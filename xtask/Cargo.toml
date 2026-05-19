@@ -1,0 +1,16 @@
+[package]
+name = "xtask"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+# Mirrors the root crate's clap (Cargo.toml) — already in Cargo.lock, so
+# no new toolchain install. xshell is the only net-new crate; it is a
+# library cargo compiles automatically, not a binary anyone installs.
+clap = { version = "4", features = ["derive"] }
+xshell = "0.2"
+
+[lints]
+workspace = true

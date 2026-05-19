@@ -1,0 +1,22 @@
+# Rust build output (single workspace -> only the root target/)
+/target
+
+# Node
+node_modules/
+
+# Editor / agent local state
+.claude/
+.cursor/
+.idea/
+.vscode/
+
+# macOS (no leading slash -> matches at every depth, e.g. pi-extension/.DS_Store)
+.DS_Store
+
+# Local sync tooling (Syncthing, environment-specific)
+.stignore
+
+# Runtime artifacts: daemon IPC sockets, pids, logs
+*.log
+*.sock
+*.pid

@@ -1,0 +1,24 @@
+# Readability-focused Clippy configuration. See [workspace.lints] in
+# Cargo.toml for the enabled lint set, and CLAUDE.md "Lint policy".
+
+# Flag single-character identifiers; keep idiomatic generics and loop vars.
+min-ident-chars-threshold = 1
+allowed-idents-below-min-chars = ["_", "T", "E", "K", "V", "R", "S", "i", "j"]
+
+# Complexity ceilings (favor small, readable functions).
+cognitive-complexity-threshold = 20
+too-many-lines-threshold = 120
+
+# Domain terms that must not trip clippy::doc_markdown (extends the default
+# allow-list rather than replacing it).
+doc-valid-idents = [
+    "iroh",
+    "QUIC",
+    "HyParView",
+    "Plumtree",
+    "Base58Check",
+    "Ed25519",
+    "TopicId",
+    "EndpointId",
+    "JSON-RPC",
+]

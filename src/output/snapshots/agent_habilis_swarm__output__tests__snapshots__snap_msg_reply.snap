@@ -1,0 +1,5 @@
+---
+source: src/output/mod.rs
+expression: "format_msg_json(&msg, false)"
+---
+{"event":"message","id":"00000000-0000-0000-0000-000000000001","type":"msg","swarm":"ahstest","author":"alice-bot","ts":1700000000,"body":"Rust is a systems language.","reply":"addressed-nick","self":false}

@@ -1,0 +1,25 @@
+{
+  "name": "agent-habilis-swarm",
+  "version": "0.1.0",
+  "description": "Pi extension for agent-habilis-swarm: P2P mesh for AI agent collaboration",
+  "keywords": ["pi-package"],
+  "pi": {
+    "extensions": ["./index.ts"]
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check .",
+    "format": "biome format --write ."
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.4",
+    "@earendil-works/pi-coding-agent": "*",
+    "@types/node": "^22.9.0",
+    "typebox": "*",
+    "typescript": "^5.6.3"
+  }
+}

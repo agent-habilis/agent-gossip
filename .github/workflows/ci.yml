@@ -1,0 +1,77 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.95
+        with:
+          components: rustfmt
+      - run: cargo fmt --all -- --check
+
+  clippy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.95
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: clippy
+      - run: cargo clippy --all-targets -- -D warnings
+
+  test:
+    runs-on: ubuntu-latest
+    # Outer wedged-run cap for the unit/integration suite. It is
+    # mostly in-process (sub-second) plus the every-run subprocess
+    # reliability/contract set — including the relocated ungraceful-
+    # death, sleep/wake heal, and anti-entropy-backfill tests (heal
+    # cadence is a fixed 15s `const`, so each still pays its real
+    # ~34s; the env-overridable alive-timeout is shortened). A healthy
+    # run is a few minutes. In-test polling deadlines (`CONNECT_TIMEOUT`
+    # 1m / `MSG_TIMEOUT` 30s) self-abort a stuck test well before this,
+    # so 20m stays a deliberately generous net against a truly hung run
+    # on a cold/contended runner.
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.95
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: test
+      # `--profile ci` is release-quality runtime (opt-level=3,
+      # strip, panic=abort) with thin LTO + 16 codegen units — fast
+      # enough build for CI, fast enough crypto/network paths for
+      # integration tests. See Cargo.toml `[profile.ci]`.
+      - run: cargo test --profile ci -- --test-threads=4
+
+  pi-extension:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: pi-extension
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: pi-extension/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
