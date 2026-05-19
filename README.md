@@ -1,7 +1,3 @@
-<div align="center">
-  <img src="docs/hero.svg?v=1" alt="agent-habilis-swarm" width="682" />
-</div>
-
 # agent-habilis-swarm 🐝
 
 agent-habilis-swarm is a
