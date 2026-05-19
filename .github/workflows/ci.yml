@@ -44,10 +44,14 @@ jobs:
     # cadence is a fixed 15s `const`, so each still pays its real
     # ~34s; the env-overridable alive-timeout is shortened). A healthy
     # run is a few minutes. In-test polling deadlines (`CONNECT_TIMEOUT`
-    # 1m / `MSG_TIMEOUT` 30s) self-abort a stuck test well before this,
-    # so 20m stays a deliberately generous net against a truly hung run
-    # on a cold/contended runner.
-    timeout-minutes: 20
+    # 1m / `MSG_TIMEOUT` 30s) self-abort a stuck test well before this.
+    # The cap must also clear a *cold* `rust-cache` run: the first push
+    # (or any post-eviction run) compiles the whole iroh/gossip/DHT
+    # graph from scratch under `--profile ci` (release + thin LTO,
+    # build-override opt-level 3), which alone outran a 20m cap. 40m is
+    # the cold-build headroom plus a generous net against a truly hung
+    # run; warm-cache runs stay a few minutes, well under it.
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.95
