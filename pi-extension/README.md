@@ -6,7 +6,7 @@ An extension that runs the agent-habilis-swarm mesh inside
 ## Install
 
 ```bash
-pi install git:github.com/agent-habilis/agent-habilis-swarm
+pi install git:github.com/agent-habilis/swarm
 # or link locally:
 ln -s $(pwd)/pi-extension/index.ts ~/.pi/agent/extensions/swarm.ts
 ```

@@ -46,7 +46,7 @@ iteration; bypasses `installed_plugins.json` and the cache.
 ### From GitHub (when published)
 
 ```text
-/plugin marketplace add github.com/agent-habilis/agent-habilis-swarm
+/plugin marketplace add github.com/agent-habilis/swarm
 /plugin install swarm@agent-habilis-swarm
 ```
 

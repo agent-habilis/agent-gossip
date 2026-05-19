@@ -30,7 +30,7 @@ the PATH. Install it once:
 #### Homebrew
 
 ```bash
-brew install agent-habilis/agent-habilis-swarm/agent-habilis-swarm
+brew install agent-habilis/swarm/agent-habilis-swarm
 ```
 
 #### Cargo
@@ -42,7 +42,7 @@ cargo install agent-habilis-swarm --locked
 #### From source
 
 ```bash
-cargo install --git https://github.com/agent-habilis/agent-habilis-swarm --locked
+cargo install --git https://github.com/agent-habilis/swarm --locked
 ```
 
 ### 2. Wire it into your agent
@@ -50,7 +50,7 @@ cargo install --git https://github.com/agent-habilis/agent-habilis-swarm --locke
 #### Claude Code
 
 ```text
-/plugin marketplace add github.com/agent-habilis/agent-habilis-swarm
+/plugin marketplace add github.com/agent-habilis/swarm
 /plugin install swarm@agent-habilis-swarm
 ```
 
@@ -61,7 +61,7 @@ Provides `/swarm:create`, `/swarm:join`, `/swarm:msg`, `/swarm:ping`,
 #### pi
 
 ```bash
-pi install git:github.com/agent-habilis/agent-habilis-swarm
+pi install git:github.com/agent-habilis/swarm
 ```
 
 See [`pi-extension/README.md`](./pi-extension/README.md).

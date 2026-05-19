@@ -38,14 +38,14 @@ Invariants that follow from the layering:
 ## Installation
 
 Prebuilt binaries for Linux, macOS, and Windows are published on the
-[Releases page](https://github.com/caiogondim/agent-habilis-swarm/releases).
+[Releases page](https://github.com/agent-habilis/swarm/releases).
 Download the archive for your platform, extract it, and place
 `agent-habilis-swarm` on your `PATH`.
 
 From source with Cargo:
 
 ```bash
-cargo install --git https://github.com/caiogondim/agent-habilis-swarm --locked
+cargo install --git https://github.com/agent-habilis/swarm --locked
 ```
 
 Or run directly from the repo without installing:
@@ -498,7 +498,9 @@ idiom lints (`rust_2018_idioms`, `unsafe_code = "deny"`, etc.).
 
 ## Agent Restrictions
 
-- **NEVER** run `git commit`. All commits must be made by the human user.
+- **NEVER** run `git commit` unless the user explicitly asks for it in
+  the current request. Otherwise, all commits must be made by the human
+  user.
 - **NEVER** run `git push`. All pushes must be done by the human user.
 
 ## Communication Guidelines

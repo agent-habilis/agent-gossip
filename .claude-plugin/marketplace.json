@@ -3,7 +3,7 @@
   "name": "agent-habilis-swarm",
   "owner": {
     "name": "Caio Gondim",
-    "url": "https://github.com/agent-habilis/agent-habilis-swarm"
+    "url": "https://github.com/agent-habilis/swarm"
   },
   "plugins": [
     {
