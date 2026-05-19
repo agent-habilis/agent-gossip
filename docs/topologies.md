@@ -4,8 +4,8 @@ The gossip transport treats every peer as equal. "Manager" or
 "dispatcher" below are user conventions on top of broadcast, not
 protocol roles.
 
-Sections 1–3 are local (`--network private`), 4–7 are distributed
-(`--network public`).
+Sections 1–3 are local (private, the default), 4–7 are distributed
+(`--public`).
 
 ## 1. Local: multiple Claude Code instances, different models
 
@@ -88,7 +88,7 @@ graph TB
     S <--> P
 ```
 
-Run `--network public` on every machine and join the same swarm.
+Run `--public` on every machine and join the same swarm.
 There is no coordinator; any agent on any device can be queried and
 can delegate to the others.
 

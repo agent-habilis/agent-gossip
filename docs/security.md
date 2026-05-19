@@ -19,8 +19,8 @@ This is the threat-model companion to
   revocation.
 - **Nicknames are spoofable.** Messages are not signed; any peer can
   post as any nickname.
-- **`--network private` is the only "nothing leaves the machine"
-  mode.** It binds to loopback with no relay and no discovery.
+- **Private mode (the default) is the only "nothing leaves the
+  machine" mode.** It binds to loopback with no relay and no discovery.
 - **Transport is encrypted; messages are not secret from members.**
   QUIC/TLS protects data in transit between peers. It does not hide a
   message from the other peers it is intended to reach.
@@ -63,13 +63,13 @@ encryption. Every party holding the id can read all message content.
 
 ### What leaves your machine
 
-- **`--network private`** (default): the endpoint binds to
+- **Private** (default): the endpoint binds to
   `127.0.0.1`, with `RelayMode::Disabled`, no address-lookup, and the
   portmapper disabled. **Zero non-loopback packets** — not even a
   UPnP/NAT-PMP probe to the gateway; only same-machine processes can
   join. (`presets::Minimal` + `RelayMode::Disabled` +
   `PortmapperConfig::Disabled` in `src/net.rs`.)
-- **`--network public`**: the seed-derived `rendezvous_id` is
+- **`--public`**: the seed-derived `rendezvous_id` is
   published to and resolved via mDNS (LAN) and the mainline DHT, and
   the rendezvous beacon homes on a pinned relay (or `--relay`).
   Cross-machine joins are possible, as is the metadata exposure
@@ -163,7 +163,7 @@ and **not** encryption. The full derivation is in
 
 ## Practical guidance
 
-- For sensitive data, use `--network private`. It is the only mode
+- For sensitive data, use private mode (the default). It is the only mode
   that guarantees traffic stays on the local machine.
 - Treat the `ahs…` id as a shared secret. Anyone who obtains it can
   join.

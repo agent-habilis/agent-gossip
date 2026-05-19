@@ -287,8 +287,8 @@ impl SwarmMode {
     }
 
     /// Parse the textual network name accepted by the MCP
-    /// `create_swarm` tool. The CLI uses its own clap enum
-    /// (`From<NetworkMode>`); the embed facade uses a `bool`.
+    /// `create_swarm` tool. The CLI uses a `--public` bool; the
+    /// embed facade uses a `bool`.
     pub(crate) fn from_network_name(name: &str) -> Result<Self> {
         match name {
             "private" => Ok(SwarmMode::Private),
@@ -402,7 +402,10 @@ pub(crate) fn validate_discovery(
     if offending.is_empty() {
         Ok(())
     } else {
-        bail!("{} require --network public", offending.join(", "));
+        bail!(
+            "{} require the public network; pass --public",
+            offending.join(", ")
+        );
     }
 }
 
@@ -493,7 +496,7 @@ mod discovery_tests {
             let error =
                 validate_discovery(SwarmMode::Private, lookups, relay.is_some()).unwrap_err();
             assert!(
-                error.to_string().contains("--network public"),
+                error.to_string().contains("--public"),
                 "got: {error}"
             );
         }

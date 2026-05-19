@@ -18,25 +18,6 @@ pub(crate) enum OutputFormat {
     Json,
 }
 
-/// CLI-level network mode. 1:1 with `SwarmMode` but lives here so
-/// `clap::ValueEnum` stays out of the protocol layer.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub(crate) enum NetworkMode {
-    /// Loopback only — peers on the same machine.
-    Private,
-    /// Open internet via iroh DNS and N0 (or custom) relay.
-    Public,
-}
-
-impl From<NetworkMode> for SwarmMode {
-    fn from(mode: NetworkMode) -> Self {
-        match mode {
-            NetworkMode::Private => SwarmMode::Private,
-            NetworkMode::Public => SwarmMode::Public,
-        }
-    }
-}
-
 #[derive(Parser, Debug)]
 #[command(
     name = "ahs",
@@ -80,7 +61,7 @@ pub(crate) struct SharedServerOpts {
 
     /// Custom relay URL (connectivity). Omitted ⇒ iroh's N0 default
     /// relays on `public` (the relay is never disabled — it is a URL,
-    /// not a toggle). Requires `--network public`; per-process, like
+    /// not a toggle). Requires `--public`; per-process, like
     /// the lookup flags.
     #[arg(long)]
     pub relay: Option<RelayUrl>,
@@ -91,8 +72,8 @@ pub(crate) struct SharedServerOpts {
 }
 
 /// The address-lookup selection flags (presence allowlist): with
-/// `--network public`, naming none enables all (mdns+dht); naming any
-/// uses *only* those passed. Both require `--network public`. Grouped
+/// `--public`, naming none enables all (mdns+dht); naming any
+/// uses *only* those passed. Both require `--public`. Grouped
 /// and flattened so each options struct stays within the readable
 /// bool budget.
 #[derive(Parser, Debug)]
@@ -127,12 +108,12 @@ pub(crate) struct CreateOpts {
     #[arg(long)]
     pub name: crate::protocol::swarm::SwarmName,
 
-    /// Network mode: private (loopback only, default) or public
-    /// (open internet via iroh DNS and N0 relay). Relay/lookup
-    /// selection lives in the shared `--relay`/`--n0`/`--mdns`/`--dht`
-    /// flags.
-    #[arg(long, default_value = "private")]
-    pub network: NetworkMode,
+    /// Use the public network (cross-machine via iroh DNS + N0 or
+    /// custom relay). Omitted ⇒ private (loopback only, the
+    /// default). Relay/lookup selection lives in the shared
+    /// `--relay`/`--mdns`/`--dht` flags.
+    #[arg(long, default_value_t = false)]
+    pub public: bool,
 
     /// Optional nickname in word-word format (random if not provided).
     /// Symmetric with `ahs join --nickname`.
@@ -204,8 +185,7 @@ mod tests {
             "create",
             "--name",
             "team",
-            "--network",
-            "public",
+            "--public",
             "--nickname",
             "custom-name",
             "--no-interactive",
@@ -217,7 +197,7 @@ mod tests {
                     opts.nickname.as_ref().map(Nickname::as_str),
                     Some("custom-name")
                 );
-                assert_eq!(opts.network, NetworkMode::Public);
+                assert!(opts.public);
                 assert!(opts.shared.no_interactive);
             }
             _ => panic!("expected Create command"),
@@ -251,9 +231,9 @@ pub(crate) enum Commands {
         nickname: Option<Nickname>,
 
         /// Accepted only to emit a clear error: the network mode is
-        /// encoded in the swarm id, so `join` has no `--network`.
+        /// encoded in the swarm id, so `join` has no `--public`.
         #[arg(long, hide = true)]
-        network: Option<String>,
+        public: bool,
 
         /// Accepted only to emit a clear error: the swarm name is
         /// encoded in the swarm id, so `join` has no `--name`.
@@ -327,12 +307,12 @@ impl From<OutputFormat> for OutputMode {
     }
 }
 
-/// `join` has no `--network`/`--name`: both are encoded in the `ahs…`
+/// `join` has no `--public`/`--name`: both are encoded in the `ahs…`
 /// identifier and auto-detected. Without this, clap rejects them with
 /// a generic "unexpected argument" + a misleading "pass as a value"
 /// tip; this gives the real reason instead.
-fn reject_id_encoded_flag(flag: &str, value: Option<&str>) -> Result<()> {
-    if value.is_some() {
+fn reject_id_encoded_flag(flag: &str, present: bool) -> Result<()> {
+    if present {
         anyhow::bail!(
             "`{flag}` is not valid for `join`: the swarm's network mode \
              and name are encoded in the swarm id and auto-detected. \
@@ -353,12 +333,12 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
         Commands::Join {
             swarm,
             nickname,
-            network,
+            public,
             name,
             opts,
         } => {
-            reject_id_encoded_flag("--network", network.as_deref())?;
-            reject_id_encoded_flag("--name", name.as_deref())?;
+            reject_id_encoded_flag("--public", public)?;
+            reject_id_encoded_flag("--name", name.is_some())?;
             join(&swarm, nickname, opts).await
         }
         Commands::Msg {
@@ -402,7 +382,11 @@ async fn run_session(
 
 /// Create a new swarm, print its identifier, and start listening.
 async fn create(opts: CreateOpts) -> Result<()> {
-    let mode = SwarmMode::from(opts.network);
+    let mode = if opts.public {
+        SwarmMode::Public
+    } else {
+        SwarmMode::Private
+    };
     let discovery = resolve_discovery(
         mode,
         opts.shared.lookups.to_set(),

@@ -65,9 +65,9 @@ already inlined). The Monitor `command:` string is **not**
 shell-expanded, so `${PPID}` cannot be used here — substitute the
 integer path yourself, the same way you substitute `{NAME}`.
 
-Add `--network public` if the user requests cross-network connectivity (e.g.
+Add `--public` if the user requests cross-network connectivity (e.g.
 connecting from different machines or networks). Add `--relay {URL}`
-together with `--network public` to pin a custom relay.
+together with `--public` to pin a custom relay.
 
 ## Parse the ready event
 

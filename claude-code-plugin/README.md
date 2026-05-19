@@ -169,7 +169,7 @@ The `ahs` binary must be on `$PATH`. From this repo:
 
 **`/swarm:join` times out**
 
-For `--network public`, relay handshake adds a few seconds. The
+For `--public`, relay handshake adds a few seconds. The
 Monitor's 300 s timeout covers this. If the swarm creator is no longer
 reachable, no bootstrap peer exists and join fails permanently.
 

@@ -133,8 +133,8 @@ project doesn't reimplement them.
   long as the overlay stays connected, traffic keeps flowing.
 - **Bounded resource use.** Each peer maintains a small constant
   number of connections regardless of swarm size.
-- **Privacy.** In `--network private`, traffic never leaves the
-  machine; in `--network public`, peer links are QUIC-encrypted end to
+- **Privacy.** In private mode (the default), traffic never leaves
+  the machine; in `--public`, peer links are QUIC-encrypted end to
   end but every member still receives every message. The full threat
   model (confidentiality, authenticity, access control) is in
   [security.md](./security.md).

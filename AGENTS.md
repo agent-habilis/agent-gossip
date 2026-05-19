@@ -88,20 +88,20 @@ can always bootstrap from whoever is currently alive:
 Prints a `ready` event with `swarm`, `name`, and `nickname` fields once the
 node is up.
 
-Use `--network public` for cross-machine networking (default:
-`--network private`, localhost only). `--relay {URL}` (with `--network
-public`) overrides the pinned rendezvous relay: the beacon homes there and
-joiners pre-register it, and this process's participant endpoint uses it
-too. It is per-process, not encoded in the id, so every member that wants
-it must pass the same URL. The swarm identifier encodes the network mode
-AND the name, so joiners auto-detect both.
+Pass `--public` for cross-machine networking; omit it for the default
+(private, localhost only). `--relay {URL}` (with `--public`) overrides
+the pinned rendezvous relay: the beacon homes there and joiners
+pre-register it, and this process's participant endpoint uses it too. It
+is per-process, not encoded in the id, so every member that wants it must
+pass the same URL. The swarm identifier encodes the network mode AND the
+name, so joiners auto-detect both.
 
 #### Discovery (address-lookup) flags
 
-`--network public` resolves the seed-derived rendezvous via two iroh
+`--public` resolves the seed-derived rendezvous via two iroh
 address-lookups, **combinable**: `--mdns` (LAN multicast) and `--dht`
 (mainline BitTorrent DHT). They are a **presence allowlist**: with
-`--network public`, passing *none* enables **both**; passing *any*
+`--public`, passing *none* enables **both**; passing *any*
 restricts to those (`--mdns` ⇒ mDNS only). The fast path is the pinned
 relay (above); mDNS accelerates same-LAN; the DHT is the operator-free
 eternal backstop. There is no N0-DNS lookup or `--n0` flag.
@@ -117,9 +117,9 @@ lookup the others also enable — the same seed-derived `rendezvous_id`
 resolves through whichever mechanism overlaps. The beacon co-host
 publishes to exactly the lookups you select.
 
-All of `--mdns`/`--dht`/`--relay {URL}` require `--network public`;
-using one with `--network private` (loopback only) is a hard error
-naming the offending flag(s) — never a silent no-op.
+All of `--mdns`/`--dht`/`--relay {URL}` require `--public`; using one
+without it (private, loopback only) is a hard error naming the
+offending flag(s) — never a silent no-op.
 
 ### join
 

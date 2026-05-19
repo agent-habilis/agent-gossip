@@ -52,7 +52,7 @@ export async function createSwarm(
   cleanup();
 
   const args = ["create", "--name", name, "--no-interactive", "--output", "json", "--filter-self"];
-  if (network === "public") args.push("--network", "public");
+  if (network === "public") args.push("--public");
   if (relay) args.push("--relay", relay);
   const filePath = stateFilePath();
   if (filePath) args.push("--state-file", filePath);

@@ -427,7 +427,7 @@ async fn test_interleaved_join_leave_order() {
     );
 }
 
-/// `--network public` is accepted and the node starts successfully.
+/// `--public` is accepted and the node starts successfully.
 #[test]
 fn test_network_public_accepted() {
     let log = tmp_log("public");
@@ -437,14 +437,13 @@ fn test_network_public_accepted() {
             "create",
             "--name",
             "pub-test",
-            "--network",
-            "public",
+            "--public",
             "--no-interactive",
         ])
         .stdout(Stdio::from(file.try_clone().unwrap()))
         .stderr(Stdio::from(file))
         .spawn()
-        .expect("failed to spawn create --network public");
+        .expect("failed to spawn create --public");
 
     let deadline = Instant::now() + CONNECT_TIMEOUT;
     let mut found = false;
@@ -464,7 +463,7 @@ fn test_network_public_accepted() {
     let _ = child.wait();
     let _ = fs::remove_file(&log);
 
-    assert!(found, "create --network public did not produce any output");
+    assert!(found, "create --public did not produce any output");
 }
 
 /// The poll command retrieves buffered messages from a running swarm process.

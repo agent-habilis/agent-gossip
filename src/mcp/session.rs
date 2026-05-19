@@ -219,7 +219,7 @@ mod tests {
     use super::*;
     use std::time::Duration;
 
-    // All tests use `--network private` (loopback) so they work on
+    // All tests use the private network (loopback) so they work on
     // any CI without public iroh DNS / relay access.
 
     async fn wait_for_gossip(session: &Session, author: &str, body: &str) -> Option<MessageId> {

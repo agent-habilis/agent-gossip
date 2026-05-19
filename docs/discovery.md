@@ -143,7 +143,7 @@ another already co-hosts the same identity. This co-host role is the
 How the rendezvous is reached depends entirely on the **network
 mode**, fixed when Alice runs `create`:
 
-### `--network private` (default) — loopback only
+### Private (default) — loopback only
 
 The endpoint binds `127.0.0.1`, with `RelayMode::Disabled` and the
 portmapper disabled — **zero non-loopback packets**. The rendezvous
@@ -156,7 +156,7 @@ port (skip to the next rung). Only other processes on the machine can
 join. (`src/net.rs` private branch; `src/daemon/beacon.rs`
 claim-if-free.)
 
-### `--network public` — open internet
+### `--public` — open internet
 
 ```mermaid
 flowchart LR
@@ -192,9 +192,9 @@ The asymmetry matters:
 
 `--relay {URL}` overrides the pinned default (every member that wants
 it must pass it; it is per-process, not in the id). `--mdns` / `--dht`
-are a presence allowlist: with `--network public`, naming none enables
+are a presence allowlist: with `--public`, naming none enables
 both; naming any restricts to those. Any of `--mdns`/`--dht`/`--relay`
-with `--network private` is a hard error (loopback only).
+without `--public` is a hard error (loopback only).
 
 (`src/net.rs` `build_endpoint_for_mode` + `effective_public_relay`;
 `src/protocol/swarm.rs` `resolve_discovery`/`validate_discovery`.)

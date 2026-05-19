@@ -109,7 +109,7 @@ Print:
 
 ## Notes
 
-- With `--network public`, relay connection can take a few seconds
+- With `--public`, relay connection can take a few seconds
   longer than localhost. The 300s Monitor timeout accounts for this.
 - Non-ID values (domains, git URLs) are resolved via
   `/.well-known/agent-habilis-swarm` before the daemon starts.
