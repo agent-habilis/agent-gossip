@@ -39,9 +39,10 @@ impl From<NetworkMode> for SwarmMode {
 
 #[derive(Parser, Debug)]
 #[command(
-    name = "agent-habilis-swarm",
-    about = "P2P swarm network for AI agents",
-    version
+    name = "ahs",
+    about = "swarm network for agents",
+    version,
+    after_help = "a tool by 🫈 agent-habilis"
 )]
 pub(crate) struct Cli {
     #[command(subcommand)]
@@ -134,7 +135,7 @@ pub(crate) struct CreateOpts {
     pub network: NetworkMode,
 
     /// Optional nickname in word-word format (random if not provided).
-    /// Symmetric with `agent-habilis-swarm join --nickname`.
+    /// Symmetric with `ahs join --nickname`.
     #[arg(long)]
     pub nickname: Option<Nickname>,
 }
@@ -146,7 +147,7 @@ mod tests {
     #[test]
     fn create_opts_with_nickname() {
         let cli = Cli::parse_from([
-            "agent-habilis-swarm",
+            "ahs",
             "create",
             "--name",
             "team",
@@ -167,7 +168,7 @@ mod tests {
 
     #[test]
     fn create_opts_without_nickname() {
-        let cli = Cli::parse_from(["agent-habilis-swarm", "create", "--name", "team"]);
+        let cli = Cli::parse_from(["ahs", "create", "--name", "team"]);
         match cli.command {
             Commands::Create { opts } => {
                 assert_eq!(opts.name.as_str(), "team");
@@ -179,18 +180,18 @@ mod tests {
 
     #[test]
     fn create_opts_requires_name() {
-        let result = Cli::try_parse_from(["agent-habilis-swarm", "create"]);
+        let result = Cli::try_parse_from(["ahs", "create"]);
         assert!(result.is_err(), "--name must be required");
     }
 
     #[test]
     fn create_opts_rejects_invalid_name() {
-        assert!(Cli::try_parse_from(["agent-habilis-swarm", "create", "--name", ""]).is_err());
+        assert!(Cli::try_parse_from(["ahs", "create", "--name", ""]).is_err());
         assert!(
-            Cli::try_parse_from(["agent-habilis-swarm", "create", "--name", "has space"]).is_err()
+            Cli::try_parse_from(["ahs", "create", "--name", "has space"]).is_err()
         );
         assert!(
-            Cli::try_parse_from(["agent-habilis-swarm", "create", "--name", "abcdefghijklm"])
+            Cli::try_parse_from(["ahs", "create", "--name", "abcdefghijklm"])
                 .is_err(),
             "13 chars must reject"
         );
@@ -199,7 +200,7 @@ mod tests {
     #[test]
     fn create_opts_nickname_with_other_flags() {
         let cli = Cli::parse_from([
-            "agent-habilis-swarm",
+            "ahs",
             "create",
             "--name",
             "team",

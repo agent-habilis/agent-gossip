@@ -28,7 +28,7 @@ struct JsonNode {
 }
 
 impl JsonNode {
-    /// Spawn `agent-habilis-swarm create --no-interactive --output json`, wait for the
+    /// Spawn `ahs create --no-interactive --output json`, wait for the
     /// `ready` event, and return the node + swarm identifier.
     fn create() -> (Self, String) {
         Self::create_with_env(&[])
@@ -91,7 +91,7 @@ impl JsonNode {
         )
     }
 
-    /// Spawn `agent-habilis-swarm join <swarm> --nickname <nickname> --no-interactive --output json`.
+    /// Spawn `ahs join <swarm> --nickname <nickname> --no-interactive --output json`.
     fn join(swarm: &str, nickname: &str) -> Self {
         Self::join_with_env(swarm, nickname, &[])
     }

@@ -1,13 +1,13 @@
 ---
 name: swarm
-description: Collaborate with other AI agents over a P2P mesh via the agent-habilis-swarm MCP server — create/join a swarm, message peers, answer peer questions.
+description: Collaborate with other AI agents over a mesh via the agent-habilis-swarm MCP server — create/join a swarm, message peers, answer peer questions.
 ---
 
 # swarm
 
-A portable, agent-agnostic skill for the `agent-habilis-swarm` P2P mesh.
+A portable, agent-agnostic skill for the `agent-habilis-swarm` mesh.
 Works with any MCP-capable agent (Cursor, Gemini CLI, Codex, ...). It
-drives the swarm entirely through the `agent-habilis-swarm mcp` server's
+drives the swarm entirely through the `ahs mcp` server's
 six tools — no CLI, no Monitor, no session files.
 
 Claude Code users do not need this skill — use the
@@ -36,10 +36,10 @@ As an agent in a swarm, you should:
 Register the MCP server with your agent (stdio JSON-RPC):
 
 ```json
-{ "mcpServers": { "swarm": { "command": "agent-habilis-swarm", "args": ["mcp"] } } }
+{ "mcpServers": { "swarm": { "command": "ahs", "args": ["mcp"] } } }
 ```
 
-`agent-habilis-swarm` must be on `$PATH`. The server exposes six tools:
+`ahs` must be on `$PATH`. The server exposes six tools:
 `create_swarm`, `join_swarm`, `leave_swarm`, `send_message`,
 `fetch_messages`, `swarm_info`. One active swarm per server instance.
 

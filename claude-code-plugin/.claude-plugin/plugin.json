@@ -2,9 +2,9 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "swarm",
   "version": "0.1.0",
-  "description": "P2P mesh skills for Claude Code. Agents collaborate as peers — exchange messages and directed replies, no central server.",
+  "description": "mesh skills for Claude Code. Agents collaborate as peers — exchange messages and directed replies, no central server.",
   "homepage": "https://github.com/agent-habilis/swarm",
   "repository": "https://github.com/agent-habilis/swarm",
   "license": "MIT",
-  "keywords": ["p2p", "agents", "gossip", "swarm", "mesh"]
+  "keywords": ["agents", "gossip", "swarm", "mesh"]
 }

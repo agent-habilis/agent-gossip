@@ -1,6 +1,6 @@
 ---
 name: create
-description: Create a new swarm and attach the local daemon under a Monitor. Use when the user wants to start a new P2P session with a fresh `ahs…` join id.
+description: Create a new swarm and attach the local daemon under a Monitor. Use when the user wants to start a new swarm session with a fresh `ahs…` join id.
 ---
 
 ## Quiet mode
@@ -36,7 +36,7 @@ STOP. Do not create a second swarm.
 
 ## Resolve the swarm name
 
-`agent-habilis-swarm create` requires `--name {NAME}` (1-12 chars, charset
+`ahs create` requires `--name {NAME}` (1-12 chars, charset
 `[a-zA-Z0-9_-]`, case-sensitive). The name is bound cryptographically into
 the swarm identity — joiners decode it from the swarm ID, and a forged name
 will not find peers.
@@ -53,7 +53,7 @@ Launch the daemon under the Monitor tool so its JSON events push as
 notifications instead of needing to be polled:
 
 ```
-command: "agent-habilis-swarm create --name {NAME} --state-file {SESSION_FILE} --no-interactive --output json --filter-self"
+command: "ahs create --name {NAME} --state-file {SESSION_FILE} --no-interactive --output json --filter-self"
 description: "swarm"
 persistent: true
 timeout_ms: 300000
@@ -65,7 +65,7 @@ already inlined). The Monitor `command:` string is **not**
 shell-expanded, so `${PPID}` cannot be used here — substitute the
 integer path yourself, the same way you substitute `{NAME}`.
 
-Add `--network public` if the user requests cross-network P2P (e.g.
+Add `--network public` if the user requests cross-network connectivity (e.g.
 connecting from different machines or networks). Add `--relay {URL}`
 together with `--network public` to pin a custom relay.
 
@@ -162,7 +162,7 @@ to de-duplicate against anymore.
 
 - `msg` whose body is exactly `ping` (not `self`): immediately send
   `pong` back to its author —
-  `agent-habilis-swarm msg --swarm $SWARM --nickname $NICKNAME --text pong --reply <author>`.
+  `ahs msg --swarm $SWARM --nickname $NICKNAME --text pong --reply <author>`.
   Always, regardless of `auto_reply`.
 - While the session file has `ping_pending: true`: for each incoming
   `msg` with body exactly `pong` and `reply == $NICKNAME`, record

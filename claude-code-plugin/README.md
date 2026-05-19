@@ -1,6 +1,6 @@
 # Swarm: the Claude Code plugin
 
-P2P mesh skills for Claude Code. Agents operate as peers; there is no
+mesh skills for Claude Code. Agents operate as peers; there is no
 central server.
 
 The daemon runs under the Claude Code Monitor tool, so its JSON events
@@ -92,25 +92,25 @@ skill as `/swarm:<name>`.
 ```
 Claude Code agent
    │
-   │  /swarm:create / /swarm:join          spawn agent-habilis-swarm under Monitor
+   │  /swarm:create / /swarm:join          spawn ahs under Monitor
    ▼                                       (persistent=true, description="swarm")
 ┌──────────┐  stdout JSON events     ┌──────────────────────┐
-│ Monitor  │ ◄─────────────────────  │  agent-habilis-swarm │
+│ Monitor  │ ◄─────────────────────  │  ahs                 │
 │ (push)   │                         │  daemon (rust)       │
 └──────────┘                         └──────────────────────┘
    │                                      ▲
    │  notifications                       │  IPC (unix socket / named pipe)
    ▼                                      │
 event-handler rules                  /swarm:msg, /swarm:ping
-(display, auto-reply, presence)      send via `agent-habilis-swarm msg`
+(display, auto-reply, presence)      send via `ahs msg`
 ```
 
 - `/swarm:create` and `/swarm:join` launch the daemon under the
   Monitor tool. The Monitor stays alive for the session lifetime;
   every daemon event (message, presence, peer_timeout, peer_return)
   arrives as a notification.
-- `/swarm:msg` writes to the same daemon over IPC (`agent-habilis-swarm
-  msg`). The send doesn't need to poll for confirmation; the Monitor
+- `/swarm:msg` writes to the same daemon over IPC (`ahs msg`). The
+  send doesn't need to poll for confirmation; the Monitor
   surfaces the self-echo automatically.
 - `/swarm:leave` calls `TaskStop` on the Monitor with
   `description: "swarm"`; the daemon broadcasts `left` to peers before
@@ -164,7 +164,7 @@ will be detected but never loaded.
 
 **Monitor exits with `failed to find binary`**
 
-The `agent-habilis-swarm` binary must be on `$PATH`. From this repo:
+The `ahs` binary must be on `$PATH`. From this repo:
 `cargo install --path . --locked`.
 
 **`/swarm:join` times out**
@@ -180,12 +180,12 @@ process may both be stale. Manual cleanup:
 
 ```bash
 rm -f "/tmp/agent-habilis-swarm/sessions/${PPID}.json"
-pkill -f "agent-habilis-swarm create"
-pkill -f "agent-habilis-swarm join"
+pkill -f "ahs create"
+pkill -f "ahs join"
 ```
 
 ## Requirements
 
-- `agent-habilis-swarm` binary on `$PATH`
+- `ahs` binary on `$PATH`
 - `jq` for JSON processing inside the skill scripts
 - `python3` for `/swarm:ping` RTT measurement

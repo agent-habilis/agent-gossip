@@ -58,13 +58,13 @@ version = "0.2.0"
 edition.workspace = true
 rust-version.workspace = true
 authors = ["Caio Gondim <me@caiogondim.com>"]
-description = "P2P swarm network for AI agents"
+description = "swarm network for agents"
 documentation = "https://github.com/agent-habilis/swarm"
 license = "MIT"
 repository = "https://github.com/agent-habilis/swarm"
 homepage = "https://github.com/agent-habilis/swarm"
 readme = "README.md"
-keywords = ["p2p", "agents", "gossip", "communication"]
+keywords = ["agents", "gossip", "communication"]
 categories = ["network-programming"]
 exclude = [
     "TODO.md",
@@ -91,7 +91,7 @@ name = "agent_habilis_swarm"
 path = "src/lib.rs"
 
 [[bin]]
-name = "agent-habilis-swarm"
+name = "ahs"
 path = "src/main.rs"
 
 [dependencies]

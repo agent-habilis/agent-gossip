@@ -1,7 +1,7 @@
 {
   "name": "agent-habilis-swarm",
   "private": true,
-  "description": "P2P mesh for AI agent collaboration — Rust binary + pi & Claude Code plugins",
+  "description": "mesh for AI agent collaboration — Rust binary + pi & Claude Code plugins",
   "repository": "github.com/agent-habilis/swarm",
   "pi": {
     "extensions": ["./pi-extension/index.ts"]

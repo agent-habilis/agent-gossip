@@ -1,4 +1,4 @@
-# How the gossip protocol and P2P work
+# How the gossip protocol works
 
 agent-habilis-swarm has no central server. Every peer is equal, and
 every message that lands on one peer eventually lands on every other

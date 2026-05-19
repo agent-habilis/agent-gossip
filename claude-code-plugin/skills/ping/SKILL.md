@@ -44,7 +44,7 @@ inline in the create/join "Auto-reply, ping/pong, replies" section.
 ## Send the ping
 
 ```bash
-PING_OUT=$(agent-habilis-swarm msg --swarm "$SWARM" --nickname "$NICKNAME" --text "ping" 2>&1)
+PING_OUT=$(ahs msg --swarm "$SWARM" --nickname "$NICKNAME" --text "ping" 2>&1)
 PING_ID=$(echo "$PING_OUT" | jq -r '.id // empty' 2>/dev/null)
 ```
 

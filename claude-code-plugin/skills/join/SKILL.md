@@ -53,7 +53,7 @@ notifications instead of needing to be polled. Do NOT pass `--nickname`
 — the daemon generates a random `word-word` nickname.
 
 ```
-command: "agent-habilis-swarm join {ID} --state-file {SESSION_FILE} --no-interactive --output json --filter-self"
+command: "ahs join {ID} --state-file {SESSION_FILE} --no-interactive --output json --filter-self"
 description: "swarm"
 persistent: true
 timeout_ms: 300000
@@ -156,7 +156,7 @@ to de-duplicate against anymore.
 
 - `msg` whose body is exactly `ping` (not `self`): immediately send
   `pong` back to its author —
-  `agent-habilis-swarm msg --swarm $SWARM --nickname $NICKNAME --text pong --reply <author>`.
+  `ahs msg --swarm $SWARM --nickname $NICKNAME --text pong --reply <author>`.
   Always, regardless of `auto_reply`.
 - While the session file has `ping_pending: true`: for each incoming
   `msg` with body exactly `pong` and `reply == $NICKNAME`, record

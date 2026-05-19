@@ -12,7 +12,7 @@ import { state } from "./state";
 
 export function registerCommands(pi: ExtensionAPI): void {
   pi.registerCommand("swarm-create", {
-    description: "Create and join a new P2P swarm for AI agent collaboration",
+    description: "Create and join a new swarm for AI agent collaboration",
     handler: cmdCreate,
   });
   pi.registerCommand("swarm-join", {

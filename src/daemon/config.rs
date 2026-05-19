@@ -33,7 +33,7 @@ pub(crate) struct SendRequest {
 /// "exit the process on quit?" and "spawn the unix-socket listener?"
 /// instead of carrying them as independent, drift-prone bools.
 pub(crate) enum DriverMode {
-    /// The `agent-habilis-swarm create` / `join` CLI. Owns the
+    /// The `ahs create` / `join` CLI. Owns the
     /// unix-socket IPC listener (for `msg` / `poll`); ctrl-c / SIGTERM
     /// `std::process::exit`s.
     Cli,

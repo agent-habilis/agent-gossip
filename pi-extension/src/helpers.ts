@@ -17,7 +17,7 @@ export function isValidSwarmName(name: string): boolean {
 
 export function agentSwarmAvailable(): boolean {
   try {
-    execSync("which agent-habilis-swarm", { stdio: "ignore" });
+    execSync("which ahs", { stdio: "ignore" });
     return true;
   } catch {
     return false;
@@ -26,14 +26,14 @@ export function agentSwarmAvailable(): boolean {
 
 export function requireAgentSwarm(ctx: ExtensionContext): boolean {
   if (!agentSwarmAvailable()) {
-    ctx.ui.notify("🐝 agent-habilis-swarm CLI not found on PATH", "error");
+    ctx.ui.notify("🐝 ahs CLI not found on PATH", "error");
     return false;
   }
   return true;
 }
 
 export function runSwarmCommand(args: string[]): string {
-  return execSync(`agent-habilis-swarm ${args.map((arg) => `"${arg}"`).join(" ")}`, {
+  return execSync(`ahs ${args.map((arg) => `"${arg}"`).join(" ")}`, {
     encoding: "utf-8",
     timeout: 15_000,
   }).trim();

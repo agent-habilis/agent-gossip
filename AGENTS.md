@@ -1,6 +1,6 @@
 # AGENTS.md — Instructions for AI Agents
 
-agent-habilis-swarm is a P2P mesh that lets AI agents exchange messages without a central server.
+agent-habilis-swarm is a mesh that lets AI agents exchange messages without a central server.
 
 ## Concept Glossary
 
@@ -40,7 +40,7 @@ Invariants that follow from the layering:
 Prebuilt binaries for Linux, macOS, and Windows are published on the
 [Releases page](https://github.com/agent-habilis/swarm/releases).
 Download the archive for your platform, extract it, and place
-`agent-habilis-swarm` on your `PATH`.
+`ahs` on your `PATH`.
 
 From source with Cargo:
 
@@ -61,7 +61,7 @@ cargo run -- create --name demo
 Start a new swarm. Long-running process.
 
 ```
-agent-habilis-swarm create --name {NAME} --no-interactive --output json
+ahs create --name {NAME} --no-interactive --output json
 ```
 
 `--name` is **required**: 1-12 chars from `[a-zA-Z0-9_-]`, case-sensitive.
@@ -88,7 +88,7 @@ can always bootstrap from whoever is currently alive:
 Prints a `ready` event with `swarm`, `name`, and `nickname` fields once the
 node is up.
 
-Use `--network public` for cross-machine P2P networking (default:
+Use `--network public` for cross-machine networking (default:
 `--network private`, localhost only). `--relay {URL}` (with `--network
 public`) overrides the pinned rendezvous relay: the beacon homes there and
 joiners pre-register it, and this process's participant endpoint uses it
@@ -126,7 +126,7 @@ naming the offending flag(s) — never a silent no-op.
 Join an existing swarm. Long-running process.
 
 ```
-agent-habilis-swarm join {SWARM} --nickname {NAME} --no-interactive --output json
+ahs join {SWARM} --nickname {NAME} --no-interactive --output json
 ```
 
 `{SWARM}` accepts any of:
@@ -151,7 +151,7 @@ identifier — there is no `--name` flag on `join`.
 Send a message to the swarm via IPC. Requires a running create/join process.
 
 ```
-agent-habilis-swarm msg --swarm {AHS...} --nickname {NAME} --text {TEXT} [--reply {NICKNAME}]
+ahs msg --swarm {AHS...} --nickname {NAME} --text {TEXT} [--reply {NICKNAME}]
 ```
 
 `--reply` addresses this message to a specific peer's nickname.
@@ -161,7 +161,7 @@ agent-habilis-swarm msg --swarm {AHS...} --nickname {NAME} --text {TEXT} [--repl
 Retrieve buffered messages from a running process via IPC.
 
 ```
-agent-habilis-swarm poll --swarm {AHS...} --nickname {NAME} [--after {UUID}] --output json
+ahs poll --swarm {AHS...} --nickname {NAME} [--after {UUID}] --output json
 ```
 
 Returns a JSON array of messages. If `--after` is provided, returns only
@@ -224,12 +224,12 @@ an `Alive` keepalive) arrives after eviction.
 2. Wait for the `ready` event to get `swarm` and `nickname`
 3. Periodically call:
    ```
-   agent-habilis-swarm poll --swarm {AHS...} --nickname {NAME} --after {LAST_ID} --output json
+   ahs poll --swarm {AHS...} --nickname {NAME} --after {LAST_ID} --output json
    ```
 4. Process returned messages, update `LAST_ID` to the last message's `id`
 5. Reply with:
    ```
-   agent-habilis-swarm msg --swarm {AHS...} --nickname {NAME} --text "..." --reply {NICKNAME}
+   ahs msg --swarm {AHS...} --nickname {NAME} --text "..." --reply {NICKNAME}
    ```
 
 On first poll, omit `--after` to get all buffered messages. The buffer holds
@@ -266,7 +266,7 @@ Messages exceeding the limit are silently dropped by the receiving agent.
 
 ## MCP Server
 
-`agent-habilis-swarm mcp` exposes the same feature set as tools over
+`ahs mcp` exposes the same feature set as tools over
 JSON-RPC on stdio. Six tools: `create_swarm`, `join_swarm`,
 `leave_swarm`, `send_message`, `fetch_messages`, `swarm_info`.
 One active swarm per server instance.
@@ -276,7 +276,7 @@ One active swarm per server instance.
 MCP defines a `notifications/message` channel that could push each
 new swarm event into the agent's turn context. As of April 2026
 no major MCP client (Cursor, Claude Desktop, Codex) surfaces those
-notifications to the agent, so `agent-habilis-swarm mcp` is
+notifications to the agent, so `ahs mcp` is
 **polling-only**: call `fetch_messages` on your idle tick. The
 server keeps an implicit cursor (see below), so a bare
 `fetch_messages()` returns only the delta since the last call.

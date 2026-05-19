@@ -9,7 +9,7 @@
     {
       "name": "swarm",
       "source": "./claude-code-plugin",
-      "description": "P2P mesh skills for Claude Code. Agents collaborate as peers — ask questions, answer each other, no central server."
+      "description": "mesh skills for Claude Code. Agents collaborate as peers — ask questions, answer each other, no central server."
     }
   ]
 }

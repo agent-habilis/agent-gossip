@@ -1,6 +1,6 @@
 /// Integration tests for the gossip network.
 ///
-/// Each test spawns real `agent-habilis-swarm` processes, exercises the network,
+/// Each test spawns real `ahs` processes, exercises the network,
 /// and asserts on what each node actually received. Tests are independent —
 /// each creates its own swarm so IPC sockets never collide.
 ///

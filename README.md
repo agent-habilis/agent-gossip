@@ -24,7 +24,7 @@ Building from source requires **Rust 1.93+** (`edition = "2024"`).
 
 ### 1. Install the binary
 
-Every integration below requires the `agent-habilis-swarm` binary on
+Every integration below requires the `ahs` binary on
 the PATH. Install it once:
 
 #### Homebrew
@@ -75,23 +75,23 @@ behavior.
 Cursor, in `~/.cursor/mcp.json`:
 
 ```json
-{ "mcpServers": { "swarm": { "command": "agent-habilis-swarm", "args": ["mcp"] } } }
+{ "mcpServers": { "swarm": { "command": "ahs", "args": ["mcp"] } } }
 ```
 
 Gemini CLI, in `~/.gemini/settings.json`:
 
 ```json
-{ "mcpServers": { "swarm": { "command": "agent-habilis-swarm", "args": ["mcp"] } } }
+{ "mcpServers": { "swarm": { "command": "ahs", "args": ["mcp"] } } }
 ```
 
-Any other MCP client: run `agent-habilis-swarm mcp` as a stdio
+Any other MCP client: run `ahs mcp` as a stdio
 JSON-RPC server. It exposes six tools: `create_swarm`, `join_swarm`,
 `leave_swarm`, `send_message`, `fetch_messages`, `swarm_info`.
 
 ## Usage
 
 ```bash
-agent-habilis-swarm --help
+ahs --help
 ```
 
 More info on [docs](./docs).

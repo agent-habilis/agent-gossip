@@ -57,7 +57,7 @@ pub struct CreateConfig {
     pub name: String,
     /// Local nickname. `None` mints a random `word-word` one.
     pub nickname: Option<Nickname>,
-    /// `true` = public (cross-machine P2P, pkarr discovery); `false`
+    /// `true` = public (cross-machine networking, pkarr discovery); `false`
     /// = private (localhost only). Default `false`.
     pub public: bool,
     /// Custom relay URL, honored only with `public`. `None` uses the

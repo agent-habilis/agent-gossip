@@ -1,6 +1,6 @@
-//! `agent-habilis-swarm` — a P2P mesh for AI agents.
+//! `agent-habilis-swarm` — a mesh for AI agents.
 //!
-//! This crate ships as **both** a binary (the `agent-habilis-swarm`
+//! This crate ships as **both** a binary (the `ahs`
 //! CLI / MCP server) and a library. The binary is a thin shim over
 //! [`run_cli`]; library consumers embed a swarm in-process via the
 //! [`embed`] module.
@@ -66,7 +66,7 @@ use cli::Cli;
 
 /// Parse `argv` and run the selected CLI subcommand to completion.
 ///
-/// This is the entire body of the `agent-habilis-swarm` binary; it is
+/// This is the entire body of the `ahs` binary; it is
 /// public so the thin `src/main.rs` shim (which owns only
 /// process-level concerns: tracing init, terminal echo) can call it.
 /// The subcommand dispatch + per-command logic lives in [`cli`].

@@ -23,8 +23,8 @@ export function registerTools(pi: ExtensionAPI): void {
   pi.registerTool({
     name: "swarm_create",
     label: "Swarm Create",
-    description: "Create and join a new P2P agent swarm",
-    promptSnippet: "Create a new P2P swarm for AI agent collaboration",
+    description: "Create and join a new agent swarm",
+    promptSnippet: "Create a new swarm for AI agent collaboration",
     promptGuidelines: [
       "Use swarm_create when the user asks to start a new swarm or collaborate with other agents",
       "Do not reformat or add extra prose after the tool result. The tool output is already the complete response.",
@@ -37,7 +37,7 @@ export function registerTools(pi: ExtensionAPI): void {
       network: Type.Optional(
         Type.String({
           description:
-            'Network mode: "public" for cross-machine P2P, "private" for localhost only (default: private)',
+            'Network mode: "public" for cross-machine networking, "private" for localhost only (default: private)',
         }),
       ),
       relay: Type.Optional(
@@ -48,7 +48,7 @@ export function registerTools(pi: ExtensionAPI): void {
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx: ExtensionContext) {
       if (!requireAgentSwarm(ctx)) {
-        return toolError("agent-habilis-swarm CLI not found on PATH");
+        return toolError("ahs CLI not found on PATH");
       }
       if (!isValidSwarmName(params.name)) {
         return toolError("Invalid name — must be 1-12 chars from [a-zA-Z0-9_-]");
@@ -65,8 +65,8 @@ export function registerTools(pi: ExtensionAPI): void {
   pi.registerTool({
     name: "swarm_join",
     label: "Swarm Join",
-    description: "Join an existing P2P agent swarm",
-    promptSnippet: "Join an existing P2P agent swarm by ID, domain, or git repo URL",
+    description: "Join an existing agent swarm",
+    promptSnippet: "Join an existing agent swarm by ID, domain, or git repo URL",
     promptGuidelines: [
       "Use swarm_join when the user provides a swarm ID, domain, or git repo URL to join",
       "Use swarm_join when the user says they want to join an existing swarm",
@@ -82,7 +82,7 @@ export function registerTools(pi: ExtensionAPI): void {
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx: ExtensionContext) {
       if (!requireAgentSwarm(ctx)) {
-        return toolError("agent-habilis-swarm CLI not found on PATH");
+        return toolError("ahs CLI not found on PATH");
       }
       const result = await joinSwarm(params.target, params.nickname);
       return {
@@ -95,8 +95,8 @@ export function registerTools(pi: ExtensionAPI): void {
   pi.registerTool({
     name: "swarm_send",
     label: "Swarm Send",
-    description: "Send a message to the P2P agent swarm",
-    promptSnippet: "Broadcast a message to the P2P agent swarm",
+    description: "Send a message to the agent swarm",
+    promptSnippet: "Broadcast a message to the agent swarm",
     promptGuidelines: [
       "Use swarm_send when the user asks to send a message to other agents in the swarm",
       "Use swarm_send when the agent needs to ask the swarm for help and auto-reply is off",
@@ -112,7 +112,7 @@ export function registerTools(pi: ExtensionAPI): void {
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx: ExtensionContext) {
       if (!requireAgentSwarm(ctx)) {
-        return toolError("agent-habilis-swarm CLI not found on PATH");
+        return toolError("ahs CLI not found on PATH");
       }
       if (!state.session?.swarm) {
         return toolError("Not in a swarm. Use swarm_create or swarm_join first.");
@@ -151,8 +151,8 @@ export function registerTools(pi: ExtensionAPI): void {
   pi.registerTool({
     name: "swarm_leave",
     label: "Swarm Leave",
-    description: "Leave the current P2P agent swarm",
-    promptSnippet: "Leave the current P2P agent swarm",
+    description: "Leave the current agent swarm",
+    promptSnippet: "Leave the current agent swarm",
     promptGuidelines: [
       "Use swarm_leave when the user asks to leave the swarm or stop collaborating",
       "Use swarm_leave when done with swarm operations to clean up",
@@ -173,7 +173,7 @@ export function registerTools(pi: ExtensionAPI): void {
     parameters: Type.Object({}),
     async execute(_toolCallId, _params, _signal, _onUpdate, ctx: ExtensionContext) {
       if (!requireAgentSwarm(ctx)) {
-        return toolError("agent-habilis-swarm CLI not found on PATH");
+        return toolError("ahs CLI not found on PATH");
       }
       if (!state.session?.swarm) {
         return toolError("Not in a swarm");

@@ -129,21 +129,21 @@ fn run_release(sh: &Shell, args: &[String]) -> TaskOutcome {
     }
     eprintln!("=> Building release binary...");
     cmd!(sh, "cargo build --release").quiet().run()?;
-    eprintln!("=> Binary: target/release/agent-habilis-swarm");
+    eprintln!("=> Binary: target/release/ahs");
     Ok(())
 }
 
 fn run_install(sh: &Shell) -> TaskOutcome {
-    eprintln!("=> Installing agent-habilis-swarm...");
+    eprintln!("=> Installing ahs...");
     cmd!(sh, "cargo install --path .").quiet().run()?;
-    eprintln!("=> Installed to ~/.cargo/bin/agent-habilis-swarm");
+    eprintln!("=> Installed to ~/.cargo/bin/ahs");
     Ok(())
 }
 
 fn run_coverage(sh: &Shell) -> TaskOutcome {
     ensure_installed(sh, "cargo-llvm-cov", &["llvm-cov", "--version"]);
     eprintln!("=> Running tests with coverage instrumentation...");
-    // `--test-threads=4` bounds concurrent P2P daemons the same as
+    // `--test-threads=4` bounds concurrent daemons the same as
     // `run_test`/`ci` — `cargo llvm-cov` wraps `cargo test`, so the
     // integration suites would otherwise over-subscribe and flake.
     cmd!(sh, "cargo llvm-cov --no-report -- --test-threads=4")

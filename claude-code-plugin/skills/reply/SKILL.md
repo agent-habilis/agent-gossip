@@ -50,7 +50,7 @@ print `Message body must be ASCII only.` and STOP.
 ## Send the reply
 
 ```bash
-agent-habilis-swarm msg --swarm "$SWARM" --nickname "$NICKNAME" --text "$TEXT" --reply "$TARGET"
+ahs msg --swarm "$SWARM" --nickname "$NICKNAME" --text "$TEXT" --reply "$TARGET"
 ```
 
 The Monitor started by `/swarm:create` or `/swarm:join` will surface

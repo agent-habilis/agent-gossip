@@ -187,7 +187,7 @@ pub(crate) async fn send(cmd: &IpcCommand, nickname: &Nickname) -> Result<String
     let path = socket_path(cmd.swarm_id(), nickname);
     let name = to_name(&path).map_err(|error| anyhow::anyhow!("invalid socket name: {error}"))?;
     let stream = Stream::connect(name).await.map_err(|_| anyhow::anyhow!(
-        "No active swarm server running for nickname '{nickname}'. Start one with `agent-habilis-swarm create` or `agent-habilis-swarm join {{ahs...}} --nickname {nickname}`."
+        "No active swarm server running for nickname '{nickname}'. Start one with `ahs create` or `ahs join {{ahs...}} --nickname {nickname}`."
     ))?;
     let (read_half, mut write_half) = tokio::io::split(stream);
 

@@ -18,7 +18,7 @@ pub(crate) const POLL: Duration = Duration::from_millis(250);
 
 /// Use the freshly built test binary to avoid stale release output formats.
 pub(crate) fn bin() -> PathBuf {
-    PathBuf::from(env!("CARGO_BIN_EXE_agent-habilis-swarm"))
+    PathBuf::from(env!("CARGO_BIN_EXE_ahs"))
 }
 
 static COUNTER: AtomicU32 = AtomicU32::new(0);
@@ -52,7 +52,7 @@ pub(crate) fn wait_until(count_fn: impl Fn() -> usize, target: usize, timeout: D
 
 // ── CLI helpers ───────────────────────────────────────────────────
 
-/// Spawn `agent-habilis-swarm msg …` and return the raw `Output`
+/// Spawn `ahs msg …` and return the raw `Output`
 /// (no success assertion — callers that test failure paths inspect
 /// it). `localhost` toggles `SWARM_LOCALHOST=1`.
 pub(crate) fn cli_msg_raw(
@@ -111,7 +111,7 @@ pub(crate) fn cli_msg_checked(
     String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
 
-/// Spawn `agent-habilis-swarm poll … --output json`, assert success,
+/// Spawn `ahs poll … --output json`, assert success,
 /// return trimmed stdout.
 pub(crate) fn cli_poll(swarm: &str, nickname: &str, after: Option<&str>) -> String {
     let mut args = vec![
@@ -458,7 +458,7 @@ pub(crate) async fn three_peers(suffix: &str) -> (InProcNode, InProcNode, InProc
     (creator, joiner_a, joiner_b)
 }
 
-// ── Subprocess harness (real `agent-habilis-swarm` processes) ─────
+// ── Subprocess harness (real `ahs` processes) ─────
 //
 // For the reliability / contract tests that must exercise the shipped
 // binary: real SIGKILL / SIGSTOP-SIGCONT, real stdout, real
@@ -471,12 +471,12 @@ pub(crate) struct Node {
 }
 
 impl Node {
-    /// Spawn `agent-habilis-swarm create`, wait for ahs... and the assigned nickname.
+    /// Spawn `ahs create`, wait for ahs... and the assigned nickname.
     pub(crate) fn create() -> (Self, String) {
         Self::create_named("itest")
     }
 
-    /// Spawn `agent-habilis-swarm create --name <name>`. Uses a fixed name by default
+    /// Spawn `ahs create --name <name>`. Uses a fixed name by default
     /// since tests don't care what the swarm is called — only that creation
     /// and join round-trip.
     pub(crate) fn create_named(name: &str) -> (Self, String) {
@@ -537,7 +537,7 @@ impl Node {
         )
     }
 
-    /// Spawn `agent-habilis-swarm join <swarm> --nickname <nickname>`.
+    /// Spawn `ahs join <swarm> --nickname <nickname>`.
     pub(crate) fn join(swarm: &str, nickname: &str) -> Self {
         Self::join_env(swarm, nickname, &[])
     }
@@ -689,7 +689,7 @@ fn parse_messages(output: &str) -> Vec<Msg> {
 }
 
 /// `cli_msg_raw` with localhost on and no success assertion — the
-/// real-P2P gossip tests' default.
+/// real-network gossip tests' default.
 pub(crate) fn cli_message_raw(swarm: &str, nickname: &str, body: &str) -> Output {
     cli_msg_raw(swarm, nickname, body, None, true)
 }

@@ -11,7 +11,7 @@ pi install git:github.com/agent-habilis/swarm
 ln -s $(pwd)/pi-extension/index.ts ~/.pi/agent/extensions/swarm.ts
 ```
 
-Requires `agent-habilis-swarm` CLI on `$PATH`:
+Requires `ahs` CLI on `$PATH`:
 ```bash
 cargo install agent-habilis-swarm --locked
 ```
@@ -30,7 +30,7 @@ cargo install agent-habilis-swarm --locked
 
 ## How it works
 
-1. `/swarm-create` spawns a background agent-habilis-swarm daemon and
+1. `/swarm-create` spawns a background ahs daemon and
    reads its stdout for events.
 2. Peer questions are inserted into the conversation. Reply normally;
    no command is required.
