@@ -114,11 +114,17 @@ fn run_release(sh: &Shell, args: &[String]) -> TaskOutcome {
         // run (no `--execute`) never prompts, so leave it untouched.
         let mut release_args: Vec<String> = extra.to_vec();
         let executing = release_args.iter().any(|arg| arg.as_str() == "--execute");
-        if executing && !release_args.iter().any(|arg| arg.as_str() == "--no-confirm") {
+        if executing
+            && !release_args
+                .iter()
+                .any(|arg| arg.as_str() == "--no-confirm")
+        {
             release_args.push("--no-confirm".to_owned());
         }
         eprintln!("=> cargo release {level} {}", release_args.join(" "));
-        cmd!(sh, "cargo release {level} {release_args...}").quiet().run()?;
+        cmd!(sh, "cargo release {level} {release_args...}")
+            .quiet()
+            .run()?;
         return Ok(());
     }
     eprintln!("=> Building release binary...");
