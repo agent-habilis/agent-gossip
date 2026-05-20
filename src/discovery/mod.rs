@@ -186,11 +186,22 @@ pub(crate) async fn probe_connect(
     target: impl Into<EndpointAddr>,
     timeout: Duration,
 ) -> bool {
+    let addr: EndpointAddr = target.into();
+    let started = std::time::Instant::now();
     let connected = matches!(
-        tokio::time::timeout(timeout, endpoint.connect(target, GOSSIP_ALPN)).await,
+        tokio::time::timeout(timeout, endpoint.connect(addr.clone(), GOSSIP_ALPN)).await,
         Ok(Ok(_conn))
     );
-    tracing::trace!(connected, "rendezvous connect-probe finished");
+    // `?addr`: a loopback/private direct addr means a *local*
+    // rendezvous co-host (self-partition signature); relay/public is
+    // the cross-machine path. `elapsed_ms` exposes a slow relay
+    // re-home outrunning the steady probe budget.
+    tracing::debug!(
+        connected,
+        elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+        addr = ?addr,
+        "rendezvous connect-probe finished"
+    );
     connected
 }
 

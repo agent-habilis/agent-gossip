@@ -396,22 +396,33 @@ unchanged.
 
 ### Logging
 
-Developer logs are emitted with `tracing` to **stderr** and are
-**additive**: they never replace the operator-facing `--output json`
-events (stdout, a stable wire contract, unaffected by any `RUST_LOG`).
+Developer logs are emitted with `tracing`. The long-running daemons
+(`create`/`join`) write to a per-member file —
+`{TMP_DIR}/logs/<swarm_prefix>-<nick>.log`, the same stem as that
+member's `.sock`, truncated on each daemon start. Records buffer in
+memory until the swarm id + nickname are known (sub-second), then
+flush there. Transient commands (`msg`/`poll`), `mcp`, and any run
+failing before identity log to **stderr** instead — so the dir holds
+one file per swarm member, not per process. `tail -f` the file. Logs
+stay **additive**: `--output json` (stdout) is unaffected and fatal
+`anyhow` errors still print to stderr. `AHS_LOG_DIR` overrides the
+directory (the test suite points it at a temp dir).
 
-Debug builds (`cargo run`) default to `info` — lifecycle/discovery/
-beacon milestones are visible out of the box. Release builds
-(`cargo xtask release` / `cargo run --release`) default to `error` —
-quiet output. `debug`/`trace` always require `RUST_LOG`.
+Debug defaults to `info`, release to `error`; `debug`/`trace` need
+`RUST_LOG` (tried first, always wins).
 
-Both defaults also pin `noq_proto::connection=off`. iroh's multipath
-QUIC fork logs a superseded-path PTO (`PTO expired while unset
-path_id=N`) at ERROR; in public swarms every member co-hosts the
-beacon under one shared `rendezvous_id`, so iroh constantly
-opens/supersedes paths to it — expected, benign churn, not a failure.
-Only that one module is scoped off; other `noq*` errors are untouched.
-Re-enable it with `RUST_LOG=...,noq_proto::connection=error`.
+Every sent/received swarm message is logged on the always-on
+`agent_habilis_swarm::messages` target: `msg` and presence
+joined/left at `info`; `alive`/`PeerInfo`/`Digest` plumbing at `trace`
+(`RUST_LOG=...,agent_habilis_swarm::messages=trace` for the firehose).
+
+Both defaults pin `noq_proto::connection=off` (benign superseded-path
+PTO churn from iroh's multipath QUIC fork; re-enable with
+`RUST_LOG=...,noq_proto::connection=error`). Release additionally pins
+`mainline::rpc=off`: the mainline DHT logs a bootstrap-failure ERROR
+when its public bootstrap nodes are unreachable — env-dependent, the
+relay is the fast path and the DHT only an optional backstop; debug
+keeps it visible, re-enable with `RUST_LOG=...,mainline::rpc=error`.
 
 #### Subsystems (one `RUST_LOG` target per subsystem)
 

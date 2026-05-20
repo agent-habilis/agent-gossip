@@ -45,7 +45,7 @@ use crate::{beacon, gossip, lifecycle};
 use crate::transport::ipc::{IpcMessage, listen};
 use crate::util::tuning::{
     ALIVE_INTERVAL_SECS, ANTIENTROPY_INTERVAL_SECS, HEAL_INTERVAL_SECS, RECLAIM_INTERVAL_MS,
-    STATE_REFRESH_SECS, sweep_interval_secs,
+    STATE_REFRESH_SECS, heal_stall_threshold_secs, sweep_interval_secs,
 };
 
 use ctx::HandlerCtx;
@@ -233,6 +233,13 @@ async fn event_loop(loop_state: EventLoop) -> Result<()> {
     let mut stdin_line = String::new();
     let mut stdin_open = interactive;
 
+    // Per-timer gap trackers; the heal gap also drives the
+    // resume-edge hard re-bootstrap.
+    let mut last_alive = Instant::now();
+    let mut last_sweep = Instant::now();
+    let mut last_heal = Instant::now();
+    let mut last_antientropy = Instant::now();
+
     let ctx = HandlerCtx {
         sender: &sender,
         endpoint: &endpoint,
@@ -247,39 +254,29 @@ async fn event_loop(loop_state: EventLoop) -> Result<()> {
     loop {
         tokio::select! {
             result = stdin_reader.read_line(&mut stdin_line), if stdin_open => {
-                match result {
-                    Ok(0) | Err(_) => { stdin_open = false; }
-                    Ok(_) => {
-                        gossip::handle_stdin_line(
-                            stdin_line.trim(),
-                            &sender,
-                            &swarm_str,
-                            &author,
-                            &mut state,
-                            &output,
-                        ).await;
-                        stdin_line.clear();
-                    }
-                }
+                stdin_open = handle_stdin_arm(result, &mut stdin_line, &sender, &swarm_str, &author, &mut state, &output).await;
             }
             ipc_msg = recv_opt(&mut ipc_rx) => {
-                match ipc_msg {
-                    None => { ipc_rx = None; }
-                    Some((cmd, resp_tx)) => {
-                        if ipc::handle_ipc_command(cmd, resp_tx, &swarm_str, &author, &mut state, &sender, &output).await {
-                            state.last_sent_at = Instant::now();
-                        }
-                    }
+                if !handle_ipc_arm(ipc_msg, &swarm_str, &author, &mut state, &sender, &output).await {
+                    ipc_rx = None;
                 }
             }
             event = receiver.next(), if state.gossip_open => {
                 gossip::handle_gossip_event(event, &mut state, &ctx).await;
             }
             _ = prune_interval.tick() => timers::tick_prune(&mut state),
-            _ = alive_interval.tick() => lifecycle::heartbeat::tick_alive(&mut state, &sender, &swarm_str, &author).await,
-            _ = sweep_interval.tick() => lifecycle::heartbeat::tick_sweep(&mut state, &output),
+            _ = alive_interval.tick() => {
+                timers::note_tick_gap("alive", &mut last_alive, Duration::from_secs(ALIVE_INTERVAL_SECS));
+                lifecycle::heartbeat::tick_alive(&mut state, &sender, &swarm_str, &author).await;
+            }
+            _ = sweep_interval.tick() => {
+                timers::note_tick_gap("sweep", &mut last_sweep, Duration::from_secs(sweep_interval_secs()));
+                lifecycle::heartbeat::tick_sweep(&mut state, &output);
+            }
             _ = heal_interval.tick() => {
-                gossip::heal::tick_heal(&endpoint, rendezvous_params.id, &sender).await;
+                let gap = last_heal.elapsed();
+                timers::note_tick_gap("heal", &mut last_heal, Duration::from_secs(HEAL_INTERVAL_SECS));
+                run_heal(gap, &mut state, &endpoint, &sender, &rendezvous_params).await;
                 // Claim-if-free (private) / idempotent (public): take
                 // over the beacon if the previous holder is gone — but
                 // a joiner only once `may_cohost` (see its docs).
@@ -291,6 +288,7 @@ async fn event_loop(loop_state: EventLoop) -> Result<()> {
                 maybe_reclaim(&state, &rendezvous_params, &endpoint, &mut rendezvous).await;
             }
             _ = antientropy_interval.tick() => {
+                timers::note_tick_gap("antientropy", &mut last_antientropy, Duration::from_secs(ANTIENTROPY_INTERVAL_SECS));
                 gossip::antientropy::broadcast_digest(&state, &sender, &swarm_str, &author).await;
             }
             _ = state_refresh_interval.tick() => timers::tick_state_refresh(&state),
@@ -401,6 +399,82 @@ fn may_cohost(co_host_eagerly: bool, meshed: bool, started: Instant) -> bool {
         || started.elapsed().as_secs() >= crate::util::tuning::cohost_grace_secs()
 }
 
+/// `gap` past `stall_threshold` means the process was frozen between
+/// heal ticks (macOS App Nap / timer coalescing / sleep): every timer
+/// stalled and the mesh died of idle timeout.
+fn is_resume(gap: Duration, stall_threshold: Duration) -> bool {
+    gap > stall_threshold
+}
+
+/// One heal tick (factored out of `event_loop` for the line budget).
+/// On a resume edge the steady probe can't rebuild a mesh that fully
+/// died while the timers were frozen, so re-enter cold-joiner mode,
+/// re-assert the relay-homed rendezvous hint (the network changed),
+/// and run the long re-bootstrap probe. Otherwise the normal probe.
+async fn run_heal(
+    gap: Duration,
+    state: &mut EventLoopState,
+    endpoint: &Endpoint,
+    sender: &GossipSender,
+    params: &beacon::RendezvousParams,
+) {
+    if is_resume(gap, Duration::from_secs(heal_stall_threshold_secs())) {
+        tracing::warn!(
+            target: "agent_habilis_swarm::gossip",
+            gap_ms = u64::try_from(gap.as_millis()).unwrap_or(u64::MAX),
+            "heal: hard re-bootstrap edge"
+        );
+        state.meshed = false;
+        setup::register_rendezvous(endpoint, params);
+        gossip::heal::tick_heal_hard(endpoint, params.id, sender).await;
+    } else {
+        gossip::heal::tick_heal(endpoint, params.id, sender).await;
+    }
+}
+
+/// One stdin-line read; returns the new `stdin_open` (`false` on
+/// EOF/error). Split out of `event_loop` for the line budget.
+async fn handle_stdin_arm(
+    result: std::io::Result<usize>,
+    line: &mut String,
+    sender: &GossipSender,
+    swarm: &SwarmId,
+    author: &Nickname,
+    state: &mut EventLoopState,
+    output: &output::Output,
+) -> bool {
+    match result {
+        Ok(0) | Err(_) => false,
+        Ok(_) => {
+            gossip::handle_stdin_line(line.trim(), sender, swarm, author, state, output).await;
+            line.clear();
+            true
+        }
+    }
+}
+
+/// One IPC command; returns `false` when the channel has closed (the
+/// caller then drops its receiver). Split out of `event_loop` for the
+/// line budget.
+async fn handle_ipc_arm(
+    ipc_msg: Option<IpcMessage>,
+    swarm: &SwarmId,
+    author: &Nickname,
+    state: &mut EventLoopState,
+    sender: &GossipSender,
+    output: &output::Output,
+) -> bool {
+    match ipc_msg {
+        None => false,
+        Some((cmd, resp_tx)) => {
+            if ipc::handle_ipc_command(cmd, resp_tx, swarm, author, state, sender, output).await {
+                state.last_sent_at = Instant::now();
+            }
+            true
+        }
+    }
+}
+
 /// Fast event-driven failover: while the post-`NeighborDown` reclaim
 /// window is open, retry the rendezvous claim so a survivor takes the
 /// freed port in ~1s instead of waiting for the 15s heal tick. A no-op
@@ -471,5 +545,35 @@ async fn recv_opt<T>(rx: &mut Option<mpsc::Receiver<T>>) -> Option<T> {
     match rx.as_mut() {
         Some(rx) => rx.recv().await,
         None => std::future::pending().await,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::is_resume;
+
+    #[test]
+    fn is_resume_only_past_threshold() {
+        let threshold = Duration::from_mins(1);
+        // A normal heal cadence (≤ ~15s) is never a resume.
+        assert!(!is_resume(Duration::from_secs(0), threshold));
+        assert!(!is_resume(Duration::from_secs(15), threshold));
+        assert!(!is_resume(Duration::from_secs(59), threshold));
+        // Exactly at the threshold is not yet a stall (strictly `>`).
+        assert!(!is_resume(Duration::from_mins(1), threshold));
+        // A multi-minute gap = the process was frozen → hard re-bootstrap.
+        assert!(is_resume(Duration::from_secs(61), threshold));
+        assert!(is_resume(Duration::from_hours(1), threshold));
+    }
+
+    #[test]
+    fn is_resume_respects_injected_threshold() {
+        // The subprocess stall regression shortens the threshold via
+        // the env knob; the comparison must track whatever is passed.
+        let short = Duration::from_secs(4);
+        assert!(!is_resume(Duration::from_secs(3), short));
+        assert!(is_resume(Duration::from_secs(5), short));
     }
 }

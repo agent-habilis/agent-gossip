@@ -8,7 +8,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::mpsc;
 
 use crate::protocol::{MessageBody, MessageId, Nickname, SwarmId};
-use crate::util::tuning::TMP_DIR;
+use crate::util::tuning::{TMP_DIR, log_dir};
 
 fn swarm_prefix(swarm: &SwarmId) -> String {
     swarm.as_str().chars().take(16).collect()
@@ -19,6 +19,18 @@ fn swarm_prefix(swarm: &SwarmId) -> String {
 /// becomes a namespaced named-pipe name.
 pub(crate) fn socket_path(swarm: &SwarmId, nickname: &Nickname) -> String {
     format!("{}/{}-{}.sock", TMP_DIR, swarm_prefix(swarm), nickname)
+}
+
+/// Per-member log file — same `<swarm_prefix>-<nick>` stem as the
+/// socket, so logs and sockets never drift. Dir is `AHS_LOG_DIR` if
+/// set (tests isolate there), else `{TMP_DIR}/logs`.
+pub(crate) fn log_file_path(swarm: &SwarmId, nickname: &Nickname) -> std::path::PathBuf {
+    std::path::PathBuf::from(format!(
+        "{}/{}-{}.log",
+        log_dir(),
+        swarm_prefix(swarm),
+        nickname
+    ))
 }
 
 #[cfg(unix)]

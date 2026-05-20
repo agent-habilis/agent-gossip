@@ -7,6 +7,7 @@
 use std::fs::{self, File};
 use std::path::PathBuf;
 use std::process::{Child, Command, Output, Stdio};
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
@@ -19,6 +20,26 @@ pub(crate) const POLL: Duration = Duration::from_millis(250);
 /// Use the freshly built test binary to avoid stale release output formats.
 pub(crate) fn bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_ahs"))
+}
+
+/// Per-test-process log dir so `cargo xtask test` never writes into
+/// the operator's `/tmp/agent-habilis-swarm/logs`. The binary honors
+/// `AHS_LOG_DIR`.
+fn test_log_dir() -> &'static str {
+    static DIR: OnceLock<String> = OnceLock::new();
+    DIR.get_or_init(|| {
+        let dir = std::env::temp_dir().join(format!("ahs-test-logs-{}", std::process::id()));
+        let _ = fs::create_dir_all(&dir);
+        dir.to_string_lossy().into_owned()
+    })
+}
+
+/// `Command` for the built binary with `AHS_LOG_DIR` redirected to a
+/// per-test temp dir. Use instead of `Command::new(bin())`.
+pub(crate) fn test_cmd() -> Command {
+    let mut cmd = Command::new(bin());
+    cmd.env("AHS_LOG_DIR", test_log_dir());
+    cmd
 }
 
 static COUNTER: AtomicU32 = AtomicU32::new(0);
@@ -36,6 +57,17 @@ pub(crate) fn tmp_log(tag: &str) -> PathBuf {
 pub(crate) fn socket_path(swarm: &str, nickname: &str) -> String {
     let prefix: String = swarm.chars().take(16).collect();
     format!("{TMP_DIR}/{prefix}-{nickname}.sock")
+}
+
+/// A node's tracing-sink log (distinct from its captured stdout/stderr
+/// in `Node::log`). Mirrors `transport::ipc::log_file_path`: same
+/// `<swarm_prefix>-<nick>` stem, under the per-test `AHS_LOG_DIR`. Use
+/// this to assert on `tracing` output (warn/info) the operator stream
+/// never carries.
+pub(crate) fn trace_log(swarm: &str, nickname: &str) -> String {
+    let prefix: String = swarm.chars().take(16).collect();
+    let path = format!("{}/{prefix}-{nickname}.log", test_log_dir());
+    fs::read_to_string(path).unwrap_or_default()
 }
 
 /// Wait until `count_fn` returns >= `target` or `timeout` elapses.
@@ -74,7 +106,7 @@ pub(crate) fn cli_msg_raw(
     if let Some(target) = reply {
         args.extend(["--reply", target]);
     }
-    let mut cmd = Command::new(bin());
+    let mut cmd = test_cmd();
     cmd.args(&args);
     if localhost {
         cmd.env("SWARM_LOCALHOST", "1");
@@ -126,7 +158,7 @@ pub(crate) fn cli_poll(swarm: &str, nickname: &str, after: Option<&str>) -> Stri
     if let Some(id) = after {
         args.extend(["--after", id]);
     }
-    let out = Command::new(bin())
+    let out = test_cmd()
         .args(&args)
         .output()
         .expect("poll command failed to spawn");
@@ -488,7 +520,7 @@ impl Node {
     pub(crate) fn create_env(name: &str, envs: &[(&str, &str)]) -> (Self, String) {
         let log = tmp_log("create");
         let file = File::create(&log).unwrap();
-        let child = Command::new(bin())
+        let child = test_cmd()
             .args(["create", "--name", name])
             .envs(envs.iter().copied())
             .stdout(Stdio::from(file.try_clone().unwrap()))
@@ -547,7 +579,7 @@ impl Node {
     pub(crate) fn join_env(swarm: &str, nickname: &str, envs: &[(&str, &str)]) -> Self {
         let log = tmp_log(nickname);
         let file = File::create(&log).unwrap();
-        let child = Command::new(bin())
+        let child = test_cmd()
             .args(["join", swarm, "--nickname", nickname])
             .envs(envs.iter().copied())
             .stdout(Stdio::from(file.try_clone().unwrap()))

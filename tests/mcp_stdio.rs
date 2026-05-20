@@ -6,9 +6,9 @@
 
 mod common;
 
-use common::{CONNECT_TIMEOUT, MSG_TIMEOUT, bin};
+use common::{CONNECT_TIMEOUT, MSG_TIMEOUT};
 use std::io::{BufRead, BufReader, Write};
-use std::process::{Child, ChildStdin, Command, Stdio};
+use std::process::{Child, ChildStdin, Stdio};
 use std::time::{Duration, Instant};
 
 /// A UUID the server has never seen. Passing it as `after` lands
@@ -27,7 +27,7 @@ struct McpClient {
 
 impl McpClient {
     fn spawn() -> Self {
-        let mut child = Command::new(bin())
+        let mut child = common::test_cmd()
             .arg("mcp")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -255,7 +255,7 @@ fn mcp_stdout_is_pure_jsonrpc_through_full_lifecycle() {
     // Separate test that captures all stdout bytes and asserts every
     // non-empty line is JSON-RPC 2.0. Guards against any future
     // println! leak (the bug that motivated OutputMode::Silent).
-    let mut child = Command::new(bin())
+    let mut child = common::test_cmd()
         .arg("mcp")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

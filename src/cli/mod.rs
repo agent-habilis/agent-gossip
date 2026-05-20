@@ -127,14 +127,7 @@ mod tests {
 
     #[test]
     fn create_opts_with_nickname() {
-        let cli = Cli::parse_from([
-            "ahs",
-            "create",
-            "--name",
-            "team",
-            "--nickname",
-            "my-nick",
-        ]);
+        let cli = Cli::parse_from(["ahs", "create", "--name", "team", "--nickname", "my-nick"]);
         match cli.command {
             Commands::Create { opts } => {
                 assert_eq!(opts.name.as_str(), "team");
@@ -168,12 +161,9 @@ mod tests {
     #[test]
     fn create_opts_rejects_invalid_name() {
         assert!(Cli::try_parse_from(["ahs", "create", "--name", ""]).is_err());
+        assert!(Cli::try_parse_from(["ahs", "create", "--name", "has space"]).is_err());
         assert!(
-            Cli::try_parse_from(["ahs", "create", "--name", "has space"]).is_err()
-        );
-        assert!(
-            Cli::try_parse_from(["ahs", "create", "--name", "abcdefghijklm"])
-                .is_err(),
+            Cli::try_parse_from(["ahs", "create", "--name", "abcdefghijklm"]).is_err(),
             "13 chars must reject"
         );
     }
@@ -377,6 +367,9 @@ async fn run_session(
         out,
     )
     .await?;
+    // First point where swarm id + nickname are known — attach the
+    // buffered log sink here (see `logsink`).
+    crate::logsink::attach(&cfg.swarm, &cfg.author);
     run_event_loop(cfg).await
 }
 

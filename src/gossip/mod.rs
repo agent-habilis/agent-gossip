@@ -28,6 +28,7 @@ use crate::util::tuning::RECLAIM_WINDOW_SECS;
 /// this helper is for presence / `PeerInfo` announcements where a
 /// failed serialize must not block the daemon.
 pub(crate) async fn broadcast_msg(sender: &GossipSender, msg: &Message) {
+    crate::messages::log_out(msg);
     if let Ok(bytes) = msg.serialize() {
         let _ = sender.broadcast(Bytes::from(bytes)).await;
     }
@@ -98,6 +99,9 @@ pub(crate) async fn handle_stdin_line(
         };
         Message::new_message(swarm, author, body)
     };
+    // Interactive stdin is the one send path not funneled through
+    // `broadcast_message`, so it logs its own outbound here.
+    crate::messages::log_out(&msg);
     if let Ok(bytes) = msg.serialize() {
         let _ = emit_or_queue(state, sender, Bytes::from(bytes), out).await;
         state.last_sent_at = Instant::now();
@@ -154,6 +158,7 @@ pub(crate) async fn broadcast_message(
     let id = msg.id.clone();
     out.print_message_ex(&msg, true);
     state.message_log.push(msg.clone());
+    crate::messages::log_out(&msg);
     emit_or_queue(state, sender, bytes, out).await?;
     Ok((id, msg))
 }
@@ -291,6 +296,7 @@ async fn handle_gossip_received(content: Bytes, state: &mut EventLoopState, ctx:
     // Heartbeat + membership + surfacing + join horizon. The lifecycle
     // layer owns every roster/presentation side effect; the gossip
     // layer only routes by kind below.
+    crate::messages::log_in(&message);
     let observed = lifecycle::observe(&message, state, ctx);
     let surfaceable = observed.surfaceable;
 

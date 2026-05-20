@@ -16,9 +16,7 @@ use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use common::{
-    CONNECT_TIMEOUT, InProcNode, MSG_TIMEOUT, POLL, bin, socket_path, tmp_log, wait_until,
-};
+use common::{CONNECT_TIMEOUT, InProcNode, MSG_TIMEOUT, POLL, socket_path, tmp_log, wait_until};
 
 /// A node running in JSON output mode, with stdout captured to a log file.
 struct JsonNode {
@@ -40,7 +38,7 @@ impl JsonNode {
     fn create_with_env(envs: &[(&str, &str)]) -> (Self, String) {
         let log = tmp_log("json-create");
         let file = fs::File::create(&log).unwrap();
-        let child = Command::new(bin())
+        let child = common::test_cmd()
             .args([
                 "create",
                 "--name",
@@ -101,7 +99,7 @@ impl JsonNode {
     fn join_with_env(swarm: &str, nickname: &str, envs: &[(&str, &str)]) -> Self {
         let log = tmp_log(&format!("json-{nickname}"));
         let file = fs::File::create(&log).unwrap();
-        let child = Command::new(bin())
+        let child = common::test_cmd()
             .args([
                 "join",
                 swarm,
@@ -759,7 +757,7 @@ fn test_hard_kill_triggers_peer_timeout() {
     let state_file = tmp_log("state-survivor");
     let log = tmp_log("json-survivor");
     let file = fs::File::create(&log).unwrap();
-    let mut creator = Command::new(bin())
+    let mut creator = common::test_cmd()
         .args([
             "create",
             "--name",

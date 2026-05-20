@@ -8,12 +8,12 @@
 mod common;
 
 use std::fs::{self, File};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::time::{Duration, Instant};
 
 use common::{
-    CONNECT_TIMEOUT, InProcNode, MSG_TIMEOUT, Msg, Node, POLL, TMP_DIR, bin, cli_message,
-    cli_message_raw, cli_poll, tmp_log, wait_total,
+    CONNECT_TIMEOUT, InProcNode, MSG_TIMEOUT, Msg, Node, POLL, TMP_DIR, cli_message,
+    cli_message_raw, cli_poll, tmp_log, trace_log, wait_total,
 };
 
 // ── tests ─────────────────────────────────────────────────────────────────────
@@ -432,7 +432,7 @@ async fn test_interleaved_join_leave_order() {
 fn test_network_public_accepted() {
     let log = tmp_log("public");
     let file = File::create(&log).unwrap();
-    let mut child = Command::new(bin())
+    let mut child = common::test_cmd()
         .args([
             "create",
             "--name",
@@ -842,6 +842,61 @@ fn test_sleep_wake_heal_recovery() {
         &sleeper,
         &creator.nickname,
         "sw-post",
+        Duration::from_mins(1),
+    );
+}
+
+/// Resume hard re-bootstrap: a peer frozen *past the stall threshold*
+/// (process throttle / sleep proxy) must take the hard recovery path
+/// — reset `meshed`, re-assert the rendezvous hint, long probe — not
+/// just the weak periodic heal that the old code relied on (and which
+/// silently failed to rebuild a fully-collapsed mesh). Shortens
+/// `HEAL_STALL_THRESHOLD_SECS` so an 8s `SIGSTOP` trips it, then
+/// asserts both the hard-path log marker and that post-wake traffic
+/// flows again.
+#[test]
+fn test_resume_triggers_hard_rebootstrap() {
+    // SHORT_EVICT + a shortened stall threshold. The threshold MUST
+    // exceed the fixed 15s `HEAL_INTERVAL_SECS` (else every normal
+    // ~15s heal tick false-positives as a resume and the node hard-
+    // reboots forever), and the freeze MUST exceed the threshold.
+    // 20s threshold < 30s freeze satisfies both; production is 60s.
+    const STALL_EVICT: [(&str, &str); 3] = [
+        ("ALIVE_TIMEOUT_SECS", "3"),
+        ("SWEEP_INTERVAL_SECS", "1"),
+        ("HEAL_STALL_THRESHOLD_SECS", "20"),
+    ];
+    // > stall threshold (20s), > evict window (3+1s).
+    let asleep = Duration::from_secs(30);
+    // tokio burst-fires the missed heal tick on SIGCONT; this is
+    // headroom for the hard path to run and log the marker.
+    let wake_settle = Duration::from_secs(20);
+
+    let (creator, swarm) = Node::create_env("itest", &STALL_EVICT);
+    let sleeper = Node::join_env(&swarm, "rb-sleeper", &STALL_EVICT);
+    assert!(creator.wait_ready(&swarm), "creator never ready");
+    assert!(sleeper.wait_ready(&swarm), "sleeper never ready");
+    let _ = cli_message(&swarm, &creator.nickname, "rb-pre");
+    assert_received(&sleeper, &creator.nickname, "rb-pre", MSG_TIMEOUT);
+
+    sleeper.stop();
+    std::thread::sleep(asleep);
+    sleeper.cont();
+    std::thread::sleep(wake_settle);
+
+    // The hard-path marker is a `tracing` warn — it lands in the
+    // sink log (AHS_LOG_DIR), not the operator stdout/stderr capture.
+    let trace = trace_log(&swarm, &sleeper.nickname);
+    assert!(
+        trace.contains("hard re-bootstrap edge"),
+        "woken peer never took the hard re-bootstrap path\nsink tail:\n{}",
+        trace.lines().rev().take(30).collect::<Vec<_>>().join("\n"),
+    );
+    let _ = cli_message(&swarm, &creator.nickname, "rb-post");
+    assert_received(
+        &sleeper,
+        &creator.nickname,
+        "rb-post",
         Duration::from_mins(1),
     );
 }

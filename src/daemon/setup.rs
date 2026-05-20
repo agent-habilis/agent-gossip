@@ -61,7 +61,12 @@ fn rendezvous_params(
 ///   (`beacon::beacon_discovery`), so this is a real relay-direct
 ///   dial, no DNS/DHT/mDNS round-trip. DHT/mDNS stay wired as the
 ///   eternal/LAN backstop if this relay is ever unreachable.
-fn register_rendezvous(endpoint: &Endpoint, params: &RendezvousParams) {
+///
+/// Also re-asserted by the daemon's hard-heal path (resume / silent
+/// partition): the startup hint may now point at a dead path, so the
+/// relay-homed `rendezvous_id` address is registered again before the
+/// long re-bootstrap probe.
+pub(crate) fn register_rendezvous(endpoint: &Endpoint, params: &RendezvousParams) {
     let mut addr = EndpointAddr::new(params.id);
     if !params.bind_ports.is_empty() {
         for &port in &params.bind_ports {

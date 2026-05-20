@@ -103,6 +103,12 @@ fn env_u64(name: &str, default: u64) -> u64 {
         .unwrap_or(default)
 }
 
+/// Directory for per-member log files. `AHS_LOG_DIR` overrides
+/// (the test suite redirects here); default `{TMP_DIR}/logs`.
+pub(crate) fn log_dir() -> String {
+    std::env::var("AHS_LOG_DIR").unwrap_or_else(|_| format!("{TMP_DIR}/logs"))
+}
+
 /// How often the daemon re-asserts `participant_count` +
 /// `last_updated` into the session state file even when membership is
 /// unchanged. A fresh `last_updated` is what external readers (the
@@ -123,6 +129,21 @@ pub(crate) const HEAL_INTERVAL_SECS: u64 = 15;
 /// real network change, capped well under `HEAL_INTERVAL_SECS` so at
 /// most one probe task is ever outstanding.
 pub(crate) const HEAL_PROBE_SECS: u64 = 5;
+
+/// Probe budget for the resume-edge hard heal. Longer than
+/// `HEAL_PROBE_SECS` because a cold relay re-home after a freeze
+/// routinely exceeds the steady-state 5s; the path is rare so a probe
+/// that briefly outlives one heal interval (still detached) is fine.
+pub(crate) const HEAL_HARD_PROBE_SECS: u64 = 20;
+
+/// A heal inter-tick gap above this many seconds means the process was
+/// frozen between ticks (App Nap / coalescing / sleep) and must hard
+/// re-bootstrap. Default 60s — safely above `HEAL_INTERVAL_SECS` (15s)
+/// so normal slack never trips it. Env-overridable (like
+/// `alive_timeout_secs`) only so subprocess tests drive it in seconds.
+pub(crate) fn heal_stall_threshold_secs() -> u64 {
+    env_u64("HEAL_STALL_THRESHOLD_SECS", 60)
+}
 
 /// How long `beacon::ensure` eagerly waits for the freshly-bound
 /// rendezvous to gossip-mesh with this process's own (already

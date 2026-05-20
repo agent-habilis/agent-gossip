@@ -495,10 +495,7 @@ mod discovery_tests {
             );
             let error =
                 validate_discovery(SwarmMode::Private, lookups, relay.is_some()).unwrap_err();
-            assert!(
-                error.to_string().contains("--public"),
-                "got: {error}"
-            );
+            assert!(error.to_string().contains("--public"), "got: {error}");
         }
     }
 }

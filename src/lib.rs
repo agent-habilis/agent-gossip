@@ -39,7 +39,9 @@ pub(crate) mod daemon;
 pub(crate) mod discovery;
 pub(crate) mod gossip;
 pub(crate) mod lifecycle;
+pub(crate) mod logsink;
 pub(crate) mod mcp;
+pub(crate) mod messages;
 pub(crate) mod output;
 pub(crate) mod protocol;
 pub(crate) mod resolver;
@@ -52,6 +54,7 @@ pub mod embed;
 // (otherwise `pub(crate)`) modules; re-exporting them from the crate
 // root is what makes them externally reachable and satisfies
 // `unreachable_pub`.
+pub use logsink::LogSink;
 pub use output::{OutputEvent, event_json};
 pub use protocol::message::{
     BodyError, IdError, Message, MessageBody, MessageId, MessageKind, PresenceSubtype,
@@ -76,4 +79,20 @@ use cli::Cli;
 /// failure, join timeout, IPC errors, invalid swarm-mode flags, etc.
 pub async fn run_cli() -> Result<()> {
     cli::dispatch(Cli::parse()).await
+}
+
+/// Build the deferred log sink and register it process-globally.
+/// Call once in `main` before subscriber init; pass the returned
+/// value to `tracing_subscriber::fmt().with_writer(..)`. Logs buffer
+/// until [`cli`] resolves the swarm id + nickname (see `logsink`).
+#[must_use]
+pub fn install_log_sink() -> LogSink {
+    logsink::install()
+}
+
+/// Flush buffered logs to stderr if identity was never resolved
+/// (transient command, or startup failed before attach). Call after
+/// `run_cli` returns.
+pub fn flush_log_if_pending() {
+    logsink::flush_pending_to_stderr();
 }
