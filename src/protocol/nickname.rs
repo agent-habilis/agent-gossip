@@ -4,15 +4,14 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
-const NICKNAME_MAX_LEN: usize = 32;
-
-/// An agent nickname — lowercase ASCII identifier.
+/// An agent nickname — a "safe UTF-8" identifier.
 ///
-/// Charset `[a-z0-9_-]`, must start with a lowercase letter, length
-/// 1..=32. The wordlist generator (`Nickname::random`) emits
-/// `word-word` pairs that fit comfortably inside this range; the
-/// angle-bracket display format (e.g. `<swift-cedar>`) relies on the
-/// charset excluding `<` and `>`.
+/// 1..=32 Unicode scalar values from any script (letters, marks,
+/// numbers, symbols, emoji); see [`super::ident`] for the exact
+/// exclusions (control, whitespace, path separators, bidi formatting).
+/// The wordlist generator (`Nickname::random`) emits `word-word` pairs.
+/// Names may contain `<`/`>`, so the angle-bracket display convention
+/// (e.g. `<swift-cedar>`) is cosmetic, not a parse boundary.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct Nickname(String);
@@ -21,7 +20,6 @@ pub struct Nickname(String);
 pub enum NicknameError {
     Length(usize),
     Charset(String),
-    LeadingChar(char),
 }
 
 impl fmt::Display for NicknameError {
@@ -30,19 +28,14 @@ impl fmt::Display for NicknameError {
             NicknameError::Length(len) => {
                 write!(
                     formatter,
-                    "nickname must be 1..={NICKNAME_MAX_LEN} chars, got {len}"
-                )
-            }
-            NicknameError::LeadingChar(ch) => {
-                write!(
-                    formatter,
-                    "nickname must start with a lowercase letter, got {ch:?}"
+                    "nickname must be 1..={} characters, got {len}",
+                    super::ident::MAX_CHARS
                 )
             }
             NicknameError::Charset(value) => {
                 write!(
                     formatter,
-                    "nickname must contain only [a-z0-9_-], got {value:?}"
+                    "nickname must not contain control characters, whitespace, path separators (/ \\), or bidirectional formatting characters, got {value:?}"
                 )
             }
         }
@@ -55,24 +48,16 @@ impl Nickname {
     /// Validate and construct a nickname.
     ///
     /// # Errors
-    /// Returns [`NicknameError`] if `value` is empty or longer than 32
-    /// chars, does not start with a lowercase ASCII letter, or contains
-    /// a character outside `[a-z0-9_-]`.
+    /// Returns [`NicknameError`] if `value` is empty, longer than 32
+    /// characters, or contains a forbidden scalar (see
+    /// [`super::ident::is_forbidden`]).
     pub fn new(value: impl Into<String>) -> Result<Self, NicknameError> {
         let value = value.into();
-        if value.is_empty() || value.len() > NICKNAME_MAX_LEN {
-            return Err(NicknameError::Length(value.len()));
+        let count = value.chars().count();
+        if count == 0 || count > super::ident::MAX_CHARS {
+            return Err(NicknameError::Length(count));
         }
-        let Some(first) = value.chars().next() else {
-            return Err(NicknameError::Length(value.len()));
-        };
-        if !first.is_ascii_lowercase() {
-            return Err(NicknameError::LeadingChar(first));
-        }
-        if !value
-            .chars()
-            .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '-' || ch == '_')
-        {
+        if value.chars().any(super::ident::is_forbidden) {
             return Err(NicknameError::Charset(value));
         }
         Ok(Self(value))
@@ -86,7 +71,6 @@ impl Nickname {
     /// succeed.
     #[must_use]
     pub fn random() -> Self {
-        // Wordlist is curated lowercase ASCII, so this always validates.
         Self::new(super::wordlist::random_pair())
             .expect("wordlist combinations are always valid nicknames")
     }
@@ -142,35 +126,43 @@ mod tests {
             "alice-bot-7",
             "snake_case",
             "abc123",
+            "Alice",      // uppercase
+            "1abc",       // leading digit
+            "café",       // accents
+            "日本語",     // CJK
+            "agent-🐝",   // emoji
+            "👨‍👩‍👧",       // ZWJ emoji sequence
+            "alice!",     // punctuation symbol
         ] {
             Nickname::new(ok).unwrap_or_else(|_| panic!("expected {ok} to validate"));
         }
     }
 
     #[test]
-    fn new_rejects_uppercase() {
-        assert!(Nickname::new("Alice").is_err());
-        assert!(Nickname::new("aLice").is_err());
-    }
-
-    #[test]
     fn new_rejects_empty_and_overlong() {
         assert!(Nickname::new("").is_err());
-        let too_long = "a".repeat(NICKNAME_MAX_LEN + 1);
+        let too_long = "a".repeat(super::super::ident::MAX_CHARS + 1);
         assert!(Nickname::new(too_long).is_err());
     }
 
     #[test]
-    fn new_rejects_leading_digit_or_dash() {
-        assert!(Nickname::new("1abc").is_err());
-        assert!(Nickname::new("-abc").is_err());
+    fn length_cap_counts_characters_not_bytes() {
+        // 32 multibyte chars (96 bytes) is fine; 33 is not.
+        assert!(Nickname::new("あ".repeat(32)).is_ok());
+        assert!(Nickname::new("あ".repeat(33)).is_err());
     }
 
     #[test]
-    fn new_rejects_invalid_charset() {
-        assert!(Nickname::new("alice bot").is_err());
-        assert!(Nickname::new("alice!").is_err());
-        assert!(Nickname::new("alice/bob").is_err());
+    fn new_rejects_unsafe_chars() {
+        assert!(Nickname::new("alice bot").is_err()); // space
+        assert!(Nickname::new("alice/bob").is_err()); // path sep
+        assert!(Nickname::new("alice\\bob").is_err()); // path sep
+        assert!(Nickname::new("alice\nbob").is_err()); // newline
+        assert!(Nickname::new("alice\0bob").is_err()); // NUL
+        assert!(Nickname::new("alice\u{7}bob").is_err()); // bell control
+        assert!(Nickname::new("alice\u{202E}bob").is_err()); // RLO (bidi override)
+        assert!(Nickname::new("alice\u{200F}bob").is_err()); // RLM (bidi mark)
+        assert!(Nickname::new("alice\u{61C}bob").is_err()); // ALM (Arabic letter mark)
     }
 
     #[test]

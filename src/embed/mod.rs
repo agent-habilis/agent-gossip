@@ -53,7 +53,8 @@ impl JoinConfig {
 /// are validated/parsed when the session is created.
 #[derive(Debug, Clone)]
 pub struct CreateConfig {
-    /// 1..=32 chars from `[a-z0-9_-]`, leading lowercase letter.
+    /// 1..=32 UTF-8 characters (any script/emoji), excluding control
+    /// characters, whitespace, and path separators (`/` `\`).
     pub name: String,
     /// Local nickname. `None` mints a random `word-word` one.
     pub nickname: Option<Nickname>,
@@ -235,9 +236,10 @@ impl SwarmSession {
         self.msg_tx.subscribe()
     }
 
-    /// Build, sign and gossip-broadcast a message. `body` must already
-    /// be ASCII ([`MessageBody::new`] enforces). `reply` addresses it
-    /// to a specific peer's nickname. Returns the new message id.
+    /// Build, sign and gossip-broadcast a message. `body` is UTF-8 text
+    /// ([`MessageBody::new`] rejects only disallowed control chars).
+    /// `reply` addresses it to a specific peer's nickname. Returns the
+    /// new message id.
     ///
     /// # Errors
     /// Fails if the event loop has stopped, or if serialization /

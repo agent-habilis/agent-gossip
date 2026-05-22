@@ -102,10 +102,11 @@ pub(crate) struct CreateOpts {
     pub shared: SharedServerOpts,
 
     /// Human-readable swarm name. Optional — a random word-word name is
-    /// minted if omitted. Same rules as a nickname: 1..=32 chars, charset
-    /// [a-z0-9_-], leading lowercase letter. Bound cryptographically into
-    /// the swarm identity so joiners who decode the ID see the same name
-    /// and a forged ID with a fake name fails to find peers.
+    /// minted if omitted. Same rules as a nickname: 1..=32 UTF-8
+    /// characters (any script/emoji), excluding control characters,
+    /// whitespace, and path separators (/ \). Bound cryptographically
+    /// into the swarm identity so joiners who decode the ID see the same
+    /// name and a forged ID with a fake name fails to find peers.
     #[arg(long)]
     pub name: Option<SwarmName>,
 
@@ -116,8 +117,10 @@ pub(crate) struct CreateOpts {
     #[arg(long, default_value_t = false)]
     pub public: bool,
 
-    /// Optional nickname in word-word format (random if not provided).
-    /// Symmetric with `ahs join --nickname`.
+    /// Optional nickname (random word-word if not provided). A custom
+    /// nickname is 1..=32 UTF-8 characters, excluding control chars,
+    /// whitespace, and path separators. Symmetric with `ahs join
+    /// --nickname`.
     #[arg(long)]
     pub nickname: Option<Nickname>,
 }
@@ -165,10 +168,13 @@ mod tests {
     #[test]
     fn create_opts_rejects_invalid_name() {
         assert!(Cli::try_parse_from(["ahs", "create", "--name", ""]).is_err());
-        assert!(Cli::try_parse_from(["ahs", "create", "--name", "has space"]).is_err());
         assert!(
-            Cli::try_parse_from(["ahs", "create", "--name", "CamelCase"]).is_err(),
-            "uppercase must reject"
+            Cli::try_parse_from(["ahs", "create", "--name", "has space"]).is_err(),
+            "whitespace must reject"
+        );
+        assert!(
+            Cli::try_parse_from(["ahs", "create", "--name", "a/b"]).is_err(),
+            "path separator must reject"
         );
         assert!(
             Cli::try_parse_from(["ahs", "create", "--name", &"a".repeat(33)]).is_err(),
@@ -224,7 +230,9 @@ pub(crate) enum Commands {
         /// Non-id values are resolved via /.well-known/agent-habilis-swarm.
         swarm: String,
 
-        /// Optional nickname in word-word format (random if not provided)
+        /// Optional nickname (random word-word if not provided). A custom
+        /// nickname is 1..=32 UTF-8 characters, excluding control chars,
+        /// whitespace, and path separators.
         #[arg(long)]
         nickname: Option<Nickname>,
 
@@ -252,7 +260,8 @@ pub(crate) enum Commands {
         #[arg(long)]
         nickname: Nickname,
 
-        /// The message text (ASCII)
+        /// The message text (UTF-8; newlines/tabs allowed, other control
+        /// characters rejected)
         #[arg(long)]
         text: MessageBody,
 

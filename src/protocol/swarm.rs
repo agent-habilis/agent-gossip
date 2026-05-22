@@ -175,13 +175,19 @@ mod swarm_id_tests {
 /// check below.
 const VERSION: u8 = 2;
 const SEED_LEN: usize = 32;
-const NAME_MAX_LEN: usize = 32;
+/// Wire bound for the encoded name in bytes. `new` caps the name at
+/// `ident::MAX_CHARS` scalar values; each is at most 4 UTF-8 bytes, so
+/// the encoded form fits this many bytes (and inside the 1-byte length
+/// field).
+const NAME_MAX_BYTES: usize = super::ident::MAX_CHARS * 4;
 
 /// A human-readable swarm label, bound cryptographically into the topic id.
 ///
-/// Same rules as `Nickname`: 1..=32 chars, charset `[a-z0-9_-]`, must
-/// start with a lowercase letter. The newtype is the single validation
-/// point — every construction path goes through `new`.
+/// Same rules as `Nickname`: 1..=32 "safe UTF-8" scalar values from any
+/// script; see [`super::ident`] for the exact exclusions (control,
+/// whitespace, path separators, bidi formatting). The newtype is the
+/// single validation point — every construction path goes through
+/// `new`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct SwarmName(String);
 
@@ -189,7 +195,6 @@ pub(crate) struct SwarmName(String);
 pub(crate) enum NameError {
     Length(usize),
     Charset(String),
-    LeadingChar(char),
 }
 
 impl fmt::Display for NameError {
@@ -198,19 +203,14 @@ impl fmt::Display for NameError {
             NameError::Length(len) => {
                 write!(
                     formatter,
-                    "swarm name must be 1..={NAME_MAX_LEN} chars, got {len}"
-                )
-            }
-            NameError::LeadingChar(ch) => {
-                write!(
-                    formatter,
-                    "swarm name must start with a lowercase letter, got {ch:?}"
+                    "swarm name must be 1..={} characters, got {len}",
+                    super::ident::MAX_CHARS
                 )
             }
             NameError::Charset(value) => {
                 write!(
                     formatter,
-                    "swarm name must contain only [a-z0-9_-], got {value:?}"
+                    "swarm name must not contain control characters, whitespace, path separators (/ \\), or bidirectional formatting characters, got {value:?}"
                 )
             }
         }
@@ -222,19 +222,11 @@ impl std::error::Error for NameError {}
 impl SwarmName {
     pub(crate) fn new(value: impl Into<String>) -> std::result::Result<Self, NameError> {
         let value = value.into();
-        if value.is_empty() || value.len() > NAME_MAX_LEN {
-            return Err(NameError::Length(value.len()));
+        let count = value.chars().count();
+        if count == 0 || count > super::ident::MAX_CHARS {
+            return Err(NameError::Length(count));
         }
-        let Some(first) = value.chars().next() else {
-            return Err(NameError::Length(value.len()));
-        };
-        if !first.is_ascii_lowercase() {
-            return Err(NameError::LeadingChar(first));
-        }
-        if !value
-            .chars()
-            .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '-' || ch == '_')
-        {
+        if value.chars().any(super::ident::is_forbidden) {
             return Err(NameError::Charset(value));
         }
         Ok(Self(value))
@@ -255,10 +247,11 @@ impl SwarmName {
         self.0.as_bytes()
     }
 
-    /// Byte length as a `u8`. `new` bounds the name to `NAME_MAX_LEN`
-    /// (<= 32), so this never truncates.
+    /// Byte length as a `u8`. `new` bounds the name to `MAX_CHARS`
+    /// scalar values (<= `NAME_MAX_BYTES` = 128 bytes), so this never
+    /// truncates.
     pub(crate) fn len_u8(&self) -> u8 {
-        u8::try_from(self.0.len()).expect("SwarmName is <= 32 bytes")
+        u8::try_from(self.0.len()).expect("SwarmName is <= 128 bytes")
     }
 }
 
@@ -535,8 +528,8 @@ mod discovery_tests {
 ///   [1 byte version]
 ///   [1 byte mode]
 ///   [32 bytes seed]
-///   [1 byte name length, 1..=32]
-///   [N bytes name (ASCII, charset enforced by `SwarmName`)]
+///   [1 byte name length in bytes, 1..=128]
+///   [N bytes name (UTF-8, <=32 scalars, charset enforced by `SwarmName`)]
 #[derive(Debug, Clone)]
 pub(crate) struct Swarm {
     pub mode: SwarmMode,
@@ -572,7 +565,7 @@ impl Swarm {
         buf.push(VERSION);
         buf.push(self.mode.to_byte());
         buf.extend_from_slice(&self.seed);
-        // SwarmName guarantees 1..=32 ASCII bytes, so a 1-byte length is safe.
+        // SwarmName guarantees 1..=128 UTF-8 bytes, so a 1-byte length is safe.
         buf.push(self.name.len_u8());
         buf.extend_from_slice(self.name.as_bytes());
         buf
@@ -594,7 +587,7 @@ impl Swarm {
 
         let name_len_pos = 2 + SEED_LEN;
         let name_len = bytes[name_len_pos] as usize;
-        if name_len == 0 || name_len > NAME_MAX_LEN {
+        if name_len == 0 || name_len > NAME_MAX_BYTES {
             bail!("Invalid swarm name length: {name_len}");
         }
         let name_start = name_len_pos + 1;
@@ -760,20 +753,28 @@ mod swarm_tests {
     fn swarm_name_validates_length() {
         assert!(SwarmName::new("").is_err());
         assert!(SwarmName::new("a").is_ok());
-        assert!(SwarmName::new("a".repeat(32)).is_ok()); // 32
-        assert!(SwarmName::new("a".repeat(33)).is_err()); // 33
+        assert!(SwarmName::new("a".repeat(32)).is_ok()); // 32 chars
+        assert!(SwarmName::new("a".repeat(33)).is_err()); // 33 chars
+        // Cap counts characters, not bytes: 32 multibyte chars are fine.
+        assert!(SwarmName::new("あ".repeat(32)).is_ok());
+        assert!(SwarmName::new("あ".repeat(33)).is_err());
     }
 
     #[test]
     fn swarm_name_validates_charset() {
         assert!(SwarmName::new("ok-name_1").is_ok());
-        assert!(SwarmName::new("CamelCase").is_err()); // uppercase
-        assert!(SwarmName::new("1leading").is_err()); // leading digit
-        assert!(SwarmName::new("-leading").is_err()); // leading dash
+        assert!(SwarmName::new("CamelCase").is_ok()); // uppercase
+        assert!(SwarmName::new("1leading").is_ok()); // leading digit
+        assert!(SwarmName::new("-leading").is_ok()); // leading dash
+        assert!(SwarmName::new("emoji-🐝").is_ok());
+        assert!(SwarmName::new("日本語").is_ok());
+        assert!(SwarmName::new("dot.no").is_ok()); // dot is a fine symbol
         assert!(SwarmName::new("has space").is_err());
-        assert!(SwarmName::new("emoji-🐝").is_err());
         assert!(SwarmName::new("slash/no").is_err());
-        assert!(SwarmName::new("dot.no").is_err());
+        assert!(SwarmName::new("back\\no").is_err());
+        assert!(SwarmName::new("nl\nno").is_err());
+        assert!(SwarmName::new("nul\0no").is_err());
+        assert!(SwarmName::new("rlo\u{202E}no").is_err()); // bidi override
     }
 
     #[test]
@@ -782,6 +783,25 @@ mod swarm_tests {
             let name = SwarmName::random();
             SwarmName::new(name.as_str()).expect("random must round-trip");
         }
+    }
+
+    #[test]
+    fn swarm_id_round_trips_unicode_name() {
+        let name = SwarmName::new("café-日本-🐝").unwrap();
+        let swarm = Swarm::new(SwarmMode::Public, dummy_seed(), name.clone());
+        let decoded: Swarm = swarm.to_string().parse().expect("decode failed");
+        assert_eq!(decoded.name, name);
+    }
+
+    #[test]
+    fn swarm_id_round_trips_max_byte_name() {
+        // 32 four-byte scalars = 128 bytes = the most the 1-byte name
+        // length field can carry; exercises the encode/decode upper edge.
+        let name = SwarmName::new("🐝".repeat(32)).unwrap();
+        assert_eq!(name.as_bytes().len(), 128);
+        let swarm = Swarm::new(SwarmMode::Private, dummy_seed(), name.clone());
+        let decoded: Swarm = swarm.to_string().parse().expect("decode failed");
+        assert_eq!(decoded.name, name);
     }
 
     mod prop {

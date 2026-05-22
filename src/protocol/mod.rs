@@ -9,6 +9,7 @@
 //! - [`peer_addr`]: the `PeerInfo` address JSON codec.
 
 pub(crate) mod crypto;
+mod ident;
 pub(crate) mod message;
 pub(crate) mod nickname;
 pub(crate) mod peer_addr;

@@ -19,8 +19,9 @@ pub(crate) const MAX_MESSAGE_SIZE: usize = 16 * 1024;
 
 // ── MessageBody ──────────────────────────────────────────────────
 
-/// A protocol message body — ASCII text only. Empty is legal: presence
-/// and `PeerInfo` messages use it.
+/// A protocol message body — UTF-8 text. Newlines and tabs are allowed
+/// (multi-line snippets); other control characters are rejected. Empty
+/// is legal: presence and `PeerInfo` messages use it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct MessageBody(String);
@@ -30,20 +31,29 @@ pub struct BodyError(String);
 
 impl fmt::Display for BodyError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "message body must be ASCII, got {:?}", self.0)
+        write!(
+            f,
+            "message body must not contain control characters other than tab/newline, got {:?}",
+            self.0
+        )
     }
 }
 
 impl std::error::Error for BodyError {}
 
 impl MessageBody {
-    /// Construct a body, enforcing the ASCII-only protocol invariant.
+    /// Construct a body. Accepts any UTF-8 text; the only restriction is
+    /// control characters other than `\t`/`\n`/`\r`.
     ///
     /// # Errors
-    /// Returns [`BodyError`] if `value` contains any non-ASCII byte.
+    /// Returns [`BodyError`] if `value` contains a disallowed control
+    /// character (e.g. NUL or other C0/C1 controls).
     pub fn new(value: impl Into<String>) -> Result<Self, BodyError> {
         let value = value.into();
-        if !value.is_ascii() {
+        if value
+            .chars()
+            .any(|ch| ch.is_control() && !matches!(ch, '\n' | '\t' | '\r'))
+        {
             return Err(BodyError(value));
         }
         Ok(Self(value))
@@ -99,9 +109,23 @@ mod body_tests {
     }
 
     #[test]
-    fn new_rejects_non_ascii() {
-        assert!(MessageBody::new("héllo").is_err());
-        assert!(MessageBody::new("emoji 🎉").is_err());
+    fn new_accepts_unicode() {
+        MessageBody::new("héllo").unwrap();
+        MessageBody::new("emoji 🎉").unwrap();
+        MessageBody::new("日本語のメッセージ").unwrap();
+    }
+
+    #[test]
+    fn new_accepts_newline_and_tab() {
+        MessageBody::new("line one\nline two").unwrap();
+        MessageBody::new("col1\tcol2").unwrap();
+        MessageBody::new("crlf\r\nline").unwrap();
+    }
+
+    #[test]
+    fn new_rejects_control_chars() {
+        assert!(MessageBody::new("nul\0byte").is_err());
+        assert!(MessageBody::new("bell\u{7}char").is_err());
     }
 
     #[test]
@@ -685,11 +709,27 @@ mod tests {
             }
 
             #[test]
-            fn prop_non_ascii_rejected(
-                body in "[^\\x00-\\x7f]{1,10}",
+            fn prop_control_chars_rejected(
+                // C0 controls excluding the allowed tab/newline/cr.
+                body in "[\\x00-\\x08\\x0b\\x0c\\x0e-\\x1f]{1,10}",
             ) {
-                // ASCII validation now lives in the type, not at serialize.
                 prop_assert!(MessageBody::new(body).is_err());
+            }
+
+            #[test]
+            fn prop_unicode_body_round_trip(
+                // `\P{C}` excludes every category-C scalar (all
+                // controls included), so `new` can't reject here and the
+                // `.unwrap()` is safe. This fuzzes the multibyte round-trip.
+                body in "\\P{C}{0,50}",
+                author in arb_nickname(),
+            ) {
+                let body = MessageBody::new(body).unwrap();
+                let expected = body.clone();
+                let msg = Message::new_message(&sid(), &author, body);
+                let bytes = msg.serialize().unwrap();
+                let parsed = Message::parse(&bytes).unwrap();
+                prop_assert_eq!(&parsed.body, &expected);
             }
 
             #[test]

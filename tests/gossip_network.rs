@@ -223,21 +223,42 @@ fn test_message_size_limit() {
     );
 }
 
-/// Non-ASCII message bodies are rejected with a clear error.
+/// UTF-8 message bodies (accents, emoji, CJK) are accepted and delivered verbatim.
 #[test]
-fn test_non_ascii_body() {
+fn test_utf8_body_round_trip() {
+    let (creator, swarm) = Node::create();
+    let joiner = Node::join(&swarm, "joiner-utf8");
+    assert!(creator.wait_ready(&swarm), "creator socket never appeared");
+    assert!(joiner.wait_ready(&swarm), "joiner socket never appeared");
+
+    let body = "héllo 🐝 日本語";
+    cli_message(&swarm, &creator.nickname, body);
+
+    let total = wait_total(|| creator.messages().len() + joiner.messages().len(), 1);
+    assert_eq!(total, 1, "utf-8 message should be delivered");
+    let msgs: Vec<Msg> = creator
+        .messages()
+        .into_iter()
+        .chain(joiner.messages())
+        .collect();
+    assert_eq!(msgs[0].body, body);
+}
+
+/// Control characters (other than tab/newline) in a body are rejected.
+#[test]
+fn test_control_char_body_rejected() {
     let (creator, swarm) = Node::create();
     assert!(creator.wait_ready(&swarm), "creator socket never appeared");
 
-    let out = cli_message_raw(&swarm, &creator.nickname, "héllo wörld");
+    let out = cli_message_raw(&swarm, &creator.nickname, "bad\u{7}bell");
     assert!(
         !out.status.success(),
-        "expected non-zero exit for non-ASCII body"
+        "expected non-zero exit for control-char body"
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stderr.contains("ASCII"),
-        "expected ASCII rejection in stderr, got: {stderr}"
+        stderr.contains("control characters"),
+        "expected control-char rejection in stderr, got: {stderr}"
     );
 }
 
