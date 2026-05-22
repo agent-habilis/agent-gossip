@@ -234,11 +234,19 @@ async fn event_loop(loop_state: EventLoop) -> Result<()> {
     let mut stdin_open = interactive;
 
     // Per-timer gap trackers; the heal gap also drives the
-    // resume-edge hard re-bootstrap.
+    // resume-edge hard re-bootstrap. Each timer carries a monotonic
+    // anchor AND a wall-clock anchor: on macOS the monotonic clock
+    // pauses in lockstep with a sleeping process, so only the wall gap
+    // reveals a suspend (see `note_tick_gap` / `run_heal`).
+    let wall_now = crate::util::clock::unix_secs();
     let mut last_alive = Instant::now();
     let mut last_sweep = Instant::now();
     let mut last_heal = Instant::now();
     let mut last_antientropy = Instant::now();
+    let mut last_alive_wall = wall_now;
+    let mut last_sweep_wall = wall_now;
+    let mut last_heal_wall = wall_now;
+    let mut last_antientropy_wall = wall_now;
 
     let ctx = HandlerCtx {
         sender: &sender,
@@ -266,17 +274,16 @@ async fn event_loop(loop_state: EventLoop) -> Result<()> {
             }
             _ = prune_interval.tick() => timers::tick_prune(&mut state),
             _ = alive_interval.tick() => {
-                timers::note_tick_gap("alive", &mut last_alive, Duration::from_secs(ALIVE_INTERVAL_SECS));
+                timers::note_tick_gap("alive", &mut last_alive, &mut last_alive_wall, Duration::from_secs(ALIVE_INTERVAL_SECS));
                 lifecycle::heartbeat::tick_alive(&mut state, &sender, &swarm_str, &author).await;
             }
             _ = sweep_interval.tick() => {
-                timers::note_tick_gap("sweep", &mut last_sweep, Duration::from_secs(sweep_interval_secs()));
+                timers::note_tick_gap("sweep", &mut last_sweep, &mut last_sweep_wall, Duration::from_secs(sweep_interval_secs()));
                 lifecycle::heartbeat::tick_sweep(&mut state, &output);
             }
             _ = heal_interval.tick() => {
-                let gap = last_heal.elapsed();
-                timers::note_tick_gap("heal", &mut last_heal, Duration::from_secs(HEAL_INTERVAL_SECS));
-                run_heal(gap, &mut state, &endpoint, &sender, &rendezvous_params).await;
+                let (mono_gap, wall_gap) = timers::note_tick_gap("heal", &mut last_heal, &mut last_heal_wall, Duration::from_secs(HEAL_INTERVAL_SECS));
+                run_heal(mono_gap, wall_gap, &mut state, &endpoint, &sender, &rendezvous_params).await;
                 // Claim-if-free (private) / idempotent (public): take
                 // over the beacon if the previous holder is gone — but
                 // a joiner only once `may_cohost` (see its docs).
@@ -288,7 +295,7 @@ async fn event_loop(loop_state: EventLoop) -> Result<()> {
                 maybe_reclaim(&state, &rendezvous_params, &endpoint, &mut rendezvous).await;
             }
             _ = antientropy_interval.tick() => {
-                timers::note_tick_gap("antientropy", &mut last_antientropy, Duration::from_secs(ANTIENTROPY_INTERVAL_SECS));
+                timers::note_tick_gap("antientropy", &mut last_antientropy, &mut last_antientropy_wall, Duration::from_secs(ANTIENTROPY_INTERVAL_SECS));
                 gossip::antientropy::broadcast_digest(&state, &sender, &swarm_str, &author).await;
             }
             _ = state_refresh_interval.tick() => timers::tick_state_refresh(&state),
@@ -399,11 +406,21 @@ fn may_cohost(co_host_eagerly: bool, meshed: bool, started: Instant) -> bool {
         || started.elapsed().as_secs() >= crate::util::tuning::cohost_grace_secs()
 }
 
-/// `gap` past `stall_threshold` means the process was frozen between
-/// heal ticks (macOS App Nap / timer coalescing / sleep): every timer
-/// stalled and the mesh died of idle timeout.
+/// Monotonic `gap` past `stall_threshold`: the process was throttled
+/// (but not fully frozen) between heal ticks (macOS App Nap / timer
+/// coalescing) long enough that the mesh died of idle timeout.
 fn is_resume(gap: Duration, stall_threshold: Duration) -> bool {
     gap > stall_threshold
+}
+
+/// The macOS-sleep signature the monotonic gap is blind to: the
+/// monotonic clock pauses in lockstep with the frozen process, so a
+/// day-long suspend shows only a few seconds of `mono_gap` while the
+/// wall clock jumped the whole way. A `wall_gap` exceeding `mono_gap`
+/// by more than `stall_threshold` means time elapsed that the process
+/// could not observe — it was suspended and the mesh is dead.
+fn is_wall_resume(wall_gap: Duration, mono_gap: Duration, stall_threshold: Duration) -> bool {
+    wall_gap.saturating_sub(mono_gap) > stall_threshold
 }
 
 /// One heal tick (factored out of `event_loop` for the line budget).
@@ -411,17 +428,25 @@ fn is_resume(gap: Duration, stall_threshold: Duration) -> bool {
 /// died while the timers were frozen, so re-enter cold-joiner mode,
 /// re-assert the relay-homed rendezvous hint (the network changed),
 /// and run the long re-bootstrap probe. Otherwise the normal probe.
+///
+/// A resume is either a monotonic stall (throttle) OR a wall-vs-
+/// monotonic divergence (suspend/sleep) — the latter is the only
+/// signal that survives a macOS sleep, which freezes the monotonic
+/// clock with the process.
 async fn run_heal(
-    gap: Duration,
+    mono_gap: Duration,
+    wall_gap: Duration,
     state: &mut EventLoopState,
     endpoint: &Endpoint,
     sender: &GossipSender,
     params: &beacon::RendezvousParams,
 ) {
-    if is_resume(gap, Duration::from_secs(heal_stall_threshold_secs())) {
+    let threshold = Duration::from_secs(heal_stall_threshold_secs());
+    if is_resume(mono_gap, threshold) || is_wall_resume(wall_gap, mono_gap, threshold) {
         tracing::warn!(
             target: "agent_habilis_swarm::gossip",
-            gap_ms = u64::try_from(gap.as_millis()).unwrap_or(u64::MAX),
+            mono_gap_ms = u64::try_from(mono_gap.as_millis()).unwrap_or(u64::MAX),
+            wall_gap_ms = u64::try_from(wall_gap.as_millis()).unwrap_or(u64::MAX),
             "heal: hard re-bootstrap edge"
         );
         state.meshed = false;
@@ -552,7 +577,7 @@ async fn recv_opt<T>(rx: &mut Option<mpsc::Receiver<T>>) -> Option<T> {
 mod tests {
     use std::time::Duration;
 
-    use super::is_resume;
+    use super::{is_resume, is_wall_resume};
 
     #[test]
     fn is_resume_only_past_threshold() {
@@ -575,5 +600,36 @@ mod tests {
         let short = Duration::from_secs(4);
         assert!(!is_resume(Duration::from_secs(3), short));
         assert!(is_resume(Duration::from_secs(5), short));
+    }
+
+    #[test]
+    fn wall_resume_detects_macos_sleep_signature() {
+        let threshold = Duration::from_mins(1);
+        // macOS sleep: the monotonic clock froze (a few seconds of
+        // real post-wake time) while the wall clock jumped a full day.
+        // The monotonic gap alone misses it; the divergence catches it.
+        let mono_gap = Duration::from_secs(3);
+        let wall_gap = Duration::from_hours(24);
+        assert!(!is_resume(mono_gap, threshold));
+        assert!(is_wall_resume(wall_gap, mono_gap, threshold));
+    }
+
+    #[test]
+    fn wall_resume_ignores_clocks_advancing_together() {
+        let threshold = Duration::from_mins(1);
+        // Steady operation: wall and monotonic advance in lockstep, so
+        // their divergence is ~0 — never a resume, whatever the cadence.
+        assert!(!is_wall_resume(
+            Duration::from_secs(15),
+            Duration::from_secs(15),
+            threshold
+        ));
+        // A wall clock running slightly behind monotonic (NTP step
+        // back) saturates to 0 divergence, not a spurious resume.
+        assert!(!is_wall_resume(
+            Duration::from_secs(10),
+            Duration::from_secs(15),
+            threshold
+        ));
     }
 }

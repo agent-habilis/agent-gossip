@@ -178,7 +178,7 @@ pub(crate) async fn handle_gossip_event(
             handle_gossip_received(received.content, state, ctx).await;
         }
         Some(Ok(Event::NeighborUp(node_id))) => {
-            tracing::debug!(
+            tracing::info!(
                 endpoint_id = %node_id,
                 is_rendezvous = node_id == ctx.rendezvous_id,
                 "gossip neighbor up"
@@ -220,7 +220,7 @@ pub(crate) async fn handle_gossip_event(
         }
         Some(Ok(Event::NeighborDown(node_id))) => {
             let is_rendezvous = node_id == ctx.rendezvous_id;
-            tracing::debug!(endpoint_id = %node_id, is_rendezvous, "gossip neighbor down");
+            tracing::info!(endpoint_id = %node_id, is_rendezvous, "gossip neighbor down");
             if !is_rendezvous {
                 state.linked_endpoints.remove(&node_id);
             }
@@ -233,7 +233,7 @@ pub(crate) async fn handle_gossip_event(
             if is_rendezvous || state.linked_endpoints.is_empty() {
                 state.reclaim_until =
                     Some(Instant::now() + Duration::from_secs(RECLAIM_WINDOW_SECS));
-                tracing::debug!(
+                tracing::info!(
                     reason = if is_rendezvous {
                         "rendezvous-loss"
                     } else {

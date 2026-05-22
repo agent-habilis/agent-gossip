@@ -42,31 +42,54 @@ pub(crate) fn tick_state_refresh(state: &EventLoopState) {
     }
 }
 
-/// Log a maintenance timer's interval fidelity and advance `*last`. A
-/// gap far over `expected` is the throttle/freeze signature (the prime
-/// suspect for the silent mesh collapse), so it is `warn`. Callers
-/// needing the gap (the heal arm) read it before calling this.
-pub(crate) fn note_tick_gap(timer: &'static str, last: &mut Instant, expected: Duration) {
+/// Log a maintenance timer's interval fidelity and advance both its
+/// monotonic and wall-clock anchors; returns `(mono_gap, wall_gap)` for
+/// the heal arm, which drives the resume-edge re-bootstrap off them.
+///
+/// Two stall signatures are surfaced at `warn` (the prime suspects for
+/// a silent mesh collapse): a monotonic gap far over `expected` (the
+/// process was throttled), and a wall-vs-monotonic divergence far over
+/// `expected` (the process was *suspended* — macOS sleep freezes the
+/// monotonic clock in lockstep, so only the wall clock reveals it).
+pub(crate) fn note_tick_gap(
+    timer: &'static str,
+    last: &mut Instant,
+    last_wall: &mut i64,
+    expected: Duration,
+) -> (Duration, Duration) {
     let now = Instant::now();
-    let gap = now.duration_since(*last);
+    let mono_gap = now.duration_since(*last);
     *last = now;
-    let gap_ms = u64::try_from(gap.as_millis()).unwrap_or(u64::MAX);
+
+    let now_wall = crate::util::clock::unix_secs();
+    let wall_gap =
+        Duration::from_secs(u64::try_from(now_wall.saturating_sub(*last_wall)).unwrap_or(0));
+    *last_wall = now_wall;
+
+    let mono_gap_ms = u64::try_from(mono_gap.as_millis()).unwrap_or(u64::MAX);
+    let wall_gap_ms = u64::try_from(wall_gap.as_millis()).unwrap_or(u64::MAX);
     let expected_ms = u64::try_from(expected.as_millis()).unwrap_or(u64::MAX);
-    if gap > expected.saturating_mul(2) {
+    let throttled = mono_gap > expected.saturating_mul(2);
+    let suspended = wall_gap.saturating_sub(mono_gap) > expected.saturating_mul(2);
+    if throttled || suspended {
         tracing::warn!(
             target: "agent_habilis_swarm::lifecycle",
             timer,
-            gap_ms,
+            mono_gap_ms,
+            wall_gap_ms,
             expected_ms,
-            "maintenance timer stalled (throttle/freeze suspected)"
+            suspected = if suspended { "freeze/sleep" } else { "throttle" },
+            "maintenance timer stalled"
         );
     } else {
         tracing::debug!(
             target: "agent_habilis_swarm::lifecycle",
             timer,
-            gap_ms,
+            mono_gap_ms,
+            wall_gap_ms,
             expected_ms,
             "maintenance tick"
         );
     }
+    (mono_gap, wall_gap)
 }

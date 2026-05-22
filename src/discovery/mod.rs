@@ -196,12 +196,17 @@ pub(crate) async fn probe_connect(
     // rendezvous co-host (self-partition signature); relay/public is
     // the cross-machine path. `elapsed_ms` exposes a slow relay
     // re-home outrunning the steady probe budget.
-    tracing::debug!(
-        connected,
-        elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
-        addr = ?addr,
-        "rendezvous connect-probe finished"
-    );
+    //
+    // A *failed* probe is the diagnostic signal a partition/post-sleep
+    // re-bootstrap can't re-home the rendezvous, so it lands at `info`
+    // (always-on file); a steady success every heal tick would be a
+    // firehose, so it stays `debug`.
+    let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+    if connected {
+        tracing::debug!(connected, elapsed_ms, addr = ?addr, "rendezvous connect-probe finished");
+    } else {
+        tracing::info!(connected, elapsed_ms, addr = ?addr, "rendezvous connect-probe finished");
+    }
     connected
 }
 

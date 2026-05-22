@@ -411,6 +411,16 @@ directory (the test suite points it at a temp dir).
 Debug defaults to `info`, release to `error`; `debug`/`trace` need
 `RUST_LOG` (tried first, always wins).
 
+Both defaults additionally **pin this crate's operational subsystems**
+(`agent_habilis_swarm::{gossip,discovery,beacon,lifecycle}`) to `info`,
+so the always-on file carries the connectivity/lifecycle story (endpoint
+bound, neighbor up/down, heal re-probe, beacon migration, resume edge,
+mesh-health census) even in a release build — whose `error` base would
+otherwise drop every diagnostic and leave only chat traffic, which is
+exactly what made a post-sleep mesh-collapse uninvestigable. Same
+rationale as the `messages=info` pin below; like it, this only affects
+the file sink (`--output json` stdout is a separate path).
+
 Every sent/received swarm message is logged on the always-on
 `agent_habilis_swarm::messages` target: `msg` and presence
 joined/left at `info`; `alive`/`PeerInfo`/`Digest` plumbing at `trace`

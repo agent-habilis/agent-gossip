@@ -49,13 +49,26 @@ fn suppress_ctrl_c_echo() {
 /// wins). Quiets benign `noq_proto::connection`; release also drops the
 /// env-dependent `mainline::rpc` DHT-bootstrap ERROR; the `messages`
 /// target is pinned on so it lands at any base level. See AGENTS.md.
+///
+/// Our own operational subsystems (gossip/discovery/beacon/lifecycle)
+/// are pinned to `info` in BOTH profiles so the always-on log file
+/// carries the connectivity/lifecycle story even in a release build
+/// (whose `error` base would otherwise drop every diagnostic) — the
+/// same rationale as the `messages=info` pin. tracing writes only to
+/// the file sink; `--output json` (stdout) is a separate path, so this
+/// never affects the event stream.
 fn log_filter() -> tracing_subscriber::EnvFilter {
     use tracing_subscriber::EnvFilter;
+    const SUBSYSTEMS: &str = "agent_habilis_swarm::gossip=info,\
+        agent_habilis_swarm::discovery=info,\
+        agent_habilis_swarm::beacon=info,\
+        agent_habilis_swarm::lifecycle=info,\
+        agent_habilis_swarm::messages=info";
     EnvFilter::try_from_default_env().unwrap_or_else(|_| {
         EnvFilter::new(if cfg!(debug_assertions) {
-            "info,noq_proto::connection=off,agent_habilis_swarm::messages=info"
+            format!("info,noq_proto::connection=off,{SUBSYSTEMS}")
         } else {
-            "error,noq_proto::connection=off,mainline::rpc=off,agent_habilis_swarm::messages=info"
+            format!("error,noq_proto::connection=off,mainline::rpc=off,{SUBSYSTEMS}")
         })
     })
 }
