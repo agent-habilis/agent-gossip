@@ -6,6 +6,7 @@
 
 mod common;
 
+use ahs_shared::RATE_LIMIT_PER_MIN;
 use common::{CONNECT_TIMEOUT, MSG_TIMEOUT};
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, ChildStdin, Stdio};
@@ -651,10 +652,14 @@ fn rate_limiter_drops_excess_messages_from_flooding_peer() {
     // Sender creates a private swarm, receiver joins, gossip links.
     let (mut sender, mut receiver, _swarm, sender_nick) = create_pair(300);
 
-    // Sender fires many messages in tight succession. Well above
-    // RATE_LIMIT_MESSAGES_BURST (15) + refills — almost all should
-    // be dropped on the receiver's rate limiter.
-    let message_flood: usize = 50;
+    // Sender fires many messages in tight succession — twice the
+    // per-identity quota, so excess is dropped regardless of token
+    // refills during the loop. With sender-side limiting the sender
+    // drops most of these before broadcast (the receiver's limiter is
+    // the backstop); either way the flood is bounded well under the
+    // count sent. Referencing the constant keeps this from silently
+    // passing if the quota changes.
+    let message_flood: usize = RATE_LIMIT_PER_MIN as usize * 2;
     for i in 0..message_flood {
         let _ = sender.tool_call(
             400 + i as u64,

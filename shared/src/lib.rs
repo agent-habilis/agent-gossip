@@ -9,3 +9,15 @@ pub const TMP_DIR: &str = "/tmp/agent-habilis-swarm";
 pub fn log_dir() -> String {
     std::env::var("AHS_LOG_DIR").unwrap_or_else(|_| format!("{TMP_DIR}/logs"))
 }
+
+/// Per-identity message rate limit, enforced symmetrically on the send
+/// and receive paths (same quota each direction). One limit covers all
+/// messages — open broadcasts and directed replies alike, no per-kind
+/// distinction. It is the swarm's published contract (agents must stay
+/// within it), so it lives in the shared crate, not the binary's tuning.
+///
+/// Messages per minute per identity (60 = one per second sustained). The
+/// token bucket's depth equals this value, so a sender may emit up to
+/// this many back-to-back, then one per `60 / RATE_LIMIT_PER_MIN` seconds
+/// thereafter.
+pub const RATE_LIMIT_PER_MIN: u32 = 60;

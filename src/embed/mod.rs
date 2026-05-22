@@ -239,7 +239,8 @@ impl SwarmSession {
     /// Build, sign and gossip-broadcast a message. `body` is UTF-8 text
     /// ([`MessageBody::new`] rejects only disallowed control chars).
     /// `reply` addresses it to a specific peer's nickname. Returns the
-    /// new message id.
+    /// new message id, or `None` when the sender-side rate limiter
+    /// dropped the message (same per-author quota the receiver enforces).
     ///
     /// # Errors
     /// Fails if the event loop has stopped, or if serialization /
@@ -248,7 +249,7 @@ impl SwarmSession {
         &self,
         body: MessageBody,
         reply: Option<Nickname>,
-    ) -> anyhow::Result<MessageId> {
+    ) -> anyhow::Result<Option<MessageId>> {
         let (resp_tx, resp_rx) = oneshot::channel();
         self.send_tx
             .send(SendRequest {

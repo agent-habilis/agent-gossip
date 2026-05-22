@@ -436,13 +436,24 @@ Star counts and issue lists current as of 2026-05-22.
    existing comment was already correct). Added tripwire test
    `pinned_relay_matches_iroh_prod_na_east` that fails if an iroh bump moves the
    prod relay off our host, forcing manual review before shipping.
-4. ⬜ **Guarantee no iroh/gossip error can panic the daemon** (teamtype #289/#145).
-   Audit error paths in the gossip/transport loop; degrade to re-bootstrap.
-5. ⬜ **Document CGNAT limits + consider relay-always for hard NATs** (alt-sendme
-   #58/#62). Be explicit that symmetric-NAT-both-ends may fail even in public
-   mode; the relay is the fallback, not optional.
-6. ⬜ **Backoff for flapping peers** (psyche #78). Don't re-add a peer that keeps
-   dropping without a cooldown, to avoid mesh churn.
-7. ⬜ **Audit `select!` for a missing `else`** (p2panda #898). (Message body size
-   is already capped at 16 KB with a clear error — `test_message_size_limit` —
-   so the p2panda #628 concern is already handled.)
+4. ✅ **No-panic audit** (teamtype #289/#145). *Audited — already covered, no
+   change.* The event loop logs a gossip `Err` and continues, and a terminal
+   `None` flips `gossip_open=false` while IPC keeps working; `connect`/`bind`/
+   `resolve` (`probe_connect`, `add_peer_addr`, `beacon`) return `Result` and
+   degrade; parsing uses `let Ok(…) else { return }`. The only non-test
+   `expect`/`unwrap` are documented infallible invariants on constant/internal
+   data. A transient iroh error can't panic the daemon. (One startup `expect` on
+   SIGTERM-handler registration is genuinely fatal-at-startup and left as is.)
+5. ✅ **CGNAT / relay-limits note** (alt-sendme #58/#62). Documented in
+   `docs/gossip.md` (Transport section): symmetric-NAT/CGNAT on both ends can
+   fail even in public mode, and the relay is the fallback, not a toggle —
+   verified in `build_endpoint_for_mode` that public mode never disables the
+   relay (default participant rides iroh's multi-relay set; `--relay` only
+   changes it). No code change.
+6. ⬜ **Backoff for flapping peers** (psyche #78). *Deferred — speculative.* No
+   observed mesh churn, and the reclaim window + 15s-bounded re-dial already
+   rate-limit reconnects. Build only if churn shows up in logs.
+7. ✅ **`select!` else-arm** (p2panda #898). *N/A — confirmed.* Our loop's
+   interval-tick arms are always live, so "all branches disabled, no else"
+   can't occur. (Message body size is also already capped at 16 KB with a clear
+   error — `test_message_size_limit` — so p2panda #628 is handled too.)

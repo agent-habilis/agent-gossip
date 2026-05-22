@@ -232,9 +232,7 @@ pub(crate) fn build_swarm(endpoint: Endpoint) -> (Gossip, Router) {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        DiscoveryOpts, RENDEZVOUS_RELAY_URL, SwarmMode, build_participant_endpoint,
-    };
+    use super::{DiscoveryOpts, RENDEZVOUS_RELAY_URL, SwarmMode, build_participant_endpoint};
 
     /// Tripwire: our pinned rendezvous relay must stay equal to iroh's
     /// `defaults::prod` NA-east relay host. Relay infra is versioned and

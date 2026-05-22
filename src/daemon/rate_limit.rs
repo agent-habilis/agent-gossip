@@ -3,6 +3,7 @@ use std::num::NonZeroU32;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
+use ahs_shared::RATE_LIMIT_PER_MIN;
 use governor::{
     Quota, RateLimiter,
     clock::DefaultClock,
@@ -11,26 +12,12 @@ use governor::{
 };
 
 use crate::protocol::Nickname;
-use crate::util::tuning::{
-    RATE_LIMIT_MESSAGES_BURST, RATE_LIMIT_MESSAGES_PER_MIN, RATE_LIMIT_REPLIES_BURST,
-    RATE_LIMIT_REPLIES_PER_MIN, RATE_LIMITER_TTL_SECS,
-};
+use crate::util::tuning::RATE_LIMITER_TTL_SECS;
 
 type Limiter = Arc<RateLimiter<NotKeyed, InMemoryState, DefaultClock, NoOpMiddleware>>;
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-enum MsgKind {
-    Message,
-    Reply,
-}
-
-fn make_limiter(kind: MsgKind) -> Limiter {
-    let (per_min, burst) = match kind {
-        MsgKind::Message => (RATE_LIMIT_MESSAGES_PER_MIN, RATE_LIMIT_MESSAGES_BURST),
-        MsgKind::Reply => (RATE_LIMIT_REPLIES_PER_MIN, RATE_LIMIT_REPLIES_BURST),
-    };
-    let quota = Quota::per_minute(NonZeroU32::new(per_min).unwrap())
-        .allow_burst(NonZeroU32::new(burst).unwrap());
+fn make_limiter() -> Limiter {
+    let quota = Quota::per_minute(NonZeroU32::new(RATE_LIMIT_PER_MIN).unwrap());
     Arc::new(RateLimiter::direct(quota))
 }
 
@@ -39,10 +26,11 @@ struct LimiterEntry {
     last_used: Instant,
 }
 
-/// Per-identity rate limiters, keyed by (author, message kind).
+/// Per-identity rate limiter, keyed by author nickname. One quota covers
+/// every message — open broadcast or directed reply, no per-kind split.
 /// Entries are pruned after `ttl_secs` of inactivity.
 pub(crate) struct SwarmRateLimiter {
-    limiters: Mutex<HashMap<(Nickname, MsgKind), LimiterEntry>>,
+    limiters: Mutex<HashMap<Nickname, LimiterEntry>>,
     ttl_secs: u64,
 }
 
@@ -54,27 +42,23 @@ impl SwarmRateLimiter {
         }
     }
 
-    fn check(&self, author: &Nickname, kind: MsgKind) -> bool {
+    /// Returns true if a message from `author` is within the rate limit.
+    /// Consumes one token on success. Applied identically on the send and
+    /// receive paths so a node is held to the same quota either way.
+    pub(crate) fn check(&self, author: &Nickname) -> bool {
         let now = Instant::now();
         let mut map = self.limiters.lock().expect("rate-limiter mutex poisoned");
-        let entry = map
-            .entry((author.clone(), kind))
-            .or_insert_with(|| LimiterEntry {
-                limiter: make_limiter(kind),
-                last_used: now,
-            });
-        entry.last_used = now;
+        // Hot path (author already seen): borrow, no key clone. Only the
+        // first sighting needs to own the key.
+        if let Some(entry) = map.get_mut(author) {
+            entry.last_used = now;
+            return entry.limiter.check().is_ok();
+        }
+        let entry = map.entry(author.clone()).or_insert_with(|| LimiterEntry {
+            limiter: make_limiter(),
+            last_used: now,
+        });
         entry.limiter.check().is_ok()
-    }
-
-    /// Returns true if the open message from `author` is allowed.
-    pub(crate) fn check_message(&self, author: &Nickname) -> bool {
-        self.check(author, MsgKind::Message)
-    }
-
-    /// Returns true if the directed reply from `author` is allowed.
-    pub(crate) fn check_reply(&self, author: &Nickname) -> bool {
-        self.check(author, MsgKind::Reply)
     }
 
     pub(crate) fn prune_inactive(&self) {
@@ -116,41 +100,22 @@ mod tests {
     }
 
     #[test]
-    fn message_allowed_within_burst() {
+    fn allowed_within_quota() {
         let limiter = SwarmRateLimiter::new();
         let alice = nick("alice");
-        for _ in 0..5 {
-            assert!(limiter.check_message(&alice));
+        for _ in 0..RATE_LIMIT_PER_MIN {
+            assert!(limiter.check(&alice));
         }
     }
 
     #[test]
-    fn message_rejected_after_burst_exceeded() {
+    fn rejected_after_quota_exceeded() {
         let limiter = SwarmRateLimiter::new();
         let spammer = nick("spammer");
-        for _ in 0..15 {
-            limiter.check_message(&spammer);
+        for _ in 0..RATE_LIMIT_PER_MIN {
+            limiter.check(&spammer);
         }
-        assert!(!limiter.check_message(&spammer));
-    }
-
-    #[test]
-    fn reply_allowed_within_burst() {
-        let limiter = SwarmRateLimiter::new();
-        let bob = nick("bob");
-        for _ in 0..10 {
-            assert!(limiter.check_reply(&bob));
-        }
-    }
-
-    #[test]
-    fn reply_rejected_after_burst_exceeded() {
-        let limiter = SwarmRateLimiter::new();
-        let spammer = nick("spammer");
-        for _ in 0..60 {
-            limiter.check_reply(&spammer);
-        }
-        assert!(!limiter.check_reply(&spammer));
+        assert!(!limiter.check(&spammer));
     }
 
     #[test]
@@ -158,24 +123,24 @@ mod tests {
         let limiter = SwarmRateLimiter::new();
         let alice = nick("alice");
         let bob = nick("bob");
-        for _ in 0..15 {
-            limiter.check_message(&alice);
+        for _ in 0..RATE_LIMIT_PER_MIN {
+            limiter.check(&alice);
         }
-        assert!(!limiter.check_message(&alice));
-        assert!(limiter.check_message(&bob));
+        assert!(!limiter.check(&alice));
+        assert!(limiter.check(&bob));
     }
 
     #[test]
     fn default_constructor_works() {
         let limiter = SwarmRateLimiter::default();
-        assert!(limiter.check_message(&nick("test")));
+        assert!(limiter.check(&nick("test")));
     }
 
     #[test]
     fn prune_removes_expired_entries() {
         let limiter = SwarmRateLimiter::with_ttl(0);
-        limiter.check_message(&nick("alice"));
-        limiter.check_reply(&nick("bob"));
+        limiter.check(&nick("alice"));
+        limiter.check(&nick("bob"));
         assert_eq!(limiter.len(), 2);
 
         limiter.prune_inactive();
@@ -185,8 +150,8 @@ mod tests {
     #[test]
     fn prune_keeps_recent_entries() {
         let limiter = SwarmRateLimiter::with_ttl(600);
-        limiter.check_message(&nick("alice"));
-        limiter.check_reply(&nick("bob"));
+        limiter.check(&nick("alice"));
+        limiter.check(&nick("bob"));
 
         limiter.prune_inactive();
         assert_eq!(limiter.len(), 2);
@@ -195,14 +160,14 @@ mod tests {
     #[test]
     fn prune_is_selective() {
         let limiter = SwarmRateLimiter::with_ttl(0);
-        limiter.check_message(&nick("old-author"));
+        limiter.check(&nick("old-author"));
 
         // Immediately prune — "old-author" expires (ttl=0)
         limiter.prune_inactive();
         assert_eq!(limiter.len(), 0);
 
         // New entry created after prune should survive until next prune
-        limiter.check_message(&nick("new-author"));
+        limiter.check(&nick("new-author"));
         assert_eq!(limiter.len(), 1);
     }
 
@@ -216,21 +181,12 @@ mod tests {
 
         proptest! {
             #[test]
-            fn prop_burst_limit_holds_for_messages(author in arb_nickname()) {
+            fn prop_quota_limit_holds(author in arb_nickname()) {
                 let limiter = SwarmRateLimiter::new();
-                for _ in 0..RATE_LIMIT_MESSAGES_BURST {
-                    assert!(limiter.check_message(&author));
+                for _ in 0..RATE_LIMIT_PER_MIN {
+                    assert!(limiter.check(&author));
                 }
-                assert!(!limiter.check_message(&author));
-            }
-
-            #[test]
-            fn prop_burst_limit_holds_for_replies(author in arb_nickname()) {
-                let limiter = SwarmRateLimiter::new();
-                for _ in 0..RATE_LIMIT_REPLIES_BURST {
-                    assert!(limiter.check_reply(&author));
-                }
-                assert!(!limiter.check_reply(&author));
+                assert!(!limiter.check(&author));
             }
 
             #[test]
@@ -240,28 +196,14 @@ mod tests {
             ) {
                 prop_assume!(author_a != author_b);
                 let limiter = SwarmRateLimiter::new();
-                // Exhaust author_a's message burst
-                for _ in 0..RATE_LIMIT_MESSAGES_BURST {
-                    limiter.check_message(&author_a);
+                // Exhaust author_a's quota.
+                for _ in 0..RATE_LIMIT_PER_MIN {
+                    limiter.check(&author_a);
                 }
-                assert!(!limiter.check_message(&author_a));
-                // author_b must still have full burst available
-                for _ in 0..RATE_LIMIT_MESSAGES_BURST {
-                    assert!(limiter.check_message(&author_b));
-                }
-            }
-
-            #[test]
-            fn prop_message_reply_independence(author in arb_nickname()) {
-                let limiter = SwarmRateLimiter::new();
-                // Exhaust message burst
-                for _ in 0..RATE_LIMIT_MESSAGES_BURST {
-                    limiter.check_message(&author);
-                }
-                assert!(!limiter.check_message(&author));
-                // Reply burst must still be fully available
-                for _ in 0..RATE_LIMIT_REPLIES_BURST {
-                    assert!(limiter.check_reply(&author));
+                assert!(!limiter.check(&author_a));
+                // author_b must still have its full quota available.
+                for _ in 0..RATE_LIMIT_PER_MIN {
+                    assert!(limiter.check(&author_b));
                 }
             }
 
@@ -271,7 +213,7 @@ mod tests {
             ) {
                 let limiter = SwarmRateLimiter::with_ttl(600);
                 for author in &authors {
-                    limiter.check_message(author);
+                    limiter.check(author);
                 }
                 limiter.prune_inactive();
                 let unique: std::collections::HashSet<_> = authors.iter().collect();

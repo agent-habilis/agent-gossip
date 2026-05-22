@@ -54,19 +54,13 @@ pub(crate) const DEFAULT_MAX_DIRECT_PEERS: usize = 25;
 /// the consumer observes `RecvError::Lagged` (see `embed::SwarmSession`).
 pub(crate) const EMBED_INBOUND_CAP: usize = 1024;
 
-/// Rate limit: open messages per minute per identity
-pub(crate) const RATE_LIMIT_MESSAGES_PER_MIN: u32 = 5;
+// The per-identity message rate (`RATE_LIMIT_PER_MIN`) is a published
+// contract enforced on both send and receive, so it lives in the shared
+// crate — see `ahs_shared::RATE_LIMIT_PER_MIN`. The prune TTL below is a
+// private memory-management knob, not part of that contract.
 
-/// Rate limit: open message burst
-pub(crate) const RATE_LIMIT_MESSAGES_BURST: u32 = 15;
-
-/// Rate limit: directed replies per minute per identity
-pub(crate) const RATE_LIMIT_REPLIES_PER_MIN: u32 = 20;
-
-/// Rate limit: directed reply burst
-pub(crate) const RATE_LIMIT_REPLIES_BURST: u32 = 60;
-
-/// Rate limiter entries older than this (seconds) are pruned.
+/// Rate-limiter entries idle longer than this (seconds) are pruned, so
+/// the per-author bucket map can't grow unbounded as nicknames churn.
 pub(crate) const RATE_LIMITER_TTL_SECS: u64 = 600;
 
 /// How often an idle daemon broadcasts a `Presence::Alive` keepalive.

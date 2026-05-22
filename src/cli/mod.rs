@@ -6,7 +6,9 @@ use serde::Deserialize;
 use crate::daemon::run as run_event_loop;
 use crate::daemon::setup::{SetupKind, setup_swarm};
 use crate::output::{Output, OutputMode};
-use crate::protocol::swarm::{DiscoveryOpts, LookupSet, Swarm, SwarmMode, SwarmName, resolve_discovery};
+use crate::protocol::swarm::{
+    DiscoveryOpts, LookupSet, Swarm, SwarmMode, SwarmName, resolve_discovery,
+};
 use crate::protocol::{MessageBody, MessageId, Nickname, SwarmId};
 use crate::resolver;
 use crate::transport::ipc::{self, IpcCommand};
@@ -426,6 +428,8 @@ struct MsgResponse {
     ok: bool,
     id: Option<String>,
     error: Option<String>,
+    #[serde(default)]
+    rate_limited: bool,
 }
 
 /// Post a message to a swarm via the running server's IPC socket.
@@ -444,6 +448,11 @@ async fn msg(
     let resp = ipc::send(&cmd, nickname).await?;
     let parsed: MsgResponse = serde_json::from_str(&resp)?;
 
+    // A rate-limited send is a deliberate drop, not a failure — surface it
+    // distinctly (still non-zero, so scripts see the message wasn't sent).
+    if parsed.rate_limited {
+        anyhow::bail!("rate limit exceeded — message not sent");
+    }
     if !parsed.ok {
         anyhow::bail!(
             "{}",

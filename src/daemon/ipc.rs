@@ -10,9 +10,9 @@ use tokio::sync::oneshot;
 use crate::daemon::state::EventLoopState;
 use crate::output;
 use crate::protocol::{Nickname, SwarmId};
-use crate::transport::ipc::{IpcCommand, json_error, json_ok_msg};
+use crate::transport::ipc::{IpcCommand, json_error, json_ok_msg, json_rate_limited};
 
-use crate::gossip::broadcast_message;
+use crate::gossip::{SendOutcome, broadcast_message};
 
 /// Returns `true` if the handler broadcast anything, so the caller
 /// can refresh `last_sent_at` for heartbeat suppression.
@@ -33,9 +33,13 @@ pub(crate) async fn handle_ipc_command(
         } => {
             tracing::debug!(addressed = reply.is_some(), "IPC msg command received");
             match broadcast_message(swarm, author, body, reply, state, sender, output).await {
-                Ok((msg_id, msg)) => {
+                Ok(SendOutcome::Sent(msg_id, msg)) => {
                     let _ = resp_tx.send(json_ok_msg(&msg_id, &msg));
                     true
+                }
+                Ok(SendOutcome::RateLimited) => {
+                    let _ = resp_tx.send(json_rate_limited());
+                    false
                 }
                 Err(error) => {
                     let _ = resp_tx.send(json_error(&error.to_string()));

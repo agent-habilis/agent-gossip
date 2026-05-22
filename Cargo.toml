@@ -128,6 +128,8 @@ interprocess = { version = "2", features = ["tokio"] }
 rmcp = { version = "1.5", features = ["server", "transport-io", "macros", "schemars"] }
 
 [dev-dependencies]
+# Integration tests assert against the published rate-limit contract.
+ahs-shared = { path = "shared" }
 proptest = "1.6"
 insta = "1"
 wiremock = "0.6"

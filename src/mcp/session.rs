@@ -65,14 +65,15 @@ impl Session {
             .context("event loop returned invalid JSON response")
     }
 
-    /// Broadcast a message. Returns `(id, echo)` where `echo` is the
+    /// Broadcast a message. Returns `Some((id, echo))` where `echo` is the
     /// full authoritative record the daemon built — same shape
-    /// `fetch_messages` returns.
+    /// `fetch_messages` returns — or `None` when the sender-side rate
+    /// limiter dropped it (a deliberate drop, not an error).
     pub(super) async fn send_message(
         &self,
         body: MessageBody,
         reply: Option<Nickname>,
-    ) -> Result<(MessageId, Value)> {
+    ) -> Result<Option<(MessageId, Value)>> {
         let cmd = IpcCommand::Msg {
             swarm: self.swarm.clone(),
             body,
@@ -84,6 +85,13 @@ impl Session {
             Value::Object(map) => map,
             other => return Err(anyhow!("malformed IPC response: {other}")),
         };
+        if obj
+            .remove("rate_limited")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false)
+        {
+            return Ok(None);
+        }
         match obj.remove("ok").and_then(|value| value.as_bool()) {
             Some(true) => {
                 let id = match obj.remove("id") {
@@ -96,7 +104,7 @@ impl Session {
                     .remove("message")
                     .ok_or_else(|| anyhow!("msg response missing 'message'"))?;
                 self.advance_cursor_to(id.clone());
-                Ok((id, echo))
+                Ok(Some((id, echo)))
             }
             Some(false) => {
                 let err = obj
@@ -280,7 +288,8 @@ mod tests {
         let (sent_id, _) = creator
             .send_message(MessageBody::from("hi bob"), None)
             .await
-            .expect("send_message");
+            .expect("send_message")
+            .expect("within rate limit");
 
         let observed = wait_for_gossip(&joiner, "alice-two", "hi bob").await;
         assert_eq!(
@@ -293,7 +302,8 @@ mod tests {
         let (reply_id, _) = joiner
             .send_message(MessageBody::from("hi alice"), None)
             .await
-            .expect("send_message reply");
+            .expect("send_message reply")
+            .expect("within rate limit");
         let observed2 = wait_for_gossip(&creator, "bob-two", "hi alice").await;
         assert_eq!(observed2, Some(reply_id));
 
@@ -319,7 +329,8 @@ mod tests {
         let (sent, echo) = alice
             .send_message(MessageBody::from("self-echo"), None)
             .await
-            .expect("send_message");
+            .expect("send_message")
+            .expect("within rate limit");
         assert_eq!(echo["id"].as_str(), Some(sent.as_str()));
         assert_eq!(echo["author"].as_str(), Some("alice-replay"));
         assert_eq!(echo["body"].as_str(), Some("self-echo"));

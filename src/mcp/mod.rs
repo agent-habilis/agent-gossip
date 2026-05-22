@@ -274,11 +274,17 @@ impl AgentSwarmServer {
         };
         let body = MessageBody::new(args.text)
             .map_err(|error| McpError::invalid_params(format!("{error}"), None))?;
-        let (id, message) = session
+        match session
             .send_message(body, reply)
             .await
-            .map_err(to_mcp_error)?;
-        ok_json(SendMessageResult { id, message })
+            .map_err(to_mcp_error)?
+        {
+            Some((id, message)) => ok_json(SendMessageResult { id, message }),
+            // Sender-side rate limiter dropped it (same per-author quota
+            // the receiver enforces). A deliberate drop, not an error, so
+            // the agent can back off rather than retry as a failure.
+            None => ok_json(serde_json::json!({ "rate_limited": true })),
+        }
     }
 
     #[tool(

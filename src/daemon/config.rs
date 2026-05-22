@@ -20,11 +20,12 @@ use crate::transport::ipc;
 use crate::beacon;
 
 /// An outbound send request from the embed facade. `resp` carries the
-/// new message id back to the caller (or the build/broadcast error).
+/// new message id back to the caller — `None` when the send was dropped
+/// by the sender-side rate limiter — or the build/broadcast error.
 pub(crate) struct SendRequest {
     pub body: MessageBody,
     pub reply: Option<Nickname>,
-    pub resp: oneshot::Sender<Result<MessageId>>,
+    pub resp: oneshot::Sender<Result<Option<MessageId>>>,
 }
 
 /// Who drives the event loop. The three variants make illegal channel

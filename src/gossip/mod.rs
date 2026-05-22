@@ -150,7 +150,8 @@ pub(crate) async fn handle_stdin_line(
         (body, None)
     };
     match broadcast_message(swarm, author, body, reply, state, sender, out).await {
-        Ok(_) => state.last_sent_at = Instant::now(),
+        Ok(SendOutcome::Sent(..)) => state.last_sent_at = Instant::now(),
+        Ok(SendOutcome::RateLimited) => {}
         Err(error) => out.report_error(&error),
     }
 }
@@ -183,13 +184,27 @@ async fn emit_or_queue(
     Ok(())
 }
 
+/// Outcome of a send through [`broadcast_message`]. `RateLimited` is a
+/// *drop*, not an error (mirrors the receiver-side drop) — returned to
+/// the caller so a programmatic sender (`ahs msg`, MCP `send_message`)
+/// can tell the message was not emitted, distinct from a real failure.
+#[allow(
+    clippy::large_enum_variant,
+    reason = "transient return value, never stored in bulk; boxing the common Sent payload to shrink the rare RateLimited unit variant would just add an allocation to every send"
+)]
+pub(crate) enum SendOutcome {
+    Sent(MessageId, Message),
+    RateLimited,
+}
+
 /// Build, sign, log and gossip-broadcast one outbound message. The
 /// single source of truth for the send path: the IPC `Msg` command
 /// and the embed facade's `external_send_rx` arm both funnel through
-/// here so they cannot drift. Returns the new id and the canonical
+/// here so they cannot drift. Rate-limited sends return
+/// [`SendOutcome::RateLimited`]; otherwise the new id and the canonical
 /// `Message` so callers can echo it without re-parsing.
 ///
-/// The caller refreshes `state.last_sent_at` on success.
+/// The caller refreshes `state.last_sent_at` only on `Sent`.
 pub(crate) async fn broadcast_message(
     swarm: &SwarmId,
     author: &Nickname,
@@ -198,14 +213,26 @@ pub(crate) async fn broadcast_message(
     state: &mut EventLoopState,
     sender: &GossipSender,
     out: &output::Output,
-) -> anyhow::Result<(MessageId, Message)> {
+) -> anyhow::Result<SendOutcome> {
+    // Sender-side rate limit, symmetric with the receiver check in
+    // `handle_gossip_received`: same limiter, same per-author quota —
+    // applied to our own author so we never broadcast traffic peers
+    // would only drop. Checked before build/print/log so a dropped send
+    // leaves no trace, just as the receiver drops before processing. The
+    // self bucket is never double-counted: self-authored inbound is
+    // filtered out earlier.
+    if !state.rate_limiter.check(author) {
+        out.info(&format!("rate limit exceeded for [{author}], dropping"));
+        tracing::debug!(%author, "send rate limit exceeded; not broadcasting");
+        return Ok(SendOutcome::RateLimited);
+    }
     let (bytes, msg) = crate::protocol::message::build_msg_bytes(swarm, body, reply, author)?;
     let id = msg.id.clone();
     out.print_message_ex(&msg, true);
     state.message_log.push(msg.clone());
     crate::messages::log_out(&msg);
     emit_or_queue(state, sender, bytes, out).await?;
-    Ok((id, msg))
+    Ok(SendOutcome::Sent(id, msg))
 }
 
 /// Dispatch a single item from the gossip receiver stream:
@@ -329,9 +356,11 @@ async fn handle_gossip_received(content: Bytes, state: &mut EventLoopState, ctx:
     if state.mark_seen(&message.id) {
         return;
     }
+    // One quota for every Msg (open or reply); plumbing kinds (presence,
+    // Alive, digest, PeerInfo) are exempt — rate-limiting them would
+    // break membership/anti-entropy.
     let rate_ok = match &message.kind {
-        MessageKind::Msg { reply: None } => state.rate_limiter.check_message(&message.author),
-        MessageKind::Msg { reply: Some(_) } => state.rate_limiter.check_reply(&message.author),
+        MessageKind::Msg { .. } => state.rate_limiter.check(&message.author),
         _ => true,
     };
     if !rate_ok {
@@ -444,9 +473,12 @@ pub(crate) async fn handle_send_request(
     output: &output::Output,
 ) -> bool {
     let SendRequest { body, reply, resp } = req;
-    let result = broadcast_message(swarm, author, body, reply, state, sender, output).await;
-    let sent_ok = result.is_ok();
-    let _ = resp.send(result.map(|(id, _msg)| id));
+    let outcome = broadcast_message(swarm, author, body, reply, state, sender, output).await;
+    let sent_ok = matches!(outcome, Ok(SendOutcome::Sent(..)));
+    let _ = resp.send(outcome.map(|sent| match sent {
+        SendOutcome::Sent(id, _msg) => Some(id),
+        SendOutcome::RateLimited => None,
+    }));
     sent_ok
 }
 

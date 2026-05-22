@@ -126,13 +126,13 @@ mod tests {
             "alice-bot-7",
             "snake_case",
             "abc123",
-            "Alice",      // uppercase
-            "1abc",       // leading digit
-            "café",       // accents
-            "日本語",     // CJK
-            "agent-🐝",   // emoji
+            "Alice",    // uppercase
+            "1abc",     // leading digit
+            "café",     // accents
+            "日本語",   // CJK
+            "agent-🐝", // emoji
             "👨‍👩‍👧",       // ZWJ emoji sequence
-            "alice!",     // punctuation symbol
+            "alice!",   // punctuation symbol
         ] {
             Nickname::new(ok).unwrap_or_else(|_| panic!("expected {ok} to validate"));
         }

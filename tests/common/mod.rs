@@ -11,7 +11,10 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
-pub(crate) const TMP_DIR: &str = "/tmp/agent-habilis-swarm";
+// The single source of truth for the runtime dir lives in the shared
+// crate (a dev-dependency); re-export it so test code keeps using
+// `common::TMP_DIR` without a divergent copy.
+pub(crate) use ahs_shared::TMP_DIR;
 
 pub(crate) const CONNECT_TIMEOUT: Duration = Duration::from_mins(1);
 pub(crate) const MSG_TIMEOUT: Duration = Duration::from_secs(30);
@@ -236,23 +239,37 @@ impl InProcNode {
         )
     }
 
-    /// Broadcast a plain message; returns the new message id.
+    /// Broadcast a plain message; returns the new message id. Panics if
+    /// the sender-side rate limiter dropped it — callers stay within the
+    /// quota; use [`Self::try_send`] to exercise the limit deliberately.
     pub(crate) async fn send(&self, text: &str) -> MessageId {
-        self.session
-            .send(MessageBody::new(text).expect("valid body"), None)
+        self.try_send(text)
             .await
             .expect("in-process send failed")
+            .expect("send within rate limit")
+    }
+
+    /// Like [`Self::send`] but returns the raw outcome: `Ok(None)` when
+    /// the sender-side rate limiter dropped the message.
+    pub(crate) async fn try_send(&self, text: &str) -> anyhow::Result<Option<MessageId>> {
+        self.send_to(None, text).await
     }
 
     /// Send a message addressed to `target`; returns the new id.
     pub(crate) async fn reply(&self, target: &str, text: &str) -> MessageId {
-        self.session
-            .send(
-                MessageBody::new(text).expect("valid body"),
-                Some(Nickname::new(target).expect("valid target nickname")),
-            )
+        self.send_to(Some(target), text)
             .await
             .expect("in-process reply failed")
+            .expect("reply within rate limit")
+    }
+
+    /// Shared send path for [`Self::try_send`] and [`Self::reply`]:
+    /// `target` `None` is an open broadcast, `Some` a directed reply.
+    async fn send_to(&self, target: Option<&str>, text: &str) -> anyhow::Result<Option<MessageId>> {
+        let reply = target.map(|nick| Nickname::new(nick).expect("valid target nickname"));
+        self.session
+            .send(MessageBody::new(text).expect("valid body"), reply)
+            .await
     }
 
     /// Clean shutdown (broadcasts `Left`).

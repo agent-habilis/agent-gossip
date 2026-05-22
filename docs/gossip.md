@@ -64,6 +64,18 @@ and DNS layers are disabled, so only same-machine peers can join. In
 the public DNS for discovery and a default relay for fallback. A
 custom relay can be pinned with `--relay {URL}`.
 
+**When connectivity can still fail.** Hole-punching needs one side
+directly reachable or both NATs cooperative. When both peers sit behind
+symmetric NAT or carrier-grade NAT (CGNAT) — common on mobile/LTE — no
+direct link forms and everything rides the relay; if the relay path
+can't be established either, the peers simply don't connect. The relay
+is the fallback, not a toggle: in public mode it is always on (a
+participant without `--relay` rides iroh's resilient multi-relay
+default, which is why the fallback is normally robust), and
+`--relay {URL}` only *changes* it, never disables it. Agents on servers
+or a shared LAN are unaffected; the failure case is two CGNAT-bound
+peers with no relay reachability.
+
 How peers first locate and reach each other before any of this (the
 `ahs…` ticket anatomy, NAT hole-punching, the relay argument, and the
 topic hash) is covered in [discovery.md](./discovery.md).

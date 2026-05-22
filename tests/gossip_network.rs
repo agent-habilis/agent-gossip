@@ -11,6 +11,7 @@ use std::fs::{self, File};
 use std::process::Stdio;
 use std::time::{Duration, Instant};
 
+use ahs_shared::RATE_LIMIT_PER_MIN;
 use common::{
     CONNECT_TIMEOUT, InProcNode, MSG_TIMEOUT, Msg, Node, POLL, TMP_DIR, cli_message,
     cli_message_raw, cli_poll, tmp_log, trace_log, wait_total,
@@ -35,6 +36,32 @@ async fn test_two_node_message_delivery() {
     let received = joiner.inbound();
     assert_eq!(received.len(), 1, "expected exactly 1 delivery");
     assert_eq!(received[0].body.as_str(), "hello from the network");
+}
+
+/// Sender-side rate limiting, symmetric with the receiver: a node may
+/// emit up to its per-author quota, then its own sends are dropped
+/// (`Ok(None)`) rather than broadcast. Mirrors the receiver-side
+/// `rate_limiter_drops_excess_messages_from_flooding_peer`. One node is
+/// enough — the limiter is checked before any mesh interaction.
+#[tokio::test]
+async fn sender_rate_limits_own_excess_messages() {
+    let node = InProcNode::create("net-send-rl").await;
+
+    // The token bucket's depth equals the per-minute quota, so exactly
+    // that many back-to-back sends are admitted.
+    for index in 0..RATE_LIMIT_PER_MIN {
+        let outcome = node.try_send(&format!("msg {index}")).await;
+        assert!(
+            matches!(outcome, Ok(Some(_))),
+            "send {index} within quota should be admitted, got {outcome:?}"
+        );
+    }
+    // The next own send is rate-limited: a deliberate drop, not an error.
+    let dropped = node.try_send("one too many").await;
+    assert!(
+        matches!(dropped, Ok(None)),
+        "send past the quota should be dropped as Ok(None), got {dropped:?}"
+    );
 }
 
 /// Three-node full-mesh: a broadcast should reach at least 2 of the 3 nodes
