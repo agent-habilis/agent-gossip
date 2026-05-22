@@ -30,9 +30,9 @@ use crate::util::tuning::RECLAIM_WINDOW_SECS;
 /// one is in use. Point-in-time, not a watcher — iroh starts a fresh
 /// link relayed and upgrades to direct after hole-punching, so a label
 /// taken right at `NeighborUp` skews toward `relay`; the periodic
-/// census reading is the representative one. Diagnostics only — the
-/// most-requested observability gap across iroh apps (sendme #67/#112,
-/// psyche #586). See docs/iroh-ecosystem-research.md.
+/// census reading is the representative one. Diagnostics only; other
+/// iroh apps wanted this too (sendme #67/#112, psyche #586). See
+/// docs/iroh-ecosystem-research.md.
 pub(crate) async fn conn_path(
     endpoint: &Endpoint,
     node_id: EndpointId,
@@ -416,6 +416,11 @@ async fn handle_peer_info(
         && state.linked_endpoints.insert(peer_id)
     {
         let _ = add_peer_addr(ctx.endpoint, peer_addr);
+        // Remember this peer for the rendezvous-independent re-bridge: it
+        // survives a later `NeighborDown`, and iroh keeps the address we
+        // just added, so the healer can re-dial it directly if the
+        // rendezvous/relay goes unreachable (see `heal::rebridge_known`).
+        state.remember_endpoint(peer_id);
         let _ = ctx.sender.join_peers(vec![peer_id]).await;
         let _ = ctx.sender.broadcast(content).await;
         state.last_sent_at = Instant::now();

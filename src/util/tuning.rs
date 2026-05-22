@@ -16,6 +16,15 @@ pub(crate) const SEEN_IDS_CAP: usize = 512;
 /// spams while offline can't grow memory unbounded.
 pub(crate) const PENDING_OUTBOUND_CAP: usize = 64;
 
+/// How many distinct peer endpoint ids we remember for the
+/// rendezvous-independent re-bridge (`gossip::heal::rebridge_known`).
+/// Survives `NeighborDown` (unlike `linked_endpoints`) so a node that
+/// lost every link can still re-dial peers directly when the
+/// rendezvous/relay is the bottleneck. Bounded FIFO (oldest evicted)
+/// so long-lived swarms with churn can't grow it unbounded; sized well
+/// above a typical swarm so recent peers are always retained.
+pub(crate) const KNOWN_ENDPOINTS_CAP: usize = 64;
+
 /// Anti-entropy: how often a member broadcasts its digest (recent
 /// message ids it holds) so peers can re-send anything it missed
 /// while partitioned/asleep. Short enough that a returning peer

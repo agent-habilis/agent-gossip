@@ -957,6 +957,15 @@ fn test_resume_triggers_hard_rebootstrap() {
         "woken peer never took the hard re-bootstrap path\nsink tail:\n{}",
         trace.lines().rev().take(30).collect::<Vec<_>>().join("\n"),
     );
+    // The hard edge also fires the rendezvous-independent re-bridge: the
+    // sleeper linked the creator before freezing, so on resume it
+    // re-dials it directly rather than relying solely on a rendezvous
+    // graft that a stale connection (iroh-gossip#10) could stall.
+    assert!(
+        trace.contains("rendezvous-independent re-bridge"),
+        "woken peer never re-dialed known peers on the hard edge\nsink tail:\n{}",
+        trace.lines().rev().take(30).collect::<Vec<_>>().join("\n"),
+    );
     let _ = cli_message(&swarm, &creator.nickname, "rb-post");
     assert_received(
         &sleeper,

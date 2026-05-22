@@ -164,8 +164,16 @@ PeerInfo{status,last_seen,nickname}>` driven by events:
 1. **Event-driven heal on connectivity-recovery** (p2panda) — wire our
    sleep/resume edge detector into an immediate heal kick. Most direct fix for
    post-sleep mesh collapse without touching the destabilizing `HEAL_INTERVAL`.
-2. **Active partition detection via message-hash overlap** (dtt) — detect splits
-   and re-bridge rather than waiting for anti-entropy to converge.
+2. ✅ **Partition re-bridge** (dtt). *Done — but reframed on investigation.* Our
+   `tick_heal` already re-grafts the rendezvous unconditionally every 15s, so we
+   never had dtt's "no recovery" gap (dtt needs DHT overlap-detection precisely
+   because it has no always-on rendezvous). The real residual gap was
+   *rendezvous-dependence*: we dropped peer ids on `NeighborDown` and only ever
+   re-grafted the rendezvous, so a flapping relay could strand halves that still
+   held each other's direct addresses. Fix: a bounded `known_endpoints` cache
+   (survives `NeighborDown`) + `heal::rebridge_known`, re-dialing remembered
+   peers directly on the isolation signal (hard/resume edge or zero live links).
+   No DHT, works in both modes. Verified via the resume reliability test.
 3. **Cap join fanout on discovery** (iroh-gossip-discovery #1) — never
    `join_peers` every node seen; it collapses gossip into all-to-all.
 4. **Per-minute DHT publish cap** (dtt) — throttle rendezvous/beacon DHT writes

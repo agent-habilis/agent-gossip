@@ -8,7 +8,9 @@ use super::message_log::MessageLog;
 use super::rate_limit::SwarmRateLimiter;
 use crate::protocol::{MessageId, Nickname};
 use crate::util::state_file::StateFile;
-use crate::util::tuning::{DEFAULT_MESSAGE_LOG_SIZE, PENDING_OUTBOUND_CAP, SEEN_IDS_CAP};
+use crate::util::tuning::{
+    DEFAULT_MESSAGE_LOG_SIZE, KNOWN_ENDPOINTS_CAP, PENDING_OUTBOUND_CAP, SEEN_IDS_CAP,
+};
 
 /// All mutable state owned by the event loop.
 ///
@@ -28,6 +30,15 @@ pub(crate) struct EventLoopState {
     /// `participants` — links are asymmetric and node-id keyed; the
     /// roster is symmetric and nickname keyed.
     pub linked_endpoints: HashSet<EndpointId>,
+    /// Re-bridge memory: every peer `EndpointId` we've ever linked to,
+    /// kept *across* `NeighborDown` (unlike `linked_endpoints`). When a
+    /// node loses all links because the rendezvous/relay is unreachable,
+    /// the healer re-dials these directly — iroh still holds their cached
+    /// addresses — so the re-bridge no longer depends on the rendezvous.
+    /// Bounded FIFO via `remember_endpoint`; `known_order` is its
+    /// eviction queue.
+    pub known_endpoints: HashSet<EndpointId>,
+    pub known_order: VecDeque<EndpointId>,
     /// Membership layer: the participant roster. Nickname-keyed set of
     /// other participants, feeding the state file's `participant_count`
     /// (`participants.len() + 1`). Excludes self. Driven by
@@ -108,6 +119,8 @@ impl EventLoopState {
     pub(crate) fn new(state_file: Option<StateFile>, now: Instant) -> Self {
         Self {
             linked_endpoints: HashSet::new(),
+            known_endpoints: HashSet::new(),
+            known_order: VecDeque::new(),
             participants: HashSet::new(),
             last_seen: HashMap::new(),
             quiet: HashSet::new(),
@@ -155,6 +168,22 @@ impl EventLoopState {
         evicted
     }
 
+    /// Remember a peer endpoint for the rendezvous-independent re-bridge.
+    /// Bounded FIFO: evicts the oldest id past `KNOWN_ENDPOINTS_CAP`. A
+    /// re-seen id keeps its original position (no recency bump) — recency
+    /// isn't load-bearing here, only "have we ever linked this peer".
+    pub(crate) fn remember_endpoint(&mut self, id: EndpointId) {
+        if !self.known_endpoints.insert(id) {
+            return;
+        }
+        self.known_order.push_back(id);
+        if self.known_order.len() > KNOWN_ENDPOINTS_CAP
+            && let Some(oldest) = self.known_order.pop_front()
+        {
+            self.known_endpoints.remove(&oldest);
+        }
+    }
+
     /// Record `id` as seen and report whether it was *already* seen.
     /// `true` => this is a duplicate delivery the caller must drop.
     /// Bounded FIFO: evicts the oldest id past `SEEN_IDS_CAP`.
@@ -200,6 +229,40 @@ mod tests {
             Some(b"newest".as_ref()),
             "newest is at the back"
         );
+    }
+
+    /// A valid (curve-point) `EndpointId` derived deterministically from
+    /// a seed — `EndpointId::from_bytes` rejects arbitrary bytes.
+    fn endpoint_id(seed: u8) -> EndpointId {
+        iroh::SecretKey::from_bytes(&[seed; 32]).public()
+    }
+
+    #[test]
+    fn remember_endpoint_is_bounded_fifo() {
+        let mut state = fresh_state();
+        let first = endpoint_id(0);
+        state.remember_endpoint(first);
+        // Fill past the cap with distinct ids; `first` is oldest and is
+        // evicted, but the set stays capped.
+        for index in 0..KNOWN_ENDPOINTS_CAP {
+            state.remember_endpoint(endpoint_id(u8::try_from(index + 1).unwrap()));
+        }
+        assert!(
+            !state.known_endpoints.contains(&first),
+            "oldest endpoint evicted past the cap"
+        );
+        assert!(state.known_endpoints.len() <= KNOWN_ENDPOINTS_CAP);
+        assert_eq!(state.known_order.len(), state.known_endpoints.len());
+    }
+
+    #[test]
+    fn remember_endpoint_dedupes() {
+        let mut state = fresh_state();
+        let id = endpoint_id(7);
+        state.remember_endpoint(id);
+        state.remember_endpoint(id);
+        assert_eq!(state.known_endpoints.len(), 1, "re-membering is a no-op");
+        assert_eq!(state.known_order.len(), 1);
     }
 
     #[test]

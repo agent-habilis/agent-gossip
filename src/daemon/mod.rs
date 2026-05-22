@@ -442,7 +442,8 @@ async fn run_heal(
     params: &beacon::RendezvousParams,
 ) {
     let threshold = Duration::from_secs(heal_stall_threshold_secs());
-    if is_resume(mono_gap, threshold) || is_wall_resume(wall_gap, mono_gap, threshold) {
+    let hard_edge = is_resume(mono_gap, threshold) || is_wall_resume(wall_gap, mono_gap, threshold);
+    if hard_edge {
         tracing::warn!(
             target: "agent_habilis_swarm::gossip",
             mono_gap_ms = u64::try_from(mono_gap.as_millis()).unwrap_or(u64::MAX),
@@ -454,6 +455,17 @@ async fn run_heal(
         gossip::heal::tick_heal_hard(endpoint, params.id, sender).await;
     } else {
         gossip::heal::tick_heal(endpoint, params.id, sender).await;
+    }
+    // Rendezvous-independent re-bridge. Fires on the hard (resume) edge —
+    // where a reused endpoint id can be stuck behind a stale *accepted*
+    // rendezvous connection (iroh-gossip#10), so the rendezvous re-graft
+    // alone may not re-admit us — or on steady-state loss of every live
+    // link (relay flap). Re-dials remembered peers directly. Skipped when
+    // healthy (`hard_edge` false and links remain) and for a lone node
+    // (nothing remembered), so it adds no churn. `linked_endpoints` is
+    // not cleared on the resume edge, hence the explicit `hard_edge` arm.
+    if (hard_edge || state.linked_endpoints.is_empty()) && !state.known_endpoints.is_empty() {
+        gossip::heal::rebridge_known(sender, &state.known_endpoints).await;
     }
 }
 

@@ -1,5 +1,6 @@
 //! Gossip healer — the sole reconnect primitive for the gossip mesh.
 
+use std::collections::HashSet;
 use std::time::Duration;
 
 use iroh::{Endpoint, EndpointId};
@@ -60,4 +61,28 @@ pub(crate) async fn tick_heal_hard(
     sender: &GossipSender,
 ) {
     heal(endpoint, rendezvous_id, sender, HEAL_HARD_PROBE_SECS).await;
+}
+
+/// Rendezvous-independent re-bridge: re-graft every peer we've ever
+/// linked to ([`EventLoopState::known_endpoints`]). [`tick_heal`] only
+/// re-grafts the rendezvous, so a node that lost all links because the
+/// rendezvous/relay went unreachable stays stranded even when it still
+/// holds peers' direct (hole-punched) addresses. The caller fires this
+/// only on the isolation signal (zero live links but known peers), so
+/// it adds no steady-state churn; `join_peers` is a cheap enqueue and
+/// iroh reuses the addresses cached when each peer was first linked.
+///
+/// [`EventLoopState::known_endpoints`]: crate::daemon::state::EventLoopState::known_endpoints
+pub(crate) async fn rebridge_known(sender: &GossipSender, known: &HashSet<EndpointId>) {
+    let peers: Vec<EndpointId> = known.iter().copied().collect();
+    // `info`, not `debug`: this fires only on the isolation signal (rare,
+    // event-driven), and a re-bridge attempt is part of the always-on
+    // connectivity story we keep at `info` for post-incident diagnosis —
+    // same rationale as the hard-edge `warn` and beacon-migration logs.
+    tracing::info!(
+        target: "agent_habilis_swarm::gossip",
+        count = peers.len(),
+        "heal: rendezvous-independent re-bridge (re-dialing known peers)"
+    );
+    let _ = sender.join_peers(peers).await;
 }
