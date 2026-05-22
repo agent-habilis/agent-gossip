@@ -56,6 +56,7 @@ dependencies = [
 name = "agent-habilis-swarm"
 version = "0.2.0"
 dependencies = [
+ "ahs-shared",
  "anyhow",
  "bs58",
  "bytes",
@@ -90,6 +91,10 @@ checksum = "ddd31a130427c27518df266943a5308ed92d4b226cc639f5a8f1002816174301"
 dependencies = [
  "memchr",
 ]
+
+[[package]]
+name = "ahs-shared"
+version = "0.1.0"
 
 [[package]]
 name = "allocator-api2"
@@ -5062,6 +5067,7 @@ checksum = "32ac00cd3f8ec9c1d33fb3e7958a82df6989c42d747bd326c822b1d625283547"
 name = "xtask"
 version = "0.1.0"
 dependencies = [
+ "ahs-shared",
  "clap",
  "xshell",
 ]

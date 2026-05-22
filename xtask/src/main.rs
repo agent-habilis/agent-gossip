@@ -51,6 +51,8 @@ enum Task {
     Lint,
     /// Remove build artifacts.
     Clean,
+    /// Print the logs directory (creating it if missing).
+    Logs,
     /// Run property-based tests.
     Proptest,
     /// Install the pi extension.
@@ -84,6 +86,7 @@ fn main() -> ExitCode {
         Task::Fmt => run_fmt(&sh),
         Task::Lint => run_lint(&sh),
         Task::Clean => run_clean(&sh),
+        Task::Logs => run_logs(),
         Task::Proptest => run_proptest(&sh),
         Task::PiLink => link_pi(&sh),
         Task::PiUnlink => unlink_pi(&sh),
@@ -171,6 +174,15 @@ fn run_clean(sh: &Shell) -> TaskOutcome {
     cmd!(sh, "cargo clean").quiet().run()?;
     // llvm-cov uses a separate target dir
     let _ = sh.remove_path("target/llvm-cov-target");
+    Ok(())
+}
+
+fn run_logs() -> TaskOutcome {
+    let dir = ahs_shared::log_dir();
+    // Ensure it exists so `cd`/`tail` never fail on a fresh machine.
+    std::fs::create_dir_all(&dir)?;
+    // stdout, the sole output, so `$(cargo xtask logs)` captures just the path.
+    println!("{dir}");
     Ok(())
 }
 

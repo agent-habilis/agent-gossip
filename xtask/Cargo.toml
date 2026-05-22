@@ -11,6 +11,9 @@ publish = false
 # library cargo compiles automatically, not a binary anyone installs.
 clap = { version = "4", features = ["derive"] }
 xshell = "0.2"
+# Dependency-free workspace crate: the single source of truth for paths
+# like the logs dir, so xtask reads the same value the daemon writes to.
+ahs-shared = { path = "../shared" }
 
 [lints]
 workspace = true

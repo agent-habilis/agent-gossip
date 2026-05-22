@@ -2,9 +2,6 @@
 //! policy but never the on-the-wire format — the size cap belongs in
 //! `protocol::message` (`MAX_MESSAGE_SIZE`).
 
-/// Runtime directory for sockets and other ephemeral files.
-pub(crate) const TMP_DIR: &str = "/tmp/agent-habilis-swarm";
-
 /// Default number of messages stored for the poll command
 pub(crate) const DEFAULT_MESSAGE_LOG_SIZE: usize = 200;
 
@@ -101,12 +98,6 @@ fn env_u64(name: &str, default: u64) -> u64 {
         .ok()
         .and_then(|raw| raw.parse().ok())
         .unwrap_or(default)
-}
-
-/// Directory for per-member log files. `AHS_LOG_DIR` overrides
-/// (the test suite redirects here); default `{TMP_DIR}/logs`.
-pub(crate) fn log_dir() -> String {
-    std::env::var("AHS_LOG_DIR").unwrap_or_else(|_| format!("{TMP_DIR}/logs"))
 }
 
 /// How often the daemon re-asserts `participant_count` +

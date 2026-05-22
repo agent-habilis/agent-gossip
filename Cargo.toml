@@ -1,5 +1,5 @@
 [workspace]
-members = ["xtask"]
+members = ["shared", "xtask"]
 
 # Shared package fields. Each crate opts in with `edition.workspace = true`
 # / `rust-version.workspace = true` so the workspace stays in lockstep
@@ -95,6 +95,7 @@ name = "ahs"
 path = "src/main.rs"
 
 [dependencies]
+ahs-shared = { path = "shared" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "io-util", "fs", "signal", "net"] }
 clap = { version = "4", features = ["derive"] }
 iroh = { version = "0.98", features = ["tls-ring", "address-lookup-mdns", "address-lookup-pkarr-dht"] }

@@ -7,8 +7,9 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::mpsc;
 
+use ahs_shared::{TMP_DIR, log_dir};
+
 use crate::protocol::{MessageBody, MessageId, Nickname, SwarmId};
-use crate::util::tuning::{TMP_DIR, log_dir};
 
 fn swarm_prefix(swarm: &SwarmId) -> String {
     swarm.as_str().chars().take(16).collect()
