@@ -50,7 +50,8 @@ async fn broadcast_peer_info(
         &our_addr,
     ))
     .expect("endpoint_addr_to_json produces a Value that always serializes");
-    let addr_body = MessageBody::new(addr_data).expect("endpoint address JSON is always ASCII");
+    let addr_body =
+        MessageBody::new(addr_data).expect("endpoint address JSON has no control characters");
     broadcast_msg(sender, &Message::new_peer_info(swarm, author, addr_body)).await;
 }
 
@@ -83,9 +84,12 @@ pub(crate) async fn handle_stdin_line(
         return;
     }
     let msg = if let Some((nick, body)) = parse_reply_command(text) {
-        let Ok(body) = MessageBody::new(body) else {
-            out.error("message body must be ASCII");
-            return;
+        let body = match MessageBody::new(body) {
+            Ok(body) => body,
+            Err(error) => {
+                out.error(&error.to_string());
+                return;
+            }
         };
         let Ok(target) = Nickname::new(nick) else {
             out.error(&format!("invalid nickname '{nick}'"));
@@ -93,9 +97,12 @@ pub(crate) async fn handle_stdin_line(
         };
         Message::new_reply(swarm, author, target, body)
     } else {
-        let Ok(body) = MessageBody::new(text) else {
-            out.error("message body must be ASCII");
-            return;
+        let body = match MessageBody::new(text) {
+            Ok(body) => body,
+            Err(error) => {
+                out.error(&error.to_string());
+                return;
+            }
         };
         Message::new_message(swarm, author, body)
     };
@@ -411,7 +418,8 @@ fn is_loggable(kind: &MessageKind) -> bool {
 /// Parse `/reply <nickname> body` from interactive stdin input.
 /// Returns `Some((nickname, body))` if the input matches, `None`
 /// otherwise. Lives here because the interactive stdin handler
-/// (`handle_stdin_line`) is its only consumer.
+/// (`handle_stdin_line`) is its only consumer. `<`/`>` are reserved
+/// (not valid in a nickname), so the bracket delimiters are unambiguous.
 fn parse_reply_command(input: &str) -> Option<(&str, &str)> {
     let rest = input.strip_prefix("/reply ")?;
     let rest = rest.strip_prefix('<')?;

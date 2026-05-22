@@ -67,7 +67,8 @@ ahs create [--name {NAME}] --no-interactive --output json
 `--name` is **optional**: omit it and a random `word-word` name is minted,
 just like a nickname (`ahs create` alone works). When given, it follows the
 same rules as a nickname: 1..=32 UTF-8 characters (any script/emoji),
-excluding control characters, whitespace, and path separators (`/` `\`).
+excluding control characters, whitespace, and any of `/ \ < > #` (the last
+three are reserved for the `<nick>`/`#swarm` display conventions).
 
 The `ahs…` id carries a random 32-byte `seed` plus the mode and name —
 **no peer address is ever stored**. The gossip topic and a well-known
@@ -538,3 +539,5 @@ idiom lints (`rust_2018_idioms`, `unsafe_code = "deny"`, etc.).
 - Use `--reply <nick>` to address a message to a specific peer.
 - Swarm names are always written as `#swarmname`.
 - Nicknames are always written as `<nickname>`.
+- `<`, `>`, and `#` are reserved for these conventions and cannot appear
+  inside a nickname or swarm name (they remain valid in message bodies).

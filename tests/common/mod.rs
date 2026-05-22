@@ -239,7 +239,7 @@ impl InProcNode {
     /// Broadcast a plain message; returns the new message id.
     pub(crate) async fn send(&self, text: &str) -> MessageId {
         self.session
-            .send(MessageBody::new(text).expect("ascii body"), None)
+            .send(MessageBody::new(text).expect("valid body"), None)
             .await
             .expect("in-process send failed")
     }
@@ -248,7 +248,7 @@ impl InProcNode {
     pub(crate) async fn reply(&self, target: &str, text: &str) -> MessageId {
         self.session
             .send(
-                MessageBody::new(text).expect("ascii body"),
+                MessageBody::new(text).expect("valid body"),
                 Some(Nickname::new(target).expect("valid target nickname")),
             )
             .await

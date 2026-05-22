@@ -8,10 +8,9 @@ use serde::{Deserialize, Serialize};
 ///
 /// 1..=32 Unicode scalar values from any script (letters, marks,
 /// numbers, symbols, emoji); see [`super::ident`] for the exact
-/// exclusions (control, whitespace, path separators, bidi formatting).
+/// exclusions (control, whitespace, path separators, bidi formatting,
+/// and `<` `>` `#` reserved for the `<nick>`/`#swarm` display forms).
 /// The wordlist generator (`Nickname::random`) emits `word-word` pairs.
-/// Names may contain `<`/`>`, so the angle-bracket display convention
-/// (e.g. `<swift-cedar>`) is cosmetic, not a parse boundary.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct Nickname(String);
@@ -28,14 +27,15 @@ impl fmt::Display for NicknameError {
             NicknameError::Length(len) => {
                 write!(
                     formatter,
-                    "nickname must be 1..={} characters, got {len}",
+                    "nickname must be {}..={} characters, got {len}",
+                    super::ident::MIN_CHARS,
                     super::ident::MAX_CHARS
                 )
             }
             NicknameError::Charset(value) => {
                 write!(
                     formatter,
-                    "nickname must not contain control characters, whitespace, path separators (/ \\), or bidirectional formatting characters, got {value:?}"
+                    "nickname must not contain control characters, whitespace, bidirectional formatting characters, or any of / \\ < > #, got {value:?}"
                 )
             }
         }
@@ -54,7 +54,7 @@ impl Nickname {
     pub fn new(value: impl Into<String>) -> Result<Self, NicknameError> {
         let value = value.into();
         let count = value.chars().count();
-        if count == 0 || count > super::ident::MAX_CHARS {
+        if !(super::ident::MIN_CHARS..=super::ident::MAX_CHARS).contains(&count) {
             return Err(NicknameError::Length(count));
         }
         if value.chars().any(super::ident::is_forbidden) {
@@ -163,6 +163,9 @@ mod tests {
         assert!(Nickname::new("alice\u{202E}bob").is_err()); // RLO (bidi override)
         assert!(Nickname::new("alice\u{200F}bob").is_err()); // RLM (bidi mark)
         assert!(Nickname::new("alice\u{61C}bob").is_err()); // ALM (Arabic letter mark)
+        assert!(Nickname::new("a<b").is_err()); // reserved for <nick>
+        assert!(Nickname::new("a>b").is_err()); // reserved for <nick>
+        assert!(Nickname::new("a#b").is_err()); // reserved for #swarm
     }
 
     #[test]

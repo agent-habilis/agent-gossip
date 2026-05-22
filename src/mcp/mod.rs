@@ -77,8 +77,8 @@ impl AgentSwarmServer {
 struct CreateSwarmArgs {
     /// Human-readable swarm name. Required. 1..=32 UTF-8 characters
     /// (any script/emoji), excluding control characters, whitespace, and
-    /// path separators (/ \). Bound cryptographically into the swarm
-    /// identity so joiners decode the same name and forgery is infeasible.
+    /// any of / \ < > #. Bound cryptographically into the swarm identity
+    /// so joiners decode the same name and forgery is infeasible.
     name: String,
     /// Network mode. "private" keeps the swarm loopback-only (same
     /// machine). "public" uses iroh's DNS + N0 relay to reach peers

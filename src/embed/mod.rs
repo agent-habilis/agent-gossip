@@ -54,7 +54,7 @@ impl JoinConfig {
 #[derive(Debug, Clone)]
 pub struct CreateConfig {
     /// 1..=32 UTF-8 characters (any script/emoji), excluding control
-    /// characters, whitespace, and path separators (`/` `\`).
+    /// characters, whitespace, and any of `/ \ < > #`.
     pub name: String,
     /// Local nickname. `None` mints a random `word-word` one.
     pub nickname: Option<Nickname>,

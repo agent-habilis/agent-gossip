@@ -185,9 +185,10 @@ const NAME_MAX_BYTES: usize = super::ident::MAX_CHARS * 4;
 ///
 /// Same rules as `Nickname`: 1..=32 "safe UTF-8" scalar values from any
 /// script; see [`super::ident`] for the exact exclusions (control,
-/// whitespace, path separators, bidi formatting). The newtype is the
-/// single validation point — every construction path goes through
-/// `new`.
+/// whitespace, path separators, bidi formatting, and `<` `>` `#`
+/// reserved for the `<nick>`/`#swarm` display conventions). The newtype
+/// is the single validation point — every construction path goes
+/// through `new`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct SwarmName(String);
 
@@ -203,14 +204,15 @@ impl fmt::Display for NameError {
             NameError::Length(len) => {
                 write!(
                     formatter,
-                    "swarm name must be 1..={} characters, got {len}",
+                    "swarm name must be {}..={} characters, got {len}",
+                    super::ident::MIN_CHARS,
                     super::ident::MAX_CHARS
                 )
             }
             NameError::Charset(value) => {
                 write!(
                     formatter,
-                    "swarm name must not contain control characters, whitespace, path separators (/ \\), or bidirectional formatting characters, got {value:?}"
+                    "swarm name must not contain control characters, whitespace, bidirectional formatting characters, or any of / \\ < > #, got {value:?}"
                 )
             }
         }
@@ -223,7 +225,7 @@ impl SwarmName {
     pub(crate) fn new(value: impl Into<String>) -> std::result::Result<Self, NameError> {
         let value = value.into();
         let count = value.chars().count();
-        if count == 0 || count > super::ident::MAX_CHARS {
+        if !(super::ident::MIN_CHARS..=super::ident::MAX_CHARS).contains(&count) {
             return Err(NameError::Length(count));
         }
         if value.chars().any(super::ident::is_forbidden) {
@@ -775,6 +777,9 @@ mod swarm_tests {
         assert!(SwarmName::new("nl\nno").is_err());
         assert!(SwarmName::new("nul\0no").is_err());
         assert!(SwarmName::new("rlo\u{202E}no").is_err()); // bidi override
+        assert!(SwarmName::new("a<b").is_err()); // reserved for <nick>
+        assert!(SwarmName::new("a>b").is_err()); // reserved for <nick>
+        assert!(SwarmName::new("a#b").is_err()); // reserved for #swarm
     }
 
     #[test]

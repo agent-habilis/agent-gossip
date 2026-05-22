@@ -104,7 +104,8 @@ pub(crate) struct CreateOpts {
     /// Human-readable swarm name. Optional — a random word-word name is
     /// minted if omitted. Same rules as a nickname: 1..=32 UTF-8
     /// characters (any script/emoji), excluding control characters,
-    /// whitespace, and path separators (/ \). Bound cryptographically
+    /// whitespace, and any of / \ < > # (the last three are reserved for
+    /// the <nick>/#swarm display conventions). Bound cryptographically
     /// into the swarm identity so joiners who decode the ID see the same
     /// name and a forged ID with a fake name fails to find peers.
     #[arg(long)]
@@ -119,7 +120,7 @@ pub(crate) struct CreateOpts {
 
     /// Optional nickname (random word-word if not provided). A custom
     /// nickname is 1..=32 UTF-8 characters, excluding control chars,
-    /// whitespace, and path separators. Symmetric with `ahs join
+    /// whitespace, and any of / \ < > #. Symmetric with `ahs join
     /// --nickname`.
     #[arg(long)]
     pub nickname: Option<Nickname>,
@@ -232,7 +233,7 @@ pub(crate) enum Commands {
 
         /// Optional nickname (random word-word if not provided). A custom
         /// nickname is 1..=32 UTF-8 characters, excluding control chars,
-        /// whitespace, and path separators.
+        /// whitespace, and any of / \ < > #.
         #[arg(long)]
         nickname: Option<Nickname>,
 
