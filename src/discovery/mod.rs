@@ -29,6 +29,13 @@ use crate::protocol::swarm::{DiscoveryOpts, SwarmMode};
 /// on different iroh versions still pin the *same* relay. `--relay`
 /// overrides it; if N0 ever retires this host the DHT address-lookup
 /// is the operator-free eternal backstop (slower, still resolves).
+///
+/// Relay infra is versioned and not cross-compatible (sendme #121): an
+/// iroh bump can move `defaults::prod` off this host, silently breaking
+/// the relay-direct bootstrap for members on a different iroh version.
+/// [`tests::pinned_relay_matches_iroh_prod_na_east`] is the tripwire —
+/// it fails on such a move so we review (does this host still operate?)
+/// before shipping the bump. See docs/iroh-ecosystem-research.md.
 const RENDEZVOUS_RELAY: &str = "https://use1-1.relay.n0.iroh-canary.iroh.link./";
 
 /// Parsed once; `RelayUrl` clones are `Arc`-backed (cheap).
@@ -225,7 +232,30 @@ pub(crate) fn build_swarm(endpoint: Endpoint) -> (Gossip, Router) {
 
 #[cfg(test)]
 mod tests {
-    use super::{DiscoveryOpts, SwarmMode, build_participant_endpoint};
+    use super::{
+        DiscoveryOpts, RENDEZVOUS_RELAY_URL, SwarmMode, build_participant_endpoint,
+    };
+
+    /// Tripwire: our pinned rendezvous relay must stay equal to iroh's
+    /// `defaults::prod` NA-east relay host. Relay infra is versioned and
+    /// not cross-compatible (sendme #121); if an iroh bump moves the prod
+    /// relay off this host, the relay-direct bootstrap silently breaks for
+    /// members on a different iroh version. Failing here forces a manual
+    /// review (is this host still served?) before the bump ships — we may
+    /// then keep the old host or follow iroh's new one, deliberately.
+    #[test]
+    fn pinned_relay_matches_iroh_prod_na_east() {
+        let pinned = RENDEZVOUS_RELAY_URL
+            .host_str()
+            .expect("pinned relay URL has a host")
+            .trim_end_matches('.');
+        let iroh_prod = iroh::defaults::prod::NA_EAST_RELAY_HOSTNAME.trim_end_matches('.');
+        assert_eq!(
+            pinned, iroh_prod,
+            "RENDEZVOUS_RELAY drifted from iroh's prod NA-east relay \
+             (sendme #121): review docs/iroh-ecosystem-research.md before bumping iroh"
+        );
+    }
 
     // Binds the `Minimal`-based public branch (the pinned relay, no
     // lookup wired) and the private all-off branch. mDNS multicast /

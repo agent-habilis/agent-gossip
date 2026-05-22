@@ -12,7 +12,8 @@ pub(crate) mod heal;
 use std::time::{Duration, Instant};
 
 use bytes::Bytes;
-use iroh::Endpoint;
+use iroh::endpoint::TransportAddrUsage;
+use iroh::{Endpoint, EndpointId, RelayUrl, TransportAddr};
 use iroh_gossip::api::{ApiError, Event, GossipSender};
 
 use crate::daemon::SendRequest;
@@ -23,6 +24,46 @@ use crate::lifecycle;
 use crate::output;
 use crate::protocol::{Message, MessageBody, MessageId, MessageKind, Nickname, SwarmId};
 use crate::util::tuning::RECLAIM_WINDOW_SECS;
+
+/// Snapshot the active transport path to `node_id`: a short label
+/// (`direct` / `relay` / `mixed` / `unknown`) plus the relay URL when
+/// one is in use. Point-in-time, not a watcher — iroh starts a fresh
+/// link relayed and upgrades to direct after hole-punching, so a label
+/// taken right at `NeighborUp` skews toward `relay`; the periodic
+/// census reading is the representative one. Diagnostics only — the
+/// most-requested observability gap across iroh apps (sendme #67/#112,
+/// psyche #586). See docs/iroh-ecosystem-research.md.
+pub(crate) async fn conn_path(
+    endpoint: &Endpoint,
+    node_id: EndpointId,
+) -> (&'static str, Option<RelayUrl>) {
+    let Some(info) = endpoint.remote_info(node_id).await else {
+        return ("unknown", None);
+    };
+    let mut has_direct = false;
+    let mut has_relay = false;
+    let mut relay_url = None;
+    for addr in info.addrs() {
+        if !matches!(addr.usage(), TransportAddrUsage::Active) {
+            continue;
+        }
+        match addr.addr() {
+            TransportAddr::Relay(url) => {
+                has_relay = true;
+                relay_url = Some(url.clone());
+            }
+            TransportAddr::Ip(_) => has_direct = true,
+            _ => {}
+        }
+    }
+    let label = match (has_direct, has_relay) {
+        (true, true) => "mixed",
+        (true, false) => "direct",
+        (false, true) => "relay",
+        (false, false) => "unknown",
+    };
+    (label, relay_url)
+}
 
 /// Fire-and-forget gossip broadcast. Serialize errors are swallowed:
 /// this helper is for presence / `PeerInfo` announcements where a
@@ -185,9 +226,12 @@ pub(crate) async fn handle_gossip_event(
             handle_gossip_received(received.content, state, ctx).await;
         }
         Some(Ok(Event::NeighborUp(node_id))) => {
+            let (conn, relay) = conn_path(ctx.endpoint, node_id).await;
             tracing::info!(
                 endpoint_id = %node_id,
                 is_rendezvous = node_id == ctx.rendezvous_id,
+                conn,
+                relay = relay.as_ref().map_or("-", |url| url.as_str()),
                 "gossip neighbor up"
             );
             // Announce on the first link, not at startup: a joiner's

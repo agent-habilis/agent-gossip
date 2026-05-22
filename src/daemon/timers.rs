@@ -5,6 +5,8 @@
 
 use std::time::{Duration, Instant};
 
+use iroh::Endpoint;
+
 use super::state::EventLoopState;
 
 /// Rate-limiter pruning: runs every `PRUNE_INTERVAL_SECS` (see `run`).
@@ -18,11 +20,17 @@ pub(crate) fn tick_prune(state: &mut EventLoopState) {
 ///
 /// Also logs a neighbor census: `meshed` yet zero peer links while the
 /// roster is non-empty is the silent-partition signature, surfaced at
-/// `warn` for post-freeze diagnosis.
-pub(crate) fn tick_state_refresh(state: &EventLoopState) {
+/// `warn` for post-freeze diagnosis. At `debug` it also classifies each
+/// live peer link `direct`/`relay`/`mixed` (see
+/// [`crate::gossip::conn_path`]) — this periodic reading is the
+/// representative one (post hole-punch upgrade), unlike the `NeighborUp`
+/// snapshot which skews `relay`. Gated on `debug` being live so the
+/// per-peer `remote_info` round-trips are skipped at the default level.
+pub(crate) async fn tick_state_refresh(state: &EventLoopState, endpoint: &Endpoint) {
     state.write_participant_count();
     let roster_len = state.participants.len();
     let link_len = state.linked_endpoints.len();
+
     if state.meshed && link_len == 0 && roster_len > 0 {
         tracing::warn!(
             target: "agent_habilis_swarm::lifecycle",
@@ -31,15 +39,43 @@ pub(crate) fn tick_state_refresh(state: &EventLoopState) {
             meshed = state.meshed,
             "neighbor census: silent partition (meshed but zero peer links)"
         );
-    } else {
+        return;
+    }
+
+    // The per-peer conn classification feeds only the DEBUG census
+    // below, and each `conn_path` is a `remote_info` actor round-trip.
+    // `lifecycle` is pinned to `info` by default, so skip the whole loop
+    // unless DEBUG is actually live — otherwise the tick pays N
+    // round-trips every interval for output the subscriber discards.
+    if !tracing::enabled!(target: "agent_habilis_swarm::lifecycle", tracing::Level::DEBUG) {
+        return;
+    }
+    let (mut direct, mut relay, mut other) = (0usize, 0usize, 0usize);
+    for &peer_id in &state.linked_endpoints {
+        let (conn, relay_url) = crate::gossip::conn_path(endpoint, peer_id).await;
+        match conn {
+            "direct" => direct += 1,
+            "relay" => relay += 1,
+            _ => other += 1,
+        }
         tracing::debug!(
             target: "agent_habilis_swarm::lifecycle",
-            roster_len,
-            link_len,
-            meshed = state.meshed,
-            "neighbor census"
+            endpoint_id = %peer_id,
+            conn,
+            relay = relay_url.as_ref().map_or("-", |url| url.as_str()),
+            "peer conn path"
         );
     }
+    tracing::debug!(
+        target: "agent_habilis_swarm::lifecycle",
+        roster_len,
+        link_len,
+        meshed = state.meshed,
+        direct,
+        relay,
+        other,
+        "neighbor census"
+    );
 }
 
 /// Log a maintenance timer's interval fidelity and advance both its

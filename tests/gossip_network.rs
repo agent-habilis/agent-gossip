@@ -867,6 +867,50 @@ fn test_sleep_wake_heal_recovery() {
     );
 }
 
+/// Fixed-node-id reconnect must be *fast*. A `SIGSTOP`/`SIGCONT` peer
+/// resumes in the **same** process with the **same** iroh endpoint id —
+/// exactly the iroh-gossip#10 / psyche #25 / p2panda #695 hazard, where a
+/// stale *accepted* connection on a reused id can force a multi-minute
+/// timeout before the peer is re-admitted to the gossip overlay. Our
+/// heal + resume re-bootstrap must sidestep that, so we probe the woken
+/// peer *immediately* on `SIGCONT` and require delivery within a bound
+/// comfortably below that stale-connection timeout. A regression (or an
+/// iroh bump reintroducing the stall) blows the bound. The lenient
+/// `test_sleep_wake_heal_recovery` proves recovery *happens*; this one
+/// proves it is heal-bound, not timeout-bound. See
+/// docs/iroh-ecosystem-research.md.
+#[test]
+fn test_fixed_id_reconnect_admits_fast() {
+    // Past SHORT_EVICT (3+1s) + margin so the sleeper is evicted.
+    let asleep = Duration::from_secs(8);
+    // Above our re-mesh cost (~1-2 fixed 15s heal cycles + resume
+    // re-bootstrap) yet far below iroh's minutes-long stale-connection
+    // timeout: a pass means admission is heal-bound.
+    let admit_bound = Duration::from_secs(50);
+
+    let (creator, swarm) = Node::create_env("itest", &SHORT_EVICT);
+    let sleeper = Node::join_env(&swarm, "fr-sleeper", &SHORT_EVICT);
+    assert!(creator.wait_ready(&swarm), "creator never ready");
+    assert!(sleeper.wait_ready(&swarm), "sleeper never ready");
+    let _ = cli_message(&swarm, &creator.nickname, "fr-pre");
+    assert_received(&sleeper, &creator.nickname, "fr-pre", MSG_TIMEOUT);
+
+    sleeper.stop();
+    std::thread::sleep(asleep);
+    assert!(
+        creator.log_contents().contains("went quiet"),
+        "creator never evicted the frozen peer\n{}",
+        creator.log_tail(20),
+    );
+
+    // Resume, then probe at once: the message is sent while the woken
+    // peer is reconnecting with its original id. Receipt within the
+    // bound proves fast re-admission, not a stale-connection stall.
+    sleeper.cont();
+    let _ = cli_message(&swarm, &creator.nickname, "fr-post");
+    assert_received(&sleeper, &creator.nickname, "fr-post", admit_bound);
+}
+
 /// Resume hard re-bootstrap: a peer frozen *past the stall threshold*
 /// (process throttle / sleep proxy) must take the hard recovery path
 /// — reset `meshed`, re-assert the rendezvous hint, long probe — not
