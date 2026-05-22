@@ -4,12 +4,6 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
-// The curated word array lives in its own file (it is large) but is a
-// private child module of `nickname` — `Nickname::random` is its only
-// consumer, so nothing else in the crate can reach `WORDS`.
-#[path = "wordlist.rs"]
-mod wordlist;
-
 const NICKNAME_MAX_LEN: usize = 32;
 
 /// An agent nickname — lowercase ASCII identifier.
@@ -92,12 +86,9 @@ impl Nickname {
     /// succeed.
     #[must_use]
     pub fn random() -> Self {
-        use rand::seq::IndexedRandom;
-        let mut rng = rand::rng();
-        let w1 = wordlist::WORDS.choose(&mut rng).unwrap();
-        let w2 = wordlist::WORDS.choose(&mut rng).unwrap();
         // Wordlist is curated lowercase ASCII, so this always validates.
-        Self::new(format!("{w1}-{w2}")).expect("wordlist combinations are always valid nicknames")
+        Self::new(super::wordlist::random_pair())
+            .expect("wordlist combinations are always valid nicknames")
     }
 
     #[must_use]

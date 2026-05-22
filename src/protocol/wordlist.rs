@@ -1,6 +1,6 @@
-//! A curated wordlist for generating nicknames. Private child module
-//! of `nickname` (loaded via `#[path]`) — `Nickname::random` is the
-//! sole consumer.
+//! A curated wordlist for generating `word-word` identifiers. Sibling
+//! module of `nickname`/`swarm` under `protocol`; `random_pair` backs
+//! both `Nickname::random` and `SwarmName::random`.
 
 /// 1024 words — gives 1,048,576 possible two-word combinations.
 pub(super) const WORDS: &[&str] = &[
@@ -107,3 +107,16 @@ pub(super) const WORDS: &[&str] = &[
 ];
 
 const _: () = assert!(!WORDS.is_empty());
+
+/// A random `word-word` pair from the curated list.
+///
+/// The list is non-empty lowercase ASCII, so the result is always a
+/// valid `Nickname`/`SwarmName` (both bounded at 32 chars; the longest
+/// pair here fits).
+pub(super) fn random_pair() -> String {
+    use rand::seq::IndexedRandom;
+    let mut rng = rand::rng();
+    let first = WORDS.choose(&mut rng).expect("wordlist is non-empty");
+    let second = WORDS.choose(&mut rng).expect("wordlist is non-empty");
+    format!("{first}-{second}")
+}

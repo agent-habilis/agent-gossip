@@ -213,13 +213,4 @@ mod topic_tests {
             derive_topic_id(&seed, &name("beta"))
         );
     }
-
-    #[test]
-    fn name_is_case_sensitive() {
-        let seed = [1u8; 32];
-        assert_ne!(
-            derive_topic_id(&seed, &name("Team")),
-            derive_topic_id(&seed, &name("team"))
-        );
-    }
 }

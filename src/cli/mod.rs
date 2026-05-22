@@ -6,7 +6,7 @@ use serde::Deserialize;
 use crate::daemon::run as run_event_loop;
 use crate::daemon::setup::{SetupKind, setup_swarm};
 use crate::output::{Output, OutputMode};
-use crate::protocol::swarm::{DiscoveryOpts, LookupSet, Swarm, SwarmMode, resolve_discovery};
+use crate::protocol::swarm::{DiscoveryOpts, LookupSet, Swarm, SwarmMode, SwarmName, resolve_discovery};
 use crate::protocol::{MessageBody, MessageId, Nickname, SwarmId};
 use crate::resolver;
 use crate::transport::ipc::{self, IpcCommand};
@@ -101,12 +101,13 @@ pub(crate) struct CreateOpts {
     #[command(flatten)]
     pub shared: SharedServerOpts,
 
-    /// Human-readable swarm name. Required. 1..=12 ASCII chars, charset
-    /// [a-zA-Z0-9_-]. Bound cryptographically into the swarm identity so
-    /// joiners who decode the ID see the same name and a forged ID with a
-    /// fake name fails to find peers.
+    /// Human-readable swarm name. Optional — a random word-word name is
+    /// minted if omitted. Same rules as a nickname: 1..=32 chars, charset
+    /// [a-z0-9_-], leading lowercase letter. Bound cryptographically into
+    /// the swarm identity so joiners who decode the ID see the same name
+    /// and a forged ID with a fake name fails to find peers.
     #[arg(long)]
-    pub name: crate::protocol::swarm::SwarmName,
+    pub name: Option<SwarmName>,
 
     /// Use the public network (cross-machine via iroh DNS + N0 or
     /// custom relay). Omitted ⇒ private (loopback only, the
@@ -130,7 +131,7 @@ mod tests {
         let cli = Cli::parse_from(["ahs", "create", "--name", "team", "--nickname", "my-nick"]);
         match cli.command {
             Commands::Create { opts } => {
-                assert_eq!(opts.name.as_str(), "team");
+                assert_eq!(opts.name.as_ref().map(SwarmName::as_str), Some("team"));
                 assert_eq!(
                     opts.nickname.as_ref().map(Nickname::as_str),
                     Some("my-nick")
@@ -145,7 +146,7 @@ mod tests {
         let cli = Cli::parse_from(["ahs", "create", "--name", "team"]);
         match cli.command {
             Commands::Create { opts } => {
-                assert_eq!(opts.name.as_str(), "team");
+                assert_eq!(opts.name.as_ref().map(SwarmName::as_str), Some("team"));
                 assert_eq!(opts.nickname, None);
             }
             _ => panic!("expected Create command"),
@@ -153,9 +154,12 @@ mod tests {
     }
 
     #[test]
-    fn create_opts_requires_name() {
-        let result = Cli::try_parse_from(["ahs", "create"]);
-        assert!(result.is_err(), "--name must be required");
+    fn create_opts_name_optional() {
+        let cli = Cli::parse_from(["ahs", "create"]);
+        match cli.command {
+            Commands::Create { opts } => assert_eq!(opts.name, None),
+            _ => panic!("expected Create command"),
+        }
     }
 
     #[test]
@@ -163,8 +167,12 @@ mod tests {
         assert!(Cli::try_parse_from(["ahs", "create", "--name", ""]).is_err());
         assert!(Cli::try_parse_from(["ahs", "create", "--name", "has space"]).is_err());
         assert!(
-            Cli::try_parse_from(["ahs", "create", "--name", "abcdefghijklm"]).is_err(),
-            "13 chars must reject"
+            Cli::try_parse_from(["ahs", "create", "--name", "CamelCase"]).is_err(),
+            "uppercase must reject"
+        );
+        assert!(
+            Cli::try_parse_from(["ahs", "create", "--name", &"a".repeat(33)]).is_err(),
+            "33 chars must reject"
         );
     }
 
@@ -182,7 +190,7 @@ mod tests {
         ]);
         match cli.command {
             Commands::Create { opts } => {
-                assert_eq!(opts.name.as_str(), "team");
+                assert_eq!(opts.name.as_ref().map(SwarmName::as_str), Some("team"));
                 assert_eq!(
                     opts.nickname.as_ref().map(Nickname::as_str),
                     Some("custom-name")
@@ -385,10 +393,8 @@ async fn create(opts: CreateOpts) -> Result<()> {
         opts.shared.lookups.to_set(),
         opts.shared.relay.clone(),
     )?;
-    let kind = SetupKind::Create {
-        mode,
-        name: opts.name,
-    };
+    let name = opts.name.unwrap_or_else(SwarmName::random);
+    let kind = SetupKind::Create { mode, name };
     run_session(kind, discovery, opts.shared, opts.nickname).await
 }
 

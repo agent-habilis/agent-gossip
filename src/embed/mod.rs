@@ -53,7 +53,7 @@ impl JoinConfig {
 /// are validated/parsed when the session is created.
 #[derive(Debug, Clone)]
 pub struct CreateConfig {
-    /// 1-12 chars from `[a-zA-Z0-9_-]`.
+    /// 1..=32 chars from `[a-z0-9_-]`, leading lowercase letter.
     pub name: String,
     /// Local nickname. `None` mints a random `word-word` one.
     pub nickname: Option<Nickname>,

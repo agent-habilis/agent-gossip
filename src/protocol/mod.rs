@@ -13,6 +13,7 @@ pub(crate) mod message;
 pub(crate) mod nickname;
 pub(crate) mod peer_addr;
 pub(crate) mod swarm;
+mod wordlist;
 
 pub(crate) use message::{Message, MessageBody, MessageId, MessageKind, PresenceSubtype};
 pub(crate) use nickname::Nickname;

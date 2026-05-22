@@ -75,9 +75,10 @@ impl AgentSwarmServer {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct CreateSwarmArgs {
-    /// Human-readable swarm name. Required. 1..=12 chars, charset
-    /// [a-zA-Z0-9_-]. Bound cryptographically into the swarm identity so
-    /// joiners decode the same name and forgery is infeasible.
+    /// Human-readable swarm name. Required. 1..=32 chars, charset
+    /// [a-z0-9_-], leading lowercase letter. Bound cryptographically into
+    /// the swarm identity so joiners decode the same name and forgery is
+    /// infeasible.
     name: String,
     /// Network mode. "private" keeps the swarm loopback-only (same
     /// machine). "public" uses iroh's DNS + N0 relay to reach peers

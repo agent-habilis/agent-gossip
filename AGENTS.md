@@ -61,10 +61,13 @@ cargo run -- create --name demo
 Start a new swarm. Long-running process.
 
 ```
-ahs create --name {NAME} --no-interactive --output json
+ahs create [--name {NAME}] --no-interactive --output json
 ```
 
-`--name` is **required**: 1-12 chars from `[a-zA-Z0-9_-]`, case-sensitive.
+`--name` is **optional**: omit it and a random `word-word` name is minted,
+just like a nickname (`ahs create` alone works). When given, it follows the
+same rules as a nickname: 1..=32 chars from `[a-z0-9_-]`, leading lowercase
+letter.
 
 The `ahs…` id carries a random 32-byte `seed` plus the mode and name —
 **no peer address is ever stored**. The gossip topic and a well-known
