@@ -5,9 +5,7 @@ use anyhow::Result;
 use iroh::{Endpoint, EndpointAddr};
 use rand::RngCore;
 
-use crate::discovery::{
-    add_peer_addr, build_participant_endpoint, build_swarm, effective_public_relay,
-};
+use crate::discovery::{add_peer_addr, build_participant_endpoint, build_swarm, relay_url};
 use crate::output;
 use crate::protocol::crypto::{derive_topic_id, rendezvous_secret};
 use crate::protocol::swarm::{DiscoveryOpts, Swarm, SwarmMode, SwarmName};
@@ -78,8 +76,7 @@ pub(crate) fn register_rendezvous(endpoint: &Endpoint, params: &RendezvousParams
             rungs = params.bind_ports.len(),
             "pre-registered rendezvous on the loopback port ladder"
         );
-    } else if params.mode == SwarmMode::Public {
-        let relay = effective_public_relay(params.discovery.relay.as_ref());
+    } else if let Some(relay) = relay_url(&params.discovery.relay) {
         tracing::info!(
             target: "agent_habilis_swarm::discovery",
             relay = %relay,
@@ -87,6 +84,9 @@ pub(crate) fn register_rendezvous(endpoint: &Endpoint, params: &RendezvousParams
         );
         addr = addr.with_relay_url(relay);
     } else {
+        // Relay disabled (not in the allowlist) or private without a
+        // port ladder: nothing to pre-register — joiners resolve the
+        // rendezvous id via mDNS/DHT only.
         return;
     }
     let _ = add_peer_addr(endpoint, addr);

@@ -13,7 +13,7 @@ use iroh::{
 };
 use iroh_gossip::net::{GOSSIP_ALPN, Gossip};
 
-use crate::protocol::swarm::{DiscoveryOpts, SwarmMode};
+use crate::protocol::swarm::{DiscoveryOpts, RelayChoice, SwarmMode};
 
 /// The single relay every public member homes on by default. Pinning
 /// **one** relay (vs iroh's 4-relay default, where members land on
@@ -46,15 +46,19 @@ static RENDEZVOUS_RELAY_URL: LazyLock<RelayUrl> = LazyLock::new(|| {
         .expect("RENDEZVOUS_RELAY is a valid relay URL constant")
 });
 
-/// The relay the **beacon** homes on and the joiner pre-registers as
-/// `rendezvous_id`'s address: the custom `--relay`, else the pinned
-/// default. Single source of truth — the beacon leg of
-/// [`build_endpoint_for_mode`] and `daemon::setup::register_rendezvous`
-/// must agree or the relay-direct bootstrap dial finds nothing.
-pub(crate) fn effective_public_relay(custom: Option<&RelayUrl>) -> RelayUrl {
-    custom
-        .cloned()
-        .unwrap_or_else(|| RENDEZVOUS_RELAY_URL.clone())
+/// Resolve a [`RelayChoice`] into the concrete relay URL the beacon
+/// homes on and the joiner pre-registers as `rendezvous_id`'s address:
+/// `Disabled` ⇒ `None` (no relay), `Pinned` ⇒ the pinned default,
+/// `Custom` ⇒ the operator URL. Single source of truth — the beacon
+/// leg of [`build_endpoint_for_mode`] and
+/// `daemon::setup::register_rendezvous` must agree or the relay-direct
+/// bootstrap dial finds nothing.
+pub(crate) fn relay_url(choice: &RelayChoice) -> Option<RelayUrl> {
+    match choice {
+        RelayChoice::Disabled => None,
+        RelayChoice::Pinned => Some(RENDEZVOUS_RELAY_URL.clone()),
+        RelayChoice::Custom(url) => Some(url.clone()),
+    }
 }
 
 /// Build an iroh endpoint for a swarm mode.
@@ -95,31 +99,39 @@ pub(crate) async fn build_endpoint_for_mode(
             builder = builder.address_lookup(DhtAddressLookup::builder());
             tracing::debug!("mainline DHT address-lookup wired (pkarr publish + resolve)");
         }
-        // Asymmetric relay. The beacon (`secret_key.is_some()`) MUST
-        // home on the one deterministic relay joiners pre-register, or
-        // the relay-direct bootstrap dial finds nothing. The
-        // participant uses resilient multi-relay `default_relay_mode()`
-        // (a custom `--relay` overrides either): pinning the
-        // participant to one relay made `bind()` block on that relay's
-        // handshake (the 30s same-machine variance) and dropped iroh's
-        // relay fallback — a `Default` participant still reaches the
-        // beacon at its pinned relay and skips relays entirely
-        // same-LAN via mDNS.
-        let relay_mode = if secret_key.is_some() {
-            let url = effective_public_relay(discovery.relay.as_ref());
-            tracing::debug!(relay = %url, "beacon homes on the pinned rendezvous relay");
-            RelayMode::custom([url])
-        } else if let Some(url) = &discovery.relay {
-            tracing::debug!(relay = %url, "participant pinned to custom --relay");
-            RelayMode::custom([url.clone()])
-        } else {
-            tracing::debug!("participant on iroh resilient multi-relay default");
-            default_relay_mode()
+        // Asymmetric relay, now an allowlist member: `Disabled` ⇒ no
+        // relay at all. Otherwise the beacon (`is_beacon`) MUST home on
+        // the one deterministic relay joiners pre-register (pinned or
+        // custom), or the relay-direct bootstrap dial finds nothing. A
+        // `Pinned` participant uses resilient multi-relay
+        // `default_relay_mode()`: pinning the participant to one relay
+        // made `bind()` block on that relay's handshake (the 30s
+        // same-machine variance) and dropped iroh's relay fallback — a
+        // `Default` participant still reaches the beacon at its pinned
+        // relay and skips relays entirely same-LAN via mDNS. A custom
+        // relay pins both legs.
+        let relay_mode = match (&discovery.relay, is_beacon) {
+            (RelayChoice::Disabled, _) => {
+                tracing::debug!("relay disabled (not in the discovery allowlist)");
+                RelayMode::Disabled
+            }
+            (RelayChoice::Pinned, true) => {
+                tracing::debug!(relay = %*RENDEZVOUS_RELAY_URL, "beacon homes on the pinned rendezvous relay");
+                RelayMode::custom([RENDEZVOUS_RELAY_URL.clone()])
+            }
+            (RelayChoice::Custom(url), _) => {
+                tracing::debug!(relay = %url, "endpoint pinned to custom relay");
+                RelayMode::custom([url.clone()])
+            }
+            (RelayChoice::Pinned, false) => {
+                tracing::debug!("participant on iroh resilient multi-relay default");
+                default_relay_mode()
+            }
         };
         builder.relay_mode(relay_mode)
     } else {
         debug_assert!(
-            !discovery.mdns && !discovery.dht && discovery.relay.is_none(),
+            !discovery.mdns && !discovery.dht && discovery.relay == RelayChoice::Disabled,
             "private mode must resolve to all-off discovery (resolver invariant)"
         );
         // Private = strictly loopback, **zero external network calls**.
@@ -172,7 +184,7 @@ pub(crate) async fn build_endpoint_for_mode(
         network,
         mdns = discovery.mdns,
         dht = discovery.dht,
-        custom_relay = discovery.relay.is_some(),
+        relay = ?discovery.relay,
         role = if is_beacon { "beacon" } else { "participant" },
         endpoint_id = %endpoint.id(),
         "endpoint bound"
@@ -249,7 +261,9 @@ pub(crate) fn build_swarm(endpoint: Endpoint) -> (Gossip, Router) {
 
 #[cfg(test)]
 mod tests {
-    use super::{DiscoveryOpts, RENDEZVOUS_RELAY_URL, SwarmMode, build_participant_endpoint};
+    use super::{
+        DiscoveryOpts, RENDEZVOUS_RELAY_URL, RelayChoice, SwarmMode, build_participant_endpoint,
+    };
 
     /// Tripwire: our pinned rendezvous relay must stay equal to iroh's
     /// `defaults::prod` NA-east relay host. Relay infra is versioned and
@@ -283,7 +297,7 @@ mod tests {
         let disco = DiscoveryOpts {
             mdns: false,
             dht: false,
-            relay: None,
+            relay: RelayChoice::Disabled,
         };
         let endpoint = build_participant_endpoint(SwarmMode::Private, &disco)
             .await
@@ -299,7 +313,7 @@ mod tests {
         let disco = DiscoveryOpts {
             mdns: false,
             dht: false,
-            relay: None,
+            relay: RelayChoice::Pinned,
         };
         let endpoint = build_participant_endpoint(SwarmMode::Public, &disco)
             .await

@@ -7,7 +7,7 @@ use crate::daemon::run as run_event_loop;
 use crate::daemon::setup::{SetupKind, setup_swarm};
 use crate::output::{Output, OutputMode};
 use crate::protocol::swarm::{
-    DiscoveryOpts, LookupSet, Swarm, SwarmMode, SwarmName, resolve_discovery,
+    DiscoveryOpts, LookupSet, RelaySelection, Swarm, SwarmMode, SwarmName, resolve_discovery,
 };
 use crate::protocol::{MessageBody, MessageId, Nickname, SwarmId};
 use crate::resolver;
@@ -64,23 +64,16 @@ pub(crate) struct SharedServerOpts {
     #[arg(long)]
     pub state_file: Option<std::path::PathBuf>,
 
-    /// Custom relay URL (connectivity). Omitted ⇒ iroh's N0 default
-    /// relays on `public` (the relay is never disabled — it is a URL,
-    /// not a toggle). Requires `--public`; per-process, like
-    /// the lookup flags.
-    #[arg(long)]
-    pub relay: Option<RelayUrl>,
-
-    /// Which address-lookups to enable.
+    /// Which discovery mechanisms to enable.
     #[command(flatten)]
     pub lookups: LookupArgs,
 }
 
-/// The address-lookup selection flags (presence allowlist): with
-/// `--public`, naming none enables all (mdns+dht); naming any
-/// uses *only* those passed. Both require `--public`. Grouped
-/// and flattened so each options struct stays within the readable
-/// bool budget.
+/// The discovery allowlist flags: with `--public`, naming none enables
+/// all three (mdns + dht + pinned relay); naming any uses *only* those
+/// passed (so `--mdns` alone disables both dht and the relay). All
+/// require `--public`. Grouped and flattened so each options struct
+/// stays within the readable bool budget.
 #[derive(Parser, Debug)]
 pub(crate) struct LookupArgs {
     /// Enable the LAN mDNS address-lookup.
@@ -90,13 +83,33 @@ pub(crate) struct LookupArgs {
     /// Enable the mainline-DHT address-lookup.
     #[arg(long, default_value_t = false)]
     pub dht: bool,
+
+    /// Enable the relay (connectivity + relay-direct rendezvous). Bare
+    /// `--relay` ⇒ the pinned default relay; `--relay <URL>` ⇒ a custom
+    /// relay. Omitting it while naming another flag disables the relay;
+    /// naming no flag at all enables it at the pinned default. An
+    /// allowlist member like `--mdns`/`--dht` — per-process, requires
+    /// `--public`. Absent ⇒ `None`; bare ⇒ `Some(None)`; valued ⇒
+    /// `Some(Some(url))`.
+    #[arg(long, num_args(0..=1))]
+    #[allow(
+        clippy::option_option,
+        reason = "clap optional-value flag: absent/bare/valued are three distinct relay states (see RelaySelection)"
+    )]
+    pub relay: Option<Option<RelayUrl>>,
 }
 
 impl LookupArgs {
     fn to_set(&self) -> LookupSet {
+        let relay = match &self.relay {
+            None => RelaySelection::Unset,
+            Some(None) => RelaySelection::Default,
+            Some(Some(url)) => RelaySelection::Custom(url.clone()),
+        };
         LookupSet {
             mdns: self.mdns,
             dht: self.dht,
+            relay,
         }
     }
 }
@@ -116,10 +129,10 @@ pub(crate) struct CreateOpts {
     #[arg(long)]
     pub name: Option<SwarmName>,
 
-    /// Use the public network (cross-machine via iroh DNS + N0 or
-    /// custom relay). Omitted ⇒ private (loopback only, the
-    /// default). Relay/lookup selection lives in the shared
-    /// `--relay`/`--mdns`/`--dht` flags.
+    /// Use the public network (cross-machine via the relay + mDNS/DHT
+    /// lookups). Omitted ⇒ private (loopback only, the default).
+    /// Discovery selection lives in the shared
+    /// `--mdns`/`--dht`/`--relay` allowlist flags.
     #[arg(long, default_value_t = false)]
     pub public: bool,
 
@@ -185,6 +198,31 @@ mod tests {
         assert!(
             Cli::try_parse_from(["ahs", "create", "--name", &"a".repeat(33)]).is_err(),
             "33 chars must reject"
+        );
+    }
+
+    #[test]
+    fn relay_flag_absent_bare_and_valued() {
+        fn relay_of(args: &[&str]) -> RelaySelection {
+            match Cli::parse_from(args).command {
+                Commands::Create { opts } => opts.shared.lookups.to_set().relay,
+                _ => panic!("expected Create"),
+            }
+        }
+        assert_eq!(
+            relay_of(&["ahs", "create", "--public"]),
+            RelaySelection::Unset,
+            "absent ⇒ Unset"
+        );
+        assert_eq!(
+            relay_of(&["ahs", "create", "--public", "--relay"]),
+            RelaySelection::Default,
+            "bare ⇒ Default (pinned)"
+        );
+        assert_eq!(
+            relay_of(&["ahs", "create", "--public", "--relay", "https://relay.example"]),
+            RelaySelection::Custom("https://relay.example".parse().unwrap()),
+            "valued ⇒ Custom"
         );
     }
 
@@ -403,11 +441,7 @@ async fn create(opts: CreateOpts) -> Result<()> {
     } else {
         SwarmMode::Private
     };
-    let discovery = resolve_discovery(
-        mode,
-        opts.shared.lookups.to_set(),
-        opts.shared.relay.clone(),
-    )?;
+    let discovery = resolve_discovery(mode, opts.shared.lookups.to_set())?;
     let name = opts.name.unwrap_or_else(SwarmName::random);
     let kind = SetupKind::Create { mode, name };
     run_session(kind, discovery, opts.shared, opts.nickname).await
@@ -418,11 +452,7 @@ async fn create(opts: CreateOpts) -> Result<()> {
 /// discovery flags are per-process (the joiner opts in itself).
 async fn join(swarm_input: &str, nickname: Option<Nickname>, opts: JoinOpts) -> Result<()> {
     let swarm: Swarm = resolver::resolve(swarm_input).await?;
-    let discovery = resolve_discovery(
-        swarm.mode,
-        opts.shared.lookups.to_set(),
-        opts.shared.relay.clone(),
-    )?;
+    let discovery = resolve_discovery(swarm.mode, opts.shared.lookups.to_set())?;
     run_session(SetupKind::Join { swarm }, discovery, opts.shared, nickname).await
 }
 

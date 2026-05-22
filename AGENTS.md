@@ -80,11 +80,13 @@ different topic and finds no peers.
 
 Every member co-hosts the rendezvous (the **beacon** role) so a cold joiner
 can always bootstrap from whoever is currently alive:
-- **public**: the beacon homes on one deterministic relay (a hard-pinned
-  default, or `--relay`); joiners pre-register that address for a
-  zero-lookup relay-direct dial. mDNS (same-LAN) and the mainline DHT
-  (operator-free, eternal backstop) also publish/resolve `rendezvous_id`.
-  The participant endpoint uses iroh's resilient multi-relay default.
+- **public**: by default the beacon homes on one deterministic relay (a
+  hard-pinned default, or `--relay {URL}`); joiners pre-register that
+  address for a zero-lookup relay-direct dial. mDNS (same-LAN) and the
+  mainline DHT (operator-free, eternal backstop) also publish/resolve
+  `rendezvous_id`. The participant endpoint uses iroh's resilient
+  multi-relay default. Each leg (relay/mDNS/DHT) is allowlist-gated —
+  see "Discovery flags" below.
 - **private**: a deterministic loopback port *ladder* derived from `seed`;
   members claim-if-free the first rung (identity-probed), so the beacon
   role migrates to a surviving member within ~15s of the holder's death.
@@ -93,35 +95,39 @@ Prints a `ready` event with `swarm`, `name`, and `nickname` fields once the
 node is up.
 
 Pass `--public` for cross-machine networking; omit it for the default
-(private, localhost only). `--relay {URL}` (with `--public`) overrides
-the pinned rendezvous relay: the beacon homes there and joiners
-pre-register it, and this process's participant endpoint uses it too. It
-is per-process, not encoded in the id, so every member that wants it must
-pass the same URL. The swarm identifier encodes the network mode AND the
+(private, localhost only). Discovery selection lives in the allowlist
+flags below. The swarm identifier encodes the network mode AND the
 name, so joiners auto-detect both.
 
-#### Discovery (address-lookup) flags
+#### Discovery flags (allowlist)
 
-`--public` resolves the seed-derived rendezvous via two iroh
-address-lookups, **combinable**: `--mdns` (LAN multicast) and `--dht`
-(mainline BitTorrent DHT). They are a **presence allowlist**: with
-`--public`, passing *none* enables **both**; passing *any*
-restricts to those (`--mdns` ⇒ mDNS only). The fast path is the pinned
-relay (above); mDNS accelerates same-LAN; the DHT is the operator-free
-eternal backstop. There is no N0-DNS lookup or `--n0` flag.
+With `--public`, three discovery mechanisms resolve the seed-derived
+rendezvous, all **combinable** and governed by one rule: `--mdns` (LAN
+multicast), `--dht` (mainline BitTorrent DHT), and `--relay` (the relay,
+both connectivity and the relay-direct rendezvous dial). They are a
+**presence allowlist**: passing *none* enables **all three** (mdns + dht
++ pinned relay); passing *any* restricts to those (`--mdns` ⇒ mDNS only,
+relay and DHT off). The relay-direct dial is the fast path; mDNS
+accelerates same-LAN; the DHT is the operator-free eternal backstop.
+There is no N0-DNS lookup or `--n0` flag.
 
-Relay (connectivity, distinct from lookup) is `--relay {URL}`: omitted
-⇒ the hard-pinned default relay for the beacon and iroh's resilient
-multi-relay default for the participant. The relay is never disabled —
-it is a URL, not a toggle.
+`--relay` is the one flag that carries an optional value: bare `--relay`
+⇒ the hard-pinned default relay; `--relay {URL}` ⇒ a custom relay (the
+beacon homes there and joiners pre-register it). Excluding `--relay`
+while naming another flag disables the relay entirely
+(`RelayMode::Disabled` — no relay-direct dial, no fallback). When the
+relay *is* enabled, the beacon homes on the pinned/custom relay while a
+participant on the pinned default uses iroh's resilient multi-relay
+default; a custom relay pins both.
 
 These are **per-process and not encoded in the id**: every member
 (creator and each joiner, via the same flags on `join`) must enable a
-lookup the others also enable — the same seed-derived `rendezvous_id`
-resolves through whichever mechanism overlaps. The beacon co-host
-publishes to exactly the lookups you select.
+mechanism the others also enable — the same seed-derived `rendezvous_id`
+resolves through whichever overlaps, and a custom `--relay {URL}` must
+match across members. The beacon co-host publishes to exactly what you
+select.
 
-All of `--mdns`/`--dht`/`--relay {URL}` require `--public`; using one
+All of `--mdns`/`--dht`/`--relay` require `--public`; using one
 without it (private, loopback only) is a hard error naming the
 offending flag(s) — never a silent no-op.
 
