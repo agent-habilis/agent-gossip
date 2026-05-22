@@ -47,7 +47,10 @@ pub(crate) struct SharedServerOpts {
     #[arg(long, default_value_t = false)]
     pub filter_self: bool,
 
-    /// Max direct peer connections (gossip relays beyond this)
+    /// Soft ceiling on tracked peer addresses (gossip relays beyond
+    /// this). Note: the gossip overlay maintains HyParView's
+    /// `active_view_capacity` (5) active neighbors regardless — this is
+    /// not the live connection count.
     #[arg(long, default_value_t = DEFAULT_MAX_DIRECT_PEERS)]
     pub max_peers: usize,
 

@@ -2,12 +2,13 @@ use std::net::{Ipv4Addr, SocketAddrV4};
 use std::sync::LazyLock;
 use std::time::Duration;
 
+use ahs_shared::{QUIC_KEEP_ALIVE_SECS, QUIC_MAX_IDLE_SECS};
 use anyhow::{Context, Result};
 use iroh::address_lookup::memory::MemoryLookup;
 use iroh::address_lookup::{DhtAddressLookup, MdnsAddressLookup};
 use iroh::{
     Endpoint, EndpointAddr, RelayMode, RelayUrl, SecretKey,
-    endpoint::{PortmapperConfig, default_relay_mode, presets},
+    endpoint::{PortmapperConfig, QuicTransportConfig, default_relay_mode, presets},
     protocol::Router,
 };
 use iroh_gossip::net::{GOSSIP_ALPN, Gossip};
@@ -146,6 +147,22 @@ pub(crate) async fn build_endpoint_for_mode(
     if let Some(secret_key) = secret_key {
         builder = builder.secret_key(secret_key);
     }
+
+    // Tighten QUIC keep-alive / idle timeout below iroh's 15s (direct) /
+    // 30s (relay) path defaults so a dead or slept peer drops fast
+    // (`NeighborDown`), speeding heal and the rendezvous-independent
+    // re-bridge. Keep-alive < idle keeps a quiet-but-live peer up.
+    // Applied to every endpoint (beacon + participant, public + private).
+    builder = builder.transport_config(
+        QuicTransportConfig::builder()
+            .keep_alive_interval(Duration::from_secs(QUIC_KEEP_ALIVE_SECS))
+            .max_idle_timeout(Some(
+                Duration::from_secs(QUIC_MAX_IDLE_SECS)
+                    .try_into()
+                    .expect("QUIC_MAX_IDLE_SECS is within IdleTimeout range"),
+            ))
+            .build(),
+    );
 
     // For the private rendezvous endpoint this returns `AddrInUse`
     // when another member already holds the deterministic port — the

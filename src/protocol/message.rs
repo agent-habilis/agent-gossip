@@ -12,10 +12,12 @@ use crate::util::clock;
 use super::nickname::Nickname;
 use super::swarm::SwarmId;
 
-/// Maximum message size in bytes (16KB). Changing this is an
-/// interop-breaking wire change; behavioural knobs live in
-/// `crate::util::tuning`.
-pub(crate) const MAX_MESSAGE_SIZE: usize = 16 * 1024;
+/// Maximum serialized message size — a network-wide wire contract kept
+/// under iroh-gossip's payload budget so a message we accept always fits
+/// one gossip message (see `ahs_shared::MAX_MESSAGE_SIZE` for why). Lives
+/// in the shared crate; the compile-time assertion below guards the
+/// relationship against the live gossip constant.
+pub(crate) use ahs_shared::MAX_MESSAGE_SIZE;
 
 // ── MessageBody ──────────────────────────────────────────────────
 
@@ -96,6 +98,18 @@ impl From<&str> for MessageBody {
         Self::new(text).expect("invalid message body in test fixture")
     }
 }
+
+/// Compile-time tripwire: a serialized message up to `MAX_MESSAGE_SIZE`
+/// must fit a single iroh-gossip message, with room for gossip's
+/// per-message wire overhead (header + `MessageId` + scope + length
+/// prefixes, ~80B; 256 leaves margin). If our cap ever reaches gossip's
+/// `DEFAULT_MAX_MESSAGE_SIZE`, oversize messages silently fail to
+/// propagate (p2panda #628) — so an iroh-gossip bump that lowers the
+/// limit under us fails the build here, not in production.
+const _: () = assert!(
+    MAX_MESSAGE_SIZE + 256 <= iroh_gossip::proto::DEFAULT_MAX_MESSAGE_SIZE,
+    "MAX_MESSAGE_SIZE leaves too little room under iroh-gossip's DEFAULT_MAX_MESSAGE_SIZE"
+);
 
 #[cfg(test)]
 mod body_tests {

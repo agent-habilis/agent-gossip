@@ -21,3 +21,26 @@ pub fn log_dir() -> String {
 /// this many back-to-back, then one per `60 / RATE_LIMIT_PER_MIN` seconds
 /// thereafter.
 pub const RATE_LIMIT_PER_MIN: u32 = 60;
+
+/// Maximum size in bytes of a serialized swarm message. A network-wide
+/// wire contract (must be uniform across members), so it lives here.
+///
+/// Kept below iroh-gossip's `DEFAULT_MAX_MESSAGE_SIZE` (4096) minus its
+/// ~39-byte wire header: a message larger than gossip's payload budget
+/// is silently dropped by the gossip layer (it never propagates and the
+/// sender gets no error), so our cap must stay under it. A compile-time
+/// assertion in the binary guards that relationship against the live
+/// gossip constant — `ahs-shared` stays dependency-free, so the value is
+/// hardcoded here rather than derived.
+pub const MAX_MESSAGE_SIZE: usize = 3840;
+
+/// QUIC keep-alive interval in seconds. Keepalives on an otherwise idle
+/// connection stop a quiet-but-live peer from being dropped; must stay
+/// well below `QUIC_MAX_IDLE_SECS`.
+pub const QUIC_KEEP_ALIVE_SECS: u64 = 5;
+
+/// QUIC max idle timeout in seconds before a connection is considered
+/// dead. Tightened from iroh's 15s (direct) / 30s (relay) path defaults
+/// so a dead or slept peer is detected (`NeighborDown`) in ~10s, which
+/// speeds up heal and the rendezvous-independent re-bridge.
+pub const QUIC_MAX_IDLE_SECS: u64 = 10;

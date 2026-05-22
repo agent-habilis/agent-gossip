@@ -236,8 +236,9 @@ fn test_message_size_limit() {
     let (creator, swarm) = Node::create();
     assert!(creator.wait_ready(&swarm), "creator socket never appeared");
 
-    // 16 300 ASCII bytes + ~200 bytes of JSON envelope exceeds the 16 384-byte limit.
-    let body = "a".repeat(16_300);
+    // A body at the cap, plus the JSON envelope, exceeds the serialized
+    // limit — rejected on the sender (a clear error, not a silent drop).
+    let body = "a".repeat(ahs_shared::MAX_MESSAGE_SIZE);
     let out = cli_message_raw(&swarm, &creator.nickname, &body);
     assert!(
         !out.status.success(),
