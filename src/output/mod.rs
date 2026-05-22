@@ -355,6 +355,15 @@ impl Output {
         );
     }
 
+    /// Surface any displayable error (`anyhow::Error`, `BodyError`, …)
+    /// through the same sink as [`Output::error`] — the single funnel
+    /// for interactive (and future) error reporting, so the
+    /// `error:`-prefixed Human line and the structured `Error` event
+    /// stay in lockstep without each caller stringifying by hand.
+    pub(crate) fn report_error(&self, error: &impl std::fmt::Display) {
+        self.error(&error.to_string());
+    }
+
     /// Clear the last line typed by the user (move up + erase). Human
     /// mode only; a no-op for JSON/Silent/Capture (terminal control
     /// has no structured form).

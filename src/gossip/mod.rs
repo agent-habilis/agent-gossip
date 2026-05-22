@@ -111,7 +111,9 @@ async fn announce_arrival(
 
 /// Process one line of interactive stdin: parse a `/reply <nick> ...`
 /// command or treat the line as a plain broadcast, validate the
-/// nickname/body, serialize, broadcast, echo locally, and log.
+/// nickname/body, then delegate to `broadcast_message` so the send
+/// (and its oversize/serialize error handling) is identical to the
+/// IPC and embed paths.
 pub(crate) async fn handle_stdin_line(
     text: &str,
     sender: &GossipSender,
@@ -124,11 +126,11 @@ pub(crate) async fn handle_stdin_line(
     if text.is_empty() {
         return;
     }
-    let msg = if let Some((nick, body)) = parse_reply_command(text) {
-        let body = match MessageBody::new(body) {
+    let (body, reply) = if let Some((nick, raw_body)) = parse_reply_command(text) {
+        let body = match MessageBody::new(raw_body) {
             Ok(body) => body,
             Err(error) => {
-                out.error(&error.to_string());
+                out.report_error(&error);
                 return;
             }
         };
@@ -136,26 +138,21 @@ pub(crate) async fn handle_stdin_line(
             out.error(&format!("invalid nickname '{nick}'"));
             return;
         };
-        Message::new_reply(swarm, author, target, body)
+        (body, Some(target))
     } else {
         let body = match MessageBody::new(text) {
             Ok(body) => body,
             Err(error) => {
-                out.error(&error.to_string());
+                out.report_error(&error);
                 return;
             }
         };
-        Message::new_message(swarm, author, body)
+        (body, None)
     };
-    // Interactive stdin is the one send path not funneled through
-    // `broadcast_message`, so it logs its own outbound here.
-    crate::messages::log_out(&msg);
-    if let Ok(bytes) = msg.serialize() {
-        let _ = emit_or_queue(state, sender, Bytes::from(bytes), out).await;
-        state.last_sent_at = Instant::now();
+    match broadcast_message(swarm, author, body, reply, state, sender, out).await {
+        Ok(_) => state.last_sent_at = Instant::now(),
+        Err(error) => out.report_error(&error),
     }
-    out.print_message_ex(&msg, true);
-    state.message_log.push(msg);
 }
 
 /// Send `bytes` to the swarm, or buffer it if we have no gossip link
