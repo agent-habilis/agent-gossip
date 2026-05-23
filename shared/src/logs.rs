@@ -1,5 +1,5 @@
 //! Per-member log path resolution. Lives in the dependency-free shared
-//! crate so the daemon (which writes the file) and `cargo xtask logs`
+//! crate so the daemon (which writes the file) and `cargo task logs`
 //! (which prints the dir) agree on one source of truth.
 
 use std::ffi::OsString;

@@ -401,11 +401,11 @@ loop:
 
 ## Development
 
-All dev tasks run through `cargo xtask`:
+All dev tasks run through `cargo task`:
 
 ### Testing
 
-`cargo xtask test` / `cargo xtask ci` run the unit/integration suite.
+`cargo task test` / `cargo task ci` run the unit/integration suite.
 Tests are layered:
 
 - **In-process (default, fast):** behavioral + output-schema tests
@@ -456,7 +456,7 @@ macOS/Windows); sockets live alongside under
 swarm id + nickname are known (sub-second), then flush there. Transient
 commands (`msg`/`poll`), `mcp`, and any run failing before identity log
 to **stderr** instead — so the dir holds one file per swarm member, not
-per process. `tail -f` the file (or `cargo xtask logs` to print the
+per process. `tail -f` the file (or `cargo task logs` to print the
 dir). Logs stay **additive**: `--output json` (stdout) is unaffected and
 fatal `anyhow` errors still print to stderr. `AHS_LOG_DIR` overrides the
 directory (the test suite points it at a temp dir).
@@ -523,7 +523,7 @@ RUST_LOG=warn cargo run --release -- create
 RUST_LOG=warn,noq_udp=error cargo run -- create
 ```
 
-Run `cargo xtask` with no arguments to list every available subcommand.
+Run `cargo task` with no arguments to list every available subcommand.
 
 ### Releasing
 
@@ -531,9 +531,9 @@ Run `cargo xtask` with no arguments to list every available subcommand.
 automatically — the push is a separate explicit step so you can inspect
 the commit and tag first.
 
-1. `cargo xtask release minor` (or `patch` / `major` / explicit version).
+1. `cargo task release minor` (or `patch` / `major` / explicit version).
    This is a dry run. Review the planned bump.
-2. `cargo xtask release minor --execute` — bumps `Cargo.toml`, updates
+2. `cargo task release minor --execute` — bumps `Cargo.toml`, updates
    `Cargo.lock`, commits `chore: release v<version>`, creates annotated
    tag `v<version>`. No push.
 3. `git push origin main --follow-tags` — pushing the tag triggers
@@ -550,7 +550,7 @@ the commit and tag first.
 ### Lint policy
 
 Lints are enforced workspace-wide via `[workspace.lints]` in
-`Cargo.toml` plus tuning in `clippy.toml`; `cargo xtask lint` / `ci`
+`Cargo.toml` plus tuning in `clippy.toml`; `cargo task lint` / `ci`
 run `cargo clippy --all-targets -- -D warnings`, so any warning fails
 CI. The set is `clippy::pedantic` + `clippy::cargo` + cherry-picked
 restriction lints (`min_ident_chars`, `shadow_unrelated`,

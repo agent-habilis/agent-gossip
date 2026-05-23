@@ -1,5 +1,5 @@
 //! Constants and helpers shared across the workspace (the `ahs` binary
-//! crate and the xtask runner). Kept dependency-free so xtask stays light.
+//! crate and the task runner). Kept dependency-free so task stays light.
 //!
 //! - [`consts`] — the single home for tunable constants (runtime paths +
 //!   wire contract), re-exported at the crate root for ergonomics.

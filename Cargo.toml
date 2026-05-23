@@ -1,5 +1,5 @@
 [workspace]
-members = ["shared", "xtask"]
+members = ["shared", "tasks"]
 
 # Shared package fields. Each crate opts in with `edition.workspace = true`
 # / `rust-version.workspace = true` so the workspace stays in lockstep

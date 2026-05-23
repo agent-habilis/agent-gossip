@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 publish = false
 
-# Empty by design: a dependency-free leaf so xtask never links the daemon.
+# Empty by design: a dependency-free leaf so task never links the daemon.
 [dependencies]
 
 [lints]

@@ -12,9 +12,9 @@ const CC_PLUGIN: &str = "swarm@agent-habilis-swarm";
 /// Task result; any `Err` is printed and turns into a non-zero exit.
 type TaskOutcome = Result<(), Box<dyn std::error::Error>>;
 
-/// Project task runner. Run `cargo xtask <task>`.
+/// Project task runner. Run `cargo task <task>`.
 #[derive(Parser)]
-#[command(bin_name = "cargo xtask")]
+#[command(bin_name = "cargo task")]
 struct Cli {
     #[command(subcommand)]
     task: Task,
@@ -112,7 +112,7 @@ fn run_release(sh: &Shell, args: &[String]) -> TaskOutcome {
     if let Some((level, extra)) = args.split_first() {
         ensure_installed(sh, "cargo-release", &["release", "--version"]);
         // `cargo release --execute` asks for confirmation on an interactive
-        // TTY; `cargo xtask` is the non-interactive entrypoint (CI, agents),
+        // TTY; `cargo task` is the non-interactive entrypoint (CI, agents),
         // so pass `--no-confirm` whenever we are actually executing. The dry
         // run (no `--execute`) never prompts, so leave it untouched.
         let mut release_args: Vec<String> = extra.to_vec();
@@ -181,7 +181,7 @@ fn run_logs() -> TaskOutcome {
     let dir = ahs_shared::logs::log_dir();
     // Ensure it exists so `cd`/`tail` never fail on a fresh machine.
     std::fs::create_dir_all(&dir)?;
-    // stdout, the sole output, so `$(cargo xtask logs)` captures just the path.
+    // stdout, the sole output, so `$(cargo task logs)` captures just the path.
     println!("{}", dir.display());
     Ok(())
 }
@@ -195,7 +195,7 @@ fn run_proptest(sh: &Shell) -> TaskOutcome {
 // ── pi extension linking ──────────────────────────────────────────────────
 
 fn repo_root() -> std::path::PathBuf {
-    // CARGO_MANIFEST_DIR is xtask/, whose parent is the workspace root.
+    // CARGO_MANIFEST_DIR is tasks/, whose parent is the workspace root.
     // Falls back to CWD if the env var is somehow missing.
     std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()

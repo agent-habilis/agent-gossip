@@ -3878,6 +3878,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7b2093cf4c8eb1e67749a6762251bc9cd836b6fc171623bd0a9d324d37af2417"
 
 [[package]]
+name = "tasks"
+version = "0.1.0"
+dependencies = [
+ "ahs-shared",
+ "clap",
+ "xshell",
+]
+
+[[package]]
 name = "tempfile"
 version = "3.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5062,15 +5071,6 @@ name = "xshell-macros"
 version = "0.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32ac00cd3f8ec9c1d33fb3e7958a82df6989c42d747bd326c822b1d625283547"
-
-[[package]]
-name = "xtask"
-version = "0.1.0"
-dependencies = [
- "ahs-shared",
- "clap",
- "xshell",
-]
 
 [[package]]
 name = "yoke"

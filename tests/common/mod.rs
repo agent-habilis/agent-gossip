@@ -29,7 +29,7 @@ pub(crate) fn bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_ahs"))
 }
 
-/// Per-test-process log dir so `cargo xtask test` never writes into
+/// Per-test-process log dir so `cargo task test` never writes into
 /// the operator's default `agent-habilis/swarm/logs`. The binary honors
 /// `AHS_LOG_DIR`.
 fn test_log_dir() -> &'static str {

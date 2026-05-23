@@ -1,7 +1,7 @@
 //! The single home for constants we may want to tune in the future:
 //! runtime paths plus the network-wide wire constants. Kept in the
 //! dependency-free `ahs-shared` crate so both the `ahs` binary and the
-//! xtask runner read the same values.
+//! task runner read the same values.
 
 /// Unix socket runtime dir. Hardcoded `/tmp` base — short (avoids the
 /// macOS `AF_UNIX` `sun_path` ~104-byte limit) and Unix-only filesystem

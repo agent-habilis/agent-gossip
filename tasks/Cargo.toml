@@ -1,5 +1,5 @@
 [package]
-name = "xtask"
+name = "tasks"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
@@ -12,7 +12,7 @@ publish = false
 clap = { version = "4", features = ["derive"] }
 xshell = "0.2"
 # Dependency-free workspace crate: the single source of truth for paths
-# like the logs dir, so xtask reads the same value the daemon writes to.
+# like the logs dir, so tasks reads the same value the daemon writes to.
 ahs-shared = { path = "../shared" }
 
 [lints]
