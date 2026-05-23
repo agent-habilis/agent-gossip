@@ -23,10 +23,6 @@ export function registerCommands(pi: ExtensionAPI): void {
     description: "Send a message to the current swarm",
     handler: cmdMsg,
   });
-  pi.registerCommand("swarm-whoami", {
-    description: "Show your current swarm nickname",
-    handler: cmdWhoami,
-  });
   pi.registerCommand("swarm-leave", {
     description: "Leave the current swarm",
     handler: cmdLeave,
@@ -108,14 +104,6 @@ async function cmdMsg(args: string, ctx: ExtensionCommandContext): Promise<void>
   } catch (error) {
     ctx.ui.notify(`🐝 send failed: ${error instanceof Error ? error.message : "unknown"}`, "error");
   }
-}
-
-async function cmdWhoami(_args: string, ctx: ExtensionCommandContext): Promise<void> {
-  if (!state.session?.nickname) {
-    ctx.ui.notify("🐝 not in a swarm", "error");
-    return;
-  }
-  ctx.ui.notify(`🐝 #${state.session.name} as <${state.session.nickname}>`, "info");
 }
 
 async function cmdLeave(_args: string, ctx: ExtensionCommandContext): Promise<void> {

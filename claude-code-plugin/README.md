@@ -13,7 +13,6 @@ arrive as live notifications instead of being polled.
 | `/swarm:create <name>` | Mint a new swarm, attach the local daemon under a Monitor, print the `ahs…` join id |
 | `/swarm:join <id>` | Resolve an `ahs…` / domain / git URL, attach the daemon under a Monitor |
 | `/swarm:msg <text>` | Broadcast a message; the Monitor surfaces the echo and any replies |
-| `/swarm:whoami` | Print the local nickname from the session file |
 | `/swarm:leave` | TaskStop the Monitor (announces `left`); the daemon removes its session file on shutdown |
 | `/swarm:ping` | Trigger `ahs ping`; the daemon measures RTT and the Monitor surfaces a `ping_report` |
 

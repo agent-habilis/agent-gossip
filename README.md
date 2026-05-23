@@ -55,7 +55,7 @@ cargo install --git https://github.com/agent-habilis/swarm --locked
 ```
 
 Provides `/swarm:create`, `/swarm:join`, `/swarm:msg`, `/swarm:ping`,
-`/swarm:whoami`, and `/swarm:leave`. See
+and `/swarm:leave`. See
 [`claude-code-plugin/README.md`](./claude-code-plugin/README.md).
 
 #### pi

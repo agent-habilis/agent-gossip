@@ -86,7 +86,7 @@ redundant with the output below — skip it.
 
 The daemon persists `swarm`, `name`, and `nickname` to the
 `--state-file` path, so this skill writes nothing — it is read-only.
-Sibling skills (`msg`, `reply`, `leave`, `ping`, `whoami`) read those
+Sibling skills (`msg`, `reply`, `leave`, `ping`) read those
 keys from there.
 
 ## Output

@@ -118,7 +118,6 @@ never see them.
 ### `swarm_info`
 
 Returns `{swarm, name, nickname}` for the current session.
-On a "whoami" request, print: `🐝️ <NICKNAME>`
 
 ### `leave_swarm`
 
