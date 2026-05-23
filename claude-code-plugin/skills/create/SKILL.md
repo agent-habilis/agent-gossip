@@ -36,16 +36,18 @@ STOP. Do not create a second swarm.
 
 ## Resolve the swarm name
 
-`ahs create` requires `--name {NAME}` (1-12 chars, charset
-`[a-zA-Z0-9_-]`, case-sensitive). The name is bound cryptographically into
-the swarm identity — joiners decode it from the swarm ID, and a forged name
-will not find peers.
+`ahs create` takes an **optional** `--name {NAME}`. When given, the name is
+1-32 UTF-8 characters (any script/emoji), excluding control characters,
+whitespace, and any of `/ \ < > #`. It is bound cryptographically into the
+swarm identity — joiners decode it from the swarm ID, and a forged name will
+not find peers. When omitted, the daemon mints a random `word-word` name (the
+same style as a nickname).
 
-If the user passed a name as an argument to the skill, use it. Otherwise ask:
-```
-Pick a name for the swarm (1-12 chars from [a-zA-Z0-9_-]):
-```
-Validate the name matches `^[a-zA-Z0-9_-]{1,12}$` before continuing.
+If the user passed a name as an argument to the skill, use it — the CLI is the
+final validator, so pass it through and let `ahs` reject a bad one. Otherwise
+do **not** prompt: omit `--name` entirely and let the daemon mint a random
+name. Never pass an empty `--name ""` (the CLI rejects it). The actual name
+comes back in the `ready` event either way.
 
 ## Start the Monitor
 
@@ -53,11 +55,14 @@ Launch the daemon under the Monitor tool so its JSON events push as
 notifications instead of needing to be polled:
 
 ```
-command: "ahs create --name {NAME} --state-file {SESSION_FILE} --no-interactive --output json --filter-self"
+command: "ahs create [--name {NAME}] --state-file {SESSION_FILE} --no-interactive --output json --filter-self"
 description: "swarm"
 persistent: true
 timeout_ms: 300000
 ```
+
+Include `--name {NAME}` only when the user supplied a name; omit the flag
+entirely otherwise (do not pass an empty value).
 
 `{SESSION_FILE}` is the literal absolute path the pre-flight step
 printed (e.g. `/tmp/agent-habilis-swarm/sessions/12345.json`, PID
