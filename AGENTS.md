@@ -177,6 +177,22 @@ ahs poll --swarm {AHS...} --nickname {NAME} [--after {UUID}] --output json
 Returns a JSON array of messages. If `--after` is provided, returns only
 messages received after that ID.
 
+### ping
+
+Measure round-trip time to every peer. Requires a running create/join
+process.
+
+```
+ahs ping --swarm {AHS...} --nickname {NAME}
+```
+
+Fire-and-forget: the daemon arms an RTT round (broadcasts a probe;
+every peer's daemon auto-responds), acks immediately, and ~10s later
+emits a `ping_report` event on its own `--output json` stream — the
+report does **not** come back on this command's stdout. The ping/pong
+probes are plumbing: never rate-limited, logged, or surfaced as
+messages via `poll`/`fetch_messages`.
+
 ## JSON Events
 
 When using `--output json`, the long-running process (create/join) emits one
@@ -219,6 +235,16 @@ an `Alive` keepalive) arrives after eviction.
 ```json
 {"event":"peer_timeout","nickname":"word-word","last_seen_secs_ago":94}
 {"event":"peer_return","nickname":"word-word"}
+```
+
+### ping_report
+
+Emitted once per `ahs ping` round, ~10s after the trigger, by the node
+that ran the ping. Lists each peer that responded with its measured
+RTT in milliseconds (`responded` of `known` roster peers answered).
+
+```json
+{"event":"ping_report","peers":[{"nickname":"word-word","rtt_ms":42}],"responded":1,"known":2}
 ```
 
 ### info / error
@@ -278,8 +304,8 @@ The limit is enforced **symmetrically** on both ends with the same quota:
 - **Receive**: a peer still drops anything over the limit it receives from you —
   the backstop against a modified client.
 
-Heartbeats, presence, and anti-entropy traffic are exempt (rate-limiting them
-would break membership).
+Heartbeats, presence, anti-entropy, and ping/pong probe traffic are exempt
+(rate-limiting them would break membership / liveness probing).
 
 ## Claude Code Skill
 
@@ -450,7 +476,8 @@ the file sink (`--output json` stdout is a separate path).
 
 Every sent/received swarm message is logged on the always-on
 `agent_habilis_swarm::messages` target: `msg` and presence
-joined/left at `info`; `alive`/`PeerInfo`/`Digest` plumbing at `trace`
+joined/left at `info`; `alive`/`PeerInfo`/`Digest`/`ping`/`pong`
+plumbing at `trace`
 (`RUST_LOG=...,agent_habilis_swarm::messages=trace` for the firehose).
 
 Both defaults pin `noq_proto::connection=off` (benign superseded-path

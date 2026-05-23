@@ -1,18 +1,29 @@
 import { execSync } from "node:child_process";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-export function isAscii(text: string): boolean {
-  for (let i = 0; i < text.length; i++) {
-    if (text.charCodeAt(i) > 0x7f) return false;
+function isControlChar(ch: string): boolean {
+  const code = ch.codePointAt(0) ?? 0;
+  // Unicode control: C0 (0x00-0x1F) plus DEL + C1 (0x7F-0x9F).
+  return code <= 0x1f || (code >= 0x7f && code <= 0x9f);
+}
+
+// Mirrors the Rust MessageBody::new invariant: any UTF-8 is allowed; the
+// only restriction is control characters other than tab / newline / CR.
+export function isValidBody(text: string): boolean {
+  for (const ch of text) {
+    if (isControlChar(ch) && ch !== "\n" && ch !== "\t" && ch !== "\r") return false;
   }
   return true;
 }
 
-// Mirrors the Rust SwarmName invariant (src/protocol/ticket.rs::SwarmName::new).
-const SWARM_NAME_RE = /^[a-zA-Z0-9_-]{1,12}$/;
-
+// Mirrors the Rust SwarmName invariant (src/protocol/swarm.rs::SwarmName::new):
+// 1-32 Unicode scalar values, excluding control characters, whitespace, and
+// any of / \ < > #. (The daemon additionally rejects bidi-control scalars; it
+// is the authoritative backstop, so this client check stays simple.)
 export function isValidSwarmName(name: string): boolean {
-  return SWARM_NAME_RE.test(name);
+  const chars = [...name];
+  if (chars.length < 1 || chars.length > 32) return false;
+  return !chars.some((ch) => isControlChar(ch) || /\s/u.test(ch) || "/\\<>#".includes(ch));
 }
 
 export function agentSwarmAvailable(): boolean {

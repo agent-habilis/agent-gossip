@@ -42,7 +42,9 @@ fn log(direction: &'static str, msg: &Message) {
             subtype: PresenceSubtype::Alive,
         }
         | MessageKind::PeerInfo
-        | MessageKind::Digest => tracing::trace!(
+        | MessageKind::Digest
+        | MessageKind::Ping
+        | MessageKind::Pong { .. } => tracing::trace!(
             target: "agent_habilis_swarm::messages",
             dir = direction,
             author = %msg.author,

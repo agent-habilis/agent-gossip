@@ -44,7 +44,9 @@ pub(crate) fn compute(
             subtype: PresenceSubtype::Joined | PresenceSubtype::Alive,
         }
         | MessageKind::PeerInfo
-        | MessageKind::Digest => !state.participants.contains(author.as_str()),
+        | MessageKind::Digest
+        | MessageKind::Ping
+        | MessageKind::Pong { .. } => !state.participants.contains(author.as_str()),
     };
     MembershipUpdate {
         returned,

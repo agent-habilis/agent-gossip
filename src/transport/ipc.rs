@@ -60,12 +60,19 @@ pub(crate) enum IpcCommand {
         #[serde(skip_serializing_if = "Option::is_none")]
         after: Option<MessageId>,
     },
+    /// Arm an RTT round: the daemon broadcasts a ping probe, collects
+    /// pongs for a fixed window, and emits a `ping_report` on its
+    /// `--output json` stream. Fire-and-forget — the ack is immediate.
+    #[serde(rename = "ping")]
+    Ping { swarm: SwarmId },
 }
 
 impl IpcCommand {
     pub(crate) fn swarm_id(&self) -> &SwarmId {
         match self {
-            IpcCommand::Msg { swarm, .. } | IpcCommand::Poll { swarm, .. } => swarm,
+            IpcCommand::Msg { swarm, .. }
+            | IpcCommand::Poll { swarm, .. }
+            | IpcCommand::Ping { swarm } => swarm,
         }
     }
 }
@@ -91,6 +98,12 @@ pub(crate) fn json_ok_msg(id: &MessageId, msg: &crate::protocol::Message) -> Str
 #[cfg(test)]
 pub(crate) fn json_ok(id: &str) -> String {
     serde_json::json!({"ok": true, "id": id}).to_string()
+}
+
+/// Bare `{ok:true}` ack for fire-and-forget IPC commands (`ping`) that
+/// have no id or payload to return.
+pub(crate) fn json_ack() -> String {
+    serde_json::json!({"ok": true}).to_string()
 }
 
 pub(crate) fn json_error(error: &str) -> String {
@@ -288,7 +301,7 @@ mod tests {
         let parsed: IpcCommand = serde_json::from_str(&json).unwrap();
         match parsed {
             IpcCommand::Msg { reply, .. } => assert_eq!(reply, Some(target)),
-            IpcCommand::Poll { .. } => panic!("expected Msg"),
+            IpcCommand::Poll { .. } | IpcCommand::Ping { .. } => panic!("expected Msg"),
         }
     }
 
@@ -303,7 +316,21 @@ mod tests {
         let parsed: IpcCommand = serde_json::from_str(&json).unwrap();
         match parsed {
             IpcCommand::Poll { after, .. } => assert_eq!(after, Some(id)),
-            IpcCommand::Msg { .. } => panic!("expected Poll"),
+            IpcCommand::Msg { .. } | IpcCommand::Ping { .. } => panic!("expected Poll"),
+        }
+    }
+
+    #[test]
+    fn ipc_command_ping_round_trip() {
+        let cmd = IpcCommand::Ping {
+            swarm: SwarmId::from("ahstest"),
+        };
+        let json = serde_json::to_string(&cmd).unwrap();
+        assert!(json.contains("\"command\":\"ping\""));
+        let parsed: IpcCommand = serde_json::from_str(&json).unwrap();
+        match parsed {
+            IpcCommand::Ping { swarm } => assert_eq!(swarm.as_str(), "ahstest"),
+            IpcCommand::Msg { .. } | IpcCommand::Poll { .. } => panic!("expected Ping"),
         }
     }
 
@@ -470,7 +497,7 @@ mod tests {
                     IpcCommand::Msg { body, .. } => {
                         let _ = resp_tx.send(json_ok(&format!("got: {body}")));
                     }
-                    IpcCommand::Poll { .. } => {
+                    IpcCommand::Poll { .. } | IpcCommand::Ping { .. } => {
                         let _ = resp_tx.send(json_error("unexpected command"));
                     }
                 }

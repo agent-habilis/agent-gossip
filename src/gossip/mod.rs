@@ -368,7 +368,11 @@ async fn handle_gossip_received(content: Bytes, state: &mut EventLoopState, ctx:
     // break membership/anti-entropy.
     let rate_ok = match &message.kind {
         MessageKind::Msg { .. } => state.rate_limiter.check(&message.author),
-        MessageKind::Presence { .. } | MessageKind::PeerInfo | MessageKind::Digest => true,
+        MessageKind::Presence { .. }
+        | MessageKind::PeerInfo
+        | MessageKind::Digest
+        | MessageKind::Ping
+        | MessageKind::Pong { .. } => true,
     };
     if !rate_ok {
         let notice = format!("rate limit exceeded for [{}], dropping", message.author);
@@ -396,7 +400,10 @@ async fn handle_gossip_received(content: Bytes, state: &mut EventLoopState, ctx:
     if let Some(tx) = ctx.external_msg_tx
         && tx.receiver_count() > 0
         && surfaceable
-        && !matches!(message.kind, MessageKind::Digest)
+        && !matches!(
+            message.kind,
+            MessageKind::Digest | MessageKind::Ping | MessageKind::Pong { .. }
+        )
     {
         let _ = tx.send(message.clone());
     }
@@ -408,6 +415,34 @@ async fn handle_gossip_received(content: Bytes, state: &mut EventLoopState, ctx:
         }
         MessageKind::Digest => {
             antientropy::handle_digest(&message, state, ctx).await;
+            return;
+        }
+        MessageKind::Ping => {
+            // Auto-respond to every probe with a pong addressed to the
+            // pinger. The daemon owns this — no agent involvement. Pong
+            // is gossip-broadcast (no unicast transport), so one probe in
+            // an N-node swarm fans out to N flooded pongs; acceptable for
+            // the small swarms and rare manual `ahs ping` this serves.
+            broadcast_msg(
+                ctx.sender,
+                &Message::new_pong(ctx.swarm, ctx.author, message.author.clone()),
+            )
+            .await;
+            return;
+        }
+        MessageKind::Pong { to } => {
+            // Record arrival for the active round only if addressed to us
+            // and from a known participant — the roster gate bounds the
+            // map and keeps `responded`/`known` honest against a peer that
+            // forges pongs from fabricated authors.
+            if to == ctx.author
+                && state.participants.contains(message.author.as_str())
+                && let Some(round) = state.ping_round.as_mut()
+            {
+                round
+                    .pongs
+                    .insert(message.author.clone(), tokio::time::Instant::now());
+            }
             return;
         }
         MessageKind::Presence { subtype } => {
@@ -489,14 +524,16 @@ pub(crate) async fn handle_send_request(
     sent_ok
 }
 
-/// `Alive` keepalives and anti-entropy `Digest`s are plumbing;
-/// everything else goes in the log (and so to `poll`/`fetch`).
+/// `Alive` keepalives, anti-entropy `Digest`s, and ping/pong probes are
+/// plumbing; everything else goes in the log (and so to `poll`/`fetch`).
 fn is_loggable(kind: &MessageKind) -> bool {
     !matches!(
         kind,
         MessageKind::Presence {
             subtype: crate::protocol::PresenceSubtype::Alive
         } | MessageKind::Digest
+            | MessageKind::Ping
+            | MessageKind::Pong { .. }
     )
 }
 

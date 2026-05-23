@@ -42,7 +42,7 @@ export function formatDisplay(event: SwarmEvent): string | null {
   if (event.event === "info" || event.event === "error") return null;
 
   if (event.type === "presence") return formatPresence(event);
-  if (event.type === "msg" || event.type === "broadcast") return formatMessage(event);
+  if (event.type === "msg") return formatMessage(event);
 
   return formatPeerLifecycle(event);
 }

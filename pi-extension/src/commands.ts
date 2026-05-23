@@ -7,7 +7,7 @@ import {
   pingPeers,
   sendSwarmMessage,
 } from "./core";
-import { isAscii, isValidSwarmName, requireAgentSwarm } from "./helpers";
+import { isValidBody, isValidSwarmName, requireAgentSwarm } from "./helpers";
 import { state } from "./state";
 
 export function registerCommands(pi: ExtensionAPI): void {
@@ -47,11 +47,14 @@ async function cmdCreate(args: string, ctx: ExtensionCommandContext): Promise<vo
 
   const name = args.trim();
   if (!name) {
-    ctx.ui.notify("🐝 usage: /swarm-create {name} (1-12 chars, a-z A-Z 0-9 _ -)", "error");
+    ctx.ui.notify(
+      "🐝 usage: /swarm-create {name} (1-32 chars, no whitespace or / \\ < > #)",
+      "error",
+    );
     return;
   }
   if (!isValidSwarmName(name)) {
-    ctx.ui.notify("🐝 invalid name — must be 1-12 chars from [a-zA-Z0-9_-]", "error");
+    ctx.ui.notify("🐝 invalid name — must be 1-32 chars, no whitespace or / \\ < > #", "error");
     return;
   }
 
@@ -85,8 +88,11 @@ async function cmdMsg(args: string, ctx: ExtensionCommandContext): Promise<void>
     return;
   }
 
-  if (!isAscii(text)) {
-    ctx.ui.notify("🐝 message body must be ASCII only", "error");
+  if (!isValidBody(text)) {
+    ctx.ui.notify(
+      "🐝 message body must not contain control characters other than tab/newline",
+      "error",
+    );
     return;
   }
 

@@ -14,8 +14,8 @@ arrive as live notifications instead of being polled.
 | `/swarm:join <id>` | Resolve an `ahs…` / domain / git URL, attach the daemon under a Monitor |
 | `/swarm:msg <text>` | Broadcast a message; the Monitor surfaces the echo and any replies |
 | `/swarm:whoami` | Print the local nickname from the session file |
-| `/swarm:leave` | TaskStop the Monitor (announces `left`), clear the session file |
-| `/swarm:ping` | Send `ping`, collect `pong` replies for 10 s, report RTT per peer |
+| `/swarm:leave` | TaskStop the Monitor (announces `left`); the daemon removes its session file on shutdown |
+| `/swarm:ping` | Trigger `ahs ping`; the daemon measures RTT and the Monitor surfaces a `ping_report` |
 
 ## Install
 
@@ -116,15 +116,15 @@ event-handler rules                  /swarm:msg, /swarm:ping
   `description: "swarm"`; the daemon broadcasts `left` to peers before
   exiting.
 
-The full event-handler contract (auto-reply rules, ping/pong, presence
-formatting, truncation handling) lives in `docs/claude-code-skill.md`
-at the repo root. It is the canonical reference; the skills stay
-intentionally terse and defer to it.
+The full event-handler contract (display strings, reply rules,
+presence formatting, `ping_report` rendering) lives inline in the
+`/swarm:create` and `/swarm:join` skills under "Monitor event handler"
+— those rules stay in the agent's context for the session lifetime.
 
 ## State
 
-Sessions write per-agent state to
-`/tmp/agent-habilis-swarm/sessions/${PPID}.json`, where `$PPID` is the
+The daemon writes per-agent state to
+`/tmp/agent-habilis/swarm/sessions/${PPID}.json`, where `$PPID` is the
 Claude Code process owning the skill invocation:
 
 ```json
@@ -132,26 +132,26 @@ Claude Code process owning the skill invocation:
   "swarm": "ahs…",
   "name": "my-team",
   "nickname": "swift-cedar",
-  "auto_reply": true,
-  "known_messages": {}
+  "participant_count": 3,
+  "last_updated": 1779509457
 }
 ```
 
 Keying by `$PPID` lets multiple Claude Code agents share one machine
 without trampling each other's session; each one resolves to its own
 file. `/tmp` is deliberate: the state is ephemeral and should not
-survive reboots or move between machines. Created by `/swarm:create`
-and `/swarm:join`; removed by `/swarm:leave`. `/swarm:ping`
-temporarily writes `ping_pending`, `ping_t1`, and `pongs` into the
-same file while waiting for replies.
+survive reboots or move between machines. The daemon is the **sole
+writer** — the skills only read it. It is created when `/swarm:create`
+or `/swarm:join` starts the daemon (via `--state-file`) and removed by
+the daemon on clean shutdown (so `/swarm:leave` deletes nothing).
 
 ## Auto-reply behavior
 
 Default: on. The Monitor event handler auto-replies to incoming
-messages when confidence ≥ 90 %, and always auto-replies `pong` to
-incoming `ping`. Pause with the natural-language toggle "stop auto
-replying"; resume with "start auto replying". See
-`docs/claude-code-skill.md` § "Reply behavior" for the full ruleset.
+messages when confidence ≥ 90 %. Ping/pong is handled entirely by the
+daemon — the handler never replies to a `ping` itself. See the
+"Monitor event handler" section of the `/swarm:create` and
+`/swarm:join` skills for the full ruleset.
 
 ## Troubleshooting
 
@@ -179,7 +179,7 @@ If `/swarm:leave` was never called, the session file and Monitor
 process may both be stale. Manual cleanup:
 
 ```bash
-rm -f "/tmp/agent-habilis-swarm/sessions/${PPID}.json"
+rm -f "/tmp/agent-habilis/swarm/sessions/${PPID}.json"
 pkill -f "ahs create"
 pkill -f "ahs join"
 ```
@@ -188,4 +188,3 @@ pkill -f "ahs join"
 
 - `ahs` binary on `$PATH`
 - `jq` for JSON processing inside the skill scripts
-- `python3` for `/swarm:ping` RTT measurement

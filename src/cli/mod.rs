@@ -164,6 +164,7 @@ mod tests {
             Commands::Join { .. }
             | Commands::Msg { .. }
             | Commands::Poll { .. }
+            | Commands::Ping { .. }
             | Commands::Mcp => {
                 panic!("expected Create command")
             }
@@ -181,6 +182,7 @@ mod tests {
             Commands::Join { .. }
             | Commands::Msg { .. }
             | Commands::Poll { .. }
+            | Commands::Ping { .. }
             | Commands::Mcp => {
                 panic!("expected Create command")
             }
@@ -195,6 +197,7 @@ mod tests {
             Commands::Join { .. }
             | Commands::Msg { .. }
             | Commands::Poll { .. }
+            | Commands::Ping { .. }
             | Commands::Mcp => {
                 panic!("expected Create command")
             }
@@ -226,6 +229,7 @@ mod tests {
                 Commands::Join { .. }
                 | Commands::Msg { .. }
                 | Commands::Poll { .. }
+                | Commands::Ping { .. }
                 | Commands::Mcp => panic!("expected Create"),
             }
         }
@@ -277,6 +281,7 @@ mod tests {
             Commands::Join { .. }
             | Commands::Msg { .. }
             | Commands::Poll { .. }
+            | Commands::Ping { .. }
             | Commands::Mcp => {
                 panic!("expected Create command")
             }
@@ -364,6 +369,19 @@ pub(crate) enum Commands {
         output: OutputFormat,
     },
 
+    /// Ping all peers and have the daemon measure RTT. Fire-and-forget:
+    /// the `ping_report` arrives on the running create/join daemon's
+    /// `--output json` stream, not on this command's stdout.
+    Ping {
+        /// Swarm identifier (ahs...)
+        #[arg(long)]
+        swarm: SwarmId,
+
+        /// Nickname of the local agent (must have a running join/create session)
+        #[arg(long)]
+        nickname: Nickname,
+    },
+
     /// Run as a Model Context Protocol server over stdio.
     ///
     /// Exposes swarm lifecycle + messaging as MCP tools for AI clients
@@ -435,6 +453,7 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
             after,
             output: _,
         } => poll(&swarm, &nickname, after).await,
+        Commands::Ping { swarm, nickname } => ping(&swarm, &nickname).await,
         Commands::Mcp => crate::mcp::run().await,
     }
 }
@@ -547,5 +566,23 @@ async fn poll(swarm: &SwarmId, nickname: &Nickname, after: Option<MessageId>) ->
     let resp = ipc::send(&cmd, nickname).await?;
     println!("{resp}");
 
+    Ok(())
+}
+
+/// Arm an RTT round on the running daemon. Fire-and-forget: the daemon
+/// acks immediately and emits the `ping_report` on its own
+/// `--output json` stream once the collection window closes.
+async fn ping(swarm: &SwarmId, nickname: &Nickname) -> Result<()> {
+    let cmd = IpcCommand::Ping {
+        swarm: swarm.clone(),
+    };
+    let resp = ipc::send(&cmd, nickname).await?;
+    let parsed: MsgResponse = serde_json::from_str(&resp)?;
+    if !parsed.ok {
+        anyhow::bail!(
+            "{}",
+            parsed.error.unwrap_or_else(|| "unknown error".to_string())
+        );
+    }
     Ok(())
 }

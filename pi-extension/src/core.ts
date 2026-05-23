@@ -2,7 +2,7 @@ import type { ChildProcess } from "node:child_process";
 import { spawn } from "node:child_process";
 import * as readline from "node:readline";
 import { clearBatch, startWatcher, stopWatcher } from "./daemon";
-import { isAscii, runSwarmCommand } from "./helpers";
+import { isValidBody, runSwarmCommand } from "./helpers";
 import { state, stateFilePath } from "./state";
 import type { PingResult, Session } from "./types";
 
@@ -111,7 +111,9 @@ export async function joinSwarm(target: string, nickname?: string): Promise<Sess
 
 export function sendSwarmMessage(text: string, reply?: string): void {
   if (!state.session?.swarm) throw new Error("Not in a swarm");
-  if (!isAscii(text)) throw new Error("Message body must be ASCII only");
+  if (!isValidBody(text)) {
+    throw new Error("Message body must not contain control characters other than tab/newline");
+  }
 
   const args = [
     "msg",

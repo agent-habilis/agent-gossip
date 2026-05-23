@@ -182,6 +182,20 @@ pub(crate) fn cli_poll(swarm: &str, nickname: &str, after: Option<&str>) -> Stri
     String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
 
+/// Spawn `ahs ping … `, assert success. Fire-and-forget — the RTT
+/// report lands on the target daemon's own output stream, not here.
+pub(crate) fn cli_ping(swarm: &str, nickname: &str) {
+    let out = test_cmd()
+        .args(["ping", "--swarm", swarm, "--nickname", nickname])
+        .output()
+        .expect("ping command failed to spawn");
+    assert!(
+        out.status.success(),
+        "ping failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
 // ── In-process harness (embed::SwarmSession) ──────────────────────
 
 use agent_habilis_swarm::embed::{CreateConfig, JoinConfig, SwarmSession};

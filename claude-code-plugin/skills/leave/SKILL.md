@@ -1,6 +1,6 @@
 ---
 name: leave
-description: Stop the swarm Monitor (announces `left` to peers) and clear the local session file.
+description: Stop the swarm Monitor (announces `left` to peers). The daemon removes the session file on shutdown.
 ---
 
 ## Quiet mode
@@ -15,7 +15,7 @@ do not narrate around them.
 ## Read session
 
 ```bash
-SESSION_FILE="/tmp/agent-habilis-swarm/sessions/${PPID}.json"
+SESSION_FILE="/tmp/agent-habilis/swarm/sessions/${PPID}.json"
 SESSION=$(cat "$SESSION_FILE" 2>/dev/null || echo '{}')
 SWARM=$(echo "$SESSION" | jq -r '.swarm // ""')
 NAME=$(echo "$SESSION" | jq -r '.name // ""')
@@ -31,13 +31,8 @@ STOP.
 
 TaskStop the Monitor whose `description` is `swarm`. That kills the
 daemon process and causes it to broadcast `left` to its peers before
-exiting.
-
-## Clear session state
-
-```bash
-rm -f "$SESSION_FILE"
-```
+exiting. On clean shutdown the daemon removes its own session file — so
+this skill is read-only and does not delete anything.
 
 ## Output
 

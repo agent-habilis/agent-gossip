@@ -7,12 +7,16 @@
 use iroh_gossip::api::GossipSender;
 use tokio::sync::oneshot;
 
-use crate::daemon::state::EventLoopState;
-use crate::output;
-use crate::protocol::{Nickname, SwarmId};
-use crate::transport::ipc::{IpcCommand, json_error, json_ok_msg, json_rate_limited};
+use std::collections::HashMap;
+use std::time::Duration;
 
-use crate::gossip::{SendOutcome, broadcast_message};
+use crate::daemon::state::{EventLoopState, PingRound};
+use crate::output;
+use crate::protocol::{Message, Nickname, SwarmId};
+use crate::transport::ipc::{IpcCommand, json_ack, json_error, json_ok_msg, json_rate_limited};
+use crate::util::tuning::ping_window_secs;
+
+use crate::gossip::{SendOutcome, broadcast_message, broadcast_msg};
 
 /// Returns `true` if the handler broadcast anything, so the caller
 /// can refresh `last_sent_at` for heartbeat suppression.
@@ -64,6 +68,21 @@ pub(crate) async fn handle_ipc_command(
                 .expect("serializing poll response (Vec<Message>) is infallible");
             let _ = resp_tx.send(resp);
             false
+        }
+        IpcCommand::Ping { swarm: _ } => {
+            // Arm a fresh round (replacing any in flight) and broadcast
+            // the probe. Pongs are collected by the gossip receive path;
+            // the round's deadline drives the `ping_report` emission.
+            let now = tokio::time::Instant::now();
+            state.ping_round = Some(Box::new(PingRound {
+                t1: now,
+                deadline: now + Duration::from_secs(ping_window_secs()),
+                pongs: HashMap::new(),
+            }));
+            broadcast_msg(sender, &Message::new_ping(swarm, author)).await;
+            tracing::debug!("IPC ping command received; round armed");
+            let _ = resp_tx.send(json_ack());
+            true
         }
     }
 }

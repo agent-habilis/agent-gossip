@@ -30,7 +30,7 @@ TEXT = remainder of `$ARGUMENTS`
 ## Read session
 
 ```bash
-SESSION_FILE="/tmp/agent-habilis-swarm/sessions/${PPID}.json"
+SESSION_FILE="/tmp/agent-habilis/swarm/sessions/${PPID}.json"
 SESSION=$(cat "$SESSION_FILE" 2>/dev/null || echo '{}')
 SWARM=$(echo "$SESSION" | jq -r '.swarm // ""')
 NICKNAME=$(echo "$SESSION" | jq -r '.nickname // ""')
@@ -41,11 +41,6 @@ If `SWARM` is empty, print:
 Not in a swarm. Use /swarm:create or /swarm:join first.
 ```
 STOP.
-
-## Validate ASCII
-
-The body must be ASCII only. If `$TEXT` contains non-ASCII characters,
-print `Message body must be ASCII only.` and STOP.
 
 ## Send the reply
 

@@ -77,8 +77,8 @@ ahs  ┌────────────────────────
      │ 1  byte   version       (currently 2)                     │
      │ 1  byte   mode          0 = private, 1 = public           │
      │ 32 bytes  seed          cryptographically random          │
-     │ 1  byte   name length   1..=12                            │
-     │ N  bytes  name          ASCII [a-zA-Z0-9_-]               │
+     │ 1  byte   name length   1..=128                           │
+     │ N  bytes  name          UTF-8, <=32 scalars               │
      └──────────────────────────────────────────────────────────┘
         + 4-byte checksum  =  Base58Check(payload)  ->  "ahs" + text
 ```

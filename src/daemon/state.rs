@@ -1,6 +1,8 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::Instant;
 
+use tokio::time::Instant as TokioInstant;
+
 use bytes::Bytes;
 use iroh::EndpointId;
 
@@ -111,6 +113,21 @@ pub(crate) struct EventLoopState {
     pub state_file: Option<StateFile>,
     pub message_log: MessageLog,
     pub rate_limiter: SwarmRateLimiter,
+    /// Active `ahs ping` round, if one is in flight. Armed by the
+    /// `Ping` IPC command, filled by inbound `Pong`s, and finalized
+    /// into a `ping_report` when its `deadline` elapses. One at a time:
+    /// a fresh ping replaces any in-flight round. Boxed to keep the
+    /// rarely-set round off the hot event-loop future's stack size.
+    pub ping_round: Option<Box<PingRound>>,
+}
+
+/// An in-flight RTT round. `t1` is when the probe was broadcast;
+/// `pongs` records each peer's local arrival instant so RTT is
+/// `arrival - t1`; the round is emitted and cleared at `deadline`.
+pub(crate) struct PingRound {
+    pub t1: TokioInstant,
+    pub deadline: TokioInstant,
+    pub pongs: HashMap<Nickname, TokioInstant>,
 }
 
 impl EventLoopState {
@@ -137,6 +154,7 @@ impl EventLoopState {
             state_file,
             message_log: MessageLog::new(DEFAULT_MESSAGE_LOG_SIZE),
             rate_limiter: SwarmRateLimiter::new(),
+            ping_round: None,
         }
     }
 

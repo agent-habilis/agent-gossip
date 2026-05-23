@@ -34,5 +34,8 @@ export const state: AppState = {
 
 export function stateFilePath(): string | null {
   if (!state.stateFileId) return null;
-  return `/tmp/agent-habilis-swarm-state-${state.stateFileId}.json`;
+  // Under the shared /tmp/agent-habilis/swarm/ namespace, next to the
+  // sockets/logs and the Claude Code plugin's PPID-keyed session files,
+  // so a statusline can scan one sessions dir for every member.
+  return `/tmp/agent-habilis/swarm/sessions/${state.stateFileId}.json`;
 }

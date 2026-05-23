@@ -41,6 +41,18 @@ enum SimpleEvent<'a> {
     Error {
         message: &'a str,
     },
+    PingReport {
+        peers: Vec<PingPeer>,
+        responded: usize,
+        known: usize,
+    },
+}
+
+/// One peer's RTT in a `ping_report` event.
+#[derive(Debug, Clone, Serialize)]
+pub struct PingPeer {
+    pub nickname: String,
+    pub rtt_ms: u64,
 }
 
 /// Common prefix for every `{"event":"message",...}` line. Field
@@ -137,6 +149,10 @@ pub enum OutputEvent {
     },
     Error {
         message: String,
+    },
+    PingReport {
+        peers: Vec<PingPeer>,
+        known: usize,
     },
 }
 
@@ -380,7 +396,13 @@ impl Output {
     /// When `filter_self` is enabled, self-authored messages are
     /// suppressed. Presence events should use `print_presence` instead.
     pub(crate) fn print_message_ex(&self, msg: &Message, is_self: bool) {
-        if matches!(msg.kind, MessageKind::PeerInfo | MessageKind::Digest) {
+        if matches!(
+            msg.kind,
+            MessageKind::PeerInfo
+                | MessageKind::Digest
+                | MessageKind::Ping
+                | MessageKind::Pong { .. }
+        ) {
             return;
         }
         if is_self && self.filters_self() {
@@ -512,6 +534,34 @@ impl Output {
         self.error(&error.to_string());
     }
 
+    /// Emit the result of an `ahs ping` round: per-peer RTT, plus how
+    /// many of the known peers responded (the responder count is just
+    /// `peers.len()`). `known` is the current participant roster size.
+    pub(crate) fn ping_report(&self, peers: Vec<PingPeer>, known: usize) {
+        // Not routed through `dispatch`: `peers` is owned and each arm
+        // consumes (or drops) it, so there is nothing to clone.
+        match self {
+            Output::Capture { tx, .. } => {
+                let _ = tx.send(OutputEvent::PingReport { peers, known });
+            }
+            Output::Stream { mode, .. } => match mode {
+                OutputMode::Human => {
+                    for peer in &peers {
+                        let (open, close) = self.nick_ansi(&peer.nickname, stderr_color());
+                        eprintln!("{open}<{}>{close} {}ms", peer.nickname, peer.rtt_ms);
+                    }
+                    eprintln!("{}/{known} online", peers.len());
+                }
+                OutputMode::Json => emit_json(&SimpleEvent::PingReport {
+                    responded: peers.len(),
+                    peers,
+                    known,
+                }),
+                OutputMode::Silent => {}
+            },
+        }
+    }
+
     /// Render a message in Human mode: `<author>: body`, or
     /// `<author> → <target>: body` for a reply. The author/target
     /// `<nick>` tokens are colored (self vs peer); the **body** is
@@ -533,7 +583,9 @@ impl Output {
             MessageKind::Msg { reply: None }
             | MessageKind::Presence { .. }
             | MessageKind::PeerInfo
-            | MessageKind::Digest => {
+            | MessageKind::Digest
+            | MessageKind::Ping
+            | MessageKind::Pong { .. } => {
                 println!("{open}<{}>{close}: {}", msg.author, msg.body);
             }
         }
@@ -595,7 +647,11 @@ pub(crate) fn format_msg_json(msg: &Message, is_self: bool) -> String {
             is_self,
         })
         .expect("message event serialization should never fail"),
-        MessageKind::Presence { .. } | MessageKind::PeerInfo | MessageKind::Digest => {
+        MessageKind::Presence { .. }
+        | MessageKind::PeerInfo
+        | MessageKind::Digest
+        | MessageKind::Ping
+        | MessageKind::Pong { .. } => {
             unreachable!("format_msg_json only handles Msg")
         }
     }
@@ -643,6 +699,13 @@ pub fn event_json(event: &OutputEvent) -> Option<String> {
         OutputEvent::MsgPosted { id } => serde_json::to_string(&SimpleEvent::MsgPosted { id }),
         OutputEvent::Info { message } => serde_json::to_string(&SimpleEvent::Info { message }),
         OutputEvent::Error { message } => serde_json::to_string(&SimpleEvent::Error { message }),
+        OutputEvent::PingReport { peers, known } => {
+            serde_json::to_string(&SimpleEvent::PingReport {
+                responded: peers.len(),
+                peers: peers.clone(),
+                known: *known,
+            })
+        }
         OutputEvent::SwarmId { .. } => return None,
     };
     json.ok()

@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 use ahs_shared::RATE_LIMIT_PER_MIN;
 use common::{
     CONNECT_TIMEOUT, InProcNode, MSG_TIMEOUT, Msg, Node, POLL, SOCKET_DIR, cli_message,
-    cli_message_raw, cli_poll, tmp_log, trace_log, wait_total,
+    cli_message_raw, cli_ping, cli_poll, tmp_log, trace_log, wait_total,
 };
 
 // ── tests ─────────────────────────────────────────────────────────────────────
@@ -573,6 +573,64 @@ fn test_poll_returns_messages() {
     assert!(
         after_bodies.contains(&"second message"),
         "second message missing from --after poll: {after_bodies:?}"
+    );
+}
+
+/// `ahs ping` is daemon-owned: the transient command arms a round over
+/// IPC, the daemon broadcasts a probe, every peer auto-pongs, and the
+/// originator emits a `ping_report` on its own output stream listing
+/// each responder's RTT. The probe/pong never surface as chat. A short
+/// `PING_WINDOW_SECS` keeps the round fast.
+#[test]
+fn test_ping_reports_peer_rtt() {
+    let (creator, swarm) = Node::create_env("itest", &[("PING_WINDOW_SECS", "2")]);
+    let joiner = Node::join(&swarm, "ping-joiner");
+    assert!(creator.wait_ready(&swarm), "creator socket never appeared");
+    assert!(joiner.wait_ready(&swarm), "joiner socket never appeared");
+
+    // Let the mesh + presence settle so the probe reaches the joiner.
+    std::thread::sleep(Duration::from_secs(3));
+
+    // Arm the round on the creator; its report lands on the creator's
+    // own stream once the 2s window closes.
+    cli_ping(&swarm, &creator.nickname);
+
+    // Poll the creator's captured output for the report (window + margin).
+    let deadline = Instant::now() + Duration::from_secs(8);
+    let mut online_line = None;
+    let mut rtt_line = None;
+    while Instant::now() < deadline && (online_line.is_none() || rtt_line.is_none()) {
+        for line in creator.log_contents().lines() {
+            if line.contains("online") {
+                online_line = Some(line.to_string());
+            }
+            if line.contains(&joiner.nickname) && line.contains("ms") {
+                rtt_line = Some(line.to_string());
+            }
+        }
+        if online_line.is_none() || rtt_line.is_none() {
+            std::thread::sleep(POLL);
+        }
+    }
+
+    assert!(
+        online_line.is_some(),
+        "ping_report 'N/M online' summary never appeared\nlog tail:\n{}",
+        creator.log_tail(15)
+    );
+    assert!(
+        rtt_line.is_some(),
+        "ping_report never listed the joiner's RTT\nlog tail:\n{}",
+        creator.log_tail(15)
+    );
+
+    // The probe/pong must not surface as chat on the joiner's stream.
+    assert!(
+        !joiner
+            .messages()
+            .iter()
+            .any(|msg| msg.body == "ping" || msg.body == "pong"),
+        "ping/pong leaked as chat messages to the joiner"
     );
 }
 

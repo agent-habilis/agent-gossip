@@ -313,6 +313,18 @@ pub enum MessageKind {
     /// `PeerInfo`: never rate-limited, logged, or surfaced via
     /// `poll`/`fetch`.
     Digest,
+    /// Liveness probe broadcast by a node running an RTT round. Every
+    /// receiver auto-responds with a `Pong` addressed back to the
+    /// pinger. Plumbing like `PeerInfo`/`Digest`: never rate-limited,
+    /// logged, or surfaced via `poll`/`fetch` — only the originator's
+    /// `ping_report` event surfaces.
+    Ping,
+    /// Response to a `Ping`, addressed to the original pinger (`to`).
+    /// The pinger records its local arrival time to compute RTT. Same
+    /// plumbing treatment as `Ping`.
+    Pong {
+        to: Nickname,
+    },
 }
 
 impl fmt::Display for MessageKind {
@@ -322,6 +334,8 @@ impl fmt::Display for MessageKind {
             MessageKind::Presence { .. } => write!(f, "presence"),
             MessageKind::PeerInfo => write!(f, "peerinfo"),
             MessageKind::Digest => write!(f, "digest"),
+            MessageKind::Ping => write!(f, "ping"),
+            MessageKind::Pong { .. } => write!(f, "pong"),
         }
     }
 }
@@ -419,6 +433,17 @@ impl Message {
         body: MessageBody,
     ) -> Self {
         Self::new(swarm, author, MessageKind::Msg { reply: Some(reply) }, body)
+    }
+
+    /// A liveness probe (broadcast). Receivers auto-respond with a
+    /// `Pong` addressed back to `author`.
+    pub(crate) fn new_ping(swarm: &SwarmId, author: &Nickname) -> Self {
+        Self::new(swarm, author, MessageKind::Ping, empty_body())
+    }
+
+    /// A `Pong` response addressed to the original pinger (`to`).
+    pub(crate) fn new_pong(swarm: &SwarmId, author: &Nickname, to: Nickname) -> Self {
+        Self::new(swarm, author, MessageKind::Pong { to }, empty_body())
     }
 
     /// Create a `PeerInfo` message. The body carries endpoint address data
@@ -563,6 +588,26 @@ mod tests {
     }
 
     #[test]
+    fn test_ping_round_trip() {
+        let msg = Message::new_ping(&sid(), &nick("word-word"));
+        let bytes = msg.serialize().unwrap();
+        assert!(String::from_utf8_lossy(&bytes).contains("\"type\":\"ping\""));
+        let parsed = Message::parse(&bytes).unwrap();
+        assert_eq!(parsed.kind, MessageKind::Ping);
+        assert_eq!(parsed.body.as_str(), "");
+    }
+
+    #[test]
+    fn test_pong_round_trip() {
+        let target = nick("pinger-here");
+        let msg = Message::new_pong(&sid(), &nick("word-word"), target.clone());
+        let bytes = msg.serialize().unwrap();
+        let parsed = Message::parse(&bytes).unwrap();
+        assert_eq!(parsed.kind, MessageKind::Pong { to: target });
+        assert_eq!(parsed.body.as_str(), "");
+    }
+
+    #[test]
     fn test_ext_round_trip() {
         let mut msg =
             Message::new_message(&sid(), &nick("word-word"), MessageBody::from("With ext."));
@@ -621,7 +666,11 @@ mod tests {
         assert_eq!(msg.body.as_str(), "reply");
         match msg.kind {
             MessageKind::Msg { reply } => assert_eq!(reply, Some(target)),
-            MessageKind::Presence { .. } | MessageKind::PeerInfo | MessageKind::Digest => {
+            MessageKind::Presence { .. }
+            | MessageKind::PeerInfo
+            | MessageKind::Digest
+            | MessageKind::Ping
+            | MessageKind::Pong { .. } => {
                 panic!("expected Msg kind")
             }
         }

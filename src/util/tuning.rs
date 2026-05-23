@@ -96,6 +96,14 @@ pub(crate) fn cohost_grace_secs() -> u64 {
     env_u64("BEACON_COHOST_GRACE_SECS", 10)
 }
 
+/// How long an `ahs ping` round collects pongs before the daemon
+/// emits its `ping_report`. Long enough for a relayed round-trip
+/// across the mesh; overridable via `PING_WINDOW_SECS` so tests don't
+/// wait the full window.
+pub(crate) fn ping_window_secs() -> u64 {
+    env_u64("PING_WINDOW_SECS", 10)
+}
+
 fn env_u64(name: &str, default: u64) -> u64 {
     std::env::var(name)
         .ok()

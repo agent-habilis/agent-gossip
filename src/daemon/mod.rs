@@ -103,7 +103,7 @@ pub(crate) async fn run(cfg: EventLoopConfig) -> Result<()> {
     };
 
     let started = Instant::now();
-    let state_file = state_file.map(|path| StateFile::new(path, &swarm_str, &author));
+    let state_file = state_file.map(|path| StateFile::new(path, &swarm_str, &author, &swarm_name));
     let state = EventLoopState::new(state_file, started);
     state.write_participant_count();
 
@@ -261,9 +261,13 @@ async fn event_loop(loop_state: EventLoop) -> Result<()> {
     };
 
     loop {
+        let ping_deadline = state.ping_round.as_ref().map(|round| round.deadline);
         tokio::select! {
             result = read_bounded_line(&mut stdin_reader, MAX_STDIN_LINE_BYTES), if stdin_open => {
                 stdin_open = handle_stdin_arm(result, &sender, &swarm_str, &author, &mut state, &output).await;
+            }
+            () = sleep_until_opt(ping_deadline) => {
+                finalize_ping_round(&mut state, &output);
             }
             ipc_msg = recv_opt(&mut ipc_rx) => {
                 if !handle_ipc_arm(ipc_msg, &swarm_str, &author, &mut state, &sender, &output).await {
@@ -395,6 +399,35 @@ fn spawn_ipc_rx(
     let (ipc_tx, rx) = mpsc::channel::<IpcMessage>(32);
     tokio::spawn(listen(swarm.clone(), author.clone(), ipc_tx, output));
     Some(rx)
+}
+
+/// Sleep until a ping round's deadline, or pend forever when no round
+/// is active. Lets the event loop's `select!` carry a ping-finalize arm
+/// that only fires while a round is in flight, without borrowing
+/// `state` across the await (the deadline is copied out beforehand).
+async fn sleep_until_opt(deadline: Option<tokio::time::Instant>) {
+    match deadline {
+        Some(at) => tokio::time::sleep_until(at).await,
+        None => std::future::pending::<()>().await,
+    }
+}
+
+/// Build and emit the `ping_report` for the elapsed round, then clear
+/// it. RTT is each pong's local arrival minus the probe broadcast time.
+fn finalize_ping_round(state: &mut EventLoopState, output: &output::Output) {
+    let Some(round) = state.ping_round.take() else {
+        return;
+    };
+    let mut peers: Vec<output::PingPeer> = round
+        .pongs
+        .iter()
+        .map(|(nickname, arrival)| output::PingPeer {
+            nickname: nickname.as_str().to_owned(),
+            rtt_ms: u64::try_from(arrival.duration_since(round.t1).as_millis()).unwrap_or(u64::MAX),
+        })
+        .collect();
+    peers.sort_by(|left, right| left.nickname.cmp(&right.nickname));
+    output.ping_report(peers, state.participants.len());
 }
 
 /// May this member co-host the rendezvous yet? See

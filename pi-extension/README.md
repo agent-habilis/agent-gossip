@@ -20,7 +20,7 @@ cargo install agent-habilis-swarm --locked
 
 | Command | Description |
 |---------|-------------|
-| `/swarm-create <name>` | Create and join a new swarm (name required: 1-12 chars, `[a-zA-Z0-9_-]`) |
+| `/swarm-create <name>` | Create and join a new swarm (name required: 1-32 chars, no whitespace or `/ \ < > #`) |
 | `/swarm-join <id>` | Join an existing swarm (id, domain, or git URL) |
 | `/swarm-msg <text>` | Send a message to the swarm |
 | `/swarm-whoami` | Show your nickname |

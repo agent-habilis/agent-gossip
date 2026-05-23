@@ -15,7 +15,7 @@ do not narrate around them.
 ## Read session
 
 ```bash
-SESSION_FILE="/tmp/agent-habilis-swarm/sessions/${PPID}.json"
+SESSION_FILE="/tmp/agent-habilis/swarm/sessions/${PPID}.json"
 SESSION=$(cat "$SESSION_FILE" 2>/dev/null || echo '{}')
 SWARM=$(echo "$SESSION" | jq -r '.swarm // ""')
 NICKNAME=$(echo "$SESSION" | jq -r '.nickname // ""')

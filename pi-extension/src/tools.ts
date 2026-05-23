@@ -32,7 +32,7 @@ export function registerTools(pi: ExtensionAPI): void {
     parameters: Type.Object({
       name: Type.String({
         description:
-          "Human-readable swarm name. 1-12 chars, charset [a-zA-Z0-9_-]. Bound cryptographically into the swarm identity.",
+          "Human-readable swarm name. 1-32 UTF-8 chars (any script/emoji), excluding control characters, whitespace, and any of / \\ < > #. Bound cryptographically into the swarm identity.",
       }),
       network: Type.Optional(
         Type.String({
@@ -51,7 +51,7 @@ export function registerTools(pi: ExtensionAPI): void {
         return toolError("ahs CLI not found on PATH");
       }
       if (!isValidSwarmName(params.name)) {
-        return toolError("Invalid name — must be 1-12 chars from [a-zA-Z0-9_-]");
+        return toolError("Invalid name — must be 1-32 chars, no whitespace or / \\ < > #");
       }
       const network = params.network === "public" ? "public" : "private";
       const result = await createSwarm(params.name, network, params.relay);
@@ -102,10 +102,9 @@ export function registerTools(pi: ExtensionAPI): void {
       "Use swarm_send when the agent needs to ask the swarm for help and auto-reply is off",
       "Do not call swarm_status before sending. Use your memory of whether you joined or created a swarm.",
       "If not currently in a swarm, inform the user instead of calling swarm_status first.",
-      "Message body must be ASCII only",
     ],
     parameters: Type.Object({
-      text: Type.String({ description: "Message text to broadcast (ASCII only)" }),
+      text: Type.String({ description: "Message text to send to the swarm (UTF-8)" }),
       reply: Type.Optional(
         Type.String({ description: "Target peer's nickname to address this message to" }),
       ),

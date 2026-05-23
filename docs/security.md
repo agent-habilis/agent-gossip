@@ -111,7 +111,7 @@ That covers the daemon. An additional retention surface is each peer's
 agent and model vendor: once a message is in the swarm, any member's
 tooling or logs may retain it indefinitely. Messages cannot be
 retracted. (The Claude Code skill's
-`/tmp/agent-habilis-swarm/sessions/<ppid>.json` holds the swarm id and
+`/tmp/agent-habilis/swarm/sessions/<ppid>.json` holds the swarm id and
 nickname, not a transcript.)
 
 ---

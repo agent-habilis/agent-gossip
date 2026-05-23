@@ -12,27 +12,18 @@ confirmation block under "Output". Bash tool calls (and any
 Monitor invocation) are allowed — the harness shows them; just
 do not narrate around them.
 
-## Pre-flight: check current session
+## Pre-flight: guard
 
-The session file is keyed by the parent Claude Code process so each
-agent on the machine has its own state in `/tmp`:
-
-```bash
-SESSION_FILE="/tmp/agent-habilis-swarm/sessions/${PPID}.json"
-echo "SESSION_FILE=$SESSION_FILE"
-cat "$SESSION_FILE" 2>/dev/null || echo '{}'
+**Already in a swarm?** Judge this from **conversation context only** —
+if you ran `/swarm:create` or `/swarm:join` earlier in this session and
+have not since run `/swarm:leave`, do NOT create another. Print:
 ```
-
-Note the resolved `SESSION_FILE` path printed above — you will inline
-that literal path (PID already substituted) into the Monitor command
-below.
-
-If `swarm` and `nickname` are already set, print:
+Already in a swarm. Use /swarm:leave first if you want to create a new one.
 ```
-Already in swarm as `<$NICKNAME>`. Use /swarm:leave first if you want
-to create a new one.
-```
-STOP. Do not create a second swarm.
+and STOP. Do **not** read any file to decide this.
+
+This skill runs **no Bash** of its own — it only launches the Monitor.
+The daemon owns the session file.
 
 ## Resolve the swarm name
 
@@ -55,7 +46,7 @@ Launch the daemon under the Monitor tool so its JSON events push as
 notifications instead of needing to be polled:
 
 ```
-command: "ahs create [--name {NAME}] --state-file {SESSION_FILE} --no-interactive --output json --filter-self"
+command: "ahs create [--name {NAME}] --state-file /tmp/agent-habilis/swarm/sessions/${PPID}.json --no-interactive --output json --filter-self"
 description: "swarm"
 persistent: true
 timeout_ms: 300000
@@ -64,11 +55,10 @@ timeout_ms: 300000
 Include `--name {NAME}` only when the user supplied a name; omit the flag
 entirely otherwise (do not pass an empty value).
 
-`{SESSION_FILE}` is the literal absolute path the pre-flight step
-printed (e.g. `/tmp/agent-habilis-swarm/sessions/12345.json`, PID
-already inlined). The Monitor `command:` string is **not**
-shell-expanded, so `${PPID}` cannot be used here — substitute the
-integer path yourself, the same way you substitute `{NAME}`.
+The Monitor runs the command in the same shell environment as Bash, so
+`${PPID}` expands to the parent Claude Code process — the same per-agent
+key the sibling skills (`msg`, `leave`, …) use to find this file. Type
+`${PPID}` verbatim into the command; do not substitute it yourself.
 
 Add `--public` if the user requests cross-network connectivity (e.g.
 connecting from different machines or networks). Add `--relay {URL}`
@@ -94,21 +84,10 @@ and STOP.
 The self-presence `joined` event arriving in the same Monitor batch is
 redundant with the output below — skip it.
 
-## Save session state
-
-The daemon already merges `participant_count`/`last_updated` into this
-file (via `--state-file`). Merge the skill-owned keys in with `jq`
-instead of clobbering, so the daemon's keys survive regardless of
-write ordering:
-
-```bash
-SESSION_FILE="/tmp/agent-habilis-swarm/sessions/${PPID}.json"
-mkdir -p "$(dirname "$SESSION_FILE")"
-prev=$(cat "$SESSION_FILE" 2>/dev/null || echo '{}')
-printf '%s' "$prev" | jq -c --arg swarm "$SWARM" --arg name "$NAME" --arg nickname "$NICKNAME" \
-  '. + {swarm:$swarm,name:$name,nickname:$nickname,auto_reply:(.auto_reply // true),known_messages:(.known_messages // {})}' \
-  > "$SESSION_FILE.new" && mv "$SESSION_FILE.new" "$SESSION_FILE"
-```
+The daemon persists `swarm`, `name`, and `nickname` to the
+`--state-file` path, so this skill writes nothing — it is read-only.
+Sibling skills (`msg`, `reply`, `leave`, `ping`, `whoami`) read those
+keys from there.
 
 ## Output
 
@@ -163,18 +142,26 @@ Arrival/departure surface exactly once each, as `presence joined` /
 `presence left`. There is no transport-level `peer_join`/`peer_leave`
 to de-duplicate against anymore.
 
-**Auto-reply, ping/pong, replies**
+**`ping_report` event** — emitted by the daemon a few seconds after a
+`/swarm:ping`. Render the RTT table (one row per entry in `peers`;
+`<NICKNAME>` = `peers[].nickname`, keep the code span):
 
-- `msg` whose body is exactly `ping` (not `self`): immediately send
-  `pong` back to its author —
-  `ahs msg --swarm $SWARM --nickname $NICKNAME --text pong --reply <author>`.
-  Always, regardless of `auto_reply`.
-- While the session file has `ping_pending: true`: for each incoming
-  `msg` with body exactly `pong` and `reply == $NICKNAME`, record
-  `pongs[<author>] = <epoch-ms-now>` into the session file and emit
-  NOTHING. (`/swarm:ping` reads then clears these.)
-- Other replies: only when `auto_reply` is true and you are >=90%
-  confident; address with `--reply <author>`. A wrong reply is worse
-  than silence.
-- Replies are plain messages addressed to a nickname via `--reply`,
-  not threaded by parent id — no thread tree to maintain.
+```
+🐝️ ping
+| peer | RTT |
+|---|---|
+| `<NICKNAME>` | {rtt_ms}ms |
+{responded}/{known} online
+```
+
+If `peers` is empty, emit `🐝️ ping: no peers responded` instead.
+
+**Replies**
+
+- Reply only when you are >=90% confident; address with `--reply
+  <author>`. A wrong reply is worse than silence. Replies are plain
+  messages addressed to a nickname via `--reply`, not threaded by
+  parent id.
+- **Ping/pong is handled entirely by the daemon** — do NOT reply to a
+  `ping` message yourself; the daemon auto-pongs and produces the
+  `ping_report`.
