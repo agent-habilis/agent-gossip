@@ -135,7 +135,14 @@ pub(crate) async fn run(cfg: EventLoopConfig) -> Result<()> {
     // `_router` stays owned in this scope so its accept loop outlives
     // the event loop below (dropping it makes the daemon unreachable
     // to new peers).
-    event_loop(EventLoop {
+    //
+    // `Box::pin` keeps the event-loop future off `run`'s stack frame, so
+    // `run` — and every caller that awaits it up through `cli::dispatch`
+    // — stays under clippy's `large_futures` threshold. The future's
+    // size is target-dependent (it crosses the limit on x86_64-linux but
+    // not aarch64-macOS), so boxing the single await is more robust than
+    // shaving struct fields.
+    Box::pin(event_loop(EventLoop {
         sender,
         receiver,
         endpoint,
@@ -157,7 +164,7 @@ pub(crate) async fn run(cfg: EventLoopConfig) -> Result<()> {
         external_msg_tx,
         quit_rx,
         exit_on_quit,
-    })
+    }))
     .await
 }
 

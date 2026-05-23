@@ -1,4 +1,9 @@
 [toolchain]
-channel = "1.95"
+# Single source of truth for the toolchain on every env (local + CI).
+# Exact patch pin so a floating "1.95" can't resolve to different patch
+# releases between machines. CI reads this file via
+# actions-rust-lang/setup-rust-toolchain — do not duplicate the version
+# in the workflows.
+channel = "1.95.0"
 components = ["clippy", "rustfmt"]
 profile = "minimal"
