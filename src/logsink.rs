@@ -8,10 +8,12 @@
 
 use std::fs;
 use std::io::{self, Write};
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
+use ahs_shared::logs::log_file_path;
+
 use crate::protocol::{Nickname, SwarmId};
-use crate::transport::ipc::log_file_path;
 
 /// Pending-buffer ceiling. `create`/`join` attach within sub-second (a
 /// few KB); a long non-attaching process (`mcp`) hits this and flips
@@ -20,8 +22,30 @@ const LOG_BUF_CAP: usize = 1 << 20;
 
 enum State {
     Pending(Vec<u8>),
-    Attached(fs::File),
+    /// Writing to the per-member file. `written`/`max` bound its size:
+    /// at the cap the file rotates to `<path>.1` (see [`rotate`]). `max
+    /// == 0` disables rotation.
+    Attached {
+        file: fs::File,
+        path: PathBuf,
+        written: u64,
+        max: u64,
+    },
     Stderr,
+}
+
+/// Rotate `path` → `<path>.1` (overwriting any prior backup) and reopen
+/// `path` truncating. Bounds disk to `2 × max` per member while keeping
+/// the most recent ≥`max` bytes of history.
+fn rotate(path: &Path) -> io::Result<fs::File> {
+    let mut backup = path.as_os_str().to_owned();
+    backup.push(".1");
+    let _ = fs::rename(path, PathBuf::from(backup));
+    fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(path)
 }
 
 #[derive(Clone)]
@@ -51,7 +75,7 @@ pub(crate) fn attach(swarm: &SwarmId, nickname: &Nickname) {
     if !matches!(*state, State::Pending(_)) {
         return;
     }
-    let path = log_file_path(swarm, nickname);
+    let path = log_file_path(swarm.as_str(), nickname.as_str());
     let opened = path
         .parent()
         .map_or(Ok(()), fs::create_dir_all)
@@ -64,11 +88,18 @@ pub(crate) fn attach(swarm: &SwarmId, nickname: &Nickname) {
         });
     match opened {
         Ok(mut file) => {
+            let mut written = 0u64;
             if let State::Pending(buf) = &*state {
                 let _ = file.write_all(buf);
                 let _ = file.flush();
+                written = buf.len() as u64;
             }
-            *state = State::Attached(file);
+            *state = State::Attached {
+                file,
+                path,
+                written,
+                max: ahs_shared::logs::log_max_bytes(),
+            };
         }
         Err(error) => {
             eprintln!(
@@ -115,7 +146,24 @@ impl Write for LogSink {
                     buf.extend_from_slice(bytes);
                 }
             }
-            State::Attached(file) => file.write_all(bytes)?,
+            State::Attached {
+                file,
+                path,
+                written,
+                max,
+            } => {
+                file.write_all(bytes)?;
+                *written += bytes.len() as u64;
+                if *max != 0 && *written >= *max {
+                    // Best-effort: on rotate failure keep the current
+                    // file (temporarily over cap) and retry next write —
+                    // never drop the sink.
+                    if let Ok(rotated) = rotate(path) {
+                        *file = rotated;
+                        *written = 0;
+                    }
+                }
+            }
             State::Stderr => io::stderr().write_all(bytes)?,
         }
         Ok(bytes.len())
@@ -124,7 +172,7 @@ impl Write for LogSink {
     fn flush(&mut self) -> io::Result<()> {
         let mut state = self.0.lock().expect("log sink poisoned");
         match &mut *state {
-            State::Attached(file) => file.flush(),
+            State::Attached { file, .. } => file.flush(),
             State::Stderr => io::stderr().flush(),
             State::Pending(_) => Ok(()),
         }
@@ -137,5 +185,47 @@ impl<'writer> tracing_subscriber::fmt::MakeWriter<'writer> for LogSink {
     type Writer = Self;
     fn make_writer(&'writer self) -> Self::Writer {
         self.clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn attached_file_rotates_at_cap() {
+        let dir = std::env::temp_dir().join(format!("ahs-logsink-{}", std::process::id()));
+        let _ = fs::create_dir_all(&dir);
+        let path = dir.join("rot.log");
+        let file = fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(&path)
+            .expect("open test log");
+        let max = 100u64;
+        let mut sink = LogSink(Arc::new(Mutex::new(State::Attached {
+            file,
+            path: path.clone(),
+            written: 0,
+            max,
+        })));
+
+        // Write well past the cap so at least one rotation fires.
+        for _ in 0..10 {
+            sink.write_all(&[b'x'; 30]).expect("write");
+        }
+        sink.flush().expect("flush");
+
+        let active = fs::metadata(&path).expect("stat active").len();
+        assert!(active < max, "active file must stay under the cap, got {active}");
+        let mut backup = path.as_os_str().to_owned();
+        backup.push(".1");
+        assert!(
+            PathBuf::from(backup).exists(),
+            "rotation backup `<path>.1` must exist"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
     }
 }

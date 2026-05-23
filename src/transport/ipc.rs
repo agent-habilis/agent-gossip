@@ -4,34 +4,19 @@ use interprocess::local_socket::{
     tokio::{Listener, Stream, prelude::*},
 };
 use serde::{Deserialize, Serialize};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncWriteExt, BufReader};
 use tokio::sync::mpsc;
 
-use ahs_shared::{TMP_DIR, log_dir};
+use ahs_shared::{MAX_IPC_COMMAND_BYTES, MAX_IPC_RESPONSE_BYTES, SOCKET_DIR, swarm_prefix};
 
 use crate::protocol::{MessageBody, MessageId, Nickname, SwarmId};
-
-fn swarm_prefix(swarm: &SwarmId) -> String {
-    swarm.as_str().chars().take(16).collect()
-}
+use crate::util::bounded_read::{LineRead, read_bounded_line};
 
 /// Returns the IPC endpoint identifier for a specific agent on a swarm.
 /// On Unix this is a filesystem socket path; on Windows the filename portion
 /// becomes a namespaced named-pipe name.
 pub(crate) fn socket_path(swarm: &SwarmId, nickname: &Nickname) -> String {
-    format!("{}/{}-{}.sock", TMP_DIR, swarm_prefix(swarm), nickname)
-}
-
-/// Per-member log file — same `<swarm_prefix>-<nick>` stem as the
-/// socket, so logs and sockets never drift. Dir is `AHS_LOG_DIR` if
-/// set (tests isolate there), else `{TMP_DIR}/logs`.
-pub(crate) fn log_file_path(swarm: &SwarmId, nickname: &Nickname) -> std::path::PathBuf {
-    std::path::PathBuf::from(format!(
-        "{}/{}-{}.log",
-        log_dir(),
-        swarm_prefix(swarm),
-        nickname
-    ))
+    format!("{SOCKET_DIR}/{}-{}.sock", swarm_prefix(swarm.as_str()), nickname)
 }
 
 #[cfg(unix)]
@@ -130,7 +115,7 @@ pub(crate) async fn listen(
     #[cfg(unix)]
     {
         let _ = std::fs::remove_file(&path);
-        let _ = std::fs::create_dir_all(TMP_DIR);
+        let _ = std::fs::create_dir_all(SOCKET_DIR);
     }
 
     let name = match to_name(&path) {
@@ -170,11 +155,16 @@ pub(crate) async fn listen(
 async fn handle_connection(stream: Stream, tx: mpsc::Sender<IpcMessage>) {
     let (read_half, mut write_half) = tokio::io::split(stream);
     let mut reader = BufReader::new(read_half);
-    let mut line = String::new();
 
-    if reader.read_line(&mut line).await.is_err() {
-        return;
-    }
+    let line = match read_bounded_line(&mut reader, MAX_IPC_COMMAND_BYTES).await {
+        Ok(LineRead::Line(line)) => line,
+        Ok(LineRead::TooLong) => {
+            let error = json_error("command too large");
+            let _ = write_half.write_all(format!("{error}\n").as_bytes()).await;
+            return;
+        }
+        Ok(LineRead::Eof) | Err(_) => return,
+    };
 
     let response = match serde_json::from_str::<IpcCommand>(line.trim()) {
         Err(error) => json_error(&format!("parse error: {error}")),
@@ -196,13 +186,6 @@ async fn handle_connection(stream: Stream, tx: mpsc::Sender<IpcMessage>) {
         .await;
 }
 
-/// Truncate the swarm identifier to its first 16 characters.
-/// Exposed for testing.
-#[cfg(test)]
-pub(crate) fn test_swarm_prefix(swarm: &SwarmId) -> String {
-    swarm_prefix(swarm)
-}
-
 /// Client-side: send an IPC command to the running server and return the raw JSON response.
 pub(crate) async fn send(cmd: &IpcCommand, nickname: &Nickname) -> Result<String> {
     let path = socket_path(cmd.swarm_id(), nickname);
@@ -217,10 +200,11 @@ pub(crate) async fn send(cmd: &IpcCommand, nickname: &Nickname) -> Result<String
     write_half.shutdown().await?;
 
     let mut reader = BufReader::new(read_half);
-    let mut line = String::new();
-    reader.read_line(&mut line).await?;
-
-    Ok(line.trim().to_string())
+    match read_bounded_line(&mut reader, MAX_IPC_RESPONSE_BYTES).await? {
+        LineRead::Line(line) => Ok(line.trim().to_string()),
+        LineRead::Eof => Ok(String::new()),
+        LineRead::TooLong => anyhow::bail!("IPC response too large"),
+    }
 }
 
 #[cfg(test)]
@@ -260,28 +244,12 @@ mod tests {
     }
 
     #[test]
-    fn swarm_prefix_truncates_to_16() {
-        assert_eq!(
-            test_swarm_prefix(&SwarmId::from("ahsabcdefghijkmnpqrs")).len(),
-            16
-        );
-    }
-
-    #[test]
-    fn swarm_prefix_short_input_unchanged() {
-        assert_eq!(
-            test_swarm_prefix(&SwarmId::from("ahsabcd")).as_str(),
-            "ahsabcd"
-        );
-    }
-
-    #[test]
     fn socket_path_format() {
         let path = socket_path(
             &SwarmId::from("ahsabcdefghijkmnpqr"),
             &Nickname::from("my-nick"),
         );
-        assert!(path.starts_with("/tmp/agent-habilis-swarm/"));
+        assert!(path.starts_with("/tmp/agent-habilis/swarm/sockets/"));
         assert!(path.ends_with("-my-nick.sock"));
         assert!(path.contains("ahsabcdefghijkmn")); // 16 chars
     }
@@ -447,13 +415,13 @@ mod tests {
 
             #[test]
             fn prop_swarm_prefix_max_16_chars(swarm in arb_swarm()) {
-                let prefix = test_swarm_prefix(&swarm);
+                let prefix = swarm_prefix(swarm.as_str());
                 prop_assert!(prefix.chars().count() <= 16);
             }
 
             #[test]
             fn prop_swarm_prefix_is_prefix_of_input(swarm in arb_swarm()) {
-                let prefix = test_swarm_prefix(&swarm);
+                let prefix = swarm_prefix(swarm.as_str());
                 prop_assert!(swarm.as_str().starts_with(&prefix));
             }
         }

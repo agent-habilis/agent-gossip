@@ -8,9 +8,9 @@ use super::message_log::MessageLog;
 use super::rate_limit::SwarmRateLimiter;
 use crate::protocol::{MessageId, Nickname};
 use crate::util::state_file::StateFile;
-use crate::util::tuning::{
-    DEFAULT_MESSAGE_LOG_SIZE, KNOWN_ENDPOINTS_CAP, PENDING_OUTBOUND_CAP, SEEN_IDS_CAP,
-};
+use ahs_shared::DEFAULT_MESSAGE_LOG_SIZE;
+
+use crate::util::tuning::{KNOWN_ENDPOINTS_CAP, PENDING_OUTBOUND_CAP, SEEN_IDS_CAP};
 
 /// All mutable state owned by the event loop.
 ///

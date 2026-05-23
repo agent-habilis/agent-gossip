@@ -421,14 +421,18 @@ unchanged.
 
 Developer logs are emitted with `tracing`. The long-running daemons
 (`create`/`join`) write to a per-member file —
-`{TMP_DIR}/logs/<swarm_prefix>-<nick>.log`, the same stem as that
-member's `.sock`, truncated on each daemon start. Records buffer in
-memory until the swarm id + nickname are known (sub-second), then
-flush there. Transient commands (`msg`/`poll`), `mcp`, and any run
-failing before identity log to **stderr** instead — so the dir holds
-one file per swarm member, not per process. `tail -f` the file. Logs
-stay **additive**: `--output json` (stdout) is unaffected and fatal
-`anyhow` errors still print to stderr. `AHS_LOG_DIR` overrides the
+`<log_dir>/<swarm_prefix>-<nick>.log`, the same stem as that member's
+`.sock`, truncated on each daemon start. The default `<log_dir>` is the
+`agent-habilis/swarm/logs` subdir of the OS temp dir
+(`/tmp/agent-habilis/swarm/logs` on Linux, a per-user temp dir on
+macOS/Windows); sockets live alongside under
+`/tmp/agent-habilis/swarm/sockets/`. Records buffer in memory until the
+swarm id + nickname are known (sub-second), then flush there. Transient
+commands (`msg`/`poll`), `mcp`, and any run failing before identity log
+to **stderr** instead — so the dir holds one file per swarm member, not
+per process. `tail -f` the file (or `cargo xtask logs` to print the
+dir). Logs stay **additive**: `--output json` (stdout) is unaffected and
+fatal `anyhow` errors still print to stderr. `AHS_LOG_DIR` overrides the
 directory (the test suite points it at a temp dir).
 
 Debug defaults to `info`, release to `error`; `debug`/`trace` need

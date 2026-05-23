@@ -1,46 +1,42 @@
 //! Constants and helpers shared across the workspace (the `ahs` binary
 //! crate and the xtask runner). Kept dependency-free so xtask stays light.
+//!
+//! - [`consts`] — the single home for tunable constants (runtime paths +
+//!   wire contract), re-exported at the crate root for ergonomics.
+//! - [`logs`] — per-member log path resolution.
 
-/// Runtime directory for sockets and other ephemeral files.
-pub const TMP_DIR: &str = "/tmp/agent-habilis-swarm";
+pub mod consts;
+pub mod logs;
 
-/// Per-member log dir. `AHS_LOG_DIR` overrides; default `{TMP_DIR}/logs`.
+pub use consts::*;
+
+/// The `<swarm_prefix>-<nick>` filename stem — the first 16 characters
+/// of the swarm identifier. Shared by both the socket name
+/// ([`crate::consts::SOCKET_DIR`]) and the log file name
+/// ([`logs::log_file_path`]), so it lives at the crate root rather than
+/// in either module.
 #[must_use]
-pub fn log_dir() -> String {
-    std::env::var("AHS_LOG_DIR").unwrap_or_else(|_| format!("{TMP_DIR}/logs"))
+pub fn swarm_prefix(swarm_id: &str) -> String {
+    swarm_id.chars().take(16).collect()
 }
 
-/// Per-identity message rate limit, enforced symmetrically on the send
-/// and receive paths (same quota each direction). One limit covers all
-/// messages — open broadcasts and directed replies alike, no per-kind
-/// distinction. It is the swarm's published contract (agents must stay
-/// within it), so it lives in the shared crate, not the binary's tuning.
-///
-/// Messages per minute per identity (60 = one per second sustained). The
-/// token bucket's depth equals this value, so a sender may emit up to
-/// this many back-to-back, then one per `60 / RATE_LIMIT_PER_MIN` seconds
-/// thereafter.
-pub const RATE_LIMIT_PER_MIN: u32 = 60;
+#[cfg(test)]
+mod tests {
+    use super::swarm_prefix;
 
-/// Maximum size in bytes of a serialized swarm message. A network-wide
-/// wire contract (must be uniform across members), so it lives here.
-///
-/// Kept below iroh-gossip's `DEFAULT_MAX_MESSAGE_SIZE` (4096) minus its
-/// ~39-byte wire header: a message larger than gossip's payload budget
-/// is silently dropped by the gossip layer (it never propagates and the
-/// sender gets no error), so our cap must stay under it. A compile-time
-/// assertion in the binary guards that relationship against the live
-/// gossip constant — `ahs-shared` stays dependency-free, so the value is
-/// hardcoded here rather than derived.
-pub const MAX_MESSAGE_SIZE: usize = 3840;
+    #[test]
+    fn truncates_to_16_chars() {
+        assert_eq!(swarm_prefix("ahsabcdefghijkmnpqrs").chars().count(), 16);
+    }
 
-/// QUIC keep-alive interval in seconds. Keepalives on an otherwise idle
-/// connection stop a quiet-but-live peer from being dropped; must stay
-/// well below `QUIC_MAX_IDLE_SECS`.
-pub const QUIC_KEEP_ALIVE_SECS: u64 = 5;
+    #[test]
+    fn short_input_unchanged() {
+        assert_eq!(swarm_prefix("ahsabcd"), "ahsabcd");
+    }
 
-/// QUIC max idle timeout in seconds before a connection is considered
-/// dead. Tightened from iroh's 15s (direct) / 30s (relay) path defaults
-/// so a dead or slept peer is detected (`NeighborDown`) in ~10s, which
-/// speeds up heal and the rendezvous-independent re-bridge.
-pub const QUIC_MAX_IDLE_SECS: u64 = 10;
+    #[test]
+    fn result_is_a_prefix_of_input() {
+        let input = "ahsabcdefghijkmnpqrstuvwx";
+        assert!(input.starts_with(&swarm_prefix(input)));
+    }
+}

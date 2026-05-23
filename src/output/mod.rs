@@ -1,4 +1,5 @@
-use std::io::Write;
+use std::io::{IsTerminal, Write};
+use std::sync::LazyLock;
 
 use serde::Serialize;
 use tokio::sync::mpsc::UnboundedSender;
@@ -139,6 +140,48 @@ pub enum OutputEvent {
     },
 }
 
+/// ANSI styling for the Human-mode `<nick>` / `#swarm` tokens.
+/// Hand-rolled (no color dependency); emission is gated on a TTY +
+/// `NO_COLOR` per stream (see [`stdout_color`] / [`stderr_color`]).
+mod style {
+    pub(super) const RESET: &str = "\x1b[0m";
+    /// Bold green — the local member's own nickname.
+    pub(super) const SELF_NICK: &str = "\x1b[1;32m";
+    /// Bold cyan — a peer's nickname.
+    pub(super) const PEER_NICK: &str = "\x1b[1;36m";
+    /// Bold yellow — a swarm name.
+    pub(super) const SWARM: &str = "\x1b[1;33m";
+}
+
+/// Color is on when the stream is a terminal and `NO_COLOR` is unset.
+fn color_enabled(stream_is_terminal: bool) -> bool {
+    stream_is_terminal && std::env::var_os("NO_COLOR").is_none()
+}
+
+/// Whether stdout should carry ANSI color. Cached — neither the TTY
+/// status nor the env var changes at runtime, and piped/non-TTY output
+/// (tests, the `/swarm` skill) auto-disables.
+fn stdout_color() -> bool {
+    static ENABLED: LazyLock<bool> = LazyLock::new(|| color_enabled(std::io::stdout().is_terminal()));
+    *ENABLED
+}
+
+/// Stderr counterpart to [`stdout_color`] (presence/info/timeout lines).
+fn stderr_color() -> bool {
+    static ENABLED: LazyLock<bool> = LazyLock::new(|| color_enabled(std::io::stderr().is_terminal()));
+    *ENABLED
+}
+
+/// The ANSI `(prefix, suffix)` wrapping a `#swarm` token — empty when
+/// disabled, so callers interpolate inline with no allocation either way.
+fn swarm_ansi(enabled: bool) -> (&'static str, &'static str) {
+    if enabled {
+        (style::SWARM, style::RESET)
+    } else {
+        ("", "")
+    }
+}
+
 /// Per-event-loop output destination. Replaces the former
 /// process-global `MODE`/`FILTER_SELF` statics so multiple in-process
 /// sessions (embed facade, tests) can run with independent output
@@ -147,8 +190,13 @@ pub enum OutputEvent {
 #[derive(Debug, Clone)]
 pub(crate) enum Output {
     /// Write to the process stdout/stderr in the given mode (CLI /
-    /// MCP-silent).
-    Stream { mode: OutputMode, filter_self: bool },
+    /// MCP-silent). `self_nick` is the local member's nickname, used to
+    /// paint your own `<nick>` distinctly from peers' in Human mode.
+    Stream {
+        mode: OutputMode,
+        filter_self: bool,
+        self_nick: Option<String>,
+    },
     /// Push structured events into an in-process channel (embed
     /// facade / tests). Mode-agnostic: every event is captured.
     Capture {
@@ -158,8 +206,12 @@ pub(crate) enum Output {
 }
 
 impl Output {
-    pub(crate) fn new(mode: OutputMode, filter_self: bool) -> Self {
-        Self::Stream { mode, filter_self }
+    pub(crate) fn new(mode: OutputMode, filter_self: bool, self_nick: Option<String>) -> Self {
+        Self::Stream {
+            mode,
+            filter_self,
+            self_nick,
+        }
     }
 
     /// Suppresses all stdout/stderr output (MCP server).
@@ -167,7 +219,92 @@ impl Output {
         Self::Stream {
             mode: OutputMode::Silent,
             filter_self: false,
+            self_nick: None,
         }
+    }
+
+    /// The local member's nickname, when known (Human-mode self-color).
+    fn self_nick(&self) -> Option<&str> {
+        match self {
+            Output::Stream { self_nick, .. } => self_nick.as_deref(),
+            Output::Capture { .. } => None,
+        }
+    }
+
+    /// The ANSI `(prefix, suffix)` wrapping a `<name>` token —
+    /// [`style::SELF_NICK`] for the local member, else
+    /// [`style::PEER_NICK`]; empty when disabled. Callers interpolate
+    /// inline so a disabled line allocates nothing extra.
+    fn nick_ansi(&self, name: &str, enabled: bool) -> (&'static str, &'static str) {
+        if !enabled {
+            return ("", "");
+        }
+        let color = if self.self_nick() == Some(name) {
+            style::SELF_NICK
+        } else {
+            style::PEER_NICK
+        };
+        (color, style::RESET)
+    }
+
+    /// Colorize `<nick>` / `#swarm` tokens in a pre-composed `info`
+    /// string. Safe because nicknames/swarm names exclude `< > #` and
+    /// whitespace, so the markers are unambiguous delimiters and the
+    /// string never carries free-form message-body text.
+    fn highlight(&self, text: &str, enabled: bool) -> String {
+        if !enabled {
+            return text.to_owned();
+        }
+        let mut out = String::with_capacity(text.len());
+        let mut chars = text.chars().peekable();
+        while let Some(ch) = chars.next() {
+            match ch {
+                '<' => {
+                    let mut name = String::new();
+                    let mut closed = false;
+                    while let Some(&next) = chars.peek() {
+                        chars.next();
+                        if next == '>' {
+                            closed = true;
+                            break;
+                        }
+                        name.push(next);
+                    }
+                    if closed {
+                        let (open, close) = self.nick_ansi(&name, true);
+                        out.push_str(open);
+                        out.push('<');
+                        out.push_str(&name);
+                        out.push('>');
+                        out.push_str(close);
+                    } else {
+                        out.push('<');
+                        out.push_str(&name);
+                    }
+                }
+                '#' => {
+                    let mut name = String::new();
+                    while let Some(&next) = chars.peek() {
+                        if next.is_whitespace() || matches!(next, '<' | '>' | '#') {
+                            break;
+                        }
+                        name.push(next);
+                        chars.next();
+                    }
+                    if name.is_empty() {
+                        out.push('#');
+                    } else {
+                        let (open, close) = swarm_ansi(true);
+                        out.push_str(open);
+                        out.push('#');
+                        out.push_str(&name);
+                        out.push_str(close);
+                    }
+                }
+                other => out.push(other),
+            }
+        }
+        out
     }
 
     /// Capture every event into `tx` (embed facade / in-process
@@ -253,7 +390,7 @@ impl Output {
                 is_self,
             },
             |mode| match mode {
-                OutputMode::Human => print_message_human(msg),
+                OutputMode::Human => self.print_message_human(msg),
                 OutputMode::Json => print_message_json(msg, is_self),
                 OutputMode::Silent => {}
             },
@@ -269,7 +406,10 @@ impl Output {
                 msg: Box::new(msg.clone()),
             },
             |mode| match mode {
-                OutputMode::Human => eprintln!("<{}> has {}", msg.author, subtype),
+                OutputMode::Human => {
+                    let (open, close) = self.nick_ansi(msg.author.as_str(), stderr_color());
+                    eprintln!("{open}<{}>{close} has {subtype}", msg.author);
+                }
                 OutputMode::Json => emit(&format_presence_json(msg, *subtype)),
                 OutputMode::Silent => {}
             },
@@ -286,7 +426,10 @@ impl Output {
                 last_seen_secs_ago,
             },
             |mode| match mode {
-                OutputMode::Human => eprintln!("<{nickname}> went quiet"),
+                OutputMode::Human => {
+                    let (open, close) = self.nick_ansi(nickname, stderr_color());
+                    eprintln!("{open}<{nickname}>{close} went quiet");
+                }
                 OutputMode::Json => emit_json(&SimpleEvent::PeerTimeout {
                     nickname,
                     last_seen_secs_ago,
@@ -305,7 +448,10 @@ impl Output {
                 nickname: nickname.to_owned(),
             },
             |mode| match mode {
-                OutputMode::Human => eprintln!("<{nickname}> came back"),
+                OutputMode::Human => {
+                    let (open, close) = self.nick_ansi(nickname, stderr_color());
+                    eprintln!("{open}<{nickname}>{close} came back");
+                }
                 OutputMode::Json => emit_json(&SimpleEvent::PeerReturn { nickname }),
                 OutputMode::Silent => {}
             },
@@ -334,7 +480,7 @@ impl Output {
                 message: msg.to_owned(),
             },
             |mode| match mode {
-                OutputMode::Human => eprintln!("{msg}"),
+                OutputMode::Human => eprintln!("{}", self.highlight(msg, stderr_color())),
                 OutputMode::Json => emit_json(&SimpleEvent::Info { message: msg }),
                 OutputMode::Silent => {}
             },
@@ -362,6 +508,28 @@ impl Output {
     /// stay in lockstep without each caller stringifying by hand.
     pub(crate) fn report_error(&self, error: &impl std::fmt::Display) {
         self.error(&error.to_string());
+    }
+
+    /// Render a message in Human mode: `<author>: body`, or
+    /// `<author> → <target>: body` for a reply. The author/target
+    /// `<nick>` tokens are colored (self vs peer); the **body** is
+    /// printed raw — it may legitimately contain `<`, `>`, `#`, so it
+    /// must never be run through the colorizer.
+    fn print_message_human(&self, msg: &Message) {
+        let enabled = stdout_color();
+        let (open, close) = self.nick_ansi(msg.author.as_str(), enabled);
+        match &msg.kind {
+            MessageKind::Msg {
+                reply: Some(target),
+            } => {
+                let (to_open, to_close) = self.nick_ansi(target.as_str(), enabled);
+                println!(
+                    "{open}<{}>{close} → {to_open}<{}>{to_close}: {}",
+                    msg.author, target, msg.body
+                );
+            }
+            _ => println!("{open}<{}>{close}: {}", msg.author, msg.body),
+        }
     }
 
     /// Clear the last line typed by the user (move up + erase). Human
@@ -394,16 +562,6 @@ fn emit_json<T: Serialize>(value: &T) {
     }
 }
 
-fn print_message_human(msg: &Message) {
-    match &msg.kind {
-        MessageKind::Msg {
-            reply: Some(target),
-        } => {
-            println!("<{}> → <{}>: {}", msg.author, target, msg.body);
-        }
-        _ => println!("<{}>: {}", msg.author, msg.body),
-    }
-}
 
 /// Format a presence message as JSON.
 ///
@@ -491,6 +649,52 @@ mod tests {
 
     fn parse(text: &str) -> serde_json::Value {
         serde_json::from_str(text).unwrap_or_else(|error| panic!("invalid JSON: {error}\n{text}"))
+    }
+
+    // ── Human-mode coloring (style::*) ─────────────────────────
+
+    fn human(self_nick: &str) -> Output {
+        Output::new(OutputMode::Human, false, Some(self_nick.to_owned()))
+    }
+
+    #[test]
+    fn nick_ansi_self_vs_peer() {
+        let out = human("alice");
+        assert_eq!(out.nick_ansi("alice", true), (style::SELF_NICK, style::RESET));
+        assert_eq!(out.nick_ansi("bob", true), (style::PEER_NICK, style::RESET));
+    }
+
+    #[test]
+    fn nick_ansi_disabled_is_empty() {
+        let out = human("alice");
+        assert_eq!(out.nick_ansi("alice", false), ("", ""));
+        assert_eq!(out.nick_ansi("bob", false), ("", ""));
+    }
+
+    #[test]
+    fn highlight_colors_swarm_and_self_and_peer() {
+        let out = human("alice");
+        let colored = out.highlight("created #team and joined as <alice>", true);
+        assert_eq!(
+            colored,
+            format!(
+                "created {}#team{} and joined as {}<alice>{}",
+                style::SWARM,
+                style::RESET,
+                style::SELF_NICK,
+                style::RESET
+            )
+        );
+        // A peer nick in an info line gets the peer color.
+        let peer = out.highlight("joined as <bob>", true);
+        assert!(peer.contains(&format!("{}<bob>{}", style::PEER_NICK, style::RESET)));
+    }
+
+    #[test]
+    fn highlight_disabled_is_identity() {
+        let out = human("alice");
+        let text = "created #team and joined as <alice>";
+        assert_eq!(out.highlight(text, false), text);
     }
 
     // ── format_msg_json: msg type ──────────────────────────────

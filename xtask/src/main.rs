@@ -178,11 +178,11 @@ fn run_clean(sh: &Shell) -> TaskOutcome {
 }
 
 fn run_logs() -> TaskOutcome {
-    let dir = ahs_shared::log_dir();
+    let dir = ahs_shared::logs::log_dir();
     // Ensure it exists so `cd`/`tail` never fail on a fresh machine.
     std::fs::create_dir_all(&dir)?;
     // stdout, the sole output, so `$(cargo xtask logs)` captures just the path.
-    println!("{dir}");
+    println!("{}", dir.display());
     Ok(())
 }
 

@@ -33,14 +33,16 @@ use anyhow::Result;
 use futures_util::StreamExt;
 use iroh::Endpoint;
 use iroh_gossip::api::{GossipReceiver, GossipSender};
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::BufReader;
 use tokio::sync::{broadcast, mpsc};
 
 use crate::output;
 use crate::protocol::swarm::SwarmName;
 use crate::protocol::{Message, Nickname, SwarmId};
+use crate::util::bounded_read::{LineRead, read_bounded_line};
 use crate::util::state_file::StateFile;
 use crate::{beacon, gossip, lifecycle};
+use ahs_shared::MAX_STDIN_LINE_BYTES;
 // Bare `ipc` is `daemon::ipc`; transport's socket server is by-item.
 use crate::transport::ipc::{IpcMessage, listen};
 use crate::util::tuning::{
@@ -230,7 +232,6 @@ async fn event_loop(loop_state: EventLoop) -> Result<()> {
     } = intervals;
 
     let mut stdin_reader = BufReader::new(tokio::io::stdin());
-    let mut stdin_line = String::new();
     let mut stdin_open = interactive;
 
     // Per-timer gap trackers; the heal gap also drives the
@@ -261,8 +262,8 @@ async fn event_loop(loop_state: EventLoop) -> Result<()> {
 
     loop {
         tokio::select! {
-            result = stdin_reader.read_line(&mut stdin_line), if stdin_open => {
-                stdin_open = handle_stdin_arm(result, &mut stdin_line, &sender, &swarm_str, &author, &mut state, &output).await;
+            result = read_bounded_line(&mut stdin_reader, MAX_STDIN_LINE_BYTES), if stdin_open => {
+                stdin_open = handle_stdin_arm(result, &sender, &swarm_str, &author, &mut state, &output).await;
             }
             ipc_msg = recv_opt(&mut ipc_rx) => {
                 if !handle_ipc_arm(ipc_msg, &swarm_str, &author, &mut state, &sender, &output).await {
@@ -472,8 +473,7 @@ async fn run_heal(
 /// One stdin-line read; returns the new `stdin_open` (`false` on
 /// EOF/error). Split out of `event_loop` for the line budget.
 async fn handle_stdin_arm(
-    result: std::io::Result<usize>,
-    line: &mut String,
+    result: std::io::Result<LineRead>,
     sender: &GossipSender,
     swarm: &SwarmId,
     author: &Nickname,
@@ -481,10 +481,13 @@ async fn handle_stdin_arm(
     output: &output::Output,
 ) -> bool {
     match result {
-        Ok(0) | Err(_) => false,
-        Ok(_) => {
+        Err(_) | Ok(LineRead::Eof) => false,
+        Ok(LineRead::TooLong) => {
+            output.error("input line too long; ignored");
+            true
+        }
+        Ok(LineRead::Line(line)) => {
             gossip::handle_stdin_line(line.trim(), sender, swarm, author, state, output).await;
-            line.clear();
             true
         }
     }

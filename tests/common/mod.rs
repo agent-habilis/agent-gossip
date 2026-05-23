@@ -11,10 +11,10 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
-// The single source of truth for the runtime dir lives in the shared
+// The single source of truth for the socket dir lives in the shared
 // crate (a dev-dependency); re-export it so test code keeps using
-// `common::TMP_DIR` without a divergent copy.
-pub(crate) use ahs_shared::TMP_DIR;
+// `common::SOCKET_DIR` without a divergent copy.
+pub(crate) use ahs_shared::SOCKET_DIR;
 
 pub(crate) const CONNECT_TIMEOUT: Duration = Duration::from_mins(1);
 pub(crate) const MSG_TIMEOUT: Duration = Duration::from_secs(30);
@@ -26,7 +26,7 @@ pub(crate) fn bin() -> PathBuf {
 }
 
 /// Per-test-process log dir so `cargo xtask test` never writes into
-/// the operator's `/tmp/agent-habilis-swarm/logs`. The binary honors
+/// the operator's default `agent-habilis/swarm/logs`. The binary honors
 /// `AHS_LOG_DIR`.
 fn test_log_dir() -> &'static str {
     static DIR: OnceLock<String> = OnceLock::new();
@@ -58,18 +58,20 @@ pub(crate) fn tmp_log(tag: &str) -> PathBuf {
 }
 
 pub(crate) fn socket_path(swarm: &str, nickname: &str) -> String {
-    let prefix: String = swarm.chars().take(16).collect();
-    format!("{TMP_DIR}/{prefix}-{nickname}.sock")
+    format!("{SOCKET_DIR}/{}-{nickname}.sock", ahs_shared::swarm_prefix(swarm))
 }
 
 /// A node's tracing-sink log (distinct from its captured stdout/stderr
-/// in `Node::log`). Mirrors `transport::ipc::log_file_path`: same
+/// in `Node::log`). Mirrors `ahs_shared::logs::log_file_path`: same
 /// `<swarm_prefix>-<nick>` stem, under the per-test `AHS_LOG_DIR`. Use
 /// this to assert on `tracing` output (warn/info) the operator stream
 /// never carries.
 pub(crate) fn trace_log(swarm: &str, nickname: &str) -> String {
-    let prefix: String = swarm.chars().take(16).collect();
-    let path = format!("{}/{prefix}-{nickname}.log", test_log_dir());
+    let path = format!(
+        "{}/{}-{nickname}.log",
+        test_log_dir(),
+        ahs_shared::swarm_prefix(swarm)
+    );
     fs::read_to_string(path).unwrap_or_default()
 }
 

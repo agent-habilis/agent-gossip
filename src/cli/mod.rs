@@ -416,8 +416,12 @@ async fn run_session(
     shared: SharedServerOpts,
     nickname: Option<Nickname>,
 ) -> Result<()> {
-    let out = Output::new(shared.output.into(), shared.filter_self);
     let author = nickname.unwrap_or_else(Nickname::random);
+    let out = Output::new(
+        shared.output.into(),
+        shared.filter_self,
+        Some(author.as_str().to_owned()),
+    );
     let cfg = setup_swarm(
         kind,
         author,
@@ -495,7 +499,8 @@ async fn msg(
 
     let id = parsed.id.unwrap_or_default();
     // `msg` has no `--output` flag — always the human confirmation.
-    let out = Output::new(OutputMode::Human, false);
+    // No nickname is rendered here (only `message posted` + id).
+    let out = Output::new(OutputMode::Human, false, None);
     out.msg_posted(&id);
 
     Ok(())

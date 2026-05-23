@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 
 use ahs_shared::RATE_LIMIT_PER_MIN;
 use common::{
-    CONNECT_TIMEOUT, InProcNode, MSG_TIMEOUT, Msg, Node, POLL, TMP_DIR, cli_message,
+    CONNECT_TIMEOUT, InProcNode, MSG_TIMEOUT, Msg, Node, POLL, SOCKET_DIR, cli_message,
     cli_message_raw, cli_poll, tmp_log, trace_log, wait_total,
 };
 
@@ -147,8 +147,8 @@ fn test_ipc_socket_isolation() {
     assert!(creator.wait_ready(&swarm), "creator socket never appeared");
     assert!(joiner.wait_ready(&swarm), "joiner socket never appeared");
 
-    let prefix: String = swarm.chars().take(16).collect();
-    let sockets: Vec<_> = fs::read_dir(TMP_DIR)
+    let prefix = ahs_shared::swarm_prefix(&swarm);
+    let sockets: Vec<_> = fs::read_dir(SOCKET_DIR)
         .expect("socket dir missing")
         .flatten()
         .filter(|entry| {

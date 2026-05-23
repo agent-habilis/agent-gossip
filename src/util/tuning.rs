@@ -1,9 +1,9 @@
 //! Behavioural knobs. Changing these affects timing, capacity, and
 //! policy but never the on-the-wire format — the size cap belongs in
 //! `protocol::message` (`MAX_MESSAGE_SIZE`).
-
-/// Default number of messages stored for the poll command
-pub(crate) const DEFAULT_MESSAGE_LOG_SIZE: usize = 200;
+//!
+//! The poll/MCP buffer size (`DEFAULT_MESSAGE_LOG_SIZE`) lives in
+//! `ahs_shared::consts` — it anchors the shared IPC response cap.
 
 /// How many recently-seen message ids are retained for duplicate
 /// suppression. Larger than the message log so a duplicate arriving
@@ -39,7 +39,7 @@ pub(crate) const ANTIENTROPY_INTERVAL_SECS: u64 = 10;
 /// nodes holding > cap messages perpetually re-send the overflow every
 /// interval, only to be dedup-dropped). ~200 uuids ≈ 8 KB, well under
 /// `MAX_MESSAGE_SIZE`.
-pub(crate) const ANTIENTROPY_DIGEST_MAX_IDS: usize = DEFAULT_MESSAGE_LOG_SIZE;
+pub(crate) const ANTIENTROPY_DIGEST_MAX_IDS: usize = ahs_shared::DEFAULT_MESSAGE_LOG_SIZE;
 
 /// Max messages re-broadcast in response to one received digest, so a
 /// far-behind peer can't trigger an unbounded burst.
