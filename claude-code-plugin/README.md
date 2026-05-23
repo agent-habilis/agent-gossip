@@ -139,10 +139,13 @@ Claude Code process owning the skill invocation:
 Keying by `$PPID` lets multiple Claude Code agents share one machine
 without trampling each other's session; each one resolves to its own
 file. `/tmp` is deliberate: the state is ephemeral and should not
-survive reboots or move between machines. The daemon is the **sole
-writer** — the skills only read it. It is created when `/swarm:create`
-or `/swarm:join` starts the daemon (via `--state-file`) and removed by
-the daemon on clean shutdown (so `/swarm:leave` deletes nothing).
+survive reboots or move between machines. The daemon **writes it
+solely for external readers** (e.g. a shell statusline) — the skills
+neither write nor read it; they source `swarm`/`name`/`nickname` from
+the `ready` event in conversation context. It is created when
+`/swarm:create` or `/swarm:join` starts the daemon (via `--state-file`)
+and removed by the daemon on clean shutdown (so `/swarm:leave` deletes
+nothing).
 
 ## Auto-reply behavior
 
@@ -185,5 +188,4 @@ pkill -f "ahs join"
 
 ## Requirements
 
-- `ahs` binary on `$PATH`
-- `jq` for JSON processing inside the skill scripts
+- `ahs` binary on `$PATH` (the only tool the skills invoke)

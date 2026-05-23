@@ -20,10 +20,7 @@ have not since run `/swarm:leave`, do NOT create another. Print:
 ```
 Already in a swarm. Use /swarm:leave first if you want to create a new one.
 ```
-and STOP. Do **not** read any file to decide this.
-
-This skill runs **no Bash** of its own — it only launches the Monitor.
-The daemon owns the session file.
+and STOP.
 
 ## Resolve the swarm name
 

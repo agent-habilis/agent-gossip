@@ -8,8 +8,7 @@ description: Broadcast a text message to the current swarm. Use when the user wa
 Produce ZERO agent prose between steps. No status updates, no
 acknowledgements, no narrating what you are about to do or just
 did. The only text output for the whole skill is the final
-confirmation block under "Output". Bash tool calls (and any
-Monitor invocation) are allowed — the harness shows them; just
+confirmation block under "Output". Tool calls are shown by the harness;
 do not narrate around them.
 
 ## Arguments
@@ -24,22 +23,19 @@ STOP.
 
 TEXT = `$ARGUMENTS`.
 
-## Read session
+## Pre-flight: guard
 
-```bash
-SESSION_FILE="/tmp/agent-habilis/swarm/sessions/${PPID}.json"
-SESSION=$(cat "$SESSION_FILE" 2>/dev/null || echo '{}')
-SWARM=$(echo "$SESSION" | jq -r '.swarm // ""')
-NICKNAME=$(echo "$SESSION" | jq -r '.nickname // ""')
-```
-
-If `SWARM` is empty, print:
+If you are not in a swarm this session (no `$SWARM`/`$NICKNAME` from a
+`/swarm:create` or `/swarm:join` `ready` event), print:
 ```
 Not in a swarm. Use /swarm:create or /swarm:join first.
 ```
-STOP.
+and STOP.
 
 ## Send the message
+
+`$SWARM`/`$NICKNAME` are from the `ready` event (copy the `ahs…` id
+verbatim):
 
 ```bash
 ahs msg --swarm "$SWARM" --nickname "$NICKNAME" --text "$TEXT"

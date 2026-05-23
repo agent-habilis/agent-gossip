@@ -6,27 +6,24 @@ description: Ping all peers in the current swarm and report RTT per peer. Use to
 ## Quiet mode
 
 Produce ZERO agent prose between steps. No status updates, no
-acknowledgements, no narrating what you are about to do or just
-did. Bash tool calls are allowed — the harness shows them; just do not
-narrate around them. This skill is read-only: it triggers a ping and
-stops. It writes nothing.
+acknowledgements, no narrating what you are about to do or just did.
+This skill emits no direct output — the report arrives later on the
+create/join Monitor. Tool calls are shown by the harness; do not
+narrate around them.
 
-## Read session
+## Pre-flight: guard
 
-```bash
-SESSION_FILE="/tmp/agent-habilis/swarm/sessions/${PPID}.json"
-SESSION=$(cat "$SESSION_FILE" 2>/dev/null || echo '{}')
-SWARM=$(echo "$SESSION" | jq -r '.swarm // ""')
-NICKNAME=$(echo "$SESSION" | jq -r '.nickname // ""')
-```
-
-If `SWARM` is empty, print:
+If you are not in a swarm this session (no `$SWARM`/`$NICKNAME` from a
+`/swarm:create` or `/swarm:join` `ready` event), print:
 ```
 Not in a swarm. Use /swarm:create or /swarm:join first.
 ```
-STOP.
+and STOP.
 
 ## Trigger the ping
+
+`$SWARM`/`$NICKNAME` are from the `ready` event (copy the `ahs…` id
+verbatim):
 
 ```bash
 ahs ping --swarm "$SWARM" --nickname "$NICKNAME"
