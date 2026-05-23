@@ -154,9 +154,10 @@ async fn fetch_and_parse(url: &str) -> Result<Swarm> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    use super::{MAX_BODY_BYTES, fetch_and_parse, resolve, resolve_url};
 
     #[test]
     fn resolve_url_maps_inputs_to_expected_urls() {

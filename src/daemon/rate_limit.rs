@@ -93,7 +93,7 @@ impl SwarmRateLimiter {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{Nickname, RATE_LIMIT_PER_MIN, SwarmRateLimiter};
 
     fn nick(text: &str) -> Nickname {
         Nickname::from(text)
@@ -172,8 +172,9 @@ mod tests {
     }
 
     mod prop {
-        use super::*;
-        use proptest::prelude::*;
+        use proptest::{prop_assume, proptest, strategy::Strategy};
+
+        use super::{Nickname, RATE_LIMIT_PER_MIN, SwarmRateLimiter};
 
         fn arb_nickname() -> impl Strategy<Value = Nickname> {
             "[a-z]{3,8}-[a-z]{3,8}".prop_map(|raw| Nickname::new(raw).unwrap())

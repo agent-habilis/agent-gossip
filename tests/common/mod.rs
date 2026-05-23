@@ -2,6 +2,10 @@
     dead_code,
     reason = "shared integration-test helpers; not every test crate exercises every one"
 )]
+#![expect(
+    clippy::wildcard_enum_match_arm,
+    reason = "OutputEvent is #[non_exhaustive]; matching it from this external test crate mandates a wildcard arm, so exhaustive enumeration is impossible"
+)]
 //! Shared test infrastructure for integration tests.
 
 use std::fs::{self, File};
@@ -58,7 +62,10 @@ pub(crate) fn tmp_log(tag: &str) -> PathBuf {
 }
 
 pub(crate) fn socket_path(swarm: &str, nickname: &str) -> String {
-    format!("{SOCKET_DIR}/{}-{nickname}.sock", ahs_shared::swarm_prefix(swarm))
+    format!(
+        "{SOCKET_DIR}/{}-{nickname}.sock",
+        ahs_shared::swarm_prefix(swarm)
+    )
 }
 
 /// A node's tracing-sink log (distinct from its captured stdout/stderr

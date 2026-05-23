@@ -162,13 +162,15 @@ fn color_enabled(stream_is_terminal: bool) -> bool {
 /// status nor the env var changes at runtime, and piped/non-TTY output
 /// (tests, the `/swarm` skill) auto-disables.
 fn stdout_color() -> bool {
-    static ENABLED: LazyLock<bool> = LazyLock::new(|| color_enabled(std::io::stdout().is_terminal()));
+    static ENABLED: LazyLock<bool> =
+        LazyLock::new(|| color_enabled(std::io::stdout().is_terminal()));
     *ENABLED
 }
 
 /// Stderr counterpart to [`stdout_color`] (presence/info/timeout lines).
 fn stderr_color() -> bool {
-    static ENABLED: LazyLock<bool> = LazyLock::new(|| color_enabled(std::io::stderr().is_terminal()));
+    static ENABLED: LazyLock<bool> =
+        LazyLock::new(|| color_enabled(std::io::stderr().is_terminal()));
     *ENABLED
 }
 
@@ -528,7 +530,12 @@ impl Output {
                     msg.author, target, msg.body
                 );
             }
-            _ => println!("{open}<{}>{close}: {}", msg.author, msg.body),
+            MessageKind::Msg { reply: None }
+            | MessageKind::Presence { .. }
+            | MessageKind::PeerInfo
+            | MessageKind::Digest => {
+                println!("{open}<{}>{close}: {}", msg.author, msg.body);
+            }
         }
     }
 
@@ -561,7 +568,6 @@ fn emit_json<T: Serialize>(value: &T) {
         emit(&json);
     }
 }
-
 
 /// Format a presence message as JSON.
 ///
@@ -644,7 +650,7 @@ pub fn event_json(event: &OutputEvent) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{Output, OutputMode, SimpleEvent, format_msg_json, format_presence_json, style};
     use crate::protocol::{Message, PresenceSubtype};
 
     fn parse(text: &str) -> serde_json::Value {
@@ -660,7 +666,10 @@ mod tests {
     #[test]
     fn nick_ansi_self_vs_peer() {
         let out = human("alice");
-        assert_eq!(out.nick_ansi("alice", true), (style::SELF_NICK, style::RESET));
+        assert_eq!(
+            out.nick_ansi("alice", true),
+            (style::SELF_NICK, style::RESET)
+        );
         assert_eq!(out.nick_ansi("bob", true), (style::PEER_NICK, style::RESET));
     }
 
@@ -833,7 +842,7 @@ mod tests {
     }
 
     mod snapshots {
-        use super::*;
+        use super::{format_msg_json, format_presence_json};
         use crate::protocol::{Message, MessageKind, PresenceSubtype};
 
         #[test]
@@ -877,10 +886,13 @@ mod tests {
     }
 
     mod prop {
-        use super::*;
+        use proptest::{
+            collection::vec as arb_vec, prelude::any, prop_assert, prop_assert_eq, proptest,
+            strategy::Strategy,
+        };
+
+        use super::{PresenceSubtype, format_msg_json, format_presence_json, sid};
         use crate::protocol::Message;
-        use proptest::collection::vec as arb_vec;
-        use proptest::prelude::*;
 
         fn arb_ascii_body() -> impl Strategy<Value = String> {
             arb_vec(0x20u8..0x7Eu8, 0..200).prop_map(|bytes| String::from_utf8(bytes).unwrap())

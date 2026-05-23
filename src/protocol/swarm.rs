@@ -518,18 +518,26 @@ mod discovery_tests {
 
     #[test]
     fn public_mdns_alone_disables_dht_and_relay() {
-        let opts =
-            resolve_discovery(SwarmMode::Public, lookups(true, false, RelaySelection::Unset))
-                .unwrap();
+        let opts = resolve_discovery(
+            SwarmMode::Public,
+            lookups(true, false, RelaySelection::Unset),
+        )
+        .unwrap();
         assert!(opts.mdns && !opts.dht);
-        assert_eq!(opts.relay, RelayChoice::Disabled, "--mdns alone ⇒ relay off");
+        assert_eq!(
+            opts.relay,
+            RelayChoice::Disabled,
+            "--mdns alone ⇒ relay off"
+        );
     }
 
     #[test]
     fn public_bare_relay_is_pinned_and_suppresses_lookups() {
-        let opts =
-            resolve_discovery(SwarmMode::Public, lookups(false, false, RelaySelection::Default))
-                .unwrap();
+        let opts = resolve_discovery(
+            SwarmMode::Public,
+            lookups(false, false, RelaySelection::Default),
+        )
+        .unwrap();
         assert!(!opts.mdns && !opts.dht);
         assert_eq!(opts.relay, RelayChoice::Pinned);
     }
@@ -547,9 +555,11 @@ mod discovery_tests {
 
     #[test]
     fn public_mdns_plus_relay_keeps_both() {
-        let opts =
-            resolve_discovery(SwarmMode::Public, lookups(true, false, RelaySelection::Default))
-                .unwrap();
+        let opts = resolve_discovery(
+            SwarmMode::Public,
+            lookups(true, false, RelaySelection::Default),
+        )
+        .unwrap();
         assert!(opts.mdns && !opts.dht);
         assert_eq!(opts.relay, RelayChoice::Pinned);
     }
@@ -730,7 +740,7 @@ impl FromStr for Swarm {
 
 #[cfg(test)]
 mod swarm_tests {
-    use super::*;
+    use super::{SEED_LEN, Swarm, SwarmMode, SwarmName};
 
     fn dummy_seed() -> [u8; SEED_LEN] {
         [7u8; SEED_LEN]
@@ -880,9 +890,12 @@ mod swarm_tests {
     }
 
     mod prop {
-        use super::*;
-        use proptest::array::uniform32;
-        use proptest::prelude::*;
+        use proptest::{
+            array::uniform32, prelude::any, prop_assert, prop_assert_eq, prop_assert_ne,
+            prop_assume, proptest, strategy::Strategy,
+        };
+
+        use super::{SEED_LEN, Swarm, SwarmMode, SwarmName};
 
         fn arb_seed() -> impl Strategy<Value = [u8; SEED_LEN]> {
             uniform32(0u8..)

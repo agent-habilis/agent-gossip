@@ -174,6 +174,6 @@ pub(crate) fn handle_msg(
             }
             true
         }
-        _ => false,
+        MessageKind::Presence { .. } | MessageKind::PeerInfo | MessageKind::Digest => false,
     }
 }

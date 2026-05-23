@@ -16,7 +16,11 @@ use crate::util::bounded_read::{LineRead, read_bounded_line};
 /// On Unix this is a filesystem socket path; on Windows the filename portion
 /// becomes a namespaced named-pipe name.
 pub(crate) fn socket_path(swarm: &SwarmId, nickname: &Nickname) -> String {
-    format!("{SOCKET_DIR}/{}-{}.sock", swarm_prefix(swarm.as_str()), nickname)
+    format!(
+        "{SOCKET_DIR}/{}-{}.sock",
+        swarm_prefix(swarm.as_str()),
+        nickname
+    )
 }
 
 #[cfg(unix)]
@@ -209,7 +213,10 @@ pub(crate) async fn send(cmd: &IpcCommand, nickname: &Nickname) -> Result<String
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{
+        IpcCommand, IpcMessage, MessageBody, MessageId, Nickname, SwarmId, json_error, json_ok,
+        listen, mpsc, send, socket_path,
+    };
 
     // ── pure functions ─────────────────────────────────────────────
 
@@ -313,9 +320,11 @@ mod tests {
     // ── property-based tests ───────────────────────────────────────
 
     mod prop {
-        use super::*;
+        use ahs_shared::swarm_prefix;
         use proptest::collection::vec as arb_vec;
-        use proptest::prelude::*;
+        use proptest::{prop_assert, prop_assert_eq, proptest, strategy::Strategy};
+
+        use super::{MessageBody, Nickname, SwarmId, json_error, json_ok};
 
         fn arb_ascii_body() -> impl Strategy<Value = String> {
             arb_vec(0x20u8..0x7Eu8, 0..200).prop_map(|bytes| String::from_utf8(bytes).unwrap())

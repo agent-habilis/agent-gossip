@@ -45,6 +45,13 @@ min_ident_chars = "warn"
 shadow_unrelated = "warn"
 semicolon_inside_block = "warn"
 allow_attributes_without_reason = "warn"
+# Force `#[expect(...)]` over `#[allow(...)]` where the lint still fires, so a
+# suppression that goes stale (lint no longer triggers) becomes a build error
+# instead of silently lingering.
+allow_attributes = "warn"
+# Forbid `_ =>` catch-all arms on enum matches: a new variant must be
+# handled explicitly rather than silently swallowed by a wildcard.
+wildcard_enum_match_arm = "warn"
 # documented opt-out (noise / not a readability win): keep CI signal useful
 module_name_repetitions = "allow"
 # Transitive duplicate crate versions are not controllable from a leaf

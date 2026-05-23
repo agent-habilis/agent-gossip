@@ -115,7 +115,7 @@ impl From<&str> for Nickname {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::Nickname;
 
     #[test]
     fn new_accepts_valid_nicknames() {

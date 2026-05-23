@@ -190,7 +190,12 @@ impl<'writer> tracing_subscriber::fmt::MakeWriter<'writer> for LogSink {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::fs;
+    use std::io::Write;
+    use std::path::PathBuf;
+    use std::sync::{Arc, Mutex};
+
+    use super::{LogSink, State};
 
     #[test]
     fn attached_file_rotates_at_cap() {
@@ -218,7 +223,10 @@ mod tests {
         sink.flush().expect("flush");
 
         let active = fs::metadata(&path).expect("stat active").len();
-        assert!(active < max, "active file must stay under the cap, got {active}");
+        assert!(
+            active < max,
+            "active file must stay under the cap, got {active}"
+        );
         let mut backup = path.as_os_str().to_owned();
         backup.push(".1");
         assert!(

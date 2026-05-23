@@ -70,9 +70,10 @@ pub(crate) fn tick_sweep(state: &mut EventLoopState, out: &output::Output) {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::util::tuning::alive_timeout_secs;
     use std::collections::HashSet;
+
+    use super::{Duration, EventLoopState, Instant, Nickname, output, tick_sweep};
+    use crate::util::tuning::alive_timeout_secs;
 
     fn fresh_state() -> EventLoopState {
         EventLoopState::new(None, Instant::now())

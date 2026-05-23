@@ -503,7 +503,9 @@ impl Message {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{
+        Message, MessageBody, MessageKind, Nickname, PresenceSubtype, SwarmId, build_msg_bytes,
+    };
 
     fn nick(name: &str) -> Nickname {
         Nickname::from(name)
@@ -619,12 +621,14 @@ mod tests {
         assert_eq!(msg.body.as_str(), "reply");
         match msg.kind {
             MessageKind::Msg { reply } => assert_eq!(reply, Some(target)),
-            _ => panic!("expected Msg kind"),
+            MessageKind::Presence { .. } | MessageKind::PeerInfo | MessageKind::Digest => {
+                panic!("expected Msg kind")
+            }
         }
     }
 
     mod snapshots {
-        use super::*;
+        use super::{Message, MessageKind, Nickname, PresenceSubtype};
 
         #[test]
         fn snap_wire_message() {
@@ -662,9 +666,15 @@ mod tests {
     }
 
     mod prop {
-        use super::*;
-        use proptest::collection::vec as arb_vec;
-        use proptest::prelude::*;
+        use proptest::{
+            collection::vec as arb_vec, prelude::any, prop_assert, prop_assert_eq, proptest,
+            strategy::Strategy,
+        };
+
+        use super::super::{
+            MAX_MESSAGE_SIZE, Message, MessageBody, MessageKind, Nickname, VERSION,
+        };
+        use super::sid;
 
         fn arb_ascii_body() -> impl Strategy<Value = String> {
             arb_vec(0x20u8..0x7Eu8, 0..200).prop_map(|bytes| String::from_utf8(bytes).unwrap())

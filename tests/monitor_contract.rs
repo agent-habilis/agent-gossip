@@ -1,14 +1,14 @@
-/// Integration tests for the Monitor tool contract.
-///
-/// The Claude Code Monitor tool runs a command in the background and feeds each
-/// stdout line back to Claude as an event. These tests validate that the daemon's
-/// JSON stdout output matches the event shapes the skill's Monitor event handler
-/// expects.
-///
-/// Uses `--output json` mode (the mode Monitor will use) and 3 peers to test
-/// multi-peer dynamics.
-///
-/// Run `cargo build --release` first for faster crypto (shorter connect times).
+//! Integration tests for the Monitor tool contract.
+//!
+//! The Claude Code Monitor tool runs a command in the background and feeds each
+//! stdout line back to Claude as an event. These tests validate that the daemon's
+//! JSON stdout output matches the event shapes the skill's Monitor event handler
+//! expects.
+//!
+//! Uses `--output json` mode (the mode Monitor will use) and 3 peers to test
+//! multi-peer dynamics.
+//!
+//! Run `cargo build --release` first for faster crypto (shorter connect times).
 mod common;
 
 use std::fs;

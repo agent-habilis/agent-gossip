@@ -204,7 +204,10 @@ impl EventLoopState {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{
+        Bytes, EndpointId, EventLoopState, Instant, KNOWN_ENDPOINTS_CAP, MessageId,
+        PENDING_OUTBOUND_CAP, SEEN_IDS_CAP,
+    };
 
     fn fresh_state() -> EventLoopState {
         EventLoopState::new(None, Instant::now())

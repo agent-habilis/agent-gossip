@@ -88,7 +88,7 @@ impl McpClient {
 
     /// Simple tool call: send and return the matching response,
     /// skipping any notifications that arrive in the meantime.
-    #[allow(
+    #[expect(
         clippy::needless_pass_by_value,
         reason = "ergonomic test helper; callers pass json! literals by value"
     )]

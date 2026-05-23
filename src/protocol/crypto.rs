@@ -118,7 +118,7 @@ pub(crate) fn derive_topic_id(seed: &[u8; 32], name: &SwarmName) -> TopicId {
 
 #[cfg(test)]
 mod kdf_tests {
-    use super::*;
+    use super::{RENDEZVOUS_LADDER, kdf, rendezvous_id, rendezvous_ports, rendezvous_secret};
 
     const SEED_A: [u8; 32] = [7u8; 32];
     const SEED_B: [u8; 32] = [9u8; 32];
@@ -181,7 +181,7 @@ mod kdf_tests {
 
 #[cfg(test)]
 mod topic_tests {
-    use super::*;
+    use super::{SwarmName, derive_topic_id};
 
     fn name(text: &str) -> SwarmName {
         SwarmName::new(text).unwrap()

@@ -1,10 +1,10 @@
-/// Integration tests for the gossip network.
-///
-/// Each test spawns real `ahs` processes, exercises the network,
-/// and asserts on what each node actually received. Tests are independent —
-/// each creates its own swarm so IPC sockets never collide.
-///
-/// Run `cargo build --release` first for faster crypto (shorter connect times).
+//! Integration tests for the gossip network.
+//!
+//! Each test spawns real `ahs` processes, exercises the network,
+//! and asserts on what each node actually received. Tests are independent —
+//! each creates its own swarm so IPC sockets never collide.
+//!
+//! Run `cargo build --release` first for faster crypto (shorter connect times).
 mod common;
 
 use std::fs::{self, File};

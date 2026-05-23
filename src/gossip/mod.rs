@@ -47,6 +47,13 @@ pub(crate) async fn conn_path(
         if !matches!(addr.usage(), TransportAddrUsage::Active) {
             continue;
         }
+        // `TransportAddr` is `#[non_exhaustive]`, so a wildcard is
+        // mandatory and the match can't be made exhaustive; only relay
+        // vs direct matters here.
+        #[expect(
+            clippy::wildcard_enum_match_arm,
+            reason = "TransportAddr is #[non_exhaustive]"
+        )]
         match addr.addr() {
             TransportAddr::Relay(url) => {
                 has_relay = true;
@@ -188,7 +195,7 @@ async fn emit_or_queue(
 /// *drop*, not an error (mirrors the receiver-side drop) — returned to
 /// the caller so a programmatic sender (`ahs msg`, MCP `send_message`)
 /// can tell the message was not emitted, distinct from a real failure.
-#[allow(
+#[expect(
     clippy::large_enum_variant,
     reason = "transient return value, never stored in bulk; boxing the common Sent payload to shrink the rare RateLimited unit variant would just add an allocation to every send"
 )]
@@ -361,7 +368,7 @@ async fn handle_gossip_received(content: Bytes, state: &mut EventLoopState, ctx:
     // break membership/anti-entropy.
     let rate_ok = match &message.kind {
         MessageKind::Msg { .. } => state.rate_limiter.check(&message.author),
-        _ => true,
+        MessageKind::Presence { .. } | MessageKind::PeerInfo | MessageKind::Digest => true,
     };
     if !rate_ok {
         let notice = format!("rate limit exceeded for [{}], dropping", message.author);

@@ -83,7 +83,11 @@ impl Session {
         // handed back without a deep clone.
         let mut obj = match self.send_cmd(cmd).await? {
             Value::Object(map) => map,
-            other => return Err(anyhow!("malformed IPC response: {other}")),
+            other @ (Value::Null
+            | Value::Bool(_)
+            | Value::Number(_)
+            | Value::String(_)
+            | Value::Array(_)) => return Err(anyhow!("malformed IPC response: {other}")),
         };
         if obj
             .remove("rate_limited")
@@ -111,7 +115,11 @@ impl Session {
                     .remove("error")
                     .and_then(|value| match value {
                         Value::String(text) => Some(text),
-                        _ => None,
+                        Value::Null
+                        | Value::Bool(_)
+                        | Value::Number(_)
+                        | Value::Array(_)
+                        | Value::Object(_) => None,
                     })
                     .unwrap_or_else(|| "unknown error".to_string());
                 Err(anyhow!("send_message failed: {err}"))
@@ -144,7 +152,11 @@ impl Session {
 
         let msgs = match self.send_cmd(cmd).await? {
             Value::Array(array) => array,
-            other => return Err(anyhow!("poll response was not an array: {other}")),
+            other @ (Value::Null
+            | Value::Bool(_)
+            | Value::Number(_)
+            | Value::String(_)
+            | Value::Object(_)) => return Err(anyhow!("poll response was not an array: {other}")),
         };
         let current_id = msgs
             .last()
@@ -224,8 +236,9 @@ async fn spawn_session(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::time::Duration;
+
+    use super::{MessageBody, MessageId, Nickname, Session, SwarmMode, SwarmName, Value};
 
     // All tests use the private network (loopback) so they work on
     // any CI without public iroh DNS / relay access.

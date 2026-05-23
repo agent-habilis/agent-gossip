@@ -74,7 +74,7 @@ fn finish(buf: &[u8]) -> LineRead {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{LineRead, io, read_bounded_line};
 
     #[tokio::test]
     async fn reads_lines_then_eof() {

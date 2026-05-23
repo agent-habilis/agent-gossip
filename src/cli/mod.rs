@@ -92,7 +92,7 @@ pub(crate) struct LookupArgs {
     /// `--public`. Absent ⇒ `None`; bare ⇒ `Some(None)`; valued ⇒
     /// `Some(Some(url))`.
     #[arg(long, num_args(0..=1))]
-    #[allow(
+    #[expect(
         clippy::option_option,
         reason = "clap optional-value flag: absent/bare/valued are three distinct relay states (see RelaySelection)"
     )]
@@ -146,7 +146,9 @@ pub(crate) struct CreateOpts {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use clap::Parser;
+
+    use super::{Cli, Commands, Nickname, RelaySelection, SwarmName};
 
     #[test]
     fn create_opts_with_nickname() {
@@ -159,7 +161,12 @@ mod tests {
                     Some("my-nick")
                 );
             }
-            _ => panic!("expected Create command"),
+            Commands::Join { .. }
+            | Commands::Msg { .. }
+            | Commands::Poll { .. }
+            | Commands::Mcp => {
+                panic!("expected Create command")
+            }
         }
     }
 
@@ -171,7 +178,12 @@ mod tests {
                 assert_eq!(opts.name.as_ref().map(SwarmName::as_str), Some("team"));
                 assert_eq!(opts.nickname, None);
             }
-            _ => panic!("expected Create command"),
+            Commands::Join { .. }
+            | Commands::Msg { .. }
+            | Commands::Poll { .. }
+            | Commands::Mcp => {
+                panic!("expected Create command")
+            }
         }
     }
 
@@ -180,7 +192,12 @@ mod tests {
         let cli = Cli::parse_from(["ahs", "create"]);
         match cli.command {
             Commands::Create { opts } => assert_eq!(opts.name, None),
-            _ => panic!("expected Create command"),
+            Commands::Join { .. }
+            | Commands::Msg { .. }
+            | Commands::Poll { .. }
+            | Commands::Mcp => {
+                panic!("expected Create command")
+            }
         }
     }
 
@@ -206,7 +223,10 @@ mod tests {
         fn relay_of(args: &[&str]) -> RelaySelection {
             match Cli::parse_from(args).command {
                 Commands::Create { opts } => opts.shared.lookups.to_set().relay,
-                _ => panic!("expected Create"),
+                Commands::Join { .. }
+                | Commands::Msg { .. }
+                | Commands::Poll { .. }
+                | Commands::Mcp => panic!("expected Create"),
             }
         }
         assert_eq!(
@@ -220,7 +240,13 @@ mod tests {
             "bare ⇒ Default (pinned)"
         );
         assert_eq!(
-            relay_of(&["ahs", "create", "--public", "--relay", "https://relay.example"]),
+            relay_of(&[
+                "ahs",
+                "create",
+                "--public",
+                "--relay",
+                "https://relay.example"
+            ]),
             RelaySelection::Custom("https://relay.example".parse().unwrap()),
             "valued ⇒ Custom"
         );
@@ -248,7 +274,12 @@ mod tests {
                 assert!(opts.public);
                 assert!(opts.shared.no_interactive);
             }
-            _ => panic!("expected Create command"),
+            Commands::Join { .. }
+            | Commands::Msg { .. }
+            | Commands::Poll { .. }
+            | Commands::Mcp => {
+                panic!("expected Create command")
+            }
         }
     }
 }

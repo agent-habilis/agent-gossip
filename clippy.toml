@@ -1,6 +1,10 @@
 # Readability-focused Clippy configuration. See [workspace.lints] in
 # Cargo.toml for the enabled lint set, and CLAUDE.md "Lint policy".
 
+# Forbid every wildcard import, including `use super::*` in test modules
+# and prelude globs (clippy's wildcard_imports exempts those by default).
+warn-on-all-wildcard-imports = true
+
 # Flag single-character identifiers; keep idiomatic generics and loop vars.
 min-ident-chars-threshold = 1
 allowed-idents-below-min-chars = ["_", "T", "E", "K", "V", "R", "S", "i", "j"]

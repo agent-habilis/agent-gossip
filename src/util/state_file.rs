@@ -114,7 +114,9 @@ fn tmp_sibling(path: &Path) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::path::PathBuf;
+
+    use super::{Nickname, StateFile, SwarmId, clock};
 
     fn unique_path(tag: &str) -> PathBuf {
         std::env::temp_dir().join(format!(

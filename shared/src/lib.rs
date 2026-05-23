@@ -8,7 +8,11 @@
 pub mod consts;
 pub mod logs;
 
-pub use consts::*;
+pub use consts::{
+    DEFAULT_MESSAGE_LOG_SIZE, LOG_FILE_MAX_BYTES, LOG_SUBPATH, MAX_IPC_COMMAND_BYTES,
+    MAX_IPC_RESPONSE_BYTES, MAX_MESSAGE_SIZE, MAX_STDIN_LINE_BYTES, QUIC_KEEP_ALIVE_SECS,
+    QUIC_MAX_IDLE_SECS, RATE_LIMIT_PER_MIN, SOCKET_DIR,
+};
 
 /// The `<swarm_prefix>-<nick>` filename stem — the first 16 characters
 /// of the swarm identifier. Shared by both the socket name

@@ -49,7 +49,9 @@ fn resolve_log_max_bytes(override_var: Option<OsString>) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::path::{Path, PathBuf};
+
+    use super::{LOG_FILE_MAX_BYTES, resolve_log_dir, resolve_log_max_bytes};
 
     #[test]
     fn default_is_log_subpath_under_temp_base() {
@@ -71,12 +73,19 @@ mod tests {
     #[test]
     fn max_bytes_default_when_unset_or_invalid() {
         assert_eq!(resolve_log_max_bytes(None), LOG_FILE_MAX_BYTES);
-        assert_eq!(resolve_log_max_bytes(Some("garbage".into())), LOG_FILE_MAX_BYTES);
+        assert_eq!(
+            resolve_log_max_bytes(Some("garbage".into())),
+            LOG_FILE_MAX_BYTES
+        );
     }
 
     #[test]
     fn max_bytes_override_parsed() {
         assert_eq!(resolve_log_max_bytes(Some("4096".into())), 4096);
-        assert_eq!(resolve_log_max_bytes(Some("0".into())), 0, "0 disables rotation");
+        assert_eq!(
+            resolve_log_max_bytes(Some("0".into())),
+            0,
+            "0 disables rotation"
+        );
     }
 }

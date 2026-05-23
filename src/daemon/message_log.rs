@@ -68,7 +68,7 @@ impl MessageLog {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{Message, MessageLog};
 
     fn msg(id: &str) -> Message {
         Message::new_message(
@@ -145,8 +145,9 @@ mod tests {
     }
 
     mod prop {
-        use super::*;
-        use proptest::prelude::*;
+        use proptest::{prop_assert, prop_assert_eq, proptest};
+
+        use super::{MessageLog, msg};
 
         proptest! {
             #[test]

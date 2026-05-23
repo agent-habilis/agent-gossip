@@ -39,7 +39,12 @@ pub(crate) fn compute(
         MessageKind::Presence {
             subtype: PresenceSubtype::Left,
         } => false,
-        _ => !state.participants.contains(author.as_str()),
+        MessageKind::Msg { .. }
+        | MessageKind::Presence {
+            subtype: PresenceSubtype::Joined | PresenceSubtype::Alive,
+        }
+        | MessageKind::PeerInfo
+        | MessageKind::Digest => !state.participants.contains(author.as_str()),
     };
     MembershipUpdate {
         returned,
@@ -72,8 +77,11 @@ pub(crate) fn apply(update: &MembershipUpdate, author: &Nickname, state: &mut Ev
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::time::Instant;
+
+    use super::{
+        EventLoopState, MembershipUpdate, MessageKind, Nickname, PresenceSubtype, apply, compute,
+    };
 
     fn fresh_state() -> EventLoopState {
         EventLoopState::new(None, Instant::now())
