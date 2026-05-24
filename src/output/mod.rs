@@ -374,16 +374,17 @@ impl Output {
         );
     }
 
-    /// Print the bare `ahs…` swarm identifier (stderr) at startup.
-    /// Human and JSON modes both emit it; Silent suppresses it. The
-    /// integration harness greps this line for the swarm id.
+    /// Surface the swarm identifier at startup (stderr). Human mode
+    /// prints the runnable join command (`ahs join <id>`); JSON mode
+    /// prints the bare `ahs…` id (the integration harness greps this);
+    /// Silent suppresses it.
     pub(crate) fn swarm_id_line(&self, id: &str) {
         self.dispatch(
             || OutputEvent::SwarmId { id: id.to_owned() },
-            |mode| {
-                if mode != OutputMode::Silent {
-                    eprintln!("{id}");
-                }
+            |mode| match mode {
+                OutputMode::Human => eprintln!("others can join with: ahs join {id}"),
+                OutputMode::Json => eprintln!("{id}"),
+                OutputMode::Silent => {}
             },
         );
     }

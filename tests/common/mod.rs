@@ -576,8 +576,12 @@ impl Node {
             let content = fs::read_to_string(&log).unwrap_or_default();
             for line in content.lines() {
                 let trimmed = line.trim();
-                if swarm_id.is_none() && line.starts_with("ahs") {
-                    swarm_id = Some(line.trim().to_string());
+                // Human-mode create prints `others can join with: ahs
+                // join <id>`; pull the id token out of that hint.
+                if swarm_id.is_none()
+                    && let Some((_, after)) = trimmed.split_once("ahs join ")
+                {
+                    swarm_id = after.split_whitespace().next().map(str::to_owned);
                 }
                 // Both lifecycle lines end with ` as <NICK>`
                 // (`created #N and joined as <nick>` /
