@@ -208,7 +208,11 @@ impl SwarmSession {
         let author = cfg.nickname.unwrap_or_else(Nickname::random);
         let (events_tx, events_rx) = mpsc::unbounded_channel();
         let mut elc = setup_swarm(
-            SetupKind::Create { mode, name },
+            SetupKind::Create {
+                mode,
+                name,
+                advertise: directory.clone(),
+            },
             author,
             /* interactive */ false,
             cfg.max_peers,
@@ -641,6 +645,15 @@ impl Directory {
     /// subsequent calls return `None`.
     pub fn events(&mut self) -> Option<mpsc::UnboundedReceiver<DirectoryEvent>> {
         self.events_rx.take()
+    }
+
+    /// The directory session's `(swarm id, nickname)` while it is open —
+    /// used by the CLI to route its logs to the per-member file via
+    /// `logging::attach` (so the picker / JSON stream stays clean).
+    pub(crate) fn session_identity(&self) -> Option<(&SwarmId, &Nickname)> {
+        self.session
+            .as_ref()
+            .map(|session| (session.swarm_id(), session.nickname()))
     }
 
     /// Leave the directory and stop collecting.

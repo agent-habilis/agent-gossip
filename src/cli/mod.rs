@@ -110,8 +110,8 @@ async fn run_session(
         .directory()
         .map(|directory| spawn_advertiser(&mut cfg, directory, lookups));
     // First point where swarm id + nickname are known — attach the
-    // buffered log sink here (see `logsink`).
-    crate::logsink::attach(&cfg.swarm, &cfg.author);
+    // buffered log sink here (see `logging`).
+    crate::logging::attach(&cfg.swarm, &cfg.author);
     run_event_loop(cfg).await
 }
 
@@ -128,7 +128,11 @@ async fn create(opts: CreateOpts) -> Result<()> {
     // (rejected before any setup work — never a silent no-op).
     validate_advertise(mode, &advertise)?;
     let name = opts.name.unwrap_or_else(SwarmName::random);
-    let kind = SetupKind::Create { mode, name };
+    let kind = SetupKind::Create {
+        mode,
+        name,
+        advertise: advertise.directory(),
+    };
     run_session(kind, lookups, opts.shared, opts.nickname, advertise).await
 }
 

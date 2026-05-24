@@ -68,45 +68,76 @@ pub(crate) fn install() -> LogSink {
 }
 
 /// Identity resolved: open `<swarm_prefix>-<nick>.log` (truncate),
-/// flush the buffer, pass through after. Open failure → stderr.
+/// flush the buffer, pass through after. First-attach-wins — already
+/// `Attached`/`Stderr` is a no-op. The `discover` → `join` handoff
+/// calls [`detach`] in between so this opens a *fresh* file for the
+/// joined swarm (with its full logs), rather than appending to the
+/// directory's file.
 pub(crate) fn attach(swarm: &SwarmId, nickname: &Nickname) {
     let Some(sink) = SINK.get() else { return };
-    let mut state = sink.0.lock().expect("log sink poisoned");
-    if !matches!(*state, State::Pending(_)) {
-        return;
+    sink.open(log_file_path(swarm.as_str(), nickname.as_str()));
+}
+
+/// Reset an attached sink back to buffering. The `discover` picker calls
+/// this when it leaves the directory to hand off to `join`, so the next
+/// [`attach`] (a different swarm) opens that swarm's own file and
+/// captures its setup logs from the first line — instead of the join's
+/// logs trailing into the directory session's file. No-op unless
+/// currently `Attached` (a `Pending` sink is already buffering; a
+/// `Stderr` sink stays degraded).
+pub(crate) fn detach() {
+    if let Some(sink) = SINK.get() {
+        sink.detach();
     }
-    let path = log_file_path(swarm.as_str(), nickname.as_str());
-    let opened = path
-        .parent()
-        .map_or(Ok(()), fs::create_dir_all)
-        .and_then(|()| {
-            fs::OpenOptions::new()
-                .create(true)
-                .write(true)
-                .truncate(true)
-                .open(&path)
-        });
-    match opened {
-        Ok(mut file) => {
-            let mut written = 0u64;
-            if let State::Pending(buf) = &*state {
-                let _ = file.write_all(buf);
-                let _ = file.flush();
-                written = buf.len() as u64;
-            }
-            *state = State::Attached {
-                file,
-                path,
-                written,
-                max: ahs_shared::logs::log_max_bytes(),
-            };
+}
+
+impl LogSink {
+    /// Reset an `Attached` sink back to buffering (no-op for
+    /// `Pending`/`Stderr`). See the free [`detach`].
+    fn detach(&self) {
+        let mut state = self.0.lock().expect("log sink poisoned");
+        if matches!(*state, State::Attached { .. }) {
+            *state = State::Pending(Vec::new());
         }
-        Err(error) => {
-            eprintln!(
-                "warning: cannot open log file {}: {error}; logging to stderr",
-                path.display()
-            );
-            drain_to_stderr(&mut state);
+    }
+
+    fn open(&self, path: PathBuf) {
+        let mut state = self.0.lock().expect("log sink poisoned");
+        if !matches!(*state, State::Pending(_)) {
+            return;
+        }
+        let opened = path
+            .parent()
+            .map_or(Ok(()), fs::create_dir_all)
+            .and_then(|()| {
+                fs::OpenOptions::new()
+                    .create(true)
+                    .write(true)
+                    .truncate(true)
+                    .open(&path)
+            });
+        match opened {
+            Ok(mut file) => {
+                let mut written = 0u64;
+                if let State::Pending(buf) = &*state {
+                    let _ = file.write_all(buf);
+                    let _ = file.flush();
+                    written = buf.len() as u64;
+                }
+                *state = State::Attached {
+                    file,
+                    path,
+                    written,
+                    max: ahs_shared::logs::log_max_bytes(),
+                };
+            }
+            Err(error) => {
+                eprintln!(
+                    "warning: cannot open log file {}: {error}; logging to stderr",
+                    path.display()
+                );
+                drain_to_stderr(&mut state);
+            }
         }
     }
 }
@@ -196,6 +227,34 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use super::{LogSink, State};
+
+    #[test]
+    fn detach_reattaches_to_a_fresh_file() {
+        let dir = std::env::temp_dir().join(format!("ahs-logswitch-{}", std::process::id()));
+        let _ = fs::create_dir_all(&dir);
+        let path_a = dir.join("a.log");
+        let path_b = dir.join("b.log");
+
+        let mut sink = LogSink(Arc::new(Mutex::new(State::Pending(Vec::new()))));
+        // Buffered bytes flush into the first file on open.
+        sink.write_all(b"pending-").expect("write");
+        sink.open(path_a.clone());
+        sink.write_all(b"alpha").expect("write");
+        sink.flush().expect("flush");
+
+        // The discover→join handoff: detach (back to buffering), then the
+        // join's open() makes its own fresh file. The directory file keeps
+        // its bytes; the join file gets the join's logs from the first byte.
+        sink.detach();
+        sink.open(path_b.clone());
+        sink.write_all(b"beta").expect("write");
+        sink.flush().expect("flush");
+
+        assert_eq!(fs::read_to_string(&path_a).expect("read a"), "pending-alpha");
+        assert_eq!(fs::read_to_string(&path_b).expect("read b"), "beta");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn attached_file_rotates_at_cap() {

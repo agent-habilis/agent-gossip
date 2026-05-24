@@ -19,7 +19,14 @@ use super::{CoHostPolicy, DriverMode, EventLoopConfig};
 /// What kind of swarm we're setting up — either minting a new one
 /// (create) or attaching to an existing one (join).
 pub(crate) enum SetupKind {
-    Create { mode: SwarmMode, name: SwarmName },
+    Create {
+        mode: SwarmMode,
+        name: SwarmName,
+        /// The directory this swarm advertises into, if any. Drives the
+        /// `advertising on #<directory>` startup line; the re-broadcast
+        /// task itself is spawned by the caller post-setup.
+        advertise: Option<SwarmName>,
+    },
     Join { swarm: Swarm },
 }
 
@@ -108,7 +115,11 @@ pub(crate) async fn setup_swarm(
     output: output::Output,
 ) -> Result<EventLoopConfig> {
     let (swarm_id, swarm_name, endpoint, router, topic, rdv, cohost) = match kind {
-        SetupKind::Create { mode, name } => {
+        SetupKind::Create {
+            mode,
+            name,
+            advertise,
+        } => {
             let mut seed = [0u8; 32];
             rand::rng().fill_bytes(&mut seed);
 
@@ -120,6 +131,9 @@ pub(crate) async fn setup_swarm(
                 .expect("Swarm::to_string always produces a valid SwarmId");
 
             output.info(&format!("created #{name} and joined as <{author}>"));
+            if let Some(directory) = &advertise {
+                output.info(&format!("advertising on #{directory}"));
+            }
             output.swarm_id_line(&id_str);
             output.ready(&id_str, name.as_str(), author.as_str());
             lifecycle::log_ready(&id_str, name.as_str(), author.as_str(), mode.network_name());

@@ -45,7 +45,11 @@ impl Session {
         let label = name.as_str().to_string();
         let lookups = LookupOpts::default_for(mode, relay);
         spawn_session(
-            SetupKind::Create { mode, name },
+            SetupKind::Create {
+                mode,
+                name,
+                advertise: advertise.clone(),
+            },
             lookups,
             label,
             nickname,

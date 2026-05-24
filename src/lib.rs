@@ -39,7 +39,7 @@ pub(crate) mod daemon;
 pub(crate) mod directory;
 pub(crate) mod gossip;
 pub(crate) mod lifecycle;
-pub(crate) mod logsink;
+pub(crate) mod logging;
 pub(crate) mod lookup;
 pub(crate) mod mcp;
 pub(crate) mod messages;
@@ -55,7 +55,7 @@ pub mod embed;
 // (otherwise `pub(crate)`) modules; re-exporting them from the crate
 // root is what makes them externally reachable and satisfies
 // `unreachable_pub`.
-pub use logsink::LogSink;
+pub use logging::LogSink;
 pub use output::{OutputEvent, event_json};
 pub use protocol::message::{
     BodyError, IdError, Message, MessageBody, MessageId, MessageKind, PresenceSubtype,
@@ -85,15 +85,23 @@ pub async fn run_cli() -> Result<()> {
 /// Build the deferred log sink and register it process-globally.
 /// Call once in `main` before subscriber init; pass the returned
 /// value to `tracing_subscriber::fmt().with_writer(..)`. Logs buffer
-/// until [`cli`] resolves the swarm id + nickname (see `logsink`).
+/// until [`cli`] resolves the swarm id + nickname (see `logging`).
 #[must_use]
 pub fn install_log_sink() -> LogSink {
-    logsink::install()
+    logging::install()
+}
+
+/// The default tracing directive filter; pass to
+/// `tracing_subscriber::fmt().with_env_filter(..)`. `RUST_LOG` overrides
+/// it. See `logging`.
+#[must_use]
+pub fn log_filter() -> tracing_subscriber::EnvFilter {
+    logging::log_filter()
 }
 
 /// Flush buffered logs to stderr if identity was never resolved
 /// (transient command, or startup failed before attach). Call after
 /// `run_cli` returns.
 pub fn flush_log_if_pending() {
-    logsink::flush_pending_to_stderr();
+    logging::flush_pending_to_stderr();
 }

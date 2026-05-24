@@ -45,41 +45,13 @@ fn suppress_ctrl_c_echo() {
     }
 }
 
-/// Default tracing directives when `RUST_LOG` is unset (`RUST_LOG`
-/// wins). Quiets benign `noq_proto::connection`; release also drops the
-/// env-dependent `mainline::rpc` DHT-bootstrap ERROR; the `messages`
-/// target is pinned on so it lands at any base level. See AGENTS.md.
-///
-/// Our own operational subsystems (gossip/lookup/beacon/lifecycle/directory)
-/// are pinned to `info` in BOTH profiles so the always-on log file
-/// carries the connectivity/lifecycle story even in a release build
-/// (whose `error` base would otherwise drop every diagnostic) — the
-/// same rationale as the `messages=info` pin. tracing writes only to
-/// the file sink; `--output json` (stdout) is a separate path, so this
-/// never affects the event stream.
-fn log_filter() -> tracing_subscriber::EnvFilter {
-    use tracing_subscriber::EnvFilter;
-    const SUBSYSTEMS: &str = "agent_habilis_swarm::gossip=info,\
-        agent_habilis_swarm::lookup=info,\
-        agent_habilis_swarm::beacon=info,\
-        agent_habilis_swarm::lifecycle=info,\
-        agent_habilis_swarm::directory=info,\
-        agent_habilis_swarm::messages=info";
-    EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-        EnvFilter::new(if cfg!(debug_assertions) {
-            format!("info,noq_proto::connection=off,{SUBSYSTEMS}")
-        } else {
-            format!("error,noq_proto::connection=off,mainline::rpc=off,{SUBSYSTEMS}")
-        })
-    })
-}
-
 #[tokio::main]
 async fn main() -> Result<()> {
     // Tracing buffers until create/join resolve swarm+nick, then
-    // flushes to the per-member file; else stderr. See `logsink`.
+    // flushes to the per-member file; else stderr. The filter + sink
+    // both live in the crate's `logging` module.
     tracing_subscriber::fmt()
-        .with_env_filter(log_filter())
+        .with_env_filter(agent_habilis_swarm::log_filter())
         .with_writer(agent_habilis_swarm::install_log_sink())
         .with_ansi(false)
         .init();

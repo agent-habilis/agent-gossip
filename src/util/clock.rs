@@ -31,12 +31,10 @@ pub(crate) fn unix_nanos() -> i64 {
         .unwrap_or(0)
 }
 
-/// Format a Unix timestamp (seconds) as ISO-8601 UTC —
-/// `YYYY-MM-DDTHH:MM:SSZ`. Pure integer arithmetic (Howard Hinnant's
+/// Break a Unix timestamp (seconds) into civil `(year, month, day, hour,
+/// minute, second)` in UTC. Pure integer arithmetic (Howard Hinnant's
 /// `civil_from_days`), so it needs no timezone / `chrono` dependency.
-/// Used by the `ahs discover` picker to show when a swarm was first seen.
-#[must_use]
-pub(crate) fn iso8601_utc(unix_secs: i64) -> String {
+fn civil_from_unix(unix_secs: i64) -> (i64, i64, i64, i64, i64, i64) {
     let days = unix_secs.div_euclid(86_400);
     let secs_of_day = unix_secs.rem_euclid(86_400);
     let hour = secs_of_day / 3_600;
@@ -66,23 +64,82 @@ pub(crate) fn iso8601_utc(unix_secs: i64) -> String {
     }; // [1, 12]
     let year = if month <= 2 { year_base + 1 } else { year_base };
 
-    format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}Z")
+    (year, month, day, hour, minute, second)
+}
+
+/// Format a Unix timestamp as a compact **local**-time stamp,
+/// `YYYY-MM-DD HH:MM`. Used by the `ahs discover` picker to show when a
+/// swarm was first seen, in the operator's own timezone.
+///
+/// `libc::localtime_r` resolves the system timezone (DST included) for
+/// the given instant; if it ever fails (not reachable for a valid
+/// `time_t`), we fall back to UTC via [`civil_from_unix`] so the picker
+/// still renders.
+#[must_use]
+#[expect(
+    unsafe_code,
+    reason = "libc localtime_r for local-time display in the discover picker; no safe std API"
+)]
+pub(crate) fn local_datetime(unix_secs: i64) -> String {
+    // SAFETY: a zeroed `tm` is a valid output buffer for `localtime_r`,
+    // which fills the broken-down local time and returns a pointer to it
+    // (or null on failure). `time` is a valid pointer to a local.
+    let local = unsafe {
+        let time = unix_secs as libc::time_t;
+        let mut tm: libc::tm = std::mem::zeroed();
+        if libc::localtime_r(&raw const time, &raw mut tm).is_null() {
+            None
+        } else {
+            Some(tm)
+        }
+    };
+    let (year, month, day, hour, minute) = local.map_or_else(
+        || {
+            let (year, month, day, hour, minute, _sec) = civil_from_unix(unix_secs);
+            (year, month, day, hour, minute)
+        },
+        |tm| {
+            (
+                i64::from(tm.tm_year) + 1900,
+                i64::from(tm.tm_mon) + 1,
+                i64::from(tm.tm_mday),
+                i64::from(tm.tm_hour),
+                i64::from(tm.tm_min),
+            )
+        },
+    );
+    format!("{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}")
 }
 
 #[cfg(test)]
 mod tests {
-    use super::iso8601_utc;
+    use super::{civil_from_unix, local_datetime};
 
     #[test]
-    fn formats_epoch() {
-        assert_eq!(iso8601_utc(0), "1970-01-01T00:00:00Z");
+    fn civil_from_epoch() {
+        assert_eq!(civil_from_unix(0), (1970, 1, 1, 0, 0, 0));
     }
 
     #[test]
-    fn formats_known_timestamps() {
-        // 2009-02-13T23:31:30Z — the classic 1234567890 epoch.
-        assert_eq!(iso8601_utc(1_234_567_890), "2009-02-13T23:31:30Z");
-        // A leap-year date with a non-zero clock.
-        assert_eq!(iso8601_utc(1_582_934_400), "2020-02-29T00:00:00Z");
+    fn civil_from_known_timestamps() {
+        // The classic 1234567890 epoch — 2009-02-13T23:31:30Z.
+        assert_eq!(civil_from_unix(1_234_567_890), (2009, 2, 13, 23, 31, 30));
+        // A leap day with a zero clock.
+        assert_eq!(civil_from_unix(1_582_934_400), (2020, 2, 29, 0, 0, 0));
+    }
+
+    #[test]
+    fn local_datetime_has_expected_shape() {
+        // Timezone-independent: assert the `YYYY-MM-DD HH:MM` layout
+        // regardless of the host zone.
+        let stamp = local_datetime(1_700_000_000);
+        let bytes = stamp.as_bytes();
+        assert_eq!(stamp.len(), 16, "{stamp}");
+        assert_eq!(bytes[4], b'-');
+        assert_eq!(bytes[7], b'-');
+        assert_eq!(bytes[10], b' ');
+        assert_eq!(bytes[13], b':');
+        let digits = stamp.chars().filter(char::is_ascii_digit).count();
+        assert_eq!(digits, 12, "{stamp}");
     }
 }

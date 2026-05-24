@@ -8,6 +8,7 @@
 //! terminal UI.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::Result;
 
@@ -36,6 +37,12 @@ pub(super) async fn discover(directory: Option<SwarmName>, opts: JoinOpts) -> Re
     let mut discoverer =
         Directory::open_with_lookups(directory.map(|name| name.as_str().to_owned()), lookups)
             .await?;
+    // Route the directory session's logs to its per-member file (same as
+    // create/join) so the picker and JSON stream aren't drowned in INFO
+    // lines on stderr.
+    if let Some((swarm, nickname)) = discoverer.session_identity() {
+        crate::logging::attach(swarm, nickname);
+    }
     let mut events = discoverer
         .events()
         .expect("discoverer events receiver is available exactly once");
@@ -47,6 +54,10 @@ pub(super) async fn discover(directory: Option<SwarmName>, opts: JoinOpts) -> Re
         match run_picker(&directory_label, &discoverer, &mut events).await {
             PickerOutcome::Selected(id) => {
                 let _ = discoverer.close().await;
+                // Leave the directory's log file behind so `join` opens
+                // the joined swarm's own file (with its setup logs) rather
+                // than appending to the directory session's.
+                crate::logging::detach();
                 return join(&id, None, opts).await;
             }
             PickerOutcome::Quit => {
@@ -133,12 +144,19 @@ async fn run_picker(
     let (mut key_rx, key_handle) = spawn_key_reader(Arc::clone(&stop));
 
     let mut selected: usize = 0;
+    // Trailing-dot count (1..=3) for the empty-state "waiting for swarms"
+    // animation, advanced by the `anim` tick below.
+    let mut dots: usize = 3;
     // Cached listing set — refreshed only on a directory event (which is
     // the only thing that changes it). A keypress just moves `selected`,
     // so it reuses this Vec instead of re-cloning + re-sorting the whole
     // directory on every arrow press.
     let mut listings = discoverer.snapshot();
-    render_picker(directory_label, &listings, selected);
+    render_picker(directory_label, &listings, selected, dots);
+
+    // Drives the empty-state dot animation; no directory event fires while
+    // we are waiting, so the redraw has to be self-clocked.
+    let mut anim = tokio::time::interval(Duration::from_millis(400));
 
     let outcome = loop {
         tokio::select! {
@@ -155,7 +173,7 @@ async fn run_picker(
                     }
                     Key::Quit => break PickerOutcome::Quit,
                 }
-                render_picker(directory_label, &listings, selected);
+                render_picker(directory_label, &listings, selected, dots);
             }
             change = events.recv() => {
                 if change.is_none() {
@@ -163,7 +181,15 @@ async fn run_picker(
                 }
                 listings = discoverer.snapshot();
                 selected = selected.min(listings.len().saturating_sub(1));
-                render_picker(directory_label, &listings, selected);
+                render_picker(directory_label, &listings, selected, dots);
+            }
+            _ = anim.tick() => {
+                // Animate only while waiting; a populated list is static,
+                // so there is nothing to repaint once swarms appear.
+                if listings.is_empty() {
+                    dots = dots % 3 + 1;
+                    render_picker(directory_label, &listings, selected, dots);
+                }
             }
         }
     };
@@ -179,11 +205,11 @@ async fn run_picker(
 }
 
 /// Redraw the picker: lowercase chrome, the directory + each swarm name in
-/// yellow, the full `ahs…` id, peer count, and an ISO-8601 UTC
-/// first-seen timestamp. `selected` is the highlighted row. Output
+/// yellow, the full `ahs…` id, peer count, and a local first-seen
+/// timestamp (`YYYY-MM-DD HH:MM`). `selected` is the highlighted row. Output
 /// post-processing (ONLCR) is left on, so `\n` still becomes CRLF in
 /// raw mode.
-fn render_picker(directory_label: &str, listings: &[SwarmListing], selected: usize) {
+fn render_picker(directory_label: &str, listings: &[SwarmListing], selected: usize, dots: usize) {
     use crate::output::style;
     use std::fmt::Write as _;
 
@@ -201,7 +227,7 @@ fn render_picker(directory_label: &str, listings: &[SwarmListing], selected: usi
         "discovering {yellow}#{directory_label}{reset} directory\n\n"
     );
     if listings.is_empty() {
-        out.push_str("  (waiting for swarms…)\n");
+        let _ = writeln!(out, "waiting for swarms{}", ".".repeat(dots));
     } else {
         for (index, listing) in listings.iter().enumerate() {
             let marker = if index == selected { "❯" } else { " " };
@@ -216,7 +242,7 @@ fn render_picker(directory_label: &str, listings: &[SwarmListing], selected: usi
                 listing.name,
                 listing.swarm.as_str(),
                 listing.peers,
-                crate::util::clock::iso8601_utc(listing.first_seen_unix),
+                crate::util::clock::local_datetime(listing.first_seen_unix),
             );
         }
     }

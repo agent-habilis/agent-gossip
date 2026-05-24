@@ -61,6 +61,13 @@ Add `--public` if the user requests cross-network connectivity (e.g.
 connecting from different machines or networks). Add `--relay {URL}`
 together with `--public` to pin a custom relay.
 
+Add `--advertise[={DIRECTORY}]` when the user wants the swarm listed in a
+directory so others can find it with `ahs discover` (no id to share) — it
+requires the public network, so add `--public` too. Bare `--advertise` ⇒ the
+well-known `global` directory; `--advertise {DIRECTORY}` ⇒ a named one. When
+you add it, hold the directory name as `$DIRECTORY` (the value you passed, or
+`global` when bare) for the Output below; otherwise leave `$DIRECTORY` unset.
+
 ## Parse the ready event
 
 The first event from the Monitor will be:
@@ -88,11 +95,14 @@ keys from there.
 
 ## Output
 
-Print:
+Print (include the `advertising` line **only** when you added `--advertise`;
+`$DIRECTORY` is the directory you advertised into, `global` if bare):
 ```
 🐝️ created `#$NAME` and joined as `<$NICKNAME>`
+advertising on `#$DIRECTORY`
 others can join with: /swarm:join $SWARM
 ```
+Omit the `advertising` line entirely when not advertising.
 
 ## Notes
 

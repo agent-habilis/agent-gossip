@@ -84,6 +84,8 @@ pub(crate) mod style {
     pub(super) const PEER_NICK: &str = "\x1b[1;36m";
     /// Bold yellow — a swarm name.
     pub(crate) const SWARM: &str = "\x1b[1;33m";
+    /// Bold blue — the runnable `ahs join <id>` hint on create.
+    pub(super) const BLUE: &str = "\x1b[1;34m";
     /// Bold — the highlighted row in the `discover` picker.
     pub(crate) const BOLD: &str = "\x1b[1m";
 }
@@ -301,7 +303,14 @@ impl Output {
         self.dispatch(
             || OutputEvent::SwarmId { id: id.to_owned() },
             |mode| match mode {
-                OutputMode::Human => eprintln!("others can join with: ahs join {id}"),
+                OutputMode::Human => {
+                    let (open, close) = if stderr_color() {
+                        (style::BLUE, style::RESET)
+                    } else {
+                        ("", "")
+                    };
+                    eprintln!("others can join with: {open}ahs join {id}{close}");
+                }
                 OutputMode::Json => eprintln!("{id}"),
                 OutputMode::Silent => {}
             },

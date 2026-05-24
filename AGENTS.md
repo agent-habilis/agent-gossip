@@ -247,7 +247,7 @@ the eventual join, exactly like `create`/`join` (omit ⇒ all-on public).
 
 - **interactive (default human output, requires a TTY):** a live
   arrow-key picker. Each row shows the swarm name (yellow), its full
-  `ahs…` id, peer count, and an ISO-8601 UTC first-seen timestamp; the
+  `ahs…` id, peer count, and a local first-seen timestamp; the
   list redraws as swarms come and go. `↑`/`↓` (or `j`/`k`) move, `enter`
   joins the highlighted swarm (handed off to the normal `join` path),
   `q` / esc / ctrl-c quit. With no TTY it falls back to the JSON stream.
