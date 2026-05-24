@@ -91,7 +91,7 @@ keys from there.
 Print:
 ```
 🐝️ created `#$NAME` and joined as `<$NICKNAME>`
-/swarm:join $SWARM
+others can join with: /swarm:join $SWARM
 ```
 
 ## Notes

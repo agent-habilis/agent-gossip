@@ -119,8 +119,8 @@ pub(crate) async fn setup_swarm(
             let swarm_id = SwarmId::new(id_str.clone())
                 .expect("Swarm::to_string always produces a valid SwarmId");
 
-            output.swarm_id_line(&id_str);
             output.info(&format!("created #{name} and joined as <{author}>"));
+            output.swarm_id_line(&id_str);
             output.ready(&id_str, name.as_str(), author.as_str());
             lifecycle::log_ready(&id_str, name.as_str(), author.as_str(), mode.network_name());
 
