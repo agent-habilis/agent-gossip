@@ -43,7 +43,9 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use crate::protocol::swarm::{SwarmMode, SwarmName, resolve_relay};
+use crate::protocol::swarm::{
+    DirectorySelection, SwarmMode, SwarmName, resolve_relay, validate_advertise,
+};
 use crate::protocol::{MessageBody, MessageId, Nickname, SwarmId};
 use session::Session;
 
@@ -91,6 +93,16 @@ struct CreateSwarmArgs {
     /// Custom relay URL. Requires `network: "public"`.
     #[serde(default)]
     relay: Option<String>,
+    /// List this swarm in a directory so others can find it with
+    /// `ahs discover` (no id to share). Requires `network: "public"`. Note:
+    /// advertising broadcasts the join token — the swarm becomes open to
+    /// anyone discovering the directory.
+    #[serde(default)]
+    advertise: bool,
+    /// The directory to advertise into when `advertise` is true.
+    /// Omit for the well-known `global` directory.
+    #[serde(default)]
+    directory: Option<String>,
 }
 
 fn default_network() -> String {
@@ -192,6 +204,19 @@ impl AgentSwarmServer {
             .map_err(|error| McpError::invalid_params(error.to_string(), None))?;
         let relay = resolve_relay(mode, args.relay.as_deref())
             .map_err(|error| McpError::invalid_params(error.to_string(), None))?;
+        // Resolve the advertise request (absent / default / named directory)
+        // and enforce the public-network requirement up front.
+        let advertise = match (args.advertise, args.directory) {
+            (false, _) => DirectorySelection::Unset,
+            (true, None) => DirectorySelection::Default,
+            (true, Some(directory)) => {
+                DirectorySelection::Named(SwarmName::new(directory).map_err(|error| {
+                    McpError::invalid_params(format!("invalid directory name: {error}"), None)
+                })?)
+            }
+        };
+        validate_advertise(mode, &advertise)
+            .map_err(|error| McpError::invalid_params(error.to_string(), None))?;
         let name = SwarmName::new(args.name).map_err(|error| {
             McpError::invalid_params(format!("invalid swarm name: {error}"), None)
         })?;
@@ -201,7 +226,7 @@ impl AgentSwarmServer {
                 McpError::invalid_params(format!("invalid nickname: {error}"), None)
             })?,
         };
-        let session = Session::create(mode, name, relay, nickname)
+        let session = Session::create(mode, name, relay, nickname, advertise.directory())
             .await
             .map_err(to_mcp_error)?;
         let result = SwarmRef::from(&session);

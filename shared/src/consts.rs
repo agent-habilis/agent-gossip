@@ -4,9 +4,8 @@
 //! task runner read the same values.
 
 /// Unix socket runtime dir. Hardcoded `/tmp` base — short (avoids the
-/// macOS `AF_UNIX` `sun_path` ~104-byte limit) and Unix-only filesystem
-/// (Windows uses named pipes that ignore the dir). Sibling
-/// agent-habilis projects share the `/tmp/agent-habilis/` namespace.
+/// macOS `AF_UNIX` `sun_path` ~104-byte limit). Sibling agent-habilis
+/// projects share the `/tmp/agent-habilis/` namespace.
 pub const SOCKET_DIR: &str = "/tmp/agent-habilis/swarm/sockets";
 
 /// Default per-member log dir, relative to the OS temp dir

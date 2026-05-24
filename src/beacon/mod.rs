@@ -34,9 +34,9 @@ use iroh::{Endpoint, EndpointAddr, EndpointId, SecretKey};
 use iroh_gossip::proto::TopicId;
 use tokio::task::JoinHandle;
 
-use crate::discovery::{add_peer_addr, build_endpoint_for_mode, build_swarm, probe_connect};
-use crate::protocol::swarm::{DiscoveryOpts, SwarmMode};
-use crate::util::tuning::RENDEZVOUS_PROBE_SECS;
+use crate::lookup::{add_peer_addr, build_endpoint_for_mode, build_swarm, probe_connect};
+use crate::protocol::swarm::{LookupOpts, SwarmMode};
+use crate::util::tuning::{HEAL_PROBE_SECS, RENDEZVOUS_PROBE_SECS};
 
 /// Everything [`ensure`] needs to (re)build the rendezvous endpoint.
 /// Cheap to clone-hold for the event loop's lifetime.
@@ -53,13 +53,13 @@ pub(crate) struct RendezvousParams {
     pub bind_ports: Vec<u16>,
     /// `rendezvous_id`, memoized for neighbor filtering / bootstrap seeding.
     pub id: EndpointId,
-    /// The participant's resolved discovery config. The beacon
+    /// The participant's resolved lookup config. The beacon
     /// endpoint must publish `rendezvous_id` to the *same*
     /// address-lookups (or a joiner using only mDNS/DHT could never
     /// resolve it) **and** home on the *same* relay (or the joiner's
     /// relay-pinned rendezvous addr finds nothing) — see
-    /// `beacon_discovery`.
-    pub discovery: DiscoveryOpts,
+    /// `beacon_lookups`.
+    pub lookups: LookupOpts,
 }
 
 /// A live co-hosted rendezvous endpoint. Dropping it aborts the task,
@@ -99,17 +99,17 @@ async fn rung_serves_our_swarm(
     ours
 }
 
-/// The beacon mirrors the participant's full discovery config —
+/// The beacon mirrors the participant's full lookup config —
 /// *address-lookups* (so a joiner resolves `rendezvous_id` via
 /// whichever it enabled) **and** the relay. The relay must match: the
 /// joiner pre-registers `rendezvous_id` at the pinned (or `--relay`)
 /// relay (see `daemon::setup::register_rendezvous`), so the beacon has
 /// to actually home there or that relay-direct dial finds nothing.
-fn beacon_discovery(params: &RendezvousParams) -> DiscoveryOpts {
-    DiscoveryOpts {
-        mdns: params.discovery.mdns,
-        dht: params.discovery.dht,
-        relay: params.discovery.relay.clone(),
+fn beacon_lookups(params: &RendezvousParams) -> LookupOpts {
+    LookupOpts {
+        mdns: params.lookups.mdns,
+        dht: params.lookups.dht,
+        relay: params.lookups.relay.clone(),
     }
 }
 
@@ -122,11 +122,30 @@ fn beacon_discovery(params: &RendezvousParams) -> DiscoveryOpts {
 async fn build_rendezvous_endpoint(
     params: &RendezvousParams,
     participant: &Endpoint,
+    probe_first: bool,
 ) -> Option<Endpoint> {
-    let discovery = beacon_discovery(params);
+    let lookups = beacon_lookups(params);
     if params.bind_ports.is_empty() {
+        // Public probe-before-claim — the analog of the private rung
+        // identity-probe below. If a beacon already serves the
+        // rendezvous, stay a participant rather than binding a second
+        // copy of the same `rendezvous_id` on the shared relay, which
+        // would collide and capture our own bootstrap dial. Skipped for
+        // the eager origin (`probe_first == false`): it has no peers to
+        // collide with and must be the beacon from t=0.
+        if probe_first
+            && probe_connect(
+                participant,
+                EndpointAddr::new(params.id),
+                Duration::from_secs(HEAL_PROBE_SECS),
+            )
+            .await
+        {
+            tracing::debug!("public rendezvous already served by a beacon; staying participant");
+            return None;
+        }
         let endpoint =
-            build_endpoint_for_mode(params.mode, &discovery, Some(params.secret.clone()), None)
+            build_endpoint_for_mode(params.mode, &lookups, Some(params.secret.clone()), None)
                 .await
                 .ok();
         if endpoint.is_some() {
@@ -139,7 +158,7 @@ async fn build_rendezvous_endpoint(
     for &port in &params.bind_ports {
         if let Ok(endpoint) = build_endpoint_for_mode(
             params.mode,
-            &discovery,
+            &lookups,
             Some(params.secret.clone()),
             Some(port),
         )
@@ -170,6 +189,7 @@ pub(crate) async fn ensure(
     params: &RendezvousParams,
     participant: &Endpoint,
     current: &mut Option<Rendezvous>,
+    probe_first: bool,
 ) {
     if current
         .as_ref()
@@ -184,7 +204,7 @@ pub(crate) async fn ensure(
     // no-op on an already-finished task) before re-arming.
     *current = None;
 
-    let Some(endpoint) = build_rendezvous_endpoint(params, participant).await else {
+    let Some(endpoint) = build_rendezvous_endpoint(params, participant, probe_first).await else {
         // Public: endpoint build failed. Private: every ladder rung is
         // occupied — our swarm's beacon(s) already exist on the ladder
         // (joiners reach them by identity-checked dial). Either way,
@@ -195,7 +215,7 @@ pub(crate) async fn ensure(
     let (gossip, router) = build_swarm(endpoint.clone());
 
     // Register the participant's address so the rendezvous can dial it
-    // in private mode (no discovery); a harmless direct hint in public.
+    // in private mode (no lookup); a harmless direct hint in public.
     let participant_id = participant.id();
     let _ = add_peer_addr(&endpoint, participant.addr());
     let topic_id = params.topic_id;

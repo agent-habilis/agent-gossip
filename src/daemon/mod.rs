@@ -14,7 +14,7 @@
 //! `config`, `setup`, housekeeping `timers`. The behavioral
 //! subsystems are crate-root siblings, each its own `RUST_LOG`
 //! target: `crate::gossip`, `crate::lifecycle`, `crate::beacon`,
-//! `crate::discovery`.
+//! `crate::lookup`.
 
 mod config;
 pub(crate) mod ctx;
@@ -53,7 +53,7 @@ use crate::util::tuning::{
 use ctx::HandlerCtx;
 use state::EventLoopState;
 
-pub(crate) use config::{DriverMode, EventLoopConfig, SendRequest};
+pub(crate) use config::{CoHostPolicy, DriverMode, EventLoopConfig, SendRequest};
 
 /// Never returns normally — exits the process on ctrl-c / SIGTERM.
 pub(crate) async fn run(cfg: EventLoopConfig) -> Result<()> {
@@ -68,8 +68,9 @@ pub(crate) async fn run(cfg: EventLoopConfig) -> Result<()> {
         router: _router,
         max_peers,
         rendezvous_params,
-        co_host_eagerly,
+        cohost,
         state_file,
+        live_count,
         driver,
     } = cfg;
 
@@ -104,14 +105,20 @@ pub(crate) async fn run(cfg: EventLoopConfig) -> Result<()> {
 
     let started = Instant::now();
     let state_file = state_file.map(|path| StateFile::new(path, &swarm_str, &author, &swarm_name));
-    let state = EventLoopState::new(state_file, started);
+    let mut state = EventLoopState::new(state_file, started);
+    // Advertise path only: the directory re-broadcast task reads the
+    // live count from here. Set before the first write below so the
+    // initial ad carries a real count.
+    state.live_count = live_count;
     state.write_participant_count();
 
-    // Origin co-hosts from t=0; a joiner defers to the `event_loop`
-    // heal gate (`may_cohost`). Why: `EventLoopConfig::co_host_eagerly`.
+    // Origin (`Eager`) co-hosts from t=0; everyone else defers to the
+    // `event_loop` heal gate (`may_cohost`). Why: `EventLoopConfig::cohost`.
     let mut rendezvous: Option<beacon::Rendezvous> = None;
-    if co_host_eagerly {
-        beacon::ensure(&rendezvous_params, &endpoint, &mut rendezvous).await;
+    if cohost == CoHostPolicy::Eager {
+        // No probe: the origin has no peers to mesh with, so it can't
+        // self-collide on the rendezvous.
+        beacon::ensure(&rendezvous_params, &endpoint, &mut rendezvous, false).await;
     }
 
     let (sender, receiver) = topic.split();
@@ -157,7 +164,7 @@ pub(crate) async fn run(cfg: EventLoopConfig) -> Result<()> {
         intervals,
         rendezvous,
         rendezvous_params,
-        co_host_eagerly,
+        cohost,
         started,
         external_quit_rx,
         external_send_rx,
@@ -188,9 +195,8 @@ struct EventLoop {
     intervals: MaintenanceIntervals,
     rendezvous: Option<beacon::Rendezvous>,
     rendezvous_params: beacon::RendezvousParams,
-    /// `true` ⇒ origin (`create`), co-host from t=0. `false` ⇒ joiner,
-    /// defer co-hosting until meshed (or the empty-swarm grace).
-    co_host_eagerly: bool,
+    /// When this member may serve the rendezvous (see [`CoHostPolicy`]).
+    cohost: CoHostPolicy,
     /// Event-loop start, for the unmeshed-joiner co-host grace.
     started: Instant,
     external_quit_rx: Option<mpsc::Receiver<()>>,
@@ -219,7 +225,7 @@ async fn event_loop(loop_state: EventLoop) -> Result<()> {
         intervals,
         mut rendezvous,
         rendezvous_params,
-        co_host_eagerly,
+        cohost,
         started,
         mut external_quit_rx,
         mut external_send_rx,
@@ -296,15 +302,10 @@ async fn event_loop(loop_state: EventLoop) -> Result<()> {
             _ = heal_interval.tick() => {
                 let (mono_gap, wall_gap) = timers::note_tick_gap("heal", &mut last_heal, &mut last_heal_wall, Duration::from_secs(HEAL_INTERVAL_SECS));
                 run_heal(mono_gap, wall_gap, &mut state, &endpoint, &sender, &rendezvous_params).await;
-                // Claim-if-free (private) / idempotent (public): take
-                // over the beacon if the previous holder is gone — but
-                // a joiner only once `may_cohost` (see its docs).
-                if may_cohost(co_host_eagerly, state.meshed, started) {
-                    beacon::ensure(&rendezvous_params, &endpoint, &mut rendezvous).await;
-                }
+                maybe_cohost(cohost, &state, started, &rendezvous_params, &endpoint, &mut rendezvous).await;
             }
             _ = reclaim_interval.tick() => {
-                maybe_reclaim(&state, &rendezvous_params, &endpoint, &mut rendezvous).await;
+                maybe_reclaim(cohost, &state, &rendezvous_params, &endpoint, &mut rendezvous).await;
             }
             _ = antientropy_interval.tick() => {
                 timers::note_tick_gap("antientropy", &mut last_antientropy, &mut last_antientropy_wall, Duration::from_secs(ANTIENTROPY_INTERVAL_SECS));
@@ -437,14 +438,19 @@ fn finalize_ping_round(state: &mut EventLoopState, output: &output::Output) {
     output.ping_report(peers, state.participants.len());
 }
 
-/// May this member co-host the rendezvous yet? See
-/// [`EventLoopConfig::co_host_eagerly`] for the why. The origin always
-/// may; a joiner only once `meshed`, or after `cohost_grace_secs` for
-/// an empty swarm. Pure + cheap; never blocks `ready`.
-fn may_cohost(co_host_eagerly: bool, meshed: bool, started: Instant) -> bool {
-    co_host_eagerly
-        || meshed
-        || started.elapsed().as_secs() >= crate::util::tuning::cohost_grace_secs()
+/// May this member co-host the rendezvous yet? See [`CoHostPolicy`].
+/// `Never` never co-hosts (a pure consumer); `Eager` always may; a
+/// `Deferred` member only once `meshed`, or after `cohost_grace_secs`
+/// for an empty swarm (then probe-gated in `beacon::ensure`). Pure +
+/// cheap; never blocks `ready`.
+fn may_cohost(cohost: CoHostPolicy, meshed: bool, started: Instant) -> bool {
+    match cohost {
+        CoHostPolicy::Never => false,
+        CoHostPolicy::Eager => true,
+        CoHostPolicy::Deferred => {
+            meshed || started.elapsed().as_secs() >= crate::util::tuning::cohost_grace_secs()
+        }
+    }
 }
 
 /// Monotonic `gap` past `stall_threshold`: the process was throttled
@@ -555,22 +561,43 @@ async fn handle_ipc_arm(
     }
 }
 
+/// Heal-tick co-host: stand up the beacon if this member may serve it
+/// now (`may_cohost`). Claim-if-free in private; in public a non-`Eager`
+/// member probes first (`beacon::ensure`) so it never registers a
+/// duplicate rendezvous that would capture its own bootstrap dial.
+async fn maybe_cohost(
+    cohost: CoHostPolicy,
+    state: &EventLoopState,
+    started: Instant,
+    params: &beacon::RendezvousParams,
+    endpoint: &Endpoint,
+    current: &mut Option<beacon::Rendezvous>,
+) {
+    if may_cohost(cohost, state.meshed, started) {
+        beacon::ensure(params, endpoint, current, cohost != CoHostPolicy::Eager).await;
+    }
+}
+
 /// Fast event-driven failover: while the post-`NeighborDown` reclaim
 /// window is open, retry the rendezvous claim so a survivor takes the
 /// freed port in ~1s instead of waiting for the 15s heal tick. A no-op
 /// outside the window (just an `Instant` compare) and idempotent once
-/// the rendezvous is held.
+/// the rendezvous is held. `Never` consumers never reclaim; everyone
+/// else probes first (`!Eager`) so a survivor that already took over
+/// isn't displaced by a colliding duplicate.
 async fn maybe_reclaim(
+    cohost: CoHostPolicy,
     state: &EventLoopState,
     params: &beacon::RendezvousParams,
     endpoint: &Endpoint,
     current: &mut Option<beacon::Rendezvous>,
 ) {
-    if state
-        .reclaim_until
-        .is_some_and(|deadline| Instant::now() < deadline)
+    if cohost != CoHostPolicy::Never
+        && state
+            .reclaim_until
+            .is_some_and(|deadline| Instant::now() < deadline)
     {
-        beacon::ensure(params, endpoint, current).await;
+        beacon::ensure(params, endpoint, current, cohost != CoHostPolicy::Eager).await;
     }
 }
 

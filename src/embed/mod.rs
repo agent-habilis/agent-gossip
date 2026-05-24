@@ -7,18 +7,25 @@
 //! broadcast path the CLI/IPC uses. No `iroh` type is exposed: targets
 //! are resolved internally from a string (`ahs…` / domain / git URL).
 
-use std::time::Duration;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio::task::JoinHandle;
 
 use crate::daemon::setup::{SetupKind, setup_swarm};
-use crate::daemon::{DriverMode, EventLoopConfig, SendRequest};
+use crate::daemon::{CoHostPolicy, DriverMode, EventLoopConfig, SendRequest};
+use crate::directory::{self, Listing, ListingChange, Listings, directory_swarm};
 use crate::output::{Output, OutputEvent};
-use crate::protocol::swarm::{DiscoveryOpts, SwarmMode, SwarmName, resolve_relay};
+use crate::protocol::swarm::{
+    DEFAULT_DIRECTORY, LookupOpts, Swarm, SwarmMode, SwarmName, resolve_relay,
+};
 use crate::protocol::{Message, MessageBody, MessageId, Nickname, SwarmId};
 use crate::resolver;
-use crate::util::tuning::{DEFAULT_MAX_DIRECT_PEERS, EMBED_INBOUND_CAP};
+use crate::util::tuning::{
+    DEFAULT_MAX_DIRECT_PEERS, EMBED_INBOUND_CAP, advertise_interval_secs, directory_expiry_secs,
+};
 
 /// How to join a swarm.
 #[derive(Debug, Clone)]
@@ -58,12 +65,18 @@ pub struct CreateConfig {
     pub name: String,
     /// Local nickname. `None` mints a random `word-word` one.
     pub nickname: Option<Nickname>,
-    /// `true` = public (cross-machine networking, pkarr discovery); `false`
+    /// `true` = public (cross-machine networking, pkarr lookup); `false`
     /// = private (localhost only). Default `false`.
     pub public: bool,
     /// Custom relay URL, honored only with `public`. `None` uses the
     /// default relay. Parsed internally.
     pub relay: Option<String>,
+    /// List this swarm in a directory so discoverers can find it
+    /// without its `ahs…` id. Requires `public`. Default `false`.
+    pub advertise: bool,
+    /// The directory to advertise into when `advertise` is set.
+    /// `None` ⇒ the well-known `global` directory.
+    pub directory: Option<String>,
     /// Max direct peer connections before gossip relays the rest.
     pub max_peers: usize,
 }
@@ -79,6 +92,8 @@ impl CreateConfig {
             nickname: None,
             public: false,
             relay: None,
+            advertise: false,
+            directory: None,
             max_peers: DEFAULT_MAX_DIRECT_PEERS,
         }
     }
@@ -98,6 +113,10 @@ pub struct SwarmSession {
     /// `events()` hands it out exactly once.
     events_rx: Option<mpsc::UnboundedReceiver<OutputEvent>>,
     task: Option<JoinHandle<anyhow::Result<()>>>,
+    /// The directory re-broadcast task, when this session was created
+    /// with `advertise`. Tied to the session's lifetime — aborted on
+    /// `leave`/drop so we don't keep advertising a swarm we left.
+    advertiser: Option<JoinHandle<()>>,
 }
 
 impl SwarmSession {
@@ -116,7 +135,7 @@ impl SwarmSession {
     /// setup fails, or the join times out (bootstrap peer unreachable).
     pub async fn join(cfg: JoinConfig) -> anyhow::Result<Self> {
         let swarm = resolver::resolve(&cfg.target).await?;
-        let discovery = DiscoveryOpts::legacy(swarm.mode, None);
+        let lookups = LookupOpts::default_for(swarm.mode, None);
         let author = cfg.nickname.unwrap_or_else(Nickname::random);
         let (events_tx, events_rx) = mpsc::unbounded_channel();
         let elc = setup_swarm(
@@ -125,11 +144,44 @@ impl SwarmSession {
             /* interactive */ false,
             cfg.max_peers,
             /* state_file */ None,
-            discovery,
+            lookups,
             Output::capture(events_tx),
         )
         .await?;
-        Ok(Self::spawn_session_from(elc, events_rx))
+        Ok(Self::spawn_session_from(elc, events_rx, None))
+    }
+
+    /// Join an already-decoded [`Swarm`] with an explicit lookup set and
+    /// co-host policy — the internal path for directory sessions.
+    /// Unlike [`SwarmSession::join`], it skips the string resolve and
+    /// the default lookups, and lets the caller pick the beacon role:
+    /// the advertiser passes [`CoHostPolicy::Eager`] (be the directory's
+    /// beacon from t=0), the [`Directory`] consumer passes
+    /// [`CoHostPolicy::Never`] (it only dials an existing beacon).
+    /// `pub(crate)`: keeps `Swarm`/`LookupOpts` off the iroh-free surface.
+    ///
+    /// # Errors
+    /// Fails if endpoint/gossip setup fails or the join times out.
+    pub(crate) async fn join_with_lookups(
+        swarm: Swarm,
+        lookups: LookupOpts,
+        nickname: Option<Nickname>,
+        cohost: CoHostPolicy,
+    ) -> anyhow::Result<Self> {
+        let author = nickname.unwrap_or_else(Nickname::random);
+        let (events_tx, events_rx) = mpsc::unbounded_channel();
+        let mut elc = setup_swarm(
+            SetupKind::Join { swarm },
+            author,
+            /* interactive */ false,
+            DEFAULT_MAX_DIRECT_PEERS,
+            /* state_file */ None,
+            lookups,
+            Output::capture(events_tx),
+        )
+        .await?;
+        elc.cohost = cohost;
+        Ok(Self::spawn_session_from(elc, events_rx, None))
     }
 
     /// Create a new swarm and spawn its event loop in the background.
@@ -149,20 +201,27 @@ impl SwarmSession {
             SwarmMode::Private
         };
         let relay = resolve_relay(mode, cfg.relay.as_deref())?;
-        let discovery = DiscoveryOpts::legacy(mode, relay);
+        let lookups = LookupOpts::default_for(mode, relay);
+        // Resolve the advertise directory up front so an invalid directory /
+        // private-mode advertise fails before the session is spawned.
+        let directory = resolve_advertise_directory(cfg.advertise, cfg.directory, mode)?;
         let author = cfg.nickname.unwrap_or_else(Nickname::random);
         let (events_tx, events_rx) = mpsc::unbounded_channel();
-        let elc = setup_swarm(
+        let mut elc = setup_swarm(
             SetupKind::Create { mode, name },
             author,
             /* interactive */ false,
             cfg.max_peers,
             /* state_file */ None,
-            discovery,
+            lookups.clone(),
             Output::capture(events_tx),
         )
         .await?;
-        Ok(Self::spawn_session_from(elc, events_rx))
+        // When advertising, start the re-broadcast task (tied to this
+        // session) on the same lookups as the swarm.
+        let advertiser =
+            directory.map(|directory_name| spawn_advertiser(&mut elc, directory_name, lookups));
+        Ok(Self::spawn_session_from(elc, events_rx, advertiser))
     }
 
     /// Wire the embed channels into `elc`, spawn the event loop, and
@@ -170,6 +229,7 @@ impl SwarmSession {
     fn spawn_session_from(
         mut elc: EventLoopConfig,
         events_rx: mpsc::UnboundedReceiver<OutputEvent>,
+        advertiser: Option<JoinHandle<()>>,
     ) -> Self {
         let (msg_tx, _initial_rx) = broadcast::channel::<Message>(EMBED_INBOUND_CAP);
         let (send_tx, send_rx) = mpsc::channel::<SendRequest>(32);
@@ -199,6 +259,7 @@ impl SwarmSession {
             quit_tx,
             events_rx: Some(events_rx),
             task: Some(task),
+            advertiser,
         }
     }
 
@@ -274,6 +335,11 @@ impl SwarmSession {
     /// Returns an error if the event-loop task panicked or returned an
     /// error before shutting down.
     pub async fn leave(mut self) -> anyhow::Result<()> {
+        // Stop advertising first — we're leaving the swarm, so its
+        // listing should age out rather than keep being re-broadcast.
+        if let Some(advertiser) = self.advertiser.take() {
+            advertiser.abort();
+        }
         let _ = self.quit_tx.send(()).await;
         if let Some(task) = self.task.take() {
             let timeout = tokio::time::sleep(Duration::from_secs(3));
@@ -297,5 +363,308 @@ impl Drop for SwarmSession {
         if let Some(task) = self.task.take() {
             task.abort();
         }
+        if let Some(advertiser) = self.advertiser.take() {
+            advertiser.abort();
+        }
+    }
+}
+
+/// Resolve the create-time advertise request into the directory to list in,
+/// or `None` when not advertising. Errors if `advertise` is set on a
+/// non-public swarm (directory listing requires the public network) or
+/// the directory name is invalid. The string-typed surface keeps `embed`
+/// iroh-free / clap-free, mirroring `CreateConfig`.
+fn resolve_advertise_directory(
+    advertise: bool,
+    directory: Option<String>,
+    mode: SwarmMode,
+) -> anyhow::Result<Option<SwarmName>> {
+    if !advertise {
+        return Ok(None);
+    }
+    if mode != SwarmMode::Public && !crate::util::tuning::directory_private_for_test() {
+        anyhow::bail!("advertise requires the public network");
+    }
+    let directory_name = match directory {
+        Some(value) => SwarmName::new(value)
+            .map_err(|error| anyhow::anyhow!("invalid directory name: {error}"))?,
+        None => SwarmName::new(DEFAULT_DIRECTORY).expect("DEFAULT_DIRECTORY is a valid swarm name"),
+    };
+    Ok(Some(directory_name))
+}
+
+/// Spawn the directory re-broadcast task for `cfg`'s swarm: wire a fresh
+/// live-participant counter into `cfg.live_count`, then re-send the
+/// swarm's `ahs…` id (with that count) into `directory` every
+/// `ADVERTISE_INTERVAL_SECS` over the swarm's own `lookups`. Returns the
+/// task handle so the owner can abort it (the inner directory session is
+/// dropped with the task, closing that membership). A directory-join
+/// failure logs and ends the task — the swarm is unaffected, just unlisted.
+pub(crate) fn spawn_advertiser(
+    cfg: &mut EventLoopConfig,
+    directory: SwarmName,
+    lookups: LookupOpts,
+) -> JoinHandle<()> {
+    let live_count = Arc::new(AtomicUsize::new(1));
+    cfg.live_count = Some(live_count.clone());
+    let swarm_id = cfg.swarm.clone();
+    tokio::spawn(async move {
+        let swarm = directory_swarm(&directory);
+        // The advertiser is the directory's de-facto origin: co-host its
+        // rendezvous *eagerly* (from t=0) so a beacon exists before any
+        // discoverer subscribes — the create+join shape that meshes in
+        // seconds. (A `Deferred` advertiser only beacons at the first
+        // heal tick, after discoverers have already failed their first
+        // graft against a dead rendezvous.) In private, claim-if-free
+        // elects one beacon among multiple advertisers; in public the
+        // common single-advertiser case is what this serves.
+        let session = match SwarmSession::join_with_lookups(
+            swarm,
+            lookups,
+            None,
+            CoHostPolicy::Eager,
+        )
+        .await
+        {
+            Ok(session) => session,
+            Err(error) => {
+                tracing::warn!(
+                    target: "agent_habilis_swarm::directory",
+                    %error,
+                    directory = %directory,
+                    "directory advertise: could not join the directory; swarm stays unlisted"
+                );
+                return;
+            }
+        };
+        let mut ticker = tokio::time::interval(Duration::from_secs(advertise_interval_secs()));
+        loop {
+            ticker.tick().await;
+            let ad = directory::Ad {
+                id: swarm_id.to_string(),
+                peers: live_count.load(Ordering::Relaxed),
+            };
+            if let Err(error) = session.send(ad.to_body(), None).await {
+                tracing::debug!(
+                    target: "agent_habilis_swarm::directory",
+                    %error,
+                    "directory advertise: re-broadcast failed (will retry next tick)"
+                );
+            }
+        }
+    })
+}
+
+// ── Directory (directory consumer) ─────────────────────────────────────
+
+/// One live directory entry handed to embedders — the public, iroh-free
+/// projection of a [`crate::directory::Listing`].
+#[derive(Debug, Clone)]
+pub struct SwarmListing {
+    /// The advertised swarm's id — pass to [`SwarmSession::join`] to join.
+    pub swarm: SwarmId,
+    /// Human-readable swarm name (decoded from the id).
+    pub name: String,
+    /// `true` if the swarm is on the public network.
+    pub public: bool,
+    /// Live participant count from the most recent ad.
+    pub peers: usize,
+    /// Unix seconds when this swarm was first seen in the directory
+    /// (stable across re-ads).
+    pub first_seen_unix: i64,
+}
+
+/// A directory change observed by a [`Directory`].
+#[derive(Debug, Clone)]
+pub enum DirectoryEvent {
+    /// A swarm appeared in the directory.
+    Found(SwarmListing),
+    /// An already-listed swarm re-advertised (refreshed count/freshness).
+    Updated(SwarmListing),
+    /// A swarm's ads stopped and its listing aged out.
+    Lost(SwarmId),
+}
+
+fn public_listing(listing: &Listing) -> SwarmListing {
+    SwarmListing {
+        swarm: listing.swarm.clone(),
+        name: listing.name.as_str().to_owned(),
+        public: listing.public,
+        peers: listing.peers,
+        first_seen_unix: listing.first_seen_unix,
+    }
+}
+
+/// A live view of a directory. Joins the directory's swarm as an
+/// ordinary [`SwarmSession`] and collects advertisements into
+/// [`Listings`], aging out swarms whose publishers went silent. Drop
+/// (or let it fall out of scope) to leave the directory.
+///
+/// ```no_run
+/// # use agent_habilis_swarm::embed::Directory;
+/// # async fn run() -> anyhow::Result<()> {
+/// let mut directory = Directory::open(Some("demo")).await?;
+/// for listing in directory.snapshot() {
+///     println!("#{} — {} peers — {}", listing.name, listing.peers, listing.swarm.as_str());
+/// }
+/// # Ok(())
+/// # }
+/// ```
+#[derive(Debug)]
+pub struct Directory {
+    session: Option<SwarmSession>,
+    listings: Arc<Mutex<Listings>>,
+    events_rx: Option<mpsc::UnboundedReceiver<DirectoryEvent>>,
+    task: Option<JoinHandle<()>>,
+}
+
+impl Directory {
+    /// Open a directory by name. `name` is the directory name; `None` ⇒
+    /// the well-known `global` directory. Uses the default all-on public
+    /// lookups; for granular control use [`Directory::open_with_lookups`].
+    /// Returns once the directory session is ready; listings then
+    /// accumulate in the background.
+    ///
+    /// # Errors
+    /// Fails if the name is invalid or the directory session cannot be
+    /// established (endpoint/gossip setup, bootstrap unreachable).
+    pub async fn open(name: Option<impl Into<String>>) -> anyhow::Result<Self> {
+        // Match the directory's mode (public normally; private under the
+        // test hook) so the lookups are valid for it.
+        let lookups = LookupOpts::default_for(directory::directory_mode(), None);
+        Self::open_with_lookups(name, lookups).await
+    }
+
+    /// Like [`Directory::open`], but with an explicit lookup set — the
+    /// directory's swarm is reached over exactly these lookups (the CLI
+    /// passes its `--mdns/--dht/--relay` allowlist here). `pub(crate)`:
+    /// keeps `LookupOpts` out of the iroh-free public surface.
+    ///
+    /// # Errors
+    /// Fails if the name is invalid or the directory session cannot be
+    /// established (endpoint/gossip setup, bootstrap unreachable).
+    ///
+    /// # Panics
+    /// Panics only if the internal collector mutex is poisoned by a
+    /// panic in the background task — not reachable in normal use.
+    pub(crate) async fn open_with_lookups(
+        name: Option<impl Into<String>>,
+        lookups: LookupOpts,
+    ) -> anyhow::Result<Self> {
+        let directory_name = match name {
+            Some(value) => SwarmName::new(value.into())
+                .map_err(|error| anyhow::anyhow!("invalid directory name: {error}"))?,
+            None => {
+                SwarmName::new(DEFAULT_DIRECTORY).expect("DEFAULT_DIRECTORY is a valid swarm name")
+            }
+        };
+        let swarm = directory_swarm(&directory_name);
+        // A discoverer is a pure consumer: never co-host the directory's
+        // rendezvous (it only dials an advertiser's beacon).
+        let session =
+            SwarmSession::join_with_lookups(swarm, lookups, None, CoHostPolicy::Never).await?;
+        let mut inbound = session.messages();
+        let listings = Arc::new(Mutex::new(Listings::new()));
+        let (events_tx, events_rx) = mpsc::unbounded_channel();
+
+        let collector = listings.clone();
+        let task = tokio::spawn(async move {
+            let ttl = Duration::from_secs(directory_expiry_secs());
+            let mut expiry = tokio::time::interval(ttl);
+            expiry.tick().await; // eat the immediate first tick
+            loop {
+                tokio::select! {
+                    received = inbound.recv() => match received {
+                        Ok(message) => {
+                            let now = Instant::now();
+                            let event = {
+                                let mut dir = collector.lock().expect("directory mutex not poisoned");
+                                match dir.observe(message.body.as_str(), now) {
+                                    Some(ListingChange::Found(id)) => dir
+                                        .get(&id)
+                                        .map(|listing| DirectoryEvent::Found(public_listing(listing))),
+                                    Some(ListingChange::Updated(id)) => dir
+                                        .get(&id)
+                                        .map(|listing| DirectoryEvent::Updated(public_listing(listing))),
+                                    None => None,
+                                }
+                            };
+                            if let Some(event) = event {
+                                let _ = events_tx.send(event);
+                            }
+                        }
+                        // Slow consumer dropped some inbound — listings
+                        // self-heal on the next re-ad, so skip and continue.
+                        Err(broadcast::error::RecvError::Lagged(_)) => {}
+                        Err(broadcast::error::RecvError::Closed) => break,
+                    },
+                    _ = expiry.tick() => {
+                        let now = Instant::now();
+                        let lost = {
+                            let mut dir = collector.lock().expect("directory mutex not poisoned");
+                            dir.expire(ttl, now)
+                        };
+                        for id in lost {
+                            let _ = events_tx.send(DirectoryEvent::Lost(id));
+                        }
+                    }
+                }
+            }
+        });
+
+        Ok(Self {
+            session: Some(session),
+            listings,
+            events_rx: Some(events_rx),
+            task: Some(task),
+        })
+    }
+
+    /// The current live listings, sorted by name then id.
+    ///
+    /// # Panics
+    /// Panics only if the internal collector mutex was poisoned by a
+    /// prior panic in the background task — not reachable in normal use.
+    #[must_use]
+    pub fn snapshot(&self) -> Vec<SwarmListing> {
+        self.listings
+            .lock()
+            .expect("directory mutex not poisoned")
+            .snapshot()
+            .iter()
+            .map(public_listing)
+            .collect()
+    }
+
+    /// Take the directory event stream (`Found` / `Updated` / `Lost`).
+    /// Single-consumer, so this returns the receiver **once**;
+    /// subsequent calls return `None`.
+    pub fn events(&mut self) -> Option<mpsc::UnboundedReceiver<DirectoryEvent>> {
+        self.events_rx.take()
+    }
+
+    /// Leave the directory and stop collecting.
+    ///
+    /// # Errors
+    /// Propagates a clean-shutdown error from the underlying directory
+    /// [`SwarmSession::leave`] (event-loop task panic / loop error).
+    pub async fn close(mut self) -> anyhow::Result<()> {
+        if let Some(task) = self.task.take() {
+            task.abort();
+        }
+        if let Some(session) = self.session.take() {
+            session.leave().await?;
+        }
+        Ok(())
+    }
+}
+
+impl Drop for Directory {
+    fn drop(&mut self) {
+        if let Some(task) = self.task.take() {
+            task.abort();
+        }
+        // The directory `SwarmSession` (if not already taken by `close`)
+        // drops here, winding down its own loop.
     }
 }

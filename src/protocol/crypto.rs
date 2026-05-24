@@ -15,7 +15,7 @@
 //!   compute [`rendezvous_id`] locally and bootstrap from it without
 //!   ever contacting the creator,
 //! - (private swarms only) a deterministic loopback port ladder, since
-//!   `presets::Minimal` has no pkarr/DNS discovery to resolve
+//!   `presets::Minimal` has no pkarr/DNS lookup to resolve
 //!   `rendezvous_id` into an address.
 //!
 //! All derivations are domain-separated SHA-256 so the topic seed, the

@@ -324,7 +324,7 @@ impl SwarmMode {
 
 /// The "a relay is only meaningful on the public network" rule for
 /// the relay-as-string paths (MCP / embed). For flag-shaped inputs
-/// the CLI uses [`validate_discovery`], which generalises this; for
+/// the CLI uses [`validate_lookups`], which generalises this; for
 /// callers that hand a relay as a string, prefer [`resolve_relay`]
 /// (guard + parse).
 pub(crate) fn require_relay_public(mode: SwarmMode, has_relay: bool) -> Result<()> {
@@ -347,13 +347,13 @@ pub(crate) fn resolve_relay(mode: SwarmMode, relay: Option<&str>) -> Result<Opti
         .transpose()
 }
 
-// ── discovery (address-lookup + relay) ───────────────────────────
+// ── lookup (address-lookup + relay) ───────────────────────────
 
 /// The connectivity relay resolved from the allowlist. `Disabled` ⇒
 /// no relay at all (`RelayMode::Disabled`); `Pinned` ⇒ the
-/// discovery-layer pinned default; `Custom` ⇒ an operator URL. Relay
+/// lookup-layer pinned default; `Custom` ⇒ an operator URL. Relay
 /// is now an allowlist member like mdns/dht, not an always-on URL —
-/// the discovery layer turns `Pinned`/`Custom` into a concrete URL.
+/// the lookup layer turns `Pinned`/`Custom` into a concrete URL.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum RelayChoice {
     Disabled,
@@ -361,18 +361,18 @@ pub(crate) enum RelayChoice {
     Custom(RelayUrl),
 }
 
-/// The resolved discovery + connectivity config the endpoint builder
+/// The resolved lookup + connectivity config the endpoint builder
 /// applies. `mdns`/`dht` are the enabled iroh address-lookups (both
 /// resolve the same seed-derived `rendezvous_id`); `relay` is the
 /// connectivity relay (see [`RelayChoice`]).
 #[derive(Debug, Clone)]
-pub(crate) struct DiscoveryOpts {
+pub(crate) struct LookupOpts {
     pub mdns: bool,
     pub dht: bool,
     pub relay: RelayChoice,
 }
 
-impl DiscoveryOpts {
+impl LookupOpts {
     /// The default behaviour, kept stable for the in-process
     /// embed/MCP sessions: `private` ⇒ everything off (loopback
     /// ladder); `public` ⇒ all lookups (mdns + dht) + the pinned (or
@@ -380,16 +380,16 @@ impl DiscoveryOpts {
     /// a custom relay must *not* suppress mdns/dht here (the embed/MCP
     /// contract is all-lookups-on), unlike the CLI allowlist where
     /// naming `--relay` alone restricts to relay only.
-    pub(crate) fn legacy(mode: SwarmMode, relay: Option<RelayUrl>) -> Self {
+    pub(crate) fn default_for(mode: SwarmMode, relay: Option<RelayUrl>) -> Self {
         match mode {
             // `relay` is ignored on private: upstream `resolve_relay`
             // already rejects a private relay before we get here.
-            SwarmMode::Private => DiscoveryOpts {
+            SwarmMode::Private => LookupOpts {
                 mdns: false,
                 dht: false,
                 relay: RelayChoice::Disabled,
             },
-            SwarmMode::Public => DiscoveryOpts {
+            SwarmMode::Public => LookupOpts {
                 mdns: true,
                 dht: true,
                 relay: relay.map_or(RelayChoice::Pinned, RelayChoice::Custom),
@@ -399,7 +399,7 @@ impl DiscoveryOpts {
 }
 
 /// CLI `--relay` intent: absent / bare / valued. Resolved into a
-/// [`RelayChoice`] by [`resolve_discovery`].
+/// [`RelayChoice`] by [`resolve_lookups`].
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub(crate) enum RelaySelection {
     #[default]
@@ -414,7 +414,58 @@ impl RelaySelection {
     }
 }
 
-/// The selected discovery allowlist: the mechanisms a member can
+/// CLI `--advertise` intent: absent / bare / valued — the same
+/// three-state optional-value shape as [`RelaySelection`]. `Unset` ⇒
+/// the swarm is not listed in any directory; `Default` ⇒ the well-known
+/// `global` directory; `Named` ⇒ a custom directory. The directory name is itself a
+/// [`SwarmName`] (same charset), since the directory derives its
+/// swarm from it.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub(crate) enum DirectorySelection {
+    #[default]
+    Unset,
+    Default,
+    Named(SwarmName),
+}
+
+/// The well-known default directory — used when `--advertise` is passed
+/// bare (no value).
+pub(crate) const DEFAULT_DIRECTORY: &str = "global";
+
+impl DirectorySelection {
+    /// `true` when advertising is requested at all (bare or valued).
+    pub(crate) fn is_set(&self) -> bool {
+        !matches!(self, DirectorySelection::Unset)
+    }
+
+    /// The directory to advertise into, or `None` when not advertising.
+    /// Bare ⇒ the [`DEFAULT_DIRECTORY`]; valued ⇒ the given name.
+    pub(crate) fn directory(&self) -> Option<SwarmName> {
+        match self {
+            DirectorySelection::Unset => None,
+            DirectorySelection::Default => Some(
+                SwarmName::new(DEFAULT_DIRECTORY).expect("DEFAULT_DIRECTORY is a valid swarm name"),
+            ),
+            DirectorySelection::Named(name) => Some(name.clone()),
+        }
+    }
+}
+
+/// `--advertise` lists the swarm in a public directory, so it requires
+/// the public network — mirrors [`validate_lookups`]. A bare/valued
+/// `--advertise` with a private (loopback-only) swarm is a hard error,
+/// never a silent no-op.
+pub(crate) fn validate_advertise(mode: SwarmMode, advertise: &DirectorySelection) -> Result<()> {
+    if advertise.is_set()
+        && mode != SwarmMode::Public
+        && !crate::util::tuning::directory_private_for_test()
+    {
+        bail!("--advertise requires the public network; pass --public");
+    }
+    Ok(())
+}
+
+/// The selected lookup allowlist: the mechanisms a member can
 /// enable. `mdns`/`dht` are address-lookups; `relay` is the
 /// connectivity/relay-direct rendezvous path — all three obey the same
 /// allowlist rule.
@@ -432,10 +483,10 @@ impl LookupSet {
 }
 
 /// One network-compatibility guard (generalises `require_relay_public`
-/// to every discovery flag). `private` is loopback-only, so any
+/// to every lookup flag). `private` is loopback-only, so any
 /// `--mdns`/`--dht`/`--relay` is rejected, naming them all in a single
 /// message — never a silent no-op.
-pub(crate) fn validate_discovery(mode: SwarmMode, lookups: &LookupSet) -> Result<()> {
+pub(crate) fn validate_lookups(mode: SwarmMode, lookups: &LookupSet) -> Result<()> {
     if mode == SwarmMode::Public {
         return Ok(());
     }
@@ -460,15 +511,15 @@ pub(crate) fn validate_discovery(mode: SwarmMode, lookups: &LookupSet) -> Result
 }
 
 /// Resolve the allowlist against the network mode into the effective
-/// [`DiscoveryOpts`]. On `public`: naming **no** flag enables all three
+/// [`LookupOpts`]. On `public`: naming **no** flag enables all three
 /// (mdns + dht + pinned relay); naming **any** uses *only* those passed
 /// — so `--mdns` alone disables both dht and the relay. `--relay` bare
 /// ⇒ pinned default, `--relay <url>` ⇒ custom. Errors if any
 /// `--mdns`/`--dht`/`--relay` is given with `private`.
-pub(crate) fn resolve_discovery(mode: SwarmMode, lookups: LookupSet) -> Result<DiscoveryOpts> {
-    validate_discovery(mode, &lookups)?;
+pub(crate) fn resolve_lookups(mode: SwarmMode, lookups: LookupSet) -> Result<LookupOpts> {
+    validate_lookups(mode, &lookups)?;
     match mode {
-        SwarmMode::Private => Ok(DiscoveryOpts {
+        SwarmMode::Private => Ok(LookupOpts {
             mdns: false,
             dht: false,
             relay: RelayChoice::Disabled,
@@ -480,13 +531,13 @@ pub(crate) fn resolve_discovery(mode: SwarmMode, lookups: LookupSet) -> Result<D
                 RelaySelection::Default => RelayChoice::Pinned,
                 RelaySelection::Custom(url) => RelayChoice::Custom(url),
             };
-            Ok(DiscoveryOpts {
+            Ok(LookupOpts {
                 mdns: lookups.mdns,
                 dht: lookups.dht,
                 relay,
             })
         }
-        SwarmMode::Public => Ok(DiscoveryOpts {
+        SwarmMode::Public => Ok(LookupOpts {
             mdns: true,
             dht: true,
             relay: RelayChoice::Pinned,
@@ -495,10 +546,10 @@ pub(crate) fn resolve_discovery(mode: SwarmMode, lookups: LookupSet) -> Result<D
 }
 
 #[cfg(test)]
-mod discovery_tests {
+mod lookup_tests {
     use super::{
-        DiscoveryOpts, LookupSet, RelayChoice, RelaySelection, SwarmMode, resolve_discovery,
-        validate_discovery,
+        LookupOpts, LookupSet, RelayChoice, RelaySelection, SwarmMode, resolve_lookups,
+        validate_lookups,
     };
 
     fn lookups(mdns: bool, dht: bool, relay: RelaySelection) -> LookupSet {
@@ -511,14 +562,14 @@ mod discovery_tests {
 
     #[test]
     fn public_no_flags_enables_all_three() {
-        let opts = resolve_discovery(SwarmMode::Public, LookupSet::default()).unwrap();
+        let opts = resolve_lookups(SwarmMode::Public, LookupSet::default()).unwrap();
         assert!(opts.mdns && opts.dht);
         assert_eq!(opts.relay, RelayChoice::Pinned, "no flags ⇒ pinned relay");
     }
 
     #[test]
     fn public_mdns_alone_disables_dht_and_relay() {
-        let opts = resolve_discovery(
+        let opts = resolve_lookups(
             SwarmMode::Public,
             lookups(true, false, RelaySelection::Unset),
         )
@@ -533,7 +584,7 @@ mod discovery_tests {
 
     #[test]
     fn public_bare_relay_is_pinned_and_suppresses_lookups() {
-        let opts = resolve_discovery(
+        let opts = resolve_lookups(
             SwarmMode::Public,
             lookups(false, false, RelaySelection::Default),
         )
@@ -544,7 +595,7 @@ mod discovery_tests {
 
     #[test]
     fn public_valued_relay_is_custom_and_suppresses_lookups() {
-        let opts = resolve_discovery(
+        let opts = resolve_lookups(
             SwarmMode::Public,
             lookups(false, false, RelaySelection::Custom(url())),
         )
@@ -555,7 +606,7 @@ mod discovery_tests {
 
     #[test]
     fn public_mdns_plus_relay_keeps_both() {
-        let opts = resolve_discovery(
+        let opts = resolve_lookups(
             SwarmMode::Public,
             lookups(true, false, RelaySelection::Default),
         )
@@ -565,16 +616,16 @@ mod discovery_tests {
     }
 
     #[test]
-    fn legacy_custom_relay_keeps_lookups_on() {
+    fn default_for_custom_relay_keeps_lookups_on() {
         // embed/MCP contract: a custom relay must not suppress mdns/dht.
-        let opts = DiscoveryOpts::legacy(SwarmMode::Public, Some(url()));
+        let opts = LookupOpts::default_for(SwarmMode::Public, Some(url()));
         assert!(opts.mdns && opts.dht);
         assert_eq!(opts.relay, RelayChoice::Custom(url()));
     }
 
     #[test]
     fn private_no_flags_is_all_off() {
-        let opts = resolve_discovery(SwarmMode::Private, LookupSet::default()).unwrap();
+        let opts = resolve_lookups(SwarmMode::Private, LookupSet::default()).unwrap();
         assert!(!opts.mdns && !opts.dht);
         assert_eq!(opts.relay, RelayChoice::Disabled);
     }
@@ -588,11 +639,48 @@ mod discovery_tests {
             lookups(false, false, RelaySelection::Custom(url())),
         ];
         for set in cases {
-            let via_resolve = resolve_discovery(SwarmMode::Private, set.clone());
+            let via_resolve = resolve_lookups(SwarmMode::Private, set.clone());
             assert!(via_resolve.is_err(), "resolve must reject: {set:?}");
-            let error = validate_discovery(SwarmMode::Private, &set).unwrap_err();
+            let error = validate_lookups(SwarmMode::Private, &set).unwrap_err();
             assert!(error.to_string().contains("--public"), "got: {error}");
         }
+    }
+}
+
+#[cfg(test)]
+mod directory_selection_tests {
+    use super::{DEFAULT_DIRECTORY, DirectorySelection, SwarmMode, SwarmName, validate_advertise};
+
+    #[test]
+    fn unset_is_not_advertising() {
+        let sel = DirectorySelection::Unset;
+        assert!(!sel.is_set());
+        assert!(sel.directory().is_none());
+    }
+
+    #[test]
+    fn bare_resolves_to_default_directory() {
+        let sel = DirectorySelection::Default;
+        assert!(sel.is_set());
+        assert_eq!(sel.directory().unwrap().as_str(), DEFAULT_DIRECTORY);
+    }
+
+    #[test]
+    fn named_resolves_to_that_directory() {
+        let sel = DirectorySelection::Named(SwarmName::new("gamedev").unwrap());
+        assert_eq!(sel.directory().unwrap().as_str(), "gamedev");
+    }
+
+    #[test]
+    fn advertise_requires_public() {
+        // Private + advertising is rejected, naming the flag.
+        let error =
+            validate_advertise(SwarmMode::Private, &DirectorySelection::Default).unwrap_err();
+        assert!(error.to_string().contains("--advertise"), "got: {error}");
+        assert!(error.to_string().contains("--public"), "got: {error}");
+        // Public + advertising, and private + not advertising, are fine.
+        assert!(validate_advertise(SwarmMode::Public, &DirectorySelection::Default).is_ok());
+        assert!(validate_advertise(SwarmMode::Private, &DirectorySelection::Unset).is_ok());
     }
 }
 

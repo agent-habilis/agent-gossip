@@ -15,8 +15,16 @@ changing code, keep these distinct:
 | **peer** | prose only | Informal synonym for "another participant". Never a load-bearing identifier or field name in new code. | — |
 | **rendezvous** | identity | The seed-derived bootstrap identity (keypair + ports) every joiner computes locally. Code: `protocol::crypto`. | seed |
 | **beacon** | role | The one live member currently binding and serving the rendezvous endpoint. Migrates on death. Code: `beacon`. | — |
+| **lookup** | transport | A mechanism that resolves a seed-derived `rendezvous_id` into a reachable address — mDNS (LAN), the mainline DHT, or the relay. The `--mdns/--dht/--relay` allowlist. Code: `lookup`. | — |
 | **surfaced** | presentation | A participant whose arrival was *shown* to the operator/agent. `surfaced ⊆ participants`; presentation-only — the roster stays complete for anti-entropy regardless. State: `surfaced`. | nickname |
 | **quiet** | heartbeat | A participant evicted for silence past `ALIVE_TIMEOUT_SECS` but who may return. State: `quiet`. | nickname |
+| **directory** | discovery | A named, well-known public `Swarm` (`kdf(DIRECTORY_BASE_SEED, name)`) that swarms **advertise** their `ahs…` id into and **discover** browses. Not a server — itself a swarm (own rendezvous, reached via lookups). Default `global`. Code: `directory`. | directory name |
+| **advertise** | discovery | A `create`-time opt-in (`--advertise[=<directory>]`) re-broadcasting this swarm's own id into a directory so `discover` finds it. Create-only; broadcasting the id makes the swarm open. | — |
+| **discover** | discovery | Browse a directory's live swarms (`ahs discover`) and join one — the consumer side of `advertise`. | — |
+
+Layering (don't conflate): **rendezvous**/**beacon** bootstrap a swarm you
+*already hold*; a **directory** finds swarms you *don't* — and is itself a
+swarm with its own rendezvous, reached via **lookups**. Three distinct layers.
 
 Invariants that follow from the layering:
 
@@ -37,7 +45,7 @@ Invariants that follow from the layering:
 
 ## Installation
 
-Prebuilt binaries for Linux, macOS, and Windows are published on the
+Prebuilt binaries for Linux and macOS are published on the
 [Releases page](https://github.com/agent-habilis/swarm/releases).
 Download the archive for your platform, extract it, and place
 `ahs` on your `PATH`.
@@ -61,7 +69,7 @@ cargo run -- create --name demo
 Start a new swarm. Long-running process.
 
 ```
-ahs create [--name {NAME}] --no-interactive --output json
+ahs create [--name {NAME}] [--advertise[={DIRECTORY}]] --no-interactive --output json
 ```
 
 `--name` is **optional**: omit it and a random `word-word` name is minted,
@@ -86,7 +94,7 @@ can always bootstrap from whoever is currently alive:
   mainline DHT (operator-free, eternal backstop) also publish/resolve
   `rendezvous_id`. The participant endpoint uses iroh's resilient
   multi-relay default. Each leg (relay/mDNS/DHT) is allowlist-gated —
-  see "Discovery flags" below.
+  see "Lookup flags" below.
 - **private**: a deterministic loopback port *ladder* derived from `seed`;
   members claim-if-free the first rung (identity-probed), so the beacon
   role migrates to a surviving member within ~15s of the holder's death.
@@ -95,13 +103,13 @@ Prints a `ready` event with `swarm`, `name`, and `nickname` fields once the
 node is up.
 
 Pass `--public` for cross-machine networking; omit it for the default
-(private, localhost only). Discovery selection lives in the allowlist
+(private, localhost only). Lookup selection lives in the allowlist
 flags below. The swarm identifier encodes the network mode AND the
 name, so joiners auto-detect both.
 
-#### Discovery flags (allowlist)
+#### Lookup flags (allowlist)
 
-With `--public`, three discovery mechanisms resolve the seed-derived
+With `--public`, three lookup mechanisms resolve the seed-derived
 rendezvous, all **combinable** and governed by one rule: `--mdns` (LAN
 multicast), `--dht` (mainline BitTorrent DHT), and `--relay` (the relay,
 both connectivity and the relay-direct rendezvous dial). They are a
@@ -130,6 +138,33 @@ select.
 All of `--mdns`/`--dht`/`--relay` require `--public`; using one
 without it (private, loopback only) is a hard error naming the
 offending flag(s) — never a silent no-op.
+
+#### Advertising (`--advertise`)
+
+`--advertise[={DIRECTORY}]` lists this swarm in a **directory** so others
+find it with `ahs discover` — no `ahs…` id to copy. It is an
+optional-value flag exactly like `--relay`:
+
+- **absent** ⇒ not listed (the default; the id stays private).
+- bare **`--advertise`** ⇒ the well-known `global` directory.
+- valued **`--advertise {DIRECTORY}`** ⇒ that named directory (a `SwarmName`).
+
+The directory name derives a well-known public swarm (see the glossary);
+the advertiser re-broadcasts its own `ahs…` id into that directory every
+~20s, and discoverers on the same directory collect the live set. There
+is **no central registry** — an ad lives only while the `create` process
+keeps re-broadcasting, then ages out of discoverers' lists. `--advertise`
+requires `--public` and is a **create-time** decision — `join` has no
+`--advertise`.
+
+The directory is reached over the **same lookups** as the swarm: the
+`--mdns/--dht/--relay` allowlist (above) is passed once and governs both
+the swarm and its advertisement — there is no separate advertise lookup
+flag. An advertiser and a discoverer meet only if their lookups overlap,
+the same rule real swarms follow.
+
+Advertising broadcasts the full join token, so a listed swarm is
+**open** — anyone discovering that directory can join it.
 
 ### join
 
@@ -193,6 +228,33 @@ report does **not** come back on this command's stdout. The ping/pong
 probes are plumbing: never rate-limited, logged, or surfaced as
 messages via `poll`/`fetch_messages`.
 
+### discover
+
+Browse swarms advertising themselves in a directory. Long-running (keeps
+discovering while open).
+
+```
+ahs discover [--directory {DIRECTORY}] [--mdns] [--dht] [--relay[={URL}]] --no-interactive --output json
+```
+
+`--directory` selects which directory to browse (omit ⇒ `global`); it
+must match the directory publishers passed to `--advertise`. `discover`
+joins that directory's swarm and collects live ads (each ad is a swarm's
+`ahs…` id; the name and network mode decode from the id locally). A swarm
+is dropped from the list if its publisher stops re-broadcasting for ~60s.
+The `--mdns/--dht/--relay` lookups apply to the directory session *and*
+the eventual join, exactly like `create`/`join` (omit ⇒ all-on public).
+
+- **interactive (default human output, requires a TTY):** a live
+  arrow-key picker. Each row shows the swarm name (yellow), its full
+  `ahs…` id, peer count, and an ISO-8601 UTC first-seen timestamp; the
+  list redraws as swarms come and go. `↑`/`↓` (or `j`/`k`) move, `enter`
+  joins the highlighted swarm (handed off to the normal `join` path),
+  `q` / esc / ctrl-c quit. With no TTY it falls back to the JSON stream.
+- **`--no-interactive` / `--output json`:** streams one JSON line per
+  directory change (`swarm_found` / `swarm_lost`, below) and never
+  auto-joins — the agent picks an id and calls `join` itself.
+
 ## JSON Events
 
 When using `--output json`, the long-running process (create/join) emits one
@@ -245,6 +307,19 @@ RTT in milliseconds (`responded` of `known` roster peers answered).
 
 ```json
 {"event":"ping_report","peers":[{"nickname":"word-word","rtt_ms":42}],"responded":1,"known":2}
+```
+
+### swarm_found / swarm_lost
+
+Emitted by `ahs discover --output json` (or `--no-interactive`), one line per
+directory change. `swarm_found` fires on a swarm's first ad **and** on
+each re-ad (upsert: the latest carries the current `peers` count);
+`swarm_lost` fires when a swarm's ads stop and its listing ages out.
+Decode `swarm` (the `ahs…` id) and pass it to `ahs join` to join.
+
+```json
+{"event":"swarm_found","swarm":"ahs...","name":"cool-team","mode":"public","peers":4}
+{"event":"swarm_lost","swarm":"ahs..."}
 ```
 
 ### info / error
@@ -315,6 +390,13 @@ Heartbeats, presence, anti-entropy, and ping/pong probe traffic are exempt
 JSON-RPC on stdio. Six tools: `create_swarm`, `join_swarm`,
 `leave_swarm`, `send_message`, `fetch_messages`, `swarm_info`.
 One active swarm per server instance.
+
+`create_swarm` takes optional `advertise: bool` + `directory: string`
+args (same semantics as the CLI `--advertise[={DIRECTORY}]`; `advertise`
+requires `network: "public"`). There is **no discover tool**: MCP is
+polling-only and one-active-swarm, an awkward fit for a live directory,
+so MCP agents join by id. The `advertise` arg still lets an
+MCP-created swarm be discovered by CLI / embed scanners.
 
 ### Limitations: polling-only, no server push
 
@@ -451,7 +533,7 @@ Developer logs are emitted with `tracing`. The long-running daemons
 `.sock`, truncated on each daemon start. The default `<log_dir>` is the
 `agent-habilis/swarm/logs` subdir of the OS temp dir
 (`/tmp/agent-habilis/swarm/logs` on Linux, a per-user temp dir on
-macOS/Windows); sockets live alongside under
+macOS); sockets live alongside under
 `/tmp/agent-habilis/swarm/sockets/`. Records buffer in memory until the
 swarm id + nickname are known (sub-second), then flush there. Transient
 commands (`msg`/`poll`), `mcp`, and any run failing before identity log
@@ -465,7 +547,7 @@ Debug defaults to `info`, release to `error`; `debug`/`trace` need
 `RUST_LOG` (tried first, always wins).
 
 Both defaults additionally **pin this crate's operational subsystems**
-(`agent_habilis_swarm::{gossip,discovery,beacon,lifecycle}`) to `info`,
+(`agent_habilis_swarm::{gossip,lookup,beacon,lifecycle,directory}`) to `info`,
 so the always-on file carries the connectivity/lifecycle story (endpoint
 bound, neighbor up/down, heal re-probe, beacon migration, resume edge,
 mesh-health census) even in a release build — whose `error` base would
@@ -495,10 +577,11 @@ one name covers a subsystem's whole folder:
 
 | Subsystem | `RUST_LOG` target |
 |---|---|
-| discovery (mDNS/DHT/relay wiring, rendezvous pre-register) | `agent_habilis_swarm::discovery` |
+| lookup (mDNS/DHT/relay wiring, rendezvous pre-register) | `agent_habilis_swarm::lookup` |
 | gossip (broadcast/recv, neighbor up/down, anti-entropy, heal) | `agent_habilis_swarm::gossip` |
 | lifecycle (ready/left, joined/left, peer_timeout/return, roster, join-horizon, heartbeat) | `agent_habilis_swarm::lifecycle` |
 | beacon (claim-if-free, bind, migration) | `agent_habilis_swarm::beacon` |
+| directory (advertise re-broadcast, discover collect/expire) | `agent_habilis_swarm::directory` |
 | ipc | `agent_habilis_swarm::transport::ipc` (socket) + `agent_habilis_swarm::daemon::ipc` (command) |
 
 Override at runtime with `RUST_LOG`:
@@ -507,8 +590,8 @@ Override at runtime with `RUST_LOG`:
 # One subsystem at trace, the rest at the default
 RUST_LOG=agent_habilis_swarm::gossip=trace cargo run -- create
 
-# Discovery (mDNS/DHT/relay) detail
-RUST_LOG=agent_habilis_swarm::discovery=debug cargo run -- create
+# Lookup (mDNS/DHT/relay) detail
+RUST_LOG=agent_habilis_swarm::lookup=debug cargo run -- create
 
 # Beacon migration + lifecycle, both at trace
 RUST_LOG=agent_habilis_swarm::beacon=trace,agent_habilis_swarm::lifecycle=trace cargo run -- create
@@ -538,9 +621,8 @@ the commit and tag first.
    tag `v<version>`. No push.
 3. `git push origin main --follow-tags` — pushing the tag triggers
    `.github/workflows/release.yml`, which verifies the tag matches
-   `Cargo.toml` and builds binaries for Linux (x86_64 + aarch64), macOS
-   (Intel + Apple Silicon), and Windows (x86_64), attaching them to the
-   GitHub Release.
+   `Cargo.toml` and builds binaries for Linux (x86_64 + aarch64) and macOS
+   (Intel + Apple Silicon), attaching them to the GitHub Release.
 4. **Update the Homebrew formula** (`Formula/agent-habilis-swarm.rb`). The
    release workflow does **not** touch it, so after the archives are attached
    to the GitHub Release: bump `version` to match the tag, and replace each

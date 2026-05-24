@@ -13,7 +13,7 @@ use iroh::{
 };
 use iroh_gossip::net::{GOSSIP_ALPN, Gossip};
 
-use crate::protocol::swarm::{DiscoveryOpts, RelayChoice, SwarmMode};
+use crate::protocol::swarm::{LookupOpts, RelayChoice, SwarmMode};
 
 /// The single relay every public member homes on by default. Pinning
 /// **one** relay (vs iroh's 4-relay default, where members land on
@@ -22,7 +22,7 @@ use crate::protocol::swarm::{DiscoveryOpts, RelayChoice, SwarmMode};
 /// rendezvous address — `EndpointAddr::new(rendezvous_id)
 /// .with_relay_url(this)` — with **zero address-lookup**, the
 /// creator-independent analog of the pre-rewrite ticket's embedded
-/// relay (the path that made public discovery instant).
+/// relay (the path that made public lookup instant).
 ///
 /// iroh 0.98's `defaults::prod` NA-east relay (N0's *production*
 /// hostname literally contains `iroh-canary` — it is the prod default,
@@ -63,7 +63,7 @@ pub(crate) fn relay_url(choice: &RelayChoice) -> Option<RelayUrl> {
 
 /// Build an iroh endpoint for a swarm mode.
 ///
-/// - `discovery`: which address-lookups (mDNS / DHT) and relay to
+/// - `lookup`: which address-lookups (mDNS / DHT) and relay to
 ///   wire. For `Public` the builder is composed from `presets::Minimal`
 ///   plus the selected lookups; the relay defaults to the single
 ///   pinned [`RENDEZVOUS_RELAY`] (overridable via `--relay`). For
@@ -79,7 +79,7 @@ pub(crate) fn relay_url(choice: &RelayChoice) -> Option<RelayUrl> {
 ///   Ignored for public swarms (N0 manages binding).
 pub(crate) async fn build_endpoint_for_mode(
     mode: SwarmMode,
-    discovery: &DiscoveryOpts,
+    lookups: &LookupOpts,
     secret_key: Option<SecretKey>,
     bind_port: Option<u16>,
 ) -> Result<Endpoint> {
@@ -91,11 +91,11 @@ pub(crate) async fn build_endpoint_for_mode(
         // operator-free eternal backstop). `Minimal` still sets the
         // rustls crypto provider.
         let mut builder = Endpoint::builder(presets::Minimal);
-        if discovery.mdns {
+        if lookups.mdns {
             builder = builder.address_lookup(MdnsAddressLookup::builder());
             tracing::debug!("mDNS address-lookup wired (LAN multicast publish + resolve)");
         }
-        if discovery.dht {
+        if lookups.dht {
             builder = builder.address_lookup(DhtAddressLookup::builder());
             tracing::debug!("mainline DHT address-lookup wired (pkarr publish + resolve)");
         }
@@ -110,9 +110,9 @@ pub(crate) async fn build_endpoint_for_mode(
         // `Default` participant still reaches the beacon at its pinned
         // relay and skips relays entirely same-LAN via mDNS. A custom
         // relay pins both legs.
-        let relay_mode = match (&discovery.relay, is_beacon) {
+        let relay_mode = match (&lookups.relay, is_beacon) {
             (RelayChoice::Disabled, _) => {
-                tracing::debug!("relay disabled (not in the discovery allowlist)");
+                tracing::debug!("relay disabled (not in the lookup allowlist)");
                 RelayMode::Disabled
             }
             (RelayChoice::Pinned, true) => {
@@ -131,8 +131,8 @@ pub(crate) async fn build_endpoint_for_mode(
         builder.relay_mode(relay_mode)
     } else {
         debug_assert!(
-            !discovery.mdns && !discovery.dht && discovery.relay == RelayChoice::Disabled,
-            "private mode must resolve to all-off discovery (resolver invariant)"
+            !lookups.mdns && !lookups.dht && lookups.relay == RelayChoice::Disabled,
+            "private mode must resolve to all-off lookup (resolver invariant)"
         );
         // Private = strictly loopback, **zero external network calls**.
         // `Minimal` picks the rustls crypto provider without N0's
@@ -182,9 +182,9 @@ pub(crate) async fn build_endpoint_for_mode(
     let endpoint = builder.bind().await.context("failed to bind endpoint")?;
     tracing::info!(
         network,
-        mdns = discovery.mdns,
-        dht = discovery.dht,
-        relay = ?discovery.relay,
+        mdns = lookups.mdns,
+        dht = lookups.dht,
+        relay = ?lookups.relay,
         role = if is_beacon { "beacon" } else { "participant" },
         endpoint_id = %endpoint.id(),
         "endpoint bound"
@@ -197,9 +197,9 @@ pub(crate) async fn build_endpoint_for_mode(
 /// so call sites don't carry the rendezvous-only `None, None`.
 pub(crate) async fn build_participant_endpoint(
     mode: SwarmMode,
-    discovery: &DiscoveryOpts,
+    lookups: &LookupOpts,
 ) -> Result<Endpoint> {
-    build_endpoint_for_mode(mode, discovery, None, None).await
+    build_endpoint_for_mode(mode, lookups, None, None).await
 }
 
 /// Register a peer's address so the endpoint can connect to it.
@@ -262,7 +262,7 @@ pub(crate) fn build_swarm(endpoint: Endpoint) -> (Gossip, Router) {
 #[cfg(test)]
 mod tests {
     use super::{
-        DiscoveryOpts, RENDEZVOUS_RELAY_URL, RelayChoice, SwarmMode, build_participant_endpoint,
+        LookupOpts, RENDEZVOUS_RELAY_URL, RelayChoice, SwarmMode, build_participant_endpoint,
     };
 
     /// Tripwire: our pinned rendezvous relay must stay equal to iroh's
@@ -294,12 +294,12 @@ mod tests {
 
     #[tokio::test]
     async fn private_all_off_binds() {
-        let disco = DiscoveryOpts {
+        let lookups = LookupOpts {
             mdns: false,
             dht: false,
             relay: RelayChoice::Disabled,
         };
-        let endpoint = build_participant_endpoint(SwarmMode::Private, &disco)
+        let endpoint = build_participant_endpoint(SwarmMode::Private, &lookups)
             .await
             .expect("private loopback endpoint must bind");
         endpoint.close().await;
@@ -310,12 +310,12 @@ mod tests {
         // No lookup wired: exercises the `Minimal` + pinned-relay
         // composition. `bind()` is non-blocking wrt the relay, so this
         // is offline-safe even with the pinned relay configured.
-        let disco = DiscoveryOpts {
+        let lookups = LookupOpts {
             mdns: false,
             dht: false,
             relay: RelayChoice::Pinned,
         };
-        let endpoint = build_participant_endpoint(SwarmMode::Public, &disco)
+        let endpoint = build_participant_endpoint(SwarmMode::Public, &lookups)
             .await
             .expect("public endpoint with pinned relay must bind");
         endpoint.close().await;

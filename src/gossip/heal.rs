@@ -20,12 +20,9 @@ async fn heal(
 ) {
     let endpoint = endpoint.clone();
     tokio::spawn(async move {
-        let _ = crate::discovery::probe_connect(
-            &endpoint,
-            rendezvous_id,
-            Duration::from_secs(probe_secs),
-        )
-        .await;
+        let _ =
+            crate::lookup::probe_connect(&endpoint, rendezvous_id, Duration::from_secs(probe_secs))
+                .await;
     });
     let _ = sender.join_peers(vec![rendezvous_id]).await;
 }

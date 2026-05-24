@@ -36,10 +36,11 @@
 pub(crate) mod beacon;
 pub(crate) mod cli;
 pub(crate) mod daemon;
-pub(crate) mod discovery;
+pub(crate) mod directory;
 pub(crate) mod gossip;
 pub(crate) mod lifecycle;
 pub(crate) mod logsink;
+pub(crate) mod lookup;
 pub(crate) mod mcp;
 pub(crate) mod messages;
 pub(crate) mod output;

@@ -12,9 +12,8 @@ use ahs_shared::{MAX_IPC_COMMAND_BYTES, MAX_IPC_RESPONSE_BYTES, SOCKET_DIR, swar
 use crate::protocol::{MessageBody, MessageId, Nickname, SwarmId};
 use crate::util::bounded_read::{LineRead, read_bounded_line};
 
-/// Returns the IPC endpoint identifier for a specific agent on a swarm.
-/// On Unix this is a filesystem socket path; on Windows the filename portion
-/// becomes a namespaced named-pipe name.
+/// Returns the IPC endpoint identifier for a specific agent on a swarm —
+/// a filesystem socket path (the project targets Unix only).
 pub(crate) fn socket_path(swarm: &SwarmId, nickname: &Nickname) -> String {
     format!(
         "{SOCKET_DIR}/{}-{}.sock",
@@ -23,20 +22,9 @@ pub(crate) fn socket_path(swarm: &SwarmId, nickname: &Nickname) -> String {
     )
 }
 
-#[cfg(unix)]
 fn to_name(path: &str) -> Result<Name<'_>> {
     use interprocess::local_socket::{GenericFilePath, ToFsName};
     Ok(path.to_fs_name::<GenericFilePath>()?)
-}
-
-#[cfg(windows)]
-fn to_name(path: &str) -> Result<Name<'_>> {
-    use interprocess::local_socket::{GenericNamespaced, ToNsName};
-    let name = std::path::Path::new(path)
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or(path);
-    Ok(name.to_ns_name::<GenericNamespaced>()?)
 }
 
 /// Type alias for messages flowing from IPC listener to the event loop.
@@ -127,13 +115,9 @@ pub(crate) async fn listen(
 ) {
     let path = socket_path(&swarm, &nickname);
 
-    // Best-effort cleanup of a stale socket file and parent dir (Unix only —
-    // Windows named pipes are kernel objects with no filesystem presence).
-    #[cfg(unix)]
-    {
-        let _ = std::fs::remove_file(&path);
-        let _ = std::fs::create_dir_all(SOCKET_DIR);
-    }
+    // Best-effort cleanup of a stale socket file and (re)create the parent dir.
+    let _ = std::fs::remove_file(&path);
+    let _ = std::fs::create_dir_all(SOCKET_DIR);
 
     let name = match to_name(&path) {
         Ok(socket_name) => socket_name,

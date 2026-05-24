@@ -12,7 +12,7 @@ use crate::daemon::{
     self, DriverMode,
     setup::{SetupKind, setup_swarm},
 };
-use crate::protocol::swarm::{DiscoveryOpts, Swarm, SwarmMode, SwarmName};
+use crate::protocol::swarm::{LookupOpts, Swarm, SwarmMode, SwarmName};
 use crate::protocol::{MessageBody, MessageId, Nickname, SwarmId};
 use crate::transport::ipc::{IpcCommand, IpcMessage};
 
@@ -28,6 +28,9 @@ pub(super) struct Session {
     last_delivered_id: Mutex<Option<MessageId>>,
     /// `None` after `leave()`; aborted in `Drop` otherwise.
     task: Option<JoinHandle<Result<()>>>,
+    /// The directory re-broadcast task when created with `advertise`.
+    /// Aborted on `leave`/drop so we stop advertising a swarm we left.
+    advertiser: Option<JoinHandle<()>>,
 }
 
 impl Session {
@@ -37,10 +40,18 @@ impl Session {
         name: SwarmName,
         relay: Option<RelayUrl>,
         nickname: Nickname,
+        advertise: Option<SwarmName>,
     ) -> Result<Self> {
         let label = name.as_str().to_string();
-        let discovery = DiscoveryOpts::legacy(mode, relay);
-        spawn_session(SetupKind::Create { mode, name }, discovery, label, nickname).await
+        let lookups = LookupOpts::default_for(mode, relay);
+        spawn_session(
+            SetupKind::Create { mode, name },
+            lookups,
+            label,
+            nickname,
+            advertise,
+        )
+        .await
     }
 
     /// Join an existing swarm. Resolves `swarm_input` via the normal
@@ -48,8 +59,9 @@ impl Session {
     pub(super) async fn join(swarm_input: &str, nickname: Nickname) -> Result<Self> {
         let swarm: Swarm = crate::resolver::resolve(swarm_input).await?;
         let label = swarm.name.as_str().to_string();
-        let discovery = DiscoveryOpts::legacy(swarm.mode, None);
-        spawn_session(SetupKind::Join { swarm }, discovery, label, nickname).await
+        let lookups = LookupOpts::default_for(swarm.mode, None);
+        // `join` never advertises — a create-time decision.
+        spawn_session(SetupKind::Join { swarm }, lookups, label, nickname, None).await
     }
 
     async fn send_cmd(&self, cmd: IpcCommand) -> Result<Value> {
@@ -140,7 +152,7 @@ impl Session {
     /// Fetch buffered messages after `after` (or all buffered when
     /// `None` AND no implicit cursor is set yet). Auto-advances the
     /// session's implicit cursor and returns the advanced id so the
-    /// caller can surface it without re-scanning the batch.
+    /// caller can surface it without re-discovering the batch.
     pub(super) async fn fetch_messages(
         &self,
         after: Option<MessageId>,
@@ -173,6 +185,9 @@ impl Session {
     /// to emit `Left` and wind down. If it doesn't, `Drop` aborts the
     /// task.
     pub(super) async fn leave(mut self) {
+        if let Some(advertiser) = self.advertiser.take() {
+            advertiser.abort();
+        }
         let _ = self.quit_tx.send(()).await;
         if let Some(task) = self.task.take() {
             let timeout = tokio::time::sleep(std::time::Duration::from_secs(3));
@@ -191,14 +206,18 @@ impl Drop for Session {
         if let Some(task) = self.task.take() {
             task.abort();
         }
+        if let Some(advertiser) = self.advertiser.take() {
+            advertiser.abort();
+        }
     }
 }
 
 async fn spawn_session(
     kind: SetupKind,
-    discovery: DiscoveryOpts,
+    lookups: LookupOpts,
     name: String,
     nickname: Nickname,
+    advertise: Option<SwarmName>,
 ) -> Result<Session> {
     let (cmd_tx, cmd_rx) = mpsc::channel::<IpcMessage>(32);
     let (quit_tx, quit_rx) = mpsc::channel::<()>(1);
@@ -209,7 +228,7 @@ async fn spawn_session(
         /* interactive */ false,
         crate::util::tuning::DEFAULT_MAX_DIRECT_PEERS,
         /* state_file */ None,
-        discovery,
+        lookups.clone(),
         // MCP owns stdout for JSON-RPC; never print swarm output.
         crate::output::Output::silent(),
     )
@@ -219,6 +238,11 @@ async fn spawn_session(
         ipc_rx: cmd_rx,
         quit_rx,
     };
+
+    // Advertising: start the re-broadcast task (tied to this session's
+    // lifetime) on the same lookups as the swarm.
+    let advertiser =
+        advertise.map(|directory| crate::embed::spawn_advertiser(&mut cfg, directory, lookups));
 
     let swarm = cfg.swarm.clone();
     let session_nickname = cfg.author.clone();
@@ -231,6 +255,7 @@ async fn spawn_session(
         quit_tx,
         last_delivered_id: Mutex::new(None),
         task: Some(task),
+        advertiser,
     })
 }
 
@@ -271,6 +296,7 @@ mod tests {
             SwarmName::new("test1").unwrap(),
             None,
             Nickname::from("alice-test"),
+            None,
         )
         .await
         .expect("create");
@@ -287,6 +313,7 @@ mod tests {
             SwarmName::new("two").unwrap(),
             None,
             Nickname::from("alice-two"),
+            None,
         )
         .await
         .expect("create");
@@ -335,6 +362,7 @@ mod tests {
             SwarmName::new("replay").unwrap(),
             None,
             Nickname::from("alice-replay"),
+            None,
         )
         .await
         .expect("create");
@@ -372,6 +400,7 @@ mod tests {
             SwarmName::new("cursor").unwrap(),
             None,
             Nickname::from("alice-cursor"),
+            None,
         )
         .await
         .expect("create");
@@ -460,6 +489,7 @@ mod tests {
             SwarmName::new("cy-a").unwrap(),
             None,
             Nickname::from("cycler-a"),
+            None,
         )
         .await
         .expect("first create");
@@ -472,6 +502,7 @@ mod tests {
             SwarmName::new("cy-b").unwrap(),
             None,
             Nickname::from("cycler-b"),
+            None,
         )
         .await
         .expect("second create after first was left");

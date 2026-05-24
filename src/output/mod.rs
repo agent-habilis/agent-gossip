@@ -159,14 +159,16 @@ pub enum OutputEvent {
 /// ANSI styling for the Human-mode `<nick>` / `#swarm` tokens.
 /// Hand-rolled (no color dependency); emission is gated on a TTY +
 /// `NO_COLOR` per stream (see [`stdout_color`] / [`stderr_color`]).
-mod style {
-    pub(super) const RESET: &str = "\x1b[0m";
+pub(crate) mod style {
+    pub(crate) const RESET: &str = "\x1b[0m";
     /// Bold green — the local member's own nickname.
     pub(super) const SELF_NICK: &str = "\x1b[1;32m";
     /// Bold cyan — a peer's nickname.
     pub(super) const PEER_NICK: &str = "\x1b[1;36m";
     /// Bold yellow — a swarm name.
-    pub(super) const SWARM: &str = "\x1b[1;33m";
+    pub(crate) const SWARM: &str = "\x1b[1;33m";
+    /// Bold — the highlighted row in the `discover` picker.
+    pub(crate) const BOLD: &str = "\x1b[1m";
 }
 
 /// Color is on when the stream is a terminal and `NO_COLOR` is unset.
@@ -177,7 +179,7 @@ fn color_enabled(stream_is_terminal: bool) -> bool {
 /// Whether stdout should carry ANSI color. Cached — neither the TTY
 /// status nor the env var changes at runtime, and piped/non-TTY output
 /// (tests, the `/swarm` skill) auto-disables.
-fn stdout_color() -> bool {
+pub(crate) fn stdout_color() -> bool {
     static ENABLED: LazyLock<bool> =
         LazyLock::new(|| color_enabled(std::io::stdout().is_terminal()));
     *ENABLED

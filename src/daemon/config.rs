@@ -56,6 +56,27 @@ pub(crate) enum DriverMode {
     },
 }
 
+/// When a member may co-host (serve) the seed-derived rendezvous — the
+/// **beacon** role. Co-hosting a duplicate `rendezvous_id` before the
+/// member has meshed registers a second copy on the shared pinned relay
+/// and can capture the member's own bootstrap dial → isolation; the
+/// policy plus the public probe-before-claim (`beacon::ensure`) keep
+/// that from happening.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CoHostPolicy {
+    /// Co-host from t=0 with no probe — the swarm origin (`create`) and
+    /// the advertiser's directory session (the directory's content
+    /// server / de-facto origin), so a beacon exists before any joiner
+    /// or discoverer subscribes.
+    Eager,
+    /// Co-host once meshed, or speculatively after the empty-swarm
+    /// grace (probe-gated in public) — a normal joiner.
+    Deferred,
+    /// Never co-host — a pure consumer (the `discover` directory
+    /// session). It only ever dials an existing beacon.
+    Never,
+}
+
 /// Configuration for the event loop, shared by `create` and `join`.
 /// The driver-specific channels live in [`DriverMode`].
 pub(crate) struct EventLoopConfig {
@@ -84,18 +105,15 @@ pub(crate) struct EventLoopConfig {
     /// `beacon::ensure` is called with these on startup and every
     /// heal tick (claim-if-free in private mode).
     pub rendezvous_params: beacon::RendezvousParams,
-    /// Co-host the rendezvous **immediately** (`true`, the swarm
-    /// origin / `create`) vs **defer** until meshed (`false`, a
-    /// joiner). A joiner that co-hosts before its own bootstrap dial
-    /// resolves registers a duplicate `rendezvous_id` on the shared
-    /// pinned relay and can capture its own dial → isolation. So a
-    /// joiner co-hosts only once it has a real neighbor (safe) or, for
-    /// an empty swarm, after a short non-blocking grace (then it
-    /// becomes the beacon for the next joiner). `ready` is never
-    /// blocked on this — see `daemon::run`.
-    pub co_host_eagerly: bool,
+    /// When this member may serve the rendezvous (beacon role).
+    pub cohost: CoHostPolicy,
     /// When set, the daemon writes peer count changes to this file.
     pub state_file: Option<PathBuf>,
+    /// When advertising (`create --advertise`), the shared counter the
+    /// directory re-broadcast task reads the live participant count
+    /// from. `setup_swarm` leaves this `None`; the advertise path sets
+    /// it before `run` (same late-assignment pattern as `driver`).
+    pub live_count: Option<std::sync::Arc<std::sync::atomic::AtomicUsize>>,
     /// Who drives the loop (CLI / MCP / embed) and the channels that
     /// driver needs. `setup_swarm` leaves this [`DriverMode::Cli`] and
     /// the MCP / embed sessions reassign it before `run`; folding the

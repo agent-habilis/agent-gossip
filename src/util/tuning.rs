@@ -88,7 +88,7 @@ pub(crate) fn sweep_interval_secs() -> u64 {
 
 /// Grace before an **unmeshed joiner** co-hosts the rendezvous anyway
 /// (empty swarm ⇒ become the beacon for the next joiner). Rationale:
-/// `EventLoopConfig::co_host_eagerly`. Non-blocking — only consulted
+/// `EventLoopConfig::cohost`. Non-blocking — only consulted
 /// on heal ticks, never delays `ready`; a joiner that meshes co-hosts
 /// the moment it has a neighbor, well before this. Overridable via
 /// `BEACON_COHOST_GRACE_SECS` for subprocess tests.
@@ -127,7 +127,7 @@ pub(crate) const STATE_REFRESH_SECS: u64 = 10;
 pub(crate) const HEAL_INTERVAL_SECS: u64 = 15;
 
 /// Upper bound on the healer's detached rendezvous connect-probe.
-/// Generous enough to absorb a public relay/discovery warmup after a
+/// Generous enough to absorb a public relay/lookup warmup after a
 /// real network change, capped well under `HEAL_INTERVAL_SECS` so at
 /// most one probe task is ever outstanding.
 pub(crate) const HEAL_PROBE_SECS: u64 = 5;
@@ -168,6 +168,36 @@ pub(crate) const RECLAIM_WINDOW_SECS: u64 = 6;
 
 /// Cadence of the fast reclaim burst while the window (above) is open.
 pub(crate) const RECLAIM_INTERVAL_MS: u64 = 400;
+
+/// How often an advertising `create` re-broadcasts its `ahs…` id into
+/// the directory. Short enough that a fresh discoverer sees every live
+/// swarm within one cycle (the join-horizon only surfaces ads stamped
+/// after the discoverer joined), long enough that the directory stays
+/// quiet — directory traffic is one tiny message per advertiser per
+/// interval. Env-overridable (`ADVERTISE_INTERVAL_SECS`) so the
+/// subprocess directory test re-ads quickly.
+pub(crate) fn advertise_interval_secs() -> u64 {
+    env_u64("ADVERTISE_INTERVAL_SECS", 20)
+}
+
+/// How long a discoverer keeps showing a swarm after its last ad. A
+/// publisher that exits stops re-broadcasting, so its listing ages out
+/// within this window. ~3× `ADVERTISE_INTERVAL_SECS` so one or two lost
+/// gossip rounds don't flicker a live swarm out of the list.
+/// Env-overridable (`DIRECTORY_EXPIRY_SECS`) so the subprocess directory
+/// test can shorten the `swarm_lost` window.
+pub(crate) fn directory_expiry_secs() -> u64 {
+    env_u64("DIRECTORY_EXPIRY_SECS", 60)
+}
+
+/// Directories are public by default; setting `AHS_DIRECTORY_PRIVATE`
+/// flips `directory_swarm` to the loopback ladder and relaxes the
+/// `--advertise` requires-`--public` guard. **Test-only**: the live
+/// advertise→discover path is otherwise unreachable in CI (no public
+/// relay) — see `tests/directory.rs`.
+pub(crate) fn directory_private_for_test() -> bool {
+    std::env::var_os("AHS_DIRECTORY_PRIVATE").is_some()
+}
 
 /// Timeout for the private-mode rendezvous identity probe. When a
 /// ladder rung is `AddrInUse`, a member probes it to tell *our*

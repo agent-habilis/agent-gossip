@@ -447,7 +447,7 @@ impl Message {
     }
 
     /// Create a `PeerInfo` message. The body carries endpoint address data
-    /// as a JSON string for mesh peer discovery.
+    /// as a JSON string for mesh peer lookup.
     pub(crate) fn new_peer_info(
         swarm: &SwarmId,
         author: &Nickname,

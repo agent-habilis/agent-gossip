@@ -10,7 +10,7 @@ use crate::swarm_prefix;
 
 /// Per-member log dir. `AHS_LOG_DIR` overrides; default is
 /// [`LOG_SUBPATH`] under the OS temp dir (`std::env::temp_dir()` —
-/// `/tmp/...` on Linux, a per-user dir on macOS/Windows). Sockets use
+/// `/tmp/...` on Linux, a per-user dir on macOS). Sockets use
 /// [`crate::consts::SOCKET_DIR`].
 #[must_use]
 pub fn log_dir() -> PathBuf {

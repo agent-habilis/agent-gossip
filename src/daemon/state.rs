@@ -1,4 +1,6 @@
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
 use tokio::time::Instant as TokioInstant;
@@ -111,6 +113,12 @@ pub(crate) struct EventLoopState {
     /// `PENDING_OUTBOUND_CAP`.
     pub pending_outbound: VecDeque<Bytes>,
     pub state_file: Option<StateFile>,
+    /// When advertising (`create --advertise`), the directory's
+    /// re-broadcast task reads the live participant count from here.
+    /// Mirrors `participant_count` (`participants.len() + 1`), refreshed
+    /// alongside every `write_participant_count`. `None` for the common
+    /// non-advertising case (no shared counter to maintain).
+    pub live_count: Option<Arc<AtomicUsize>>,
     pub message_log: MessageLog,
     pub rate_limiter: SwarmRateLimiter,
     /// Active `ahs ping` round, if one is in flight. Armed by the
@@ -152,6 +160,7 @@ impl EventLoopState {
             seen_order: VecDeque::new(),
             pending_outbound: VecDeque::new(),
             state_file,
+            live_count: None,
             message_log: MessageLog::new(DEFAULT_MESSAGE_LOG_SIZE),
             rate_limiter: SwarmRateLimiter::new(),
             ping_round: None,
@@ -159,10 +168,15 @@ impl EventLoopState {
     }
 
     /// Write `participant_count = participants.len() + 1` (we add 1
-    /// for self) to the state file, if configured. No-op otherwise.
+    /// for self) to the state file, if configured, and mirror it into
+    /// the advertise counter, if present. No-op for neither.
     pub(crate) fn write_participant_count(&self) {
+        let count = self.participants.len() + 1;
         if let Some(sf) = self.state_file.as_ref() {
-            sf.write(self.participants.len() + 1);
+            sf.write(count);
+        }
+        if let Some(live) = self.live_count.as_ref() {
+            live.store(count, Ordering::Relaxed);
         }
     }
 
