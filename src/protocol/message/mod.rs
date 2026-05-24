@@ -1,16 +1,27 @@
-use std::borrow::Borrow;
+//! The `Message` envelope + its value types.
+//!
+//! - [`MessageBody`] ([`body`]) and [`MessageId`] ([`id`]) — the
+//!   validated newtypes the envelope carries.
+//! - [`Message`] (this file) — the JSON wire envelope, its
+//!   [`MessageKind`] / [`PresenceSubtype`] tags, the constructors, and
+//!   (de)serialization.
+
 use std::fmt;
-use std::str::FromStr;
 
 use anyhow::{Context, Result, bail};
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 use crate::util::clock;
 
 use super::nickname::Nickname;
 use super::swarm::SwarmId;
+
+mod body;
+mod id;
+
+pub use body::{BodyError, MessageBody};
+pub use id::{IdError, MessageId};
 
 /// Maximum serialized message size — a network-wide wire contract kept
 /// under iroh-gossip's payload budget so a message we accept always fits
@@ -18,86 +29,6 @@ use super::swarm::SwarmId;
 /// in the shared crate; the compile-time assertion below guards the
 /// relationship against the live gossip constant.
 pub(crate) use ahs_shared::MAX_MESSAGE_SIZE;
-
-// ── MessageBody ──────────────────────────────────────────────────
-
-/// A protocol message body — UTF-8 text. Newlines and tabs are allowed
-/// (multi-line snippets); other control characters are rejected. Empty
-/// is legal: presence and `PeerInfo` messages use it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct MessageBody(String);
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BodyError(String);
-
-impl fmt::Display for BodyError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "message body must not contain control characters other than tab/newline, got {:?}",
-            self.0
-        )
-    }
-}
-
-impl std::error::Error for BodyError {}
-
-impl MessageBody {
-    /// Construct a body. Accepts any UTF-8 text; the only restriction is
-    /// control characters other than `\t`/`\n`/`\r`.
-    ///
-    /// # Errors
-    /// Returns [`BodyError`] if `value` contains a disallowed control
-    /// character (e.g. NUL or other C0/C1 controls).
-    pub fn new(value: impl Into<String>) -> Result<Self, BodyError> {
-        let value = value.into();
-        if value
-            .chars()
-            .any(|ch| ch.is_control() && !matches!(ch, '\n' | '\t' | '\r'))
-        {
-            return Err(BodyError(value));
-        }
-        Ok(Self(value))
-    }
-
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl fmt::Display for MessageBody {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-impl FromStr for MessageBody {
-    type Err = BodyError;
-    fn from_str(text: &str) -> Result<Self, Self::Err> {
-        Self::new(text)
-    }
-}
-
-impl AsRef<str> for MessageBody {
-    fn as_ref(&self) -> &str {
-        &self.0
-    }
-}
-
-impl AsRef<[u8]> for MessageBody {
-    fn as_ref(&self) -> &[u8] {
-        self.0.as_bytes()
-    }
-}
-
-#[cfg(test)]
-impl From<&str> for MessageBody {
-    fn from(text: &str) -> Self {
-        Self::new(text).expect("invalid message body in test fixture")
-    }
-}
 
 /// Compile-time tripwire: a serialized message up to `MAX_MESSAGE_SIZE`
 /// must fit a single iroh-gossip message, with room for gossip's
@@ -110,162 +41,6 @@ const _: () = assert!(
     MAX_MESSAGE_SIZE + 256 <= iroh_gossip::proto::DEFAULT_MAX_MESSAGE_SIZE,
     "MAX_MESSAGE_SIZE leaves too little room under iroh-gossip's DEFAULT_MAX_MESSAGE_SIZE"
 );
-
-#[cfg(test)]
-mod body_tests {
-    use super::MessageBody;
-
-    #[test]
-    fn new_accepts_ascii() {
-        MessageBody::new("hello world").unwrap();
-        MessageBody::new("").unwrap();
-        MessageBody::new("special chars: !@#$%^&*()").unwrap();
-    }
-
-    #[test]
-    fn new_accepts_unicode() {
-        MessageBody::new("héllo").unwrap();
-        MessageBody::new("emoji 🎉").unwrap();
-        MessageBody::new("日本語のメッセージ").unwrap();
-    }
-
-    #[test]
-    fn new_accepts_newline_and_tab() {
-        MessageBody::new("line one\nline two").unwrap();
-        MessageBody::new("col1\tcol2").unwrap();
-        MessageBody::new("crlf\r\nline").unwrap();
-    }
-
-    #[test]
-    fn new_rejects_control_chars() {
-        assert!(MessageBody::new("nul\0byte").is_err());
-        assert!(MessageBody::new("bell\u{7}char").is_err());
-    }
-
-    #[test]
-    fn serde_transparent_round_trip() {
-        let body = MessageBody::from("hello");
-        let json = serde_json::to_string(&body).unwrap();
-        assert_eq!(json, "\"hello\"");
-        let parsed: MessageBody = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed, body);
-    }
-}
-
-// ── MessageId ────────────────────────────────────────────────────
-
-/// A protocol message identifier — UUID v4 string form.
-///
-/// Construction goes through `new` (validates UUID format) or `random`
-/// (mints a fresh v4). The newtype prevents argument-order confusion
-/// between `id` and `after`-cursor parameters that carry the same kind
-/// of value.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct MessageId(String);
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct IdError(String);
-
-impl fmt::Display for IdError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "invalid message id: {:?}", self.0)
-    }
-}
-
-impl std::error::Error for IdError {}
-
-impl MessageId {
-    pub(crate) fn new(value: impl Into<String>) -> Result<Self, IdError> {
-        let value = value.into();
-        Uuid::parse_str(&value).map_err(|_| IdError(value.clone()))?;
-        Ok(Self(value))
-    }
-
-    pub(crate) fn random() -> Self {
-        Self(Uuid::new_v4().to_string())
-    }
-
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl fmt::Display for MessageId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-impl FromStr for MessageId {
-    type Err = IdError;
-    fn from_str(text: &str) -> Result<Self, Self::Err> {
-        Self::new(text)
-    }
-}
-
-impl AsRef<str> for MessageId {
-    fn as_ref(&self) -> &str {
-        &self.0
-    }
-}
-
-impl Borrow<str> for MessageId {
-    fn borrow(&self) -> &str {
-        &self.0
-    }
-}
-
-#[cfg(test)]
-impl From<&str> for MessageId {
-    fn from(text: &str) -> Self {
-        Self::new(text).expect("invalid message id in test fixture")
-    }
-}
-
-#[cfg(test)]
-mod id_tests {
-    use super::MessageId;
-
-    #[test]
-    fn new_accepts_uuid_v4() {
-        let id = MessageId::new("550e8400-e29b-41d4-a716-446655440000").unwrap();
-        assert_eq!(id.as_str(), "550e8400-e29b-41d4-a716-446655440000");
-    }
-
-    #[test]
-    fn new_rejects_garbage() {
-        assert!(MessageId::new("not-a-uuid").is_err());
-        assert!(MessageId::new("").is_err());
-        assert!(MessageId::new("550e8400").is_err());
-    }
-
-    #[test]
-    fn random_produces_valid_id() {
-        let first = MessageId::random();
-        let second = MessageId::random();
-        assert_ne!(first, second);
-        MessageId::new(first.as_str()).expect("random must round-trip through new");
-    }
-
-    #[test]
-    fn from_str_works_for_clap() {
-        let id: MessageId = "550e8400-e29b-41d4-a716-446655440000".parse().unwrap();
-        assert_eq!(id.as_str(), "550e8400-e29b-41d4-a716-446655440000");
-    }
-
-    #[test]
-    fn serde_transparent_round_trip() {
-        let id = MessageId::random();
-        let json = serde_json::to_string(&id).unwrap();
-        assert_eq!(json, format!("\"{}\"", id.as_str()));
-        let parsed: MessageId = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed, id);
-    }
-}
-
-// ── Message ──────────────────────────────────────────────────────
 
 /// Protocol version embedded in every message.
 pub(crate) const VERSION: &str = "1.0";
