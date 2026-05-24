@@ -541,6 +541,18 @@ the commit and tag first.
    `Cargo.toml` and builds binaries for Linux (x86_64 + aarch64), macOS
    (Intel + Apple Silicon), and Windows (x86_64), attaching them to the
    GitHub Release.
+4. **Update the Homebrew formula** (`Formula/agent-habilis-swarm.rb`). The
+   release workflow does **not** touch it, so after the archives are attached
+   to the GitHub Release: bump `version` to match the tag, and replace each
+   `sha256` with the published archive's checksum. The formula's URLs
+   interpolate `#{version}`, so the `version` stanza must be present and
+   correct or `brew` can't resolve the download URL. Compute each checksum
+   with:
+   ```bash
+   shasum -a 256 ahs-v<version>-<target>.tar.gz
+   ```
+   for the four `darwin`/`linux-musl` targets the formula lists, then commit
+   the formula change. (Manual today; can be folded into `release.yml` later.)
 
 ## Code Style
 

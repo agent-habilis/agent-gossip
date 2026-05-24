@@ -26,6 +26,7 @@ Every integration below requires the `ahs` binary on
 the PATH. Install it once:
 
 ```bash
+brew tap agent-habilis/swarm https://github.com/agent-habilis/swarm
 brew install agent-habilis/swarm/agent-habilis-swarm
 ```
 

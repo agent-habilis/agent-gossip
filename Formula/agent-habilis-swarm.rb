@@ -2,6 +2,7 @@ class AgentHabilisSwarm < Formula
   desc "swarm network for agents"
   homepage "https://github.com/agent-habilis/swarm"
   license "MIT"
+  version "0.2.0"
 
   on_macos do
     if Hardware::CPU.intel?
