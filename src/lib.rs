@@ -61,7 +61,8 @@ pub use protocol::message::{
 };
 pub use protocol::nickname::{Nickname, NicknameError};
 pub use protocol::swarm::{
-    NameError, RelayLadder, RelayLadderError, SwarmId, SwarmIdError, SwarmName,
+    LookupSet, NameError, RelayLadder, RelayLadderError, RelaySelection, SwarmId, SwarmIdError,
+    SwarmName,
 };
 pub use resolver::{JoinTarget, JoinTargetError};
 

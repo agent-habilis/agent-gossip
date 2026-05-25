@@ -65,16 +65,6 @@ impl LookupOpts {
         }
     }
 
-    /// Swap in a custom relay ladder (empty ⇒ leave the pinned default).
-    /// Used by the embed/MCP create paths that take a relay as text.
-    #[must_use]
-    pub(crate) fn with_relay(mut self, ladder: Vec<RelayUrl>) -> Self {
-        if !ladder.is_empty() {
-            self.relay = RelayChoice::Custom(ladder);
-        }
-        self
-    }
-
     /// True when nothing reaches off-machine — the swarm is loopback-only.
     pub(crate) fn is_loopback(&self) -> bool {
         !self.mdns && !self.dht && self.relay == RelayChoice::Disabled
@@ -222,15 +212,19 @@ impl SwarmConfig {
     }
 }
 
-/// CLI `--relay` intent: absent / bare / valued. Resolved into a
-/// [`RelayChoice`] by [`resolve_lookups`]. `Custom` carries the ordered
-/// ladder parsed from a comma-separated `--relay a,b,c`.
+/// Relay intent in a [`LookupSet`]: absent / default / custom. Resolved
+/// into a [`RelayChoice`] by [`resolve_lookups`]. `Custom` carries the
+/// ordered [`RelayLadder`] (iroh-free), so this enum is part of the public
+/// embed surface.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub(crate) enum RelaySelection {
+pub enum RelaySelection {
+    /// No relay (the CLI `--relay` flag absent).
     #[default]
     Unset,
+    /// The pinned default n0 prod relay ladder (bare `--relay`).
     Default,
-    Custom(Vec<RelayUrl>),
+    /// A custom ordered ladder (`--relay a,b,c`).
+    Custom(RelayLadder),
 }
 
 impl RelaySelection {
@@ -276,18 +270,32 @@ impl DirectorySelection {
     }
 }
 
+/// Advertise was requested on a loopback-only swarm. A directory listing
+/// requires a swarm reachable across machines, so this is a hard error
+/// (never a silent no-op). Typed so callers can classify it — the MCP
+/// server maps it to `invalid_params`, the CLI to an `anyhow` bail.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AdvertiseRequiresReachable;
+
+impl fmt::Display for AdvertiseRequiresReachable {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("advertise needs a reachable swarm; enable a lookup (e.g. public)")
+    }
+}
+
+impl std::error::Error for AdvertiseRequiresReachable {}
+
 /// `--advertise` lists the swarm in a public directory, so it requires a
-/// swarm that is actually reachable across machines. Advertising a
-/// loopback-only swarm is a hard error, never a silent no-op.
+/// swarm that is actually reachable across machines.
 pub(crate) fn validate_advertise(
     advertise: &DirectorySelection,
     lookups: &LookupOpts,
-) -> Result<()> {
+) -> Result<(), AdvertiseRequiresReachable> {
     if advertise.is_set()
         && lookups.is_loopback()
         && !crate::util::tuning::directory_private_for_test()
     {
-        bail!("--advertise needs a reachable swarm; enable a lookup (e.g. --public)");
+        return Err(AdvertiseRequiresReachable);
     }
     Ok(())
 }
@@ -296,7 +304,7 @@ pub(crate) fn validate_advertise(
 /// address-lookups; `relay` is the connectivity/relay-direct rendezvous
 /// path.
 #[derive(Debug, Clone, Default)]
-pub(crate) struct LookupSet {
+pub struct LookupSet {
     pub mdns: bool,
     pub dht: bool,
     pub relay: RelaySelection,
@@ -319,7 +327,7 @@ pub(crate) fn resolve_lookups(public: bool, lookups: LookupSet) -> LookupOpts {
         let relay = match lookups.relay {
             RelaySelection::Unset => RelayChoice::Disabled,
             RelaySelection::Default => RelayChoice::Pinned,
-            RelaySelection::Custom(ladder) => RelayChoice::Custom(ladder),
+            RelaySelection::Custom(ladder) => RelayChoice::Custom(ladder.as_urls().to_vec()),
         };
         LookupOpts {
             mdns: lookups.mdns,
@@ -419,28 +427,6 @@ impl fmt::Display for RelayLadder {
     }
 }
 
-impl LookupOpts {
-    /// Resolve the embed/MCP create shape — a single `public` toggle plus
-    /// an optional [`RelayLadder`] — into the effective lookups. `public`
-    /// enables the all-on preset, refined by a custom relay; a relay
-    /// without `public` is a hard error, not a silent drop (it would
-    /// otherwise be dropped on a loopback-only swarm). The CLI uses
-    /// [`resolve_lookups`] instead (it has the granular allowlist).
-    pub(crate) fn from_public_relay(public: bool, relay: Option<&RelayLadder>) -> Result<Self> {
-        if !public && relay.is_some() {
-            bail!("a relay requires public");
-        }
-        if public {
-            let ladder = relay
-                .map(|ladder| ladder.as_urls().to_vec())
-                .unwrap_or_default();
-            Ok(LookupOpts::public_preset().with_relay(ladder))
-        } else {
-            Ok(LookupOpts::loopback())
-        }
-    }
-}
-
 #[cfg(test)]
 mod lookup_tests {
     use super::{
@@ -478,14 +464,14 @@ mod lookup_tests {
     }
 
     #[test]
-    fn from_public_relay_requires_public() {
+    fn naming_relay_enables_it_without_public() {
+        // Granular model: naming any lookup uses only those, regardless of
+        // `public`. A relay alone yields a reachable (non-loopback) swarm.
         let ladder: RelayLadder = "https://a.example".parse().unwrap();
-        assert!(
-            LookupOpts::from_public_relay(false, Some(&ladder)).is_err(),
-            "a relay without public is a hard error"
-        );
-        let opts = LookupOpts::from_public_relay(true, Some(&ladder)).unwrap();
-        assert_eq!(opts.relay, RelayChoice::Custom(ladder.as_urls().to_vec()));
+        let opts = resolve_lookups(false, lookups(false, false, RelaySelection::Custom(ladder)));
+        assert!(!opts.mdns && !opts.dht);
+        assert!(!opts.is_loopback(), "a named relay makes the swarm reachable");
+        assert!(matches!(opts.relay, RelayChoice::Custom(_)));
     }
 
     #[test]
@@ -522,14 +508,8 @@ mod lookup_tests {
     fn valued_relay_preserves_ladder_order() {
         let rung0: iroh::RelayUrl = "https://a.example".parse().unwrap();
         let rung1: iroh::RelayUrl = "https://b.example".parse().unwrap();
-        let opts = resolve_lookups(
-            false,
-            lookups(
-                false,
-                false,
-                RelaySelection::Custom(vec![rung0.clone(), rung1.clone()]),
-            ),
-        );
+        let ladder: RelayLadder = "https://a.example,https://b.example".parse().unwrap();
+        let opts = resolve_lookups(false, lookups(false, false, RelaySelection::Custom(ladder)));
         assert_eq!(opts.relay, RelayChoice::Custom(vec![rung0, rung1]));
     }
 
@@ -610,7 +590,7 @@ mod directory_selection_tests {
         // Loopback-only + advertising is rejected.
         let error =
             validate_advertise(&DirectorySelection::Default, &LookupOpts::loopback()).unwrap_err();
-        assert!(error.to_string().contains("--advertise"), "got: {error}");
+        assert!(error.to_string().contains("reachable"), "got: {error}");
         // Reachable + advertising, and loopback + not advertising, are fine.
         assert!(
             validate_advertise(&DirectorySelection::Default, &LookupOpts::public_preset()).is_ok()

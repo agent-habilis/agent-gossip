@@ -8,14 +8,13 @@ use anyhow::Result;
 use serde::Deserialize;
 
 use crate::daemon::run as run_event_loop;
-use crate::daemon::setup::{SetupKind, setup_swarm};
+use crate::daemon::setup::setup_swarm;
+use crate::daemon::{CreateParams, JoinParams, Resolved};
 use crate::embed::spawn_advertiser;
 use crate::output::{Output, OutputMode};
-use crate::protocol::swarm::{
-    DirectorySelection, Swarm, SwarmConfig, SwarmName, resolve_lookups, validate_advertise,
-};
+use crate::protocol::swarm::{SwarmConfig, SwarmName, resolve_lookups};
 use crate::protocol::{MessageId, Nickname};
-use crate::resolver::{self, JoinTarget};
+use crate::resolver::JoinTarget;
 use crate::transport::ipc::{self, IpcCommand};
 
 mod args;
@@ -50,7 +49,7 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
         Commands::Join { opts } => {
             reject_id_encoded_flag("--public", opts.public)?;
             reject_id_encoded_flag("--name", opts.name.is_some())?;
-            join(&opts.swarm, opts.nickname, opts.shared).await
+            join(opts.swarm, opts.nickname, opts.shared).await
         }
         Commands::Msg { opts } => msg(opts).await,
         Commands::Poll { opts } => poll(opts).await,
@@ -60,15 +59,16 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
     }
 }
 
-/// Build the output sink, resolve the author, set up the swarm, and
-/// run the event loop. The shared spine of `create` and `join`.
-async fn run_session(
-    kind: SetupKind,
-    shared: SharedServerOpts,
-    nickname: Option<Nickname>,
-    advertise: DirectorySelection,
-) -> Result<()> {
-    let author = nickname.unwrap_or_else(Nickname::random);
+/// Build the output sink, set up the swarm, and run the event loop. The
+/// shared spine of `create` and `join` — `resolved` carries the
+/// already-resolved [`SetupKind`](crate::daemon::setup::SetupKind), author,
+/// and advertise directory (see [`crate::daemon::params`]).
+async fn run_session(resolved: Resolved, shared: SharedServerOpts) -> Result<()> {
+    let Resolved {
+        kind,
+        author,
+        advertise_directory,
+    } = resolved;
     let out = Output::new(
         shared.output.into(),
         shared.filter_self,
@@ -87,9 +87,7 @@ async fn run_session(
     // joins the directory over the directory's own config. The handle is
     // held for the session's lifetime — on the CLI the process exits (via
     // signal) before it would drop, which tears the task down.
-    let _advertiser = advertise
-        .directory()
-        .map(|directory| spawn_advertiser(&mut cfg, directory));
+    let _advertiser = advertise_directory.map(|directory| spawn_advertiser(&mut cfg, directory));
     // First point where swarm id + nickname are known — attach the
     // buffered log sink here (see `logging`).
     crate::logging::attach(&cfg.swarm, &cfg.author);
@@ -98,40 +96,36 @@ async fn run_session(
 
 /// Create a new swarm, print its identifier, and start listening.
 async fn create(opts: CreateOpts) -> Result<()> {
-    let lookups = resolve_lookups(opts.public, opts.lookups.to_set());
+    // Borrow-then-move: resolve the lookups and advertise selection (which
+    // borrow `opts`) before moving `opts.name`/`opts.nickname` out.
     let advertise = opts.advertise_selection();
-    // Reject before any setup work — never a silent no-op.
-    validate_advertise(&advertise, &lookups)?;
-    let name = opts.name.unwrap_or_else(SwarmName::random);
     let config = SwarmConfig {
         rate_limit_per_min: opts.rate_limit,
-        lookups,
+        lookups: resolve_lookups(opts.public, opts.lookups.to_set()),
     };
-    let kind = SetupKind::Create {
-        name,
+    // `resolve` validates `--advertise` against the config (never a silent
+    // no-op) before any setup work.
+    let resolved = CreateParams {
+        name: opts.name.unwrap_or_else(SwarmName::random),
+        nickname: opts.nickname,
         config,
-        advertise: advertise.directory(),
-    };
-    run_session(kind, opts.shared, opts.nickname, advertise).await
+        advertise,
+    }
+    .resolve()?;
+    run_session(resolved, opts.shared).await
 }
 
 /// Join an existing swarm by its identifier (ahs...), a domain, or a
 /// supported git repo URL. The swarm's config (lookups + rate limit) is
 /// decoded from the id — `join` takes no lookup/rate flags.
 async fn join(
-    target: &JoinTarget,
+    target: JoinTarget,
     nickname: Option<Nickname>,
     shared: SharedServerOpts,
 ) -> Result<()> {
-    let swarm: Swarm = resolver::resolve(target).await?;
     // `join` never advertises — that is a create-time decision.
-    run_session(
-        SetupKind::Join { swarm },
-        shared,
-        nickname,
-        DirectorySelection::Unset,
-    )
-    .await
+    let resolved = JoinParams { target, nickname }.resolve().await?;
+    run_session(resolved, shared).await
 }
 
 #[derive(Deserialize)]

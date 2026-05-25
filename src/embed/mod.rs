@@ -7,6 +7,7 @@
 //! broadcast path the CLI/IPC uses. No `iroh` type is exposed: targets
 //! are resolved internally from a string (`ahs…` / domain / git URL).
 
+use std::fmt;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -15,14 +16,16 @@ use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio::task::JoinHandle;
 
 use crate::daemon::setup::{SetupKind, setup_swarm};
-use crate::daemon::{CoHostPolicy, DriverMode, EventLoopConfig, SendRequest};
+use crate::daemon::{
+    CoHostPolicy, CreateParams, DriverMode, EventLoopConfig, JoinParams, Resolved, SessionRequest,
+};
 use crate::directory::{self, Listing, ListingChange, Listings, directory_swarm};
 use crate::output::{Output, OutputEvent};
 use crate::protocol::swarm::{
-    DEFAULT_DIRECTORY, LookupOpts, RelayLadder, Swarm, SwarmConfig, SwarmName,
+    DEFAULT_DIRECTORY, DirectorySelection, LookupSet, Swarm, SwarmConfig, SwarmName, resolve_lookups,
 };
 use crate::protocol::{Message, MessageBody, MessageId, Nickname, SwarmId};
-use crate::resolver::{self, JoinTarget};
+use crate::resolver::JoinTarget;
 use crate::util::tuning::{
     DEFAULT_MAX_DIRECT_PEERS, EMBED_INBOUND_CAP, advertise_interval_secs, directory_expiry_secs,
 };
@@ -58,8 +61,9 @@ impl JoinConfig {
 }
 
 /// How to create a new swarm. Built from validated domain types
-/// ([`SwarmName`], [`Nickname`], [`RelayLadder`]); the iroh `RelayUrl`
-/// stays hidden behind [`RelayLadder`], so the surface is iroh-free.
+/// ([`SwarmName`], [`Nickname`], [`LookupSet`]); the iroh `RelayUrl`
+/// stays hidden behind [`RelayLadder`](crate::RelayLadder) inside the
+/// lookups, so the surface is iroh-free.
 #[derive(Debug, Clone)]
 pub struct CreateConfig {
     /// The swarm name (validated): 1..=32 UTF-8 characters (any
@@ -68,14 +72,15 @@ pub struct CreateConfig {
     pub name: SwarmName,
     /// Local nickname. `None` mints a random `word-word` one.
     pub nickname: Option<Nickname>,
-    /// `true` = public (cross-machine networking, pkarr lookup); `false`
-    /// = private (localhost only). Default `false`.
+    /// `true` ⇒ the all-on lookup preset (mDNS + DHT + default relay
+    /// ladder) when `lookups` names nothing; `false` ⇒ loopback only.
+    /// Sugar over `lookups`, mirroring the CLI `--public`. Default `false`.
     pub public: bool,
-    /// Custom relay ladder (one URL or `a,b,c` in preference order),
-    /// honored only with `public`. `None` ⇒ the default n0 prod ladder.
-    /// Build by parsing a string (`"a,b".parse()?`); validated at
-    /// construction.
-    pub relay: Option<RelayLadder>,
+    /// Granular lookup allowlist (`mdns`/`dht`/`relay`). Naming any one
+    /// uses *only* those (relay defaults off); naming none falls back to
+    /// `public`. Default [`LookupSet::default`] (all off). Mirrors the
+    /// CLI `--mdns`/`--dht`/`--relay` flags.
+    pub lookups: LookupSet,
     /// List this swarm in a directory so discoverers can find it
     /// without its `ahs…` id. Requires `public`. Default `false`.
     pub advertise: bool,
@@ -99,7 +104,7 @@ impl CreateConfig {
             name,
             nickname: None,
             public: false,
-            relay: None,
+            lookups: LookupSet::default(),
             advertise: false,
             directory: None,
             rate_limit_per_min: ahs_shared::RATE_LIMIT_PER_MIN,
@@ -108,215 +113,234 @@ impl CreateConfig {
     }
 }
 
-/// A live swarm membership. The event loop runs as a background task
-/// for the lifetime of this value; dropping it (or calling
-/// [`SwarmSession::leave`]) winds the loop down.
+/// Why [`SwarmSession::create`] failed, classified so callers can react:
+/// the MCP server maps [`CreateError::AdvertiseRequiresReachable`] to an
+/// `invalid_params` error and [`CreateError::Setup`] to an internal one.
 #[derive(Debug)]
-pub struct SwarmSession {
+pub enum CreateError {
+    /// `advertise` was requested on a loopback-only swarm — a directory
+    /// listing requires a swarm reachable across machines.
+    AdvertiseRequiresReachable,
+    /// Endpoint / gossip / setup failure.
+    Setup(anyhow::Error),
+}
+
+impl fmt::Display for CreateError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            // Single source of truth for the message: the validator's error.
+            CreateError::AdvertiseRequiresReachable => {
+                write!(formatter, "{}", crate::protocol::swarm::AdvertiseRequiresReachable)
+            }
+            CreateError::Setup(error) => write!(formatter, "{error}"),
+        }
+    }
+}
+
+impl std::error::Error for CreateError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            CreateError::AdvertiseRequiresReachable => None,
+            CreateError::Setup(error) => {
+                let source: &(dyn std::error::Error + 'static) = error.as_ref();
+                Some(source)
+            }
+        }
+    }
+}
+
+/// Why [`SwarmSession::join`] failed — the symmetric counterpart to
+/// [`CreateError`]. `Resolve` is a bad target (an `ahs…` id, a domain, or a
+/// git-repo URL and its well-known file); `Setup` is an endpoint/gossip
+/// failure. The MCP server maps both to an internal error.
+#[derive(Debug)]
+pub enum JoinError {
+    /// The target could not be resolved into a swarm.
+    Resolve(anyhow::Error),
+    /// Endpoint / gossip / setup failure.
+    Setup(anyhow::Error),
+}
+
+impl fmt::Display for JoinError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            JoinError::Resolve(error) | JoinError::Setup(error) => write!(formatter, "{error}"),
+        }
+    }
+}
+
+impl std::error::Error for JoinError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        let (JoinError::Resolve(error) | JoinError::Setup(error)) = self;
+        let source: &(dyn std::error::Error + 'static) = error.as_ref();
+        Some(source)
+    }
+}
+
+/// The captured-output sink plus its single-consumer receiver — the embed
+/// facade's [`SwarmSession::events`] stream.
+fn capture() -> (Output, mpsc::UnboundedReceiver<OutputEvent>) {
+    let (events_tx, events_rx) = mpsc::unbounded_channel();
+    (Output::capture(events_tx), events_rx)
+}
+
+/// Resolve + set up a create: the ready [`EventLoopConfig`] plus the spawned
+/// directory advertiser task (if `advertise` was requested). The caller picks
+/// the `output` sink (captured for [`SwarmSession`], silent for the MCP core).
+///
+/// # Errors
+/// [`CreateError::AdvertiseRequiresReachable`] / [`CreateError::Setup`].
+async fn create_setup(
+    cfg: CreateConfig,
+    output: Output,
+) -> Result<(EventLoopConfig, Option<JoinHandle<()>>), CreateError> {
+    let config = SwarmConfig {
+        rate_limit_per_min: cfg.rate_limit_per_min,
+        lookups: resolve_lookups(cfg.public, cfg.lookups),
+    };
+    // Map embed's `advertise: bool` + `directory` onto the shared
+    // `DirectorySelection`; `resolve` validates it against the config
+    // (loopback-only advertise is rejected before any setup work).
+    let advertise = match (cfg.advertise, cfg.directory) {
+        (false, _) => DirectorySelection::Unset,
+        (true, None) => DirectorySelection::Default,
+        (true, Some(directory)) => DirectorySelection::Named(directory),
+    };
+    let max_peers = cfg.max_peers;
+    let Resolved {
+        kind,
+        author,
+        advertise_directory,
+    } = CreateParams {
+        name: cfg.name,
+        nickname: cfg.nickname,
+        config,
+        advertise,
+    }
+    .resolve()
+    .map_err(|_| CreateError::AdvertiseRequiresReachable)?;
+    let mut elc = setup_swarm(kind, author, /* interactive */ false, max_peers, None, output)
+        .await
+        .map_err(|error| CreateError::Setup(error.context("setup_swarm failed")))?;
+    // When advertising, start the re-broadcast task (tied to this session);
+    // it joins the directory over the directory's own config.
+    let advertiser = advertise_directory.map(|directory| spawn_advertiser(&mut elc, directory));
+    Ok((elc, advertiser))
+}
+
+/// Resolve + set up a join: the ready [`EventLoopConfig`]. The caller picks
+/// the `output` sink.
+///
+/// # Errors
+/// [`JoinError::Resolve`] / [`JoinError::Setup`].
+async fn join_setup(cfg: JoinConfig, output: Output) -> Result<EventLoopConfig, JoinError> {
+    let max_peers = cfg.max_peers;
+    let Resolved { kind, author, .. } = JoinParams {
+        target: cfg.target,
+        nickname: cfg.nickname,
+    }
+    .resolve()
+    .await
+    .map_err(JoinError::Resolve)?;
+    setup_swarm(kind, author, /* interactive */ false, max_peers, None, output)
+        .await
+        .map_err(|error| JoinError::Setup(error.context("setup_swarm failed")))
+}
+
+/// The in-process session core shared by the public [`SwarmSession`] (embed
+/// facade) and the MCP server. Owns the typed request channel, the quit
+/// signal, the event-loop task, and the optional advertiser, and drives
+/// `send`/`fetch`/`leave`. The two frontends differ only in *presentation*:
+/// `SwarmSession` adds the inbound broadcast + captured-event stream; the
+/// MCP server wraps this core directly (poll-only, silent output).
+#[derive(Debug)]
+pub(crate) struct InProcessSession {
     swarm_id: SwarmId,
+    name: SwarmName,
     nickname: Nickname,
-    msg_tx: broadcast::Sender<Message>,
-    send_tx: mpsc::Sender<SendRequest>,
+    req_tx: mpsc::Sender<SessionRequest>,
     quit_tx: mpsc::Sender<()>,
-    /// Captured structured output events. Single-consumer (mpsc), so
-    /// `events()` hands it out exactly once.
-    events_rx: Option<mpsc::UnboundedReceiver<OutputEvent>>,
     task: Option<JoinHandle<anyhow::Result<()>>>,
-    /// The directory re-broadcast task, when this session was created
-    /// with `advertise`. Tied to the session's lifetime — aborted on
-    /// `leave`/drop so we don't keep advertising a swarm we left.
+    /// Directory re-broadcast task (when created with `advertise`); aborted
+    /// on `leave`/drop so we stop advertising a swarm we left.
     advertiser: Option<JoinHandle<()>>,
 }
 
-impl SwarmSession {
-    /// Resolve `cfg.target`, join the swarm, and spawn the event loop
-    /// in the background. Returns once the session is ready — the
-    /// resolved [`SwarmSession::swarm_id`] and effective
-    /// [`SwarmSession::nickname`] are known.
-    ///
-    /// Output is captured per-session into [`SwarmSession::events`]
-    /// (the embedder owns stdout/stderr; nothing is printed). Unlike
-    /// the old process-global switch, each session has an independent
-    /// sink, so multiple in-process sessions don't interfere.
-    ///
-    /// # Errors
-    /// Fails if the target cannot be resolved, the endpoint/gossip
-    /// setup fails, or the join times out (bootstrap peer unreachable).
-    pub async fn join(cfg: JoinConfig) -> anyhow::Result<Self> {
-        let swarm = resolver::resolve(&cfg.target).await?;
-        let author = cfg.nickname.unwrap_or_else(Nickname::random);
-        let (events_tx, events_rx) = mpsc::unbounded_channel();
-        let elc = setup_swarm(
-            SetupKind::Join { swarm },
-            author,
-            /* interactive */ false,
-            cfg.max_peers,
-            /* state_file */ None,
-            Output::capture(events_tx),
-        )
-        .await?;
-        Ok(Self::spawn_session_from(elc, events_rx, None))
-    }
-
-    /// Join an already-decoded [`Swarm`] with an explicit lookup set and
-    /// co-host policy — the internal path for directory sessions.
-    /// Unlike [`SwarmSession::join`], it skips the string resolve and
-    /// the default lookups, and lets the caller pick the beacon role:
-    /// the advertiser passes [`CoHostPolicy::Eager`] (be the directory's
-    /// beacon from t=0), the [`Directory`] consumer passes
-    /// [`CoHostPolicy::Never`] (it only dials an existing beacon).
-    /// `pub(crate)`: keeps `Swarm`/`LookupOpts` off the iroh-free surface.
-    ///
-    /// # Errors
-    /// Fails if endpoint/gossip setup fails or the join times out.
-    pub(crate) async fn join_decoded(
-        swarm: Swarm,
-        nickname: Option<Nickname>,
-        cohost: CoHostPolicy,
-    ) -> anyhow::Result<Self> {
-        let author = nickname.unwrap_or_else(Nickname::random);
-        let (events_tx, events_rx) = mpsc::unbounded_channel();
-        let mut elc = setup_swarm(
-            SetupKind::Join { swarm },
-            author,
-            /* interactive */ false,
-            DEFAULT_MAX_DIRECT_PEERS,
-            /* state_file */ None,
-            Output::capture(events_tx),
-        )
-        .await?;
-        elc.cohost = cohost;
-        Ok(Self::spawn_session_from(elc, events_rx, None))
-    }
-
-    /// Create a new swarm and spawn its event loop in the background.
-    /// `cfg.relay` is already a validated [`RelayLadder`].
-    ///
-    /// # Errors
-    /// Fails if a relay is given without `public`, or endpoint/gossip
-    /// setup fails.
-    pub async fn create(cfg: CreateConfig) -> anyhow::Result<Self> {
-        let name = cfg.name;
-        let config = SwarmConfig {
-            rate_limit_per_min: cfg.rate_limit_per_min,
-            lookups: LookupOpts::from_public_relay(cfg.public, cfg.relay.as_ref())?,
-        };
-        // Resolve the advertise directory up front so an invalid directory /
-        // loopback-only advertise fails before the session is spawned.
-        let directory =
-            resolve_advertise_directory(cfg.advertise, cfg.directory, &config.lookups)?;
-        let author = cfg.nickname.unwrap_or_else(Nickname::random);
-        let (events_tx, events_rx) = mpsc::unbounded_channel();
-        let mut elc = setup_swarm(
-            SetupKind::Create {
-                name,
-                config,
-                advertise: directory.clone(),
-            },
-            author,
-            /* interactive */ false,
-            cfg.max_peers,
-            /* state_file */ None,
-            Output::capture(events_tx),
-        )
-        .await?;
-        // When advertising, start the re-broadcast task (tied to this
-        // session); it joins the directory over the directory's own config.
-        let advertiser =
-            directory.map(|directory_name| spawn_advertiser(&mut elc, directory_name));
-        Ok(Self::spawn_session_from(elc, events_rx, advertiser))
-    }
-
-    /// Wire the embed channels into `elc`, spawn the event loop, and
-    /// build the session handle. Shared by `join` and `create`.
-    fn spawn_session_from(
+impl InProcessSession {
+    /// Wire the typed channels into `elc`, spawn the event loop, and build
+    /// the core. `push` is `Some` to fan inbound traffic out to a broadcast
+    /// ([`SwarmSession::messages`]), `None` for a poll-only consumer (MCP).
+    fn spawn(
         mut elc: EventLoopConfig,
-        events_rx: mpsc::UnboundedReceiver<OutputEvent>,
         advertiser: Option<JoinHandle<()>>,
+        push: Option<broadcast::Sender<Message>>,
     ) -> Self {
-        let (msg_tx, _initial_rx) = broadcast::channel::<Message>(EMBED_INBOUND_CAP);
-        let (send_tx, send_rx) = mpsc::channel::<SendRequest>(32);
+        let (req_tx, req_rx) = mpsc::channel::<SessionRequest>(32);
         let (quit_tx, quit_rx) = mpsc::channel::<()>(1);
-
-        // A fully in-process session: typed inbound push, a dedicated
-        // outbound-send channel, external quit; no socket, no process
-        // exit. The `DriverMode` makes that the only representable
-        // shape (no stray None/true combination to get wrong).
-        elc.driver = DriverMode::Embed {
-            msg_tx: msg_tx.clone(),
-            send_rx,
+        elc.driver = DriverMode::InProcess {
+            msg_tx: push,
+            req_rx,
             quit_rx,
         };
-
-        // Resolved/effective values — no stdout scraping needed.
         let swarm_id = elc.swarm.clone();
+        let name = elc.name.clone();
         let nickname = elc.author.clone();
-
         let task = tokio::spawn(crate::daemon::run(elc));
-
         Self {
             swarm_id,
+            name,
             nickname,
-            msg_tx,
-            send_tx,
+            req_tx,
             quit_tx,
-            events_rx: Some(events_rx),
             task: Some(task),
             advertiser,
         }
     }
 
-    /// Take the captured structured-event stream
-    /// ([`OutputEvent`]: `ready`, `message`, `presence`, `peer_*`,
-    /// `info`, …). Single-consumer, so this returns the receiver
-    /// **once**; subsequent calls return `None`. Mirrors what the CLI
-    /// would print, as typed values instead of stdout lines.
-    pub fn events(&mut self) -> Option<mpsc::UnboundedReceiver<OutputEvent>> {
-        self.events_rx.take()
+    /// Create a new swarm as a poll-only, silent core (the MCP server).
+    ///
+    /// # Errors
+    /// [`CreateError::AdvertiseRequiresReachable`] / [`CreateError::Setup`].
+    pub(crate) async fn create_poll(cfg: CreateConfig) -> Result<Self, CreateError> {
+        let (elc, advertiser) = create_setup(cfg, Output::silent()).await?;
+        Ok(Self::spawn(elc, advertiser, None))
     }
 
-    /// The resolved swarm identifier.
-    #[must_use]
-    pub fn swarm_id(&self) -> &SwarmId {
+    /// Join an existing swarm as a poll-only, silent core (the MCP server).
+    ///
+    /// # Errors
+    /// [`JoinError::Resolve`] / [`JoinError::Setup`].
+    pub(crate) async fn join_poll(cfg: JoinConfig) -> Result<Self, JoinError> {
+        let elc = join_setup(cfg, Output::silent()).await?;
+        Ok(Self::spawn(elc, None, None))
+    }
+
+    pub(crate) fn swarm_id(&self) -> &SwarmId {
         &self.swarm_id
     }
 
-    /// Our effective nickname in this swarm.
-    #[must_use]
-    pub fn nickname(&self) -> &Nickname {
+    pub(crate) fn name(&self) -> &SwarmName {
+        &self.name
+    }
+
+    pub(crate) fn nickname(&self) -> &Nickname {
         &self.nickname
     }
 
-    /// Subscribe to inbound messages. Each call returns an independent
-    /// receiver that sees traffic sent *after* it subscribed, so
-    /// subscribe before you expect messages. Includes every kind that
-    /// parses — `msg`, `presence` (joined/left/alive), `peer_info`;
-    /// filter as needed. Under sustained lag the bounded ring drops
-    /// the oldest messages and the receiver observes
-    /// [`broadcast::error::RecvError::Lagged`] — by design, so a slow
-    /// consumer never stalls the gossip loop.
-    #[must_use]
-    pub fn messages(&self) -> broadcast::Receiver<Message> {
-        self.msg_tx.subscribe()
-    }
-
-    /// Build, sign and gossip-broadcast a message. `body` is UTF-8 text
-    /// ([`MessageBody::new`] rejects only disallowed control chars).
-    /// `reply` addresses it to a specific peer's nickname. Returns the
-    /// new message id, or `None` when the sender-side rate limiter
-    /// dropped the message (same per-author quota the receiver enforces).
+    /// Build, sign and gossip-broadcast a message; returns the canonical
+    /// [`Message`] the loop built, or `None` when the sender-side rate
+    /// limiter dropped it.
     ///
     /// # Errors
-    /// Fails if the event loop has stopped, or if serialization /
-    /// gossip broadcast fails inside the loop.
-    pub async fn send(
+    /// Fails if the event loop has stopped or dropped the response.
+    pub(crate) async fn send(
         &self,
         body: MessageBody,
         reply: Option<Nickname>,
-    ) -> anyhow::Result<Option<MessageId>> {
+    ) -> anyhow::Result<Option<Message>> {
         let (resp_tx, resp_rx) = oneshot::channel();
-        self.send_tx
-            .send(SendRequest {
+        self.req_tx
+            .send(SessionRequest::Send {
                 body,
                 reply,
                 resp: resp_tx,
@@ -329,17 +353,32 @@ impl SwarmSession {
         }
     }
 
-    /// Clean shutdown: ask the loop to broadcast `Left`, remove its
-    /// state file, and return. Waits up to 3s for the task to wind
-    /// down; on timeout it returns `Ok(())` and the task is left to
-    /// finish detaching.
+    /// Poll the buffered history after `after` (join-horizon filtered).
     ///
     /// # Errors
-    /// Returns an error if the event-loop task panicked or returned an
-    /// error before shutting down.
-    pub async fn leave(mut self) -> anyhow::Result<()> {
-        // Stop advertising first — we're leaving the swarm, so its
-        // listing should age out rather than keep being re-broadcast.
+    /// Fails if the event loop has stopped or dropped the response.
+    pub(crate) async fn fetch(&self, after: Option<MessageId>) -> anyhow::Result<Vec<Message>> {
+        let (resp_tx, resp_rx) = oneshot::channel();
+        self.req_tx
+            .send(SessionRequest::Poll {
+                after,
+                resp: resp_tx,
+            })
+            .await
+            .map_err(|_| anyhow::anyhow!("swarm event loop has stopped"))?;
+        resp_rx
+            .await
+            .map_err(|_| anyhow::anyhow!("swarm event loop dropped the response"))
+    }
+
+    /// Clean shutdown: ask the loop to broadcast `Left` and wind down,
+    /// waiting up to 3s. On timeout returns `Ok(())` and `Drop` detaches.
+    ///
+    /// # Errors
+    /// Returns an error if the event-loop task panicked or returned an error.
+    pub(crate) async fn leave(mut self) -> anyhow::Result<()> {
+        // Stop advertising first — we're leaving, so the listing should age
+        // out rather than keep being re-broadcast.
         if let Some(advertiser) = self.advertiser.take() {
             advertiser.abort();
         }
@@ -359,10 +398,10 @@ impl SwarmSession {
     }
 }
 
-impl Drop for SwarmSession {
+impl Drop for InProcessSession {
     fn drop(&mut self) {
-        // Fallback if `leave()` was never called: abort the loop task
-        // so it doesn't leak. (Mirrors the MCP session's Drop.)
+        // Fallback if `leave()` was never called: abort the loop + advertiser
+        // tasks so they don't leak.
         if let Some(task) = self.task.take() {
             task.abort();
         }
@@ -372,25 +411,157 @@ impl Drop for SwarmSession {
     }
 }
 
-/// Resolve the create-time advertise request into the directory to list in,
-/// or `None` when not advertising. Errors if `advertise` is set on a
-/// non-public swarm (directory listing requires the public network).
-fn resolve_advertise_directory(
-    advertise: bool,
-    directory: Option<SwarmName>,
-    lookups: &LookupOpts,
-) -> anyhow::Result<Option<SwarmName>> {
-    if !advertise {
-        return Ok(None);
+/// A live swarm membership (the public embed facade): the shared
+/// [`InProcessSession`] plus the inbound broadcast and captured-event
+/// stream. Dropping it (or [`SwarmSession::leave`]) winds the loop down.
+#[derive(Debug)]
+pub struct SwarmSession {
+    core: InProcessSession,
+    msg_tx: broadcast::Sender<Message>,
+    /// Captured structured output events. Single-consumer (mpsc), so
+    /// `events()` hands it out exactly once.
+    events_rx: Option<mpsc::UnboundedReceiver<OutputEvent>>,
+}
+
+impl SwarmSession {
+    /// Resolve `cfg.target`, join the swarm, and spawn the event loop in the
+    /// background. Output is captured per-session into
+    /// [`SwarmSession::events`] (the embedder owns stdout/stderr).
+    ///
+    /// # Errors
+    /// [`JoinError::Resolve`] if the target can't be resolved;
+    /// [`JoinError::Setup`] on endpoint/gossip failure.
+    pub async fn join(cfg: JoinConfig) -> Result<Self, JoinError> {
+        let (output, events_rx) = capture();
+        let elc = join_setup(cfg, output).await?;
+        Ok(Self::with_events(elc, None, events_rx))
     }
-    if lookups.is_loopback() && !crate::util::tuning::directory_private_for_test() {
-        anyhow::bail!("advertise needs a reachable swarm; create it with `public`");
+
+    /// Create a new swarm and spawn its event loop in the background.
+    /// `cfg.lookups` is resolved the same granular way the CLI uses.
+    ///
+    /// # Errors
+    /// [`CreateError::AdvertiseRequiresReachable`] if `advertise` is set on a
+    /// loopback-only swarm; [`CreateError::Setup`] on endpoint/gossip failure.
+    pub async fn create(cfg: CreateConfig) -> Result<Self, CreateError> {
+        let (output, events_rx) = capture();
+        let (elc, advertiser) = create_setup(cfg, output).await?;
+        Ok(Self::with_events(elc, advertiser, events_rx))
     }
-    let directory_name = directory
-        .unwrap_or_else(|| {
-            SwarmName::new(DEFAULT_DIRECTORY).expect("DEFAULT_DIRECTORY is a valid swarm name")
-        });
-    Ok(Some(directory_name))
+
+    /// Join an already-decoded [`Swarm`] with an explicit co-host policy —
+    /// the internal directory-session path (the advertiser eager-cohosts; the
+    /// discover consumer never cohosts). `pub(crate)`: keeps `Swarm` off the
+    /// iroh-free surface.
+    ///
+    /// # Errors
+    /// Fails if endpoint/gossip setup fails.
+    pub(crate) async fn join_decoded(
+        swarm: Swarm,
+        nickname: Option<Nickname>,
+        cohost: CoHostPolicy,
+    ) -> anyhow::Result<Self> {
+        let author = nickname.unwrap_or_else(Nickname::random);
+        let (output, events_rx) = capture();
+        let mut elc = setup_swarm(
+            SetupKind::Join { swarm },
+            author,
+            /* interactive */ false,
+            DEFAULT_MAX_DIRECT_PEERS,
+            /* state_file */ None,
+            output,
+        )
+        .await?;
+        elc.cohost = cohost;
+        Ok(Self::with_events(elc, None, events_rx))
+    }
+
+    /// The events presentation: a broadcast for inbound traffic plus the
+    /// captured-event stream, over a freshly-spawned [`InProcessSession`]
+    /// (which pushes inbound to the broadcast).
+    fn with_events(
+        elc: EventLoopConfig,
+        advertiser: Option<JoinHandle<()>>,
+        events_rx: mpsc::UnboundedReceiver<OutputEvent>,
+    ) -> Self {
+        let (msg_tx, _initial_rx) = broadcast::channel::<Message>(EMBED_INBOUND_CAP);
+        let core = InProcessSession::spawn(elc, advertiser, Some(msg_tx.clone()));
+        Self {
+            core,
+            msg_tx,
+            events_rx: Some(events_rx),
+        }
+    }
+
+    /// Take the captured structured-event stream ([`OutputEvent`]: `ready`,
+    /// `message`, `presence`, `peer_*`, `info`, …). Single-consumer, so this
+    /// returns the receiver **once**; later calls return `None`.
+    pub fn events(&mut self) -> Option<mpsc::UnboundedReceiver<OutputEvent>> {
+        self.events_rx.take()
+    }
+
+    /// The resolved swarm identifier.
+    #[must_use]
+    pub fn swarm_id(&self) -> &SwarmId {
+        self.core.swarm_id()
+    }
+
+    /// The swarm's human-readable name (decoded from the id).
+    #[must_use]
+    pub fn name(&self) -> &SwarmName {
+        self.core.name()
+    }
+
+    /// Our effective nickname in this swarm.
+    #[must_use]
+    pub fn nickname(&self) -> &Nickname {
+        self.core.nickname()
+    }
+
+    /// Subscribe to inbound messages. Each call returns an independent
+    /// receiver that sees traffic sent *after* it subscribed, so subscribe
+    /// before you expect messages. Includes every kind that parses — `msg`,
+    /// `presence` (joined/left/alive), `peer_info`; filter as needed. Under
+    /// sustained lag the bounded ring drops the oldest messages and the
+    /// receiver observes [`broadcast::error::RecvError::Lagged`] — by design,
+    /// so a slow consumer never stalls the gossip loop.
+    #[must_use]
+    pub fn messages(&self) -> broadcast::Receiver<Message> {
+        self.msg_tx.subscribe()
+    }
+
+    /// Build, sign and gossip-broadcast a message. Returns the canonical
+    /// [`Message`] the loop built (read `.id` for the new id), or `None` when
+    /// the sender-side rate limiter dropped it.
+    ///
+    /// # Errors
+    /// Fails if the event loop has stopped or dropped the response.
+    pub async fn send(
+        &self,
+        body: MessageBody,
+        reply: Option<Nickname>,
+    ) -> anyhow::Result<Option<Message>> {
+        self.core.send(body, reply).await
+    }
+
+    /// Poll the buffered message history after `after` (the most recent ~200;
+    /// `None` for the full buffer). Join-horizon filtered. A pull alternative
+    /// to the [`SwarmSession::messages`] live subscription.
+    ///
+    /// # Errors
+    /// Fails if the event loop has stopped or dropped the response.
+    pub async fn fetch(&self, after: Option<MessageId>) -> anyhow::Result<Vec<Message>> {
+        self.core.fetch(after).await
+    }
+
+    /// Clean shutdown: ask the loop to broadcast `Left` and wind down,
+    /// waiting up to 3s. On timeout returns `Ok(())` and the task detaches.
+    ///
+    /// # Errors
+    /// Returns an error if the event-loop task panicked or returned an error.
+    pub async fn leave(self) -> anyhow::Result<()> {
+        self.core.leave().await
+    }
 }
 
 /// Spawn the directory re-broadcast task for `cfg`'s swarm: wire a fresh

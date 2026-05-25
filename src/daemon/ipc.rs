@@ -52,18 +52,9 @@ pub(crate) async fn handle_ipc_command(
             }
         }
         IpcCommand::Poll { swarm: _, after } => {
-            let (mut messages, evicted) = state.message_log.messages_after(after.as_ref());
-            if evicted {
-                output.info("poll: --after ID was evicted from buffer, returning all messages");
-            }
-            // Join horizon: the log keeps pre-join messages (for
-            // anti-entropy), but `poll`/`fetch` never surface them.
-            messages.retain(|message| message.timestamp >= state.joined_at);
-            tracing::debug!(
-                returned = messages.len(),
-                evicted,
-                "IPC poll command served"
-            );
+            // Shared with the typed in-process `Poll` (join-horizon
+            // filtered); the CLI socket just serializes the result.
+            let messages = state.poll_after(after.as_ref(), output);
             let resp = serde_json::to_string(&messages)
                 .expect("serializing poll response (Vec<Message>) is infallible");
             let _ = resp_tx.send(resp);

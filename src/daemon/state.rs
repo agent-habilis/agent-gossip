@@ -10,7 +10,8 @@ use iroh::EndpointId;
 
 use super::message_log::MessageLog;
 use super::rate_limit::SwarmRateLimiter;
-use crate::protocol::{MessageId, Nickname};
+use crate::output;
+use crate::protocol::{Message, MessageId, Nickname};
 use crate::daemon::state_file::StateFile;
 use ahs_shared::DEFAULT_MESSAGE_LOG_SIZE;
 
@@ -166,6 +167,25 @@ impl EventLoopState {
             rate_limiter: SwarmRateLimiter::from_per_min(rate_limit_per_min),
             ping_round: None,
         }
+    }
+
+    /// The buffered messages after `after`, join-horizon filtered (never
+    /// surfaces a message stamped before this process joined). The single
+    /// source of truth for both the CLI socket `poll` and the typed
+    /// in-process `Poll` (embed `fetch` / MCP `fetch_messages`). Emits the
+    /// evicted-cursor notice through `output` when `after` aged out.
+    pub(crate) fn poll_after(
+        &self,
+        after: Option<&MessageId>,
+        output: &output::Output,
+    ) -> Vec<Message> {
+        let (mut messages, evicted) = self.message_log.messages_after(after);
+        if evicted {
+            output.info("poll: --after ID was evicted from buffer, returning all messages");
+        }
+        messages.retain(|message| message.timestamp >= self.joined_at);
+        tracing::debug!(returned = messages.len(), evicted, "poll served");
+        messages
     }
 
     /// Write `participant_count = participants.len() + 1` (we add 1

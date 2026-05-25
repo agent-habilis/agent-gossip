@@ -28,10 +28,10 @@ mod name;
 
 pub use id::{SwarmId, SwarmIdError};
 pub(crate) use lookup::{
-    DEFAULT_DIRECTORY, DirectorySelection, LookupOpts, LookupSet, RelayChoice, RelaySelection,
-    SwarmConfig, parse_relay_ladder, resolve_lookups, validate_advertise,
+    AdvertiseRequiresReachable, DEFAULT_DIRECTORY, DirectorySelection, LookupOpts, RelayChoice,
+    SwarmConfig, resolve_lookups, validate_advertise,
 };
-pub use lookup::{RelayLadder, RelayLadderError};
+pub use lookup::{LookupSet, RelayLadder, RelayLadderError, RelaySelection};
 pub use name::{NameError, SwarmName};
 
 const PREFIX: &str = "ahs";

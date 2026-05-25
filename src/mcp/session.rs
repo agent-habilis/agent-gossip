@@ -1,146 +1,102 @@
-//! Holds one active swarm's event loop + command channel for the MCP server.
+//! The MCP server's swarm handle — a thin wrapper over the in-process
+//! [`embed::SwarmSession`] that adds the implicit `fetch` cursor. The rmcp
+//! server, tool handlers, and arg/result types live in [`super`]; only the
+//! session plumbing lives here, reused from `embed` rather than duplicated.
 
 use std::sync::Mutex;
 
-use anyhow::{Context, Result, anyhow};
-use serde_json::Value;
-use tokio::sync::{mpsc, oneshot};
-use tokio::task::JoinHandle;
+use anyhow::Result;
 
-use crate::daemon::{
-    self, DriverMode,
-    setup::{SetupKind, setup_swarm},
-};
-use crate::protocol::swarm::{Swarm, SwarmConfig, SwarmName};
+use crate::embed::{CreateConfig, CreateError, InProcessSession, JoinConfig, JoinError};
+use crate::protocol::swarm::SwarmName;
 use crate::protocol::{Message, MessageBody, MessageId, Nickname, SwarmId};
-use crate::resolver::JoinTarget;
-use crate::transport::ipc::{IpcCommand, IpcMessage};
 
-/// A running swarm with an open command channel. Owned by the MCP
-/// server. Dropping this aborts the event loop task.
+/// One active swarm for the MCP server: the shared [`InProcessSession`]
+/// core (poll-only, silent) plus the per-session implicit `after` cursor.
+/// Dropping it winds the loop down via the core's own `Drop`.
 pub(super) struct Session {
-    pub swarm: SwarmId,
-    pub name: SwarmName,
-    pub nickname: Nickname,
-    cmd_tx: mpsc::Sender<IpcMessage>,
-    quit_tx: mpsc::Sender<()>,
-    /// Implicit `after` cursor.
+    inner: InProcessSession,
+    /// Implicit `after` cursor for [`Session::fetch_messages`].
     last_delivered_id: Mutex<Option<MessageId>>,
-    /// `None` after `leave()`; aborted in `Drop` otherwise.
-    task: Option<JoinHandle<Result<()>>>,
-    /// The directory re-broadcast task when created with `advertise`.
-    /// Aborted on `leave`/drop so we stop advertising a swarm we left.
-    advertiser: Option<JoinHandle<()>>,
 }
 
 impl Session {
-    /// Start a new swarm (Create) and its event loop. `config` (rate
-    /// limit + lookups) is baked into the minted id.
-    pub(super) async fn create(
-        name: SwarmName,
-        config: SwarmConfig,
-        nickname: Nickname,
-        advertise: Option<SwarmName>,
-    ) -> Result<Self> {
-        spawn_session(
-            SetupKind::Create {
-                name: name.clone(),
-                config,
-                advertise: advertise.clone(),
-            },
-            name,
-            nickname,
-            advertise,
-        )
-        .await
+    /// Start a new swarm — poll-only, silent — from an embed [`CreateConfig`].
+    ///
+    /// # Errors
+    /// Propagates [`CreateError`] so the tool layer can classify
+    /// advertise-on-loopback (`invalid_params`) vs setup (`internal`).
+    pub(super) async fn create(cfg: CreateConfig) -> Result<Self, CreateError> {
+        Ok(Self::wrap(InProcessSession::create_poll(cfg).await?))
     }
 
-    /// Join an existing swarm. Resolves `target` via the normal resolver
-    /// (ahs…, domain, git URL). The swarm's config is decoded from the id.
-    pub(super) async fn join(target: JoinTarget, nickname: Nickname) -> Result<Self> {
-        let swarm: Swarm = crate::resolver::resolve(&target).await?;
-        let name = swarm.name.clone();
-        // `join` never advertises — a create-time decision.
-        spawn_session(SetupKind::Join { swarm }, name, nickname, None).await
+    /// Join an existing swarm — poll-only, silent — from a [`JoinConfig`]
+    /// (resolves the `ahs…`/domain/git-URL target internally).
+    ///
+    /// # Errors
+    /// [`JoinError`] if the target can't be resolved or setup fails.
+    pub(super) async fn join(cfg: JoinConfig) -> Result<Self, JoinError> {
+        Ok(Self::wrap(InProcessSession::join_poll(cfg).await?))
     }
 
-    async fn send_cmd(&self, cmd: IpcCommand) -> Result<Value> {
-        let (resp_tx, resp_rx) = oneshot::channel::<String>();
-        self.cmd_tx
-            .send((cmd, resp_tx))
-            .await
-            .map_err(|_| anyhow!("event loop channel closed"))?;
-        let response = resp_rx
-            .await
-            .map_err(|_| anyhow!("event loop dropped response channel"))?;
-        serde_json::from_str::<Value>(&response)
-            .context("event loop returned invalid JSON response")
+    fn wrap(inner: InProcessSession) -> Self {
+        Self {
+            inner,
+            last_delivered_id: Mutex::new(None),
+        }
     }
 
-    /// Broadcast a message. Returns `Some((id, echo))` where `echo` is the
-    /// full authoritative [`Message`] the daemon built — same record
-    /// `fetch_messages` returns — or `None` when the sender-side rate
-    /// limiter dropped it (a deliberate drop, not an error).
+    /// The resolved swarm id.
+    pub(super) fn swarm(&self) -> &SwarmId {
+        self.inner.swarm_id()
+    }
+
+    /// The decoded swarm name.
+    pub(super) fn name(&self) -> &SwarmName {
+        self.inner.name()
+    }
+
+    /// Our effective nickname.
+    pub(super) fn nickname(&self) -> &Nickname {
+        self.inner.nickname()
+    }
+
+    /// Broadcast a message. Returns `Some((id, echo))` — the new id and the
+    /// canonical [`Message`] — or `None` when the sender-side rate limiter
+    /// dropped it. Advances the implicit cursor past our own send.
+    ///
+    /// # Errors
+    /// Fails if the event loop has stopped.
     pub(super) async fn send_message(
         &self,
         body: MessageBody,
         reply: Option<Nickname>,
     ) -> Result<Option<(MessageId, Message)>> {
-        let cmd = IpcCommand::Msg {
-            swarm: self.swarm.clone(),
-            body,
-            reply,
-        };
-        // Move-destructure the response so the echo object can be
-        // handed back without a deep clone.
-        let mut obj = match self.send_cmd(cmd).await? {
-            Value::Object(map) => map,
-            other @ (Value::Null
-            | Value::Bool(_)
-            | Value::Number(_)
-            | Value::String(_)
-            | Value::Array(_)) => return Err(anyhow!("malformed IPC response: {other}")),
-        };
-        if obj
-            .remove("rate_limited")
-            .and_then(|value| value.as_bool())
-            .unwrap_or(false)
-        {
-            return Ok(None);
-        }
-        match obj.remove("ok").and_then(|value| value.as_bool()) {
-            Some(true) => {
-                let id = match obj.remove("id") {
-                    Some(Value::String(raw)) => MessageId::new(raw).map_err(|error| {
-                        anyhow!("msg response 'id' is not a valid MessageId: {error}")
-                    })?,
-                    _ => return Err(anyhow!("msg response missing 'id'")),
-                };
-                let echo_value = obj
-                    .remove("message")
-                    .ok_or_else(|| anyhow!("msg response missing 'message'"))?;
-                let echo: Message = serde_json::from_value(echo_value).map_err(|error| {
-                    anyhow!("msg response 'message' is not a valid Message: {error}")
-                })?;
+        match self.inner.send(body, reply).await? {
+            Some(msg) => {
+                let id = msg.id.clone();
                 self.advance_cursor_to(id.clone());
-                Ok(Some((id, echo)))
+                Ok(Some((id, msg)))
             }
-            Some(false) => {
-                let err = obj
-                    .remove("error")
-                    .and_then(|value| match value {
-                        Value::String(text) => Some(text),
-                        Value::Null
-                        | Value::Bool(_)
-                        | Value::Number(_)
-                        | Value::Array(_)
-                        | Value::Object(_) => None,
-                    })
-                    .unwrap_or_else(|| "unknown error".to_string());
-                Err(anyhow!("send_message failed: {err}"))
-            }
-            None => Err(anyhow!("malformed IPC response: missing 'ok'")),
+            None => Ok(None),
         }
+    }
+
+    /// Fetch buffered messages after `after` (or the implicit cursor when
+    /// `None`). Auto-advances the cursor and returns the advanced id.
+    ///
+    /// # Errors
+    /// Fails if the event loop has stopped.
+    pub(super) async fn fetch_messages(
+        &self,
+        after: Option<MessageId>,
+    ) -> Result<(Vec<Message>, Option<MessageId>)> {
+        let msgs = self.inner.fetch(self.effective_after(after)).await?;
+        let current_id = msgs.last().map(|msg| msg.id.clone());
+        if let Some(id) = current_id.clone() {
+            self.advance_cursor_to(id);
+        }
+        Ok((msgs, current_id))
     }
 
     /// Explicit cursor wins; otherwise fall back to the implicit one.
@@ -152,125 +108,37 @@ impl Session {
         *self.last_delivered_id.lock().unwrap() = Some(id);
     }
 
-    /// Fetch buffered messages after `after` (or all buffered when
-    /// `None` AND no implicit cursor is set yet). Auto-advances the
-    /// session's implicit cursor and returns the advanced id so the
-    /// caller can surface it without re-discovering the batch.
-    pub(super) async fn fetch_messages(
-        &self,
-        after: Option<MessageId>,
-    ) -> Result<(Vec<Message>, Option<MessageId>)> {
-        let cmd = IpcCommand::Poll {
-            swarm: self.swarm.clone(),
-            after: self.effective_after(after),
-        };
-
-        let array = match self.send_cmd(cmd).await? {
-            value @ Value::Array(_) => value,
-            other @ (Value::Null
-            | Value::Bool(_)
-            | Value::Number(_)
-            | Value::String(_)
-            | Value::Object(_)) => return Err(anyhow!("poll response was not an array: {other}")),
-        };
-        // The daemon serializes the poll buffer as `Vec<Message>`, so it
-        // round-trips straight back into typed records here.
-        let msgs: Vec<Message> = serde_json::from_value(array)
-            .map_err(|error| anyhow!("poll response is not a list of Messages: {error}"))?;
-        let current_id = msgs.last().map(|msg| msg.id.clone());
-        if let Some(id) = current_id.clone() {
-            self.advance_cursor_to(id);
-        }
-        Ok((msgs, current_id))
+    /// Clean shutdown — delegates to [`SwarmSession::leave`].
+    pub(super) async fn leave(self) {
+        let _ = self.inner.leave().await;
     }
-
-    /// Clean shutdown: signal the event loop and wait up to 3s for it
-    /// to emit `Left` and wind down. If it doesn't, `Drop` aborts the
-    /// task.
-    pub(super) async fn leave(mut self) {
-        if let Some(advertiser) = self.advertiser.take() {
-            advertiser.abort();
-        }
-        let _ = self.quit_tx.send(()).await;
-        if let Some(task) = self.task.take() {
-            let timeout = tokio::time::sleep(std::time::Duration::from_secs(3));
-            tokio::select! {
-                _ = task => {}
-                () = timeout => {}
-            }
-        }
-    }
-}
-
-impl Drop for Session {
-    fn drop(&mut self) {
-        // Fallback — if the MCP server exits without calling leave(),
-        // still abort the event loop task so we don't leak it.
-        if let Some(task) = self.task.take() {
-            task.abort();
-        }
-        if let Some(advertiser) = self.advertiser.take() {
-            advertiser.abort();
-        }
-    }
-}
-
-async fn spawn_session(
-    kind: SetupKind,
-    name: SwarmName,
-    nickname: Nickname,
-    advertise: Option<SwarmName>,
-) -> Result<Session> {
-    let (cmd_tx, cmd_rx) = mpsc::channel::<IpcMessage>(32);
-    let (quit_tx, quit_rx) = mpsc::channel::<()>(1);
-
-    let mut cfg = setup_swarm(
-        kind,
-        nickname,
-        /* interactive */ false,
-        crate::util::tuning::DEFAULT_MAX_DIRECT_PEERS,
-        /* state_file */ None,
-        // MCP owns stdout for JSON-RPC; never print swarm output.
-        crate::output::Output::silent(),
-    )
-    .await
-    .context("setup_swarm failed")?;
-    cfg.driver = DriverMode::Mcp {
-        ipc_rx: cmd_rx,
-        quit_rx,
-    };
-
-    // Advertising: start the re-broadcast task (tied to this session's
-    // lifetime); it joins the directory over the directory's own config.
-    let advertiser =
-        advertise.map(|directory| crate::embed::spawn_advertiser(&mut cfg, directory));
-
-    let swarm = cfg.swarm.clone();
-    let session_nickname = cfg.author.clone();
-    let task = tokio::spawn(daemon::run(cfg));
-    Ok(Session {
-        swarm,
-        name,
-        nickname: session_nickname,
-        cmd_tx,
-        quit_tx,
-        last_delivered_id: Mutex::new(None),
-        task: Some(task),
-        advertiser,
-    })
 }
 
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
 
-    use super::{
-        JoinTarget, Message, MessageBody, MessageId, Nickname, Session, SwarmConfig, SwarmName,
-    };
+    use super::{Message, MessageBody, MessageId, Nickname, Session, SwarmId, SwarmName};
+    use crate::embed::{CreateConfig, JoinConfig};
     use crate::protocol::{MessageKind, PresenceSubtype};
+    use crate::resolver::JoinTarget;
 
     // All tests use the private network (loopback) so they work on
     // any CI without public iroh DNS / relay access.
+
+    /// A loopback create config with an explicit nickname, no advertising.
+    fn create_cfg(name: &str, nick: &str) -> CreateConfig {
+        let mut cfg = CreateConfig::new(SwarmName::new(name).unwrap());
+        cfg.nickname = Some(Nickname::from(nick));
+        cfg
+    }
+
+    /// A join config for an existing swarm id with an explicit nickname.
+    fn join_cfg(swarm: &SwarmId, nick: &str) -> JoinConfig {
+        let mut cfg = JoinConfig::new(JoinTarget::Swarm(swarm.clone()));
+        cfg.nickname = Some(Nickname::from(nick));
+        cfg
+    }
 
     async fn wait_for_gossip(session: &Session, author: &str, body: &str) -> Option<MessageId> {
         // Poll up to ~10 s for the message to propagate via gossip.
@@ -290,36 +158,26 @@ mod tests {
 
     #[tokio::test]
     async fn create_session_yields_valid_swarm_and_nickname() {
-        let session = Session::create(
-            SwarmName::new("test1").unwrap(),
-            SwarmConfig::loopback(),
-            Nickname::from("alice-test"),
-            None,
-        )
-        .await
-        .expect("create");
-        assert!(session.swarm.as_str().starts_with("ahs"));
-        assert_eq!(session.name.as_str(), "test1");
-        assert_eq!(session.nickname.as_str(), "alice-test");
+        let session = Session::create(create_cfg("test1", "alice-test"))
+            .await
+            .expect("create");
+        assert!(session.swarm().as_str().starts_with("ahs"));
+        assert_eq!(session.name().as_str(), "test1");
+        assert_eq!(session.nickname().as_str(), "alice-test");
         session.leave().await;
     }
 
     #[tokio::test]
     async fn two_sessions_same_swarm_exchange_messages() {
-        let creator = Session::create(
-            SwarmName::new("two").unwrap(),
-            SwarmConfig::loopback(),
-            Nickname::from("alice-two"),
-            None,
-        )
-        .await
-        .expect("create");
-        let swarm = creator.swarm.clone();
+        let creator = Session::create(create_cfg("two", "alice-two"))
+            .await
+            .expect("create");
+        let swarm = creator.swarm().clone();
 
-        let joiner = Session::join(JoinTarget::Swarm(swarm.clone()), Nickname::from("bob-two"))
+        let joiner = Session::join(join_cfg(&swarm, "bob-two"))
             .await
             .expect("join");
-        assert_eq!(joiner.name.as_str(), "two");
+        assert_eq!(joiner.name().as_str(), "two");
 
         // Send from creator → joiner should see it.
         let (sent_id, _) = creator
@@ -354,14 +212,9 @@ mod tests {
         // ts, body) so callers don't need to re-fetch to see their
         // own send, and advances the cursor past it so subsequent
         // idle fetches don't surface a self-echo feedback loop.
-        let alice = Session::create(
-            SwarmName::new("replay").unwrap(),
-            SwarmConfig::loopback(),
-            Nickname::from("alice-replay"),
-            None,
-        )
-        .await
-        .expect("create");
+        let alice = Session::create(create_cfg("replay", "alice-replay"))
+            .await
+            .expect("create");
 
         let (sent, echo) = alice
             .send_message(MessageBody::from("self-echo"), None)
@@ -389,16 +242,11 @@ mod tests {
         // First `fetch_messages(None)` sees full history. Subsequent
         // `fetch_messages(None)` calls see only what arrived since
         // the last one. Explicit `after` still overrides the cursor.
-        let alice = Session::create(
-            SwarmName::new("cursor").unwrap(),
-            SwarmConfig::loopback(),
-            Nickname::from("alice-cursor"),
-            None,
-        )
-        .await
-        .expect("create");
-        let swarm = alice.swarm.clone();
-        let bob = Session::join(JoinTarget::Swarm(swarm.clone()), Nickname::from("bob-cursor"))
+        let alice = Session::create(create_cfg("cursor", "alice-cursor"))
+            .await
+            .expect("create");
+        let swarm = alice.swarm().clone();
+        let bob = Session::join(join_cfg(&swarm, "bob-cursor"))
             .await
             .expect("join");
 
@@ -479,31 +327,22 @@ mod tests {
     #[tokio::test]
     async fn create_after_leave_succeeds_in_same_process() {
         // First cycle.
-        let first = Session::create(
-            SwarmName::new("cy-a").unwrap(),
-            SwarmConfig::loopback(),
-            Nickname::from("cycler-a"),
-            None,
-        )
-        .await
-        .expect("first create");
-        let first_swarm = first.swarm.clone();
+        let first = Session::create(create_cfg("cy-a", "cycler-a"))
+            .await
+            .expect("first create");
+        let first_swarm = first.swarm().clone();
         first.leave().await;
 
         // Second cycle — new session, new swarm.
-        let second = Session::create(
-            SwarmName::new("cy-b").unwrap(),
-            SwarmConfig::loopback(),
-            Nickname::from("cycler-b"),
-            None,
-        )
-        .await
-        .expect("second create after first was left");
+        let second = Session::create(create_cfg("cy-b", "cycler-b"))
+            .await
+            .expect("second create after first was left");
         assert_ne!(
-            second.swarm, first_swarm,
+            second.swarm(),
+            &first_swarm,
             "second create should mint a fresh swarm id"
         );
-        assert_eq!(second.nickname.as_str(), "cycler-b");
+        assert_eq!(second.nickname().as_str(), "cycler-b");
         second.leave().await;
     }
 }

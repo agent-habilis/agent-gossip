@@ -1,9 +1,9 @@
 //! Inputs the event loop is constructed from.
 //!
 //! [`EventLoopConfig`] is produced by `daemon::setup::setup_swarm` and
-//! consumed by [`daemon::run`](super::run); [`SendRequest`] is the
-//! embed facade's outbound-send message. Split out of `mod.rs` so the
-//! orchestrator file reads as pure lifecycle narrative.
+//! consumed by [`daemon::run`](super::run); [`SessionRequest`] is the
+//! typed in-process send/poll message (embed + MCP). Split out of
+//! `mod.rs` so the orchestrator file reads as pure lifecycle narrative.
 
 use std::path::PathBuf;
 
@@ -15,43 +15,42 @@ use tokio::sync::{broadcast, mpsc, oneshot, watch};
 use crate::output;
 use crate::protocol::swarm::SwarmName;
 use crate::protocol::{Message, MessageBody, MessageId, Nickname, SwarmId};
-use crate::transport::ipc;
 
 use crate::beacon;
 
-/// An outbound send request from the embed facade. `resp` carries the
-/// new message id back to the caller — `None` when the send was dropped
-/// by the sender-side rate limiter — or the build/broadcast error.
-pub(crate) struct SendRequest {
-    pub body: MessageBody,
-    pub reply: Option<Nickname>,
-    pub resp: oneshot::Sender<Result<Option<MessageId>>>,
+/// A typed in-process request from an embed/MCP session to the event
+/// loop — the shared alternative to the CLI's `IpcCommand`-over-socket
+/// (which must serialize). `Send` broadcasts a message and echoes back the
+/// canonical [`Message`] (`None` ⇒ dropped by the sender-side rate
+/// limiter); `Poll` reads the buffered history after a cursor.
+pub(crate) enum SessionRequest {
+    Send {
+        body: MessageBody,
+        reply: Option<Nickname>,
+        resp: oneshot::Sender<Result<Option<Message>>>,
+    },
+    Poll {
+        after: Option<MessageId>,
+        resp: oneshot::Sender<Vec<Message>>,
+    },
 }
 
-/// Who drives the event loop. The three variants make illegal channel
-/// combinations unrepresentable (e.g. an embed session can't exist
-/// without its send/quit channels) and let the loop *derive* both
-/// "exit the process on quit?" and "spawn the unix-socket listener?"
-/// instead of carrying them as independent, drift-prone bools.
+/// Who drives the event loop. The variants make illegal channel
+/// combinations unrepresentable and let the loop *derive* both "exit the
+/// process on quit?" and "spawn the unix-socket listener?" instead of
+/// carrying them as independent, drift-prone bools.
 pub(crate) enum DriverMode {
-    /// The `ahs create` / `join` CLI. Owns the
-    /// unix-socket IPC listener (for `msg` / `poll`); ctrl-c / SIGTERM
-    /// `std::process::exit`s.
+    /// The `ahs create` / `join` CLI. Owns the unix-socket IPC listener
+    /// (for `msg` / `poll`); ctrl-c / SIGTERM `std::process::exit`s.
     Cli,
-    /// The MCP stdio server: drives the loop in-process with a
-    /// pre-wired IPC command channel and an external quit. Never exits
-    /// the process (one swarm of potentially many in the server) and
-    /// binds no socket (commands arrive on `ipc_rx`).
-    Mcp {
-        ipc_rx: mpsc::Receiver<ipc::IpcMessage>,
-        quit_rx: mpsc::Receiver<()>,
-    },
-    /// The embed facade: fully in-process. Inbound traffic is pushed
-    /// on `msg_tx`, outbound sends arrive on `send_rx`, shutdown on
-    /// `quit_rx`. No socket, no process exit.
-    Embed {
-        msg_tx: broadcast::Sender<Message>,
-        send_rx: mpsc::Receiver<SendRequest>,
+    /// Fully in-process, shared by the embed facade and the MCP server.
+    /// Outbound sends + polls arrive **typed** on `req_rx`; `msg_tx`
+    /// pushes inbound to a broadcast subscriber (embed's `messages()`),
+    /// or is `None` for a poll-only consumer (the MCP server). Never
+    /// exits the process and binds no socket; shutdown on `quit_rx`.
+    InProcess {
+        msg_tx: Option<broadcast::Sender<Message>>,
+        req_rx: mpsc::Receiver<SessionRequest>,
         quit_rx: mpsc::Receiver<()>,
     },
 }

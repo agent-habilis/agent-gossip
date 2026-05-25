@@ -22,6 +22,7 @@ pub(crate) mod ipc;
 // In-memory accounting stores owned by `EventLoopState`. Private to
 // `daemon` — no consumer outside the event loop.
 mod message_log;
+pub(crate) mod params;
 mod rate_limit;
 pub(crate) mod setup;
 pub(crate) mod state;
@@ -32,5 +33,6 @@ pub(crate) mod timers;
 
 mod event_loop;
 
-pub(crate) use config::{CoHostPolicy, DriverMode, EventLoopConfig, SendRequest};
+pub(crate) use config::{CoHostPolicy, DriverMode, EventLoopConfig, SessionRequest};
 pub(crate) use event_loop::run;
+pub(crate) use params::{CreateParams, JoinParams, Resolved};

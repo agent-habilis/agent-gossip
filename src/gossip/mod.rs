@@ -17,7 +17,7 @@ use iroh::endpoint::TransportAddrUsage;
 use iroh::{Endpoint, EndpointId, RelayUrl, TransportAddr};
 
 pub(crate) use broadcast::{
-    SendOutcome, broadcast_message, broadcast_msg, handle_send_request, handle_stdin_line,
+    SendOutcome, broadcast_message, broadcast_msg, handle_session_request, handle_stdin_line,
 };
 pub(crate) use recv::handle_gossip_event;
 

@@ -436,17 +436,23 @@ fn send_message_without_session_errors() {
 }
 
 #[test]
-fn create_swarm_with_relay_but_not_public_errors() {
+fn create_swarm_with_granular_relay_succeeds() {
+    // Granular lookups: naming `relay` opts into it directly, the same way
+    // the CLI `--relay` flag does — the old "relay requires public" rule is
+    // gone, so a relay-only (network:private) swarm now creates fine.
     let mut client = McpClient::spawn();
     let resp = client.tool_call(
         80,
         "create_swarm",
         serde_json::json!({ "name": "relayp", "network": "private", "relay": "https://relay.example/" }),
     );
-    let err = tool_error(&resp).expect("relay+private should error");
+    let result = tool_result_json(&resp).expect("granular relay create should succeed");
     assert!(
-        err.contains("relay") && err.contains("public"),
-        "expected relay/public error, got: {err}"
+        result["swarm"]
+            .as_str()
+            .unwrap_or_default()
+            .starts_with("ahs"),
+        "expected a swarm id, got: {result}"
     );
 }
 

@@ -2,9 +2,9 @@
 //! broadcasting messages; the unmeshed-join outbound buffer; presence /
 //! `PeerInfo` announcements; and the interactive `/reply` stdin path.
 //! [`broadcast_message`] is the single source of truth for the send
-//! path — the IPC `Msg` command, the embed `SendRequest`, and stdin all
-//! funnel through it so they cannot drift. Inbound dispatch lives in
-//! [`super::recv`].
+//! path — the IPC `Msg` command, the typed in-process `SessionRequest`,
+//! and stdin all funnel through it so they cannot drift. Inbound dispatch
+//! lives in [`super::recv`].
 
 use std::time::Instant;
 
@@ -12,7 +12,7 @@ use bytes::Bytes;
 use iroh::Endpoint;
 use iroh_gossip::api::GossipSender;
 
-use crate::daemon::SendRequest;
+use crate::daemon::SessionRequest;
 use crate::daemon::state::EventLoopState;
 use crate::output;
 use crate::protocol::{Message, MessageBody, MessageId, Nickname, SwarmId};
@@ -150,9 +150,9 @@ pub(crate) enum SendOutcome {
 }
 
 /// Build, sign, log and gossip-broadcast one outbound message. The
-/// single source of truth for the send path: the IPC `Msg` command
-/// and the embed facade's `external_send_rx` arm both funnel through
-/// here so they cannot drift. Rate-limited sends return
+/// single source of truth for the send path: the CLI socket's IPC `Msg`
+/// command and the typed in-process `SessionRequest::Send` both funnel
+/// through here so they cannot drift. Rate-limited sends return
 /// [`SendOutcome::RateLimited`]; otherwise the new id and the canonical
 /// `Message` so callers can echo it without re-parsing.
 ///
@@ -187,25 +187,34 @@ pub(crate) async fn broadcast_message(
     Ok(SendOutcome::Sent(id, msg))
 }
 
-/// Handle one embed `SendRequest`: broadcast via the shared helper and
-/// reply on the oneshot. Returns `true` if anything was broadcast so
-/// the caller can refresh `last_sent_at` (mirrors `handle_ipc_command`).
-pub(crate) async fn handle_send_request(
-    req: SendRequest,
+/// Handle one typed in-process [`SessionRequest`] (embed / MCP). `Send`
+/// broadcasts via the shared helper and echoes the canonical [`Message`]
+/// back on the oneshot; `Poll` returns the join-horizon-filtered buffer.
+/// Returns `true` if anything was broadcast so the caller can refresh
+/// `last_sent_at` (mirrors `handle_ipc_command`).
+pub(crate) async fn handle_session_request(
+    req: SessionRequest,
     swarm: &SwarmId,
     author: &Nickname,
     state: &mut EventLoopState,
     sender: &GossipSender,
     output: &output::Output,
 ) -> bool {
-    let SendRequest { body, reply, resp } = req;
-    let outcome = broadcast_message(swarm, author, body, reply, state, sender, output).await;
-    let sent_ok = matches!(outcome, Ok(SendOutcome::Sent(..)));
-    let _ = resp.send(outcome.map(|sent| match sent {
-        SendOutcome::Sent(id, _msg) => Some(id),
-        SendOutcome::RateLimited => None,
-    }));
-    sent_ok
+    match req {
+        SessionRequest::Send { body, reply, resp } => {
+            let outcome = broadcast_message(swarm, author, body, reply, state, sender, output).await;
+            let sent_ok = matches!(outcome, Ok(SendOutcome::Sent(..)));
+            let _ = resp.send(outcome.map(|sent| match sent {
+                SendOutcome::Sent(_id, msg) => Some(msg),
+                SendOutcome::RateLimited => None,
+            }));
+            sent_ok
+        }
+        SessionRequest::Poll { after, resp } => {
+            let _ = resp.send(state.poll_after(after.as_ref(), output));
+            false
+        }
+    }
 }
 
 /// Parse `/reply <nickname> body` from interactive stdin input.

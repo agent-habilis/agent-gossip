@@ -43,18 +43,18 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use crate::protocol::swarm::{
-    DirectorySelection, LookupOpts, RelayLadder, SwarmConfig, SwarmName, validate_advertise,
-};
+use crate::embed::{CreateConfig, CreateError, JoinConfig};
+use crate::protocol::swarm::{LookupSet, RelayLadder, RelaySelection, SwarmName};
 use crate::protocol::{Message, MessageBody, MessageId, Nickname, SwarmId};
 use crate::resolver::JoinTarget;
+use crate::util::tuning::DEFAULT_MAX_DIRECT_PEERS;
 use session::Session;
 
 /// Run the MCP server over stdio. Blocks until the client disconnects.
 pub(crate) async fn run() -> Result<()> {
-    // stdout belongs to the MCP JSON-RPC transport; the per-session
-    // `Output::silent()` (see `spawn_session`) suppresses any print
-    // that would corrupt the stream.
+    // stdout belongs to the MCP JSON-RPC transport; each session runs on
+    // a silent, poll-only `SwarmSession` (`create_silent`/`join_silent`),
+    // so nothing prints to stdout and corrupts the stream.
     let server = AgentSwarmServer::new();
     let running = server.serve(stdio()).await?;
     running.waiting().await?;
@@ -97,15 +97,24 @@ struct CreateSwarmArgs {
     /// so joiners decode the same name and forgery is infeasible.
     name: String,
     /// Network mode. "private" keeps the swarm loopback-only (same
-    /// machine). "public" uses iroh's DNS + N0 relay to reach peers
-    /// across the internet.
+    /// machine); "public" enables the all-on lookup preset (mDNS + DHT +
+    /// default relay). Naming any of `mdns`/`dht`/`relay` below overrides
+    /// the preset and uses only those (the same model as the CLI flags).
     #[serde(default)]
     network: NetworkMode,
     /// Optional nickname in `word-word` form. Random if omitted.
     #[serde(default)]
     nickname: Option<String>,
-    /// Custom relay URL (or comma-separated ladder). Requires
-    /// `network: "public"`.
+    /// Enable the LAN mDNS address-lookup. Naming it (or `dht`/`relay`)
+    /// switches off the `network` preset and uses only the named lookups.
+    #[serde(default)]
+    mdns: bool,
+    /// Enable the mainline-DHT address-lookup. See `mdns`.
+    #[serde(default)]
+    dht: bool,
+    /// Relay lookup: omit for off, `"default"` for the pinned n0 prod
+    /// ladder, or a comma-separated `a,b,c` of relay URLs for a custom
+    /// ordered ladder.
     #[serde(default)]
     relay: Option<String>,
     /// Per-author messages-per-minute cap baked into the swarm id and
@@ -177,11 +186,11 @@ struct SwarmRef {
 impl From<&Session> for SwarmRef {
     fn from(session: &Session) -> Self {
         SwarmRef {
-            swarm: session.swarm.clone(),
+            swarm: session.swarm().clone(),
             // `SwarmRef` is the serialized tool output; the wire shape
             // keeps `name` a plain string.
-            name: session.name.as_str().to_owned(),
-            nickname: session.nickname.clone(),
+            name: session.name().as_str().to_owned(),
+            nickname: session.nickname().clone(),
         }
     }
 }
@@ -222,45 +231,48 @@ impl AgentSwarmServer {
         if let Some(existing) = guard.as_ref() {
             return Err(already_in_swarm_error(existing));
         }
-        let public = matches!(args.network, NetworkMode::Public);
-        let relay = args
-            .relay
-            .as_deref()
-            .map(str::parse::<RelayLadder>)
-            .transpose()
-            .map_err(|error| {
+        // Parse each arg into its domain type at the boundary (every
+        // failure here is `invalid_params`); embed resolves the lookups
+        // and validates advertise, surfacing the latter as a typed
+        // `CreateError` we re-classify below.
+        let relay = match args.relay.as_deref() {
+            None => RelaySelection::Unset,
+            Some("default") => RelaySelection::Default,
+            Some(urls) => RelaySelection::Custom(urls.parse::<RelayLadder>().map_err(|error| {
                 McpError::invalid_params(format!("invalid relay ladder: {error}"), None)
-            })?;
-        let config = SwarmConfig {
-            rate_limit_per_min: args.rate_limit_per_min,
-            lookups: LookupOpts::from_public_relay(public, relay.as_ref())
-                .map_err(|error| McpError::invalid_params(error.to_string(), None))?,
+            })?),
         };
-        // Resolve the advertise request (absent / default / named directory)
-        // and enforce the reachable-swarm requirement up front.
-        let advertise = match (args.advertise, args.directory) {
-            (false, _) => DirectorySelection::Unset,
-            (true, None) => DirectorySelection::Default,
-            (true, Some(directory)) => {
-                DirectorySelection::Named(SwarmName::new(directory).map_err(|error| {
-                    McpError::invalid_params(format!("invalid directory name: {error}"), None)
-                })?)
-            }
-        };
-        validate_advertise(&advertise, &config.lookups)
-            .map_err(|error| McpError::invalid_params(error.to_string(), None))?;
         let name = SwarmName::new(args.name).map_err(|error| {
             McpError::invalid_params(format!("invalid swarm name: {error}"), None)
         })?;
-        let nickname = match args.nickname {
-            None => Nickname::random(),
-            Some(raw) => Nickname::new(raw).map_err(|error| {
-                McpError::invalid_params(format!("invalid nickname: {error}"), None)
-            })?,
+        let nickname = args
+            .nickname
+            .map(Nickname::new)
+            .transpose()
+            .map_err(|error| McpError::invalid_params(format!("invalid nickname: {error}"), None))?;
+        let directory = args.directory.map(SwarmName::new).transpose().map_err(|error| {
+            McpError::invalid_params(format!("invalid directory name: {error}"), None)
+        })?;
+        let cfg = CreateConfig {
+            name,
+            nickname,
+            public: matches!(args.network, NetworkMode::Public),
+            lookups: LookupSet {
+                mdns: args.mdns,
+                dht: args.dht,
+                relay,
+            },
+            advertise: args.advertise,
+            directory,
+            rate_limit_per_min: args.rate_limit_per_min,
+            max_peers: DEFAULT_MAX_DIRECT_PEERS,
         };
-        let session = Session::create(name, config, nickname, advertise.directory())
-            .await
-            .map_err(to_mcp_error)?;
+        let session = Session::create(cfg).await.map_err(|error| match error {
+            CreateError::AdvertiseRequiresReachable => {
+                McpError::invalid_params(error.to_string(), None)
+            }
+            CreateError::Setup(error) => McpError::internal_error(error.to_string(), None),
+        })?;
         let result = SwarmRef::from(&session);
         *guard = Some(session);
         ok_json(result)
@@ -283,21 +295,25 @@ impl AgentSwarmServer {
             let same_nickname = args
                 .nickname
                 .as_deref()
-                .is_none_or(|candidate| candidate == existing.nickname.as_str());
-            if matches!(&target, JoinTarget::Swarm(id) if id == &existing.swarm) && same_nickname {
+                .is_none_or(|candidate| candidate == existing.nickname().as_str());
+            if matches!(&target, JoinTarget::Swarm(id) if id == existing.swarm()) && same_nickname {
                 return ok_json(SwarmRef::from(existing));
             }
             return Err(already_in_swarm_error(existing));
         }
         let nickname = match args.nickname {
-            None => Nickname::random(),
-            Some(raw) => Nickname::new(raw).map_err(|error| {
+            None => None,
+            Some(raw) => Some(Nickname::new(raw).map_err(|error| {
                 McpError::invalid_params(format!("invalid nickname: {error}"), None)
-            })?,
+            })?),
         };
-        let session = Session::join(target, nickname)
-            .await
-            .map_err(to_mcp_error)?;
+        let session = Session::join(JoinConfig {
+            target,
+            nickname,
+            max_peers: DEFAULT_MAX_DIRECT_PEERS,
+        })
+        .await
+        .map_err(to_mcp_error)?;
         let result = SwarmRef::from(&session);
         *guard = Some(session);
         ok_json(result)
@@ -398,7 +414,8 @@ fn already_in_swarm_error(existing: &Session) -> McpError {
     McpError::invalid_request(
         format!(
             "already in swarm {} as {}; call leave_swarm first",
-            existing.swarm, existing.nickname
+            existing.swarm(),
+            existing.nickname()
         ),
         None,
     )

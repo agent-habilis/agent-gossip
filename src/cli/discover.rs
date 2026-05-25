@@ -57,7 +57,7 @@ pub(super) async fn discover(opts: DiscoverOpts) -> Result<()> {
                 let target = id
                     .parse::<JoinTarget>()
                     .expect("a discovered swarm id is a valid join target");
-                return join(&target, None, opts.shared).await;
+                return join(target, None, opts.shared).await;
             }
             PickerOutcome::Quit => {
                 let _ = discoverer.close().await;

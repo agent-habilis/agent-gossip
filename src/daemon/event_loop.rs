@@ -31,7 +31,7 @@ use crate::util::tuning::{
     STATE_REFRESH_SECS, heal_stall_threshold_secs, sweep_interval_secs,
 };
 
-use super::config::{CoHostPolicy, DriverMode, EventLoopConfig, SendRequest};
+use super::config::{CoHostPolicy, DriverMode, EventLoopConfig, SessionRequest};
 use super::ctx::HandlerCtx;
 use super::state::EventLoopState;
 use super::{ipc, setup, timers};
@@ -58,33 +58,17 @@ pub(crate) async fn run(cfg: EventLoopConfig) -> Result<()> {
     } = cfg;
 
     // Every driver-derived fact in one place. Only the CLI exits the
-    // process on quit; only the CLI binds the unix socket (MCP has a
-    // pre-wired `ipc_rx`, embed has neither).
-    let (
-        external_ipc_rx,
-        external_quit_rx,
-        external_msg_tx,
-        external_send_rx,
-        ipc_listener_disabled,
-        exit_on_quit,
-    ) = match driver {
-        DriverMode::Cli => (None, None, None, None, false, true),
-        DriverMode::Mcp { ipc_rx, quit_rx } => {
-            (Some(ipc_rx), Some(quit_rx), None, None, false, false)
-        }
-        DriverMode::Embed {
-            msg_tx,
-            send_rx,
-            quit_rx,
-        } => (
-            None,
-            Some(quit_rx),
-            Some(msg_tx),
-            Some(send_rx),
-            true,
-            false,
-        ),
-    };
+    // process on quit and binds the unix socket; in-process drivers
+    // (embed / MCP) take typed requests on `req_rx` instead.
+    let (external_quit_rx, external_msg_tx, external_req_rx, ipc_listener_disabled, exit_on_quit) =
+        match driver {
+            DriverMode::Cli => (None, None, None, false, true),
+            DriverMode::InProcess {
+                msg_tx,
+                req_rx,
+                quit_rx,
+            } => (Some(quit_rx), msg_tx, Some(req_rx), true, false),
+        };
 
     let started = Instant::now();
     let state_file = state_file.map(|path| StateFile::new(path, &swarm_str, &author, &swarm_name));
@@ -107,7 +91,6 @@ pub(crate) async fn run(cfg: EventLoopConfig) -> Result<()> {
     let (sender, receiver) = topic.split();
 
     let ipc_rx = spawn_ipc_rx(
-        external_ipc_rx,
         ipc_listener_disabled,
         &swarm_str,
         &author,
@@ -151,7 +134,7 @@ pub(crate) async fn run(cfg: EventLoopConfig) -> Result<()> {
         cohost,
         started,
         external_quit_rx,
-        external_send_rx,
+        external_req_rx,
         external_msg_tx,
         quit_rx,
         exit_on_quit,
@@ -187,7 +170,7 @@ struct EventLoop {
     /// Event-loop start, for the unmeshed-joiner co-host grace.
     started: Instant,
     external_quit_rx: Option<mpsc::Receiver<()>>,
-    external_send_rx: Option<mpsc::Receiver<SendRequest>>,
+    external_req_rx: Option<mpsc::Receiver<SessionRequest>>,
     external_msg_tx: Option<broadcast::Sender<Message>>,
     quit_rx: mpsc::Receiver<()>,
     exit_on_quit: bool,
@@ -216,7 +199,7 @@ async fn event_loop(loop_state: EventLoop) -> Result<()> {
         cohost,
         started,
         mut external_quit_rx,
-        mut external_send_rx,
+        mut external_req_rx,
         external_msg_tx,
         mut quit_rx,
         exit_on_quit,
@@ -308,14 +291,14 @@ async fn event_loop(loop_state: EventLoop) -> Result<()> {
                 // the process, regardless of `exit_on_quit`.
                 break;
             }
-            send_req = recv_opt(&mut external_send_rx) => {
-                match send_req {
+            req = recv_opt(&mut external_req_rx) => {
+                match req {
                     Some(req) => {
-                        if gossip::handle_send_request(req, &swarm_str, &author, &mut state, &sender, &output).await {
+                        if gossip::handle_session_request(req, &swarm_str, &author, &mut state, &sender, &output).await {
                             state.last_sent_at = Instant::now();
                         }
                     }
-                    None => external_send_rx = None,
+                    None => external_req_rx = None,
                 }
             }
             _ = quit_rx.recv() => {
@@ -379,18 +362,15 @@ fn spawn_quit_signal_tasks() -> mpsc::Receiver<()> {
 /// for the CLI, spawn the unix-socket listener and own the channel.
 /// Returning `Option` keeps the loop's `select!` arm uniform.
 fn spawn_ipc_rx(
-    external_ipc_rx: Option<mpsc::Receiver<IpcMessage>>,
     disable_ipc_listener: bool,
     swarm: &SwarmId,
     author: &Nickname,
     output: output::Output,
 ) -> Option<mpsc::Receiver<IpcMessage>> {
-    if let Some(rx) = external_ipc_rx {
-        return Some(rx);
-    }
-    // Embed mode: no pre-wired channel AND no socket. Returning
-    // `None` leaves the loop's IPC `select!` arm inert (it pends
-    // forever), so the unix-socket listener is never bound.
+    // In-process mode (embed / MCP): no socket. Returning `None` leaves
+    // the loop's IPC `select!` arm inert (it pends forever), so the
+    // unix-socket listener is never bound — those drivers use the typed
+    // `req_rx` instead.
     if disable_ipc_listener {
         return None;
     }

@@ -296,9 +296,12 @@ impl InProcNode {
     /// `target` `None` is an open broadcast, `Some` a directed reply.
     async fn send_to(&self, target: Option<&str>, text: &str) -> anyhow::Result<Option<MessageId>> {
         let reply = target.map(|nick| Nickname::new(nick).expect("valid target nickname"));
-        self.session
+        // `send` returns the canonical `Message`; the harness only needs its id.
+        let sent = self
+            .session
             .send(MessageBody::new(text).expect("valid body"), reply)
-            .await
+            .await?;
+        Ok(sent.map(|msg| msg.id))
     }
 
     /// Clean shutdown (broadcasts `Left`).

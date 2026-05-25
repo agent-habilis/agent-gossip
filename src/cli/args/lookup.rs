@@ -2,9 +2,8 @@
 //! into every server command, and its resolution into a [`LookupSet`].
 
 use clap::Parser;
-use iroh::RelayUrl;
 
-use crate::protocol::swarm::{LookupSet, RelaySelection, parse_relay_ladder};
+use crate::protocol::swarm::{LookupSet, RelayLadder, RelaySelection};
 
 /// The lookup allowlist flags: with `--public`, naming none enables
 /// all three (mdns + dht + pinned relay); naming any uses *only* those
@@ -29,12 +28,12 @@ pub(crate) struct LookupArgs {
     /// ladder. An allowlist member like `--mdns`/`--dht` — per-process,
     /// requires `--public`. Absent ⇒ `None`; bare ⇒ `Some(None)`;
     /// valued ⇒ `Some(Some(ladder))`.
-    #[arg(long, num_args(0..=1), value_parser = parse_relay_ladder)]
+    #[arg(long, num_args(0..=1))]
     #[expect(
         clippy::option_option,
         reason = "clap optional-value flag: absent/bare/valued are three distinct relay states (see RelaySelection)"
     )]
-    pub relay: Option<Option<Vec<RelayUrl>>>,
+    pub relay: Option<Option<RelayLadder>>,
 }
 
 impl LookupArgs {
@@ -94,7 +93,7 @@ mod tests {
                 "--relay",
                 "https://relay.example"
             ]),
-            RelaySelection::Custom(vec!["https://relay.example".parse().unwrap()]),
+            RelaySelection::Custom("https://relay.example".parse().unwrap()),
             "valued ⇒ single-rung Custom ladder"
         );
         assert_eq!(
@@ -105,10 +104,7 @@ mod tests {
                 "--relay",
                 "https://a.example,https://b.example"
             ]),
-            RelaySelection::Custom(vec![
-                "https://a.example".parse().unwrap(),
-                "https://b.example".parse().unwrap(),
-            ]),
+            RelaySelection::Custom("https://a.example,https://b.example".parse().unwrap()),
             "comma-separated ⇒ ordered multi-rung ladder"
         );
     }
