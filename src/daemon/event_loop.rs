@@ -79,13 +79,21 @@ pub(crate) async fn run(cfg: EventLoopConfig) -> Result<()> {
     state.live_count = live_count;
     state.write_participant_count();
 
-    // Origin (`Eager`) co-hosts from t=0; everyone else defers to the
-    // `event_loop` heal gate (`may_cohost`). Why: `EventLoopConfig::cohost`.
+    // An eager member co-hosts from t=0 so a beacon exists before any
+    // joiner subscribes; everyone else defers to the heal gate
+    // (`may_cohost`). `Eager` skips the probe (a brand-new swarm has no
+    // peers to self-collide with); `EagerProbed` probes first, so several
+    // advertisers sharing one directory `rendezvous_id` don't bind
+    // duplicate copies. Why: `EventLoopConfig::cohost`.
     let mut rendezvous: Option<beacon::Rendezvous> = None;
-    if cohost == CoHostPolicy::Eager {
-        // No probe: the origin has no peers to mesh with, so it can't
-        // self-collide on the rendezvous.
-        beacon::ensure(&rendezvous_params, &endpoint, &mut rendezvous, false).await;
+    if claims_at_startup(cohost) {
+        beacon::ensure(
+            &rendezvous_params,
+            &endpoint,
+            &mut rendezvous,
+            probes_before_claim(cohost),
+        )
+        .await;
     }
 
     let (sender, receiver) = topic.split();
@@ -408,15 +416,43 @@ fn finalize_ping_round(state: &mut EventLoopState, output: &output::Output) {
     output.ping_report(peers, state.participants.len());
 }
 
+/// Whether a co-hosting member probes the rendezvous before claiming it —
+/// the single source of truth for the `probe_first` flag passed to
+/// [`beacon::ensure`] from every claim site (startup, heal tick, reclaim
+/// window). Only `Eager` (the swarm origin) skips the probe: a brand-new
+/// swarm has no peers to self-collide with. Every other policy probes, so
+/// it never binds a duplicate of a rendezvous a peer already serves — the
+/// directory advertiser's shared `rendezvous_id` (`EagerProbed`) or a
+/// survivor mid-failover (`Deferred`). Exhaustive on purpose: a new variant
+/// must make this decision explicitly rather than defaulting to "probe".
+fn probes_before_claim(cohost: CoHostPolicy) -> bool {
+    match cohost {
+        CoHostPolicy::Eager => false,
+        CoHostPolicy::EagerProbed | CoHostPolicy::Deferred | CoHostPolicy::Never => true,
+    }
+}
+
+/// Whether this member claims the rendezvous **at startup** (t=0) rather
+/// than deferring to the heal gate ([`may_cohost`]) or never co-hosting.
+/// The eager policies claim immediately so a beacon exists before any
+/// joiner/discoverer subscribes; whether that claim probes first is the
+/// orthogonal [`probes_before_claim`] axis.
+fn claims_at_startup(cohost: CoHostPolicy) -> bool {
+    match cohost {
+        CoHostPolicy::Eager | CoHostPolicy::EagerProbed => true,
+        CoHostPolicy::Deferred | CoHostPolicy::Never => false,
+    }
+}
+
 /// May this member co-host the rendezvous yet? See [`CoHostPolicy`].
-/// `Never` never co-hosts (a pure consumer); `Eager` always may; a
-/// `Deferred` member only once `meshed`, or after `cohost_grace_secs`
-/// for an empty swarm (then probe-gated in `beacon::ensure`). Pure +
-/// cheap; never blocks `ready`.
+/// `Never` never co-hosts (a pure consumer); `Eager`/`EagerProbed` always
+/// may; a `Deferred` member only once `meshed`, or after
+/// `cohost_grace_secs` for an empty swarm (then probe-gated in
+/// `beacon::ensure`). Pure + cheap; never blocks `ready`.
 fn may_cohost(cohost: CoHostPolicy, meshed: bool, started: Instant) -> bool {
     match cohost {
         CoHostPolicy::Never => false,
-        CoHostPolicy::Eager => true,
+        CoHostPolicy::Eager | CoHostPolicy::EagerProbed => true,
         CoHostPolicy::Deferred => {
             meshed || started.elapsed().as_secs() >= crate::util::tuning::cohost_grace_secs()
         }
@@ -600,7 +636,7 @@ async fn maybe_cohost(
     current: &mut Option<beacon::Rendezvous>,
 ) {
     if may_cohost(cohost, state.meshed, started) {
-        beacon::ensure(params, endpoint, current, cohost != CoHostPolicy::Eager).await;
+        beacon::ensure(params, endpoint, current, probes_before_claim(cohost)).await;
     }
 }
 
@@ -623,7 +659,7 @@ async fn maybe_reclaim(
             .reclaim_until
             .is_some_and(|deadline| Instant::now() < deadline)
     {
-        beacon::ensure(params, endpoint, current, cohost != CoHostPolicy::Eager).await;
+        beacon::ensure(params, endpoint, current, probes_before_claim(cohost)).await;
     }
 }
 
@@ -685,7 +721,27 @@ async fn recv_opt<T>(rx: &mut Option<mpsc::Receiver<T>>) -> Option<T> {
 mod tests {
     use std::time::Duration;
 
-    use super::{is_resume, is_wall_resume};
+    use super::{CoHostPolicy, claims_at_startup, is_resume, is_wall_resume, probes_before_claim};
+
+    #[test]
+    fn directory_advertiser_claims_at_startup_with_probe() {
+        // Regression for the duplicate-beacon directory bug: an advertiser
+        // must co-host the shared rendezvous from t=0 *and* probe-first, so a
+        // second advertiser into the same directory defers instead of binding
+        // a duplicate (which partitioned the directory in public mode — only
+        // one swarm was discoverable). The pre-fix policy was the no-probe
+        // `Eager` (claims, doesn't probe), which the probe assertion guards.
+        let advertiser = crate::embed::DIRECTORY_ADVERTISER_COHOST;
+        assert!(claims_at_startup(advertiser), "must claim at t=0");
+        assert!(probes_before_claim(advertiser), "must probe before claiming");
+
+        // The swarm origin (`create`) claims at startup but skips the probe;
+        // joiners and consumers don't claim at startup at all.
+        assert!(claims_at_startup(CoHostPolicy::Eager));
+        assert!(!probes_before_claim(CoHostPolicy::Eager));
+        assert!(!claims_at_startup(CoHostPolicy::Deferred));
+        assert!(!claims_at_startup(CoHostPolicy::Never));
+    }
 
     #[test]
     fn is_resume_only_past_threshold() {

@@ -573,6 +573,11 @@ impl SwarmSession {
     }
 }
 
+/// The co-host policy for a directory advertiser: claim the directory's
+/// shared rendezvous from t=0 but probe-first. See
+/// [`CoHostPolicy::EagerProbed`] for why probing matters here.
+pub(crate) const DIRECTORY_ADVERTISER_COHOST: CoHostPolicy = CoHostPolicy::EagerProbed;
+
 /// Spawn the directory re-broadcast task for `cfg`'s swarm: wire a fresh
 /// live-participant counter into `cfg.live_count`, then re-send the
 /// swarm's `ahs…` id (with that count) into `directory` every
@@ -586,15 +591,12 @@ pub(crate) fn spawn_advertiser(cfg: &mut EventLoopConfig, directory: SwarmName) 
     let swarm_id = cfg.swarm.clone();
     tokio::spawn(async move {
         let swarm = directory_swarm(&directory);
-        // The advertiser is the directory's de-facto origin: co-host its
-        // rendezvous *eagerly* (from t=0) so a beacon exists before any
-        // discoverer subscribes — the create+join shape that meshes in
-        // seconds. (A `Deferred` advertiser only beacons at the first
-        // heal tick, after discoverers have already failed their first
-        // graft against a dead rendezvous.) In private, claim-if-free
-        // elects one beacon among multiple advertisers; in public the
-        // common single-advertiser case is what this serves.
-        let session = match SwarmSession::join_decoded(swarm, None, CoHostPolicy::Eager).await {
+        // Co-host the directory rendezvous from t=0 so a beacon exists
+        // before any discoverer subscribes (a `Deferred` advertiser would
+        // only beacon at the first heal tick, after discoverers already
+        // failed their first graft). Probe-first; see DIRECTORY_ADVERTISER_COHOST.
+        let session =
+            match SwarmSession::join_decoded(swarm, None, DIRECTORY_ADVERTISER_COHOST).await {
             Ok(session) => session,
             Err(error) => {
                 tracing::warn!(
