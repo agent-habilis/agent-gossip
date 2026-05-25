@@ -290,7 +290,7 @@ async fn event_loop(loop_state: EventLoop) -> Result<()> {
             }
             _ = antientropy_interval.tick() => {
                 timers::note_tick_gap("antientropy", &mut last_antientropy, &mut last_antientropy_wall, Duration::from_secs(ANTIENTROPY_INTERVAL_SECS));
-                gossip::antientropy::broadcast_digest(&state, &sender, &swarm_str, &author).await;
+                gossip::antientropy::broadcast_digest(&mut state, &sender, &swarm_str, &author).await;
             }
             _ = state_refresh_interval.tick() => timers::tick_state_refresh(&state, &endpoint).await,
             _ = recv_opt(&mut external_quit_rx) => {

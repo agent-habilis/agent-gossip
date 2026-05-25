@@ -16,12 +16,14 @@
 //! target: `crate::gossip`, `crate::lifecycle`, `crate::beacon`,
 //! `crate::lookup`.
 
+mod bounded_id_set;
 mod config;
 pub(crate) mod ctx;
 pub(crate) mod ipc;
-// In-memory accounting stores owned by `EventLoopState`. Private to
-// `daemon` — no consumer outside the event loop.
-mod message_log;
+// In-memory accounting stores owned by `EventLoopState`. `pub(crate)` so
+// the gossip anti-entropy layer (and its tests) can name `MessageLog` /
+// `DigestWindow`; still crate-internal.
+pub(crate) mod message_log;
 pub(crate) mod params;
 // Normally private to the daemon; widened to `pub(crate)` only under the
 // `bench` feature so `bench_api` can reach `SwarmRateLimiter`. Non-bench

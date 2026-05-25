@@ -44,10 +44,21 @@ pub const RATE_LIMIT_PER_MIN: u16 = 60;
 /// hardcoded here rather than derived.
 pub const MAX_MESSAGE_SIZE: usize = 3840;
 
-/// Number of recent messages retained for the poll command / MCP
-/// `fetch_messages` buffer — the contract for how much history a single
-/// poll can return. Anchors [`MAX_IPC_RESPONSE_BYTES`].
-pub const DEFAULT_MESSAGE_LOG_SIZE: usize = 200;
+/// Default number of recent messages each member retains in its in-memory
+/// log (anti-entropy recovery source + poll/fetch history). Overridable per
+/// process via `AHS_MESSAGE_LOG_SIZE` (see `tuning::message_log_size`); this
+/// is just the default. A bigger log lets a reconnecting peer recover a
+/// longer gap. Not coupled to the IPC response cap — that is the separate,
+/// fixed [`POLL_RESPONSE_MAX_MSGS`] (the log can exceed it; `poll` then
+/// surfaces the most-recent window and anti-entropy carries the rest).
+pub const DEFAULT_MESSAGE_LOG_SIZE: usize = 1000;
+
+/// Max messages a single `poll` / `fetch_messages` returns — a **fixed**
+/// IPC contract (the `ahs poll` client can't know the daemon's configured
+/// log size, so the read cap can't depend on it). At the default log size
+/// this equals the log, so `poll` returns everything; a larger configured
+/// log just means `poll` surfaces the most-recent `POLL_RESPONSE_MAX_MSGS`.
+pub const POLL_RESPONSE_MAX_MSGS: usize = 1000;
 
 /// Max bytes for one stdin line. A raw message body larger than the wire
 /// cap can never form a valid message, so the line read is capped there.
@@ -57,9 +68,11 @@ pub const MAX_STDIN_LINE_BYTES: usize = MAX_MESSAGE_SIZE;
 /// (swarm id, nickname, keys). 2× the wire cap is comfortable headroom.
 pub const MAX_IPC_COMMAND_BYTES: usize = 2 * MAX_MESSAGE_SIZE;
 
-/// Max bytes for one IPC response line: a poll returns at most the full
-/// message buffer, each message ≤ the wire cap.
-pub const MAX_IPC_RESPONSE_BYTES: usize = DEFAULT_MESSAGE_LOG_SIZE * MAX_MESSAGE_SIZE;
+/// Max bytes for one IPC response line: a poll returns at most
+/// [`POLL_RESPONSE_MAX_MSGS`] messages, each ≤ the wire cap. Fixed (not tied
+/// to the configurable log size) so the `poll` client has a stable read
+/// bound.
+pub const MAX_IPC_RESPONSE_BYTES: usize = POLL_RESPONSE_MAX_MSGS * MAX_MESSAGE_SIZE;
 
 /// QUIC keep-alive interval in seconds. Keepalives on an otherwise idle
 /// connection stop a quiet-but-live peer from being dropped; must stay

@@ -8,14 +8,16 @@ use tokio::time::Instant as TokioInstant;
 use bytes::Bytes;
 use iroh::EndpointId;
 
+use super::bounded_id_set::BoundedIdSet;
 use super::message_log::MessageLog;
 use super::rate_limit::SwarmRateLimiter;
 use crate::daemon::state_file::StateFile;
 use crate::output;
 use crate::protocol::{Message, MessageId, Nickname};
-use ahs_shared::DEFAULT_MESSAGE_LOG_SIZE;
 
-use crate::util::tuning::{KNOWN_ENDPOINTS_CAP, PENDING_OUTBOUND_CAP, SEEN_IDS_CAP};
+use crate::util::tuning::{
+    KNOWN_ENDPOINTS_CAP, PENDING_OUTBOUND_CAP, message_log_size, seen_ids_cap,
+};
 
 /// All mutable state owned by the event loop.
 ///
@@ -101,13 +103,12 @@ pub(crate) struct EventLoopState {
     /// waiting for the next 15s heal tick.
     pub reclaim_until: Option<Instant>,
     /// Recently-seen message ids, for duplicate suppression. Gossip
-    /// (GRAFT/repair, topology churn, our own re-broadcasts, the
-    /// rendezvous double-path) can deliver the same message twice;
-    /// `mark_seen` drops the repeat before it reaches the log / embed
-    /// channel / agent. `seen_order` is the FIFO eviction queue for the
-    /// set, bounded by `SEEN_IDS_CAP`.
-    pub seen_ids: HashSet<MessageId>,
-    pub seen_order: VecDeque<MessageId>,
+    /// (GRAFT/repair, topology churn, our own re-broadcasts, anti-entropy
+    /// re-sends, the rendezvous double-path) can deliver the same message
+    /// twice; `mark_seen` drops the repeat before it reaches the log /
+    /// embed channel / agent. Bounded (`seen_ids_cap`, 2× the message log)
+    /// so it always covers the retention window.
+    pub seen: BoundedIdSet,
     /// User messages sent before we had a real-peer link (no gossip
     /// path yet — a bare `broadcast` would be a lost one-shot).
     /// Drained in FIFO order once `meshed` flips; bounded by
@@ -121,6 +122,11 @@ pub(crate) struct EventLoopState {
     /// non-advertising case (no shared counter to maintain).
     pub live_count: Option<Arc<AtomicUsize>>,
     pub message_log: MessageLog,
+    /// Rolling start index for the anti-entropy digest window: each round
+    /// advertises `message_log[digest_cursor ..]` (up to
+    /// `ANTIENTROPY_DIGEST_MAX_IDS`), then advances/wraps so a log larger
+    /// than one digest is swept over several rounds.
+    pub digest_cursor: usize,
     pub rate_limiter: SwarmRateLimiter,
     /// Active `ahs ping` round, if one is in flight. Armed by the
     /// `Ping` IPC command, filled by inbound `Pong`s, and finalized
@@ -162,12 +168,12 @@ impl EventLoopState {
             announced: false,
             meshed: false,
             reclaim_until: None,
-            seen_ids: HashSet::new(),
-            seen_order: VecDeque::new(),
+            seen: BoundedIdSet::new(seen_ids_cap()),
             pending_outbound: VecDeque::new(),
             state_file,
             live_count: None,
-            message_log: MessageLog::new(DEFAULT_MESSAGE_LOG_SIZE),
+            message_log: MessageLog::new(message_log_size()),
+            digest_cursor: 0,
             rate_limiter: SwarmRateLimiter::from_per_min(rate_limit_per_min),
             ping_round: None,
         }
@@ -188,6 +194,17 @@ impl EventLoopState {
             output.info("poll: --after ID was evicted from buffer, returning all messages");
         }
         messages.retain(|message| message.timestamp >= self.joined_at);
+        // Cap the response to the fixed IPC window (independent of the
+        // configurable log size). Normally a no-op — the default log equals
+        // the window — but a larger configured log surfaces only the most
+        // recent `POLL_RESPONSE_MAX_MSGS` here (deep history still backs
+        // anti-entropy recovery).
+        if messages.len() > ahs_shared::POLL_RESPONSE_MAX_MSGS {
+            let drop_count = messages.len() - ahs_shared::POLL_RESPONSE_MAX_MSGS;
+            messages.drain(0..drop_count);
+            output
+                .info("poll: log exceeds the response window, returning the most recent messages");
+        }
         tracing::debug!(returned = messages.len(), evicted, "poll served");
         messages
     }
@@ -243,19 +260,9 @@ impl EventLoopState {
 
     /// Record `id` as seen and report whether it was *already* seen.
     /// `true` => this is a duplicate delivery the caller must drop.
-    /// Bounded FIFO: evicts the oldest id past `SEEN_IDS_CAP`.
+    /// Delegates to the bounded [`BoundedIdSet`].
     pub(crate) fn mark_seen(&mut self, id: &MessageId) -> bool {
-        if self.seen_ids.contains(id) {
-            return true;
-        }
-        self.seen_ids.insert(id.clone());
-        self.seen_order.push_back(id.clone());
-        if self.seen_order.len() > SEEN_IDS_CAP
-            && let Some(oldest) = self.seen_order.pop_front()
-        {
-            self.seen_ids.remove(&oldest);
-        }
-        false
+        self.seen.mark(id)
     }
 }
 
@@ -263,7 +270,7 @@ impl EventLoopState {
 mod tests {
     use super::{
         Bytes, EndpointId, EventLoopState, Instant, KNOWN_ENDPOINTS_CAP, MessageId,
-        PENDING_OUTBOUND_CAP, SEEN_IDS_CAP,
+        PENDING_OUTBOUND_CAP,
     };
 
     fn fresh_state() -> EventLoopState {
@@ -326,38 +333,43 @@ mod tests {
     }
 
     #[test]
-    fn mark_seen_reports_first_then_duplicate() {
+    fn mark_seen_delegates_dedup() {
+        // Smoke test the `EventLoopState` → `BoundedIdSet` delegation; the
+        // bounded-FIFO/eviction logic itself is covered in `bounded_id_set`.
         let mut state = fresh_state();
         let id = MessageId::random();
         assert!(!state.mark_seen(&id), "first sighting is not a duplicate");
         assert!(state.mark_seen(&id), "second sighting is a duplicate");
-        assert!(state.mark_seen(&id), "still a duplicate on repeat");
     }
 
     #[test]
-    fn mark_seen_distinct_ids_are_independent() {
-        let mut state = fresh_state();
-        let (one, two) = (MessageId::random(), MessageId::random());
-        assert!(!state.mark_seen(&one));
-        assert!(!state.mark_seen(&two));
-        assert!(state.mark_seen(&one));
-        assert!(state.mark_seen(&two));
-    }
+    fn dedup_window_covers_the_retention_window() {
+        use crate::util::tuning::{message_log_size, seen_ids_cap};
 
-    #[test]
-    fn mark_seen_evicts_oldest_past_cap() {
-        let mut state = fresh_state();
-        let first = MessageId::random();
-        assert!(!state.mark_seen(&first));
-        // Fill past the cap; `first` is the oldest and must be evicted.
-        for _ in 0..SEEN_IDS_CAP {
-            assert!(!state.mark_seen(&MessageId::random()));
-        }
+        // Invariant the whole design rests on: the dedup set must outlive
+        // the message log. Anti-entropy re-broadcasts any message still in
+        // the log; if its id had scrolled out of the dedup set the resend
+        // would be reprocessed and **re-surfaced** to the agent.
         assert!(
-            !state.mark_seen(&first),
-            "evicted id is treated as new again"
+            seen_ids_cap() >= message_log_size(),
+            "dedup cap ({}) must cover the retention window ({})",
+            seen_ids_cap(),
+            message_log_size(),
         );
-        assert_eq!(state.seen_order.len(), state.seen_ids.len());
-        assert!(state.seen_order.len() <= SEEN_IDS_CAP);
+
+        let mut state = fresh_state();
+        let earliest = MessageId::random();
+        assert!(!state.mark_seen(&earliest));
+        // Mark a full buffer's worth of later ids.
+        for _ in 1..message_log_size() {
+            state.mark_seen(&MessageId::random());
+        }
+        // The earliest is still within the dedup window, so an anti-entropy
+        // resend of it (while it is still retained in the log) is dropped as
+        // a duplicate rather than surfaced a second time.
+        assert!(
+            state.mark_seen(&earliest),
+            "a resend of a still-retained message must be deduped, not re-surfaced"
+        );
     }
 }

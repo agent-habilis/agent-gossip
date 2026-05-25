@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 use ahs_shared::RATE_LIMIT_PER_MIN;
 use common::{
     CONNECT_TIMEOUT, InProcNode, MSG_TIMEOUT, Msg, Node, POLL, SOCKET_DIR, cli_message,
-    cli_message_raw, cli_ping, cli_poll, tmp_log, trace_log, wait_total,
+    cli_message_raw, cli_ping, cli_poll, tmp_log, trace_log, wait_total, wait_until,
 };
 
 // ── tests ─────────────────────────────────────────────────────────────────────
@@ -776,7 +776,7 @@ fn test_first_message_after_post_departure_join_is_delivered() {
     let j2b_id = cli_message(&swarm, &joiner.nickname, "j2b first");
     assert!(!j2b_id.is_empty(), "joiner msg returned empty id");
     assert!(
-        common::wait_until(
+        wait_until(
             || bystander.count_from(&joiner.nickname, "j2b first"),
             1,
             MSG_TIMEOUT
@@ -791,7 +791,7 @@ fn test_first_message_after_post_departure_join_is_delivered() {
     let b2j_id = cli_message(&swarm, &bystander.nickname, "b2j first");
     assert!(!b2j_id.is_empty(), "bystander msg returned empty id");
     assert!(
-        common::wait_until(
+        wait_until(
             || joiner.count_from(&bystander.nickname, "b2j first"),
             1,
             MSG_TIMEOUT
@@ -867,7 +867,7 @@ const SHORT_EVICT: [(&str, &str); 2] = [("ALIVE_TIMEOUT_SECS", "3"), ("SWEEP_INT
 /// adaptive — a healthy run returns the instant the message lands.
 fn assert_received(receiver: &Node, sender: &str, body: &str, within: Duration) {
     assert!(
-        common::wait_until(|| receiver.count_from(sender, body), 1, within) >= 1,
+        wait_until(|| receiver.count_from(sender, body), 1, within) >= 1,
         "{} never received {body:?} from {sender}\n{}",
         receiver.nickname,
         receiver.log_tail(20),
@@ -1094,4 +1094,376 @@ fn test_anti_entropy_set_convergence() {
     // Post-join message, so the horizon does not hide it: anti-entropy
     // must backfill it to the still-member peer.
     assert_received(&alpha, &creator.nickname, "ae-gap", reconcile);
+}
+
+/// Large-gap reconnect replication: with a shared history larger than the
+/// old ~90-uuid digest overflow point, a peer that freezes and misses a
+/// burst must converge to the **full** set when it resumes.
+///
+/// Regression for the digest overflow: pre-fix, a buffer past ~90 messages
+/// made every node's `recent_ids` digest (a JSON array of 36-char uuid
+/// strings, ~8 KB at 200) exceed the gossip cap and get silently dropped —
+/// so anti-entropy stalled and the gap never reconciled. The compact,
+/// windowed digest keeps every digest under the cap, so it recovers.
+#[test]
+fn test_large_gap_reconnect_replication() {
+    // Comfortably past the old ~98-uuid overflow *before* the gap, so the
+    // old string-array digest would have been dropped.
+    const PRELUDE: usize = 120;
+    const GAP: usize = 30;
+    const TOTAL: usize = PRELUDE + GAP;
+    // Production alive-timeout (no `SHORT_EVICT`) so alpha stays a member
+    // while frozen; a faster max-resend so the deep backfill converges
+    // inside the window.
+    let envs = [("AHS_ANTIENTROPY_MAX_RESEND", "128")];
+
+    // `--rate-limit 0`: the burst must not be throttled on the send path.
+    let (creator, swarm) = Node::create_args("itest", &["--rate-limit", "0"], &envs);
+    let alpha = Node::join_env(&swarm, "lg-alpha", &envs);
+    let bravo = Node::join_env(&swarm, "lg-bravo", &envs);
+    assert!(creator.wait_ready(&swarm), "creator never ready");
+    assert!(alpha.wait_ready(&swarm), "alpha never ready");
+    assert!(bravo.wait_ready(&swarm), "bravo never ready");
+
+    let author = creator.nickname.clone();
+
+    // Build a shared history past the overflow point; alpha gets it live.
+    for index in 0..PRELUDE {
+        let _ = cli_message_raw(&swarm, &creator.nickname, &format!("lg-{index}"));
+    }
+    let live = wait_until(
+        || alpha.count_distinct_from(&author, "lg-"),
+        PRELUDE,
+        Duration::from_mins(1),
+    );
+    assert_eq!(live, PRELUDE, "alpha never received the live prelude");
+
+    // Freeze alpha, then send the gap it must later recover.
+    alpha.stop();
+    std::thread::sleep(Duration::from_secs(2));
+    for index in PRELUDE..TOTAL {
+        let _ = cli_message_raw(&swarm, &creator.nickname, &format!("lg-{index}"));
+    }
+    // bravo (live) gets everything — confirms the burst actually went out
+    // while alpha was frozen.
+    let bravo_total = wait_until(
+        || bravo.count_distinct_from(&author, "lg-"),
+        TOTAL,
+        Duration::from_mins(1),
+    );
+    assert_eq!(bravo_total, TOTAL, "bravo never received the full burst");
+
+    // Hold the freeze past QUIC_MAX_IDLE_SECS (10s) so alpha's link dies and
+    // the gap is genuinely missed — recovery then must go through
+    // anti-entropy rather than a buffered post-resume delivery.
+    std::thread::sleep(Duration::from_secs(15));
+    // Resume: anti-entropy must backfill the gap. Generous — a frozen link
+    // re-meshes on the 15s heal tick, then digests reconcile over a few
+    // 10s cycles.
+    alpha.cont();
+    let final_count = wait_until(
+        || alpha.count_distinct_from(&author, "lg-"),
+        TOTAL,
+        Duration::from_secs(150),
+    );
+    assert_eq!(
+        final_count,
+        TOTAL,
+        "alpha did not converge to the full set after reconnect (got {final_count}/{TOTAL})\n{}",
+        alpha.log_tail(20),
+    );
+}
+
+/// Rate-limited messages never enter the receiver's message log — which is
+/// the anti-entropy recovery source — so anti-entropy can never "launder"
+/// dropped spam to a peer. Drops happen on the send side (before the log
+/// push, `broadcast.rs`) and the receive side (before the log push,
+/// `recv.rs`); either way the excess is absent from what backfills peers.
+#[tokio::test]
+async fn rate_dropped_messages_are_not_retained_for_backfill() {
+    let sender = InProcNode::create("net-rl-backfill").await;
+    let mut receiver = InProcNode::join(&sender.swarm, "rl-backfill-recv").await;
+
+    let flood = RATE_LIMIT_PER_MIN as usize * 2; // twice the per-identity quota
+    for index in 0..flood {
+        let _ = sender.try_send(&format!("flood {index}")).await;
+    }
+    assert!(
+        receiver.wait_inbound(1, MSG_TIMEOUT).await,
+        "no flood message arrived at all"
+    );
+    tokio::time::sleep(Duration::from_secs(2)).await; // let gossip settle
+
+    let retained = receiver
+        .inbound()
+        .iter()
+        .filter(|msg| msg.body.as_str().starts_with("flood "))
+        .map(|msg| msg.body.as_str().to_string())
+        .collect::<std::collections::HashSet<_>>()
+        .len();
+    assert!(
+        retained >= 1,
+        "the receiver should retain at least the burst allowance"
+    );
+    assert!(
+        retained < flood,
+        "rate limiter must keep excess out of the log (the anti-entropy source); retained all {retained}"
+    );
+}
+
+/// Deep **interior** gap: a peer holds older *and* newer messages but is
+/// missing a middle slice, so its open newest window cannot cover the gap —
+/// it is recovered only by the rolling **closed older** window. Exercises
+/// that path end to end (the tail-loss `test_large_gap_reconnect_replication`
+/// does not).
+#[test]
+fn test_interior_gap_recovered_via_rolling_window() {
+    const OLD: usize = 80; // shared older history
+    const GAP: usize = 40; // interior gap (frozen peer misses these)
+    const TAIL: usize = 80; // newer tail
+    const TOTAL: usize = OLD + GAP + TAIL;
+    let envs = [("AHS_ANTIENTROPY_MAX_RESEND", "128")];
+
+    let (creator, swarm) = Node::create_args("itest", &["--rate-limit", "0"], &envs);
+    let alpha = Node::join_env(&swarm, "ig-alpha", &envs);
+    let bravo = Node::join_env(&swarm, "ig-bravo", &envs);
+    assert!(
+        creator.wait_ready(&swarm) && alpha.wait_ready(&swarm) && bravo.wait_ready(&swarm),
+        "nodes never ready"
+    );
+    let author = creator.nickname.clone();
+
+    let mut idx = 0usize;
+    // OLD: shared older history; alpha gets it live.
+    for _ in 0..OLD {
+        let _ = cli_message_raw(&swarm, &creator.nickname, &format!("ig-{idx}"));
+        idx += 1;
+    }
+    assert_eq!(
+        wait_until(
+            || alpha.count_distinct_from(&author, "ig-"),
+            OLD,
+            Duration::from_mins(1)
+        ),
+        OLD,
+        "alpha missed the shared history"
+    );
+    // Freeze alpha, send the GAP — the interior slice alpha never sees live.
+    alpha.stop();
+    for _ in 0..GAP {
+        let _ = cli_message_raw(&swarm, &creator.nickname, &format!("ig-{idx}"));
+        idx += 1;
+    }
+    assert_eq!(
+        wait_until(
+            || bravo.count_distinct_from(&author, "ig-"),
+            OLD + GAP,
+            Duration::from_mins(1)
+        ),
+        OLD + GAP,
+        "bravo missed the gap batch"
+    );
+    // Hold the freeze past QUIC_MAX_IDLE_SECS (10s) so alpha's link dies and
+    // it genuinely misses the gap (recoverable only via anti-entropy, not a
+    // buffered post-resume delivery).
+    std::thread::sleep(Duration::from_secs(15));
+    // Resume and send the newer TAIL. alpha ends up holding OLD + TAIL with
+    // the GAP strictly below its newest window, so the gap is recoverable
+    // only via the rolling older window.
+    alpha.cont();
+    for _ in 0..TAIL {
+        let _ = cli_message_raw(&swarm, &creator.nickname, &format!("ig-{idx}"));
+        idx += 1;
+    }
+    let final_count = wait_until(
+        || alpha.count_distinct_from(&author, "ig-"),
+        TOTAL,
+        Duration::from_secs(150),
+    );
+    assert_eq!(
+        final_count,
+        TOTAL,
+        "interior gap not recovered via the rolling older window (got {final_count}/{TOTAL})\n{}",
+        alpha.log_tail(20),
+    );
+}
+
+/// Steady-state churn-free: once a swarm with a buffer larger than one
+/// digest window is fully converged, anti-entropy must go quiet — no peer
+/// keeps re-sending. A naive sub-window digest (advertising less than it
+/// holds) would make peers perpetually re-send the remainder; the `[lo,hi]`
+/// bounds prevent that. We assert the `resent` log count stops growing.
+#[test]
+fn test_steady_state_no_resend_churn() {
+    const COUNT: usize = 150; // > one 70-id window ⇒ the rolling older window is active
+    let envs = [
+        ("RUST_LOG", "agent_habilis_swarm::gossip=debug"),
+        ("AHS_LOG_MAX_BYTES", "0"), // no rotation, so the full log is one file
+    ];
+
+    let (creator, swarm) = Node::create_args("itest", &["--rate-limit", "0"], &envs);
+    let alpha = Node::join_env(&swarm, "cf-alpha", &envs);
+    let bravo = Node::join_env(&swarm, "cf-bravo", &envs);
+    assert!(
+        creator.wait_ready(&swarm) && alpha.wait_ready(&swarm) && bravo.wait_ready(&swarm),
+        "nodes never ready"
+    );
+    let author = creator.nickname.clone();
+    for index in 0..COUNT {
+        let _ = cli_message_raw(&swarm, &creator.nickname, &format!("cf-{index}"));
+    }
+    assert_eq!(
+        wait_until(
+            || alpha.count_distinct_from(&author, "cf-"),
+            COUNT,
+            Duration::from_mins(1)
+        ),
+        COUNT,
+        "alpha never converged"
+    );
+    assert_eq!(
+        wait_until(
+            || bravo.count_distinct_from(&author, "cf-"),
+            COUNT,
+            Duration::from_mins(1)
+        ),
+        COUNT,
+        "bravo never converged"
+    );
+
+    // NOTE: greps the debug line emitted by `handle_digest` in
+    // `src/gossip/antientropy.rs` ("anti-entropy: resent …"). Keep the two
+    // in sync — if that message is reworded, update this match.
+    let resends = || -> usize {
+        [&creator, &alpha, &bravo]
+            .iter()
+            .map(|node| node.log_contents().matches("anti-entropy: resent").count())
+            .sum()
+    };
+    // Settle past the convergence-era resends.
+    std::thread::sleep(Duration::from_secs(25));
+    let before = resends();
+    // Two more anti-entropy cycles in a now-converged swarm.
+    std::thread::sleep(Duration::from_secs(25));
+    let after = resends();
+    assert_eq!(
+        before, after,
+        "a converged swarm kept re-sending (churn): {before} -> {after}"
+    );
+}
+
+/// Gap larger than the buffer: a peer frozen through a burst bigger than
+/// the (shrunk) log misses everything, and the oldest messages are evicted
+/// swarm-wide. On resume it can recover only the still-retained recent set —
+/// not the evicted ones — and must not spin forever requesting them.
+#[test]
+fn test_gap_larger_than_buffer_recovers_retained_set() {
+    const CAP: usize = 20;
+    const BURST: usize = 50; // > CAP: the oldest are evicted everywhere
+    let envs = [
+        ("AHS_MESSAGE_LOG_SIZE", "20"),
+        ("AHS_ANTIENTROPY_MAX_RESEND", "64"),
+    ];
+
+    let (creator, swarm) = Node::create_args("itest", &["--rate-limit", "0"], &envs);
+    let alpha = Node::join_env(&swarm, "gb-alpha", &envs);
+    let bravo = Node::join_env(&swarm, "gb-bravo", &envs);
+    assert!(
+        creator.wait_ready(&swarm) && alpha.wait_ready(&swarm) && bravo.wait_ready(&swarm),
+        "nodes never ready"
+    );
+    let author = creator.nickname.clone();
+
+    // Freeze alpha and let it settle into suspension before any send, so it
+    // can't surface an early message live.
+    alpha.stop();
+    std::thread::sleep(Duration::from_secs(2));
+    for index in 0..BURST {
+        let _ = cli_message_raw(&swarm, &creator.nickname, &format!("b-{index}"));
+    }
+    // bravo received them all; its buffer keeps only the most recent CAP.
+    let newest = format!("b-{}", BURST - 1);
+    let _ = wait_until(
+        || bravo.count_from(&author, &newest),
+        1,
+        Duration::from_mins(1),
+    );
+    // Hold the freeze past QUIC_MAX_IDLE_SECS (10s) so alpha's link dies and
+    // the burst is genuinely missed (not just buffered for delivery on
+    // resume) — recovery must then go through anti-entropy.
+    std::thread::sleep(Duration::from_secs(15));
+
+    alpha.cont();
+    // alpha recovers the newest retained message…
+    let got_newest = wait_until(
+        || alpha.count_from(&author, &newest),
+        1,
+        Duration::from_mins(2),
+    );
+    assert_eq!(
+        got_newest, 1,
+        "alpha never recovered the newest retained message"
+    );
+    // …but never the evicted oldest, and the test completes (no infinite
+    // re-request loop).
+    assert_eq!(
+        alpha.count_from(&author, "b-0"),
+        0,
+        "alpha recovered a message evicted swarm-wide"
+    );
+    let recovered = alpha
+        .messages()
+        .iter()
+        .filter(|msg| msg.author == author && msg.body.starts_with("b-"))
+        .map(|msg| msg.body.clone())
+        .collect::<std::collections::HashSet<_>>()
+        .len();
+    assert!(
+        recovered <= CAP + 2,
+        "alpha retained more than the buffer cap ({recovered} > {CAP})"
+    );
+}
+
+/// Multi-round throttled backfill: a per-round resend budget far smaller
+/// than the gap forces recovery across several anti-entropy cycles (not one
+/// burst). Proves the cumulative catch-up converges.
+#[test]
+fn test_multi_round_throttled_backfill() {
+    const GAP: usize = 40;
+    let envs = [("AHS_ANTIENTROPY_MAX_RESEND", "5")]; // tiny budget ⇒ many rounds
+
+    let (creator, swarm) = Node::create_args("itest", &["--rate-limit", "0"], &envs);
+    let alpha = Node::join_env(&swarm, "mr-alpha", &envs);
+    let bravo = Node::join_env(&swarm, "mr-bravo", &envs);
+    assert!(
+        creator.wait_ready(&swarm) && alpha.wait_ready(&swarm) && bravo.wait_ready(&swarm),
+        "nodes never ready"
+    );
+    let author = creator.nickname.clone();
+
+    alpha.stop();
+    std::thread::sleep(Duration::from_secs(2));
+    for index in 0..GAP {
+        let _ = cli_message_raw(&swarm, &creator.nickname, &format!("mr-{index}"));
+    }
+    let _ = wait_until(
+        || bravo.count_distinct_from(&author, "mr-"),
+        GAP,
+        Duration::from_mins(1),
+    );
+    // Hold the freeze past QUIC_MAX_IDLE_SECS (10s) so the gap is genuinely
+    // missed and recovered through anti-entropy's throttled resend.
+    std::thread::sleep(Duration::from_secs(15));
+    alpha.cont();
+    let final_count = wait_until(
+        || alpha.count_distinct_from(&author, "mr-"),
+        GAP,
+        Duration::from_secs(150),
+    );
+    assert_eq!(
+        final_count,
+        GAP,
+        "throttled backfill did not complete over multiple rounds (got {final_count}/{GAP})\n{}",
+        alpha.log_tail(20),
+    );
 }

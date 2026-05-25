@@ -567,10 +567,19 @@ impl Node {
     /// Like [`create_named`](Self::create_named) but exports extra env
     /// vars to the spawned daemon (e.g. a shortened heal cadence).
     pub(crate) fn create_env(name: &str, envs: &[(&str, &str)]) -> (Self, String) {
+        Self::create_args(name, &[], envs)
+    }
+
+    /// Like [`create_env`](Self::create_env) but also passes extra `create`
+    /// CLI args (e.g. `["--rate-limit", "0"]` to lift the send-side cap for
+    /// a burst).
+    pub(crate) fn create_args(name: &str, extra: &[&str], envs: &[(&str, &str)]) -> (Self, String) {
         let log = tmp_log("create");
         let file = File::create(&log).unwrap();
+        let mut args = vec!["create", "--name", name];
+        args.extend_from_slice(extra);
         let child = test_cmd()
-            .args(["create", "--name", name])
+            .args(&args)
             .envs(envs.iter().copied())
             .stdout(Stdio::from(file.try_clone().unwrap()))
             .stderr(Stdio::from(file))
@@ -687,6 +696,18 @@ impl Node {
             .iter()
             .filter(|msg| msg.author == author && msg.body == body)
             .count()
+    }
+
+    /// How many **distinct** messages from `author` have a body starting with
+    /// `prefix` — the convergence metric for the anti-entropy gap-recovery
+    /// tests (each sends `prefix-{i}` and waits for the full distinct set).
+    pub(crate) fn count_distinct_from(&self, author: &str, prefix: &str) -> usize {
+        self.messages()
+            .iter()
+            .filter(|msg| msg.author == author && msg.body.starts_with(prefix))
+            .map(|msg| msg.body.clone())
+            .collect::<std::collections::HashSet<_>>()
+            .len()
     }
 
     /// Send SIGINT to the child process (triggers the ctrl-c handler).

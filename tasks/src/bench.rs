@@ -17,7 +17,11 @@ pub(crate) fn run(sh: &Shell, args: &[String]) -> TaskOutcome {
     match args.first().map(String::as_str) {
         None => cmd!(sh, "cargo bench --features bench").run()?,
         Some("transfer") => cmd!(sh, "cargo bench --bench transfer").run()?,
-        _ => cmd!(sh, "cargo bench --features bench --bench hot_paths -- {args...}").run()?,
+        _ => cmd!(
+            sh,
+            "cargo bench --features bench --bench hot_paths -- {args...}"
+        )
+        .run()?,
     }
     Ok(())
 }

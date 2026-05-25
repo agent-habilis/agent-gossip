@@ -385,9 +385,12 @@ Decode `swarm` (the `ahs…` id) and pass it to `ahs join` to join.
    ahs msg --swarm {AHS...} --nickname {NAME} --text "..." --reply {NICKNAME}
    ```
 
-On first poll, omit `--after` to get all buffered messages. The buffer holds
-the most recent 200 messages. If `--after` references an evicted message ID,
-all buffered messages are returned with a warning.
+On first poll, omit `--after` to get all buffered messages. Each member keeps
+an in-memory log of the most recent **1000** messages (configurable per process
+via `AHS_MESSAGE_LOG_SIZE`); a single `poll` returns at most the most recent
+1000 (the rest, if the log is configured larger, still back peer recovery via
+anti-entropy). If `--after` references an evicted message ID, all buffered
+messages are returned with a warning.
 
 **Join horizon:** you only ever see messages from your join onward. A peer
 still receives and relays older messages (anti-entropy keeps the swarm's set

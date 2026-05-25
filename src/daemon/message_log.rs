@@ -2,8 +2,20 @@ use std::collections::{HashSet, VecDeque};
 
 use crate::protocol::{Message, MessageId};
 
-/// A bounded FIFO buffer storing all message types for the poll command.
-/// When full, the oldest message is discarded.
+/// One anti-entropy digest window: the inclusive `[lo, hi]` timestamp
+/// range it covers and the compact (raw 16-byte UUID) ids the sender holds
+/// in that range. The bounds let a receiver re-send only **in-window** gaps,
+/// so advertising a sub-window of a large log never makes peers perpetually
+/// re-send the out-of-window remainder.
+pub(crate) struct DigestWindow {
+    pub lo: i64,
+    pub hi: i64,
+    pub ids: Vec<[u8; 16]>,
+}
+
+/// A bounded FIFO buffer of the recent messages a member retains — the
+/// anti-entropy recovery source and the poll/fetch history. Time-ordered
+/// (push order ≈ ascending timestamp). When full, the oldest is discarded.
 pub(crate) struct MessageLog {
     capacity: usize,
     messages: VecDeque<Message>,
@@ -25,25 +37,79 @@ impl MessageLog {
         self.messages.push_back(msg);
     }
 
-    /// The `max` most-recent message ids (newest first) — the payload
-    /// of an anti-entropy digest advertising what we hold.
-    pub(crate) fn recent_ids(&self, max: usize) -> Vec<&str> {
-        self.messages
-            .iter()
-            .rev()
-            .take(max)
-            .map(|msg| msg.id.as_str())
-            .collect()
+    pub(crate) fn len(&self) -> usize {
+        self.messages.len()
     }
 
-    /// Up to `max` of our messages (newest first) whose id is **not**
-    /// in `have` — the gap to re-broadcast so a peer that sent us that
-    /// digest recovers what it missed.
-    pub(crate) fn missing_from(&self, have: &HashSet<&str>, max: usize) -> Vec<Message> {
+    /// A contiguous window of the log: up to `max` messages starting at
+    /// index `start`, with their inclusive `[lo, hi]` timestamp bounds and
+    /// compact ids. `None` if the log is empty or `start` is past the end.
+    pub(crate) fn window_at(&self, start: usize, max: usize) -> Option<DigestWindow> {
+        let slice: Vec<&Message> = self.messages.iter().skip(start).take(max).collect();
+        let lo = slice.first()?.timestamp;
+        let hi = slice.last()?.timestamp;
+        let ids = slice.iter().map(|msg| msg.id.as_uuid_bytes()).collect();
+        Some(DigestWindow { lo, hi, ids })
+    }
+
+    /// The newest `recent` messages as an **open-ended** digest window
+    /// (`hi = i64::MAX`): "I hold everything from `lo` onward except the
+    /// gaps not in `ids`." This is what drives reconnect recovery — a peer
+    /// that froze advertises it, and holders re-send every *newer* message
+    /// it lacks (a closed `hi` would never cover messages past the sender's
+    /// own newest). `None` only if the log is empty.
+    pub(crate) fn recent_window(&self, recent: usize) -> Option<DigestWindow> {
+        let start = self.len().saturating_sub(recent);
+        let mut window = self.window_at(start, recent)?;
+        window.hi = i64::MAX;
+        Some(window)
+    }
+
+    /// Number of messages older than the newest `recent` — the portion the
+    /// rolling [`older_window`](Self::older_window) sweeps.
+    pub(crate) fn older_len(&self, recent: usize) -> usize {
+        self.len().saturating_sub(recent)
+    }
+
+    /// A rolling **closed** window over the older portion (everything before
+    /// the newest `recent`): up to `max` ids starting at `start` *within*
+    /// that portion, with exact `[lo, hi]` bounds so receivers reconcile
+    /// deep interior gaps without re-sending the out-of-window remainder.
+    /// `None` when there is no older portion (`len <= recent`).
+    pub(crate) fn older_window(
+        &self,
+        recent: usize,
+        start: usize,
+        max: usize,
+    ) -> Option<DigestWindow> {
+        let older_len = self.older_len(recent);
+        if older_len == 0 {
+            return None;
+        }
+        let start = start % older_len;
+        let count = max.min(older_len - start);
+        self.window_at(start, count)
+    }
+
+    /// Up to `max` of our messages (newest first) within the `[lo, hi]`
+    /// timestamp window whose compact id is **not** in `have` — the
+    /// in-window gap to re-broadcast so a peer that advertised that window
+    /// recovers what it missed. Out-of-window messages are never re-sent.
+    pub(crate) fn missing_in_window(
+        &self,
+        lo: i64,
+        hi: i64,
+        have: &HashSet<[u8; 16]>,
+        max: usize,
+    ) -> Vec<Message> {
         self.messages
             .iter()
             .rev()
-            .filter(|msg| !have.contains(msg.id.as_str()))
+            .filter(|msg| {
+                msg.timestamp >= lo
+                    && msg.timestamp <= hi
+                    && !have.contains(&msg.id.as_uuid_bytes())
+            })
             .take(max)
             .cloned()
             .collect()
@@ -68,6 +134,8 @@ impl MessageLog {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+
     use super::{Message, MessageLog};
 
     fn msg(id: &str) -> Message {
@@ -76,6 +144,105 @@ mod tests {
             &crate::protocol::Nickname::from("author"),
             crate::protocol::MessageBody::from(id),
         )
+    }
+
+    /// A message tagged with an explicit timestamp, for window tests.
+    fn msg_at(body: &str, ts: i64) -> Message {
+        let mut message = msg(body);
+        message.timestamp = ts;
+        message
+    }
+
+    // ── windowed digest ────────────────────────────────────────────
+
+    #[test]
+    fn window_at_returns_slice_with_ts_bounds() {
+        let mut log = MessageLog::new(10);
+        for ts in [10, 20, 30, 40, 50] {
+            log.push(msg_at(&ts.to_string(), ts));
+        }
+        // A middle slice of 2, starting at index 1 (ts=20).
+        let window = log.window_at(1, 2).expect("non-empty window");
+        assert_eq!((window.lo, window.hi), (20, 30));
+        assert_eq!(window.ids.len(), 2);
+        // A max wider than the log starting at 0 covers everything.
+        let full = log.window_at(0, 100).expect("non-empty window");
+        assert_eq!((full.lo, full.hi), (10, 50));
+        assert_eq!(full.ids.len(), 5);
+        // Past the end ⇒ None.
+        assert!(log.window_at(5, 2).is_none());
+    }
+
+    #[test]
+    fn rolling_window_covers_whole_buffer() {
+        // Sweeping the rolling cursor in `max`-sized steps must advertise
+        // every id at least once over a full cycle — so a peer behind by
+        // more than one window's worth still recovers across rounds.
+        let mut log = MessageLog::new(50);
+        for index in 0..50 {
+            log.push(msg_at(&format!("m{index}"), 100 + index));
+        }
+        let max = 7;
+        let len = log.len();
+        let mut advertised: HashSet<[u8; 16]> = HashSet::new();
+        let mut cursor = 0usize;
+        // ceil(50/7) = 8 rounds covers the cycle; loop a little extra.
+        for _ in 0..16 {
+            let start = if max >= len { 0 } else { cursor % len };
+            let window = log.window_at(start, max).expect("non-empty");
+            advertised.extend(window.ids);
+            cursor = if max >= len { 0 } else { (start + max) % len };
+        }
+        assert_eq!(advertised.len(), 50, "every buffered id advertised");
+    }
+
+    #[test]
+    fn missing_in_window_excludes_out_of_window_and_have() {
+        let mut log = MessageLog::new(10);
+        for ts in [10, 20, 30, 40, 50] {
+            log.push(msg_at(&ts.to_string(), ts));
+        }
+        // The receiver already has the ts=30 message.
+        let have: HashSet<[u8; 16]> = log
+            .window_at(2, 1)
+            .expect("ts=30 window")
+            .ids
+            .into_iter()
+            .collect();
+        let gap = log.missing_in_window(20, 40, &have, 10);
+        let bodies: HashSet<&str> = gap.iter().map(|msg| msg.body.as_str()).collect();
+        // ts 20 and 40 are in-window and missing; 30 is in `have`; 10 and 50
+        // are out of window — never re-sent.
+        assert_eq!(bodies, HashSet::from(["20", "40"]));
+    }
+
+    #[test]
+    fn recent_window_is_open_ended_and_recovers_newer() {
+        // The core reconnect-recovery property: a peer that only has the
+        // older messages advertises an open-ended newest window, and a
+        // holder must offer everything *newer* it lacks. A closed `hi` at
+        // the requester's own newest would miss exactly those.
+        let mut requester = MessageLog::new(100);
+        let mut holder = MessageLog::new(100);
+        let mut newer: HashSet<String> = HashSet::new();
+        for ts in 1..=10i64 {
+            let message = msg_at(&ts.to_string(), ts);
+            holder.push(message.clone());
+            if ts <= 5 {
+                requester.push(message);
+            } else {
+                newer.insert(ts.to_string());
+            }
+        }
+        let window = requester.recent_window(50).expect("non-empty");
+        assert_eq!(window.hi, i64::MAX, "newest window must be open-ended");
+        let have: HashSet<[u8; 16]> = window.ids.into_iter().collect();
+        let offered: HashSet<String> = holder
+            .missing_in_window(window.lo, window.hi, &have, 100)
+            .iter()
+            .map(|msg| msg.body.as_str().to_string())
+            .collect();
+        assert_eq!(offered, newer, "holder offers exactly the newer messages");
     }
 
     // ── MessageLog ─────────────────────────────────────────────────

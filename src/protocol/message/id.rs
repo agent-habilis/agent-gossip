@@ -45,6 +45,16 @@ impl MessageId {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+
+    /// The id's 16 raw UUID bytes — the compact form packed into an
+    /// anti-entropy digest (vs the 36-char string), so far more ids fit
+    /// one gossip message. Infallible: a `MessageId` is always a valid
+    /// UUID (enforced by `new`).
+    pub(crate) fn as_uuid_bytes(&self) -> [u8; 16] {
+        Uuid::parse_str(&self.0)
+            .expect("MessageId always holds a valid UUID")
+            .into_bytes()
+    }
 }
 
 impl fmt::Display for MessageId {

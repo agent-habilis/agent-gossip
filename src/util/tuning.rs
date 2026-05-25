@@ -5,10 +5,23 @@
 //! The poll/MCP buffer size (`DEFAULT_MESSAGE_LOG_SIZE`) lives in
 //! `ahs_shared::consts` — it anchors the shared IPC response cap.
 
+/// In-memory message-log capacity: how many recent messages each member
+/// retains as the anti-entropy recovery source and poll/fetch history. A
+/// bigger log lets a reconnecting peer recover a longer gap. Defaults to
+/// [`ahs_shared::DEFAULT_MESSAGE_LOG_SIZE`] (1000); overridable per process
+/// via `AHS_MESSAGE_LOG_SIZE`. Clamped to `>= 1`.
+pub(crate) fn message_log_size() -> usize {
+    env_usize("AHS_MESSAGE_LOG_SIZE", ahs_shared::DEFAULT_MESSAGE_LOG_SIZE).max(1)
+}
+
 /// How many recently-seen message ids are retained for duplicate
-/// suppression. Larger than the message log so a duplicate arriving
-/// after the original scrolled out of the poll buffer is still caught.
-pub(crate) const SEEN_IDS_CAP: usize = 512;
+/// suppression. Kept at **2× the message log** so it always covers the
+/// retention window with margin: anti-entropy resends any message still
+/// in the log, and a resend whose id had scrolled out of this set would be
+/// reprocessed and **re-surfaced**. Scales with `message_log_size()`.
+pub(crate) fn seen_ids_cap() -> usize {
+    message_log_size().saturating_mul(2)
+}
 
 /// How many outbound user messages are buffered while the node has no
 /// gossip link yet (sent before the first `NeighborUp`). Flushed in
@@ -33,17 +46,27 @@ pub(crate) const KNOWN_ENDPOINTS_CAP: usize = 64;
 /// cost is one tiny message per interval.
 pub(crate) const ANTIENTROPY_INTERVAL_SECS: u64 = 10;
 
-/// Max message ids advertised in one digest (newest first). Equal to
-/// the log size so a fully-converged node advertises its *entire*
-/// history and peers find zero phantom gaps (a smaller cap would make
-/// nodes holding > cap messages perpetually re-send the overflow every
-/// interval, only to be dedup-dropped). ~200 uuids ≈ 8 KB, well under
-/// `MAX_MESSAGE_SIZE`.
-pub(crate) const ANTIENTROPY_DIGEST_MAX_IDS: usize = ahs_shared::DEFAULT_MESSAGE_LOG_SIZE;
+/// Max ids advertised per digest **window**. A digest carries up to two
+/// windows: an **open-ended newest** one (`[lo, i64::MAX]`, which drives
+/// reconnect recovery — holders re-send every *newer* message the sender
+/// lacks) and a rolling **closed** older one (`[lo, hi]`, which reconciles
+/// deep interior gaps without re-sending the out-of-window remainder). At
+/// 70 ids each (~140 total) the body packs ids as raw 16-byte UUIDs
+/// Base58-encoded (~22 chars/id) to ~3.1 KB; plus the `{windows:[…]}` and
+/// message envelope (the `ahs…` id alone is ~80 chars) it stays under
+/// `MAX_MESSAGE_SIZE` (3840) — guarded by the `digest_fits_gossip_cap`
+/// test. Sized to a single gossip message, **not** the (larger,
+/// configurable) log, which the rolling cursor sweeps across rounds.
+pub(crate) const ANTIENTROPY_DIGEST_WINDOW_IDS: usize = 70;
 
 /// Max messages re-broadcast in response to one received digest, so a
-/// far-behind peer can't trigger an unbounded burst.
-pub(crate) const ANTIENTROPY_MAX_RESEND: usize = 32;
+/// far-behind peer can't trigger an unbounded burst. This throttles
+/// deep-backfill throughput (~`this × peers` messages per
+/// `ANTIENTROPY_INTERVAL_SECS`); raised from 32 and overridable via
+/// `AHS_ANTIENTROPY_MAX_RESEND` so large reconnect gaps catch up faster.
+pub(crate) fn antientropy_max_resend() -> usize {
+    env_usize("AHS_ANTIENTROPY_MAX_RESEND", 64).max(1)
+}
 
 /// Default max direct peer connections (gossip relays beyond this)
 pub(crate) const DEFAULT_MAX_DIRECT_PEERS: usize = 25;
@@ -105,6 +128,13 @@ pub(crate) fn ping_window_secs() -> u64 {
 }
 
 fn env_u64(name: &str, default: u64) -> u64 {
+    std::env::var(name)
+        .ok()
+        .and_then(|raw| raw.parse().ok())
+        .unwrap_or(default)
+}
+
+fn env_usize(name: &str, default: usize) -> usize {
     std::env::var(name)
         .ok()
         .and_then(|raw| raw.parse().ok())
