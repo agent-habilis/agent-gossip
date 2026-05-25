@@ -13,7 +13,7 @@ use crate::lookup::{
 use crate::output;
 use crate::util::tuning::RELAY_RUNG_PROBE_SECS;
 use crate::protocol::crypto::{derive_topic_id, rendezvous_secret};
-use crate::protocol::swarm::{LookupOpts, Swarm, SwarmMode, SwarmName};
+use crate::protocol::swarm::{LookupOpts, Swarm, SwarmConfig, SwarmName};
 use crate::protocol::{Nickname, SwarmId};
 
 use crate::beacon::RendezvousParams;
@@ -25,8 +25,10 @@ use super::{CoHostPolicy, DriverMode, EventLoopConfig};
 /// (create) or attaching to an existing one (join).
 pub(crate) enum SetupKind {
     Create {
-        mode: SwarmMode,
         name: SwarmName,
+        /// The swarm-wide config (rate limit + lookups) baked into the
+        /// minted id and mixed into the topic.
+        config: SwarmConfig,
         /// The directory this swarm advertises into, if any. Drives the
         /// `advertising on #<directory>` startup line; the re-broadcast
         /// task itself is spawned by the caller post-setup.
@@ -45,7 +47,7 @@ fn rendezvous_params(
     lookups: &LookupOpts,
     rung_tx: watch::Sender<Option<RelayUrl>>,
 ) -> RendezvousParams {
-    let bind_ports = if swarm.mode == SwarmMode::Private {
+    let bind_ports = if swarm.is_loopback() {
         swarm.rendezvous_ports().to_vec()
     } else {
         Vec::new()
@@ -58,7 +60,6 @@ fn rendezvous_params(
     // private / relay-disabled ⇒ `None`.
     let bootstrap_relay = relay_ladder(&lookups.relay).first().cloned();
     RendezvousParams {
-        mode: swarm.mode,
         topic_id,
         secret: rendezvous_secret(swarm.seed()),
         bind_ports,
@@ -95,18 +96,17 @@ fn spawn_startup_rung_confirmation(ladder: Vec<RelayUrl>, rung_tx: watch::Sender
 }
 
 /// Pre-register `rendezvous_id`'s address so a cold joiner reaches it
-/// with **zero address-lookup wait** — the creator-independent analog
-/// of the pre-rewrite ticket's embedded address (the path that made
-/// public lookup instant):
+/// with **zero address-lookup wait** — a creator-independent bootstrap
+/// that needs no discovery query to make the first dial:
 ///
-/// - **private**: every loopback ladder rung (iroh's node-id dial
+/// - **loopback-only**: every loopback ladder rung (iroh's node-id dial
 ///   reaches whichever rung our beacon bound; see `crate::beacon`).
-/// - **public**: the seed-derived `rendezvous_id` at the chosen relay
-///   **rung** (`params.bootstrap_relay` — the first reachable rung of
-///   the ladder) — the beacon homes there (`beacon::beacon_lookups`),
-///   so this is a real relay-direct dial, no DNS/DHT/mDNS round-trip.
-///   DHT/mDNS stay wired as the eternal/LAN backstop if every rung is
-///   ever unreachable.
+/// - **reachable across machines**: the seed-derived `rendezvous_id` at
+///   the chosen relay **rung** (`params.bootstrap_relay` — the first
+///   reachable rung of the ladder) — the beacon homes there
+///   (`beacon::beacon_lookups`), so this is a real relay-direct dial, no
+///   DNS/DHT/mDNS round-trip. DHT/mDNS stay wired as the eternal/LAN
+///   backstop if every rung is ever unreachable.
 ///
 /// Also re-asserted by the daemon's hard-heal path (resume / silent
 /// partition): the startup hint may now point at a dead path, so the
@@ -152,9 +152,15 @@ pub(crate) async fn setup_swarm(
     interactive: bool,
     max_peers: usize,
     state_file: Option<PathBuf>,
-    lookups: LookupOpts,
     output: output::Output,
 ) -> Result<EventLoopConfig> {
+    // Create mints the config from the caller's choices; join decodes it
+    // from the id — one source of truth either way.
+    let (lookups, rate_limit_per_min) = match &kind {
+        SetupKind::Create { config, .. } => (config.lookups.clone(), config.rate_limit_per_min),
+        SetupKind::Join { swarm } => (swarm.lookups().clone(), swarm.rate_limit_per_min()),
+    };
+
     // The off-loop rung channel: the backgrounded startup probe and the
     // beacon's liveness self-monitor publish a chosen rung here; the
     // event loop applies it (re-register + re-home) without ever running
@@ -165,16 +171,16 @@ pub(crate) async fn setup_swarm(
 
     let (swarm_id, swarm_name, endpoint, router, topic, rdv, cohost) = match kind {
         SetupKind::Create {
-            mode,
             name,
+            config,
             advertise,
         } => {
             let mut seed = [0u8; 32];
             rand::rng().fill_bytes(&mut seed);
 
-            let endpoint = build_participant_endpoint(mode, &lookups).await?;
+            let endpoint = build_participant_endpoint(&lookups).await?;
 
-            let swarm = Swarm::new(mode, seed, name.clone());
+            let swarm = Swarm::new(seed, name.clone(), config);
             let id_str = swarm.to_string();
             let swarm_id = SwarmId::new(id_str.clone())
                 .expect("Swarm::to_string always produces a valid SwarmId");
@@ -185,9 +191,9 @@ pub(crate) async fn setup_swarm(
             }
             output.swarm_id_line(&id_str);
             output.ready(&id_str, name.as_str(), author.as_str());
-            lifecycle::log_ready(&id_str, name.as_str(), author.as_str(), mode.network_name());
+            lifecycle::log_ready(&id_str, name.as_str(), author.as_str(), swarm.network_label());
 
-            let topic_id = derive_topic_id(&seed, &name);
+            let topic_id = derive_topic_id(swarm.seed(), &swarm.name, &swarm.config_bytes());
             let (gossip, router) = build_swarm(endpoint.clone());
             // Creator has no peers yet — bootstrap is empty.
             let topic = gossip.subscribe(topic_id, vec![]).await?;
@@ -212,14 +218,15 @@ pub(crate) async fn setup_swarm(
             let id_str = swarm.to_string();
             let swarm_id = SwarmId::new(id_str.clone())
                 .expect("Swarm::to_string always produces a valid SwarmId");
-            let topic_id = derive_topic_id(swarm.seed(), &swarm.name);
+            let topic_id = derive_topic_id(swarm.seed(), &swarm.name, &swarm.config_bytes());
 
-            let endpoint = build_participant_endpoint(swarm.mode, &lookups).await?;
+            let endpoint = build_participant_endpoint(&lookups).await?;
 
             let rdv = rendezvous_params(&swarm, topic_id, &lookups, rung_tx.clone());
             // Must precede the join: the participant resolves the
             // rendezvous id via this registered address — the loopback
-            // port ladder (private) or the chosen relay rung (public).
+            // port ladder (loopback-only) or the chosen relay rung
+            // (reachable across machines).
             register_rendezvous(&endpoint, &rdv);
 
             let (gossip, router) = build_swarm(endpoint.clone());
@@ -239,7 +246,7 @@ pub(crate) async fn setup_swarm(
                 &id_str,
                 swarm.name.as_str(),
                 author.as_str(),
-                swarm.mode.network_name(),
+                swarm.network_label(),
             );
             output.info(&format!("joined #{} as <{author}>", swarm.name));
 
@@ -270,6 +277,7 @@ pub(crate) async fn setup_swarm(
         endpoint,
         router,
         max_peers,
+        rate_limit_per_min,
         rendezvous_params: rdv,
         rung_rx,
         cohost,

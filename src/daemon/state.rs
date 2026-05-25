@@ -140,8 +140,9 @@ pub(crate) struct PingRound {
 
 impl EventLoopState {
     /// Build a fresh event-loop state. `now` is passed explicitly so
-    /// tests can pin a deterministic instant.
-    pub(crate) fn new(state_file: Option<StateFile>, now: Instant) -> Self {
+    /// tests can pin a deterministic instant; `rate_limit_per_min` is the
+    /// swarm-wide cap decoded from the id (`0` ⇒ no limit).
+    pub(crate) fn new(state_file: Option<StateFile>, now: Instant, rate_limit_per_min: u16) -> Self {
         Self {
             linked_endpoints: HashSet::new(),
             known_endpoints: HashSet::new(),
@@ -162,7 +163,7 @@ impl EventLoopState {
             state_file,
             live_count: None,
             message_log: MessageLog::new(DEFAULT_MESSAGE_LOG_SIZE),
-            rate_limiter: SwarmRateLimiter::new(),
+            rate_limiter: SwarmRateLimiter::from_per_min(rate_limit_per_min),
             ping_round: None,
         }
     }
@@ -242,7 +243,7 @@ mod tests {
     };
 
     fn fresh_state() -> EventLoopState {
-        EventLoopState::new(None, Instant::now())
+        EventLoopState::new(None, Instant::now(), ahs_shared::RATE_LIMIT_PER_MIN)
     }
 
     #[test]

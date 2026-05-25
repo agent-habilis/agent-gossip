@@ -12,8 +12,7 @@ use crate::daemon::setup::{SetupKind, setup_swarm};
 use crate::embed::spawn_advertiser;
 use crate::output::{Output, OutputMode};
 use crate::protocol::swarm::{
-    DirectorySelection, LookupOpts, Swarm, SwarmMode, SwarmName, resolve_lookups,
-    validate_advertise,
+    DirectorySelection, Swarm, SwarmConfig, SwarmName, resolve_lookups, validate_advertise,
 };
 use crate::protocol::Nickname;
 use crate::resolver;
@@ -65,7 +64,6 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
 /// run the event loop. The shared spine of `create` and `join`.
 async fn run_session(
     kind: SetupKind,
-    lookups: LookupOpts,
     shared: SharedServerOpts,
     nickname: Option<Nickname>,
     advertise: DirectorySelection,
@@ -82,17 +80,16 @@ async fn run_session(
         !shared.no_interactive,
         shared.max_peers,
         shared.state_file,
-        lookups.clone(),
         out,
     )
     .await?;
-    // Advertising (`create --advertise`): start the re-broadcast task on
-    // the swarm's own lookups. The handle is held for the session's
-    // lifetime — on the CLI the process exits (via signal) before it
-    // would drop, which tears the task down.
+    // Advertising (`create --advertise`): start the re-broadcast task. It
+    // joins the directory over the directory's own config. The handle is
+    // held for the session's lifetime — on the CLI the process exits (via
+    // signal) before it would drop, which tears the task down.
     let _advertiser = advertise
         .directory()
-        .map(|directory| spawn_advertiser(&mut cfg, directory, lookups));
+        .map(|directory| spawn_advertiser(&mut cfg, directory));
     // First point where swarm id + nickname are known — attach the
     // buffered log sink here (see `logging`).
     crate::logging::attach(&cfg.swarm, &cfg.author);
@@ -101,39 +98,35 @@ async fn run_session(
 
 /// Create a new swarm, print its identifier, and start listening.
 async fn create(opts: CreateOpts) -> Result<()> {
-    let mode = if opts.public {
-        SwarmMode::Public
-    } else {
-        SwarmMode::Private
-    };
-    let lookups = resolve_lookups(mode, opts.shared.lookups.to_set())?;
+    let lookups = resolve_lookups(opts.public, opts.lookups.to_set());
     let advertise = opts.advertise_selection();
-    // `--advertise` lists the swarm publicly, so it requires `--public`
-    // (rejected before any setup work — never a silent no-op).
-    validate_advertise(mode, &advertise)?;
+    // Reject before any setup work — never a silent no-op.
+    validate_advertise(&advertise, &lookups)?;
     let name = opts.name.unwrap_or_else(SwarmName::random);
+    let config = SwarmConfig {
+        rate_limit_per_min: opts.rate_limit,
+        lookups,
+    };
     let kind = SetupKind::Create {
-        mode,
         name,
+        config,
         advertise: advertise.directory(),
     };
-    run_session(kind, lookups, opts.shared, opts.nickname, advertise).await
+    run_session(kind, opts.shared, opts.nickname, advertise).await
 }
 
 /// Join an existing swarm by its identifier (ahs...), a domain, or a
-/// supported git repo URL. The network mode is decoded from the id;
-/// lookup flags are per-process (the joiner opts in itself).
+/// supported git repo URL. The swarm's config (lookups + rate limit) is
+/// decoded from the id — `join` takes no lookup/rate flags.
 async fn join(
     swarm_input: &str,
     nickname: Option<Nickname>,
     shared: SharedServerOpts,
 ) -> Result<()> {
     let swarm: Swarm = resolver::resolve(swarm_input).await?;
-    let lookups = resolve_lookups(swarm.mode, shared.lookups.to_set())?;
     // `join` never advertises — that is a create-time decision.
     run_session(
         SetupKind::Join { swarm },
-        lookups,
         shared,
         nickname,
         DirectorySelection::Unset,

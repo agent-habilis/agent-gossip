@@ -23,7 +23,7 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 
 use crate::protocol::crypto::kdf;
-use crate::protocol::swarm::{Swarm, SwarmMode, SwarmName};
+use crate::protocol::swarm::{Swarm, SwarmConfig, SwarmName};
 use crate::protocol::{MessageBody, SwarmId};
 
 /// Domain-separation seed for every directory. The directory name is
@@ -41,22 +41,22 @@ const DIRECTORY_BASE_SEED: [u8; 32] = *b"agent-habilis-swarm/directory/v1";
 /// independent directory.
 pub(crate) fn directory_swarm(directory: &SwarmName) -> Swarm {
     Swarm::new(
-        directory_mode(),
         kdf(&DIRECTORY_BASE_SEED, directory.as_bytes()),
         directory.clone(),
+        directory_config(),
     )
 }
 
-/// The network mode every directory swarm uses: `Public` in normal
-/// operation; `Private` (loopback ladder) under `AHS_DIRECTORY_PRIVATE`
-/// so the live advertise→discover path is testable in CI without the
-/// public relay. Callers that resolve the directory session's lookups
-/// must use this so the lookups match the mode (private ⇒ all-off).
-pub(crate) fn directory_mode() -> SwarmMode {
+/// The config every directory swarm uses: the all-on lookup preset in
+/// normal operation; loopback-only under `AHS_DIRECTORY_PRIVATE` so the
+/// live advertise→discover path is testable in CI without the public
+/// relay. Its lookups are the directory session's lookups, so a member
+/// reaches the directory exactly as it reaches the directory's swarm.
+pub(crate) fn directory_config() -> SwarmConfig {
     if crate::util::tuning::directory_private_for_test() {
-        SwarmMode::Private
+        SwarmConfig::loopback()
     } else {
-        SwarmMode::Public
+        SwarmConfig::public_preset()
     }
 }
 
@@ -177,8 +177,8 @@ impl Listings {
             swarm_id.clone(),
             Listing {
                 swarm: swarm_id.clone(),
+                public: !swarm.is_loopback(),
                 name: swarm.name,
-                public: swarm.mode == SwarmMode::Public,
                 peers: ad.peers,
                 last_seen: now,
                 first_seen_unix: crate::util::clock::unix_secs(),
@@ -253,11 +253,7 @@ mod tests {
 
     #[test]
     fn directory_is_public() {
-        use crate::protocol::swarm::SwarmMode;
-        assert_eq!(
-            directory_swarm(&directory("global")).mode,
-            SwarmMode::Public
-        );
+        assert!(!directory_swarm(&directory("global")).is_loopback());
     }
 
     #[test]

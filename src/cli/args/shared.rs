@@ -1,11 +1,12 @@
 //! `SharedServerOpts` — the option group flattened into every
-//! long-running server command (`create`, `join`, `discover`).
+//! long-running server command (`create`, `join`, `discover`). Holds
+//! only genuinely-local, per-process settings; lookup selection is a
+//! swarm-wide property carried in the id (see `create`'s `LookupArgs`).
 
 use clap::Parser;
 
 use crate::util::tuning::DEFAULT_MAX_DIRECT_PEERS;
 
-use super::lookup::LookupArgs;
 use super::output::OutputFormat;
 
 /// Shared options for server commands.
@@ -39,8 +40,4 @@ pub(crate) struct SharedServerOpts {
     /// participant count and liveness without IPC.
     #[arg(long)]
     pub state_file: Option<std::path::PathBuf>,
-
-    /// Which lookup mechanisms to enable.
-    #[command(flatten)]
-    pub lookups: LookupArgs,
 }

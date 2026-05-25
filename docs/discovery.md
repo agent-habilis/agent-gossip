@@ -40,8 +40,8 @@ same way, on every machine.
 ## 2. The `ahs…` id is a seed, not an address
 
 When Alice runs `create`, her daemon generates **32 random bytes** —
-the `seed` — and packs them with the network mode and swarm name. It
-does **not** put any address, key, or relay in the id.
+the `seed` — and packs them with the swarm name and config (rate limit
++ lookups). It does **not** put any address or key in the id.
 
 ```mermaid
 flowchart LR
@@ -70,34 +70,18 @@ today still works in a year, as long as any member is online.
 
 ## 3. Anatomy of an `ahs…` id
 
-The payload is deliberately tiny — no key, no relay, no IP:
+The id carries a random `seed`, the swarm `name`, and the swarm's
+config (rate limit + the `mdns`/`dht`/`relay` lookups) — no key, no IP.
+There is **no peer address stored anywhere**, and a forged id with any
+tampered field hashes to a *different* topic (see §6) and simply finds
+no peers.
 
-```
-ahs  ┌──────────────────────────────────────────────────────────┐
-     │ 1  byte   version       (currently 2)                     │
-     │ 1  byte   mode          0 = private, 1 = public           │
-     │ 32 bytes  seed          cryptographically random          │
-     │ 1  byte   name length   1..=128                           │
-     │ N  bytes  name          UTF-8, <=32 scalars               │
-     └──────────────────────────────────────────────────────────┘
-        + 4-byte checksum  =  Base58Check(payload)  ->  "ahs" + text
-```
+The full byte layout, the config encoding, and the Base58Check framing
+live in **[`docs/swarm-hash.md`](swarm-hash.md)** — the single source of
+truth for the id format. This doc covers what happens *after* an id is
+decoded.
 
-Decoding yields only the version, mode, seed, and name. There is **no
-peer address stored anywhere** — the consequence is that a forged id
-with a tampered name hashes to a *different* topic (see §6) and simply
-finds no peers.
-
-The trailing 4-byte checksum is `SHA256(SHA256(payload))[..4]`
-(Bitcoin-style Base58Check). It detects a **mistyped or truncated** id
-before the daemon does any network I/O. It is not a security feature:
-anyone editing the bytes can recompute it. Forgery resistance comes
-from the seed → topic derivation in §6, not the checksum.
-
-`v2` is the only accepted version: the project is pre-release and the
-old creator-`EndpointId` ticket format (`v1`) is rejected outright.
-
-(`src/protocol/swarm.rs`: `Swarm::encode_bytes`/`decode_bytes`,
+(`src/protocol/swarm/mod.rs`: `Swarm::encode_bytes`/`decode_bytes`,
 `base58check_encode`.)
 
 ---
@@ -114,21 +98,21 @@ flowchart TB
     A -->|no| X1[reject]
     A -->|yes| B{"Base58Check<br/>checksum ok?"}
     B -->|no| X2["reject:<br/>typo / truncated"]
-    B -->|yes| C["read version, mode, seed, name"]
+    B -->|yes| C["read version, seed, name, config"]
     C --> D["derive rendezvous_id = pub(kdf(seed,'rendezvous'))"]
-    C --> E["derive TopicId from seed + name"]
-    C --> F["build a mode-matched iroh endpoint"]
+    C --> E["derive TopicId from seed + name + config"]
+    C --> F["build an endpoint for the config's lookups"]
     F --> G["pre-register rendezvous_id's address<br/>so iroh can dial it with zero lookup"]
 ```
 
 The last step is the key to fast bootstrap. Bob constructs an
 `EndpointAddr` for the **rendezvous** (its derived id + the relay it is
 known to home on, §5) and registers it. iroh now has a concrete path
-to the rendezvous before any discovery query runs — the
-creator-independent analogue of the old embedded-address ticket.
+to the rendezvous before any discovery query runs — a creator-independent
+bootstrap with zero address-lookup wait.
 
-(`src/protocol/swarm.rs` decode; `register_rendezvous` +
-`add_peer_addr` in `src/daemon/setup.rs` / `src/net.rs`.)
+(`src/protocol/swarm/mod.rs` decode; `register_rendezvous` +
+`add_peer_addr` in `src/daemon/setup.rs` / `src/lookup/mod.rs`.)
 
 ---
 
@@ -138,25 +122,25 @@ Nobody connects to "Alice". Bob connects to the **rendezvous**: the
 seed-derived identity that *every live member co-hosts*. Whoever
 currently holds it bridges Bob into the mesh; if that member dies,
 another already co-hosts the same identity. This co-host role is the
-**beacon** (`src/daemon/beacon.rs`).
+**beacon** (`src/beacon/mod.rs`).
 
-How the rendezvous is reached depends entirely on the **network
-mode**, fixed when Alice runs `create`:
+How the rendezvous is reached depends entirely on the swarm's
+**lookups**, which the id carries (so every member agrees):
 
-### Private (default) — loopback only
+### Loopback only — no lookups
 
-The endpoint binds `127.0.0.1`, with `RelayMode::Disabled` and the
-portmapper disabled — **zero non-loopback packets**. The rendezvous
-has no DNS/relay to resolve, so instead the seed derives a
-deterministic **loopback port ladder** (`kdf(seed,"port")`, 8 rungs).
-Exactly one member is the beacon: it binds the first free rung;
-`AddrInUse` triggers an identity probe distinguishing *our* beacon
-(stay a participant) from an unrelated swarm that derived the same
-port (skip to the next rung). Only other processes on the machine can
-join. (`src/net.rs` private branch; `src/daemon/beacon.rs`
-claim-if-free.)
+With an empty lookup set the endpoint binds `127.0.0.1`, with
+`RelayMode::Disabled` and the portmapper disabled — **zero non-loopback
+packets**. The rendezvous has no DNS/relay to resolve, so instead the
+seed derives a deterministic **loopback port ladder**
+(`kdf(seed,"port")`, 8 rungs). Exactly one member is the beacon: it
+binds the first free rung; `AddrInUse` triggers an identity probe
+distinguishing *our* beacon (stay a participant) from an unrelated swarm
+that derived the same port (skip to the next rung). Only other processes
+on the machine can join. (`src/lookup/mod.rs` loopback branch;
+`src/beacon/mod.rs` claim-if-free.)
 
-### `--public` — open internet
+### Reachable across machines — `--public` (the all-on lookup preset)
 
 ```mermaid
 flowchart LR
@@ -186,18 +170,19 @@ The asymmetry matters:
   `rendezvous_id`): **mDNS** (LAN multicast — instant, infra-free,
   the same-machine/same-LAN fast path) and the **mainline BitTorrent
   DHT** (operator-free, ~20-year track record — the *eternal*
-  backstop if the pinned relay is ever retired). N0 DNS and the old
-  `--n0` flag were removed: the pinned relay is the fast path and the
-  DHT is the durable one.
+  backstop if the pinned relay is ever retired). The pinned relay is the
+  fast path and the DHT is the durable one.
 
-`--relay {URL}` overrides the pinned default (every member that wants
-it must pass it; it is per-process, not in the id). `--mdns` / `--dht`
-are a presence allowlist: with `--public`, naming none enables
-both; naming any restricts to those. Any of `--mdns`/`--dht`/`--relay`
-without `--public` is a hard error (loopback only).
+The lookups are a create-time choice **baked into the id**, so a joiner
+inherits them (no flags on `join`). On `create`, `--relay {URL}`
+overrides the pinned default and `--mdns` / `--dht` are a presence
+allowlist: naming none with `--public` enables all three; naming any
+restricts to those. Because the lookups are mixed into the topic
+(see §6), every member of a swarm necessarily uses the same set. See
+[`swarm-hash.md`](swarm-hash.md).
 
-(`src/net.rs` `build_endpoint_for_mode` + `effective_public_relay`;
-`src/protocol/swarm.rs` `resolve_discovery`/`validate_discovery`.)
+(`src/lookup/mod.rs` `build_endpoint`; `src/protocol/swarm/lookup.rs`
+`resolve_lookups`.)
 
 A relayed hop is still end-to-end QUIC-encrypted — the relay forwards
 ciphertext and cannot read bodies, but can observe that two endpoints
@@ -213,12 +198,14 @@ A relay (and the DHT) carry many unrelated swarms, so Bob must join
 not random:
 
 ```
-TopicId = SHA256( kdf(seed, "topic")  ‖  len(name)  ‖  name )
+TopicId = SHA256( kdf(seed, "topic")  ‖  len(name)  ‖  name  ‖  len(config)  ‖  config )
 ```
 
 Both Alice (`create`) and Bob (`join`) compute it independently from
-the seed and name in the id. Identical inputs → identical topic → same
-conversation. The seed runs through the domain-separated `kdf` first,
+the seed, name, and config in the id. Identical inputs → identical topic
+→ same conversation. Because the config (rate limit + lookups) is mixed
+in, two members meet only if their entire config matches — so it cannot
+diverge across a swarm. The seed runs through the domain-separated `kdf` first,
 so the same 32 bytes can never be both the topic and the rendezvous
 key. (`derive_topic_id` in `src/protocol/crypto.rs`.)
 
@@ -343,7 +330,7 @@ Recovery is bounded by the heartbeat timescale (~`alive_timeout`,
 sequenceDiagram
     autonumber
     participant A as Alice — create
-    participant Sd as ahs… (seed+mode+name)
+    participant Sd as ahs… (seed+name+config)
     participant B as Bob — join
     participant Rv as rendezvous (seed-derived id)
     participant Rl as pinned relay / mDNS / DHT

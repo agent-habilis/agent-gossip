@@ -34,11 +34,10 @@ use crate::util::tuning::{
 /// ([`select_bootstrap_rung`]) and the joiner pre-registers
 /// `rendezvous_id` at that same rung — `EndpointAddr::new(rendezvous_id)
 /// .with_relay_url(rung)` — for a **zero-address-lookup** relay-direct
-/// dial, the creator-independent analog of the pre-rewrite ticket's
-/// embedded relay (the path that made public lookup instant).
+/// dial: a creator-independent bootstrap that needs no address lookup to
+/// reach the rendezvous.
 ///
-/// rung 0 is iroh `defaults::prod` NA-east, so the common case is
-/// behaviour-compatible with the old single pin. Hardcoded, **not**
+/// rung 0 is iroh `defaults::prod` NA-east. Hardcoded, **not**
 /// `defaults::prod::default_relay_map()`, so members on different iroh
 /// versions still agree on the *same* ladder. Relay infra is versioned
 /// and not cross-compatible (sendme #121): an iroh bump can move

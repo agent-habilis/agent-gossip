@@ -20,59 +20,45 @@ use iroh::{
 };
 use iroh_gossip::net::{GOSSIP_ALPN, Gossip};
 
-use crate::protocol::swarm::{LookupOpts, RelayChoice, SwarmMode};
+use crate::protocol::swarm::{LookupOpts, RelayChoice};
 
 pub(crate) use relay::{
     RungRefresh, plan_rung_refresh, relay_ladder, select_bootstrap_rung, spawn_relay_monitor,
 };
 
-/// Build an iroh endpoint for a swarm mode.
+/// Build an iroh endpoint for a swarm's lookups.
 ///
 /// - `lookups`: which address-lookups (mDNS / DHT) and relay to wire.
-///   For `Public` the builder is composed from `presets::Minimal` plus
-///   the selected lookups; the relay maps via [`relay::relay_mode`]. For
-///   `Private` it must be all-off (the resolver guarantees this) —
-///   loopback only.
+///   When any lookup is on, the builder is composed from
+///   `presets::Minimal` plus the selected lookups; the relay maps via
+///   [`relay::relay_mode`]. An all-off (loopback-only) set wires none of
+///   them.
 /// - `secret_key`: `Some` pins a deterministic identity (used for the
 ///   shared rendezvous endpoint); `None` lets iroh generate a fresh
 ///   random key (the normal participant endpoint).
-/// - `bind_port`: private mode only — `Some(port)` binds
+/// - `bind_port`: loopback-only — `Some(port)` binds
 ///   `127.0.0.1:port` (the deterministic rendezvous port; a bind
 ///   failure with `AddrInUse` is the claim-if-free signal that another
 ///   member already holds the beacon). `None` binds an ephemeral port.
-///   Ignored for public swarms (N0 manages binding).
-pub(crate) async fn build_endpoint_for_mode(
-    mode: SwarmMode,
+///   Ignored when lookups are on (N0 manages binding).
+pub(crate) async fn build_endpoint(
     lookups: &LookupOpts,
     secret_key: Option<SecretKey>,
     bind_port: Option<u16>,
 ) -> Result<Endpoint> {
     let is_beacon = secret_key.is_some();
-    let network = mode.network_name();
-    let mut builder = if mode == SwarmMode::Public {
-        // `Minimal` (not `presets::N0`): N0-DNS is intentionally not
-        // wired (the relay ladder is the fast path; DHT is the
-        // operator-free eternal backstop). `Minimal` still sets the
-        // rustls crypto provider.
-        let mut builder = Endpoint::builder(presets::Minimal);
-        if lookups.mdns {
-            builder = mdns::wire(builder);
-        }
-        if lookups.dht {
-            builder = dht::wire(builder);
-        }
-        builder.relay_mode(relay::relay_mode(&lookups.relay))
-    } else {
+    let network = lookups.network_label();
+    let mut builder = if lookups.is_loopback() {
         debug_assert!(
             !lookups.mdns && !lookups.dht && lookups.relay == RelayChoice::Disabled,
-            "private mode must resolve to all-off lookup (resolver invariant)"
+            "loopback-only swarm must resolve to all-off lookups"
         );
-        // Private = strictly loopback, **zero external network calls**.
+        // Loopback-only = strictly loopback, **zero external network calls**.
         // `Minimal` picks the rustls crypto provider without N0's
         // DNS/relay defaults; we then lock down every path that could
         // touch a non-loopback host: `bind_addr` 127.0.0.1,
         // `RelayMode::Disabled` (no relay; no address-lookup is wired
-        // for private so no DNS/pkarr/mDNS/DHT either), and
+        // for a loopback-only swarm so no DNS/pkarr/mDNS/DHT either), and
         // `PortmapperConfig::Disabled` — the one remaining default-on
         // reach (UPnP/PCP/NAT-PMP to the LAN gateway, on even with the
         // relay off). With relay + portmapper off, iroh's netcheck has
@@ -87,6 +73,19 @@ pub(crate) async fn build_endpoint_for_mode(
             .context("failed to set bind address")?
             .relay_mode(RelayMode::Disabled)
             .portmapper_config(PortmapperConfig::Disabled)
+    } else {
+        // `Minimal` (not `presets::N0`): N0-DNS is intentionally not
+        // wired (the relay ladder is the fast path; DHT is the
+        // operator-free eternal backstop). `Minimal` still sets the
+        // rustls crypto provider.
+        let mut builder = Endpoint::builder(presets::Minimal);
+        if lookups.mdns {
+            builder = mdns::wire(builder);
+        }
+        if lookups.dht {
+            builder = dht::wire(builder);
+        }
+        builder.relay_mode(relay::relay_mode(&lookups.relay))
     };
 
     if let Some(secret_key) = secret_key {
@@ -126,13 +125,10 @@ pub(crate) async fn build_endpoint_for_mode(
 }
 
 /// The normal participant endpoint: a fresh random identity, no
-/// pinned port. Thin intent-named wrapper over `build_endpoint_for_mode`
+/// pinned port. Thin intent-named wrapper over `build_endpoint`
 /// so call sites don't carry the rendezvous-only `None, None`.
-pub(crate) async fn build_participant_endpoint(
-    mode: SwarmMode,
-    lookups: &LookupOpts,
-) -> Result<Endpoint> {
-    build_endpoint_for_mode(mode, lookups, None, None).await
+pub(crate) async fn build_participant_endpoint(lookups: &LookupOpts) -> Result<Endpoint> {
+    build_endpoint(lookups, None, None).await
 }
 
 /// Register a peer's address so the endpoint can connect to it.
@@ -194,24 +190,20 @@ pub(crate) fn build_swarm(endpoint: Endpoint) -> (Gossip, Router) {
 
 #[cfg(test)]
 mod tests {
-    use super::{LookupOpts, RelayChoice, SwarmMode, build_participant_endpoint};
+    use super::{LookupOpts, build_participant_endpoint};
 
-    // Binds the `Minimal`-based public branch (the default relay ladder,
-    // no lookup wired) and the private all-off branch. mDNS multicast /
-    // mainline-DHT socket setup is environment-dependent, so it is not
-    // exercised here; presence-allowlist resolution is unit-tested in
-    // `protocol::swarm`, and the relay ladder logic in [`super::relay`].
+    // Binds the `Minimal`-based reachable branch (the default relay
+    // ladder, no lookup wired) and the loopback all-off branch. mDNS
+    // multicast / mainline-DHT socket setup is environment-dependent, so
+    // it is not exercised here; presence-allowlist resolution is
+    // unit-tested in `protocol::swarm`, and the relay ladder logic in
+    // [`super::relay`].
 
     #[tokio::test]
-    async fn private_all_off_binds() {
-        let lookups = LookupOpts {
-            mdns: false,
-            dht: false,
-            relay: RelayChoice::Disabled,
-        };
-        let endpoint = build_participant_endpoint(SwarmMode::Private, &lookups)
+    async fn loopback_all_off_binds() {
+        let endpoint = build_participant_endpoint(&LookupOpts::loopback())
             .await
-            .expect("private loopback endpoint must bind");
+            .expect("loopback endpoint must bind");
         endpoint.close().await;
     }
 
@@ -220,14 +212,9 @@ mod tests {
         // No lookup wired: exercises the `Minimal` + pinned-ladder
         // composition. `bind()` is non-blocking wrt the relay, so this
         // is offline-safe even with the relay ladder configured.
-        let lookups = LookupOpts {
-            mdns: false,
-            dht: false,
-            relay: RelayChoice::Pinned,
-        };
-        let endpoint = build_participant_endpoint(SwarmMode::Public, &lookups)
+        let endpoint = build_participant_endpoint(&LookupOpts::public_preset())
             .await
-            .expect("public endpoint with pinned relay ladder must bind");
+            .expect("endpoint with pinned relay ladder must bind");
         endpoint.close().await;
     }
 }

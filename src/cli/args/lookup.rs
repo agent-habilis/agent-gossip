@@ -64,7 +64,7 @@ mod tests {
     /// through the create command.
     fn relay_of(args: &[&str]) -> RelaySelection {
         match Cli::parse_from(args).command {
-            Commands::Create { opts } => opts.shared.lookups.to_set().relay,
+            Commands::Create { opts } => opts.lookups.to_set().relay,
             Commands::Join { .. }
             | Commands::Msg { .. }
             | Commands::Poll { .. }
@@ -126,21 +126,20 @@ mod tests {
     }
 
     #[test]
-    fn discover_mdns_resolves_to_mdns_only_lookups() {
-        use crate::protocol::swarm::{RelayChoice, SwarmMode, resolve_lookups};
-        // `ahs discover --mdns` ⇒ the directory session uses mDNS only
-        // (the same allowlist rule create/join apply to the swarm).
-        let opts = match Cli::parse_from(["ahs", "discover", "--directory", "x", "--mdns"]).command
-        {
-            Commands::Discover { opts } => opts,
-            Commands::Create { .. }
-            | Commands::Join { .. }
+    fn create_mdns_resolves_to_mdns_only_lookups() {
+        use crate::protocol::swarm::{RelayChoice, resolve_lookups};
+        // `ahs create --mdns` ⇒ the swarm's id encodes mDNS only (naming a
+        // lookup flag opts into exactly those; relay and dht stay off).
+        let opts = match Cli::parse_from(["ahs", "create", "--mdns"]).command {
+            Commands::Create { opts } => opts,
+            Commands::Join { .. }
             | Commands::Msg { .. }
             | Commands::Poll { .. }
             | Commands::Ping { .. }
-            | Commands::Mcp => panic!("expected Discover"),
+            | Commands::Discover { .. }
+            | Commands::Mcp => panic!("expected Create"),
         };
-        let lookups = resolve_lookups(SwarmMode::Public, opts.shared.lookups.to_set()).unwrap();
+        let lookups = resolve_lookups(opts.public, opts.lookups.to_set());
         assert!(lookups.mdns && !lookups.dht);
         assert_eq!(lookups.relay, RelayChoice::Disabled);
     }

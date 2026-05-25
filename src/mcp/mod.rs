@@ -44,7 +44,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use crate::protocol::swarm::{
-    DirectorySelection, SwarmMode, SwarmName, resolve_relay, validate_advertise,
+    DirectorySelection, LookupOpts, SwarmConfig, SwarmName, validate_advertise,
 };
 use crate::protocol::{MessageBody, MessageId, Nickname, SwarmId};
 use session::Session;
@@ -90,9 +90,15 @@ struct CreateSwarmArgs {
     /// Optional nickname in `word-word` form. Random if omitted.
     #[serde(default)]
     nickname: Option<String>,
-    /// Custom relay URL. Requires `network: "public"`.
+    /// Custom relay URL (or comma-separated ladder). Requires
+    /// `network: "public"`.
     #[serde(default)]
     relay: Option<String>,
+    /// Per-author messages-per-minute cap baked into the swarm id and
+    /// enforced swarm-wide (every joiner inherits it). `0` disables rate
+    /// limiting. Default 60.
+    #[serde(default = "default_rate_limit")]
+    rate_limit_per_min: u16,
     /// List this swarm in a directory so others can find it with
     /// `ahs discover` (no id to share). Requires `network: "public"`. Note:
     /// advertising broadcasts the join token — the swarm becomes open to
@@ -107,6 +113,10 @@ struct CreateSwarmArgs {
 
 fn default_network() -> String {
     "private".to_string()
+}
+
+fn default_rate_limit() -> u16 {
+    ahs_shared::RATE_LIMIT_PER_MIN
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -200,12 +210,23 @@ impl AgentSwarmServer {
         if let Some(existing) = guard.as_ref() {
             return Err(already_in_swarm_error(existing));
         }
-        let mode = SwarmMode::from_network_name(&args.network)
-            .map_err(|error| McpError::invalid_params(error.to_string(), None))?;
-        let relay = resolve_relay(mode, args.relay.as_deref())
-            .map_err(|error| McpError::invalid_params(error.to_string(), None))?;
+        let public = match args.network.as_str() {
+            "public" => true,
+            "private" => false,
+            other => {
+                return Err(McpError::invalid_params(
+                    format!("unknown network mode: {other} (expected 'private' or 'public')"),
+                    None,
+                ));
+            }
+        };
+        let config = SwarmConfig {
+            rate_limit_per_min: args.rate_limit_per_min,
+            lookups: LookupOpts::from_public_relay(public, args.relay.as_deref())
+                .map_err(|error| McpError::invalid_params(error.to_string(), None))?,
+        };
         // Resolve the advertise request (absent / default / named directory)
-        // and enforce the public-network requirement up front.
+        // and enforce the reachable-swarm requirement up front.
         let advertise = match (args.advertise, args.directory) {
             (false, _) => DirectorySelection::Unset,
             (true, None) => DirectorySelection::Default,
@@ -215,7 +236,7 @@ impl AgentSwarmServer {
                 })?)
             }
         };
-        validate_advertise(mode, &advertise)
+        validate_advertise(&advertise, &config.lookups)
             .map_err(|error| McpError::invalid_params(error.to_string(), None))?;
         let name = SwarmName::new(args.name).map_err(|error| {
             McpError::invalid_params(format!("invalid swarm name: {error}"), None)
@@ -226,7 +247,7 @@ impl AgentSwarmServer {
                 McpError::invalid_params(format!("invalid nickname: {error}"), None)
             })?,
         };
-        let session = Session::create(mode, name, relay, nickname, advertise.directory())
+        let session = Session::create(name, config, nickname, advertise.directory())
             .await
             .map_err(to_mcp_error)?;
         let result = SwarmRef::from(&session);

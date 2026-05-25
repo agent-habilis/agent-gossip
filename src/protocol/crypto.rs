@@ -93,23 +93,28 @@ pub(crate) fn rendezvous_ports(seed: &[u8; 32]) -> [u16; RENDEZVOUS_LADDER] {
     })
 }
 
-/// Derive the gossip TopicId from the swarm `seed` + name. The seed is
-/// the random 32 bytes carried in the `ahs…` token, so the topic is
-/// **creator-independent**: it never depends on any node's ephemeral
-/// key and survives the creator's death. The name is length-prefixed
-/// before hashing so `(foo, bar)` and `(foobar, "")` can never collide
-/// — defensive, since `SwarmName` always validates non-empty.
+/// Derive the gossip TopicId from the swarm `seed` + name + config. The
+/// seed is the random 32 bytes carried in the `ahs…` token, so the topic
+/// is **creator-independent**: it never depends on any node's ephemeral
+/// key and survives the creator's death. The name and the canonical
+/// config bytes are each length-prefixed before hashing so distinct
+/// fields can never collide across the boundary.
 ///
 /// The seed is first run through the domain-separated [`kdf`] so a
-/// `seed` can never produce the same 32 bytes for the topic and for
-/// the rendezvous key. Binding the name still means a forged token
-/// (same seed, swapped name) hashes to a different topic and the
-/// joiner finds no peers.
-pub(crate) fn derive_topic_id(seed: &[u8; 32], name: &SwarmName) -> TopicId {
+/// `seed` can never produce the same 32 bytes for the topic and for the
+/// rendezvous key. Binding the name *and* the config means a forged
+/// token (same seed, swapped name or tampered rate limit / lookups)
+/// hashes to a different topic and the joiner finds no peers — so every
+/// member of a swarm provably shares the same config.
+pub(crate) fn derive_topic_id(seed: &[u8; 32], name: &SwarmName, config_bytes: &[u8]) -> TopicId {
     let mut hasher = Sha256::new();
     hasher.update(kdf(seed, b"topic"));
     hasher.update([name.len_u8()]);
     hasher.update(name.as_bytes());
+    let config_len =
+        u16::try_from(config_bytes.len()).expect("swarm config encodes well within a u16 length");
+    hasher.update(config_len.to_le_bytes());
+    hasher.update(config_bytes);
     let hash = hasher.finalize();
     let mut bytes = [0u8; 32];
     bytes.copy_from_slice(&hash);
@@ -187,11 +192,14 @@ mod topic_tests {
         SwarmName::new(text).unwrap()
     }
 
+    const CFG_A: &[u8] = &[60, 0, 0]; // rate 60, lookups loopback
+    const CFG_B: &[u8] = &[0, 0, 0b0111]; // rate 0, mdns+dht+pinned relay
+
     #[test]
     fn deterministic_for_same_input() {
         let seed = [42u8; 32];
-        let first = derive_topic_id(&seed, &name("team"));
-        let second = derive_topic_id(&seed, &name("team"));
+        let first = derive_topic_id(&seed, &name("team"), CFG_A);
+        let second = derive_topic_id(&seed, &name("team"), CFG_A);
         assert_eq!(first, second);
     }
 
@@ -200,8 +208,8 @@ mod topic_tests {
         let seed_a = [1u8; 32];
         let seed_b = [42u8; 32];
         assert_ne!(
-            derive_topic_id(&seed_a, &name("team")),
-            derive_topic_id(&seed_b, &name("team"))
+            derive_topic_id(&seed_a, &name("team"), CFG_A),
+            derive_topic_id(&seed_b, &name("team"), CFG_A)
         );
     }
 
@@ -209,8 +217,18 @@ mod topic_tests {
     fn different_names_produce_different_topics() {
         let seed = [1u8; 32];
         assert_ne!(
-            derive_topic_id(&seed, &name("alpha")),
-            derive_topic_id(&seed, &name("beta"))
+            derive_topic_id(&seed, &name("alpha"), CFG_A),
+            derive_topic_id(&seed, &name("beta"), CFG_A)
+        );
+    }
+
+    #[test]
+    fn different_config_produces_different_topics() {
+        let seed = [1u8; 32];
+        assert_ne!(
+            derive_topic_id(&seed, &name("team"), CFG_A),
+            derive_topic_id(&seed, &name("team"), CFG_B),
+            "config is mixed into the topic, so it cannot diverge across members"
         );
     }
 }

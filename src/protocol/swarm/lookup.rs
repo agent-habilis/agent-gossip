@@ -1,20 +1,22 @@
-//! The lookup allowlist (address-lookup + relay) and the `--advertise`
-//! directory selection — the flag-shaped inputs the CLI resolves into the
-//! effective [`LookupOpts`] the endpoint builder applies.
+//! The swarm-wide config carried in the `ahs…` id — the lookup
+//! allowlist (`mdns`/`dht`/`relay`) and the per-author rate limit — plus
+//! its byte codec and the `--advertise` directory selection. A swarm's
+//! network reach is fully described by its lookups: no lookups means
+//! loopback-only; any lookup means reachable across machines.
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use iroh::RelayUrl;
 
-use super::{SwarmMode, SwarmName};
+use super::SwarmName;
 
-/// The connectivity relay resolved from the allowlist. `Disabled` ⇒
-/// no relay at all (`RelayMode::Disabled`); `Pinned` ⇒ the
-/// lookup-layer pinned default *ladder* (the n0 prod set); `Custom` ⇒
-/// an operator-supplied **ordered ladder** (`--relay a,b,c`). Relay is
-/// an allowlist member like mdns/dht, not an always-on URL — the lookup
-/// layer turns `Pinned`/`Custom` into an ordered relay ladder, and the
-/// beacon homes on the first reachable rung (see `lookup::relay_ladder`
-/// / `lookup::select_bootstrap_rung`).
+/// The connectivity relay. `Disabled` ⇒ no relay at all
+/// (`RelayMode::Disabled`); `Pinned` ⇒ the lookup-layer pinned default
+/// *ladder* (the n0 prod set); `Custom` ⇒ an operator-supplied **ordered
+/// ladder** (`--relay a,b,c`). Relay is an allowlist member like
+/// mdns/dht, not an always-on URL — the lookup layer turns
+/// `Pinned`/`Custom` into an ordered relay ladder, and the beacon homes
+/// on the first reachable rung (see `lookup::relay_ladder` /
+/// `lookup::select_bootstrap_rung`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum RelayChoice {
     Disabled,
@@ -22,45 +24,198 @@ pub(crate) enum RelayChoice {
     Custom(Vec<RelayUrl>),
 }
 
-/// The resolved lookup + connectivity config the endpoint builder
-/// applies. `mdns`/`dht` are the enabled iroh address-lookups (both
-/// resolve the same seed-derived `rendezvous_id`); `relay` is the
-/// connectivity relay (see [`RelayChoice`]).
-#[derive(Debug, Clone)]
+/// The lookup allowlist baked into the swarm id. `mdns`/`dht` are the
+/// enabled iroh address-lookups (both resolve the same seed-derived
+/// `rendezvous_id`); `relay` is the connectivity relay (see
+/// [`RelayChoice`]). An all-off set is a loopback-only swarm.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct LookupOpts {
     pub mdns: bool,
     pub dht: bool,
     pub relay: RelayChoice,
 }
 
+/// Wire ceiling on a custom relay ladder, so a forged id can't blow up
+/// allocation. Far above any real ladder.
+const MAX_RELAY_LADDER: usize = 16;
+/// Wire ceiling on a single relay URL's byte length.
+const MAX_RELAY_URL_BYTES: usize = 512;
+
 impl LookupOpts {
-    /// The default behaviour, kept stable for the in-process
-    /// embed/MCP sessions: `private` ⇒ everything off (loopback
-    /// ladder); `public` ⇒ all lookups (mdns + dht) + the pinned (or
-    /// custom) relay. Built directly rather than via the allowlist:
-    /// a custom relay ladder must *not* suppress mdns/dht here (the
-    /// embed/MCP contract is all-lookups-on), unlike the CLI allowlist
-    /// where naming `--relay` alone restricts to relay only. An empty
-    /// `relay` ladder ⇒ the pinned default.
-    pub(crate) fn default_for(mode: SwarmMode, relay: Vec<RelayUrl>) -> Self {
-        match mode {
-            // `relay` is ignored on private: upstream `resolve_relay`
-            // already rejects a private relay before we get here.
-            SwarmMode::Private => LookupOpts {
-                mdns: false,
-                dht: false,
-                relay: RelayChoice::Disabled,
-            },
-            SwarmMode::Public => LookupOpts {
-                mdns: true,
-                dht: true,
-                relay: if relay.is_empty() {
-                    RelayChoice::Pinned
-                } else {
-                    RelayChoice::Custom(relay)
-                },
-            },
+    /// Loopback-only: no address-lookups, no relay (the seed-derived
+    /// port ladder bootstraps everything on one machine).
+    pub(crate) fn loopback() -> Self {
+        LookupOpts {
+            mdns: false,
+            dht: false,
+            relay: RelayChoice::Disabled,
         }
+    }
+
+    /// The all-on default for a swarm reachable across machines: both
+    /// address-lookups plus the pinned default relay ladder.
+    pub(crate) fn public_preset() -> Self {
+        LookupOpts {
+            mdns: true,
+            dht: true,
+            relay: RelayChoice::Pinned,
+        }
+    }
+
+    /// Swap in a custom relay ladder (empty ⇒ leave the pinned default).
+    /// Used by the embed/MCP create paths that take a relay as text.
+    #[must_use]
+    pub(crate) fn with_relay(mut self, ladder: Vec<RelayUrl>) -> Self {
+        if !ladder.is_empty() {
+            self.relay = RelayChoice::Custom(ladder);
+        }
+        self
+    }
+
+    /// True when nothing reaches off-machine — the swarm is loopback-only.
+    pub(crate) fn is_loopback(&self) -> bool {
+        !self.mdns && !self.dht && self.relay == RelayChoice::Disabled
+    }
+
+    /// Human/JSON label for the swarm's reach. Derived from the lookups —
+    /// there is no stored network mode.
+    pub(crate) fn network_label(&self) -> &'static str {
+        if self.is_loopback() {
+            "private"
+        } else {
+            "public"
+        }
+    }
+
+    /// Append the canonical wire encoding to `buf`:
+    /// `[flags u8][if custom: [count u8] ([len u16 LE] url)*]`.
+    fn encode_into(&self, buf: &mut Vec<u8>) {
+        let mut flags: u8 = 0;
+        if self.mdns {
+            flags |= 0b0001;
+        }
+        if self.dht {
+            flags |= 0b0010;
+        }
+        match &self.relay {
+            RelayChoice::Disabled => {}
+            RelayChoice::Pinned => flags |= 0b0100,
+            RelayChoice::Custom(_) => flags |= 0b0100 | 0b1000,
+        }
+        buf.push(flags);
+        if let RelayChoice::Custom(ladder) = &self.relay {
+            // The ladder is created locally and bounded by the CLI/embed,
+            // so this cast and the lengths below always fit.
+            buf.push(u8::try_from(ladder.len()).expect("relay ladder bounded by MAX_RELAY_LADDER"));
+            for url in ladder {
+                let text = url.to_string();
+                let len = u16::try_from(text.len()).expect("relay URL bounded by MAX_RELAY_URL_BYTES");
+                buf.extend_from_slice(&len.to_le_bytes());
+                buf.extend_from_slice(text.as_bytes());
+            }
+        }
+    }
+
+    /// Decode from a cursor over the config region, advancing `pos`.
+    fn decode_from(bytes: &[u8], pos: &mut usize) -> Result<Self> {
+        let flags = *bytes.get(*pos).context("truncated lookup flags")?;
+        *pos += 1;
+        let mdns = flags & 0b0001 != 0;
+        let dht = flags & 0b0010 != 0;
+        let relay_enabled = flags & 0b0100 != 0;
+        let relay_custom = flags & 0b1000 != 0;
+        if relay_custom && !relay_enabled {
+            bail!("custom-relay bit set without relay-enabled bit");
+        }
+        let relay = if !relay_enabled {
+            RelayChoice::Disabled
+        } else if !relay_custom {
+            RelayChoice::Pinned
+        } else {
+            let count = *bytes.get(*pos).context("truncated relay ladder count")? as usize;
+            *pos += 1;
+            if count == 0 {
+                bail!("custom relay ladder is empty");
+            }
+            if count > MAX_RELAY_LADDER {
+                bail!("relay ladder too long: {count}");
+            }
+            let mut ladder = Vec::with_capacity(count);
+            for _ in 0..count {
+                let len = read_u16(bytes, pos).context("truncated relay URL length")? as usize;
+                if len > MAX_RELAY_URL_BYTES {
+                    bail!("relay URL too long: {len}");
+                }
+                let end = pos.checked_add(len).context("relay URL length overflow")?;
+                let raw = bytes.get(*pos..end).context("truncated relay URL")?;
+                *pos = end;
+                let text = std::str::from_utf8(raw).context("relay URL is not UTF-8")?;
+                ladder.push(text.parse::<RelayUrl>().context("invalid relay URL")?);
+            }
+            RelayChoice::Custom(ladder)
+        };
+        Ok(LookupOpts { mdns, dht, relay })
+    }
+}
+
+pub(super) fn read_u16(bytes: &[u8], pos: &mut usize) -> Result<u16> {
+    let end = pos.checked_add(2).context("u16 length overflow")?;
+    let slice = bytes.get(*pos..end).context("truncated u16")?;
+    *pos = end;
+    Ok(u16::from_le_bytes([slice[0], slice[1]]))
+}
+
+/// The swarm-wide configuration carried in the id and mixed into the
+/// gossip topic, so every member that joins behaves identically. A
+/// different config is a different swarm (different topic).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SwarmConfig {
+    /// Per-author messages-per-minute cap; `0` means no rate limit.
+    pub rate_limit_per_min: u16,
+    pub lookups: LookupOpts,
+}
+
+impl SwarmConfig {
+    /// Default loopback-only config: the standard rate limit, no lookups.
+    pub(crate) fn loopback() -> Self {
+        SwarmConfig {
+            rate_limit_per_min: ahs_shared::RATE_LIMIT_PER_MIN,
+            lookups: LookupOpts::loopback(),
+        }
+    }
+
+    /// Default reachable-across-machines config: the standard rate limit,
+    /// the all-on lookup preset.
+    pub(crate) fn public_preset() -> Self {
+        SwarmConfig {
+            rate_limit_per_min: ahs_shared::RATE_LIMIT_PER_MIN,
+            lookups: LookupOpts::public_preset(),
+        }
+    }
+
+    /// Canonical wire bytes: `[rate_limit u16 LE][lookups…]`. This exact
+    /// byte string is what the id carries and what the topic derivation
+    /// mixes in, so it must be deterministic.
+    pub(crate) fn to_bytes(&self) -> Vec<u8> {
+        let mut buf = Vec::with_capacity(4);
+        buf.extend_from_slice(&self.rate_limit_per_min.to_le_bytes());
+        self.lookups.encode_into(&mut buf);
+        buf
+    }
+
+    /// Decode a config region, requiring it to consume `bytes` exactly
+    /// (no trailing slack within the length-delimited region we were given).
+    pub(crate) fn from_bytes(bytes: &[u8]) -> Result<Self> {
+        let mut pos = 0;
+        let rate_limit_per_min = read_u16(bytes, &mut pos).context("truncated rate limit")?;
+        let lookups = LookupOpts::decode_from(bytes, &mut pos)?;
+        if pos != bytes.len() {
+            bail!("trailing bytes in swarm config");
+        }
+        Ok(SwarmConfig {
+            rate_limit_per_min,
+            lookups,
+        })
     }
 }
 
@@ -118,24 +273,25 @@ impl DirectorySelection {
     }
 }
 
-/// `--advertise` lists the swarm in a public directory, so it requires
-/// the public network — mirrors [`validate_lookups`]. A bare/valued
-/// `--advertise` with a private (loopback-only) swarm is a hard error,
-/// never a silent no-op.
-pub(crate) fn validate_advertise(mode: SwarmMode, advertise: &DirectorySelection) -> Result<()> {
+/// `--advertise` lists the swarm in a public directory, so it requires a
+/// swarm that is actually reachable across machines. Advertising a
+/// loopback-only swarm is a hard error, never a silent no-op.
+pub(crate) fn validate_advertise(
+    advertise: &DirectorySelection,
+    lookups: &LookupOpts,
+) -> Result<()> {
     if advertise.is_set()
-        && mode != SwarmMode::Public
+        && lookups.is_loopback()
         && !crate::util::tuning::directory_private_for_test()
     {
-        bail!("--advertise requires the public network; pass --public");
+        bail!("--advertise needs a reachable swarm; enable a lookup (e.g. --public)");
     }
     Ok(())
 }
 
-/// The selected lookup allowlist: the mechanisms a member can
-/// enable. `mdns`/`dht` are address-lookups; `relay` is the
-/// connectivity/relay-direct rendezvous path — all three obey the same
-/// allowlist rule.
+/// The lookup flags the user selected on the CLI. `mdns`/`dht` are
+/// address-lookups; `relay` is the connectivity/relay-direct rendezvous
+/// path.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct LookupSet {
     pub mdns: bool,
@@ -149,200 +305,186 @@ impl LookupSet {
     }
 }
 
-/// One network-compatibility guard (generalises `require_relay_public`
-/// to every lookup flag). `private` is loopback-only, so any
-/// `--mdns`/`--dht`/`--relay` is rejected, naming them all in a single
-/// message — never a silent no-op.
-pub(crate) fn validate_lookups(mode: SwarmMode, lookups: &LookupSet) -> Result<()> {
-    if mode == SwarmMode::Public {
-        return Ok(());
-    }
-    let mut offending = Vec::new();
-    if lookups.mdns {
-        offending.push("--mdns");
-    }
-    if lookups.dht {
-        offending.push("--dht");
-    }
-    if lookups.relay.is_set() {
-        offending.push("--relay");
-    }
-    if offending.is_empty() {
-        Ok(())
+/// Resolve the CLI inputs into the effective [`LookupOpts`] baked into
+/// the swarm id. Naming **any** lookup flag uses *only* those passed (so
+/// `--mdns` alone is mDNS-only, relay/dht off); naming **none** but
+/// passing `--public` enables the all-on preset; naming nothing at all is
+/// a loopback-only swarm. `--relay` bare ⇒ pinned default, `--relay
+/// <url>` ⇒ custom ladder.
+pub(crate) fn resolve_lookups(public: bool, lookups: LookupSet) -> LookupOpts {
+    if lookups.any() {
+        let relay = match lookups.relay {
+            RelaySelection::Unset => RelayChoice::Disabled,
+            RelaySelection::Default => RelayChoice::Pinned,
+            RelaySelection::Custom(ladder) => RelayChoice::Custom(ladder),
+        };
+        LookupOpts {
+            mdns: lookups.mdns,
+            dht: lookups.dht,
+            relay,
+        }
+    } else if public {
+        LookupOpts::public_preset()
     } else {
-        bail!(
-            "{} require the public network; pass --public",
-            offending.join(", ")
-        );
+        LookupOpts::loopback()
     }
 }
 
-/// Resolve the allowlist against the network mode into the effective
-/// [`LookupOpts`]. On `public`: naming **no** flag enables all three
-/// (mdns + dht + pinned relay); naming **any** uses *only* those passed
-/// — so `--mdns` alone disables both dht and the relay. `--relay` bare
-/// ⇒ pinned default, `--relay <url>` ⇒ custom. Errors if any
-/// `--mdns`/`--dht`/`--relay` is given with `private`.
-pub(crate) fn resolve_lookups(mode: SwarmMode, lookups: LookupSet) -> Result<LookupOpts> {
-    validate_lookups(mode, &lookups)?;
-    match mode {
-        SwarmMode::Private => Ok(LookupOpts {
-            mdns: false,
-            dht: false,
-            relay: RelayChoice::Disabled,
-        }),
-        SwarmMode::Public if lookups.any() => {
-            // Any flag ⇒ use *only* those passed.
-            let relay = match lookups.relay {
-                RelaySelection::Unset => RelayChoice::Disabled,
-                RelaySelection::Default => RelayChoice::Pinned,
-                RelaySelection::Custom(ladder) => RelayChoice::Custom(ladder),
-            };
-            Ok(LookupOpts {
-                mdns: lookups.mdns,
-                dht: lookups.dht,
-                relay,
-            })
+/// Parse a comma-separated, ordered relay **ladder** (`a,b,c`) — order
+/// preserved (the beacon homes on the first reachable rung); an empty or
+/// whitespace-only entry is a hard error so a typo never silently
+/// shrinks the ladder. The single source of truth for `--relay` syntax,
+/// shared by the CLI value-parser and [`resolve_relay`] (the MCP/embed
+/// string path); `String` error so clap can surface it directly.
+pub(crate) fn parse_relay_ladder(raw: &str) -> Result<Vec<RelayUrl>, String> {
+    raw.split(',')
+        .map(|entry| {
+            let trimmed = entry.trim();
+            if trimmed.is_empty() {
+                return Err(format!("empty entry in relay ladder {raw:?}"));
+            }
+            trimmed
+                .parse::<RelayUrl>()
+                .map_err(|error| format!("invalid relay URL {trimmed:?}: {error}"))
+        })
+        .collect()
+}
+
+/// Parse an optional relay ladder given as text (MCP tool args, embed
+/// `CreateConfig`). `None` ⇒ an empty ladder (the caller's preset then
+/// keeps the pinned default).
+fn resolve_relay(relay: Option<&str>) -> Result<Vec<RelayUrl>> {
+    match relay {
+        None => Ok(Vec::new()),
+        Some(raw) => parse_relay_ladder(raw).map_err(|error| anyhow::anyhow!(error)),
+    }
+}
+
+impl LookupOpts {
+    /// Resolve the embed/MCP create shape — a single `public` toggle plus
+    /// an optional relay ladder as text — into the effective lookups.
+    /// `public` enables the all-on preset, refined by a custom relay; a
+    /// relay without `public` is a hard error, not a silent drop (it would
+    /// otherwise be dropped on a loopback-only swarm). The CLI uses
+    /// [`resolve_lookups`] instead (it has the granular allowlist).
+    pub(crate) fn from_public_relay(public: bool, relay: Option<&str>) -> Result<Self> {
+        if !public && relay.is_some() {
+            bail!("a relay requires public");
         }
-        SwarmMode::Public => Ok(LookupOpts {
-            mdns: true,
-            dht: true,
-            relay: RelayChoice::Pinned,
-        }),
+        if public {
+            Ok(LookupOpts::public_preset().with_relay(resolve_relay(relay)?))
+        } else {
+            Ok(LookupOpts::loopback())
+        }
     }
 }
 
 #[cfg(test)]
 mod lookup_tests {
     use super::{
-        LookupOpts, LookupSet, RelayChoice, RelaySelection, SwarmMode, resolve_lookups,
-        validate_lookups,
+        LookupOpts, LookupSet, RelayChoice, RelaySelection, SwarmConfig, resolve_lookups,
     };
 
     fn lookups(mdns: bool, dht: bool, relay: RelaySelection) -> LookupSet {
         LookupSet { mdns, dht, relay }
     }
 
-    fn url() -> iroh::RelayUrl {
-        "https://relay.example".parse().unwrap()
-    }
-
-    fn ladder() -> Vec<iroh::RelayUrl> {
-        vec![url()]
-    }
-
     #[test]
     fn public_no_flags_enables_all_three() {
-        let opts = resolve_lookups(SwarmMode::Public, LookupSet::default()).unwrap();
+        let opts = resolve_lookups(true, LookupSet::default());
         assert!(opts.mdns && opts.dht);
-        assert_eq!(opts.relay, RelayChoice::Pinned, "no flags ⇒ pinned relay");
+        assert_eq!(opts.relay, RelayChoice::Pinned, "preset ⇒ pinned relay");
+        assert!(!opts.is_loopback());
     }
 
     #[test]
-    fn public_mdns_alone_disables_dht_and_relay() {
-        let opts = resolve_lookups(
-            SwarmMode::Public,
-            lookups(true, false, RelaySelection::Unset),
-        )
-        .unwrap();
+    fn no_public_no_flags_is_loopback() {
+        let opts = resolve_lookups(false, LookupSet::default());
+        assert!(opts.is_loopback());
+        assert_eq!(opts.network_label(), "private");
+    }
+
+    #[test]
+    fn mdns_alone_disables_dht_and_relay() {
+        let opts = resolve_lookups(false, lookups(true, false, RelaySelection::Unset));
         assert!(opts.mdns && !opts.dht);
-        assert_eq!(
-            opts.relay,
-            RelayChoice::Disabled,
-            "--mdns alone ⇒ relay off"
-        );
+        assert_eq!(opts.relay, RelayChoice::Disabled, "--mdns alone ⇒ relay off");
+        assert!(!opts.is_loopback(), "any lookup ⇒ reachable");
     }
 
     #[test]
-    fn public_bare_relay_is_pinned_and_suppresses_lookups() {
-        let opts = resolve_lookups(
-            SwarmMode::Public,
-            lookups(false, false, RelaySelection::Default),
-        )
-        .unwrap();
+    fn bare_relay_is_pinned_and_suppresses_lookups() {
+        let opts = resolve_lookups(false, lookups(false, false, RelaySelection::Default));
         assert!(!opts.mdns && !opts.dht);
         assert_eq!(opts.relay, RelayChoice::Pinned);
     }
 
     #[test]
-    fn public_valued_relay_is_custom_and_suppresses_lookups() {
-        let opts = resolve_lookups(
-            SwarmMode::Public,
-            lookups(false, false, RelaySelection::Custom(ladder())),
-        )
-        .unwrap();
-        assert!(!opts.mdns && !opts.dht);
-        assert_eq!(opts.relay, RelayChoice::Custom(ladder()));
-    }
-
-    #[test]
-    fn public_valued_relay_preserves_ladder_order() {
+    fn valued_relay_preserves_ladder_order() {
         let rung0: iroh::RelayUrl = "https://a.example".parse().unwrap();
         let rung1: iroh::RelayUrl = "https://b.example".parse().unwrap();
         let opts = resolve_lookups(
-            SwarmMode::Public,
+            false,
             lookups(
                 false,
                 false,
                 RelaySelection::Custom(vec![rung0.clone(), rung1.clone()]),
             ),
-        )
-        .unwrap();
+        );
         assert_eq!(opts.relay, RelayChoice::Custom(vec![rung0, rung1]));
     }
 
     #[test]
-    fn public_mdns_plus_relay_keeps_both() {
-        let opts = resolve_lookups(
-            SwarmMode::Public,
-            lookups(true, false, RelaySelection::Default),
-        )
-        .unwrap();
-        assert!(opts.mdns && !opts.dht);
-        assert_eq!(opts.relay, RelayChoice::Pinned);
+    fn config_round_trips_loopback() {
+        let config = SwarmConfig::loopback();
+        let decoded = SwarmConfig::from_bytes(&config.to_bytes()).unwrap();
+        assert_eq!(decoded, config);
     }
 
     #[test]
-    fn default_for_custom_relay_keeps_lookups_on() {
-        // embed/MCP contract: a custom relay must not suppress mdns/dht.
-        let opts = LookupOpts::default_for(SwarmMode::Public, ladder());
-        assert!(opts.mdns && opts.dht);
-        assert_eq!(opts.relay, RelayChoice::Custom(ladder()));
+    fn config_round_trips_public_preset() {
+        let config = SwarmConfig::public_preset();
+        let decoded = SwarmConfig::from_bytes(&config.to_bytes()).unwrap();
+        assert_eq!(decoded, config);
     }
 
     #[test]
-    fn default_for_empty_ladder_is_pinned() {
-        let opts = LookupOpts::default_for(SwarmMode::Public, Vec::new());
-        assert_eq!(opts.relay, RelayChoice::Pinned);
+    fn config_round_trips_custom_relay_ladder_and_rate() {
+        let config = SwarmConfig {
+            rate_limit_per_min: 0,
+            lookups: LookupOpts {
+                mdns: true,
+                dht: false,
+                relay: RelayChoice::Custom(vec![
+                    "https://a.example".parse().unwrap(),
+                    "https://b.example".parse().unwrap(),
+                ]),
+            },
+        };
+        let decoded = SwarmConfig::from_bytes(&config.to_bytes()).unwrap();
+        assert_eq!(decoded, config);
     }
 
     #[test]
-    fn private_no_flags_is_all_off() {
-        let opts = resolve_lookups(SwarmMode::Private, LookupSet::default()).unwrap();
-        assert!(!opts.mdns && !opts.dht);
-        assert_eq!(opts.relay, RelayChoice::Disabled);
+    fn config_rejects_trailing_bytes() {
+        let mut bytes = SwarmConfig::loopback().to_bytes();
+        bytes.push(0);
+        assert!(SwarmConfig::from_bytes(&bytes).is_err());
     }
 
     #[test]
-    fn private_with_any_flag_is_rejected() {
-        let cases = [
-            lookups(true, false, RelaySelection::Unset),
-            lookups(false, true, RelaySelection::Unset),
-            lookups(false, false, RelaySelection::Default),
-            lookups(false, false, RelaySelection::Custom(ladder())),
-        ];
-        for set in cases {
-            let via_resolve = resolve_lookups(SwarmMode::Private, set.clone());
-            assert!(via_resolve.is_err(), "resolve must reject: {set:?}");
-            let error = validate_lookups(SwarmMode::Private, &set).unwrap_err();
-            assert!(error.to_string().contains("--public"), "got: {error}");
-        }
+    fn config_rejects_custom_flag_without_enabled() {
+        // rate(2) + flags with custom(0b1000) but not enabled(0b0100).
+        let bytes = [0u8, 0u8, 0b1000];
+        assert!(SwarmConfig::from_bytes(&bytes).is_err());
     }
 }
 
 #[cfg(test)]
 mod directory_selection_tests {
-    use super::{DEFAULT_DIRECTORY, DirectorySelection, SwarmMode, SwarmName, validate_advertise};
+    use super::{
+        DEFAULT_DIRECTORY, DirectorySelection, LookupOpts, SwarmName, validate_advertise,
+    };
 
     #[test]
     fn unset_is_not_advertising() {
@@ -365,14 +507,15 @@ mod directory_selection_tests {
     }
 
     #[test]
-    fn advertise_requires_public() {
-        // Private + advertising is rejected, naming the flag.
+    fn advertise_requires_reachable_swarm() {
+        // Loopback-only + advertising is rejected.
         let error =
-            validate_advertise(SwarmMode::Private, &DirectorySelection::Default).unwrap_err();
+            validate_advertise(&DirectorySelection::Default, &LookupOpts::loopback()).unwrap_err();
         assert!(error.to_string().contains("--advertise"), "got: {error}");
-        assert!(error.to_string().contains("--public"), "got: {error}");
-        // Public + advertising, and private + not advertising, are fine.
-        assert!(validate_advertise(SwarmMode::Public, &DirectorySelection::Default).is_ok());
-        assert!(validate_advertise(SwarmMode::Private, &DirectorySelection::Unset).is_ok());
+        // Reachable + advertising, and loopback + not advertising, are fine.
+        assert!(
+            validate_advertise(&DirectorySelection::Default, &LookupOpts::public_preset()).is_ok()
+        );
+        assert!(validate_advertise(&DirectorySelection::Unset, &LookupOpts::loopback()).is_ok());
     }
 }

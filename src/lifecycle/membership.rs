@@ -86,7 +86,7 @@ mod tests {
     };
 
     fn fresh_state() -> EventLoopState {
-        EventLoopState::new(None, Instant::now())
+        EventLoopState::new(None, Instant::now(), ahs_shared::RATE_LIMIT_PER_MIN)
     }
 
     fn nick(name: &str) -> Nickname {

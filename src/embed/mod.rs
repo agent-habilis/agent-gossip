@@ -18,9 +18,7 @@ use crate::daemon::setup::{SetupKind, setup_swarm};
 use crate::daemon::{CoHostPolicy, DriverMode, EventLoopConfig, SendRequest};
 use crate::directory::{self, Listing, ListingChange, Listings, directory_swarm};
 use crate::output::{Output, OutputEvent};
-use crate::protocol::swarm::{
-    DEFAULT_DIRECTORY, LookupOpts, Swarm, SwarmMode, SwarmName, resolve_relay,
-};
+use crate::protocol::swarm::{DEFAULT_DIRECTORY, LookupOpts, Swarm, SwarmConfig, SwarmName};
 use crate::protocol::{Message, MessageBody, MessageId, Nickname, SwarmId};
 use crate::resolver;
 use crate::util::tuning::{
@@ -78,6 +76,9 @@ pub struct CreateConfig {
     /// The directory to advertise into when `advertise` is set.
     /// `None` ⇒ the well-known `global` directory.
     pub directory: Option<String>,
+    /// Per-author messages-per-minute cap baked into the swarm id and
+    /// enforced swarm-wide. `0` disables rate limiting. Default 60.
+    pub rate_limit_per_min: u16,
     /// Max direct peer connections before gossip relays the rest.
     pub max_peers: usize,
 }
@@ -95,6 +96,7 @@ impl CreateConfig {
             relay: None,
             advertise: false,
             directory: None,
+            rate_limit_per_min: ahs_shared::RATE_LIMIT_PER_MIN,
             max_peers: DEFAULT_MAX_DIRECT_PEERS,
         }
     }
@@ -136,7 +138,6 @@ impl SwarmSession {
     /// setup fails, or the join times out (bootstrap peer unreachable).
     pub async fn join(cfg: JoinConfig) -> anyhow::Result<Self> {
         let swarm = resolver::resolve(&cfg.target).await?;
-        let lookups = LookupOpts::default_for(swarm.mode, Vec::new());
         let author = cfg.nickname.unwrap_or_else(Nickname::random);
         let (events_tx, events_rx) = mpsc::unbounded_channel();
         let elc = setup_swarm(
@@ -145,7 +146,6 @@ impl SwarmSession {
             /* interactive */ false,
             cfg.max_peers,
             /* state_file */ None,
-            lookups,
             Output::capture(events_tx),
         )
         .await?;
@@ -163,9 +163,8 @@ impl SwarmSession {
     ///
     /// # Errors
     /// Fails if endpoint/gossip setup fails or the join times out.
-    pub(crate) async fn join_with_lookups(
+    pub(crate) async fn join_decoded(
         swarm: Swarm,
-        lookups: LookupOpts,
         nickname: Option<Nickname>,
         cohost: CoHostPolicy,
     ) -> anyhow::Result<Self> {
@@ -177,7 +176,6 @@ impl SwarmSession {
             /* interactive */ false,
             DEFAULT_MAX_DIRECT_PEERS,
             /* state_file */ None,
-            lookups,
             Output::capture(events_tx),
         )
         .await?;
@@ -196,36 +194,33 @@ impl SwarmSession {
     pub async fn create(cfg: CreateConfig) -> anyhow::Result<Self> {
         let name = SwarmName::new(cfg.name)
             .map_err(|error| anyhow::anyhow!("invalid swarm name: {error:?}"))?;
-        let mode = if cfg.public {
-            SwarmMode::Public
-        } else {
-            SwarmMode::Private
+        let config = SwarmConfig {
+            rate_limit_per_min: cfg.rate_limit_per_min,
+            lookups: LookupOpts::from_public_relay(cfg.public, cfg.relay.as_deref())?,
         };
-        let relay = resolve_relay(mode, cfg.relay.as_deref())?;
-        let lookups = LookupOpts::default_for(mode, relay);
         // Resolve the advertise directory up front so an invalid directory /
-        // private-mode advertise fails before the session is spawned.
-        let directory = resolve_advertise_directory(cfg.advertise, cfg.directory, mode)?;
+        // loopback-only advertise fails before the session is spawned.
+        let directory =
+            resolve_advertise_directory(cfg.advertise, cfg.directory, &config.lookups)?;
         let author = cfg.nickname.unwrap_or_else(Nickname::random);
         let (events_tx, events_rx) = mpsc::unbounded_channel();
         let mut elc = setup_swarm(
             SetupKind::Create {
-                mode,
                 name,
+                config,
                 advertise: directory.clone(),
             },
             author,
             /* interactive */ false,
             cfg.max_peers,
             /* state_file */ None,
-            lookups.clone(),
             Output::capture(events_tx),
         )
         .await?;
         // When advertising, start the re-broadcast task (tied to this
-        // session) on the same lookups as the swarm.
+        // session); it joins the directory over the directory's own config.
         let advertiser =
-            directory.map(|directory_name| spawn_advertiser(&mut elc, directory_name, lookups));
+            directory.map(|directory_name| spawn_advertiser(&mut elc, directory_name));
         Ok(Self::spawn_session_from(elc, events_rx, advertiser))
     }
 
@@ -382,13 +377,13 @@ impl Drop for SwarmSession {
 fn resolve_advertise_directory(
     advertise: bool,
     directory: Option<String>,
-    mode: SwarmMode,
+    lookups: &LookupOpts,
 ) -> anyhow::Result<Option<SwarmName>> {
     if !advertise {
         return Ok(None);
     }
-    if mode != SwarmMode::Public && !crate::util::tuning::directory_private_for_test() {
-        anyhow::bail!("advertise requires the public network");
+    if lookups.is_loopback() && !crate::util::tuning::directory_private_for_test() {
+        anyhow::bail!("advertise needs a reachable swarm; create it with `public`");
     }
     let directory_name = match directory {
         Some(value) => SwarmName::new(value)
@@ -408,7 +403,6 @@ fn resolve_advertise_directory(
 pub(crate) fn spawn_advertiser(
     cfg: &mut EventLoopConfig,
     directory: SwarmName,
-    lookups: LookupOpts,
 ) -> JoinHandle<()> {
     let live_count = Arc::new(AtomicUsize::new(1));
     cfg.live_count = Some(live_count.clone());
@@ -423,14 +417,7 @@ pub(crate) fn spawn_advertiser(
         // graft against a dead rendezvous.) In private, claim-if-free
         // elects one beacon among multiple advertisers; in public the
         // common single-advertiser case is what this serves.
-        let session = match SwarmSession::join_with_lookups(
-            swarm,
-            lookups,
-            None,
-            CoHostPolicy::Eager,
-        )
-        .await
-        {
+        let session = match SwarmSession::join_decoded(swarm, None, CoHostPolicy::Eager).await {
             Ok(session) => session,
             Err(error) => {
                 tracing::warn!(
@@ -525,25 +512,11 @@ pub struct Directory {
 
 impl Directory {
     /// Open a directory by name. `name` is the directory name; `None` ⇒
-    /// the well-known `global` directory. Uses the default all-on public
-    /// lookups; for granular control use [`Directory::open_with_lookups`].
-    /// Returns once the directory session is ready; listings then
-    /// accumulate in the background.
-    ///
-    /// # Errors
-    /// Fails if the name is invalid or the directory session cannot be
-    /// established (endpoint/gossip setup, bootstrap unreachable).
-    pub async fn open(name: Option<impl Into<String>>) -> anyhow::Result<Self> {
-        // Match the directory's mode (public normally; private under the
-        // test hook) so the lookups are valid for it.
-        let lookups = LookupOpts::default_for(directory::directory_mode(), Vec::new());
-        Self::open_with_lookups(name, lookups).await
-    }
-
-    /// Like [`Directory::open`], but with an explicit lookup set — the
-    /// directory's swarm is reached over exactly these lookups (the CLI
-    /// passes its `--mdns/--dht/--relay` allowlist here). `pub(crate)`:
-    /// keeps `LookupOpts` out of the iroh-free public surface.
+    /// the well-known `global` directory. The directory is itself a swarm
+    /// whose config (and thus its lookups) is fixed by its name, so
+    /// advertisers and discoverers always meet on the same topic. Returns
+    /// once the directory session is ready; listings then accumulate in
+    /// the background.
     ///
     /// # Errors
     /// Fails if the name is invalid or the directory session cannot be
@@ -552,10 +525,7 @@ impl Directory {
     /// # Panics
     /// Panics only if the internal collector mutex is poisoned by a
     /// panic in the background task — not reachable in normal use.
-    pub(crate) async fn open_with_lookups(
-        name: Option<impl Into<String>>,
-        lookups: LookupOpts,
-    ) -> anyhow::Result<Self> {
+    pub async fn open(name: Option<impl Into<String>>) -> anyhow::Result<Self> {
         let directory_name = match name {
             Some(value) => SwarmName::new(value.into())
                 .map_err(|error| anyhow::anyhow!("invalid directory name: {error}"))?,
@@ -565,9 +535,10 @@ impl Directory {
         };
         let swarm = directory_swarm(&directory_name);
         // A discoverer is a pure consumer: never co-host the directory's
-        // rendezvous (it only dials an advertiser's beacon).
-        let session =
-            SwarmSession::join_with_lookups(swarm, lookups, None, CoHostPolicy::Never).await?;
+        // rendezvous (it only dials an advertiser's beacon). The directory
+        // swarm carries its own config, so the session's lookups are fixed
+        // by it — advertisers and discoverers meet on the same topic.
+        let session = SwarmSession::join_decoded(swarm, None, CoHostPolicy::Never).await?;
         let mut inbound = session.messages();
         let listings = Arc::new(Mutex::new(Listings::new()));
         let (events_tx, events_rx) = mpsc::unbounded_channel();

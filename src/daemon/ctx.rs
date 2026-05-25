@@ -24,8 +24,8 @@ pub(crate) struct HandlerCtx<'a> {
     /// self-author and rate-limit filters is forwarded here before
     /// kind routing. `None` for CLI/MCP.
     pub external_msg_tx: Option<&'a broadcast::Sender<Message>>,
-    /// Per-loop output sink (replaces the former process-global
-    /// statics). Borrowed for the loop's lifetime; handlers read it
+    /// Per-loop output sink, so multiple in-process sessions don't share
+    /// one global. Borrowed for the loop's lifetime; handlers read it
     /// through `ctx.output`.
     pub output: &'a output::Output,
 }

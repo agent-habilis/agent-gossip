@@ -70,8 +70,8 @@ impl IpcCommand {
 /// `poll` returns per entry — `serde_json::to_value(msg)` — so
 /// agents can treat it uniformly with `fetch_messages` results.
 ///
-/// Legacy CLI callers that only read `response["id"]` keep working;
-/// the MCP server reads the embedded `"message"` field.
+/// A caller that only reads `response["id"]` gets the id; the MCP server
+/// reads the embedded `"message"` field for the full record.
 pub(crate) fn json_ok_msg(id: &MessageId, msg: &crate::protocol::Message) -> String {
     serde_json::json!({
         "ok": true,

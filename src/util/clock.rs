@@ -1,9 +1,6 @@
 //! Unix-epoch timestamps — `std::time` wrappers that produce the
 //! `i64`-shaped fields the wire protocol and state file expect.
-//!
-//! Replaces the `chrono::Utc::now().timestamp()` shape that used to
-//! pull `chrono` (and its `iana-time-zone`, `num-traits` etc.) for
-//! three call sites.
+//! Pure `std`, so the crate needs no `chrono` dependency.
 
 use std::time::{SystemTime, UNIX_EPOCH};
 

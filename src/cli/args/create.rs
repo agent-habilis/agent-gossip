@@ -2,15 +2,23 @@
 
 use clap::Parser;
 
+use ahs_shared::RATE_LIMIT_PER_MIN;
+
 use crate::protocol::Nickname;
 use crate::protocol::swarm::{DirectorySelection, SwarmName};
 
+use super::lookup::LookupArgs;
 use super::shared::SharedServerOpts;
 
 #[derive(Parser, Debug)]
 pub(crate) struct CreateOpts {
     #[command(flatten)]
     pub shared: SharedServerOpts,
+
+    /// Which lookup mechanisms this swarm uses (baked into its id, so
+    /// every joiner inherits them). `create`-only: `join` decodes them.
+    #[command(flatten)]
+    pub lookups: LookupArgs,
 
     /// Human-readable swarm name. Optional — a random word-word name is
     /// minted if omitted. Same rules as a nickname: 1..=32 UTF-8
@@ -22,12 +30,18 @@ pub(crate) struct CreateOpts {
     #[arg(long)]
     pub name: Option<SwarmName>,
 
-    /// Use the public network (cross-machine via the relay + mDNS/DHT
-    /// lookups). Omitted ⇒ private (loopback only, the default).
-    /// Lookup selection lives in the shared
-    /// `--mdns`/`--dht`/`--relay` allowlist flags.
+    /// Make the swarm reachable across machines — sugar for the all-on
+    /// lookup preset (mDNS + DHT + the default relay ladder). Omitted ⇒
+    /// loopback only (the default). Refine with the `--mdns`/`--dht`/
+    /// `--relay` flags; all of it is baked into the swarm id.
     #[arg(long, default_value_t = false)]
     pub public: bool,
+
+    /// Per-author messages-per-minute cap, baked into the swarm id and
+    /// enforced swarm-wide (every joiner inherits it). `0` disables rate
+    /// limiting entirely. Default 60.
+    #[arg(long = "rate-limit", default_value_t = RATE_LIMIT_PER_MIN)]
+    pub rate_limit: u16,
 
     /// Optional nickname (random word-word if not provided). A custom
     /// nickname is 1..=32 UTF-8 characters, excluding control chars,

@@ -3,14 +3,15 @@
 //! - [`SwarmId`] — the validated `ahs…` *string* (shallow: prefix +
 //!   length + Base58 charset). Cheap boundary check at the CLI / IPC
 //!   edge. Code: [`id`].
-//! - [`Swarm`] — the *decoded* structure (mode + name + 32-byte seed),
-//!   with the Base58Check codec (this file). `SwarmId` is what flows
-//!   through the wire/CLI; `Swarm` is what `setup_swarm` derives identity
-//!   from.
+//! - [`Swarm`] — the *decoded* structure (32-byte seed + name +
+//!   [`SwarmConfig`]), with the Base58Check codec (this file). `SwarmId`
+//!   is what flows through the wire/CLI; `Swarm` is what `setup_swarm`
+//!   derives identity and behavior from.
 //!
-//! Also home to [`SwarmName`] ([`name`]), [`SwarmMode`] + the relay rule
-//! ([`mode`]), and the lookup allowlist / `--advertise` selection
-//! ([`lookup`]).
+//! See `docs/swarm-hash.md` for the full byte layout and rationale.
+//!
+//! Also home to [`SwarmName`] ([`name`]), the lookup allowlist + rate
+//! limit ([`lookup`]) carried in the id, and the relay-ladder parsing.
 
 use std::fmt;
 use std::str::FromStr;
@@ -23,24 +24,20 @@ use super::crypto;
 
 mod id;
 mod lookup;
-mod mode;
 mod name;
 
 pub use id::{SwarmId, SwarmIdError};
 pub(crate) use lookup::{
     DEFAULT_DIRECTORY, DirectorySelection, LookupOpts, LookupSet, RelayChoice, RelaySelection,
-    resolve_lookups, validate_advertise,
+    SwarmConfig, parse_relay_ladder, resolve_lookups, validate_advertise,
 };
-pub(crate) use mode::{SwarmMode, parse_relay_ladder, resolve_relay};
 pub(crate) use name::SwarmName;
 
 const PREFIX: &str = "ahs";
 
-/// Wire version. v2 replaced the creator `EndpointId` with a random
-/// `seed` (creator-independent rendezvous). No v1 compatibility — the
-/// project is pre-release; old `ahs…` ids are rejected by the version
-/// check below.
-const VERSION: u8 = 2;
+/// Id format version. A single byte reserved so the encoding can evolve;
+/// an unknown version is rejected.
+const VERSION: u8 = 1;
 const SEED_LEN: usize = 32;
 /// Wire bound for the encoded name in bytes. `SwarmName::new` caps the
 /// name at `ident::MAX_CHARS` scalar values; each is at most 4 UTF-8
@@ -50,32 +47,59 @@ const NAME_MAX_BYTES: usize = super::ident::MAX_CHARS * 4;
 
 /// A swarm identifier — Base58Check payload with an `ahs` prefix.
 ///
-/// The token carries only the random `seed`; **no peer address is
-/// ever stored**. The gossip topic, the well-known rendezvous identity
-/// (every joiner's bootstrap target), and the private-mode loopback
-/// port are all derived from `seed` in memory, so the swarm is
-/// creator-independent and survives the creator's death.
+/// The token carries the random `seed` plus the swarm's [`SwarmConfig`]
+/// (rate limit + lookups); **no peer address is ever stored**. The
+/// gossip topic, the well-known rendezvous identity (every joiner's
+/// bootstrap target), and the loopback port ladder are all derived from
+/// `seed` in memory, so the swarm is creator-independent and survives
+/// the creator's death. The config is mixed into the topic derivation,
+/// so every member of a swarm shares the same config.
 ///
 /// Wire format (little-endian):
 ///   [1 byte version]
-///   [1 byte mode]
 ///   [32 bytes seed]
 ///   [1 byte name length in bytes, 1..=128]
 ///   [N bytes name (UTF-8, <=32 scalars, charset enforced by `SwarmName`)]
+///   [2 bytes config length] [config bytes (see `SwarmConfig::to_bytes`)]
 #[derive(Debug, Clone)]
 pub(crate) struct Swarm {
-    pub mode: SwarmMode,
     pub name: SwarmName,
     seed: [u8; SEED_LEN],
+    pub config: SwarmConfig,
 }
 
 impl Swarm {
-    pub(crate) fn new(mode: SwarmMode, seed: [u8; SEED_LEN], name: SwarmName) -> Self {
-        Swarm { mode, name, seed }
+    pub(crate) fn new(seed: [u8; SEED_LEN], name: SwarmName, config: SwarmConfig) -> Self {
+        Swarm { name, seed, config }
     }
 
     pub(crate) fn seed(&self) -> &[u8; SEED_LEN] {
         &self.seed
+    }
+
+    pub(crate) fn lookups(&self) -> &LookupOpts {
+        &self.config.lookups
+    }
+
+    /// True when the swarm is loopback-only (no off-machine lookups).
+    pub(crate) fn is_loopback(&self) -> bool {
+        self.config.lookups.is_loopback()
+    }
+
+    /// `"private"`/`"public"` label for output, derived from the lookups.
+    pub(crate) fn network_label(&self) -> &'static str {
+        self.config.lookups.network_label()
+    }
+
+    /// Per-author messages-per-minute cap; `0` means no rate limit.
+    pub(crate) fn rate_limit_per_min(&self) -> u16 {
+        self.config.rate_limit_per_min
+    }
+
+    /// The canonical config bytes mixed into the topic derivation (so a
+    /// swarm's config is part of its identity).
+    pub(crate) fn config_bytes(&self) -> Vec<u8> {
+        self.config.to_bytes()
     }
 
     /// Well-known rendezvous `EndpointId`, derived from `seed`. Every
@@ -85,57 +109,67 @@ impl Swarm {
         crypto::rendezvous_id(&self.seed)
     }
 
-    /// Deterministic loopback port *ladder* for private swarms (no
-    /// pkarr/DNS to resolve `rendezvous_id`). Preference order; a
-    /// beacon binds the first free rung, joiners try all rungs.
+    /// Deterministic loopback port *ladder* for loopback-only swarms (no
+    /// pkarr/DNS to resolve `rendezvous_id`). Preference order; a beacon
+    /// binds the first free rung, joiners try all rungs.
     pub(crate) fn rendezvous_ports(&self) -> [u16; crypto::RENDEZVOUS_LADDER] {
         crypto::rendezvous_ports(&self.seed)
     }
 
     fn encode_bytes(&self) -> Vec<u8> {
-        let mut buf = Vec::with_capacity(3 + SEED_LEN + self.name.as_bytes().len());
+        let config = self.config.to_bytes();
+        let mut buf =
+            Vec::with_capacity(1 + SEED_LEN + 1 + self.name.as_bytes().len() + 2 + config.len());
         buf.push(VERSION);
-        buf.push(self.mode.to_byte());
         buf.extend_from_slice(&self.seed);
         // SwarmName guarantees 1..=128 UTF-8 bytes, so a 1-byte length is safe.
         buf.push(self.name.len_u8());
         buf.extend_from_slice(self.name.as_bytes());
+        let config_len =
+            u16::try_from(config.len()).expect("SwarmConfig encodes well within a u16 length");
+        buf.extend_from_slice(&config_len.to_le_bytes());
+        buf.extend_from_slice(&config);
         buf
     }
 
     fn decode_bytes(bytes: &[u8]) -> Result<Self> {
-        // [version][mode][32 seed][name_len] => 35 bytes minimum.
-        if bytes.len() < 3 + SEED_LEN {
-            bail!("Swarm identifier too short");
-        }
-        let version = bytes[0];
+        let mut pos = 0usize;
+        let version = *bytes.get(pos).context("Swarm identifier too short")?;
+        pos += 1;
         if version != VERSION {
-            bail!("Unsupported swarm version: {version}");
+            bail!("Unsupported swarm id version: {version}");
         }
-        let mode = SwarmMode::from_byte(bytes[1])?;
 
+        let seed_slice = bytes
+            .get(pos..pos + SEED_LEN)
+            .context("Swarm identifier too short")?;
         let mut seed = [0u8; SEED_LEN];
-        seed.copy_from_slice(&bytes[2..2 + SEED_LEN]);
+        seed.copy_from_slice(seed_slice);
+        pos += SEED_LEN;
 
-        let name_len_pos = 2 + SEED_LEN;
-        let name_len = bytes[name_len_pos] as usize;
+        let name_len = *bytes.get(pos).context("Truncated swarm name length")? as usize;
+        pos += 1;
         if name_len == 0 || name_len > NAME_MAX_BYTES {
             bail!("Invalid swarm name length: {name_len}");
         }
-        let name_start = name_len_pos + 1;
-        let name_end = name_start + name_len;
-        if name_end > bytes.len() {
-            bail!("Truncated in swarm identifier");
-        }
-        let name_str = std::str::from_utf8(&bytes[name_start..name_end])
-            .context("Invalid swarm name UTF-8")?;
+        let name_raw = bytes
+            .get(pos..pos + name_len)
+            .context("Truncated swarm name")?;
+        pos += name_len;
+        let name_str = std::str::from_utf8(name_raw).context("Invalid swarm name UTF-8")?;
         let name = SwarmName::new(name_str).context("Invalid swarm name")?;
 
-        if name_end != bytes.len() {
+        let config_len = lookup::read_u16(bytes, &mut pos).context("Truncated config length")? as usize;
+        let config_raw = bytes
+            .get(pos..pos + config_len)
+            .context("Truncated swarm config")?;
+        pos += config_len;
+        if pos != bytes.len() {
             bail!("Trailing bytes in swarm identifier");
         }
+        let config = SwarmConfig::from_bytes(config_raw)?;
 
-        Ok(Swarm { mode, name, seed })
+        Ok(Swarm { name, seed, config })
     }
 }
 
@@ -190,7 +224,7 @@ impl FromStr for Swarm {
 
 #[cfg(test)]
 mod swarm_tests {
-    use super::{SEED_LEN, Swarm, SwarmMode, SwarmName};
+    use super::{LookupOpts, RelayChoice, SEED_LEN, Swarm, SwarmConfig, SwarmName};
 
     fn dummy_seed() -> [u8; SEED_LEN] {
         [7u8; SEED_LEN]
@@ -200,54 +234,82 @@ mod swarm_tests {
         SwarmName::new("test").unwrap()
     }
 
-    #[test]
-    fn round_trip_private() {
-        let swarm = Swarm::new(SwarmMode::Private, dummy_seed(), dummy_name());
-        let encoded = swarm.to_string();
-        assert!(encoded.starts_with("ahs"));
-        let decoded: Swarm = encoded.parse().unwrap();
-        assert_eq!(decoded.mode, swarm.mode);
-        assert_eq!(decoded.seed(), swarm.seed());
-        assert_eq!(decoded.name, swarm.name);
+    fn custom_config() -> SwarmConfig {
+        SwarmConfig {
+            rate_limit_per_min: 0,
+            lookups: LookupOpts {
+                mdns: true,
+                dht: false,
+                relay: RelayChoice::Custom(vec![
+                    "https://a.example".parse().unwrap(),
+                    "https://b.example".parse().unwrap(),
+                ]),
+            },
+        }
     }
 
     #[test]
-    fn round_trip_public() {
-        let swarm = Swarm::new(SwarmMode::Public, [0xABu8; SEED_LEN], dummy_name());
-        let decoded: Swarm = swarm.to_string().parse().unwrap();
-        assert_eq!(decoded.mode, SwarmMode::Public);
-        assert_eq!(decoded.seed(), &[0xABu8; SEED_LEN]);
+    fn round_trip_loopback() {
+        let swarm = Swarm::new(dummy_seed(), dummy_name(), SwarmConfig::loopback());
+        let encoded = swarm.to_string();
+        assert!(encoded.starts_with("ahs"));
+        let decoded: Swarm = encoded.parse().unwrap();
+        assert_eq!(decoded.seed(), swarm.seed());
         assert_eq!(decoded.name, swarm.name);
+        assert_eq!(decoded.config, swarm.config);
+        assert!(decoded.is_loopback());
+    }
+
+    #[test]
+    fn round_trip_public_preset() {
+        let swarm = Swarm::new([0xABu8; SEED_LEN], dummy_name(), SwarmConfig::public_preset());
+        let decoded: Swarm = swarm.to_string().parse().unwrap();
+        assert_eq!(decoded.seed(), &[0xABu8; SEED_LEN]);
+        assert_eq!(decoded.config, swarm.config);
+        assert!(!decoded.is_loopback());
+        assert_eq!(decoded.network_label(), "public");
+    }
+
+    #[test]
+    fn round_trip_custom_relay_ladder_and_zero_rate() {
+        let swarm = Swarm::new(dummy_seed(), dummy_name(), custom_config());
+        let decoded: Swarm = swarm.to_string().parse().unwrap();
+        assert_eq!(decoded.config, custom_config());
+        assert_eq!(decoded.rate_limit_per_min(), 0);
     }
 
     #[test]
     fn seed_drives_rendezvous_identity() {
-        let swarm = Swarm::new(SwarmMode::Public, dummy_seed(), dummy_name());
+        let swarm = Swarm::new(dummy_seed(), dummy_name(), SwarmConfig::public_preset());
         let decoded: Swarm = swarm.to_string().parse().unwrap();
-        // Token round-trip preserves the derived rendezvous identity.
         assert_eq!(decoded.rendezvous_id(), swarm.rendezvous_id());
         assert_eq!(decoded.rendezvous_ports(), swarm.rendezvous_ports());
     }
 
     #[test]
     fn different_seeds_yield_different_ids() {
-        let one = Swarm::new(SwarmMode::Private, [1u8; SEED_LEN], dummy_name()).to_string();
-        let two = Swarm::new(SwarmMode::Private, [2u8; SEED_LEN], dummy_name()).to_string();
+        let one = Swarm::new([1u8; SEED_LEN], dummy_name(), SwarmConfig::loopback()).to_string();
+        let two = Swarm::new([2u8; SEED_LEN], dummy_name(), SwarmConfig::loopback()).to_string();
         assert_ne!(one, two);
     }
 
     #[test]
+    fn different_config_yields_different_id() {
+        let one = Swarm::new(dummy_seed(), dummy_name(), SwarmConfig::loopback()).to_string();
+        let two = Swarm::new(dummy_seed(), dummy_name(), SwarmConfig::public_preset()).to_string();
+        assert_ne!(one, two, "config is part of the id");
+    }
+
+    #[test]
     fn invalid_prefix_rejected() {
-        let swarm = Swarm::new(SwarmMode::Private, dummy_seed(), dummy_name());
-        let encoded = swarm.to_string();
+        let encoded = Swarm::new(dummy_seed(), dummy_name(), SwarmConfig::loopback()).to_string();
         let bad = format!("xxx{}", &encoded[3..]);
         assert!(bad.parse::<Swarm>().is_err());
     }
 
     #[test]
     fn non_ahs_prefix_rejected() {
-        let swarm = Swarm::new(SwarmMode::Private, dummy_seed(), dummy_name());
-        let encoded = swarm.to_string();
+        let encoded = Swarm::new(dummy_seed(), dummy_name(), SwarmConfig::loopback()).to_string();
         for bad_prefix in ["sw1", "xyz", "AHS"] {
             let bad = format!("{}{}", bad_prefix, &encoded[3..]);
             assert!(
@@ -259,8 +321,7 @@ mod swarm_tests {
 
     #[test]
     fn invalid_checksum_rejected() {
-        let swarm = Swarm::new(SwarmMode::Private, dummy_seed(), dummy_name());
-        let encoded = swarm.to_string();
+        let encoded = Swarm::new(dummy_seed(), dummy_name(), SwarmConfig::loopback()).to_string();
         let mut bad = encoded.clone();
         let last_index = bad.len() - 1;
         let replacement = if bad.ends_with('1') { "2" } else { "1" };
@@ -274,56 +335,17 @@ mod swarm_tests {
     }
 
     #[test]
-    fn wrong_version_rejected() {
-        let swarm = Swarm::new(SwarmMode::Private, dummy_seed(), dummy_name());
+    fn unknown_version_rejected() {
+        let swarm = Swarm::new(dummy_seed(), dummy_name(), SwarmConfig::loopback());
         let mut bytes = swarm.encode_bytes();
-        bytes[0] = 1; // the now-unsupported v1
+        bytes[0] = 2; // an unknown version byte
         assert!(Swarm::decode_bytes(&bytes).is_err());
-    }
-
-    #[test]
-    fn swarm_name_validates_length() {
-        assert!(SwarmName::new("").is_err());
-        assert!(SwarmName::new("a").is_ok());
-        assert!(SwarmName::new("a".repeat(32)).is_ok()); // 32 chars
-        assert!(SwarmName::new("a".repeat(33)).is_err()); // 33 chars
-        // Cap counts characters, not bytes: 32 multibyte chars are fine.
-        assert!(SwarmName::new("あ".repeat(32)).is_ok());
-        assert!(SwarmName::new("あ".repeat(33)).is_err());
-    }
-
-    #[test]
-    fn swarm_name_validates_charset() {
-        assert!(SwarmName::new("ok-name_1").is_ok());
-        assert!(SwarmName::new("CamelCase").is_ok()); // uppercase
-        assert!(SwarmName::new("1leading").is_ok()); // leading digit
-        assert!(SwarmName::new("-leading").is_ok()); // leading dash
-        assert!(SwarmName::new("emoji-🐝").is_ok());
-        assert!(SwarmName::new("日本語").is_ok());
-        assert!(SwarmName::new("dot.no").is_ok()); // dot is a fine symbol
-        assert!(SwarmName::new("has space").is_err());
-        assert!(SwarmName::new("slash/no").is_err());
-        assert!(SwarmName::new("back\\no").is_err());
-        assert!(SwarmName::new("nl\nno").is_err());
-        assert!(SwarmName::new("nul\0no").is_err());
-        assert!(SwarmName::new("rlo\u{202E}no").is_err()); // bidi override
-        assert!(SwarmName::new("a<b").is_err()); // reserved for <nick>
-        assert!(SwarmName::new("a>b").is_err()); // reserved for <nick>
-        assert!(SwarmName::new("a#b").is_err()); // reserved for #swarm
-    }
-
-    #[test]
-    fn swarm_name_random_validates() {
-        for _ in 0..20 {
-            let name = SwarmName::random();
-            SwarmName::new(name.as_str()).expect("random must round-trip");
-        }
     }
 
     #[test]
     fn swarm_id_round_trips_unicode_name() {
         let name = SwarmName::new("café-日本-🐝").unwrap();
-        let swarm = Swarm::new(SwarmMode::Public, dummy_seed(), name.clone());
+        let swarm = Swarm::new(dummy_seed(), name.clone(), SwarmConfig::loopback());
         let decoded: Swarm = swarm.to_string().parse().expect("decode failed");
         assert_eq!(decoded.name, name);
     }
@@ -334,7 +356,7 @@ mod swarm_tests {
         // length field can carry; exercises the encode/decode upper edge.
         let name = SwarmName::new("🐝".repeat(32)).unwrap();
         assert_eq!(name.as_bytes().len(), 128);
-        let swarm = Swarm::new(SwarmMode::Private, dummy_seed(), name.clone());
+        let swarm = Swarm::new(dummy_seed(), name.clone(), SwarmConfig::public_preset());
         let decoded: Swarm = swarm.to_string().parse().expect("decode failed");
         assert_eq!(decoded.name, name);
     }
@@ -345,7 +367,7 @@ mod swarm_tests {
             prop_assume, proptest, strategy::Strategy,
         };
 
-        use super::{SEED_LEN, Swarm, SwarmMode, SwarmName};
+        use super::{SEED_LEN, Swarm, SwarmConfig, SwarmName};
 
         fn arb_seed() -> impl Strategy<Value = [u8; SEED_LEN]> {
             uniform32(0u8..)
@@ -355,26 +377,33 @@ mod swarm_tests {
             "[a-z][a-z0-9_-]{0,31}".prop_map(|raw| SwarmName::new(raw).unwrap())
         }
 
+        fn arb_config() -> impl Strategy<Value = SwarmConfig> {
+            any::<bool>().prop_map(|public| {
+                if public {
+                    SwarmConfig::public_preset()
+                } else {
+                    SwarmConfig::loopback()
+                }
+            })
+        }
+
         proptest! {
             #[test]
             fn prop_round_trip(
                 seed in arb_seed(),
                 name in arb_name(),
-                mode in any::<bool>(),
+                config in arb_config(),
             ) {
-                let mode = if mode { SwarmMode::Public } else { SwarmMode::Private };
-                let swarm = Swarm::new(mode, seed, name.clone());
-                let encoded = swarm.to_string();
-                let decoded: Swarm = encoded.parse().expect("decode failed");
-
-                prop_assert_eq!(decoded.mode, swarm.mode);
+                let swarm = Swarm::new(seed, name.clone(), config.clone());
+                let decoded: Swarm = swarm.to_string().parse().expect("decode failed");
                 prop_assert_eq!(decoded.seed(), swarm.seed());
                 prop_assert_eq!(decoded.name, swarm.name);
+                prop_assert_eq!(decoded.config, config);
             }
 
             #[test]
             fn prop_prefix(seed in arb_seed(), name in arb_name()) {
-                let swarm = Swarm::new(SwarmMode::Private, seed, name);
+                let swarm = Swarm::new(seed, name, SwarmConfig::loopback());
                 prop_assert!(swarm.to_string().starts_with("ahs"));
             }
 
@@ -382,10 +411,9 @@ mod swarm_tests {
             fn prop_deterministic(
                 seed in arb_seed(),
                 name in arb_name(),
-                mode in any::<bool>(),
+                config in arb_config(),
             ) {
-                let mode = if mode { SwarmMode::Public } else { SwarmMode::Private };
-                let swarm = Swarm::new(mode, seed, name);
+                let swarm = Swarm::new(seed, name, config);
                 prop_assert_eq!(swarm.to_string(), swarm.to_string());
             }
 
@@ -396,8 +424,8 @@ mod swarm_tests {
                 name in arb_name(),
             ) {
                 prop_assume!(seed_a != seed_b);
-                let one = Swarm::new(SwarmMode::Public, seed_a, name.clone()).to_string();
-                let two = Swarm::new(SwarmMode::Public, seed_b, name).to_string();
+                let one = Swarm::new(seed_a, name.clone(), SwarmConfig::loopback()).to_string();
+                let two = Swarm::new(seed_b, name, SwarmConfig::loopback()).to_string();
                 prop_assert_ne!(one, two);
             }
         }

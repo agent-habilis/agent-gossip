@@ -87,9 +87,9 @@ pub(crate) struct EventLoopConfig {
     /// shutdown path can print `left #NAME` without re-parsing
     /// the id.
     pub name: SwarmName,
-    /// Per-loop output sink (replaces the former process-global
-    /// output mode/filter statics). Threaded to every handler so
-    /// multiple in-process sessions don't race a shared `OnceLock`.
+    /// Per-loop output sink. Threaded to every handler so multiple
+    /// in-process sessions each have their own and never race a shared
+    /// global.
     pub output: output::Output,
     pub interactive: bool,
     pub endpoint: Endpoint,
@@ -99,6 +99,10 @@ pub(crate) struct EventLoopConfig {
     /// unreachable to new peers.
     pub router: Router,
     pub max_peers: usize,
+    /// Per-author messages-per-minute cap decoded from the swarm id
+    /// (`0` ⇒ no rate limit). Uniform across the swarm because it travels
+    /// in the hash; the event loop builds the [`SwarmRateLimiter`] from it.
+    pub rate_limit_per_min: u16,
     /// Inputs for (re)building the co-hosted rendezvous endpoint.
     /// `rendezvous_params.id` doubles as the bootstrap-cache heal
     /// anchor and the participant-side neighbor-filter id;

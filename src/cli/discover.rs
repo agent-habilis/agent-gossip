@@ -14,7 +14,6 @@ use anyhow::Result;
 use tokio::signal::unix::{Signal, SignalKind, signal};
 
 use crate::embed::{Directory, DirectoryEvent, SwarmListing};
-use crate::protocol::swarm::resolve_lookups;
 
 use super::args::{DiscoverOpts, OutputFormat};
 use super::join;
@@ -22,25 +21,17 @@ use super::join;
 /// Browse a directory. Human mode renders a live picker that
 /// hands off to `join` on selection; `--no-interactive` / `--output
 /// json` streams `swarm_found`/`swarm_lost` JSON lines instead (the
-/// agent picks and joins by id itself). The lookup flags / nickname
-/// in `opts.shared` are reused for the eventual join.
+/// agent picks and joins by id itself).
 pub(super) async fn discover(opts: DiscoverOpts) -> Result<()> {
     let directory_label = opts
         .directory
         .as_ref()
         .map_or_else(|| "global".to_owned(), |name| name.as_str().to_owned());
-    // The directory session uses the same `--mdns/--dht/--relay` lookups
-    // the eventual join (below) will use, resolved against the directory's
-    // mode (public in normal use; private under the test hook).
-    let lookups = resolve_lookups(
-        crate::directory::directory_mode(),
-        opts.shared.lookups.to_set(),
-    )?;
-    let mut discoverer = Directory::open_with_lookups(
-        opts.directory.map(|name| name.as_str().to_owned()),
-        lookups,
-    )
-    .await?;
+    // The directory is itself a swarm whose config (and thus lookups) is
+    // fixed by its name, so advertisers and discoverers meet on the same
+    // topic — there is nothing per-process to pass here.
+    let mut discoverer =
+        Directory::open(opts.directory.map(|name| name.as_str().to_owned())).await?;
     // Route the directory session's logs to its per-member file (same as
     // create/join) so the picker and JSON stream aren't drowned in INFO
     // lines on stderr.
@@ -147,10 +138,21 @@ enum Key {
     Quit,
 }
 
-/// Clear screen + home cursor (a TTY control, not color — always on
-/// since the picker only runs under a TTY). Swarm-name color reuses the
-/// shared `output::style` constants, gated on `NO_COLOR` like the rest.
-const PICKER_CLEAR: &str = "\x1b[2J\x1b[1;1H";
+/// TTY controls for the inline picker (not color — always on since the
+/// picker only runs under a TTY). The picker never clears the screen: it
+/// redraws **in place**, overwriting only its own lines. Swarm-name color
+/// reuses the shared `output::style` constants, gated on `NO_COLOR`.
+///
+/// `DISABLE_WRAP`/`ENABLE_WRAP` toggle the terminal's autowrap for the
+/// picker's lifetime: with it off, every logical line is exactly one
+/// physical row (over-wide ids are hard-cut at the right margin by the
+/// terminal, not by us), so the move-cursor-up redraw math stays exact.
+/// `ERASE_LINE` erases from the cursor to the end of the *current line*
+/// only — never the whole screen (`\x1b[2J`) or to end-of-display
+/// (`\x1b[J`), so scrollback above the picker is untouched.
+const DISABLE_WRAP: &str = "\x1b[?7l";
+const ENABLE_WRAP: &str = "\x1b[?7h";
+const ERASE_LINE: &str = "\x1b[K";
 
 /// Run the live arrow-key picker until the user selects/quits or the
 /// directory closes. Redraws on every directory change; `↑`/`↓` (and
@@ -164,10 +166,17 @@ async fn run_picker(
     let Some(raw) = RawMode::enable() else {
         return PickerOutcome::Unsupported;
     };
+    // Turn off autowrap so over-wide listing lines stay one physical row
+    // each (the terminal hard-cuts them at the margin); restored on exit.
+    print_str(DISABLE_WRAP);
     let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let (mut key_rx, key_handle) = spawn_key_reader(Arc::clone(&stop));
 
     let mut selected: usize = 0;
+    // Lines drawn by the previous `render_picker`, so the next render can
+    // move the cursor back up to the top of its own block and overwrite it
+    // in place. 0 ⇒ nothing drawn yet (first render starts in place).
+    let mut prev_lines: usize = 0;
     // Trailing-dot count (1..=3) for the empty-state "waiting for swarms"
     // animation, advanced by the `anim` tick below.
     let mut dots: usize = 3;
@@ -176,7 +185,7 @@ async fn run_picker(
     // so it reuses this Vec instead of re-cloning + re-sorting the whole
     // directory on every arrow press.
     let mut listings = discoverer.snapshot();
-    render_picker(directory_label, &listings, selected, dots);
+    render_picker(directory_label, &listings, selected, dots, &mut prev_lines);
 
     // Drives the empty-state dot animation; no directory event fires while
     // we are waiting, so the redraw has to be self-clocked.
@@ -201,7 +210,7 @@ async fn run_picker(
                     }
                     Key::Quit => break PickerOutcome::Quit,
                 }
-                render_picker(directory_label, &listings, selected, dots);
+                render_picker(directory_label, &listings, selected, dots, &mut prev_lines);
             }
             change = events.recv() => {
                 if change.is_none() {
@@ -209,14 +218,14 @@ async fn run_picker(
                 }
                 listings = discoverer.snapshot();
                 selected = selected.min(listings.len().saturating_sub(1));
-                render_picker(directory_label, &listings, selected, dots);
+                render_picker(directory_label, &listings, selected, dots, &mut prev_lines);
             }
             _ = anim.tick() => {
                 // Animate only while waiting; a populated list is static,
                 // so there is nothing to repaint once swarms appear.
                 if listings.is_empty() {
                     dots = dots % 3 + 1;
-                    render_picker(directory_label, &listings, selected, dots);
+                    render_picker(directory_label, &listings, selected, dots, &mut prev_lines);
                 }
             }
         }
@@ -228,16 +237,36 @@ async fn run_picker(
     stop.store(true, std::sync::atomic::Ordering::Relaxed);
     let _ = key_handle.join();
     drop(raw);
-    print_clear();
+    // Restore autowrap, then erase only the picker's own block so the
+    // discover chrome leaves no trace: the `join` handoff (or the shell
+    // prompt on quit) takes its place, while the `$ ahs discover` prompt and
+    // everything above stay put — i.e. selecting a swarm lands in the same
+    // terminal state as a direct `ahs join`.
+    print_str(ENABLE_WRAP);
+    erase_block(prev_lines);
     outcome
 }
 
-/// Redraw the picker: lowercase chrome, the directory + each swarm name in
-/// yellow, the full `ahs…` id, peer count, and a local first-seen
-/// timestamp (`YYYY-MM-DD HH:MM`). `selected` is the highlighted row. Output
-/// post-processing (ONLCR) is left on, so `\n` still becomes CRLF in
-/// raw mode.
-fn render_picker(directory_label: &str, listings: &[SwarmListing], selected: usize, dots: usize) {
+/// Redraw the picker **in place**, overwriting only its own lines (never
+/// clearing the screen): lowercase chrome, the directory + each swarm name
+/// in yellow, the full `ahs…` id, peer count, and a local first-seen
+/// timestamp (`YYYY-MM-DD HH:MM`). `selected` is the highlighted row.
+///
+/// `prev_lines` is the line count of the previous render: when non-zero the
+/// cursor is moved back up to the top of that block (`\x1b[{n}F`) before
+/// rewriting; on the first render (0) it starts at column 0 of the current
+/// line, so everything already on screen is preserved. Every line ends with
+/// `ERASE_LINE` to scrub leftovers from a longer prior render, and when the
+/// block shrinks the surplus rows are blanked the same way — so no
+/// screen/display clear is ever emitted. Output post-processing (ONLCR) is
+/// left on, so `\n` still becomes CRLF in raw mode.
+fn render_picker(
+    directory_label: &str,
+    listings: &[SwarmListing],
+    selected: usize,
+    dots: usize,
+    prev_lines: &mut usize,
+) {
     use crate::output::style;
     use std::fmt::Write as _;
 
@@ -249,13 +278,24 @@ fn render_picker(directory_label: &str, listings: &[SwarmListing], selected: usi
         ("", "")
     };
 
-    let mut out = String::from(PICKER_CLEAR);
-    let _ = write!(
-        out,
-        "discovering {yellow}#{directory_label}{reset} directory\n\n"
+    // Build the visible block as logical lines; `push_line` terminates each
+    // with `ERASE_LINE` + `\n` and counts it.
+    let mut out = String::new();
+    let mut new_lines: usize = 0;
+    let mut push_line = |buf: &mut String, line: &str| {
+        buf.push_str(line);
+        buf.push_str(ERASE_LINE);
+        buf.push('\n');
+        new_lines += 1;
+    };
+
+    push_line(
+        &mut out,
+        &format!("discovering {yellow}#{directory_label}{reset} directory"),
     );
+    push_line(&mut out, "");
     if listings.is_empty() {
-        let _ = writeln!(out, "waiting for swarms{}", ".".repeat(dots));
+        push_line(&mut out, &format!("waiting for swarms{}", ".".repeat(dots)));
     } else {
         for (index, listing) in listings.iter().enumerate() {
             let marker = if index == selected { "❯" } else { " " };
@@ -264,23 +304,63 @@ fn render_picker(directory_label: &str, listings: &[SwarmListing], selected: usi
             } else {
                 ""
             };
-            let _ = writeln!(
-                out,
-                "{marker} {bold}{yellow}#{}{reset}  {}  {}  {}",
-                listing.name,
-                listing.swarm.as_str(),
-                listing.peers,
-                crate::util::clock::local_datetime(listing.first_seen_unix),
+            push_line(
+                &mut out,
+                &format!(
+                    "{marker} {bold}{yellow}#{}{reset}  {}  {}  {}",
+                    listing.name,
+                    listing.swarm.as_str(),
+                    listing.peers,
+                    crate::util::clock::local_datetime(listing.first_seen_unix),
+                ),
             );
         }
     }
-    out.push_str("\n↑/↓ move · enter join · q quit\n");
-    print_str(&out);
+    push_line(&mut out, "");
+    push_line(&mut out, "↑/↓ move · enter join · q quit");
+
+    // Prefix: move to the top of the previous block (in place), or just to
+    // column 0 of the current line on the first render.
+    let mut framed = String::new();
+    if *prev_lines > 0 {
+        let _ = write!(framed, "\x1b[{}F", *prev_lines);
+    } else {
+        framed.push('\r');
+    }
+    framed.push_str(&out);
+    // If the block shrank, blank the now-stale trailing rows, then return
+    // the cursor to just below the new block so the next render lines up.
+    if *prev_lines > new_lines {
+        let surplus = *prev_lines - new_lines;
+        for _ in 0..surplus {
+            framed.push_str(ERASE_LINE);
+            framed.push('\n');
+        }
+        let _ = write!(framed, "\x1b[{surplus}F");
+    }
+    *prev_lines = new_lines;
+    print_str(&framed);
 }
 
-/// Clear the screen (used when leaving the picker for a clean handoff).
-fn print_clear() {
-    print_str(PICKER_CLEAR);
+/// Erase the picker's own `lines` rows on the way out, leaving the cursor
+/// at the block's top so a `join` handoff (or the shell prompt) continues
+/// exactly where the picker began. Touches only the picker's lines — moves
+/// to the top of the block (`\x1b[{lines}F`), blanks each row with
+/// `ERASE_LINE`, then returns to the top — never the whole screen.
+fn erase_block(lines: usize) {
+    use std::fmt::Write as _;
+
+    if lines == 0 {
+        return;
+    }
+    let mut out = String::new();
+    let _ = write!(out, "\x1b[{lines}F");
+    for _ in 0..lines {
+        out.push_str(ERASE_LINE);
+        out.push('\n');
+    }
+    let _ = write!(out, "\x1b[{lines}F");
+    print_str(&out);
 }
 
 /// Write a string straight to stdout and flush — the picker controls the

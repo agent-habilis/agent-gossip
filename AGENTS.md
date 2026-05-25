@@ -13,6 +13,7 @@ changing code, keep these distinct:
 | **endpoint** / **link** | transport | An iroh `EndpointId` and the gossip neighbor link to it. Plumbing — never surfaced to operators/agents. State: `linked_endpoints`. | node id (hex) |
 | **participant** | membership | A member of the swarm other than self. The roster. `participant_count == participants.len() + 1` (the `+1` is self). State: `participants`. | nickname |
 | **peer** | prose only | Informal synonym for "another participant". Never a load-bearing identifier or field name in new code. | — |
+| **swarm hash** | identity | The `ahs…` id: a self-describing token carrying the `seed` + name + **config** (rate limit + lookups). Mixed into the topic, so every member shares the same config; `join` needs nothing else. Code: `protocol::swarm` (`Swarm`/`SwarmConfig`). Layout: `docs/swarm-hash.md`. | seed |
 | **rendezvous** | identity | The seed-derived bootstrap identity (keypair + ports) every joiner computes locally. Code: `protocol::crypto`. | seed |
 | **beacon** | role | The one live member currently binding and serving the rendezvous endpoint. Migrates on death. Code: `beacon`. | — |
 | **lookup** | lookup | A mechanism that resolves a seed-derived `rendezvous_id` into a reachable address — mDNS (LAN), the mainline DHT, or the relay. The `--mdns/--dht/--relay` allowlist. Each is **feature-complete on its own**; extras are reliability layers (see below). Code: `lookup`. | — |
@@ -85,7 +86,7 @@ cargo run -- create --name demo
 Start a new swarm. Long-running process.
 
 ```
-ahs create [--name {NAME}] [--advertise[={DIRECTORY}]] --no-interactive --output json
+ahs create [--name {NAME}] [--public] [--rate-limit {N}] [--mdns] [--dht] [--relay[={URLS}]] [--advertise[={DIRECTORY}]] --no-interactive --output json
 ```
 
 `--name` is **optional**: omit it and a random `word-word` name is minted,
@@ -94,70 +95,78 @@ same rules as a nickname: 1..=32 UTF-8 characters (any script/emoji),
 excluding control characters, whitespace, and any of `/ \ < > #` (the last
 three are reserved for the `<nick>`/`#swarm` display conventions).
 
-The `ahs…` id carries a random 32-byte `seed` plus the mode and name —
-**no peer address is ever stored**. The gossip topic and a well-known
-*rendezvous* identity are both derived from `seed` in memory, so the swarm
-is **creator-independent**: it keeps accepting new joiners even after the
-creator process dies, as long as any member is still up. The name is mixed
-into the topic derivation, so a forged id with a tampered name hashes to a
-different topic and finds no peers.
+The `ahs…` id (the **swarm hash**) carries a random 32-byte `seed`, the
+name, and the swarm's **config** — the per-author rate limit and the
+`mdns`/`dht`/`relay` lookups — **no peer address is ever stored**. The
+gossip topic and a well-known *rendezvous* identity are both derived from
+`seed` in memory, so the swarm is **creator-independent**: it keeps
+accepting new joiners even after the creator process dies, as long as any
+member is still up. The name **and the config** are mixed into the topic
+derivation, so a forged id with a tampered field hashes to a different
+topic and finds no peers — and every member of a swarm provably shares the
+same config. Full byte layout: [`docs/swarm-hash.md`](docs/swarm-hash.md).
 
 Every member co-hosts the rendezvous (the **beacon** role) so a cold joiner
 can always bootstrap from whoever is currently alive:
-- **public**: by default the beacon homes on the first reachable rung of
-  a deterministic relay *ladder* (the n0 prod set, or a custom
-  `--relay a,b,c`); joiners pre-register that same rung for a zero-lookup
-  relay-direct dial. mDNS (same-LAN) and the mainline DHT (operator-free,
-  eternal backstop) also publish/resolve `rendezvous_id`. The participant
-  endpoint uses iroh's resilient multi-relay default. Each leg
-  (relay/mDNS/DHT) is allowlist-gated — see "Lookup flags" below.
-- **private**: a deterministic loopback port *ladder* derived from `seed`;
-  members claim-if-free the first rung (identity-probed), so the beacon
-  role migrates to a surviving member within ~15s of the holder's death.
+- **reachable across machines** (any lookup on): by default the beacon
+  homes on the first reachable rung of a deterministic relay *ladder* (the
+  n0 prod set, or a custom `--relay a,b,c`); joiners pre-register that same
+  rung for a zero-lookup relay-direct dial. mDNS (same-LAN) and the
+  mainline DHT (operator-free, eternal backstop) also publish/resolve
+  `rendezvous_id`. The participant endpoint uses iroh's resilient
+  multi-relay default. Which legs are wired is the swarm's lookup config —
+  see "Lookup flags" below.
+- **loopback only** (no lookups): a deterministic loopback port *ladder*
+  derived from `seed`; members claim-if-free the first rung
+  (identity-probed), so the beacon role migrates to a surviving member
+  within ~15s of the holder's death.
 
 Prints a `ready` event with `swarm`, `name`, and `nickname` fields once the
 node is up.
 
-Pass `--public` for cross-machine networking; omit it for the default
-(private, localhost only). Lookup selection lives in the allowlist
-flags below. The swarm identifier encodes the network mode AND the
-name, so joiners auto-detect both.
+Pass `--public` for cross-machine networking (sugar for the all-on lookup
+preset); omit it for the default (loopback only). There is **no network
+mode** — loopback vs reachable is simply whether the swarm has any
+lookups. The id encodes the name **and the config**, so a joiner inherits
+both.
 
-#### Lookup flags (allowlist)
+#### Lookup flags (a create-time, id-encoded choice)
 
-With `--public`, three lookup mechanisms resolve the seed-derived
-rendezvous, all **combinable** and governed by one rule: `--mdns` (LAN
-multicast), `--dht` (mainline BitTorrent DHT), and `--relay` (the relay,
-both connectivity and the relay-direct rendezvous dial). They are a
-**presence allowlist**: passing *none* enables **all three** (mdns + dht
-+ default relay ladder); passing *any* restricts to those (`--mdns` ⇒
-mDNS only, relay and DHT off). The relay-direct dial is the fast path;
-mDNS accelerates same-LAN; the DHT is the operator-free eternal backstop.
-There is no N0-DNS lookup or `--n0` flag.
+The lookups are part of the swarm's identity: chosen at `create`, baked
+into the id, and inherited by every joiner (so `join` takes **no** lookup
+flags). Three mechanisms resolve the seed-derived rendezvous, all
+**combinable**: `--mdns` (LAN multicast), `--dht` (mainline BitTorrent
+DHT), and `--relay` (the relay, both connectivity and the relay-direct
+rendezvous dial). `--public` is sugar for the all-on preset; naming
+individual flags restricts to those (`--mdns` ⇒ mDNS only). The
+relay-direct dial is the fast path; mDNS accelerates same-LAN; the DHT is
+the operator-free eternal backstop. There is no N0-DNS lookup or `--n0`
+flag.
 
-`--relay` is the one flag that carries an optional value, and it accepts
-an **ordered, comma-separated ladder**: bare `--relay` ⇒ the default n0
-prod relay set; `--relay {URL}` or `--relay {URL1},{URL2},…` ⇒ a custom
-ladder. The beacon homes on the **first reachable rung** and joiners
-pre-register `rendezvous_id` at that same rung — under equal relay
-visibility every member converges on the same rung and fails over to the
-next together (the public analog of the private loopback-port ladder).
-Excluding `--relay` while naming another flag disables the relay
-entirely (`RelayMode::Disabled` — no relay-direct dial, no fallback).
-While the rendezvous rung is single and deterministic, each
-*participant* endpoint still spreads across the whole ladder (iroh's
-resilient multi-relay default / the full custom set) for connectivity.
+`--relay` carries an optional value — an **ordered, comma-separated
+ladder**: bare `--relay` ⇒ the default n0 prod relay set; `--relay {URL}`
+or `--relay {URL1},{URL2},…` ⇒ a custom ladder. The beacon homes on the
+**first reachable rung** and joiners pre-register `rendezvous_id` at that
+same rung — every member converges on the same rung and fails over to the
+next together. Naming another flag without `--relay` disables the relay
+entirely (`RelayMode::Disabled`). While the rendezvous rung is single and
+deterministic, each *participant* endpoint still spreads across the whole
+ladder for connectivity.
 
-These are **per-process and not encoded in the id**: every member
-(creator and each joiner, via the same flags on `join`) must enable a
-mechanism the others also enable — the same seed-derived `rendezvous_id`
-resolves through whichever overlaps, and a custom `--relay` ladder must
-match across members (same URLs, same order). The beacon co-host
-publishes to exactly what you select.
+Because the lookups are **encoded in the id and mixed into the topic**,
+every member necessarily uses the same set (a custom `--relay` ladder
+included) — there is nothing to keep in sync by hand, and a joiner cannot
+diverge. (The directory a swarm advertises into is itself a swarm whose
+config is fixed by its name, so `discover` and the advertiser meet on the
+same topic with no per-process lookup flags either.)
 
-All of `--mdns`/`--dht`/`--relay` require `--public`; using one
-without it (private, loopback only) is a hard error naming the
-offending flag(s) — never a silent no-op.
+#### Rate limit (`--rate-limit`)
+
+`--rate-limit {N}` sets the per-author messages-per-minute cap, baked into
+the id and enforced swarm-wide (every joiner inherits it). `--rate-limit 0`
+disables rate limiting entirely. Default 60. Like the lookups it is a
+**create-time** decision — `join` has no `--rate-limit`. See
+[Rate Limits](#rate-limits).
 
 #### Advertising (`--advertise`)
 
@@ -177,11 +186,11 @@ keeps re-broadcasting, then ages out of discoverers' lists. `--advertise`
 requires `--public` and is a **create-time** decision — `join` has no
 `--advertise`.
 
-The directory is reached over the **same lookups** as the swarm: the
-`--mdns/--dht/--relay` allowlist (above) is passed once and governs both
-the swarm and its advertisement — there is no separate advertise lookup
-flag. An advertiser and a discoverer meet only if their lookups overlap,
-the same rule real swarms follow.
+The directory is itself a swarm, derived from the directory name, with a
+fixed config — so the advertiser and every discoverer reach it the same
+way with no per-process lookup flags. `--advertise` requires a reachable
+swarm (create it with `--public` or a lookup flag); advertising a
+loopback-only swarm is a hard error.
 
 Advertising broadcasts the full join token, so a listed swarm is
 **open** — anyone discovering that directory can join it.
@@ -208,8 +217,10 @@ The well-known file must be JSON with one field:
 {"as.swarm": "ahs..."}
 ```
 
-Prints a `ready` event once connected. The swarm name is decoded from the
-identifier — there is no `--name` flag on `join`.
+Prints a `ready` event once connected. The swarm name **and config** (rate
+limit + lookups) are decoded from the identifier, so `join` has no
+`--name`, `--public`, `--rate-limit`, or `--mdns`/`--dht`/`--relay` flags —
+the hash carries all of it.
 
 ### msg
 
@@ -254,16 +265,17 @@ Browse swarms advertising themselves in a directory. Long-running (keeps
 discovering while open).
 
 ```
-ahs discover [--directory {DIRECTORY}] [--mdns] [--dht] [--relay[={URL}]] --no-interactive --output json
+ahs discover [--directory {DIRECTORY}] --no-interactive --output json
 ```
 
 `--directory` selects which directory to browse (omit ⇒ `global`); it
 must match the directory publishers passed to `--advertise`. `discover`
 joins that directory's swarm and collects live ads (each ad is a swarm's
-`ahs…` id; the name and network mode decode from the id locally). A swarm
-is dropped from the list if its publisher stops re-broadcasting for ~60s.
-The `--mdns/--dht/--relay` lookups apply to the directory session *and*
-the eventual join, exactly like `create`/`join` (omit ⇒ all-on public).
+`ahs…` id; the name and config decode from the id locally). A swarm is
+dropped from the list if its publisher stops re-broadcasting for ~60s. The
+directory's own config (and thus its lookups) is fixed by its name, so
+there are no lookup flags here; the eventual join inherits the chosen
+swarm's lookups from its id.
 
 - **interactive (default human output, requires a TTY):** a live
   arrow-key picker. Each row shows the swarm name (yellow), its full
@@ -387,10 +399,13 @@ symmetrically.
 
 ## Rate Limits
 
-A single per-identity limit prevents spam: **60 messages per minute** (one per
-second) per nickname, covering open messages and `--reply` directed messages
-alike (no per-kind distinction). The token bucket admits up to 60 back-to-back,
-then one per second.
+A single per-identity limit prevents spam, covering open messages and
+`--reply` directed messages alike (no per-kind distinction). The cap is a
+**create-time, swarm-wide** setting carried in the id (`--rate-limit {N}`,
+default **60 messages per minute**); every member decodes the same value
+from the hash, so the quota cannot diverge. The token bucket admits up to
+`N` back-to-back, then one per `60/N` seconds. **`--rate-limit 0` disables
+rate limiting entirely** — every message is admitted.
 
 The limit is enforced **symmetrically** on both ends with the same quota:
 - **Send**: your own excess sends are dropped before they hit the wire. `ahs
@@ -411,9 +426,11 @@ JSON-RPC on stdio. Six tools: `create_swarm`, `join_swarm`,
 `leave_swarm`, `send_message`, `fetch_messages`, `swarm_info`.
 One active swarm per server instance.
 
-`create_swarm` takes optional `advertise: bool` + `directory: string`
-args (same semantics as the CLI `--advertise[={DIRECTORY}]`; `advertise`
-requires `network: "public"`). There is **no discover tool**: MCP is
+`create_swarm` takes optional `rate_limit_per_min: u16` (default 60, `0`
+disables) and `advertise: bool` + `directory: string` args (same semantics
+as the CLI `--rate-limit` and `--advertise[={DIRECTORY}]`; `advertise`
+requires `network: "public"`). All of it is baked into the swarm id, so
+`join_swarm` takes only the id. There is **no discover tool**: MCP is
 polling-only and one-active-swarm, an awkward fit for a live directory,
 so MCP agents join by id. The `advertise` arg still lets an
 MCP-created swarm be discovered by CLI / embed scanners.

@@ -35,22 +35,22 @@ use iroh_gossip::proto::TopicId;
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
-use crate::lookup::{add_peer_addr, build_endpoint_for_mode, build_swarm, probe_connect};
-use crate::protocol::swarm::{LookupOpts, RelayChoice, SwarmMode};
+use crate::lookup::{add_peer_addr, build_endpoint, build_swarm, probe_connect};
+use crate::protocol::swarm::{LookupOpts, RelayChoice};
 use crate::util::tuning::{HEAL_PROBE_SECS, RENDEZVOUS_PROBE_SECS};
 
 /// Everything [`ensure`] needs to (re)build the rendezvous endpoint.
 /// Cheap to clone-hold for the event loop's lifetime.
 pub(crate) struct RendezvousParams {
-    pub mode: SwarmMode,
     pub topic_id: TopicId,
     /// `rendezvous_secret(seed)` — the shared identity every co-host binds.
     pub secret: SecretKey,
-    /// Empty = public (ephemeral, pkarr-discoverable). Non-empty =
-    /// private: the deterministic loopback port *ladder* in preference
-    /// order. The beacon binds the first free rung; an independent
-    /// swarm squatting a rung (seed collision) is skipped instead of
-    /// mistaken for our own beacon.
+    /// Empty when the swarm has lookups (ephemeral, address-lookup
+    /// discoverable). Non-empty for a loopback-only swarm: the
+    /// deterministic loopback port *ladder* in preference order. The
+    /// beacon binds the first free rung; an independent swarm squatting a
+    /// rung (seed collision) is skipped instead of mistaken for our own
+    /// beacon.
     pub bind_ports: Vec<u16>,
     /// `rendezvous_id`, memoized for neighbor filtering / bootstrap seeding.
     pub id: EndpointId,
@@ -175,10 +175,9 @@ async fn build_rendezvous_endpoint(
             tracing::debug!("public rendezvous already served by a beacon; staying participant");
             return None;
         }
-        let endpoint =
-            build_endpoint_for_mode(params.mode, &lookups, Some(params.secret.clone()), None)
-                .await
-                .ok();
+        let endpoint = build_endpoint(&lookups, Some(params.secret.clone()), None)
+            .await
+            .ok();
         if endpoint.is_some() {
             tracing::info!("beacon assumed: bound public rendezvous endpoint (ephemeral port)");
         } else {
@@ -187,13 +186,8 @@ async fn build_rendezvous_endpoint(
         return endpoint;
     }
     for &port in &params.bind_ports {
-        if let Ok(endpoint) = build_endpoint_for_mode(
-            params.mode,
-            &lookups,
-            Some(params.secret.clone()),
-            Some(port),
-        )
-        .await
+        if let Ok(endpoint) =
+            build_endpoint(&lookups, Some(params.secret.clone()), Some(port)).await
         {
             tracing::info!(port, "beacon assumed: bound rendezvous ladder rung");
             return Some(endpoint);
@@ -257,7 +251,7 @@ pub(crate) async fn ensure(
     // (public + a non-empty ladder) — *not* gated on currently holding a
     // rung, so a relay-less beacon keeps probing to rediscover one.
     let ladder = crate::lookup::relay_ladder(&params.lookups.relay);
-    let monitors_relay = params.mode == SwarmMode::Public && !ladder.is_empty();
+    let monitors_relay = !params.lookups.is_loopback() && !ladder.is_empty();
     let monitor_endpoint = endpoint.clone();
     let monitor_homed = params.bootstrap_relay.is_some();
     let monitor_rung_tx = params.rung_tx.clone();

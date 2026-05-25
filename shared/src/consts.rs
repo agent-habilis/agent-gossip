@@ -28,8 +28,9 @@ pub const LOG_FILE_MAX_BYTES: u64 = 10 * 1024 * 1024; // 10 MiB
 /// Messages per minute per identity (60 = one per second sustained). The
 /// token bucket's depth equals this value, so a sender may emit up to
 /// this many back-to-back, then one per `60 / RATE_LIMIT_PER_MIN` seconds
-/// thereafter.
-pub const RATE_LIMIT_PER_MIN: u32 = 60;
+/// thereafter. This is the default a swarm is created with; the effective
+/// cap travels in the swarm id (`0` there means no rate limit).
+pub const RATE_LIMIT_PER_MIN: u16 = 60;
 
 /// Maximum size in bytes of a serialized swarm message. A network-wide
 /// wire contract (must be uniform across members), so it lives here.

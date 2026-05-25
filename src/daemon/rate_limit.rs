@@ -16,9 +16,8 @@ use crate::util::tuning::RATE_LIMITER_TTL_SECS;
 
 type Limiter = Arc<RateLimiter<NotKeyed, InMemoryState, DefaultClock, NoOpMiddleware>>;
 
-fn make_limiter() -> Limiter {
-    let quota = Quota::per_minute(NonZeroU32::new(RATE_LIMIT_PER_MIN).unwrap());
-    Arc::new(RateLimiter::direct(quota))
+fn make_limiter(per_min: NonZeroU32) -> Limiter {
+    Arc::new(RateLimiter::direct(Quota::per_minute(per_min)))
 }
 
 struct LimiterEntry {
@@ -28,24 +27,38 @@ struct LimiterEntry {
 
 /// Per-identity rate limiter, keyed by author nickname. One quota covers
 /// every message — open broadcast or directed reply, no per-kind split.
-/// Entries are pruned after `ttl_secs` of inactivity.
+/// Entries are pruned after `ttl_secs` of inactivity. The cap is the
+/// swarm-wide one carried in the id; `per_min == None` means no limit
+/// (the id encoded `0`), in which case `check` always admits.
 pub(crate) struct SwarmRateLimiter {
     limiters: Mutex<HashMap<Nickname, LimiterEntry>>,
     ttl_secs: u64,
+    per_min: Option<NonZeroU32>,
 }
 
 impl SwarmRateLimiter {
     pub(crate) fn new() -> Self {
+        Self::from_per_min(RATE_LIMIT_PER_MIN)
+    }
+
+    /// Build a limiter for `per_min` messages/minute per author. `0`
+    /// disables rate limiting entirely (every `check` admits).
+    pub(crate) fn from_per_min(per_min: u16) -> Self {
         SwarmRateLimiter {
             limiters: Mutex::new(HashMap::new()),
             ttl_secs: RATE_LIMITER_TTL_SECS,
+            per_min: NonZeroU32::new(u32::from(per_min)),
         }
     }
 
     /// Returns true if a message from `author` is within the rate limit.
     /// Consumes one token on success. Applied identically on the send and
-    /// receive paths so a node is held to the same quota either way.
+    /// receive paths so a node is held to the same quota either way. When
+    /// the swarm disabled rate limiting (`per_min == 0`), always admits.
     pub(crate) fn check(&self, author: &Nickname) -> bool {
+        let Some(per_min) = self.per_min else {
+            return true;
+        };
         let now = Instant::now();
         let mut map = self.limiters.lock().expect("rate-limiter mutex poisoned");
         // Hot path (author already seen): borrow, no key clone. Only the
@@ -55,7 +68,7 @@ impl SwarmRateLimiter {
             return entry.limiter.check().is_ok();
         }
         let entry = map.entry(author.clone()).or_insert_with(|| LimiterEntry {
-            limiter: make_limiter(),
+            limiter: make_limiter(per_min),
             last_used: now,
         });
         entry.limiter.check().is_ok()
@@ -80,6 +93,7 @@ impl SwarmRateLimiter {
         SwarmRateLimiter {
             limiters: Mutex::new(HashMap::new()),
             ttl_secs,
+            per_min: NonZeroU32::new(u32::from(RATE_LIMIT_PER_MIN)),
         }
     }
 
@@ -134,6 +148,27 @@ mod tests {
     fn default_constructor_works() {
         let limiter = SwarmRateLimiter::default();
         assert!(limiter.check(&nick("test")));
+    }
+
+    #[test]
+    fn from_per_min_zero_disables_rate_limiting() {
+        let limiter = SwarmRateLimiter::from_per_min(0);
+        let spammer = nick("spammer");
+        // Well past any finite quota — all admitted because the swarm
+        // encoded `0` (no rate limit).
+        for _ in 0..(u32::from(RATE_LIMIT_PER_MIN) * 4) {
+            assert!(limiter.check(&spammer));
+        }
+    }
+
+    #[test]
+    fn from_per_min_caps_at_the_given_quota() {
+        let limiter = SwarmRateLimiter::from_per_min(RATE_LIMIT_PER_MIN);
+        let author = nick("author");
+        for _ in 0..RATE_LIMIT_PER_MIN {
+            assert!(limiter.check(&author));
+        }
+        assert!(!limiter.check(&author), "over quota is rejected");
     }
 
     #[test]

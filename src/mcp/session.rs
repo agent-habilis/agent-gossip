@@ -3,7 +3,6 @@
 use std::sync::Mutex;
 
 use anyhow::{Context, Result, anyhow};
-use iroh::RelayUrl;
 use serde_json::Value;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
@@ -12,7 +11,7 @@ use crate::daemon::{
     self, DriverMode,
     setup::{SetupKind, setup_swarm},
 };
-use crate::protocol::swarm::{LookupOpts, Swarm, SwarmMode, SwarmName};
+use crate::protocol::swarm::{Swarm, SwarmConfig, SwarmName};
 use crate::protocol::{MessageBody, MessageId, Nickname, SwarmId};
 use crate::transport::ipc::{IpcCommand, IpcMessage};
 
@@ -34,23 +33,21 @@ pub(super) struct Session {
 }
 
 impl Session {
-    /// Start a new swarm (Create) and its event loop.
+    /// Start a new swarm (Create) and its event loop. `config` (rate
+    /// limit + lookups) is baked into the minted id.
     pub(super) async fn create(
-        mode: SwarmMode,
         name: SwarmName,
-        relay: Vec<RelayUrl>,
+        config: SwarmConfig,
         nickname: Nickname,
         advertise: Option<SwarmName>,
     ) -> Result<Self> {
         let label = name.as_str().to_string();
-        let lookups = LookupOpts::default_for(mode, relay);
         spawn_session(
             SetupKind::Create {
-                mode,
                 name,
+                config,
                 advertise: advertise.clone(),
             },
-            lookups,
             label,
             nickname,
             advertise,
@@ -59,13 +56,13 @@ impl Session {
     }
 
     /// Join an existing swarm. Resolves `swarm_input` via the normal
-    /// resolver (ahs…, domain, git URL).
+    /// resolver (ahs…, domain, git URL). The swarm's config is decoded
+    /// from the id.
     pub(super) async fn join(swarm_input: &str, nickname: Nickname) -> Result<Self> {
         let swarm: Swarm = crate::resolver::resolve(swarm_input).await?;
         let label = swarm.name.as_str().to_string();
-        let lookups = LookupOpts::default_for(swarm.mode, Vec::new());
         // `join` never advertises — a create-time decision.
-        spawn_session(SetupKind::Join { swarm }, lookups, label, nickname, None).await
+        spawn_session(SetupKind::Join { swarm }, label, nickname, None).await
     }
 
     async fn send_cmd(&self, cmd: IpcCommand) -> Result<Value> {
@@ -218,7 +215,6 @@ impl Drop for Session {
 
 async fn spawn_session(
     kind: SetupKind,
-    lookups: LookupOpts,
     name: String,
     nickname: Nickname,
     advertise: Option<SwarmName>,
@@ -232,7 +228,6 @@ async fn spawn_session(
         /* interactive */ false,
         crate::util::tuning::DEFAULT_MAX_DIRECT_PEERS,
         /* state_file */ None,
-        lookups.clone(),
         // MCP owns stdout for JSON-RPC; never print swarm output.
         crate::output::Output::silent(),
     )
@@ -244,9 +239,9 @@ async fn spawn_session(
     };
 
     // Advertising: start the re-broadcast task (tied to this session's
-    // lifetime) on the same lookups as the swarm.
+    // lifetime); it joins the directory over the directory's own config.
     let advertiser =
-        advertise.map(|directory| crate::embed::spawn_advertiser(&mut cfg, directory, lookups));
+        advertise.map(|directory| crate::embed::spawn_advertiser(&mut cfg, directory));
 
     let swarm = cfg.swarm.clone();
     let session_nickname = cfg.author.clone();
@@ -267,7 +262,7 @@ async fn spawn_session(
 mod tests {
     use std::time::Duration;
 
-    use super::{MessageBody, MessageId, Nickname, Session, SwarmMode, SwarmName, Value};
+    use super::{MessageBody, MessageId, Nickname, Session, SwarmConfig, SwarmName, Value};
 
     // All tests use the private network (loopback) so they work on
     // any CI without public iroh DNS / relay access.
@@ -296,9 +291,8 @@ mod tests {
     #[tokio::test]
     async fn create_session_yields_valid_swarm_and_nickname() {
         let session = Session::create(
-            SwarmMode::Private,
             SwarmName::new("test1").unwrap(),
-            Vec::new(),
+            SwarmConfig::loopback(),
             Nickname::from("alice-test"),
             None,
         )
@@ -313,9 +307,8 @@ mod tests {
     #[tokio::test]
     async fn two_sessions_same_swarm_exchange_messages() {
         let creator = Session::create(
-            SwarmMode::Private,
             SwarmName::new("two").unwrap(),
-            Vec::new(),
+            SwarmConfig::loopback(),
             Nickname::from("alice-two"),
             None,
         )
@@ -362,9 +355,8 @@ mod tests {
         // own send, and advances the cursor past it so subsequent
         // idle fetches don't surface a self-echo feedback loop.
         let alice = Session::create(
-            SwarmMode::Private,
             SwarmName::new("replay").unwrap(),
-            Vec::new(),
+            SwarmConfig::loopback(),
             Nickname::from("alice-replay"),
             None,
         )
@@ -400,9 +392,8 @@ mod tests {
         // `fetch_messages(None)` calls see only what arrived since
         // the last one. Explicit `after` still overrides the cursor.
         let alice = Session::create(
-            SwarmMode::Private,
             SwarmName::new("cursor").unwrap(),
-            Vec::new(),
+            SwarmConfig::loopback(),
             Nickname::from("alice-cursor"),
             None,
         )
@@ -489,9 +480,8 @@ mod tests {
     async fn create_after_leave_succeeds_in_same_process() {
         // First cycle.
         let first = Session::create(
-            SwarmMode::Private,
             SwarmName::new("cy-a").unwrap(),
-            Vec::new(),
+            SwarmConfig::loopback(),
             Nickname::from("cycler-a"),
             None,
         )
@@ -502,9 +492,8 @@ mod tests {
 
         // Second cycle — new session, new swarm.
         let second = Session::create(
-            SwarmMode::Private,
             SwarmName::new("cy-b").unwrap(),
-            Vec::new(),
+            SwarmConfig::loopback(),
             Nickname::from("cycler-b"),
             None,
         )

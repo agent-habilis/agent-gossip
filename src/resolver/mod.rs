@@ -212,13 +212,8 @@ mod tests {
     }
 
     fn known_swarm_id() -> String {
-        use crate::protocol::swarm::{Swarm, SwarmMode, SwarmName};
-        Swarm::new(
-            SwarmMode::Private,
-            [1u8; 32],
-            SwarmName::new("test").unwrap(),
-        )
-        .to_string()
+        use crate::protocol::swarm::{Swarm, SwarmConfig, SwarmName};
+        Swarm::new([1u8; 32], SwarmName::new("test").unwrap(), SwarmConfig::loopback()).to_string()
     }
 
     async fn mock_well_known(body: &str, status: u16) -> (MockServer, String) {
