@@ -5,6 +5,8 @@
 use std::fmt;
 use std::str::FromStr;
 
+use serde::Serialize;
+
 use crate::protocol::{ident, wordlist};
 
 /// A human-readable swarm label, bound cryptographically into the topic id.
@@ -15,11 +17,12 @@ use crate::protocol::{ident, wordlist};
 /// reserved for the `<nick>`/`#swarm` display conventions). The newtype
 /// is the single validation point — every construction path goes
 /// through `new`.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub(crate) struct SwarmName(String);
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
+#[serde(transparent)]
+pub struct SwarmName(String);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum NameError {
+pub enum NameError {
     Length(usize),
     Charset(String),
 }
@@ -48,7 +51,14 @@ impl fmt::Display for NameError {
 impl std::error::Error for NameError {}
 
 impl SwarmName {
-    pub(crate) fn new(value: impl Into<String>) -> Result<Self, NameError> {
+    /// Validate and wrap a swarm name. The single construction path —
+    /// every `SwarmName` is guaranteed to satisfy the charset/length rules.
+    ///
+    /// # Errors
+    /// Returns [`NameError`] if `value` is empty, longer than 32 scalar
+    /// values, or contains a forbidden character (control, whitespace,
+    /// path separator, bidi formatting, or any of `/ \ < > #`).
+    pub fn new(value: impl Into<String>) -> Result<Self, NameError> {
         let value = value.into();
         let count = value.chars().count();
         if !(ident::MIN_CHARS..=ident::MAX_CHARS).contains(&count) {
@@ -62,11 +72,17 @@ impl SwarmName {
 
     /// Generate a random `word-word` swarm name from the curated
     /// wordlist — the same generator nicknames use.
-    pub(crate) fn random() -> Self {
+    ///
+    /// # Panics
+    /// Never in practice: every wordlist pair is a lowercase-ASCII
+    /// constant, so selection and validation always succeed.
+    #[must_use]
+    pub fn random() -> Self {
         Self::new(wordlist::random_pair()).expect("wordlist pair is always a valid swarm name")
     }
 
-    pub(crate) fn as_str(&self) -> &str {
+    #[must_use]
+    pub fn as_str(&self) -> &str {
         &self.0
     }
 

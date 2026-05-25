@@ -31,7 +31,8 @@ pub(crate) use lookup::{
     DEFAULT_DIRECTORY, DirectorySelection, LookupOpts, LookupSet, RelayChoice, RelaySelection,
     SwarmConfig, parse_relay_ladder, resolve_lookups, validate_advertise,
 };
-pub(crate) use name::SwarmName;
+pub use lookup::{RelayLadder, RelayLadderError};
+pub use name::{NameError, SwarmName};
 
 const PREFIX: &str = "ahs";
 

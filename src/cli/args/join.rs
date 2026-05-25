@@ -3,6 +3,7 @@
 use clap::Parser;
 
 use crate::protocol::Nickname;
+use crate::resolver::JoinTarget;
 
 use super::shared::SharedServerOpts;
 
@@ -11,7 +12,8 @@ pub(crate) struct JoinOpts {
     /// Swarm identifier (ahs...), a domain (example.com), or a git repo
     /// URL (github.com/user/repo, gitlab.com/user/repo, bitbucket.org/user/repo).
     /// Non-id values are resolved via /.well-known/agent-habilis-swarm.
-    pub swarm: String,
+    /// Classified + syntactically validated at parse (clap `FromStr`).
+    pub swarm: JoinTarget,
 
     /// Optional nickname (random word-word if not provided). A custom
     /// nickname is 1..=32 UTF-8 characters, excluding control chars,

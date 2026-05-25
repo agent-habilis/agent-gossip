@@ -3,7 +3,8 @@ use std::sync::LazyLock;
 
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::protocol::{Message, MessageKind};
+use crate::protocol::swarm::SwarmName;
+use crate::protocol::{Message, MessageId, MessageKind, Nickname, SwarmId};
 
 mod json;
 #[cfg(test)]
@@ -37,12 +38,12 @@ pub(crate) enum OutputMode {
 #[non_exhaustive]
 pub enum OutputEvent {
     Ready {
-        swarm: String,
-        name: String,
-        nickname: String,
+        swarm: SwarmId,
+        name: SwarmName,
+        nickname: Nickname,
     },
     SwarmId {
-        id: String,
+        id: SwarmId,
     },
     Message {
         msg: Box<Message>,
@@ -52,14 +53,14 @@ pub enum OutputEvent {
         msg: Box<Message>,
     },
     PeerTimeout {
-        nickname: String,
+        nickname: Nickname,
         last_seen_secs_ago: u64,
     },
     PeerReturn {
-        nickname: String,
+        nickname: Nickname,
     },
     MsgPosted {
-        id: String,
+        id: MessageId,
     },
     Info {
         message: String,
@@ -275,20 +276,20 @@ impl Output {
         }
     }
 
-    pub(crate) fn ready(&self, swarm: &str, name: &str, nickname: &str) {
+    pub(crate) fn ready(&self, swarm: &SwarmId, name: &SwarmName, nickname: &Nickname) {
         self.dispatch(
             || OutputEvent::Ready {
-                swarm: swarm.to_owned(),
-                name: name.to_owned(),
-                nickname: nickname.to_owned(),
+                swarm: swarm.clone(),
+                name: name.clone(),
+                nickname: nickname.clone(),
             },
             |mode| {
                 // In human mode, `info("joined as <nick>")` covers this.
                 if mode == OutputMode::Json {
                     emit_json(&SimpleEvent::Ready {
-                        swarm,
-                        name,
-                        nickname,
+                        swarm: swarm.as_str(),
+                        name: name.as_str(),
+                        nickname: nickname.as_str(),
                     });
                 }
             },
@@ -299,9 +300,9 @@ impl Output {
     /// prints the runnable join command (`ahs join <id>`); JSON mode
     /// prints the bare `ahs…` id (the integration harness greps this);
     /// Silent suppresses it.
-    pub(crate) fn swarm_id_line(&self, id: &str) {
+    pub(crate) fn swarm_id_line(&self, id: &SwarmId) {
         self.dispatch(
-            || OutputEvent::SwarmId { id: id.to_owned() },
+            || OutputEvent::SwarmId { id: id.clone() },
             |mode| match mode {
                 OutputMode::Human => {
                     let (open, close) = if stderr_color() {
@@ -372,19 +373,19 @@ impl Output {
     /// Emit a peer-timeout event. Distinct from `presence left` (a
     /// voluntary departure): this fires when the local heartbeat
     /// sweeper evicts a participant silent past `ALIVE_TIMEOUT_SECS`.
-    pub(crate) fn peer_timeout(&self, nickname: &str, last_seen_secs_ago: u64) {
+    pub(crate) fn peer_timeout(&self, nickname: &Nickname, last_seen_secs_ago: u64) {
         self.dispatch(
             || OutputEvent::PeerTimeout {
-                nickname: nickname.to_owned(),
+                nickname: nickname.clone(),
                 last_seen_secs_ago,
             },
             |mode| match mode {
                 OutputMode::Human => {
-                    let (open, close) = self.nick_ansi(nickname, stderr_color());
+                    let (open, close) = self.nick_ansi(nickname.as_str(), stderr_color());
                     eprintln!("{open}<{nickname}>{close} went quiet");
                 }
                 OutputMode::Json => emit_json(&SimpleEvent::PeerTimeout {
-                    nickname,
+                    nickname: nickname.as_str(),
                     last_seen_secs_ago,
                 }),
                 OutputMode::Silent => {}
@@ -395,32 +396,34 @@ impl Output {
     /// Symmetric counterpart to `peer_timeout`: fires when a peer we
     /// previously evicted for silence resumes sending (any message,
     /// including an `Alive` keepalive).
-    pub(crate) fn peer_return(&self, nickname: &str) {
+    pub(crate) fn peer_return(&self, nickname: &Nickname) {
         self.dispatch(
             || OutputEvent::PeerReturn {
-                nickname: nickname.to_owned(),
+                nickname: nickname.clone(),
             },
             |mode| match mode {
                 OutputMode::Human => {
-                    let (open, close) = self.nick_ansi(nickname, stderr_color());
+                    let (open, close) = self.nick_ansi(nickname.as_str(), stderr_color());
                     eprintln!("{open}<{nickname}>{close} came back");
                 }
-                OutputMode::Json => emit_json(&SimpleEvent::PeerReturn { nickname }),
+                OutputMode::Json => emit_json(&SimpleEvent::PeerReturn {
+                    nickname: nickname.as_str(),
+                }),
                 OutputMode::Silent => {}
             },
         );
     }
 
     /// Print a "message posted" confirmation with the message ID.
-    pub(crate) fn msg_posted(&self, id: &str) {
+    pub(crate) fn msg_posted(&self, id: &MessageId) {
         self.dispatch(
-            || OutputEvent::MsgPosted { id: id.to_owned() },
+            || OutputEvent::MsgPosted { id: id.clone() },
             |mode| match mode {
                 OutputMode::Human => {
                     eprintln!("message posted");
                     println!("{id}");
                 }
-                OutputMode::Json => emit_json(&SimpleEvent::MsgPosted { id }),
+                OutputMode::Json => emit_json(&SimpleEvent::MsgPosted { id: id.as_str() }),
                 OutputMode::Silent => {}
             },
         );
@@ -476,7 +479,7 @@ impl Output {
             Output::Stream { mode, .. } => match mode {
                 OutputMode::Human => {
                     for peer in &peers {
-                        let (open, close) = self.nick_ansi(&peer.nickname, stderr_color());
+                        let (open, close) = self.nick_ansi(peer.nickname.as_str(), stderr_color());
                         eprintln!("{open}<{}>{close} {}ms", peer.nickname, peer.rtt_ms);
                     }
                     eprintln!("{}/{known} online", peers.len());

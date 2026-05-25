@@ -14,6 +14,7 @@ use anyhow::Result;
 use tokio::signal::unix::{Signal, SignalKind, signal};
 
 use crate::embed::{Directory, DirectoryEvent, SwarmListing};
+use crate::resolver::JoinTarget;
 
 use super::args::{DiscoverOpts, OutputFormat};
 use super::join;
@@ -53,7 +54,10 @@ pub(super) async fn discover(opts: DiscoverOpts) -> Result<()> {
                 // the joined swarm's own file (with its setup logs) rather
                 // than appending to the directory session's.
                 crate::logging::detach();
-                return join(&id, None, opts.shared).await;
+                let target = id
+                    .parse::<JoinTarget>()
+                    .expect("a discovered swarm id is a valid join target");
+                return join(&target, None, opts.shared).await;
             }
             PickerOutcome::Quit => {
                 let _ = discoverer.close().await;

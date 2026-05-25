@@ -44,9 +44,10 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use crate::protocol::swarm::{
-    DirectorySelection, LookupOpts, SwarmConfig, SwarmName, validate_advertise,
+    DirectorySelection, LookupOpts, RelayLadder, SwarmConfig, SwarmName, validate_advertise,
 };
-use crate::protocol::{MessageBody, MessageId, Nickname, SwarmId};
+use crate::protocol::{Message, MessageBody, MessageId, Nickname, SwarmId};
+use crate::resolver::JoinTarget;
 use session::Session;
 
 /// Run the MCP server over stdio. Blocks until the client disconnects.
@@ -75,6 +76,19 @@ impl AgentSwarmServer {
 
 // ── tool argument schemas ────────────────────────────────────────
 
+/// Network reachability for a new swarm. A typed JSON-RPC enum (renders
+/// as `"private"` / `"public"` in the tool schema), so an unknown value is
+/// rejected at deserialize rather than by a hand-written string match.
+#[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "lowercase")]
+enum NetworkMode {
+    /// Loopback-only (same machine).
+    #[default]
+    Private,
+    /// Cross-machine: iroh's DNS + relay reach peers across the internet.
+    Public,
+}
+
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct CreateSwarmArgs {
     /// Human-readable swarm name. Required. 1..=32 UTF-8 characters
@@ -85,8 +99,8 @@ struct CreateSwarmArgs {
     /// Network mode. "private" keeps the swarm loopback-only (same
     /// machine). "public" uses iroh's DNS + N0 relay to reach peers
     /// across the internet.
-    #[serde(default = "default_network")]
-    network: String,
+    #[serde(default)]
+    network: NetworkMode,
     /// Optional nickname in `word-word` form. Random if omitted.
     #[serde(default)]
     nickname: Option<String>,
@@ -109,10 +123,6 @@ struct CreateSwarmArgs {
     /// Omit for the well-known `global` directory.
     #[serde(default)]
     directory: Option<String>,
-}
-
-fn default_network() -> String {
-    "private".to_string()
 }
 
 fn default_rate_limit() -> u16 {
@@ -168,7 +178,9 @@ impl From<&Session> for SwarmRef {
     fn from(session: &Session) -> Self {
         SwarmRef {
             swarm: session.swarm.clone(),
-            name: session.name.clone(),
+            // `SwarmRef` is the serialized tool output; the wire shape
+            // keeps `name` a plain string.
+            name: session.name.as_str().to_owned(),
             nickname: session.nickname.clone(),
         }
     }
@@ -181,12 +193,12 @@ struct SendMessageResult {
     /// author, ts, body, reply) — same shape `fetch_messages`
     /// returns. Agents should read this instead of issuing a
     /// follow-up fetch just to learn their own timestamp.
-    message: serde_json::Value,
+    message: Message,
 }
 
 #[derive(Debug, Serialize)]
 struct FetchMessagesResult {
-    messages: Vec<serde_json::Value>,
+    messages: Vec<Message>,
     current_id: Option<MessageId>,
 }
 
@@ -210,19 +222,18 @@ impl AgentSwarmServer {
         if let Some(existing) = guard.as_ref() {
             return Err(already_in_swarm_error(existing));
         }
-        let public = match args.network.as_str() {
-            "public" => true,
-            "private" => false,
-            other => {
-                return Err(McpError::invalid_params(
-                    format!("unknown network mode: {other} (expected 'private' or 'public')"),
-                    None,
-                ));
-            }
-        };
+        let public = matches!(args.network, NetworkMode::Public);
+        let relay = args
+            .relay
+            .as_deref()
+            .map(str::parse::<RelayLadder>)
+            .transpose()
+            .map_err(|error| {
+                McpError::invalid_params(format!("invalid relay ladder: {error}"), None)
+            })?;
         let config = SwarmConfig {
             rate_limit_per_min: args.rate_limit_per_min,
-            lookups: LookupOpts::from_public_relay(public, args.relay.as_deref())
+            lookups: LookupOpts::from_public_relay(public, relay.as_ref())
                 .map_err(|error| McpError::invalid_params(error.to_string(), None))?,
         };
         // Resolve the advertise request (absent / default / named directory)
@@ -262,15 +273,18 @@ impl AgentSwarmServer {
         &self,
         Parameters(args): Parameters<JoinSwarmArgs>,
     ) -> Result<CallToolResult, McpError> {
+        let target: JoinTarget = args.swarm.parse().map_err(|error| {
+            McpError::invalid_params(format!("invalid swarm target: {error}"), None)
+        })?;
         let mut guard = self.session.lock().await;
         if let Some(existing) = guard.as_ref() {
-            // Idempotent: re-joining the same swarm with either the
+            // Idempotent: re-joining the same swarm id with either the
             // same nickname or no nickname is a no-op, not an error.
             let same_nickname = args
                 .nickname
                 .as_deref()
                 .is_none_or(|candidate| candidate == existing.nickname.as_str());
-            if existing.swarm.as_str() == args.swarm && same_nickname {
+            if matches!(&target, JoinTarget::Swarm(id) if id == &existing.swarm) && same_nickname {
                 return ok_json(SwarmRef::from(existing));
             }
             return Err(already_in_swarm_error(existing));
@@ -281,7 +295,7 @@ impl AgentSwarmServer {
                 McpError::invalid_params(format!("invalid nickname: {error}"), None)
             })?,
         };
-        let session = Session::join(&args.swarm, nickname)
+        let session = Session::join(target, nickname)
             .await
             .map_err(to_mcp_error)?;
         let result = SwarmRef::from(&session);

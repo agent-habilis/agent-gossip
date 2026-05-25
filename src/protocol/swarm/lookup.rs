@@ -4,6 +4,9 @@
 //! network reach is fully described by its lookups: no lookups means
 //! loopback-only; any lookup means reachable across machines.
 
+use std::fmt;
+use std::str::FromStr;
+
 use anyhow::{Context, Result, bail};
 use iroh::RelayUrl;
 
@@ -350,29 +353,88 @@ pub(crate) fn parse_relay_ladder(raw: &str) -> Result<Vec<RelayUrl>, String> {
         .collect()
 }
 
-/// Parse an optional relay ladder given as text (MCP tool args, embed
-/// `CreateConfig`). `None` ⇒ an empty ladder (the caller's preset then
-/// keeps the pinned default).
-fn resolve_relay(relay: Option<&str>) -> Result<Vec<RelayUrl>> {
-    match relay {
-        None => Ok(Vec::new()),
-        Some(raw) => parse_relay_ladder(raw).map_err(|error| anyhow::anyhow!(error)),
+/// An ordered, non-empty relay ladder (`a,b,c` in preference order),
+/// validated at construction. Public + **iroh-free**: the wrapped
+/// `Vec<RelayUrl>` stays private, so embedders (`CreateConfig`) name a
+/// ladder without depending on the `iroh` type. Parsing reuses
+/// [`parse_relay_ladder`] — the same source of truth as the CLI value
+/// parser — and rejects empty entries, so a `RelayLadder` is never empty;
+/// "no custom ladder" is the `Option::None` case at the boundary.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RelayLadder(Vec<RelayUrl>);
+
+/// A relay ladder that couldn't be parsed (empty entry / invalid URL).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RelayLadderError(String);
+
+impl fmt::Display for RelayLadderError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for RelayLadderError {}
+
+impl FromStr for RelayLadder {
+    type Err = RelayLadderError;
+
+    fn from_str(input: &str) -> Result<Self, Self::Err> {
+        parse_relay_ladder(input)
+            .map(RelayLadder)
+            .map_err(RelayLadderError)
+    }
+}
+
+impl RelayLadder {
+    /// The ordered rungs, for internal consumers — keeps `RelayUrl` off
+    /// the public surface.
+    pub(crate) fn as_urls(&self) -> &[RelayUrl] {
+        &self.0
+    }
+
+    /// The number of rungs (always >= 1).
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    /// Always `false` — a `RelayLadder` is constructed non-empty. Present
+    /// for API completeness (and `clippy::len_without_is_empty`).
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+impl fmt::Display for RelayLadder {
+    /// The canonical `a,b,c` text form — round-trips through [`FromStr`].
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for (index, url) in self.0.iter().enumerate() {
+            if index > 0 {
+                formatter.write_str(",")?;
+            }
+            write!(formatter, "{url}")?;
+        }
+        Ok(())
     }
 }
 
 impl LookupOpts {
     /// Resolve the embed/MCP create shape — a single `public` toggle plus
-    /// an optional relay ladder as text — into the effective lookups.
-    /// `public` enables the all-on preset, refined by a custom relay; a
-    /// relay without `public` is a hard error, not a silent drop (it would
+    /// an optional [`RelayLadder`] — into the effective lookups. `public`
+    /// enables the all-on preset, refined by a custom relay; a relay
+    /// without `public` is a hard error, not a silent drop (it would
     /// otherwise be dropped on a loopback-only swarm). The CLI uses
     /// [`resolve_lookups`] instead (it has the granular allowlist).
-    pub(crate) fn from_public_relay(public: bool, relay: Option<&str>) -> Result<Self> {
+    pub(crate) fn from_public_relay(public: bool, relay: Option<&RelayLadder>) -> Result<Self> {
         if !public && relay.is_some() {
             bail!("a relay requires public");
         }
         if public {
-            Ok(LookupOpts::public_preset().with_relay(resolve_relay(relay)?))
+            let ladder = relay
+                .map(|ladder| ladder.as_urls().to_vec())
+                .unwrap_or_default();
+            Ok(LookupOpts::public_preset().with_relay(ladder))
         } else {
             Ok(LookupOpts::loopback())
         }
@@ -382,11 +444,48 @@ impl LookupOpts {
 #[cfg(test)]
 mod lookup_tests {
     use super::{
-        LookupOpts, LookupSet, RelayChoice, RelaySelection, SwarmConfig, resolve_lookups,
+        LookupOpts, LookupSet, RelayChoice, RelayLadder, RelaySelection, SwarmConfig,
+        resolve_lookups,
     };
 
     fn lookups(mdns: bool, dht: bool, relay: RelaySelection) -> LookupSet {
         LookupSet { mdns, dht, relay }
+    }
+
+    #[test]
+    fn relay_ladder_parses_ordered_rungs() {
+        let one: RelayLadder = "https://a.example".parse().unwrap();
+        assert_eq!(one.len(), 1);
+        assert!(!one.is_empty());
+
+        let two: RelayLadder = "https://a.example,https://b.example".parse().unwrap();
+        assert_eq!(two.len(), 2);
+        // Display round-trips through FromStr (canonical `a,b` text form).
+        let rendered = two.to_string();
+        assert_eq!(rendered.parse::<RelayLadder>().unwrap(), two);
+        assert_eq!(two.as_urls().len(), 2);
+    }
+
+    #[test]
+    fn relay_ladder_rejects_empty_and_empty_entries() {
+        assert!("".parse::<RelayLadder>().is_err());
+        assert!(
+            "https://a.example,,https://b.example"
+                .parse::<RelayLadder>()
+                .is_err(),
+            "an empty entry must be rejected so a typo never shrinks the ladder"
+        );
+    }
+
+    #[test]
+    fn from_public_relay_requires_public() {
+        let ladder: RelayLadder = "https://a.example".parse().unwrap();
+        assert!(
+            LookupOpts::from_public_relay(false, Some(&ladder)).is_err(),
+            "a relay without public is a hard error"
+        );
+        let opts = LookupOpts::from_public_relay(true, Some(&ladder)).unwrap();
+        assert_eq!(opts.relay, RelayChoice::Custom(ladder.as_urls().to_vec()));
     }
 
     #[test]

@@ -200,7 +200,7 @@ pub(crate) fn cli_ping(swarm: &str, nickname: &str) {
 
 use agent_habilis_swarm::embed::{CreateConfig, JoinConfig, SwarmSession};
 use agent_habilis_swarm::{
-    Message, MessageBody, MessageId, MessageKind, Nickname, OutputEvent, PresenceSubtype,
+    Message, MessageBody, MessageId, MessageKind, Nickname, OutputEvent, PresenceSubtype, SwarmName,
 };
 use tokio::sync::mpsc::UnboundedReceiver;
 
@@ -217,11 +217,16 @@ pub(crate) struct InProcNode {
     pub nickname: String,
 }
 
+/// Validate a `&str` into a [`SwarmName`] for the in-process harness.
+fn test_swarm_name(name: &str) -> SwarmName {
+    SwarmName::new(name).expect("valid test swarm name")
+}
+
 impl InProcNode {
     /// Create a new private swarm. `self.swarm` holds the `ahs…` id.
     pub(crate) async fn create(name: &str) -> Self {
         Self::from_session(
-            SwarmSession::create(CreateConfig::new(name))
+            SwarmSession::create(CreateConfig::new(test_swarm_name(name)))
                 .await
                 .expect("in-process create failed"),
         )
@@ -229,7 +234,7 @@ impl InProcNode {
 
     /// Create a new private swarm with an explicit nickname.
     pub(crate) async fn create_with_nick(name: &str, nick: &str) -> Self {
-        let mut cfg = CreateConfig::new(name);
+        let mut cfg = CreateConfig::new(test_swarm_name(name));
         cfg.nickname = Some(Nickname::new(nick).expect("valid test nickname"));
         Self::from_session(
             SwarmSession::create(cfg)
@@ -253,7 +258,8 @@ impl InProcNode {
 
     /// Join `swarm` (an `ahs…` id) with an explicit nickname.
     pub(crate) async fn join(swarm: &str, nickname: &str) -> Self {
-        let mut cfg = JoinConfig::new(swarm);
+        let target = swarm.parse().expect("valid test join target");
+        let mut cfg = JoinConfig::new(target);
         cfg.nickname = Some(Nickname::new(nickname).expect("valid test nickname"));
         Self::from_session(
             SwarmSession::join(cfg)

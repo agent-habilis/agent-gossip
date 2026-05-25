@@ -14,8 +14,8 @@ use crate::output::{Output, OutputMode};
 use crate::protocol::swarm::{
     DirectorySelection, Swarm, SwarmConfig, SwarmName, resolve_lookups, validate_advertise,
 };
-use crate::protocol::Nickname;
-use crate::resolver;
+use crate::protocol::{MessageId, Nickname};
+use crate::resolver::{self, JoinTarget};
 use crate::transport::ipc::{self, IpcCommand};
 
 mod args;
@@ -119,11 +119,11 @@ async fn create(opts: CreateOpts) -> Result<()> {
 /// supported git repo URL. The swarm's config (lookups + rate limit) is
 /// decoded from the id — `join` takes no lookup/rate flags.
 async fn join(
-    swarm_input: &str,
+    target: &JoinTarget,
     nickname: Option<Nickname>,
     shared: SharedServerOpts,
 ) -> Result<()> {
-    let swarm: Swarm = resolver::resolve(swarm_input).await?;
+    let swarm: Swarm = resolver::resolve(target).await?;
     // `join` never advertises — that is a create-time decision.
     run_session(
         SetupKind::Join { swarm },
@@ -137,7 +137,7 @@ async fn join(
 #[derive(Deserialize)]
 struct MsgResponse {
     ok: bool,
-    id: Option<String>,
+    id: Option<MessageId>,
     error: Option<String>,
     #[serde(default)]
     rate_limited: bool,
@@ -172,7 +172,9 @@ async fn msg(opts: MsgOpts) -> Result<()> {
         );
     }
 
-    let id = parsed.id.unwrap_or_default();
+    let id = parsed
+        .id
+        .ok_or_else(|| anyhow::anyhow!("msg response missing id"))?;
     // `msg` has no `--output` flag — always the human confirmation.
     // No nickname is rendered here (only `message posted` + id).
     let out = Output::new(OutputMode::Human, false, None);

@@ -55,7 +55,7 @@ pub(crate) fn tick_sweep(state: &mut EventLoopState, out: &output::Output) {
             state.write_participant_count();
             if state.surfaced.remove(nick.as_str()) {
                 state.quiet.insert(nick.clone());
-                out.peer_timeout(nick.as_str(), age);
+                out.peer_timeout(&nick, age);
                 tracing::debug!(nickname = %nick, age_secs = age, "peer evicted (silence timeout)");
             } else {
                 tracing::trace!(

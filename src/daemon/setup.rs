@@ -189,8 +189,8 @@ pub(crate) async fn setup_swarm(
             if let Some(directory) = &advertise {
                 output.info(&format!("advertising on #{directory}"));
             }
-            output.swarm_id_line(&id_str);
-            output.ready(&id_str, name.as_str(), author.as_str());
+            output.swarm_id_line(&swarm_id);
+            output.ready(&swarm_id, &name, &author);
             lifecycle::log_ready(&id_str, name.as_str(), author.as_str(), swarm.network_label());
 
             let topic_id = derive_topic_id(swarm.seed(), &swarm.name, &swarm.config_bytes());
@@ -241,7 +241,7 @@ pub(crate) async fn setup_swarm(
             // `EventLoopConfig::cohost`.
             let topic = gossip.subscribe(topic_id, vec![rdv.id]).await?;
 
-            output.ready(&id_str, swarm.name.as_str(), author.as_str());
+            output.ready(&swarm_id, &swarm.name, &author);
             lifecycle::log_ready(
                 &id_str,
                 swarm.name.as_str(),

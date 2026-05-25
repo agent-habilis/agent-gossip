@@ -11,7 +11,7 @@ use std::io::Write;
 use serde::Serialize;
 
 use super::OutputEvent;
-use crate::protocol::{Message, MessageKind, PresenceSubtype};
+use crate::protocol::{Message, MessageKind, Nickname, PresenceSubtype};
 
 /// One-shot events (everything except the `"event":"message"` family).
 /// `#[serde(tag = "event")]` inlines the discriminator as the first field.
@@ -49,7 +49,7 @@ pub(super) enum SimpleEvent<'a> {
 /// One peer's RTT in a `ping_report` event.
 #[derive(Debug, Clone, Serialize)]
 pub struct PingPeer {
-    pub nickname: String,
+    pub nickname: Nickname,
     pub rtt_ms: u64,
 }
 
@@ -130,9 +130,7 @@ pub(super) fn format_msg_json(msg: &Message, is_self: bool) -> String {
         MessageKind::Msg { reply } => serde_json::to_string(&MsgLine {
             header: message_header(msg, "msg"),
             body: msg.body.as_str(),
-            reply: reply
-                .as_ref()
-                .map(crate::protocol::nickname::Nickname::as_str),
+            reply: reply.as_ref().map(Nickname::as_str),
             is_self,
         })
         .expect("message event serialization should never fail"),
@@ -164,9 +162,9 @@ pub fn event_json(event: &OutputEvent) -> Option<String> {
             name,
             nickname,
         } => serde_json::to_string(&SimpleEvent::Ready {
-            swarm,
-            name,
-            nickname,
+            swarm: swarm.as_str(),
+            name: name.as_str(),
+            nickname: nickname.as_str(),
         }),
         OutputEvent::Message { msg, is_self } => return Some(format_msg_json(msg, *is_self)),
         OutputEvent::Presence { msg } => {
@@ -179,13 +177,17 @@ pub fn event_json(event: &OutputEvent) -> Option<String> {
             nickname,
             last_seen_secs_ago,
         } => serde_json::to_string(&SimpleEvent::PeerTimeout {
-            nickname,
+            nickname: nickname.as_str(),
             last_seen_secs_ago: *last_seen_secs_ago,
         }),
         OutputEvent::PeerReturn { nickname } => {
-            serde_json::to_string(&SimpleEvent::PeerReturn { nickname })
+            serde_json::to_string(&SimpleEvent::PeerReturn {
+                nickname: nickname.as_str(),
+            })
         }
-        OutputEvent::MsgPosted { id } => serde_json::to_string(&SimpleEvent::MsgPosted { id }),
+        OutputEvent::MsgPosted { id } => {
+            serde_json::to_string(&SimpleEvent::MsgPosted { id: id.as_str() })
+        }
         OutputEvent::Info { message } => serde_json::to_string(&SimpleEvent::Info { message }),
         OutputEvent::Error { message } => serde_json::to_string(&SimpleEvent::Error { message }),
         OutputEvent::PingReport { peers, known } => {

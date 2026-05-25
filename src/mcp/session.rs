@@ -12,14 +12,15 @@ use crate::daemon::{
     setup::{SetupKind, setup_swarm},
 };
 use crate::protocol::swarm::{Swarm, SwarmConfig, SwarmName};
-use crate::protocol::{MessageBody, MessageId, Nickname, SwarmId};
+use crate::protocol::{Message, MessageBody, MessageId, Nickname, SwarmId};
+use crate::resolver::JoinTarget;
 use crate::transport::ipc::{IpcCommand, IpcMessage};
 
 /// A running swarm with an open command channel. Owned by the MCP
 /// server. Dropping this aborts the event loop task.
 pub(super) struct Session {
     pub swarm: SwarmId,
-    pub name: String,
+    pub name: SwarmName,
     pub nickname: Nickname,
     cmd_tx: mpsc::Sender<IpcMessage>,
     quit_tx: mpsc::Sender<()>,
@@ -41,28 +42,26 @@ impl Session {
         nickname: Nickname,
         advertise: Option<SwarmName>,
     ) -> Result<Self> {
-        let label = name.as_str().to_string();
         spawn_session(
             SetupKind::Create {
-                name,
+                name: name.clone(),
                 config,
                 advertise: advertise.clone(),
             },
-            label,
+            name,
             nickname,
             advertise,
         )
         .await
     }
 
-    /// Join an existing swarm. Resolves `swarm_input` via the normal
-    /// resolver (ahs…, domain, git URL). The swarm's config is decoded
-    /// from the id.
-    pub(super) async fn join(swarm_input: &str, nickname: Nickname) -> Result<Self> {
-        let swarm: Swarm = crate::resolver::resolve(swarm_input).await?;
-        let label = swarm.name.as_str().to_string();
+    /// Join an existing swarm. Resolves `target` via the normal resolver
+    /// (ahs…, domain, git URL). The swarm's config is decoded from the id.
+    pub(super) async fn join(target: JoinTarget, nickname: Nickname) -> Result<Self> {
+        let swarm: Swarm = crate::resolver::resolve(&target).await?;
+        let name = swarm.name.clone();
         // `join` never advertises — a create-time decision.
-        spawn_session(SetupKind::Join { swarm }, label, nickname, None).await
+        spawn_session(SetupKind::Join { swarm }, name, nickname, None).await
     }
 
     async fn send_cmd(&self, cmd: IpcCommand) -> Result<Value> {
@@ -79,14 +78,14 @@ impl Session {
     }
 
     /// Broadcast a message. Returns `Some((id, echo))` where `echo` is the
-    /// full authoritative record the daemon built — same shape
+    /// full authoritative [`Message`] the daemon built — same record
     /// `fetch_messages` returns — or `None` when the sender-side rate
     /// limiter dropped it (a deliberate drop, not an error).
     pub(super) async fn send_message(
         &self,
         body: MessageBody,
         reply: Option<Nickname>,
-    ) -> Result<Option<(MessageId, Value)>> {
+    ) -> Result<Option<(MessageId, Message)>> {
         let cmd = IpcCommand::Msg {
             swarm: self.swarm.clone(),
             body,
@@ -117,9 +116,12 @@ impl Session {
                     })?,
                     _ => return Err(anyhow!("msg response missing 'id'")),
                 };
-                let echo = obj
+                let echo_value = obj
                     .remove("message")
                     .ok_or_else(|| anyhow!("msg response missing 'message'"))?;
+                let echo: Message = serde_json::from_value(echo_value).map_err(|error| {
+                    anyhow!("msg response 'message' is not a valid Message: {error}")
+                })?;
                 self.advance_cursor_to(id.clone());
                 Ok(Some((id, echo)))
             }
@@ -157,25 +159,25 @@ impl Session {
     pub(super) async fn fetch_messages(
         &self,
         after: Option<MessageId>,
-    ) -> Result<(Vec<Value>, Option<MessageId>)> {
+    ) -> Result<(Vec<Message>, Option<MessageId>)> {
         let cmd = IpcCommand::Poll {
             swarm: self.swarm.clone(),
             after: self.effective_after(after),
         };
 
-        let msgs = match self.send_cmd(cmd).await? {
-            Value::Array(array) => array,
+        let array = match self.send_cmd(cmd).await? {
+            value @ Value::Array(_) => value,
             other @ (Value::Null
             | Value::Bool(_)
             | Value::Number(_)
             | Value::String(_)
             | Value::Object(_)) => return Err(anyhow!("poll response was not an array: {other}")),
         };
-        let current_id = msgs
-            .last()
-            .and_then(|msg| msg.get("id"))
-            .and_then(|value| value.as_str())
-            .and_then(|raw| MessageId::new(raw).ok());
+        // The daemon serializes the poll buffer as `Vec<Message>`, so it
+        // round-trips straight back into typed records here.
+        let msgs: Vec<Message> = serde_json::from_value(array)
+            .map_err(|error| anyhow!("poll response is not a list of Messages: {error}"))?;
+        let current_id = msgs.last().map(|msg| msg.id.clone());
         if let Some(id) = current_id.clone() {
             self.advance_cursor_to(id);
         }
@@ -215,7 +217,7 @@ impl Drop for Session {
 
 async fn spawn_session(
     kind: SetupKind,
-    name: String,
+    name: SwarmName,
     nickname: Nickname,
     advertise: Option<SwarmName>,
 ) -> Result<Session> {
@@ -262,7 +264,10 @@ async fn spawn_session(
 mod tests {
     use std::time::Duration;
 
-    use super::{MessageBody, MessageId, Nickname, Session, SwarmConfig, SwarmName, Value};
+    use super::{
+        JoinTarget, Message, MessageBody, MessageId, Nickname, Session, SwarmConfig, SwarmName,
+    };
+    use crate::protocol::{MessageKind, PresenceSubtype};
 
     // All tests use the private network (loopback) so they work on
     // any CI without public iroh DNS / relay access.
@@ -273,13 +278,8 @@ mod tests {
         while tokio::time::Instant::now() < deadline {
             if let Ok((msgs, _)) = session.fetch_messages(None).await {
                 for entry in &msgs {
-                    if entry.get("author").and_then(|value| value.as_str()) == Some(author)
-                        && entry.get("body").and_then(|value| value.as_str()) == Some(body)
-                    {
-                        return entry
-                            .get("id")
-                            .and_then(|value| value.as_str())
-                            .and_then(|raw| MessageId::new(raw).ok());
+                    if entry.author.as_str() == author && entry.body.as_str() == body {
+                        return Some(entry.id.clone());
                     }
                 }
             }
@@ -299,7 +299,7 @@ mod tests {
         .await
         .expect("create");
         assert!(session.swarm.as_str().starts_with("ahs"));
-        assert_eq!(session.name, "test1");
+        assert_eq!(session.name.as_str(), "test1");
         assert_eq!(session.nickname.as_str(), "alice-test");
         session.leave().await;
     }
@@ -316,10 +316,10 @@ mod tests {
         .expect("create");
         let swarm = creator.swarm.clone();
 
-        let joiner = Session::join(swarm.as_str(), Nickname::from("bob-two"))
+        let joiner = Session::join(JoinTarget::Swarm(swarm.clone()), Nickname::from("bob-two"))
             .await
             .expect("join");
-        assert_eq!(joiner.name, "two");
+        assert_eq!(joiner.name.as_str(), "two");
 
         // Send from creator → joiner should see it.
         let (sent_id, _) = creator
@@ -368,16 +368,14 @@ mod tests {
             .await
             .expect("send_message")
             .expect("within rate limit");
-        assert_eq!(echo["id"].as_str(), Some(sent.as_str()));
-        assert_eq!(echo["author"].as_str(), Some("alice-replay"));
-        assert_eq!(echo["body"].as_str(), Some("self-echo"));
-        assert!(echo["ts"].is_i64(), "echo must carry a numeric ts");
+        assert_eq!(echo.id, sent);
+        assert_eq!(echo.author.as_str(), "alice-replay");
+        assert_eq!(echo.body.as_str(), "self-echo");
+        assert!(echo.timestamp > 0, "echo must carry a unix timestamp");
 
         // Cursor advanced past self-send → default fetch hides it.
         let (msgs, _) = alice.fetch_messages(None).await.expect("fetch");
-        let has_own = msgs
-            .iter()
-            .any(|msg| msg.get("id").and_then(|value| value.as_str()) == Some(sent.as_str()));
+        let has_own = msgs.iter().any(|msg| msg.id == sent);
         assert!(
             !has_own,
             "implicit cursor should have advanced past self-send, got {msgs:?}"
@@ -400,7 +398,7 @@ mod tests {
         .await
         .expect("create");
         let swarm = alice.swarm.clone();
-        let bob = Session::join(swarm.as_str(), Nickname::from("bob-cursor"))
+        let bob = Session::join(JoinTarget::Swarm(swarm.clone()), Nickname::from("bob-cursor"))
             .await
             .expect("join");
 
@@ -408,14 +406,18 @@ mod tests {
         // presence lands. That first non-empty fetch advances the
         // implicit cursor past everything currently buffered —
         // which is exactly what we want to test against next.
-        let mut first: Vec<Value> = Vec::new();
+        let mut first: Vec<Message> = Vec::new();
         let mut expected_cursor: Option<MessageId> = None;
         let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
         while tokio::time::Instant::now() < deadline {
             let (msgs, cur) = alice.fetch_messages(None).await.expect("first fetch");
             if msgs.iter().any(|msg| {
-                msg.get("subtype").and_then(|value| value.as_str()) == Some("joined")
-                    && msg.get("author").and_then(|value| value.as_str()) == Some("bob-cursor")
+                matches!(
+                    msg.kind,
+                    MessageKind::Presence {
+                        subtype: PresenceSubtype::Joined
+                    }
+                ) && msg.author.as_str() == "bob-cursor"
             }) {
                 first = msgs;
                 expected_cursor = cur;
@@ -442,7 +444,7 @@ mod tests {
         bob.send_message(MessageBody::from("hi via cursor"), None)
             .await
             .expect("send");
-        let mut saw: Vec<Value> = Vec::new();
+        let mut saw: Vec<Message> = Vec::new();
         let delta_deadline = tokio::time::Instant::now() + Duration::from_secs(10);
         while tokio::time::Instant::now() < delta_deadline && saw.is_empty() {
             let (msgs, _) = alice.fetch_messages(None).await.expect("delta fetch 2");
@@ -456,7 +458,7 @@ mod tests {
             1,
             "delta fetch after bob's send should contain exactly one message, got {saw:?}"
         );
-        assert_eq!(saw[0]["body"].as_str(), Some("hi via cursor"));
+        assert_eq!(saw[0].body.as_str(), "hi via cursor");
 
         // Explicit `after` must override the implicit cursor: pass
         // the cursor position we observed earlier and confirm we
@@ -466,9 +468,7 @@ mod tests {
             .await
             .expect("explicit fetch");
         assert!(
-            forced.iter().any(
-                |msg| msg.get("body").and_then(|value| value.as_str()) == Some("hi via cursor")
-            ),
+            forced.iter().any(|msg| msg.body.as_str() == "hi via cursor"),
             "explicit after must override implicit cursor"
         );
 

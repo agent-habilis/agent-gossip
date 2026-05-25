@@ -71,7 +71,7 @@ pub(crate) fn observe(
 
     if update.returned && surfaceable {
         state.surfaced.insert(message.author.clone());
-        ctx.output.peer_return(message.author.as_str());
+        ctx.output.peer_return(&message.author);
         tracing::info!(nickname = %message.author, "peer returned");
     }
 

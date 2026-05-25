@@ -420,11 +420,11 @@ fn finalize_ping_round(state: &mut EventLoopState, output: &output::Output) {
         .pongs
         .iter()
         .map(|(nickname, arrival)| output::PingPeer {
-            nickname: nickname.as_str().to_owned(),
+            nickname: nickname.clone(),
             rtt_ms: u64::try_from(arrival.duration_since(round.t1).as_millis()).unwrap_or(u64::MAX),
         })
         .collect();
-    peers.sort_by(|left, right| left.nickname.cmp(&right.nickname));
+    peers.sort_by(|left, right| left.nickname.as_str().cmp(right.nickname.as_str()));
     output.ping_report(peers, state.participants.len());
 }
 

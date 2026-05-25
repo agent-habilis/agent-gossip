@@ -1,9 +1,12 @@
+use std::fmt;
+use std::str::FromStr;
 use std::sync::Once;
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
 use serde::Deserialize;
 
+use crate::protocol::SwarmId;
 use crate::protocol::swarm::Swarm;
 
 /// `rustls-no-provider` ships no crypto backend, so a default
@@ -101,12 +104,59 @@ struct WellKnown {
     swarm: String,
 }
 
-pub(crate) async fn resolve(arg: &str) -> Result<Swarm> {
-    if let Ok(swarm) = arg.parse::<Swarm>() {
-        return Ok(swarm);
+/// What a join accepts: a literal swarm id, or a domain / git-repo URL
+/// whose `/.well-known/agent-habilis-swarm` names one. The three accepted
+/// input forms are classified and syntactically validated **once**, at the
+/// boundary (clap `FromStr` / MCP entry), so [`resolve`] matches on the
+/// variant instead of re-sniffing a `String`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum JoinTarget {
+    /// A literal `ahs…` id — resolves with no I/O.
+    Swarm(SwarmId),
+    /// A domain or git-repo URL; carries the resolved well-known URL.
+    WellKnown(String),
+}
+
+/// A join target that isn't a swarm id and isn't a well-formed
+/// domain/git-repo reference (e.g. a malformed git path).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JoinTargetError(String);
+
+impl fmt::Display for JoinTargetError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.0)
     }
-    let url = resolve_url(arg)?;
-    fetch_and_parse(&url).await
+}
+
+impl std::error::Error for JoinTargetError {}
+
+impl FromStr for JoinTarget {
+    type Err = JoinTargetError;
+
+    fn from_str(input: &str) -> Result<Self, Self::Err> {
+        let trimmed = input.trim();
+        // A literal `ahs…` id is the no-I/O case. Shallow `SwarmId`
+        // validation here; the full structural decode happens in `resolve`.
+        if let Ok(id) = trimmed.parse::<SwarmId>() {
+            return Ok(JoinTarget::Swarm(id));
+        }
+        // Otherwise it's a domain or git-repo URL: classify + validate the
+        // form now (provider prefixes, segment counts) and carry the
+        // resolved well-known URL.
+        resolve_url(trimmed)
+            .map(JoinTarget::WellKnown)
+            .map_err(|error| JoinTargetError(error.to_string()))
+    }
+}
+
+pub(crate) async fn resolve(target: &JoinTarget) -> Result<Swarm> {
+    match target {
+        JoinTarget::Swarm(id) => id
+            .as_str()
+            .parse::<Swarm>()
+            .map_err(|error| anyhow!("invalid swarm id: {error}")),
+        JoinTarget::WellKnown(url) => fetch_and_parse(url).await,
+    }
 }
 
 async fn fetch_and_parse(url: &str) -> Result<Swarm> {
@@ -157,7 +207,7 @@ mod tests {
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    use super::{MAX_BODY_BYTES, fetch_and_parse, resolve, resolve_url};
+    use super::{JoinTarget, MAX_BODY_BYTES, fetch_and_parse, resolve, resolve_url};
 
     #[test]
     fn resolve_url_maps_inputs_to_expected_urls() {
@@ -272,7 +322,35 @@ mod tests {
     #[tokio::test]
     async fn resolve_passthrough_for_valid_swarm_id() {
         let id = known_swarm_id();
-        let swarm = resolve(&id).await.unwrap();
+        let target: JoinTarget = id.parse().unwrap();
+        let swarm = resolve(&target).await.unwrap();
         assert_eq!(swarm.to_string(), id);
+    }
+
+    #[test]
+    fn join_target_classifies_inputs() {
+        // A literal `ahs…` id ⇒ Swarm (no I/O to resolve).
+        let id = known_swarm_id();
+        assert!(matches!(
+            id.parse::<JoinTarget>(),
+            Ok(JoinTarget::Swarm(_))
+        ));
+        // A bare domain ⇒ WellKnown carrying the well-known URL.
+        assert_eq!(
+            "example.com".parse::<JoinTarget>(),
+            Ok(JoinTarget::WellKnown(
+                "https://example.com/.well-known/agent-habilis-swarm".to_owned()
+            ))
+        );
+        // A git-repo URL ⇒ WellKnown carrying the raw-file URL.
+        assert_eq!(
+            "github.com/alice/proj".parse::<JoinTarget>(),
+            Ok(JoinTarget::WellKnown(
+                "https://raw.githubusercontent.com/alice/proj/HEAD/.well-known/agent-habilis-swarm"
+                    .to_owned()
+            ))
+        );
+        // A malformed git path is rejected at parse, not mid-resolve.
+        assert!("github.com/alice".parse::<JoinTarget>().is_err());
     }
 }

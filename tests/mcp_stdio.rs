@@ -459,9 +459,11 @@ fn create_swarm_with_unknown_network_errors() {
         serde_json::json!({ "name": "bogus1", "network": "bogus" }),
     );
     let err = tool_error(&resp).expect("bogus network should error");
+    // The `network` arg is a typed enum, so an unknown value is rejected
+    // at parameter deserialization with the valid set named.
     assert!(
-        err.to_lowercase().contains("network"),
-        "expected network-related error, got: {err}"
+        err.contains("private") && err.contains("public"),
+        "expected the error to name the valid network modes, got: {err}"
     );
 }
 

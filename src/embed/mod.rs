@@ -18,9 +18,11 @@ use crate::daemon::setup::{SetupKind, setup_swarm};
 use crate::daemon::{CoHostPolicy, DriverMode, EventLoopConfig, SendRequest};
 use crate::directory::{self, Listing, ListingChange, Listings, directory_swarm};
 use crate::output::{Output, OutputEvent};
-use crate::protocol::swarm::{DEFAULT_DIRECTORY, LookupOpts, Swarm, SwarmConfig, SwarmName};
+use crate::protocol::swarm::{
+    DEFAULT_DIRECTORY, LookupOpts, RelayLadder, Swarm, SwarmConfig, SwarmName,
+};
 use crate::protocol::{Message, MessageBody, MessageId, Nickname, SwarmId};
-use crate::resolver;
+use crate::resolver::{self, JoinTarget};
 use crate::util::tuning::{
     DEFAULT_MAX_DIRECT_PEERS, EMBED_INBOUND_CAP, advertise_interval_secs, directory_expiry_secs,
 };
@@ -29,10 +31,11 @@ use crate::util::tuning::{
 #[derive(Debug, Clone)]
 pub struct JoinConfig {
     /// What to join: an `ahs…` id, a domain serving
-    /// `/.well-known/agent-habilis-swarm`, or a supported git repo URL.
-    /// Resolved internally; the network mode and name are decoded from
-    /// the resolved swarm.
-    pub target: String,
+    /// `/.well-known/agent-habilis-swarm`, or a supported git repo URL —
+    /// classified into a [`JoinTarget`] at the boundary (parse a string
+    /// with [`str::parse`]). Resolved internally; the network mode and
+    /// name are decoded from the resolved swarm.
+    pub target: JoinTarget,
     /// Local nickname. `None` mints a random `word-word` one.
     pub nickname: Option<Nickname>,
     /// Max direct peer connections before gossip relays the rest.
@@ -42,40 +45,43 @@ pub struct JoinConfig {
 impl JoinConfig {
     /// A config for `target` with a random nickname and the default
     /// peer cap. Set [`JoinConfig::nickname`] / [`JoinConfig::max_peers`]
-    /// afterwards to override.
+    /// afterwards to override. Build the [`JoinTarget`] by parsing a
+    /// string (`"ahs…".parse()?`).
     #[must_use]
-    pub fn new(target: impl Into<String>) -> Self {
+    pub fn new(target: JoinTarget) -> Self {
         Self {
-            target: target.into(),
+            target,
             nickname: None,
             max_peers: DEFAULT_MAX_DIRECT_PEERS,
         }
     }
 }
 
-/// How to create a new swarm. String/primitive-typed to keep the
-/// embed surface iroh-free (mirrors [`JoinConfig`]); `name`/`relay`
-/// are validated/parsed when the session is created.
+/// How to create a new swarm. Built from validated domain types
+/// ([`SwarmName`], [`Nickname`], [`RelayLadder`]); the iroh `RelayUrl`
+/// stays hidden behind [`RelayLadder`], so the surface is iroh-free.
 #[derive(Debug, Clone)]
 pub struct CreateConfig {
-    /// 1..=32 UTF-8 characters (any script/emoji), excluding control
-    /// characters, whitespace, and any of `/ \ < > #`.
-    pub name: String,
+    /// The swarm name (validated): 1..=32 UTF-8 characters (any
+    /// script/emoji), excluding control characters, whitespace, and any
+    /// of `/ \ < > #`.
+    pub name: SwarmName,
     /// Local nickname. `None` mints a random `word-word` one.
     pub nickname: Option<Nickname>,
     /// `true` = public (cross-machine networking, pkarr lookup); `false`
     /// = private (localhost only). Default `false`.
     pub public: bool,
-    /// Custom relay ladder — one URL or a comma-separated `a,b,c` in
-    /// preference order — honored only with `public`. `None` uses the
-    /// default n0 prod ladder. Parsed internally (see `parse_relay_ladder`).
-    pub relay: Option<String>,
+    /// Custom relay ladder (one URL or `a,b,c` in preference order),
+    /// honored only with `public`. `None` ⇒ the default n0 prod ladder.
+    /// Build by parsing a string (`"a,b".parse()?`); validated at
+    /// construction.
+    pub relay: Option<RelayLadder>,
     /// List this swarm in a directory so discoverers can find it
     /// without its `ahs…` id. Requires `public`. Default `false`.
     pub advertise: bool,
     /// The directory to advertise into when `advertise` is set.
     /// `None` ⇒ the well-known `global` directory.
-    pub directory: Option<String>,
+    pub directory: Option<SwarmName>,
     /// Per-author messages-per-minute cap baked into the swarm id and
     /// enforced swarm-wide. `0` disables rate limiting. Default 60.
     pub rate_limit_per_min: u16,
@@ -88,9 +94,9 @@ impl CreateConfig {
     /// nickname and the default peer cap. Set the other fields
     /// afterwards to override.
     #[must_use]
-    pub fn new(name: impl Into<String>) -> Self {
+    pub fn new(name: SwarmName) -> Self {
         Self {
-            name: name.into(),
+            name,
             nickname: None,
             public: false,
             relay: None,
@@ -184,19 +190,16 @@ impl SwarmSession {
     }
 
     /// Create a new swarm and spawn its event loop in the background.
-    /// `cfg.name` is validated and `cfg.relay` parsed here, keeping the
-    /// public surface iroh-free.
+    /// `cfg.relay` is already a validated [`RelayLadder`].
     ///
     /// # Errors
-    /// Fails if the name is invalid, a relay is given without
-    /// `public`, the relay URL is unparseable, or endpoint/gossip
+    /// Fails if a relay is given without `public`, or endpoint/gossip
     /// setup fails.
     pub async fn create(cfg: CreateConfig) -> anyhow::Result<Self> {
-        let name = SwarmName::new(cfg.name)
-            .map_err(|error| anyhow::anyhow!("invalid swarm name: {error:?}"))?;
+        let name = cfg.name;
         let config = SwarmConfig {
             rate_limit_per_min: cfg.rate_limit_per_min,
-            lookups: LookupOpts::from_public_relay(cfg.public, cfg.relay.as_deref())?,
+            lookups: LookupOpts::from_public_relay(cfg.public, cfg.relay.as_ref())?,
         };
         // Resolve the advertise directory up front so an invalid directory /
         // loopback-only advertise fails before the session is spawned.
@@ -371,12 +374,10 @@ impl Drop for SwarmSession {
 
 /// Resolve the create-time advertise request into the directory to list in,
 /// or `None` when not advertising. Errors if `advertise` is set on a
-/// non-public swarm (directory listing requires the public network) or
-/// the directory name is invalid. The string-typed surface keeps `embed`
-/// iroh-free / clap-free, mirroring `CreateConfig`.
+/// non-public swarm (directory listing requires the public network).
 fn resolve_advertise_directory(
     advertise: bool,
-    directory: Option<String>,
+    directory: Option<SwarmName>,
     lookups: &LookupOpts,
 ) -> anyhow::Result<Option<SwarmName>> {
     if !advertise {
@@ -385,11 +386,10 @@ fn resolve_advertise_directory(
     if lookups.is_loopback() && !crate::util::tuning::directory_private_for_test() {
         anyhow::bail!("advertise needs a reachable swarm; create it with `public`");
     }
-    let directory_name = match directory {
-        Some(value) => SwarmName::new(value)
-            .map_err(|error| anyhow::anyhow!("invalid directory name: {error}"))?,
-        None => SwarmName::new(DEFAULT_DIRECTORY).expect("DEFAULT_DIRECTORY is a valid swarm name"),
-    };
+    let directory_name = directory
+        .unwrap_or_else(|| {
+            SwarmName::new(DEFAULT_DIRECTORY).expect("DEFAULT_DIRECTORY is a valid swarm name")
+        });
     Ok(Some(directory_name))
 }
 
@@ -433,7 +433,7 @@ pub(crate) fn spawn_advertiser(
         loop {
             ticker.tick().await;
             let ad = directory::Ad {
-                id: swarm_id.to_string(),
+                id: swarm_id.clone(),
                 peers: live_count.load(Ordering::Relaxed),
             };
             if let Err(error) = session.send(ad.to_body(), None).await {
@@ -456,7 +456,7 @@ pub struct SwarmListing {
     /// The advertised swarm's id — pass to [`SwarmSession::join`] to join.
     pub swarm: SwarmId,
     /// Human-readable swarm name (decoded from the id).
-    pub name: String,
+    pub name: SwarmName,
     /// `true` if the swarm is on the public network.
     pub public: bool,
     /// Live participant count from the most recent ad.
@@ -480,7 +480,7 @@ pub enum DirectoryEvent {
 fn public_listing(listing: &Listing) -> SwarmListing {
     SwarmListing {
         swarm: listing.swarm.clone(),
-        name: listing.name.as_str().to_owned(),
+        name: listing.name.clone(),
         public: listing.public,
         peers: listing.peers,
         first_seen_unix: listing.first_seen_unix,

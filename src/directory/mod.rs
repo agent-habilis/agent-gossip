@@ -68,7 +68,7 @@ pub(crate) fn directory_config() -> SwarmConfig {
 /// ignore unparseable bodies entirely).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct Ad {
-    pub id: String,
+    pub id: SwarmId,
     pub peers: usize,
 }
 
@@ -151,8 +151,11 @@ impl Listings {
     /// JSON stream every tick with identical data.
     pub(crate) fn observe(&mut self, body: &str, now: Instant) -> Option<ListingChange> {
         let ad = Ad::parse(body)?;
-        let swarm: Swarm = ad.id.parse().ok()?;
-        let swarm_id = SwarmId::new(ad.id).ok()?;
+        // `ad.id` is a `SwarmId` (shallow charset check only); the
+        // structural `Swarm` decode below is the real validity gate, so
+        // an id that doesn't decode is dropped here.
+        let swarm: Swarm = ad.id.as_str().parse().ok()?;
+        let swarm_id = ad.id;
 
         if let Some(listing) = self.entries.get_mut(&swarm_id) {
             listing.last_seen = now;
@@ -225,10 +228,17 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use super::{Ad, ListingChange, Listings, directory_swarm};
+    use crate::protocol::SwarmId;
     use crate::protocol::swarm::SwarmName;
 
     fn directory(name: &str) -> SwarmName {
         SwarmName::new(name).unwrap()
+    }
+
+    /// The advertised swarm's id for a directory of the given name.
+    fn advertised_id(name: &str) -> SwarmId {
+        SwarmId::new(directory_swarm(&directory(name)).to_string())
+            .expect("directory swarm id is valid")
     }
 
     #[test]
@@ -259,7 +269,7 @@ mod tests {
     #[test]
     fn ad_round_trips_through_body() {
         // Build a real advertised id so `observe` can decode it.
-        let advertised = directory_swarm(&directory("demo")).to_string();
+        let advertised = advertised_id("demo");
         let ad = Ad {
             id: advertised.clone(),
             peers: 4,
@@ -283,7 +293,7 @@ mod tests {
 
     #[test]
     fn observe_found_then_updated_then_expire_lost() {
-        let advertised = directory_swarm(&directory("demo")).to_string();
+        let advertised = advertised_id("demo");
         let body = Ad {
             id: advertised.clone(),
             peers: 2,
@@ -320,7 +330,7 @@ mod tests {
     #[test]
     fn unchanged_re_ad_refreshes_liveness_without_an_event() {
         let body = Ad {
-            id: directory_swarm(&directory("demo")).to_string(),
+            id: advertised_id("demo"),
             peers: 3,
         }
         .to_body();

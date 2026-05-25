@@ -18,7 +18,7 @@
 //! use agent_habilis_swarm::MessageBody;
 //!
 //! # async fn run() -> anyhow::Result<()> {
-//! let session = SwarmSession::join(JoinConfig::new("ahs...")).await?;
+//! let session = SwarmSession::join(JoinConfig::new("ahs...".parse()?)).await?;
 //! let mut rx = session.messages();
 //! session.send(MessageBody::new("hello")?, None).await?;
 //! while let Ok(msg) = rx.recv().await {
@@ -60,7 +60,10 @@ pub use protocol::message::{
     BodyError, IdError, Message, MessageBody, MessageId, MessageKind, PresenceSubtype,
 };
 pub use protocol::nickname::{Nickname, NicknameError};
-pub use protocol::swarm::{SwarmId, SwarmIdError};
+pub use protocol::swarm::{
+    NameError, RelayLadder, RelayLadderError, SwarmId, SwarmIdError, SwarmName,
+};
+pub use resolver::{JoinTarget, JoinTargetError};
 
 use anyhow::Result;
 use clap::Parser;
