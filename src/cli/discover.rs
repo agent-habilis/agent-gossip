@@ -11,6 +11,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
+use tokio::signal::unix::{Signal, SignalKind, signal};
 
 use crate::embed::{Directory, DirectoryEvent, SwarmListing};
 use crate::protocol::swarm::{SwarmName, resolve_lookups};
@@ -69,10 +70,12 @@ pub(super) async fn discover(directory: Option<SwarmName>, opts: JoinOpts) -> Re
         }
     }
 
-    // Agent / non-TTY mode: one JSON line per directory change until ctrl-c.
+    // Agent / non-TTY mode: one JSON line per directory change until
+    // interrupted (SIGINT or SIGTERM — see `interrupted`).
+    let mut sigterm = sigterm_stream();
     loop {
         tokio::select! {
-            _ = tokio::signal::ctrl_c() => break,
+            () = interrupted(&mut sigterm) => break,
             received = events.recv() => match received {
                 Some(change) => println!("{}", discover_event_json(&change)),
                 None => break,
@@ -81,6 +84,24 @@ pub(super) async fn discover(directory: Option<SwarmName>, opts: JoinOpts) -> Re
     }
     let _ = discoverer.close().await;
     Ok(())
+}
+
+/// Resolves on SIGINT (ctrl-c) or SIGTERM — the signals a supervisor or
+/// the `/swarm:discover` skill uses to stop a foreground discover. The
+/// embed directory session registers its own SIGTERM handler (which
+/// suppresses the OS default-terminate), so without listening for it here
+/// a plain `kill` would hang the stream / picker loop.
+async fn interrupted(sigterm: &mut Signal) {
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {}
+        _ = sigterm.recv() => {}
+    }
+}
+
+/// A SIGTERM stream (the project is Unix-only). Held across a loop and
+/// polled via [`interrupted`].
+fn sigterm_stream() -> Signal {
+    signal(SignalKind::terminate()).expect("register SIGTERM handler")
 }
 
 /// One directory change as a JSON line for `ahs discover --output json`.
@@ -157,9 +178,13 @@ async fn run_picker(
     // Drives the empty-state dot animation; no directory event fires while
     // we are waiting, so the redraw has to be self-clocked.
     let mut anim = tokio::time::interval(Duration::from_millis(400));
+    // A `kill` (SIGTERM/SIGINT) quits the picker so its `Drop` restores
+    // the tty; without this the terminal would be left in raw mode.
+    let mut sigterm = sigterm_stream();
 
     let outcome = loop {
         tokio::select! {
+            () = interrupted(&mut sigterm) => break PickerOutcome::Quit,
             key = key_rx.recv() => {
                 let Some(key) = key else { break PickerOutcome::Quit };
                 match key {

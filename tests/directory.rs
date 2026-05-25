@@ -12,7 +12,7 @@ mod common;
 
 use std::fs::{self, File};
 use std::path::Path;
-use std::process::{Child, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use common::{CONNECT_TIMEOUT, POLL, test_cmd, tmp_log};
@@ -131,4 +131,90 @@ fn directory_advertise_then_discover() {
         lost_ok,
         "discoverer never reported swarm_lost for {listed_id}\ndisc:\n{disc}"
     );
+}
+
+/// A running `discover` must exit on a plain **SIGTERM** (`kill <pid>`),
+/// not only on SIGINT. The embed directory session registers its own
+/// SIGTERM handler (suppressing the OS default-terminate), so `discover`'s
+/// own loop has to break on SIGTERM too — otherwise `kill` hangs it.
+/// Regression for that hang.
+#[test]
+fn discover_stops_on_sigterm() {
+    // Advertiser so the discoverer fully comes up (and thus has the embed
+    // session — and its SIGTERM handler — running) before we signal it.
+    let adv_log = tmp_log("term-adv");
+    let adv_file = File::create(&adv_log).unwrap();
+    let mut advertiser = test_cmd()
+        .args([
+            "create",
+            "--advertise",
+            // Own directory so this runs in parallel with
+            // `directory_advertise_then_discover` (a shared private
+            // directory derives the same loopback ports → contention).
+            "stoptest",
+            "--nickname",
+            "adv",
+            "--no-interactive",
+            "--output",
+            "json",
+        ])
+        .envs(DIR_ENV.iter().copied())
+        .stdout(Stdio::from(adv_file.try_clone().unwrap()))
+        .stderr(Stdio::from(adv_file))
+        .spawn()
+        .expect("spawn advertiser");
+    if wait_for_line(&adv_log, "\"event\":\"ready\"", CONNECT_TIMEOUT).is_none() {
+        reap(&mut advertiser);
+        panic!("advertiser never became ready");
+    }
+
+    let disc_log = tmp_log("term-disc");
+    let disc_file = File::create(&disc_log).unwrap();
+    let mut discoverer = test_cmd()
+        .args([
+            "discover",
+            "--directory",
+            "stoptest",
+            "--no-interactive",
+            "--output",
+            "json",
+        ])
+        .envs(DIR_ENV.iter().copied())
+        .stdout(Stdio::from(disc_file.try_clone().unwrap()))
+        .stderr(Stdio::from(disc_file))
+        .spawn()
+        .expect("spawn discoverer");
+
+    // Proven fully up once it surfaces the advertised swarm.
+    let up = wait_for_line(&disc_log, "\"event\":\"swarm_found\"", CONNECT_TIMEOUT).is_some();
+    reap(&mut advertiser);
+    if !up {
+        reap(&mut discoverer);
+        panic!(
+            "discoverer never surfaced a swarm\ndisc:\n{}",
+            fs::read_to_string(&disc_log).unwrap_or_default()
+        );
+    }
+
+    // Plain SIGTERM — the conventional stop. (std `Child` has no SIGTERM.)
+    let _ = Command::new("kill")
+        .arg(discoverer.id().to_string())
+        .status();
+
+    // Must exit promptly; before the fix it hung indefinitely.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut exited = false;
+    while Instant::now() < deadline {
+        if discoverer.try_wait().expect("try_wait").is_some() {
+            exited = true;
+            break;
+        }
+        std::thread::sleep(POLL);
+    }
+    // Always reap (harmless if it already exited) — guarantees `wait`.
+    reap(&mut discoverer);
+    let _ = fs::remove_file(&adv_log);
+    let _ = fs::remove_file(&disc_log);
+
+    assert!(exited, "discover did not exit within 5s of SIGTERM (hang regressed)");
 }
