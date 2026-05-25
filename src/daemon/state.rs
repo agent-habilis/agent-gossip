@@ -11,7 +11,7 @@ use iroh::EndpointId;
 use super::message_log::MessageLog;
 use super::rate_limit::SwarmRateLimiter;
 use crate::protocol::{MessageId, Nickname};
-use crate::util::state_file::StateFile;
+use crate::daemon::state_file::StateFile;
 use ahs_shared::DEFAULT_MESSAGE_LOG_SIZE;
 
 use crate::util::tuning::{KNOWN_ENDPOINTS_CAP, PENDING_OUTBOUND_CAP, SEEN_IDS_CAP};

@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use anyhow::Result;
 use iroh::{Endpoint, protocol::Router};
 use iroh_gossip::api::GossipTopic;
-use tokio::sync::{broadcast, mpsc, oneshot};
+use tokio::sync::{broadcast, mpsc, oneshot, watch};
 
 use crate::output;
 use crate::protocol::swarm::SwarmName;
@@ -105,6 +105,12 @@ pub(crate) struct EventLoopConfig {
     /// `beacon::ensure` is called with these on startup and every
     /// heal tick (claim-if-free in private mode).
     pub rendezvous_params: beacon::RendezvousParams,
+    /// Receives the bootstrap relay rung chosen off the event loop — by
+    /// the backgrounded startup probe and the beacon's liveness
+    /// self-monitor (`rendezvous_params.rung_tx` is the sending half). On
+    /// a change the loop re-registers the rendezvous and re-homes the
+    /// beacon, so the ladder walk never runs on the sole loop.
+    pub rung_rx: watch::Receiver<Option<iroh::RelayUrl>>,
     /// When this member may serve the rendezvous (beacon role).
     pub cohost: CoHostPolicy,
     /// When set, the daemon writes peer count changes to this file.

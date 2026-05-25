@@ -9,14 +9,17 @@ use super::{SwarmMode, SwarmName};
 
 /// The connectivity relay resolved from the allowlist. `Disabled` ⇒
 /// no relay at all (`RelayMode::Disabled`); `Pinned` ⇒ the
-/// lookup-layer pinned default; `Custom` ⇒ an operator URL. Relay
-/// is now an allowlist member like mdns/dht, not an always-on URL —
-/// the lookup layer turns `Pinned`/`Custom` into a concrete URL.
+/// lookup-layer pinned default *ladder* (the n0 prod set); `Custom` ⇒
+/// an operator-supplied **ordered ladder** (`--relay a,b,c`). Relay is
+/// an allowlist member like mdns/dht, not an always-on URL — the lookup
+/// layer turns `Pinned`/`Custom` into an ordered relay ladder, and the
+/// beacon homes on the first reachable rung (see `lookup::relay_ladder`
+/// / `lookup::select_bootstrap_rung`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum RelayChoice {
     Disabled,
     Pinned,
-    Custom(RelayUrl),
+    Custom(Vec<RelayUrl>),
 }
 
 /// The resolved lookup + connectivity config the endpoint builder
@@ -35,10 +38,11 @@ impl LookupOpts {
     /// embed/MCP sessions: `private` ⇒ everything off (loopback
     /// ladder); `public` ⇒ all lookups (mdns + dht) + the pinned (or
     /// custom) relay. Built directly rather than via the allowlist:
-    /// a custom relay must *not* suppress mdns/dht here (the embed/MCP
-    /// contract is all-lookups-on), unlike the CLI allowlist where
-    /// naming `--relay` alone restricts to relay only.
-    pub(crate) fn default_for(mode: SwarmMode, relay: Option<RelayUrl>) -> Self {
+    /// a custom relay ladder must *not* suppress mdns/dht here (the
+    /// embed/MCP contract is all-lookups-on), unlike the CLI allowlist
+    /// where naming `--relay` alone restricts to relay only. An empty
+    /// `relay` ladder ⇒ the pinned default.
+    pub(crate) fn default_for(mode: SwarmMode, relay: Vec<RelayUrl>) -> Self {
         match mode {
             // `relay` is ignored on private: upstream `resolve_relay`
             // already rejects a private relay before we get here.
@@ -50,20 +54,25 @@ impl LookupOpts {
             SwarmMode::Public => LookupOpts {
                 mdns: true,
                 dht: true,
-                relay: relay.map_or(RelayChoice::Pinned, RelayChoice::Custom),
+                relay: if relay.is_empty() {
+                    RelayChoice::Pinned
+                } else {
+                    RelayChoice::Custom(relay)
+                },
             },
         }
     }
 }
 
 /// CLI `--relay` intent: absent / bare / valued. Resolved into a
-/// [`RelayChoice`] by [`resolve_lookups`].
+/// [`RelayChoice`] by [`resolve_lookups`]. `Custom` carries the ordered
+/// ladder parsed from a comma-separated `--relay a,b,c`.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub(crate) enum RelaySelection {
     #[default]
     Unset,
     Default,
-    Custom(RelayUrl),
+    Custom(Vec<RelayUrl>),
 }
 
 impl RelaySelection {
@@ -187,7 +196,7 @@ pub(crate) fn resolve_lookups(mode: SwarmMode, lookups: LookupSet) -> Result<Loo
             let relay = match lookups.relay {
                 RelaySelection::Unset => RelayChoice::Disabled,
                 RelaySelection::Default => RelayChoice::Pinned,
-                RelaySelection::Custom(url) => RelayChoice::Custom(url),
+                RelaySelection::Custom(ladder) => RelayChoice::Custom(ladder),
             };
             Ok(LookupOpts {
                 mdns: lookups.mdns,
@@ -216,6 +225,10 @@ mod lookup_tests {
 
     fn url() -> iroh::RelayUrl {
         "https://relay.example".parse().unwrap()
+    }
+
+    fn ladder() -> Vec<iroh::RelayUrl> {
+        vec![url()]
     }
 
     #[test]
@@ -255,11 +268,27 @@ mod lookup_tests {
     fn public_valued_relay_is_custom_and_suppresses_lookups() {
         let opts = resolve_lookups(
             SwarmMode::Public,
-            lookups(false, false, RelaySelection::Custom(url())),
+            lookups(false, false, RelaySelection::Custom(ladder())),
         )
         .unwrap();
         assert!(!opts.mdns && !opts.dht);
-        assert_eq!(opts.relay, RelayChoice::Custom(url()));
+        assert_eq!(opts.relay, RelayChoice::Custom(ladder()));
+    }
+
+    #[test]
+    fn public_valued_relay_preserves_ladder_order() {
+        let rung0: iroh::RelayUrl = "https://a.example".parse().unwrap();
+        let rung1: iroh::RelayUrl = "https://b.example".parse().unwrap();
+        let opts = resolve_lookups(
+            SwarmMode::Public,
+            lookups(
+                false,
+                false,
+                RelaySelection::Custom(vec![rung0.clone(), rung1.clone()]),
+            ),
+        )
+        .unwrap();
+        assert_eq!(opts.relay, RelayChoice::Custom(vec![rung0, rung1]));
     }
 
     #[test]
@@ -276,9 +305,15 @@ mod lookup_tests {
     #[test]
     fn default_for_custom_relay_keeps_lookups_on() {
         // embed/MCP contract: a custom relay must not suppress mdns/dht.
-        let opts = LookupOpts::default_for(SwarmMode::Public, Some(url()));
+        let opts = LookupOpts::default_for(SwarmMode::Public, ladder());
         assert!(opts.mdns && opts.dht);
-        assert_eq!(opts.relay, RelayChoice::Custom(url()));
+        assert_eq!(opts.relay, RelayChoice::Custom(ladder()));
+    }
+
+    #[test]
+    fn default_for_empty_ladder_is_pinned() {
+        let opts = LookupOpts::default_for(SwarmMode::Public, Vec::new());
+        assert_eq!(opts.relay, RelayChoice::Pinned);
     }
 
     #[test]
@@ -294,7 +329,7 @@ mod lookup_tests {
             lookups(true, false, RelaySelection::Unset),
             lookups(false, true, RelaySelection::Unset),
             lookups(false, false, RelaySelection::Default),
-            lookups(false, false, RelaySelection::Custom(url())),
+            lookups(false, false, RelaySelection::Custom(ladder())),
         ];
         for set in cases {
             let via_resolve = resolve_lookups(SwarmMode::Private, set.clone());

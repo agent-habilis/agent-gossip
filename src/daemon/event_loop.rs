@@ -12,17 +12,17 @@ use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use futures_util::StreamExt;
-use iroh::Endpoint;
+use iroh::{Endpoint, RelayUrl};
 use iroh_gossip::api::{GossipReceiver, GossipSender};
 use tokio::io::BufReader;
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::{broadcast, mpsc, watch};
 
 use crate::output;
 use crate::protocol::swarm::SwarmName;
 use crate::protocol::{Message, Nickname, SwarmId};
 use crate::util::bounded_read::{LineRead, read_bounded_line};
-use crate::util::state_file::StateFile;
-use crate::{beacon, gossip, lifecycle};
+use crate::daemon::state_file::StateFile;
+use crate::{beacon, gossip, lifecycle, lookup};
 use ahs_shared::MAX_STDIN_LINE_BYTES;
 // Bare `ipc` is `daemon::ipc`; transport's socket server is by-item.
 use crate::transport::ipc::{IpcMessage, listen};
@@ -49,6 +49,7 @@ pub(crate) async fn run(cfg: EventLoopConfig) -> Result<()> {
         router: _router,
         max_peers,
         rendezvous_params,
+        rung_rx,
         cohost,
         state_file,
         live_count,
@@ -145,6 +146,7 @@ pub(crate) async fn run(cfg: EventLoopConfig) -> Result<()> {
         intervals,
         rendezvous,
         rendezvous_params,
+        rung_rx,
         cohost,
         started,
         external_quit_rx,
@@ -176,6 +178,9 @@ struct EventLoop {
     intervals: MaintenanceIntervals,
     rendezvous: Option<beacon::Rendezvous>,
     rendezvous_params: beacon::RendezvousParams,
+    /// Bootstrap rung chosen off-loop (startup probe + beacon
+    /// self-monitor); the loop applies changes via the rung-update arm.
+    rung_rx: watch::Receiver<Option<RelayUrl>>,
     /// When this member may serve the rendezvous (see [`CoHostPolicy`]).
     cohost: CoHostPolicy,
     /// Event-loop start, for the unmeshed-joiner co-host grace.
@@ -205,7 +210,8 @@ async fn event_loop(loop_state: EventLoop) -> Result<()> {
         interactive,
         intervals,
         mut rendezvous,
-        rendezvous_params,
+        mut rendezvous_params,
+        mut rung_rx,
         cohost,
         started,
         mut external_quit_rx,
@@ -282,9 +288,11 @@ async fn event_loop(loop_state: EventLoop) -> Result<()> {
             }
             _ = heal_interval.tick() => {
                 let (mono_gap, wall_gap) = timers::note_tick_gap("heal", &mut last_heal, &mut last_heal_wall, Duration::from_secs(HEAL_INTERVAL_SECS));
-                run_heal(mono_gap, wall_gap, &mut state, &endpoint, &sender, &rendezvous_params).await;
-                maybe_cohost(cohost, &state, started, &rendezvous_params, &endpoint, &mut rendezvous).await;
+                heal_tick(mono_gap, wall_gap, &mut state, &endpoint, &sender, &rendezvous_params, cohost, started, &mut rendezvous).await;
             }
+            // A bootstrap rung chosen off-loop (startup probe / beacon self-monitor); apply it cheaply.
+            // `Ok(())` only: a closed channel (impossible while the beacon params live) disables the arm.
+            Ok(()) = rung_rx.changed() => apply_rung_change(&mut rendezvous_params, &endpoint, &mut rendezvous, &rung_rx),
             _ = reclaim_interval.tick() => {
                 maybe_reclaim(cohost, &state, &rendezvous_params, &endpoint, &mut rendezvous).await;
             }
@@ -479,6 +487,10 @@ async fn run_heal(
             "heal: hard re-bootstrap edge"
         );
         state.meshed = false;
+        // Re-assert the rendezvous hint (the network changed). The rung
+        // is re-validated off-loop by the beacon's liveness self-monitor,
+        // so a rung that died during the freeze self-corrects — no inline
+        // ladder walk on the event loop here.
         setup::register_rendezvous(endpoint, params);
         gossip::heal::tick_heal_hard(endpoint, params.id, sender).await;
     } else {
@@ -494,6 +506,58 @@ async fn run_heal(
     // not cleared on the resume edge, hence the explicit `hard_edge` arm.
     if (hard_edge || state.linked_endpoints.is_empty()) && !state.known_endpoints.is_empty() {
         gossip::heal::rebridge_known(sender, &state.known_endpoints).await;
+    }
+}
+
+/// One heal tick: re-bootstrap/heal, then (re)claim the beacon if we
+/// should co-host. Grouped so the event-loop arm stays a one-liner.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "threads the heal + cohost state the event loop owns; splitting would only re-bundle it"
+)]
+async fn heal_tick(
+    mono_gap: Duration,
+    wall_gap: Duration,
+    state: &mut EventLoopState,
+    endpoint: &Endpoint,
+    sender: &GossipSender,
+    params: &beacon::RendezvousParams,
+    cohost: CoHostPolicy,
+    started: Instant,
+    rendezvous: &mut Option<beacon::Rendezvous>,
+) {
+    run_heal(mono_gap, wall_gap, state, endpoint, sender, params).await;
+    maybe_cohost(cohost, state, started, params, endpoint, rendezvous).await;
+}
+
+/// Apply a bootstrap rung chosen **off the event loop** (the startup
+/// confirmation probe or the beacon's liveness self-monitor publishing
+/// through `rendezvous_params.rung_tx`). Cheap and non-blocking — the
+/// ladder walk already ran in the background task. If the new rung
+/// differs from the one we're homed on, re-pre-register `rendezvous_id`
+/// at it and drop the beacon so `maybe_cohost` rebuilds it homed on the
+/// new rung.
+fn apply_rung_change(
+    params: &mut beacon::RendezvousParams,
+    endpoint: &Endpoint,
+    rendezvous: &mut Option<beacon::Rendezvous>,
+    rung_rx: &watch::Receiver<Option<RelayUrl>>,
+) {
+    let selected = rung_rx.borrow().clone();
+    if let lookup::RungRefresh::Rehome(new) =
+        lookup::plan_rung_refresh(params.bootstrap_relay.as_ref(), selected)
+    {
+        tracing::info!(
+            target: "agent_habilis_swarm::beacon",
+            old = ?params.bootstrap_relay,
+            new = ?new,
+            "bootstrap relay rung changed; re-registering rendezvous and re-homing the beacon"
+        );
+        params.bootstrap_relay = new;
+        setup::register_rendezvous(endpoint, params);
+        // Drop the beacon: `maybe_cohost` → `beacon::ensure` rebuilds it
+        // homed on the new rung at the next heal/reclaim tick.
+        *rendezvous = None;
     }
 }
 

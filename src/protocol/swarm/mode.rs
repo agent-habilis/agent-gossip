@@ -67,15 +67,34 @@ pub(crate) fn require_relay_public(mode: SwarmMode, has_relay: bool) -> Result<(
     Ok(())
 }
 
-/// Enforce [`require_relay_public`] then parse the relay string into a
-/// `RelayUrl`. Used by the create paths that take a relay as text
-/// (MCP tool args, embed `CreateConfig`).
-pub(crate) fn resolve_relay(mode: SwarmMode, relay: Option<&str>) -> Result<Option<RelayUrl>> {
-    require_relay_public(mode, relay.is_some())?;
-    relay
-        .map(|raw| {
-            raw.parse::<RelayUrl>()
-                .map_err(|error| anyhow::anyhow!("invalid relay URL: {error}"))
+/// Parse a comma-separated, ordered relay **ladder** (`a,b,c`) — order
+/// preserved (the beacon homes on the first reachable rung); an empty or
+/// whitespace-only entry is a hard error so a typo never silently
+/// shrinks the ladder. The single source of truth for `--relay` syntax,
+/// shared by the CLI value-parser and [`resolve_relay`] (the MCP/embed
+/// string path); `String` error so clap can surface it directly.
+pub(crate) fn parse_relay_ladder(raw: &str) -> Result<Vec<RelayUrl>, String> {
+    raw.split(',')
+        .map(|entry| {
+            let trimmed = entry.trim();
+            if trimmed.is_empty() {
+                return Err(format!("empty entry in relay ladder {raw:?}"));
+            }
+            trimmed
+                .parse::<RelayUrl>()
+                .map_err(|error| format!("invalid relay URL {trimmed:?}: {error}"))
         })
-        .transpose()
+        .collect()
+}
+
+/// Enforce [`require_relay_public`] then [`parse_relay_ladder`]. Used by
+/// the create paths that take a relay as text (MCP tool args, embed
+/// `CreateConfig`). `None` ⇒ an empty ladder (the caller's `default_for`
+/// then falls back to the pinned default).
+pub(crate) fn resolve_relay(mode: SwarmMode, relay: Option<&str>) -> Result<Vec<RelayUrl>> {
+    require_relay_public(mode, relay.is_some())?;
+    match relay {
+        None => Ok(Vec::new()),
+        Some(raw) => parse_relay_ladder(raw).map_err(|error| anyhow::anyhow!(error)),
+    }
 }

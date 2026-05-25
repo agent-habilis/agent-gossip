@@ -38,7 +38,7 @@ impl Session {
     pub(super) async fn create(
         mode: SwarmMode,
         name: SwarmName,
-        relay: Option<RelayUrl>,
+        relay: Vec<RelayUrl>,
         nickname: Nickname,
         advertise: Option<SwarmName>,
     ) -> Result<Self> {
@@ -63,7 +63,7 @@ impl Session {
     pub(super) async fn join(swarm_input: &str, nickname: Nickname) -> Result<Self> {
         let swarm: Swarm = crate::resolver::resolve(swarm_input).await?;
         let label = swarm.name.as_str().to_string();
-        let lookups = LookupOpts::default_for(swarm.mode, None);
+        let lookups = LookupOpts::default_for(swarm.mode, Vec::new());
         // `join` never advertises — a create-time decision.
         spawn_session(SetupKind::Join { swarm }, lookups, label, nickname, None).await
     }
@@ -298,7 +298,7 @@ mod tests {
         let session = Session::create(
             SwarmMode::Private,
             SwarmName::new("test1").unwrap(),
-            None,
+            Vec::new(),
             Nickname::from("alice-test"),
             None,
         )
@@ -315,7 +315,7 @@ mod tests {
         let creator = Session::create(
             SwarmMode::Private,
             SwarmName::new("two").unwrap(),
-            None,
+            Vec::new(),
             Nickname::from("alice-two"),
             None,
         )
@@ -364,7 +364,7 @@ mod tests {
         let alice = Session::create(
             SwarmMode::Private,
             SwarmName::new("replay").unwrap(),
-            None,
+            Vec::new(),
             Nickname::from("alice-replay"),
             None,
         )
@@ -402,7 +402,7 @@ mod tests {
         let alice = Session::create(
             SwarmMode::Private,
             SwarmName::new("cursor").unwrap(),
-            None,
+            Vec::new(),
             Nickname::from("alice-cursor"),
             None,
         )
@@ -491,7 +491,7 @@ mod tests {
         let first = Session::create(
             SwarmMode::Private,
             SwarmName::new("cy-a").unwrap(),
-            None,
+            Vec::new(),
             Nickname::from("cycler-a"),
             None,
         )
@@ -504,7 +504,7 @@ mod tests {
         let second = Session::create(
             SwarmMode::Private,
             SwarmName::new("cy-b").unwrap(),
-            None,
+            Vec::new(),
             Nickname::from("cycler-b"),
             None,
         )

@@ -30,12 +30,13 @@
 use std::net::{Ipv4Addr, SocketAddr};
 use std::time::Duration;
 
-use iroh::{Endpoint, EndpointAddr, EndpointId, SecretKey};
+use iroh::{Endpoint, EndpointAddr, EndpointId, RelayUrl, SecretKey};
 use iroh_gossip::proto::TopicId;
+use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
 use crate::lookup::{add_peer_addr, build_endpoint_for_mode, build_swarm, probe_connect};
-use crate::protocol::swarm::{LookupOpts, SwarmMode};
+use crate::protocol::swarm::{LookupOpts, RelayChoice, SwarmMode};
 use crate::util::tuning::{HEAL_PROBE_SECS, RENDEZVOUS_PROBE_SECS};
 
 /// Everything [`ensure`] needs to (re)build the rendezvous endpoint.
@@ -56,22 +57,46 @@ pub(crate) struct RendezvousParams {
     /// The participant's resolved lookup config. The beacon
     /// endpoint must publish `rendezvous_id` to the *same*
     /// address-lookups (or a joiner using only mDNS/DHT could never
-    /// resolve it) **and** home on the *same* relay (or the joiner's
-    /// relay-pinned rendezvous addr finds nothing) — see
-    /// `beacon_lookups`.
+    /// resolve it) — see `beacon_lookups`.
     pub lookups: LookupOpts,
+    /// The single relay **rung** the beacon homes on — initialized to
+    /// the first ladder rung (optimistic, unprobed) at setup and
+    /// corrected off the event loop: a backgrounded startup probe and
+    /// the beacon's own liveness self-monitor publish a new rung through
+    /// [`Self::rung_tx`], which the event loop applies back here. The
+    /// joiner pre-registers `rendezvous_id` at this exact rung
+    /// (`daemon::setup::register_rendezvous`), so the beacon must home
+    /// here or that relay-direct dial finds nothing. `None` ⇒ no
+    /// reachable relay (private mode, relay disabled, or every rung
+    /// down) — joiners fall back to mDNS/DHT.
+    pub bootstrap_relay: Option<RelayUrl>,
+    /// How the off-loop rung selectors (the backgrounded startup probe
+    /// and the beacon co-host's liveness self-monitor) publish a freshly
+    /// chosen rung. The event loop holds the matching receiver and, on a
+    /// change, updates [`Self::bootstrap_relay`], re-registers the
+    /// rendezvous, and re-homes the beacon — so the heavy ladder walk
+    /// never runs on the sole event loop.
+    pub rung_tx: watch::Sender<Option<RelayUrl>>,
 }
 
-/// A live co-hosted rendezvous endpoint. Dropping it aborts the task,
+/// A live co-hosted rendezvous endpoint. Dropping it aborts both tasks,
 /// releasing the endpoint + router (and, private, freeing the
 /// deterministic port for the next member to claim).
 pub(crate) struct Rendezvous {
+    /// The gossip co-host: subscribes, bridges the rendezvous into the
+    /// mesh, and re-asserts the participant link each heal tick.
     task: JoinHandle<()>,
+    /// The relay-rung liveness/discovery monitor ([`spawn_relay_monitor`]).
+    /// `None` for private / relay-disabled swarms (nothing to monitor).
+    monitor: Option<JoinHandle<()>>,
 }
 
 impl Drop for Rendezvous {
     fn drop(&mut self) {
         self.task.abort();
+        if let Some(monitor) = &self.monitor {
+            monitor.abort();
+        }
     }
 }
 
@@ -99,17 +124,23 @@ async fn rung_serves_our_swarm(
     ours
 }
 
-/// The beacon mirrors the participant's full lookup config —
-/// *address-lookups* (so a joiner resolves `rendezvous_id` via
-/// whichever it enabled) **and** the relay. The relay must match: the
-/// joiner pre-registers `rendezvous_id` at the pinned (or `--relay`)
-/// relay (see `daemon::setup::register_rendezvous`), so the beacon has
-/// to actually home there or that relay-direct dial finds nothing.
+/// The beacon mirrors the participant's *address-lookups* (so a joiner
+/// resolves `rendezvous_id` via whichever it enabled) but homes on a
+/// **single** relay rung — `params.bootstrap_relay`, the first
+/// reachable rung of the ladder. Unlike a participant (which spreads
+/// across the whole multi-relay set for resilience), the beacon must be
+/// at the one deterministic rung the joiner pre-registers
+/// (`daemon::setup::register_rendezvous`), or the relay-direct dial
+/// finds nothing. A `None` rung ⇒ relay off for the beacon (joiners use
+/// mDNS/DHT).
 fn beacon_lookups(params: &RendezvousParams) -> LookupOpts {
     LookupOpts {
         mdns: params.lookups.mdns,
         dht: params.lookups.dht,
-        relay: params.lookups.relay.clone(),
+        relay: params
+            .bootstrap_relay
+            .clone()
+            .map_or(RelayChoice::Disabled, |rung| RelayChoice::Custom(vec![rung])),
     }
 }
 
@@ -220,6 +251,17 @@ pub(crate) async fn ensure(
     let _ = add_peer_addr(&endpoint, participant.addr());
     let topic_id = params.topic_id;
 
+    // Relay-monitor inputs. The monitor runs as its **own** task (below),
+    // off both the event loop and this gossip task, so relay probes never
+    // stall rendezvous bridging. Spawned whenever relay is enabled
+    // (public + a non-empty ladder) — *not* gated on currently holding a
+    // rung, so a relay-less beacon keeps probing to rediscover one.
+    let ladder = crate::lookup::relay_ladder(&params.lookups.relay);
+    let monitors_relay = params.mode == SwarmMode::Public && !ladder.is_empty();
+    let monitor_endpoint = endpoint.clone();
+    let monitor_homed = params.bootstrap_relay.is_some();
+    let monitor_rung_tx = params.rung_tx.clone();
+
     let task = tokio::spawn(async move {
         use std::time::Duration;
 
@@ -269,6 +311,13 @@ pub(crate) async fn ensure(
         }
     });
 
+    // Relay liveness/discovery, off this gossip task: never stops
+    // probing, backs off while relay-less. `None` when relay is disabled
+    // (private / empty ladder).
+    let monitor = monitors_relay.then(|| {
+        crate::lookup::spawn_relay_monitor(monitor_endpoint, ladder, monitor_rung_tx, monitor_homed)
+    });
+
     tracing::info!("beacon role active: serving the rendezvous");
-    *current = Some(Rendezvous { task });
+    *current = Some(Rendezvous { task, monitor });
 }

@@ -14,18 +14,19 @@ use anyhow::Result;
 use tokio::signal::unix::{Signal, SignalKind, signal};
 
 use crate::embed::{Directory, DirectoryEvent, SwarmListing};
-use crate::protocol::swarm::{SwarmName, resolve_lookups};
+use crate::protocol::swarm::resolve_lookups;
 
-use super::args::{JoinOpts, OutputFormat};
+use super::args::{DiscoverOpts, OutputFormat};
 use super::join;
 
 /// Browse a directory. Human mode renders a live picker that
 /// hands off to `join` on selection; `--no-interactive` / `--output
 /// json` streams `swarm_found`/`swarm_lost` JSON lines instead (the
 /// agent picks and joins by id itself). The lookup flags / nickname
-/// in `opts` are reused for the eventual join.
-pub(super) async fn discover(directory: Option<SwarmName>, opts: JoinOpts) -> Result<()> {
-    let directory_label = directory
+/// in `opts.shared` are reused for the eventual join.
+pub(super) async fn discover(opts: DiscoverOpts) -> Result<()> {
+    let directory_label = opts
+        .directory
         .as_ref()
         .map_or_else(|| "global".to_owned(), |name| name.as_str().to_owned());
     // The directory session uses the same `--mdns/--dht/--relay` lookups
@@ -35,9 +36,11 @@ pub(super) async fn discover(directory: Option<SwarmName>, opts: JoinOpts) -> Re
         crate::directory::directory_mode(),
         opts.shared.lookups.to_set(),
     )?;
-    let mut discoverer =
-        Directory::open_with_lookups(directory.map(|name| name.as_str().to_owned()), lookups)
-            .await?;
+    let mut discoverer = Directory::open_with_lookups(
+        opts.directory.map(|name| name.as_str().to_owned()),
+        lookups,
+    )
+    .await?;
     // Route the directory session's logs to its per-member file (same as
     // create/join) so the picker and JSON stream aren't drowned in INFO
     // lines on stderr.
@@ -59,7 +62,7 @@ pub(super) async fn discover(directory: Option<SwarmName>, opts: JoinOpts) -> Re
                 // the joined swarm's own file (with its setup logs) rather
                 // than appending to the directory session's.
                 crate::logging::detach();
-                return join(&id, None, opts).await;
+                return join(&id, None, opts.shared).await;
             }
             PickerOutcome::Quit => {
                 let _ = discoverer.close().await;

@@ -1,12 +1,17 @@
 use std::net::{Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
+use std::time::Duration;
 
 use anyhow::Result;
-use iroh::{Endpoint, EndpointAddr};
+use iroh::{Endpoint, EndpointAddr, RelayUrl};
 use rand::RngCore;
+use tokio::sync::watch;
 
-use crate::lookup::{add_peer_addr, build_participant_endpoint, build_swarm, relay_url};
+use crate::lookup::{
+    add_peer_addr, build_participant_endpoint, build_swarm, relay_ladder, select_bootstrap_rung,
+};
 use crate::output;
+use crate::util::tuning::RELAY_RUNG_PROBE_SECS;
 use crate::protocol::crypto::{derive_topic_id, rendezvous_secret};
 use crate::protocol::swarm::{LookupOpts, Swarm, SwarmMode, SwarmName};
 use crate::protocol::{Nickname, SwarmId};
@@ -38,12 +43,20 @@ fn rendezvous_params(
     swarm: &Swarm,
     topic_id: iroh_gossip::proto::TopicId,
     lookups: &LookupOpts,
+    rung_tx: watch::Sender<Option<RelayUrl>>,
 ) -> RendezvousParams {
     let bind_ports = if swarm.mode == SwarmMode::Private {
         swarm.rendezvous_ports().to_vec()
     } else {
         Vec::new()
     };
+    // Optimistic rung 0 — the first ladder rung, **unprobed**, so setup
+    // (and the joiner's `ready`) never blocks on a relay handshake. A
+    // backgrounded probe (`spawn_startup_rung_confirmation`) and the
+    // beacon's own liveness self-monitor correct it off the event loop
+    // via `rung_tx` if rung 0 turns out to be unreachable. Empty for
+    // private / relay-disabled ⇒ `None`.
+    let bootstrap_relay = relay_ladder(&lookups.relay).first().cloned();
     RendezvousParams {
         mode: swarm.mode,
         topic_id,
@@ -51,7 +64,34 @@ fn rendezvous_params(
         bind_ports,
         id: swarm.rendezvous_id(),
         lookups: lookups.clone(),
+        bootstrap_relay,
+        rung_tx,
     }
+}
+
+/// Confirm the optimistic rung 0 **off the event loop**: walk the ladder
+/// once (the only relay handshakes setup pays, and detached so `ready`
+/// is already out) and, if the first *reachable* rung differs from rung
+/// 0, publish it through `rung_tx`. Covers a rung-0-down-at-start for
+/// both creator and joiner; the joiner has no beacon self-monitor, so
+/// this is its only startup correction. No-op for an empty (private /
+/// relay-disabled) ladder.
+fn spawn_startup_rung_confirmation(ladder: Vec<RelayUrl>, rung_tx: watch::Sender<Option<RelayUrl>>) {
+    if ladder.is_empty() {
+        return;
+    }
+    tokio::spawn(async move {
+        let confirmed =
+            select_bootstrap_rung(&ladder, Duration::from_secs(RELAY_RUNG_PROBE_SECS)).await;
+        rung_tx.send_if_modified(|current| {
+            if *current == confirmed {
+                false
+            } else {
+                *current = confirmed;
+                true
+            }
+        });
+    });
 }
 
 /// Pre-register `rendezvous_id`'s address so a cold joiner reaches it
@@ -61,11 +101,12 @@ fn rendezvous_params(
 ///
 /// - **private**: every loopback ladder rung (iroh's node-id dial
 ///   reaches whichever rung our beacon bound; see `crate::beacon`).
-/// - **public**: the seed-derived `rendezvous_id` at the single
-///   pinned (or `--relay`) relay — the beacon homes there
-///   (`beacon::beacon_lookups`), so this is a real relay-direct
-///   dial, no DNS/DHT/mDNS round-trip. DHT/mDNS stay wired as the
-///   eternal/LAN backstop if this relay is ever unreachable.
+/// - **public**: the seed-derived `rendezvous_id` at the chosen relay
+///   **rung** (`params.bootstrap_relay` — the first reachable rung of
+///   the ladder) — the beacon homes there (`beacon::beacon_lookups`),
+///   so this is a real relay-direct dial, no DNS/DHT/mDNS round-trip.
+///   DHT/mDNS stay wired as the eternal/LAN backstop if every rung is
+///   ever unreachable.
 ///
 /// Also re-asserted by the daemon's hard-heal path (resume / silent
 /// partition): the startup hint may now point at a dead path, so the
@@ -83,11 +124,11 @@ pub(crate) fn register_rendezvous(endpoint: &Endpoint, params: &RendezvousParams
             rungs = params.bind_ports.len(),
             "pre-registered rendezvous on the loopback port ladder"
         );
-    } else if let Some(relay) = relay_url(&params.lookups.relay) {
+    } else if let Some(relay) = params.bootstrap_relay.clone() {
         tracing::info!(
             target: "agent_habilis_swarm::lookup",
             relay = %relay,
-            "pre-registered rendezvous at the relay for zero-lookup dial"
+            "pre-registered rendezvous at the relay rung for zero-lookup dial"
         );
         addr = addr.with_relay_url(relay);
     } else {
@@ -114,6 +155,14 @@ pub(crate) async fn setup_swarm(
     lookups: LookupOpts,
     output: output::Output,
 ) -> Result<EventLoopConfig> {
+    // The off-loop rung channel: the backgrounded startup probe and the
+    // beacon's liveness self-monitor publish a chosen rung here; the
+    // event loop applies it (re-register + re-home) without ever running
+    // a ladder walk on the sole loop. Initialized to the optimistic
+    // rung 0 (empty ladder ⇒ `None`).
+    let ladder = relay_ladder(&lookups.relay);
+    let (rung_tx, rung_rx) = watch::channel(ladder.first().cloned());
+
     let (swarm_id, swarm_name, endpoint, router, topic, rdv, cohost) = match kind {
         SetupKind::Create {
             mode,
@@ -143,7 +192,7 @@ pub(crate) async fn setup_swarm(
             // Creator has no peers yet — bootstrap is empty.
             let topic = gossip.subscribe(topic_id, vec![]).await?;
 
-            let rdv = rendezvous_params(&swarm, topic_id, &lookups);
+            let rdv = rendezvous_params(&swarm, topic_id, &lookups, rung_tx.clone());
             register_rendezvous(&endpoint, &rdv);
 
             // The origin co-hosts the rendezvous immediately: it has
@@ -167,10 +216,10 @@ pub(crate) async fn setup_swarm(
 
             let endpoint = build_participant_endpoint(swarm.mode, &lookups).await?;
 
-            let rdv = rendezvous_params(&swarm, topic_id, &lookups);
+            let rdv = rendezvous_params(&swarm, topic_id, &lookups, rung_tx.clone());
             // Must precede the join: the participant resolves the
             // rendezvous id via this registered address — the loopback
-            // ladder (private) or the pinned relay (public).
+            // port ladder (private) or the chosen relay rung (public).
             register_rendezvous(&endpoint, &rdv);
 
             let (gossip, router) = build_swarm(endpoint.clone());
@@ -206,6 +255,11 @@ pub(crate) async fn setup_swarm(
         }
     };
 
+    // Off the critical path: `ready` is already out. Confirm/correct the
+    // optimistic rung 0 in the background (covers a joiner, which has no
+    // beacon self-monitor of its own).
+    spawn_startup_rung_confirmation(ladder, rung_tx);
+
     Ok(EventLoopConfig {
         topic,
         author,
@@ -217,6 +271,7 @@ pub(crate) async fn setup_swarm(
         router,
         max_peers,
         rendezvous_params: rdv,
+        rung_rx,
         cohost,
         state_file,
         // Set by the advertise path (cli::create / embed::create) before

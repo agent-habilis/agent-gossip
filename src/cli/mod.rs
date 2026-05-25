@@ -15,7 +15,7 @@ use crate::protocol::swarm::{
     DirectorySelection, LookupOpts, Swarm, SwarmMode, SwarmName, resolve_lookups,
     validate_advertise,
 };
-use crate::protocol::{MessageBody, MessageId, Nickname, SwarmId};
+use crate::protocol::Nickname;
 use crate::resolver;
 use crate::transport::ipc::{self, IpcCommand};
 
@@ -23,7 +23,7 @@ mod args;
 mod discover;
 
 pub(crate) use args::Cli;
-use args::{Commands, CreateOpts, JoinOpts, SharedServerOpts};
+use args::{Commands, CreateOpts, MsgOpts, PingOpts, PollOpts, SharedServerOpts};
 
 /// `join` has no `--public`/`--name`: both are encoded in the `ahs…`
 /// identifier and auto-detected. Without this, clap rejects them with
@@ -48,31 +48,15 @@ fn reject_id_encoded_flag(flag: &str, present: bool) -> Result<()> {
 pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
     match cli.command {
         Commands::Create { opts } => create(opts).await,
-        Commands::Join {
-            swarm,
-            nickname,
-            public,
-            name,
-            opts,
-        } => {
-            reject_id_encoded_flag("--public", public)?;
-            reject_id_encoded_flag("--name", name.is_some())?;
-            join(&swarm, nickname, opts).await
+        Commands::Join { opts } => {
+            reject_id_encoded_flag("--public", opts.public)?;
+            reject_id_encoded_flag("--name", opts.name.is_some())?;
+            join(&opts.swarm, opts.nickname, opts.shared).await
         }
-        Commands::Msg {
-            swarm,
-            nickname,
-            text,
-            reply,
-        } => msg(&swarm, &nickname, text, reply).await,
-        Commands::Poll {
-            swarm,
-            nickname,
-            after,
-            output: _,
-        } => poll(&swarm, &nickname, after).await,
-        Commands::Ping { swarm, nickname } => ping(&swarm, &nickname).await,
-        Commands::Discover { directory, opts } => discover::discover(directory, opts).await,
+        Commands::Msg { opts } => msg(opts).await,
+        Commands::Poll { opts } => poll(opts).await,
+        Commands::Ping { opts } => ping(opts).await,
+        Commands::Discover { opts } => discover::discover(opts).await,
         Commands::Mcp => crate::mcp::run().await,
     }
 }
@@ -139,14 +123,18 @@ async fn create(opts: CreateOpts) -> Result<()> {
 /// Join an existing swarm by its identifier (ahs...), a domain, or a
 /// supported git repo URL. The network mode is decoded from the id;
 /// lookup flags are per-process (the joiner opts in itself).
-async fn join(swarm_input: &str, nickname: Option<Nickname>, opts: JoinOpts) -> Result<()> {
+async fn join(
+    swarm_input: &str,
+    nickname: Option<Nickname>,
+    shared: SharedServerOpts,
+) -> Result<()> {
     let swarm: Swarm = resolver::resolve(swarm_input).await?;
-    let lookups = resolve_lookups(swarm.mode, opts.shared.lookups.to_set())?;
+    let lookups = resolve_lookups(swarm.mode, shared.lookups.to_set())?;
     // `join` never advertises — that is a create-time decision.
     run_session(
         SetupKind::Join { swarm },
         lookups,
-        opts.shared,
+        shared,
         nickname,
         DirectorySelection::Unset,
     )
@@ -163,19 +151,20 @@ struct MsgResponse {
 }
 
 /// Post a message to a swarm via the running server's IPC socket.
-async fn msg(
-    swarm: &SwarmId,
-    nickname: &Nickname,
-    text: MessageBody,
-    reply: Option<Nickname>,
-) -> Result<()> {
+async fn msg(opts: MsgOpts) -> Result<()> {
+    let MsgOpts {
+        swarm,
+        nickname,
+        text,
+        reply,
+    } = opts;
     let cmd = IpcCommand::Msg {
-        swarm: swarm.clone(),
+        swarm,
         body: text,
         reply,
     };
 
-    let resp = ipc::send(&cmd, nickname).await?;
+    let resp = ipc::send(&cmd, &nickname).await?;
     let parsed: MsgResponse = serde_json::from_str(&resp)?;
 
     // A rate-limited send is a deliberate drop, not a failure — surface it
@@ -200,13 +189,18 @@ async fn msg(
 }
 
 /// Retrieve buffered messages from a running swarm process via IPC.
-async fn poll(swarm: &SwarmId, nickname: &Nickname, after: Option<MessageId>) -> Result<()> {
-    let cmd = IpcCommand::Poll {
-        swarm: swarm.clone(),
+/// `poll` always emits the raw IPC JSON; the `--output` flag is accepted
+/// for symmetry but not consulted here.
+async fn poll(opts: PollOpts) -> Result<()> {
+    let PollOpts {
+        swarm,
+        nickname,
         after,
-    };
+        output: _,
+    } = opts;
+    let cmd = IpcCommand::Poll { swarm, after };
 
-    let resp = ipc::send(&cmd, nickname).await?;
+    let resp = ipc::send(&cmd, &nickname).await?;
     println!("{resp}");
 
     Ok(())
@@ -215,11 +209,10 @@ async fn poll(swarm: &SwarmId, nickname: &Nickname, after: Option<MessageId>) ->
 /// Arm an RTT round on the running daemon. Fire-and-forget: the daemon
 /// acks immediately and emits the `ping_report` on its own
 /// `--output json` stream once the collection window closes.
-async fn ping(swarm: &SwarmId, nickname: &Nickname) -> Result<()> {
-    let cmd = IpcCommand::Ping {
-        swarm: swarm.clone(),
-    };
-    let resp = ipc::send(&cmd, nickname).await?;
+async fn ping(opts: PingOpts) -> Result<()> {
+    let PingOpts { swarm, nickname } = opts;
+    let cmd = IpcCommand::Ping { swarm };
+    let resp = ipc::send(&cmd, &nickname).await?;
     let parsed: MsgResponse = serde_json::from_str(&resp)?;
     if !parsed.ok {
         anyhow::bail!(

@@ -1,7 +1,10 @@
-//! Developer-log plumbing: the tracing directive filter ([`log_filter`])
-//! and the deferred per-member file sink ([`sink`]). `--output json`
-//! (stdout) is a separate path and is unaffected by anything here.
+//! Developer-log plumbing: the tracing directive filter ([`log_filter`]),
+//! the deferred per-member file sink ([`sink`]), and the per-message
+//! [`messages`] logger on the `agent_habilis_swarm::messages` target.
+//! `--output json` (stdout) is a separate path and is unaffected by
+//! anything here.
 
+pub(crate) mod messages;
 mod sink;
 
 pub use sink::LogSink;

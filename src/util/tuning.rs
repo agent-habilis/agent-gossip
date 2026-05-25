@@ -199,6 +199,41 @@ pub(crate) fn directory_private_for_test() -> bool {
     std::env::var_os("AHS_DIRECTORY_PRIVATE").is_some()
 }
 
+/// Per-rung timeout when selecting the public-mode bootstrap relay
+/// ([`crate::lookup::select_bootstrap_rung`]) and when the beacon polls
+/// its own rung's liveness. The selector walks the relay ladder and
+/// homes on the first rung whose pinned endpoint reaches `online()`
+/// within this budget; a rung that does not answer in time is treated
+/// as unreachable and the next is tried.
+///
+/// Set to iroh's `NET_REPORT_TIMEOUT` (10s): `online()`'s own docs say
+/// to use a timeout close to it so at least one net-report has been
+/// attempted — a shorter budget can misjudge a healthy-but-slow relay
+/// as down and trigger a spurious fall-through.
+pub(crate) const RELAY_RUNG_PROBE_SECS: u64 = 10;
+
+/// How often the beacon polls whether its current relay rung is still
+/// connected (`timeout(RELAY_RUNG_PROBE_SECS, online())` on its own
+/// endpoint). Off the event loop, inside the beacon co-host task.
+pub(crate) const RELAY_LIVENESS_INTERVAL_SECS: u64 = 10;
+
+/// Debounce: consecutive failed liveness polls before the beacon
+/// concludes its rung is gone and re-walks the ladder. >1 so a single
+/// transient blip (iroh auto-reconnects its home relay within a tick)
+/// does not thrash the beacon between rungs.
+pub(crate) const RELAY_LIVENESS_FAILS_TO_EVICT: u32 = 2;
+
+/// Relay-less rediscovery backoff bounds. When the beacon holds **no**
+/// rung (every ladder rung was unreachable), it keeps re-walking the
+/// ladder to rediscover a recovered rung — but backs off between
+/// rounds (`crate::lookup::next_relay_backoff`, doubling from MIN to
+/// MAX) so an all-down ladder isn't hammered. The MIN is the first
+/// inter-round wait; MAX caps it (still re-walking forever, just
+/// sparsely). Distinct from `RELAY_LIVENESS_INTERVAL_SECS`, which is the
+/// *homed* poll cadence (cheap, no backoff).
+pub(crate) const RELAY_REPROBE_BACKOFF_MIN_SECS: u64 = 30;
+pub(crate) const RELAY_REPROBE_BACKOFF_MAX_SECS: u64 = 300;
+
 /// Timeout for the private-mode rendezvous identity probe. When a
 /// ladder rung is `AddrInUse`, a member probes it to tell *our*
 /// swarm's beacon (→ stay a participant) from an unrelated swarm

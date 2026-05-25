@@ -68,8 +68,9 @@ pub struct CreateConfig {
     /// `true` = public (cross-machine networking, pkarr lookup); `false`
     /// = private (localhost only). Default `false`.
     pub public: bool,
-    /// Custom relay URL, honored only with `public`. `None` uses the
-    /// default relay. Parsed internally.
+    /// Custom relay ladder — one URL or a comma-separated `a,b,c` in
+    /// preference order — honored only with `public`. `None` uses the
+    /// default n0 prod ladder. Parsed internally (see `parse_relay_ladder`).
     pub relay: Option<String>,
     /// List this swarm in a directory so discoverers can find it
     /// without its `ahs…` id. Requires `public`. Default `false`.
@@ -135,7 +136,7 @@ impl SwarmSession {
     /// setup fails, or the join times out (bootstrap peer unreachable).
     pub async fn join(cfg: JoinConfig) -> anyhow::Result<Self> {
         let swarm = resolver::resolve(&cfg.target).await?;
-        let lookups = LookupOpts::default_for(swarm.mode, None);
+        let lookups = LookupOpts::default_for(swarm.mode, Vec::new());
         let author = cfg.nickname.unwrap_or_else(Nickname::random);
         let (events_tx, events_rx) = mpsc::unbounded_channel();
         let elc = setup_swarm(
@@ -535,7 +536,7 @@ impl Directory {
     pub async fn open(name: Option<impl Into<String>>) -> anyhow::Result<Self> {
         // Match the directory's mode (public normally; private under the
         // test hook) so the lookups are valid for it.
-        let lookups = LookupOpts::default_for(directory::directory_mode(), None);
+        let lookups = LookupOpts::default_for(directory::directory_mode(), Vec::new());
         Self::open_with_lookups(name, lookups).await
     }
 

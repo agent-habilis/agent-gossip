@@ -15,7 +15,8 @@ changing code, keep these distinct:
 | **peer** | prose only | Informal synonym for "another participant". Never a load-bearing identifier or field name in new code. | — |
 | **rendezvous** | identity | The seed-derived bootstrap identity (keypair + ports) every joiner computes locally. Code: `protocol::crypto`. | seed |
 | **beacon** | role | The one live member currently binding and serving the rendezvous endpoint. Migrates on death. Code: `beacon`. | — |
-| **lookup** | transport | A mechanism that resolves a seed-derived `rendezvous_id` into a reachable address — mDNS (LAN), the mainline DHT, or the relay. The `--mdns/--dht/--relay` allowlist. Code: `lookup`. | — |
+| **lookup** | lookup | A mechanism that resolves a seed-derived `rendezvous_id` into a reachable address — mDNS (LAN), the mainline DHT, or the relay. The `--mdns/--dht/--relay` allowlist. Each is **feature-complete on its own**; extras are reliability layers (see below). Code: `lookup`. | — |
+| **ladder** | transport | An *ordered* set of rendezvous rungs the beacon claims in preference order, so every member converges on the same one. Two instances: the seed-derived **loopback-port** ladder (private) and the **relay** ladder (public — the n0 prod set, or `--relay a,b,c`). The beacon homes on the first reachable/free rung and re-elects there on death. Code: `beacon` (ports), `lookup::select_bootstrap_rung` (relays). | — |
 | **surfaced** | presentation | A participant whose arrival was *shown* to the operator/agent. `surfaced ⊆ participants`; presentation-only — the roster stays complete for anti-entropy regardless. State: `surfaced`. | nickname |
 | **quiet** | heartbeat | A participant evicted for silence past `ALIVE_TIMEOUT_SECS` but who may return. State: `quiet`. | nickname |
 | **directory** | discovery | A named, well-known public `Swarm` (`kdf(DIRECTORY_BASE_SEED, name)`) that swarms **advertise** their `ahs…` id into and **discover** browses. Not a server — itself a swarm (own rendezvous, reached via lookups). Default `global`. Code: `directory`. | directory name |
@@ -42,6 +43,21 @@ Invariants that follow from the layering:
 - **author**: the `Nickname` that wrote a message. Same value-type as
   a participant id; the distinct word marks "sender of *this*
   message", not a separate concept.
+- **Lookups are independently sufficient**: each lookup (mDNS / DHT /
+  relay) is **feature-complete on its own** — any single one enabled
+  must bootstrap *and* run a swarm with no other present. Additional
+  mechanisms are **reliability layers**, never feature dependencies
+  (they widen reachability and remove single points of failure). This
+  is why the beacon homes on **one deterministic relay rung** rather
+  than spreading across the set: iroh does not reliably race multiple
+  relay candidates in an `EndpointAddr`, so relay-only bootstrap needs a
+  rung every member computes identically — the **ladder**. Under equal
+  relay visibility "first reachable rung" is a global function, so all
+  members meet at the same rung and fail over together; under *unequal*
+  visibility the relay layer can't guarantee a meeting, and that is
+  exactly where mDNS/DHT take over. (Participant *connectivity* still
+  uses the full multi-relay set for resilience — only the rendezvous
+  rung is pinned.)
 
 ## Installation
 
@@ -88,13 +104,13 @@ different topic and finds no peers.
 
 Every member co-hosts the rendezvous (the **beacon** role) so a cold joiner
 can always bootstrap from whoever is currently alive:
-- **public**: by default the beacon homes on one deterministic relay (a
-  hard-pinned default, or `--relay {URL}`); joiners pre-register that
-  address for a zero-lookup relay-direct dial. mDNS (same-LAN) and the
-  mainline DHT (operator-free, eternal backstop) also publish/resolve
-  `rendezvous_id`. The participant endpoint uses iroh's resilient
-  multi-relay default. Each leg (relay/mDNS/DHT) is allowlist-gated —
-  see "Lookup flags" below.
+- **public**: by default the beacon homes on the first reachable rung of
+  a deterministic relay *ladder* (the n0 prod set, or a custom
+  `--relay a,b,c`); joiners pre-register that same rung for a zero-lookup
+  relay-direct dial. mDNS (same-LAN) and the mainline DHT (operator-free,
+  eternal backstop) also publish/resolve `rendezvous_id`. The participant
+  endpoint uses iroh's resilient multi-relay default. Each leg
+  (relay/mDNS/DHT) is allowlist-gated — see "Lookup flags" below.
 - **private**: a deterministic loopback port *ladder* derived from `seed`;
   members claim-if-free the first rung (identity-probed), so the beacon
   role migrates to a surviving member within ~15s of the holder's death.
@@ -114,26 +130,30 @@ rendezvous, all **combinable** and governed by one rule: `--mdns` (LAN
 multicast), `--dht` (mainline BitTorrent DHT), and `--relay` (the relay,
 both connectivity and the relay-direct rendezvous dial). They are a
 **presence allowlist**: passing *none* enables **all three** (mdns + dht
-+ pinned relay); passing *any* restricts to those (`--mdns` ⇒ mDNS only,
-relay and DHT off). The relay-direct dial is the fast path; mDNS
-accelerates same-LAN; the DHT is the operator-free eternal backstop.
++ default relay ladder); passing *any* restricts to those (`--mdns` ⇒
+mDNS only, relay and DHT off). The relay-direct dial is the fast path;
+mDNS accelerates same-LAN; the DHT is the operator-free eternal backstop.
 There is no N0-DNS lookup or `--n0` flag.
 
-`--relay` is the one flag that carries an optional value: bare `--relay`
-⇒ the hard-pinned default relay; `--relay {URL}` ⇒ a custom relay (the
-beacon homes there and joiners pre-register it). Excluding `--relay`
-while naming another flag disables the relay entirely
-(`RelayMode::Disabled` — no relay-direct dial, no fallback). When the
-relay *is* enabled, the beacon homes on the pinned/custom relay while a
-participant on the pinned default uses iroh's resilient multi-relay
-default; a custom relay pins both.
+`--relay` is the one flag that carries an optional value, and it accepts
+an **ordered, comma-separated ladder**: bare `--relay` ⇒ the default n0
+prod relay set; `--relay {URL}` or `--relay {URL1},{URL2},…` ⇒ a custom
+ladder. The beacon homes on the **first reachable rung** and joiners
+pre-register `rendezvous_id` at that same rung — under equal relay
+visibility every member converges on the same rung and fails over to the
+next together (the public analog of the private loopback-port ladder).
+Excluding `--relay` while naming another flag disables the relay
+entirely (`RelayMode::Disabled` — no relay-direct dial, no fallback).
+While the rendezvous rung is single and deterministic, each
+*participant* endpoint still spreads across the whole ladder (iroh's
+resilient multi-relay default / the full custom set) for connectivity.
 
 These are **per-process and not encoded in the id**: every member
 (creator and each joiner, via the same flags on `join`) must enable a
 mechanism the others also enable — the same seed-derived `rendezvous_id`
-resolves through whichever overlaps, and a custom `--relay {URL}` must
-match across members. The beacon co-host publishes to exactly what you
-select.
+resolves through whichever overlaps, and a custom `--relay` ladder must
+match across members (same URLs, same order). The beacon co-host
+publishes to exactly what you select.
 
 All of `--mdns`/`--dht`/`--relay` require `--public`; using one
 without it (private, loopback only) is a hard error naming the
@@ -488,6 +508,12 @@ All dev tasks run through `cargo task`:
 ### Testing
 
 `cargo task test` / `cargo task ci` run the unit/integration suite.
+
+> **Always run tests in the background.** The subprocess reliability
+> tests pay an irreducible ~34s+ handoff floor (see below), so the suite
+> takes minutes — launch it as a background job and poll, rather than
+> blocking the turn on it.
+
 Tests are layered:
 
 - **In-process (default, fast):** behavioral + output-schema tests
