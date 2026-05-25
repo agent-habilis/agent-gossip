@@ -23,7 +23,7 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 
 use crate::protocol::crypto::kdf;
-use crate::protocol::swarm::{Swarm, SwarmConfig, SwarmName};
+use crate::protocol::swarm::{LookupOpts, Swarm, SwarmConfig, SwarmName};
 use crate::protocol::{MessageBody, SwarmId};
 
 /// Domain-separation seed for every directory. The directory name is
@@ -33,30 +33,33 @@ use crate::protocol::{MessageBody, SwarmId};
 /// orphans every existing directory (a wire-incompatible directory change).
 const DIRECTORY_BASE_SEED: [u8; 32] = *b"agent-habilis-swarm/directory/v1";
 
-/// The well-known public [`Swarm`] for a directory. Both `--advertise
-/// <name>` and `ahs discover --directory <name>` call this, so they
-/// derive the identical topic + rendezvous and join the same mesh. The
-/// name is mixed into both the seed (here) and, downstream, the topic
-/// derivation (via [`Swarm`]), so a different name yields a fully
-/// independent directory.
-pub(crate) fn directory_swarm(directory: &SwarmName) -> Swarm {
+/// The well-known [`Swarm`] for a directory, reached over `lookups`. Both
+/// `--advertise <name>` and `ahs discover --directory <name>` call this; the
+/// seed + rendezvous are name-derived (so they're identical regardless of
+/// `lookups`), but the **topic** mixes in the config bytes — which include the
+/// lookups — so an advertiser and a discoverer meet only when they pass the
+/// **same** `lookups`. That is deliberate: the directory's lookups are the
+/// advertiser's own swarm lookups (so an mDNS-only swarm advertises over mDNS
+/// only) and the discoverer's `--mdns/--dht/--relay` choice, and the two must
+/// align to see each other. A different name still yields a fully independent
+/// directory.
+pub(crate) fn directory_swarm(directory: &SwarmName, lookups: LookupOpts) -> Swarm {
     Swarm::new(
         kdf(&DIRECTORY_BASE_SEED, directory.as_bytes()),
         directory.clone(),
-        directory_config(),
+        directory_config(lookups),
     )
 }
 
-/// The config every directory swarm uses: the all-on lookup preset in
-/// normal operation; loopback-only under `AHS_DIRECTORY_PRIVATE` so the
-/// live advertise→discover path is testable in CI without the public
-/// relay. Its lookups are the directory session's lookups, so a member
-/// reaches the directory exactly as it reaches the directory's swarm.
-pub(crate) fn directory_config() -> SwarmConfig {
-    if crate::util::tuning::directory_private_for_test() {
-        SwarmConfig::loopback()
-    } else {
-        SwarmConfig::public_preset()
+/// The config a directory swarm uses for `lookups`: the standard rate limit
+/// (fixed, so the topic varies only with the lookups) plus the caller's chosen
+/// lookups. The lookups become the directory session's lookups, so a member
+/// reaches the directory over exactly those mechanisms — a disabled leg issues
+/// no network requests for the directory at all.
+pub(crate) fn directory_config(lookups: LookupOpts) -> SwarmConfig {
+    SwarmConfig {
+        rate_limit_per_min: ahs_shared::RATE_LIMIT_PER_MIN,
+        lookups,
     }
 }
 
@@ -229,7 +232,7 @@ mod tests {
 
     use super::{Ad, ListingChange, Listings, directory_swarm};
     use crate::protocol::SwarmId;
-    use crate::protocol::swarm::SwarmName;
+    use crate::protocol::swarm::{LookupOpts, SwarmName};
 
     fn directory(name: &str) -> SwarmName {
         SwarmName::new(name).unwrap()
@@ -237,33 +240,53 @@ mod tests {
 
     /// The advertised swarm's id for a directory of the given name.
     fn advertised_id(name: &str) -> SwarmId {
-        SwarmId::new(directory_swarm(&directory(name)).to_string())
+        SwarmId::new(directory_swarm(&directory(name), LookupOpts::public_preset()).to_string())
             .expect("directory swarm id is valid")
     }
 
     #[test]
     fn directory_is_deterministic_per_name() {
-        let one = directory_swarm(&directory("global"));
-        let two = directory_swarm(&directory("global"));
+        let one = directory_swarm(&directory("global"), LookupOpts::public_preset());
+        let two = directory_swarm(&directory("global"), LookupOpts::public_preset());
         assert_eq!(
             one.to_string(),
             two.to_string(),
-            "same directory ⇒ same swarm"
+            "same directory + same lookups ⇒ same swarm"
         );
     }
 
     #[test]
     fn distinct_names_are_distinct_directories() {
         assert_ne!(
-            directory_swarm(&directory("global")).to_string(),
-            directory_swarm(&directory("gamedev")).to_string(),
+            directory_swarm(&directory("global"), LookupOpts::public_preset()).to_string(),
+            directory_swarm(&directory("gamedev"), LookupOpts::public_preset()).to_string(),
             "different names ⇒ independent directories"
         );
     }
 
     #[test]
-    fn directory_is_public() {
-        assert!(!directory_swarm(&directory("global")).is_loopback());
+    fn directory_is_public_with_public_lookups() {
+        assert!(!directory_swarm(&directory("global"), LookupOpts::public_preset()).is_loopback());
+    }
+
+    #[test]
+    fn directory_topic_couples_to_lookups() {
+        // The symmetry rule: same name but different lookups ⇒ a different
+        // directory swarm (id encodes config_bytes, and the topic derives
+        // from those same bytes), so an advertiser and a discoverer meet only
+        // when their lookups match. Equal lookups ⇒ identical swarm.
+        let name = directory("global");
+        let all_on = directory_swarm(&name, LookupOpts::public_preset()).to_string();
+        let all_on_again = directory_swarm(&name, LookupOpts::public_preset()).to_string();
+        let loopback = directory_swarm(&name, LookupOpts::loopback()).to_string();
+        assert_eq!(
+            all_on, all_on_again,
+            "same name + same lookups ⇒ same directory"
+        );
+        assert_ne!(
+            all_on, loopback,
+            "same name, different lookups ⇒ different directory (they won't meet)"
+        );
     }
 
     #[test]

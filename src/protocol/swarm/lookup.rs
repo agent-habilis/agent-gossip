@@ -171,6 +171,9 @@ pub(crate) struct SwarmConfig {
 
 impl SwarmConfig {
     /// Default loopback-only config: the standard rate limit, no lookups.
+    /// Test-only since the directory now builds its config from explicit
+    /// lookups and `create` constructs `SwarmConfig` directly.
+    #[cfg(test)]
     pub(crate) fn loopback() -> Self {
         SwarmConfig {
             rate_limit_per_min: ahs_shared::RATE_LIMIT_PER_MIN,
@@ -179,7 +182,8 @@ impl SwarmConfig {
     }
 
     /// Default reachable-across-machines config: the standard rate limit,
-    /// the all-on lookup preset.
+    /// the all-on lookup preset. Test-only (see [`SwarmConfig::loopback`]).
+    #[cfg(test)]
     pub(crate) fn public_preset() -> Self {
         SwarmConfig {
             rate_limit_per_min: ahs_shared::RATE_LIMIT_PER_MIN,

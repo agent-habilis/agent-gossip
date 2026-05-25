@@ -733,7 +733,10 @@ mod tests {
         // `Eager` (claims, doesn't probe), which the probe assertion guards.
         let advertiser = crate::embed::DIRECTORY_ADVERTISER_COHOST;
         assert!(claims_at_startup(advertiser), "must claim at t=0");
-        assert!(probes_before_claim(advertiser), "must probe before claiming");
+        assert!(
+            probes_before_claim(advertiser),
+            "must probe before claiming"
+        );
 
         // The swarm origin (`create`) claims at startup but skips the probe;
         // joiners and consumers don't claim at startup at all.

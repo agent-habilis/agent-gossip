@@ -8,7 +8,7 @@ use anyhow::Result;
 use serde::Deserialize;
 
 use crate::daemon::run as run_event_loop;
-use crate::daemon::setup::setup_swarm;
+use crate::daemon::setup::{SetupKind, setup_swarm};
 use crate::daemon::{CreateParams, JoinParams, Resolved};
 use crate::embed::spawn_advertiser;
 use crate::output::{Output, OutputMode};
@@ -69,6 +69,12 @@ async fn run_session(resolved: Resolved, shared: SharedServerOpts) -> Result<()>
         author,
         advertise_directory,
     } = resolved;
+    // The advertiser reaches the directory over this swarm's own lookups
+    // (only `create` advertises, so only `Create` carries them).
+    let directory_lookups = match &kind {
+        SetupKind::Create { config, .. } => Some(config.lookups.clone()),
+        SetupKind::Join { .. } => None,
+    };
     let out = Output::new(
         shared.output.into(),
         shared.filter_self,
@@ -84,10 +90,12 @@ async fn run_session(resolved: Resolved, shared: SharedServerOpts) -> Result<()>
     )
     .await?;
     // Advertising (`create --advertise`): start the re-broadcast task. It
-    // joins the directory over the directory's own config. The handle is
+    // reaches the directory over this swarm's own lookups. The handle is
     // held for the session's lifetime — on the CLI the process exits (via
     // signal) before it would drop, which tears the task down.
-    let _advertiser = advertise_directory.map(|directory| spawn_advertiser(&mut cfg, directory));
+    let _advertiser = advertise_directory
+        .zip(directory_lookups)
+        .map(|(directory, lookups)| spawn_advertiser(&mut cfg, directory, lookups));
     // First point where swarm id + nickname are known — attach the
     // buffered log sink here (see `logging`).
     crate::logging::attach(&cfg.swarm, &cfg.author);

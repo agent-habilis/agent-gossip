@@ -28,11 +28,14 @@ pub(super) async fn discover(opts: DiscoverOpts) -> Result<()> {
         .directory
         .as_ref()
         .map_or_else(|| "global".to_owned(), |name| name.as_str().to_owned());
-    // The directory is itself a swarm whose config (and thus lookups) is
-    // fixed by its name, so advertisers and discoverers meet on the same
-    // topic — there is nothing per-process to pass here.
-    let mut discoverer =
-        Directory::open(opts.directory.map(|name| name.as_str().to_owned())).await?;
+    // Reach the directory over the chosen lookups (default all-on). Must
+    // match the lookups the advertiser used — an mDNS-only advertiser is
+    // found only by an mDNS-only `discover`.
+    let mut discoverer = Directory::open(
+        opts.directory.map(|name| name.as_str().to_owned()),
+        opts.lookups.to_set(),
+    )
+    .await?;
     // Route the directory session's logs to its per-member file (same as
     // create/join) so the picker and JSON stream aren't drowned in INFO
     // lines on stderr.

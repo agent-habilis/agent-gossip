@@ -156,9 +156,9 @@ ladder for connectivity.
 Because the lookups are **encoded in the id and mixed into the topic**,
 every member necessarily uses the same set (a custom `--relay` ladder
 included) — there is nothing to keep in sync by hand, and a joiner cannot
-diverge. (The directory a swarm advertises into is itself a swarm whose
-config is fixed by its name, so `discover` and the advertiser meet on the
-same topic with no per-process lookup flags either.)
+diverge. (These same lookups are also how an advertiser reaches the
+**directory** it advertises into — see `--advertise` below — so an
+`--mdns`-only swarm advertises over mDNS only.)
 
 #### Rate limit (`--rate-limit`)
 
@@ -178,19 +178,22 @@ optional-value flag exactly like `--relay`:
 - bare **`--advertise`** ⇒ the well-known `global` directory.
 - valued **`--advertise {DIRECTORY}`** ⇒ that named directory (a `SwarmName`).
 
-The directory name derives a well-known public swarm (see the glossary);
-the advertiser re-broadcasts its own `ahs…` id into that directory every
-~20s, and discoverers on the same directory collect the live set. There
-is **no central registry** — an ad lives only while the `create` process
-keeps re-broadcasting, then ages out of discoverers' lists. `--advertise`
+The directory name derives a well-known swarm (see the glossary); the
+advertiser re-broadcasts its own `ahs…` id into that directory every ~20s,
+and discoverers on the same directory collect the live set. There is **no
+central registry** — an ad lives only while the `create` process keeps
+re-broadcasting, then ages out of discoverers' lists. `--advertise`
 requires `--public` and is a **create-time** decision — `join` has no
 `--advertise`.
 
-The directory is itself a swarm, derived from the directory name, with a
-fixed config — so the advertiser and every discoverer reach it the same
-way with no per-process lookup flags. `--advertise` requires a reachable
-swarm (create it with `--public` or a lookup flag); advertising a
-loopback-only swarm is a hard error.
+The advertiser reaches the directory over **this swarm's own lookups**
+(the `--mdns/--dht/--relay` you passed to `create`), so an `--mdns`-only
+swarm advertises over mDNS only — no DHT/relay request is made for the
+directory. The directory's topic is keyed by its name **and** the lookups
+in use, so a discoverer sees this ad only if it browses with the **same**
+lookups (`ahs discover --mdns`); the all-on default on both sides meets as
+before. `--advertise` requires a reachable swarm (create it with `--public`
+or a lookup flag); advertising a loopback-only swarm is a hard error.
 
 Advertising broadcasts the full join token, so a listed swarm is
 **open** — anyone discovering that directory can join it.
@@ -265,17 +268,24 @@ Browse swarms advertising themselves in a directory. Long-running (keeps
 discovering while open).
 
 ```
-ahs discover [--directory {DIRECTORY}] --no-interactive --output json
+ahs discover [--directory {DIRECTORY}] [--mdns] [--dht] [--relay[={URLS}]] --no-interactive --output json
 ```
 
 `--directory` selects which directory to browse (omit ⇒ `global`); it
 must match the directory publishers passed to `--advertise`. `discover`
 joins that directory's swarm and collects live ads (each ad is a swarm's
 `ahs…` id; the name and config decode from the id locally). A swarm is
-dropped from the list if its publisher stops re-broadcasting for ~60s. The
-directory's own config (and thus its lookups) is fixed by its name, so
-there are no lookup flags here; the eventual join inherits the chosen
-swarm's lookups from its id.
+dropped from the list if its publisher stops re-broadcasting for ~60s.
+
+The `--mdns/--dht/--relay` flags are the **same lookup allowlist** as
+`create` (no `--public` — a directory is always networked): naming none
+uses all three; naming any restricts to those, and a disabled leg makes
+**no** network requests for the directory. These must **match the lookups
+the advertiser used** — a directory's topic is keyed by its name *and* the
+lookups in use, so an `--mdns`-only advertiser is found only by an
+`--mdns`-only `discover`; bare `discover` (all-on) meets a `--public`
+advertiser. (The eventual join inherits the chosen swarm's own lookups from
+its id, independently of how the directory was reached.)
 
 - **interactive (default human output, requires a TTY):** a live
   arrow-key picker. Each row shows the swarm name (yellow), its full

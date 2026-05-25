@@ -22,7 +22,7 @@ use crate::daemon::{
 use crate::directory::{self, Listing, ListingChange, Listings, directory_swarm};
 use crate::output::{Output, OutputEvent};
 use crate::protocol::swarm::{
-    DEFAULT_DIRECTORY, DirectorySelection, LookupSet, Swarm, SwarmConfig, SwarmName,
+    DEFAULT_DIRECTORY, DirectorySelection, LookupOpts, LookupSet, Swarm, SwarmConfig, SwarmName,
     resolve_lookups,
 };
 use crate::protocol::{Message, MessageBody, MessageId, Nickname, SwarmId};
@@ -203,6 +203,8 @@ async fn create_setup(
         rate_limit_per_min: cfg.rate_limit_per_min,
         lookups: resolve_lookups(cfg.public, cfg.lookups),
     };
+    // The advertiser reaches the directory over this swarm's own lookups.
+    let directory_lookups = config.lookups.clone();
     // Map embed's `advertise: bool` + `directory` onto the shared
     // `DirectorySelection`; `resolve` validates it against the config
     // (loopback-only advertise is rejected before any setup work).
@@ -230,8 +232,10 @@ async fn create_setup(
     .await
     .map_err(|error| CreateError::Setup(error.context("setup_swarm failed")))?;
     // When advertising, start the re-broadcast task (tied to this session);
-    // it joins the directory over the directory's own config.
-    let advertiser = advertise_directory.map(|directory| spawn_advertiser(&mut elc, directory));
+    // it reaches the directory over this swarm's own lookups (moved into the
+    // at-most-once closure, so no clone).
+    let advertiser = advertise_directory
+        .map(|directory| spawn_advertiser(&mut elc, directory, directory_lookups));
     Ok((elc, advertiser))
 }
 
@@ -585,29 +589,36 @@ pub(crate) const DIRECTORY_ADVERTISER_COHOST: CoHostPolicy = CoHostPolicy::Eager
 /// task handle so the owner can abort it (the inner directory session is
 /// dropped with the task, closing that membership). A directory-join
 /// failure logs and ends the task — the swarm is unaffected, just unlisted.
-pub(crate) fn spawn_advertiser(cfg: &mut EventLoopConfig, directory: SwarmName) -> JoinHandle<()> {
+pub(crate) fn spawn_advertiser(
+    cfg: &mut EventLoopConfig,
+    directory: SwarmName,
+    lookups: LookupOpts,
+) -> JoinHandle<()> {
     let live_count = Arc::new(AtomicUsize::new(1));
     cfg.live_count = Some(live_count.clone());
     let swarm_id = cfg.swarm.clone();
     tokio::spawn(async move {
-        let swarm = directory_swarm(&directory);
+        // Reach the directory over the advertised swarm's own lookups, so an
+        // mDNS-only swarm advertises over mDNS only (no DHT/relay touched) and
+        // discoverers must use the same lookups to meet.
+        let swarm = directory_swarm(&directory, lookups);
         // Co-host the directory rendezvous from t=0 so a beacon exists
         // before any discoverer subscribes (a `Deferred` advertiser would
         // only beacon at the first heal tick, after discoverers already
         // failed their first graft). Probe-first; see DIRECTORY_ADVERTISER_COHOST.
         let session =
             match SwarmSession::join_decoded(swarm, None, DIRECTORY_ADVERTISER_COHOST).await {
-            Ok(session) => session,
-            Err(error) => {
-                tracing::warn!(
-                    target: "agent_habilis_swarm::directory",
-                    %error,
-                    directory = %directory,
-                    "directory advertise: could not join the directory; swarm stays unlisted"
-                );
-                return;
-            }
-        };
+                Ok(session) => session,
+                Err(error) => {
+                    tracing::warn!(
+                        target: "agent_habilis_swarm::directory",
+                        %error,
+                        directory = %directory,
+                        "directory advertise: could not join the directory; swarm stays unlisted"
+                    );
+                    return;
+                }
+            };
         let mut ticker = tokio::time::interval(Duration::from_secs(advertise_interval_secs()));
         loop {
             ticker.tick().await;
@@ -673,8 +684,10 @@ fn public_listing(listing: &Listing) -> SwarmListing {
 ///
 /// ```no_run
 /// # use agent_habilis_swarm::embed::Directory;
+/// # use agent_habilis_swarm::LookupSet;
 /// # async fn run() -> anyhow::Result<()> {
-/// let mut directory = Directory::open(Some("demo")).await?;
+/// // Bare `LookupSet::default()` ⇒ all-on (mDNS + DHT + relay).
+/// let mut directory = Directory::open(Some("demo"), LookupSet::default()).await?;
 /// for listing in directory.snapshot() {
 ///     println!("#{} — {} peers — {}", listing.name, listing.peers, listing.swarm.as_str());
 /// }
@@ -690,12 +703,15 @@ pub struct Directory {
 }
 
 impl Directory {
-    /// Open a directory by name. `name` is the directory name; `None` ⇒
-    /// the well-known `global` directory. The directory is itself a swarm
-    /// whose config (and thus its lookups) is fixed by its name, so
-    /// advertisers and discoverers always meet on the same topic. Returns
-    /// once the directory session is ready; listings then accumulate in
-    /// the background.
+    /// Open a directory by name, reaching it over `lookups`. `name` is the
+    /// directory name; `None` ⇒ the well-known `global` directory. The
+    /// directory's topic is keyed by name **and** the lookups in use, so a
+    /// discoverer only sees advertisers that reached the directory over the
+    /// **same** lookups; bare `LookupSet::default()` resolves to the all-on
+    /// preset (mDNS + DHT + relay), matching a `--public` advertiser. A
+    /// disabled leg issues no network requests for the directory. Returns once
+    /// the directory session is ready; listings then accumulate in the
+    /// background.
     ///
     /// # Errors
     /// Fails if the name is invalid or the directory session cannot be
@@ -704,7 +720,7 @@ impl Directory {
     /// # Panics
     /// Panics only if the internal collector mutex is poisoned by a
     /// panic in the background task — not reachable in normal use.
-    pub async fn open(name: Option<impl Into<String>>) -> anyhow::Result<Self> {
+    pub async fn open(name: Option<impl Into<String>>, lookups: LookupSet) -> anyhow::Result<Self> {
         let directory_name = match name {
             Some(value) => SwarmName::new(value.into())
                 .map_err(|error| anyhow::anyhow!("invalid directory name: {error}"))?,
@@ -712,11 +728,13 @@ impl Directory {
                 SwarmName::new(DEFAULT_DIRECTORY).expect("DEFAULT_DIRECTORY is a valid swarm name")
             }
         };
-        let swarm = directory_swarm(&directory_name);
+        // Directories are inherently networked, so resolve as if `--public`:
+        // no flags ⇒ all-on. The test env forces loopback so the hermetic
+        // advertise→discover path runs without the public relay.
+        let resolved = resolve_lookups(!crate::util::tuning::directory_private_for_test(), lookups);
+        let swarm = directory_swarm(&directory_name, resolved);
         // A discoverer is a pure consumer: never co-host the directory's
-        // rendezvous (it only dials an advertiser's beacon). The directory
-        // swarm carries its own config, so the session's lookups are fixed
-        // by it — advertisers and discoverers meet on the same topic.
+        // rendezvous (it only dials an advertiser's beacon).
         let session = SwarmSession::join_decoded(swarm, None, CoHostPolicy::Never).await?;
         let mut inbound = session.messages();
         let listings = Arc::new(Mutex::new(Listings::new()));
