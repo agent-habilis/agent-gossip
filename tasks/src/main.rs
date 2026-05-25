@@ -3,6 +3,7 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 use xshell::Shell;
 
+mod bench;
 mod cc_plugin;
 mod ci;
 mod clean;
@@ -35,6 +36,13 @@ struct Cli {
 enum Task {
     /// Run unit tests.
     Test,
+    /// Run benchmarks. No args = everything; `transfer` = the loopback
+    /// transfer soak only; any other arg = a divan filter for the
+    /// microbenchmarks (e.g. `bench derive_secret`).
+    Bench {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
     /// Build the release binary.
     Release {
         /// `cargo-release` level (`patch`|`minor`|`major`|`x.y.z`) plus
@@ -85,6 +93,7 @@ fn main() -> ExitCode {
 
     let outcome = match cli.task {
         Task::Test => test::run(&sh),
+        Task::Bench { args } => bench::run(&sh, &args),
         Task::Release { args } => release::run(&sh, &args),
         Task::Install => install::run(&sh),
         Task::CcPluginInstall => cc_plugin::install(&sh),

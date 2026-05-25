@@ -23,6 +23,12 @@ pub(crate) mod ipc;
 // `daemon` — no consumer outside the event loop.
 mod message_log;
 pub(crate) mod params;
+// Normally private to the daemon; widened to `pub(crate)` only under the
+// `bench` feature so `bench_api` can reach `SwarmRateLimiter`. Non-bench
+// builds keep the original surface.
+#[cfg(feature = "bench")]
+pub(crate) mod rate_limit;
+#[cfg(not(feature = "bench"))]
 mod rate_limit;
 pub(crate) mod setup;
 pub(crate) mod state;

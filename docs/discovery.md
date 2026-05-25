@@ -46,14 +46,14 @@ the `seed` — and packs them with the swarm name and config (rate limit
 ```mermaid
 flowchart LR
     S["random 32-byte seed"]
-    S -->|"kdf(seed, &quot;rendezvous&quot;)"| K["rendezvous keypair<br/>(stable EndpointId)"]
-    S -->|"kdf(seed, &quot;topic&quot;)"| T["gossip TopicId"]
-    S -->|"kdf(seed, &quot;port&quot;)"| L["private loopback<br/>port ladder"]
+    S -->|"derive_secret(seed, &quot;rendezvous&quot;)"| K["rendezvous keypair<br/>(stable EndpointId)"]
+    S -->|"derive_secret(seed, &quot;topic&quot;)"| T["gossip TopicId"]
+    S -->|"derive_secret(seed, &quot;port&quot;)"| L["private loopback<br/>port ladder"]
     K --> R["the rendezvous —<br/>a well-known identity<br/>every member co-hosts"]
 ```
 
 Every derivation is a domain-separated SHA-256:
-`kdf(seed, label) = SHA256("agent-habilis-swarm/v2" ‖ len(label) ‖
+`derive_secret(seed, label) = SHA256("agent-habilis-swarm/v2" ‖ len(label) ‖
 label ‖ seed)`. Distinct labels (`rendezvous`, `topic`, `port`) can
 never collide for one seed. Bob, decoding the same `ahs…`, runs the
 exact same derivations and gets the exact same rendezvous identity and
@@ -63,7 +63,7 @@ This is why the id is *eternal* and *creator-independent*: it contains
 no expiring address and names no particular machine. An id minted
 today still works in a year, as long as any member is online.
 
-(`src/protocol/crypto.rs`: `kdf`, `rendezvous_secret`/`rendezvous_id`,
+(`src/protocol/crypto.rs`: `derive_secret`, `rendezvous_secret`/`rendezvous_id`,
 `rendezvous_ports`, `derive_topic_id`.)
 
 ---
@@ -99,7 +99,7 @@ flowchart TB
     A -->|yes| B{"Base58Check<br/>checksum ok?"}
     B -->|no| X2["reject:<br/>typo / truncated"]
     B -->|yes| C["read version, seed, name, config"]
-    C --> D["derive rendezvous_id = pub(kdf(seed,'rendezvous'))"]
+    C --> D["derive rendezvous_id = pub(derive_secret(seed,'rendezvous'))"]
     C --> E["derive TopicId from seed + name + config"]
     C --> F["build an endpoint for the config's lookups"]
     F --> G["pre-register rendezvous_id's address<br/>so iroh can dial it with zero lookup"]
@@ -133,7 +133,7 @@ With an empty lookup set the endpoint binds `127.0.0.1`, with
 `RelayMode::Disabled` and the portmapper disabled — **zero non-loopback
 packets**. The rendezvous has no DNS/relay to resolve, so instead the
 seed derives a deterministic **loopback port ladder**
-(`kdf(seed,"port")`, 8 rungs). Exactly one member is the beacon: it
+(`derive_secret(seed,"port")`, 8 rungs). Exactly one member is the beacon: it
 binds the first free rung; `AddrInUse` triggers an identity probe
 distinguishing *our* beacon (stay a participant) from an unrelated swarm
 that derived the same port (skip to the next rung). Only other processes
@@ -198,14 +198,14 @@ A relay (and the DHT) carry many unrelated swarms, so Bob must join
 not random:
 
 ```
-TopicId = SHA256( kdf(seed, "topic")  ‖  len(name)  ‖  name  ‖  len(config)  ‖  config )
+TopicId = SHA256( derive_secret(seed, "topic")  ‖  len(name)  ‖  name  ‖  len(config)  ‖  config )
 ```
 
 Both Alice (`create`) and Bob (`join`) compute it independently from
 the seed, name, and config in the id. Identical inputs → identical topic
 → same conversation. Because the config (rate limit + lookups) is mixed
 in, two members meet only if their entire config matches — so it cannot
-diverge across a swarm. The seed runs through the domain-separated `kdf` first,
+diverge across a swarm. The seed runs through the domain-separated `derive_secret` first,
 so the same 32 bytes can never be both the topic and the rendezvous
 key. (`derive_topic_id` in `src/protocol/crypto.rs`.)
 

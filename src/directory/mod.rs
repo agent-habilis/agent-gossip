@@ -22,14 +22,15 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
-use crate::protocol::crypto::kdf;
+use crate::protocol::crypto::derive_secret;
 use crate::protocol::swarm::{LookupOpts, Swarm, SwarmConfig, SwarmName};
 use crate::protocol::{MessageBody, SwarmId};
 
 /// Domain-separation seed for every directory. The directory name is
-/// the `kdf` *label*; this is the *seed*, so a directory's derived swarm
-/// seed (`kdf(DIRECTORY_BASE_SEED, directory)`) is a SHA-256 output that can
-/// never collide with a user swarm's random 32-byte seed. Bumping this
+/// the `derive_secret` *label*; this is the *seed*, so a directory's
+/// derived swarm seed (`derive_secret(DIRECTORY_BASE_SEED, directory)`) is a
+/// SHA-256 output that can never collide with a user swarm's random
+/// 32-byte seed. Bumping this
 /// orphans every existing directory (a wire-incompatible directory change).
 const DIRECTORY_BASE_SEED: [u8; 32] = *b"agent-habilis-swarm/directory/v1";
 
@@ -45,7 +46,7 @@ const DIRECTORY_BASE_SEED: [u8; 32] = *b"agent-habilis-swarm/directory/v1";
 /// directory.
 pub(crate) fn directory_swarm(directory: &SwarmName, lookups: LookupOpts) -> Swarm {
     Swarm::new(
-        kdf(&DIRECTORY_BASE_SEED, directory.as_bytes()),
+        derive_secret(&DIRECTORY_BASE_SEED, directory.as_bytes()),
         directory.clone(),
         directory_config(lookups),
     )

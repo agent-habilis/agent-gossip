@@ -101,6 +101,12 @@ path = "src/lib.rs"
 name = "ahs"
 path = "src/main.rs"
 
+[features]
+# Off by default. Exposes `src/bench_api.rs` so the divan microbenchmark
+# bench can reach `pub(crate)` hot paths; never enabled in a normal or
+# release build, so the public API surface is unchanged.
+bench = []
+
 [dependencies]
 ahs-shared = { path = "shared" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "io-util", "fs", "signal", "net"] }
@@ -144,6 +150,22 @@ wiremock = "0.6"
 # `embed::SwarmSession` async, so the test crates need a runtime + the
 # `#[tokio::test]` macro. Same major as the lib dep — no new dup version.
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }
+# Offline microbenchmarks (`benches/hot_paths.rs`). No html/plotting deps;
+# prints a summary table to stdout.
+divan = "0.1"
+
+# Offline microbenchmarks of the pure hot paths. Needs `bench` for the
+# `bench_api` shim that reaches `pub(crate)` internals.
+[[bench]]
+name = "hot_paths"
+harness = false
+required-features = ["bench"]
+
+# Two-node loopback transfer soak. Plain `fn main()` harness over the
+# public `embed` API — no `bench` feature.
+[[bench]]
+name = "transfer"
+harness = false
 
 [profile.release]
 opt-level = 3

@@ -14,7 +14,7 @@ config bit — derives a different topic and finds no peers. So the name is
 [`swarm-hash.md`](swarm-hash.md).
 
 The one deliberate exception is a **directory**, whose swarm seed is derived
-*deterministically* from its name (`kdf(DIRECTORY_BASE_SEED, name)`), so
+*deterministically* from its name (`derive_secret(DIRECTORY_BASE_SEED, name)`), so
 everyone naming the same directory shares the same seed and rendezvous. Its
 *topic* still mixes in the lookups in use, so an advertiser and a discoverer
 meet only when they use the **same** lookups (`ahs discover --mdns` finds an

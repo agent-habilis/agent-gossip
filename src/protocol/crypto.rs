@@ -33,15 +33,20 @@ use super::swarm::SwarmName;
 /// topic/identity and never meet).
 const DOMAIN: &[u8] = b"agent-habilis-swarm/v2";
 
-/// `SHA256(DOMAIN ‖ [label_len] ‖ label ‖ seed)`.
+/// Derive an independent 32-byte secret for `label` from the swarm
+/// `seed`: `SHA256(DOMAIN ‖ [label_len] ‖ label ‖ seed)`. Each label
+/// (`"rendezvous"`, `"port"`, `"topic"`, …) yields a distinct value, so
+/// one seed safely feeds every derived identity.
 ///
 /// `label` is length-prefixed so distinct labels can never produce the
 /// same byte stream (e.g. `("rd","vseed")` vs `("rdv","seed")`).
 #[must_use]
-pub(crate) fn kdf(seed: &[u8; 32], label: &[u8]) -> [u8; 32] {
+pub(crate) fn derive_secret(seed: &[u8; 32], label: &[u8]) -> [u8; 32] {
     let mut hasher = Sha256::new();
     hasher.update(DOMAIN);
-    hasher.update([u8::try_from(label.len()).expect("kdf labels are short ASCII constants")]);
+    hasher.update([
+        u8::try_from(label.len()).expect("derive_secret labels are short ASCII constants")
+    ]);
     hasher.update(label);
     hasher.update(seed);
     let digest = hasher.finalize();
@@ -56,7 +61,7 @@ pub(crate) fn kdf(seed: &[u8; 32], label: &[u8]) -> [u8; 32] {
 /// infallible — any 32 bytes is a valid Ed25519 secret.
 #[must_use]
 pub(crate) fn rendezvous_secret(seed: &[u8; 32]) -> SecretKey {
-    SecretKey::from_bytes(&kdf(seed, b"rendezvous"))
+    SecretKey::from_bytes(&derive_secret(seed, b"rendezvous"))
 }
 
 /// The well-known rendezvous `EndpointId` (public key of
@@ -76,14 +81,14 @@ pub(crate) const RENDEZVOUS_LADDER: usize = 8;
 
 /// The deterministic loopback port ladder for a private swarm, in
 /// preference order. Mapped into the unprivileged range
-/// `1024..=65535`. Derived from one `kdf` digest (2 bytes per rung);
-/// rungs are near-certainly distinct, and a rare in-ladder dup merely
-/// wastes a rung (harmless).
+/// `1024..=65535`. Derived from one `derive_secret` digest (2 bytes per
+/// rung); rungs are near-certainly distinct, and a rare in-ladder dup
+/// merely wastes a rung (harmless).
 #[must_use]
 pub(crate) fn rendezvous_ports(seed: &[u8; 32]) -> [u16; RENDEZVOUS_LADDER] {
     const LOW: u32 = 1024;
     const SPAN: u32 = 65535 - LOW + 1; // 64512
-    let digest = kdf(seed, b"port");
+    let digest = derive_secret(seed, b"port");
     std::array::from_fn(|index| {
         let raw = u32::from(u16::from_le_bytes([
             digest[2 * index],
@@ -100,15 +105,15 @@ pub(crate) fn rendezvous_ports(seed: &[u8; 32]) -> [u16; RENDEZVOUS_LADDER] {
 /// config bytes are each length-prefixed before hashing so distinct
 /// fields can never collide across the boundary.
 ///
-/// The seed is first run through the domain-separated [`kdf`] so a
-/// `seed` can never produce the same 32 bytes for the topic and for the
-/// rendezvous key. Binding the name *and* the config means a forged
+/// The seed is first run through the domain-separated [`derive_secret`]
+/// so a `seed` can never produce the same 32 bytes for the topic and for
+/// the rendezvous key. Binding the name *and* the config means a forged
 /// token (same seed, swapped name or tampered rate limit / lookups)
 /// hashes to a different topic and the joiner finds no peers — so every
 /// member of a swarm provably shares the same config.
 pub(crate) fn derive_topic_id(seed: &[u8; 32], name: &SwarmName, config_bytes: &[u8]) -> TopicId {
     let mut hasher = Sha256::new();
-    hasher.update(kdf(seed, b"topic"));
+    hasher.update(derive_secret(seed, b"topic"));
     hasher.update([name.len_u8()]);
     hasher.update(name.as_bytes());
     let config_len =
@@ -122,32 +127,46 @@ pub(crate) fn derive_topic_id(seed: &[u8; 32], name: &SwarmName, config_bytes: &
 }
 
 #[cfg(test)]
-mod kdf_tests {
-    use super::{RENDEZVOUS_LADDER, kdf, rendezvous_id, rendezvous_ports, rendezvous_secret};
+mod derive_secret_tests {
+    use super::{
+        RENDEZVOUS_LADDER, derive_secret, rendezvous_id, rendezvous_ports, rendezvous_secret,
+    };
 
     const SEED_A: [u8; 32] = [7u8; 32];
     const SEED_B: [u8; 32] = [9u8; 32];
 
     #[test]
-    fn kdf_is_deterministic() {
-        assert_eq!(kdf(&SEED_A, b"rendezvous"), kdf(&SEED_A, b"rendezvous"));
+    fn derive_secret_is_deterministic() {
+        assert_eq!(
+            derive_secret(&SEED_A, b"rendezvous"),
+            derive_secret(&SEED_A, b"rendezvous")
+        );
     }
 
     #[test]
-    fn kdf_domain_separates_by_label() {
-        assert_ne!(kdf(&SEED_A, b"rendezvous"), kdf(&SEED_A, b"port"));
+    fn derive_secret_domain_separates_by_label() {
+        assert_ne!(
+            derive_secret(&SEED_A, b"rendezvous"),
+            derive_secret(&SEED_A, b"port")
+        );
     }
 
     #[test]
-    fn kdf_domain_separates_by_seed() {
-        assert_ne!(kdf(&SEED_A, b"rendezvous"), kdf(&SEED_B, b"rendezvous"));
+    fn derive_secret_domain_separates_by_seed() {
+        assert_ne!(
+            derive_secret(&SEED_A, b"rendezvous"),
+            derive_secret(&SEED_B, b"rendezvous")
+        );
     }
 
     #[test]
     fn label_length_prefix_prevents_collision() {
         // Without the length prefix ("rd"+"vx") and ("rdv"+"x") would
         // hash the same stream. The prefix must keep them distinct.
-        assert_ne!(kdf(&SEED_A, b"rdvx"), kdf(&SEED_A, b"rdv"));
+        assert_ne!(
+            derive_secret(&SEED_A, b"rdvx"),
+            derive_secret(&SEED_A, b"rdv")
+        );
     }
 
     #[test]

@@ -50,6 +50,13 @@ pub(crate) mod util;
 
 pub mod embed;
 
+// Not public API. Exposed only under the `bench` feature so the divan
+// microbenchmark suite can reach `pub(crate)` hot paths without widening
+// the curated surface below.
+#[cfg(feature = "bench")]
+#[doc(hidden)]
+pub mod bench_api;
+
 // Curated public protocol surface. These types are `pub` inside their
 // (otherwise `pub(crate)`) modules; re-exporting them from the crate
 // root is what makes them externally reachable and satisfies
