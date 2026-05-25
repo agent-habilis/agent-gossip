@@ -102,7 +102,8 @@ impl LookupOpts {
             buf.push(u8::try_from(ladder.len()).expect("relay ladder bounded by MAX_RELAY_LADDER"));
             for url in ladder {
                 let text = url.to_string();
-                let len = u16::try_from(text.len()).expect("relay URL bounded by MAX_RELAY_URL_BYTES");
+                let len =
+                    u16::try_from(text.len()).expect("relay URL bounded by MAX_RELAY_URL_BYTES");
                 buf.extend_from_slice(&len.to_le_bytes());
                 buf.extend_from_slice(text.as_bytes());
             }
@@ -213,7 +214,7 @@ impl SwarmConfig {
 }
 
 /// Relay intent in a [`LookupSet`]: absent / default / custom. Resolved
-/// into a [`RelayChoice`] by [`resolve_lookups`]. `Custom` carries the
+/// into a `RelayChoice` by `resolve_lookups`. `Custom` carries the
 /// ordered [`RelayLadder`] (iroh-free), so this enum is part of the public
 /// embed surface.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -345,7 +346,7 @@ pub(crate) fn resolve_lookups(public: bool, lookups: LookupSet) -> LookupOpts {
 /// preserved (the beacon homes on the first reachable rung); an empty or
 /// whitespace-only entry is a hard error so a typo never silently
 /// shrinks the ladder. The single source of truth for `--relay` syntax,
-/// shared by the CLI value-parser and [`resolve_relay`] (the MCP/embed
+/// shared by the CLI value-parser and `RelayLadder` (the MCP/embed
 /// string path); `String` error so clap can surface it directly.
 pub(crate) fn parse_relay_ladder(raw: &str) -> Result<Vec<RelayUrl>, String> {
     raw.split(',')
@@ -365,7 +366,7 @@ pub(crate) fn parse_relay_ladder(raw: &str) -> Result<Vec<RelayUrl>, String> {
 /// validated at construction. Public + **iroh-free**: the wrapped
 /// `Vec<RelayUrl>` stays private, so embedders (`CreateConfig`) name a
 /// ladder without depending on the `iroh` type. Parsing reuses
-/// [`parse_relay_ladder`] — the same source of truth as the CLI value
+/// `parse_relay_ladder` — the same source of truth as the CLI value
 /// parser — and rejects empty entries, so a `RelayLadder` is never empty;
 /// "no custom ladder" is the `Option::None` case at the boundary.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -470,7 +471,10 @@ mod lookup_tests {
         let ladder: RelayLadder = "https://a.example".parse().unwrap();
         let opts = resolve_lookups(false, lookups(false, false, RelaySelection::Custom(ladder)));
         assert!(!opts.mdns && !opts.dht);
-        assert!(!opts.is_loopback(), "a named relay makes the swarm reachable");
+        assert!(
+            !opts.is_loopback(),
+            "a named relay makes the swarm reachable"
+        );
         assert!(matches!(opts.relay, RelayChoice::Custom(_)));
     }
 
@@ -493,7 +497,11 @@ mod lookup_tests {
     fn mdns_alone_disables_dht_and_relay() {
         let opts = resolve_lookups(false, lookups(true, false, RelaySelection::Unset));
         assert!(opts.mdns && !opts.dht);
-        assert_eq!(opts.relay, RelayChoice::Disabled, "--mdns alone ⇒ relay off");
+        assert_eq!(
+            opts.relay,
+            RelayChoice::Disabled,
+            "--mdns alone ⇒ relay off"
+        );
         assert!(!opts.is_loopback(), "any lookup ⇒ reachable");
     }
 
@@ -561,9 +569,7 @@ mod lookup_tests {
 
 #[cfg(test)]
 mod directory_selection_tests {
-    use super::{
-        DEFAULT_DIRECTORY, DirectorySelection, LookupOpts, SwarmName, validate_advertise,
-    };
+    use super::{DEFAULT_DIRECTORY, DirectorySelection, LookupOpts, SwarmName, validate_advertise};
 
     #[test]
     fn unset_is_not_advertising() {

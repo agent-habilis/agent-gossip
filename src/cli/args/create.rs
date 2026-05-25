@@ -24,7 +24,7 @@ pub(crate) struct CreateOpts {
     /// minted if omitted. Same rules as a nickname: 1..=32 UTF-8
     /// characters (any script/emoji), excluding control characters,
     /// whitespace, and any of / \ < > # (the last three are reserved for
-    /// the <nick>/#swarm display conventions). Bound cryptographically
+    /// the `<nick>`/#swarm display conventions). Bound cryptographically
     /// into the swarm identity so joiners who decode the ID see the same
     /// name and a forged ID with a fake name fails to find peers.
     #[arg(long)]

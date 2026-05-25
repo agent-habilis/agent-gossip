@@ -57,11 +57,14 @@ const NAME_MAX_BYTES: usize = super::ident::MAX_CHARS * 4;
 /// so every member of a swarm shares the same config.
 ///
 /// Wire format (little-endian):
-///   [1 byte version]
-///   [32 bytes seed]
-///   [1 byte name length in bytes, 1..=128]
-///   [N bytes name (UTF-8, <=32 scalars, charset enforced by `SwarmName`)]
-///   [2 bytes config length] [config bytes (see `SwarmConfig::to_bytes`)]
+///
+/// ```text
+/// [1 byte version]
+/// [32 bytes seed]
+/// [1 byte name length in bytes, 1..=128]
+/// [N bytes name (UTF-8, <=32 scalars, charset enforced by SwarmName)]
+/// [2 bytes config length] [config bytes (see SwarmConfig::to_bytes)]
+/// ```
 #[derive(Debug, Clone)]
 pub(crate) struct Swarm {
     pub name: SwarmName,
@@ -160,7 +163,8 @@ impl Swarm {
         let name_str = std::str::from_utf8(name_raw).context("Invalid swarm name UTF-8")?;
         let name = SwarmName::new(name_str).context("Invalid swarm name")?;
 
-        let config_len = lookup::read_u16(bytes, &mut pos).context("Truncated config length")? as usize;
+        let config_len =
+            lookup::read_u16(bytes, &mut pos).context("Truncated config length")? as usize;
         let config_raw = bytes
             .get(pos..pos + config_len)
             .context("Truncated swarm config")?;
@@ -263,7 +267,11 @@ mod swarm_tests {
 
     #[test]
     fn round_trip_public_preset() {
-        let swarm = Swarm::new([0xABu8; SEED_LEN], dummy_name(), SwarmConfig::public_preset());
+        let swarm = Swarm::new(
+            [0xABu8; SEED_LEN],
+            dummy_name(),
+            SwarmConfig::public_preset(),
+        );
         let decoded: Swarm = swarm.to_string().parse().unwrap();
         assert_eq!(decoded.seed(), &[0xABu8; SEED_LEN]);
         assert_eq!(decoded.config, swarm.config);

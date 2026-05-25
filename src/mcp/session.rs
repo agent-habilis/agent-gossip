@@ -1,5 +1,5 @@
 //! The MCP server's swarm handle — a thin wrapper over the in-process
-//! [`embed::SwarmSession`] that adds the implicit `fetch` cursor. The rmcp
+//! [`crate::embed::SwarmSession`] that adds the implicit `fetch` cursor. The rmcp
 //! server, tool handlers, and arg/result types live in [`super`]; only the
 //! session plumbing lives here, reused from `embed` rather than duplicated.
 
@@ -108,7 +108,7 @@ impl Session {
         *self.last_delivered_id.lock().unwrap() = Some(id);
     }
 
-    /// Clean shutdown — delegates to [`SwarmSession::leave`].
+    /// Clean shutdown — delegates to the core's `leave`.
     pub(super) async fn leave(self) {
         let _ = self.inner.leave().await;
     }
@@ -316,7 +316,9 @@ mod tests {
             .await
             .expect("explicit fetch");
         assert!(
-            forced.iter().any(|msg| msg.body.as_str() == "hi via cursor"),
+            forced
+                .iter()
+                .any(|msg| msg.body.as_str() == "hi via cursor"),
             "explicit after must override implicit cursor"
         );
 

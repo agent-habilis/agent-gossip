@@ -22,7 +22,8 @@ use crate::daemon::{
 use crate::directory::{self, Listing, ListingChange, Listings, directory_swarm};
 use crate::output::{Output, OutputEvent};
 use crate::protocol::swarm::{
-    DEFAULT_DIRECTORY, DirectorySelection, LookupSet, Swarm, SwarmConfig, SwarmName, resolve_lookups,
+    DEFAULT_DIRECTORY, DirectorySelection, LookupSet, Swarm, SwarmConfig, SwarmName,
+    resolve_lookups,
 };
 use crate::protocol::{Message, MessageBody, MessageId, Nickname, SwarmId};
 use crate::resolver::JoinTarget;
@@ -130,7 +131,11 @@ impl fmt::Display for CreateError {
         match self {
             // Single source of truth for the message: the validator's error.
             CreateError::AdvertiseRequiresReachable => {
-                write!(formatter, "{}", crate::protocol::swarm::AdvertiseRequiresReachable)
+                write!(
+                    formatter,
+                    "{}",
+                    crate::protocol::swarm::AdvertiseRequiresReachable
+                )
             }
             CreateError::Setup(error) => write!(formatter, "{error}"),
         }
@@ -219,9 +224,11 @@ async fn create_setup(
     }
     .resolve()
     .map_err(|_| CreateError::AdvertiseRequiresReachable)?;
-    let mut elc = setup_swarm(kind, author, /* interactive */ false, max_peers, None, output)
-        .await
-        .map_err(|error| CreateError::Setup(error.context("setup_swarm failed")))?;
+    let mut elc = setup_swarm(
+        kind, author, /* interactive */ false, max_peers, None, output,
+    )
+    .await
+    .map_err(|error| CreateError::Setup(error.context("setup_swarm failed")))?;
     // When advertising, start the re-broadcast task (tied to this session);
     // it joins the directory over the directory's own config.
     let advertiser = advertise_directory.map(|directory| spawn_advertiser(&mut elc, directory));
@@ -242,9 +249,11 @@ async fn join_setup(cfg: JoinConfig, output: Output) -> Result<EventLoopConfig, 
     .resolve()
     .await
     .map_err(JoinError::Resolve)?;
-    setup_swarm(kind, author, /* interactive */ false, max_peers, None, output)
-        .await
-        .map_err(|error| JoinError::Setup(error.context("setup_swarm failed")))
+    setup_swarm(
+        kind, author, /* interactive */ false, max_peers, None, output,
+    )
+    .await
+    .map_err(|error| JoinError::Setup(error.context("setup_swarm failed")))
 }
 
 /// The in-process session core shared by the public [`SwarmSession`] (embed
@@ -412,7 +421,7 @@ impl Drop for InProcessSession {
 }
 
 /// A live swarm membership (the public embed facade): the shared
-/// [`InProcessSession`] plus the inbound broadcast and captured-event
+/// `InProcessSession` plus the inbound broadcast and captured-event
 /// stream. Dropping it (or [`SwarmSession::leave`]) winds the loop down.
 #[derive(Debug)]
 pub struct SwarmSession {
@@ -571,10 +580,7 @@ impl SwarmSession {
 /// task handle so the owner can abort it (the inner directory session is
 /// dropped with the task, closing that membership). A directory-join
 /// failure logs and ends the task — the swarm is unaffected, just unlisted.
-pub(crate) fn spawn_advertiser(
-    cfg: &mut EventLoopConfig,
-    directory: SwarmName,
-) -> JoinHandle<()> {
+pub(crate) fn spawn_advertiser(cfg: &mut EventLoopConfig, directory: SwarmName) -> JoinHandle<()> {
     let live_count = Arc::new(AtomicUsize::new(1));
     cfg.live_count = Some(live_count.clone());
     let swarm_id = cfg.swarm.clone();
@@ -621,7 +627,7 @@ pub(crate) fn spawn_advertiser(
 // ── Directory (directory consumer) ─────────────────────────────────────
 
 /// One live directory entry handed to embedders — the public, iroh-free
-/// projection of a [`crate::directory::Listing`].
+/// projection of a `crate::directory::Listing`.
 #[derive(Debug, Clone)]
 pub struct SwarmListing {
     /// The advertised swarm's id — pass to [`SwarmSession::join`] to join.
@@ -660,7 +666,7 @@ fn public_listing(listing: &Listing) -> SwarmListing {
 
 /// A live view of a directory. Joins the directory's swarm as an
 /// ordinary [`SwarmSession`] and collects advertisements into
-/// [`Listings`], aging out swarms whose publishers went silent. Drop
+/// `Listings`, aging out swarms whose publishers went silent. Drop
 /// (or let it fall out of scope) to leave the directory.
 ///
 /// ```no_run

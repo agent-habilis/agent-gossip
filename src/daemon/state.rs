@@ -10,9 +10,9 @@ use iroh::EndpointId;
 
 use super::message_log::MessageLog;
 use super::rate_limit::SwarmRateLimiter;
+use crate::daemon::state_file::StateFile;
 use crate::output;
 use crate::protocol::{Message, MessageId, Nickname};
-use crate::daemon::state_file::StateFile;
 use ahs_shared::DEFAULT_MESSAGE_LOG_SIZE;
 
 use crate::util::tuning::{KNOWN_ENDPOINTS_CAP, PENDING_OUTBOUND_CAP, SEEN_IDS_CAP};
@@ -143,7 +143,11 @@ impl EventLoopState {
     /// Build a fresh event-loop state. `now` is passed explicitly so
     /// tests can pin a deterministic instant; `rate_limit_per_min` is the
     /// swarm-wide cap decoded from the id (`0` ⇒ no limit).
-    pub(crate) fn new(state_file: Option<StateFile>, now: Instant, rate_limit_per_min: u16) -> Self {
+    pub(crate) fn new(
+        state_file: Option<StateFile>,
+        now: Instant,
+        rate_limit_per_min: u16,
+    ) -> Self {
         Self {
             linked_endpoints: HashSet::new(),
             known_endpoints: HashSet::new(),

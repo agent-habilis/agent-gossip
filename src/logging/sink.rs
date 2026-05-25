@@ -250,7 +250,10 @@ mod tests {
         sink.write_all(b"beta").expect("write");
         sink.flush().expect("flush");
 
-        assert_eq!(fs::read_to_string(&path_a).expect("read a"), "pending-alpha");
+        assert_eq!(
+            fs::read_to_string(&path_a).expect("read a"),
+            "pending-alpha"
+        );
         assert_eq!(fs::read_to_string(&path_b).expect("read b"), "beta");
 
         let _ = fs::remove_dir_all(&dir);

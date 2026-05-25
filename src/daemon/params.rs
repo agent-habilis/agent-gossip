@@ -11,10 +11,10 @@
 
 use anyhow::Result;
 
+use crate::protocol::Nickname;
 use crate::protocol::swarm::{
     AdvertiseRequiresReachable, DirectorySelection, SwarmConfig, SwarmName, validate_advertise,
 };
-use crate::protocol::Nickname;
 use crate::resolver::{self, JoinTarget};
 
 use super::setup::SetupKind;
@@ -23,7 +23,7 @@ use super::setup::SetupKind;
 /// own input struct (the lookups are already resolved into `config`).
 pub(crate) struct CreateParams {
     pub name: SwarmName,
-    /// `None` ⇒ a random `word-word` nickname is minted in [`resolve`].
+    /// `None` ⇒ a random `word-word` nickname is minted in `resolve`.
     pub nickname: Option<Nickname>,
     pub config: SwarmConfig,
     pub advertise: DirectorySelection,

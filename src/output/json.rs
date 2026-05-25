@@ -180,11 +180,9 @@ pub fn event_json(event: &OutputEvent) -> Option<String> {
             nickname: nickname.as_str(),
             last_seen_secs_ago: *last_seen_secs_ago,
         }),
-        OutputEvent::PeerReturn { nickname } => {
-            serde_json::to_string(&SimpleEvent::PeerReturn {
-                nickname: nickname.as_str(),
-            })
-        }
+        OutputEvent::PeerReturn { nickname } => serde_json::to_string(&SimpleEvent::PeerReturn {
+            nickname: nickname.as_str(),
+        }),
         OutputEvent::MsgPosted { id } => {
             serde_json::to_string(&SimpleEvent::MsgPosted { id: id.as_str() })
         }

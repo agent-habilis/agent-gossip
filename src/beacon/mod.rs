@@ -86,7 +86,7 @@ pub(crate) struct Rendezvous {
     /// The gossip co-host: subscribes, bridges the rendezvous into the
     /// mesh, and re-asserts the participant link each heal tick.
     task: JoinHandle<()>,
-    /// The relay-rung liveness/discovery monitor ([`spawn_relay_monitor`]).
+    /// The relay-rung liveness/discovery monitor (`spawn_relay_monitor`).
     /// `None` for private / relay-disabled swarms (nothing to monitor).
     monitor: Option<JoinHandle<()>>,
 }
@@ -140,7 +140,9 @@ fn beacon_lookups(params: &RendezvousParams) -> LookupOpts {
         relay: params
             .bootstrap_relay
             .clone()
-            .map_or(RelayChoice::Disabled, |rung| RelayChoice::Custom(vec![rung])),
+            .map_or(RelayChoice::Disabled, |rung| {
+                RelayChoice::Custom(vec![rung])
+            }),
     }
 }
 

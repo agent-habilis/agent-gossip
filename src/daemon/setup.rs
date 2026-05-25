@@ -11,10 +11,10 @@ use crate::lookup::{
     add_peer_addr, build_participant_endpoint, build_swarm, relay_ladder, select_bootstrap_rung,
 };
 use crate::output;
-use crate::util::tuning::RELAY_RUNG_PROBE_SECS;
 use crate::protocol::crypto::{derive_topic_id, rendezvous_secret};
 use crate::protocol::swarm::{LookupOpts, Swarm, SwarmConfig, SwarmName};
 use crate::protocol::{Nickname, SwarmId};
+use crate::util::tuning::RELAY_RUNG_PROBE_SECS;
 
 use crate::beacon::RendezvousParams;
 use crate::lifecycle;
@@ -34,7 +34,9 @@ pub(crate) enum SetupKind {
         /// task itself is spawned by the caller post-setup.
         advertise: Option<SwarmName>,
     },
-    Join { swarm: Swarm },
+    Join {
+        swarm: Swarm,
+    },
 }
 
 /// Build the `RendezvousParams` for a swarm. `id` is the well-known
@@ -77,7 +79,10 @@ fn rendezvous_params(
 /// both creator and joiner; the joiner has no beacon self-monitor, so
 /// this is its only startup correction. No-op for an empty (private /
 /// relay-disabled) ladder.
-fn spawn_startup_rung_confirmation(ladder: Vec<RelayUrl>, rung_tx: watch::Sender<Option<RelayUrl>>) {
+fn spawn_startup_rung_confirmation(
+    ladder: Vec<RelayUrl>,
+    rung_tx: watch::Sender<Option<RelayUrl>>,
+) {
     if ladder.is_empty() {
         return;
     }
@@ -191,7 +196,12 @@ pub(crate) async fn setup_swarm(
             }
             output.swarm_id_line(&swarm_id);
             output.ready(&swarm_id, &name, &author);
-            lifecycle::log_ready(&id_str, name.as_str(), author.as_str(), swarm.network_label());
+            lifecycle::log_ready(
+                &id_str,
+                name.as_str(),
+                author.as_str(),
+                swarm.network_label(),
+            );
 
             let topic_id = derive_topic_id(swarm.seed(), &swarm.name, &swarm.config_bytes());
             let (gossip, router) = build_swarm(endpoint.clone());

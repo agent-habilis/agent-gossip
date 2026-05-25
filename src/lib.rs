@@ -76,7 +76,7 @@ use cli::Cli;
 /// This is the entire body of the `ahs` binary; it is
 /// public so the thin `src/main.rs` shim (which owns only
 /// process-level concerns: tracing init, terminal echo) can call it.
-/// The subcommand dispatch + per-command logic lives in [`cli`].
+/// The subcommand dispatch + per-command logic lives in `cli`.
 ///
 /// # Errors
 /// Propagates any error from the selected subcommand — swarm setup
@@ -88,7 +88,7 @@ pub async fn run_cli() -> Result<()> {
 /// Build the deferred log sink and register it process-globally.
 /// Call once in `main` before subscriber init; pass the returned
 /// value to `tracing_subscriber::fmt().with_writer(..)`. Logs buffer
-/// until [`cli`] resolves the swarm id + nickname (see `logging`).
+/// until `cli` resolves the swarm id + nickname (see `logging`).
 #[must_use]
 pub fn install_log_sink() -> LogSink {
     logging::install()

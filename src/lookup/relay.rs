@@ -43,7 +43,7 @@ use crate::util::tuning::{
 /// and not cross-compatible (sendme #121): an iroh bump can move
 /// `defaults::prod` off these hosts, silently breaking the relay-direct
 /// bootstrap for members on a different iroh version.
-/// [`tests::pinned_ladder_matches_iroh_prod`] is the tripwire — it fails
+/// `pinned_ladder_matches_iroh_prod` is the tripwire — it fails
 /// on such a move so we review (do these hosts still operate?) before
 /// shipping the bump. See docs/iroh-ecosystem-research.md.
 const RENDEZVOUS_RELAY_LADDER: [&str; 4] = [
@@ -392,8 +392,7 @@ mod tests {
         // RFC-5737 TEST-NET-1, never routable ⇒ the relay handshake can
         // never connect ⇒ `select_bootstrap_rung` finds no reachable rung.
         let bogus: RelayUrl = "https://192.0.2.1./".parse().unwrap();
-        let selected =
-            select_bootstrap_rung(&[bogus], std::time::Duration::from_secs(2)).await;
+        let selected = select_bootstrap_rung(&[bogus], std::time::Duration::from_secs(2)).await;
         assert!(
             selected.is_none(),
             "an unreachable relay must not be selected as a live rung"

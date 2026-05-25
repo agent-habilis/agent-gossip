@@ -17,11 +17,11 @@ use iroh_gossip::api::{GossipReceiver, GossipSender};
 use tokio::io::BufReader;
 use tokio::sync::{broadcast, mpsc, watch};
 
+use crate::daemon::state_file::StateFile;
 use crate::output;
 use crate::protocol::swarm::SwarmName;
 use crate::protocol::{Message, Nickname, SwarmId};
 use crate::util::bounded_read::{LineRead, read_bounded_line};
-use crate::daemon::state_file::StateFile;
 use crate::{beacon, gossip, lifecycle, lookup};
 use ahs_shared::MAX_STDIN_LINE_BYTES;
 // Bare `ipc` is `daemon::ipc`; transport's socket server is by-item.

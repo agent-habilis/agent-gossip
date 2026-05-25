@@ -10,8 +10,8 @@ mod json;
 #[cfg(test)]
 mod tests;
 
-pub use json::event_json;
 pub(crate) use json::PingPeer;
+pub use json::event_json;
 use json::{SimpleEvent, emit, emit_json, format_presence_json, print_message_json};
 
 /// Output mode — chosen per event loop at construction.

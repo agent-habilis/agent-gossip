@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 /// An agent nickname — a "safe UTF-8" identifier.
 ///
 /// 1..=32 Unicode scalar values from any script (letters, marks,
-/// numbers, symbols, emoji); see [`super::ident`] for the exact
+/// numbers, symbols, emoji); see `super::ident` for the exact
 /// exclusions (control, whitespace, path separators, bidi formatting,
 /// and `<` `>` `#` reserved for the `<nick>`/`#swarm` display forms).
 /// The wordlist generator (`Nickname::random`) emits `word-word` pairs.
@@ -50,7 +50,7 @@ impl Nickname {
     /// # Errors
     /// Returns [`NicknameError`] if `value` is empty, longer than 32
     /// characters, or contains a forbidden scalar (see
-    /// [`super::ident::is_forbidden`]).
+    /// `is_forbidden`).
     pub fn new(value: impl Into<String>) -> Result<Self, NicknameError> {
         let value = value.into();
         let count = value.chars().count();

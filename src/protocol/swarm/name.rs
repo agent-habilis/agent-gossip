@@ -12,7 +12,7 @@ use crate::protocol::{ident, wordlist};
 /// A human-readable swarm label, bound cryptographically into the topic id.
 ///
 /// Same rules as `Nickname`: 1..=32 "safe UTF-8" scalar values from any
-/// script; see [`crate::protocol::ident`] for the exact exclusions (control,
+/// script; see `crate::protocol::ident` for the exact exclusions (control,
 /// whitespace, path separators, bidi formatting, and `<` `>` `#`
 /// reserved for the `<nick>`/`#swarm` display conventions). The newtype
 /// is the single validation point — every construction path goes

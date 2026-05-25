@@ -216,5 +216,8 @@ fn discover_stops_on_sigterm() {
     let _ = fs::remove_file(&adv_log);
     let _ = fs::remove_file(&disc_log);
 
-    assert!(exited, "discover did not exit within 5s of SIGTERM (hang regressed)");
+    assert!(
+        exited,
+        "discover did not exit within 5s of SIGTERM (hang regressed)"
+    );
 }

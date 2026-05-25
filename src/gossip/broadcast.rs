@@ -202,7 +202,8 @@ pub(crate) async fn handle_session_request(
 ) -> bool {
     match req {
         SessionRequest::Send { body, reply, resp } => {
-            let outcome = broadcast_message(swarm, author, body, reply, state, sender, output).await;
+            let outcome =
+                broadcast_message(swarm, author, body, reply, state, sender, output).await;
             let sent_ok = matches!(outcome, Ok(SendOutcome::Sent(..)));
             let _ = resp.send(outcome.map(|sent| match sent {
                 SendOutcome::Sent(_id, msg) => Some(msg),

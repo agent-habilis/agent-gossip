@@ -107,7 +107,7 @@ struct WellKnown {
 /// What a join accepts: a literal swarm id, or a domain / git-repo URL
 /// whose `/.well-known/agent-habilis-swarm` names one. The three accepted
 /// input forms are classified and syntactically validated **once**, at the
-/// boundary (clap `FromStr` / MCP entry), so [`resolve`] matches on the
+/// boundary (clap `FromStr` / MCP entry), so `resolve` matches on the
 /// variant instead of re-sniffing a `String`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum JoinTarget {
@@ -263,7 +263,12 @@ mod tests {
 
     fn known_swarm_id() -> String {
         use crate::protocol::swarm::{Swarm, SwarmConfig, SwarmName};
-        Swarm::new([1u8; 32], SwarmName::new("test").unwrap(), SwarmConfig::loopback()).to_string()
+        Swarm::new(
+            [1u8; 32],
+            SwarmName::new("test").unwrap(),
+            SwarmConfig::loopback(),
+        )
+        .to_string()
     }
 
     async fn mock_well_known(body: &str, status: u16) -> (MockServer, String) {
@@ -331,10 +336,7 @@ mod tests {
     fn join_target_classifies_inputs() {
         // A literal `ahs…` id ⇒ Swarm (no I/O to resolve).
         let id = known_swarm_id();
-        assert!(matches!(
-            id.parse::<JoinTarget>(),
-            Ok(JoinTarget::Swarm(_))
-        ));
+        assert!(matches!(id.parse::<JoinTarget>(), Ok(JoinTarget::Swarm(_))));
         // A bare domain ⇒ WellKnown carrying the well-known URL.
         assert_eq!(
             "example.com".parse::<JoinTarget>(),

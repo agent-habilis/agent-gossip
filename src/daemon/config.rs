@@ -100,7 +100,7 @@ pub(crate) struct EventLoopConfig {
     pub max_peers: usize,
     /// Per-author messages-per-minute cap decoded from the swarm id
     /// (`0` ⇒ no rate limit). Uniform across the swarm because it travels
-    /// in the hash; the event loop builds the [`SwarmRateLimiter`] from it.
+    /// in the hash; the event loop builds the `SwarmRateLimiter` from it.
     pub rate_limit_per_min: u16,
     /// Inputs for (re)building the co-hosted rendezvous endpoint.
     /// `rendezvous_params.id` doubles as the bootstrap-cache heal

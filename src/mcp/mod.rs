@@ -249,10 +249,16 @@ impl AgentSwarmServer {
             .nickname
             .map(Nickname::new)
             .transpose()
-            .map_err(|error| McpError::invalid_params(format!("invalid nickname: {error}"), None))?;
-        let directory = args.directory.map(SwarmName::new).transpose().map_err(|error| {
-            McpError::invalid_params(format!("invalid directory name: {error}"), None)
-        })?;
+            .map_err(|error| {
+                McpError::invalid_params(format!("invalid nickname: {error}"), None)
+            })?;
+        let directory = args
+            .directory
+            .map(SwarmName::new)
+            .transpose()
+            .map_err(|error| {
+                McpError::invalid_params(format!("invalid directory name: {error}"), None)
+            })?;
         let cfg = CreateConfig {
             name,
             nickname,
