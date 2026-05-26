@@ -1,11 +1,11 @@
 //! Gossip healer — the sole reconnect primitive for the gossip mesh.
 
-use std::collections::HashSet;
 use std::time::Duration;
 
 use iroh::{Endpoint, EndpointId};
 use iroh_gossip::api::GossipSender;
 
+use crate::util::bounded_fifo_set::BoundedFifoSet;
 use crate::util::tuning::{HEAL_HARD_PROBE_SECS, HEAL_PROBE_SECS};
 
 /// Re-resolve/re-path the seed-derived rendezvous, then re-graft it.
@@ -73,7 +73,7 @@ pub(crate) async fn tick_heal_hard(
 /// iroh reuses the addresses cached when each peer was first linked.
 ///
 /// [`EventLoopState::known_endpoints`]: crate::daemon::state::EventLoopState::known_endpoints
-pub(crate) async fn rebridge_known(sender: &GossipSender, known: &HashSet<EndpointId>) {
+pub(crate) async fn rebridge_known(sender: &GossipSender, known: &BoundedFifoSet<EndpointId>) {
     let peers: Vec<EndpointId> = known.iter().copied().collect();
     // `info`, not `debug`: this fires only on the isolation signal (rare,
     // event-driven), and a re-bridge attempt is part of the always-on

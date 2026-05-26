@@ -199,6 +199,14 @@ pub(crate) const RECLAIM_WINDOW_SECS: u64 = 6;
 /// Cadence of the fast reclaim burst while the window (above) is open.
 pub(crate) const RECLAIM_INTERVAL_MS: u64 = 400;
 
+/// Max remembered `quiet` (silence-evicted but maybe-returning) participants.
+/// `quiet` is drained only when a peer returns, so without a cap a churn / sybil
+/// stream of one-shot nicknames would grow it without bound — the one unbounded
+/// collection we own. Evicting a long-departed peer that never came back costs
+/// only a missed `peer_return` surface — acceptable. Generously above any
+/// realistic live roster.
+pub(crate) const QUIET_CAP: usize = 1024;
+
 /// Minimum gap between our own re-dial + `PeerInfo` re-flood of the *same*
 /// peer learned via `PeerInfo` (`gossip::recv::handle_peer_info`). Caps the
 /// membership amplifier so a flapping/unstable peer is re-linked at most once

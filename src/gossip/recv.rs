@@ -83,7 +83,7 @@ pub(crate) async fn handle_gossip_event(
                 if !state.meshed {
                     state.meshed = true;
                     let mut flushed = 0usize;
-                    for bytes in state.take_pending_outbound() {
+                    for bytes in state.pending_outbound.take() {
                         let _ = ctx.sender.broadcast(bytes).await;
                         flushed += 1;
                     }
@@ -333,7 +333,7 @@ async fn handle_peer_info(
         // survives a later `NeighborDown`, and iroh keeps the address we
         // just added, so the healer can re-dial it directly if the
         // rendezvous/relay goes unreachable (see `heal::rebridge_known`).
-        state.remember_endpoint(peer_id);
+        state.known_endpoints.insert(peer_id);
         let _ = ctx.sender.join_peers(vec![peer_id]).await;
         let _ = ctx.sender.broadcast(content).await;
         state.last_sent_at = Instant::now();

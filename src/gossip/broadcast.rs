@@ -134,7 +134,7 @@ async fn emit_or_queue(
         tracing::trace!(ok = result.is_ok(), "broadcast to mesh");
         return result;
     }
-    if state.queue_outbound(bytes).is_some() {
+    if state.pending_outbound.push(bytes).is_some() {
         out.info("pending outbound buffer full; dropped oldest undelivered message");
         tracing::warn!("pending outbound buffer full; dropped oldest undelivered message");
     } else {

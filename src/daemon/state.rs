@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
@@ -15,9 +15,12 @@ use crate::daemon::state_file::StateFile;
 use crate::output;
 use crate::protocol::identity::Identity;
 use crate::protocol::{Message, MessageId, Nickname};
+use crate::util::bounded_fifo_set::BoundedFifoSet;
+use crate::util::bounded_queue::BoundedQueue;
 
 use crate::util::tuning::{
-    KNOWN_ENDPOINTS_CAP, PENDING_OUTBOUND_CAP, RELINK_COOLDOWN_SECS, message_log_size, seen_ids_cap,
+    KNOWN_ENDPOINTS_CAP, PENDING_OUTBOUND_CAP, QUIET_CAP, RELINK_COOLDOWN_SECS, message_log_size,
+    seen_ids_cap,
 };
 
 /// `RELINK_COOLDOWN_SECS` as a `Duration` — the single window value both
@@ -47,10 +50,8 @@ pub(crate) struct EventLoopState {
     /// node loses all links because the rendezvous/relay is unreachable,
     /// the healer re-dials these directly — iroh still holds their cached
     /// addresses — so the re-bridge no longer depends on the rendezvous.
-    /// Bounded FIFO via `remember_endpoint`; `known_order` is its
-    /// eviction queue.
-    pub known_endpoints: HashSet<EndpointId>,
-    pub known_order: VecDeque<EndpointId>,
+    /// Bounded FIFO (cap `KNOWN_ENDPOINTS_CAP`) so it can't grow without limit.
+    pub known_endpoints: BoundedFifoSet<EndpointId>,
     /// Per-endpoint re-link cooldown: the last `Instant` we re-dialed +
     /// re-flooded a peer learned via `PeerInfo`. Kept *across* `NeighborDown`
     /// (unlike `linked_endpoints`), so a flapping/unstable peer is re-linked at
@@ -74,8 +75,10 @@ pub(crate) struct EventLoopState {
     /// Heartbeat layer: participants we've evicted as quiet (silent
     /// past `ALIVE_TIMEOUT_SECS`) but who may still reappear. Any
     /// message from a nickname in this set triggers a symmetric
-    /// `peer_return` event and re-inclusion in `participants`.
-    pub quiet: HashSet<Nickname>,
+    /// `peer_return` event and re-inclusion in `participants`. Bounded FIFO
+    /// (cap `QUIET_CAP`): drained on return, so without the cap a churn /
+    /// sybil stream of one-shot nicknames would grow it without bound.
+    pub quiet: BoundedFifoSet<Nickname>,
     /// Presentation layer: participants for whom we have *surfaced* an
     /// arrival (synthetic `joined`, real `Presence::Joined`, or
     /// `peer_return`). Gates departure surfacing so a participant whose
@@ -123,10 +126,10 @@ pub(crate) struct EventLoopState {
     /// so it always covers the retention window.
     pub seen: BoundedIdSet,
     /// User messages sent before we had a real-peer link (no gossip
-    /// path yet — a bare `broadcast` would be a lost one-shot).
-    /// Drained in FIFO order once `meshed` flips; bounded by
-    /// `PENDING_OUTBOUND_CAP`.
-    pub pending_outbound: VecDeque<Bytes>,
+    /// path yet — a bare `broadcast` would be a lost one-shot). Drained in
+    /// FIFO order once `meshed` flips; a bounded FIFO queue (cap
+    /// `PENDING_OUTBOUND_CAP`) so the backlog can't grow without limit.
+    pub pending_outbound: BoundedQueue<Bytes>,
     pub state_file: Option<StateFile>,
     /// When advertising (`create --advertise`), the directory's
     /// re-broadcast task reads the live participant count from here.
@@ -196,12 +199,11 @@ impl EventLoopState {
     ) -> Self {
         Self {
             linked_endpoints: HashSet::new(),
-            known_endpoints: HashSet::new(),
-            known_order: VecDeque::new(),
+            known_endpoints: BoundedFifoSet::new(KNOWN_ENDPOINTS_CAP),
             relink_at: HashMap::new(),
             participants: HashSet::new(),
             last_seen: HashMap::new(),
-            quiet: HashSet::new(),
+            quiet: BoundedFifoSet::new(QUIET_CAP),
             surfaced: HashSet::new(),
             last_sent_at: now,
             joined_at: crate::util::clock::unix_secs(),
@@ -210,7 +212,7 @@ impl EventLoopState {
             meshed: false,
             reclaim_until: None,
             seen: BoundedIdSet::new(seen_ids_cap()),
-            pending_outbound: VecDeque::new(),
+            pending_outbound: BoundedQueue::new(PENDING_OUTBOUND_CAP),
             state_file,
             live_count: None,
             message_log: MessageLog::new(message_log_size()),
@@ -267,42 +269,6 @@ impl EventLoopState {
         }
         if let Some(live) = self.live_count.as_ref() {
             live.store(count, Ordering::Relaxed);
-        }
-    }
-
-    /// Take everything buffered while unmeshed, FIFO order, leaving the
-    /// buffer empty — the caller broadcasts each now that a real link
-    /// exists.
-    pub(crate) fn take_pending_outbound(&mut self) -> VecDeque<Bytes> {
-        std::mem::take(&mut self.pending_outbound)
-    }
-
-    /// Buffer an outbound message that has no gossip path yet. Bounded
-    /// FIFO: drops (and returns) the evicted oldest payload when the
-    /// buffer is already at `PENDING_OUTBOUND_CAP`, else `None`.
-    pub(crate) fn queue_outbound(&mut self, bytes: Bytes) -> Option<Bytes> {
-        let evicted = if self.pending_outbound.len() >= PENDING_OUTBOUND_CAP {
-            self.pending_outbound.pop_front()
-        } else {
-            None
-        };
-        self.pending_outbound.push_back(bytes);
-        evicted
-    }
-
-    /// Remember a peer endpoint for the rendezvous-independent re-bridge.
-    /// Bounded FIFO: evicts the oldest id past `KNOWN_ENDPOINTS_CAP`. A
-    /// re-seen id keeps its original position (no recency bump) — recency
-    /// isn't load-bearing here, only "have we ever linked this peer".
-    pub(crate) fn remember_endpoint(&mut self, id: EndpointId) {
-        if !self.known_endpoints.insert(id) {
-            return;
-        }
-        self.known_order.push_back(id);
-        if self.known_order.len() > KNOWN_ENDPOINTS_CAP
-            && let Some(oldest) = self.known_order.pop_front()
-        {
-            self.known_endpoints.remove(&oldest);
         }
     }
 
@@ -413,9 +379,13 @@ const MAX_DAG_PARENTS: usize = 16;
 #[cfg(test)]
 mod tests {
     use super::{
-        Bytes, Duration, EndpointId, EventLoopState, Instant, KNOWN_ENDPOINTS_CAP, MessageId,
-        PENDING_OUTBOUND_CAP, RELINK_COOLDOWN_SECS,
+        Duration, EndpointId, EventLoopState, Instant, KNOWN_ENDPOINTS_CAP, MessageId, Nickname,
+        QUIET_CAP, RELINK_COOLDOWN_SECS,
     };
+
+    fn nick(name: &str) -> Nickname {
+        Nickname::new(name.to_owned()).expect("valid test nickname")
+    }
 
     fn fresh_state() -> EventLoopState {
         EventLoopState::new(
@@ -509,59 +479,45 @@ mod tests {
         assert!(state.dag_parents().is_empty());
     }
 
-    #[test]
-    fn queue_outbound_is_bounded_fifo() {
-        let mut state = fresh_state();
-        // Fill exactly to cap — nothing evicted yet.
-        for index in 0..PENDING_OUTBOUND_CAP {
-            let evicted =
-                state.queue_outbound(Bytes::from(vec![u8::try_from(index % 256).unwrap()]));
-            assert!(evicted.is_none(), "no eviction below cap");
-        }
-        assert_eq!(state.pending_outbound.len(), PENDING_OUTBOUND_CAP);
-        // One past cap evicts the oldest (FIFO), length stays capped.
-        let evicted = state.queue_outbound(Bytes::from_static(b"newest"));
-        assert_eq!(evicted, Some(Bytes::from(vec![0u8])), "oldest evicted");
-        assert_eq!(state.pending_outbound.len(), PENDING_OUTBOUND_CAP);
-        assert_eq!(
-            state.pending_outbound.back().map(Bytes::as_ref),
-            Some(b"newest".as_ref()),
-            "newest is at the back"
-        );
-    }
-
     /// A valid (curve-point) `EndpointId` derived deterministically from
     /// a seed — `EndpointId::from_bytes` rejects arbitrary bytes.
     fn endpoint_id(seed: u8) -> EndpointId {
         iroh::SecretKey::from_bytes(&[seed; 32]).public()
     }
 
+    // The `known_endpoints` / `quiet` fields are `BoundedFifoSet`s wired with
+    // their caps — the generic FIFO/dedup/remove behavior is covered in
+    // `bounded_fifo_set`; these only assert the state wires the right cap.
     #[test]
-    fn remember_endpoint_is_bounded_fifo() {
+    fn known_endpoints_field_is_capped() {
         let mut state = fresh_state();
         let first = endpoint_id(0);
-        state.remember_endpoint(first);
-        // Fill past the cap with distinct ids; `first` is oldest and is
-        // evicted, but the set stays capped.
+        state.known_endpoints.insert(first);
         for index in 0..KNOWN_ENDPOINTS_CAP {
-            state.remember_endpoint(endpoint_id(u8::try_from(index + 1).unwrap()));
+            state
+                .known_endpoints
+                .insert(endpoint_id(u8::try_from(index + 1).unwrap()));
         }
+        assert!(state.known_endpoints.len() <= KNOWN_ENDPOINTS_CAP);
         assert!(
             !state.known_endpoints.contains(&first),
-            "oldest endpoint evicted past the cap"
+            "oldest evicted past the cap"
         );
-        assert!(state.known_endpoints.len() <= KNOWN_ENDPOINTS_CAP);
-        assert_eq!(state.known_order.len(), state.known_endpoints.len());
     }
 
     #[test]
-    fn remember_endpoint_dedupes() {
+    fn quiet_field_is_capped() {
+        // `quiet` is drained only on return, so the cap is what stops a churn /
+        // sybil stream of one-shot nicknames from growing it without bound.
         let mut state = fresh_state();
-        let id = endpoint_id(7);
-        state.remember_endpoint(id);
-        state.remember_endpoint(id);
-        assert_eq!(state.known_endpoints.len(), 1, "re-membering is a no-op");
-        assert_eq!(state.known_order.len(), 1);
+        for index in 0..(QUIET_CAP + 5) {
+            state.quiet.insert(nick(&format!("ghost-{index}")));
+        }
+        assert!(
+            state.quiet.len() <= QUIET_CAP,
+            "quiet stays capped under churn: {}",
+            state.quiet.len()
+        );
     }
 
     #[test]
