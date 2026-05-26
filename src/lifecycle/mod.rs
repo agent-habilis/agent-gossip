@@ -133,7 +133,11 @@ pub(crate) async fn handle_presence(
         }
     } else if subtype == PresenceSubtype::Joined && update.joined_new {
         // Re-announce so late joiners seed their roster.
-        gossip::broadcast_msg(ctx.sender, &Message::new_joined(ctx.swarm, ctx.author)).await;
+        gossip::broadcast_msg(
+            ctx.sender,
+            &Message::new_joined(ctx.swarm, ctx.author).signed(ctx.identity),
+        )
+        .await;
         state.last_sent_at = Instant::now();
         // Suppress "has joined" when we already printed "came back"
         // from the quiet check, or when this `joined` predates

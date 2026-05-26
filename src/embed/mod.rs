@@ -384,6 +384,19 @@ impl InProcessSession {
             .map_err(|_| anyhow::anyhow!("swarm event loop dropped the response"))
     }
 
+    /// Broadcast pre-built wire bytes verbatim (no signing/chain). Testkit
+    /// only — the injection point for crafted/malicious messages.
+    ///
+    /// # Errors
+    /// Fails if the event loop has stopped.
+    #[cfg(feature = "testkit")]
+    pub(crate) async fn inject_raw(&self, bytes: bytes::Bytes) -> anyhow::Result<()> {
+        self.req_tx
+            .send(SessionRequest::InjectRaw { bytes })
+            .await
+            .map_err(|_| anyhow::anyhow!("swarm event loop has stopped"))
+    }
+
     /// Clean shutdown: ask the loop to broadcast `Left` and wind down,
     /// waiting up to 3s. On timeout returns `Ok(())` and `Drop` detaches.
     ///
@@ -565,6 +578,19 @@ impl SwarmSession {
     /// Fails if the event loop has stopped or dropped the response.
     pub async fn fetch(&self, after: Option<MessageId>) -> anyhow::Result<Vec<Message>> {
         self.core.fetch(after).await
+    }
+
+    /// Broadcast pre-built wire bytes **verbatim** into the swarm — no
+    /// signing, no chain stamping. Test-only escape hatch (the `testkit`
+    /// feature) for injecting crafted/malicious messages a correct client
+    /// would never produce, so the adversarial suite can prove receivers
+    /// reject or flag them. Not part of the normal public API.
+    ///
+    /// # Errors
+    /// Fails if the event loop has stopped.
+    #[cfg(feature = "testkit")]
+    pub async fn inject_raw(&self, bytes: Vec<u8>) -> anyhow::Result<()> {
+        self.core.inject_raw(bytes::Bytes::from(bytes)).await
     }
 
     /// Clean shutdown: ask the loop to broadcast `Left` and wind down,

@@ -361,8 +361,16 @@ mod tests {
                 let author = Nickname::new(author).unwrap();
                 let body = MessageBody::new(body).unwrap();
                 let expected_body = body.clone();
-                let (bytes, built) =
-                    crate::protocol::message::build_msg_bytes(&swarm, body, None, &author).unwrap();
+                let identity = crate::protocol::identity::Identity::generate();
+                let (bytes, built) = crate::protocol::message::build_msg_bytes(
+                    &swarm,
+                    body,
+                    None,
+                    &author,
+                    &identity,
+                    crate::protocol::message::ChainCtx::genesis(),
+                )
+                .unwrap();
                 prop_assert!(!built.id.as_str().is_empty());
                 let parsed = crate::protocol::Message::parse(&bytes).unwrap();
                 prop_assert_eq!(&parsed.author, &author);
@@ -383,9 +391,16 @@ mod tests {
                 let body = MessageBody::new(body).unwrap();
                 let expected_body = body.clone();
                 let expected_target = target.clone();
-                let (bytes, built) =
-                    crate::protocol::message::build_msg_bytes(&swarm, body, Some(target), &author)
-                        .unwrap();
+                let identity = crate::protocol::identity::Identity::generate();
+                let (bytes, built) = crate::protocol::message::build_msg_bytes(
+                    &swarm,
+                    body,
+                    Some(target),
+                    &author,
+                    &identity,
+                    crate::protocol::message::ChainCtx::genesis(),
+                )
+                .unwrap();
                 prop_assert!(!built.id.as_str().is_empty());
                 let parsed = crate::protocol::Message::parse(&bytes).unwrap();
                 prop_assert_eq!(&parsed.author, &author);

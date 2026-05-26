@@ -11,7 +11,6 @@ use governor::{
     state::{InMemoryState, NotKeyed},
 };
 
-use crate::protocol::Nickname;
 use crate::util::tuning::RATE_LIMITER_TTL_SECS;
 
 type Limiter = Arc<RateLimiter<NotKeyed, InMemoryState, DefaultClock, NoOpMiddleware>>;
@@ -25,13 +24,15 @@ struct LimiterEntry {
     last_used: Instant,
 }
 
-/// Per-identity rate limiter, keyed by author nickname. One quota covers
-/// every message — open broadcast or directed reply, no per-kind split.
-/// Entries are pruned after `ttl_secs` of inactivity. The cap is the
-/// swarm-wide one carried in the id; `per_min == None` means no limit
-/// (the id encoded `0`), in which case `check` always admits.
+/// Per-identity rate limiter, keyed by the author's **verified public key**
+/// (hex). Keying on the signed pubkey rather than the spoofable nickname
+/// means the quota cannot be dodged by switching display names. One quota
+/// covers every message — open broadcast or directed reply, no per-kind
+/// split. Entries are pruned after `ttl_secs` of inactivity. The cap is the
+/// swarm-wide one carried in the id; `per_min == None` means no limit (the
+/// id encoded `0`), in which case `check` always admits.
 pub(crate) struct SwarmRateLimiter {
-    limiters: Mutex<HashMap<Nickname, LimiterEntry>>,
+    limiters: Mutex<HashMap<String, LimiterEntry>>,
     ttl_secs: u64,
     per_min: Option<NonZeroU32>,
 }
@@ -51,23 +52,24 @@ impl SwarmRateLimiter {
         }
     }
 
-    /// Returns true if a message from `author` is within the rate limit.
-    /// Consumes one token on success. Applied identically on the send and
-    /// receive paths so a node is held to the same quota either way. When
-    /// the swarm disabled rate limiting (`per_min == 0`), always admits.
-    pub(crate) fn check(&self, author: &Nickname) -> bool {
+    /// Returns true if a message from the author with public key `key`
+    /// (hex) is within the rate limit. Consumes one token on success.
+    /// Applied identically on the send and receive paths so a node is held
+    /// to the same quota either way. When the swarm disabled rate limiting
+    /// (`per_min == 0`), always admits.
+    pub(crate) fn check(&self, key: &str) -> bool {
         let Some(per_min) = self.per_min else {
             return true;
         };
         let now = Instant::now();
         let mut map = self.limiters.lock().expect("rate-limiter mutex poisoned");
-        // Hot path (author already seen): borrow, no key clone. Only the
+        // Hot path (key already seen): borrow, no key clone. Only the
         // first sighting needs to own the key.
-        if let Some(entry) = map.get_mut(author) {
+        if let Some(entry) = map.get_mut(key) {
             entry.last_used = now;
             return entry.limiter.check().is_ok();
         }
-        let entry = map.entry(author.clone()).or_insert_with(|| LimiterEntry {
+        let entry = map.entry(key.to_owned()).or_insert_with(|| LimiterEntry {
             limiter: make_limiter(per_min),
             last_used: now,
         });
@@ -107,75 +109,70 @@ impl SwarmRateLimiter {
 
 #[cfg(test)]
 mod tests {
-    use super::{Nickname, RATE_LIMIT_PER_MIN, SwarmRateLimiter};
+    use super::{RATE_LIMIT_PER_MIN, SwarmRateLimiter};
 
-    fn nick(text: &str) -> Nickname {
-        Nickname::from(text)
-    }
+    // Keys are author public keys (hex) in production; any distinct string
+    // exercises the keying for these tests.
+    const ALICE: &str = "alice-pubkey";
+    const BOB: &str = "bob-pubkey";
 
     #[test]
     fn allowed_within_quota() {
         let limiter = SwarmRateLimiter::new();
-        let alice = nick("alice");
         for _ in 0..RATE_LIMIT_PER_MIN {
-            assert!(limiter.check(&alice));
+            assert!(limiter.check(ALICE));
         }
     }
 
     #[test]
     fn rejected_after_quota_exceeded() {
         let limiter = SwarmRateLimiter::new();
-        let spammer = nick("spammer");
         for _ in 0..RATE_LIMIT_PER_MIN {
-            limiter.check(&spammer);
+            limiter.check("spammer-pubkey");
         }
-        assert!(!limiter.check(&spammer));
+        assert!(!limiter.check("spammer-pubkey"));
     }
 
     #[test]
     fn limiters_are_per_author() {
         let limiter = SwarmRateLimiter::new();
-        let alice = nick("alice");
-        let bob = nick("bob");
         for _ in 0..RATE_LIMIT_PER_MIN {
-            limiter.check(&alice);
+            limiter.check(ALICE);
         }
-        assert!(!limiter.check(&alice));
-        assert!(limiter.check(&bob));
+        assert!(!limiter.check(ALICE));
+        assert!(limiter.check(BOB));
     }
 
     #[test]
     fn default_constructor_works() {
         let limiter = SwarmRateLimiter::default();
-        assert!(limiter.check(&nick("test")));
+        assert!(limiter.check("test-pubkey"));
     }
 
     #[test]
     fn from_per_min_zero_disables_rate_limiting() {
         let limiter = SwarmRateLimiter::from_per_min(0);
-        let spammer = nick("spammer");
         // Well past any finite quota — all admitted because the swarm
         // encoded `0` (no rate limit).
         for _ in 0..(u32::from(RATE_LIMIT_PER_MIN) * 4) {
-            assert!(limiter.check(&spammer));
+            assert!(limiter.check("spammer-pubkey"));
         }
     }
 
     #[test]
     fn from_per_min_caps_at_the_given_quota() {
         let limiter = SwarmRateLimiter::from_per_min(RATE_LIMIT_PER_MIN);
-        let author = nick("author");
         for _ in 0..RATE_LIMIT_PER_MIN {
-            assert!(limiter.check(&author));
+            assert!(limiter.check("author-pubkey"));
         }
-        assert!(!limiter.check(&author), "over quota is rejected");
+        assert!(!limiter.check("author-pubkey"), "over quota is rejected");
     }
 
     #[test]
     fn prune_removes_expired_entries() {
         let limiter = SwarmRateLimiter::with_ttl(0);
-        limiter.check(&nick("alice"));
-        limiter.check(&nick("bob"));
+        limiter.check(ALICE);
+        limiter.check(BOB);
         assert_eq!(limiter.len(), 2);
 
         limiter.prune_inactive();
@@ -185,8 +182,8 @@ mod tests {
     #[test]
     fn prune_keeps_recent_entries() {
         let limiter = SwarmRateLimiter::with_ttl(600);
-        limiter.check(&nick("alice"));
-        limiter.check(&nick("bob"));
+        limiter.check(ALICE);
+        limiter.check(BOB);
 
         limiter.prune_inactive();
         assert_eq!(limiter.len(), 2);
@@ -195,29 +192,29 @@ mod tests {
     #[test]
     fn prune_is_selective() {
         let limiter = SwarmRateLimiter::with_ttl(0);
-        limiter.check(&nick("old-author"));
+        limiter.check("old-author-pubkey");
 
         // Immediately prune — "old-author" expires (ttl=0)
         limiter.prune_inactive();
         assert_eq!(limiter.len(), 0);
 
         // New entry created after prune should survive until next prune
-        limiter.check(&nick("new-author"));
+        limiter.check("new-author-pubkey");
         assert_eq!(limiter.len(), 1);
     }
 
     mod prop {
         use proptest::{prop_assume, proptest, strategy::Strategy};
 
-        use super::{Nickname, RATE_LIMIT_PER_MIN, SwarmRateLimiter};
+        use super::{RATE_LIMIT_PER_MIN, SwarmRateLimiter};
 
-        fn arb_nickname() -> impl Strategy<Value = Nickname> {
-            "[a-z]{3,8}-[a-z]{3,8}".prop_map(|raw| Nickname::new(raw).unwrap())
+        fn arb_key() -> impl Strategy<Value = String> {
+            "[a-f0-9]{8,16}".prop_map(|raw| raw)
         }
 
         proptest! {
             #[test]
-            fn prop_quota_limit_holds(author in arb_nickname()) {
+            fn prop_quota_limit_holds(author in arb_key()) {
                 let limiter = SwarmRateLimiter::new();
                 for _ in 0..RATE_LIMIT_PER_MIN {
                     assert!(limiter.check(&author));
@@ -227,8 +224,8 @@ mod tests {
 
             #[test]
             fn prop_per_author_isolation(
-                author_a in arb_nickname(),
-                author_b in arb_nickname(),
+                author_a in arb_key(),
+                author_b in arb_key(),
             ) {
                 prop_assume!(author_a != author_b);
                 let limiter = SwarmRateLimiter::new();
@@ -245,7 +242,7 @@ mod tests {
 
             #[test]
             fn prop_prune_never_exceeds_input_count(
-                authors in proptest::collection::vec(arb_nickname(), 1..20),
+                authors in proptest::collection::vec(arb_key(), 1..20),
             ) {
                 let limiter = SwarmRateLimiter::with_ttl(600);
                 for author in &authors {

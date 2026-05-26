@@ -17,8 +17,11 @@ This is the threat-model companion to
 - **The `ahs…` id is a shared credential.** Anyone who has it can join
   and then receives all traffic. There is no allow-list and no
   revocation.
-- **Nicknames are spoofable.** Messages are not signed; any peer can
-  post as any nickname.
+- **Messages are signed; identity is the key.** Every message is
+  signed by a per-author Ed25519 key and hash-linked into a tamper-evident
+  history. The **public key (its fingerprint) is the identity**; the nickname
+  is a non-unique display label — trust the key, not the name. See
+  [Message-history integrity](#message-history-integrity).
 - **Private mode (the default) is the only "nothing leaves the
   machine" mode.** It binds to loopback with no relay and no discovery.
 - **Transport is encrypted; messages are not secret from members.**
@@ -118,26 +121,139 @@ nickname, not a transcript.)
 
 ## Authenticity & integrity
 
-The message wire format carries a self-asserted `author` nickname
-(random `word-word` by default), and **nothing signs or verifies it**.
-There is no signature field and no verification step on the message
-path (`src/protocol/message.rs`, `src/protocol/nickname.rs`).
+Authenticity is provided by **per-author signatures** over a tamper-evident
+message log — the full mechanism is its own document,
+[`history-integrity.md`](./history-integrity.md), and summarized in
+[Message-history integrity](#message-history-integrity) below.
 
-Consequences:
+In short: each participant holds a per-swarm Ed25519 keypair, every message
+carries that `pubkey` + a `signature` verified before the message is accepted,
+and **the public key (its fingerprint) is the identity** — the `author`
+nickname is a non-unique display label, never claimed. The transport iroh
+`EndpointId` authenticates the *connection*; the message signature
+authenticates the *key*.
 
-- Any peer can post a message claiming **any** nickname. Nicknames are
-  pseudonymous labels, not authenticated accounts.
-- A nickname does not identify who sent a message. Do not make trust
-  decisions based on it.
-- Rate limits are keyed on that spoofable identity, so they are
-  best-effort anti-spam, not a security control.
+---
 
-The only cryptographic handle in the system is the transport-level iroh
-`EndpointId` (its QUIC/TLS keypair). It authenticates the connection,
-not the `author` string inside a gossiped message, and the project
-does not expose per-message sender attestation. Message integrity is
-limited to QUIC transport integrity: bytes are delivered intact, with
-no guarantee about the sender.
+## Message-history integrity
+
+Every message is **signed by its author and hash-linked into a
+tamper-evident history**. This replaces spoofable nicknames with cryptographic
+identity, without adding consensus, a blockchain, or a server. The deep
+mechanics — wire fields, data structures, the verify pipeline, the
+linearization algorithm — live in
+[`history-integrity.md`](./history-integrity.md); this section is the
+threat-facing summary.
+
+### Identity: keys, not nicknames
+
+Each participant holds a per-swarm **Ed25519 keypair**, generated on first
+`create`/`join` (in-process / ephemeral today; on-disk persistence is a
+follow-up). The **public key is the identity** — its short **fingerprint** is
+the human-facing id. The nickname is a **non-unique display label**: freely
+chosen, never claimed, never pinned. Two identities may show the same
+nickname; they are distinguished by fingerprint. This is the p2panda model —
+**trust the key, not the name** — and it means a nickname is never "burned":
+a restart (a new key) can reuse any display name. The key, not the name, is
+what carries authorship and rate-limit quota.
+
+This is distinct from the transport `EndpointId` (which authenticates the
+*connection*) and from the shared seed-derived rendezvous key (which every
+member holds). It is the first **per-author** credential in the system.
+
+### What is signed, and what that buys
+
+Every message carries the author's `pubkey` and a detached Ed25519 `signature`
+over its canonical bytes, verified **before** the message is accepted,
+relayed, logged, or surfaced. Consequences:
+
+- **No impersonation.** A message's author is provably the holder of that
+  key; you can no longer post as someone else's identity.
+- **No tampering in flight or at rest.** Altering any signed byte (body,
+  author, timestamp) invalidates the signature, so on-path modification and
+  malicious-relay edits are dropped — not just metadata-protected by QUIC.
+- **Rate limits become real.** The per-author quota keys on the verified
+  pubkey instead of a spoofable nickname, so it can't be dodged by switching
+  names.
+
+### Tamper-evident history (per-author log + cross-author DAG)
+
+Content messages additionally carry `seq` + `prev` (each author's
+append-only, back-linked log) and `parents` (hashes of the latest messages
+the author had seen — a cross-author Merkle-DAG). Together:
+
+- **Sequence integrity.** Truncating, inserting, or reordering an author's
+  own stream is detectable, and gaps are visible.
+- **Verifiable causal order.** If A's message references B's hash, A provably
+  saw B first. Display order is a deterministic linearization of the DAG
+  (topological, ties broken by `(timestamp, hash)`), so every honest node
+  with the same set renders an **identical** history — no agreement protocol.
+- **Bounded backdating.** A message's timestamp must be `≥` its parents';
+  you cannot claim a message is older than something it references.
+
+### Data model & prior art
+
+None of this is novel — it is the well-trodden **secure append-only log**
+model, assembled from standard structures:
+
+- Each author's `seq` + `prev` chain is a **Secure Scuttlebutt (SSB) feed** /
+  signed hash chain: a single-writer, append-only log where every entry
+  back-links the hash of the author's previous entry. Fork detection (one key,
+  two entries at the same `seq`) is the same primitive SSB uses.
+- The cross-author `parents` links form a **Merkle-DAG** — the same shape as
+  a Git commit graph, a Matrix room's event DAG, or Hashgraph — encoding a
+  verifiable *partial* (causal) order instead of forcing a single total order.
+- The whole history is a **grow-only set (a CRDT)** reconciled by gossip
+  **anti-entropy**: peers exchange what the other lacks and converge, with no
+  coordinator and no canonical chain to elect. This is why divergent histories
+  *merge* (set union) rather than one winning.
+
+Concretely we mirror **p2panda-core**'s `Header` (its `seq_num`/`backlink`
+fields and the DAG-via-extension `namakemono` design) as the reference shape,
+implemented on in-tree primitives (iroh's Ed25519 `SecretKey` + `sha2`) rather
+than taken as a dependency. The deliberate *non*-choice is a global-consensus
+**blockchain**: a chat needs authentic, causally-ordered, mergeable history,
+not one linear chain bought with proof-of-work and consensus latency — and a
+single chain would orphan the "losing" branch's real messages.
+
+### Conflicting histories: merge, don't pick
+
+There is no single canonical chain, so divergent histories **union** rather
+than electing a winner (a chat must never silently drop a message):
+
+- **Benign divergence** (partition, sleep-wake, late join) heals via
+  anti-entropy: each side adds the other's signed messages as new DAG nodes
+  and the views re-converge. Older messages may "fill in" behind the current
+  point after a heal.
+- **Equivocation** (an author signing two messages at the same `seq`) is a
+  **fork**: the signed pair is self-contained proof, so the moment both
+  branches reach any honest node a `fork` security event fires naming the
+  offending key. Forks are **detected, never auto-resolved** (no trustless
+  winner; resolving one would reward the attacker).
+
+### What this does NOT provide
+
+- **Not confidentiality.** Unchanged from above: every member still sees
+  every message. Signing authenticates senders; it does not hide content.
+- **Not access control.** The `ahs…` id is still a bearer capability;
+  signatures identify *who* spoke, not *whether they were allowed* to.
+- **Not censorship resistance.** A peer can still *omit* messages. Omission
+  is **detectable** (DAG/chain gaps) and any one honest peer repairs it via
+  anti-entropy, so it only succeeds under a **total eclipse** (every one of
+  your peers colludes) — but it cannot be prevented outright.
+- **Not true timestamps.** Signing makes a timestamp non-repudiable, not
+  *correct*; only the relative ordering (per-author `seq`, DAG `parents`) is
+  enforced.
+- **Not verified pre-join history.** Integrity holds **from your join
+  onward**. Every backfilled message's signature is checked, but a malicious
+  peer can mint a fresh key and fabricate an entire identity + history you
+  never saw live — indistinguishable from a real participant who left before
+  you arrived. It cannot forge or alter a key you *have* seen. Authenticating
+  ancient history would need a creator-rooted roster, which this design omits.
+
+The guarantee, precisely, is **authenticity + tamper-evidence + convergence
+on heal + detection of malice** — not real-time global truth, which no
+consensus-free system can provide.
 
 ---
 
@@ -172,6 +288,10 @@ and **not** encryption. The full derivation is in
 - To control metadata exposure in public mode, self-host the relay
   with `--relay`. This changes which party is trusted with metadata;
   it does not eliminate the trusted party.
-- Do not gate behavior on a nickname; nicknames are not authenticated.
+- Make trust decisions on a peer's **key fingerprint**, not its nickname:
+  nicknames are non-unique display labels (anyone may show any name), while
+  the signing key is the authenticated identity. History from before your
+  join is not retroactively verified. See
+  [`history-integrity.md`](./history-integrity.md).
 - Credential rotation means re-creating the swarm under a new id;
   individual members cannot be revoked.

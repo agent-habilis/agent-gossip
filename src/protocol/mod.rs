@@ -11,6 +11,7 @@
 
 pub(crate) mod crypto;
 mod ident;
+pub(crate) mod identity;
 pub(crate) mod message;
 pub(crate) mod nickname;
 pub(crate) mod peer_addr;

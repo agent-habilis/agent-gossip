@@ -277,9 +277,15 @@ pub(crate) async fn setup_swarm(
     // beacon self-monitor of its own).
     spawn_startup_rung_confirmation(ladder, rung_tx);
 
+    // This member's per-author signing identity. In-process / ephemeral:
+    // minted here, held for the process lifetime, never persisted (a
+    // restart is a fresh identity). See `crate::protocol::identity`.
+    let identity = std::sync::Arc::new(crate::protocol::identity::Identity::generate());
+
     Ok(EventLoopConfig {
         topic,
         author,
+        identity,
         swarm: swarm_id,
         name: swarm_name,
         output,

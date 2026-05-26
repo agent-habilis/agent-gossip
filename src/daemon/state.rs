@@ -13,6 +13,7 @@ use super::message_log::MessageLog;
 use super::rate_limit::SwarmRateLimiter;
 use crate::daemon::state_file::StateFile;
 use crate::output;
+use crate::protocol::identity::Identity;
 use crate::protocol::{Message, MessageId, Nickname};
 
 use crate::util::tuning::{
@@ -128,6 +129,32 @@ pub(crate) struct EventLoopState {
     /// than one digest is swept over several rounds.
     pub digest_cursor: usize,
     pub rate_limiter: SwarmRateLimiter,
+    /// This member's signing identity (Ed25519). Shared with the
+    /// send path so messages we author are signed before broadcast.
+    /// The public key is the durable identity; the nickname is a
+    /// non-unique display label (see `docs/history-integrity.md`).
+    pub identity: Arc<Identity>,
+    /// Our own per-author log cursor (Phase 2): `self_seq` is the next
+    /// `Msg` sequence number to emit, `self_prev` the content hash of our
+    /// last sent `Msg` (`None` until the first). Advanced on every send so
+    /// our `Msg` stream is a `seq`+`prev` hash chain.
+    pub self_seq: u64,
+    pub self_prev: Option<String>,
+    /// Phase 2 fork detection: per author pubkey (hex), the content hash
+    /// seen at each `Msg` `seq`. A *different* hash at an already-seen
+    /// `(pubkey, seq)` is cryptographic proof of equivocation → a `fork`
+    /// event. Order-independent (gossip delivers out of order).
+    pub author_seqs: HashMap<String, HashMap<u64, String>>,
+    /// Author pubkeys already flagged as forked, so one `fork` event fires
+    /// per offending key rather than per message.
+    pub forked: HashSet<String>,
+    /// Cross-author DAG (Phase 3): `by_hash` maps each known `Msg`'s content
+    /// hash to its timestamp (for the `ts ≥ max(parents.ts)` backdating
+    /// rule); `dag_heads` is the current tip set (hashes with no observed
+    /// child) — the `parents` stamped on the next `Msg` we author. Both are
+    /// pruned alongside the message-log eviction.
+    pub by_hash: HashMap<String, i64>,
+    pub dag_heads: HashSet<String>,
     /// Active `ahs ping` round, if one is in flight. Armed by the
     /// `Ping` IPC command, filled by inbound `Pong`s, and finalized
     /// into a `ping_report` when its `deadline` elapses. One at a time:
@@ -153,6 +180,7 @@ impl EventLoopState {
         state_file: Option<StateFile>,
         now: Instant,
         rate_limit_per_min: u16,
+        identity: Arc<Identity>,
     ) -> Self {
         Self {
             linked_endpoints: HashSet::new(),
@@ -175,6 +203,13 @@ impl EventLoopState {
             message_log: MessageLog::new(message_log_size()),
             digest_cursor: 0,
             rate_limiter: SwarmRateLimiter::from_per_min(rate_limit_per_min),
+            identity,
+            self_seq: 0,
+            self_prev: None,
+            author_seqs: HashMap::new(),
+            forked: HashSet::new(),
+            by_hash: HashMap::new(),
+            dag_heads: HashSet::new(),
             ping_round: None,
         }
     }
@@ -264,7 +299,84 @@ impl EventLoopState {
     pub(crate) fn mark_seen(&mut self, id: &MessageId) -> bool {
         self.seen.mark(id)
     }
+
+    /// Record a `Msg`'s `(pubkey, seq, content-hash)` for fork detection.
+    /// Returns `true` **exactly once** per offending key — when a *different*
+    /// content hash is first seen at an already-recorded `(pubkey, seq)`,
+    /// which is cryptographic proof the author equivocated (signed two
+    /// conflicting messages at one seq). Order-independent. The caller emits
+    /// a `fork` event on `true`; the message itself is still processed.
+    pub(crate) fn note_msg_seq(&mut self, pubkey: &str, seq: u64, hash: String) -> bool {
+        let seen = self.author_seqs.entry(pubkey.to_owned()).or_default();
+        match seen.get(&seq) {
+            Some(existing) if *existing != hash => {} // conflict → fall through
+            Some(_) => return false,                  // same message, already recorded
+            None => {
+                seen.insert(seq, hash);
+                return false;
+            }
+        }
+        // Equivocation: flag the key, returning true only on first detection.
+        self.forked.insert(pubkey.to_owned())
+    }
+
+    /// The `parents` to stamp on the next `Msg` we author: the current DAG
+    /// tips, sorted (deterministic) and capped to [`MAX_DAG_PARENTS`] to
+    /// bound message size. Usually a single head on a quiet swarm.
+    #[must_use]
+    pub(crate) fn dag_parents(&self) -> Vec<String> {
+        let mut heads: Vec<String> = self.dag_heads.iter().cloned().collect();
+        heads.sort_unstable();
+        heads.truncate(MAX_DAG_PARENTS);
+        heads
+    }
+
+    /// Fold a content `Msg` (hash `hash`, `parents`, timestamp `ts`) into the
+    /// DAG — for messages we receive *and* ones we author. Returns `true` if
+    /// `ts` is **before** a known parent's timestamp (a backdating violation
+    /// to flag). Updates `by_hash` and moves the tip set: the named parents
+    /// are no longer tips, and `hash` becomes one. Unknown parents are left
+    /// alone (the set converges via anti-entropy).
+    pub(crate) fn note_dag(&mut self, hash: String, parents: &[String], ts: i64) -> bool {
+        let mut backdated = false;
+        for parent in parents {
+            if let Some(&parent_ts) = self.by_hash.get(parent)
+                && ts < parent_ts
+            {
+                backdated = true;
+            }
+            self.dag_heads.remove(parent);
+        }
+        self.by_hash.insert(hash.clone(), ts);
+        self.dag_heads.insert(hash);
+        backdated
+    }
+
+    /// Prune an evicted message's content hash from the DAG indexes, keeping
+    /// `by_hash`/`dag_heads` bounded alongside the message-log `VecDeque`.
+    pub(crate) fn forget_hash(&mut self, hash: &str) {
+        self.by_hash.remove(hash);
+        self.dag_heads.remove(hash);
+    }
+
+    /// Prune an evicted `Msg`'s `(pubkey, seq)` from the fork-detection
+    /// index, bounding `author_seqs`/`forked` to the message-log window: an
+    /// identity whose messages have all aged out drops off both maps (so a
+    /// sybil that fires once and vanishes is forgotten).
+    pub(crate) fn forget_msg_seq(&mut self, pubkey: &str, seq: u64) {
+        if let Some(seqs) = self.author_seqs.get_mut(pubkey) {
+            seqs.remove(&seq);
+            if seqs.is_empty() {
+                self.author_seqs.remove(pubkey);
+                self.forked.remove(pubkey);
+            }
+        }
+    }
 }
+
+/// Max `parents` stamped on a `Msg` — bounds the wire size of the causal
+/// links. A quiet swarm has one head; this only bites under heavy concurrency.
+const MAX_DAG_PARENTS: usize = 16;
 
 #[cfg(test)]
 mod tests {
@@ -274,7 +386,95 @@ mod tests {
     };
 
     fn fresh_state() -> EventLoopState {
-        EventLoopState::new(None, Instant::now(), ahs_shared::RATE_LIMIT_PER_MIN)
+        EventLoopState::new(
+            None,
+            Instant::now(),
+            ahs_shared::RATE_LIMIT_PER_MIN,
+            std::sync::Arc::new(crate::protocol::identity::Identity::generate()),
+        )
+    }
+
+    #[test]
+    fn note_msg_seq_detects_equivocation_once() {
+        let mut state = fresh_state();
+        let key = "alice-key";
+        // First sighting at a seq → recorded, no fork.
+        assert!(!state.note_msg_seq(key, 0, "hashA".into()));
+        // Same message again (same hash) → no fork.
+        assert!(!state.note_msg_seq(key, 0, "hashA".into()));
+        // Different hash at the SAME seq → fork, reported exactly once.
+        assert!(
+            state.note_msg_seq(key, 0, "hashB".into()),
+            "conflict is a fork"
+        );
+        assert!(
+            !state.note_msg_seq(key, 0, "hashC".into()),
+            "already flagged: one event per key"
+        );
+    }
+
+    #[test]
+    fn note_msg_seq_is_per_key_and_per_seq() {
+        let mut state = fresh_state();
+        assert!(!state.note_msg_seq("alice", 0, "h0".into()));
+        // A new seq for the same author is just the next entry, not a fork.
+        assert!(!state.note_msg_seq("alice", 1, "h1".into()));
+        // A different key reusing seq 0 with its own hash is independent.
+        assert!(!state.note_msg_seq("bob", 0, "other".into()));
+        // But a conflict on alice's seq 0 still fires.
+        assert!(state.note_msg_seq("alice", 0, "h0-prime".into()));
+    }
+
+    #[test]
+    fn forget_msg_seq_prunes_author_and_fork_flag() {
+        let mut state = fresh_state();
+        state.note_msg_seq("alice", 0, "h0".into());
+        assert!(state.note_msg_seq("alice", 0, "h0-prime".into()), "fork");
+        assert!(state.forked.contains("alice"));
+        // Evicting alice's only seq drops her from both maps (bounded to log).
+        state.forget_msg_seq("alice", 0);
+        assert!(!state.author_seqs.contains_key("alice"));
+        assert!(
+            !state.forked.contains("alice"),
+            "fork flag pruned with author"
+        );
+    }
+
+    #[test]
+    fn note_dag_moves_tip_set() {
+        let mut state = fresh_state();
+        // First message (no parents) becomes the sole tip.
+        assert!(!state.note_dag("h1".into(), &[], 100));
+        assert_eq!(state.dag_parents(), vec!["h1".to_string()]);
+        // A child referencing h1 makes h1 no longer a tip; h2 is the new one.
+        assert!(!state.note_dag("h2".into(), &["h1".to_string()], 101));
+        assert_eq!(state.dag_parents(), vec!["h2".to_string()]);
+    }
+
+    #[test]
+    fn note_dag_keeps_concurrent_tips() {
+        let mut state = fresh_state();
+        state.note_dag("a".into(), &[], 1);
+        state.note_dag("b".into(), &[], 1); // concurrent: no shared parent
+        assert_eq!(state.dag_parents(), vec!["a".to_string(), "b".to_string()]);
+    }
+
+    #[test]
+    fn note_dag_flags_backdating() {
+        let mut state = fresh_state();
+        state.note_dag("parent".into(), &[], 200);
+        // Child claims an earlier timestamp than a parent it references.
+        assert!(state.note_dag("child".into(), &["parent".to_string()], 100));
+        // A forward timestamp is fine.
+        assert!(!state.note_dag("ok".into(), &["parent".to_string()], 300));
+    }
+
+    #[test]
+    fn forget_hash_prunes_dag() {
+        let mut state = fresh_state();
+        state.note_dag("h".into(), &[], 1);
+        state.forget_hash("h");
+        assert!(state.dag_parents().is_empty());
     }
 
     #[test]

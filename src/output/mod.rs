@@ -59,6 +59,13 @@ pub enum OutputEvent {
     PeerReturn {
         nickname: Nickname,
     },
+    /// Equivocation detected (Phase 2): an author key signed two different
+    /// messages at the same `seq`. Surfaced once per offending key.
+    Fork {
+        nickname: Nickname,
+        pubkey: String,
+        seq: u64,
+    },
     MsgPosted {
         id: MessageId,
     },
@@ -387,6 +394,35 @@ impl Output {
                 OutputMode::Json => emit_json(&SimpleEvent::PeerTimeout {
                     nickname: nickname.as_str(),
                     last_seen_secs_ago,
+                }),
+                OutputMode::Silent => {}
+            },
+        );
+    }
+
+    /// Equivocation / fork alert (Phase 2): an author's signing key produced
+    /// two different messages at the same `seq` — cryptographic proof of a
+    /// fork. Surfaced once per offending key. Human mode prints a stderr
+    /// warning; JSON mode emits a `fork` event for agents.
+    pub(crate) fn fork(&self, nickname: &Nickname, pubkey: &str, seq: u64) {
+        self.dispatch(
+            || OutputEvent::Fork {
+                nickname: nickname.clone(),
+                pubkey: pubkey.to_owned(),
+                seq,
+            },
+            |mode| match mode {
+                OutputMode::Human => {
+                    let (open, close) = self.nick_ansi(nickname.as_str(), stderr_color());
+                    eprintln!(
+                        "⚠ fork: {open}<{nickname}>{close} signed conflicting messages at seq {seq} (key {})",
+                        &pubkey[..pubkey.len().min(16)]
+                    );
+                }
+                OutputMode::Json => emit_json(&SimpleEvent::Fork {
+                    nickname: nickname.as_str(),
+                    pubkey,
+                    seq,
                 }),
                 OutputMode::Silent => {}
             },

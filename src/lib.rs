@@ -57,6 +57,13 @@ pub mod embed;
 #[doc(hidden)]
 pub mod bench_api;
 
+// Not public API. Exposed only under the `testkit` feature so the adversarial
+// integration suite (`tests/adversarial.rs`) can craft and inject malicious
+// wire messages a correct client never would. Off in normal/release builds.
+#[cfg(feature = "testkit")]
+#[doc(hidden)]
+pub mod testkit;
+
 // Curated public protocol surface. These types are `pub` inside their
 // (otherwise `pub(crate)`) modules; re-exporting them from the crate
 // root is what makes them externally reachable and satisfies

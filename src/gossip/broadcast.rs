@@ -15,6 +15,7 @@ use iroh_gossip::api::GossipSender;
 use crate::daemon::SessionRequest;
 use crate::daemon::state::EventLoopState;
 use crate::output;
+use crate::protocol::identity::{self, Identity};
 use crate::protocol::{Message, MessageBody, MessageId, Nickname, SwarmId};
 
 /// Fire-and-forget gossip broadcast. Serialize errors are swallowed:
@@ -36,6 +37,7 @@ pub(super) async fn broadcast_peer_info(
     sender: &GossipSender,
     swarm: &SwarmId,
     author: &Nickname,
+    identity: &Identity,
     endpoint: &Endpoint,
 ) {
     let our_addr = endpoint.addr();
@@ -45,7 +47,11 @@ pub(super) async fn broadcast_peer_info(
     .expect("endpoint_addr_to_json produces a Value that always serializes");
     let addr_body =
         MessageBody::new(addr_data).expect("endpoint address JSON has no control characters");
-    broadcast_msg(sender, &Message::new_peer_info(swarm, author, addr_body)).await;
+    broadcast_msg(
+        sender,
+        &Message::new_peer_info(swarm, author, addr_body).signed(identity),
+    )
+    .await;
 }
 
 /// Announce our arrival: `joined` presence followed by `PeerInfo`.
@@ -55,10 +61,11 @@ pub(super) async fn announce_arrival(
     sender: &GossipSender,
     swarm: &SwarmId,
     author: &Nickname,
+    identity: &Identity,
     endpoint: &Endpoint,
 ) {
-    broadcast_msg(sender, &Message::new_joined(swarm, author)).await;
-    broadcast_peer_info(sender, swarm, author, endpoint).await;
+    broadcast_msg(sender, &Message::new_joined(swarm, author).signed(identity)).await;
+    broadcast_peer_info(sender, swarm, author, identity, endpoint).await;
 }
 
 /// Process one line of interactive stdin: parse a `/reply <nick> ...`
@@ -173,15 +180,41 @@ pub(crate) async fn broadcast_message(
     // send leaves no trace, just as the receiver drops before
     // processing. The self bucket is never double-counted: self-authored
     // inbound is filtered out earlier.
-    if !state.rate_limiter.check(author) {
+    // Our own signing identity + its pubkey: the rate limiter keys on the
+    // verified pubkey (symmetric with the receiver, which keys on the
+    // sender's signed pubkey), and `build_msg_bytes` signs with it. Clone
+    // the Arc first so the immutable read is done before the `&mut state`
+    // rate-limiter / log mutations below.
+    let signer = state.identity.clone();
+    let our_pubkey = identity::encode_pubkey(&signer.public());
+    if !state.rate_limiter.check(&our_pubkey) {
         out.info(&format!("rate limit exceeded for [{author}], dropping"));
         tracing::debug!(%author, "send rate limit exceeded; not broadcasting");
         return Ok(SendOutcome::RateLimited);
     }
-    let (bytes, msg) = crate::protocol::message::build_msg_bytes(swarm, body, reply, author)?;
+    // Stamp this Msg into our hash chain (Phase 2: seq + prev) and the
+    // cross-author DAG (Phase 3: parents = the tips we've seen). After
+    // building, advance the chain cursor and fold our own message into the
+    // DAG so the next Msg back-links/parents here.
+    let chain = crate::protocol::message::ChainCtx {
+        seq: state.self_seq,
+        prev: state.self_prev.clone(),
+        parents: state.dag_parents(),
+    };
+    let (bytes, msg) =
+        crate::protocol::message::build_msg_bytes(swarm, body, reply, author, &signer, chain)?;
+    let hash = msg.content_hash_hex();
+    state.self_seq += 1;
+    state.self_prev = Some(hash.clone());
+    state.note_dag(hash, &msg.parents, msg.timestamp);
     let id = msg.id.clone();
     out.print_message_ex(&msg, true);
-    state.message_log.push(msg.clone());
+    if let Some(evicted) = state.message_log.push(msg.clone()) {
+        state.forget_hash(&evicted.content_hash_hex());
+        if let Some(seq) = evicted.seq {
+            state.forget_msg_seq(&evicted.pubkey, seq);
+        }
+    }
     crate::logging::messages::log_out(&msg);
     emit_or_queue(state, sender, bytes, out).await?;
     Ok(SendOutcome::Sent(id, msg))
@@ -214,6 +247,13 @@ pub(crate) async fn handle_session_request(
         SessionRequest::Poll { after, resp } => {
             let _ = resp.send(state.poll_after(after.as_ref(), output));
             false
+        }
+        // Raw injection (testkit only): broadcast the bytes verbatim, no
+        // signing or chain stamping — a malicious/crafted message on the wire.
+        #[cfg(feature = "testkit")]
+        SessionRequest::InjectRaw { bytes } => {
+            let _ = sender.broadcast(bytes).await;
+            true
         }
     }
 }

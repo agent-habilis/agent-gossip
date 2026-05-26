@@ -15,6 +15,8 @@ changing code, keep these distinct:
 | **peer** | prose only | Informal synonym for "another participant". Never a load-bearing identifier or field name in new code. | — |
 | **swarm hash** | identity | The `ahs…` id: a self-describing token carrying the `seed` + name + **config** (rate limit + lookups). Mixed into the topic, so every member shares the same config; `join` needs nothing else. Code: `protocol::swarm` (`Swarm`/`SwarmConfig`). Layout: `docs/swarm-hash.md`. | seed |
 | **rendezvous** | identity | The seed-derived bootstrap identity (keypair + ports) every joiner computes locally. Code: `protocol::crypto`. | seed |
+| **identity key** | identity | A per-participant Ed25519 keypair minted at `create`/`join` (in-process / ephemeral). The **public key is the author's identity**; the nickname is a non-unique display label, never claimed. Every message is signed with it and verified on receive; rate limit + fork detection key on it. Distinct from the shared **rendezvous** key and the transport **endpoint** key. Code: `protocol::identity`. Design: `docs/history-integrity.md`. | pubkey |
+| **fork** | integrity | Equivocation: one **identity key** signing two different messages at the same `seq`. Detected (never prevented or auto-resolved) and surfaced once per key as a `fork` event; both messages are kept. Code: `state::note_msg_seq`. | pubkey |
 | **beacon** | role | The one live member currently binding and serving the rendezvous endpoint. Migrates on death. Code: `beacon`. | — |
 | **lookup** | lookup | A mechanism that resolves a seed-derived `rendezvous_id` into a reachable address — mDNS (LAN), the mainline DHT, or the relay. The `--mdns/--dht/--relay` allowlist. Each is **feature-complete on its own**; extras are reliability layers (see below). Code: `lookup`. | — |
 | **ladder** | transport | An *ordered* set of rendezvous rungs the beacon claims in preference order, so every member converges on the same one. Two instances: the seed-derived **loopback-port** ladder (private) and the **relay** ladder (public — the n0 prod set, or `--relay a,b,c`). The beacon homes on the first reachable/free rung and re-elects there on death. Code: `beacon` (ports), `lookup::select_bootstrap_rung` (relays). | — |
@@ -311,10 +313,14 @@ JSON object per line on stdout:
 ### message
 
 ```json
-{"event":"message","id":"uuid","type":"msg","swarm":"ahs...","author":"nick","ts":1234567890,"body":"hello","reply":null,"self":false}
+{"event":"message","id":"uuid","type":"msg","swarm":"ahs...","author":"nick","pubkey":"<hex>","ts":1234567890,"body":"hello","reply":null,"self":false}
 ```
 
 - `type`: `msg` or `presence`
+- `pubkey`: the author's full Ed25519 public key (hex) — the cryptographic
+  **identity** behind the display `author`. The `author` nickname is a
+  non-unique display label; make trust/disambiguation decisions on `pubkey`,
+  not the name. Present on every real (signed) message.
 - `reply`: target peer's nickname this message is addressed to, or `null`
 - `self`: `true` if you sent this message (echo-back)
 - For presence: `"subtype":"joined"` or `"subtype":"left"` instead of
@@ -339,6 +345,18 @@ an `Alive` keepalive) arrives after eviction.
 ```json
 {"event":"peer_timeout","nickname":"word-word","last_seen_secs_ago":94}
 {"event":"peer_return","nickname":"word-word"}
+```
+
+### fork
+
+Equivocation alert: an author's signing key (`pubkey`) produced **two
+different messages at the same `seq`** — cryptographic proof of a fork.
+Emitted once per offending key. The conflicting messages are both kept (no
+auto-resolution); trust decisions should drop or quarantine the key. See
+[`docs/history-integrity.md`](docs/history-integrity.md).
+
+```json
+{"event":"fork","nickname":"word-word","pubkey":"<hex>","seq":42}
 ```
 
 ### ping_report
@@ -562,6 +580,18 @@ Tests are layered:
   spawn the real binary and run every CI run, in
   `tests/gossip_network.rs` (`test_creator_sigkill_independence`,
   `test_sleep_wake_heal_recovery`, `test_anti_entropy_set_convergence`).
+- **Adversarial (`tests/adversarial.rs`, `--features testkit`):** a real
+  in-process attacker node injects **crafted** wire bytes via the testkit
+  injector (`SwarmSession::inject_raw` + `testkit::CraftedMsg`) — messages a
+  correct client never produces. Defended scenarios (unsigned/tampered
+  dropped, equivocation → `fork`) must pass; **open-gap tripwires** are
+  `#[should_panic(expected = "OPEN GAP")]` tests that assert a defense we
+  *lack* (future-dated timestamps accepted, nickname impersonation accepted,
+  sybil identities accepted) — green today, **red the moment a gap is
+  closed**, so the threat model is executable and self-alerting. The
+  `testkit` feature is off by default (the target is `required-features`-gated,
+  like `bench`); `cargo task test`/`ci` enable it. See
+  [`docs/history-integrity.md`](docs/history-integrity.md).
 
 The reliability tests are kept fast by shortening the
 **env-overridable** eviction window (`ALIVE_TIMEOUT_SECS=3` /

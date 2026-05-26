@@ -23,7 +23,7 @@ pub(crate) async fn tick_alive(
     if state.last_sent_at.elapsed() < Duration::from_secs(ALIVE_INTERVAL_SECS) {
         return;
     }
-    let msg = Message::new_alive(swarm, author);
+    let msg = Message::new_alive(swarm, author).signed(&state.identity);
     if let Ok(bytes) = msg.serialize() {
         let _ = sender.broadcast(Bytes::from(bytes)).await;
     }
@@ -76,7 +76,12 @@ mod tests {
     use crate::util::tuning::alive_timeout_secs;
 
     fn fresh_state() -> EventLoopState {
-        EventLoopState::new(None, Instant::now(), ahs_shared::RATE_LIMIT_PER_MIN)
+        EventLoopState::new(
+            None,
+            Instant::now(),
+            ahs_shared::RATE_LIMIT_PER_MIN,
+            std::sync::Arc::new(crate::protocol::identity::Identity::generate()),
+        )
     }
 
     fn nick(name: &str) -> Nickname {

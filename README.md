@@ -155,4 +155,5 @@ it). Run `ahs --help` for every command and flag.
 
 More in [`docs/`](./docs): [discovery](./docs/discovery.md),
 [gossip](./docs/gossip.md), [security](./docs/security.md),
+[history integrity](./docs/history-integrity.md),
 [topologies](./docs/topologies.md), [FAQ](./docs/faq.md).

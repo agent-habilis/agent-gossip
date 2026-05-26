@@ -41,6 +41,7 @@ pub(crate) async fn run(cfg: EventLoopConfig) -> Result<()> {
     let EventLoopConfig {
         topic,
         author,
+        identity,
         swarm: swarm_str,
         name: swarm_name,
         output,
@@ -72,7 +73,7 @@ pub(crate) async fn run(cfg: EventLoopConfig) -> Result<()> {
 
     let started = Instant::now();
     let state_file = state_file.map(|path| StateFile::new(path, &swarm_str, &author, &swarm_name));
-    let mut state = EventLoopState::new(state_file, started, rate_limit_per_min);
+    let mut state = EventLoopState::new(state_file, started, rate_limit_per_min, identity);
     // Advertise path only: the directory re-broadcast task reads the
     // live count from here. Set before the first write below so the
     // initial ad carries a real count.
@@ -236,16 +237,17 @@ async fn event_loop(loop_state: EventLoop) -> Result<()> {
     let mut last_sweep = Instant::now();
     let mut last_heal = Instant::now();
     let mut last_antientropy = Instant::now();
-    let mut last_alive_wall = wall_now;
-    let mut last_sweep_wall = wall_now;
-    let mut last_heal_wall = wall_now;
-    let mut last_antientropy_wall = wall_now;
+    let (mut last_alive_wall, mut last_sweep_wall, mut last_heal_wall, mut last_antientropy_wall) =
+        (wall_now, wall_now, wall_now, wall_now);
 
+    // Owned Arc clone so the ctx can borrow it for the whole loop without colliding with `&mut state`.
+    let identity = state.identity.clone();
     let ctx = HandlerCtx {
         sender: &sender,
         endpoint: &endpoint,
         swarm: &swarm_str,
         author: &author,
+        identity: identity.as_ref(),
         max_peers,
         rendezvous_id: rendezvous_params.id,
         external_msg_tx: external_msg_tx.as_ref(),
@@ -338,7 +340,11 @@ async fn shutdown(
 ) {
     output.info(&format!("left #{name}"));
     lifecycle::log_leaving(name.as_str());
-    gossip::broadcast_msg(sender, &Message::new_left(swarm, author)).await;
+    gossip::broadcast_msg(
+        sender,
+        &Message::new_left(swarm, author).signed(&state.identity),
+    )
+    .await;
     tokio::time::sleep(Duration::from_millis(500)).await;
     if let Some(sf) = state.state_file.as_ref() {
         sf.remove();

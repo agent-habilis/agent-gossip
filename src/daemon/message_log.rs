@@ -13,9 +13,13 @@ pub(crate) struct DigestWindow {
     pub ids: Vec<[u8; 16]>,
 }
 
-/// A bounded FIFO buffer of the recent messages a member retains — the
-/// anti-entropy recovery source and the poll/fetch history. Time-ordered
-/// (push order ≈ ascending timestamp). When full, the oldest is discarded.
+/// A bounded buffer of the recent messages a member retains — the
+/// anti-entropy recovery source and the poll/fetch history. Held in arrival
+/// order (push order ≈ ascending timestamp) for the poll cursor and the
+/// positional digest windows. When full, the message with the smallest
+/// [`eviction_key`] is discarded — *not* the front — so the **retained set**
+/// is a deterministic function of the message set, identical on every node
+/// regardless of gossip delivery order (see [`MessageLog::push`]).
 pub(crate) struct MessageLog {
     capacity: usize,
     messages: VecDeque<Message>,
@@ -29,12 +33,28 @@ impl MessageLog {
         }
     }
 
-    /// Add a message to the log. If full, removes the oldest.
-    pub(crate) fn push(&mut self, msg: Message) {
-        if self.messages.len() >= self.capacity {
-            self.messages.pop_front();
-        }
+    /// Add a message to the log, keeping arrival order. If that overflows
+    /// the capacity, evict (and return) the message with the smallest
+    /// **eviction key** — *not* the front — so the retained set is a
+    /// deterministic function of `(message set, capacity)`, identical on
+    /// every node regardless of gossip delivery order. That makes the
+    /// swarm-wide retained set well-defined: peers agree on which messages
+    /// survive, so anti-entropy recovery converges on one set instead of the
+    /// union of divergent arrival-order windows. The returned eviction lets
+    /// callers prune side indexes keyed by it (the DAG `by_hash`, fork map).
+    pub(crate) fn push(&mut self, msg: Message) -> Option<Message> {
         self.messages.push_back(msg);
+        if self.messages.len() <= self.capacity {
+            return None;
+        }
+        let victim = self
+            .messages
+            .iter()
+            .enumerate()
+            .min_by(|(_, lhs), (_, rhs)| eviction_key(lhs).cmp(&eviction_key(rhs)))
+            .map(|(index, _)| index)
+            .expect("over-capacity log is non-empty");
+        self.messages.remove(victim)
     }
 
     pub(crate) fn len(&self) -> usize {
@@ -130,6 +150,16 @@ impl MessageLog {
             }
         }
     }
+}
+
+/// Total order deciding which message is evicted on overflow (smallest is
+/// dropped): oldest `timestamp` first, then author key, the author's `seq`
+/// (so one author's burst evicts in send order — `seq 0` goes first), and
+/// finally the message id as a tie-break. Every field travels on the wire
+/// and is identical on every node, so retention is a pure function of the
+/// message set, not of arrival order.
+fn eviction_key(msg: &Message) -> (i64, &str, Option<u64>, &str) {
+    (msg.timestamp, msg.pubkey.as_str(), msg.seq, msg.id.as_str())
 }
 
 #[cfg(test)]
@@ -279,11 +309,11 @@ mod tests {
     #[test]
     fn message_log_returns_all_with_evicted_flag_when_id_not_found() {
         let mut log = MessageLog::new(2);
-        let m1 = msg("first");
+        let m1 = msg_at("first", 10); // lowest ts → the one evicted
         let id1 = m1.id.clone();
         log.push(m1);
-        log.push(msg("second"));
-        log.push(msg("third")); // evicts "first"
+        log.push(msg_at("second", 20));
+        log.push(msg_at("third", 30)); // over cap → evicts "first"
         let (msgs, evicted) = log.messages_after(Some(&id1));
         assert!(evicted);
         assert_eq!(msgs.len(), 2);
@@ -301,20 +331,27 @@ mod tests {
     }
 
     #[test]
-    fn message_log_evicts_oldest_when_full() {
+    fn message_log_evicts_lowest_key_when_full() {
+        // Eviction drops the smallest eviction key (here: oldest timestamp),
+        // not the front, so retention is independent of push order. Push the
+        // newest first to prove arrival order doesn't decide who survives.
         let mut log = MessageLog::new(2);
-        log.push(msg("a"));
-        log.push(msg("b"));
-        log.push(msg("c"));
+        log.push(msg_at("c", 30));
+        log.push(msg_at("a", 10));
+        log.push(msg_at("b", 20)); // over cap → evicts "a" (ts=10), the oldest
         assert_eq!(log.messages.len(), 2);
-        assert_eq!(log.messages[0].body.as_str(), "b");
-        assert_eq!(log.messages[1].body.as_str(), "c");
+        let bodies: HashSet<&str> = log.messages.iter().map(|msg| msg.body.as_str()).collect();
+        assert_eq!(
+            bodies,
+            HashSet::from(["b", "c"]),
+            "kept the two newest by ts"
+        );
     }
 
     mod prop {
         use proptest::{prop_assert, prop_assert_eq, proptest};
 
-        use super::{MessageLog, msg};
+        use super::{MessageLog, msg, msg_at};
 
         proptest! {
             #[test]
@@ -367,12 +404,14 @@ mod tests {
                 extra in 1..20usize,
             ) {
                 let mut log = MessageLog::new(cap);
-                let first = msg("evicted");
+                // ts=0 makes "evicted" the lowest key, so it is always the
+                // one dropped once the log overflows (fills use ts >= 1).
+                let first = msg_at("evicted", 0);
                 let evicted_id = first.id.clone();
                 log.push(first);
                 // Push enough to evict
                 for i in 0..(cap + extra) {
-                    log.push(msg(&format!("fill{i}")));
+                    log.push(msg_at(&format!("fill{i}"), i64::try_from(i).unwrap() + 1));
                 }
                 let (msgs, evicted) = log.messages_after(Some(&evicted_id));
                 prop_assert!(evicted);

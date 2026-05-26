@@ -87,6 +87,37 @@ fn json_message_has_all_fields() {
     assert_eq!(parsed["self"], false);
     assert!(parsed["id"].is_string());
     assert!(parsed["ts"].is_number());
+    // Unsigned (test fixture): the pubkey field is omitted.
+    assert!(parsed.get("pubkey").is_none());
+}
+
+#[test]
+fn json_signed_message_exposes_full_pubkey() {
+    // A real (signed) message carries the author's full Ed25519 public key
+    // (hex) in the JSON event — the identity behind the display nickname.
+    let identity = crate::protocol::identity::Identity::generate();
+    let msg = Message::new_message(&sid(), &nick("alice"), body("hi")).signed(&identity);
+    let parsed = parse(&format_msg_json(&msg, false));
+    let pubkey = parsed["pubkey"].as_str().expect("signed event has pubkey");
+    assert_eq!(pubkey, msg.pubkey, "event pubkey must be the message's key");
+    assert_eq!(pubkey.len(), 64, "full 32-byte key as hex");
+}
+
+#[test]
+fn fork_event_json_shape() {
+    use super::OutputEvent;
+    let pubkey = "deadbeef".repeat(8); // 64 hex
+    let json = super::json::event_json(&OutputEvent::Fork {
+        nickname: nick("alice"),
+        pubkey: pubkey.clone(),
+        seq: 7,
+    })
+    .expect("fork event produces a JSON line");
+    let parsed = parse(&json);
+    assert_eq!(parsed["event"], "fork");
+    assert_eq!(parsed["nickname"], "alice");
+    assert_eq!(parsed["pubkey"], pubkey);
+    assert_eq!(parsed["seq"], 7);
 }
 
 #[test]

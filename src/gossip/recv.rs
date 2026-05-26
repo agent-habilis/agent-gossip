@@ -15,6 +15,7 @@ use crate::daemon::ctx::HandlerCtx;
 use crate::daemon::state::EventLoopState;
 use crate::lifecycle;
 use crate::lookup::add_peer_addr;
+use crate::protocol::identity;
 use crate::protocol::{Message, MessageKind};
 use crate::util::tuning::RECLAIM_WINDOW_SECS;
 
@@ -49,9 +50,23 @@ pub(crate) async fn handle_gossip_event(
             // one-shot — sending it before any link exists loses it.
             // Later neighbors only get a `PeerInfo` re-send.
             if state.announced {
-                broadcast_peer_info(ctx.sender, ctx.swarm, ctx.author, ctx.endpoint).await;
+                broadcast_peer_info(
+                    ctx.sender,
+                    ctx.swarm,
+                    ctx.author,
+                    ctx.identity,
+                    ctx.endpoint,
+                )
+                .await;
             } else {
-                announce_arrival(ctx.sender, ctx.swarm, ctx.author, ctx.endpoint).await;
+                announce_arrival(
+                    ctx.sender,
+                    ctx.swarm,
+                    ctx.author,
+                    ctx.identity,
+                    ctx.endpoint,
+                )
+                .await;
                 state.announced = true;
                 tracing::info!("announced arrival on first gossip link");
             }
@@ -131,7 +146,10 @@ async fn handle_gossip_received(content: Bytes, state: &mut EventLoopState, ctx:
         tracing::warn!("failed to parse inbound gossip message");
         return;
     };
-    if message.author == *ctx.author {
+    // Self-echo drop: keyed on our **public key**, not the nickname. With
+    // non-unique display names a peer may legitimately share our nickname —
+    // only our own signing key identifies our own echoed broadcasts.
+    if message.pubkey == identity::encode_pubkey(&ctx.identity.public()) {
         return;
     }
     tracing::trace!(author = %message.author, "gossip message received");
@@ -142,11 +160,46 @@ async fn handle_gossip_received(content: Bytes, state: &mut EventLoopState, ctx:
     if state.mark_seen(&message.id) {
         return;
     }
+    // Authenticity gate: every inbound message must carry a valid
+    // signature over its canonical bytes. Drop unsigned / tampered /
+    // wrong-key messages before they are rate-counted, surfaced, logged,
+    // or acted on. Relayed and anti-entropy copies keep their original
+    // author's signature, so they verify here too.
+    if !message.verify_signature() {
+        tracing::warn!(author = %message.author, "dropping message with missing/invalid signature");
+        return;
+    }
+    // Identity is the signing key, not the nickname (p2panda-style): the
+    // signature above authenticates the *key*; the `author` nickname is a
+    // non-unique display label and is deliberately **not** pinned/claimed,
+    // so a nickname is never "burned" by a restart on a long-lived swarm.
+    // Identities are distinguished by their key fingerprint, not the name.
+    //
+    // Phase 2 fork (equivocation) detection: only `Msg` carries `seq`. A
+    // second, *different* content hash at an already-seen `(pubkey, seq)` is
+    // cryptographic proof the author signed conflicting messages — surface a
+    // `fork` once per offending key. Order-independent (gossip is unordered);
+    // the message itself is still processed (we keep both, never auto-pick).
+    if matches!(message.kind, MessageKind::Msg { .. }) {
+        let hash = message.content_hash_hex();
+        // Per-author fork (equivocation) detection — Msgs that carry a seq.
+        if let Some(seq) = message.seq
+            && state.note_msg_seq(&message.pubkey, seq, hash.clone())
+        {
+            ctx.output.fork(&message.author, &message.pubkey, seq);
+            tracing::warn!(author = %message.author, seq, "fork detected: conflicting messages at same seq");
+        }
+        // Cross-author DAG (Phase 3): fold into the tip set; flag a message
+        // whose timestamp precedes a referenced parent (backdating).
+        if state.note_dag(hash, &message.parents, message.timestamp) {
+            tracing::warn!(author = %message.author, "message timestamp precedes a referenced parent; possible backdating");
+        }
+    }
     // One quota for every Msg (open or reply); plumbing kinds (presence,
     // Alive, digest, PeerInfo) are exempt — rate-limiting them would
-    // break membership/anti-entropy.
+    // break membership/anti-entropy. Keyed on the verified pubkey.
     let rate_ok = match &message.kind {
-        MessageKind::Msg { .. } => state.rate_limiter.check(&message.author),
+        MessageKind::Msg { .. } => state.rate_limiter.check(&message.pubkey),
         MessageKind::Presence { .. }
         | MessageKind::PeerInfo
         | MessageKind::Digest
@@ -204,7 +257,8 @@ async fn handle_gossip_received(content: Bytes, state: &mut EventLoopState, ctx:
             // the small swarms and rare manual `ahs ping` this serves.
             broadcast_msg(
                 ctx.sender,
-                &Message::new_pong(ctx.swarm, ctx.author, message.author.clone()),
+                &Message::new_pong(ctx.swarm, ctx.author, message.author.clone())
+                    .signed(ctx.identity),
             )
             .await;
             return;
@@ -242,8 +296,14 @@ async fn handle_gossip_received(content: Bytes, state: &mut EventLoopState, ctx:
         }
     }
 
-    if is_loggable(&message.kind) {
-        state.message_log.push(message);
+    if is_loggable(&message.kind)
+        && let Some(evicted) = state.message_log.push(message)
+    {
+        // Keep the DAG + fork indexes bounded with the log window.
+        state.forget_hash(&evicted.content_hash_hex());
+        if let Some(seq) = evicted.seq {
+            state.forget_msg_seq(&evicted.pubkey, seq);
+        }
     }
 }
 

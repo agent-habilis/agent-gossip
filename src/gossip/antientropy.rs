@@ -113,7 +113,11 @@ pub(crate) async fn broadcast_digest(
         return;
     };
     tracing::trace!(ids = total_ids, "anti-entropy digest broadcast");
-    broadcast_msg(sender, &Message::new_digest(swarm, author, body)).await;
+    broadcast_msg(
+        sender,
+        &Message::new_digest(swarm, author, body).signed(&state.identity),
+    )
+    .await;
 }
 
 /// Handle a received anti-entropy digest: for each advertised window,

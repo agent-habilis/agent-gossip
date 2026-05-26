@@ -86,7 +86,12 @@ mod tests {
     };
 
     fn fresh_state() -> EventLoopState {
-        EventLoopState::new(None, Instant::now(), ahs_shared::RATE_LIMIT_PER_MIN)
+        EventLoopState::new(
+            None,
+            Instant::now(),
+            ahs_shared::RATE_LIMIT_PER_MIN,
+            std::sync::Arc::new(crate::protocol::identity::Identity::generate()),
+        )
     }
 
     fn nick(name: &str) -> Nickname {

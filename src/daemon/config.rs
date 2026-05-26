@@ -33,6 +33,14 @@ pub(crate) enum SessionRequest {
         after: Option<MessageId>,
         resp: oneshot::Sender<Vec<Message>>,
     },
+    /// Broadcast pre-built wire bytes **verbatim** — no signing, no chain
+    /// stamping. The escape hatch the `testkit` feature uses to inject
+    /// crafted/malicious messages (bad signature, equivocation, backdating)
+    /// that a correct client would never produce, so the adversarial test
+    /// suite can prove receivers reject/flag them. Reachable only through
+    /// the testkit-gated `SwarmSession::inject_raw`.
+    #[cfg(feature = "testkit")]
+    InjectRaw { bytes: bytes::Bytes },
 }
 
 /// Who drives the event loop. The variants make illegal channel
@@ -88,6 +96,9 @@ pub(crate) enum CoHostPolicy {
 pub(crate) struct EventLoopConfig {
     pub topic: GossipTopic,
     pub author: Nickname,
+    /// This member's signing identity (Ed25519), minted in `setup_swarm`.
+    /// In-process / ephemeral for now (see [`crate::protocol::identity`]).
+    pub identity: std::sync::Arc<crate::protocol::identity::Identity>,
     pub swarm: SwarmId,
     /// Decoded swarm name (from the `ahs…` id). Carried so the
     /// shutdown path can print `left #NAME` without re-parsing

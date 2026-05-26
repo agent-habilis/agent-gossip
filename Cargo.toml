@@ -106,6 +106,12 @@ path = "src/main.rs"
 # bench can reach `pub(crate)` hot paths; never enabled in a normal or
 # release build, so the public API surface is unchanged.
 bench = []
+# Off by default. Exposes `src/testkit.rs` + `SwarmSession::inject_raw` so the
+# adversarial integration suite (`tests/adversarial.rs`) can craft and inject
+# malicious wire messages a correct client never would. Never enabled in a
+# normal/release build, so the public surface is unchanged. `cargo task
+# test`/`ci` enable it.
+testkit = []
 
 [dependencies]
 ahs-shared = { path = "shared" }
@@ -166,6 +172,13 @@ required-features = ["bench"]
 [[bench]]
 name = "transfer"
 harness = false
+
+# Adversarial / malicious-peer integration suite. Needs `testkit` for the
+# crafted-message injector that reaches `pub(crate)` message internals; the
+# default `cargo test` skips it, `cargo task test`/`ci` enable the feature.
+[[test]]
+name = "adversarial"
+required-features = ["testkit"]
 
 [profile.release]
 opt-level = 3

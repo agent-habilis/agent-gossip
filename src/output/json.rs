@@ -33,6 +33,11 @@ pub(super) enum SimpleEvent<'a> {
     PeerReturn {
         nickname: &'a str,
     },
+    Fork {
+        nickname: &'a str,
+        pubkey: &'a str,
+        seq: u64,
+    },
     Info {
         message: &'a str,
     },
@@ -63,6 +68,12 @@ struct MessageHeader<'a> {
     pub ty: &'static str,
     pub swarm: &'a str,
     pub author: &'a str,
+    /// Author's full Ed25519 public key (hex) — the cryptographic identity
+    /// behind the display `author`. `Some` on every signed (real) message;
+    /// `None` (omitted) only for unsigned test fixtures. Agents should key
+    /// trust/disambiguation on this, not the nickname.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pubkey: Option<&'a str>,
     pub ts: i64,
 }
 
@@ -90,6 +101,7 @@ fn message_header<'a>(msg: &'a Message, ty: &'static str) -> MessageHeader<'a> {
         ty,
         swarm: msg.swarm.as_str(),
         author: msg.author.as_str(),
+        pubkey: (!msg.pubkey.is_empty()).then_some(msg.pubkey.as_str()),
         ts: msg.timestamp,
     }
 }
@@ -182,6 +194,15 @@ pub fn event_json(event: &OutputEvent) -> Option<String> {
         }),
         OutputEvent::PeerReturn { nickname } => serde_json::to_string(&SimpleEvent::PeerReturn {
             nickname: nickname.as_str(),
+        }),
+        OutputEvent::Fork {
+            nickname,
+            pubkey,
+            seq,
+        } => serde_json::to_string(&SimpleEvent::Fork {
+            nickname: nickname.as_str(),
+            pubkey,
+            seq: *seq,
         }),
         OutputEvent::MsgPosted { id } => {
             serde_json::to_string(&SimpleEvent::MsgPosted { id: id.as_str() })

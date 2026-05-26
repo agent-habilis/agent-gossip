@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::util::clock;
 
+use super::identity::{self, Identity};
 use super::nickname::Nickname;
 use super::swarm::SwarmId;
 
@@ -145,6 +146,31 @@ pub struct Message {
     #[serde(rename = "ts")]
     pub timestamp: i64,
     pub body: MessageBody,
+    /// Author's Ed25519 public key (lowercase hex), and the detached
+    /// signature over the message's [canonical bytes](Message::canonical_bytes).
+    /// Empty on an unsigned message (which then serializes exactly as a v1
+    /// message — the fields are skipped); real outbound traffic is signed on
+    /// the broadcast path. See [`docs/history-integrity.md`].
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub pubkey: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub sig: String,
+    /// Per-author hash-linked log (Phase 2), set on `Msg` only: `seq` is
+    /// this author's monotonic counter and `prev` the content hash of their
+    /// previous `Msg` (`None` at `seq 0`). Both are signed. Plumbing /
+    /// presence kinds leave them `None`. The message's own content hash is
+    /// computed locally (`content_hash_hex`), never transmitted. See
+    /// [`docs/history-integrity.md`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seq: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prev: Option<String>,
+    /// Cross-author DAG (Phase 3), `Msg` only: content hashes of the DAG
+    /// tips this author had seen when authoring — the causal links. Signed.
+    /// Empty for the very first message / messages with no observed
+    /// predecessor. See [`docs/history-integrity.md`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub parents: Vec<String>,
     /// Extension escape hatch. Add experimental fields here; stable fields get promoted to top-level.
     #[serde(default = "default_ext")]
     pub ext: serde_json::Value,
@@ -160,6 +186,11 @@ impl Message {
             author: author.clone(),
             timestamp: clock::unix_secs(),
             body,
+            pubkey: String::new(),
+            sig: String::new(),
+            seq: None,
+            prev: None,
+            parents: Vec::new(),
             ext: default_ext(),
         }
     }
@@ -261,6 +292,109 @@ impl Message {
         }
         Ok(msg)
     }
+
+    /// Deterministic, domain-separated, length-prefixed encoding of every
+    /// signed field (i.e. all of them **except** `sig`, including
+    /// `pubkey` so the key is bound to the message). This — not the JSON —
+    /// is what gets signed and hashed, so signature verification does not
+    /// depend on JSON formatting. `kind` and `ext` are folded in via their
+    /// (deterministic, sorted-key) `serde_json` encodings.
+    #[must_use]
+    pub(crate) fn canonical_bytes(&self) -> Vec<u8> {
+        const DOMAIN: &[u8] = b"agent-habilis-swarm/msg";
+        let mut buf = Vec::new();
+        let mut field = |bytes: &[u8]| {
+            buf.extend_from_slice(
+                &u32::try_from(bytes.len())
+                    .expect("a message field fits in u32")
+                    .to_le_bytes(),
+            );
+            buf.extend_from_slice(bytes);
+        };
+        field(DOMAIN);
+        field(self.version.as_bytes());
+        field(self.id.as_str().as_bytes());
+        field(&serde_json::to_vec(&self.kind).unwrap_or_default());
+        field(self.swarm.as_str().as_bytes());
+        field(self.author.as_str().as_bytes());
+        field(&self.timestamp.to_le_bytes());
+        field(self.body.as_str().as_bytes());
+        field(self.pubkey.as_bytes());
+        // `seq`/`prev` are signed too. `None` encodes as a zero-length field
+        // (distinct from `Some(0)`, which is 8 bytes), so a plumbing message
+        // and a `seq 0` message never collide.
+        match self.seq {
+            Some(value) => field(&value.to_le_bytes()),
+            None => field(&[]),
+        }
+        match &self.prev {
+            Some(value) => field(value.as_bytes()),
+            None => field(&[]),
+        }
+        // Parents (DAG causal links) are signed too. Serialized as their
+        // deterministic JSON array; empty for no-parent messages.
+        field(&serde_json::to_vec(&self.parents).unwrap_or_default());
+        field(&serde_json::to_vec(&self.ext).unwrap_or_default());
+        buf
+    }
+
+    /// This message's content hash (SHA-256 of [`canonical_bytes`], hex) —
+    /// the id used by another author's `prev` backlink and by fork
+    /// detection. Recomputed locally on receive; never trusted off the wire.
+    #[must_use]
+    pub(crate) fn content_hash_hex(&self) -> String {
+        identity::content_hash_hex(&self.canonical_bytes())
+    }
+
+    /// Stamp the per-author log fields before signing (`Msg` only). `seq`
+    /// is the author's monotonic counter, `prev` the hash of their previous
+    /// `Msg` (`None` at `seq 0`). Consuming-builder so it composes with
+    /// [`signed`](Self::signed): `Message::new_message(..).with_chain(..).signed(..)`.
+    #[must_use]
+    pub(crate) fn with_chain(mut self, seq: u64, prev: Option<String>) -> Self {
+        self.seq = Some(seq);
+        self.prev = prev;
+        self
+    }
+
+    /// Stamp the cross-author DAG `parents` (content hashes of the tips
+    /// seen when authoring) before signing. Consuming-builder, composes
+    /// with [`with_chain`](Self::with_chain) and [`signed`](Self::signed).
+    #[must_use]
+    pub(crate) fn with_parents(mut self, parents: Vec<String>) -> Self {
+        self.parents = parents;
+        self
+    }
+
+    /// Sign this message with `identity`, filling `pubkey` then `sig`.
+    /// `pubkey` is set before the canonical bytes are computed so the key
+    /// is part of what is signed; consuming-builder style so it composes in
+    /// the construction expression (`Message::new_message(..).signed(&id)`).
+    #[must_use]
+    pub(crate) fn signed(mut self, identity: &Identity) -> Self {
+        self.pubkey = identity::encode_pubkey(&identity.public());
+        self.sig = identity::encode_sig(&identity.sign(&self.canonical_bytes()));
+        self
+    }
+
+    /// Verify the detached signature against the embedded `pubkey` over the
+    /// canonical bytes. `false` if either field is absent/malformed or the
+    /// signature does not match — never panics. (Whether `pubkey` is the
+    /// *expected* identity for this `author` is the receiver's TOFU check,
+    /// separate from this cryptographic check.)
+    #[must_use]
+    pub(crate) fn verify_signature(&self) -> bool {
+        if self.pubkey.is_empty() || self.sig.is_empty() {
+            return false;
+        }
+        let (Ok(pubkey), Ok(sig)) = (
+            identity::decode_pubkey(&self.pubkey),
+            identity::decode_sig(&self.sig),
+        ) else {
+            return false;
+        };
+        identity::verify(&pubkey, &self.canonical_bytes(), &sig)
+    }
 }
 
 /// Build the serialized wire bytes for an outbound user message
@@ -271,16 +405,43 @@ impl Message {
 ///
 /// # Errors
 /// Propagates [`Message::serialize`] failure (oversized payload).
+/// The per-author log + DAG position to stamp on an outbound `Msg`: the
+/// chain `seq`/`prev` (Phase 2) and the DAG `parents` (Phase 3). Bundled so
+/// [`build_msg_bytes`] stays within the argument budget; the daemon fills it
+/// from its send cursor + current DAG tips.
+pub(crate) struct ChainCtx {
+    pub seq: u64,
+    pub prev: Option<String>,
+    pub parents: Vec<String>,
+}
+
+#[cfg(test)]
+impl ChainCtx {
+    /// The genesis position (seq 0, no predecessor, no parents).
+    pub(crate) fn genesis() -> Self {
+        ChainCtx {
+            seq: 0,
+            prev: None,
+            parents: Vec::new(),
+        }
+    }
+}
+
 pub(crate) fn build_msg_bytes(
     swarm: &SwarmId,
     body: MessageBody,
     reply: Option<Nickname>,
     author: &Nickname,
+    identity: &Identity,
+    chain: ChainCtx,
 ) -> Result<(Bytes, Message)> {
     let msg = match reply {
         None => Message::new_message(swarm, author, body),
         Some(target) => Message::new_reply(swarm, author, target, body),
-    };
+    }
+    .with_chain(chain.seq, chain.prev)
+    .with_parents(chain.parents)
+    .signed(identity);
     let raw = msg.serialize()?;
     Ok((Bytes::from(raw), msg))
 }
@@ -296,6 +457,11 @@ impl Message {
             author: "alice-bot".into(),
             timestamp: 1_700_000_000,
             body: body.into(),
+            pubkey: String::new(),
+            sig: String::new(),
+            seq: None,
+            prev: None,
+            parents: Vec::new(),
             ext: serde_json::json!({}),
         }
     }
@@ -304,7 +470,8 @@ impl Message {
 #[cfg(test)]
 mod tests {
     use super::{
-        Message, MessageBody, MessageKind, Nickname, PresenceSubtype, SwarmId, build_msg_bytes,
+        ChainCtx, Message, MessageBody, MessageKind, Nickname, PresenceSubtype, SwarmId,
+        build_msg_bytes,
     };
 
     fn nick(name: &str) -> Nickname {
@@ -417,8 +584,16 @@ mod tests {
     #[test]
     fn build_msg_bytes_message() {
         let alice = nick("alice");
-        let (bytes, built) =
-            build_msg_bytes(&sid(), MessageBody::from("hello"), None, &alice).unwrap();
+        let identity = crate::protocol::identity::Identity::generate();
+        let (bytes, built) = build_msg_bytes(
+            &sid(),
+            MessageBody::from("hello"),
+            None,
+            &alice,
+            &identity,
+            ChainCtx::genesis(),
+        )
+        .unwrap();
         assert!(!built.id.as_str().is_empty());
         assert!(!bytes.is_empty());
         let msg = Message::parse(&bytes).unwrap();
@@ -430,11 +605,14 @@ mod tests {
     fn build_msg_bytes_reply() {
         let target = nick("alice");
         let bob = nick("bob");
+        let identity = crate::protocol::identity::Identity::generate();
         let (bytes, _) = build_msg_bytes(
             &sid(),
             MessageBody::from("reply"),
             Some(target.clone()),
             &bob,
+            &identity,
+            ChainCtx::genesis(),
         )
         .unwrap();
         let msg = Message::parse(&bytes).unwrap();
@@ -448,6 +626,130 @@ mod tests {
             | MessageKind::Pong { .. } => {
                 panic!("expected Msg kind")
             }
+        }
+    }
+
+    mod signing {
+        use super::super::{Message, MessageKind};
+        use crate::protocol::identity::Identity;
+
+        fn identity() -> Identity {
+            Identity::generate()
+        }
+
+        #[test]
+        fn signed_message_verifies() {
+            let msg =
+                Message::fixture(MessageKind::Msg { reply: None }, "hello").signed(&identity());
+            assert!(!msg.pubkey.is_empty() && !msg.sig.is_empty());
+            assert!(msg.verify_signature());
+        }
+
+        #[test]
+        fn unsigned_message_does_not_verify() {
+            let msg = Message::fixture(MessageKind::Msg { reply: None }, "hello");
+            assert!(!msg.verify_signature(), "empty pubkey/sig must not verify");
+        }
+
+        #[test]
+        fn tampered_body_breaks_signature() {
+            let mut msg =
+                Message::fixture(MessageKind::Msg { reply: None }, "hello").signed(&identity());
+            msg.body = "tampered".into();
+            assert!(!msg.verify_signature());
+        }
+
+        #[test]
+        fn tampered_author_breaks_signature() {
+            let mut msg =
+                Message::fixture(MessageKind::Msg { reply: None }, "hello").signed(&identity());
+            msg.author = "impostor-bot".into();
+            assert!(!msg.verify_signature());
+        }
+
+        #[test]
+        fn signature_survives_wire_round_trip() {
+            let msg = Message::fixture(MessageKind::Msg { reply: None }, "hi").signed(&identity());
+            let parsed = Message::parse(&msg.serialize().unwrap()).unwrap();
+            assert!(parsed.verify_signature());
+            assert_eq!(parsed.pubkey, msg.pubkey);
+        }
+
+        #[test]
+        fn unsigned_wire_omits_signature_fields() {
+            // The skip-if-empty fields keep an unsigned message byte-identical
+            // to the v1 wire, so existing snapshots are unaffected.
+            let bytes = Message::fixture(MessageKind::Msg { reply: None }, "hi")
+                .serialize()
+                .unwrap();
+            let wire = String::from_utf8(bytes).unwrap();
+            assert!(!wire.contains("pubkey"), "{wire}");
+            assert!(!wire.contains("\"sig\""), "{wire}");
+        }
+    }
+
+    mod chain {
+        use super::super::{Message, MessageKind};
+        use crate::protocol::identity::Identity;
+
+        fn msg(body: &str) -> Message {
+            Message::fixture(MessageKind::Msg { reply: None }, body)
+        }
+
+        #[test]
+        fn chained_message_carries_seq_prev_and_verifies() {
+            let prev = "a".repeat(64);
+            let signed = msg("hi")
+                .with_chain(5, Some(prev.clone()))
+                .signed(&Identity::generate());
+            assert_eq!(signed.seq, Some(5));
+            assert_eq!(signed.prev.as_deref(), Some(prev.as_str()));
+            assert!(signed.verify_signature());
+        }
+
+        #[test]
+        fn content_hash_is_stable_and_64_hex() {
+            let stamped = msg("x").with_chain(0, None);
+            assert_eq!(stamped.content_hash_hex(), stamped.content_hash_hex());
+            assert_eq!(stamped.content_hash_hex().len(), 64);
+        }
+
+        #[test]
+        fn fork_pair_hashes_differently() {
+            // The equivocation primitive: two different messages at the same
+            // seq hash differently, so a receiver can prove the fork.
+            let alpha = msg("alpha").with_chain(1, None);
+            let beta = msg("beta").with_chain(1, None);
+            assert_ne!(alpha.content_hash_hex(), beta.content_hash_hex());
+        }
+
+        #[test]
+        fn tampering_seq_breaks_signature() {
+            let mut signed = msg("x").with_chain(3, None).signed(&Identity::generate());
+            signed.seq = Some(4);
+            assert!(!signed.verify_signature(), "seq is a signed field");
+        }
+
+        #[test]
+        fn parents_are_signed_and_round_trip() {
+            let parents = vec!["a".repeat(64), "b".repeat(64)];
+            let signed = msg("hi")
+                .with_chain(1, None)
+                .with_parents(parents.clone())
+                .signed(&Identity::generate());
+            assert_eq!(signed.parents, parents);
+            let parsed = Message::parse(&signed.serialize().unwrap()).unwrap();
+            assert_eq!(parsed.parents, parents);
+            assert!(parsed.verify_signature());
+        }
+
+        #[test]
+        fn tampering_parents_breaks_signature() {
+            let mut signed = msg("hi")
+                .with_parents(vec!["a".repeat(64)])
+                .signed(&Identity::generate());
+            signed.parents.push("b".repeat(64));
+            assert!(!signed.verify_signature(), "parents are signed");
         }
     }
 

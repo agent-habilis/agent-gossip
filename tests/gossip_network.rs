@@ -1388,6 +1388,24 @@ fn test_gap_larger_than_buffer_recovers_retained_set() {
         1,
         Duration::from_mins(1),
     );
+    // Wait for the live holders to *converge* on the canonical retained set
+    // before resuming alpha. Eviction is deterministic (lowest (ts,pubkey,
+    // seq,id) dropped), so once bravo holds the oldest retained message
+    // (`b-{BURST-CAP}`) it necessarily holds the whole top-CAP window
+    // `b-30..b-49` — exactly the set creator keeps. Without this gate alpha
+    // could reconcile against a half-converged bravo and recover the *union*
+    // of two divergent windows (>CAP) or a not-yet-evicted old message —
+    // the source of this test's former flakiness.
+    let oldest_retained = format!("b-{}", BURST - CAP);
+    let converged = wait_until(
+        || bravo.count_from(&author, &oldest_retained),
+        1,
+        Duration::from_mins(2),
+    );
+    assert_eq!(
+        converged, 1,
+        "bravo never converged on the full retained window ({oldest_retained}..={newest})"
+    );
     // Hold the freeze past QUIC_MAX_IDLE_SECS (10s) so alpha's link dies and
     // the burst is genuinely missed (not just buffered for delivery on
     // resume) — recovery must then go through anti-entropy.
@@ -1466,4 +1484,99 @@ fn test_multi_round_throttled_backfill() {
         "throttled backfill did not complete over multiple rounds (got {final_count}/{GAP})\n{}",
         alpha.log_tail(20),
     );
+}
+
+// ── Key-identity model (Tier 1) ─────────────────────────────────────────
+
+/// Two members deliberately share a display nickname. Identity is the
+/// signing **key**, not the name, and self-echo is keyed on the pubkey — so
+/// each must still see the *other's* same-named messages. Regression guard
+/// for the nickname→pubkey self-echo fix (a nickname-keyed self-echo would
+/// have each node silently drop the other as its own echo).
+#[tokio::test]
+async fn same_nickname_peers_communicate() {
+    let mut alpha = InProcNode::create_with_nick("samenick", "dup").await;
+    let mut beta = InProcNode::join(&alpha.swarm, "dup").await;
+
+    alpha.send("from-alpha").await;
+    assert!(
+        beta.wait_body("from-alpha", MSG_TIMEOUT).await,
+        "beta never saw alpha's message despite the shared nickname"
+    );
+    beta.send("from-beta").await;
+    assert!(
+        alpha.wait_body("from-beta", MSG_TIMEOUT).await,
+        "alpha never saw beta's message despite the shared nickname"
+    );
+
+    // The surfaced message carries the author's full Ed25519 key — the real,
+    // distinguishing identity behind the shared cosmetic nickname.
+    let from_alpha = beta
+        .inbound()
+        .into_iter()
+        .find(|msg| msg.body.as_str() == "from-alpha")
+        .expect("alpha's message is present");
+    assert_eq!(
+        from_alpha.pubkey.len(),
+        64,
+        "a surfaced message carries the author's full 32-byte key as hex"
+    );
+
+    alpha.leave().await;
+    beta.leave().await;
+}
+
+/// The `--output json` `message` event exposes the author's full public key,
+/// so an agent can key trust/disambiguation on the key rather than the
+/// (non-unique) nickname.
+#[tokio::test]
+async fn message_event_carries_full_pubkey() {
+    let alpha = InProcNode::create("pubkeyjson").await;
+    let mut beta = InProcNode::join(&alpha.swarm, "pk-beta").await;
+
+    alpha.send("hi").await;
+    assert!(
+        beta.wait_body("hi", MSG_TIMEOUT).await,
+        "message never arrived"
+    );
+
+    let events = beta.message_events();
+    let event = events
+        .iter()
+        .find(|event| event["body"] == "hi")
+        .expect("the message event was surfaced");
+    let pubkey = event["pubkey"]
+        .as_str()
+        .expect("the JSON message event carries a `pubkey` field");
+    assert_eq!(pubkey.len(), 64, "full Ed25519 public key as 64 hex chars");
+
+    alpha.leave().await;
+    beta.leave().await;
+}
+
+/// A nickname is never "burned": after a member leaves, a new member can
+/// take the same display name and communicate normally (ephemeral keys mean
+/// the name was never *claimed* — only the key is the identity).
+#[tokio::test]
+async fn nickname_reusable_after_peer_leaves() {
+    let mut observer = InProcNode::create("reuse").await;
+    let first = InProcNode::join(&observer.swarm, "ditto").await;
+
+    first.send("first-here").await;
+    assert!(
+        observer.wait_body("first-here", MSG_TIMEOUT).await,
+        "observer never saw the first member"
+    );
+    first.leave().await;
+
+    // A brand-new member reuses the departed nickname.
+    let second = InProcNode::join(&observer.swarm, "ditto").await;
+    second.send("second-here").await;
+    assert!(
+        observer.wait_body("second-here", MSG_TIMEOUT).await,
+        "a reused nickname could not communicate after the prior holder left"
+    );
+
+    observer.leave().await;
+    second.leave().await;
 }

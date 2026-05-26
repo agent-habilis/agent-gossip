@@ -5,6 +5,7 @@ use iroh_gossip::api::GossipSender;
 use tokio::sync::broadcast;
 
 use crate::output;
+use crate::protocol::identity::Identity;
 use crate::protocol::{Message, Nickname, SwarmId};
 
 /// Immutable loop-level context threaded through every handler.
@@ -14,6 +15,9 @@ pub(crate) struct HandlerCtx<'a> {
     pub endpoint: &'a Endpoint,
     pub swarm: &'a SwarmId,
     pub author: &'a Nickname,
+    /// This member's signing identity (Ed25519). Messages we author are
+    /// signed with it before broadcast; see [`Identity`].
+    pub identity: &'a Identity,
     pub max_peers: usize,
     /// Well-known rendezvous endpoint id. Its co-hosted pseudo-node
     /// shows up as a gossip neighbor on participant endpoints; it is

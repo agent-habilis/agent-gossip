@@ -70,7 +70,11 @@ pub(crate) async fn handle_ipc_command(
                 deadline: now + Duration::from_secs(ping_window_secs()),
                 pongs: HashMap::new(),
             }));
-            broadcast_msg(sender, &Message::new_ping(swarm, author)).await;
+            broadcast_msg(
+                sender,
+                &Message::new_ping(swarm, author).signed(&state.identity),
+            )
+            .await;
             tracing::debug!("IPC ping command received; round armed");
             let _ = resp_tx.send(json_ack());
             true
