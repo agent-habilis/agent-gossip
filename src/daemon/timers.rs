@@ -42,6 +42,18 @@ pub(crate) async fn tick_state_refresh(state: &EventLoopState, endpoint: &Endpoi
         return;
     }
 
+    // Always-on census reading: the cheap counts only (no `remote_info`
+    // round-trips), at `info` so the file sink carries a per-tick
+    // roster/link time series — the flap rate read directly, not
+    // inferred from counting NeighborUp/Down lines.
+    tracing::info!(
+        target: "agent_habilis_swarm::lifecycle",
+        roster_len,
+        link_len,
+        meshed = state.meshed,
+        "mesh census"
+    );
+
     // The per-peer conn classification feeds only the DEBUG census
     // below, and each `conn_path` is a `remote_info` actor round-trip.
     // `lifecycle` is pinned to `info` by default, so skip the whole loop

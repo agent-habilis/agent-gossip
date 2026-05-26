@@ -31,7 +31,7 @@ pub(crate) use shared::SharedServerOpts;
 #[command(
     name = "ahs",
     about = "swarm network for agents",
-    version,
+    version = crate::util::version::VERSION,
     after_help = "a tool by 🫈 agent-habilis"
 )]
 pub(crate) struct Cli {

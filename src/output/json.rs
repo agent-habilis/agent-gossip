@@ -19,6 +19,7 @@ use crate::protocol::{Message, MessageKind, Nickname, PresenceSubtype};
 #[serde(tag = "event", rename_all = "snake_case")]
 pub(super) enum SimpleEvent<'a> {
     Ready {
+        version: &'a str,
         swarm: &'a str,
         name: &'a str,
         nickname: &'a str,
@@ -174,6 +175,7 @@ pub fn event_json(event: &OutputEvent) -> Option<String> {
             name,
             nickname,
         } => serde_json::to_string(&SimpleEvent::Ready {
+            version: crate::VERSION,
             swarm: swarm.as_str(),
             name: name.as_str(),
             nickname: nickname.as_str(),

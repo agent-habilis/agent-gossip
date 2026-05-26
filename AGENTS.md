@@ -306,8 +306,12 @@ JSON object per line on stdout:
 
 ### ready
 
+`version` is the build's identity — crate version + git short hash + dirty
+flag (e.g. `0.2.0 (1c362892 dirty:false)`) — so a node self-reports exactly
+which commit it runs (matches `ahs --version`).
+
 ```json
-{"event":"ready","swarm":"ahs...","name":"cool-team","nickname":"word-word"}
+{"event":"ready","version":"0.2.0 (1c362892 dirty:false)","swarm":"ahs...","name":"cool-team","nickname":"word-word"}
 ```
 
 ### message
@@ -628,6 +632,13 @@ per process. `tail -f` the file (or `cargo task logs` to print the
 dir). Logs stay **additive**: `--output json` (stdout) is unaffected and
 fatal `anyhow` errors still print to stderr. `AHS_LOG_DIR` overrides the
 directory (the test suite points it at a temp dir).
+
+**Each daemon logs one `daemon starting` line stamped with the build version**
+(crate version + git short hash + dirty flag, e.g. `0.2.0 (1c362892
+dirty:false)`) at the top of its file — one log file is one process is one
+build, so a single line identifies the whole file's commit. The `ready` JSON
+event carries the same `version`. The hash comes from `build.rs` (vergen) via
+`util::version::VERSION`; `ahs --version` prints it too.
 
 Debug defaults to `info`, release to `error`; `debug`/`trace` need
 `RUST_LOG` (tried first, always wins).

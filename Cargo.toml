@@ -160,6 +160,13 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"
 # prints a summary table to stdout.
 divan = "0.1"
 
+# Stamps the build's git short hash + dirty flag into the version
+# (`util::version::VERSION`), so every `ahs` self-identifies its commit in
+# `--version`, the `ready` event, and every log line. git-CLI backend — no
+# libgit2/gix; build hosts all have `git`.
+[build-dependencies]
+vergen-gitcl = "1"
+
 # Offline microbenchmarks of the pure hot paths. Needs `bench` for the
 # `bench_api` shim that reaches `pub(crate)` internals.
 [[bench]]

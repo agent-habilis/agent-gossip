@@ -241,6 +241,12 @@ async fn test_ready_event_shape() {
     assert_eq!(ready["swarm"].as_str().unwrap(), swarm);
     assert_eq!(ready["name"].as_str().unwrap(), "readyshape");
     assert_eq!(ready["nickname"].as_str().unwrap(), nick);
+    // The build self-identifies: the ready event carries the exact version
+    // string (crate version + git sha + dirty flag).
+    assert_eq!(
+        ready["version"].as_str().unwrap(),
+        agent_habilis_swarm::VERSION
+    );
 }
 
 /// Three peers: creator surfaces a membership `joined` presence for

@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use tokio::time::Instant as TokioInstant;
 
@@ -17,8 +17,12 @@ use crate::protocol::identity::Identity;
 use crate::protocol::{Message, MessageId, Nickname};
 
 use crate::util::tuning::{
-    KNOWN_ENDPOINTS_CAP, PENDING_OUTBOUND_CAP, message_log_size, seen_ids_cap,
+    KNOWN_ENDPOINTS_CAP, PENDING_OUTBOUND_CAP, RELINK_COOLDOWN_SECS, message_log_size, seen_ids_cap,
 };
+
+/// `RELINK_COOLDOWN_SECS` as a `Duration` — the single window value both
+/// cooldown helpers compare against.
+const RELINK_COOLDOWN: Duration = Duration::from_secs(RELINK_COOLDOWN_SECS);
 
 /// All mutable state owned by the event loop.
 ///
@@ -47,6 +51,14 @@ pub(crate) struct EventLoopState {
     /// eviction queue.
     pub known_endpoints: HashSet<EndpointId>,
     pub known_order: VecDeque<EndpointId>,
+    /// Per-endpoint re-link cooldown: the last `Instant` we re-dialed +
+    /// re-flooded a peer learned via `PeerInfo`. Kept *across* `NeighborDown`
+    /// (unlike `linked_endpoints`), so a flapping/unstable peer is re-linked at
+    /// most once per `RELINK_COOLDOWN_SECS` — the choke that stops one bad
+    /// node's flap from amplifying into a mesh-wide connection storm. Bounded:
+    /// `note_relink` prunes expired entries, so it never outgrows the peers
+    /// re-linked within the active window.
+    pub relink_at: HashMap<EndpointId, Instant>,
     /// Membership layer: the participant roster. Nickname-keyed set of
     /// other participants, feeding the state file's `participant_count`
     /// (`participants.len() + 1`). Excludes self. Driven by
@@ -186,6 +198,7 @@ impl EventLoopState {
             linked_endpoints: HashSet::new(),
             known_endpoints: HashSet::new(),
             known_order: VecDeque::new(),
+            relink_at: HashMap::new(),
             participants: HashSet::new(),
             last_seen: HashMap::new(),
             quiet: HashSet::new(),
@@ -293,6 +306,25 @@ impl EventLoopState {
         }
     }
 
+    /// `true` if we re-dialed + re-flooded `peer` within the last
+    /// `RELINK_COOLDOWN_SECS` of `now`, so the caller should skip re-linking
+    /// it again. Breaks the flap → re-dial → re-flood loop that otherwise
+    /// turns one unstable peer into a mesh-wide CPU storm.
+    pub(crate) fn relink_on_cooldown(&self, peer: EndpointId, now: Instant) -> bool {
+        self.relink_at
+            .get(&peer)
+            .is_some_and(|at| now.duration_since(*at) < RELINK_COOLDOWN)
+    }
+
+    /// Record a re-link of `peer` at `now`, opportunistically dropping expired
+    /// entries so the map stays bounded by the peers re-linked within the
+    /// active window.
+    pub(crate) fn note_relink(&mut self, peer: EndpointId, now: Instant) {
+        self.relink_at
+            .retain(|_, at| now.duration_since(*at) < RELINK_COOLDOWN);
+        self.relink_at.insert(peer, now);
+    }
+
     /// Record `id` as seen and report whether it was *already* seen.
     /// `true` => this is a duplicate delivery the caller must drop.
     /// Delegates to the bounded [`BoundedIdSet`].
@@ -381,8 +413,8 @@ const MAX_DAG_PARENTS: usize = 16;
 #[cfg(test)]
 mod tests {
     use super::{
-        Bytes, EndpointId, EventLoopState, Instant, KNOWN_ENDPOINTS_CAP, MessageId,
-        PENDING_OUTBOUND_CAP,
+        Bytes, Duration, EndpointId, EventLoopState, Instant, KNOWN_ENDPOINTS_CAP, MessageId,
+        PENDING_OUTBOUND_CAP, RELINK_COOLDOWN_SECS,
     };
 
     fn fresh_state() -> EventLoopState {
@@ -540,6 +572,73 @@ mod tests {
         let id = MessageId::random();
         assert!(!state.mark_seen(&id), "first sighting is not a duplicate");
         assert!(state.mark_seen(&id), "second sighting is a duplicate");
+    }
+
+    // Replicates the mesh-wide CPU runaway at its mechanism: a peer whose
+    // transport link flaps (each `NeighborDown` drops it from
+    // `linked_endpoints`, each re-learned `PeerInfo` re-passes the novelty
+    // gate) must NOT re-dial + re-flood once per flap. See memory
+    // `cpu-runaway-membership-amplifier`.
+    #[test]
+    fn relink_cooldown_caps_a_flapping_peer() {
+        let peer = endpoint_id(7);
+        let start = Instant::now();
+
+        // Baseline — documents the BUG: the bare novelty gate (remove+insert)
+        // re-links on EVERY flap, i.e. unbounded amplification.
+        let mut bare_state = fresh_state();
+        let mut bare = 0;
+        for _ in 0..100u32 {
+            bare_state.linked_endpoints.remove(&peer);
+            if bare_state.linked_endpoints.insert(peer) {
+                bare += 1;
+            }
+        }
+        assert_eq!(
+            bare, 100,
+            "without a cooldown every flap re-links — the runaway"
+        );
+
+        // With the cooldown: 100 flaps inside one window collapse to ONE re-link.
+        let mut cooled = fresh_state();
+        let mut relinks = 0;
+        for index in 0..100u32 {
+            let now = start + Duration::from_millis(u64::from(index) * 10);
+            cooled.linked_endpoints.remove(&peer);
+            if !cooled.relink_on_cooldown(peer, now) && cooled.linked_endpoints.insert(peer) {
+                cooled.note_relink(peer, now);
+                relinks += 1;
+            }
+        }
+        assert_eq!(relinks, 1, "the cooldown caps re-links to once per window");
+
+        // Past the window a genuine re-link is allowed again (no permanent lockout).
+        let later = start + Duration::from_secs(RELINK_COOLDOWN_SECS + 1);
+        assert!(!cooled.relink_on_cooldown(peer, later));
+    }
+
+    #[test]
+    fn relink_cooldown_is_per_peer_and_bounded() {
+        let mut state = fresh_state();
+        let start = Instant::now();
+        let flapping = endpoint_id(7);
+        let other = endpoint_id(8);
+
+        // One peer's cooldown never gates a different peer.
+        state.note_relink(flapping, start);
+        assert!(state.relink_on_cooldown(flapping, start));
+        assert!(!state.relink_on_cooldown(other, start));
+
+        // Many distinct peers re-linked across more than a full window:
+        // expired entries are pruned, so the map never accumulates them all.
+        for seed in 0..50u8 {
+            let when = start + Duration::from_secs(u64::from(seed));
+            state.note_relink(endpoint_id(seed), when);
+        }
+        assert!(
+            state.relink_at.len() <= usize::try_from(RELINK_COOLDOWN_SECS).unwrap() + 1,
+            "expired cooldown entries are pruned (map stays bounded)"
+        );
     }
 
     #[test]

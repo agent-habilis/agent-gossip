@@ -320,11 +320,14 @@ async fn handle_peer_info(
     else {
         return;
     };
+    let now = Instant::now();
     if peer_id != ctx.endpoint.id()
         && peer_id != ctx.rendezvous_id
         && state.linked_endpoints.len() < ctx.max_peers
+        && !state.relink_on_cooldown(peer_id, now)
         && state.linked_endpoints.insert(peer_id)
     {
+        state.note_relink(peer_id, now);
         let _ = add_peer_addr(ctx.endpoint, peer_addr);
         // Remember this peer for the rendezvous-independent re-bridge: it
         // survives a later `NeighborDown`, and iroh keeps the address we

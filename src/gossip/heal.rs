@@ -43,7 +43,10 @@ pub(crate) async fn tick_heal(
     rendezvous_id: EndpointId,
     sender: &GossipSender,
 ) {
-    tracing::debug!("heal tick: re-probe + re-graft the rendezvous");
+    tracing::info!(
+        target: "agent_habilis_swarm::gossip",
+        "heal tick: re-probe + re-graft the rendezvous"
+    );
     heal(endpoint, rendezvous_id, sender, HEAL_PROBE_SECS).await;
 }
 

@@ -199,6 +199,16 @@ pub(crate) const RECLAIM_WINDOW_SECS: u64 = 6;
 /// Cadence of the fast reclaim burst while the window (above) is open.
 pub(crate) const RECLAIM_INTERVAL_MS: u64 = 400;
 
+/// Minimum gap between our own re-dial + `PeerInfo` re-flood of the *same*
+/// peer learned via `PeerInfo` (`gossip::recv::handle_peer_info`). Caps the
+/// membership amplifier so a flapping/unstable peer is re-linked at most once
+/// per window instead of once per flap — the fix for the mesh-wide CPU
+/// runaway. `10s`: exceeds the QUIC idle timeout (a truly-gone peer isn't
+/// aggressively re-dialed) and is ≤ `HEAL_INTERVAL_SECS` (15s), so the healer
+/// stays the backstop for legitimate re-bridge. iroh-gossip's own membership
+/// still maintains links independently — this only throttles *our* piling-on.
+pub(crate) const RELINK_COOLDOWN_SECS: u64 = 10;
+
 /// How often an advertising `create` re-broadcasts its `ahs…` id into
 /// the directory. Short enough that a fresh discoverer sees every live
 /// swarm within one cycle (the join-horizon only surfaces ads stamped

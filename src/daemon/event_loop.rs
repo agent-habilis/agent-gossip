@@ -188,6 +188,19 @@ struct EventLoop {
 /// The daemon's `select!` loop. Never returns normally on the CLI
 /// path (ctrl-c / SIGTERM `std::process::exit`s); embedded drivers
 /// break out via their external quit channel and get `Ok(())`.
+/// Log the one per-daemon build-stamp line into the always-on file (one log
+/// file == one process == one build). The `ready` JSON event carries the same
+/// `version`; this is the file-log counterpart. Explicit pinned target so it
+/// survives a release build's `error` base.
+fn log_daemon_start(author: &Nickname) {
+    tracing::info!(
+        target: "agent_habilis_swarm::lifecycle",
+        version = crate::VERSION,
+        nickname = %author,
+        "daemon starting"
+    );
+}
+
 async fn event_loop(loop_state: EventLoop) -> Result<()> {
     let EventLoop {
         sender,
@@ -223,6 +236,8 @@ async fn event_loop(loop_state: EventLoop) -> Result<()> {
         antientropy: mut antientropy_interval,
         state_refresh: mut state_refresh_interval,
     } = intervals;
+
+    log_daemon_start(&author);
 
     let mut stdin_reader = BufReader::new(tokio::io::stdin());
     let mut stdin_open = interactive;

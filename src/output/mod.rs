@@ -294,6 +294,7 @@ impl Output {
                 // In human mode, `info("joined as <nick>")` covers this.
                 if mode == OutputMode::Json {
                     emit_json(&SimpleEvent::Ready {
+                        version: crate::VERSION,
                         swarm: swarm.as_str(),
                         name: name.as_str(),
                         nickname: nickname.as_str(),

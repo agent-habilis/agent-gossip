@@ -79,6 +79,7 @@ pub use protocol::swarm::{
     SwarmName,
 };
 pub use resolver::{JoinTarget, JoinTargetError};
+pub use util::version::VERSION;
 
 use anyhow::Result;
 use clap::Parser;
