@@ -286,7 +286,7 @@ async fn event_loop(loop_state: EventLoop) -> Result<()> {
             event = receiver.next(), if state.gossip_open => {
                 gossip::handle_gossip_event(event, &mut state, &ctx).await;
             }
-            _ = prune_interval.tick() => timers::tick_prune(&mut state),
+            _ = prune_interval.tick() => timers::tick_prune(&mut state, &output),
             _ = alive_interval.tick() => {
                 timers::note_tick_gap("alive", &mut last_alive, &mut last_alive_wall, Duration::from_secs(ALIVE_INTERVAL_SECS));
                 lifecycle::heartbeat::tick_alive(&mut state, &sender, &swarm_str, &author).await;

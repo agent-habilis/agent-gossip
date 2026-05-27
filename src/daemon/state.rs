@@ -17,14 +17,15 @@ use crate::protocol::identity::Identity;
 use crate::protocol::{Message, MessageId, Nickname};
 use crate::util::bounded_fifo_set::BoundedFifoSet;
 use crate::util::bounded_queue::BoundedQueue;
+use crate::util::cooldown::Cooldown;
 
 use crate::util::tuning::{
     KNOWN_ENDPOINTS_CAP, PENDING_OUTBOUND_CAP, QUIET_CAP, RELINK_COOLDOWN_SECS, message_log_size,
     seen_ids_cap,
 };
 
-/// `RELINK_COOLDOWN_SECS` as a `Duration` — the single window value both
-/// cooldown helpers compare against.
+/// `RELINK_COOLDOWN_SECS` as a `Duration` — the window both per-endpoint
+/// throttles (`relink`, `peerinfo`) use.
 const RELINK_COOLDOWN: Duration = Duration::from_secs(RELINK_COOLDOWN_SECS);
 
 /// All mutable state owned by the event loop.
@@ -38,6 +39,10 @@ const RELINK_COOLDOWN: Duration = Duration::from_secs(RELINK_COOLDOWN_SECS);
 /// `participants` (membership roster), `surfaced` (presentation gate),
 /// `quiet` (heartbeat-evicted). Never conflate them — they are keyed
 /// differently (node id vs nickname) and have different lifetimes.
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent lifecycle edges (gossip_open/announced/meshed) plus the one-shot rss_warned latch; each tracks a distinct transition, not a config bundle worth a sub-struct"
+)]
 pub(crate) struct EventLoopState {
     /// Transport layer: the set of `EndpointId`s we hold a direct
     /// link to (exchanged `PeerInfo` with). Bounded by `max_peers`.
@@ -52,14 +57,22 @@ pub(crate) struct EventLoopState {
     /// addresses — so the re-bridge no longer depends on the rendezvous.
     /// Bounded FIFO (cap `KNOWN_ENDPOINTS_CAP`) so it can't grow without limit.
     pub known_endpoints: BoundedFifoSet<EndpointId>,
-    /// Per-endpoint re-link cooldown: the last `Instant` we re-dialed +
-    /// re-flooded a peer learned via `PeerInfo`. Kept *across* `NeighborDown`
-    /// (unlike `linked_endpoints`), so a flapping/unstable peer is re-linked at
-    /// most once per `RELINK_COOLDOWN_SECS` — the choke that stops one bad
-    /// node's flap from amplifying into a mesh-wide connection storm. Bounded:
-    /// `note_relink` prunes expired entries, so it never outgrows the peers
-    /// re-linked within the active window.
-    pub relink_at: HashMap<EndpointId, Instant>,
+    /// Per-endpoint re-link throttle: caps re-dialing + re-flooding a peer
+    /// learned via `PeerInfo` to once per window. Tracked *across*
+    /// `NeighborDown` (unlike `linked_endpoints`), so a flapping/unstable peer
+    /// is re-linked at most once per `RELINK_COOLDOWN_SECS` — the choke that
+    /// stops one bad node's flap from amplifying into a mesh-wide connection
+    /// storm. Bounded by construction (see [`Cooldown`]).
+    pub relink: Cooldown<EndpointId>,
+    /// Per-endpoint `PeerInfo` re-flood throttle. `relink` only throttles the
+    /// *inbound* re-dial in `handle_peer_info`; this throttles the *outbound*
+    /// re-flood every `NeighborUp` would otherwise trigger (`gossip::recv`).
+    /// Without it a single flapping link re-floods the whole mesh on every
+    /// up-transition — the residual amplifier behind the soak's ~7.4k-per-host
+    /// `neighbor up` storm. Kept separate from `relink` so the two throttles
+    /// stay independently reasoned (and a new neighbor still gets exactly one
+    /// re-flood).
+    pub peerinfo: Cooldown<EndpointId>,
     /// Membership layer: the participant roster. Nickname-keyed set of
     /// other participants, feeding the state file's `participant_count`
     /// (`participants.len() + 1`). Excludes self. Driven by
@@ -170,6 +183,11 @@ pub(crate) struct EventLoopState {
     /// pruned alongside the message-log eviction.
     pub by_hash: HashMap<String, i64>,
     pub dag_heads: HashSet<String>,
+    /// Latch for the warn-only RSS leak signal: set once this process's RSS
+    /// first crosses `tuning::rss_warn_mb`, so the `warn` fires exactly once
+    /// per process rather than every prune tick. Purely observability — never
+    /// gates behavior (see `timers::tick_prune`).
+    pub rss_warned: bool,
     /// Active `ahs ping` round, if one is in flight. Armed by the
     /// `Ping` IPC command, filled by inbound `Pong`s, and finalized
     /// into a `ping_report` when its `deadline` elapses. One at a time:
@@ -200,7 +218,8 @@ impl EventLoopState {
         Self {
             linked_endpoints: HashSet::new(),
             known_endpoints: BoundedFifoSet::new(KNOWN_ENDPOINTS_CAP),
-            relink_at: HashMap::new(),
+            relink: Cooldown::new(RELINK_COOLDOWN),
+            peerinfo: Cooldown::new(RELINK_COOLDOWN),
             participants: HashSet::new(),
             last_seen: HashMap::new(),
             quiet: BoundedFifoSet::new(QUIET_CAP),
@@ -225,6 +244,7 @@ impl EventLoopState {
             forked: HashSet::new(),
             by_hash: HashMap::new(),
             dag_heads: HashSet::new(),
+            rss_warned: false,
             ping_round: None,
         }
     }
@@ -277,18 +297,27 @@ impl EventLoopState {
     /// it again. Breaks the flap → re-dial → re-flood loop that otherwise
     /// turns one unstable peer into a mesh-wide CPU storm.
     pub(crate) fn relink_on_cooldown(&self, peer: EndpointId, now: Instant) -> bool {
-        self.relink_at
-            .get(&peer)
-            .is_some_and(|at| now.duration_since(*at) < RELINK_COOLDOWN)
+        self.relink.on_cooldown(peer, now)
     }
 
-    /// Record a re-link of `peer` at `now`, opportunistically dropping expired
-    /// entries so the map stays bounded by the peers re-linked within the
-    /// active window.
+    /// Record a re-link of `peer` at `now`.
     pub(crate) fn note_relink(&mut self, peer: EndpointId, now: Instant) {
-        self.relink_at
-            .retain(|_, at| now.duration_since(*at) < RELINK_COOLDOWN);
-        self.relink_at.insert(peer, now);
+        self.relink.note(peer, now);
+    }
+
+    /// `true` if a `NeighborUp` for `peer` already made us re-flood our own
+    /// `PeerInfo` within the cooldown window of `now`, so the caller should
+    /// skip re-flooding again. This is what stops a flapping link from
+    /// re-broadcasting our address to the whole mesh on *every* up-transition
+    /// (see `peerinfo`); a genuinely new neighbor, having no entry, still gets
+    /// exactly one re-flood.
+    pub(crate) fn peerinfo_on_cooldown(&self, peer: EndpointId, now: Instant) -> bool {
+        self.peerinfo.on_cooldown(peer, now)
+    }
+
+    /// Record a `PeerInfo` re-flood triggered by `peer` at `now`.
+    pub(crate) fn note_peerinfo(&mut self, peer: EndpointId, now: Instant) {
+        self.peerinfo.note(peer, now);
     }
 
     /// Record `id` as seen and report whether it was *already* seen.
@@ -573,6 +602,86 @@ mod tests {
         assert!(!cooled.relink_on_cooldown(peer, later));
     }
 
+    // The residual flap amplifier the re-link cooldown did NOT cover: every
+    // `NeighborUp` re-floods our own `PeerInfo` to the whole mesh, and a
+    // flapping link re-triggers `NeighborUp` on each up-transition, so without
+    // a second cooldown one bad node re-floods the swarm ~once per flap (the
+    // ~7.4k-per-host `neighbor up` storm seen in the distributed soak). The
+    // PeerInfo cooldown collapses that to once per window per endpoint while
+    // still letting a genuinely new neighbor get exactly one re-flood.
+    #[test]
+    fn peerinfo_cooldown_caps_a_flapping_peer() {
+        let peer = endpoint_id(7);
+        let start = Instant::now();
+
+        // The pre-fix `NeighborUp` arm re-flooded unconditionally when
+        // `announced`, so 100 flaps == 100 mesh-wide PeerInfo broadcasts. The
+        // gate below replays the same 100 flaps and counts what now actually
+        // re-floods.
+        let mut state = fresh_state();
+        let mut refloods = 0;
+        for index in 0..100u32 {
+            let now = start + Duration::from_millis(u64::from(index) * 10);
+            if !state.peerinfo_on_cooldown(peer, now) {
+                state.note_peerinfo(peer, now);
+                refloods += 1;
+            }
+        }
+        assert_eq!(
+            refloods, 1,
+            "the cooldown caps PeerInfo re-floods to one per window (was 100, one per flap)"
+        );
+
+        // A genuinely different neighbor in the same window still gets its own
+        // re-flood (the choke targets the *flapping* endpoint, not all peers).
+        let fresh_peer = endpoint_id(8);
+        assert!(!state.peerinfo_on_cooldown(fresh_peer, start));
+
+        // Past the window the flapping peer may re-flood once more (no permanent silence).
+        let later = start + Duration::from_secs(RELINK_COOLDOWN_SECS + 1);
+        assert!(!state.peerinfo_on_cooldown(peer, later));
+    }
+
+    // Under a long flap storm against a steady peer set, every collection *we*
+    // own stays flat — so the soak's monotonic 4.6 GB RSS climb is provably
+    // below our layer (the iroh transport), not in daemon state. This replays
+    // the per-flap state mutations the `NeighborUp`/`NeighborDown` arms +
+    // `handle_peer_info` make, for many flaps over simulated hours.
+    #[test]
+    fn app_state_stays_bounded_under_flap_churn() {
+        let mut state = fresh_state();
+        let start = Instant::now();
+        // A small, *steady* roster (the soak's shape: ~10 members, ~7.4k flaps),
+        // not a sybil endpoint stream — endpoints are real curve points.
+        let peers: Vec<EndpointId> = (0..8u8).map(endpoint_id).collect();
+
+        for index in 0..10_000u32 {
+            let now = start + Duration::from_millis(u64::from(index) * 100);
+            let peer = peers[index as usize % peers.len()];
+            // NeighborUp → PeerInfo reflood gate + (via handle_peer_info) link.
+            if !state.peerinfo_on_cooldown(peer, now) {
+                state.note_peerinfo(peer, now);
+            }
+            if !state.relink_on_cooldown(peer, now) {
+                state.note_relink(peer, now);
+                state.linked_endpoints.insert(peer);
+                state.known_endpoints.insert(peer);
+            }
+            // NeighborDown drops the transport link (kept in known_endpoints).
+            state.linked_endpoints.remove(&peer);
+        }
+
+        // None of our collections grew with the 10k flaps: each is bounded by
+        // the roster size or its hard cap, never by the flap count.
+        assert!(state.relink.len() <= peers.len(), "relink flat: {}", state.relink.len());
+        assert!(state.peerinfo.len() <= peers.len(), "peerinfo flat: {}", state.peerinfo.len());
+        assert!(state.linked_endpoints.len() <= peers.len(), "linked_endpoints flat");
+        assert!(
+            state.known_endpoints.len() <= KNOWN_ENDPOINTS_CAP.min(peers.len()),
+            "known_endpoints bounded"
+        );
+    }
+
     #[test]
     fn relink_cooldown_is_per_peer_and_bounded() {
         let mut state = fresh_state();
@@ -592,7 +701,7 @@ mod tests {
             state.note_relink(endpoint_id(seed), when);
         }
         assert!(
-            state.relink_at.len() <= usize::try_from(RELINK_COOLDOWN_SECS).unwrap() + 1,
+            state.relink.len() <= usize::try_from(RELINK_COOLDOWN_SECS).unwrap() + 1,
             "expired cooldown entries are pruned (map stays bounded)"
         );
     }

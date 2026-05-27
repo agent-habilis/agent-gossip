@@ -48,16 +48,26 @@ pub(crate) async fn handle_gossip_event(
             // Announce on the first link, not at startup: a joiner's
             // first link is the rendezvous relay, and `joined` is a
             // one-shot — sending it before any link exists loses it.
-            // Later neighbors only get a `PeerInfo` re-send.
+            // Later neighbors only get a `PeerInfo` re-send, and only once
+            // per cooldown window per endpoint: a flapping link must not
+            // re-flood our address to the whole mesh on every up-transition
+            // (the residual amplifier behind the soak's `neighbor up` storm).
+            let now = Instant::now();
             if state.announced {
-                broadcast_peer_info(
-                    ctx.sender,
-                    ctx.swarm,
-                    ctx.author,
-                    ctx.identity,
-                    ctx.endpoint,
-                )
-                .await;
+                if state.peerinfo_on_cooldown(node_id, now) {
+                    tracing::debug!(endpoint_id = %node_id, "skipped PeerInfo re-flood (cooldown)");
+                } else {
+                    broadcast_peer_info(
+                        ctx.sender,
+                        ctx.swarm,
+                        ctx.author,
+                        ctx.identity,
+                        ctx.endpoint,
+                    )
+                    .await;
+                    state.note_peerinfo(node_id, now);
+                    state.last_sent_at = now;
+                }
             } else {
                 announce_arrival(
                     ctx.sender,
@@ -68,9 +78,10 @@ pub(crate) async fn handle_gossip_event(
                 )
                 .await;
                 state.announced = true;
+                state.note_peerinfo(node_id, now);
+                state.last_sent_at = now;
                 tracing::info!("announced arrival on first gossip link");
             }
-            state.last_sent_at = Instant::now();
             // The co-hosted rendezvous is overlay plumbing, not a
             // participant — never cache its pseudo-node in the
             // bootstrap set. Transport links are not surfaced at all:

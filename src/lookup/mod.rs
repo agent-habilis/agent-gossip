@@ -10,12 +10,11 @@ mod relay;
 use std::net::{Ipv4Addr, SocketAddrV4};
 use std::time::Duration;
 
-use ahs_shared::{QUIC_KEEP_ALIVE_SECS, QUIC_MAX_IDLE_SECS};
 use anyhow::{Context, Result};
 use iroh::address_lookup::memory::MemoryLookup;
 use iroh::{
     Endpoint, EndpointAddr, RelayMode, SecretKey,
-    endpoint::{PortmapperConfig, QuicTransportConfig, presets},
+    endpoint::{PortmapperConfig, presets},
     protocol::Router,
 };
 use iroh_gossip::net::{GOSSIP_ALPN, Gossip};
@@ -77,41 +76,38 @@ pub(crate) async fn build_endpoint(
         // `Minimal` (not `presets::N0`): N0-DNS is intentionally not
         // wired (the relay ladder is the fast path; DHT is the
         // operator-free eternal backstop). `Minimal` still sets the
-        // rustls crypto provider.
-        let mut builder = Endpoint::builder(presets::Minimal);
-        if lookups.mdns {
-            builder = mdns::wire(builder);
-        }
-        if lookups.dht {
-            builder = dht::wire(builder);
-        }
-        builder.relay_mode(relay::relay_mode(&lookups.relay))
+        // rustls crypto provider. The mDNS / DHT address-lookups are
+        // wired **after** bind (below) — in iroh 1.0 they live in
+        // companion crates and need the bound endpoint's id.
+        Endpoint::builder(presets::Minimal).relay_mode(relay::relay_mode(&lookups.relay))
     };
 
     if let Some(secret_key) = secret_key {
         builder = builder.secret_key(secret_key);
     }
 
-    // Tighten QUIC keep-alive / idle timeout below iroh's 15s (direct) /
-    // 30s (relay) path defaults so a dead or slept peer drops fast
-    // (`NeighborDown`), speeding heal and the rendezvous-independent
-    // re-bridge. Keep-alive < idle keeps a quiet-but-live peer up.
-    // Applied to every endpoint (beacon + participant, public + private).
-    builder = builder.transport_config(
-        QuicTransportConfig::builder()
-            .keep_alive_interval(Duration::from_secs(QUIC_KEEP_ALIVE_SECS))
-            .max_idle_timeout(Some(
-                Duration::from_secs(QUIC_MAX_IDLE_SECS)
-                    .try_into()
-                    .expect("QUIC_MAX_IDLE_SECS is within IdleTimeout range"),
-            ))
-            .build(),
-    );
+    // Transport config is intentionally left at iroh's defaults: iroh tunes
+    // keep-alive / idle (and the per-path multipath settings) for its
+    // holepunching, and its own docs warn that adjusting them "may cause
+    // suboptimal usage". A prior aggressive 10s idle / 5s keep-alive override
+    // fought that tuning — marginal / distant links falsely idle-timed-out,
+    // HyParView refilled from passive, and the resulting NeighborDown/Up churn
+    // drove a per-connection memory leak. So we set nothing here.
 
     // For the private rendezvous endpoint this returns `AddrInUse`
     // when another member already holds the deterministic port — the
     // caller treats that as "someone else is the beacon" and retries.
     let endpoint = builder.bind().await.context("failed to bind endpoint")?;
+    // Post-bind address-lookup wiring: in iroh 1.0 the mDNS / mainline-DHT
+    // providers are companion crates built from the bound endpoint's id and
+    // added to its lookup services. Loopback-only swarms wire none (asserted
+    // above). The relay leg is configured pre-bind via `relay_mode`.
+    if lookups.mdns {
+        mdns::wire(&endpoint)?;
+    }
+    if lookups.dht {
+        dht::wire(&endpoint)?;
+    }
     tracing::info!(
         network,
         mdns = lookups.mdns,

@@ -4,11 +4,22 @@
 //! independently-sufficient reliability layers (see the lookup glossary
 //! in AGENTS.md).
 
-use iroh::address_lookup::MdnsAddressLookup;
-use iroh::endpoint::Builder;
+use anyhow::{Context, Result};
+use iroh::Endpoint;
+use iroh_mdns_address_lookup::MdnsAddressLookup;
 
-/// Wire the LAN mDNS address-lookup onto a public-endpoint builder.
-pub(super) fn wire(builder: Builder) -> Builder {
+/// Wire the LAN mDNS address-lookup onto a bound endpoint. In iroh 1.0 the
+/// provider is a companion crate built from the endpoint id and added to the
+/// endpoint's address-lookup services.
+pub(super) fn wire(endpoint: &Endpoint) -> Result<()> {
+    let lookup = MdnsAddressLookup::builder()
+        .build(endpoint.id())
+        .context("building mDNS address-lookup")?;
+    endpoint
+        .address_lookup()
+        .map_err(|err| anyhow::anyhow!("{err:?}"))
+        .context("endpoint has no address-lookup services for mDNS")?
+        .add(lookup);
     tracing::debug!("mDNS address-lookup wired (LAN multicast publish + resolve)");
-    builder.address_lookup(MdnsAddressLookup::builder())
+    Ok(())
 }

@@ -5,11 +5,22 @@
 //! independently-sufficient reliability layers (see the lookup glossary
 //! in AGENTS.md).
 
-use iroh::address_lookup::DhtAddressLookup;
-use iroh::endpoint::Builder;
+use anyhow::{Context, Result};
+use iroh::Endpoint;
+use iroh_mainline_address_lookup::DhtAddressLookup;
 
-/// Wire the mainline-DHT address-lookup onto a public-endpoint builder.
-pub(super) fn wire(builder: Builder) -> Builder {
+/// Wire the mainline-DHT address-lookup onto a bound endpoint. In iroh 1.0 the
+/// provider is a companion crate added to the endpoint's address-lookup
+/// services (it publishes/resolves via pkarr keyed on the endpoint's own key).
+pub(super) fn wire(endpoint: &Endpoint) -> Result<()> {
+    let lookup = DhtAddressLookup::builder()
+        .build()
+        .context("building mainline-DHT address-lookup")?;
+    endpoint
+        .address_lookup()
+        .map_err(|err| anyhow::anyhow!("{err:?}"))
+        .context("endpoint has no address-lookup services for DHT")?
+        .add(lookup);
     tracing::debug!("mainline DHT address-lookup wired (pkarr publish + resolve)");
-    builder.address_lookup(DhtAddressLookup::builder())
+    Ok(())
 }

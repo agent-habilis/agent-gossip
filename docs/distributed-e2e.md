@@ -7,19 +7,28 @@ cross-machine behavior (relay re-home, partition heal, beacon migration, a CPU
 runaway, a memory leak) that only manifests with real OS processes, real
 relays, and real network paths.
 
-One machine is the **orchestrator** (the one you run this from). It owns the
-source of truth, seeds every other host, launches the swarm, and collects
-evidence. Each host **builds its own `ahs`** — no cross-compilation, no binary
+One machine is the **orchestrator** (the one you run this from). It is a
+**pure driver — it runs NO `ahs` instance of its own** (no `create`, no
+`join`). It owns the source of truth, seeds every other host, drives the run
+over SSH, and collects evidence. Keeping it out of the swarm means a swarm-side
+bug (CPU runaway, leak, OOM) can never take down the machine you're driving
+from. Each host **builds its own `ahs`** — no cross-compilation, no binary
 shipping.
 
-The commands below are parameterized over a `HOSTS` array; set it once and
-paste each block.
+The fleet is the `HOSTS` array. One host is the **`CREATE_HOST`** (it runs the
+single `create`); every host runs its joins. macOS coverage comes from
+**`nyc-macmini1`** (the macOS host in the fleet), not the orchestrator.
 
 ```bash
-HOSTS=(nyc-pi2 nyc-pi4 nyc-macmini1)   # every host EXCEPT this orchestrator
+HOSTS=(nyc-pi2 nyc-pi4 slz-pi1 nyc-macmini1)   # the swarm fleet (orchestrator NOT included)
+CREATE_HOST=nyc-macmini1                        # runs `create` (macOS beacon coverage)
 SRC=/Users/caiogondim/Developer/personal/agent-habilis/agent-swarm
 DST='~/Developer/personal/agent-habilis/swarm'   # remote checkout dir
 ```
+
+> The orchestrator builds/runs no `ahs` — skip it in the build step (§3) and
+> never launch `create`/`join` locally. Sanity checks (`ping`/`poll`) run **on
+> a host** via SSH, since they need a local daemon socket.
 
 ## 1. Prerequisites
 
@@ -57,18 +66,13 @@ the orchestrator's exact commit with `dirty:false`.
 
 ## 3. Build on each machine
 
-Build on every host **and on the orchestrator itself** — the orchestrator runs
-`ahs` too (a `create` plus its own joins, see step 4), so it must carry the
-same freshly-stamped binary, not a stale earlier install.
+Build on **every host in `HOSTS`** — *not* on the orchestrator (it runs no
+`ahs`, so it needs no binary). Each host gets a freshly-stamped release build.
 
 ```bash
 # Host-agnostic brew activation: picks /home/linuxbrew or /opt/homebrew.
 BREW_ENV='eval "$($(ls /home/linuxbrew/.linuxbrew/bin/brew /opt/homebrew/bin/brew 2>/dev/null | head -1) shellenv)"'
 
-# Orchestrator (this machine) — local, no ssh:
-( cd "$SRC" && cargo task install )
-
-# Every other host:
 for h in "${HOSTS[@]}"; do
   echo "=== building on $h ==="
   ssh "$h" "$BREW_ENV; cd $DST && cargo task install"
@@ -76,38 +80,66 @@ done
 ```
 
 `cargo task install` runs `cargo install --path .` → `~/.cargo/bin/ahs` (a
-release build; expect several minutes on a low-core Pi). Note the orchestrator
-ends up with **two** `ahs` paths — `$SRC/target/release/ahs` and the installed
-`~/.cargo/bin/ahs`; either works as long as `--version` shows the right commit.
+release build; expect several minutes on a low-core Pi).
+
+> **Low-RAM hosts may OOM on the fat-LTO link.** The release profile uses
+> `lto=fat`, whose final `rustc` link of the iroh tree can exceed ~8 GB and get
+> OOM-killed on a small host (e.g. a 8 GB Pi like `slz-pi1`). Build those with
+> LTO off — functionally identical, just less optimized (irrelevant to the
+> flap/leak/CPU behavior under test):
+> ```bash
+> ssh slz-pi1 "$BREW_ENV; cd $DST && \
+>   CARGO_PROFILE_RELEASE_LTO=off CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16 cargo task install"
+> ```
+
+> **Gotcha — re-seeding an existing checkout leaves a stale version stamp.**
+> `rsync -a` (step 2) preserves the *source* mtimes, so after re-seeding a host
+> that already built once, cargo sees `.git` as "unchanged" and **reuses the
+> cached `VERGEN_GIT_SHA`** — the rebuild compiles the new code but
+> `ahs --version` still prints the *old* commit. Bust the mtime cache before
+> rebuilding so vergen re-stamps:
+> ```bash
+> ssh "$h" "cd $DST && touch .git/HEAD .git/refs/heads/* && \
+>   find . -name '*.rs' -not -path './target/*' -exec touch {} +"
+> ```
+> (Or seed with `rsync -a --no-times` so files land with fresh mtimes.) A first
+> build on a clean host doesn't need this.
 
 **Verify every node runs the same build** — this is the whole point of shipping
 `.git`:
 
 ```bash
 for h in "${HOSTS[@]}"; do printf '%-14s ' "$h:"; ssh "$h" '~/.cargo/bin/ahs --version'; done
-"$SRC/target/release/ahs" --version 2>/dev/null || (cd "$SRC" && cargo run -q -- --version)
 ```
 
-All lines must print the **same** `0.x.y (<hash> dirty:false)`. A differing
+All hosts must print the **same** `0.x.y (<hash> dirty:false)`. A differing
 hash means that host's tree drifted (re-run step 2); a `dirty:true` means the
-seeded tree has uncommitted edits relative to its `.git`.
+seeded tree has uncommitted edits relative to its `.git` (expected when running
+an unreleased fix — fine as long as the hash + dirty flag match across hosts).
+The orchestrator has no `ahs` to check.
 
 ## 4. Launch the swarm
 
-**Orchestrator runs `create`** (one instance) and yields the `ahs…` id. Use
-whichever lookup flags the scenario needs (`--public` = all lookups on):
+Everything launches **over SSH from the orchestrator** — the orchestrator runs
+no `ahs` itself.
+
+**`CREATE_HOST` runs `create`** (one instance) and yields the `ahs…` id; the
+orchestrator reads it back over SSH. Use whichever lookup flags the scenario
+needs (`--public` = all lookups on):
 
 ```bash
-mkdir -p /tmp/ahs-e2e
-ahs create --public --no-interactive --output json \
-  | tee /tmp/ahs-e2e/orchestrator.out &
-# Read the swarm id from the ready event:
-SWARM=$(grep -m1 '"event":"ready"' /tmp/ahs-e2e/orchestrator.out | sed 's/.*"swarm":"\([^"]*\)".*/\1/')
-echo "SWARM=$SWARM"
+ssh "$CREATE_HOST" "mkdir -p /tmp/ahs-e2e; nohup ~/.cargo/bin/ahs create --public \
+  --no-interactive --output json > /tmp/ahs-e2e/create.out 2>&1 &"
+# Read the swarm id (and the creator's nick, for the ping below) from CREATE_HOST:
+for i in $(seq 1 40); do ssh "$CREATE_HOST" 'grep -q ready /tmp/ahs-e2e/create.out' && break; sleep 1; done
+READY=$(ssh "$CREATE_HOST" "grep -m1 '\"event\":\"ready\"' /tmp/ahs-e2e/create.out")
+SWARM=$(echo "$READY" | sed 's/.*"swarm":"\([^"]*\)".*/\1/')
+CREATOR_NICK=$(echo "$READY" | sed 's/.*"nickname":"\([^"]*\)".*/\1/')
+echo "SWARM=$SWARM  CREATOR_NICK=$CREATOR_NICK"
 ```
 
 **Each host runs 2 `join` instances** of that id, distinct nicknames,
-backgrounded:
+backgrounded (the `CREATE_HOST` carries its `create` plus these two joins):
 
 ```bash
 for h in "${HOSTS[@]}"; do
@@ -118,30 +150,44 @@ for h in "${HOSTS[@]}"; do
 done
 ```
 
-**The orchestrator also runs 2 `join` instances** of its own swarm — same
-pattern, locally (no `ssh`), so this machine carries a `create` plus two joins
-just like every other host:
+Total nodes = **1** (`create` on `CREATE_HOST`) **+ 2 × len(HOSTS)** joins. The
+orchestrator contributes **zero** nodes.
+
+> **Cap every node so a runaway can never crash the host.** The 2026-05-26 soak
+> took the orchestrator MacBook *down* (hard reboot) because its joins hit a CPU
+> runaway + memory leak with **no OS resource limit** — a leaking daemon must
+> cost a killed process, never a dead machine. Launch every `ahs` under a cap:
+>
+> - **Linux hosts (cgroup, hard):** wrap each `ahs` in a transient scope —
+>   ```bash
+>   systemd-run --user --scope -p MemoryMax=1G -p MemorySwapMax=0 -p CPUQuota=150% \
+>     ~/.cargo/bin/ahs join "$SWARM" --nickname ${h}-$n --no-interactive --output json ...
+>   ```
+>   The kernel OOM-kills the scope at `MemoryMax` and throttles it at `CPUQuota`;
+>   the host stays up. (`--user` so no root needed.)
+> - **macOS host (`nyc-macmini1`, no cgroups):** there is no reliable
+>   per-process RSS cap, so rely on **(a)** the daemon's built-in
+>   `AHS_RSS_WARN_MB` warn (below) and **(b)** the sampler kill-switch in §7.2,
+>   which `kill`s any `ahs` whose sampled RSS exceeds a cap.
+>
+> The orchestrator itself runs no `ahs`, so it is never at risk regardless —
+> that's the point of keeping it out of the swarm. Set `AHS_RSS_WARN_MB` on
+> **every** node (default 1024) so each daemon logs a one-shot `warn` + JSON
+> `info` event the moment its own RSS crosses the soft threshold.
+
+**Sanity check the mesh formed across machines** — fire a ping **on the
+`CREATE_HOST`** (the orchestrator has no daemon to ping from) and read its
+report back:
 
 ```bash
-for n in 1 2; do
-  nohup ahs join "$SWARM" --nickname orchestrator-$n \
-    --no-interactive --output json > /tmp/ahs-e2e/orchestrator-join-$n.out 2>&1 &
-done
+ssh "$CREATE_HOST" "ahs ping --swarm $SWARM --nickname $CREATOR_NICK"
+# ~10s later a ping_report lands on CREATE_HOST's create.out --output json stream:
+sleep 12; ssh "$CREATE_HOST" "grep '\"event\":\"ping_report\"' /tmp/ahs-e2e/create.out | tail -1"
+# should list every <host>-1 / <host>-2 nickname.
 ```
 
-Total nodes = **1** (orchestrator `create`) **+ 2 × (len(HOSTS) + 1)** joins
-(the `+ 1` is the orchestrator's own two joins).
-
-**Sanity check the mesh formed across machines** — ping from the orchestrator
-and wait ~10s for the report:
-
-```bash
-ahs ping --swarm "$SWARM" --nickname <your-create-nick>
-# ~10s later a ping_report on the orchestrator's --output json stream
-# should list every <host>-1 / <host>-2 nickname plus orchestrator-1/-2.
-```
-
-`responded == known == 2×(len(HOSTS)+1)` means full reachability.
+`responded == known == 2×len(HOSTS) − 1` (every join except the creator's own
+node answering itself) means full reachability.
 
 ## 5. Debugging
 
@@ -254,12 +300,124 @@ done
 
 ## 6. Teardown
 
+> ⚠️ **ALWAYS tear down the fleet when a run ends — every time, no exceptions,
+> including interrupted, crashed, or "I'll get to it later" runs.** Leftover
+> `create`/`join` daemons keep **leaking memory and churning connections** for as
+> long as they run (a forgotten run once leaked for ~1h and an earlier one
+> crashed a host); leftover `ahs-soak` **samplers and stress drivers** keep
+> generating load and corrupting the next run's metrics. **The very first step
+> after finishing — or abandoning — a run is this teardown.** Never start a new
+> run, walk away, or consider the work done until `pgrep` returns nothing on
+> *every* host.
+
 ```bash
-for h in "${HOSTS[@]}"; do ssh "$h" "pkill -f 'ahs (create|join)'"; done
-# Orchestrator: stop its own create + two joins:
-pkill -f 'ahs (create|join)'
+# Kill the daemons AND the soak helpers (samplers, stress drivers, kill-switch
+# guards — all live under ~/ahs-soak) on every host and the orchestrator.
+for h in "${HOSTS[@]}"; do ssh "$h" "pkill -9 -f 'ahs (create|join)'; pkill -9 -f ahs-soak"; done
+pkill -9 -f 'ahs (create|join)'; pkill -9 -f ahs-soak   # orchestrator
+
+# CONFIRM nothing is left — must print 0 for every host and the orchestrator:
+for h in "${HOSTS[@]}"; do printf '%-14s ' "$h:"; ssh "$h" "pgrep -f '[a]hs (create|join)' | wc -l"; done
+printf '%-14s ' orchestrator:; pgrep -f '[a]hs (create|join)' | wc -l
 ```
 
-`pkill -f` is scoped to `ahs create|join` so a co-located unrelated `ahs`
-process (another agent's run, an MCP server) is never touched. Confirm with
-`ssh $h 'pgrep -af "ahs (create|join)"'` returning nothing.
+`pkill -f 'ahs (create|join)'` is scoped so a co-located unrelated `ahs`
+(another agent's run, an MCP server) is never touched; the separate
+`pkill -f ahs-soak` clears the §7.2 samplers / stress / guards. **Do not skip
+the confirmation pass** — a launch that isn't verified-torn-down is an
+unfinished run.
+
+## 7. Long-run soak (overnight)
+
+A multi-hour soak confirms a fix *holds over time* — no delayed flap storm,
+**flat RSS (no slow leak)**, stable mesh — beyond what a 20-minute run shows.
+The harshest member is a **geographically distant, NAT'd** node (e.g. a Pi in
+Brazil, ~100-200ms cross-continent RTT over relay) — the unstable-path case that
+provokes the membership churn. Build + launch as in §1-4, but **detached** so it
+survives the orchestrator sleeping or the driving session ending: the always-on
+hosts carry the swarm (creator-independent + beacon migration), so the
+orchestrator's own sleep/wake is just bonus heal data.
+
+### 7.1 Launch detached
+
+Use `nohup … &` for `create` and every `join` (not foreground), teeing
+`--output json` to per-node files. Capture the swarm id from the `ready` line as
+in §4. The swarm must be `--public` (the relay path is the point).
+
+### 7.2 Time-series metric samplers
+
+The per-member logs carry the flap / `mesh census` / heal story at `info`, but
+**not CPU/RSS over time** — the leak signal. Add a detached per-host sampler
+that survives disconnect:
+
+```bash
+SAMPLER='mkdir -p ~/ahs-soak; nohup sh -c '\''while true; do ts=$(date +%s);
+  ps -eo pid,pcpu,rss,etime,args | grep "[a]hs join\|[a]hs create" |
+  while read pid cpu rss et rest; do echo "$ts,$pid,$cpu,$rss,$et" >> ~/ahs-soak/metrics.csv; done;
+  sleep 60; done'\'' >/dev/null 2>&1 &'
+for h in "${HOSTS[@]}"; do ssh "$h" "$SAMPLER"; done
+# (No local sampler — the orchestrator runs no ahs.)
+```
+
+**Sampler kill-switch (the macOS host-safety net).** Where cgroups aren't
+available (macOS), add a second detached loop that `kill`s any `ahs` whose RSS
+crosses a hard cap (`RSS_KILL_KB`, e.g. 2 GiB) — so a leak is bounded to a dead
+*process*, not a dead host, exactly as the 2026-05-26 crash demands. The killed
+daemon's swarm is creator-independent, so the mesh survives and the incident is
+captured in `metrics.csv` and the per-member log:
+
+```bash
+RSS_KILL_KB=2097152   # 2 GiB
+GUARD='nohup sh -c '\''while true; do
+  ps -eo pid,rss,args | grep "[a]hs join\|[a]hs create" |
+  while read pid rss rest; do [ "$rss" -gt '"$RSS_KILL_KB"' ] &&
+    { echo "$(date +%s) KILL pid=$pid rss_kb=$rss" >> ~/ahs-soak/kills.log; kill "$pid"; }; done;
+  sleep 30; done'\'' >/dev/null 2>&1 &'
+for h in "${HOSTS[@]}"; do ssh "$h" "$GUARD"; done
+# (No local guard — the orchestrator runs no ahs.)
+```
+
+(On Linux the §4 `systemd-run` `MemoryMax` already enforces this in-kernel; the
+guard is a portable backstop and the only mechanism on macOS. Tear it down with
+`pkill -f ahs-soak` alongside the sampler — both match that pattern.)
+
+### 7.3 Live 30-minute report cycle
+
+If a session drives the soak, report every 30 min (the samplers are the durable
+record between/after reports). Each cycle:
+
+1. **Exchange a probe message**, rotating the sender across the fleet (so every
+   origin, including the cross-continent node, is exercised):
+   `ahs msg --swarm $SWARM --nickname <sender> --text "soak-probe <seq> <ts>"`,
+   wait ~8s, then `ahs poll` each node and confirm the probe arrived —
+   **msgs replicated: N/(node count)**.
+2. **Report**, per node:
+   - **RSS** — *the* leak check; flat = bounded-memory holds (see §5 memory
+     check for how to read the trend).
+   - **CPU %** — must stay low (a sustained climb is the runaway returning).
+   - **Log size** (bytes + lines) — growth rate proxies flap activity and flags
+     disk-fill risk.
+   - **Msgs replicated** — N/(node count) saw the probe (end-to-end delivery).
+   - **Mesh health** — `ahs ping` RTT + `responded/known`; latest `mesh census
+     roster_len/link_len/meshed`.
+   - **Flap delta** — new `neighbor up`/`down` since the last report.
+   - **Stability** — new `warn`/`error`, beacon migrations, reclaim arming.
+   - **Liveness** — every daemon still up (no crash/restart).
+
+### 7.4 Morning analysis + teardown
+
+```bash
+mkdir -p ./soak-evidence
+for h in "${HOSTS[@]}"; do
+  rsync -az "$h:~/ahs-soak/metrics.csv" "./soak-evidence/$h-metrics.csv"
+  rsync -az "$h:/tmp/agent-habilis/swarm/logs/" "./soak-evidence/$h-logs/" 2>/dev/null
+done
+```
+
+Per node: **RSS first→last slope** (the leak verdict — must be flat), peak/avg
+**CPU**, **flap rate** bucketed by hour (`grep -c "neighbor up/down"` + the
+`mesh census` time series), and **stability events** (beacon migrations, reclaim
+arming, `warn`/`error`). Cross-reference the RSS slope against the flap rate — a
+pre-fix leak tracked the connection churn. Then tear down per §6, and also kill
+the samplers: `for h in "${HOSTS[@]}"; do ssh "$h" "pkill -f ahs-soak"; done`
+(nothing to kill locally — the orchestrator runs no `ahs`).

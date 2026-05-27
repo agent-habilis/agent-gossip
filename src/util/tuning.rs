@@ -86,6 +86,16 @@ pub(crate) const EMBED_INBOUND_CAP: usize = 1024;
 /// the per-author bucket map can't grow unbounded as nicknames churn.
 pub(crate) const RATE_LIMITER_TTL_SECS: u64 = 600;
 
+/// Soft RSS threshold (`MiB`) above which the daemon emits a one-shot `warn`
+/// (log + JSON `info` event) on its slow prune tick — the in-process
+/// leak-visibility signal the distributed soak lacked. **Warn-only**: it never
+/// exits; host safety is the e2e runbook's OS resource caps. Default 1024
+/// (well above a healthy node's tens of `MiB`, so it only fires on a genuine
+/// runaway like the soak's 4.6 GB climb); `AHS_RSS_WARN_MB=0` disables it.
+pub(crate) fn rss_warn_mb() -> u64 {
+    env_u64("AHS_RSS_WARN_MB", 1024)
+}
+
 /// How often an idle daemon broadcasts a `Presence::Alive` keepalive.
 /// Active talkers never emit one — any sent gossip message resets the
 /// timer, so chatty swarms pay zero heartbeat cost.

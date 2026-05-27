@@ -8,10 +8,42 @@ use std::time::{Duration, Instant};
 use iroh::Endpoint;
 
 use super::state::EventLoopState;
+use crate::output;
+use crate::util::{rss, tuning};
 
-/// Rate-limiter pruning: runs every `PRUNE_INTERVAL_SECS` (see `run`).
-pub(crate) fn tick_prune(state: &mut EventLoopState) {
+/// Rate-limiter pruning + the warn-only RSS leak check: runs every
+/// `PRUNE_INTERVAL_SECS` (see `run`).
+pub(crate) fn tick_prune(state: &mut EventLoopState, output: &output::Output) {
     state.rate_limiter.prune_inactive();
+    warn_on_high_rss(state, output, tuning::rss_warn_mb());
+}
+
+/// One-shot leak-visibility signal: if RSS has crossed `threshold_mb`
+/// (`AHS_RSS_WARN_MB`), emit a `warn` (file sink) plus a JSON `info` event
+/// (`--output json` stream) exactly once. Warn-only — never exits or alters
+/// behavior; the distributed soak that crashed a host had no such in-process
+/// signal. `threshold_mb` is passed in (not read here) so the threshold stays
+/// a single source of truth and the latch is unit-testable without env races.
+fn warn_on_high_rss(state: &mut EventLoopState, output: &output::Output, threshold_mb: u64) {
+    if threshold_mb == 0 || state.rss_warned {
+        return;
+    }
+    let Some(rss_bytes) = rss::peak_rss_bytes() else {
+        return;
+    };
+    let rss_mb = rss_bytes / (1024 * 1024);
+    if rss_mb >= threshold_mb {
+        state.rss_warned = true;
+        tracing::warn!(
+            target: "agent_habilis_swarm::lifecycle",
+            rss_mb,
+            threshold_mb,
+            "RSS crossed the warn threshold (possible leak); not exiting — see AHS_RSS_WARN_MB"
+        );
+        output.info(&format!(
+            "RSS {rss_mb} MiB crossed warn threshold {threshold_mb} MiB (possible memory leak)"
+        ));
+    }
 }
 
 /// Re-asserts `participant_count` + `last_updated` into the state
@@ -140,4 +172,54 @@ pub(crate) fn note_tick_gap(
         );
     }
     (mono_gap, wall_gap)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+    use std::time::Instant;
+
+    use tokio::sync::mpsc::unbounded_channel;
+
+    use super::{EventLoopState, output, warn_on_high_rss};
+    use crate::protocol::identity::Identity;
+
+    fn fresh_state() -> EventLoopState {
+        EventLoopState::new(
+            None,
+            Instant::now(),
+            ahs_shared::RATE_LIMIT_PER_MIN,
+            Arc::new(Identity::generate()),
+        )
+    }
+
+    // The warn-only RSS leak signal: a threshold the live process already
+    // exceeds (1 MiB) must fire exactly once and latch, never exit or mutate
+    // anything else. A `0` threshold disables it entirely.
+    #[test]
+    fn rss_warn_fires_once_then_latches() {
+        let (tx, mut rx) = unbounded_channel();
+        let out = output::Output::capture(tx);
+        let mut state = fresh_state();
+
+        // Real RSS is tens of MiB ≫ 1, so this crosses immediately.
+        warn_on_high_rss(&mut state, &out, 1);
+        assert!(state.rss_warned, "first crossing latches the warn");
+        let first = rx.try_recv();
+        assert!(first.is_ok(), "an info event is emitted on the crossing");
+
+        // Second tick: latched, so no second event (no per-tick spam).
+        warn_on_high_rss(&mut state, &out, 1);
+        assert!(rx.try_recv().is_err(), "warn fires exactly once per process");
+    }
+
+    #[test]
+    fn rss_warn_disabled_by_zero_threshold() {
+        let (tx, mut rx) = unbounded_channel();
+        let out = output::Output::capture(tx);
+        let mut state = fresh_state();
+        warn_on_high_rss(&mut state, &out, 0);
+        assert!(!state.rss_warned, "threshold 0 disables the warn");
+        assert!(rx.try_recv().is_err(), "no event when disabled");
+    }
 }

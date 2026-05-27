@@ -74,13 +74,9 @@ pub const MAX_IPC_COMMAND_BYTES: usize = 2 * MAX_MESSAGE_SIZE;
 /// bound.
 pub const MAX_IPC_RESPONSE_BYTES: usize = POLL_RESPONSE_MAX_MSGS * MAX_MESSAGE_SIZE;
 
-/// QUIC keep-alive interval in seconds. Keepalives on an otherwise idle
-/// connection stop a quiet-but-live peer from being dropped; must stay
-/// well below `QUIC_MAX_IDLE_SECS`.
-pub const QUIC_KEEP_ALIVE_SECS: u64 = 5;
-
-/// QUIC max idle timeout in seconds before a connection is considered
-/// dead. Tightened from iroh's 15s (direct) / 30s (relay) path defaults
-/// so a dead or slept peer is detected (`NeighborDown`) in ~10s, which
-/// speeds up heal and the rendezvous-independent re-bridge.
-pub const QUIC_MAX_IDLE_SECS: u64 = 10;
+// QUIC keep-alive / idle timeout are intentionally left at iroh's
+// holepunch-tuned transport defaults (~1s keep-alive, 15s direct / 30s relay
+// idle); see `lookup::build_endpoint`. A prior override (5s keep-alive, 10s
+// idle) fought iroh's QUIC-multipath tuning and drove connection-churn — a
+// per-connection memory leak. The sleep-wake reliability tests therefore freeze
+// a peer past iroh's 15s direct-path idle to force a link death.

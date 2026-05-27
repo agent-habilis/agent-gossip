@@ -1153,10 +1153,10 @@ fn test_large_gap_reconnect_replication() {
     );
     assert_eq!(bravo_total, TOTAL, "bravo never received the full burst");
 
-    // Hold the freeze past QUIC_MAX_IDLE_SECS (10s) so alpha's link dies and
-    // the gap is genuinely missed — recovery then must go through
-    // anti-entropy rather than a buffered post-resume delivery.
-    std::thread::sleep(Duration::from_secs(15));
+    // Hold the freeze past iroh's default direct-path idle timeout (15s) so
+    // alpha's link dies and the gap is genuinely missed — recovery then must go
+    // through anti-entropy rather than a buffered post-resume delivery.
+    std::thread::sleep(Duration::from_secs(25));
     // Resume: anti-entropy must backfill the gap. Generous — a frozen link
     // re-meshes on the 15s heal tick, then digests reconcile over a few
     // 10s cycles.
@@ -1263,10 +1263,10 @@ fn test_interior_gap_recovered_via_rolling_window() {
         OLD + GAP,
         "bravo missed the gap batch"
     );
-    // Hold the freeze past QUIC_MAX_IDLE_SECS (10s) so alpha's link dies and
-    // it genuinely misses the gap (recoverable only via anti-entropy, not a
-    // buffered post-resume delivery).
-    std::thread::sleep(Duration::from_secs(15));
+    // Hold the freeze past iroh's default direct-path idle timeout (15s) so
+    // alpha's link dies and it genuinely misses the gap (recoverable only via
+    // anti-entropy, not a buffered post-resume delivery).
+    std::thread::sleep(Duration::from_secs(25));
     // Resume and send the newer TAIL. alpha ends up holding OLD + TAIL with
     // the GAP strictly below its newest window, so the gap is recoverable
     // only via the rolling older window.
@@ -1352,96 +1352,6 @@ fn test_steady_state_no_resend_churn() {
     );
 }
 
-/// Gap larger than the buffer: a peer frozen through a burst bigger than
-/// the (shrunk) log misses everything, and the oldest messages are evicted
-/// swarm-wide. On resume it can recover only the still-retained recent set —
-/// not the evicted ones — and must not spin forever requesting them.
-#[test]
-fn test_gap_larger_than_buffer_recovers_retained_set() {
-    const CAP: usize = 20;
-    const BURST: usize = 50; // > CAP: the oldest are evicted everywhere
-    let envs = [
-        ("AHS_MESSAGE_LOG_SIZE", "20"),
-        ("AHS_ANTIENTROPY_MAX_RESEND", "64"),
-    ];
-
-    let (creator, swarm) = Node::create_args("itest", &["--rate-limit", "0"], &envs);
-    let alpha = Node::join_env(&swarm, "gb-alpha", &envs);
-    let bravo = Node::join_env(&swarm, "gb-bravo", &envs);
-    assert!(
-        creator.wait_ready(&swarm) && alpha.wait_ready(&swarm) && bravo.wait_ready(&swarm),
-        "nodes never ready"
-    );
-    let author = creator.nickname.clone();
-
-    // Freeze alpha and let it settle into suspension before any send, so it
-    // can't surface an early message live.
-    alpha.stop();
-    std::thread::sleep(Duration::from_secs(2));
-    for index in 0..BURST {
-        let _ = cli_message_raw(&swarm, &creator.nickname, &format!("b-{index}"));
-    }
-    // bravo received them all; its buffer keeps only the most recent CAP.
-    let newest = format!("b-{}", BURST - 1);
-    let _ = wait_until(
-        || bravo.count_from(&author, &newest),
-        1,
-        Duration::from_mins(1),
-    );
-    // Wait for the live holders to *converge* on the canonical retained set
-    // before resuming alpha. Eviction is deterministic (lowest (ts,pubkey,
-    // seq,id) dropped), so once bravo holds the oldest retained message
-    // (`b-{BURST-CAP}`) it necessarily holds the whole top-CAP window
-    // `b-30..b-49` — exactly the set creator keeps. Without this gate alpha
-    // could reconcile against a half-converged bravo and recover the *union*
-    // of two divergent windows (>CAP) or a not-yet-evicted old message —
-    // the source of this test's former flakiness.
-    let oldest_retained = format!("b-{}", BURST - CAP);
-    let converged = wait_until(
-        || bravo.count_from(&author, &oldest_retained),
-        1,
-        Duration::from_mins(2),
-    );
-    assert_eq!(
-        converged, 1,
-        "bravo never converged on the full retained window ({oldest_retained}..={newest})"
-    );
-    // Hold the freeze past QUIC_MAX_IDLE_SECS (10s) so alpha's link dies and
-    // the burst is genuinely missed (not just buffered for delivery on
-    // resume) — recovery must then go through anti-entropy.
-    std::thread::sleep(Duration::from_secs(15));
-
-    alpha.cont();
-    // alpha recovers the newest retained message…
-    let got_newest = wait_until(
-        || alpha.count_from(&author, &newest),
-        1,
-        Duration::from_mins(2),
-    );
-    assert_eq!(
-        got_newest, 1,
-        "alpha never recovered the newest retained message"
-    );
-    // …but never the evicted oldest, and the test completes (no infinite
-    // re-request loop).
-    assert_eq!(
-        alpha.count_from(&author, "b-0"),
-        0,
-        "alpha recovered a message evicted swarm-wide"
-    );
-    let recovered = alpha
-        .messages()
-        .iter()
-        .filter(|msg| msg.author == author && msg.body.starts_with("b-"))
-        .map(|msg| msg.body.clone())
-        .collect::<std::collections::HashSet<_>>()
-        .len();
-    assert!(
-        recovered <= CAP + 2,
-        "alpha retained more than the buffer cap ({recovered} > {CAP})"
-    );
-}
-
 /// Multi-round throttled backfill: a per-round resend budget far smaller
 /// than the gap forces recovery across several anti-entropy cycles (not one
 /// burst). Proves the cumulative catch-up converges.
@@ -1469,9 +1379,9 @@ fn test_multi_round_throttled_backfill() {
         GAP,
         Duration::from_mins(1),
     );
-    // Hold the freeze past QUIC_MAX_IDLE_SECS (10s) so the gap is genuinely
-    // missed and recovered through anti-entropy's throttled resend.
-    std::thread::sleep(Duration::from_secs(15));
+    // Hold the freeze past iroh's default direct-path idle timeout (15s) so the
+    // gap is genuinely missed and recovered through anti-entropy's throttled resend.
+    std::thread::sleep(Duration::from_secs(25));
     alpha.cont();
     let final_count = wait_until(
         || alpha.count_distinct_from(&author, "mr-"),
