@@ -86,14 +86,14 @@ pub(crate) const EMBED_INBOUND_CAP: usize = 1024;
 /// the per-author bucket map can't grow unbounded as nicknames churn.
 pub(crate) const RATE_LIMITER_TTL_SECS: u64 = 600;
 
-/// Soft RSS threshold (`MiB`) above which the daemon emits a one-shot `warn`
-/// (log + JSON `info` event) on its slow prune tick — the in-process
-/// leak-visibility signal the distributed soak lacked. **Warn-only**: it never
-/// exits; host safety is the e2e runbook's OS resource caps. Fixed at
-/// [`ahs_shared::consts::RSS_WARN_MB`] (1024, well above a healthy node's tens
-/// of `MiB`); `0` there disables it. Edit the const to tune.
-pub(crate) fn rss_warn_mb() -> u64 {
-    ahs_shared::consts::RSS_WARN_MB
+/// Soft resident-memory threshold (`MiB`) above which the daemon emits a
+/// one-shot `warn` (log + JSON `info` event) on its slow prune tick — the
+/// in-process leak-visibility signal the distributed soak lacked. **Warn-only**:
+/// it never exits; host safety is the e2e runbook's OS resource caps. Fixed at
+/// [`ahs_shared::consts::RESIDENT_MEMORY_WARN_MB`] (1024, well above a healthy
+/// node's tens of `MiB`); `0` there disables it. Edit the const to tune.
+pub(crate) fn resident_memory_warn_mb() -> u64 {
+    ahs_shared::consts::RESIDENT_MEMORY_WARN_MB
 }
 
 /// How often an idle daemon broadcasts a `Presence::Alive` keepalive.

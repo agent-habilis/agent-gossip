@@ -9,39 +9,43 @@ use iroh::Endpoint;
 
 use super::state::EventLoopState;
 use crate::output;
-use crate::util::{rss, tuning};
+use crate::util::{resident_memory, tuning};
 
-/// Rate-limiter pruning + the warn-only RSS leak check: runs every
+/// Rate-limiter pruning + the warn-only resident-memory leak check: runs every
 /// `PRUNE_INTERVAL_SECS` (see `run`).
 pub(crate) fn tick_prune(state: &mut EventLoopState, output: &output::Output) {
     state.rate_limiter.prune_inactive();
-    warn_on_high_rss(state, output, tuning::rss_warn_mb());
+    warn_on_high_resident_memory(state, output, tuning::resident_memory_warn_mb());
 }
 
-/// One-shot leak-visibility signal: if RSS has crossed `threshold_mb`
-/// (`consts::RSS_WARN_MB`), emit a `warn` (file sink) plus a JSON `info` event
-/// (`--output json` stream) exactly once. Warn-only — never exits or alters
-/// behavior; the distributed soak that crashed a host had no such in-process
-/// signal. `threshold_mb` is passed in (not read here) so the threshold stays
-/// a single source of truth and the latch is unit-testable without env races.
-fn warn_on_high_rss(state: &mut EventLoopState, output: &output::Output, threshold_mb: u64) {
-    if threshold_mb == 0 || state.rss_warned {
+/// One-shot leak-visibility signal: if resident memory has crossed
+/// `threshold_mb` (`consts::RESIDENT_MEMORY_WARN_MB`), emit a `warn` (file sink)
+/// plus a JSON `info` event (`--output json` stream) exactly once. Warn-only —
+/// never exits or alters behavior; the distributed soak that crashed a host had
+/// no such in-process signal. `threshold_mb` is passed in (not read here) so the
+/// threshold stays a single source of truth and the latch is unit-testable.
+fn warn_on_high_resident_memory(
+    state: &mut EventLoopState,
+    output: &output::Output,
+    threshold_mb: u64,
+) {
+    if threshold_mb == 0 || state.resident_memory_warned {
         return;
     }
-    let Some(rss_bytes) = rss::peak_rss_bytes() else {
+    let Some(resident_bytes) = resident_memory::peak_resident_memory_bytes() else {
         return;
     };
-    let rss_mb = rss_bytes / (1024 * 1024);
-    if rss_mb >= threshold_mb {
-        state.rss_warned = true;
+    let resident_mb = resident_bytes / (1024 * 1024);
+    if resident_mb >= threshold_mb {
+        state.resident_memory_warned = true;
         tracing::warn!(
             target: "agent_habilis_swarm::lifecycle",
-            rss_mb,
+            resident_mb,
             threshold_mb,
-            "RSS crossed the warn threshold (possible leak); not exiting — see consts::RSS_WARN_MB"
+            "resident memory crossed the warn threshold (possible leak); not exiting — see consts::RESIDENT_MEMORY_WARN_MB"
         );
         output.info(&format!(
-            "RSS {rss_mb} MiB crossed warn threshold {threshold_mb} MiB (possible memory leak)"
+            "resident memory {resident_mb} MiB crossed warn threshold {threshold_mb} MiB (possible memory leak)"
         ));
     }
 }
@@ -77,17 +81,17 @@ pub(crate) async fn tick_state_refresh(state: &EventLoopState, endpoint: &Endpoi
     // Always-on census reading: the cheap counts only (no `remote_info`
     // round-trips), at `info` so the file sink carries a per-tick
     // roster/link time series — the flap rate read directly, not
-    // inferred from counting NeighborUp/Down lines. `peak_rss_mb` rides the
-    // same line as the leak gauge: peak RSS is monotonic, so a
-    // churn-proportional leak reads as a rising slope right next to the
-    // flap counts — no external `ps` sampler needed (0 if RSS is
-    // unreadable on this platform).
+    // inferred from counting NeighborUp/Down lines. `peak_resident_memory_mb`
+    // rides the same line as the leak gauge: peak resident memory is monotonic,
+    // so a churn-proportional leak reads as a rising slope right next to the
+    // flap counts — no external `ps` sampler needed (0 if it is unreadable on
+    // this platform).
     tracing::info!(
         target: "agent_habilis_swarm::lifecycle",
         roster_len,
         link_len,
         meshed = state.meshed,
-        peak_rss_mb = rss::peak_rss_mb().unwrap_or(0),
+        peak_resident_memory_mb = resident_memory::peak_resident_memory_mb().unwrap_or(0),
         "mesh census"
     );
 
@@ -186,7 +190,7 @@ mod tests {
 
     use tokio::sync::mpsc::unbounded_channel;
 
-    use super::{EventLoopState, output, warn_on_high_rss};
+    use super::{EventLoopState, output, warn_on_high_resident_memory};
     use crate::protocol::identity::Identity;
 
     fn fresh_state() -> EventLoopState {
@@ -198,23 +202,26 @@ mod tests {
         )
     }
 
-    // The warn-only RSS leak signal: a threshold the live process already
-    // exceeds (1 MiB) must fire exactly once and latch, never exit or mutate
-    // anything else. A `0` threshold disables it entirely.
+    // The warn-only resident-memory leak signal: a threshold the live process
+    // already exceeds (1 MiB) must fire exactly once and latch, never exit or
+    // mutate anything else. A `0` threshold disables it entirely.
     #[test]
-    fn rss_warn_fires_once_then_latches() {
+    fn resident_memory_warn_fires_once_then_latches() {
         let (tx, mut rx) = unbounded_channel();
         let out = output::Output::capture(tx);
         let mut state = fresh_state();
 
-        // Real RSS is tens of MiB ≫ 1, so this crosses immediately.
-        warn_on_high_rss(&mut state, &out, 1);
-        assert!(state.rss_warned, "first crossing latches the warn");
+        // Real resident memory is tens of MiB ≫ 1, so this crosses immediately.
+        warn_on_high_resident_memory(&mut state, &out, 1);
+        assert!(
+            state.resident_memory_warned,
+            "first crossing latches the warn"
+        );
         let first = rx.try_recv();
         assert!(first.is_ok(), "an info event is emitted on the crossing");
 
         // Second tick: latched, so no second event (no per-tick spam).
-        warn_on_high_rss(&mut state, &out, 1);
+        warn_on_high_resident_memory(&mut state, &out, 1);
         assert!(
             rx.try_recv().is_err(),
             "warn fires exactly once per process"
@@ -222,12 +229,15 @@ mod tests {
     }
 
     #[test]
-    fn rss_warn_disabled_by_zero_threshold() {
+    fn resident_memory_warn_disabled_by_zero_threshold() {
         let (tx, mut rx) = unbounded_channel();
         let out = output::Output::capture(tx);
         let mut state = fresh_state();
-        warn_on_high_rss(&mut state, &out, 0);
-        assert!(!state.rss_warned, "threshold 0 disables the warn");
+        warn_on_high_resident_memory(&mut state, &out, 0);
+        assert!(
+            !state.resident_memory_warned,
+            "threshold 0 disables the warn"
+        );
         assert!(rx.try_recv().is_err(), "no event when disabled");
     }
 }

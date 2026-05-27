@@ -120,10 +120,12 @@ pub const DIRECTORY_EXPIRY_SECS: u64 = 60;
 /// `--antientropy-max-resend`.
 pub const ANTIENTROPY_MAX_RESEND: usize = 64;
 
-/// Soft RSS threshold (`MiB`) above which the daemon emits a one-shot `warn`
-/// on its slow prune tick — the in-process leak-visibility signal. Warn-only;
-/// `0` disables. A pure const (no flag): an operator tunes it by editing here.
-pub const RSS_WARN_MB: u64 = 1024;
+/// Soft resident-memory threshold (`MiB`) above which the daemon emits a
+/// one-shot `warn` on its slow prune tick — the in-process leak-visibility
+/// signal. (Resident memory = the physical RAM the process holds; the resident
+/// set size, RSS.) Warn-only; `0` disables. A pure const (no flag): an operator
+/// tunes it by editing here.
+pub const RESIDENT_MEMORY_WARN_MB: u64 = 1024;
 
 // QUIC keep-alive / idle timeout are intentionally left at iroh's
 // holepunch-tuned transport defaults (~1s keep-alive, 15s direct / 30s relay

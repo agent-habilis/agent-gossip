@@ -41,7 +41,7 @@ const RELINK_COOLDOWN: Duration = Duration::from_secs(RELINK_COOLDOWN_SECS);
 /// differently (node id vs nickname) and have different lifetimes.
 #[expect(
     clippy::struct_excessive_bools,
-    reason = "independent lifecycle edges (gossip_open/announced/meshed) plus the one-shot rss_warned latch; each tracks a distinct transition, not a config bundle worth a sub-struct"
+    reason = "independent lifecycle edges (gossip_open/announced/meshed) plus the one-shot resident_memory_warned latch; each tracks a distinct transition, not a config bundle worth a sub-struct"
 )]
 pub(crate) struct EventLoopState {
     /// Transport layer: the set of `EndpointId`s we hold a direct
@@ -183,11 +183,12 @@ pub(crate) struct EventLoopState {
     /// pruned alongside the message-log eviction.
     pub by_hash: HashMap<String, i64>,
     pub dag_heads: HashSet<String>,
-    /// Latch for the warn-only RSS leak signal: set once this process's RSS
-    /// first crosses `tuning::rss_warn_mb`, so the `warn` fires exactly once
-    /// per process rather than every prune tick. Purely observability — never
-    /// gates behavior (see `timers::tick_prune`).
-    pub rss_warned: bool,
+    /// Latch for the warn-only resident-memory leak signal: set once this
+    /// process's resident memory first crosses `tuning::resident_memory_warn_mb`,
+    /// so the `warn` fires exactly once per process rather than every prune
+    /// tick. Purely observability — never gates behavior (see
+    /// `timers::tick_prune`).
+    pub resident_memory_warned: bool,
     /// Active `ahs ping` round, if one is in flight. Armed by the
     /// `Ping` IPC command, filled by inbound `Pong`s, and finalized
     /// into a `ping_report` when its `deadline` elapses. One at a time:
@@ -244,7 +245,7 @@ impl EventLoopState {
             forked: HashSet::new(),
             by_hash: HashMap::new(),
             dag_heads: HashSet::new(),
-            rss_warned: false,
+            resident_memory_warned: false,
             ping_round: None,
         }
     }
@@ -643,7 +644,7 @@ mod tests {
     }
 
     // Under a long flap storm against a steady peer set, every collection *we*
-    // own stays flat — so the soak's monotonic 4.6 GB RSS climb is provably
+    // own stays flat — so the soak's monotonic 4.6 GB resident-memory climb is provably
     // below our layer (the iroh transport), not in daemon state. This replays
     // the per-flap state mutations the `NeighborUp`/`NeighborDown` arms +
     // `handle_peer_info` make, for many flaps over simulated hours.

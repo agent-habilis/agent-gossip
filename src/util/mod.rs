@@ -5,6 +5,6 @@ pub(crate) mod bounded_queue;
 pub(crate) mod bounded_read;
 pub(crate) mod clock;
 pub(crate) mod cooldown;
-pub(crate) mod rss;
+pub(crate) mod resident_memory;
 pub(crate) mod tuning;
 pub(crate) mod version;
