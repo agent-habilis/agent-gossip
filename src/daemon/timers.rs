@@ -19,7 +19,7 @@ pub(crate) fn tick_prune(state: &mut EventLoopState, output: &output::Output) {
 }
 
 /// One-shot leak-visibility signal: if RSS has crossed `threshold_mb`
-/// (`AHS_RSS_WARN_MB`), emit a `warn` (file sink) plus a JSON `info` event
+/// (`consts::RSS_WARN_MB`), emit a `warn` (file sink) plus a JSON `info` event
 /// (`--output json` stream) exactly once. Warn-only — never exits or alters
 /// behavior; the distributed soak that crashed a host had no such in-process
 /// signal. `threshold_mb` is passed in (not read here) so the threshold stays
@@ -38,7 +38,7 @@ fn warn_on_high_rss(state: &mut EventLoopState, output: &output::Output, thresho
             target: "agent_habilis_swarm::lifecycle",
             rss_mb,
             threshold_mb,
-            "RSS crossed the warn threshold (possible leak); not exiting — see AHS_RSS_WARN_MB"
+            "RSS crossed the warn threshold (possible leak); not exiting — see consts::RSS_WARN_MB"
         );
         output.info(&format!(
             "RSS {rss_mb} MiB crossed warn threshold {threshold_mb} MiB (possible memory leak)"
@@ -77,12 +77,17 @@ pub(crate) async fn tick_state_refresh(state: &EventLoopState, endpoint: &Endpoi
     // Always-on census reading: the cheap counts only (no `remote_info`
     // round-trips), at `info` so the file sink carries a per-tick
     // roster/link time series — the flap rate read directly, not
-    // inferred from counting NeighborUp/Down lines.
+    // inferred from counting NeighborUp/Down lines. `peak_rss_mb` rides the
+    // same line as the leak gauge: peak RSS is monotonic, so a
+    // churn-proportional leak reads as a rising slope right next to the
+    // flap counts — no external `ps` sampler needed (0 if RSS is
+    // unreadable on this platform).
     tracing::info!(
         target: "agent_habilis_swarm::lifecycle",
         roster_len,
         link_len,
         meshed = state.meshed,
+        peak_rss_mb = rss::peak_rss_mb().unwrap_or(0),
         "mesh census"
     );
 
@@ -210,7 +215,10 @@ mod tests {
 
         // Second tick: latched, so no second event (no per-tick spam).
         warn_on_high_rss(&mut state, &out, 1);
-        assert!(rx.try_recv().is_err(), "warn fires exactly once per process");
+        assert!(
+            rx.try_recv().is_err(),
+            "warn fires exactly once per process"
+        );
     }
 
     #[test]

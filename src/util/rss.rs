@@ -19,6 +19,18 @@ pub(crate) fn peak_rss_bytes() -> Option<u64> {
     maxrss_bytes()
 }
 
+/// This process's peak resident-set size in `MiB`, or `None` on platforms
+/// where RSS can't be read.
+///
+/// The leak gauge the periodic `mesh census` log line carries: peak RSS is
+/// monotonic, so a churn-proportional leak shows as a rising slope on one
+/// always-on timeline next to the roster/link counts — no external `ps`
+/// sampler needed (the gap the distributed-soak runbook had to work around).
+#[must_use]
+pub(crate) fn peak_rss_mb() -> Option<u64> {
+    peak_rss_bytes().map(|bytes| bytes / (1024 * 1024))
+}
+
 #[cfg(unix)]
 #[expect(
     unsafe_code,
@@ -62,6 +74,9 @@ mod tests {
         // The test process holds a real address space, so RSS is readable and
         // non-trivial — guards against a units/selector regression returning 0.
         let rss = peak_rss_bytes().expect("RSS readable on unix");
-        assert!(rss > 1024 * 1024, "RSS should exceed 1 MiB, got {rss} bytes");
+        assert!(
+            rss > 1024 * 1024,
+            "RSS should exceed 1 MiB, got {rss} bytes"
+        );
     }
 }

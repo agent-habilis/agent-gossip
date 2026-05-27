@@ -42,7 +42,8 @@ impl<K: Eq + Hash + Copy> Cooldown<K> {
     /// Record `key` at `now`, dropping expired entries first so the map stays
     /// bounded by the keys seen within the active window.
     pub(crate) fn note(&mut self, key: K, now: Instant) {
-        self.seen.retain(|_, at| now.duration_since(*at) < self.window);
+        self.seen
+            .retain(|_, at| now.duration_since(*at) < self.window);
         self.seen.insert(key, now);
     }
 
@@ -65,7 +66,10 @@ mod tests {
     fn note_then_on_cooldown_within_window() {
         let mut cooldown: Cooldown<u8> = Cooldown::new(WINDOW);
         let start = Instant::now();
-        assert!(!cooldown.on_cooldown(1, start), "unseen key is never on cooldown");
+        assert!(
+            !cooldown.on_cooldown(1, start),
+            "unseen key is never on cooldown"
+        );
         cooldown.note(1, start);
         assert!(cooldown.on_cooldown(1, start));
         // Past the window the key is free again (no permanent lockout).
@@ -78,7 +82,10 @@ mod tests {
         let start = Instant::now();
         cooldown.note(1, start);
         assert!(cooldown.on_cooldown(1, start));
-        assert!(!cooldown.on_cooldown(2, start), "one key's cooldown never gates another");
+        assert!(
+            !cooldown.on_cooldown(2, start),
+            "one key's cooldown never gates another"
+        );
     }
 
     #[test]

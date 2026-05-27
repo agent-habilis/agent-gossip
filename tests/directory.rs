@@ -1,8 +1,8 @@
 //! Live advertise → discover, end to end, over the loopback ladder.
 //!
 //! The directory swarm is hardcoded public in normal operation, so this
-//! path can't run against the public relay in CI. `AHS_DIRECTORY_PRIVATE`
-//! flips the directory to private (loopback ladder) and relaxes the
+//! path can't run against the public relay in CI. The `--directory-private`
+//! flag flips the directory to private (loopback ladder) and relaxes the
 //! `--advertise` requires-`--public` guard, so the whole pipeline —
 //! advertiser → directory mesh → discoverer → `swarm_found`/`swarm_lost`
 //! — runs hermetically. This is the regression guard for the directory
@@ -20,12 +20,12 @@ use common::{CONNECT_TIMEOUT, POLL, test_cmd, tmp_log};
 /// Loopback directory + fast timings so the test runs in seconds:
 /// short co-host grace (advertiser becomes the directory beacon fast),
 /// frequent re-ads, and a short expiry (quick `swarm_lost`).
-const DIR_ENV: [(&str, &str); 5] = [
-    ("AHS_DIRECTORY_PRIVATE", "1"),
-    ("BEACON_COHOST_GRACE_SECS", "2"),
-    ("ADVERTISE_INTERVAL_SECS", "2"),
-    ("DIRECTORY_EXPIRY_SECS", "4"),
-    ("ALIVE_TIMEOUT_SECS", "5"),
+const DIR_FLAGS: [(&str, &str); 5] = [
+    ("--directory-private", ""),
+    ("--beacon-cohost-grace-secs", "2"),
+    ("--advertise-interval-secs", "2"),
+    ("--directory-expiry-secs", "4"),
+    ("--alive-timeout-secs", "5"),
 ];
 
 /// First log line containing `needle`, or `None` if `timeout` elapses.
@@ -62,7 +62,7 @@ fn directory_advertise_then_discover() {
             "--output",
             "json",
         ])
-        .envs(DIR_ENV.iter().copied())
+        .args(common::flag_args(&DIR_FLAGS))
         .stdout(Stdio::from(adv_file.try_clone().unwrap()))
         .stderr(Stdio::from(adv_file))
         .spawn()
@@ -92,7 +92,7 @@ fn directory_advertise_then_discover() {
             "--output",
             "json",
         ])
-        .envs(DIR_ENV.iter().copied())
+        .args(common::flag_args(&DIR_FLAGS))
         .stdout(Stdio::from(disc_file.try_clone().unwrap()))
         .stderr(Stdio::from(disc_file))
         .spawn()
@@ -158,7 +158,7 @@ fn discover_stops_on_sigterm() {
             "--output",
             "json",
         ])
-        .envs(DIR_ENV.iter().copied())
+        .args(common::flag_args(&DIR_FLAGS))
         .stdout(Stdio::from(adv_file.try_clone().unwrap()))
         .stderr(Stdio::from(adv_file))
         .spawn()
@@ -179,7 +179,7 @@ fn discover_stops_on_sigterm() {
             "--output",
             "json",
         ])
-        .envs(DIR_ENV.iter().copied())
+        .args(common::flag_args(&DIR_FLAGS))
         .stdout(Stdio::from(disc_file.try_clone().unwrap()))
         .stderr(Stdio::from(disc_file))
         .spawn()

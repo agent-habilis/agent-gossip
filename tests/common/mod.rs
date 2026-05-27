@@ -30,8 +30,8 @@ pub(crate) fn bin() -> PathBuf {
 }
 
 /// Per-test-process log dir so `cargo task test` never writes into
-/// the operator's default `agent-habilis/swarm/logs`. The binary honors
-/// `AHS_LOG_DIR`.
+/// the operator's default `agent-habilis/swarm/logs`. Passed via the
+/// global `--log-dir` flag.
 fn test_log_dir() -> &'static str {
     static DIR: OnceLock<String> = OnceLock::new();
     DIR.get_or_init(|| {
@@ -41,12 +41,49 @@ fn test_log_dir() -> &'static str {
     })
 }
 
-/// `Command` for the built binary with `AHS_LOG_DIR` redirected to a
-/// per-test temp dir. Use instead of `Command::new(bin())`.
+/// `Command` for the built binary with `--log-dir` redirected to a
+/// per-test temp dir. Use instead of `Command::new(bin())`. (`--log-dir`
+/// is a global flag, so it sits before the subcommand here.)
 pub(crate) fn test_cmd() -> Command {
     let mut cmd = Command::new(bin());
-    cmd.env("AHS_LOG_DIR", test_log_dir());
+    cmd.arg("--log-dir").arg(test_log_dir());
     cmd
+}
+
+/// Apply `(flag, value)` tuning pairs to a spawn `Command`. `RUST_LOG` (a
+/// kept standard convention, not app config) is set as an **env var**; every
+/// other pair becomes a CLI flag (empty value ⇒ bare flag, e.g.
+/// `("--directory-private", "")`). Use for the `Node` spawns that may carry a
+/// `RUST_LOG` debug filter.
+fn apply_flags(cmd: &mut Command, pairs: &[(&str, &str)]) {
+    for (flag, value) in pairs {
+        if *flag == "RUST_LOG" {
+            cmd.env("RUST_LOG", value);
+        } else {
+            cmd.arg(flag);
+            if !value.is_empty() {
+                cmd.arg(value);
+            }
+        }
+    }
+}
+
+/// Turn `(flag, value)` tuning pairs into CLI args for a spawned `ahs`
+/// (replaces the former `.envs(...)` overrides). An empty value yields a
+/// bare flag — e.g. the boolean `("--directory-private", "")`. For pair lists
+/// that never include `RUST_LOG` (directory / monitor spawns); use
+/// [`apply_flags`] otherwise.
+pub(crate) fn flag_args(pairs: &[(&str, &str)]) -> Vec<String> {
+    pairs
+        .iter()
+        .flat_map(|(flag, value)| {
+            let mut out = vec![(*flag).to_string()];
+            if !value.is_empty() {
+                out.push((*value).to_string());
+            }
+            out
+        })
+        .collect()
 }
 
 static COUNTER: AtomicU32 = AtomicU32::new(0);
@@ -97,15 +134,8 @@ pub(crate) fn wait_until(count_fn: impl Fn() -> usize, target: usize, timeout: D
 // ── CLI helpers ───────────────────────────────────────────────────
 
 /// Spawn `ahs msg …` and return the raw `Output`
-/// (no success assertion — callers that test failure paths inspect
-/// it). `localhost` toggles `SWARM_LOCALHOST=1`.
-pub(crate) fn cli_msg_raw(
-    swarm: &str,
-    nickname: &str,
-    body: &str,
-    reply: Option<&str>,
-    localhost: bool,
-) -> Output {
+/// (no success assertion — callers that test failure paths inspect it).
+pub(crate) fn cli_msg_raw(swarm: &str, nickname: &str, body: &str, reply: Option<&str>) -> Output {
     let mut args = vec![
         "msg",
         "--swarm",
@@ -118,12 +148,10 @@ pub(crate) fn cli_msg_raw(
     if let Some(target) = reply {
         args.extend(["--reply", target]);
     }
-    let mut cmd = test_cmd();
-    cmd.args(&args);
-    if localhost {
-        cmd.env("SWARM_LOCALHOST", "1");
-    }
-    cmd.output().expect("msg command failed to spawn")
+    test_cmd()
+        .args(&args)
+        .output()
+        .expect("msg command failed to spawn")
 }
 
 /// `cli_msg_raw` + trim stdout. No success assertion.
@@ -132,9 +160,8 @@ pub(crate) fn cli_msg_stdout(
     nickname: &str,
     body: &str,
     reply: Option<&str>,
-    localhost: bool,
 ) -> String {
-    let out = cli_msg_raw(swarm, nickname, body, reply, localhost);
+    let out = cli_msg_raw(swarm, nickname, body, reply);
     String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
 
@@ -144,9 +171,8 @@ pub(crate) fn cli_msg_checked(
     nickname: &str,
     body: &str,
     reply: Option<&str>,
-    localhost: bool,
 ) -> String {
-    let out = cli_msg_raw(swarm, nickname, body, reply, localhost);
+    let out = cli_msg_raw(swarm, nickname, body, reply);
     assert!(
         out.status.success(),
         "msg failed: {}",
@@ -561,26 +587,32 @@ impl Node {
     /// since tests don't care what the swarm is called — only that creation
     /// and join round-trip.
     pub(crate) fn create_named(name: &str) -> (Self, String) {
-        Self::create_env(name, &[])
+        Self::create_flags(name, &[])
     }
 
-    /// Like [`create_named`](Self::create_named) but exports extra env
-    /// vars to the spawned daemon (e.g. a shortened heal cadence).
-    pub(crate) fn create_env(name: &str, envs: &[(&str, &str)]) -> (Self, String) {
-        Self::create_args(name, &[], envs)
+    /// Like [`create_named`](Self::create_named) but passes extra hidden
+    /// tuning flags to the spawned daemon as `(flag, value)` pairs (e.g. a
+    /// shortened heal cadence). Replaces the former env overrides.
+    pub(crate) fn create_flags(name: &str, flags: &[(&str, &str)]) -> (Self, String) {
+        Self::create_args(name, &[], flags)
     }
 
-    /// Like [`create_env`](Self::create_env) but also passes extra `create`
-    /// CLI args (e.g. `["--rate-limit", "0"]` to lift the send-side cap for
-    /// a burst).
-    pub(crate) fn create_args(name: &str, extra: &[&str], envs: &[(&str, &str)]) -> (Self, String) {
+    /// Like [`create_flags`](Self::create_flags) but also passes extra raw
+    /// `create` CLI args (e.g. `["--rate-limit", "0"]` to lift the send-side
+    /// cap for a burst).
+    pub(crate) fn create_args(
+        name: &str,
+        extra: &[&str],
+        flags: &[(&str, &str)],
+    ) -> (Self, String) {
         let log = tmp_log("create");
         let file = File::create(&log).unwrap();
         let mut args = vec!["create", "--name", name];
         args.extend_from_slice(extra);
-        let child = test_cmd()
-            .args(&args)
-            .envs(envs.iter().copied())
+        let mut cmd = test_cmd();
+        cmd.args(&args);
+        apply_flags(&mut cmd, flags);
+        let child = cmd
             .stdout(Stdio::from(file.try_clone().unwrap()))
             .stderr(Stdio::from(file))
             .spawn()
@@ -633,17 +665,18 @@ impl Node {
 
     /// Spawn `ahs join <swarm> --nickname <nickname>`.
     pub(crate) fn join(swarm: &str, nickname: &str) -> Self {
-        Self::join_env(swarm, nickname, &[])
+        Self::join_flags(swarm, nickname, &[])
     }
 
-    /// Like [`join`](Self::join) but exports extra env vars to the
-    /// spawned daemon.
-    pub(crate) fn join_env(swarm: &str, nickname: &str, envs: &[(&str, &str)]) -> Self {
+    /// Like [`join`](Self::join) but passes extra hidden tuning flags to the
+    /// spawned daemon as `(flag, value)` pairs.
+    pub(crate) fn join_flags(swarm: &str, nickname: &str, flags: &[(&str, &str)]) -> Self {
         let log = tmp_log(nickname);
         let file = File::create(&log).unwrap();
-        let child = test_cmd()
-            .args(["join", swarm, "--nickname", nickname])
-            .envs(envs.iter().copied())
+        let mut cmd = test_cmd();
+        cmd.args(["join", swarm, "--nickname", nickname]);
+        apply_flags(&mut cmd, flags);
+        let child = cmd
             .stdout(Stdio::from(file.try_clone().unwrap()))
             .stderr(Stdio::from(file))
             .spawn()
@@ -794,15 +827,14 @@ fn parse_messages(output: &str) -> Vec<Msg> {
     msgs
 }
 
-/// `cli_msg_raw` with localhost on and no success assertion — the
-/// real-network gossip tests' default.
+/// `cli_msg_raw` with no success assertion — the gossip tests' default.
 pub(crate) fn cli_message_raw(swarm: &str, nickname: &str, body: &str) -> Output {
-    cli_msg_raw(swarm, nickname, body, None, true)
+    cli_msg_raw(swarm, nickname, body, None)
 }
 
-/// `cli_msg_stdout` with localhost on.
+/// `cli_msg_stdout` shorthand.
 pub(crate) fn cli_message(swarm: &str, nickname: &str, body: &str) -> String {
-    cli_msg_stdout(swarm, nickname, body, None, true)
+    cli_msg_stdout(swarm, nickname, body, None)
 }
 
 /// `wait_until` with the standard message-delivery timeout.

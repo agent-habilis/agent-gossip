@@ -9,12 +9,12 @@
 pub const SOCKET_DIR: &str = "/tmp/agent-habilis/swarm/sockets";
 
 /// Default per-member log dir, relative to the OS temp dir
-/// (`std::env::temp_dir()`); `AHS_LOG_DIR` overrides. Resolved by
+/// (`std::env::temp_dir()`); the `--log-dir` flag overrides. Resolved by
 /// [`crate::logs::log_dir`].
 pub const LOG_SUBPATH: &str = "agent-habilis/swarm/logs";
 
 /// Max bytes a per-member log file grows before rotating to `<file>.1`
-/// (active + one backup ⇒ bounded at `2 ×` this). `AHS_LOG_MAX_BYTES`
+/// (active + one backup ⇒ bounded at `2 ×` this). The `--log-max-bytes` flag
 /// overrides; `0` disables rotation. Resolved by
 /// [`crate::logs::log_max_bytes`].
 pub const LOG_FILE_MAX_BYTES: u64 = 10 * 1024 * 1024; // 10 MiB
@@ -45,9 +45,9 @@ pub const RATE_LIMIT_PER_MIN: u16 = 60;
 pub const MAX_MESSAGE_SIZE: usize = 3840;
 
 /// Default number of recent messages each member retains in its in-memory
-/// log (anti-entropy recovery source + poll/fetch history). Overridable per
-/// process via `AHS_MESSAGE_LOG_SIZE` (see `tuning::message_log_size`); this
-/// is just the default. A bigger log lets a reconnecting peer recover a
+/// log (anti-entropy recovery source + poll/fetch history). A fixed value
+/// (see `tuning::message_log_size`); edit + commit here to change it. A
+/// bigger log lets a reconnecting peer recover a
 /// longer gap. Not coupled to the IPC response cap — that is the separate,
 /// fixed [`POLL_RESPONSE_MAX_MSGS`] (the log can exceed it; `poll` then
 /// surfaces the most-recent window and anti-entropy carries the rest).
@@ -73,6 +73,57 @@ pub const MAX_IPC_COMMAND_BYTES: usize = 2 * MAX_MESSAGE_SIZE;
 /// to the configurable log size) so the `poll` client has a stable read
 /// bound.
 pub const MAX_IPC_RESPONSE_BYTES: usize = POLL_RESPONSE_MAX_MSGS * MAX_MESSAGE_SIZE;
+
+// ── Daemon tuning defaults ────────────────────────────────────────
+//
+// Behavioural knobs that used to be environment-overridable. They now live
+// here as constants: an experiment is an *edit + commit* (under version
+// control, with history), never an ephemeral shell var. Each is the default
+// for the matching hidden CLI flag (`--alive-timeout-secs`, …) that the
+// subprocess test suite passes to run with short timings; production reads the
+// const. See `agent_habilis_swarm::util::tuning`.
+
+/// How long a peer can go unheard before the sweeper evicts it. Must exceed
+/// the alive-keepalive interval comfortably (3× absorbs one or two lost
+/// rounds). Flag: `--alive-timeout-secs` (tests shorten it to seconds).
+pub const ALIVE_TIMEOUT_SECS: u64 = 90;
+
+/// How often the sweeper walks `last_seen` looking for expired peers.
+/// Flag: `--sweep-interval-secs`.
+pub const SWEEP_INTERVAL_SECS: u64 = 10;
+
+/// Grace before an unmeshed joiner co-hosts the rendezvous anyway (empty
+/// swarm ⇒ become the beacon for the next joiner). Flag:
+/// `--beacon-cohost-grace-secs`.
+pub const BEACON_COHOST_GRACE_SECS: u64 = 10;
+
+/// How long an `ahs ping` round collects pongs before the daemon emits its
+/// `ping_report`. Flag: `--ping-window-secs`.
+pub const PING_WINDOW_SECS: u64 = 10;
+
+/// A heal inter-tick gap above this (seconds) means the process was frozen
+/// between ticks (App Nap / sleep) and must hard re-bootstrap. Safely above
+/// the 15s heal interval so normal slack never trips it. Flag:
+/// `--heal-stall-threshold-secs`.
+pub const HEAL_STALL_THRESHOLD_SECS: u64 = 60;
+
+/// How often an advertising `create` re-broadcasts its `ahs…` id into the
+/// directory. Flag: `--advertise-interval-secs`.
+pub const ADVERTISE_INTERVAL_SECS: u64 = 20;
+
+/// How long a discoverer keeps showing a swarm after its last ad (~3×
+/// `ADVERTISE_INTERVAL_SECS`). Flag: `--directory-expiry-secs`.
+pub const DIRECTORY_EXPIRY_SECS: u64 = 60;
+
+/// Max messages re-broadcast in response to one received digest, so a
+/// far-behind peer can't trigger an unbounded backfill burst. Flag:
+/// `--antientropy-max-resend`.
+pub const ANTIENTROPY_MAX_RESEND: usize = 64;
+
+/// Soft RSS threshold (`MiB`) above which the daemon emits a one-shot `warn`
+/// on its slow prune tick — the in-process leak-visibility signal. Warn-only;
+/// `0` disables. A pure const (no flag): an operator tunes it by editing here.
+pub const RSS_WARN_MB: u64 = 1024;
 
 // QUIC keep-alive / idle timeout are intentionally left at iroh's
 // holepunch-tuned transport defaults (~1s keep-alive, 15s direct / 30s relay

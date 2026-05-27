@@ -408,10 +408,9 @@ Decode `swarm` (the `ahs…` id) and pass it to `ahs join` to join.
    ```
 
 On first poll, omit `--after` to get all buffered messages. Each member keeps
-an in-memory log of the most recent **1000** messages (configurable per process
-via `AHS_MESSAGE_LOG_SIZE`); a single `poll` returns at most the most recent
-1000 (the rest, if the log is configured larger, still back peer recovery via
-anti-entropy). If `--after` references an evicted message ID, all buffered
+an in-memory log of the most recent **1000** messages (a fixed const,
+`ahs_shared::DEFAULT_MESSAGE_LOG_SIZE`); a single `poll` returns at most the
+most recent 1000. If `--after` references an evicted message ID, all buffered
 messages are returned with a warning.
 
 **Join horizon:** you only ever see messages from your join onward. A peer
@@ -597,23 +596,27 @@ Tests are layered:
   like `bench`); `cargo task test`/`ci` enable it. See
   [`docs/history-integrity.md`](docs/history-integrity.md).
 
-The reliability tests are kept fast by shortening the
-**env-overridable** eviction window (`ALIVE_TIMEOUT_SECS=3` /
-`SWEEP_INTERVAL_SECS=1`, the same pattern `monitor_contract.rs` uses).
-`HEAL_INTERVAL_SECS` is a fixed 15s `const`, **not** env-overridable —
-shortening it was tried and empirically destabilises convergence (the
-heal tick is the rare HyParView re-seed primitive, not a speed knob).
-So any claim-if-free handoff still pays its real ~34s (≥2 heal cycles);
-that floor is irreducible and is the bulk of those tests' runtime.
+The reliability tests are kept fast by shortening the eviction window via
+**hidden CLI flags** (`--alive-timeout-secs 3` / `--sweep-interval-secs 1`,
+the same pattern `monitor_contract.rs` uses — passed by the subprocess test
+harness, never shown in `--help`). The 15s heal interval is a fixed `const`,
+**not** a flag — shortening it was tried and empirically destabilises
+convergence (the heal tick is the rare HyParView re-seed primitive, not a
+speed knob). So any claim-if-free handoff still pays its real ~34s (≥2 heal
+cycles); that floor is irreducible and is the bulk of those tests' runtime.
 `test_anti_entropy_set_convergence` deliberately keeps the **production**
 alive-timeout (no short-evict): it needs the frozen peer to stay a
 member (`gap` << alive-timeout); its irreducible cost is the fixed 10s
 anti-entropy cycle, and the adaptive probe pays only real reconcile
 latency.
 
-`ALIVE_TIMEOUT_SECS` / `SWEEP_INTERVAL_SECS` are env-overridable purely
-so subprocess tests can shorten real timings; production defaults are
-unchanged.
+**No environment-variable config.** Every knob we control is a `const` in
+`ahs_shared::consts` (edit + commit to experiment — changes stay in git
+history); the handful the test suite must vary per-run are **hidden CLI
+flags** (`#[arg(hide = true)]`, defaulting to the const), e.g.
+`--alive-timeout-secs`, `--antientropy-max-resend`, `--directory-private`,
+`--log-dir`. Only the standard external conventions `RUST_LOG` (tracing
+filter) and `NO_COLOR` are read from the environment.
 
 ### Logging
 
@@ -630,8 +633,8 @@ commands (`msg`/`poll`), `mcp`, and any run failing before identity log
 to **stderr** instead — so the dir holds one file per swarm member, not
 per process. `tail -f` the file (or `cargo task logs` to print the
 dir). Logs stay **additive**: `--output json` (stdout) is unaffected and
-fatal `anyhow` errors still print to stderr. `AHS_LOG_DIR` overrides the
-directory (the test suite points it at a temp dir).
+fatal `anyhow` errors still print to stderr. The `--log-dir` flag (global,
+hidden) overrides the directory (the test suite points it at a temp dir).
 
 **Each daemon logs one `daemon starting` line stamped with the build version**
 (crate version + git short hash + dirty flag, e.g. `0.2.0 (1c362892

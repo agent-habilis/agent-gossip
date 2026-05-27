@@ -5,6 +5,8 @@
 
 use clap::Parser;
 
+use ahs_shared::consts;
+
 use crate::util::tuning::DEFAULT_MAX_DIRECT_PEERS;
 
 use super::output::OutputFormat;
@@ -40,4 +42,62 @@ pub(crate) struct SharedServerOpts {
     /// participant count and liveness without IPC.
     #[arg(long)]
     pub state_file: Option<std::path::PathBuf>,
+
+    // ── Hidden tuning knobs ───────────────────────────────────────
+    // Not in `--help`. Production runs on the `ahs_shared::consts`
+    // defaults below; the subprocess test suite passes these to run with
+    // short timings. These replace the former env-var overrides — see
+    // `crate::util::tuning`.
+    /// Peer-eviction silence timeout (seconds).
+    #[arg(long, hide = true, default_value_t = consts::ALIVE_TIMEOUT_SECS)]
+    pub alive_timeout_secs: u64,
+
+    /// How often the sweeper scans for expired peers (seconds).
+    #[arg(long, hide = true, default_value_t = consts::SWEEP_INTERVAL_SECS)]
+    pub sweep_interval_secs: u64,
+
+    /// Grace before an unmeshed joiner co-hosts the rendezvous (seconds).
+    #[arg(long, hide = true, default_value_t = consts::BEACON_COHOST_GRACE_SECS)]
+    pub beacon_cohost_grace_secs: u64,
+
+    /// How long an `ahs ping` round collects pongs (seconds).
+    #[arg(long, hide = true, default_value_t = consts::PING_WINDOW_SECS)]
+    pub ping_window_secs: u64,
+
+    /// Heal inter-tick gap above which the process hard re-bootstraps (seconds).
+    #[arg(long, hide = true, default_value_t = consts::HEAL_STALL_THRESHOLD_SECS)]
+    pub heal_stall_threshold_secs: u64,
+
+    /// Directory re-broadcast cadence for an advertiser (seconds).
+    #[arg(long, hide = true, default_value_t = consts::ADVERTISE_INTERVAL_SECS)]
+    pub advertise_interval_secs: u64,
+
+    /// How long a discoverer keeps showing a swarm after its last ad (seconds).
+    #[arg(long, hide = true, default_value_t = consts::DIRECTORY_EXPIRY_SECS)]
+    pub directory_expiry_secs: u64,
+
+    /// Max messages re-sent in response to one anti-entropy digest.
+    #[arg(long, hide = true, default_value_t = consts::ANTIENTROPY_MAX_RESEND)]
+    pub antientropy_max_resend: usize,
+
+    /// Use the loopback (private) directory + relax the advertise→public guard.
+    #[arg(long, hide = true, default_value_t = false)]
+    pub directory_private: bool,
+}
+
+impl SharedServerOpts {
+    /// The process tuning carried by these flags, for [`crate::util::tuning::init`].
+    pub(crate) fn tuning(&self) -> crate::util::tuning::Tuning {
+        crate::util::tuning::Tuning {
+            alive_timeout_secs: self.alive_timeout_secs,
+            sweep_interval_secs: self.sweep_interval_secs,
+            cohost_grace_secs: self.beacon_cohost_grace_secs,
+            ping_window_secs: self.ping_window_secs,
+            heal_stall_threshold_secs: self.heal_stall_threshold_secs,
+            advertise_interval_secs: self.advertise_interval_secs,
+            directory_expiry_secs: self.directory_expiry_secs,
+            antientropy_max_resend: self.antientropy_max_resend,
+            directory_private: self.directory_private,
+        }
+    }
 }

@@ -29,13 +29,13 @@ impl JsonNode {
     /// Spawn `ahs create --no-interactive --output json`, wait for the
     /// `ready` event, and return the node + swarm identifier.
     fn create() -> (Self, String) {
-        Self::create_with_env(&[])
+        Self::create_with_flags(&[])
     }
 
-    /// Like [`create`](Self::create) but exports extra env vars to the
-    /// spawned daemon (e.g. shortened eviction timings). Scoped to the
-    /// child process — no parent-process env mutation.
-    fn create_with_env(envs: &[(&str, &str)]) -> (Self, String) {
+    /// Like [`create`](Self::create) but passes extra hidden tuning flags to
+    /// the spawned daemon as `(flag, value)` pairs (e.g. shortened eviction
+    /// timings).
+    fn create_with_flags(flags: &[(&str, &str)]) -> (Self, String) {
         let log = tmp_log("json-create");
         let file = fs::File::create(&log).unwrap();
         let child = common::test_cmd()
@@ -47,7 +47,7 @@ impl JsonNode {
                 "--output",
                 "json",
             ])
-            .envs(envs.iter().copied())
+            .args(common::flag_args(flags))
             .stdout(Stdio::from(file.try_clone().unwrap()))
             .stderr(Stdio::from(file))
             .spawn()
@@ -91,12 +91,12 @@ impl JsonNode {
 
     /// Spawn `ahs join <swarm> --nickname <nickname> --no-interactive --output json`.
     fn join(swarm: &str, nickname: &str) -> Self {
-        Self::join_with_env(swarm, nickname, &[])
+        Self::join_with_flags(swarm, nickname, &[])
     }
 
-    /// Like [`join`](Self::join) but exports extra env vars to the
-    /// spawned daemon. Scoped to the child process.
-    fn join_with_env(swarm: &str, nickname: &str, envs: &[(&str, &str)]) -> Self {
+    /// Like [`join`](Self::join) but passes extra hidden tuning flags to the
+    /// spawned daemon as `(flag, value)` pairs.
+    fn join_with_flags(swarm: &str, nickname: &str, flags: &[(&str, &str)]) -> Self {
         let log = tmp_log(&format!("json-{nickname}"));
         let file = fs::File::create(&log).unwrap();
         let child = common::test_cmd()
@@ -109,7 +109,7 @@ impl JsonNode {
                 "--output",
                 "json",
             ])
-            .envs(envs.iter().copied())
+            .args(common::flag_args(flags))
             .stdout(Stdio::from(file.try_clone().unwrap()))
             .stderr(Stdio::from(file))
             .spawn()
@@ -196,7 +196,7 @@ impl Drop for JsonNode {
 // already-running daemon; success is asserted.
 
 fn cli_send(swarm: &str, nickname: &str, body: &str) -> String {
-    common::cli_msg_checked(swarm, nickname, body, None, false)
+    common::cli_msg_checked(swarm, nickname, body, None)
 }
 
 // ── test fixtures ──────────────────────────────────────────────────────────
@@ -774,8 +774,7 @@ fn test_hard_kill_triggers_peer_timeout() {
             "--state-file",
             state_file.to_str().unwrap(),
         ])
-        .env("ALIVE_TIMEOUT_SECS", "3")
-        .env("SWEEP_INTERVAL_SECS", "1")
+        .args(["--alive-timeout-secs", "3", "--sweep-interval-secs", "1"])
         .stdout(Stdio::from(file.try_clone().unwrap()))
         .stderr(Stdio::from(file))
         .spawn()
@@ -876,9 +875,12 @@ fn test_hard_kill_triggers_peer_timeout() {
 /// within the test window.
 #[test]
 fn test_pre_join_ghost_peer_never_surfaces() {
-    let short_evict = [("ALIVE_TIMEOUT_SECS", "3"), ("SWEEP_INTERVAL_SECS", "1")];
+    let short_evict = [
+        ("--alive-timeout-secs", "3"),
+        ("--sweep-interval-secs", "1"),
+    ];
 
-    let (creator, swarm) = JsonNode::create_with_env(&short_evict);
+    let (creator, swarm) = JsonNode::create_with_flags(&short_evict);
     assert!(creator.wait_ready(&swarm), "creator never ready");
 
     // A peer joins, talks, then is hard-killed — all before the late
@@ -907,7 +909,7 @@ fn test_pre_join_ghost_peer_never_surfaces() {
     // earlier second than the late join (off the 1s boundary).
     std::thread::sleep(Duration::from_secs(2));
 
-    let late = JsonNode::join_with_env(&swarm, "jh-late", &short_evict);
+    let late = JsonNode::join_with_flags(&swarm, "jh-late", &short_evict);
     assert!(late.wait_ready(&swarm), "late joiner never ready");
 
     // Positive control: the still-present creator must surface, proving

@@ -44,17 +44,36 @@ fn reject_id_encoded_flag(flag: &str, present: bool) -> Result<()> {
 /// Propagates any error from the selected subcommand — swarm setup
 /// failure, join timeout, IPC errors, invalid swarm-mode flags, etc.
 pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
+    // Install the log-path config from the global flags before any
+    // subcommand resolves its log file (the buffered sink flushes at
+    // `logging::attach`, after this). Replaces the old AHS_LOG_DIR /
+    // AHS_LOG_MAX_BYTES env reads.
+    ahs_shared::logs::configure(ahs_shared::logs::LogConfig {
+        dir: cli.log_dir,
+        max_bytes: cli.log_max_bytes,
+    });
+    // Source the process tuning from the (hidden) flags before any handler
+    // resolution reads it — e.g. `create --advertise` checks the
+    // `directory_private` guard while building its `SetupKind`, before the
+    // event loop. Replaces the former env-var overrides.
     match cli.command {
-        Commands::Create { opts } => create(opts).await,
+        Commands::Create { opts } => {
+            crate::util::tuning::init(opts.shared.tuning());
+            create(opts).await
+        }
         Commands::Join { opts } => {
             reject_id_encoded_flag("--public", opts.public)?;
             reject_id_encoded_flag("--name", opts.name.is_some())?;
+            crate::util::tuning::init(opts.shared.tuning());
             join(opts.swarm, opts.nickname, opts.shared).await
         }
         Commands::Msg { opts } => msg(opts).await,
         Commands::Poll { opts } => poll(opts).await,
         Commands::Ping { opts } => ping(opts).await,
-        Commands::Discover { opts } => discover::discover(opts).await,
+        Commands::Discover { opts } => {
+            crate::util::tuning::init(opts.shared.tuning());
+            discover::discover(opts).await
+        }
         Commands::Mcp => crate::mcp::run().await,
     }
 }

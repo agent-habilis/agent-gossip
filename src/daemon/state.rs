@@ -673,9 +673,20 @@ mod tests {
 
         // None of our collections grew with the 10k flaps: each is bounded by
         // the roster size or its hard cap, never by the flap count.
-        assert!(state.relink.len() <= peers.len(), "relink flat: {}", state.relink.len());
-        assert!(state.peerinfo.len() <= peers.len(), "peerinfo flat: {}", state.peerinfo.len());
-        assert!(state.linked_endpoints.len() <= peers.len(), "linked_endpoints flat");
+        assert!(
+            state.relink.len() <= peers.len(),
+            "relink flat: {}",
+            state.relink.len()
+        );
+        assert!(
+            state.peerinfo.len() <= peers.len(),
+            "peerinfo flat: {}",
+            state.peerinfo.len()
+        );
+        assert!(
+            state.linked_endpoints.len() <= peers.len(),
+            "linked_endpoints flat"
+        );
         assert!(
             state.known_endpoints.len() <= KNOWN_ENDPOINTS_CAP.min(peers.len()),
             "known_endpoints bounded"

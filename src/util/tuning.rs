@@ -7,11 +7,11 @@
 
 /// In-memory message-log capacity: how many recent messages each member
 /// retains as the anti-entropy recovery source and poll/fetch history. A
-/// bigger log lets a reconnecting peer recover a longer gap. Defaults to
-/// [`ahs_shared::DEFAULT_MESSAGE_LOG_SIZE`] (1000); overridable per process
-/// via `AHS_MESSAGE_LOG_SIZE`. Clamped to `>= 1`.
+/// bigger log lets a reconnecting peer recover a longer gap. Fixed at
+/// [`ahs_shared::DEFAULT_MESSAGE_LOG_SIZE`] (1000), clamped to `>= 1`; edit
+/// the const to change it.
 pub(crate) fn message_log_size() -> usize {
-    env_usize("AHS_MESSAGE_LOG_SIZE", ahs_shared::DEFAULT_MESSAGE_LOG_SIZE).max(1)
+    ahs_shared::DEFAULT_MESSAGE_LOG_SIZE.max(1)
 }
 
 /// How many recently-seen message ids are retained for duplicate
@@ -62,10 +62,10 @@ pub(crate) const ANTIENTROPY_DIGEST_WINDOW_IDS: usize = 70;
 /// Max messages re-broadcast in response to one received digest, so a
 /// far-behind peer can't trigger an unbounded burst. This throttles
 /// deep-backfill throughput (~`this × peers` messages per
-/// `ANTIENTROPY_INTERVAL_SECS`); raised from 32 and overridable via
-/// `AHS_ANTIENTROPY_MAX_RESEND` so large reconnect gaps catch up faster.
+/// `ANTIENTROPY_INTERVAL_SECS`). Default [`ahs_shared::consts::ANTIENTROPY_MAX_RESEND`];
+/// hidden flag `--antientropy-max-resend` (tests raise it for deep backfill).
 pub(crate) fn antientropy_max_resend() -> usize {
-    env_usize("AHS_ANTIENTROPY_MAX_RESEND", 64).max(1)
+    current().antientropy_max_resend.max(1)
 }
 
 /// Default max direct peer connections (gossip relays beyond this)
@@ -89,11 +89,11 @@ pub(crate) const RATE_LIMITER_TTL_SECS: u64 = 600;
 /// Soft RSS threshold (`MiB`) above which the daemon emits a one-shot `warn`
 /// (log + JSON `info` event) on its slow prune tick — the in-process
 /// leak-visibility signal the distributed soak lacked. **Warn-only**: it never
-/// exits; host safety is the e2e runbook's OS resource caps. Default 1024
-/// (well above a healthy node's tens of `MiB`, so it only fires on a genuine
-/// runaway like the soak's 4.6 GB climb); `AHS_RSS_WARN_MB=0` disables it.
+/// exits; host safety is the e2e runbook's OS resource caps. Fixed at
+/// [`ahs_shared::consts::RSS_WARN_MB`] (1024, well above a healthy node's tens
+/// of `MiB`); `0` there disables it. Edit the const to tune.
 pub(crate) fn rss_warn_mb() -> u64 {
-    env_u64("AHS_RSS_WARN_MB", 1024)
+    ahs_shared::consts::RSS_WARN_MB
 }
 
 /// How often an idle daemon broadcasts a `Presence::Alive` keepalive.
@@ -104,51 +104,90 @@ pub(crate) const ALIVE_INTERVAL_SECS: u64 = 30;
 /// How long a peer can go unheard before the sweeper evicts it.
 /// Must exceed `ALIVE_INTERVAL_SECS` comfortably — 3x absorbs one or
 /// two lost gossip rounds. Worst-case ghost window is
-/// `ALIVE_TIMEOUT_SECS + SWEEP_INTERVAL_SECS`.
+/// `alive_timeout + sweep_interval`.
 ///
-/// Overridable via the `ALIVE_TIMEOUT_SECS` env var so integration
-/// tests that exercise eviction can run in seconds instead of minutes.
+/// Default [`ahs_shared::consts::ALIVE_TIMEOUT_SECS`]; hidden flag
+/// `--alive-timeout-secs` so integration tests exercise eviction in
+/// seconds instead of minutes.
 pub(crate) fn alive_timeout_secs() -> u64 {
-    env_u64("ALIVE_TIMEOUT_SECS", 90)
+    current().alive_timeout_secs
 }
 
 /// How often the sweeper walks `last_seen` looking for expired peers.
 /// Bounds the maximum statusline staleness from a peer's true
-/// disappearance to its eviction. Overridable via `SWEEP_INTERVAL_SECS`.
+/// disappearance to its eviction. Hidden flag `--sweep-interval-secs`.
 pub(crate) fn sweep_interval_secs() -> u64 {
-    env_u64("SWEEP_INTERVAL_SECS", 10)
+    current().sweep_interval_secs
 }
 
 /// Grace before an **unmeshed joiner** co-hosts the rendezvous anyway
 /// (empty swarm ⇒ become the beacon for the next joiner). Rationale:
 /// `EventLoopConfig::cohost`. Non-blocking — only consulted
 /// on heal ticks, never delays `ready`; a joiner that meshes co-hosts
-/// the moment it has a neighbor, well before this. Overridable via
-/// `BEACON_COHOST_GRACE_SECS` for subprocess tests.
+/// the moment it has a neighbor, well before this. Hidden flag
+/// `--beacon-cohost-grace-secs`.
 pub(crate) fn cohost_grace_secs() -> u64 {
-    env_u64("BEACON_COHOST_GRACE_SECS", 10)
+    current().cohost_grace_secs
 }
 
 /// How long an `ahs ping` round collects pongs before the daemon
 /// emits its `ping_report`. Long enough for a relayed round-trip
-/// across the mesh; overridable via `PING_WINDOW_SECS` so tests don't
+/// across the mesh; hidden flag `--ping-window-secs` so tests don't
 /// wait the full window.
 pub(crate) fn ping_window_secs() -> u64 {
-    env_u64("PING_WINDOW_SECS", 10)
+    current().ping_window_secs
 }
 
-fn env_u64(name: &str, default: u64) -> u64 {
-    std::env::var(name)
-        .ok()
-        .and_then(|raw| raw.parse().ok())
-        .unwrap_or(default)
+/// Process tuning sourced **once** at daemon startup from the hidden CLI
+/// flags (`--alive-timeout-secs`, …). Replaces the former env-var reads: an
+/// experiment is now an edit-the-const + commit, and a subprocess test passes
+/// the flag. Production runs on [`Tuning::DEFAULTS`] (the `ahs_shared::consts`
+/// values) when [`init`] is never called (the embed / MCP path).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Tuning {
+    pub alive_timeout_secs: u64,
+    pub sweep_interval_secs: u64,
+    pub cohost_grace_secs: u64,
+    pub ping_window_secs: u64,
+    pub heal_stall_threshold_secs: u64,
+    pub advertise_interval_secs: u64,
+    pub directory_expiry_secs: u64,
+    pub antientropy_max_resend: usize,
+    pub directory_private: bool,
 }
 
-fn env_usize(name: &str, default: usize) -> usize {
-    std::env::var(name)
-        .ok()
-        .and_then(|raw| raw.parse().ok())
-        .unwrap_or(default)
+impl Tuning {
+    /// The production defaults, all from `ahs_shared::consts`.
+    pub(crate) const DEFAULTS: Self = Self {
+        alive_timeout_secs: ahs_shared::consts::ALIVE_TIMEOUT_SECS,
+        sweep_interval_secs: ahs_shared::consts::SWEEP_INTERVAL_SECS,
+        cohost_grace_secs: ahs_shared::consts::BEACON_COHOST_GRACE_SECS,
+        ping_window_secs: ahs_shared::consts::PING_WINDOW_SECS,
+        heal_stall_threshold_secs: ahs_shared::consts::HEAL_STALL_THRESHOLD_SECS,
+        advertise_interval_secs: ahs_shared::consts::ADVERTISE_INTERVAL_SECS,
+        directory_expiry_secs: ahs_shared::consts::DIRECTORY_EXPIRY_SECS,
+        antientropy_max_resend: ahs_shared::consts::ANTIENTROPY_MAX_RESEND,
+        directory_private: false,
+    };
+}
+
+impl Default for Tuning {
+    fn default() -> Self {
+        Self::DEFAULTS
+    }
+}
+
+static TUNING: std::sync::OnceLock<Tuning> = std::sync::OnceLock::new();
+
+/// Install the process tuning, once, at daemon startup (from the parsed CLI
+/// flags). A second call is ignored; if never called (embed / MCP), [`current`]
+/// returns [`Tuning::DEFAULTS`].
+pub(crate) fn init(tuning: Tuning) {
+    let _ = TUNING.set(tuning);
+}
+
+fn current() -> Tuning {
+    TUNING.get().copied().unwrap_or(Tuning::DEFAULTS)
 }
 
 /// How often the daemon re-asserts `participant_count` +
@@ -180,11 +219,12 @@ pub(crate) const HEAL_HARD_PROBE_SECS: u64 = 20;
 
 /// A heal inter-tick gap above this many seconds means the process was
 /// frozen between ticks (App Nap / coalescing / sleep) and must hard
-/// re-bootstrap. Default 60s — safely above `HEAL_INTERVAL_SECS` (15s)
-/// so normal slack never trips it. Env-overridable (like
-/// `alive_timeout_secs`) only so subprocess tests drive it in seconds.
+/// re-bootstrap. Default [`ahs_shared::consts::HEAL_STALL_THRESHOLD_SECS`]
+/// (60s) — safely above `HEAL_INTERVAL_SECS` (15s) so normal slack never
+/// trips it. Hidden flag `--heal-stall-threshold-secs` so subprocess tests
+/// drive it in seconds.
 pub(crate) fn heal_stall_threshold_secs() -> u64 {
-    env_u64("HEAL_STALL_THRESHOLD_SECS", 60)
+    current().heal_stall_threshold_secs
 }
 
 /// How long `beacon::ensure` eagerly waits for the freshly-bound
@@ -232,29 +272,31 @@ pub(crate) const RELINK_COOLDOWN_SECS: u64 = 10;
 /// swarm within one cycle (the join-horizon only surfaces ads stamped
 /// after the discoverer joined), long enough that the directory stays
 /// quiet — directory traffic is one tiny message per advertiser per
-/// interval. Env-overridable (`ADVERTISE_INTERVAL_SECS`) so the
-/// subprocess directory test re-ads quickly.
+/// interval. Default [`ahs_shared::consts::ADVERTISE_INTERVAL_SECS`]; hidden
+/// flag `--advertise-interval-secs` so the subprocess directory test re-ads
+/// quickly.
 pub(crate) fn advertise_interval_secs() -> u64 {
-    env_u64("ADVERTISE_INTERVAL_SECS", 20)
+    current().advertise_interval_secs
 }
 
 /// How long a discoverer keeps showing a swarm after its last ad. A
 /// publisher that exits stops re-broadcasting, so its listing ages out
 /// within this window. ~3× `ADVERTISE_INTERVAL_SECS` so one or two lost
-/// gossip rounds don't flicker a live swarm out of the list.
-/// Env-overridable (`DIRECTORY_EXPIRY_SECS`) so the subprocess directory
-/// test can shorten the `swarm_lost` window.
+/// gossip rounds don't flicker a live swarm out of the list. Default
+/// [`ahs_shared::consts::DIRECTORY_EXPIRY_SECS`]; hidden flag
+/// `--directory-expiry-secs` so the subprocess directory test can shorten the
+/// `swarm_lost` window.
 pub(crate) fn directory_expiry_secs() -> u64 {
-    env_u64("DIRECTORY_EXPIRY_SECS", 60)
+    current().directory_expiry_secs
 }
 
-/// Directories are public by default; setting `AHS_DIRECTORY_PRIVATE`
-/// flips `directory_swarm` to the loopback ladder and relaxes the
-/// `--advertise` requires-`--public` guard. **Test-only**: the live
-/// advertise→discover path is otherwise unreachable in CI (no public
-/// relay) — see `tests/directory.rs`.
+/// Directories are public by default; the `--directory-private` flag flips
+/// `directory_swarm` to the loopback ladder and relaxes the `--advertise`
+/// requires-`--public` guard. **Test-only** (hidden flag): the live
+/// advertise→discover path is otherwise unreachable in CI (no public relay) —
+/// see `tests/directory.rs`.
 pub(crate) fn directory_private_for_test() -> bool {
-    std::env::var_os("AHS_DIRECTORY_PRIVATE").is_some()
+    current().directory_private
 }
 
 /// Per-rung timeout when selecting the public-mode bootstrap relay

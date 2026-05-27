@@ -583,7 +583,7 @@ fn test_poll_returns_messages() {
 /// `PING_WINDOW_SECS` keeps the round fast.
 #[test]
 fn test_ping_reports_peer_rtt() {
-    let (creator, swarm) = Node::create_env("itest", &[("PING_WINDOW_SECS", "2")]);
+    let (creator, swarm) = Node::create_flags("itest", &[("--ping-window-secs", "2")]);
     let joiner = Node::join(&swarm, "ping-joiner");
     assert!(creator.wait_ready(&swarm), "creator socket never appeared");
     assert!(joiner.wait_ready(&swarm), "joiner socket never appeared");
@@ -860,7 +860,10 @@ async fn test_join_horizon_hides_pre_join_history() {
 // claim-if-free handoff still costs its real ~34s: that floor is
 // irreducible and dominates these tests' runtime.
 
-const SHORT_EVICT: [(&str, &str); 2] = [("ALIVE_TIMEOUT_SECS", "3"), ("SWEEP_INTERVAL_SECS", "1")];
+const SHORT_EVICT: [(&str, &str); 2] = [
+    ("--alive-timeout-secs", "3"),
+    ("--sweep-interval-secs", "1"),
+];
 
 /// Assert `receiver` records `body` from `sender` within `within`,
 /// dumping the receiver's log tail on failure. `wait_until` is
@@ -885,9 +888,9 @@ fn test_creator_sigkill_independence() {
     // cold joiner's connect. Irreducible (heal cadence is a `const`).
     let handoff = Duration::from_secs(36);
 
-    let (creator, swarm) = Node::create_env("itest", &SHORT_EVICT);
-    let alpha = Node::join_env(&swarm, "ck-alpha", &SHORT_EVICT);
-    let bravo = Node::join_env(&swarm, "ck-bravo", &SHORT_EVICT);
+    let (creator, swarm) = Node::create_flags("itest", &SHORT_EVICT);
+    let alpha = Node::join_flags(&swarm, "ck-alpha", &SHORT_EVICT);
+    let bravo = Node::join_flags(&swarm, "ck-bravo", &SHORT_EVICT);
     assert!(creator.wait_ready(&swarm), "creator never ready");
     assert!(alpha.wait_ready(&swarm), "alpha never ready");
     assert!(bravo.wait_ready(&swarm), "bravo never ready");
@@ -904,7 +907,7 @@ fn test_creator_sigkill_independence() {
     // A brand-new joiner can only reach the swarm if a survivor now
     // serves the seed-derived rendezvous.
     std::thread::sleep(handoff);
-    let charlie = Node::join_env(&swarm, "ck-charlie", &SHORT_EVICT);
+    let charlie = Node::join_flags(&swarm, "ck-charlie", &SHORT_EVICT);
     assert!(
         charlie.wait_ready(&swarm),
         "fresh joiner could not bootstrap after creator SIGKILL\nalpha:\n{}\ncharlie:\n{}",
@@ -927,8 +930,8 @@ fn test_sleep_wake_heal_recovery() {
     // peer. Irreducible.
     let wake_settle = Duration::from_secs(18);
 
-    let (creator, swarm) = Node::create_env("itest", &SHORT_EVICT);
-    let sleeper = Node::join_env(&swarm, "sw-sleeper", &SHORT_EVICT);
+    let (creator, swarm) = Node::create_flags("itest", &SHORT_EVICT);
+    let sleeper = Node::join_flags(&swarm, "sw-sleeper", &SHORT_EVICT);
     assert!(creator.wait_ready(&swarm), "creator never ready");
     assert!(sleeper.wait_ready(&swarm), "sleeper never ready");
     let _ = cli_message(&swarm, &creator.nickname, "sw-pre");
@@ -974,8 +977,8 @@ fn test_fixed_id_reconnect_admits_fast() {
     // timeout: a pass means admission is heal-bound.
     let admit_bound = Duration::from_secs(50);
 
-    let (creator, swarm) = Node::create_env("itest", &SHORT_EVICT);
-    let sleeper = Node::join_env(&swarm, "fr-sleeper", &SHORT_EVICT);
+    let (creator, swarm) = Node::create_flags("itest", &SHORT_EVICT);
+    let sleeper = Node::join_flags(&swarm, "fr-sleeper", &SHORT_EVICT);
     assert!(creator.wait_ready(&swarm), "creator never ready");
     assert!(sleeper.wait_ready(&swarm), "sleeper never ready");
     let _ = cli_message(&swarm, &creator.nickname, "fr-pre");
@@ -1013,9 +1016,9 @@ fn test_resume_triggers_hard_rebootstrap() {
     // reboots forever), and the freeze MUST exceed the threshold.
     // 20s threshold < 30s freeze satisfies both; production is 60s.
     const STALL_EVICT: [(&str, &str); 3] = [
-        ("ALIVE_TIMEOUT_SECS", "3"),
-        ("SWEEP_INTERVAL_SECS", "1"),
-        ("HEAL_STALL_THRESHOLD_SECS", "20"),
+        ("--alive-timeout-secs", "3"),
+        ("--sweep-interval-secs", "1"),
+        ("--heal-stall-threshold-secs", "20"),
     ];
     // > stall threshold (20s), > evict window (3+1s).
     let asleep = Duration::from_secs(30);
@@ -1023,8 +1026,8 @@ fn test_resume_triggers_hard_rebootstrap() {
     // headroom for the hard path to run and log the marker.
     let wake_settle = Duration::from_secs(20);
 
-    let (creator, swarm) = Node::create_env("itest", &STALL_EVICT);
-    let sleeper = Node::join_env(&swarm, "rb-sleeper", &STALL_EVICT);
+    let (creator, swarm) = Node::create_flags("itest", &STALL_EVICT);
+    let sleeper = Node::join_flags(&swarm, "rb-sleeper", &STALL_EVICT);
     assert!(creator.wait_ready(&swarm), "creator never ready");
     assert!(sleeper.wait_ready(&swarm), "sleeper never ready");
     let _ = cli_message(&swarm, &creator.nickname, "rb-pre");
@@ -1115,12 +1118,12 @@ fn test_large_gap_reconnect_replication() {
     // Production alive-timeout (no `SHORT_EVICT`) so alpha stays a member
     // while frozen; a faster max-resend so the deep backfill converges
     // inside the window.
-    let envs = [("AHS_ANTIENTROPY_MAX_RESEND", "128")];
+    let envs = [("--antientropy-max-resend", "128")];
 
     // `--rate-limit 0`: the burst must not be throttled on the send path.
     let (creator, swarm) = Node::create_args("itest", &["--rate-limit", "0"], &envs);
-    let alpha = Node::join_env(&swarm, "lg-alpha", &envs);
-    let bravo = Node::join_env(&swarm, "lg-bravo", &envs);
+    let alpha = Node::join_flags(&swarm, "lg-alpha", &envs);
+    let bravo = Node::join_flags(&swarm, "lg-bravo", &envs);
     assert!(creator.wait_ready(&swarm), "creator never ready");
     assert!(alpha.wait_ready(&swarm), "alpha never ready");
     assert!(bravo.wait_ready(&swarm), "bravo never ready");
@@ -1222,11 +1225,11 @@ fn test_interior_gap_recovered_via_rolling_window() {
     const GAP: usize = 40; // interior gap (frozen peer misses these)
     const TAIL: usize = 80; // newer tail
     const TOTAL: usize = OLD + GAP + TAIL;
-    let envs = [("AHS_ANTIENTROPY_MAX_RESEND", "128")];
+    let envs = [("--antientropy-max-resend", "128")];
 
     let (creator, swarm) = Node::create_args("itest", &["--rate-limit", "0"], &envs);
-    let alpha = Node::join_env(&swarm, "ig-alpha", &envs);
-    let bravo = Node::join_env(&swarm, "ig-bravo", &envs);
+    let alpha = Node::join_flags(&swarm, "ig-alpha", &envs);
+    let bravo = Node::join_flags(&swarm, "ig-bravo", &envs);
     assert!(
         creator.wait_ready(&swarm) && alpha.wait_ready(&swarm) && bravo.wait_ready(&swarm),
         "nodes never ready"
@@ -1298,12 +1301,12 @@ fn test_steady_state_no_resend_churn() {
     const COUNT: usize = 150; // > one 70-id window ⇒ the rolling older window is active
     let envs = [
         ("RUST_LOG", "agent_habilis_swarm::gossip=debug"),
-        ("AHS_LOG_MAX_BYTES", "0"), // no rotation, so the full log is one file
+        ("--log-max-bytes", "0"), // no rotation, so the full log is one file
     ];
 
     let (creator, swarm) = Node::create_args("itest", &["--rate-limit", "0"], &envs);
-    let alpha = Node::join_env(&swarm, "cf-alpha", &envs);
-    let bravo = Node::join_env(&swarm, "cf-bravo", &envs);
+    let alpha = Node::join_flags(&swarm, "cf-alpha", &envs);
+    let bravo = Node::join_flags(&swarm, "cf-bravo", &envs);
     assert!(
         creator.wait_ready(&swarm) && alpha.wait_ready(&swarm) && bravo.wait_ready(&swarm),
         "nodes never ready"
@@ -1358,11 +1361,11 @@ fn test_steady_state_no_resend_churn() {
 #[test]
 fn test_multi_round_throttled_backfill() {
     const GAP: usize = 40;
-    let envs = [("AHS_ANTIENTROPY_MAX_RESEND", "5")]; // tiny budget ⇒ many rounds
+    let envs = [("--antientropy-max-resend", "5")]; // tiny budget ⇒ many rounds
 
     let (creator, swarm) = Node::create_args("itest", &["--rate-limit", "0"], &envs);
-    let alpha = Node::join_env(&swarm, "mr-alpha", &envs);
-    let bravo = Node::join_env(&swarm, "mr-bravo", &envs);
+    let alpha = Node::join_flags(&swarm, "mr-alpha", &envs);
+    let bravo = Node::join_flags(&swarm, "mr-bravo", &envs);
     assert!(
         creator.wait_ready(&swarm) && alpha.wait_ready(&swarm) && bravo.wait_ready(&swarm),
         "nodes never ready"
