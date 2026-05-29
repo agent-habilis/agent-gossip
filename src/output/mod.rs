@@ -12,7 +12,10 @@ mod tests;
 
 pub(crate) use json::PingPeer;
 pub use json::event_json;
-use json::{SimpleEvent, emit, emit_json, format_presence_json, print_message_json};
+use json::{
+    SimpleEvent, emit, emit_json, format_presence_json, peer_return_display, peer_timeout_display,
+    ping_report_display, print_message_json,
+};
 
 /// Output mode — chosen per event loop at construction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -395,6 +398,7 @@ impl Output {
                 OutputMode::Json => emit_json(&SimpleEvent::PeerTimeout {
                     nickname: nickname.as_str(),
                     last_seen_secs_ago,
+                    display: peer_timeout_display(nickname.as_str()),
                 }),
                 OutputMode::Silent => {}
             },
@@ -445,6 +449,7 @@ impl Output {
                 }
                 OutputMode::Json => emit_json(&SimpleEvent::PeerReturn {
                     nickname: nickname.as_str(),
+                    display: peer_return_display(nickname.as_str()),
                 }),
                 OutputMode::Silent => {}
             },
@@ -523,6 +528,7 @@ impl Output {
                 }
                 OutputMode::Json => emit_json(&SimpleEvent::PingReport {
                     responded: peers.len(),
+                    display: ping_report_display(&peers, known),
                     peers,
                     known,
                 }),

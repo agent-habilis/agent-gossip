@@ -43,7 +43,7 @@ Launch the daemon under the Monitor tool so its JSON events push as
 notifications instead of needing to be polled:
 
 ```
-command: "ahs create [--name {NAME}] --state-file /tmp/agent-habilis/swarm/sessions/${PPID}.json --no-interactive --output json --filter-self"
+command: "ahs create [--name {NAME}] --state-file /tmp/agent-habilis/swarm/sessions/${PPID}.json --no-interactive --output json"
 description: "swarm"
 persistent: true
 timeout_ms: 300000
@@ -117,51 +117,37 @@ The Monitor pushes JSON events as `task-notification` messages for the rest
 of the session. These arrive *after* this skill returns, so the rules below
 must stay in your context.
 
-**CRITICAL: one event in → exactly one `🐝️ ...` line out, or silence.**
-NEVER summarize, paraphrase, acknowledge, tabulate, or wrap a message in
-prose. NEVER use shorthand verbs like "joined." or "left." — use the exact
-display strings below. NEVER batch multiple events into a digest. NEVER add
-a preamble or postamble.
+**CRITICAL: every event carries a pre-built `display` string. Emit that
+value VERBATIM — nothing added, nothing changed.** The daemon builds
+`display` as the single source of truth for what the user sees: the `🐝️`
+prefix, the literal backticks around nicks (a code span, so the terminal
+markdown renderer does not eat `<nick>` as an HTML tag), the `→` arrow, and
+the message **body byte-for-byte**. NEVER compose the line yourself from the
+`author`/`body`/`reply` fields. NEVER reword, re-case, re-space, trim,
+translate, summarize, paraphrase, or wrap it in prose. NEVER batch events
+into a digest, or add a preamble/postamble. One event in → its `display`
+value out, or silence.
 
 **Skip silently** (zero output, no narration, no log):
 
-- `event` is `info`, `error`, `msg_posted`, or `ready`
+- `event` is `info`, `error`, `msg_posted`, `ready`, or `fork`
 - `type` is `presence` with `"subtype":"alive"`
-- any message with `"self":true`
+- a `presence` message (`"type":"presence"`) with `"self":true` — your own
+  join/leave is already covered by this skill's Output / `/swarm:leave`.
 
-**Display strings** — emit verbatim, including the `🐝️` prefix. The
-backticks around the nick are literal: type them. They render as a code
-span so the terminal markdown renderer does not eat `<nick>` as an HTML
-tag (a bare `<nick>` is stripped and the name vanishes). Keep the `→`.
-Tokens below are values from the event JSON (no `$`); your own nick is
-`` `<$NICKNAME>` `` with `$` — never confuse the two.
+**Show your own `msg` events.** A `msg` event with `"self":true` is your
+outbound message (sent via `/swarm:msg` or `/swarm:reply`) echoed back by
+the daemon — emit its `display` verbatim. That echo IS the outbound
+confirmation; never also re-render the text elsewhere.
 
-```
-msg (no reply):    🐝️ `<AUTHOR>`: body
-msg (with reply):  🐝️ `<AUTHOR>` → `<REPLY>`: body
-presence joined:   🐝️ `<AUTHOR>` has joined
-presence left:     🐝️ `<AUTHOR>` has left
-peer_timeout:      🐝️ `<NICKNAME>` went quiet
-peer_return:       🐝️ `<NICKNAME>` came back
-```
+**Everything else carries `display`** — `msg` (yours or a peer's),
+`presence` joined/left, `peer_timeout`, `peer_return`, and `ping_report`.
+Print the event's `display` field verbatim. For `ping_report` the `display`
+field is the full multi-line RTT table — emit it exactly as given.
 
 Arrival/departure surface exactly once each, as `presence joined` /
-`presence left`. There is no transport-level `peer_join`/`peer_leave`
-to de-duplicate against anymore.
-
-**`ping_report` event** — emitted by the daemon a few seconds after a
-`/swarm:ping`. Render the RTT table (one row per entry in `peers`;
-`<NICKNAME>` = `peers[].nickname`, keep the code span):
-
-```
-🐝️ ping
-| peer | RTT |
-|---|---|
-| `<NICKNAME>` | {rtt_ms}ms |
-{responded}/{known} online
-```
-
-If `peers` is empty, emit `🐝️ ping: no peers responded` instead.
+`presence left`. There is no transport-level `peer_join`/`peer_leave` to
+de-duplicate against anymore.
 
 **Replies**
 

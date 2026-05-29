@@ -6,6 +6,7 @@
 //! parent module renders through these so the captured-event and
 //! stdout forms stay byte-identical.
 
+use std::fmt::Write as _;
 use std::io::Write;
 
 use serde::Serialize;
@@ -30,9 +31,14 @@ pub(super) enum SimpleEvent<'a> {
     PeerTimeout {
         nickname: &'a str,
         last_seen_secs_ago: u64,
+        /// Pre-formatted, markdown-safe line the `/swarm` skill echoes
+        /// verbatim. See [`peer_timeout_display`].
+        display: String,
     },
     PeerReturn {
         nickname: &'a str,
+        /// Pre-formatted, markdown-safe line (see [`peer_return_display`]).
+        display: String,
     },
     Fork {
         nickname: &'a str,
@@ -49,6 +55,8 @@ pub(super) enum SimpleEvent<'a> {
         peers: Vec<PingPeer>,
         responded: usize,
         known: usize,
+        /// Pre-formatted, markdown-safe RTT table (see [`ping_report_display`]).
+        display: String,
     },
 }
 
@@ -84,6 +92,10 @@ struct MsgLine<'a> {
     pub header: MessageHeader<'a>,
     pub body: &'a str,
     pub reply: Option<&'a str>,
+    /// Pre-formatted, markdown-safe line the `/swarm` skill echoes
+    /// verbatim — the single source of truth for what the user sees.
+    /// See [`msg_display`].
+    pub display: String,
     #[serde(rename = "self")]
     pub is_self: bool,
 }
@@ -93,6 +105,8 @@ struct PresenceLine<'a> {
     #[serde(flatten)]
     pub header: MessageHeader<'a>,
     pub subtype: PresenceSubtype,
+    /// Pre-formatted, markdown-safe line (see [`presence_display`]).
+    pub display: String,
 }
 
 fn message_header<'a>(msg: &'a Message, ty: &'static str) -> MessageHeader<'a> {
@@ -105,6 +119,51 @@ fn message_header<'a>(msg: &'a Message, ty: &'static str) -> MessageHeader<'a> {
         pubkey: (!msg.pubkey.is_empty()).then_some(msg.pubkey.as_str()),
         ts: msg.timestamp,
     }
+}
+
+/// The pre-formatted, markdown-safe `display` line for a `msg` event —
+/// the single source of truth the `/swarm` skill echoes verbatim, so the
+/// model never composes or re-types a body. Nicks are wrapped in literal
+/// backticks: the skill renders into markdown, where a bare `<nick>` is
+/// stripped as an HTML tag, and the code span prevents that. The body is
+/// embedded **raw** (never trimmed, escaped, or re-spaced). This is
+/// JSON-only — the Human/terminal sink renders separately (ANSI, no
+/// backticks).
+fn msg_display(author: &str, body: &str, reply: Option<&str>) -> String {
+    match reply {
+        Some(target) => format!("🐝️ `<{author}>` → `<{target}>`: {body}"),
+        None => format!("🐝️ `<{author}>`: {body}"),
+    }
+}
+
+/// `display` line for a presence event: `` 🐝️ `<author>` has joined `` /
+/// `… has left`. See [`msg_display`] for the backtick rationale.
+fn presence_display(author: &str, subtype: PresenceSubtype) -> String {
+    format!("🐝️ `<{author}>` has {subtype}")
+}
+
+/// `display` line for a `peer_timeout` event.
+pub(super) fn peer_timeout_display(nickname: &str) -> String {
+    format!("🐝️ `<{nickname}>` went quiet")
+}
+
+/// `display` line for a `peer_return` event.
+pub(super) fn peer_return_display(nickname: &str) -> String {
+    format!("🐝️ `<{nickname}>` came back")
+}
+
+/// `display` block for a `ping_report` event: a markdown RTT table (one
+/// row per responding peer), or a single line when no peer answered.
+pub(super) fn ping_report_display(peers: &[PingPeer], known: usize) -> String {
+    if peers.is_empty() {
+        return "🐝️ ping: no peers responded".to_owned();
+    }
+    let mut out = String::from("🐝️ ping\n| peer | RTT |\n|---|---|\n");
+    for peer in peers {
+        let _ = writeln!(out, "| `<{}>` | {}ms |", peer.nickname, peer.rtt_ms);
+    }
+    let _ = write!(out, "{}/{known} online", peers.len());
+    out
 }
 
 /// Write a line to stdout and flush immediately.
@@ -132,6 +191,7 @@ pub(super) fn format_presence_json(msg: &Message, subtype: PresenceSubtype) -> S
     serde_json::to_string(&PresenceLine {
         header: message_header(msg, "presence"),
         subtype,
+        display: presence_display(msg.author.as_str(), subtype),
     })
     .expect("presence event serialization should never fail")
 }
@@ -144,6 +204,11 @@ pub(super) fn format_msg_json(msg: &Message, is_self: bool) -> String {
             header: message_header(msg, "msg"),
             body: msg.body.as_str(),
             reply: reply.as_ref().map(Nickname::as_str),
+            display: msg_display(
+                msg.author.as_str(),
+                msg.body.as_str(),
+                reply.as_ref().map(Nickname::as_str),
+            ),
             is_self,
         })
         .expect("message event serialization should never fail"),
@@ -193,9 +258,11 @@ pub fn event_json(event: &OutputEvent) -> Option<String> {
         } => serde_json::to_string(&SimpleEvent::PeerTimeout {
             nickname: nickname.as_str(),
             last_seen_secs_ago: *last_seen_secs_ago,
+            display: peer_timeout_display(nickname.as_str()),
         }),
         OutputEvent::PeerReturn { nickname } => serde_json::to_string(&SimpleEvent::PeerReturn {
             nickname: nickname.as_str(),
+            display: peer_return_display(nickname.as_str()),
         }),
         OutputEvent::Fork {
             nickname,
@@ -214,6 +281,7 @@ pub fn event_json(event: &OutputEvent) -> Option<String> {
         OutputEvent::PingReport { peers, known } => {
             serde_json::to_string(&SimpleEvent::PingReport {
                 responded: peers.len(),
+                display: ping_report_display(peers, *known),
                 peers: peers.clone(),
                 known: *known,
             })

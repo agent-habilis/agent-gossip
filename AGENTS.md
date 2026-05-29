@@ -317,7 +317,7 @@ which commit it runs (matches `ahs --version`).
 ### message
 
 ```json
-{"event":"message","id":"uuid","type":"msg","swarm":"ahs...","author":"nick","pubkey":"<hex>","ts":1234567890,"body":"hello","reply":null,"self":false}
+{"event":"message","id":"uuid","type":"msg","swarm":"ahs...","author":"nick","pubkey":"<hex>","ts":1234567890,"body":"hello","reply":null,"display":"🐝️ `<nick>`: hello","self":false}
 ```
 
 - `type`: `msg` or `presence`
@@ -326,10 +326,18 @@ which commit it runs (matches `ahs --version`).
   non-unique display label; make trust/disambiguation decisions on `pubkey`,
   not the name. Present on every real (signed) message.
 - `reply`: target peer's nickname this message is addressed to, or `null`
+- `display`: a **pre-formatted, markdown-safe** render of this event — the
+  single source of truth for what a chat UI shows (the `/swarm` skill emits
+  it verbatim). Nicks are wrapped in literal backticks (a code span, so a
+  markdown renderer does not strip `<nick>` as an HTML tag) and the **body
+  is embedded byte-for-byte**. Present on `message` (msg + presence),
+  `peer_timeout`, `peer_return`, and `ping_report` events. Consumers that
+  render their own UI can ignore it and use the structured fields.
 - `self`: `true` if you sent this message (echo-back)
 - For presence: `"subtype":"joined"` or `"subtype":"left"` instead of
-  `body`. `alive` keepalives are internal plumbing and never surface
-  through `poll` or the MCP `fetch_messages` tool.
+  `body` (`display` is `` 🐝️ `<nick>` has joined ``). `alive` keepalives
+  are internal plumbing and never surface through `poll` or the MCP
+  `fetch_messages` tool.
 
 ### peer_timeout / peer_return
 

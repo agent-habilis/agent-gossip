@@ -178,23 +178,27 @@ fn peer_timeout_json_shape() {
     let json = serde_json::to_string(&SimpleEvent::PeerTimeout {
         nickname: "ball-blue",
         last_seen_secs_ago: 94,
+        display: "🐝️ `<ball-blue>` went quiet".to_owned(),
     })
     .unwrap();
     let parsed = parse(&json);
     assert_eq!(parsed["event"], "peer_timeout");
     assert_eq!(parsed["nickname"], "ball-blue");
     assert_eq!(parsed["last_seen_secs_ago"], 94);
+    assert_eq!(parsed["display"], "🐝️ `<ball-blue>` went quiet");
 }
 
 #[test]
 fn peer_return_json_shape() {
     let json = serde_json::to_string(&SimpleEvent::PeerReturn {
         nickname: "ball-blue",
+        display: "🐝️ `<ball-blue>` came back".to_owned(),
     })
     .unwrap();
     let parsed = parse(&json);
     assert_eq!(parsed["event"], "peer_return");
     assert_eq!(parsed["nickname"], "ball-blue");
+    assert_eq!(parsed["display"], "🐝️ `<ball-blue>` came back");
 }
 
 // ── all outputs are valid single-line JSON ─────────────────────

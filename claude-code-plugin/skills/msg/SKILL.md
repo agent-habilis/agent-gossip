@@ -41,13 +41,12 @@ verbatim):
 ahs msg --swarm "$SWARM" --nickname "$NICKNAME" --text "$TEXT"
 ```
 
-The Monitor started by `/swarm:create` or `/swarm:join` will surface
-the self-echo and any replies as event notifications — no polling
-needed.
-
 ## Output
 
-Print:
-```
-🐝️ `<$NICKNAME>`: $TEXT
-```
+Produce **no output of your own**. Do not re-type or re-render `$TEXT`.
+
+The Monitor started by `/swarm:create` or `/swarm:join` surfaces the
+daemon's self-echo of this message as a `msg` event with `"self":true`,
+carrying the authoritative pre-built `display` line. That echo is the
+verbatim confirmation — emit its `display` field per the create/join
+event handler, and nothing else here.
