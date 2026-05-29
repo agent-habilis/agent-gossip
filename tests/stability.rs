@@ -1,0 +1,197 @@
+//! Local-stability hardening: a healthy quiet swarm should *stay* healthy.
+//!
+//! The reliability suite in `gossip_network.rs` covers recovery from
+//! disruption (SIGKILL beacon migration, SIGSTOP sleep/wake heal,
+//! anti-entropy backfill). This file covers the **negative-space**
+//! assertions — that *nothing goes wrong* in a quiet, healthy swarm —
+//! which is exactly the class of regression a future iroh / gossip
+//! change could silently introduce.
+//!
+//! All in-process via the `InProcNode` harness (real iroh mesh, sub-second
+//! to ~30s each, deterministic). Total CI cost ~70s.
+
+mod common;
+
+use std::time::Duration;
+
+use agent_habilis_swarm::OutputEvent;
+use common::InProcNode;
+
+/// How long the steady-state test holds the swarm quiet before asserting
+/// nothing spurious happened. Long enough to outlive a fresh-mesh
+/// settling burst; short enough to keep CI fast.
+const STEADY_HOLD: Duration = Duration::from_secs(30);
+
+/// Budget for a broadcast to fan out to every member of a small mesh.
+const FANOUT_WAIT: Duration = Duration::from_secs(10);
+
+/// Budget for a node's view of the roster to converge (see N−1 `joined`
+/// presence events). Generous so a slow CI box doesn't flake.
+const ROSTER_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// **Steady-state hold (the most valuable test).** A 3-node swarm meshes,
+/// then sits idle for 30s. Asserts no spurious `peer_timeout` or
+/// `presence:left` surfaced anywhere (all nodes were alive throughout)
+/// **and** a fresh broadcast at the end still fans out to every member —
+/// the latter is the durable proof that the gossip overlay survived the
+/// quiet period without silently degrading.
+#[tokio::test]
+async fn mesh_stays_meshed_no_spurious_flaps() {
+    let mut creator = InProcNode::create("stab-steady").await;
+    let swarm = creator.swarm.clone();
+    let mut joiner_a = InProcNode::join(&swarm, "stab-a").await;
+    let mut joiner_b = InProcNode::join(&swarm, "stab-b").await;
+
+    // Each node converges on the full roster.
+    assert!(
+        creator.wait_presence_count(true, 2, ROSTER_TIMEOUT).await,
+        "creator never surfaced both joiners"
+    );
+    assert!(
+        joiner_a.wait_presence_count(true, 2, ROSTER_TIMEOUT).await,
+        "joiner a never saw both other peers"
+    );
+    assert!(
+        joiner_b.wait_presence_count(true, 2, ROSTER_TIMEOUT).await,
+        "joiner b never saw both other peers"
+    );
+
+    tokio::time::sleep(STEADY_HOLD).await;
+
+    // Negative space: nothing flapped while every node was alive.
+    for (label, node) in [
+        ("creator", &mut creator),
+        ("stab-a", &mut joiner_a),
+        ("stab-b", &mut joiner_b),
+    ] {
+        let timeouts = node
+            .events()
+            .iter()
+            .filter(|event| matches!(event, OutputEvent::PeerTimeout { .. }))
+            .count();
+        let lefts = node.presence_count(false);
+        assert_eq!(
+            timeouts, 0,
+            "{label} surfaced a spurious peer_timeout during the quiet hold (all peers were alive)"
+        );
+        assert_eq!(
+            lefts, 0,
+            "{label} surfaced a spurious presence:left during the quiet hold (no peer departed)"
+        );
+    }
+
+    // The overlay must still deliver after the hold — durable proof the
+    // mesh did not silently degrade.
+    let _ = creator.send("steady-probe").await;
+    assert!(
+        joiner_a.wait_body("steady-probe", FANOUT_WAIT).await,
+        "stab-a never received the late broadcast — mesh degraded silently"
+    );
+    assert!(
+        joiner_b.wait_body("steady-probe", FANOUT_WAIT).await,
+        "stab-b never received the late broadcast — mesh degraded silently"
+    );
+}
+
+/// **Concurrent joins.** Five joiners launched simultaneously must all
+/// bootstrap, mesh, and receive a creator broadcast. Catches loopback
+/// rendezvous-ladder and `BEACON_COHOST_GRACE` contention regressions.
+#[tokio::test]
+async fn concurrent_joins_all_mesh_and_receive() {
+    let mut creator = InProcNode::create("stab-concurrent").await;
+    let swarm = creator.swarm.clone();
+    // tokio::join! polls these 5 join futures cooperatively in one task,
+    // so they race for the rendezvous together rather than each waiting
+    // for the previous to finish.
+    let (n1, n2, n3, n4, n5) = tokio::join!(
+        InProcNode::join(&swarm, "cn1"),
+        InProcNode::join(&swarm, "cn2"),
+        InProcNode::join(&swarm, "cn3"),
+        InProcNode::join(&swarm, "cn4"),
+        InProcNode::join(&swarm, "cn5"),
+    );
+    let mut joiners = [n1, n2, n3, n4, n5];
+
+    assert!(
+        creator.wait_presence_count(true, 5, ROSTER_TIMEOUT).await,
+        "creator did not surface all 5 concurrent joiners as `joined`"
+    );
+
+    let _ = creator.send("concurrent-probe").await;
+    for joiner in &mut joiners {
+        let nick = joiner.nickname.clone();
+        assert!(
+            joiner.wait_body("concurrent-probe", FANOUT_WAIT).await,
+            "joiner {nick} never received the broadcast"
+        );
+    }
+}
+
+/// **Fan-out completeness from every origin.** In a 4-node swarm, *every*
+/// node broadcasts a unique body and *every other* node receives all the
+/// others' broadcasts. A single-origin test would miss asymmetric overlay
+/// defects (e.g. only the creator can reach all peers).
+#[tokio::test]
+async fn fanout_complete_from_each_origin() {
+    let mut creator = InProcNode::create("stab-fanout").await;
+    let swarm = creator.swarm.clone();
+    let mut j1 = InProcNode::join(&swarm, "fo-j1").await;
+    let mut j2 = InProcNode::join(&swarm, "fo-j2").await;
+    let mut j3 = InProcNode::join(&swarm, "fo-j3").await;
+
+    for (label, node) in [
+        ("creator", &mut creator),
+        ("fo-j1", &mut j1),
+        ("fo-j2", &mut j2),
+        ("fo-j3", &mut j3),
+    ] {
+        assert!(
+            node.wait_presence_count(true, 3, ROSTER_TIMEOUT).await,
+            "{label} did not see all 3 other peers as `joined`"
+        );
+    }
+
+    let _ = creator.send("from-creator").await;
+    let _ = j1.send("from-j1").await;
+    let _ = j2.send("from-j2").await;
+    let _ = j3.send("from-j3").await;
+
+    // Each node receives every body authored by another node.
+    for (label, node, expect) in [
+        ("creator", &mut creator, ["from-j1", "from-j2", "from-j3"]),
+        ("fo-j1", &mut j1, ["from-creator", "from-j2", "from-j3"]),
+        ("fo-j2", &mut j2, ["from-creator", "from-j1", "from-j3"]),
+        ("fo-j3", &mut j3, ["from-creator", "from-j1", "from-j2"]),
+    ] {
+        for body in expect {
+            assert!(
+                node.wait_body(body, FANOUT_WAIT).await,
+                "{label} did not receive `{body}` from its origin"
+            );
+        }
+    }
+}
+
+/// **Roster convergence.** Every node's view of the participant set
+/// reaches the full N within a budget — each node surfaces N−1 `joined`
+/// presence events for the other peers.
+#[tokio::test]
+async fn roster_converges_to_4() {
+    let mut creator = InProcNode::create("stab-roster").await;
+    let swarm = creator.swarm.clone();
+    let mut j1 = InProcNode::join(&swarm, "ro-j1").await;
+    let mut j2 = InProcNode::join(&swarm, "ro-j2").await;
+    let mut j3 = InProcNode::join(&swarm, "ro-j3").await;
+
+    for (label, node) in [
+        ("creator", &mut creator),
+        ("ro-j1", &mut j1),
+        ("ro-j2", &mut j2),
+        ("ro-j3", &mut j3),
+    ] {
+        assert!(
+            node.wait_presence_count(true, 3, ROSTER_TIMEOUT).await,
+            "{label} did not converge to 3 peer `joined` presences within {ROSTER_TIMEOUT:?}"
+        );
+    }
+}
