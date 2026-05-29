@@ -1,13 +1,15 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import {
+  type CreateOptions,
   createSwarm,
   getSwarmStatus,
   joinSwarm,
   leaveSwarm,
   pingPeers,
   sendSwarmMessage,
+  validateCreateOptions,
 } from "./core";
-import { isValidBody, isValidSwarmName, requireAgentSwarm } from "./helpers";
+import { isValidBody, requireAgentSwarm } from "./helpers";
 import { state } from "./state";
 
 export function registerCommands(pi: ExtensionAPI): void {
@@ -37,25 +39,78 @@ export function registerCommands(pi: ExtensionAPI): void {
   });
 }
 
+// Parse `/swarm-create [name] [flags]`. The first non-flag token is the
+// optional swarm name; recognized flags mirror the `ahs create` CLI.
+function parseCreateArgs(args: string): { options: CreateOptions; error?: string } {
+  const options: CreateOptions = {};
+  const tokens = args.trim().split(/\s+/u).filter(Boolean);
+
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    const [flag, inlineValue] = token.includes("=")
+      ? [token.slice(0, token.indexOf("=")), token.slice(token.indexOf("=") + 1)]
+      : [token, undefined];
+
+    switch (flag) {
+      case "--public":
+        options.network = "public";
+        break;
+      case "--mdns":
+        options.mdns = true;
+        break;
+      case "--dht":
+        options.dht = true;
+        break;
+      case "--relay":
+        options.relay = inlineValue ?? "";
+        break;
+      case "--advertise":
+        options.advertise = true;
+        if (inlineValue) options.directory = inlineValue;
+        break;
+      case "--rate-limit": {
+        let raw = inlineValue;
+        if (raw === undefined) {
+          index += 1;
+          raw = tokens[index];
+        }
+        const parsed = Number(raw);
+        if (!Number.isInteger(parsed) || parsed < 0) {
+          return { options, error: `invalid --rate-limit value: ${raw ?? "(missing)"}` };
+        }
+        options.rateLimit = parsed;
+        break;
+      }
+      default:
+        if (flag.startsWith("--")) return { options, error: `unknown flag: ${flag}` };
+        if (options.name !== undefined) return { options, error: `unexpected argument: ${token}` };
+        options.name = token;
+    }
+  }
+
+  return { options };
+}
+
 async function cmdCreate(args: string, ctx: ExtensionCommandContext): Promise<void> {
   state.ctx = ctx;
   if (!requireAgentSwarm(ctx)) return;
 
-  const name = args.trim();
-  if (!name) {
+  const { options, error } = parseCreateArgs(args);
+  if (error) {
     ctx.ui.notify(
-      "🐝 usage: /swarm-create {name} (1-32 chars, no whitespace or / \\ < > #)",
+      `🐝 ${error}\nusage: /swarm-create [name] [--public] [--mdns] [--dht] [--relay[=urls]] [--rate-limit N] [--advertise[=dir]]`,
       "error",
     );
     return;
   }
-  if (!isValidSwarmName(name)) {
-    ctx.ui.notify("🐝 invalid name — must be 1-32 chars, no whitespace or / \\ < > #", "error");
+  const invalid = validateCreateOptions(options);
+  if (invalid) {
+    ctx.ui.notify(`🐝 ${invalid}`, "error");
     return;
   }
 
-  ctx.ui.notify(`🐝 creating #${name}...`, "info");
-  const result = await createSwarm(name);
+  ctx.ui.notify(options.name ? `🐝 creating #${options.name}...` : "🐝 creating swarm...", "info");
+  const result = await createSwarm(options);
   ctx.ui.notify(`🐝 created #${result.name}\n/swarm-join ${result.swarm}`, "info");
 }
 

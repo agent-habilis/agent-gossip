@@ -1,14 +1,16 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import {
+  type CreateOptions,
   createSwarm,
   getSwarmStatus,
   joinSwarm,
   leaveSwarm,
   pingPeers,
   sendSwarmMessage,
+  validateCreateOptions,
 } from "./core";
-import { isValidSwarmName, requireAgentSwarm } from "./helpers";
+import { requireAgentSwarm } from "./helpers";
 import { state } from "./state";
 
 function toolError(text: string) {
@@ -30,31 +32,61 @@ export function registerTools(pi: ExtensionAPI): void {
       "Do not reformat or add extra prose after the tool result. The tool output is already the complete response.",
     ],
     parameters: Type.Object({
-      name: Type.String({
-        description:
-          "Human-readable swarm name. 1-32 UTF-8 chars (any script/emoji), excluding control characters, whitespace, and any of / \\ < > #. Bound cryptographically into the swarm identity.",
-      }),
+      name: Type.Optional(
+        Type.String({
+          description:
+            "Human-readable swarm name. 1-32 UTF-8 chars (any script/emoji), excluding control characters, whitespace, and any of / \\ < > #. Bound cryptographically into the swarm identity. Omit for a random word-word name.",
+        }),
+      ),
       network: Type.Optional(
         Type.String({
           description:
-            'Network mode: "public" for cross-machine networking, "private" for localhost only (default: private)',
+            'Network mode: "public" for the all-on lookup preset (mDNS + DHT + default relay), "private" for localhost only (default: private). Naming mdns/dht/relay overrides the preset.',
         }),
       ),
+      mdns: Type.Optional(Type.Boolean({ description: "Enable the LAN mDNS lookup." })),
+      dht: Type.Optional(Type.Boolean({ description: "Enable the mainline-DHT lookup." })),
       relay: Type.Optional(
         Type.String({
-          description: "Custom relay URL for public network mode",
+          description:
+            'Relay lookup: omit for off, "" for the default n0 prod ladder, or a comma-separated a,b,c of relay URLs.',
         }),
+      ),
+      rate_limit: Type.Optional(
+        Type.Number({
+          description:
+            "Per-author messages-per-minute cap baked into the swarm id (every joiner inherits it). 0 disables. Default 60.",
+        }),
+      ),
+      advertise: Type.Optional(
+        Type.Boolean({
+          description:
+            'List this swarm in a directory so others find it with discover. Requires network "public"; makes the swarm open.',
+        }),
+      ),
+      directory: Type.Optional(
+        Type.String({ description: "Directory to advertise into. Omit for the global directory." }),
       ),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx: ExtensionContext) {
       if (!requireAgentSwarm(ctx)) {
         return toolError("ahs CLI not found on PATH");
       }
-      if (!isValidSwarmName(params.name)) {
-        return toolError("Invalid name — must be 1-32 chars, no whitespace or / \\ < > #");
+      const options: CreateOptions = {
+        name: params.name,
+        network: params.network === "public" ? "public" : "private",
+        mdns: params.mdns,
+        dht: params.dht,
+        relay: params.relay,
+        rateLimit: params.rate_limit,
+        advertise: params.advertise,
+        directory: params.directory,
+      };
+      const invalid = validateCreateOptions(options);
+      if (invalid) {
+        return toolError(invalid);
       }
-      const network = params.network === "public" ? "public" : "private";
-      const result = await createSwarm(params.name, network, params.relay);
+      const result = await createSwarm(options);
       return {
         content: [{ type: "text", text: "ok" }],
         details: { swarm: result.swarm, name: result.name, nickname: result.nickname },

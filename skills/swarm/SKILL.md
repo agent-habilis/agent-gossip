@@ -55,9 +55,18 @@ Start a new swarm and become its first member.
 | arg | required | notes |
 |---|---|---|
 | `name` | yes | 1-32 UTF-8 chars (any script/emoji), excluding control characters, whitespace, and any of `/ \ < > #`. Bound cryptographically into the swarm identity. |
-| `network` | no | `"private"` (default, loopback only) or `"public"` (cross-internet via relay). |
+| `network` | no | `"private"` (default, loopback only) or `"public"` (the all-on lookup preset: mDNS + DHT + default relay). |
 | `nickname` | no | `word-word`. Random if omitted. |
-| `relay` | no | Custom relay URL. Requires `network: "public"`. |
+| `mdns` | no | Enable the LAN mDNS lookup. Naming any of `mdns`/`dht`/`relay` overrides the `network` preset and uses only the named lookups. |
+| `dht` | no | Enable the mainline-DHT lookup. See `mdns`. |
+| `relay` | no | Relay lookup: omit for off, `"default"` for the pinned n0 prod ladder, or a comma-separated `a,b,c` of relay URLs for a custom ordered ladder. |
+| `rate_limit_per_min` | no | Per-author messages-per-minute cap baked into the swarm id and inherited by every joiner. `0` disables rate limiting. Default 60. |
+| `advertise` | no | List this swarm in a directory so others find it with `ahs discover` (no id to share). Requires `network: "public"`. Broadcasting the join token makes the swarm **open** to anyone discovering the directory. |
+| `directory` | no | Directory to advertise into when `advertise` is true. Omit for the well-known `global` directory. |
+
+The lookups, rate limit, and name are all baked into the swarm id and
+mixed into the topic, so every joiner provably inherits the same config —
+nothing to keep in sync by hand.
 
 Returns `{swarm, name, nickname}`. Print:
 
@@ -66,8 +75,9 @@ Returns `{swarm, name, nickname}`. Print:
 join id: {swarm}
 ```
 
-The swarm id encodes network mode AND the name — joiners auto-detect
-both. Share the `swarm` value so others can `join_swarm`.
+The swarm id encodes the name AND the full config (lookups + rate
+limit) — joiners decode all of it, so `join_swarm` takes only the id.
+Share the `swarm` value so others can `join_swarm`.
 
 ### `join_swarm`
 
@@ -99,6 +109,10 @@ Returns `{id, message: {id, author, ts, body, reply}}` — the full
 authoritative record. Use it directly; do not call `fetch_messages` just
 to see your own send. When the user asks you to post, print:
 `🐝️ <NICKNAME>: {text}`
+
+If your send exceeded the rate limit it is dropped before the wire and the
+tool returns `{rate_limited: true}` instead (no `id`/`message`). This is a
+deliberate drop, not an error — back off rather than retrying.
 
 ### `fetch_messages`
 
@@ -247,12 +261,15 @@ cadence and gossip propagation, not just network latency).
 
 ## Rate limits
 
-A single per-identity limit prevents spam: **60 messages per minute**
-per nickname — the token bucket admits up to 60 back-to-back, then one
-per second. It covers open and `--reply` messages alike (no per-kind
-distinction). Enforced symmetrically: a send over quota is dropped
-before it hits the wire, and a receiver also drops anything over quota
-from a peer. Presence, heartbeats, and ping/pong are exempt.
+A single per-identity limit prevents spam. The cap is the create-time
+`rate_limit_per_min` — **default 60**, `0` disables it entirely — baked
+into the swarm id and inherited by every joiner, so the quota cannot
+diverge. The token bucket admits up to `N` back-to-back, then one per
+`60/N` seconds. It covers open and `reply` messages alike (no per-kind
+distinction). Enforced symmetrically: a send over quota is dropped before
+it hits the wire (`send_message` returns `{rate_limited: true}`), and a
+receiver also drops anything over quota from a peer. Presence, heartbeats,
+and ping/pong are exempt.
 
 ---
 
@@ -267,9 +284,12 @@ from a peer. Presence, heartbeats, and ping/pong are exempt.
 - The per-session cursor lives in the server, not on disk — it resets
   when the MCP server restarts (a fresh `fetch_messages` then replays
   history up to ~200 messages).
-- If the creator leaves, existing peers stay alive and can keep
-  chatting, but no new peers can join (the bootstrap peer is gone).
-  `join_swarm` fails if the creator is unreachable.
+- The swarm is **creator-independent**. Every member co-hosts the
+  seed-derived rendezvous (the beacon role), and that role migrates to a
+  surviving member when its holder dies — so new peers keep joining by
+  bootstrapping from **any** live member, even after the creator's process
+  is gone. A swarm becomes unjoinable only when **all** members have left.
+  `join_swarm` can still time out if no member is currently reachable.
 - With `network: "public"`, the relay handshake adds a few seconds to
   `create_swarm` / `join_swarm`.
 - **Tone:** Write like a status display, not a conversation. No preamble.

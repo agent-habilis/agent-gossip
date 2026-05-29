@@ -22,7 +22,8 @@ pi version --extensions | grep swarm
 From inside pi, test each slash command:
 
 ```
-/swarm-create cool-team    # create a swarm (name: 1-32 chars, no whitespace or / \ < > #)
+/swarm-create              # create a swarm with a random name
+/swarm-create cool-team --public --rate-limit 30   # named, public, custom rate limit
 /swarm-join {ahs...}       # join an existing swarm
 /swarm-msg hello           # send a message
 /swarm-monitor             # show status
