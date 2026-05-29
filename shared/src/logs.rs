@@ -1,6 +1,7 @@
-//! Per-member log path resolution. Lives in the dependency-free shared
-//! crate so the daemon (which writes the file) and `cargo task logs`
-//! (which prints the dir) agree on one source of truth.
+//! Per-member log path resolution and the body-redaction policy. Lives in
+//! the dependency-free shared crate so the daemon (which writes the file)
+//! and `cargo task logs` (which prints the dir) agree on one source of
+//! truth.
 
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -8,17 +9,21 @@ use std::sync::OnceLock;
 use crate::consts::{LOG_FILE_MAX_BYTES, LOG_SUBPATH};
 use crate::swarm_prefix;
 
-/// Log-path config, installed **once** at startup from the `--log-dir` /
-/// `--log-max-bytes` flags. The shared crate has no CLI, so the binary parses
-/// the flags and calls [`configure`]; if it never does (e.g. `cargo task
-/// logs`, or a path that doesn't log to files) the defaults apply. Replaces
-/// the former `AHS_LOG_DIR` / `AHS_LOG_MAX_BYTES` env reads.
+/// Log config, installed **once** at startup from the `--log-dir` /
+/// `--log-max-bytes` / `--log-raw` flags. The shared crate has no CLI, so the
+/// binary parses the flags and calls [`configure`]; if it never does (e.g.
+/// `cargo task logs`, or a path that doesn't log to files) the defaults
+/// apply. Replaces the former `AHS_LOG_DIR` / `AHS_LOG_MAX_BYTES` env reads.
 #[derive(Clone, Debug, Default)]
 pub struct LogConfig {
     /// `--log-dir` override; `None` ⇒ [`LOG_SUBPATH`] under the OS temp dir.
     pub dir: Option<PathBuf>,
     /// `--log-max-bytes` override; `None` ⇒ [`LOG_FILE_MAX_BYTES`].
     pub max_bytes: Option<u64>,
+    /// `--log-raw`: log raw message bodies. Default `false` — bodies are
+    /// redacted to length + content-hash so log files are safe to share. Opt
+    /// in only for a dev's own local debugging.
+    pub raw: bool,
 }
 
 static LOG_CONFIG: OnceLock<LogConfig> = OnceLock::new();
@@ -60,6 +65,15 @@ pub fn log_file_path(swarm_id: &str, nickname: &str) -> PathBuf {
 #[must_use]
 pub fn log_max_bytes() -> u64 {
     config().max_bytes.unwrap_or(LOG_FILE_MAX_BYTES)
+}
+
+/// Whether message bodies are logged raw. Default `false`: bodies are
+/// redacted to length + a short content-hash prefix so log files stay safe
+/// to share with developers. `--log-raw` opts a local debugging run back
+/// into raw bodies. See [`LogConfig::raw`].
+#[must_use]
+pub fn log_raw() -> bool {
+    config().raw
 }
 
 #[cfg(test)]

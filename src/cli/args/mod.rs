@@ -46,6 +46,13 @@ pub(crate) struct Cli {
     #[arg(long, global = true, hide = true)]
     pub log_max_bytes: Option<u64>,
 
+    /// Log raw message bodies (default: redacted to length + content-hash so
+    /// log files are safe to share). Hidden opt-in for a dev's own local
+    /// debugging — never set on a user's machine if the logs may be sent
+    /// upstream.
+    #[arg(long, global = true, hide = true)]
+    pub log_raw: bool,
+
     #[command(subcommand)]
     pub command: Commands,
 }

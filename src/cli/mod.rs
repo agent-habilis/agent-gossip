@@ -51,6 +51,7 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
     ahs_shared::logs::configure(ahs_shared::logs::LogConfig {
         dir: cli.log_dir,
         max_bytes: cli.log_max_bytes,
+        raw: cli.log_raw,
     });
     // Source the process tuning from the (hidden) flags before any handler
     // resolution reads it — e.g. `create --advertise` checks the

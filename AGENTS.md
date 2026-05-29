@@ -662,6 +662,18 @@ joined/left at `info`; `alive`/`PeerInfo`/`Digest`/`ping`/`pong`
 plumbing at `trace`
 (`RUST_LOG=...,agent_habilis_swarm::messages=trace` for the firehose).
 
+**Message bodies are redacted by default** so users can safely send their
+log file upstream. The `body=` field on a `msg` line is replaced with
+`<redacted NB hashprefix>` — byte length plus the first 8 hex chars of
+the message's content hash. The hash is identical on every node for the
+same message, so a dev can still grep one prefix to follow that message
+across several members' logs. Authorship metadata (`dir`/`author`/`ts`/
+`reply`/`presence`) is not redacted — it is debug, not the body. Pass
+the hidden `--log-raw` flag to log raw bodies for a dev's own local
+debugging; never set it on a user machine whose logs may be shared. This
+affects only the file sink; the `--output json` stdout stream is the
+functional agent API and always carries raw bodies.
+
 Both defaults pin `noq_proto::connection=off` (benign superseded-path
 PTO churn from iroh's multipath QUIC fork; re-enable with
 `RUST_LOG=...,noq_proto::connection=error`). Release additionally pins
