@@ -4,7 +4,14 @@ use crate::TaskOutcome;
 
 pub(crate) fn run(sh: &Shell) -> TaskOutcome {
     eprintln!("=> Installing ahs...");
-    cmd!(sh, "cargo install --path .").quiet().run()?;
+    // `--force` is required: the crate version rarely changes between builds
+    // (it stays `0.2.0` across many commits), and without `--force`
+    // `cargo install --path .` treats "0.2.0 already installed" as up-to-date
+    // and **skips the rebuild entirely**, silently leaving the previously
+    // installed binary in place. That shipped a stale `ahs` to fleet hosts
+    // (the binary's git-hash stamp lagged the checked-out commit). `--force`
+    // always rebuilds + reinstalls the current tree.
+    cmd!(sh, "cargo install --path . --force").quiet().run()?;
     eprintln!("=> Installed to ~/.cargo/bin/ahs");
     Ok(())
 }
