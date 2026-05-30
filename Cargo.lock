@@ -2028,8 +2028,7 @@ dependencies = [
 [[package]]
 name = "iroh-gossip"
 version = "0.99.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "48eaefd27751bc5dabda1f1b318c38a8b624fa137a1aaf429dfdd4d66b452ba9"
+source = "git+https://github.com/agent-habilis/iroh-gossip?branch=fix%2Fsuperseded-conn-leak#f7ddfcc0c32d57683fe03fcffedc8c29b025de0c"
 dependencies = [
  "blake3",
  "bytes",
@@ -2678,8 +2677,7 @@ checksum = "38bf9645c8b145698bb0b18a4637dcacbc421ea49bef2317e4fd8065a387cf21"
 [[package]]
 name = "noq"
 version = "1.0.0-rc.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "22739e0831e40f5ab7d6ac5317ed80bfe5fb3f44be57d23fa2eea8bff83fb303"
+source = "git+https://github.com/agent-habilis/noq?branch=fix%2Fabandoned-path-leak#1a9d2b0367578f7584c8376c398a4617c171efa4"
 dependencies = [
  "bytes",
  "cfg_aliases",
@@ -2700,8 +2698,7 @@ dependencies = [
 [[package]]
 name = "noq-proto"
 version = "1.0.0-rc.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7cee32450cf726b223ac4154003c93cb52fbde159ab1240990e88945bf3ae35e"
+source = "git+https://github.com/agent-habilis/noq?branch=fix%2Fabandoned-path-leak#1a9d2b0367578f7584c8376c398a4617c171efa4"
 dependencies = [
  "aes-gcm",
  "bytes",
@@ -2727,8 +2724,7 @@ dependencies = [
 [[package]]
 name = "noq-udp"
 version = "1.0.0-rc.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "78633d1fe1bde91d12bcabb230ac9edb890857414c6d44f3212e0d309525b5ff"
+source = "git+https://github.com/agent-habilis/noq?branch=fix%2Fabandoned-path-leak#1a9d2b0367578f7584c8376c398a4617c171efa4"
 dependencies = [
  "cfg_aliases",
  "libc",

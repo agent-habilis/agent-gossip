@@ -224,3 +224,14 @@ push = false
 tag-name = "v{{version}}"
 pre-release-commit-message = "chore: release v{{version}}"
 allow-branch = ["main"]
+
+# Local, uncommitted patch consuming the leak fixes from our GitHub forks
+# (kept out of `main` until the upstream PRs merge, then dropped for the released
+# versions). iroh-gossip: the connection-churn leak fix. noq: the noq-proto
+# `abandoned_paths` bound — all three noq crates point at the same fork repo+branch
+# because cargo resolves the noq workspace as a unit.
+[patch.crates-io]
+iroh-gossip = { git = "https://github.com/agent-habilis/iroh-gossip", branch = "fix/superseded-conn-leak" }
+noq = { git = "https://github.com/agent-habilis/noq", branch = "fix/abandoned-path-leak" }
+noq-proto = { git = "https://github.com/agent-habilis/noq", branch = "fix/abandoned-path-leak" }
+noq-udp = { git = "https://github.com/agent-habilis/noq", branch = "fix/abandoned-path-leak" }
