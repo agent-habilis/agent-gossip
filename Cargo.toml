@@ -112,8 +112,17 @@ bench = []
 # normal/release build, so the public surface is unchanged. `cargo task
 # test`/`ci` enable it.
 testkit = []
+# Off by default. Installs dhat's heap-profiling global allocator + a profiler
+# in `main`, and makes the CLI quit path return cleanly (instead of
+# `process::exit`) so the profiler flushes `dhat-heap.json` on shutdown. For
+# localizing the gossip-churn per-connection retention: build with this feature,
+# run a churning daemon (`--active-view-capacity 5 --no-interactive`), SIGTERM
+# it, inspect the profile. Never in a normal build.
+dhat-heap = ["dep:dhat"]
 
 [dependencies]
+# Optional: only compiled in under the `dhat-heap` feature (heap profiling).
+dhat = { version = "0.3", optional = true }
 ahs-shared = { path = "shared" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "io-util", "fs", "signal", "net"] }
 clap = { version = "4", features = ["derive"] }

@@ -45,8 +45,22 @@ fn suppress_ctrl_c_echo() {
     }
 }
 
+/// Heap-profiling allocator, only under `--features dhat-heap`. Tracks every
+/// allocation so the profiler can attribute retained bytes by backtrace.
+#[cfg(feature = "dhat-heap")]
+#[global_allocator]
+static ALLOC: dhat::Alloc = dhat::Alloc;
+
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Heap profiler (dhat-heap feature): writes `dhat-heap.json` to CWD when this
+    // guard drops. The daemon's CLI quit path normally `process::exit`s (skipping
+    // destructors) — under `dhat-heap` that exit is gated out (see
+    // `daemon::event_loop`) so a `--no-interactive` daemon returns cleanly through
+    // here and the profile flushes. SIGTERM/ctrl-c the churning daemon to dump it.
+    #[cfg(feature = "dhat-heap")]
+    let _dhat = dhat::Profiler::new_heap();
+
     // Tracing buffers until create/join resolve swarm+nick, then
     // flushes to the per-member file; else stderr. The filter + sink
     // both live in the crate's `logging` module.

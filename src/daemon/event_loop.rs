@@ -239,6 +239,12 @@ async fn event_loop(loop_state: EventLoop) -> Result<()> {
 
     log_daemon_start(&author);
 
+    // `exit_on_quit` drives the CLI `process::exit` path, which is compiled out
+    // under `dhat-heap` (so the profiler can flush) — consume it here to avoid
+    // an unused-variable warning in that build.
+    #[cfg(feature = "dhat-heap")]
+    let _ = exit_on_quit;
+
     let mut stdin_reader = BufReader::new(tokio::io::stdin());
     let mut stdin_open = interactive;
 
@@ -328,6 +334,12 @@ async fn event_loop(loop_state: EventLoop) -> Result<()> {
             }
             _ = quit_rx.recv() => {
                 shutdown(&sender, &swarm_str, &swarm_name, &author, &state, &output).await;
+                // Under `dhat-heap`, never `process::exit` — it skips destructors,
+                // so the heap profiler would never flush `dhat-heap.json`. Fall
+                // through to `break` → unwind to `main` → profiler drops + writes.
+                // Safe only because profiling runs use `--no-interactive` (no
+                // blocking stdin thread to hang the clean shutdown).
+                #[cfg(not(feature = "dhat-heap"))]
                 if exit_on_quit {
                     // Force exit — the blocking stdin thread won't
                     // terminate on its own. CLI mode.
