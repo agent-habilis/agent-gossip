@@ -239,12 +239,6 @@ async fn event_loop(loop_state: EventLoop) -> Result<()> {
 
     log_daemon_start(&author);
 
-    // `exit_on_quit` drives the CLI `process::exit` path, which is compiled out
-    // under `dhat-heap` (so the profiler can flush) — consume it here to avoid
-    // an unused-variable warning in that build.
-    #[cfg(feature = "dhat-heap")]
-    let _ = exit_on_quit;
-
     let mut stdin_reader = BufReader::new(tokio::io::stdin());
     let mut stdin_open = interactive;
 
@@ -317,9 +311,8 @@ async fn event_loop(loop_state: EventLoop) -> Result<()> {
             }
             _ = state_refresh_interval.tick() => timers::tick_state_refresh(&state, &endpoint).await,
             _ = recv_opt(&mut external_quit_rx) => {
-                shutdown(&sender, &swarm_str, &swarm_name, &author, &state, &output).await;
-                // External quit is always embedded (MCP): never exit
-                // the process, regardless of `exit_on_quit`.
+                // External quit is always embedded (MCP): never hard-exit (`false`).
+                announce_and_maybe_exit(&sender, &swarm_str, &swarm_name, &author, &state, &output, false).await;
                 break;
             }
             req = recv_opt(&mut external_req_rx) => {
@@ -333,18 +326,7 @@ async fn event_loop(loop_state: EventLoop) -> Result<()> {
                 }
             }
             _ = quit_rx.recv() => {
-                shutdown(&sender, &swarm_str, &swarm_name, &author, &state, &output).await;
-                // Under `dhat-heap`, never `process::exit` — it skips destructors,
-                // so the heap profiler would never flush `dhat-heap.json`. Fall
-                // through to `break` → unwind to `main` → profiler drops + writes.
-                // Safe only because profiling runs use `--no-interactive` (no
-                // blocking stdin thread to hang the clean shutdown).
-                #[cfg(not(feature = "dhat-heap"))]
-                if exit_on_quit {
-                    // Force exit — the blocking stdin thread won't
-                    // terminate on its own. CLI mode.
-                    std::process::exit(0);
-                }
+                announce_and_maybe_exit(&sender, &swarm_str, &swarm_name, &author, &state, &output, exit_on_quit).await;
                 break;
             }
         }
@@ -376,6 +358,33 @@ async fn shutdown(
     if let Some(sf) = state.state_file.as_ref() {
         sf.remove();
     }
+}
+
+/// Announce departure, then decide whether to hard-exit the process.
+///
+/// `exit_on_quit` is the CLI hard-exit: in interactive CLI mode the blocking
+/// stdin reader thread won't terminate on its own, so we `process::exit`.
+/// Embedded/MCP quits pass `false` and unwind cleanly instead. Under the
+/// `dhat-heap` profiling build we *never* `process::exit` regardless — it skips
+/// destructors, so the heap profiler would never flush `dhat-heap.json`; we fall
+/// through so `main` unwinds and the profiler drops (safe because profiling runs
+/// use `--no-interactive`, i.e. no blocking stdin thread to hang shutdown).
+async fn announce_and_maybe_exit(
+    sender: &GossipSender,
+    swarm: &SwarmId,
+    name: &SwarmName,
+    author: &Nickname,
+    state: &EventLoopState,
+    output: &output::Output,
+    exit_on_quit: bool,
+) {
+    shutdown(sender, swarm, name, author, state, output).await;
+    #[cfg(not(feature = "dhat-heap"))]
+    if exit_on_quit {
+        std::process::exit(0);
+    }
+    #[cfg(feature = "dhat-heap")]
+    let _ = exit_on_quit;
 }
 
 /// Spawn ctrl-c (all platforms) and SIGTERM (unix) listener tasks

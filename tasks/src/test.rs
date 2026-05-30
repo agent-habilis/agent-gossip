@@ -8,5 +8,7 @@ pub(crate) fn run(sh: &Shell) -> TaskOutcome {
     cmd!(sh, "cargo test --features testkit -- --test-threads=4")
         .quiet()
         .run()?;
+
+    crate::util::sweep_stale_artifacts(sh);
     Ok(())
 }

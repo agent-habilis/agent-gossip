@@ -26,5 +26,8 @@ pub(crate) fn run(sh: &Shell) -> TaskOutcome {
     // live in `tests/gossip_network.rs` with shortened eviction timers.
 
     crate::pi::typecheck(sh)?;
-    crate::pi::lint(sh)
+    crate::pi::lint(sh)?;
+
+    crate::util::sweep_stale_artifacts(sh);
+    Ok(())
 }
