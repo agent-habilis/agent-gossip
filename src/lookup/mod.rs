@@ -18,6 +18,7 @@ use iroh::{
     protocol::Router,
 };
 use iroh_gossip::net::{GOSSIP_ALPN, Gossip};
+use iroh_gossip::proto::HyparviewConfig;
 
 use crate::protocol::swarm::{LookupOpts, RelayChoice};
 
@@ -177,7 +178,19 @@ pub(crate) async fn probe_connect(
 /// with the gossip ALPN to the Gossip protocol handler. Without this,
 /// peers cannot accept inbound connections from other peers.
 pub(crate) fn build_swarm(endpoint: Endpoint) -> (Gossip, Router) {
-    let gossip = Gossip::builder().spawn(endpoint.clone());
+    // Raise HyParView's active view above iroh-gossip's default (5) so swarms up
+    // to the configured size form a full mesh with nothing to shuffle — no
+    // membership churn, hence none of the churn-driven per-connection leak. The
+    // capacity is overridable (hidden `--active-view-capacity`); set it small to
+    // reproduce the churn. See `crate::util::tuning::gossip_active_view_capacity`.
+    let membership = HyparviewConfig {
+        active_view_capacity: crate::util::tuning::gossip_active_view_capacity(),
+        passive_view_capacity: crate::util::tuning::gossip_passive_view_capacity(),
+        ..Default::default()
+    };
+    let gossip = Gossip::builder()
+        .membership_config(membership)
+        .spawn(endpoint.clone());
     let router = Router::builder(endpoint)
         .accept(GOSSIP_ALPN, gossip.clone())
         .spawn();

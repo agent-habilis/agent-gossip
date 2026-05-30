@@ -127,6 +127,26 @@ pub const ANTIENTROPY_MAX_RESEND: usize = 64;
 /// tunes it by editing here.
 pub const RESIDENT_MEMORY_WARN_MB: u64 = 1024;
 
+/// HyParView **active view** capacity — the number of direct gossip neighbors
+/// (open QUIC links) each member maintains per topic. A swarm at or below this
+/// size forms a **full mesh** with nothing to shuffle, so it has **zero
+/// membership churn** (and thus none of the per-connection-churn memory leak);
+/// past it the overlay maintains a partial mesh and continuously
+/// promotes/demotes peers (the churn). Raised from iroh-gossip's default of 5
+/// to **32** so realistic agent swarms (≤ 33) stay churn-free. The ceiling is
+/// performance, not correctness: each slot is a live connection + keepalive,
+/// and a full mesh costs O(S²) broadcast amplification, so ~48–50 is the
+/// practical upper bound on Pi-class hardware. Distinct from the
+/// `DEFAULT_MAX_DIRECT_PEERS` (25) soft address-tracking cap. Flag (hidden):
+/// `--active-view-capacity` — set it *small* to deliberately reproduce the
+/// gossip-churn leak at any node count.
+pub const GOSSIP_ACTIVE_VIEW_CAPACITY: usize = 32;
+
+/// HyParView **passive view** capacity — the backup contact pool used for
+/// healing/shuffle when active-view links drop. Kept ≥ 2× the active view
+/// (iroh-gossip default 30). Flag (hidden): `--passive-view-capacity`.
+pub const GOSSIP_PASSIVE_VIEW_CAPACITY: usize = 64;
+
 // QUIC keep-alive / idle timeout are intentionally left at iroh's
 // holepunch-tuned transport defaults (~1s keep-alive, 15s direct / 30s relay
 // idle); see `lookup::build_endpoint`. A prior override (5s keep-alive, 10s

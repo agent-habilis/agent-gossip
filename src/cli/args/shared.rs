@@ -83,6 +83,15 @@ pub(crate) struct SharedServerOpts {
     /// Use the loopback (private) directory + relax the advertise→public guard.
     #[arg(long, hide = true, default_value_t = false)]
     pub directory_private: bool,
+
+    /// HyParView active-view capacity (direct gossip neighbors). Set *small*
+    /// (e.g. 5) to deliberately reproduce the gossip partial-mesh churn / leak.
+    #[arg(long, hide = true, default_value_t = consts::GOSSIP_ACTIVE_VIEW_CAPACITY)]
+    pub active_view_capacity: usize,
+
+    /// HyParView passive-view capacity (healing/shuffle contact pool).
+    #[arg(long, hide = true, default_value_t = consts::GOSSIP_PASSIVE_VIEW_CAPACITY)]
+    pub passive_view_capacity: usize,
 }
 
 impl SharedServerOpts {
@@ -98,6 +107,8 @@ impl SharedServerOpts {
             directory_expiry_secs: self.directory_expiry_secs,
             antientropy_max_resend: self.antientropy_max_resend,
             directory_private: self.directory_private,
+            gossip_active_view_capacity: self.active_view_capacity,
+            gossip_passive_view_capacity: self.passive_view_capacity,
         }
     }
 }

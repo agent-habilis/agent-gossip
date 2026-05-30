@@ -195,3 +195,71 @@ async fn roster_converges_to_4() {
         );
     }
 }
+
+/// **Above-the-old-cap full mesh stays churn-free.** An 8-node swarm exceeds
+/// iroh-gossip's default active-view capacity of 5 — pre-fix this size formed a
+/// *partial* mesh and churned (the membership-maintenance leak driver). With the
+/// raised `GOSSIP_ACTIVE_VIEW_CAPACITY` (32) it forms a **full mesh** instead, so
+/// it must hold steady with **zero** spurious `peer_timeout`/`left` over a quiet
+/// hold and still fan a late broadcast out to all 7 peers. This is the
+/// regression guard that the active-view raise took effect: revert the const to
+/// 5 and this test churns/fails.
+#[tokio::test]
+async fn above_old_cap_swarm_stays_full_mesh() {
+    const JOINERS: usize = 7; // 8 nodes total — > old cap (5), ≤ new cap (32)
+    let mut creator = InProcNode::create("stab-cap").await;
+    let swarm = creator.swarm.clone();
+    let mut joiners = Vec::with_capacity(JOINERS);
+    for index in 0..JOINERS {
+        joiners.push(InProcNode::join(&swarm, &format!("cap-j{index}")).await);
+    }
+
+    // All 8 nodes converge on the full roster (7 peers each).
+    assert!(
+        creator
+            .wait_presence_count(true, JOINERS, ROSTER_TIMEOUT)
+            .await,
+        "creator never surfaced all {JOINERS} joiners"
+    );
+    for joiner in &mut joiners {
+        let nick = joiner.nickname.clone();
+        assert!(
+            joiner
+                .wait_presence_count(true, JOINERS, ROSTER_TIMEOUT)
+                .await,
+            "{nick} never saw all {JOINERS} peers"
+        );
+    }
+
+    tokio::time::sleep(STEADY_HOLD).await;
+
+    // Zero churn while every node was alive — the full mesh has nothing to
+    // shuffle, so no promote/demote flaps.
+    for joiner in &mut joiners {
+        let nick = joiner.nickname.clone();
+        let timeouts = joiner
+            .events()
+            .iter()
+            .filter(|event| matches!(event, OutputEvent::PeerTimeout { .. }))
+            .count();
+        assert_eq!(
+            timeouts, 0,
+            "{nick} surfaced a spurious peer_timeout — the >5-node mesh is churning (active-view raise regressed?)"
+        );
+        assert_eq!(
+            joiner.presence_count(false),
+            0,
+            "{nick} surfaced a spurious presence:left during the quiet hold"
+        );
+    }
+
+    // Overlay still delivers to every peer after the hold.
+    let _ = creator.send("cap-probe").await;
+    for joiner in &mut joiners {
+        let nick = joiner.nickname.clone();
+        assert!(
+            joiner.wait_body("cap-probe", FANOUT_WAIT).await,
+            "{nick} never received the late broadcast — mesh degraded"
+        );
+    }
+}
