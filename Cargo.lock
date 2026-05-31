@@ -1929,8 +1929,7 @@ dependencies = [
 [[package]]
 name = "iroh"
 version = "1.0.0-rc.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b98e206e3d3f2642f5c08c413755fc0ac19b54ae1a656af88be03454ce3ed2e6"
+source = "git+https://github.com/agent-habilis/iroh?branch=fix%2Fmapped-addrs-eviction#67cd78c96a8162b58c95306ab06e215bd250c893"
 dependencies = [
  "backon",
  "blake3",
@@ -1982,8 +1981,7 @@ dependencies = [
 [[package]]
 name = "iroh-base"
 version = "1.0.0-rc.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2160a45265eba3bd290ce698f584c9b088bee47e518e9ec4460d5e5888ef660e"
+source = "git+https://github.com/agent-habilis/iroh?branch=fix%2Fmapped-addrs-eviction#67cd78c96a8162b58c95306ab06e215bd250c893"
 dependencies = [
  "curve25519-dalek",
  "data-encoding",
@@ -2004,8 +2002,7 @@ dependencies = [
 [[package]]
 name = "iroh-dns"
 version = "1.0.0-rc.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c8b6d2946350d398c9d2d795bb99b04f22e8414c8a8ad9c5c3c0c5b7899af9a4"
+source = "git+https://github.com/agent-habilis/iroh?branch=fix%2Fmapped-addrs-eviction#67cd78c96a8162b58c95306ab06e215bd250c893"
 dependencies = [
  "arc-swap",
  "cfg_aliases",
@@ -2123,8 +2120,7 @@ dependencies = [
 [[package]]
 name = "iroh-relay"
 version = "1.0.0-rc.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "54f490405e42dd2ecf16be18a3587d2665401e94a498094f12322eaa6d5ebb2b"
+source = "git+https://github.com/agent-habilis/iroh?branch=fix%2Fmapped-addrs-eviction#67cd78c96a8162b58c95306ab06e215bd250c893"
 dependencies = [
  "blake3",
  "bytes",
@@ -2677,7 +2673,7 @@ checksum = "38bf9645c8b145698bb0b18a4637dcacbc421ea49bef2317e4fd8065a387cf21"
 [[package]]
 name = "noq"
 version = "1.0.0-rc.0"
-source = "git+https://github.com/agent-habilis/noq?branch=fix%2Fabandoned-path-leak#1a9d2b0367578f7584c8376c398a4617c171efa4"
+source = "git+https://github.com/agent-habilis/noq?branch=fix%2Fabandoned-path-leak#7a02ed23af4d5da530b18517918c84f117346814"
 dependencies = [
  "bytes",
  "cfg_aliases",
@@ -2698,7 +2694,7 @@ dependencies = [
 [[package]]
 name = "noq-proto"
 version = "1.0.0-rc.0"
-source = "git+https://github.com/agent-habilis/noq?branch=fix%2Fabandoned-path-leak#1a9d2b0367578f7584c8376c398a4617c171efa4"
+source = "git+https://github.com/agent-habilis/noq?branch=fix%2Fabandoned-path-leak#7a02ed23af4d5da530b18517918c84f117346814"
 dependencies = [
  "aes-gcm",
  "bytes",
@@ -2724,7 +2720,7 @@ dependencies = [
 [[package]]
 name = "noq-udp"
 version = "1.0.0-rc.0"
-source = "git+https://github.com/agent-habilis/noq?branch=fix%2Fabandoned-path-leak#1a9d2b0367578f7584c8376c398a4617c171efa4"
+source = "git+https://github.com/agent-habilis/noq?branch=fix%2Fabandoned-path-leak#7a02ed23af4d5da530b18517918c84f117346814"
 dependencies = [
  "cfg_aliases",
  "libc",

@@ -231,7 +231,18 @@ allow-branch = ["main"]
 # `abandoned_paths` bound — all three noq crates point at the same fork repo+branch
 # because cargo resolves the noq workspace as a unit.
 [patch.crates-io]
+# iroh#4294 mapped_addrs eviction (drlukeangel's), from the agent-habilis fork.
+# iroh-base/iroh-dns are patched to the SAME repo+branch as `iroh` because the
+# forked `iroh` pulls its workspace-local copies of them — without these the
+# graph carries two `iroh_base`/`iroh_dns` versions (fork vs crates.io) and types
+# from iroh-gossip/lookups clash (E0308).
+iroh = { git = "https://github.com/agent-habilis/iroh", branch = "fix/mapped-addrs-eviction" }
+iroh-base = { git = "https://github.com/agent-habilis/iroh", branch = "fix/mapped-addrs-eviction" }
+iroh-dns = { git = "https://github.com/agent-habilis/iroh", branch = "fix/mapped-addrs-eviction" }
 iroh-gossip = { git = "https://github.com/agent-habilis/iroh-gossip", branch = "fix/superseded-conn-leak" }
+# noq fork branch carries the abandoned_paths bound (#683, ours) + the
+# Connecting-drop fix (#682, drlukeangel's). All three crates point at the same
+# repo+branch (cargo resolves the noq workspace as a unit).
 noq = { git = "https://github.com/agent-habilis/noq", branch = "fix/abandoned-path-leak" }
 noq-proto = { git = "https://github.com/agent-habilis/noq", branch = "fix/abandoned-path-leak" }
 noq-udp = { git = "https://github.com/agent-habilis/noq", branch = "fix/abandoned-path-leak" }
