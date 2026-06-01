@@ -2547,8 +2547,7 @@ checksum = "27b02d87554356db9e9a873add8782d4ea6e3e58ea071a9adb9a2e8ddb884a8b"
 [[package]]
 name = "netdev"
 version = "0.43.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "57bacaf873ee4eab5646f99b381b271ec75e716902a67cf962c0f328c5eb5bfb"
+source = "git+https://github.com/agent-habilis/netdev?branch=fix%2Fmacos-corewlan-autorelease-leak#c2561063f4ca3bab09070184842b1ee85efd90e8"
 dependencies = [
  "block2",
  "dispatch2",
@@ -2559,6 +2558,7 @@ dependencies = [
  "netlink-packet-core",
  "netlink-packet-route 0.29.0",
  "netlink-sys",
+ "objc2",
  "objc2-core-foundation",
  "objc2-core-wlan",
  "objc2-foundation",

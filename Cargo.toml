@@ -246,3 +246,7 @@ iroh-gossip = { git = "https://github.com/agent-habilis/iroh-gossip", branch = "
 noq = { git = "https://github.com/agent-habilis/noq", branch = "fix/abandoned-path-leak" }
 noq-proto = { git = "https://github.com/agent-habilis/noq", branch = "fix/abandoned-path-leak" }
 noq-udp = { git = "https://github.com/agent-habilis/noq", branch = "fix/abandoned-path-leak" }
+# netdev fork: macOS CoreWLAN autorelease leak in os/macos/wifi.rs (CWWiFiClient
+# queried with no autoreleasepool, via netwatch on every network event) — the
+# full-mesh steady-state RSS leak. Pulled in by netwatch → iroh.
+netdev = { git = "https://github.com/agent-habilis/netdev", branch = "fix/macos-corewlan-autorelease-leak" }
