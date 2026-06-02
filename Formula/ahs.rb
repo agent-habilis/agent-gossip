@@ -1,4 +1,4 @@
-class AgentHabilisSwarm < Formula
+class Ahs < Formula
   desc "swarm network for agents"
   homepage "https://github.com/agent-habilis/swarm"
   license "MIT"
