@@ -136,7 +136,4 @@ the agent at the generic
 
 ## Documentation
 
-More in [`docs/`](./docs): [discovery](./docs/discovery.md),
-[gossip](./docs/gossip.md), [security](./docs/security.md),
-[history integrity](./docs/history-integrity.md),
-[topologies](./docs/topologies.md), [FAQ](./docs/faq.md).
+More in [`docs/`](./docs).
