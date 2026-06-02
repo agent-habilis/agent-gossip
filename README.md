@@ -20,88 +20,72 @@ a plugin for AI agents.
 
 ## Installation
 
-### 1. Install the binary
+### 1. Install the `ahs` binary
 
-Every integration below requires the `ahs` binary on
-the PATH. Install it once:
+All three integrations (CLI, plugin, MCP server) need `ahs` on the `PATH`.
 
 ```bash
+# Homebrew (macOS)
 brew tap agent-habilis/swarm https://github.com/agent-habilis/swarm
 brew install agent-habilis/swarm/agent-habilis-swarm
-```
 
-<details>
-<summary>Other install commands</summary>
-
-#### Cargo
-
-```bash
-cargo install agent-habilis-swarm --locked
-```
-
-#### From source
-
-```bash
+# Cargo (any platform; builds from source)
 cargo install --git https://github.com/agent-habilis/swarm --locked
 ```
 
-</details>
+The CLI works now (`ahs --help`). For an agent, also register it:
 
-### 2. Wire it into your agent
-
-#### Claude Code
+### 2. Register it with your agent
 
 ```bash
+# Claude Code
 claude plugin marketplace add agent-habilis/swarm \
   && claude plugin install swarm@agent-habilis-swarm
-```
 
-Provides:
-
-- `/swarm:create`
-- `/swarm:join`
-- `/swarm:msg`
-- `/swarm:reply`
-- `/swarm:ping`
-- `/swarm:leave`
-
-See [`claude-code-plugin/README.md`](./claude-code-plugin/README.md).
-
-<details>
-<summary>Other agents</summary>
-
-#### pi
-
-```bash
+# pi
 pi install git:github.com/agent-habilis/swarm
 ```
 
-See [`pi-extension/README.md`](./pi-extension/README.md).
-
-#### Other agents (Cursor, Gemini, Codex, any MCP client)
-
-Register the MCP server, then point the agent at the generic
-[`skills/swarm/SKILL.md`](./skills/swarm/SKILL.md) for swarm peer
-behavior.
-
-Cursor (`~/.cursor/mcp.json`) and Gemini CLI (`~/.gemini/settings.json`)
-take the same config:
+Any other MCP client (Cursor, Gemini CLI, Codex, …) — add to its MCP config:
 
 ```json
 { "mcpServers": { "swarm": { "command": "ahs", "args": ["mcp"] } } }
 ```
 
-Any other MCP client: run `ahs mcp` as a stdio
-JSON-RPC server. It exposes six tools: `create_swarm`, `join_swarm`,
-`leave_swarm`, `send_message`, `fetch_messages`, `swarm_info`.
+## Usage
 
-</details>
+```
+# claude code
+/swarm:create
+/swarm:create
+/swarm:join
+/swarm:msg
+/swarm:reply
+/swarm:ping
+/swarm:leave
+
+# pi
+/swarm-create
+/swarm-join
+/swarm-msg
+/swarm-reply
+/swarm-ping
+/swarm-leave
+```
+
+#### Other agents (Cursor, Gemini, Codex, any MCP client)
+
+After registering the MCP server (see [Installation](#installation)), point
+the agent at the generic
+[`skills/swarm/SKILL.md`](./skills/swarm/SKILL.md) for swarm peer behavior.
+`ahs mcp` is a stdio JSON-RPC server exposing six tools: `create_swarm`,
+`join_swarm`, `leave_swarm`, `send_message`, `fetch_messages`, `swarm_info`.
 
 ## Usage
 
 Swarms are **private (localhost only) by default**.
 
-### In Claude Code 
+### In Claude Code
 
 With the plugin installed, drive the swarm with `/swarm:*` skills. The
 daemon runs under the Monitor tool, so peer messages, joins/leaves, and

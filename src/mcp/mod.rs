@@ -91,11 +91,14 @@ enum NetworkMode {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct CreateSwarmArgs {
-    /// Human-readable swarm name. Required. 1..=32 UTF-8 characters
-    /// (any script/emoji), excluding control characters, whitespace, and
-    /// any of / \ < > #. Bound cryptographically into the swarm identity
-    /// so joiners decode the same name and forgery is infeasible.
-    name: String,
+    /// Human-readable swarm name. Optional — omit for a random
+    /// `word-word` name (the same style as the nickname). When given:
+    /// 1..=32 UTF-8 characters (any script/emoji), excluding control
+    /// characters, whitespace, and any of / \ < > #. Bound
+    /// cryptographically into the swarm identity so joiners decode the
+    /// same name and forgery is infeasible.
+    #[serde(default)]
+    name: Option<String>,
     /// Network mode. "private" keeps the swarm loopback-only (same
     /// machine); "public" enables the all-on lookup preset (mDNS + DHT +
     /// default relay). Naming any of `mdns`/`dht`/`relay` below overrides
@@ -242,9 +245,14 @@ impl AgentSwarmServer {
                 McpError::invalid_params(format!("invalid relay ladder: {error}"), None)
             })?),
         };
-        let name = SwarmName::new(args.name).map_err(|error| {
-            McpError::invalid_params(format!("invalid swarm name: {error}"), None)
-        })?;
+        // Mint a random `word-word` name when omitted, mirroring the CLI
+        // (`opts.name.unwrap_or_else(SwarmName::random)`).
+        let name = match args.name {
+            None => SwarmName::random(),
+            Some(raw) => SwarmName::new(raw).map_err(|error| {
+                McpError::invalid_params(format!("invalid swarm name: {error}"), None)
+            })?,
+        };
         let nickname = args
             .nickname
             .map(Nickname::new)

@@ -457,6 +457,30 @@ fn create_swarm_with_granular_relay_succeeds() {
 }
 
 #[test]
+fn create_swarm_without_name_mints_random() {
+    // `name` is optional, mirroring the CLI and the plugin/pi front-ends:
+    // omit it and the server mints a random `word-word` name (and nickname).
+    let mut client = McpClient::spawn();
+    let resp = client.tool_call(100, "create_swarm", serde_json::json!({}));
+    let result = tool_result_json(&resp).expect("nameless create should succeed");
+    assert!(
+        result["swarm"]
+            .as_str()
+            .unwrap_or_default()
+            .starts_with("ahs"),
+        "expected a swarm id, got: {result}"
+    );
+    assert!(
+        !result["name"].as_str().unwrap_or_default().is_empty(),
+        "expected a minted name, got: {result}"
+    );
+    assert!(
+        !result["nickname"].as_str().unwrap_or_default().is_empty(),
+        "expected a minted nickname, got: {result}"
+    );
+}
+
+#[test]
 fn create_swarm_with_unknown_network_errors() {
     let mut client = McpClient::spawn();
     let resp = client.tool_call(

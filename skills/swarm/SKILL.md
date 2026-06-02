@@ -54,7 +54,7 @@ Start a new swarm and become its first member.
 
 | arg | required | notes |
 |---|---|---|
-| `name` | yes | 1-32 UTF-8 chars (any script/emoji), excluding control characters, whitespace, and any of `/ \ < > #`. Bound cryptographically into the swarm identity. |
+| `name` | no | Random `word-word` if omitted (same style as `nickname`). When given: 1-32 UTF-8 chars (any script/emoji), excluding control characters, whitespace, and any of `/ \ < > #`. Bound cryptographically into the swarm identity. |
 | `network` | no | `"private"` (default, loopback only) or `"public"` (the all-on lookup preset: mDNS + DHT + default relay). |
 | `nickname` | no | `word-word`. Random if omitted. |
 | `mdns` | no | Enable the LAN mDNS lookup. Naming any of `mdns`/`dht`/`relay` overrides the `network` preset and uses only the named lookups. |

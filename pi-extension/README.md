@@ -13,7 +13,7 @@ ln -s $(pwd)/pi-extension/index.ts ~/.pi/agent/extensions/swarm.ts
 
 Requires `ahs` CLI on `$PATH`:
 ```bash
-cargo install agent-habilis-swarm --locked
+cargo install --git https://github.com/agent-habilis/swarm --locked
 ```
 
 ## Commands
