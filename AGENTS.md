@@ -742,7 +742,7 @@ the commit and tag first.
 3. `git push origin main --follow-tags` — pushing the tag triggers
    `.github/workflows/release.yml`, which verifies the tag matches
    `Cargo.toml` and builds binaries for Linux (x86_64 + aarch64) and macOS
-   (Intel + Apple Silicon), attaching them to the GitHub Release.
+   (Apple Silicon only), attaching them to the GitHub Release.
 4. **Update the Homebrew formula** (`Formula/ahs.rb`). The
    release workflow does **not** touch it, so after the archives are attached
    to the GitHub Release: bump `version` to match the tag, and replace each
@@ -753,7 +753,7 @@ the commit and tag first.
    ```bash
    shasum -a 256 ahs-v<version>-<target>.tar.gz
    ```
-   for the four `darwin`/`linux-musl` targets the formula lists, then commit
+   for the three `darwin`/`linux-musl` targets the formula lists, then commit
    the formula change. (Manual today; can be folded into `release.yml` later.)
 
 ## Code Style

@@ -5,10 +5,9 @@ class Ahs < Formula
   version "0.2.0"
 
   on_macos do
-    if Hardware::CPU.intel?
-      url "https://github.com/agent-habilis/swarm/releases/download/v#{version}/ahs-v#{version}-x86_64-apple-darwin.tar.gz"
-      sha256 "REPLACE_WITH_ACTUAL_SHA256"
-    elsif Hardware::CPU.arm?
+    # Apple Silicon only — Intel (x86_64) macOS binaries are no longer
+    # published; Intel Macs install from source via Cargo.
+    if Hardware::CPU.arm?
       url "https://github.com/agent-habilis/swarm/releases/download/v#{version}/ahs-v#{version}-aarch64-apple-darwin.tar.gz"
       sha256 "REPLACE_WITH_ACTUAL_SHA256"
     end
