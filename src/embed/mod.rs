@@ -108,7 +108,7 @@ impl CreateConfig {
             lookups: LookupSet::default(),
             advertise: false,
             directory: None,
-            rate_limit_per_min: ahs_shared::RATE_LIMIT_PER_MIN,
+            rate_limit_per_min: crate::util::consts::RATE_LIMIT_PER_MIN,
             max_peers: DEFAULT_MAX_DIRECT_PEERS,
         }
     }

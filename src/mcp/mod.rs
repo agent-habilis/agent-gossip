@@ -138,7 +138,7 @@ struct CreateSwarmArgs {
 }
 
 fn default_rate_limit() -> u16 {
-    ahs_shared::RATE_LIMIT_PER_MIN
+    crate::util::consts::RATE_LIMIT_PER_MIN
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]

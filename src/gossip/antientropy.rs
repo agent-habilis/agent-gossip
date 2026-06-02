@@ -203,10 +203,10 @@ mod tests {
         let digest = Message::new_digest(&swarm, &Nickname::from("a-fairly-long-nickname"), body);
         let wire = digest.serialize().expect("serialize digest");
         assert!(
-            wire.len() <= ahs_shared::MAX_MESSAGE_SIZE,
+            wire.len() <= crate::util::consts::MAX_MESSAGE_SIZE,
             "digest is {} bytes, over the {}-byte gossip cap",
             wire.len(),
-            ahs_shared::MAX_MESSAGE_SIZE
+            crate::util::consts::MAX_MESSAGE_SIZE
         );
     }
 

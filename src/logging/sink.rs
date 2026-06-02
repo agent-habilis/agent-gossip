@@ -11,7 +11,7 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
-use ahs_shared::logs::log_file_path;
+use crate::util::logs::log_file_path;
 
 use crate::protocol::{Nickname, SwarmId};
 
@@ -128,7 +128,7 @@ impl LogSink {
                     file,
                     path,
                     written,
-                    max: ahs_shared::logs::log_max_bytes(),
+                    max: crate::util::logs::log_max_bytes(),
                 };
             }
             Err(error) => {

@@ -3,7 +3,7 @@ use std::num::NonZeroU32;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use ahs_shared::RATE_LIMIT_PER_MIN;
+use crate::util::consts::RATE_LIMIT_PER_MIN;
 use governor::{
     Quota, RateLimiter,
     clock::DefaultClock,

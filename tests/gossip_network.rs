@@ -11,7 +11,7 @@ use std::fs::{self, File};
 use std::process::Stdio;
 use std::time::{Duration, Instant};
 
-use ahs_shared::RATE_LIMIT_PER_MIN;
+use agent_habilis_swarm::RATE_LIMIT_PER_MIN;
 use common::{
     CONNECT_TIMEOUT, InProcNode, MSG_TIMEOUT, Msg, Node, POLL, SOCKET_DIR, cli_message,
     cli_message_raw, cli_ping, cli_poll, tmp_log, trace_log, wait_total, wait_until,
@@ -147,7 +147,7 @@ fn test_ipc_socket_isolation() {
     assert!(creator.wait_ready(&swarm), "creator socket never appeared");
     assert!(joiner.wait_ready(&swarm), "joiner socket never appeared");
 
-    let prefix = ahs_shared::swarm_prefix(&swarm);
+    let prefix = agent_habilis_swarm::swarm_prefix(&swarm);
     let sockets: Vec<_> = fs::read_dir(SOCKET_DIR)
         .expect("socket dir missing")
         .flatten()
@@ -238,7 +238,7 @@ fn test_message_size_limit() {
 
     // A body at the cap, plus the JSON envelope, exceeds the serialized
     // limit — rejected on the sender (a clear error, not a silent drop).
-    let body = "a".repeat(ahs_shared::MAX_MESSAGE_SIZE);
+    let body = "a".repeat(agent_habilis_swarm::MAX_MESSAGE_SIZE);
     let out = cli_message_raw(&swarm, &creator.nickname, &body);
     assert!(
         !out.status.success(),

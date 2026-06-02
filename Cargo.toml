@@ -1,5 +1,5 @@
 [workspace]
-members = ["shared", "tasks"]
+members = ["tasks"]
 
 # Shared package fields. Each crate opts in with `edition.workspace = true`
 # / `rust-version.workspace = true` so the workspace stays in lockstep
@@ -123,7 +123,6 @@ dhat-heap = ["dep:dhat"]
 [dependencies]
 # Optional: only compiled in under the `dhat-heap` feature (heap profiling).
 dhat = { version = "0.3", optional = true }
-ahs-shared = { path = "shared" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "io-util", "fs", "signal", "net"] }
 clap = { version = "4", features = ["derive"] }
 iroh = { version = "1.0.0-rc.0", features = ["tls-ring"] }
@@ -160,8 +159,6 @@ interprocess = { version = "2", features = ["tokio"] }
 rmcp = { version = "1.5", features = ["server", "transport-io", "macros", "schemars"] }
 
 [dev-dependencies]
-# Integration tests assert against the published rate-limit contract.
-ahs-shared = { path = "shared" }
 proptest = "1.6"
 insta = "1"
 wiremock = "0.6"

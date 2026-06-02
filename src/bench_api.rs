@@ -51,7 +51,7 @@ impl BenchConfig {
 
 fn cfg(lookups: LookupOpts) -> SwarmConfig {
     SwarmConfig {
-        rate_limit_per_min: ahs_shared::RATE_LIMIT_PER_MIN,
+        rate_limit_per_min: crate::util::consts::RATE_LIMIT_PER_MIN,
         lookups,
     }
 }
@@ -144,7 +144,9 @@ impl BenchRateLimiter {
         Self(SwarmRateLimiter::from_per_min(per_min))
     }
 
-    pub fn check(&self, author: &Nickname) -> bool {
-        self.0.check(author)
+    /// Keyed by the author's pubkey hex in production; the bench passes any
+    /// distinct string, matching [`SwarmRateLimiter::check`]'s `&str` key.
+    pub fn check(&self, key: &str) -> bool {
+        self.0.check(key)
     }
 }

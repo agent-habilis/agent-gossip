@@ -3,15 +3,15 @@
 //! `protocol::message` (`MAX_MESSAGE_SIZE`).
 //!
 //! The poll/MCP buffer size (`DEFAULT_MESSAGE_LOG_SIZE`) lives in
-//! `ahs_shared::consts` — it anchors the shared IPC response cap.
+//! `crate::util::consts` — it anchors the shared IPC response cap.
 
 /// In-memory message-log capacity: how many recent messages each member
 /// retains as the anti-entropy recovery source and poll/fetch history. A
 /// bigger log lets a reconnecting peer recover a longer gap. Fixed at
-/// [`ahs_shared::DEFAULT_MESSAGE_LOG_SIZE`] (1000), clamped to `>= 1`; edit
+/// [`crate::util::consts::DEFAULT_MESSAGE_LOG_SIZE`] (1000), clamped to `>= 1`; edit
 /// the const to change it.
 pub(crate) fn message_log_size() -> usize {
-    ahs_shared::DEFAULT_MESSAGE_LOG_SIZE.max(1)
+    crate::util::consts::DEFAULT_MESSAGE_LOG_SIZE.max(1)
 }
 
 /// How many recently-seen message ids are retained for duplicate
@@ -62,7 +62,7 @@ pub(crate) const ANTIENTROPY_DIGEST_WINDOW_IDS: usize = 70;
 /// Max messages re-broadcast in response to one received digest, so a
 /// far-behind peer can't trigger an unbounded burst. This throttles
 /// deep-backfill throughput (~`this × peers` messages per
-/// `ANTIENTROPY_INTERVAL_SECS`). Default [`ahs_shared::consts::ANTIENTROPY_MAX_RESEND`];
+/// `ANTIENTROPY_INTERVAL_SECS`). Default [`crate::util::consts::ANTIENTROPY_MAX_RESEND`];
 /// hidden flag `--antientropy-max-resend` (tests raise it for deep backfill).
 pub(crate) fn antientropy_max_resend() -> usize {
     current().antientropy_max_resend.max(1)
@@ -73,7 +73,7 @@ pub(crate) const DEFAULT_MAX_DIRECT_PEERS: usize = 25;
 
 /// HyParView active-view capacity — the full-mesh threshold that eliminates
 /// membership churn (and the churn-driven leak) for swarms ≤ it. Default
-/// [`ahs_shared::consts::GOSSIP_ACTIVE_VIEW_CAPACITY`] (32); hidden flag
+/// [`crate::util::consts::GOSSIP_ACTIVE_VIEW_CAPACITY`] (32); hidden flag
 /// `--active-view-capacity` — set it *small* to deliberately reproduce the
 /// gossip-churn leak at any node count.
 pub(crate) fn gossip_active_view_capacity() -> usize {
@@ -81,7 +81,7 @@ pub(crate) fn gossip_active_view_capacity() -> usize {
 }
 
 /// HyParView passive-view capacity (healing/shuffle contact pool). Default
-/// [`ahs_shared::consts::GOSSIP_PASSIVE_VIEW_CAPACITY`] (64); hidden flag
+/// [`crate::util::consts::GOSSIP_PASSIVE_VIEW_CAPACITY`] (64); hidden flag
 /// `--passive-view-capacity`.
 pub(crate) fn gossip_passive_view_capacity() -> usize {
     current().gossip_passive_view_capacity.max(1)
@@ -95,7 +95,7 @@ pub(crate) const EMBED_INBOUND_CAP: usize = 1024;
 
 // The per-identity message rate (`RATE_LIMIT_PER_MIN`) is a published
 // contract enforced on both send and receive, so it lives in the shared
-// crate — see `ahs_shared::RATE_LIMIT_PER_MIN`. The prune TTL below is a
+// crate — see `crate::util::consts::RATE_LIMIT_PER_MIN`. The prune TTL below is a
 // private memory-management knob, not part of that contract.
 
 /// Rate-limiter entries idle longer than this (seconds) are pruned, so
@@ -106,10 +106,10 @@ pub(crate) const RATE_LIMITER_TTL_SECS: u64 = 600;
 /// one-shot `warn` (log + JSON `info` event) on its slow prune tick — the
 /// in-process leak-visibility signal the distributed soak lacked. **Warn-only**:
 /// it never exits; host safety is the e2e runbook's OS resource caps. Fixed at
-/// [`ahs_shared::consts::RESIDENT_MEMORY_WARN_MB`] (1024, well above a healthy
+/// [`crate::util::consts::RESIDENT_MEMORY_WARN_MB`] (1024, well above a healthy
 /// node's tens of `MiB`); `0` there disables it. Edit the const to tune.
 pub(crate) fn resident_memory_warn_mb() -> u64 {
-    ahs_shared::consts::RESIDENT_MEMORY_WARN_MB
+    crate::util::consts::RESIDENT_MEMORY_WARN_MB
 }
 
 /// How often an idle daemon broadcasts a `Presence::Alive` keepalive.
@@ -122,7 +122,7 @@ pub(crate) const ALIVE_INTERVAL_SECS: u64 = 30;
 /// two lost gossip rounds. Worst-case ghost window is
 /// `alive_timeout + sweep_interval`.
 ///
-/// Default [`ahs_shared::consts::ALIVE_TIMEOUT_SECS`]; hidden flag
+/// Default [`crate::util::consts::ALIVE_TIMEOUT_SECS`]; hidden flag
 /// `--alive-timeout-secs` so integration tests exercise eviction in
 /// seconds instead of minutes.
 pub(crate) fn alive_timeout_secs() -> u64 {
@@ -157,7 +157,7 @@ pub(crate) fn ping_window_secs() -> u64 {
 /// Process tuning sourced **once** at daemon startup from the hidden CLI
 /// flags (`--alive-timeout-secs`, …). Replaces the former env-var reads: an
 /// experiment is now an edit-the-const + commit, and a subprocess test passes
-/// the flag. Production runs on [`Tuning::DEFAULTS`] (the `ahs_shared::consts`
+/// the flag. Production runs on [`Tuning::DEFAULTS`] (the `crate::util::consts`
 /// values) when [`init`] is never called (the embed / MCP path).
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Tuning {
@@ -175,19 +175,19 @@ pub(crate) struct Tuning {
 }
 
 impl Tuning {
-    /// The production defaults, all from `ahs_shared::consts`.
+    /// The production defaults, all from `crate::util::consts`.
     pub(crate) const DEFAULTS: Self = Self {
-        alive_timeout_secs: ahs_shared::consts::ALIVE_TIMEOUT_SECS,
-        sweep_interval_secs: ahs_shared::consts::SWEEP_INTERVAL_SECS,
-        cohost_grace_secs: ahs_shared::consts::BEACON_COHOST_GRACE_SECS,
-        ping_window_secs: ahs_shared::consts::PING_WINDOW_SECS,
-        heal_stall_threshold_secs: ahs_shared::consts::HEAL_STALL_THRESHOLD_SECS,
-        advertise_interval_secs: ahs_shared::consts::ADVERTISE_INTERVAL_SECS,
-        directory_expiry_secs: ahs_shared::consts::DIRECTORY_EXPIRY_SECS,
-        antientropy_max_resend: ahs_shared::consts::ANTIENTROPY_MAX_RESEND,
+        alive_timeout_secs: crate::util::consts::ALIVE_TIMEOUT_SECS,
+        sweep_interval_secs: crate::util::consts::SWEEP_INTERVAL_SECS,
+        cohost_grace_secs: crate::util::consts::BEACON_COHOST_GRACE_SECS,
+        ping_window_secs: crate::util::consts::PING_WINDOW_SECS,
+        heal_stall_threshold_secs: crate::util::consts::HEAL_STALL_THRESHOLD_SECS,
+        advertise_interval_secs: crate::util::consts::ADVERTISE_INTERVAL_SECS,
+        directory_expiry_secs: crate::util::consts::DIRECTORY_EXPIRY_SECS,
+        antientropy_max_resend: crate::util::consts::ANTIENTROPY_MAX_RESEND,
         directory_private: false,
-        gossip_active_view_capacity: ahs_shared::consts::GOSSIP_ACTIVE_VIEW_CAPACITY,
-        gossip_passive_view_capacity: ahs_shared::consts::GOSSIP_PASSIVE_VIEW_CAPACITY,
+        gossip_active_view_capacity: crate::util::consts::GOSSIP_ACTIVE_VIEW_CAPACITY,
+        gossip_passive_view_capacity: crate::util::consts::GOSSIP_PASSIVE_VIEW_CAPACITY,
     };
 }
 
@@ -239,7 +239,7 @@ pub(crate) const HEAL_HARD_PROBE_SECS: u64 = 20;
 
 /// A heal inter-tick gap above this many seconds means the process was
 /// frozen between ticks (App Nap / coalescing / sleep) and must hard
-/// re-bootstrap. Default [`ahs_shared::consts::HEAL_STALL_THRESHOLD_SECS`]
+/// re-bootstrap. Default [`crate::util::consts::HEAL_STALL_THRESHOLD_SECS`]
 /// (60s) — safely above `HEAL_INTERVAL_SECS` (15s) so normal slack never
 /// trips it. Hidden flag `--heal-stall-threshold-secs` so subprocess tests
 /// drive it in seconds.
@@ -292,7 +292,7 @@ pub(crate) const RELINK_COOLDOWN_SECS: u64 = 10;
 /// swarm within one cycle (the join-horizon only surfaces ads stamped
 /// after the discoverer joined), long enough that the directory stays
 /// quiet — directory traffic is one tiny message per advertiser per
-/// interval. Default [`ahs_shared::consts::ADVERTISE_INTERVAL_SECS`]; hidden
+/// interval. Default [`crate::util::consts::ADVERTISE_INTERVAL_SECS`]; hidden
 /// flag `--advertise-interval-secs` so the subprocess directory test re-ads
 /// quickly.
 pub(crate) fn advertise_interval_secs() -> u64 {
@@ -303,7 +303,7 @@ pub(crate) fn advertise_interval_secs() -> u64 {
 /// publisher that exits stops re-broadcasting, so its listing ages out
 /// within this window. ~3× `ADVERTISE_INTERVAL_SECS` so one or two lost
 /// gossip rounds don't flicker a live swarm out of the list. Default
-/// [`ahs_shared::consts::DIRECTORY_EXPIRY_SECS`]; hidden flag
+/// [`crate::util::consts::DIRECTORY_EXPIRY_SECS`]; hidden flag
 /// `--directory-expiry-secs` so the subprocess directory test can shorten the
 /// `swarm_lost` window.
 pub(crate) fn directory_expiry_secs() -> u64 {

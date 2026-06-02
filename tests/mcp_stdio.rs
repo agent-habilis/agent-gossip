@@ -6,7 +6,7 @@
 
 mod common;
 
-use ahs_shared::RATE_LIMIT_PER_MIN;
+use agent_habilis_swarm::RATE_LIMIT_PER_MIN;
 use common::{CONNECT_TIMEOUT, MSG_TIMEOUT};
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, ChildStdin, Stdio};

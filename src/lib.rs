@@ -79,6 +79,10 @@ pub use protocol::swarm::{
     SwarmName,
 };
 pub use resolver::{JoinTarget, JoinTargetError};
+// Wire/runtime constants the external test + bench crates assert against; the
+// rest of `util::consts` stays crate-internal.
+pub use util::consts::{MAX_MESSAGE_SIZE, RATE_LIMIT_PER_MIN, SOCKET_DIR};
+pub use util::swarm_prefix;
 pub use util::version::VERSION;
 
 use anyhow::Result;

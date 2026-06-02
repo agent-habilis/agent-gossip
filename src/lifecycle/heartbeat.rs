@@ -79,7 +79,7 @@ mod tests {
         EventLoopState::new(
             None,
             Instant::now(),
-            ahs_shared::RATE_LIMIT_PER_MIN,
+            crate::util::consts::RATE_LIMIT_PER_MIN,
             std::sync::Arc::new(crate::protocol::identity::Identity::generate()),
         )
     }

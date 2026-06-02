@@ -45,7 +45,7 @@ const ASCII_SPAN: u64 = 94;
 // Tie the chunk size to the live wire cap so shrinking `MAX_MESSAGE_SIZE`
 // fails the build here instead of silently dropping every send.
 const _: () = assert!(
-    CHUNK_BODY_LEN + 512 <= ahs_shared::MAX_MESSAGE_SIZE,
+    CHUNK_BODY_LEN + 512 <= agent_habilis_swarm::MAX_MESSAGE_SIZE,
     "chunk body leaves too little room under MAX_MESSAGE_SIZE for the JSON envelope"
 );
 

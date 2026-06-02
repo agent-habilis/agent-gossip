@@ -165,7 +165,7 @@ mod message {
 mod rate_limit {
     use std::sync::atomic::{AtomicU64, Ordering};
 
-    use super::{BenchRateLimiter, Bencher, ItemsCount, MessageBody, Nickname, black_box};
+    use super::{BenchRateLimiter, Bencher, ItemsCount, MessageBody, black_box};
 
     /// Far above the production cap (60/min) so a bench run never exhausts
     /// the bucket mid-measurement — we time the per-call cost, not the
@@ -175,12 +175,12 @@ mod rate_limit {
     #[divan::bench]
     fn check_known_author(bencher: Bencher<'_, '_>) {
         let limiter = BenchRateLimiter::new(HIGH_QUOTA);
-        let author = Nickname::new("steady-author").unwrap();
+        let author = "steady-author-pubkey";
         // Prime the map so every timed call takes the borrow path.
-        limiter.check(&author);
+        limiter.check(author);
         bencher
             .counter(ItemsCount::new(1usize))
-            .bench(|| black_box(limiter.check(black_box(&author))));
+            .bench(|| black_box(limiter.check(black_box(author))));
     }
 
     // First-sighting path: a never-seen author each iteration drives the
@@ -197,7 +197,7 @@ mod rate_limit {
             .counter(ItemsCount::new(1usize))
             .with_inputs(|| {
                 let next = counter.fetch_add(1, Ordering::Relaxed);
-                Nickname::new(format!("a{next}")).unwrap()
+                format!("a{next}")
             })
             .bench_refs(|author| black_box(limiter.check(author)));
     }
@@ -207,10 +207,10 @@ mod rate_limit {
     #[divan::bench]
     fn check_unlimited(bencher: Bencher<'_, '_>) {
         let limiter = BenchRateLimiter::new(0);
-        let author = Nickname::new("steady-author").unwrap();
+        let author = "steady-author-pubkey";
         bencher
             .counter(ItemsCount::new(1usize))
-            .bench(|| black_box(limiter.check(black_box(&author))));
+            .bench(|| black_box(limiter.check(black_box(author))));
     }
 
     // `MessageBody` is public; keep a tiny validation bench alongside.

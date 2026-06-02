@@ -270,8 +270,8 @@ impl EventLoopState {
         // the window — but a larger configured log surfaces only the most
         // recent `POLL_RESPONSE_MAX_MSGS` here (deep history still backs
         // anti-entropy recovery).
-        if messages.len() > ahs_shared::POLL_RESPONSE_MAX_MSGS {
-            let drop_count = messages.len() - ahs_shared::POLL_RESPONSE_MAX_MSGS;
+        if messages.len() > crate::util::consts::POLL_RESPONSE_MAX_MSGS {
+            let drop_count = messages.len() - crate::util::consts::POLL_RESPONSE_MAX_MSGS;
             messages.drain(0..drop_count);
             output
                 .info("poll: log exceeds the response window, returning the most recent messages");
@@ -421,7 +421,7 @@ mod tests {
         EventLoopState::new(
             None,
             Instant::now(),
-            ahs_shared::RATE_LIMIT_PER_MIN,
+            crate::util::consts::RATE_LIMIT_PER_MIN,
             std::sync::Arc::new(crate::protocol::identity::Identity::generate()),
         )
     }

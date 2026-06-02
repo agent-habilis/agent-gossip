@@ -36,13 +36,13 @@ pub(crate) use shared::SharedServerOpts;
 )]
 pub(crate) struct Cli {
     /// Per-member log directory (default: the OS temp dir). Hidden — a
-    /// test/ops knob; production reads `ahs_shared::consts::LOG_SUBPATH`
+    /// test/ops knob; production reads `crate::util::consts::LOG_SUBPATH`
     /// under the temp dir. Global so it applies to any subcommand.
     #[arg(long, global = true, hide = true)]
     pub log_dir: Option<std::path::PathBuf>,
 
     /// Max log-file bytes before rotating to `<file>.1` (`0` disables).
-    /// Hidden test/ops knob; default `ahs_shared::consts::LOG_FILE_MAX_BYTES`.
+    /// Hidden test/ops knob; default `crate::util::consts::LOG_FILE_MAX_BYTES`.
     #[arg(long, global = true, hide = true)]
     pub log_max_bytes: Option<u64>,
 

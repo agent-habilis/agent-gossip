@@ -48,7 +48,7 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
     // subcommand resolves its log file (the buffered sink flushes at
     // `logging::attach`, after this). Replaces the old AHS_LOG_DIR /
     // AHS_LOG_MAX_BYTES env reads.
-    ahs_shared::logs::configure(ahs_shared::logs::LogConfig {
+    crate::util::logs::configure(crate::util::logs::LogConfig {
         dir: cli.log_dir,
         max_bytes: cli.log_max_bytes,
         raw: cli.log_raw,

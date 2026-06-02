@@ -2,7 +2,7 @@
 
 use clap::Parser;
 
-use ahs_shared::RATE_LIMIT_PER_MIN;
+use crate::util::consts::RATE_LIMIT_PER_MIN;
 
 use crate::protocol::Nickname;
 use crate::protocol::swarm::{DirectorySelection, SwarmName};

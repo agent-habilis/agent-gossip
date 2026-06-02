@@ -176,7 +176,7 @@ impl SwarmConfig {
     #[cfg(test)]
     pub(crate) fn loopback() -> Self {
         SwarmConfig {
-            rate_limit_per_min: ahs_shared::RATE_LIMIT_PER_MIN,
+            rate_limit_per_min: crate::util::consts::RATE_LIMIT_PER_MIN,
             lookups: LookupOpts::loopback(),
         }
     }
@@ -186,7 +186,7 @@ impl SwarmConfig {
     #[cfg(test)]
     pub(crate) fn public_preset() -> Self {
         SwarmConfig {
-            rate_limit_per_min: ahs_shared::RATE_LIMIT_PER_MIN,
+            rate_limit_per_min: crate::util::consts::RATE_LIMIT_PER_MIN,
             lookups: LookupOpts::public_preset(),
         }
     }

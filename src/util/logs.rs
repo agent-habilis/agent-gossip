@@ -1,35 +1,34 @@
-//! Per-member log path resolution and the body-redaction policy. Lives in
-//! the dependency-free shared crate so the daemon (which writes the file)
-//! and `cargo task logs` (which prints the dir) agree on one source of
-//! truth.
+//! Per-member log path resolution and the body-redaction policy. The daemon
+//! (which writes the file) and the rest of the binary agree on one source of
+//! truth here.
 
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
-use crate::consts::{LOG_FILE_MAX_BYTES, LOG_SUBPATH};
-use crate::swarm_prefix;
+use crate::util::consts::{LOG_FILE_MAX_BYTES, LOG_SUBPATH};
+use crate::util::swarm_prefix;
 
 /// Log config, installed **once** at startup from the `--log-dir` /
-/// `--log-max-bytes` / `--log-raw` flags. The shared crate has no CLI, so the
-/// binary parses the flags and calls [`configure`]; if it never does (e.g.
-/// `cargo task logs`, or a path that doesn't log to files) the defaults
-/// apply. Replaces the former `AHS_LOG_DIR` / `AHS_LOG_MAX_BYTES` env reads.
+/// `--log-max-bytes` / `--log-raw` flags. The `cli` layer parses the flags and
+/// calls [`configure`]; if it never does (a path that doesn't log to files)
+/// the defaults apply. Replaces the former `AHS_LOG_DIR` /
+/// `AHS_LOG_MAX_BYTES` env reads.
 #[derive(Clone, Debug, Default)]
-pub struct LogConfig {
+pub(crate) struct LogConfig {
     /// `--log-dir` override; `None` ⇒ [`LOG_SUBPATH`] under the OS temp dir.
-    pub dir: Option<PathBuf>,
+    pub(crate) dir: Option<PathBuf>,
     /// `--log-max-bytes` override; `None` ⇒ [`LOG_FILE_MAX_BYTES`].
-    pub max_bytes: Option<u64>,
+    pub(crate) max_bytes: Option<u64>,
     /// `--log-raw`: log raw message bodies. Default `false` — bodies are
     /// redacted to length + content-hash so log files are safe to share. Opt
     /// in only for a dev's own local debugging.
-    pub raw: bool,
+    pub(crate) raw: bool,
 }
 
 static LOG_CONFIG: OnceLock<LogConfig> = OnceLock::new();
 
 /// Install the log-path config, once. A second call is ignored.
-pub fn configure(config: LogConfig) {
+pub(crate) fn configure(config: LogConfig) {
     let _ = LOG_CONFIG.set(config);
 }
 
@@ -40,9 +39,9 @@ fn config() -> LogConfig {
 /// Per-member log dir. The `--log-dir` flag overrides; default is
 /// [`LOG_SUBPATH`] under the OS temp dir (`std::env::temp_dir()` — `/tmp/...`
 /// on Linux, a per-user dir on macOS). Sockets use
-/// [`crate::consts::SOCKET_DIR`].
+/// [`crate::util::consts::SOCKET_DIR`].
 #[must_use]
-pub fn log_dir() -> PathBuf {
+pub(crate) fn log_dir() -> PathBuf {
     resolve_log_dir(config().dir, &std::env::temp_dir())
 }
 
@@ -55,7 +54,7 @@ fn resolve_log_dir(override_dir: Option<PathBuf>, temp_base: &Path) -> PathBuf {
 /// Per-member log file — `<swarm_prefix>-<nick>.log` (same stem as the
 /// socket) under [`log_dir`].
 #[must_use]
-pub fn log_file_path(swarm_id: &str, nickname: &str) -> PathBuf {
+pub(crate) fn log_file_path(swarm_id: &str, nickname: &str) -> PathBuf {
     log_dir().join(format!("{}-{}.log", swarm_prefix(swarm_id), nickname))
 }
 
@@ -63,7 +62,7 @@ pub fn log_file_path(swarm_id: &str, nickname: &str) -> PathBuf {
 /// `--log-max-bytes` flag overrides [`LOG_FILE_MAX_BYTES`]; `0` disables
 /// rotation.
 #[must_use]
-pub fn log_max_bytes() -> u64 {
+pub(crate) fn log_max_bytes() -> u64 {
     config().max_bytes.unwrap_or(LOG_FILE_MAX_BYTES)
 }
 
@@ -72,7 +71,7 @@ pub fn log_max_bytes() -> u64 {
 /// to share with developers. `--log-raw` opts a local debugging run back
 /// into raw bodies. See [`LogConfig::raw`].
 #[must_use]
-pub fn log_raw() -> bool {
+pub(crate) fn log_raw() -> bool {
     config().raw
 }
 

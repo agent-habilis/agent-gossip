@@ -26,10 +26,10 @@ pub use id::{IdError, MessageId};
 
 /// Maximum serialized message size — a network-wide wire contract kept
 /// under iroh-gossip's payload budget so a message we accept always fits
-/// one gossip message (see `ahs_shared::MAX_MESSAGE_SIZE` for why). Lives
+/// one gossip message (see `crate::util::consts::MAX_MESSAGE_SIZE` for why). Lives
 /// in the shared crate; the compile-time assertion below guards the
 /// relationship against the live gossip constant.
-pub(crate) use ahs_shared::MAX_MESSAGE_SIZE;
+pub(crate) use crate::util::consts::MAX_MESSAGE_SIZE;
 
 /// Compile-time tripwire: a serialized message up to `MAX_MESSAGE_SIZE`
 /// must fit a single iroh-gossip message, with room for gossip's

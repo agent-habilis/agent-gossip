@@ -18,7 +18,7 @@ use std::time::{Duration, Instant};
 // The single source of truth for the socket dir lives in the shared
 // crate (a dev-dependency); re-export it so test code keeps using
 // `common::SOCKET_DIR` without a divergent copy.
-pub(crate) use ahs_shared::SOCKET_DIR;
+pub(crate) use agent_habilis_swarm::SOCKET_DIR;
 
 pub(crate) const CONNECT_TIMEOUT: Duration = Duration::from_mins(1);
 pub(crate) const MSG_TIMEOUT: Duration = Duration::from_secs(30);
@@ -101,12 +101,12 @@ pub(crate) fn tmp_log(tag: &str) -> PathBuf {
 pub(crate) fn socket_path(swarm: &str, nickname: &str) -> String {
     format!(
         "{SOCKET_DIR}/{}-{nickname}.sock",
-        ahs_shared::swarm_prefix(swarm)
+        agent_habilis_swarm::swarm_prefix(swarm)
     )
 }
 
 /// A node's tracing-sink log (distinct from its captured stdout/stderr
-/// in `Node::log`). Mirrors `ahs_shared::logs::log_file_path`: same
+/// in `Node::log`). Mirrors `agent_habilis_swarm::logs::log_file_path`: same
 /// `<swarm_prefix>-<nick>` stem, under the per-test `AHS_LOG_DIR`. Use
 /// this to assert on `tracing` output (warn/info) the operator stream
 /// never carries.
@@ -114,7 +114,7 @@ pub(crate) fn trace_log(swarm: &str, nickname: &str) -> String {
     let path = format!(
         "{}/{}-{nickname}.log",
         test_log_dir(),
-        ahs_shared::swarm_prefix(swarm)
+        agent_habilis_swarm::swarm_prefix(swarm)
     );
     fs::read_to_string(path).unwrap_or_default()
 }

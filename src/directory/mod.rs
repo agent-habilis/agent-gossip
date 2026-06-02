@@ -59,7 +59,7 @@ pub(crate) fn directory_swarm(directory: &SwarmName, lookups: LookupOpts) -> Swa
 /// no network requests for the directory at all.
 pub(crate) fn directory_config(lookups: LookupOpts) -> SwarmConfig {
     SwarmConfig {
-        rate_limit_per_min: ahs_shared::RATE_LIMIT_PER_MIN,
+        rate_limit_per_min: crate::util::consts::RATE_LIMIT_PER_MIN,
         lookups,
     }
 }

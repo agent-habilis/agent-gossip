@@ -7,10 +7,10 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncWriteExt, BufReader};
 use tokio::sync::mpsc;
 
-use ahs_shared::{MAX_IPC_COMMAND_BYTES, MAX_IPC_RESPONSE_BYTES, SOCKET_DIR, swarm_prefix};
-
 use crate::protocol::{MessageBody, MessageId, Nickname, SwarmId};
 use crate::util::bounded_read::{LineRead, read_bounded_line};
+use crate::util::consts::{MAX_IPC_COMMAND_BYTES, MAX_IPC_RESPONSE_BYTES, SOCKET_DIR};
+use crate::util::swarm_prefix;
 
 /// Returns the IPC endpoint identifier for a specific agent on a swarm —
 /// a filesystem socket path (the project targets Unix only).
@@ -331,7 +331,7 @@ mod tests {
     // ── property-based tests ───────────────────────────────────────
 
     mod prop {
-        use ahs_shared::swarm_prefix;
+        use crate::util::swarm_prefix;
         use proptest::collection::vec as arb_vec;
         use proptest::{prop_assert, prop_assert_eq, proptest, strategy::Strategy};
 

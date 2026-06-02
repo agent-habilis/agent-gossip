@@ -5,7 +5,7 @@
 
 use clap::Parser;
 
-use ahs_shared::consts;
+use crate::util::consts;
 
 use crate::util::tuning::DEFAULT_MAX_DIRECT_PEERS;
 
@@ -44,7 +44,7 @@ pub(crate) struct SharedServerOpts {
     pub state_file: Option<std::path::PathBuf>,
 
     // ── Hidden tuning knobs ───────────────────────────────────────
-    // Not in `--help`. Production runs on the `ahs_shared::consts`
+    // Not in `--help`. Production runs on the `crate::util::consts`
     // defaults below; the subprocess test suite passes these to run with
     // short timings. These replace the former env-var overrides — see
     // `crate::util::tuning`.

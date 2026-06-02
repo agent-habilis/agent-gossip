@@ -1,7 +1,7 @@
 //! The single home for constants we may want to tune in the future:
-//! runtime paths plus the network-wide wire constants. Kept in the
-//! dependency-free `ahs-shared` crate so both the `ahs` binary and the
-//! task runner read the same values.
+//! runtime paths plus the network-wide wire constants. The few names the
+//! external test/bench crates assert against are re-exported from the crate
+//! root (see `lib.rs`); the rest stay crate-internal.
 
 /// Unix socket runtime dir. Hardcoded `/tmp` base — short (avoids the
 /// macOS `AF_UNIX` `sun_path` ~104-byte limit). Sibling agent-habilis
@@ -10,14 +10,14 @@ pub const SOCKET_DIR: &str = "/tmp/agent-habilis/swarm/sockets";
 
 /// Default per-member log dir, relative to the OS temp dir
 /// (`std::env::temp_dir()`); the `--log-dir` flag overrides. Resolved by
-/// [`crate::logs::log_dir`].
-pub const LOG_SUBPATH: &str = "agent-habilis/swarm/logs";
+/// [`crate::util::logs::log_dir`].
+pub(crate) const LOG_SUBPATH: &str = "agent-habilis/swarm/logs";
 
 /// Max bytes a per-member log file grows before rotating to `<file>.1`
 /// (active + one backup ⇒ bounded at `2 ×` this). The `--log-max-bytes` flag
 /// overrides; `0` disables rotation. Resolved by
-/// [`crate::logs::log_max_bytes`].
-pub const LOG_FILE_MAX_BYTES: u64 = 10 * 1024 * 1024; // 10 MiB
+/// [`crate::util::logs::log_max_bytes`].
+pub(crate) const LOG_FILE_MAX_BYTES: u64 = 10 * 1024 * 1024; // 10 MiB
 
 /// Per-identity message rate limit, enforced symmetrically on the send
 /// and receive paths (same quota each direction). One limit covers all
@@ -40,8 +40,8 @@ pub const RATE_LIMIT_PER_MIN: u16 = 60;
 /// is silently dropped by the gossip layer (it never propagates and the
 /// sender gets no error), so our cap must stay under it. A compile-time
 /// assertion in the binary guards that relationship against the live
-/// gossip constant — `ahs-shared` stays dependency-free, so the value is
-/// hardcoded here rather than derived.
+/// gossip constant; the value is hardcoded here rather than derived from
+/// iroh-gossip's (so this module pulls in no dependency).
 pub const MAX_MESSAGE_SIZE: usize = 3840;
 
 /// Default number of recent messages each member retains in its in-memory
@@ -51,28 +51,28 @@ pub const MAX_MESSAGE_SIZE: usize = 3840;
 /// longer gap. Not coupled to the IPC response cap — that is the separate,
 /// fixed [`POLL_RESPONSE_MAX_MSGS`] (the log can exceed it; `poll` then
 /// surfaces the most-recent window and anti-entropy carries the rest).
-pub const DEFAULT_MESSAGE_LOG_SIZE: usize = 1000;
+pub(crate) const DEFAULT_MESSAGE_LOG_SIZE: usize = 1000;
 
 /// Max messages a single `poll` / `fetch_messages` returns — a **fixed**
 /// IPC contract (the `ahs poll` client can't know the daemon's configured
 /// log size, so the read cap can't depend on it). At the default log size
 /// this equals the log, so `poll` returns everything; a larger configured
 /// log just means `poll` surfaces the most-recent `POLL_RESPONSE_MAX_MSGS`.
-pub const POLL_RESPONSE_MAX_MSGS: usize = 1000;
+pub(crate) const POLL_RESPONSE_MAX_MSGS: usize = 1000;
 
 /// Max bytes for one stdin line. A raw message body larger than the wire
 /// cap can never form a valid message, so the line read is capped there.
-pub const MAX_STDIN_LINE_BYTES: usize = MAX_MESSAGE_SIZE;
+pub(crate) const MAX_STDIN_LINE_BYTES: usize = MAX_MESSAGE_SIZE;
 
 /// Max bytes for one IPC command line: the same body in a JSON envelope
 /// (swarm id, nickname, keys). 2× the wire cap is comfortable headroom.
-pub const MAX_IPC_COMMAND_BYTES: usize = 2 * MAX_MESSAGE_SIZE;
+pub(crate) const MAX_IPC_COMMAND_BYTES: usize = 2 * MAX_MESSAGE_SIZE;
 
 /// Max bytes for one IPC response line: a poll returns at most
 /// [`POLL_RESPONSE_MAX_MSGS`] messages, each ≤ the wire cap. Fixed (not tied
 /// to the configurable log size) so the `poll` client has a stable read
 /// bound.
-pub const MAX_IPC_RESPONSE_BYTES: usize = POLL_RESPONSE_MAX_MSGS * MAX_MESSAGE_SIZE;
+pub(crate) const MAX_IPC_RESPONSE_BYTES: usize = POLL_RESPONSE_MAX_MSGS * MAX_MESSAGE_SIZE;
 
 // ── Daemon tuning defaults ────────────────────────────────────────
 //
@@ -86,46 +86,46 @@ pub const MAX_IPC_RESPONSE_BYTES: usize = POLL_RESPONSE_MAX_MSGS * MAX_MESSAGE_S
 /// How long a peer can go unheard before the sweeper evicts it. Must exceed
 /// the alive-keepalive interval comfortably (3× absorbs one or two lost
 /// rounds). Flag: `--alive-timeout-secs` (tests shorten it to seconds).
-pub const ALIVE_TIMEOUT_SECS: u64 = 90;
+pub(crate) const ALIVE_TIMEOUT_SECS: u64 = 90;
 
 /// How often the sweeper walks `last_seen` looking for expired peers.
 /// Flag: `--sweep-interval-secs`.
-pub const SWEEP_INTERVAL_SECS: u64 = 10;
+pub(crate) const SWEEP_INTERVAL_SECS: u64 = 10;
 
 /// Grace before an unmeshed joiner co-hosts the rendezvous anyway (empty
 /// swarm ⇒ become the beacon for the next joiner). Flag:
 /// `--beacon-cohost-grace-secs`.
-pub const BEACON_COHOST_GRACE_SECS: u64 = 10;
+pub(crate) const BEACON_COHOST_GRACE_SECS: u64 = 10;
 
 /// How long an `ahs ping` round collects pongs before the daemon emits its
 /// `ping_report`. Flag: `--ping-window-secs`.
-pub const PING_WINDOW_SECS: u64 = 10;
+pub(crate) const PING_WINDOW_SECS: u64 = 10;
 
 /// A heal inter-tick gap above this (seconds) means the process was frozen
 /// between ticks (App Nap / sleep) and must hard re-bootstrap. Safely above
 /// the 15s heal interval so normal slack never trips it. Flag:
 /// `--heal-stall-threshold-secs`.
-pub const HEAL_STALL_THRESHOLD_SECS: u64 = 60;
+pub(crate) const HEAL_STALL_THRESHOLD_SECS: u64 = 60;
 
 /// How often an advertising `create` re-broadcasts its `ahs…` id into the
 /// directory. Flag: `--advertise-interval-secs`.
-pub const ADVERTISE_INTERVAL_SECS: u64 = 20;
+pub(crate) const ADVERTISE_INTERVAL_SECS: u64 = 20;
 
 /// How long a discoverer keeps showing a swarm after its last ad (~3×
 /// `ADVERTISE_INTERVAL_SECS`). Flag: `--directory-expiry-secs`.
-pub const DIRECTORY_EXPIRY_SECS: u64 = 60;
+pub(crate) const DIRECTORY_EXPIRY_SECS: u64 = 60;
 
 /// Max messages re-broadcast in response to one received digest, so a
 /// far-behind peer can't trigger an unbounded backfill burst. Flag:
 /// `--antientropy-max-resend`.
-pub const ANTIENTROPY_MAX_RESEND: usize = 64;
+pub(crate) const ANTIENTROPY_MAX_RESEND: usize = 64;
 
 /// Soft resident-memory threshold (`MiB`) above which the daemon emits a
 /// one-shot `warn` on its slow prune tick — the in-process leak-visibility
 /// signal. (Resident memory = the physical RAM the process holds; the resident
 /// set size, RSS.) Warn-only; `0` disables. A pure const (no flag): an operator
 /// tunes it by editing here.
-pub const RESIDENT_MEMORY_WARN_MB: u64 = 1024;
+pub(crate) const RESIDENT_MEMORY_WARN_MB: u64 = 1024;
 
 /// HyParView **active view** capacity — the number of direct gossip neighbors
 /// (open QUIC links) each member maintains per topic. A swarm at or below this
@@ -140,12 +140,12 @@ pub const RESIDENT_MEMORY_WARN_MB: u64 = 1024;
 /// `DEFAULT_MAX_DIRECT_PEERS` (25) soft address-tracking cap. Flag (hidden):
 /// `--active-view-capacity` — set it *small* to deliberately reproduce the
 /// gossip-churn leak at any node count.
-pub const GOSSIP_ACTIVE_VIEW_CAPACITY: usize = 32;
+pub(crate) const GOSSIP_ACTIVE_VIEW_CAPACITY: usize = 32;
 
 /// HyParView **passive view** capacity — the backup contact pool used for
 /// healing/shuffle when active-view links drop. Kept ≥ 2× the active view
 /// (iroh-gossip default 30). Flag (hidden): `--passive-view-capacity`.
-pub const GOSSIP_PASSIVE_VIEW_CAPACITY: usize = 64;
+pub(crate) const GOSSIP_PASSIVE_VIEW_CAPACITY: usize = 64;
 
 // QUIC keep-alive / idle timeout are intentionally left at iroh's
 // holepunch-tuned transport defaults (~1s keep-alive, 15s direct / 30s relay
