@@ -104,6 +104,36 @@ others can join with: `/swarm:join $SWARM`
 ```
 Omit the `advertising` line entirely when not advertising.
 
+## Offer to copy the join command
+
+After the Output block, offer to put the join command on the clipboard so the
+user can share it without hand-selecting it. Use the **ask widget**
+(`AskUserQuestion`) — it is a tool, not prose, so it is allowed under Quiet
+mode:
+
+- question: "Copy the join command to your clipboard?"
+- header: "Clipboard"
+- options (single-select): **"Copy join command"** and **"Not now"**.
+
+On **Copy join command**, run this portable clipboard command, substituting
+the real `$SWARM` id (macOS `pbcopy`, with Wayland/X11 Linux fallbacks):
+
+```bash
+printf %s '/swarm:join $SWARM' | (pbcopy || wl-copy || xclip -selection clipboard || xsel -ib) 2>/dev/null
+```
+
+Then print exactly one line:
+```
+📋 copied join command to clipboard
+```
+
+On **Not now**, do nothing.
+
+The string copied **must** be byte-identical to the Output's join line
+(`/swarm:join $SWARM`) so the two never drift. The ask widget plus that single
+`📋` confirmation line are the **only** additions allowed beyond the Output
+block — no other narration (Quiet mode still holds otherwise).
+
 ## Notes
 
 - The Monitor holds the daemon for the session lifetime. Use
