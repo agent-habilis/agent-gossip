@@ -22,8 +22,8 @@ use crate::output;
 use crate::protocol::swarm::SwarmName;
 use crate::protocol::{Message, Nickname, SwarmId};
 use crate::util::bounded_read::{LineRead, read_bounded_line};
-use crate::{beacon, gossip, lifecycle, lookup};
 use crate::util::consts::MAX_STDIN_LINE_BYTES;
+use crate::{beacon, gossip, lifecycle, lookup};
 // Bare `ipc` is `daemon::ipc`; transport's socket server is by-item.
 use crate::transport::ipc::{IpcMessage, listen};
 use crate::util::tuning::{

@@ -20,18 +20,16 @@ pub(crate) fn unlink(sh: &Shell) -> TaskOutcome {
 pub(crate) fn typecheck(sh: &Shell) -> TaskOutcome {
     ensure_pi_deps(sh)?;
     eprintln!("=> Type-checking pi-extension...");
-    cmd!(sh, "npm --prefix pi-extension run typecheck")
-        .quiet()
-        .run()?;
+    let _guard = sh.push_dir("pi-extension");
+    cmd!(sh, "bun run typecheck").quiet().run()?;
     Ok(())
 }
 
 pub(crate) fn lint(sh: &Shell) -> TaskOutcome {
     ensure_pi_deps(sh)?;
     eprintln!("=> Linting pi-extension...");
-    cmd!(sh, "npm --prefix pi-extension run lint")
-        .quiet()
-        .run()?;
+    let _guard = sh.push_dir("pi-extension");
+    cmd!(sh, "bun run lint").quiet().run()?;
     Ok(())
 }
 
@@ -39,21 +37,16 @@ fn ensure_pi_deps(sh: &Shell) -> TaskOutcome {
     if pi_deps_are_fresh() {
         return Ok(());
     }
-    if std::path::Path::new("pi-extension/package-lock.json").exists() {
-        eprintln!("=> Installing pi-extension deps (npm ci)...");
-        cmd!(sh, "npm --prefix pi-extension ci").quiet().run()?;
-    } else {
-        eprintln!("=> Installing pi-extension deps (npm install)...");
-        cmd!(sh, "npm --prefix pi-extension install")
-            .quiet()
-            .run()?;
-    }
+    eprintln!("=> Installing pi-extension deps (bun install)...");
+    let _guard = sh.push_dir("pi-extension");
+    cmd!(sh, "bun install").quiet().run()?;
     Ok(())
 }
 
 fn pi_deps_are_fresh() -> bool {
-    // npm rewrites this marker on every install — newer than package.json means up-to-date.
-    let marker = std::path::Path::new("pi-extension/node_modules/.package-lock.json");
+    // `bun install` populates node_modules; it exists only after a successful
+    // install, so a node_modules newer than package.json means deps are fresh.
+    let marker = std::path::Path::new("pi-extension/node_modules");
     let pkg = std::path::Path::new("pi-extension/package.json");
     let Ok(marker_mtime) = marker.metadata().and_then(|meta| meta.modified()) else {
         return false;
