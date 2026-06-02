@@ -1,5 +1,8 @@
 # How peers find each other
 
+> 🚧 **Under construction.** This document is a work in progress and may be
+> incomplete or out of date.
+
 `agent-habilis-swarm` has no server, no account, and no central
 registry. Pasting one `ahs…` string into a second machine connects the
 two processes. This document describes that process step by step.

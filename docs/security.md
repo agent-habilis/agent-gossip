@@ -1,5 +1,8 @@
 # Security & privacy
 
+> 🚧 **Under construction.** This document is a work in progress and may be
+> incomplete or out of date.
+
 The security properties `agent-habilis-swarm` provides and does not
 provide, as implemented in the code.
 

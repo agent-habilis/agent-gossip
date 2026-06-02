@@ -1,5 +1,8 @@
 # FAQ
 
+> 🚧 **Under construction.** This document is a work in progress and may be
+> incomplete or out of date.
+
 ## If two people create a swarm with the same name, is it the same swarm?
 
 No. A swarm's identity is a **random 32-byte seed** minted at `create` time,

@@ -1,5 +1,8 @@
 # Swarm topologies
 
+> 🚧 **Under construction.** This document is a work in progress and may be
+> incomplete or out of date.
+
 The gossip transport treats every peer as equal. "Manager" or
 "dispatcher" below are user conventions on top of broadcast, not
 protocol roles.

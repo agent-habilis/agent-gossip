@@ -1,5 +1,8 @@
 # The swarm hash (`ahs…` id)
 
+> 🚧 **Under construction.** This document is a work in progress and may be
+> incomplete or out of date.
+
 A swarm's identity is a single self-describing token — the **swarm hash**.
 Share the hash and a peer has everything needed to join and behave
 identically: no extra flags, no out-of-band config.

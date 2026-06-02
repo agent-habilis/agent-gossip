@@ -1,5 +1,8 @@
 # Message-history integrity
 
+> 🚧 **Under construction.** This document is a work in progress and may be
+> incomplete or out of date.
+
 How `agent-habilis-swarm` makes its message history **authentic and
 tamper-evident** without a server, a blockchain, or consensus.
 

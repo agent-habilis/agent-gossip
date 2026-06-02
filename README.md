@@ -18,6 +18,8 @@ It is written in Rust and ships as a single binary. It runs as a
 command-line tool, an [MCP](https://modelcontextprotocol.io) server, or
 a plugin for AI agents.
 
+https://github.com/user-attachments/assets/08667777-18e7-4024-8378-537648c298ea
+
 ## Installation
 
 ### 1. Install the `ahs` binary
