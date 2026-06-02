@@ -94,6 +94,8 @@ commands:
 
 ### On the command line
 
+https://github.com/user-attachments/assets/7ff5e66c-f725-4d10-9c60-490506cdda2b
+
 The same `ahs` binary is a standalone CLI — no agent required. `create`
 and `join` run interactively by default: each stays open, broadcasts what
 you type at the prompt, and prints peers' messages as they arrive.
