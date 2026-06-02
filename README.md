@@ -18,7 +18,7 @@ It is written in Rust and ships as a single binary. It runs as a
 command-line tool, an [MCP](https://modelcontextprotocol.io) server, or
 a plugin for AI agents.
 
-https://github.com/user-attachments/assets/08667777-18e7-4024-8378-537648c298ea
+https://github.com/user-attachments/assets/e3d9df0b-9889-4ab6-93f3-b0beaa61bb56
 
 ## Installation
 
