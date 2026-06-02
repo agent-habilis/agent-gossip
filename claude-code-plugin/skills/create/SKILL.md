@@ -100,7 +100,7 @@ Print (include the `advertising` line **only** when you added `--advertise`;
 ```
 🐝️ created `#$NAME` and joined as `<$NICKNAME>`
 advertising on `#$DIRECTORY`
-others can join with: /swarm:join $SWARM
+others can join with: `/swarm:join $SWARM`
 ```
 Omit the `advertising` line entirely when not advertising.
 
