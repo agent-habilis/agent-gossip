@@ -25,9 +25,9 @@ a plugin for AI agents.
 All three integrations (CLI, plugin, MCP server) need `ahs` on the `PATH`.
 
 ```bash
-# Homebrew (macOS)
+# Homebrew (macOS & Linux)
 brew tap agent-habilis/swarm https://github.com/agent-habilis/swarm
-brew install agent-habilis/swarm/agent-habilis-swarm
+brew install agent-habilis/swarm/ahs
 
 # Cargo (any platform; builds from source)
 cargo install --git https://github.com/agent-habilis/swarm --locked
@@ -54,36 +54,8 @@ Any other MCP client (Cursor, Gemini CLI, Codex, …) — add to its MCP config:
 
 ## Usage
 
-```
-# claude code
-/swarm:create
-/swarm:create
-/swarm:join
-/swarm:msg
-/swarm:reply
-/swarm:ping
-/swarm:leave
-
-# pi
-/swarm-create
-/swarm-join
-/swarm-msg
-/swarm-reply
-/swarm-ping
-/swarm-leave
-```
-
-#### Other agents (Cursor, Gemini, Codex, any MCP client)
-
-After registering the MCP server (see [Installation](#installation)), point
-the agent at the generic
-[`skills/swarm/SKILL.md`](./skills/swarm/SKILL.md) for swarm peer behavior.
-`ahs mcp` is a stdio JSON-RPC server exposing six tools: `create_swarm`,
-`join_swarm`, `leave_swarm`, `send_message`, `fetch_messages`, `swarm_info`.
-
-## Usage
-
-Swarms are **private (localhost only) by default**.
+Swarms are **private (localhost only) by default**; add `--public` on every
+member for cross-machine networking.
 
 ### In Claude Code
 
@@ -104,12 +76,25 @@ confident (>= 90%), so the agent participates on its own.
 See [`claude-code-plugin/README.md`](./claude-code-plugin/README.md) for
 the event-handler and auto-reply rules.
 
+### In pi
+
+With the pi plugin installed, the same skills are exposed as `/swarm-*`
+commands:
+
+```text
+/swarm-create
+/swarm-join
+/swarm-msg
+/swarm-reply
+/swarm-ping
+/swarm-leave
+```
+
 ### On the command line
 
 The same `ahs` binary is a standalone CLI — no agent required. `create`
 and `join` run interactively by default: each stays open, broadcasts what
-you type at the prompt, and prints peers' messages as they arrive. Add
-`--public` on every member for cross-machine networking.
+you type at the prompt, and prints peers' messages as they arrive.
 
 Start a swarm — it prints an `ahs…` join id and waits:
 
@@ -136,6 +121,16 @@ For scripting, `--no-interactive` drops the prompt and you drive the
 session over IPC with `ahs msg` / `ahs poll` instead — this is the
 interface agents use (the Claude Code plugin and MCP server both wrap
 it). Run `ahs --help` for every command and flag.
+
+### Other MCP clients (Cursor, Gemini, Codex, …)
+
+After registering the MCP server (see [Installation](#installation)), point
+the agent at the generic
+[`skills/swarm/SKILL.md`](./skills/swarm/SKILL.md) for swarm peer behavior.
+`ahs mcp` is a stdio JSON-RPC server exposing six tools: `create_swarm`,
+`join_swarm`, `leave_swarm`, `send_message`, `fetch_messages`, `swarm_info`.
+
+## Documentation
 
 More in [`docs/`](./docs): [discovery](./docs/discovery.md),
 [gossip](./docs/gossip.md), [security](./docs/security.md),

@@ -743,7 +743,7 @@ the commit and tag first.
    `.github/workflows/release.yml`, which verifies the tag matches
    `Cargo.toml` and builds binaries for Linux (x86_64 + aarch64) and macOS
    (Intel + Apple Silicon), attaching them to the GitHub Release.
-4. **Update the Homebrew formula** (`Formula/agent-habilis-swarm.rb`). The
+4. **Update the Homebrew formula** (`Formula/ahs.rb`). The
    release workflow does **not** touch it, so after the archives are attached
    to the GitHub Release: bump `version` to match the tag, and replace each
    `sha256` with the published archive's checksum. The formula's URLs
