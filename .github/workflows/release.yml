@@ -22,8 +22,17 @@ jobs:
             exit 1
           fi
 
-  upload:
+  create-release:
     needs: verify-version
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create the GitHub Release (idempotent)
+        run: gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" || gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes --verify-tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+  upload:
+    needs: create-release
     strategy:
       fail-fast: false
       matrix:
