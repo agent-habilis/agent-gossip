@@ -740,21 +740,20 @@ the commit and tag first.
    `Cargo.lock`, commits `chore: release v<version>`, creates annotated
    tag `v<version>`. No push.
 3. `git push origin main --follow-tags` — pushing the tag triggers
-   `.github/workflows/release.yml`, which verifies the tag matches
-   `Cargo.toml` and builds binaries for Linux (x86_64 + aarch64) and macOS
-   (Apple Silicon only), attaching them to the GitHub Release.
-4. **Update the Homebrew formula** (`Formula/ahs.rb`). The
-   release workflow does **not** touch it, so after the archives are attached
-   to the GitHub Release: bump `version` to match the tag, and replace each
-   `sha256` with the published archive's checksum. The formula's URLs
-   interpolate `#{version}`, so the `version` stanza must be present and
-   correct or `brew` can't resolve the download URL. Compute each checksum
-   with:
-   ```bash
-   shasum -a 256 ahs-v<version>-<target>.tar.gz
-   ```
-   for the three `darwin`/`linux-musl` targets the formula lists, then commit
-   the formula change. (Manual today; can be folded into `release.yml` later.)
+   `.github/workflows/release.yml`. The workflow runs four jobs in order:
+   `verify-version` (tag must match `Cargo.toml`), `create-release`
+   (idempotently creates the GitHub Release), `upload` (builds Linux
+   x86_64 + aarch64 and macOS Apple-Silicon binaries, attaching each
+   archive plus an `<archive>.sha256` sidecar), and `update-formula`.
+4. **The Homebrew formula updates itself.** The `update-formula` job
+   reads the `.sha256` sidecars from the release, rewrites
+   `Formula/ahs.rb` (the `version` stanza plus each target's `sha256`),
+   and commits `chore: update Homebrew formula for v<version>` straight
+   to `main` with the default `GITHUB_TOKEN`. No manual step. (That push
+   uses `GITHUB_TOKEN`, so it does not re-trigger any workflow.) If the
+   formula's structure ever changes, update the `sed`/`perl` rewrite in
+   the `update-formula` job to match — its regex keys each `sha256` line
+   to the target named on the `url` line directly above it.
 
 ## Code Style
 

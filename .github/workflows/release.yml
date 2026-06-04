@@ -52,3 +52,37 @@ jobs:
           target: ${{ matrix.target }}
           archive: $bin-$tag-$target
           token: ${{ secrets.GITHUB_TOKEN }}
+          # Emit an `<archive>.sha256` sidecar per target so update-formula
+          # can read the checksums without re-downloading the tarballs.
+          checksum: sha256
+
+  update-formula:
+    needs: upload
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: main # commit the formula bump onto main, not the tag
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Bump Formula/ahs.rb to the released version + checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          ver="${TAG#v}"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern '*.sha256' --dir /tmp --clobber
+          sed -i -E "s/^  version \"[^\"]*\"/  version \"$ver\"/" Formula/ahs.rb
+          for target in aarch64-apple-darwin x86_64-unknown-linux-musl aarch64-unknown-linux-musl; do
+            sum=$(cut -d' ' -f1 "/tmp/ahs-v$ver-$target.tar.gz.sha256")
+            # Replace the sha256 line immediately following this target's url line.
+            perl -0pi -e "s{(${target}\.tar\.gz\"\s*\n\s*sha256 \")[0-9a-f]{64}}{\${1}${sum}}g" Formula/ahs.rb
+          done
+      - name: Commit the formula bump
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/ahs.rb
+          git diff --cached --quiet || git commit -m "chore: update Homebrew formula for ${TAG}"
+          git push origin main
