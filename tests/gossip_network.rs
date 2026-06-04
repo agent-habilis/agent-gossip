@@ -515,6 +515,64 @@ fn test_network_public_accepted() {
     assert!(found, "create --public did not produce any output");
 }
 
+/// A catchable termination signal must remove the `--state-file` so the
+/// shell statusline pill clears immediately on leave instead of lingering
+/// until its staleness window expires. Covers SIGTERM (what a Monitor
+/// `TaskStop` sends) and SIGHUP (a closing parent) — both must trip the
+/// graceful `shutdown()` path that deletes the file. SIGKILL is excluded:
+/// it is uncatchable, so the file legitimately survives it.
+#[test]
+fn test_state_file_removed_on_signal() {
+    for signal in ["-TERM", "-HUP", "-INT"] {
+        let log = tmp_log(&format!("statefile{signal}"));
+        let file = File::create(&log).unwrap();
+        let state_file = std::env::temp_dir().join(format!(
+            "ahs-statefile-test-{}-{signal}.json",
+            std::process::id()
+        ));
+        let _ = fs::remove_file(&state_file);
+
+        let mut child = common::test_cmd()
+            .args(["create", "--name", "statefile-test", "--no-interactive"])
+            .arg("--state-file")
+            .arg(&state_file)
+            .stdout(Stdio::from(file.try_clone().unwrap()))
+            .stderr(Stdio::from(file))
+            .spawn()
+            .expect("failed to spawn create --state-file");
+
+        // The daemon writes the state file once the node is up.
+        let appear = Instant::now() + CONNECT_TIMEOUT;
+        while Instant::now() < appear && !state_file.exists() {
+            std::thread::sleep(POLL);
+        }
+        assert!(
+            state_file.exists(),
+            "daemon never wrote the state file ({signal})\nlog:\n{}",
+            fs::read_to_string(&log).unwrap_or_default()
+        );
+
+        let _ = std::process::Command::new("kill")
+            .args([signal, &child.id().to_string()])
+            .status();
+
+        // The graceful shutdown removes the file (after a ~500ms Left
+        // broadcast window); allow generous slack.
+        let gone = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < gone && state_file.exists() {
+            std::thread::sleep(POLL);
+        }
+        assert!(
+            !state_file.exists(),
+            "state file survived {signal} — statusline pill would linger"
+        );
+
+        let _ = child.wait();
+        let _ = fs::remove_file(&log);
+        let _ = fs::remove_file(&state_file);
+    }
+}
+
 /// The poll command retrieves buffered messages from a running swarm process.
 /// Calling poll with --after returns only messages after that ID.
 #[test]

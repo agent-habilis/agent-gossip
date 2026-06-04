@@ -335,10 +335,17 @@ async fn event_loop(loop_state: EventLoop) -> Result<()> {
     Ok(())
 }
 
-/// Graceful shutdown: announce `Left`, give the broadcast a moment
-/// to reach peers, then remove the statusline state file. Shared
-/// by both the external-quit and ctrl-c/SIGTERM paths so they
-/// can't drift apart.
+/// Graceful shutdown: remove the statusline state file first, then
+/// announce `Left` and give the broadcast a moment to reach peers.
+/// Shared by both the external-quit and ctrl-c/SIGTERM/SIGHUP paths so
+/// they can't drift apart.
+///
+/// The state-file removal is the time-critical step: an external reader
+/// (the shell statusline) shows the swarm pill while the file is fresh,
+/// so a leaver must clear it *immediately*. It runs before the
+/// best-effort `Left` broadcast and its 500 ms propagation sleep so a
+/// kill landing during that window can't strand the file with a still-fresh
+/// `last_updated`, leaving a ghost pill on the statusline.
 async fn shutdown(
     sender: &GossipSender,
     swarm: &SwarmId,
@@ -347,6 +354,9 @@ async fn shutdown(
     state: &EventLoopState,
     output: &output::Output,
 ) {
+    if let Some(sf) = state.state_file.as_ref() {
+        sf.remove();
+    }
     output.info(&format!("left #{name}"));
     lifecycle::log_leaving(name.as_str());
     gossip::broadcast_msg(
@@ -355,9 +365,6 @@ async fn shutdown(
     )
     .await;
     tokio::time::sleep(Duration::from_millis(500)).await;
-    if let Some(sf) = state.state_file.as_ref() {
-        sf.remove();
-    }
 }
 
 /// Announce departure, then decide whether to hard-exit the process.
@@ -387,24 +394,39 @@ async fn announce_and_maybe_exit(
     let _ = exit_on_quit;
 }
 
-/// Spawn ctrl-c (all platforms) and SIGTERM (unix) listener tasks
-/// feeding a single internal quit channel. `tokio::signal::ctrl_c()`
-/// inside a `select!` branch doesn't reliably interrupt a blocking
-/// stdin read, so we offload signal listening to dedicated tasks.
+/// Spawn ctrl-c (all platforms) plus SIGTERM/SIGHUP/SIGQUIT (unix)
+/// listener tasks feeding a single internal quit channel.
+/// `tokio::signal::ctrl_c()` inside a `select!` branch doesn't reliably
+/// interrupt a blocking stdin read, so we offload signal listening to
+/// dedicated tasks.
+///
+/// Every catchable termination signal routes through the graceful
+/// `shutdown()` path so the statusline state file is removed. SIGHUP in
+/// particular is what a closing parent (e.g. the Monitor that hosts the
+/// daemon for a `/swarm:*` session) tends to send; without catching it
+/// the default action terminated the daemon without cleanup, stranding a
+/// ghost pill on the statusline. Only SIGKILL stays uncatchable.
 fn spawn_quit_signal_tasks() -> mpsc::Receiver<()> {
     let (quit_tx, quit_rx) = mpsc::channel::<()>(1);
-    let quit_tx2 = quit_tx.clone();
+    let ctrl_c_tx = quit_tx.clone();
     tokio::spawn(async move {
         let _ = tokio::signal::ctrl_c().await;
-        let _ = quit_tx.send(()).await;
+        let _ = ctrl_c_tx.send(()).await;
     });
     #[cfg(unix)]
-    tokio::spawn(async move {
-        let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-            .expect("failed to register SIGTERM handler");
-        sigterm.recv().await;
-        let _ = quit_tx2.send(()).await;
-    });
+    for kind in [
+        tokio::signal::unix::SignalKind::terminate(),
+        tokio::signal::unix::SignalKind::hangup(),
+        tokio::signal::unix::SignalKind::quit(),
+    ] {
+        let signal_tx = quit_tx.clone();
+        tokio::spawn(async move {
+            let mut signal =
+                tokio::signal::unix::signal(kind).expect("failed to register termination handler");
+            signal.recv().await;
+            let _ = signal_tx.send(()).await;
+        });
+    }
     quit_rx
 }
 
