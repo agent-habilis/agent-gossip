@@ -73,7 +73,7 @@ jobs:
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern '*.sha256' --dir /tmp --clobber
           sed -i -E "s/^  version \"[^\"]*\"/  version \"$ver\"/" Formula/ahs.rb
           for target in aarch64-apple-darwin x86_64-unknown-linux-musl aarch64-unknown-linux-musl; do
-            sum=$(cut -d' ' -f1 "/tmp/ahs-v$ver-$target.tar.gz.sha256")
+            sum=$(cut -d' ' -f1 "/tmp/ahs-v$ver-$target.sha256")
             # Replace the sha256 line immediately following this target's url line.
             perl -0pi -e "s{(${target}\.tar\.gz\"\s*\n\s*sha256 \")[0-9a-f]{64}}{\${1}${sum}}g" Formula/ahs.rb
           done
