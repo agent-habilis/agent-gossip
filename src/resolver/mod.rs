@@ -164,6 +164,12 @@ async fn fetch_and_parse(url: &str) -> Result<Swarm> {
     let client = reqwest::Client::builder()
         .timeout(FETCH_TIMEOUT)
         .user_agent(USER_AGENT)
+        // Do not follow redirects. The well-known endpoint is expected to
+        // serve the JSON directly over HTTPS; following redirects would turn a
+        // join target into an SSRF primitive (a hostile/compromised domain
+        // could 30x-redirect the fetch to an internal address such as the
+        // cloud metadata endpoint). A 3xx is surfaced as a failed fetch.
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .context("build http client")?;
     let resp = client
@@ -322,6 +328,40 @@ mod tests {
         let (_s, url) = mock_well_known(&big, 200).await;
         let err = fetch_and_parse(&url).await.unwrap_err();
         assert!(err.to_string().contains("too large"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn fetch_and_parse_does_not_follow_redirects() {
+        // SSRF guard: a hostile well-known endpoint 302-redirects to another
+        // host. With redirects disabled the fetch fails (3xx is not success)
+        // and the redirect target is never contacted.
+        let evil = MockServer::start().await;
+        let id = known_swarm_id();
+        // Would serve a valid swarm if reached — `.expect(0)` asserts it is not
+        // (verified when `evil` drops at end of scope).
+        Mock::given(method("GET"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_string(format!(r#"{{"as.swarm":"{id}"}}"#)),
+            )
+            .expect(0)
+            .mount(&evil)
+            .await;
+
+        let redirector = MockServer::start().await;
+        let evil_target = format!("{}/.well-known/agent-habilis-swarm", evil.uri());
+        Mock::given(method("GET"))
+            .and(path("/.well-known/agent-habilis-swarm"))
+            .respond_with(
+                ResponseTemplate::new(302).insert_header("location", evil_target.as_str()),
+            )
+            .mount(&redirector)
+            .await;
+
+        let url = format!("{}/.well-known/agent-habilis-swarm", redirector.uri());
+        assert!(
+            fetch_and_parse(&url).await.is_err(),
+            "a redirect must not be followed"
+        );
     }
 
     #[tokio::test]

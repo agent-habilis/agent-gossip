@@ -257,12 +257,15 @@ async fn event_loop(loop_state: EventLoop) -> Result<()> {
 
     // Owned Arc clone so the ctx can borrow it for the whole loop without colliding with `&mut state`.
     let identity = state.identity.clone();
+    // Our own pubkey hex, computed once for the per-message self-echo compare.
+    let our_pubkey = crate::protocol::identity::encode_pubkey(&identity.public());
     let ctx = HandlerCtx {
         sender: &sender,
         endpoint: &endpoint,
         swarm: &swarm_str,
         author: &author,
         identity: identity.as_ref(),
+        our_pubkey: &our_pubkey,
         max_peers,
         rendezvous_id: rendezvous_params.id,
         external_msg_tx: external_msg_tx.as_ref(),
@@ -477,7 +480,11 @@ fn finalize_ping_round(state: &mut EventLoopState, output: &output::Output) {
         })
         .collect();
     peers.sort_by(|left, right| left.nickname.as_str().cmp(right.nickname.as_str()));
-    output.ping_report(peers, state.participants.len());
+    // `known` must never be less than the number that responded: a peer can
+    // pong and then leave the roster before this ~10s finalize, which would
+    // otherwise report responded > known. Clamp so the count stays coherent.
+    let known = state.participants.len().max(peers.len());
+    output.ping_report(peers, known);
 }
 
 /// Whether a co-hosting member probes the rendezvous before claiming it —

@@ -391,8 +391,16 @@ impl EventLoopState {
     /// index, bounding `author_seqs`/`forked` to the message-log window: an
     /// identity whose messages have all aged out drops off both maps (so a
     /// sybil that fires once and vanishes is forgotten).
-    pub(crate) fn forget_msg_seq(&mut self, pubkey: &str, seq: u64) {
-        if let Some(seqs) = self.author_seqs.get_mut(pubkey) {
+    ///
+    /// Only drops the slot when `hash` is the one we recorded for that
+    /// `(pubkey, seq)`. A fork retains *two* messages at one `(pubkey, seq)`;
+    /// evicting the twin we did **not** record must not clear the recorded
+    /// evidence, or a later anti-entropy resend of the still-retained twin
+    /// would re-detect the equivocation as a fresh first sighting.
+    pub(crate) fn forget_msg_seq(&mut self, pubkey: &str, seq: u64, hash: &str) {
+        if let Some(seqs) = self.author_seqs.get_mut(pubkey)
+            && seqs.get(&seq).is_some_and(|recorded| recorded == hash)
+        {
             seqs.remove(&seq);
             if seqs.is_empty() {
                 self.author_seqs.remove(pubkey);
@@ -463,13 +471,34 @@ mod tests {
         state.note_msg_seq("alice", 0, "h0".into());
         assert!(state.note_msg_seq("alice", 0, "h0-prime".into()), "fork");
         assert!(state.forked.contains("alice"));
-        // Evicting alice's only seq drops her from both maps (bounded to log).
-        state.forget_msg_seq("alice", 0);
+        // Evicting the *recorded* twin (hash "h0") drops alice from both maps.
+        state.forget_msg_seq("alice", 0, "h0");
         assert!(!state.author_seqs.contains_key("alice"));
         assert!(
             !state.forked.contains("alice"),
             "fork flag pruned with author"
         );
+    }
+
+    #[test]
+    fn forget_msg_seq_keeps_evidence_when_other_twin_evicted() {
+        // A fork keeps two twins at one (pubkey, seq). Evicting the twin we did
+        // NOT record must not clear the recorded slot / fork flag — otherwise a
+        // later resend of the still-retained twin re-detects the fork as new.
+        let mut state = fresh_state();
+        state.note_msg_seq("alice", 0, "recorded".into());
+        assert!(state.note_msg_seq("alice", 0, "twin".into()), "fork fires");
+        assert!(state.forked.contains("alice"));
+        // Evict the non-recorded twin ("twin"): the slot for "recorded" stays.
+        state.forget_msg_seq("alice", 0, "twin");
+        assert!(
+            state.author_seqs.contains_key("alice"),
+            "recorded slot retained"
+        );
+        assert!(state.forked.contains("alice"), "fork flag retained");
+        // A resend of the recorded twin does not re-fire the fork (already
+        // flagged), proving the evidence survived the eviction.
+        assert!(!state.note_msg_seq("alice", 0, "twin".into()));
     }
 
     #[test]

@@ -382,8 +382,24 @@ impl Message {
     /// signature does not match — never panics. (Whether `pubkey` is the
     /// *expected* identity for this `author` is the receiver's TOFU check,
     /// separate from this cryptographic check.)
+    /// Convenience wrapper that computes the canonical bytes itself. The hot
+    /// receive path uses [`verify_signature_with`](Self::verify_signature_with)
+    /// to share one `canonical_bytes()` with the content hash; this form is
+    /// only the ergonomic one used by tests.
+    #[cfg(test)]
     #[must_use]
     pub(crate) fn verify_signature(&self) -> bool {
+        self.verify_signature_with(&self.canonical_bytes())
+    }
+
+    /// Like [`verify_signature`](Self::verify_signature) but against
+    /// **precomputed** canonical bytes. The hot receive path computes
+    /// `canonical_bytes()` once and reuses it for both this check and the
+    /// content hash, instead of re-serializing the message twice per `Msg`.
+    /// `canonical` MUST be `self.canonical_bytes()` for the result to be
+    /// meaningful.
+    #[must_use]
+    pub(crate) fn verify_signature_with(&self, canonical: &[u8]) -> bool {
         if self.pubkey.is_empty() || self.sig.is_empty() {
             return false;
         }
@@ -393,7 +409,7 @@ impl Message {
         ) else {
             return false;
         };
-        identity::verify(&pubkey, &self.canonical_bytes(), &sig)
+        identity::verify(&pubkey, canonical, &sig)
     }
 }
 
@@ -560,9 +576,15 @@ mod tests {
         assert_eq!(parsed.ext["priority"], 1);
     }
 
+    /// A valid UUID for the hand-written wire-JSON fixtures below (the
+    /// validating `MessageId` deserialize rejects non-UUID ids).
+    const FIXTURE_ID: &str = "550e8400-e29b-41d4-a716-446655440000";
+
     #[test]
     fn test_unknown_ext_fields_ignored() {
-        let json = r#"{"v":"1.0","id":"abc","type":"msg","swarm":"ahstest","author":"a-b","ts":0,"body":"hi","ext":{"future_field":"value","another":42}}"#;
+        let json = format!(
+            r#"{{"v":"1.0","id":"{FIXTURE_ID}","type":"msg","swarm":"ahstest","author":"a-b","ts":0,"body":"hi","ext":{{"future_field":"value","another":42}}}}"#
+        );
         let parsed = Message::parse(json.as_bytes()).unwrap();
         assert_eq!(parsed.body.as_str(), "hi");
         assert_eq!(parsed.ext["future_field"], "value");
@@ -570,14 +592,44 @@ mod tests {
 
     #[test]
     fn test_missing_ext_defaults_to_empty_object() {
-        let json = r#"{"v":"1.0","id":"abc","type":"msg","swarm":"ahstest","author":"a-b","ts":0,"body":"hi"}"#;
+        let json = format!(
+            r#"{{"v":"1.0","id":"{FIXTURE_ID}","type":"msg","swarm":"ahstest","author":"a-b","ts":0,"body":"hi"}}"#
+        );
         let parsed = Message::parse(json.as_bytes()).unwrap();
         assert_eq!(parsed.ext, serde_json::json!({}));
     }
 
     #[test]
     fn test_version_mismatch_rejected() {
-        let json = r#"{"v":"2.0","id":"abc","type":"msg","swarm":"ahstest","author":"a-b","ts":0,"body":"hi","ext":{}}"#;
+        let json = format!(
+            r#"{{"v":"2.0","id":"{FIXTURE_ID}","type":"msg","swarm":"ahstest","author":"a-b","ts":0,"body":"hi","ext":{{}}}}"#
+        );
+        assert!(Message::parse(json.as_bytes()).is_err());
+    }
+
+    // Crafted wire messages that a correct client never produces: the
+    // validating newtype `Deserialize` impls must reject them at `parse`, so a
+    // malicious peer cannot crash the daemon (bad id) or inject terminal
+    // escapes / spoof the `<nick>`/`#swarm` conventions (bad body/author).
+    #[test]
+    fn parse_rejects_non_uuid_id() {
+        let json = r#"{"v":"1.0","id":"not-a-uuid","type":"msg","swarm":"ahstest","author":"a-b","ts":0,"body":"hi","ext":{}}"#;
+        assert!(Message::parse(json.as_bytes()).is_err());
+    }
+
+    #[test]
+    fn parse_rejects_control_char_body() {
+        let json = format!(
+            r#"{{"v":"1.0","id":"{FIXTURE_ID}","type":"msg","swarm":"ahstest","author":"a-b","ts":0,"body":"evil\u0000body","ext":{{}}}}"#
+        );
+        assert!(Message::parse(json.as_bytes()).is_err());
+    }
+
+    #[test]
+    fn parse_rejects_unsafe_author_nickname() {
+        let json = format!(
+            r#"{{"v":"1.0","id":"{FIXTURE_ID}","type":"msg","swarm":"ahstest","author":"a#b","ts":0,"body":"hi","ext":{{}}}}"#
+        );
         assert!(Message::parse(json.as_bytes()).is_err());
     }
 

@@ -2,7 +2,7 @@ use std::borrow::Borrow;
 use std::fmt;
 use std::str::FromStr;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 /// An agent nickname — a "safe UTF-8" identifier.
 ///
@@ -11,9 +11,26 @@ use serde::{Deserialize, Serialize};
 /// exclusions (control, whitespace, path separators, bidi formatting,
 /// and `<` `>` `#` reserved for the `<nick>`/`#swarm` display forms).
 /// The wordlist generator (`Nickname::random`) emits `word-word` pairs.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+///
+/// Deserialization is **validating** (not the derived transparent one): an
+/// inbound `author`/`reply` off the wire is run through `new`, so a message
+/// carrying control characters, bidi overrides, a reserved `<`/`>`/`#`, or an
+/// over-length nickname is rejected at `Message::parse` instead of reaching
+/// the surfaced display string (terminal-injection / `<nick>`/`#swarm`
+/// spoofing).
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 #[serde(transparent)]
 pub struct Nickname(String);
+
+impl<'de> Deserialize<'de> for Nickname {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let raw = String::deserialize(deserializer)?;
+        Nickname::new(raw).map_err(serde::de::Error::custom)
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NicknameError {
@@ -183,5 +200,20 @@ mod tests {
         assert_eq!(json, "\"swift-cedar\"");
         let parsed: Nickname = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed, nickname);
+    }
+
+    #[test]
+    fn deserialize_rejects_unsafe_nicknames() {
+        // The validating Deserialize rejects what `new` rejects, so a crafted
+        // wire nickname can't bypass the charset/length rules.
+        assert!(serde_json::from_str::<Nickname>("\"a#b\"").is_err()); // reserved
+        assert!(serde_json::from_str::<Nickname>("\"a<b\"").is_err()); // reserved
+        assert!(serde_json::from_str::<Nickname>("\"a\\u0007b\"").is_err()); // bell
+        assert!(serde_json::from_str::<Nickname>("\"a\\u202Eb\"").is_err()); // RLO bidi
+        assert!(serde_json::from_str::<Nickname>("\"\"").is_err()); // empty
+        let overlong = format!("\"{}\"", "a".repeat(33));
+        assert!(serde_json::from_str::<Nickname>(&overlong).is_err());
+        // A valid nickname still round-trips.
+        assert!(serde_json::from_str::<Nickname>("\"swift-cedar\"").is_ok());
     }
 }

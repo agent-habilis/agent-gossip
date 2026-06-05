@@ -159,25 +159,30 @@ async fn handle_gossip_received(content: Bytes, state: &mut EventLoopState, ctx:
     };
     // Self-echo drop: keyed on our **public key**, not the nickname. With
     // non-unique display names a peer may legitimately share our nickname —
-    // only our own signing key identifies our own echoed broadcasts.
-    if message.pubkey == identity::encode_pubkey(&ctx.identity.public()) {
+    // only our own signing key identifies our own echoed broadcasts. The hex
+    // pubkey is computed once at loop setup (`ctx.our_pubkey`), so this is a
+    // string compare, not a key-derivation + allocation per message.
+    if message.pubkey == ctx.our_pubkey {
         return;
     }
     tracing::trace!(author = %message.author, "gossip message received");
-    // Duplicate suppression: a true repeat delivery must not
-    // re-rate-count, re-heartbeat, re-run membership, re-embed-forward,
-    // re-log, or re-print. Re-broadcasts of `joined`/`Alive` mint fresh
-    // ids so they are never falsely suppressed here.
-    if state.mark_seen(&message.id) {
+    // Authenticity gate, **before** dedup: every inbound message must carry a
+    // valid signature over its canonical bytes. Verifying before `mark_seen`
+    // stops a forged/unsigned message from poisoning the dedup window with a
+    // replayed id and suppressing the genuine signed copy. Relayed and
+    // anti-entropy copies keep their original author's signature, so they
+    // verify here too. Canonical bytes are computed once and reused for the
+    // content hash at the log site, so a Msg is not re-serialized twice.
+    let canonical = message.canonical_bytes();
+    if !message.verify_signature_with(&canonical) {
+        tracing::warn!(author = %message.author, "dropping message with missing/invalid signature");
         return;
     }
-    // Authenticity gate: every inbound message must carry a valid
-    // signature over its canonical bytes. Drop unsigned / tampered /
-    // wrong-key messages before they are rate-counted, surfaced, logged,
-    // or acted on. Relayed and anti-entropy copies keep their original
-    // author's signature, so they verify here too.
-    if !message.verify_signature() {
-        tracing::warn!(author = %message.author, "dropping message with missing/invalid signature");
+    // Duplicate suppression: a true repeat delivery must not re-rate-count,
+    // re-heartbeat, re-run membership, re-embed-forward, re-log, or re-print.
+    // Re-broadcasts of `joined`/`Alive` mint fresh ids so they are never
+    // falsely suppressed here. Only authenticated messages reach this gate.
+    if state.mark_seen(&message.id) {
         return;
     }
     // Identity is the signing key, not the nickname (p2panda-style): the
@@ -185,27 +190,9 @@ async fn handle_gossip_received(content: Bytes, state: &mut EventLoopState, ctx:
     // non-unique display label and is deliberately **not** pinned/claimed,
     // so a nickname is never "burned" by a restart on a long-lived swarm.
     // Identities are distinguished by their key fingerprint, not the name.
-    //
-    // Phase 2 fork (equivocation) detection: only `Msg` carries `seq`. A
-    // second, *different* content hash at an already-seen `(pubkey, seq)` is
-    // cryptographic proof the author signed conflicting messages — surface a
-    // `fork` once per offending key. Order-independent (gossip is unordered);
-    // the message itself is still processed (we keep both, never auto-pick).
-    if matches!(message.kind, MessageKind::Msg { .. }) {
-        let hash = message.content_hash_hex();
-        // Per-author fork (equivocation) detection — Msgs that carry a seq.
-        if let Some(seq) = message.seq
-            && state.note_msg_seq(&message.pubkey, seq, hash.clone())
-        {
-            ctx.output.fork(&message.author, &message.pubkey, seq);
-            tracing::warn!(author = %message.author, seq, "fork detected: conflicting messages at same seq");
-        }
-        // Cross-author DAG (Phase 3): fold into the tip set; flag a message
-        // whose timestamp precedes a referenced parent (backdating).
-        if state.note_dag(hash, &message.parents, message.timestamp) {
-            tracing::warn!(author = %message.author, "message timestamp precedes a referenced parent; possible backdating");
-        }
-    }
+    // Fork (equivocation) detection and DAG folding happen at the log-push
+    // site below, coupled to retention so their indexes stay bounded by the
+    // log window — a rate-dropped or relay-to-other Msg is never indexed.
     // One quota for every Msg (open or reply); plumbing kinds (presence,
     // Alive, digest, PeerInfo) are exempt — rate-limiting them would
     // break membership/anti-entropy. Keyed on the verified pubkey.
@@ -307,13 +294,38 @@ async fn handle_gossip_received(content: Bytes, state: &mut EventLoopState, ctx:
         }
     }
 
-    if is_loggable(&message.kind)
-        && let Some(evicted) = state.message_log.push(message)
-    {
-        // Keep the DAG + fork indexes bounded with the log window.
-        state.forget_hash(&evicted.content_hash_hex());
-        if let Some(seq) = evicted.seq {
-            state.forget_msg_seq(&evicted.pubkey, seq);
+    if is_loggable(&message.kind) {
+        // Fork (equivocation) detection + cross-author DAG folding are coupled
+        // to logging: only a message we actually **retain** is folded into the
+        // indexes, so `by_hash`/`dag_heads`/`author_seqs` stay bounded by the
+        // log window (pruned on eviction below). A rate-dropped Msg, or a reply
+        // addressed to another peer, returned earlier and never reaches here —
+        // so it can no longer leak a permanent index entry. Only `Msg` carries
+        // a `seq`/parents; presence is loggable but not indexed.
+        if matches!(message.kind, MessageKind::Msg { .. }) {
+            let hash = identity::content_hash_hex(&canonical);
+            // A second, *different* content hash at an already-seen
+            // `(pubkey, seq)` is cryptographic proof of equivocation — surface
+            // a `fork` once per offending key (order-independent; we keep both).
+            if let Some(seq) = message.seq
+                && state.note_msg_seq(&message.pubkey, seq, hash.clone())
+            {
+                ctx.output.fork(&message.author, &message.pubkey, seq);
+                tracing::warn!(author = %message.author, seq, "fork detected: conflicting messages at same seq");
+            }
+            // Fold into the DAG tip set; flag a message whose timestamp
+            // precedes a referenced parent (backdating).
+            if state.note_dag(hash, &message.parents, message.timestamp) {
+                tracing::warn!(author = %message.author, "message timestamp precedes a referenced parent; possible backdating");
+            }
+        }
+        if let Some(evicted) = state.message_log.push(message) {
+            // Keep the DAG + fork indexes bounded with the log window.
+            let evicted_hash = evicted.content_hash_hex();
+            state.forget_hash(&evicted_hash);
+            if let Some(seq) = evicted.seq {
+                state.forget_msg_seq(&evicted.pubkey, seq, &evicted_hash);
+            }
         }
     }
 }
@@ -356,14 +368,21 @@ async fn handle_peer_info(
     }
 }
 
-/// `Alive` keepalives, anti-entropy `Digest`s, and ping/pong probes are
-/// plumbing; everything else goes in the log (and so to `poll`/`fetch`).
+/// `Alive` keepalives, `PeerInfo` endpoint plumbing, anti-entropy `Digest`s,
+/// and ping/pong probes are infrastructure; everything else (real `Msg`s and
+/// `joined`/`left` presence) goes in the log (and so to `poll`/`fetch`).
+///
+/// `PeerInfo` is classified as non-loggable here so the rule is encoded in one
+/// place rather than relying on its match arm's early `return`: a future code
+/// path that reaches the log gate must not start persisting endpoint-address
+/// plumbing into the poll/fetch buffer.
 fn is_loggable(kind: &MessageKind) -> bool {
     !matches!(
         kind,
         MessageKind::Presence {
             subtype: crate::protocol::PresenceSubtype::Alive
-        } | MessageKind::Digest
+        } | MessageKind::PeerInfo
+            | MessageKind::Digest
             | MessageKind::Ping
             | MessageKind::Pong { .. }
     )
@@ -392,8 +411,10 @@ mod is_loggable_tests {
     }
 
     #[test]
-    fn msg_peerinfo_are_loggable() {
+    fn msg_is_loggable_but_peerinfo_is_not() {
         assert!(is_loggable(&MessageKind::Msg { reply: None }));
-        assert!(is_loggable(&MessageKind::PeerInfo));
+        // PeerInfo is endpoint plumbing — never logged/surfaced, and the
+        // classifier (not just its early-return) now says so.
+        assert!(!is_loggable(&MessageKind::PeerInfo));
     }
 }

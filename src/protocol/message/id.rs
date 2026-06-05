@@ -6,7 +6,7 @@ use std::borrow::Borrow;
 use std::fmt;
 use std::str::FromStr;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use uuid::Uuid;
 
 /// A protocol message identifier — UUID v4 string form.
@@ -14,10 +14,23 @@ use uuid::Uuid;
 /// Construction goes through `new` (validates UUID format) or `random`
 /// (mints a fresh v4). The newtype prevents argument-order confusion
 /// between `id` and `after`-cursor parameters that carry the same kind
-/// of value.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+/// of value. Deserialization is **validating** (not the derived
+/// transparent one): an inbound id off the wire is run through `new`, so a
+/// non-UUID `id` is rejected at `Message::parse` rather than panicking later
+/// in `as_uuid_bytes` (the anti-entropy digest path).
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 #[serde(transparent)]
 pub struct MessageId(String);
+
+impl<'de> Deserialize<'de> for MessageId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let raw = String::deserialize(deserializer)?;
+        MessageId::new(raw).map_err(serde::de::Error::custom)
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IdError(String);
@@ -127,5 +140,14 @@ mod id_tests {
         assert_eq!(json, format!("\"{}\"", id.as_str()));
         let parsed: MessageId = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed, id);
+    }
+
+    #[test]
+    fn deserialize_rejects_non_uuid() {
+        // The derived transparent Deserialize would accept any string and let
+        // `as_uuid_bytes` panic later; the validating impl rejects it here.
+        assert!(serde_json::from_str::<MessageId>("\"not-a-uuid\"").is_err());
+        assert!(serde_json::from_str::<MessageId>("\"550e8400\"").is_err());
+        assert!(serde_json::from_str::<MessageId>("\"\"").is_err());
     }
 }

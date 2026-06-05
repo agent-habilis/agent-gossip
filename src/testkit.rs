@@ -13,7 +13,7 @@
 
 use crate::protocol::identity::{self, Identity};
 use crate::protocol::message::Message;
-use crate::protocol::{MessageBody, Nickname, SwarmId};
+use crate::protocol::{MessageBody, MessageKind, Nickname, SwarmId};
 
 /// An opaque attacker/peer signing key. Wraps the crate-internal `Identity`
 /// so a test can hold one and pass it to the builder/helpers without the
@@ -56,6 +56,24 @@ impl CraftedMsg {
     /// Stamp the per-author hash chain (Phase 2): `seq` + optional `prev`.
     pub fn chain(mut self, seq: u64, prev: Option<String>) -> Self {
         self.msg = self.msg.with_chain(seq, prev);
+        self
+    }
+
+    /// Override the message id — e.g. to replay another message's id (the
+    /// dedup-ordering test). Must be a valid UUID string.
+    pub fn id(mut self, id: &str) -> Self {
+        self.msg.id = id.parse().expect("crafted id must be a valid UUID");
+        self
+    }
+
+    /// Make this a directed reply addressed to `target` instead of an open
+    /// `Msg` — a message a receiver relays but, if `target` is someone else,
+    /// never logs (so it must never be folded into the fork/DAG indexes).
+    pub fn reply_to(mut self, target: &str) -> Self {
+        let target = Nickname::new(target.to_owned()).expect("valid reply target");
+        self.msg.kind = MessageKind::Msg {
+            reply: Some(target),
+        };
         self
     }
 

@@ -22,7 +22,11 @@ pub(crate) struct BoundedFifoSet<T> {
 impl<T: Clone + Eq + Hash> BoundedFifoSet<T> {
     pub(crate) fn new(capacity: usize) -> Self {
         Self {
-            capacity,
+            // Clamp to >= 1 (mirrors `BoundedIdSet`): a 0 capacity would make
+            // every insert immediately evict itself, leaving the set
+            // permanently empty while reporting inserts as "new" — silently
+            // broken membership.
+            capacity: capacity.max(1),
             set: HashSet::new(),
             order: VecDeque::new(),
         }
@@ -123,6 +127,16 @@ mod tests {
         // Re-inserting the removed value works (order queue stayed consistent).
         assert!(set.insert(1u32));
         assert_eq!(set.len(), 2);
+    }
+
+    #[test]
+    fn zero_capacity_is_clamped_to_one() {
+        // A 0 capacity must not yield a set that holds nothing yet reports
+        // inserts as new: it's clamped to 1, so membership actually works.
+        let mut set = BoundedFifoSet::new(0);
+        assert!(set.insert(7u32), "first insert is new");
+        assert!(set.contains(&7), "the inserted item is actually retained");
+        assert_eq!(set.len(), 1);
     }
 
     #[test]

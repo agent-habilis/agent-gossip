@@ -1,6 +1,11 @@
-//! A fixed-capacity FIFO queue: pushing past `capacity` evicts (and returns)
-//! the oldest item. The bounded building block for `pending_outbound` (the
-//! while-unmeshed send backlog) so it can't grow without limit.
+//! A fixed-capacity FIFO queue: pushing when full **rejects the new item**
+//! (nothing is evicted). The bounded building block for `pending_outbound`
+//! (the while-unmeshed send backlog) so it can't grow without limit.
+//!
+//! Rejecting the newest rather than evicting the oldest matters: the items are
+//! a per-author send chain (`seq`/`prev` hash-linked) replayed in order on
+//! connect. Dropping a *middle* item would orphan its `seq` and leave peers a
+//! dangling `prev`/parent; keeping an unbroken oldest-first prefix does not.
 //!
 //! Distinct from [`super::bounded_fifo_set::BoundedFifoSet`]: this keeps
 //! duplicates and order matters (every item is later replayed in FIFO order),
@@ -21,16 +26,16 @@ impl<T> BoundedQueue<T> {
         }
     }
 
-    /// Append `item`. Returns the evicted oldest item when this push would
-    /// exceed `capacity`, else `None`.
-    pub(crate) fn push(&mut self, item: T) -> Option<T> {
-        let evicted = if self.queue.len() >= self.capacity {
-            self.queue.pop_front()
-        } else {
-            None
-        };
+    /// Append `item` if there is room. Returns `true` if stored, `false` if
+    /// the queue is already at `capacity` (the item is **rejected** and the
+    /// existing oldest-first run is left intact — see the module docs for why
+    /// reject-newest beats evict-oldest for an ordered send chain).
+    pub(crate) fn push(&mut self, item: T) -> bool {
+        if self.queue.len() >= self.capacity {
+            return false;
+        }
         self.queue.push_back(item);
-        evicted
+        true
     }
 
     /// Take everything in FIFO order, leaving the queue empty.
@@ -44,23 +49,23 @@ mod tests {
     use super::BoundedQueue;
 
     #[test]
-    fn push_evicts_oldest_past_capacity() {
+    fn push_rejects_newest_when_full() {
         let mut queue = BoundedQueue::new(2);
-        assert_eq!(queue.push(1u32), None);
-        assert_eq!(queue.push(2), None);
-        assert_eq!(queue.push(3), Some(1), "oldest evicted past the cap");
+        assert!(queue.push(1u32));
+        assert!(queue.push(2));
+        assert!(!queue.push(3), "rejected when full — nothing evicted");
         assert_eq!(
             queue.take().into_iter().collect::<Vec<_>>(),
-            vec![2, 3],
-            "FIFO order, capped"
+            vec![1, 2],
+            "the oldest-first prefix is retained intact",
         );
     }
 
     #[test]
     fn take_empties_in_fifo_order() {
         let mut queue = BoundedQueue::new(8);
-        queue.push("a");
-        queue.push("b");
+        assert!(queue.push("a"));
+        assert!(queue.push("b"));
         assert_eq!(queue.take().into_iter().collect::<Vec<_>>(), vec!["a", "b"]);
         assert!(queue.take().is_empty(), "second take is empty");
     }
@@ -68,9 +73,13 @@ mod tests {
     #[test]
     fn stays_capped_under_churn() {
         let mut queue = BoundedQueue::new(10);
+        let mut stored = 0;
         for value in 0..1000u32 {
-            queue.push(value);
+            if queue.push(value) {
+                stored += 1;
+            }
         }
+        assert_eq!(stored, 10, "only a capacity's worth is ever accepted");
         assert_eq!(queue.take().len(), 10, "never exceeds capacity");
     }
 }

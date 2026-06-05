@@ -112,13 +112,29 @@ fn to_hex(bytes: &[u8]) -> String {
 }
 
 fn from_hex(hex: &str) -> Result<Vec<u8>> {
-    if !hex.len().is_multiple_of(2) {
+    // Operate on raw bytes, not `&str` slices: an attacker-controlled
+    // `pubkey`/`sig` is arbitrary UTF-8, and byte-indexing a `&str`
+    // (`&hex[i..i+2]`) panics if `i` lands inside a multibyte char. Decoding
+    // each ASCII nibble from bytes is panic-free — any non-hex byte (including
+    // a continuation byte) is a graceful `Err`.
+    let bytes = hex.as_bytes();
+    if !bytes.len().is_multiple_of(2) {
         anyhow::bail!("hex string has odd length");
     }
-    (0..hex.len())
-        .step_by(2)
-        .map(|index| u8::from_str_radix(&hex[index..index + 2], 16).context("invalid hex digit"))
+    bytes
+        .chunks_exact(2)
+        .map(|pair| Ok((hex_nibble(pair[0])? << 4) | hex_nibble(pair[1])?))
         .collect()
+}
+
+/// Decode one lowercase/uppercase ASCII hex digit byte to its 0..=15 value.
+fn hex_nibble(byte: u8) -> Result<u8> {
+    match byte {
+        b'0'..=b'9' => Ok(byte - b'0'),
+        b'a'..=b'f' => Ok(byte - b'a' + 10),
+        b'A'..=b'F' => Ok(byte - b'A' + 10),
+        _ => anyhow::bail!("invalid hex digit"),
+    }
 }
 
 #[cfg(test)]
@@ -171,5 +187,18 @@ mod tests {
         assert!(decode_pubkey("zz").is_err());
         assert!(decode_pubkey("abc").is_err()); // odd length
         assert!(decode_sig("00").is_err()); // wrong length
+    }
+
+    #[test]
+    fn decode_rejects_non_ascii_hex_without_panicking() {
+        // Regression: an inbound `pubkey`/`sig` is arbitrary UTF-8. A
+        // multibyte char of even *byte* length (here `aéa` = 0x61 C3 A9 0x61,
+        // 4 bytes) positioned so a 2-byte slice splits it used to panic on a
+        // non-char-boundary slice — a one-message remote DoS reachable from
+        // `verify_signature`. It must now decode byte-wise and return `Err`.
+        assert!(decode_pubkey("aéa").is_err());
+        assert!(decode_sig("aéa").is_err());
+        // Pure multibyte input of even byte length, too.
+        assert!(decode_pubkey("€€").is_err()); // 6 bytes, all continuation/non-hex
     }
 }

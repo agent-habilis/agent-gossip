@@ -397,6 +397,23 @@ impl InProcessSession {
             .map_err(|_| anyhow::anyhow!("swarm event loop has stopped"))
     }
 
+    /// Snapshot the fork/DAG index sizes `(by_hash, dag_heads, author_seqs)`.
+    /// Testkit only.
+    ///
+    /// # Errors
+    /// Fails if the event loop has stopped or dropped the response.
+    #[cfg(feature = "testkit")]
+    pub(crate) async fn index_stats(&self) -> anyhow::Result<(usize, usize, usize)> {
+        let (resp_tx, resp_rx) = oneshot::channel();
+        self.req_tx
+            .send(SessionRequest::IndexStats { resp: resp_tx })
+            .await
+            .map_err(|_| anyhow::anyhow!("swarm event loop has stopped"))?;
+        resp_rx
+            .await
+            .map_err(|_| anyhow::anyhow!("swarm event loop dropped the response"))
+    }
+
     /// Clean shutdown: ask the loop to broadcast `Left` and wind down,
     /// waiting up to 3s. On timeout returns `Ok(())` and `Drop` detaches.
     ///
@@ -591,6 +608,17 @@ impl SwarmSession {
     #[cfg(feature = "testkit")]
     pub async fn inject_raw(&self, bytes: Vec<u8>) -> anyhow::Result<()> {
         self.core.inject_raw(bytes::Bytes::from(bytes)).await
+    }
+
+    /// Snapshot the fork/DAG index sizes `(by_hash, dag_heads, author_seqs)`.
+    /// Testkit only — lets the adversarial suite assert that messages we don't
+    /// retain are never folded into the indexes (no unbounded leak).
+    ///
+    /// # Errors
+    /// Fails if the event loop has stopped.
+    #[cfg(feature = "testkit")]
+    pub async fn index_stats(&self) -> anyhow::Result<(usize, usize, usize)> {
+        self.core.index_stats().await
     }
 
     /// Clean shutdown: ask the loop to broadcast `Left` and wind down,

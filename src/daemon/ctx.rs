@@ -18,6 +18,10 @@ pub(crate) struct HandlerCtx<'a> {
     /// This member's signing identity (Ed25519). Messages we author are
     /// signed with it before broadcast; see [`Identity`].
     pub identity: &'a Identity,
+    /// Our own public key as lowercase hex — computed once at loop setup so
+    /// the per-message self-echo check is a string compare, not a fresh
+    /// key-derivation + allocation on every inbound message.
+    pub our_pubkey: &'a str,
     pub max_peers: usize,
     /// Well-known rendezvous endpoint id. Its co-hosted pseudo-node
     /// shows up as a gossip neighbor on participant endpoints; it is

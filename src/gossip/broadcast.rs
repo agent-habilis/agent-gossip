@@ -115,32 +115,25 @@ pub(crate) async fn handle_stdin_line(
     }
 }
 
-/// Send `bytes` to the swarm, or buffer it if we have no gossip link
-/// yet. Before the first `NeighborUp` a bare `broadcast` goes into the
-/// void (no eager-push peers) and is a lost one-shot; queueing it and
-/// flushing on connect makes the first message after a join reliable.
-/// Returns `Err` only on a genuine broadcast failure (queued = `Ok`).
-async fn emit_or_queue(
-    state: &mut EventLoopState,
-    sender: &GossipSender,
-    bytes: Bytes,
-    out: &output::Output,
-) -> anyhow::Result<()> {
-    if state.meshed {
-        let result = sender
-            .broadcast(bytes)
-            .await
-            .map_err(|error| anyhow::anyhow!("{error}"));
-        tracing::trace!(ok = result.is_ok(), "broadcast to mesh");
-        return result;
+/// Commit a just-built outbound `Msg` into local state: advance the per-author
+/// hash chain (`seq`/`prev`) and the DAG tips, echo it to the operator, retain
+/// it in the message log (pruning the fork/DAG indexes on eviction), and write
+/// the dev log. Shared by the meshed and queued send paths so the chain
+/// bookkeeping can't drift between them.
+fn commit_outbound(state: &mut EventLoopState, msg: &Message, out: &output::Output) {
+    let hash = msg.content_hash_hex();
+    state.self_seq += 1;
+    state.self_prev = Some(hash.clone());
+    state.note_dag(hash, &msg.parents, msg.timestamp);
+    out.print_message_ex(msg, true);
+    if let Some(evicted) = state.message_log.push(msg.clone()) {
+        let evicted_hash = evicted.content_hash_hex();
+        state.forget_hash(&evicted_hash);
+        if let Some(seq) = evicted.seq {
+            state.forget_msg_seq(&evicted.pubkey, seq, &evicted_hash);
+        }
     }
-    if state.pending_outbound.push(bytes).is_some() {
-        out.info("pending outbound buffer full; dropped oldest undelivered message");
-        tracing::warn!("pending outbound buffer full; dropped oldest undelivered message");
-    } else {
-        tracing::trace!("queued outbound message (unmeshed)");
-    }
-    Ok(())
+    crate::logging::messages::log_out(msg);
 }
 
 /// Outcome of a send through [`broadcast_message`]. `RateLimited` is a
@@ -203,20 +196,29 @@ pub(crate) async fn broadcast_message(
     };
     let (bytes, msg) =
         crate::protocol::message::build_msg_bytes(swarm, body, reply, author, &signer, chain)?;
-    let hash = msg.content_hash_hex();
-    state.self_seq += 1;
-    state.self_prev = Some(hash.clone());
-    state.note_dag(hash, &msg.parents, msg.timestamp);
     let id = msg.id.clone();
-    out.print_message_ex(&msg, true);
-    if let Some(evicted) = state.message_log.push(msg.clone()) {
-        state.forget_hash(&evicted.content_hash_hex());
-        if let Some(seq) = evicted.seq {
-            state.forget_msg_seq(&evicted.pubkey, seq);
-        }
+    if state.meshed {
+        // Meshed: commit the chain + retain locally, then hit the wire. A
+        // transient broadcast error still leaves the message in our log, so
+        // anti-entropy can resend it.
+        commit_outbound(state, &msg, out);
+        sender
+            .broadcast(bytes)
+            .await
+            .map_err(|error| anyhow::anyhow!("{error}"))?;
+    } else if state.pending_outbound.push(bytes) {
+        // Unmeshed: buffered for flush-on-connect. Commit the chain now — the
+        // message *will* be sent (in order) once we mesh.
+        commit_outbound(state, &msg, out);
+    } else {
+        // Unmeshed AND the buffer is full: drop this send WITHOUT consuming a
+        // seq, so the per-author chain stays contiguous. Dropping a queued
+        // middle message would orphan its seq and leave peers a dangling
+        // prev/parent that anti-entropy could never fill.
+        out.info("pending outbound buffer full; outbound message dropped");
+        tracing::warn!("pending outbound buffer full; outbound message dropped");
+        return Ok(SendOutcome::RateLimited);
     }
-    crate::logging::messages::log_out(&msg);
-    emit_or_queue(state, sender, bytes, out).await?;
     Ok(SendOutcome::Sent(id, msg))
 }
 
@@ -254,6 +256,16 @@ pub(crate) async fn handle_session_request(
         SessionRequest::InjectRaw { bytes } => {
             let _ = sender.broadcast(bytes).await;
             true
+        }
+        // Index-size snapshot (testkit only) for the leak regression test.
+        #[cfg(feature = "testkit")]
+        SessionRequest::IndexStats { resp } => {
+            let _ = resp.send((
+                state.by_hash.len(),
+                state.dag_heads.len(),
+                state.author_seqs.len(),
+            ));
+            false
         }
     }
 }

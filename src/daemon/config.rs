@@ -41,6 +41,14 @@ pub(crate) enum SessionRequest {
     /// the testkit-gated `SwarmSession::inject_raw`.
     #[cfg(feature = "testkit")]
     InjectRaw { bytes: bytes::Bytes },
+    /// Snapshot the fork/DAG index sizes `(by_hash, dag_heads, author_seqs)`.
+    /// Testkit only — lets the adversarial suite assert that messages we don't
+    /// retain (rate-dropped, or replies addressed to another peer) are never
+    /// folded into the indexes, i.e. the unbounded-growth leak is closed.
+    #[cfg(feature = "testkit")]
+    IndexStats {
+        resp: oneshot::Sender<(usize, usize, usize)>,
+    },
 }
 
 /// Who drives the event loop. The variants make illegal channel

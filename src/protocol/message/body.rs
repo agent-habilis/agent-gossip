@@ -5,14 +5,30 @@
 use std::fmt;
 use std::str::FromStr;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 /// A protocol message body — UTF-8 text. Newlines and tabs are allowed
 /// (multi-line snippets); other control characters are rejected. Empty
 /// is legal: presence and `PeerInfo` messages use it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// Deserialization is **validating** (not the derived transparent one): an
+/// inbound body off the wire is run through `new`, so a message carrying
+/// control characters (e.g. ANSI/terminal escapes) is rejected at
+/// `Message::parse` instead of being embedded byte-for-byte in the surfaced
+/// display string.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(transparent)]
 pub struct MessageBody(String);
+
+impl<'de> Deserialize<'de> for MessageBody {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let raw = String::deserialize(deserializer)?;
+        MessageBody::new(raw).map_err(serde::de::Error::custom)
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BodyError(String);
@@ -123,5 +139,16 @@ mod body_tests {
         assert_eq!(json, "\"hello\"");
         let parsed: MessageBody = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed, body);
+    }
+
+    #[test]
+    fn deserialize_rejects_control_chars() {
+        // The validating Deserialize rejects a body a crafted wire message
+        // could otherwise smuggle past `new` (e.g. a NUL or an ANSI escape).
+        assert!(serde_json::from_str::<MessageBody>("\"evil\\u0000body\"").is_err());
+        assert!(serde_json::from_str::<MessageBody>("\"esc\\u001b[31m\"").is_err());
+        // Newline/tab and ordinary text still round-trip.
+        assert!(serde_json::from_str::<MessageBody>("\"line\\nfeed\"").is_ok());
+        assert!(serde_json::from_str::<MessageBody>("\"\"").is_ok());
     }
 }

@@ -125,6 +125,90 @@ async fn equivocation_surfaces_a_fork() {
     attacker.leave().await;
 }
 
+#[tokio::test]
+async fn forged_message_does_not_suppress_genuine_with_replayed_id() {
+    // Authenticity must be checked BEFORE dedup: an unsigned/forged message
+    // carrying a replayed id must not poison the dedup window and suppress the
+    // genuine signed copy that shares that id.
+    let (mut victim, attacker) = meshed_pair("dedup-order").await;
+    let key = testkit::new_key();
+    let swarm = attacker.session.swarm_id();
+    let shared_id = "550e8400-e29b-41d4-a716-446655440000";
+
+    // 1) An UNSIGNED message with a chosen id — dropped at the signature gate,
+    //    and (post-fix) never recorded as "seen".
+    let forged = CraftedMsg::new(swarm, "ghost", "forged")
+        .id(shared_id)
+        .bytes();
+    attacker
+        .session
+        .inject_raw(forged)
+        .await
+        .expect("inject forged");
+    // Barrier (same link, in order) so the victim has processed the forged copy
+    // before the genuine one arrives — makes the regression deterministic.
+    attacker.send("after-forged").await;
+    assert!(victim.wait_body("after-forged", T).await, "barrier lost");
+
+    // 2) A genuine SIGNED message reusing that id must still be delivered.
+    let genuine = CraftedMsg::new(swarm, "ghost", "genuine")
+        .id(shared_id)
+        .sign(&key)
+        .bytes();
+    attacker
+        .session
+        .inject_raw(genuine)
+        .await
+        .expect("inject genuine");
+    assert!(
+        victim.wait_body("genuine", T).await,
+        "a genuine signed message with a replayed id must still be delivered"
+    );
+    victim.leave().await;
+    attacker.leave().await;
+}
+
+#[tokio::test]
+async fn directed_replies_to_third_party_do_not_leak_into_indexes() {
+    // A reply addressed to someone else is relayed but never logged. It must
+    // therefore never be folded into the fork/DAG indexes — otherwise those
+    // maps grow without bound (the leak). Only the two open messages from the
+    // attacker's own key are retained and indexed.
+    let (mut victim, attacker) = meshed_pair("noleak").await;
+    let key = testkit::new_key();
+    let swarm = attacker.session.swarm_id();
+
+    for index in 0..20u32 {
+        let bytes = CraftedMsg::new(swarm, "ghost", &format!("to-other-{index}"))
+            .reply_to("someone-else")
+            .chain(u64::from(index), None)
+            .sign(&key)
+            .bytes();
+        attacker
+            .session
+            .inject_raw(bytes)
+            .await
+            .expect("inject reply");
+    }
+    // Barrier: an open message that IS logged + indexed, and confirms the 20
+    // replies (injected first, same link) were already processed.
+    attacker.send("barrier").await;
+    assert!(victim.wait_body("barrier", T).await, "barrier lost");
+
+    let (by_hash, _dag_heads, author_seqs) =
+        victim.session.index_stats().await.expect("index stats");
+    assert_eq!(
+        author_seqs, 1,
+        "only the attacker's own key is indexed; replies to a third party must not leak (was 2 before the fix)"
+    );
+    assert!(
+        by_hash <= 2,
+        "only the warmup + barrier open messages are indexed, not the 20 directed replies: by_hash={by_hash}"
+    );
+    victim.leave().await;
+    attacker.leave().await;
+}
+
 // ── Open-gap tripwires: scenarios we are currently OPEN TO ─────────────
 //
 // Green today (the defensive assert fails → panics → should_panic catches
