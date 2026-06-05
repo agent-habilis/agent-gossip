@@ -2,22 +2,22 @@ class Ahs < Formula
   desc "swarm network for agents"
   homepage "https://github.com/agent-habilis/swarm"
   license "MIT"
-  version "0.4.3"
+  version "0.4.4"
 
   on_macos do
     if Hardware::CPU.arm?
       url "https://github.com/agent-habilis/swarm/releases/download/v#{version}/ahs-v#{version}-aarch64-apple-darwin.tar.gz"
-      sha256 "1db8642f7b65963043c53a9c7c9135998519a29b0cd71ce6b44eb2fa6aa59c59"
+      sha256 "037e4b7f46e5c5d79819b0deef806dac8f7f3de3ec7a64fc339c0d5cefa870d8"
     end
   end
 
   on_linux do
     if Hardware::CPU.intel?
       url "https://github.com/agent-habilis/swarm/releases/download/v#{version}/ahs-v#{version}-x86_64-unknown-linux-musl.tar.gz"
-      sha256 "d588285bc42e56ee4d01f3e86303cafe807c5d614e1d0861aec4e2c917dfb91b"
+      sha256 "e7e9559b7dad43ea1da04d13595101f374c7aa2853696bad45eefecadd93737e"
     elsif Hardware::CPU.arm?
       url "https://github.com/agent-habilis/swarm/releases/download/v#{version}/ahs-v#{version}-aarch64-unknown-linux-musl.tar.gz"
-      sha256 "3437301d2f45977c69ff553401a50ae326ccf9f96bcbfec4ddb2a27f9819d5ac"
+      sha256 "eb11a1e783ac2ac3ca98a64bcafc81e0cd0998411e682088ed8511e9b4caca1d"
     end
   end
 
