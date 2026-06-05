@@ -350,6 +350,7 @@ mod tests {
         }
 
         proptest! {
+            #![proptest_config(crate::proptest_support::config())]
             // ── Round-trip: build_msg_bytes -> Message::parse ──────
 
             #[test]

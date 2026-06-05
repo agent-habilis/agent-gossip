@@ -354,6 +354,7 @@ mod tests {
         use super::{MessageLog, msg, msg_at};
 
         proptest! {
+            #![proptest_config(crate::proptest_support::config())]
             #[test]
             fn prop_message_log_never_exceeds_capacity(
                 cap in 1..50usize,

@@ -213,6 +213,7 @@ mod tests {
         }
 
         proptest! {
+            #![proptest_config(crate::proptest_support::config())]
             #[test]
             fn prop_quota_limit_holds(author in arb_key()) {
                 let limiter = SwarmRateLimiter::new();

@@ -397,6 +397,7 @@ mod swarm_tests {
         }
 
         proptest! {
+            #![proptest_config(crate::proptest_support::config())]
             #[test]
             fn prop_round_trip(
                 seed in arb_seed(),

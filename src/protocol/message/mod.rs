@@ -863,6 +863,7 @@ mod tests {
         }
 
         proptest! {
+            #![proptest_config(crate::proptest_support::config())]
             #[test]
             fn prop_message_round_trip(
                 body in arb_ascii_body(),

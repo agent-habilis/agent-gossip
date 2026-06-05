@@ -291,6 +291,7 @@ mod prop {
     }
 
     proptest! {
+        #![proptest_config(crate::proptest_support::config())]
         #[test]
         fn prop_message_json_is_valid(
             body_text in arb_ascii_body(),
