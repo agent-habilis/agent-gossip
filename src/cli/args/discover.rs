@@ -45,7 +45,8 @@ mod tests {
                 | Commands::Msg { .. }
                 | Commands::Poll { .. }
                 | Commands::Ping { .. }
-                | Commands::Mcp => panic!("expected Discover"),
+                | Commands::Mcp
+                | Commands::Man => panic!("expected Discover"),
             }
         }
         // Bare discover ⇒ no explicit directory (defaults to global downstream).

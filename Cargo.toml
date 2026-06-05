@@ -101,6 +101,14 @@ path = "src/lib.rs"
 name = "ahs"
 path = "src/main.rs"
 
+# Offline roff man-page generator (`cargo task man`). `required-features`
+# gated like the bench/adversarial targets, so `clap_mangen` is never
+# compiled into the shipped `ahs` binary or a normal `cargo build`.
+[[bin]]
+name = "gen-man"
+path = "src/bin/gen-man.rs"
+required-features = ["mangen"]
+
 [features]
 # Off by default. Exposes `src/bench_api.rs` so the divan microbenchmark
 # bench can reach `pub(crate)` hot paths; never enabled in a normal or
@@ -119,10 +127,16 @@ testkit = []
 # run a churning daemon (`--active-view-capacity 5 --no-interactive`), SIGTERM
 # it, inspect the profile. Never in a normal build.
 dhat-heap = ["dep:dhat"]
+# Off by default. Pulls in `clap_mangen` for the `gen-man` bin that emits
+# roff man pages from the clap command tree. Enabled only by `cargo task
+# man` / the release workflow; never in a normal or release `ahs` build.
+mangen = ["dep:clap_mangen"]
 
 [dependencies]
 # Optional: only compiled in under the `dhat-heap` feature (heap profiling).
 dhat = { version = "0.3", optional = true }
+# Optional: only compiled in under the `mangen` feature (the `gen-man` bin).
+clap_mangen = { version = "0.2", optional = true }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "io-util", "fs", "signal", "net"] }
 clap = { version = "4", features = ["derive"] }
 iroh = { version = "1.0.0-rc.0", features = ["tls-ring"] }

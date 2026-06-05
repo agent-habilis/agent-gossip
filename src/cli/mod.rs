@@ -76,6 +76,12 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
             discover::discover(opts).await
         }
         Commands::Mcp => crate::mcp::run().await,
+        // The manual is embedded at compile time (`include_str!`), so the
+        // binary documents itself with no repo checkout.
+        Commands::Man => {
+            print!("{}", include_str!("../../docs/manual.txt"));
+            Ok(())
+        }
     }
 }
 

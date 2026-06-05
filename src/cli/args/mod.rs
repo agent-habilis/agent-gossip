@@ -109,4 +109,11 @@ pub(crate) enum Commands {
     /// stdin, writes to stdout; the caller is expected to be an MCP client
     /// that manages this process's lifetime.
     Mcp,
+
+    /// Print the full agent manual to stdout.
+    ///
+    /// A self-contained man page covering every command, JSON event, and
+    /// common workflow, embedded in the binary so it works with no repo
+    /// checkout.
+    Man,
 }

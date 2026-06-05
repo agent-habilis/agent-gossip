@@ -31,8 +31,25 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
 
+  # The roff man pages are target-independent, so build them once here (a
+  # host build of the feature-gated `gen-man` bin) and hand them to every
+  # `upload` job as an artifact, rather than recompiling the crate on each
+  # matrix runner. Keeps it off the per-target build path too, so a host
+  # toolchain hiccup can't block a binary that cross-compiles fine.
+  man-pages:
+    needs: verify-version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Generate roff man pages
+        run: cargo run --quiet --features mangen --bin gen-man -- --out man
+      - uses: actions/upload-artifact@v4
+        with:
+          name: man-pages
+          path: man/
+
   upload:
-    needs: create-release
+    needs: [create-release, man-pages]
     strategy:
       fail-fast: false
       matrix:
@@ -46,12 +63,22 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
+      # Pull the once-built man pages into ./man so the archive can bundle
+      # them; Homebrew installs them from there (see Formula/ahs.rb).
+      - name: Download man pages
+        uses: actions/download-artifact@v4
+        with:
+          name: man-pages
+          path: man
       - uses: taiki-e/upload-rust-binary-action@v1
         with:
           bin: ahs
           target: ${{ matrix.target }}
           archive: $bin-$tag-$target
           token: ${{ secrets.GITHUB_TOKEN }}
+          # Bundle the generated man pages alongside the binary so
+          # `brew install` can drop them into the man path.
+          include: man
           # Emit an `<archive>.sha256` sidecar per target so update-formula
           # can read the checksums without re-downloading the tarballs.
           checksum: sha256

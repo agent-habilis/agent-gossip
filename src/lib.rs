@@ -104,6 +104,14 @@ pub async fn run_cli() -> Result<()> {
     cli::dispatch(Cli::parse()).await
 }
 
+/// The fully-built `ahs` clap command tree, for offline man-page
+/// generation (`cargo task man` runs the `gen-man` bin through
+/// `clap_mangen`). Arg surface only; no iroh, no runtime state.
+#[must_use]
+pub fn cli_command() -> clap::Command {
+    <Cli as clap::CommandFactory>::command()
+}
+
 /// Build the deferred log sink and register it process-globally.
 /// Call once in `main` before subscriber init; pass the returned
 /// value to `tracing_subscriber::fmt().with_writer(..)`. Logs buffer

@@ -23,6 +23,7 @@ class Ahs < Formula
 
   def install
     bin.install "ahs"
+    man1.install Dir["man/*.1"]
   end
 
   test do

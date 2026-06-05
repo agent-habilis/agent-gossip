@@ -12,6 +12,7 @@ mod fmt;
 mod install;
 mod lint;
 mod logs;
+mod man;
 mod pi;
 mod proptest;
 mod release;
@@ -69,6 +70,8 @@ enum Task {
     Clean,
     /// Print the logs directory (creating it if missing).
     Logs,
+    /// Generate roff man pages into `target/man/` (needs `clap_mangen`).
+    Man,
     /// Run property-based tests.
     Proptest,
     /// Install the pi extension.
@@ -104,6 +107,7 @@ fn main() -> ExitCode {
         Task::Lint => lint::run(&sh),
         Task::Clean => clean::run(&sh),
         Task::Logs => logs::run(),
+        Task::Man => man::run(&sh),
         Task::Proptest => proptest::run(&sh),
         Task::PiLink => pi::link(&sh),
         Task::PiUnlink => pi::unlink(&sh),
