@@ -124,14 +124,14 @@ printf %s '/swarm:join $SWARM' | (pbcopy || wl-copy || xclip -selection clipboar
 
 Then print exactly one line:
 ```
-📋 copied join command to clipboard
+🐝 join command copied to clipboard
 ```
 
 On **Not now**, do nothing.
 
 The string copied **must** be byte-identical to the Output's join line
 (`/swarm:join $SWARM`) so the two never drift. The ask widget plus that single
-`📋` confirmation line are the **only** additions allowed beyond the Output
+`🐝` confirmation line are the **only** additions allowed beyond the Output
 block — no other narration (Quiet mode still holds otherwise).
 
 ## Notes
