@@ -32,7 +32,7 @@ pub(crate) use shared::SharedServerOpts;
     name = "ahs",
     about = "swarm network for agents",
     version = crate::util::version::VERSION,
-    after_help = "a tool by 🫈 agent-habilis"
+    after_help = "a tool by agent-habilis █🫈"
 )]
 pub(crate) struct Cli {
     /// Per-member log directory (default: the OS temp dir). Hidden — a
