@@ -138,7 +138,7 @@ fn commit_outbound(state: &mut EventLoopState, msg: &Message, out: &output::Outp
 
 /// Outcome of a send through [`broadcast_message`]. `RateLimited` is a
 /// *drop*, not an error (mirrors the receiver-side drop) — returned to
-/// the caller so a programmatic sender (`ahs msg`, MCP `send_message`)
+/// the caller so a programmatic sender (`ah-s msg`, MCP `send_message`)
 /// can tell the message was not emitted, distinct from a real failure.
 #[expect(
     clippy::large_enum_variant,

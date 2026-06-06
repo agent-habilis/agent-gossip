@@ -40,7 +40,7 @@ export function registerCommands(pi: ExtensionAPI): void {
 }
 
 // Parse `/swarm-create [name] [flags]`. The first non-flag token is the
-// optional swarm name; recognized flags mirror the `ahs create` CLI.
+// optional swarm name; recognized flags mirror the `ah-s create` CLI.
 function parseCreateArgs(args: string): { options: CreateOptions; error?: string } {
   const options: CreateOptions = {};
   const tokens = args.trim().split(/\s+/u).filter(Boolean);

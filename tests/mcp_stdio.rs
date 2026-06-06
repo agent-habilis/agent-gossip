@@ -1,4 +1,4 @@
-//! Integration tests: `ahs mcp` over stdio.
+//! Integration tests: `ah-s mcp` over stdio.
 //!
 //! Spawns the binary, pipes in JSON-RPC, asserts the server's
 //! responses. These are the reliability guarantees we make at the
@@ -34,7 +34,7 @@ impl McpClient {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .expect("spawn ahs mcp");
+            .expect("spawn ah-s mcp");
         let stdin = child.stdin.take().expect("child stdin");
         let stdout = child.stdout.take().expect("child stdout");
         let reader = BufReader::new(stdout);

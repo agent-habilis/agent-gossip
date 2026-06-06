@@ -126,7 +126,7 @@ struct CreateSwarmArgs {
     #[serde(default = "default_rate_limit")]
     rate_limit_per_min: u16,
     /// List this swarm in a directory so others can find it with
-    /// `ahs discover` (no id to share). Requires `network: "public"`. Note:
+    /// `ah-s discover` (no id to share). Requires `network: "public"`. Note:
     /// advertising broadcasts the join token — the swarm becomes open to
     /// anyone discovering the directory.
     #[serde(default)]

@@ -24,7 +24,7 @@ extern "C" fn restore_ctrl_c_echo() {
 /// original and registering a libc `atexit` restore. `atexit` not
 /// `Drop`: the daemon's ctrl-c / SIGTERM path exits via
 /// `std::process::exit`, which runs C `atexit` handlers but skips
-/// destructors — otherwise `ahs` would leave the terminal with `^C`
+/// destructors — otherwise `ah-s` would leave the terminal with `^C`
 /// echo off after it exits.
 #[expect(
     unsafe_code,

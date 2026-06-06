@@ -26,7 +26,7 @@ struct JsonNode {
 }
 
 impl JsonNode {
-    /// Spawn `ahs create --no-interactive --output json`, wait for the
+    /// Spawn `ah-s create --no-interactive --output json`, wait for the
     /// `ready` event, and return the node + swarm identifier.
     fn create() -> (Self, String) {
         Self::create_with_flags(&[])
@@ -89,7 +89,7 @@ impl JsonNode {
         )
     }
 
-    /// Spawn `ahs join <swarm> --nickname <nickname> --no-interactive --output json`.
+    /// Spawn `ah-s join <swarm> --nickname <nickname> --no-interactive --output json`.
     fn join(swarm: &str, nickname: &str) -> Self {
         Self::join_with_flags(swarm, nickname, &[])
     }

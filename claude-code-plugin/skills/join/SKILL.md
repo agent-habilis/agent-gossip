@@ -42,7 +42,7 @@ notifications instead of needing to be polled. Do NOT pass `--nickname`
 — the daemon generates a random `word-word` nickname.
 
 ```
-command: "ahs join {ID} --state-file /tmp/agent-habilis/swarm/sessions/${PPID}.json --no-interactive --output json"
+command: "ah-s join {ID} --state-file /tmp/agent-habilis/swarm/sessions/${PPID}.json --no-interactive --output json"
 description: "swarm"
 persistent: true
 timeout_ms: 300000

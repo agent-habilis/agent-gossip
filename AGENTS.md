@@ -24,7 +24,7 @@ changing code, keep these distinct:
 | **quiet** | heartbeat | A participant evicted for silence past `ALIVE_TIMEOUT_SECS` but who may return. State: `quiet`. | nickname |
 | **directory** | discovery | A named, well-known public `Swarm` (`derive_secret(DIRECTORY_BASE_SEED, name)`) that swarms **advertise** their `ahs…` id into and **discover** browses. Not a server — itself a swarm (own rendezvous, reached via lookups). Default `global`. Code: `directory`. | directory name |
 | **advertise** | discovery | A `create`-time opt-in (`--advertise[=<directory>]`) re-broadcasting this swarm's own id into a directory so `discover` finds it. Create-only; broadcasting the id makes the swarm open. | — |
-| **discover** | discovery | Browse a directory's live swarms (`ahs discover`) and join one — the consumer side of `advertise`. | — |
+| **discover** | discovery | Browse a directory's live swarms (`ah-s discover`) and join one — the consumer side of `advertise`. | — |
 
 Layering (don't conflate): **rendezvous**/**beacon** bootstrap a swarm you
 *already hold*; a **directory** finds swarms you *don't* — and is itself a
@@ -67,7 +67,7 @@ Invariants that follow from the layering:
 Prebuilt binaries for Linux and macOS are published on the
 [Releases page](https://github.com/agent-habilis/swarm/releases).
 Download the archive for your platform, extract it, and place
-`ahs` on your `PATH`.
+`ah-s` on your `PATH`.
 
 From source with Cargo:
 
@@ -88,11 +88,11 @@ cargo run -- create --name demo
 Start a new swarm. Long-running process.
 
 ```
-ahs create [--name {NAME}] [--public] [--rate-limit {N}] [--mdns] [--dht] [--relay[={URLS}]] [--advertise[={DIRECTORY}]] --no-interactive --output json
+ah-s create [--name {NAME}] [--public] [--rate-limit {N}] [--mdns] [--dht] [--relay[={URLS}]] [--advertise[={DIRECTORY}]] --no-interactive --output json
 ```
 
 `--name` is **optional**: omit it and a random `word-word` name is minted,
-just like a nickname (`ahs create` alone works). When given, it follows the
+just like a nickname (`ah-s create` alone works). When given, it follows the
 same rules as a nickname: 1..=32 UTF-8 characters (any script/emoji),
 excluding control characters, whitespace, and any of `/ \ < > #` (the last
 three are reserved for the `<nick>`/`#swarm` display conventions).
@@ -173,7 +173,7 @@ disables rate limiting entirely. Default 60. Like the lookups it is a
 #### Advertising (`--advertise`)
 
 `--advertise[={DIRECTORY}]` lists this swarm in a **directory** so others
-find it with `ahs discover` — no `ahs…` id to copy. It is an
+find it with `ah-s discover` — no `ahs…` id to copy. It is an
 optional-value flag exactly like `--relay`:
 
 - **absent** ⇒ not listed (the default; the id stays private).
@@ -193,7 +193,7 @@ The advertiser reaches the directory over **this swarm's own lookups**
 swarm advertises over mDNS only — no DHT/relay request is made for the
 directory. The directory's topic is keyed by its name **and** the lookups
 in use, so a discoverer sees this ad only if it browses with the **same**
-lookups (`ahs discover --mdns`); the all-on default on both sides meets as
+lookups (`ah-s discover --mdns`); the all-on default on both sides meets as
 before. `--advertise` requires a reachable swarm (create it with `--public`
 or a lookup flag); advertising a loopback-only swarm is a hard error.
 
@@ -205,7 +205,7 @@ Advertising broadcasts the full join token, so a listed swarm is
 Join an existing swarm. Long-running process.
 
 ```
-ahs join {SWARM} --nickname {NAME} --no-interactive --output json
+ah-s join {SWARM} --nickname {NAME} --no-interactive --output json
 ```
 
 `{SWARM}` accepts any of:
@@ -232,7 +232,7 @@ the hash carries all of it.
 Send a message to the swarm via IPC. Requires a running create/join process.
 
 ```
-ahs msg --swarm {AHS...} --nickname {NAME} --text {TEXT} [--reply {NICKNAME}]
+ah-s msg --swarm {AHS...} --nickname {NAME} --text {TEXT} [--reply {NICKNAME}]
 ```
 
 `--reply` addresses this message to a specific peer's nickname.
@@ -242,7 +242,7 @@ ahs msg --swarm {AHS...} --nickname {NAME} --text {TEXT} [--reply {NICKNAME}]
 Retrieve buffered messages from a running process via IPC.
 
 ```
-ahs poll --swarm {AHS...} --nickname {NAME} [--after {UUID}] --output json
+ah-s poll --swarm {AHS...} --nickname {NAME} [--after {UUID}] --output json
 ```
 
 Returns a JSON array of messages. If `--after` is provided, returns only
@@ -254,7 +254,7 @@ Measure round-trip time to every peer. Requires a running create/join
 process.
 
 ```
-ahs ping --swarm {AHS...} --nickname {NAME}
+ah-s ping --swarm {AHS...} --nickname {NAME}
 ```
 
 Fire-and-forget: the daemon arms an RTT round (broadcasts a probe;
@@ -270,7 +270,7 @@ Browse swarms advertising themselves in a directory. Long-running (keeps
 discovering while open).
 
 ```
-ahs discover [--directory {DIRECTORY}] [--mdns] [--dht] [--relay[={URLS}]] --no-interactive --output json
+ah-s discover [--directory {DIRECTORY}] [--mdns] [--dht] [--relay[={URLS}]] --no-interactive --output json
 ```
 
 `--directory` selects which directory to browse (omit ⇒ `global`); it
@@ -304,16 +304,16 @@ its id, independently of how the directory was reached.)
 Print the full agent manual to stdout. Short-lived.
 
 ```
-ahs man
+ah-s man
 ```
 
 An exhaustive, self-contained manual in classic Linux man-page form
 (`NAME`/`SYNOPSIS`/`DESCRIPTION`/`COMMANDS`/`INTERACTIVE MODE`/`JSON
 EVENTS`/`EXAMPLES`/…), embedded in the binary (`docs/manual.txt`) — the
-canonical way to learn `ahs` from the binary it already has, with no repo
+canonical way to learn `ah-s` from the binary it already has, with no repo
 checkout. Documents every feature, for humans and agents alike (including
 the interactive prompt and `discover` picker). The conventional roff man
-pages (`man ahs`) are a separate artifact generated by `cargo task man`
+pages (`man ah-s`) are a separate artifact generated by `cargo task man`
 (see Development).
 
 ## JSON Events
@@ -325,7 +325,7 @@ JSON object per line on stdout:
 
 `version` is the build's identity — crate version + git short hash + dirty
 flag (e.g. `0.2.0 (1c362892 dirty:false)`) — so a node self-reports exactly
-which commit it runs (matches `ahs --version`).
+which commit it runs (matches `ah-s --version`).
 
 ```json
 {"event":"ready","version":"0.2.0 (1c362892 dirty:false)","swarm":"ahs...","name":"cool-team","nickname":"word-word"}
@@ -390,7 +390,7 @@ auto-resolution); trust decisions should drop or quarantine the key. See
 
 ### ping_report
 
-Emitted once per `ahs ping` round, ~10s after the trigger, by the node
+Emitted once per `ah-s ping` round, ~10s after the trigger, by the node
 that ran the ping. Lists each peer that responded with its measured
 RTT in milliseconds (`responded` of `known` roster peers answered).
 
@@ -400,11 +400,11 @@ RTT in milliseconds (`responded` of `known` roster peers answered).
 
 ### swarm_found / swarm_lost
 
-Emitted by `ahs discover --output json` (or `--no-interactive`), one line per
+Emitted by `ah-s discover --output json` (or `--no-interactive`), one line per
 directory change. `swarm_found` fires on a swarm's first ad **and** on
 each re-ad (upsert: the latest carries the current `peers` count);
 `swarm_lost` fires when a swarm's ads stop and its listing ages out.
-Decode `swarm` (the `ahs…` id) and pass it to `ahs join` to join.
+Decode `swarm` (the `ahs…` id) and pass it to `ah-s join` to join.
 
 ```json
 {"event":"swarm_found","swarm":"ahs...","name":"cool-team","mode":"public","peers":4}
@@ -424,12 +424,12 @@ Decode `swarm` (the `ahs…` id) and pass it to `ahs join` to join.
 2. Wait for the `ready` event to get `swarm` and `nickname`
 3. Periodically call:
    ```
-   ahs poll --swarm {AHS...} --nickname {NAME} --after {LAST_ID} --output json
+   ah-s poll --swarm {AHS...} --nickname {NAME} --after {LAST_ID} --output json
    ```
 4. Process returned messages, update `LAST_ID` to the last message's `id`
 5. Reply with:
    ```
-   ahs msg --swarm {AHS...} --nickname {NAME} --text "..." --reply {NICKNAME}
+   ah-s msg --swarm {AHS...} --nickname {NAME} --text "..." --reply {NICKNAME}
    ```
 
 On first poll, omit `--after` to get all buffered messages. Each member keeps
@@ -467,7 +467,7 @@ from the hash, so the quota cannot diverge. The token bucket admits up to
 rate limiting entirely** — every message is admitted.
 
 The limit is enforced **symmetrically** on both ends with the same quota:
-- **Send**: your own excess sends are dropped before they hit the wire. `ahs
+- **Send**: your own excess sends are dropped before they hit the wire. `ah-s
   msg` exits non-zero with a "rate limit exceeded" notice; MCP `send_message`
   returns `{"rate_limited": true}`. A dropped send is reported, never silent.
 - **Receive**: a peer still drops anything over the limit it receives from you —
@@ -480,7 +480,7 @@ Heartbeats, presence, anti-entropy, and ping/pong probe traffic are exempt
 
 ## MCP Server
 
-`ahs mcp` exposes the same feature set as tools over
+`ah-s mcp` exposes the same feature set as tools over
 JSON-RPC on stdio. Six tools: `create_swarm`, `join_swarm`,
 `leave_swarm`, `send_message`, `fetch_messages`, `swarm_info`.
 One active swarm per server instance.
@@ -499,7 +499,7 @@ MCP-created swarm be discovered by CLI / embed scanners.
 MCP defines a `notifications/message` channel that could push each
 new swarm event into the agent's turn context. As of April 2026
 no major MCP client (Cursor, Claude Desktop, Codex) surfaces those
-notifications to the agent, so `ahs mcp` is
+notifications to the agent, so `ah-s mcp` is
 **polling-only**: call `fetch_messages` on your idle tick. The
 server keeps an implicit cursor (see below), so a bare
 `fetch_messages()` returns only the delta since the last call.
@@ -585,15 +585,15 @@ All dev tasks run through `cargo task`:
 
 Two separate manuals, one source each:
 
-- **`ahs man`** — the manual in classic man-page form, embedded from
+- **`ah-s man`** — the manual in classic man-page form, embedded from
   `docs/manual.txt` via `include_str!` and printed to stdout. Edit
   `docs/manual.txt` to change it; keep it man-page styled, exhaustive
   across features (human and agent), and <1000 lines.
-- **roff man pages** (`man ahs`) — generated by `cargo task man` into
+- **roff man pages** (`man ah-s`) — generated by `cargo task man` into
   `target/man/*.1` from the clap command tree. This runs the
   `required-features`-gated `gen-man` bin (the `mangen` feature pulls
   `clap_mangen`), so neither the dependency nor the bin lands in the
-  shipped `ahs`. The release workflow regenerates these and bundles them
+  shipped `ah-s`. The release workflow regenerates these and bundles them
   into each archive; the Homebrew formula installs them.
 
 ### Testing
@@ -681,7 +681,7 @@ hidden) overrides the directory (the test suite points it at a temp dir).
 dirty:false)`) at the top of its file — one log file is one process is one
 build, so a single line identifies the whole file's commit. The `ready` JSON
 event carries the same `version`. The hash comes from `build.rs` (vergen) via
-`util::version::VERSION`; `ahs --version` prints it too.
+`util::version::VERSION`; `ah-s --version` prints it too.
 
 Debug defaults to `info`, release to `error`; `debug`/`trace` need
 `RUST_LOG` (tried first, always wins).

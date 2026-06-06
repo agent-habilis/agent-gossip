@@ -1,4 +1,4 @@
-//! The `ahs` command-line interface: the clap-derived argument shape
+//! The `ah-s` command-line interface: the clap-derived argument shape
 //! lives in [`args`], the live `discover` picker in [`discover`], and the
 //! per-subcommand handlers + [`dispatch`] here. `lib.rs::run_cli` parses
 //! argv and calls `dispatch`; each handler is the thin glue between the

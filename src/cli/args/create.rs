@@ -45,13 +45,13 @@ pub(crate) struct CreateOpts {
 
     /// Optional nickname (random word-word if not provided). A custom
     /// nickname is 1..=32 UTF-8 characters, excluding control chars,
-    /// whitespace, and any of / \ < > #. Symmetric with `ahs join
+    /// whitespace, and any of / \ < > #. Symmetric with `ah-s join
     /// --nickname`.
     #[arg(long)]
     pub nickname: Option<Nickname>,
 
     /// List this swarm in a directory so others can find it with
-    /// `ahs discover` — no `ahs…` id to share. Optional-value, like
+    /// `ah-s discover` — no `ahs…` id to share. Optional-value, like
     /// `--relay`: absent ⇒ unlisted; bare `--advertise` ⇒ the default
     /// `global` directory; `--advertise <directory>` ⇒ that named directory.
     /// Requires `--public` (a directory listing only makes sense for a
@@ -88,7 +88,7 @@ mod tests {
 
     #[test]
     fn create_opts_with_nickname() {
-        let cli = Cli::parse_from(["ahs", "create", "--name", "team", "--nickname", "my-nick"]);
+        let cli = Cli::parse_from(["ah-s", "create", "--name", "team", "--nickname", "my-nick"]);
         match cli.command {
             Commands::Create { opts } => {
                 assert_eq!(opts.name.as_ref().map(SwarmName::as_str), Some("team"));
@@ -111,7 +111,7 @@ mod tests {
 
     #[test]
     fn create_opts_without_nickname() {
-        let cli = Cli::parse_from(["ahs", "create", "--name", "team"]);
+        let cli = Cli::parse_from(["ah-s", "create", "--name", "team"]);
         match cli.command {
             Commands::Create { opts } => {
                 assert_eq!(opts.name.as_ref().map(SwarmName::as_str), Some("team"));
@@ -131,7 +131,7 @@ mod tests {
 
     #[test]
     fn create_opts_name_optional() {
-        let cli = Cli::parse_from(["ahs", "create"]);
+        let cli = Cli::parse_from(["ah-s", "create"]);
         match cli.command {
             Commands::Create { opts } => assert_eq!(opts.name, None),
             Commands::Join { .. }
@@ -148,17 +148,17 @@ mod tests {
 
     #[test]
     fn create_opts_rejects_invalid_name() {
-        assert!(Cli::try_parse_from(["ahs", "create", "--name", ""]).is_err());
+        assert!(Cli::try_parse_from(["ah-s", "create", "--name", ""]).is_err());
         assert!(
-            Cli::try_parse_from(["ahs", "create", "--name", "has space"]).is_err(),
+            Cli::try_parse_from(["ah-s", "create", "--name", "has space"]).is_err(),
             "whitespace must reject"
         );
         assert!(
-            Cli::try_parse_from(["ahs", "create", "--name", "a/b"]).is_err(),
+            Cli::try_parse_from(["ah-s", "create", "--name", "a/b"]).is_err(),
             "path separator must reject"
         );
         assert!(
-            Cli::try_parse_from(["ahs", "create", "--name", &"a".repeat(33)]).is_err(),
+            Cli::try_parse_from(["ah-s", "create", "--name", &"a".repeat(33)]).is_err(),
             "33 chars must reject"
         );
     }
@@ -178,17 +178,17 @@ mod tests {
             }
         }
         assert_eq!(
-            advertise_of(&["ahs", "create", "--public"]),
+            advertise_of(&["ah-s", "create", "--public"]),
             DirectorySelection::Unset,
             "absent ⇒ Unset (unlisted)"
         );
         assert_eq!(
-            advertise_of(&["ahs", "create", "--public", "--advertise"]),
+            advertise_of(&["ah-s", "create", "--public", "--advertise"]),
             DirectorySelection::Default,
             "bare ⇒ Default (global directory)"
         );
         assert_eq!(
-            advertise_of(&["ahs", "create", "--public", "--advertise", "gamedev"]),
+            advertise_of(&["ah-s", "create", "--public", "--advertise", "gamedev"]),
             DirectorySelection::Named(SwarmName::new("gamedev").unwrap()),
             "valued ⇒ Named directory"
         );
@@ -197,7 +197,7 @@ mod tests {
     #[test]
     fn create_opts_nickname_with_other_flags() {
         let cli = Cli::parse_from([
-            "ahs",
+            "ah-s",
             "create",
             "--name",
             "team",

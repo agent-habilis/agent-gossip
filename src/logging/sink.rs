@@ -230,7 +230,7 @@ mod tests {
 
     #[test]
     fn detach_reattaches_to_a_fresh_file() {
-        let dir = std::env::temp_dir().join(format!("ahs-logswitch-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("ah-s-logswitch-{}", std::process::id()));
         let _ = fs::create_dir_all(&dir);
         let path_a = dir.join("a.log");
         let path_b = dir.join("b.log");
@@ -261,7 +261,7 @@ mod tests {
 
     #[test]
     fn attached_file_rotates_at_cap() {
-        let dir = std::env::temp_dir().join(format!("ahs-logsink-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("ah-s-logsink-{}", std::process::id()));
         let _ = fs::create_dir_all(&dir);
         let path = dir.join("rot.log");
         let file = fs::OpenOptions::new()

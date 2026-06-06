@@ -98,12 +98,12 @@ name = "agent_habilis_swarm"
 path = "src/lib.rs"
 
 [[bin]]
-name = "ahs"
+name = "ah-s"
 path = "src/main.rs"
 
 # Offline roff man-page generator (`cargo task man`). `required-features`
 # gated like the bench/adversarial targets, so `clap_mangen` is never
-# compiled into the shipped `ahs` binary or a normal `cargo build`.
+# compiled into the shipped `ah-s` binary or a normal `cargo build`.
 [[bin]]
 name = "gen-man"
 path = "src/bin/gen-man.rs"
@@ -129,7 +129,7 @@ testkit = []
 dhat-heap = ["dep:dhat"]
 # Off by default. Pulls in `clap_mangen` for the `gen-man` bin that emits
 # roff man pages from the clap command tree. Enabled only by `cargo task
-# man` / the release workflow; never in a normal or release `ahs` build.
+# man` / the release workflow; never in a normal or release `ah-s` build.
 mangen = ["dep:clap_mangen"]
 
 [dependencies]
@@ -185,7 +185,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"
 divan = "0.1"
 
 # Stamps the build's git short hash + dirty flag into the version
-# (`util::version::VERSION`), so every `ahs` self-identifies its commit in
+# (`util::version::VERSION`), so every `ah-s` self-identifies its commit in
 # `--version`, the `ready` event, and every log line. git-CLI backend — no
 # libgit2/gix; build hosts all have `git`.
 [build-dependencies]

@@ -70,7 +70,7 @@ export function registerTools(pi: ExtensionAPI): void {
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx: ExtensionContext) {
       if (!requireAgentSwarm(ctx)) {
-        return toolError("ahs CLI not found on PATH");
+        return toolError("ah-s CLI not found on PATH");
       }
       const options: CreateOptions = {
         name: params.name,
@@ -114,7 +114,7 @@ export function registerTools(pi: ExtensionAPI): void {
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx: ExtensionContext) {
       if (!requireAgentSwarm(ctx)) {
-        return toolError("ahs CLI not found on PATH");
+        return toolError("ah-s CLI not found on PATH");
       }
       const result = await joinSwarm(params.target, params.nickname);
       return {
@@ -143,7 +143,7 @@ export function registerTools(pi: ExtensionAPI): void {
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx: ExtensionContext) {
       if (!requireAgentSwarm(ctx)) {
-        return toolError("ahs CLI not found on PATH");
+        return toolError("ah-s CLI not found on PATH");
       }
       if (!state.session?.swarm) {
         return toolError("Not in a swarm. Use swarm_create or swarm_join first.");
@@ -204,7 +204,7 @@ export function registerTools(pi: ExtensionAPI): void {
     parameters: Type.Object({}),
     async execute(_toolCallId, _params, _signal, _onUpdate, ctx: ExtensionContext) {
       if (!requireAgentSwarm(ctx)) {
-        return toolError("ahs CLI not found on PATH");
+        return toolError("ah-s CLI not found on PATH");
       }
       if (!state.session?.swarm) {
         return toolError("Not in a swarm");

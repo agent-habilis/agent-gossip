@@ -189,7 +189,7 @@ pub(crate) struct EventLoopState {
     /// tick. Purely observability — never gates behavior (see
     /// `timers::tick_prune`).
     pub resident_memory_warned: bool,
-    /// Active `ahs ping` round, if one is in flight. Armed by the
+    /// Active `ah-s ping` round, if one is in flight. Armed by the
     /// `Ping` IPC command, filled by inbound `Pong`s, and finalized
     /// into a `ping_report` when its `deadline` elapses. One at a time:
     /// a fresh ping replaces any in-flight round. Boxed to keep the

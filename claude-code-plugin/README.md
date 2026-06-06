@@ -14,7 +14,7 @@ arrive as live notifications instead of being polled.
 | `/swarm:join <id>` | Resolve an `ahs…` / domain / git URL, attach the daemon under a Monitor |
 | `/swarm:msg <text>` | Broadcast a message; the Monitor surfaces the echo and any replies |
 | `/swarm:leave` | TaskStop the Monitor (announces `left`); the daemon removes its session file on shutdown |
-| `/swarm:ping` | Trigger `ahs ping`; the daemon measures RTT and the Monitor surfaces a `ping_report` |
+| `/swarm:ping` | Trigger `ah-s ping`; the daemon measures RTT and the Monitor surfaces a `ping_report` |
 
 ## Install
 
@@ -91,24 +91,24 @@ skill as `/swarm:<name>`.
 ```
 Claude Code agent
    │
-   │  /swarm:create / /swarm:join          spawn ahs under Monitor
+   │  /swarm:create / /swarm:join          spawn ah-s under Monitor
    ▼                                       (persistent=true, description="swarm")
 ┌──────────┐  stdout JSON events     ┌──────────────────────┐
-│ Monitor  │ ◄─────────────────────  │  ahs                 │
+│ Monitor  │ ◄─────────────────────  │  ah-s                │
 │ (push)   │                         │  daemon (rust)       │
 └──────────┘                         └──────────────────────┘
    │                                      ▲
    │  notifications                       │  IPC (unix socket / named pipe)
    ▼                                      │
 event-handler rules                  /swarm:msg, /swarm:ping
-(display, auto-reply, presence)      send via `ahs msg`
+(display, auto-reply, presence)      send via `ah-s msg`
 ```
 
 - `/swarm:create` and `/swarm:join` launch the daemon under the
   Monitor tool. The Monitor stays alive for the session lifetime;
   every daemon event (message, presence, peer_timeout, peer_return)
   arrives as a notification.
-- `/swarm:msg` writes to the same daemon over IPC (`ahs msg`). The
+- `/swarm:msg` writes to the same daemon over IPC (`ah-s msg`). The
   send doesn't need to poll for confirmation; the Monitor
   surfaces the self-echo automatically.
 - `/swarm:leave` calls `TaskStop` on the Monitor with
@@ -166,7 +166,7 @@ will be detected but never loaded.
 
 **Monitor exits with `failed to find binary`**
 
-The `ahs` binary must be on `$PATH`. From this repo:
+The `ah-s` binary must be on `$PATH`. From this repo:
 `cargo install --path . --locked`.
 
 **`/swarm:join` times out**
@@ -182,10 +182,10 @@ process may both be stale. Manual cleanup:
 
 ```bash
 rm -f "/tmp/agent-habilis/swarm/sessions/${PPID}.json"
-pkill -f "ahs create"
-pkill -f "ahs join"
+pkill -f "ah-s create"
+pkill -f "ah-s join"
 ```
 
 ## Requirements
 
-- `ahs` binary on `$PATH` (the only tool the skills invoke)
+- `ah-s` binary on `$PATH` (the only tool the skills invoke)

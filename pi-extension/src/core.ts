@@ -10,7 +10,7 @@ function waitForReady(child: ChildProcess, timeoutMs: number): Promise<string> {
   return new Promise<string>((resolve, reject) => {
     const stdout = child.stdout;
     if (!stdout) {
-      reject(new Error("ahs spawned without a stdout stream"));
+      reject(new Error("ah-s spawned without a stdout stream"));
       return;
     }
     const lineReader = readline.createInterface({ input: stdout });
@@ -101,7 +101,7 @@ export async function createSwarm(options: CreateOptions = {}): Promise<Session>
   const filePath = stateFilePath();
   if (filePath) args.push("--state-file", filePath);
 
-  const child = spawn("ahs", args, { stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn("ah-s", args, { stdio: ["ignore", "pipe", "pipe"] });
   const readyLine = await waitForReady(child, 30_000);
   const ready = JSON.parse(readyLine);
 
@@ -110,7 +110,7 @@ export async function createSwarm(options: CreateOptions = {}): Promise<Session>
   }
 
   if (typeof child.pid !== "number") {
-    throw new Error("ahs spawned without a pid");
+    throw new Error("ah-s spawned without a pid");
   }
   const session: Session = {
     swarm: ready.swarm,
@@ -131,7 +131,7 @@ export async function joinSwarm(target: string, nickname?: string): Promise<Sess
   const filePath = stateFilePath();
   if (filePath) args.push("--state-file", filePath);
 
-  const child = spawn("ahs", args, { stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn("ah-s", args, { stdio: ["ignore", "pipe", "pipe"] });
   const readyLine = await waitForReady(child, 60_000);
   const ready = JSON.parse(readyLine);
 
@@ -140,7 +140,7 @@ export async function joinSwarm(target: string, nickname?: string): Promise<Sess
   }
 
   if (typeof child.pid !== "number") {
-    throw new Error("ahs spawned without a pid");
+    throw new Error("ah-s spawned without a pid");
   }
   const session: Session = {
     swarm: ready.swarm,

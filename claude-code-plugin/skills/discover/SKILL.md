@@ -1,6 +1,6 @@
 ---
 name: discover
-description: Browse swarms advertising in a directory and join one. Runs `ahs discover` under a Monitor and shows a refreshable picker; pick a swarm to hand off to `/swarm:join`.
+description: Browse swarms advertising in a directory and join one. Runs `ah-s discover` under a Monitor and shows a refreshable picker; pick a swarm to hand off to `/swarm:join`.
 ---
 
 ## Quiet mode
@@ -29,13 +29,13 @@ Browsing is **always** allowed — discover joins no swarm, so there is no
 
 ## Start the Monitor
 
-Launch `ahs discover` under the Monitor tool so its JSON events push as
+Launch `ah-s discover` under the Monitor tool so its JSON events push as
 notifications, exactly like `/swarm:create` and `/swarm:join`. Use a
 **distinct description** (`swarm-discover`, not `swarm`) so `/swarm:leave`
 never stops it and it never collides with a real swarm session.
 
 ```
-command: "ahs discover --directory $DIR --no-interactive --output json"
+command: "ah-s discover --directory $DIR --no-interactive --output json"
 description: "swarm-discover"
 persistent: true
 timeout_ms: 300000
@@ -115,7 +115,7 @@ discovering, then join it:
 ## Always clean up
 
 On **every** exit path — a join hand-off, the user stopping, or any error
-— **TaskStop the `swarm-discover` Monitor** so `ahs discover` never leaks.
+— **TaskStop the `swarm-discover` Monitor** so `ah-s discover` never leaks.
 
 ## Notes
 

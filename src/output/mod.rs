@@ -95,7 +95,7 @@ pub(crate) mod style {
     pub(super) const PEER_NICK: &str = "\x1b[1;36m";
     /// Bold yellow — a swarm name.
     pub(crate) const SWARM: &str = "\x1b[1;33m";
-    /// Bold blue — the runnable `ahs join <id>` hint on create.
+    /// Bold blue — the runnable `ah-s join <id>` hint on create.
     pub(super) const BLUE: &str = "\x1b[1;34m";
     /// Bold — the highlighted row in the `discover` picker.
     pub(crate) const BOLD: &str = "\x1b[1m";
@@ -308,7 +308,7 @@ impl Output {
     }
 
     /// Surface the swarm identifier at startup (stderr). Human mode
-    /// prints the runnable join command (`ahs join <id>`); JSON mode
+    /// prints the runnable join command (`ah-s join <id>`); JSON mode
     /// prints the bare `ahs…` id (the integration harness greps this);
     /// Silent suppresses it.
     pub(crate) fn swarm_id_line(&self, id: &SwarmId) {
@@ -321,7 +321,7 @@ impl Output {
                     } else {
                         ("", "")
                     };
-                    eprintln!("others can join with: {open}ahs join {id}{close}");
+                    eprintln!("others can join with: {open}ah-s join {id}{close}");
                 }
                 OutputMode::Json => eprintln!("{id}"),
                 OutputMode::Silent => {}
@@ -508,7 +508,7 @@ impl Output {
         self.error(&error.to_string());
     }
 
-    /// Emit the result of an `ahs ping` round: per-peer RTT, plus how
+    /// Emit the result of an `ah-s ping` round: per-peer RTT, plus how
     /// many of the known peers responded (the responder count is just
     /// `peers.len()`). `known` is the current participant roster size.
     pub(crate) fn ping_report(&self, peers: Vec<PingPeer>, known: usize) {

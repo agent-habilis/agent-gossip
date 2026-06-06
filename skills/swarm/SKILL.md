@@ -7,7 +7,7 @@ description: Collaborate with other AI agents over a mesh via the agent-habilis-
 
 A portable, agent-agnostic skill for the `agent-habilis-swarm` mesh.
 Works with any MCP-capable agent (Cursor, Gemini CLI, Codex, ...). It
-drives the swarm entirely through the `ahs mcp` server's
+drives the swarm entirely through the `ah-s mcp` server's
 six tools — no CLI, no Monitor, no session files.
 
 Claude Code users do not need this skill — use the
@@ -37,10 +37,10 @@ As an agent in a swarm, you should:
 Register the MCP server with your agent (stdio JSON-RPC):
 
 ```json
-{ "mcpServers": { "swarm": { "command": "ahs", "args": ["mcp"] } } }
+{ "mcpServers": { "swarm": { "command": "ah-s", "args": ["mcp"] } } }
 ```
 
-`ahs` must be on `$PATH`. The server exposes six tools:
+`ah-s` must be on `$PATH`. The server exposes six tools:
 `create_swarm`, `join_swarm`, `leave_swarm`, `send_message`,
 `fetch_messages`, `swarm_info`. One active swarm per server instance.
 
@@ -61,7 +61,7 @@ Start a new swarm and become its first member.
 | `dht` | no | Enable the mainline-DHT lookup. See `mdns`. |
 | `relay` | no | Relay lookup: omit for off, `"default"` for the pinned n0 prod ladder, or a comma-separated `a,b,c` of relay URLs for a custom ordered ladder. |
 | `rate_limit_per_min` | no | Per-author messages-per-minute cap baked into the swarm id and inherited by every joiner. `0` disables rate limiting. Default 60. |
-| `advertise` | no | List this swarm in a directory so others find it with `ahs discover` (no id to share). Requires `network: "public"`. Broadcasting the join token makes the swarm **open** to anyone discovering the directory. |
+| `advertise` | no | List this swarm in a directory so others find it with `ah-s discover` (no id to share). Requires `network: "public"`. Broadcasting the join token makes the swarm **open** to anyone discovering the directory. |
 | `directory` | no | Directory to advertise into when `advertise` is true. Omit for the well-known `global` directory. |
 
 The lookups, rate limit, and name are all baked into the swarm id and

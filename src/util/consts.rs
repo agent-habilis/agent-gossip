@@ -54,7 +54,7 @@ pub const MAX_MESSAGE_SIZE: usize = 3840;
 pub(crate) const DEFAULT_MESSAGE_LOG_SIZE: usize = 1000;
 
 /// Max messages a single `poll` / `fetch_messages` returns — a **fixed**
-/// IPC contract (the `ahs poll` client can't know the daemon's configured
+/// IPC contract (the `ah-s poll` client can't know the daemon's configured
 /// log size, so the read cap can't depend on it). At the default log size
 /// this equals the log, so `poll` returns everything; a larger configured
 /// log just means `poll` surfaces the most-recent `POLL_RESPONSE_MAX_MSGS`.
@@ -97,7 +97,7 @@ pub(crate) const SWEEP_INTERVAL_SECS: u64 = 10;
 /// `--beacon-cohost-grace-secs`.
 pub(crate) const BEACON_COHOST_GRACE_SECS: u64 = 10;
 
-/// How long an `ahs ping` round collects pongs before the daemon emits its
+/// How long an `ah-s ping` round collects pongs before the daemon emits its
 /// `ping_report`. Flag: `--ping-window-secs`.
 pub(crate) const PING_WINDOW_SECS: u64 = 10;
 
