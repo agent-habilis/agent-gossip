@@ -1,7 +1,7 @@
 use xshell::{Shell, cmd};
 
 use crate::TaskOutcome;
-use crate::util::repo_root;
+use crate::util::{output, repo_root};
 
 /// Generate roff man pages into `target/man/` by running the feature-gated
 /// `gen-man` bin (which pulls `clap_mangen`, kept out of the shipped
@@ -13,6 +13,6 @@ pub(crate) fn run(sh: &Shell) -> TaskOutcome {
         "cargo run --quiet --features mangen --bin gen-man -- --out {out}"
     )
     .run()?;
-    eprintln!("=> man pages written to {}", out.display());
+    output::status("Generated", &format!("man pages ({})", out.display()));
     Ok(())
 }

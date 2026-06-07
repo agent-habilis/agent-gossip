@@ -7,6 +7,11 @@ pub(crate) mod clock;
 pub(crate) mod consts;
 pub(crate) mod cooldown;
 pub(crate) mod logs;
+#[expect(
+    dead_code,
+    reason = "canonical cargo-style helpers, also include!d by the cargo task runner; the binary uses a subset"
+)]
+pub(crate) mod output;
 pub(crate) mod resident_memory;
 pub(crate) mod tuning;
 pub(crate) mod version;

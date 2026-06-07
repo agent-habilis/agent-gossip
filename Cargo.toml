@@ -142,8 +142,6 @@ clap = { version = "4", features = ["derive"] }
 # Embeds the integration artifacts (Claude Code plugin, pi extension, generic
 # skill) into the binary at compile time so `ah-s setup` is self-contained.
 include_dir = "0.7"
-# cargo-style status output for `setup`/`teardown` (matches `../browse`):
-# anstyle styles, anstream strips color when stderr isn't a terminal.
 anstyle = "1"
 anstream = "0.6"
 iroh = { version = "1.0.0-rc.0", features = ["tls-ring"] }

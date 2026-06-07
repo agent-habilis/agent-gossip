@@ -28,8 +28,9 @@ SYNOPSIS
 
        ah-s man
 
-       ah-s setup    [--agent claude|pi|generic] [--execute]
-       ah-s teardown [--agent claude|pi|generic] [--execute]
+       ah-s setup    [--agent claude-code|pi|generic] [--execute]
+       ah-s teardown [--agent claude-code|pi|generic] [--execute]
+       ah-s status
 
        ah-s --help | --version
 
@@ -218,7 +219,7 @@ COMMANDS
        man
               Print this manual to stdout and exit.
 
-       setup [--agent claude|pi|generic] [--execute]
+       setup [--agent claude-code|pi|generic] [--execute]
               Install the swarm integrations into your agents — the Claude
               Code plugin (~/.claude/skills/swarm), the pi extension, and the
               generic ~/.agents/skills/swarm skill. The artifacts are embedded
@@ -227,10 +228,16 @@ COMMANDS
               no --agent, the detected agents are used; repeat --agent to
               select several.
 
-       teardown [--agent claude|pi|generic] [--execute]
+       teardown [--agent claude-code|pi|generic] [--execute]
               Remove what setup installed (symmetric). Dry run by default;
               --execute performs the removal. With no --agent, the agents that
               have it installed are used.
+
+       status
+              Report, per agent, whether the swarm integration is up to date
+              (installed copy matches this binary), out of date, not set up, or
+              the agent is absent, with its path. Read-only — the quick "what's
+              installed?" check for setup/teardown.
 
 GLOBAL OPTIONS
        --help     Print usage. Works on any subcommand: ah-s CMD --help.

@@ -44,7 +44,7 @@ The CLI works now (`ah-s --help`). For an agent, also register it:
 # extension, generic ~/.agents/skills skill). Embedded in the binary —
 # no clone needed. Dry-run first, then --execute:
 ah-s setup            # preview what it would install into detected agents
-ah-s setup --execute  # do it (or scope with --agent claude|pi|generic)
+ah-s setup --execute  # do it (or scope with --agent claude-code|pi|generic)
 ```
 
 The Claude Code plugin loads as `swarm@skills-dir` (no marketplace); its

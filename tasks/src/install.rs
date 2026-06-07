@@ -1,9 +1,10 @@
 use xshell::{Shell, cmd};
 
 use crate::TaskOutcome;
+use crate::util::output;
 
 pub(crate) fn run(sh: &Shell) -> TaskOutcome {
-    eprintln!("=> Installing ah-s...");
+    output::status("Installing", "ah-s");
     // `--force` is required: the crate version rarely changes between builds
     // (it stays `0.2.0` across many commits), and without `--force`
     // `cargo install --path .` treats "0.2.0 already installed" as up-to-date
@@ -12,6 +13,6 @@ pub(crate) fn run(sh: &Shell) -> TaskOutcome {
     // (the binary's git-hash stamp lagged the checked-out commit). `--force`
     // always rebuilds + reinstalls the current tree.
     cmd!(sh, "cargo install --path . --force").quiet().run()?;
-    eprintln!("=> Installed to ~/.cargo/bin/ah-s");
+    output::status("Installed", "~/.cargo/bin/ah-s");
     Ok(())
 }

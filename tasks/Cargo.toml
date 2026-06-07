@@ -11,6 +11,11 @@ publish = false
 # library cargo compiles automatically, not a binary anyone installs.
 clap = { version = "4", features = ["derive"] }
 xshell = "0.2"
+# Cargo-style status output, shared with the binary by `include!`ing its
+# canonical source (`../src/cli/output.rs`) — see `src/output.rs`. anstyle
+# styles; anstream strips color when the stream isn't a terminal.
+anstyle = "1"
+anstream = "0.6"
 
 [lints]
 workspace = true

@@ -4,10 +4,11 @@
 use xshell::{Shell, cmd};
 
 use crate::TaskOutcome;
+use crate::util::output;
 
 pub(crate) fn typecheck(sh: &Shell) -> TaskOutcome {
     ensure_pi_deps(sh)?;
-    eprintln!("=> Type-checking pi-extension...");
+    output::status("Checking", "pi-extension types");
     let _guard = sh.push_dir("pi-extension");
     cmd!(sh, "bun run typecheck").quiet().run()?;
     Ok(())
@@ -15,7 +16,7 @@ pub(crate) fn typecheck(sh: &Shell) -> TaskOutcome {
 
 pub(crate) fn lint(sh: &Shell) -> TaskOutcome {
     ensure_pi_deps(sh)?;
-    eprintln!("=> Linting pi-extension...");
+    output::status("Linting", "pi-extension");
     let _guard = sh.push_dir("pi-extension");
     cmd!(sh, "bun run lint").quiet().run()?;
     Ok(())
@@ -25,7 +26,7 @@ fn ensure_pi_deps(sh: &Shell) -> TaskOutcome {
     if pi_deps_are_fresh() {
         return Ok(());
     }
-    eprintln!("=> Installing pi-extension deps (bun install)...");
+    output::status("Installing", "pi-extension deps");
     let _guard = sh.push_dir("pi-extension");
     cmd!(sh, "bun install").quiet().run()?;
     Ok(())

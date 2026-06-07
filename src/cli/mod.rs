@@ -17,9 +17,11 @@ use crate::protocol::{MessageId, Nickname};
 use crate::resolver::JoinTarget;
 use crate::transport::ipc::{self, IpcCommand};
 
+mod agent;
 mod args;
 mod discover;
 mod setup;
+mod status;
 
 pub(crate) use args::Cli;
 use args::{Commands, CreateOpts, MsgOpts, PingOpts, PollOpts, SharedServerOpts};
@@ -87,6 +89,7 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
         // self-contained, no repo checkout needed (like `Man`).
         Commands::Setup { execute, agents } => setup::setup(execute, &agents),
         Commands::Teardown { execute, agents } => setup::teardown(execute, &agents),
+        Commands::Status => status::run(),
     }
 }
 

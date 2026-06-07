@@ -72,7 +72,8 @@ mod tests {
             | Commands::Mcp
             | Commands::Man
             | Commands::Setup { .. }
-            | Commands::Teardown { .. } => panic!("expected Create"),
+            | Commands::Teardown { .. }
+            | Commands::Status => panic!("expected Create"),
         }
     }
 
@@ -139,7 +140,8 @@ mod tests {
             | Commands::Mcp
             | Commands::Man
             | Commands::Setup { .. }
-            | Commands::Teardown { .. } => panic!("expected Create"),
+            | Commands::Teardown { .. }
+            | Commands::Status => panic!("expected Create"),
         };
         let lookups = resolve_lookups(opts.public, opts.lookups.to_set());
         assert!(lookups.mdns && !lookups.dht);

@@ -131,7 +131,7 @@ pub(crate) enum Commands {
         execute: bool,
         /// Agent(s) to install into (repeatable). Defaults to detected agents.
         #[arg(long = "agent", value_enum)]
-        agents: Vec<super::setup::Agent>,
+        agents: Vec<super::agent::Agent>,
     },
 
     /// Remove the swarm integrations from your agents (symmetric to `setup`).
@@ -145,6 +145,12 @@ pub(crate) enum Commands {
         /// Agent(s) to remove from (repeatable). Defaults to agents that have
         /// the integration installed.
         #[arg(long = "agent", value_enum)]
-        agents: Vec<super::setup::Agent>,
+        agents: Vec<super::agent::Agent>,
     },
+
+    /// Report which agents have the swarm integrations installed.
+    ///
+    /// Read-only: for each agent (Claude Code, pi, generic) prints whether the
+    /// integration is set up, not set up, or the agent is absent, plus its path.
+    Status,
 }

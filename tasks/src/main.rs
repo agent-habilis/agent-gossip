@@ -80,7 +80,7 @@ fn main() -> ExitCode {
     let sh = match Shell::new() {
         Ok(sh) => sh,
         Err(error) => {
-            eprintln!("error: {error}");
+            util::output::error(&error.to_string());
             return ExitCode::FAILURE;
         }
     };
@@ -105,7 +105,7 @@ fn main() -> ExitCode {
     match outcome {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("error: {error}");
+            util::output::error(&error.to_string());
             ExitCode::FAILURE
         }
     }

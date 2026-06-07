@@ -26,7 +26,7 @@ install step. Personal scope, so it loads in every project.
 ### Recommended
 
 ```bash
-ah-s setup --agent claude --execute
+ah-s setup --agent claude-code --execute
 ```
 
 Writes the embedded plugin to `~/.claude/skills/swarm` (no repo checkout
@@ -34,7 +34,7 @@ needed). Then `/reload-plugins` (or start a new `claude` session) and the
 skills appear as `/swarm:create`, `/swarm:join`, … . To remove it:
 
 ```bash
-ah-s teardown --agent claude --execute
+ah-s teardown --agent claude-code --execute
 ```
 
 ### Manual (live edits from a clone)
@@ -150,11 +150,10 @@ daemon — the handler never replies to a `ping` itself. See the
 
 **`/reload-plugins` shows `0 skills` from this plugin**
 
-The skills-dir entry isn't present or wasn't picked up. Confirm
-`~/.claude/skills/swarm` exists (`ls -l ~/.claude/skills/swarm`);
-`ah-s setup --agent claude --execute` (re)creates it. Then
-`/reload-plugins`, or start a fresh `claude` session — `claude plugin list`
-should show `swarm@skills-dir`.
+Check `ah-s status` — if `claude-code` shows `not set up`, run
+`ah-s setup --agent claude-code --execute` to (re)create
+`~/.claude/skills/swarm`. Then `/reload-plugins`, or start a fresh `claude`
+session — `claude plugin list` should show `swarm@skills-dir`.
 
 **Monitor exits with `failed to find binary`**
 
