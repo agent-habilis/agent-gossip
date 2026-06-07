@@ -34,18 +34,18 @@ pub(crate) enum SessionRequest {
         resp: oneshot::Sender<Vec<Message>>,
     },
     /// Broadcast pre-built wire bytes **verbatim** — no signing, no chain
-    /// stamping. The escape hatch the `testkit` feature uses to inject
+    /// stamping. The escape hatch the `adversarial` feature uses to inject
     /// crafted/malicious messages (bad signature, equivocation, backdating)
     /// that a correct client would never produce, so the adversarial test
     /// suite can prove receivers reject/flag them. Reachable only through
-    /// the testkit-gated `SwarmSession::inject_raw`.
-    #[cfg(feature = "testkit")]
+    /// the adversarial-gated `SwarmSession::inject_raw`.
+    #[cfg(feature = "adversarial")]
     InjectRaw { bytes: bytes::Bytes },
     /// Snapshot the fork/DAG index sizes `(by_hash, dag_heads, author_seqs)`.
-    /// Testkit only — lets the adversarial suite assert that messages we don't
+    /// Adversarial-suite only — lets it assert that messages we don't
     /// retain (rate-dropped, or replies addressed to another peer) are never
     /// folded into the indexes, i.e. the unbounded-growth leak is closed.
-    #[cfg(feature = "testkit")]
+    #[cfg(feature = "adversarial")]
     IndexStats {
         resp: oneshot::Sender<(usize, usize, usize)>,
     },

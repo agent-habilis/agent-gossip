@@ -389,7 +389,7 @@ impl InProcessSession {
     ///
     /// # Errors
     /// Fails if the event loop has stopped.
-    #[cfg(feature = "testkit")]
+    #[cfg(feature = "adversarial")]
     pub(crate) async fn inject_raw(&self, bytes: bytes::Bytes) -> anyhow::Result<()> {
         self.req_tx
             .send(SessionRequest::InjectRaw { bytes })
@@ -398,11 +398,11 @@ impl InProcessSession {
     }
 
     /// Snapshot the fork/DAG index sizes `(by_hash, dag_heads, author_seqs)`.
-    /// Testkit only.
+    /// Adversarial-suite only.
     ///
     /// # Errors
     /// Fails if the event loop has stopped or dropped the response.
-    #[cfg(feature = "testkit")]
+    #[cfg(feature = "adversarial")]
     pub(crate) async fn index_stats(&self) -> anyhow::Result<(usize, usize, usize)> {
         let (resp_tx, resp_rx) = oneshot::channel();
         self.req_tx
@@ -598,25 +598,25 @@ impl SwarmSession {
     }
 
     /// Broadcast pre-built wire bytes **verbatim** into the swarm — no
-    /// signing, no chain stamping. Test-only escape hatch (the `testkit`
+    /// signing, no chain stamping. Test-only escape hatch (the `adversarial`
     /// feature) for injecting crafted/malicious messages a correct client
     /// would never produce, so the adversarial suite can prove receivers
     /// reject or flag them. Not part of the normal public API.
     ///
     /// # Errors
     /// Fails if the event loop has stopped.
-    #[cfg(feature = "testkit")]
+    #[cfg(feature = "adversarial")]
     pub async fn inject_raw(&self, bytes: Vec<u8>) -> anyhow::Result<()> {
         self.core.inject_raw(bytes::Bytes::from(bytes)).await
     }
 
     /// Snapshot the fork/DAG index sizes `(by_hash, dag_heads, author_seqs)`.
-    /// Testkit only — lets the adversarial suite assert that messages we don't
+    /// Adversarial-suite only — lets it assert that messages we don't
     /// retain are never folded into the indexes (no unbounded leak).
     ///
     /// # Errors
     /// Fails if the event loop has stopped.
-    #[cfg(feature = "testkit")]
+    #[cfg(feature = "adversarial")]
     pub async fn index_stats(&self) -> anyhow::Result<(usize, usize, usize)> {
         self.core.index_stats().await
     }

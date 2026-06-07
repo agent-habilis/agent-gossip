@@ -1,4 +1,4 @@
-//! Not public API. Exposed only under the `testkit` feature so the
+//! Not public API. Exposed only under the `adversarial` feature so the
 //! adversarial integration suite (`tests/adversarial.rs`) can **craft and
 //! inject** wire messages a correct client would never produce — unsigned /
 //! bad-signature, equivocating (two messages at one `seq`), tampered, or

@@ -250,15 +250,15 @@ pub(crate) async fn handle_session_request(
             let _ = resp.send(state.poll_after(after.as_ref(), output));
             false
         }
-        // Raw injection (testkit only): broadcast the bytes verbatim, no
+        // Raw injection (adversarial only): broadcast the bytes verbatim, no
         // signing or chain stamping — a malicious/crafted message on the wire.
-        #[cfg(feature = "testkit")]
+        #[cfg(feature = "adversarial")]
         SessionRequest::InjectRaw { bytes } => {
             let _ = sender.broadcast(bytes).await;
             true
         }
-        // Index-size snapshot (testkit only) for the leak regression test.
-        #[cfg(feature = "testkit")]
+        // Index-size snapshot (adversarial only) for the leak regression test.
+        #[cfg(feature = "adversarial")]
         SessionRequest::IndexStats { resp } => {
             let _ = resp.send((
                 state.by_hash.len(),

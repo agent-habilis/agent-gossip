@@ -8,17 +8,17 @@ pub(crate) fn run(sh: &Shell) -> TaskOutcome {
     cmd!(sh, "cargo fmt --check").quiet().run()?;
 
     output::status("Running", "clippy");
-    // `--features testkit` so the adversarial suite + testkit shim are linted
+    // `--features adversarial` so the adversarial suite + shim are linted
     // too (they are `required-features`-gated, else clippy would skip them).
     cmd!(
         sh,
-        "cargo clippy --all-targets --features testkit -- -D warnings"
+        "cargo clippy --all-targets --features adversarial -- -D warnings"
     )
     .quiet()
     .run()?;
 
     output::status("Running", "tests");
-    cmd!(sh, "cargo test --features testkit -- --test-threads=4")
+    cmd!(sh, "cargo test --features adversarial -- --test-threads=4")
         .quiet()
         .run()?;
 

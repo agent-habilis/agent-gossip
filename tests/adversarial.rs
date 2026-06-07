@@ -1,6 +1,6 @@
 //! Adversarial / malicious-peer integration suite (requires `--features
-//! testkit`; `cargo task test`/`ci` enable it). A real in-process attacker
-//! node broadcasts **crafted** wire bytes via the testkit injector — messages
+//! adversarial`; `cargo task test`/`ci` enable it). A real in-process attacker
+//! node broadcasts **crafted** wire bytes via the injector — messages
 //! a correct client would never produce — and we assert how a victim node
 //! reacts over the real iroh mesh.
 //!
@@ -23,7 +23,7 @@ mod common;
 use std::time::Duration;
 
 use agent_habilis_swarm::OutputEvent;
-use agent_habilis_swarm::testkit::{self, CraftedMsg};
+use agent_habilis_swarm::harness::adversarial::{self, CraftedMsg};
 use common::InProcNode;
 
 const T: Duration = Duration::from_secs(30);
@@ -73,7 +73,7 @@ async fn unsigned_message_is_dropped() {
 #[tokio::test]
 async fn tampered_message_is_dropped() {
     let (mut victim, attacker) = meshed_pair("tampered").await;
-    let key = testkit::new_key();
+    let key = adversarial::new_key();
     // Sign "honest", then mutate the body → signature no longer matches.
     let evil = CraftedMsg::new(attacker.session.swarm_id(), "ghost", "honest")
         .sign(&key)
@@ -96,7 +96,7 @@ async fn tampered_message_is_dropped() {
 #[tokio::test]
 async fn equivocation_surfaces_a_fork() {
     let (mut victim, attacker) = meshed_pair("fork").await;
-    let key = testkit::new_key();
+    let key = adversarial::new_key();
     let swarm = attacker.session.swarm_id();
     // Same key, same seq, two different bodies → two valid but conflicting
     // signed messages: cryptographic proof of equivocation.
@@ -131,7 +131,7 @@ async fn forged_message_does_not_suppress_genuine_with_replayed_id() {
     // carrying a replayed id must not poison the dedup window and suppress the
     // genuine signed copy that shares that id.
     let (mut victim, attacker) = meshed_pair("dedup-order").await;
-    let key = testkit::new_key();
+    let key = adversarial::new_key();
     let swarm = attacker.session.swarm_id();
     let shared_id = "550e8400-e29b-41d4-a716-446655440000";
 
@@ -175,7 +175,7 @@ async fn directed_replies_to_third_party_do_not_leak_into_indexes() {
     // maps grow without bound (the leak). Only the two open messages from the
     // attacker's own key are retained and indexed.
     let (mut victim, attacker) = meshed_pair("noleak").await;
-    let key = testkit::new_key();
+    let key = adversarial::new_key();
     let swarm = attacker.session.swarm_id();
 
     for index in 0..20u32 {
@@ -222,7 +222,7 @@ async fn gap_future_timestamp_is_accepted() {
     // (nothing to bound it). We only enforce `ts >= max(parents.ts)`; with no
     // parents there is no check, and there is no absolute-time sanity bound.
     let (mut victim, attacker) = meshed_pair("future-ts").await;
-    let key = testkit::new_key();
+    let key = adversarial::new_key();
     let evil = CraftedMsg::new(attacker.session.swarm_id(), "time-lord", "from-the-future")
         .timestamp(4_102_444_800) // 2100-01-01
         .sign(&key)
@@ -246,7 +246,7 @@ async fn gap_nickname_impersonation_is_accepted() {
     // pubkey distinguishes them.
     let (mut victim, attacker) = meshed_pair("imposter").await;
     let victim_nick = victim.nickname.clone();
-    let key = testkit::new_key(); // NOT the victim's key
+    let key = adversarial::new_key(); // NOT the victim's key
     let evil = CraftedMsg::new(attacker.session.swarm_id(), &victim_nick, "i-am-you")
         .sign(&key)
         .bytes();
@@ -269,7 +269,7 @@ async fn gap_sybil_identities_are_accepted() {
     let (mut victim, attacker) = meshed_pair("sybil").await;
     let swarm = attacker.session.swarm_id();
     for index in 0..5u32 {
-        let key = testkit::new_key();
+        let key = adversarial::new_key();
         let bytes = CraftedMsg::new(swarm, &format!("sybil-{index}"), &format!("flood-{index}"))
             .sign(&key)
             .bytes();

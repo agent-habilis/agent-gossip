@@ -77,7 +77,6 @@ dependencies = [
  "bs58",
  "bytes",
  "clap",
- "clap_mangen",
  "dhat",
  "divan",
  "futures-util",
@@ -4146,9 +4145,11 @@ checksum = "7b2093cf4c8eb1e67749a6762251bc9cd836b6fc171623bd0a9d324d37af2417"
 name = "tasks"
 version = "0.1.0"
 dependencies = [
+ "agent-habilis-swarm",
  "anstream 0.6.21",
  "anstyle",
  "clap",
+ "clap_mangen",
  "xshell",
 ]
 

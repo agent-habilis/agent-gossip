@@ -5,10 +5,10 @@
 //! table at the end.
 //!
 //! Run: `cargo task bench` (or `cargo bench --features bench`). The
-//! `bench` feature exposes `agent_habilis_swarm::bench_api`, the in-crate
+//! `bench` feature exposes `agent_habilis_swarm::harness::bench`, the in-crate
 //! shim over the otherwise-`pub(crate)` internals.
 
-use agent_habilis_swarm::bench_api::{self as api, BenchConfig, BenchMessage, BenchRateLimiter};
+use agent_habilis_swarm::harness::bench::{self as api, BenchConfig, BenchMessage, BenchRateLimiter};
 use agent_habilis_swarm::{MessageBody, Nickname, SwarmName};
 use divan::counter::{BytesCount, ItemsCount};
 use divan::{Bencher, black_box};

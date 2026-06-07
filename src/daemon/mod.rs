@@ -26,7 +26,7 @@ pub(crate) mod ipc;
 pub(crate) mod message_log;
 pub(crate) mod params;
 // Normally private to the daemon; widened to `pub(crate)` only under the
-// `bench` feature so `bench_api` can reach `SwarmRateLimiter`. Non-bench
+// `bench` feature so `harness::bench` can reach `SwarmRateLimiter`. Non-bench
 // builds keep the original surface.
 #[cfg(feature = "bench")]
 pub(crate) mod rate_limit;

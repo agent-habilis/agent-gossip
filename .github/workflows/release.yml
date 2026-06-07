@@ -31,22 +31,22 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
 
-  # The roff man pages are target-independent, so build them once here (a
-  # host build of the feature-gated `gen-man` bin) and hand them to every
-  # `upload` job as an artifact, rather than recompiling the crate on each
-  # matrix runner. Keeps it off the per-target build path too, so a host
-  # toolchain hiccup can't block a binary that cross-compiles fine.
+  # The roff man pages are target-independent, so build them once here
+  # (`cargo task man` generates them in-process via `clap_mangen`) and hand
+  # them to every `upload` job as an artifact, rather than recompiling the
+  # crate on each matrix runner. Keeps it off the per-target build path too,
+  # so a host toolchain hiccup can't block a binary that cross-compiles fine.
   man-pages:
     needs: verify-version
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
       - name: Generate roff man pages
-        run: cargo run --quiet --features mangen --bin gen-man -- --out man
+        run: cargo task man
       - uses: actions/upload-artifact@v4
         with:
           name: man-pages
-          path: man/
+          path: target/man/
 
   upload:
     needs: [create-release, man-pages]

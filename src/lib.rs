@@ -50,19 +50,11 @@ pub(crate) mod util;
 
 pub mod embed;
 
-// Not public API. Exposed only under the `bench` feature so the divan
-// microbenchmark suite can reach `pub(crate)` hot paths without widening
-// the curated surface below.
-#[cfg(feature = "bench")]
+// Not public API. Feature-gated, doc-hidden shims that expose pub(crate)
+// internals to the crate's own bench/adversarial suites. See harness/mod.rs.
+#[cfg(any(feature = "bench", feature = "adversarial"))]
 #[doc(hidden)]
-pub mod bench_api;
-
-// Not public API. Exposed only under the `testkit` feature so the adversarial
-// integration suite (`tests/adversarial.rs`) can craft and inject malicious
-// wire messages a correct client never would. Off in normal/release builds.
-#[cfg(feature = "testkit")]
-#[doc(hidden)]
-pub mod testkit;
+pub mod harness;
 
 // Curated public protocol surface. These types are `pub` inside their
 // (otherwise `pub(crate)`) modules; re-exporting them from the crate
@@ -105,7 +97,7 @@ pub async fn run_cli() -> Result<()> {
 }
 
 /// The fully-built `ah-s` clap command tree, for offline man-page
-/// generation (`cargo task man` runs the `gen-man` bin through
+/// generation (`cargo task man` walks it in-process through
 /// `clap_mangen`). Arg surface only; no iroh, no runtime state.
 #[must_use]
 pub fn cli_command() -> clap::Command {

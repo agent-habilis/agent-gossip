@@ -96,7 +96,7 @@ fn main() -> ExitCode {
         Task::Lint => lint::run(&sh),
         Task::Clean => clean::run(&sh),
         Task::Logs => logs::run(),
-        Task::Man => man::run(&sh),
+        Task::Man => man::run(),
         Task::Proptest => proptest::run(&sh),
         Task::PiTypecheck => pi::typecheck(&sh),
         Task::PiLint => pi::lint(&sh),

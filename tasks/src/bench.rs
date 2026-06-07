@@ -11,7 +11,7 @@ use crate::TaskOutcome;
 /// - `cargo task bench <filter>` — only the microbenchmarks, with
 ///   `<filter>` passed to divan (e.g. `cargo task bench derive_secret`).
 ///
-/// The `bench` feature exposes the in-crate `bench_api` shim the
+/// The `bench` feature exposes the in-crate `harness::bench` shim the
 /// microbenchmarks need; the transfer bench uses only the public API.
 pub(crate) fn run(sh: &Shell, args: &[String]) -> TaskOutcome {
     match args.first().map(String::as_str) {
