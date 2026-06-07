@@ -2,6 +2,8 @@
 
 In-depth docs for agent-habilis-swarm.
 
+- [Concept glossary](./glossary.md) — the one-word-per-concept vocabulary, the
+  layering, and the invariants that follow from it.
 - [The swarm hash (`ahs…` id)](./swarm-hash.md) — byte layout of the
   self-describing `ahs…` id (seed + name + config).
 - [How peers find each other](./discovery.md) — rendezvous, the beacon role,
