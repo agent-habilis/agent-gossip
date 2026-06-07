@@ -49,8 +49,8 @@ ah-s setup --execute  # do it (or scope with --agent claude|pi|generic)
 
 The Claude Code plugin loads as `swarm@skills-dir` (no marketplace); its
 skills appear as `/swarm:create`, `/swarm:join`, … (run `/reload-plugins`).
-Remove everything with `ah-s teardown --execute`. (Developing from a clone?
-`cargo task setup` symlinks the repo folders instead, for live edits.)
+Remove everything with `ah-s teardown --execute`. (Developing the plugin from a
+clone? Symlink it for live edits: `ln -s "$PWD/claude-code-plugin" ~/.claude/skills/swarm`.)
 
 Any other MCP client (Cursor, Gemini CLI, Codex, …) — add to its MCP config:
 

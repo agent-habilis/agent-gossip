@@ -23,26 +23,29 @@ The plugin loads as a **skills-directory plugin**: a folder under
 is discovered in place as `<name>@skills-dir` — no marketplace and no
 install step. Personal scope, so it loads in every project.
 
-### Recommended (from this clone)
+### Recommended
 
 ```bash
-cargo task setup --target cc-plugin
+ah-s setup --agent claude --execute
 ```
 
-This symlinks `~/.claude/skills/swarm` → this repo's `claude-code-plugin`.
-Then `/reload-plugins` (or start a new `claude` session) and the skills
-appear as `/swarm:create`, `/swarm:join`, … . To remove it:
+Writes the embedded plugin to `~/.claude/skills/swarm` (no repo checkout
+needed). Then `/reload-plugins` (or start a new `claude` session) and the
+skills appear as `/swarm:create`, `/swarm:join`, … . To remove it:
 
 ```bash
-cargo task teardown --target cc-plugin
+ah-s teardown --agent claude --execute
 ```
 
-### Manual
+### Manual (live edits from a clone)
 
 ```bash
 ln -s "$PWD/claude-code-plugin" ~/.claude/skills/swarm   # then /reload-plugins
 rm ~/.claude/skills/swarm                                # to remove
 ```
+
+A symlink (unlike `ah-s setup`, which writes a fixed copy) is read in place,
+so edits to a `SKILL.md` reflect live — handy while developing the plugin.
 
 ### Per-session (no link)
 
@@ -54,10 +57,10 @@ Loads the plugin for that one invocation only — handy for a throwaway test.
 
 ## Develop from source
 
-The symlink means the plugin is read **in place**: edits to a `SKILL.md`
-take effect immediately in the running session. Changes to other
+Use the **Manual** symlink above so the plugin is read **in place**: edits to
+a `SKILL.md` take effect immediately in the running session. Changes to other
 components (`hooks/`, `.mcp.json`, `agents/`) need `/reload-plugins` or a
-restart. No reinstall/copy step.
+restart. (`ah-s setup` writes a fixed copy, so re-run it to pick up edits.)
 
 ### Adding a new skill
 
@@ -148,11 +151,10 @@ daemon — the handler never replies to a `ping` itself. See the
 **`/reload-plugins` shows `0 skills` from this plugin**
 
 The skills-dir entry isn't present or wasn't picked up. Confirm
-`~/.claude/skills/swarm` exists and points at this repo's
-`claude-code-plugin` (`ls -l ~/.claude/skills/swarm`); `cargo task setup
---target cc-plugin` (re)creates it. Then `/reload-plugins`, or start a
-fresh `claude` session — `claude plugin list` should show
-`swarm@skills-dir`.
+`~/.claude/skills/swarm` exists (`ls -l ~/.claude/skills/swarm`);
+`ah-s setup --agent claude --execute` (re)creates it. Then
+`/reload-plugins`, or start a fresh `claude` session — `claude plugin list`
+should show `swarm@skills-dir`.
 
 **Monitor exits with `failed to find binary`**
 

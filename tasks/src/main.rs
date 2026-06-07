@@ -1,6 +1,6 @@
 use std::process::ExitCode;
 
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Parser, Subcommand};
 use xshell::Shell;
 
 mod bench;
@@ -15,8 +15,6 @@ mod man;
 mod pi;
 mod proptest;
 mod release;
-mod setup;
-mod teardown;
 mod test;
 mod util;
 
@@ -55,20 +53,6 @@ enum Task {
     },
     /// Install the binary.
     Install,
-    /// Set up dev integrations (Claude Code plugin, pi extension). Acts on
-    /// `--target`, or all targets when none given. Flag-driven, no prompts.
-    Setup {
-        /// Targets (cc-plugin, pi). Repeatable or comma-separated. Omit for all.
-        #[arg(long, value_delimiter = ',')]
-        target: Vec<Target>,
-    },
-    /// Tear down dev integrations (Claude Code plugin, pi extension). Same
-    /// flags as `setup`.
-    Teardown {
-        /// Targets (cc-plugin, pi). Repeatable or comma-separated. Omit for all.
-        #[arg(long, value_delimiter = ',')]
-        target: Vec<Target>,
-    },
     /// Run tests with coverage.
     Coverage,
     /// Run the CI gate.
@@ -91,14 +75,6 @@ enum Task {
     PiLint,
 }
 
-/// A dev integration `setup`/`teardown` acts on. clap kebab-cases the variants,
-/// so the flag surface is `--target cc-plugin` / `--target pi`.
-#[derive(Clone, Copy, ValueEnum)]
-pub(crate) enum Target {
-    CcPlugin,
-    Pi,
-}
-
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let sh = match Shell::new() {
@@ -114,8 +90,6 @@ fn main() -> ExitCode {
         Task::Bench { args } => bench::run(&sh, &args),
         Task::Release { args } => release::run(&sh, &args),
         Task::Install => install::run(&sh),
-        Task::Setup { target } => setup::run(&sh, &target),
-        Task::Teardown { target } => teardown::run(&sh, &target),
         Task::Coverage => coverage::run(&sh),
         Task::Ci => ci::run(&sh),
         Task::Fmt => fmt::run(&sh),
