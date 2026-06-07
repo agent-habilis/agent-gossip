@@ -103,7 +103,9 @@ mod tests {
             | Commands::Ping { .. }
             | Commands::Discover { .. }
             | Commands::Mcp
-            | Commands::Man => {
+            | Commands::Man
+            | Commands::Setup { .. }
+            | Commands::Teardown { .. } => {
                 panic!("expected Create command")
             }
         }
@@ -123,7 +125,9 @@ mod tests {
             | Commands::Ping { .. }
             | Commands::Discover { .. }
             | Commands::Mcp
-            | Commands::Man => {
+            | Commands::Man
+            | Commands::Setup { .. }
+            | Commands::Teardown { .. } => {
                 panic!("expected Create command")
             }
         }
@@ -140,7 +144,9 @@ mod tests {
             | Commands::Ping { .. }
             | Commands::Discover { .. }
             | Commands::Mcp
-            | Commands::Man => {
+            | Commands::Man
+            | Commands::Setup { .. }
+            | Commands::Teardown { .. } => {
                 panic!("expected Create command")
             }
         }
@@ -174,7 +180,9 @@ mod tests {
                 | Commands::Ping { .. }
                 | Commands::Discover { .. }
                 | Commands::Mcp
-                | Commands::Man => panic!("expected Create"),
+                | Commands::Man
+                | Commands::Setup { .. }
+                | Commands::Teardown { .. } => panic!("expected Create"),
             }
         }
         assert_eq!(
@@ -222,7 +230,9 @@ mod tests {
             | Commands::Ping { .. }
             | Commands::Discover { .. }
             | Commands::Mcp
-            | Commands::Man => {
+            | Commands::Man
+            | Commands::Setup { .. }
+            | Commands::Teardown { .. } => {
                 panic!("expected Create command")
             }
         }

@@ -11,6 +11,10 @@ publish = false
 # library cargo compiles automatically, not a binary anyone installs.
 clap = { version = "4", features = ["derive"] }
 xshell = "0.2"
+# cargo-style status output for `setup`/`teardown` (matches `../browse`):
+# anstyle is the styling crate cargo/clap use; anstream strips color off-TTY.
+anstyle = "1"
+anstream = "0.6"
 
 [lints]
 workspace = true

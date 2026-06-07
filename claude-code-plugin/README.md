@@ -18,57 +18,46 @@ arrive as live notifications instead of being polled.
 
 ## Install
 
-### Local install (from this clone)
+The plugin loads as a **skills-directory plugin**: a folder under
+`~/.claude/skills/<name>/` that contains a `.claude-plugin/plugin.json`
+is discovered in place as `<name>@skills-dir` — no marketplace and no
+install step. Personal scope, so it loads in every project.
 
-```text
-/plugin marketplace add /absolute/path/to/agent-habilis-swarm
-/plugin install swarm@agent-habilis-swarm
-/reload-plugins
+### Recommended (from this clone)
+
+```bash
+cargo task setup --target cc-plugin
 ```
 
-To uninstall:
+This symlinks `~/.claude/skills/swarm` → this repo's `claude-code-plugin`.
+Then `/reload-plugins` (or start a new `claude` session) and the skills
+appear as `/swarm:create`, `/swarm:join`, … . To remove it:
 
-```text
-/plugin uninstall swarm@agent-habilis-swarm
-/plugin marketplace remove agent-habilis-swarm
+```bash
+cargo task teardown --target cc-plugin
 ```
 
-### Per-session (no install)
+### Manual
+
+```bash
+ln -s "$PWD/claude-code-plugin" ~/.claude/skills/swarm   # then /reload-plugins
+rm ~/.claude/skills/swarm                                # to remove
+```
+
+### Per-session (no link)
 
 ```bash
 claude --plugin-dir /absolute/path/to/agent-habilis-swarm/claude-code-plugin
 ```
 
-Loads the plugin for that one invocation only. Useful for rapid
-iteration; bypasses `installed_plugins.json` and the cache.
-
-### From GitHub (when published)
-
-```text
-/plugin marketplace add github.com/agent-habilis/swarm
-/plugin install swarm@agent-habilis-swarm
-```
+Loads the plugin for that one invocation only — handy for a throwaway test.
 
 ## Develop from source
 
-`/plugin install` **copies** the plugin into
-`~/.claude/plugins/cache/agent-habilis-swarm/swarm/<version>/`. After
-editing files in the repo, `/reload-plugins` won't pick them up, so
-re-install:
-
-```text
-/plugin uninstall swarm@agent-habilis-swarm
-/plugin install swarm@agent-habilis-swarm
-/reload-plugins
-```
-
-For tight iteration, use `--plugin-dir` instead. Claude then reads
-directly from the source tree, so `/reload-plugins` reflects edits
-immediately:
-
-```bash
-claude --plugin-dir /absolute/path/to/agent-habilis-swarm/claude-code-plugin
-```
+The symlink means the plugin is read **in place**: edits to a `SKILL.md`
+take effect immediately in the running session. Changes to other
+components (`hooks/`, `.mcp.json`, `agents/`) need `/reload-plugins` or a
+restart. No reinstall/copy step.
 
 ### Adding a new skill
 
@@ -82,9 +71,8 @@ description: <one sentence on when Claude should use this skill>
 ---
 ```
 
-After adding/editing a `SKILL.md`, follow the reinstall steps above
-(or use `--plugin-dir`). `/reload-plugins` should then surface the new
-skill as `/swarm:<name>`.
+After adding a `SKILL.md`, run `/reload-plugins`; it surfaces as
+`/swarm:<name>`.
 
 ## How it works
 
@@ -159,10 +147,12 @@ daemon — the handler never replies to a `ping` itself. See the
 
 **`/reload-plugins` shows `0 skills` from this plugin**
 
-The plugin isn't installed: only the loaded plugins listed in
-`~/.claude/plugins/installed_plugins.json` contribute skills. Re-run
-the marketplace flow above; a bare symlink at `~/.claude/plugins/swarm`
-will be detected but never loaded.
+The skills-dir entry isn't present or wasn't picked up. Confirm
+`~/.claude/skills/swarm` exists and points at this repo's
+`claude-code-plugin` (`ls -l ~/.claude/skills/swarm`); `cargo task setup
+--target cc-plugin` (re)creates it. Then `/reload-plugins`, or start a
+fresh `claude` session — `claude plugin list` should show
+`swarm@skills-dir`.
 
 **Monitor exits with `failed to find binary`**
 

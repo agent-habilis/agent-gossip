@@ -19,6 +19,7 @@ use crate::transport::ipc::{self, IpcCommand};
 
 mod args;
 mod discover;
+mod setup;
 
 pub(crate) use args::Cli;
 use args::{Commands, CreateOpts, MsgOpts, PingOpts, PollOpts, SharedServerOpts};
@@ -82,6 +83,10 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
             print!("{}", include_str!("../../docs/manual.txt"));
             Ok(())
         }
+        // Embedded integration artifacts written to the agents' skills dirs —
+        // self-contained, no repo checkout needed (like `Man`).
+        Commands::Setup { execute, agents } => setup::setup(execute, &agents),
+        Commands::Teardown { execute, agents } => setup::teardown(execute, &agents),
     }
 }
 

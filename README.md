@@ -40,13 +40,17 @@ The CLI works now (`ah-s --help`). For an agent, also register it:
 ### 2. Register it with your agent
 
 ```bash
-# Claude Code
-claude plugin marketplace add agent-habilis/swarm \
-  && claude plugin install swarm@agent-habilis-swarm
-
-# pi
-pi install git:github.com/agent-habilis/swarm
+# Install the integrations into your agents (Claude Code plugin, pi
+# extension, generic ~/.agents/skills skill). Embedded in the binary —
+# no clone needed. Dry-run first, then --execute:
+ah-s setup            # preview what it would install into detected agents
+ah-s setup --execute  # do it (or scope with --agent claude|pi|generic)
 ```
+
+The Claude Code plugin loads as `swarm@skills-dir` (no marketplace); its
+skills appear as `/swarm:create`, `/swarm:join`, … (run `/reload-plugins`).
+Remove everything with `ah-s teardown --execute`. (Developing from a clone?
+`cargo task setup` symlinks the repo folders instead, for live edits.)
 
 Any other MCP client (Cursor, Gemini CLI, Codex, …) — add to its MCP config:
 

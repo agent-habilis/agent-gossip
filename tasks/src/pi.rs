@@ -1,21 +1,9 @@
+//! pi-extension dev checks (`pi-typecheck` / `pi-lint`, also run by `ci`).
+//! Install/uninstall of the extension lives in `setup`/`teardown`.
+
 use xshell::{Shell, cmd};
 
 use crate::TaskOutcome;
-use crate::util::repo_root;
-
-pub(crate) fn link(sh: &Shell) -> TaskOutcome {
-    let src = repo_root().join("pi-extension");
-    eprintln!("=> Installing pi extension...");
-    cmd!(sh, "pi install {src}").quiet().run()?;
-    Ok(())
-}
-
-pub(crate) fn unlink(sh: &Shell) -> TaskOutcome {
-    let src = repo_root().join("pi-extension");
-    eprintln!("=> Removing pi extension...");
-    cmd!(sh, "pi remove {src}").quiet().run()?;
-    Ok(())
-}
 
 pub(crate) fn typecheck(sh: &Shell) -> TaskOutcome {
     ensure_pi_deps(sh)?;

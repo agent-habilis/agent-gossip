@@ -1,10 +1,9 @@
 use std::process::ExitCode;
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use xshell::Shell;
 
 mod bench;
-mod cc_plugin;
 mod ci;
 mod clean;
 mod coverage;
@@ -16,6 +15,8 @@ mod man;
 mod pi;
 mod proptest;
 mod release;
+mod setup;
+mod teardown;
 mod test;
 mod util;
 
@@ -31,8 +32,8 @@ struct Cli {
 }
 
 /// Variant doc comments *are* the `--help` text — no separate usage
-/// block to drift. clap kebab-cases names (`CcPluginInstall` →
-/// `cc-plugin-install`), so the invocation surface stays stable.
+/// block to drift. clap kebab-cases names (`PiTypecheck` →
+/// `pi-typecheck`), so the invocation surface stays stable.
 #[derive(Subcommand)]
 enum Task {
     /// Run unit tests.
@@ -54,10 +55,20 @@ enum Task {
     },
     /// Install the binary.
     Install,
-    /// Install the Claude Code plugin.
-    CcPluginInstall,
-    /// Uninstall the Claude Code plugin.
-    CcPluginUninstall,
+    /// Set up dev integrations (Claude Code plugin, pi extension). Acts on
+    /// `--target`, or all targets when none given. Flag-driven, no prompts.
+    Setup {
+        /// Targets (cc-plugin, pi). Repeatable or comma-separated. Omit for all.
+        #[arg(long, value_delimiter = ',')]
+        target: Vec<Target>,
+    },
+    /// Tear down dev integrations (Claude Code plugin, pi extension). Same
+    /// flags as `setup`.
+    Teardown {
+        /// Targets (cc-plugin, pi). Repeatable or comma-separated. Omit for all.
+        #[arg(long, value_delimiter = ',')]
+        target: Vec<Target>,
+    },
     /// Run tests with coverage.
     Coverage,
     /// Run the CI gate.
@@ -74,14 +85,18 @@ enum Task {
     Man,
     /// Run property-based tests.
     Proptest,
-    /// Install the pi extension.
-    PiLink,
-    /// Uninstall the pi extension.
-    PiUnlink,
     /// Type-check the pi extension.
     PiTypecheck,
     /// Lint the pi extension.
     PiLint,
+}
+
+/// A dev integration `setup`/`teardown` acts on. clap kebab-cases the variants,
+/// so the flag surface is `--target cc-plugin` / `--target pi`.
+#[derive(Clone, Copy, ValueEnum)]
+pub(crate) enum Target {
+    CcPlugin,
+    Pi,
 }
 
 fn main() -> ExitCode {
@@ -99,8 +114,8 @@ fn main() -> ExitCode {
         Task::Bench { args } => bench::run(&sh, &args),
         Task::Release { args } => release::run(&sh, &args),
         Task::Install => install::run(&sh),
-        Task::CcPluginInstall => cc_plugin::install(&sh),
-        Task::CcPluginUninstall => cc_plugin::uninstall(&sh),
+        Task::Setup { target } => setup::run(&sh, &target),
+        Task::Teardown { target } => teardown::run(&sh, &target),
         Task::Coverage => coverage::run(&sh),
         Task::Ci => ci::run(&sh),
         Task::Fmt => fmt::run(&sh),
@@ -109,8 +124,6 @@ fn main() -> ExitCode {
         Task::Logs => logs::run(),
         Task::Man => man::run(&sh),
         Task::Proptest => proptest::run(&sh),
-        Task::PiLink => pi::link(&sh),
-        Task::PiUnlink => pi::unlink(&sh),
         Task::PiTypecheck => pi::typecheck(&sh),
         Task::PiLint => pi::lint(&sh),
     };
