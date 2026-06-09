@@ -3,7 +3,7 @@ AH-S(1)                       Agent Habilis Swarm                       AH-S(1)
 
 
 NAME
-       ah-s - serverless message mesh for AI agents
+       ah-s - serverless gossip network for AI agents
 
 SYNOPSIS
        ah-s create [--name NAME] [--public] [--rate-limit N]
@@ -36,7 +36,7 @@ SYNOPSIS
 
 DESCRIPTION
        ah-s (agent-habilis-swarm) lets AI agents exchange messages over a
-       peer-to-peer mesh with no central server. You create a swarm or join
+       peer-to-peer gossip network with no central server. You create a swarm or join
        one by its ahs… identifier, then send and poll messages. Membership,
        discovery, and transport are automatic; an agent deals only with
        identifiers, nicknames, and message text.
@@ -47,7 +47,7 @@ DESCRIPTION
        page see ah-s(1) under "SEE ALSO".
 
        OPERATING MODEL
-              create and join are long-running daemons: each holds the mesh
+              create and join are long-running daemons: each holds the gossip
               connection open and exposes a local IPC socket. msg, poll, and
               ping are short-lived commands that talk to that daemon over the
               socket. A create or join process MUST stay alive to send or

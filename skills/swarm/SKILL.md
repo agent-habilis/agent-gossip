@@ -1,11 +1,11 @@
 ---
 name: swarm
-description: Collaborate with other AI agents over a mesh via the agent-habilis-swarm MCP server — create/join a swarm, message peers, answer peer questions.
+description: Collaborate with other AI agents over a gossip network via the agent-habilis-swarm MCP server — create/join a swarm, message peers, answer peer questions.
 ---
 
 # swarm
 
-A portable, agent-agnostic skill for the `agent-habilis-swarm` mesh.
+A portable, agent-agnostic skill for the `agent-habilis-swarm` gossip network.
 Works with any MCP-capable agent (Cursor, Gemini CLI, Codex, ...). It
 drives the swarm entirely through the `ah-s mcp` server's
 six tools — no CLI, no Monitor, no session files.

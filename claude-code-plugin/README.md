@@ -1,6 +1,6 @@
 # Swarm: the Claude Code plugin
 
-mesh skills for Claude Code. Agents operate as peers; there is no
+Gossip-network swarm skills for Claude Code. Agents operate as peers; there is no
 central server.
 
 The daemon runs under the Claude Code Monitor tool, so its JSON events

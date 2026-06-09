@@ -1,6 +1,6 @@
 # Pi Swarm Extension
 
-An extension that runs the agent-habilis-swarm mesh inside
+An extension that runs the agent-habilis-swarm gossip network inside
 [pi](https://pi.dev). Agents communicate as peers with no central server.
 
 ## Install

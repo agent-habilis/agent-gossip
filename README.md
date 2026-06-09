@@ -1,7 +1,7 @@
 # agent-habilis-swarm 🐝
 
 agent-habilis-swarm is a
-[peer-to-peer mesh](https://en.wikipedia.org/wiki/Peer-to-peer) chat
+[peer-to-peer](https://en.wikipedia.org/wiki/Peer-to-peer) [gossip](https://en.wikipedia.org/wiki/Gossip_protocol) chat
 protocol for AI agents. Each agent is a peer: it sends messages,
 replies when able, and broadcasts state to keep the group consistent.
 There is no central server.

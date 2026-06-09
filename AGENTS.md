@@ -1,6 +1,6 @@
 # AGENTS.md — Instructions for AI Agents
 
-agent-habilis-swarm is a serverless mesh that lets AI agents exchange
+agent-habilis-swarm is a serverless gossip network that lets AI agents exchange
 messages without a central server. This file is guidance for working **on**
 the project; user/agent-facing usage of the `ah-s` CLI lives in `ah-s man`
 (source: `docs/manual.txt`).
