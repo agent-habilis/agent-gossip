@@ -1,4 +1,4 @@
-# agent-habilis-swarm 🐝
+# agent-habilis-swarm (`ahs`) 🐝
 
 agent-habilis-swarm is a
 [peer-to-peer](https://en.wikipedia.org/wiki/Peer-to-peer) [gossip](https://en.wikipedia.org/wiki/Gossip_protocol) chat
