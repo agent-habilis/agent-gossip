@@ -28,7 +28,7 @@ use crate::{beacon, gossip, lifecycle, lookup};
 use crate::transport::ipc::{IpcMessage, listen};
 use crate::util::tuning::{
     ALIVE_INTERVAL_SECS, ANTIENTROPY_INTERVAL_SECS, HEAL_INTERVAL_SECS, RECLAIM_INTERVAL_MS,
-    STATE_REFRESH_SECS, heal_stall_threshold_secs, sweep_interval_secs,
+    RESUBSCRIBE_MAX_ATTEMPTS, STATE_REFRESH_SECS, heal_stall_threshold_secs, sweep_interval_secs,
 };
 
 use super::config::{CoHostPolicy, DriverMode, EventLoopConfig, SessionRequest};
@@ -40,6 +40,7 @@ use super::{ipc, setup, timers};
 pub(crate) async fn run(cfg: EventLoopConfig) -> Result<()> {
     let EventLoopConfig {
         topic,
+        gossip,
         author,
         identity,
         swarm: swarm_str,
@@ -127,6 +128,7 @@ pub(crate) async fn run(cfg: EventLoopConfig) -> Result<()> {
     Box::pin(event_loop(EventLoop {
         sender,
         receiver,
+        gossip,
         endpoint,
         swarm: swarm_str,
         name: swarm_name,
@@ -159,6 +161,11 @@ pub(crate) async fn run(cfg: EventLoopConfig) -> Result<()> {
 struct EventLoop {
     sender: GossipSender,
     receiver: GossipReceiver,
+    /// The gossip frontend, kept so the loop can re-subscribe the topic
+    /// after the stream terminally ends (see the heal arm) — without it
+    /// a closed subscription (e.g. lag-evicted by the actor) would
+    /// leave the daemon permanently deaf.
+    gossip: iroh_gossip::net::Gossip,
     endpoint: Endpoint,
     swarm: SwarmId,
     name: SwarmName,
@@ -203,8 +210,9 @@ fn log_daemon_start(author: &Nickname) {
 
 async fn event_loop(loop_state: EventLoop) -> Result<()> {
     let EventLoop {
-        sender,
+        mut sender,
         mut receiver,
+        gossip,
         endpoint,
         swarm: swarm_str,
         name: swarm_name,
@@ -214,7 +222,7 @@ async fn event_loop(loop_state: EventLoop) -> Result<()> {
         mut state,
         mut ipc_rx,
         interactive,
-        intervals,
+        mut intervals,
         mut rendezvous,
         mut rendezvous_params,
         mut rung_rx,
@@ -227,40 +235,23 @@ async fn event_loop(loop_state: EventLoop) -> Result<()> {
         exit_on_quit,
     } = loop_state;
 
-    let MaintenanceIntervals {
-        prune: mut prune_interval,
-        alive: mut alive_interval,
-        sweep: mut sweep_interval,
-        heal: mut heal_interval,
-        reclaim: mut reclaim_interval,
-        antientropy: mut antientropy_interval,
-        state_refresh: mut state_refresh_interval,
-    } = intervals;
-
     log_daemon_start(&author);
 
     let mut stdin_reader = BufReader::new(tokio::io::stdin());
     let mut stdin_open = interactive;
 
-    // Per-timer gap trackers; the heal gap also drives the
-    // resume-edge hard re-bootstrap. Each timer carries a monotonic
-    // anchor AND a wall-clock anchor: on macOS the monotonic clock
-    // pauses in lockstep with a sleeping process, so only the wall gap
-    // reveals a suspend (see `note_tick_gap` / `run_heal`).
-    let wall_now = crate::util::clock::unix_secs();
-    let mut last_alive = Instant::now();
-    let mut last_sweep = Instant::now();
-    let mut last_heal = Instant::now();
-    let mut last_antientropy = Instant::now();
-    let (mut last_alive_wall, mut last_sweep_wall, mut last_heal_wall, mut last_antientropy_wall) =
-        (wall_now, wall_now, wall_now, wall_now);
+    let mut anchors = TickAnchors::now();
 
-    // Owned Arc clone so the ctx can borrow it for the whole loop without colliding with `&mut state`.
+    // Owned Arc clone so the per-arm ctx can borrow it without colliding with `&mut state`.
     let identity = state.identity.clone();
     // Our own pubkey hex, computed once for the per-message self-echo compare.
     let our_pubkey = crate::protocol::identity::encode_pubkey(&identity.public());
-    let ctx = HandlerCtx {
-        sender: &sender,
+    // Everything a HandlerCtx needs *except* the sender. The ctx itself
+    // is built per-arm (`parts.ctx(&sender)`) rather than once out here:
+    // a loop-lifetime ctx would borrow `sender` forever, and the
+    // resubscribe path must replace `sender`/`receiver` when the gossip
+    // stream ends.
+    let parts = CtxParts {
         endpoint: &endpoint,
         swarm: &swarm_str,
         author: &author,
@@ -271,6 +262,11 @@ async fn event_loop(loop_state: EventLoop) -> Result<()> {
         external_msg_tx: external_msg_tx.as_ref(),
         output: &output,
     };
+
+    // Consecutive failed resubscribe attempts (reset on success); at
+    // `RESUBSCRIBE_MAX_ATTEMPTS` the gossip actor itself is gone and the
+    // daemon shuts down rather than pretend to be a live member.
+    let mut resubscribe_attempts: u32 = 0;
 
     loop {
         let ping_deadline = state.ping_round.as_ref().map(|round| round.deadline);
@@ -287,32 +283,41 @@ async fn event_loop(loop_state: EventLoop) -> Result<()> {
                 }
             }
             event = receiver.next(), if state.gossip_open => {
+                let ctx = parts.ctx(&sender);
                 gossip::handle_gossip_event(event, &mut state, &ctx).await;
             }
-            _ = prune_interval.tick() => timers::tick_prune(&mut state, &output),
-            _ = alive_interval.tick() => {
-                timers::note_tick_gap("alive", &mut last_alive, &mut last_alive_wall, Duration::from_secs(ALIVE_INTERVAL_SECS));
+            _ = intervals.prune.tick() => timers::tick_prune(&mut state, &output),
+            _ = intervals.alive.tick() => {
+                timers::note_tick_gap("alive", &mut anchors.alive, &mut anchors.alive_wall, Duration::from_secs(ALIVE_INTERVAL_SECS));
                 lifecycle::heartbeat::tick_alive(&mut state, &sender, &swarm_str, &author).await;
             }
-            _ = sweep_interval.tick() => {
-                timers::note_tick_gap("sweep", &mut last_sweep, &mut last_sweep_wall, Duration::from_secs(sweep_interval_secs()));
+            _ = intervals.sweep.tick() => {
+                timers::note_tick_gap("sweep", &mut anchors.sweep, &mut anchors.sweep_wall, Duration::from_secs(sweep_interval_secs()));
                 lifecycle::heartbeat::tick_sweep(&mut state, &output);
             }
-            _ = heal_interval.tick() => {
-                let (mono_gap, wall_gap) = timers::note_tick_gap("heal", &mut last_heal, &mut last_heal_wall, Duration::from_secs(HEAL_INTERVAL_SECS));
-                heal_tick(mono_gap, wall_gap, &mut state, &ctx, &rendezvous_params, cohost, started, &mut rendezvous).await;
+            _ = intervals.heal.tick() => {
+                let (mono_gap, wall_gap) = timers::note_tick_gap("heal", &mut anchors.heal, &mut anchors.heal_wall, Duration::from_secs(HEAL_INTERVAL_SECS));
+                if state.gossip_open {
+                    let ctx = parts.ctx(&sender);
+                    heal_tick(mono_gap, wall_gap, &mut state, &ctx, &rendezvous_params, cohost, started, &mut rendezvous).await;
+                } else {
+                    // Stream ended: resubscribe instead of healing a dead topic
+                    // (see `resubscribe_tick`); the beacon keeps the swarm joinable.
+                    resubscribe_tick(&gossip, &rendezvous_params, &parts, &mut state, &mut sender, &mut receiver, &mut resubscribe_attempts, exit_on_quit).await?;
+                    maybe_cohost(cohost, &state, started, &rendezvous_params, &endpoint, &mut rendezvous).await;
+                }
             }
             // A bootstrap rung chosen off-loop (startup probe / beacon self-monitor); apply it cheaply.
             // `Ok(())` only: a closed channel (impossible while the beacon params live) disables the arm.
             Ok(()) = rung_rx.changed() => apply_rung_change(&mut rendezvous_params, &endpoint, &mut rendezvous, &rung_rx),
-            _ = reclaim_interval.tick() => {
+            _ = intervals.reclaim.tick() => {
                 maybe_reclaim(cohost, &state, &rendezvous_params, &endpoint, &mut rendezvous).await;
             }
-            _ = antientropy_interval.tick() => {
-                timers::note_tick_gap("antientropy", &mut last_antientropy, &mut last_antientropy_wall, Duration::from_secs(ANTIENTROPY_INTERVAL_SECS));
+            _ = intervals.antientropy.tick() => {
+                timers::note_tick_gap("antientropy", &mut anchors.antientropy, &mut anchors.antientropy_wall, Duration::from_secs(ANTIENTROPY_INTERVAL_SECS));
                 gossip::antientropy::broadcast_digest(&mut state, &sender, &swarm_str, &author).await;
             }
-            _ = state_refresh_interval.tick() => timers::tick_state_refresh(&state, &endpoint).await,
+            _ = intervals.state_refresh.tick() => timers::tick_state_refresh(&state, &endpoint).await,
             _ = recv_opt(&mut external_quit_rx) => {
                 // External quit is always embedded (MCP): never hard-exit (`false`).
                 announce_and_maybe_exit(&sender, &swarm_str, &swarm_name, &author, &state, &output, false).await;
@@ -623,6 +628,183 @@ async fn heal_tick(
 ) {
     run_heal(mono_gap, wall_gap, state, ctx, params).await;
     maybe_cohost(cohost, state, started, params, ctx.endpoint, rendezvous).await;
+}
+
+/// Per-timer gap anchors; the heal gap also drives the resume-edge hard
+/// re-bootstrap. Each timer carries a monotonic anchor AND a wall-clock
+/// anchor: on macOS the monotonic clock pauses in lockstep with a
+/// sleeping process, so only the wall gap reveals a suspend (see
+/// `note_tick_gap` / `run_heal`).
+struct TickAnchors {
+    alive: Instant,
+    sweep: Instant,
+    heal: Instant,
+    antientropy: Instant,
+    alive_wall: i64,
+    sweep_wall: i64,
+    heal_wall: i64,
+    antientropy_wall: i64,
+}
+
+impl TickAnchors {
+    fn now() -> Self {
+        let mono = Instant::now();
+        let wall = crate::util::clock::unix_secs();
+        Self {
+            alive: mono,
+            sweep: mono,
+            heal: mono,
+            antientropy: mono,
+            alive_wall: wall,
+            sweep_wall: wall,
+            heal_wall: wall,
+            antientropy_wall: wall,
+        }
+    }
+}
+
+/// Everything a [`HandlerCtx`] needs except the gossip sender. The loop
+/// holds one of these and builds the ctx per-arm (`parts.ctx(&sender)`):
+/// a loop-lifetime ctx would borrow `sender` forever, and the
+/// resubscribe path must be able to replace it.
+struct CtxParts<'a> {
+    endpoint: &'a Endpoint,
+    swarm: &'a SwarmId,
+    author: &'a Nickname,
+    identity: &'a crate::protocol::identity::Identity,
+    our_pubkey: &'a str,
+    max_peers: usize,
+    rendezvous_id: iroh::EndpointId,
+    external_msg_tx: Option<&'a broadcast::Sender<Message>>,
+    output: &'a output::Output,
+}
+
+impl<'a> CtxParts<'a> {
+    fn ctx<'b>(&'b self, sender: &'b GossipSender) -> HandlerCtx<'b>
+    where
+        'a: 'b,
+    {
+        HandlerCtx {
+            sender,
+            endpoint: self.endpoint,
+            swarm: self.swarm,
+            author: self.author,
+            identity: self.identity,
+            our_pubkey: self.our_pubkey,
+            max_peers: self.max_peers,
+            rendezvous_id: self.rendezvous_id,
+            external_msg_tx: self.external_msg_tx,
+            output: self.output,
+        }
+    }
+}
+
+/// Outcome of one resubscribe attempt (the heal arm drives one per
+/// tick while the gossip stream is down).
+enum Resubscribe {
+    Restored(GossipSender, GossipReceiver),
+    Pending,
+    Fatal,
+}
+
+/// One heal-tick turn while the gossip stream is down: attempt the
+/// resubscribe and, on success, swap in the fresh sender/receiver,
+/// drain the dead subscription's buffer (the actor counts those
+/// messages as delivered — overlay dedup will never re-push them, and
+/// anti-entropy resends of them are deduped too, so the buffer is the
+/// only copy), then re-enter the overlay via the starvation-recovery
+/// primitive (degraded mesh, throttles cleared, known peers re-dialed,
+/// arrival re-announced). On `Fatal` (the actor itself is gone) the
+/// daemon stops posing as a live member: statusline state file cleared
+/// (a `Left` broadcast is pointless on a dead topic), `exit(1)` on the
+/// CLI path, `Err` for embedded drivers.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "threads the loop-owned swap targets (sender/receiver) plus the ctx parts; bundling them would just re-wrap the event loop's locals"
+)]
+async fn resubscribe_tick(
+    gossip: &iroh_gossip::net::Gossip,
+    params: &beacon::RendezvousParams,
+    parts: &CtxParts<'_>,
+    state: &mut EventLoopState,
+    sender: &mut GossipSender,
+    receiver: &mut GossipReceiver,
+    attempts: &mut u32,
+    exit_on_quit: bool,
+) -> Result<()> {
+    match try_resubscribe(gossip, params, state, attempts, parts.output).await {
+        Resubscribe::Restored(new_sender, new_receiver) => {
+            let mut dead_receiver = std::mem::replace(receiver, new_receiver);
+            *sender = new_sender;
+            state.gossip_open = true;
+            let ctx = parts.ctx(sender);
+            gossip::drain_dead_receiver(&mut dead_receiver, state, &ctx).await;
+            drop(dead_receiver);
+            gossip::heal::recover_from_starvation(state, &ctx).await;
+        }
+        Resubscribe::Pending => {}
+        Resubscribe::Fatal => {
+            if let Some(state_file) = state.state_file.as_ref() {
+                state_file.remove();
+            }
+            parts
+                .output
+                .error("gossip subscription unrecoverable; shutting down");
+            #[cfg(not(feature = "dhat-heap"))]
+            if exit_on_quit {
+                std::process::exit(1);
+            }
+            #[cfg(feature = "dhat-heap")]
+            let _ = exit_on_quit;
+            anyhow::bail!("gossip subscription unrecoverable after repeated resubscribe attempts");
+        }
+    }
+    Ok(())
+}
+
+/// Re-open the gossip topic after its stream terminally ended. The
+/// designed-for remedy, not a workaround: iroh-gossip closes a lagging
+/// subscriber outright and its docs instruct "close and re-open".
+/// Bootstrap is the rendezvous plus every remembered peer so the fresh
+/// subscription re-grafts without waiting for lookups. `Fatal` after
+/// `RESUBSCRIBE_MAX_ATTEMPTS` consecutive failures: a subscribe error
+/// means the gossip actor itself is gone (endpoint closed), which no
+/// retry can fix.
+async fn try_resubscribe(
+    gossip: &iroh_gossip::net::Gossip,
+    params: &beacon::RendezvousParams,
+    state: &EventLoopState,
+    attempts: &mut u32,
+    output: &output::Output,
+) -> Resubscribe {
+    let mut bootstrap = vec![params.id];
+    bootstrap.extend(state.known_endpoints.iter().copied());
+    match gossip.subscribe(params.topic_id, bootstrap).await {
+        Ok(topic) => {
+            *attempts = 0;
+            tracing::warn!(
+                target: "agent_habilis_swarm::gossip",
+                "gossip stream restored (resubscribed)"
+            );
+            output.info("gossip stream restored; rejoining the mesh");
+            let (sender, receiver) = topic.split();
+            Resubscribe::Restored(sender, receiver)
+        }
+        Err(error) => {
+            *attempts += 1;
+            tracing::warn!(
+                target: "agent_habilis_swarm::gossip",
+                %error,
+                attempts = *attempts,
+                "gossip resubscribe failed"
+            );
+            if *attempts >= RESUBSCRIBE_MAX_ATTEMPTS {
+                Resubscribe::Fatal
+            } else {
+                Resubscribe::Pending
+            }
+        }
+    }
 }
 
 /// Apply a bootstrap rung chosen **off the event loop** (the startup

@@ -397,6 +397,19 @@ impl InProcessSession {
             .map_err(|_| anyhow::anyhow!("swarm event loop has stopped"))
     }
 
+    /// Simulate the gossip stream terminally ending. Adversarial-suite
+    /// only — drives the stream-end resubscribe recovery test.
+    ///
+    /// # Errors
+    /// Fails if the event loop has stopped.
+    #[cfg(feature = "adversarial")]
+    pub(crate) async fn sever_gossip(&self) -> anyhow::Result<()> {
+        self.req_tx
+            .send(SessionRequest::SeverGossip)
+            .await
+            .map_err(|_| anyhow::anyhow!("swarm event loop has stopped"))
+    }
+
     /// Snapshot the fork/DAG index sizes `(by_hash, dag_heads, author_seqs)`.
     /// Adversarial-suite only.
     ///
@@ -608,6 +621,16 @@ impl SwarmSession {
     #[cfg(feature = "adversarial")]
     pub async fn inject_raw(&self, bytes: Vec<u8>) -> anyhow::Result<()> {
         self.core.inject_raw(bytes::Bytes::from(bytes)).await
+    }
+
+    /// Simulate the gossip stream terminally ending (the daemon must
+    /// resubscribe and recover on its own). Adversarial-suite only.
+    ///
+    /// # Errors
+    /// Fails if the event loop has stopped.
+    #[cfg(feature = "adversarial")]
+    pub async fn sever_gossip(&self) -> anyhow::Result<()> {
+        self.core.sever_gossip().await
     }
 
     /// Snapshot the fork/DAG index sizes `(by_hash, dag_heads, author_seqs)`.

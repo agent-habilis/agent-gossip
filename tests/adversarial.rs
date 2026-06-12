@@ -292,3 +292,43 @@ async fn gap_sybil_identities_are_accepted() {
     victim.leave().await;
     attacker.leave().await;
 }
+
+// ── Defended: stream-end recovery (H1) ────────────────────────────────────────
+
+/// The gossip event stream terminally ending must not leave the daemon
+/// deaf: the heal arm re-subscribes the topic, the node re-enters the
+/// overlay, and anti-entropy backfills what was missed during the
+/// outage. Upstream closes a lagging subscriber outright (its docs:
+/// "close and re-open"), so this is a realistic flood-pressure path.
+/// `sever_gossip` flips the same `gossip_open` flag the real terminal
+/// `None` arm does, so the loop cannot tell the difference.
+#[tokio::test]
+async fn severed_gossip_stream_resubscribes_and_backfills() {
+    let (mut victim, attacker) = meshed_pair("sever").await;
+    victim.session.sever_gossip().await.expect("sever");
+
+    // Broadcast while the victim's subscription is down: it must arrive
+    // later via anti-entropy over the fresh subscription, not be lost.
+    attacker.send("during-outage").await;
+
+    // Recovery budget: one heal tick (fixed 15s) to resubscribe, the
+    // re-announce/re-graft round-trip, then an anti-entropy cycle (10s)
+    // for the backfill — with margin for a slow runner.
+    let recovery = Duration::from_secs(75);
+    let backfilled = victim.wait_body("during-outage", recovery).await;
+    assert!(
+        backfilled,
+        "message broadcast during the outage never backfilled after resubscribe\nvictim events: {:#?}",
+        victim.events()
+    );
+
+    // Live traffic flows again on the new subscription.
+    attacker.send("after-recovery").await;
+    assert!(
+        victim.wait_body("after-recovery", T).await,
+        "victim deaf to live traffic after resubscribe"
+    );
+
+    victim.leave().await;
+    attacker.leave().await;
+}

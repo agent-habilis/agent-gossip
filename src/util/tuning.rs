@@ -227,6 +227,14 @@ pub(crate) const STATE_REFRESH_SECS: u64 = 10;
 /// control message per tick when already healthy.
 pub(crate) const HEAL_INTERVAL_SECS: u64 = 15;
 
+/// Consecutive failed gossip-topic resubscribe attempts (one per heal
+/// tick after the stream terminally ends) before the daemon gives up
+/// and shuts down. A subscribe error means the gossip actor itself is
+/// gone — endpoint closed, unrecoverable — so 8 (~2 min at the heal
+/// cadence) is generosity, not hope; a deaf daemon must not pose as a
+/// live member forever.
+pub(crate) const RESUBSCRIBE_MAX_ATTEMPTS: u32 = 8;
+
 /// Upper bound on the healer's detached rendezvous connect-probe.
 /// Generous enough to absorb a public relay/lookup warmup after a
 /// real network change, capped well under `HEAL_INTERVAL_SECS` so at

@@ -132,6 +132,9 @@ pub(crate) async fn handle_gossip_event(
             }
         }
         Some(Ok(Event::Lagged)) => {
+            // Upstream closes a lagging subscriber outright (its docs:
+            // "close and re-open"), so a terminal `None` follows; the
+            // heal arm's resubscribe handles the re-open.
             ctx.output
                 .info("Event stream lagged, some messages may have been missed");
             tracing::warn!("gossip event stream lagged; some messages missed");
@@ -141,11 +144,47 @@ pub(crate) async fn handle_gossip_event(
             tracing::warn!(%error, "gossip error");
         }
         None => {
-            // Stream ended. IPC keeps working for msg/poll.
+            // Terminal: the actor closed this subscription (lag
+            // eviction) or died. The heal arm re-subscribes; meanwhile
+            // IPC msg/poll keep serving the local buffer.
             state.gossip_open = false;
-            tracing::warn!("gossip stream ended; IPC msg/poll still works");
+            ctx.output.error("gossip stream ended; resubscribing");
+            tracing::error!("gossip stream ended; heal arm will resubscribe");
         }
     }
+}
+
+/// Drain the message payloads a dead subscription buffered before its
+/// stream ended, so they reach the app instead of vanishing. The gossip
+/// actor already counts them as delivered — its overlay dedup will
+/// *not* re-push them, and anti-entropy resends of them are likewise
+/// dropped below the app — so the buffer is the only copy this node
+/// will ever see. Only `Received` payloads are processed: neighbor
+/// up/down from a dead subscription is stale link state the fresh
+/// subscription re-derives immediately.
+pub(crate) async fn drain_dead_receiver(
+    receiver: &mut iroh_gossip::api::GossipReceiver,
+    state: &mut EventLoopState,
+    ctx: &HandlerCtx<'_>,
+) {
+    use futures_util::{FutureExt as _, StreamExt as _};
+    let mut recovered = 0usize;
+    loop {
+        match receiver.next().now_or_never() {
+            Some(Some(Ok(Event::Received(incoming)))) => {
+                handle_gossip_received(incoming.content, state, ctx).await;
+                recovered += 1;
+            }
+            // Skip stale membership events / errors; stop on a terminal
+            // `None` (the stream's actual end) or an empty buffer.
+            Some(Some(_)) => {}
+            Some(None) | None => break,
+        }
+    }
+    tracing::info!(
+        recovered,
+        "drained buffered messages from the dead gossip subscription"
+    );
 }
 
 /// Drain `pending_outbound` onto the wire, in order. Shared by the two

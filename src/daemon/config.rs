@@ -49,6 +49,13 @@ pub(crate) enum SessionRequest {
     IndexStats {
         resp: oneshot::Sender<(usize, usize, usize)>,
     },
+    /// Simulate the gossip event stream terminally ending (flips
+    /// `gossip_open` off, exactly what the real `None` arm does — the
+    /// orphaned receiver is dropped when the heal arm resubscribes).
+    /// Adversarial-suite only: drives the stream-end recovery test
+    /// without needing to kill the gossip actor from outside.
+    #[cfg(feature = "adversarial")]
+    SeverGossip,
 }
 
 /// Who drives the event loop. The variants make illegal channel
@@ -103,6 +110,12 @@ pub(crate) enum CoHostPolicy {
 /// The driver-specific channels live in [`DriverMode`].
 pub(crate) struct EventLoopConfig {
     pub topic: GossipTopic,
+    /// The gossip frontend the topic was subscribed on. Held by the
+    /// event loop so it can **re-subscribe** after the topic stream
+    /// terminally ends — iroh-gossip closes a lagging subscriber and
+    /// its docs say to re-open it; without this handle the daemon
+    /// would stay permanently deaf (review finding H1).
+    pub gossip: iroh_gossip::net::Gossip,
     pub author: Nickname,
     /// This member's signing identity (Ed25519), minted in `setup_swarm`.
     /// In-process / ephemeral for now (see [`crate::protocol::identity`]).

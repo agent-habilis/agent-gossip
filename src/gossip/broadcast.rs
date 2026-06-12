@@ -275,6 +275,14 @@ pub(crate) async fn handle_session_request(
             ));
             false
         }
+        // Simulated stream end (adversarial only): indistinguishable from
+        // the real `None` arm as far as the event loop is concerned.
+        #[cfg(feature = "adversarial")]
+        SessionRequest::SeverGossip => {
+            state.gossip_open = false;
+            tracing::warn!("gossip stream severed (adversarial); heal arm will resubscribe");
+            false
+        }
     }
 }
 

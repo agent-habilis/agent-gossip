@@ -174,7 +174,7 @@ pub(crate) async fn setup_swarm(
     let ladder = relay_ladder(&lookups.relay);
     let (rung_tx, rung_rx) = watch::channel(ladder.first().cloned());
 
-    let (swarm_id, swarm_name, endpoint, router, topic, rdv, cohost) = match kind {
+    let (swarm_id, swarm_name, endpoint, router, gossip, topic, rdv, cohost) = match kind {
         SetupKind::Create {
             name,
             config,
@@ -219,6 +219,7 @@ pub(crate) async fn setup_swarm(
                 name,
                 endpoint,
                 router,
+                gossip,
                 topic,
                 rdv,
                 CoHostPolicy::Eager,
@@ -265,6 +266,7 @@ pub(crate) async fn setup_swarm(
                 swarm.name,
                 endpoint,
                 router,
+                gossip,
                 topic,
                 rdv,
                 CoHostPolicy::Deferred,
@@ -284,6 +286,7 @@ pub(crate) async fn setup_swarm(
 
     Ok(EventLoopConfig {
         topic,
+        gossip,
         author,
         identity,
         swarm: swarm_id,
