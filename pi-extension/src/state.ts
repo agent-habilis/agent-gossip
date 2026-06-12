@@ -7,6 +7,9 @@ export type AppState = {
   session: Session | null;
   autoReply: boolean;
   pendingMessages: SwarmEvent[];
+  // Events shed from the capped buffers while the UI was unavailable;
+  // surfaced as one "(+N dropped)" notice on the next flush.
+  droppedPending: number;
   messageBatch: SwarmEvent[];
   messageBatchTimer: ReturnType<typeof setTimeout> | null;
   pi: ExtensionAPI | null;
@@ -22,6 +25,7 @@ export const state: AppState = {
   session: null,
   autoReply: true,
   pendingMessages: [],
+  droppedPending: 0,
   messageBatch: [],
   messageBatchTimer: null,
   pi: null,

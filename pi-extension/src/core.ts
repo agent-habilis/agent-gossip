@@ -40,6 +40,7 @@ export function cleanup(): void {
   clearBatch();
   state.session = null;
   state.pendingMessages = [];
+  state.droppedPending = 0;
   state.pingPending = false;
   state.pongMap.clear();
 }
