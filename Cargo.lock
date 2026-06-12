@@ -1980,7 +1980,7 @@ dependencies = [
 [[package]]
 name = "iroh"
 version = "1.0.0-rc.0"
-source = "git+https://github.com/agent-habilis/iroh?branch=fix%2Fmapped-addrs-eviction#67cd78c96a8162b58c95306ab06e215bd250c893"
+source = "git+https://github.com/agent-habilis/iroh?rev=67cd78c96a8162b58c95306ab06e215bd250c893#67cd78c96a8162b58c95306ab06e215bd250c893"
 dependencies = [
  "backon",
  "blake3",
@@ -2032,7 +2032,7 @@ dependencies = [
 [[package]]
 name = "iroh-base"
 version = "1.0.0-rc.0"
-source = "git+https://github.com/agent-habilis/iroh?branch=fix%2Fmapped-addrs-eviction#67cd78c96a8162b58c95306ab06e215bd250c893"
+source = "git+https://github.com/agent-habilis/iroh?rev=67cd78c96a8162b58c95306ab06e215bd250c893#67cd78c96a8162b58c95306ab06e215bd250c893"
 dependencies = [
  "curve25519-dalek",
  "data-encoding",
@@ -2053,7 +2053,7 @@ dependencies = [
 [[package]]
 name = "iroh-dns"
 version = "1.0.0-rc.0"
-source = "git+https://github.com/agent-habilis/iroh?branch=fix%2Fmapped-addrs-eviction#67cd78c96a8162b58c95306ab06e215bd250c893"
+source = "git+https://github.com/agent-habilis/iroh?rev=67cd78c96a8162b58c95306ab06e215bd250c893#67cd78c96a8162b58c95306ab06e215bd250c893"
 dependencies = [
  "arc-swap",
  "cfg_aliases",
@@ -2076,7 +2076,7 @@ dependencies = [
 [[package]]
 name = "iroh-gossip"
 version = "0.99.0"
-source = "git+https://github.com/agent-habilis/iroh-gossip?branch=fix%2Fsuperseded-conn-leak#f7ddfcc0c32d57683fe03fcffedc8c29b025de0c"
+source = "git+https://github.com/agent-habilis/iroh-gossip?rev=f7ddfcc0c32d57683fe03fcffedc8c29b025de0c#f7ddfcc0c32d57683fe03fcffedc8c29b025de0c"
 dependencies = [
  "blake3",
  "bytes",
@@ -2171,7 +2171,7 @@ dependencies = [
 [[package]]
 name = "iroh-relay"
 version = "1.0.0-rc.0"
-source = "git+https://github.com/agent-habilis/iroh?branch=fix%2Fmapped-addrs-eviction#67cd78c96a8162b58c95306ab06e215bd250c893"
+source = "git+https://github.com/agent-habilis/iroh?rev=67cd78c96a8162b58c95306ab06e215bd250c893#67cd78c96a8162b58c95306ab06e215bd250c893"
 dependencies = [
  "blake3",
  "bytes",
@@ -2598,7 +2598,7 @@ checksum = "27b02d87554356db9e9a873add8782d4ea6e3e58ea071a9adb9a2e8ddb884a8b"
 [[package]]
 name = "netdev"
 version = "0.43.0"
-source = "git+https://github.com/agent-habilis/netdev?branch=fix%2Fmacos-corewlan-autorelease-leak#c2561063f4ca3bab09070184842b1ee85efd90e8"
+source = "git+https://github.com/agent-habilis/netdev?rev=c2561063f4ca3bab09070184842b1ee85efd90e8#c2561063f4ca3bab09070184842b1ee85efd90e8"
 dependencies = [
  "block2",
  "dispatch2",
@@ -2724,7 +2724,7 @@ checksum = "38bf9645c8b145698bb0b18a4637dcacbc421ea49bef2317e4fd8065a387cf21"
 [[package]]
 name = "noq"
 version = "1.0.0-rc.0"
-source = "git+https://github.com/agent-habilis/noq?branch=fix%2Fabandoned-path-leak#7a02ed23af4d5da530b18517918c84f117346814"
+source = "git+https://github.com/agent-habilis/noq?rev=7a02ed23af4d5da530b18517918c84f117346814#7a02ed23af4d5da530b18517918c84f117346814"
 dependencies = [
  "bytes",
  "cfg_aliases",
@@ -2745,7 +2745,7 @@ dependencies = [
 [[package]]
 name = "noq-proto"
 version = "1.0.0-rc.0"
-source = "git+https://github.com/agent-habilis/noq?branch=fix%2Fabandoned-path-leak#7a02ed23af4d5da530b18517918c84f117346814"
+source = "git+https://github.com/agent-habilis/noq?rev=7a02ed23af4d5da530b18517918c84f117346814#7a02ed23af4d5da530b18517918c84f117346814"
 dependencies = [
  "aes-gcm",
  "bytes",
@@ -2771,7 +2771,7 @@ dependencies = [
 [[package]]
 name = "noq-udp"
 version = "1.0.0-rc.0"
-source = "git+https://github.com/agent-habilis/noq?branch=fix%2Fabandoned-path-leak#7a02ed23af4d5da530b18517918c84f117346814"
+source = "git+https://github.com/agent-habilis/noq?rev=7a02ed23af4d5da530b18517918c84f117346814#7a02ed23af4d5da530b18517918c84f117346814"
 dependencies = [
  "cfg_aliases",
  "libc",

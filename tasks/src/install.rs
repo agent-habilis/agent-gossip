@@ -12,7 +12,15 @@ pub(crate) fn run(sh: &Shell) -> TaskOutcome {
     // installed binary in place. That shipped a stale `ah-s` to fleet hosts
     // (the binary's git-hash stamp lagged the checked-out commit). `--force`
     // always rebuilds + reinstalls the current tree.
-    cmd!(sh, "cargo install --path . --force").quiet().run()?;
+    //
+    // `--locked` is equally load-bearing: without it `cargo install`
+    // ignores Cargo.lock and freshly resolves on the host, so a registry
+    // release after the lock was cut can change the build — a 2026-06-12
+    // fleet install failed outright on a `time` upgrade whose trait impls
+    // collided with iroh-gossip's blanket `From`.
+    cmd!(sh, "cargo install --path . --force --locked")
+        .quiet()
+        .run()?;
     output::status("Installed", "~/.cargo/bin/ah-s");
     Ok(())
 }

@@ -233,22 +233,29 @@ allow-branch = ["main"]
 # `abandoned_paths` bound — all three noq crates point at the same fork repo+branch
 # because cargo resolves the noq workspace as a unit.
 [patch.crates-io]
-# iroh#4294 mapped_addrs eviction (drlukeangel's), from the agent-habilis fork.
-# iroh-base/iroh-dns are patched to the SAME repo+branch as `iroh` because the
-# forked `iroh` pulls its workspace-local copies of them — without these the
-# graph carries two `iroh_base`/`iroh_dns` versions (fork vs crates.io) and types
-# from iroh-gossip/lookups clash (E0308).
-iroh = { git = "https://github.com/agent-habilis/iroh", branch = "fix/mapped-addrs-eviction" }
-iroh-base = { git = "https://github.com/agent-habilis/iroh", branch = "fix/mapped-addrs-eviction" }
-iroh-dns = { git = "https://github.com/agent-habilis/iroh", branch = "fix/mapped-addrs-eviction" }
-iroh-gossip = { git = "https://github.com/agent-habilis/iroh-gossip", branch = "fix/superseded-conn-leak" }
-# noq fork branch carries the abandoned_paths bound (#683, ours) + the
+# Pinned by `rev`, not `branch`: a branch ref is mutable, so a force-push (or
+# any later commit) on the fork would silently change what the next
+# `cargo update` builds. The rev is the tip of the named fix branch at pin
+# time; bumping a fork is an explicit rev edit here.
+#
+# iroh#4294 mapped_addrs eviction (drlukeangel's), from the agent-habilis fork
+# (branch fix/mapped-addrs-eviction). iroh-base/iroh-dns are patched to the
+# SAME repo+rev as `iroh` because the forked `iroh` pulls its workspace-local
+# copies of them — without these the graph carries two `iroh_base`/`iroh_dns`
+# versions (fork vs crates.io) and types from iroh-gossip/lookups clash (E0308).
+iroh = { git = "https://github.com/agent-habilis/iroh", rev = "67cd78c96a8162b58c95306ab06e215bd250c893" }
+iroh-base = { git = "https://github.com/agent-habilis/iroh", rev = "67cd78c96a8162b58c95306ab06e215bd250c893" }
+iroh-dns = { git = "https://github.com/agent-habilis/iroh", rev = "67cd78c96a8162b58c95306ab06e215bd250c893" }
+# Branch fix/superseded-conn-leak: the connection-churn leak fix.
+iroh-gossip = { git = "https://github.com/agent-habilis/iroh-gossip", rev = "f7ddfcc0c32d57683fe03fcffedc8c29b025de0c" }
+# Branch fix/abandoned-path-leak: the abandoned_paths bound (#683, ours) + the
 # Connecting-drop fix (#682, drlukeangel's). All three crates point at the same
-# repo+branch (cargo resolves the noq workspace as a unit).
-noq = { git = "https://github.com/agent-habilis/noq", branch = "fix/abandoned-path-leak" }
-noq-proto = { git = "https://github.com/agent-habilis/noq", branch = "fix/abandoned-path-leak" }
-noq-udp = { git = "https://github.com/agent-habilis/noq", branch = "fix/abandoned-path-leak" }
-# netdev fork: macOS CoreWLAN autorelease leak in os/macos/wifi.rs (CWWiFiClient
-# queried with no autoreleasepool, via netwatch on every network event) — the
-# full-mesh steady-state RSS leak. Pulled in by netwatch → iroh.
-netdev = { git = "https://github.com/agent-habilis/netdev", branch = "fix/macos-corewlan-autorelease-leak" }
+# repo+rev (cargo resolves the noq workspace as a unit).
+noq = { git = "https://github.com/agent-habilis/noq", rev = "7a02ed23af4d5da530b18517918c84f117346814" }
+noq-proto = { git = "https://github.com/agent-habilis/noq", rev = "7a02ed23af4d5da530b18517918c84f117346814" }
+noq-udp = { git = "https://github.com/agent-habilis/noq", rev = "7a02ed23af4d5da530b18517918c84f117346814" }
+# Branch fix/macos-corewlan-autorelease-leak: macOS CoreWLAN autorelease leak in
+# os/macos/wifi.rs (CWWiFiClient queried with no autoreleasepool, via netwatch on
+# every network event) — the full-mesh steady-state RSS leak. Pulled in by
+# netwatch → iroh.
+netdev = { git = "https://github.com/agent-habilis/netdev", rev = "c2561063f4ca3bab09070184842b1ee85efd90e8" }
