@@ -235,6 +235,21 @@ pub(crate) const HEAL_INTERVAL_SECS: u64 = 15;
 /// live member forever.
 pub(crate) const RESUBSCRIBE_MAX_ATTEMPTS: u32 = 8;
 
+/// Backoff bounds between failed IPC `accept`s. An accept error is
+/// almost always transient (fd exhaustion under load, an aborted
+/// handshake), so the listener retries forever instead of dying — the
+/// backoff (doubling MIN→MAX, reset on any successful accept) just
+/// keeps a persistently failing listener from spinning hot.
+pub(crate) const IPC_ACCEPT_BACKOFF_MIN_MS: u64 = 100;
+pub(crate) const IPC_ACCEPT_BACKOFF_MAX_SECS: u64 = 5;
+
+/// Per-connection IPC I/O deadline: how long the daemon waits for a
+/// connected client to send its command line, and for the response
+/// write to complete. A client that connects and goes silent would
+/// otherwise pin a task + fd for the daemon's lifetime; well above any
+/// real `msg`/`poll` round-trip, so only a hung client ever hits it.
+pub(crate) const IPC_IO_TIMEOUT_SECS: u64 = 10;
+
 /// Upper bound on the healer's detached rendezvous connect-probe.
 /// Generous enough to absorb a public relay/lookup warmup after a
 /// real network change, capped well under `HEAL_INTERVAL_SECS` so at

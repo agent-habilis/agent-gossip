@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use anyhow::Result;
 use interprocess::local_socket::{
     ListenerOptions, Name,
@@ -11,6 +13,9 @@ use crate::protocol::{MessageBody, MessageId, Nickname, SwarmId};
 use crate::util::bounded_read::{LineRead, read_bounded_line};
 use crate::util::consts::{MAX_IPC_COMMAND_BYTES, MAX_IPC_RESPONSE_BYTES, SOCKET_DIR};
 use crate::util::swarm_prefix;
+use crate::util::tuning::{
+    IPC_ACCEPT_BACKOFF_MAX_SECS, IPC_ACCEPT_BACKOFF_MIN_MS, IPC_IO_TIMEOUT_SECS,
+};
 
 /// Returns the IPC endpoint identifier for a specific agent on a swarm —
 /// a filesystem socket path (the project targets Unix only).
@@ -138,33 +143,76 @@ pub(crate) async fn listen(
     };
     tracing::info!(?path, "IPC socket listening");
 
+    // Accept errors are retried forever: they are almost always
+    // transient (fd exhaustion under load, an aborted handshake), and
+    // the old `break` permanently killed msg/poll for the process
+    // lifetime on the first one — a silent partial outage on a daemon
+    // meant to run for weeks. The backoff keeps a persistently failing
+    // listener from spinning; the operator-facing error event fires
+    // once per failure streak, not once per retry.
+    let mut backoff = Duration::from_millis(IPC_ACCEPT_BACKOFF_MIN_MS);
+    let mut failing = false;
     loop {
         match listener.accept().await {
             Ok(stream) => {
+                backoff = Duration::from_millis(IPC_ACCEPT_BACKOFF_MIN_MS);
+                failing = false;
                 let tx = tx.clone();
                 tokio::spawn(handle_connection(stream, tx));
             }
             Err(error) => {
-                output.error(&format!("IPC: accept error: {error}"));
-                tracing::warn!(%error, "IPC: accept error");
-                break;
+                if !failing {
+                    output.error(&format!("IPC: accept error (retrying): {error}"));
+                    failing = true;
+                }
+                tracing::warn!(
+                    %error,
+                    backoff_ms = u64::try_from(backoff.as_millis()).unwrap_or(u64::MAX),
+                    "IPC: accept error; retrying"
+                );
+                tokio::time::sleep(backoff).await;
+                backoff = next_accept_backoff(backoff);
             }
         }
     }
+}
+
+/// Double the accept backoff up to its cap.
+fn next_accept_backoff(current: Duration) -> Duration {
+    current
+        .saturating_mul(2)
+        .min(Duration::from_secs(IPC_ACCEPT_BACKOFF_MAX_SECS))
 }
 
 async fn handle_connection(stream: Stream, tx: mpsc::Sender<IpcMessage>) {
     let (read_half, mut write_half) = tokio::io::split(stream);
     let mut reader = BufReader::new(read_half);
 
-    let line = match read_bounded_line(&mut reader, MAX_IPC_COMMAND_BYTES).await {
-        Ok(LineRead::Line(line)) => line,
-        Ok(LineRead::TooLong) => {
+    // I/O deadline on both legs: a client that connects and goes silent
+    // (or stops draining the response) would otherwise pin this task and
+    // its fd for the daemon's lifetime.
+    let io_deadline = Duration::from_secs(IPC_IO_TIMEOUT_SECS);
+    let line = match tokio::time::timeout(
+        io_deadline,
+        read_bounded_line(&mut reader, MAX_IPC_COMMAND_BYTES),
+    )
+    .await
+    {
+        Ok(Ok(LineRead::Line(line))) => line,
+        Ok(Ok(LineRead::TooLong)) => {
             let error = json_error("command too large");
-            let _ = write_half.write_all(format!("{error}\n").as_bytes()).await;
+            let _ = tokio::time::timeout(
+                io_deadline,
+                write_half.write_all(format!("{error}\n").as_bytes()),
+            )
+            .await;
             return;
         }
-        Ok(LineRead::Eof) | Err(_) => return,
+        Ok(Ok(LineRead::Eof) | Err(_)) => return,
+        Err(_idle) => {
+            tracing::debug!("IPC: connection sent nothing within the read deadline; closing");
+            return;
+        }
     };
 
     let response = match serde_json::from_str::<IpcCommand>(line.trim()) {
@@ -182,9 +230,11 @@ async fn handle_connection(stream: Stream, tx: mpsc::Sender<IpcMessage>) {
         }
     };
 
-    let _ = write_half
-        .write_all(format!("{response}\n").as_bytes())
-        .await;
+    let _ = tokio::time::timeout(
+        io_deadline,
+        write_half.write_all(format!("{response}\n").as_bytes()),
+    )
+    .await;
 }
 
 /// Client-side: send an IPC command to the running server and return the raw JSON response.
@@ -516,6 +566,82 @@ mod tests {
         assert_eq!(parsed["id"], "got: test message");
 
         handler.await.unwrap();
+        listener_handle.abort();
+    }
+
+    #[test]
+    fn accept_backoff_doubles_to_cap() {
+        use std::time::Duration;
+
+        use crate::util::tuning::{IPC_ACCEPT_BACKOFF_MAX_SECS, IPC_ACCEPT_BACKOFF_MIN_MS};
+
+        let cap = Duration::from_secs(IPC_ACCEPT_BACKOFF_MAX_SECS);
+        let mut backoff = Duration::from_millis(IPC_ACCEPT_BACKOFF_MIN_MS);
+        let mut previous = backoff;
+        for _ in 0..16 {
+            backoff = super::next_accept_backoff(backoff);
+            assert!(backoff >= previous, "backoff never shrinks");
+            assert!(backoff <= cap, "backoff never exceeds the cap");
+            previous = backoff;
+        }
+        assert_eq!(backoff, cap, "sustained failure settles at the cap");
+    }
+
+    // An idle client (connects, never sends) must be disconnected at the
+    // I/O deadline instead of pinning a handler task + fd for the
+    // daemon's lifetime, and the listener must keep serving others
+    // throughout. Real-time: waits out `IPC_IO_TIMEOUT_SECS` (10s).
+    #[tokio::test]
+    async fn idle_connection_is_closed_at_the_read_deadline() {
+        use interprocess::local_socket::{
+            GenericFilePath, ToFsName, tokio::Stream, tokio::prelude::*,
+        };
+        use tokio::io::AsyncReadExt;
+
+        let pid_b58 = bs58::encode(std::process::id().to_le_bytes()).into_string();
+        let swarm = SwarmId::new(format!("ahsipcquiet{pid_b58}")).unwrap();
+        let nickname = Nickname::from("idle-nick");
+        let (tx, mut rx) = mpsc::channel::<IpcMessage>(8);
+        let listener_handle = tokio::spawn(listen(
+            swarm.clone(),
+            nickname.clone(),
+            tx,
+            crate::output::Output::silent(),
+        ));
+        // Echo handler so a healthy command still round-trips while the
+        // idle connection is parked.
+        let handler = tokio::spawn(async move {
+            while let Some((_cmd, resp_tx)) = rx.recv().await {
+                let _ = resp_tx.send(json_ok("healthy"));
+            }
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        // Park a silent connection.
+        let path = socket_path(&swarm, &nickname);
+        let name = path.clone().to_fs_name::<GenericFilePath>().unwrap();
+        let mut idle = Stream::connect(name).await.unwrap();
+
+        // A healthy command still round-trips while the idle one is parked.
+        let cmd = IpcCommand::Ping {
+            swarm: swarm.clone(),
+        };
+        let response = send(&cmd, &nickname).await.unwrap();
+        assert!(response.contains("healthy"), "listener stalled: {response}");
+
+        // The parked connection is closed (EOF) at the deadline, with margin.
+        let mut sink = Vec::new();
+        let read = tokio::time::timeout(
+            std::time::Duration::from_secs(crate::util::tuning::IPC_IO_TIMEOUT_SECS + 5),
+            idle.read_to_end(&mut sink),
+        )
+        .await;
+        assert!(
+            matches!(read, Ok(Ok(0))),
+            "idle connection was not closed at the read deadline: {read:?}"
+        );
+
+        handler.abort();
         listener_handle.abort();
     }
 }
