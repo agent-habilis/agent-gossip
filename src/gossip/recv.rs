@@ -88,20 +88,21 @@ pub(crate) async fn handle_gossip_event(
             // arrival is surfaced once, via membership presence
             // (`joined`), keyed by nickname and join-horizon gated.
             if node_id != ctx.rendezvous_id {
+                // `NeighborUp`/`NeighborDown` are the only writers of
+                // `linked_endpoints`: it must mirror the *live* overlay
+                // links, because the silent-partition WARN and the
+                // re-bridge gate read it as link truth. (A `PeerInfo`
+                // used to insert here optimistically — before any link
+                // formed — leaving permanent ghosts that suppressed
+                // both; see the 2026-06-12 roster-collapse review.)
+                state.linked_endpoints.insert(node_id);
                 // First link to a *real* peer: now (and only now) can
                 // user content actually be delivered. Flush anything
                 // buffered while we were unmeshed, in order.
                 if !state.meshed {
                     state.meshed = true;
-                    let mut flushed = 0usize;
-                    for bytes in state.pending_outbound.take() {
-                        let _ = ctx.sender.broadcast(bytes).await;
-                        flushed += 1;
-                    }
-                    tracing::info!(
-                        flushed,
-                        "meshed: first real-peer link up, flushed buffered messages"
-                    );
+                    state.degraded = false;
+                    flush_pending(state, ctx, "first real-peer link up").await;
                 }
             }
         }
@@ -147,6 +148,21 @@ pub(crate) async fn handle_gossip_event(
     }
 }
 
+/// Drain `pending_outbound` onto the wire, in order. Shared by the two
+/// meshed edges: the first real-peer `NeighborUp`, and a degraded
+/// node's first inbound message after a fault (starvation recovery /
+/// resume), where traffic — not a fresh link — is the healthy signal.
+async fn flush_pending(state: &mut EventLoopState, ctx: &HandlerCtx<'_>, edge: &'static str) {
+    let mut flushed = 0usize;
+    for bytes in state.pending_outbound.take() {
+        if let Err(error) = ctx.sender.broadcast(bytes).await {
+            tracing::warn!(%error, "flush of a buffered outbound message failed");
+        }
+        flushed += 1;
+    }
+    tracing::info!(flushed, edge, "meshed: flushed buffered messages");
+}
+
 /// Handle a single received gossip payload: parse, drop self-echo,
 /// rate-check, run the lifecycle observer (heartbeat / membership /
 /// surfacing / horizon), dispatch by kind, and finally push to the
@@ -177,6 +193,12 @@ async fn handle_gossip_received(content: Bytes, state: &mut EventLoopState, ctx:
     if !message.verify_signature_with(&canonical) {
         tracing::warn!(author = %message.author, "dropping message with missing/invalid signature");
         return;
+    }
+    // Starvation watchdog signal, *before* dedup: even a duplicate
+    // delivery proves the mesh carries traffic. On the degraded→meshed
+    // edge (recovery succeeded) the outbound buffer flushes here.
+    if state.note_inbound(Instant::now()) {
+        flush_pending(state, ctx, "inbound traffic resumed").await;
     }
     // Duplicate suppression: a true repeat delivery must not re-rate-count,
     // re-heartbeat, re-run membership, re-embed-forward, re-log, or re-print.
@@ -343,27 +365,39 @@ async fn handle_peer_info(
     else {
         return;
     };
+    if peer_id == ctx.endpoint.id() || peer_id == ctx.rendezvous_id {
+        return;
+    }
+    // Remember every advertised peer for the rendezvous-independent
+    // re-bridge, and register its address once. Unconditional on link
+    // state — a `PeerInfo` normally arrives over an already-formed link,
+    // and recovery (`heal::rebridge_known`, the starvation watchdog's
+    // precondition) needs the memory precisely *after* that link dies.
+    if state.known_endpoints.insert(peer_id) {
+        let _ = add_peer_addr(ctx.endpoint, peer_addr.clone());
+    }
     let now = Instant::now();
-    if peer_id != ctx.endpoint.id()
-        && peer_id != ctx.rendezvous_id
-        && state.linked_endpoints.len() < ctx.max_peers
+    // A `PeerInfo` is a dial hint, never a link: `linked_endpoints` is
+    // owned by `NeighborUp`/`NeighborDown` (link truth), so an unlinked
+    // peer's `PeerInfo` only re-registers its (possibly fresh) address
+    // and *asks* the gossip actor to graft it. Until the link
+    // materializes, each post-cooldown re-receipt retries the dial —
+    // the healer's per-peer backstop.
+    if state.linked_endpoints.len() < ctx.max_peers
+        && !state.linked_endpoints.contains(&peer_id)
         && !state.relink_on_cooldown(peer_id, now)
-        && state.linked_endpoints.insert(peer_id)
     {
         state.note_relink(peer_id, now);
         let _ = add_peer_addr(ctx.endpoint, peer_addr);
-        // Remember this peer for the rendezvous-independent re-bridge: it
-        // survives a later `NeighborDown`, and iroh keeps the address we
-        // just added, so the healer can re-dial it directly if the
-        // rendezvous/relay goes unreachable (see `heal::rebridge_known`).
-        state.known_endpoints.insert(peer_id);
-        let _ = ctx.sender.join_peers(vec![peer_id]).await;
+        if let Err(error) = ctx.sender.join_peers(vec![peer_id]).await {
+            tracing::warn!(endpoint_id = %peer_id, %error, "PeerInfo graft request failed");
+        }
         let _ = ctx.sender.broadcast(content).await;
         state.last_sent_at = Instant::now();
         tracing::debug!(
             endpoint_id = %peer_id,
             linked = state.linked_endpoints.len(),
-            "linked new peer from PeerInfo"
+            "dialing peer from PeerInfo"
         );
     }
 }

@@ -1,10 +1,12 @@
 //! Gossip healer — the sole reconnect primitive for the gossip mesh.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use iroh::{Endpoint, EndpointId};
 use iroh_gossip::api::GossipSender;
 
+use crate::daemon::ctx::HandlerCtx;
+use crate::daemon::state::EventLoopState;
 use crate::util::bounded_fifo_set::BoundedFifoSet;
 use crate::util::tuning::{HEAL_HARD_PROBE_SECS, HEAL_PROBE_SECS};
 
@@ -24,7 +26,15 @@ async fn heal(
             crate::lookup::probe_connect(&endpoint, rendezvous_id, Duration::from_secs(probe_secs))
                 .await;
     });
-    let _ = sender.join_peers(vec![rendezvous_id]).await;
+    // A failing re-graft is the recovery path failing — it must be loud.
+    // The 11h roster-collapse soak ran 2,596 of these with zero log signal.
+    if let Err(error) = sender.join_peers(vec![rendezvous_id]).await {
+        tracing::warn!(
+            target: "agent_habilis_swarm::gossip",
+            %error,
+            "heal: rendezvous re-graft request failed"
+        );
+    }
 }
 
 /// Gossip healer. iroh-gossip has no built-in reconnect, so this is
@@ -84,5 +94,49 @@ pub(crate) async fn rebridge_known(sender: &GossipSender, known: &BoundedFifoSet
         count = peers.len(),
         "heal: rendezvous-independent re-bridge (re-dialing known peers)"
     );
-    let _ = sender.join_peers(peers).await;
+    if let Err(error) = sender.join_peers(peers).await {
+        tracing::warn!(
+            target: "agent_habilis_swarm::gossip",
+            %error,
+            "heal: re-bridge graft request failed"
+        );
+    }
+}
+
+/// Starvation recovery: the heal arm detected verified inbound silence
+/// past the threshold while real peers are known
+/// ([`EventLoopState::starvation_due`]) — the roster-collapse signature,
+/// where the overlay is wedged but heal's rendezvous re-graft alone
+/// never re-admits us. Degrade `meshed` (outbound buffers until traffic
+/// proves the mesh again), reset the per-peer throttles, re-dial every
+/// remembered peer directly, and re-announce (`joined` + `PeerInfo`) so
+/// peers that evicted us re-seed their rosters the moment a link
+/// re-forms. Loud by design: this is the watchdog the 11h silent
+/// partition lacked.
+pub(crate) async fn recover_from_starvation(state: &mut EventLoopState, ctx: &HandlerCtx<'_>) {
+    let starved_secs = state.last_inbound_at.elapsed().as_secs();
+    tracing::warn!(
+        target: "agent_habilis_swarm::gossip",
+        starved_secs,
+        trips = state.recovery_trips,
+        "mesh starvation: no inbound traffic; re-bridging known peers and re-announcing"
+    );
+    ctx.output.info(&format!(
+        "mesh starvation: no traffic for {starved_secs}s; attempting recovery"
+    ));
+    state.note_degraded();
+    state.relink.clear();
+    state.peerinfo.clear();
+    rebridge_known(ctx.sender, &state.known_endpoints).await;
+    super::broadcast::announce_arrival(
+        ctx.sender,
+        ctx.swarm,
+        ctx.author,
+        ctx.identity,
+        ctx.endpoint,
+    )
+    .await;
+    let now = Instant::now();
+    state.last_sent_at = now;
+    state.note_recovery(now);
 }

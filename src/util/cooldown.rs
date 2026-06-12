@@ -47,6 +47,13 @@ impl<K: Eq + Hash + Copy> Cooldown<K> {
         self.seen.insert(key, now);
     }
 
+    /// Drop every entry. The starvation watchdog resets both per-peer
+    /// throttles before re-announcing, so a recovery is never muted by a
+    /// cooldown noted moments before the mesh died.
+    pub(crate) fn clear(&mut self) {
+        self.seen.clear();
+    }
+
     /// Live entry count — for the state's bounded-ness assertions.
     #[cfg(test)]
     pub(crate) fn len(&self) -> usize {
@@ -74,6 +81,19 @@ mod tests {
         assert!(cooldown.on_cooldown(1, start));
         // Past the window the key is free again (no permanent lockout).
         assert!(!cooldown.on_cooldown(1, start + WINDOW + Duration::from_secs(1)));
+    }
+
+    #[test]
+    fn clear_drops_every_active_cooldown() {
+        let mut cooldown: Cooldown<u8> = Cooldown::new(WINDOW);
+        let start = Instant::now();
+        cooldown.note(1, start);
+        cooldown.note(2, start);
+        assert!(cooldown.on_cooldown(1, start));
+        cooldown.clear();
+        // A starvation recovery must be able to re-announce immediately.
+        assert!(!cooldown.on_cooldown(1, start));
+        assert!(!cooldown.on_cooldown(2, start));
     }
 
     #[test]

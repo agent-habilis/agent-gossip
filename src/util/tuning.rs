@@ -166,6 +166,7 @@ pub(crate) struct Tuning {
     pub cohost_grace_secs: u64,
     pub ping_window_secs: u64,
     pub heal_stall_threshold_secs: u64,
+    pub starvation_threshold_secs: u64,
     pub advertise_interval_secs: u64,
     pub directory_expiry_secs: u64,
     pub antientropy_max_resend: usize,
@@ -182,6 +183,7 @@ impl Tuning {
         cohost_grace_secs: crate::util::consts::BEACON_COHOST_GRACE_SECS,
         ping_window_secs: crate::util::consts::PING_WINDOW_SECS,
         heal_stall_threshold_secs: crate::util::consts::HEAL_STALL_THRESHOLD_SECS,
+        starvation_threshold_secs: crate::util::consts::STARVATION_THRESHOLD_SECS,
         advertise_interval_secs: crate::util::consts::ADVERTISE_INTERVAL_SECS,
         directory_expiry_secs: crate::util::consts::DIRECTORY_EXPIRY_SECS,
         antientropy_max_resend: crate::util::consts::ANTIENTROPY_MAX_RESEND,
@@ -245,6 +247,17 @@ pub(crate) const HEAL_HARD_PROBE_SECS: u64 = 20;
 /// drive it in seconds.
 pub(crate) fn heal_stall_threshold_secs() -> u64 {
     current().heal_stall_threshold_secs
+}
+
+/// No verified inbound gossip for this long, while real peers are known,
+/// trips the heal arm's starvation watchdog (re-bridge + re-announce; see
+/// `gossip::heal::recover_from_starvation`). Keyed on traffic, not the link
+/// view — links can look alive while nothing flows (the roster-collapse
+/// signature). Default [`crate::util::consts::STARVATION_THRESHOLD_SECS`]
+/// (2× alive timeout); hidden flag `--starvation-threshold-secs`, its own
+/// knob so the tests' short-evict profile doesn't arm it everywhere.
+pub(crate) fn starvation_threshold_secs() -> u64 {
+    current().starvation_threshold_secs
 }
 
 /// How long `beacon::ensure` eagerly waits for the freshly-bound

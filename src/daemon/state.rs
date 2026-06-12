@@ -41,14 +41,18 @@ const RELINK_COOLDOWN: Duration = Duration::from_secs(RELINK_COOLDOWN_SECS);
 /// differently (node id vs nickname) and have different lifetimes.
 #[expect(
     clippy::struct_excessive_bools,
-    reason = "independent lifecycle edges (gossip_open/announced/meshed) plus the one-shot resident_memory_warned latch; each tracks a distinct transition, not a config bundle worth a sub-struct"
+    reason = "independent lifecycle edges (gossip_open/announced/meshed/degraded) plus the one-shot resident_memory_warned latch; each tracks a distinct transition, not a config bundle worth a sub-struct"
 )]
 pub(crate) struct EventLoopState {
-    /// Transport layer: the set of `EndpointId`s we hold a direct
-    /// link to (exchanged `PeerInfo` with). Bounded by `max_peers`.
-    /// Used to dedupe learning the same endpoint twice. Distinct from
-    /// `participants` — links are asymmetric and node-id keyed; the
-    /// roster is symmetric and nickname keyed.
+    /// Transport layer: the **live** gossip neighbor links, written only
+    /// by `NeighborUp`/`NeighborDown` (a received `PeerInfo` is a dial
+    /// hint, not a link). Link *truth* matters: the silent-partition WARN
+    /// and the healer's re-bridge gate read this set, and an optimistic
+    /// entry for a link that never formed has no `NeighborDown` to remove
+    /// it — a permanent ghost that suppressed both (the 2026-06-12
+    /// roster-collapse). Bounded by HyParView's `active_view_capacity`.
+    /// Distinct from `participants` — links are asymmetric and node-id
+    /// keyed; the roster is symmetric and nickname keyed.
     pub linked_endpoints: HashSet<EndpointId>,
     /// Re-bridge memory: every peer `EndpointId` we've ever linked to,
     /// kept *across* `NeighborDown` (unlike `linked_endpoints`). When a
@@ -183,6 +187,25 @@ pub(crate) struct EventLoopState {
     /// pruned alongside the message-log eviction.
     pub by_hash: HashMap<String, i64>,
     pub dag_heads: HashSet<String>,
+    /// When the last *verified* inbound gossip message arrived — the
+    /// starvation watchdog's signal. Keyed on messages, not neighbor
+    /// events: the roster-collapse showed links can look alive (or flap)
+    /// while no traffic flows, and traffic is what membership feeds on.
+    pub last_inbound_at: Instant,
+    /// When the watchdog last ran a starvation recovery, if ever.
+    /// Paired with `recovery_trips` to back off repeated attempts so a
+    /// legitimately-last-survivor node settles into a sparse retry
+    /// instead of warning every threshold period.
+    pub last_recovery_at: Option<Instant>,
+    /// Consecutive starvation recoveries without any inbound in between
+    /// (drives the backoff; reset by `note_inbound`).
+    pub recovery_trips: u32,
+    /// `meshed` was cleared by a fault path (starvation recovery / hard
+    /// resume edge) rather than never having been set. Gates
+    /// `note_inbound`'s meshed-restore so a fresh joiner's pre-mesh
+    /// inbound never flips `meshed` early; only a degraded node heals
+    /// on traffic. See [`Self::note_degraded`].
+    pub degraded: bool,
     /// Latch for the warn-only resident-memory leak signal: set once this
     /// process's resident memory first crosses `tuning::resident_memory_warn_mb`,
     /// so the `warn` fires exactly once per process rather than every prune
@@ -245,6 +268,10 @@ impl EventLoopState {
             forked: HashSet::new(),
             by_hash: HashMap::new(),
             dag_heads: HashSet::new(),
+            last_inbound_at: now,
+            last_recovery_at: None,
+            recovery_trips: 0,
+            degraded: false,
             resident_memory_warned: false,
             ping_round: None,
         }
@@ -326,6 +353,63 @@ impl EventLoopState {
     /// Delegates to the bounded [`BoundedIdSet`].
     pub(crate) fn mark_seen(&mut self, id: &MessageId) -> bool {
         self.seen.mark(id)
+    }
+
+    /// Mark the mesh degraded: a fault path (starvation recovery, hard
+    /// resume edge) cleared `meshed`, so outbound user content buffers in
+    /// `pending_outbound` instead of broadcasting into a dead overlay.
+    /// `note_inbound` undoes it on the first proof of live traffic.
+    pub(crate) fn note_degraded(&mut self) {
+        self.meshed = false;
+        self.degraded = true;
+    }
+
+    /// Record a verified inbound gossip message: refresh the starvation
+    /// watchdog's signal and disarm its backoff. Called *before* dedup —
+    /// a duplicate delivery still proves the mesh carries traffic. Also
+    /// the moment a *degraded* node turns healthy again: inbound traffic
+    /// is proof of a live path, so `meshed` is restored (the caller
+    /// flushes `pending_outbound` on the flip). A fresh joiner that has
+    /// never meshed is NOT flipped here — pre-mesh, relayed traffic can
+    /// arrive before the overlay can carry our outbound, so the first
+    /// real-peer `NeighborUp` keeps that job. Returns `true` on the
+    /// degraded→meshed edge.
+    pub(crate) fn note_inbound(&mut self, now: Instant) -> bool {
+        self.last_inbound_at = now;
+        self.recovery_trips = 0;
+        self.last_recovery_at = None;
+        if self.degraded {
+            self.degraded = false;
+            self.meshed = true;
+            return true;
+        }
+        false
+    }
+
+    /// Should the heal tick run a starvation recovery *now*? True only
+    /// when this node has been part of a mesh (`announced`) and knows at
+    /// least one real peer to re-dial, yet has received **nothing** for
+    /// over `threshold` — the roster-collapse signature, keyed on
+    /// traffic rather than the (fallible) link view. Repeated trips back
+    /// off 1-2-4-8× so a genuinely-last-survivor node retries sparsely.
+    /// Deliberately NOT gated on `meshed`: recovery clears `meshed`, so
+    /// that gate would disarm the watchdog after a single attempt.
+    pub(crate) fn starvation_due(&self, now: Instant, threshold: Duration) -> bool {
+        if !self.announced || self.known_endpoints.is_empty() {
+            return false;
+        }
+        if now.duration_since(self.last_inbound_at) <= threshold {
+            return false;
+        }
+        let backoff = threshold.saturating_mul(1 << self.recovery_trips.min(3));
+        self.last_recovery_at
+            .is_none_or(|at| now.duration_since(at) > backoff)
+    }
+
+    /// Record that a starvation recovery ran at `now` (arms the backoff).
+    pub(crate) fn note_recovery(&mut self, now: Instant) {
+        self.recovery_trips = self.recovery_trips.saturating_add(1);
+        self.last_recovery_at = Some(now);
     }
 
     /// Record a `Msg`'s `(pubkey, seq, content-hash)` for fork detection.
@@ -776,5 +860,103 @@ mod tests {
             state.mark_seen(&earliest),
             "a resend of a still-retained message must be deduped, not re-surfaced"
         );
+    }
+
+    const STARVE: Duration = Duration::from_secs(10);
+
+    // The watchdog must only ever fire for a node that (a) was part of a
+    // mesh and (b) knows a real peer to re-dial — a lone creator is alone
+    // by construction, not starved.
+    #[test]
+    fn starvation_due_requires_announce_known_peers_and_silence() {
+        let mut state = fresh_state();
+        let past_threshold = Instant::now() + STARVE + Duration::from_secs(1);
+        assert!(
+            !state.starvation_due(past_threshold, STARVE),
+            "never announced => never starved"
+        );
+        state.announced = true;
+        assert!(
+            !state.starvation_due(past_threshold, STARVE),
+            "no known peers => alone, not starved"
+        );
+        state.known_endpoints.insert(endpoint_id(1));
+        assert!(state.starvation_due(past_threshold, STARVE));
+        // Fresh inbound disarms it until the threshold passes again.
+        state.note_inbound(past_threshold);
+        assert!(!state.starvation_due(past_threshold, STARVE));
+        assert!(state.starvation_due(past_threshold + STARVE + Duration::from_secs(1), STARVE));
+    }
+
+    #[test]
+    fn starvation_recovery_backs_off_then_resets_on_inbound() {
+        let mut state = fresh_state();
+        state.announced = true;
+        state.known_endpoints.insert(endpoint_id(1));
+        let first = Instant::now() + STARVE + Duration::from_secs(1);
+        assert!(state.starvation_due(first, STARVE));
+        state.note_recovery(first);
+        // One trip: the next attempt waits 2x the threshold, not 1x.
+        assert!(!state.starvation_due(first + STARVE + Duration::from_secs(1), STARVE));
+        let second = first + (STARVE * 2) + Duration::from_secs(1);
+        assert!(state.starvation_due(second, STARVE));
+        state.note_recovery(second);
+        // Two trips: 4x.
+        assert!(!state.starvation_due(second + (STARVE * 2) + Duration::from_secs(1), STARVE));
+        assert!(state.starvation_due(second + (STARVE * 4) + Duration::from_secs(1), STARVE));
+        // Any inbound resets the backoff to the base threshold.
+        let healed = second + (STARVE * 4) + Duration::from_secs(2);
+        state.note_inbound(healed);
+        assert_eq!(state.recovery_trips, 0);
+        assert!(!state.starvation_due(healed + STARVE, STARVE));
+        assert!(state.starvation_due(healed + STARVE + Duration::from_secs(1), STARVE));
+    }
+
+    #[test]
+    fn starvation_backoff_caps_at_eight_threshold() {
+        let mut state = fresh_state();
+        state.announced = true;
+        state.known_endpoints.insert(endpoint_id(1));
+        let mut last_recovery = Instant::now() + STARVE + Duration::from_secs(1);
+        // Trip well past the cap (`recovery_trips.min(3)` => 8x ceiling).
+        for _ in 0..6 {
+            state.note_recovery(last_recovery);
+            last_recovery += STARVE * 8 + Duration::from_secs(1);
+        }
+        state.note_recovery(last_recovery);
+        assert!(
+            !state.starvation_due(last_recovery + STARVE * 8, STARVE),
+            "inside the capped backoff window"
+        );
+        assert!(
+            state.starvation_due(last_recovery + STARVE * 8 + Duration::from_secs(1), STARVE),
+            "the backoff never grows past 8x the threshold"
+        );
+    }
+
+    // `meshed` restoration on inbound is gated on the `degraded` fault
+    // flag: a fresh joiner's pre-mesh inbound (relayed backlog) must not
+    // flip `meshed` early — that stays the first real-peer NeighborUp's
+    // job — while a degraded node heals on the first proof of traffic.
+    #[test]
+    fn note_inbound_restores_meshed_only_when_degraded() {
+        let mut state = fresh_state();
+        let now = Instant::now();
+        assert!(
+            !state.note_inbound(now),
+            "pre-mesh inbound never flips meshed"
+        );
+        assert!(!state.meshed);
+        state.meshed = true;
+        assert!(!state.note_inbound(now), "healthy meshed: no edge");
+        assert!(state.meshed);
+        state.note_degraded();
+        assert!(!state.meshed);
+        assert!(
+            state.note_inbound(now),
+            "degraded node heals on first inbound (caller flushes)"
+        );
+        assert!(state.meshed);
+        assert!(!state.degraded);
     }
 }

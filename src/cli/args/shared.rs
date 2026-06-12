@@ -68,6 +68,10 @@ pub(crate) struct SharedServerOpts {
     #[arg(long, hide = true, default_value_t = consts::HEAL_STALL_THRESHOLD_SECS)]
     pub heal_stall_threshold_secs: u64,
 
+    /// No inbound gossip for this long, with peers known, trips the starvation watchdog (seconds).
+    #[arg(long, hide = true, default_value_t = consts::STARVATION_THRESHOLD_SECS)]
+    pub starvation_threshold_secs: u64,
+
     /// Directory re-broadcast cadence for an advertiser (seconds).
     #[arg(long, hide = true, default_value_t = consts::ADVERTISE_INTERVAL_SECS)]
     pub advertise_interval_secs: u64,
@@ -103,6 +107,7 @@ impl SharedServerOpts {
             cohost_grace_secs: self.beacon_cohost_grace_secs,
             ping_window_secs: self.ping_window_secs,
             heal_stall_threshold_secs: self.heal_stall_threshold_secs,
+            starvation_threshold_secs: self.starvation_threshold_secs,
             advertise_interval_secs: self.advertise_interval_secs,
             directory_expiry_secs: self.directory_expiry_secs,
             antientropy_max_resend: self.antientropy_max_resend,

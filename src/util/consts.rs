@@ -107,6 +107,15 @@ pub(crate) const PING_WINDOW_SECS: u64 = 10;
 /// `--heal-stall-threshold-secs`.
 pub(crate) const HEAL_STALL_THRESHOLD_SECS: u64 = 60;
 
+/// No verified inbound gossip for this long (seconds), while real peers are
+/// known, trips the starvation watchdog (re-bridge + re-announce). 2× the
+/// alive timeout: by then the sweeper has evicted the whole roster, and an
+/// idle-but-healthy mesh stays far inside it (keepalives every 30s).
+/// Deliberately its own knob, NOT derived from `--alive-timeout-secs` — the
+/// short-evict test profile must not arm the watchdog in unrelated tests.
+/// Flag: `--starvation-threshold-secs`.
+pub(crate) const STARVATION_THRESHOLD_SECS: u64 = 2 * ALIVE_TIMEOUT_SECS;
+
 /// How often an advertising `create` re-broadcasts its `ahs…` id into the
 /// directory. Flag: `--advertise-interval-secs`.
 pub(crate) const ADVERTISE_INTERVAL_SECS: u64 = 20;

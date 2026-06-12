@@ -300,7 +300,7 @@ async fn event_loop(loop_state: EventLoop) -> Result<()> {
             }
             _ = heal_interval.tick() => {
                 let (mono_gap, wall_gap) = timers::note_tick_gap("heal", &mut last_heal, &mut last_heal_wall, Duration::from_secs(HEAL_INTERVAL_SECS));
-                heal_tick(mono_gap, wall_gap, &mut state, &endpoint, &sender, &rendezvous_params, cohost, started, &mut rendezvous).await;
+                heal_tick(mono_gap, wall_gap, &mut state, &ctx, &rendezvous_params, cohost, started, &mut rendezvous).await;
             }
             // A bootstrap rung chosen off-loop (startup probe / beacon self-monitor); apply it cheaply.
             // `Ok(())` only: a closed channel (impossible while the beacon params live) disables the arm.
@@ -561,8 +561,7 @@ async fn run_heal(
     mono_gap: Duration,
     wall_gap: Duration,
     state: &mut EventLoopState,
-    endpoint: &Endpoint,
-    sender: &GossipSender,
+    ctx: &HandlerCtx<'_>,
     params: &beacon::RendezvousParams,
 ) {
     let threshold = Duration::from_secs(heal_stall_threshold_secs());
@@ -574,15 +573,15 @@ async fn run_heal(
             wall_gap_ms = u64::try_from(wall_gap.as_millis()).unwrap_or(u64::MAX),
             "heal: hard re-bootstrap edge"
         );
-        state.meshed = false;
+        state.note_degraded();
         // Re-assert the rendezvous hint (the network changed). The rung
         // is re-validated off-loop by the beacon's liveness self-monitor,
         // so a rung that died during the freeze self-corrects — no inline
         // ladder walk on the event loop here.
-        setup::register_rendezvous(endpoint, params);
-        gossip::heal::tick_heal_hard(endpoint, params.id, sender).await;
+        setup::register_rendezvous(ctx.endpoint, params);
+        gossip::heal::tick_heal_hard(ctx.endpoint, params.id, ctx.sender).await;
     } else {
-        gossip::heal::tick_heal(endpoint, params.id, sender).await;
+        gossip::heal::tick_heal(ctx.endpoint, params.id, ctx.sender).await;
     }
     // Rendezvous-independent re-bridge. Fires on the hard (resume) edge —
     // where a reused endpoint id can be stuck behind a stale *accepted*
@@ -593,7 +592,16 @@ async fn run_heal(
     // (nothing remembered), so it adds no churn. `linked_endpoints` is
     // not cleared on the resume edge, hence the explicit `hard_edge` arm.
     if (hard_edge || state.linked_endpoints.is_empty()) && !state.known_endpoints.is_empty() {
-        gossip::heal::rebridge_known(sender, &state.known_endpoints).await;
+        gossip::heal::rebridge_known(ctx.sender, &state.known_endpoints).await;
+    }
+    // Starvation watchdog: links/heal can look busy while no traffic
+    // flows (the roster-collapse signature), so the last word every heal
+    // tick is a check on verified *inbound* silence.
+    if state.starvation_due(
+        Instant::now(),
+        Duration::from_secs(crate::util::tuning::starvation_threshold_secs()),
+    ) {
+        gossip::heal::recover_from_starvation(state, ctx).await;
     }
 }
 
@@ -607,15 +615,14 @@ async fn heal_tick(
     mono_gap: Duration,
     wall_gap: Duration,
     state: &mut EventLoopState,
-    endpoint: &Endpoint,
-    sender: &GossipSender,
+    ctx: &HandlerCtx<'_>,
     params: &beacon::RendezvousParams,
     cohost: CoHostPolicy,
     started: Instant,
     rendezvous: &mut Option<beacon::Rendezvous>,
 ) {
-    run_heal(mono_gap, wall_gap, state, endpoint, sender, params).await;
-    maybe_cohost(cohost, state, started, params, endpoint, rendezvous).await;
+    run_heal(mono_gap, wall_gap, state, ctx, params).await;
+    maybe_cohost(cohost, state, started, params, ctx.endpoint, rendezvous).await;
 }
 
 /// Apply a bootstrap rung chosen **off the event loop** (the startup

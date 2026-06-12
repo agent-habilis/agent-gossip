@@ -20,11 +20,19 @@ use crate::protocol::{Message, MessageBody, MessageId, Nickname, SwarmId};
 
 /// Fire-and-forget gossip broadcast. Serialize errors are swallowed:
 /// this helper is for presence / `PeerInfo` announcements where a
-/// failed serialize must not block the daemon.
+/// failed serialize must not block the daemon. A failed *broadcast* is
+/// logged — it means the gossip actor refused the send (the wedge the
+/// roster-collapse soak hit silently), not a routine empty room.
 pub(crate) async fn broadcast_msg(sender: &GossipSender, msg: &Message) {
     crate::logging::messages::log_out(msg);
-    if let Ok(bytes) = msg.serialize() {
-        let _ = sender.broadcast(Bytes::from(bytes)).await;
+    if let Ok(bytes) = msg.serialize()
+        && let Err(error) = sender.broadcast(Bytes::from(bytes)).await
+    {
+        tracing::warn!(
+            target: "agent_habilis_swarm::gossip",
+            %error,
+            "presence/plumbing broadcast failed"
+        );
     }
 }
 

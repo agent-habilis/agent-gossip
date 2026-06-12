@@ -1551,3 +1551,129 @@ async fn nickname_reusable_after_peer_leaves() {
     observer.leave().await;
     second.leave().await;
 }
+
+// ── starvation watchdog (the roster-collapse fix) ─────────────────────────────
+
+// `SHORT_EVICT` plus a 6s starvation threshold. The threshold is its own
+// flag (not derived from the alive timeout) precisely so the short-evict
+// profile used across this suite never arms the watchdog by accident;
+// these tests opt in explicitly.
+const STARVE_EVICT: [(&str, &str); 3] = [
+    ("--alive-timeout-secs", "3"),
+    ("--sweep-interval-secs", "1"),
+    ("--starvation-threshold-secs", "6"),
+];
+
+/// The starvation watchdog must fire — loudly — when the only peer
+/// vanishes ungracefully. This is the detection the 11h roster-collapse
+/// soak lacked: zero inbound while peers are known must produce a
+/// recovery attempt (re-bridge + re-announce) and a log/JSON signal,
+/// not eternal silence. The survivor must also stay functional.
+#[test]
+fn test_starvation_watchdog_recovers_loudly() {
+    // Threshold (6s) + at most one heal tick (fixed 15s) + margin.
+    let detect = Duration::from_secs(45);
+
+    let (creator, swarm) = Node::create_flags("itest", &STARVE_EVICT);
+    let survivor = Node::join_flags(&swarm, "sv-alpha", &STARVE_EVICT);
+    assert!(creator.wait_ready(&swarm), "creator never ready");
+    assert!(survivor.wait_ready(&swarm), "survivor never ready");
+    let _ = cli_message(&swarm, &creator.nickname, "sv-base");
+    assert_received(&survivor, &creator.nickname, "sv-base", MSG_TIMEOUT);
+
+    // Silent vanish: keepalives stop, the survivor's inbound goes quiet.
+    creator.kill();
+    drop(creator);
+    assert!(
+        wait_until(
+            || usize::from(survivor.log_contents().contains("mesh starvation")),
+            1,
+            detect,
+        ) >= 1,
+        "watchdog never fired after the only peer vanished\n{}",
+        survivor.log_tail(25),
+    );
+    // Degraded, not broken: the IPC plane still accepts a send (it is
+    // buffered until traffic proves the mesh again).
+    let _ = common::cli_msg_checked(&swarm, &survivor.nickname, "sv-after", None);
+}
+
+/// False-positive guard: a lone creator is alone by construction — it
+/// never announced into a mesh of real peers and knows nobody to
+/// re-dial — so the watchdog must stay silent no matter how long it
+/// idles past the threshold.
+#[test]
+fn test_lone_creator_never_trips_starvation() {
+    let (creator, swarm) = Node::create_flags("itest", &STARVE_EVICT);
+    assert!(creator.wait_ready(&swarm), "creator never ready");
+    // Threshold (6s) + two heal ticks (15s each) of opportunity to misfire.
+    std::thread::sleep(Duration::from_secs(32));
+    assert!(
+        !creator.log_contents().contains("mesh starvation"),
+        "lone creator false-tripped the starvation watchdog\n{}",
+        creator.log_tail(25),
+    );
+}
+
+/// The 2026-05-31 roster-collapse, mechanized: a 5-node swarm at
+/// `--active-view-capacity 2` (the partial-mesh churn regime) put
+/// through SIGSTOP/SIGCONT flap rounds. Pre-fix, a node could end up
+/// with an empty roster and phantom links forever — silent message
+/// loss. Post-fix (link truth + starvation watchdog), every node must
+/// deliver again once the storm passes.
+#[test]
+fn test_flap_storm_all_rosters_recover() {
+    const CAP2_STARVE: [(&str, &str); 4] = [
+        ("--alive-timeout-secs", "3"),
+        ("--sweep-interval-secs", "1"),
+        ("--starvation-threshold-secs", "6"),
+        ("--active-view-capacity", "2"),
+    ];
+    // Stop window: past the 3+1s evict so victims get swept; resume gap
+    // long enough for partial re-meshing before the next round hits.
+    let stop_window = Duration::from_secs(8);
+    let resume_gap = Duration::from_secs(5);
+    // Recovery bound: starvation threshold (6s) + a couple of fixed 15s
+    // heal ticks for re-bridge/re-announce to propagate, plus margin.
+    let recover = Duration::from_secs(90);
+
+    let (creator, swarm) = Node::create_flags("itest", &CAP2_STARVE);
+    let joiners: Vec<Node> = (0..4)
+        .map(|index| Node::join_flags(&swarm, &format!("fs-{index}"), &CAP2_STARVE))
+        .collect();
+    assert!(creator.wait_ready(&swarm), "creator never ready");
+    for joiner in &joiners {
+        assert!(joiner.wait_ready(&swarm), "{} never ready", joiner.nickname);
+    }
+    // Baseline delivery gets the same generous bound as the post-storm
+    // probe: at cap 2 even a healthy broadcast is partial-mesh-routed
+    // (multi-hop, convergence-dependent), so the standard 30s message
+    // timeout is occasionally short here. Adaptive — healthy runs pass
+    // in seconds.
+    let _ = cli_message(&swarm, &creator.nickname, "fs-base");
+    for joiner in &joiners {
+        assert_received(joiner, &creator.nickname, "fs-base", recover);
+    }
+
+    // Three flap rounds, two victims each, rotating across all five
+    // nodes — the same storm shape that wedged the soak and the manual
+    // repro (roster_len=0 with phantom links, delivery frozen).
+    let all: Vec<&Node> = std::iter::once(&creator).chain(joiners.iter()).collect();
+    for round in 0..3usize {
+        let first = all[round % all.len()];
+        let second = all[(round + 2) % all.len()];
+        first.stop();
+        second.stop();
+        std::thread::sleep(stop_window);
+        first.cont();
+        second.cont();
+        std::thread::sleep(resume_gap);
+    }
+
+    // Settle, then the invariant: a fresh broadcast reaches EVERY node.
+    std::thread::sleep(Duration::from_secs(10));
+    let _ = cli_message(&swarm, &creator.nickname, "fs-probe");
+    for joiner in &joiners {
+        assert_received(joiner, &creator.nickname, "fs-probe", recover);
+    }
+}
