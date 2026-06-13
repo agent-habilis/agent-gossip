@@ -87,7 +87,12 @@ pub(crate) async fn handle_gossip_event(
             // bootstrap set. Transport links are not surfaced at all:
             // arrival is surfaced once, via membership presence
             // (`joined`), keyed by nickname and join-horizon gated.
-            if node_id != ctx.rendezvous_id {
+            if node_id == ctx.rendezvous_id {
+                // Re-arms the healer's probe gate: while this is true the
+                // heal tick must not connect-probe the rendezvous (the
+                // probe would supersede this very link on the beacon).
+                state.rendezvous_linked = true;
+            } else {
                 // `NeighborUp`/`NeighborDown` are the only writers of
                 // `linked_endpoints`: it must mirror the *live* overlay
                 // links, because the silent-partition WARN and the
@@ -109,7 +114,9 @@ pub(crate) async fn handle_gossip_event(
         Some(Ok(Event::NeighborDown(node_id))) => {
             let is_rendezvous = node_id == ctx.rendezvous_id;
             tracing::info!(endpoint_id = %node_id, is_rendezvous, "gossip neighbor down");
-            if !is_rendezvous {
+            if is_rendezvous {
+                state.rendezvous_linked = false;
+            } else {
                 state.linked_endpoints.remove(&node_id);
             }
             // Arm the fast reclaim burst only on a real beacon-loss /

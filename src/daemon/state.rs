@@ -41,7 +41,7 @@ const RELINK_COOLDOWN: Duration = Duration::from_secs(RELINK_COOLDOWN_SECS);
 /// differently (node id vs nickname) and have different lifetimes.
 #[expect(
     clippy::struct_excessive_bools,
-    reason = "independent lifecycle edges (gossip_open/announced/meshed/degraded) plus the one-shot resident_memory_warned latch; each tracks a distinct transition, not a config bundle worth a sub-struct"
+    reason = "independent lifecycle edges (gossip_open/rendezvous_linked/announced/meshed/degraded) plus the one-shot resident_memory_warned latch; each tracks a distinct transition, not a config bundle worth a sub-struct"
 )]
 pub(crate) struct EventLoopState {
     /// Transport layer: the **live** gossip neighbor links, written only
@@ -117,6 +117,14 @@ pub(crate) struct EventLoopState {
     /// Goes false when the receiver stream terminally ends; IPC
     /// keeps working for `msg` / `poll` after that.
     pub gossip_open: bool,
+    /// Whether the gossip overlay currently links us to the co-hosted
+    /// rendezvous (its `NeighborUp`/`NeighborDown` arms drive it). Gates
+    /// the healer's connect-probe: probing the rendezvous while a live
+    /// link exists makes the beacon's gossip *adopt* the probe
+    /// connection and then mark the peer down when the probe handle
+    /// drops — one rendezvous-link flap per heal tick, forever (the
+    /// 2026-05-30 soak's residual flap).
+    pub rendezvous_linked: bool,
     /// Set once we've broadcast our arrival (`joined` + `PeerInfo`).
     /// The announce is deferred to the first `NeighborUp` so it isn't
     /// lost into an unconnected overlay; subsequent neighbors only get
@@ -251,6 +259,7 @@ impl EventLoopState {
             last_sent_at: now,
             joined_at: crate::util::clock::unix_secs(),
             gossip_open: true,
+            rendezvous_linked: false,
             announced: false,
             meshed: false,
             reclaim_until: None,

@@ -150,10 +150,19 @@ pub(crate) async fn probe_connect(
 ) -> bool {
     let addr: EndpointAddr = target.into();
     let started = std::time::Instant::now();
-    let connected = matches!(
-        tokio::time::timeout(timeout, endpoint.connect(addr.clone(), GOSSIP_ALPN)).await,
-        Ok(Ok(_conn))
-    );
+    let connected =
+        match tokio::time::timeout(timeout, endpoint.connect(addr.clone(), GOSSIP_ALPN)).await {
+            Ok(Ok(conn)) => {
+                // Close explicitly, not via drop: the resolution side effect is
+                // done, and an orderly CONNECTION_CLOSE lets the accept side
+                // (the beacon's gossip, which adopts GOSSIP_ALPN connections)
+                // release the connection immediately instead of via its own
+                // error path.
+                conn.close(0u32.into(), b"probe");
+                true
+            }
+            _ => false,
+        };
     // `?addr`: a loopback/private direct addr means a *local*
     // rendezvous co-host (self-partition signature); relay/public is
     // the cross-machine path. `elapsed_ms` exposes a slow relay

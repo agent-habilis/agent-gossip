@@ -8,12 +8,12 @@ use iroh_gossip::api::GossipSender;
 use crate::daemon::ctx::HandlerCtx;
 use crate::daemon::state::EventLoopState;
 use crate::util::bounded_fifo_set::BoundedFifoSet;
-use crate::util::tuning::{HEAL_HARD_PROBE_SECS, HEAL_PROBE_SECS};
+use crate::util::tuning::HEAL_HARD_PROBE_SECS;
 
-/// Re-resolve/re-path the seed-derived rendezvous, then re-graft it.
-/// The probe is only wanted for that resolution side effect (its
-/// connection is discarded) and a cold path can take seconds, so it is
-/// detached off the sole event loop; `join_peers` is a cheap enqueue.
+/// Hard-heal body: re-resolve/re-path the seed-derived rendezvous via a
+/// detached connect-probe (only wanted for that resolution side effect;
+/// a cold path can take seconds, so it never runs on the sole event
+/// loop), then re-graft it. `join_peers` is a cheap enqueue.
 async fn heal(
     endpoint: &Endpoint,
     rendezvous_id: EndpointId,
@@ -38,26 +38,33 @@ async fn heal(
 }
 
 /// Gossip healer. iroh-gossip has no built-in reconnect, so this is
-/// the sole steady-state recovery primitive — unconditional and
-/// cause-agnostic. Every tick it forces iroh to re-resolve/re-path the
-/// seed-derived rendezvous, then re-grafts it. Cheap when already
-/// meshed (one HyParView control message). A partitioned node is just
-/// a cold joiner that kept its subscription and the rendezvous is the
-/// creator-independent re-entry point, so this single behavior covers
-/// relay churn and ordinary partitions with no gate or blind spot.
+/// the sole steady-state recovery primitive: re-graft the seed-derived
+/// rendezvous via `join_peers` (the gossip actor dials it with the
+/// endpoint's address lookups). A partitioned node is just a cold
+/// joiner that kept its subscription and the rendezvous is the
+/// creator-independent re-entry point.
 ///
-/// Not sufficient after a process freeze (the timer driving it stalled
-/// too); [`tick_heal_hard`] handles that edge.
-pub(crate) async fn tick_heal(
-    endpoint: &Endpoint,
-    rendezvous_id: EndpointId,
-    sender: &GossipSender,
-) {
+/// The caller runs this **only while the rendezvous link is down**, and
+/// it deliberately does NOT connect-probe: every `GOSSIP_ALPN`
+/// connection gets *adopted* by the beacon's gossip as the member's
+/// peer connection, so a probe alongside the graft supersedes — and on
+/// close, kills — the very link `join_peers` is forming. That race was
+/// the 2026-05-30 soak's once-per-tick rendezvous flap (reproduced in
+/// `code-review/2026-06-12 … repro-m2-probe-churn`). The long probe
+/// survives where cold re-resolution is genuinely needed:
+/// [`tick_heal_hard`] (resume edge) and the beacon's own probes.
+pub(crate) async fn tick_heal(rendezvous_id: EndpointId, sender: &GossipSender) {
     tracing::info!(
         target: "agent_habilis_swarm::gossip",
-        "heal tick: re-probe + re-graft the rendezvous"
+        "heal tick: re-graft the rendezvous"
     );
-    heal(endpoint, rendezvous_id, sender, HEAL_PROBE_SECS).await;
+    if let Err(error) = sender.join_peers(vec![rendezvous_id]).await {
+        tracing::warn!(
+            target: "agent_habilis_swarm::gossip",
+            %error,
+            "heal: rendezvous re-graft request failed"
+        );
+    }
 }
 
 /// Resume-edge re-bootstrap: [`tick_heal`] with a longer probe budget

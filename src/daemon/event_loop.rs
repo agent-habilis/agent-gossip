@@ -579,14 +579,27 @@ async fn run_heal(
             "heal: hard re-bootstrap edge"
         );
         state.note_degraded();
+        // The frozen-era link view is stale by definition; clearing this
+        // re-arms the regular tick's probe until a fresh NeighborUp.
+        state.rendezvous_linked = false;
         // Re-assert the rendezvous hint (the network changed). The rung
         // is re-validated off-loop by the beacon's liveness self-monitor,
         // so a rung that died during the freeze self-corrects — no inline
         // ladder walk on the event loop here.
         setup::register_rendezvous(ctx.endpoint, params);
         gossip::heal::tick_heal_hard(ctx.endpoint, params.id, ctx.sender).await;
+    } else if state.rendezvous_linked {
+        // A live rendezvous link has nothing to heal — and healing it
+        // anyway is what flapped it once per tick (both heal legs dial
+        // `GOSSIP_ALPN`, which the beacon's gossip adopts, superseding
+        // the healthy link; see `tick_heal`). `NeighborDown` re-arms
+        // this gate instantly.
+        tracing::debug!(
+            target: "agent_habilis_swarm::gossip",
+            "heal tick: rendezvous linked; idle"
+        );
     } else {
-        gossip::heal::tick_heal(ctx.endpoint, params.id, ctx.sender).await;
+        gossip::heal::tick_heal(params.id, ctx.sender).await;
     }
     // Rendezvous-independent re-bridge. Fires on the hard (resume) edge —
     // where a reused endpoint id can be stuck behind a stale *accepted*
@@ -737,6 +750,9 @@ async fn resubscribe_tick(
             let mut dead_receiver = std::mem::replace(receiver, new_receiver);
             *sender = new_sender;
             state.gossip_open = true;
+            // The dead subscription's link view is void; the fresh one
+            // emits its own NeighborUps (and re-arms the probe gate).
+            state.rendezvous_linked = false;
             let ctx = parts.ctx(sender);
             gossip::drain_dead_receiver(&mut dead_receiver, state, &ctx).await;
             drop(dead_receiver);
