@@ -48,10 +48,9 @@ export function formatDisplay(event: SwarmEvent): string | null {
 }
 
 export function getNotifyType(event: SwarmEvent): NotifyType {
-  if (event.type === "presence") {
-    if (event.subtype === "left") return "warning";
-    return "info";
-  }
+  // Presence (joined/left) is plain "info" — a peer leaving is not a warning,
+  // so pi must not prefix the line with "Warning:".
+  if (event.type === "presence") return "info";
   if (event.event === "peer_timeout") return "error";
   return "info";
 }

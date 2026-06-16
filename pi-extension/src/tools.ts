@@ -3,6 +3,7 @@ import { Type } from "typebox";
 import {
   type CreateOptions,
   createSwarm,
+  discoverSwarms,
   getPeers,
   getSwarmStatus,
   joinSwarm,
@@ -128,6 +129,39 @@ export function registerTools(pi: ExtensionAPI): void {
         content: [{ type: "text", text: "ok" }],
         details: { swarm: result.swarm, name: result.name, nickname: result.nickname },
       };
+    },
+  });
+
+  pi.registerTool({
+    name: "swarm_discover",
+    label: "Swarm Discover",
+    description:
+      "Browse a directory for advertised swarms; returns the list (join one with swarm_join)",
+    promptSnippet: "Find advertised swarms in a directory to join",
+    promptGuidelines: [
+      "Use swarm_discover when the user wants to find a swarm to join but has no swarm id",
+      "After discovering, join a listed swarm with swarm_join using its swarm id",
+    ],
+    parameters: Type.Object({
+      directory: Type.Optional(
+        Type.String({ description: "Directory to browse. Omit for the global directory." }),
+      ),
+    }),
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx: ExtensionContext) {
+      if (!requireAgentSwarm(ctx)) {
+        return toolError("ah-s CLI not found on PATH");
+      }
+      const directory = params.directory?.trim() || "global";
+      const swarms = await discoverSwarms({
+        directory: directory === "global" ? undefined : directory,
+      });
+      const text =
+        swarms.length === 0
+          ? `no swarms found in #${directory}`
+          : swarms
+              .map((swarm) => `#${swarm.name} · ${swarm.peers} peers · ${swarm.swarm}`)
+              .join("\n");
+      return { content: [{ type: "text", text }], details: { directory, swarms } };
     },
   });
 

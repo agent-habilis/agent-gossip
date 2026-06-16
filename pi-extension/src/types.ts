@@ -26,6 +26,13 @@ export type PingResult = {
   rtt: number;
 };
 
+export type DiscoveredSwarm = {
+  swarm: string;
+  name: string;
+  peers: number;
+  mode: "public" | "private";
+};
+
 export type Peer = {
   nickname: string;
   // "direct" => a live link (shown as "connected"); "gossip" => relayed.

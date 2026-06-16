@@ -1,8 +1,9 @@
 import { spawn } from "node:child_process";
+import * as readline from "node:readline";
 import { clearBatch, startWatcher, stopWatcher } from "./daemon";
 import { isValidBody, isValidSwarmName, runSwarmCommand } from "./helpers";
 import { state, stateFilePath } from "./state";
-import type { Peer, PingResult, Session } from "./types";
+import type { DiscoveredSwarm, Peer, PingResult, Session } from "./types";
 
 export function cleanup(): void {
   stopWatcher();
@@ -196,6 +197,76 @@ export function getSwarmStatus(): {
 
 export function leaveSwarm(): void {
   cleanup();
+}
+
+// Browse a directory for advertised swarms. Spawns `ah-s discover`, collects
+// swarm_found/swarm_lost lines, then resolves: ~`graceMs` after the first hit
+// (to gather a few more), or at `maxMs` if nothing shows. Discovery joins no
+// swarm — the child is always killed before resolving.
+export function discoverSwarms({
+  directory,
+  graceMs = 1500,
+  maxMs = 8000,
+}: {
+  directory?: string;
+  graceMs?: number;
+  maxMs?: number;
+}): Promise<DiscoveredSwarm[]> {
+  return new Promise((resolve) => {
+    const args = ["discover", "--no-interactive", "--output", "json"];
+    if (directory && directory !== "global") args.push("--directory", directory);
+    const child = spawn("ah-s", args, { stdio: ["ignore", "pipe", "pipe"] });
+    const found = new Map<string, DiscoveredSwarm>();
+    let graceTimer: ReturnType<typeof setTimeout> | null = null;
+    let settled = false;
+
+    const settle = () => {
+      if (settled) return;
+      settled = true;
+      if (graceTimer) clearTimeout(graceTimer);
+      clearTimeout(maxTimer);
+      try {
+        child.kill();
+      } catch {
+        /* already gone */
+      }
+      resolve([...found.values()].sort((left, right) => right.peers - left.peers));
+    };
+    const maxTimer = setTimeout(settle, maxMs);
+
+    const stdout = child.stdout;
+    if (!stdout) {
+      settle();
+      return;
+    }
+    const lineReader = readline.createInterface({ input: stdout });
+    lineReader.on("line", (line) => {
+      let event: {
+        event?: string;
+        swarm?: string;
+        name?: string;
+        peers?: number;
+        mode?: string;
+      };
+      try {
+        event = JSON.parse(line);
+      } catch {
+        return;
+      }
+      if (event.event === "swarm_found" && typeof event.swarm === "string") {
+        found.set(event.swarm, {
+          swarm: event.swarm,
+          name: event.name ?? "?",
+          peers: Number(event.peers ?? 0),
+          mode: event.mode === "public" ? "public" : "private",
+        });
+        if (!graceTimer) graceTimer = setTimeout(settle, graceMs);
+      } else if (event.event === "swarm_lost" && typeof event.swarm === "string") {
+        found.delete(event.swarm);
+      }
+    });
+    child.on("error", settle);
+  });
 }
 
 // Query the live roster via `ah-s peers`. Throws when not in a swarm.

@@ -2,6 +2,7 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-c
 import {
   type CreateOptions,
   createSwarm,
+  discoverSwarms,
   getPeers,
   getSwarmStatus,
   joinSwarm,
@@ -13,6 +14,7 @@ import {
 import { formatRoster } from "./format";
 import { formatSwarmMessage, isValidBody, requireAgentSwarm, runSwarmCommand } from "./helpers";
 import { state } from "./state";
+import type { DiscoveredSwarm } from "./types";
 
 export function registerCommands(pi: ExtensionAPI): void {
   pi.registerCommand("swarm-create", {
@@ -22,6 +24,10 @@ export function registerCommands(pi: ExtensionAPI): void {
   pi.registerCommand("swarm-join", {
     description: "Join an existing swarm by ID, domain, or git repo URL",
     handler: cmdJoin,
+  });
+  pi.registerCommand("swarm-discover", {
+    description: "Browse a directory for advertised swarms and join one",
+    handler: cmdDiscover,
   });
   pi.registerCommand("swarm-msg", {
     description: "Send a message to the current swarm",
@@ -142,6 +148,39 @@ async function cmdJoin(args: string, ctx: ExtensionCommandContext): Promise<void
 
   ctx.ui.notify(`🐝 joining ${target.slice(0, 40)}...`, "info");
   const result = await joinSwarm({ target, model: ctx.model?.name });
+  ctx.ui.notify(`🐝 joined #${result.name} as <${result.nickname}>`, "info");
+  if (result.drift) ctx.ui.notify(`🐝 ${result.drift}`, "info");
+}
+
+async function cmdDiscover(args: string, ctx: ExtensionCommandContext): Promise<void> {
+  state.ctx = ctx;
+  if (!requireAgentSwarm(ctx)) return;
+
+  const directory = args.trim() || "global";
+  ctx.ui.notify(`🐝 discovering #${directory}...`, "info");
+
+  const swarms = await discoverSwarms({
+    directory: directory === "global" ? undefined : directory,
+  });
+  if (swarms.length === 0) {
+    ctx.ui.notify(`🐝 no swarms found in #${directory}`, "info");
+    return;
+  }
+
+  // Option label carries name + peers + a short id so distinct swarms never
+  // collide; map it back to the full `ahs…` id for the join.
+  const byOption = new Map(
+    swarms.map((swarm): [string, DiscoveredSwarm] => [
+      `#${swarm.name} · ${swarm.peers} peers · ${swarm.swarm.slice(0, 14)}…`,
+      swarm,
+    ]),
+  );
+  const choice = await ctx.ui.select(`Swarms in #${directory}`, [...byOption.keys()]);
+  const picked = choice ? byOption.get(choice) : undefined;
+  if (!picked) return;
+
+  ctx.ui.notify(`🐝 joining #${picked.name}...`, "info");
+  const result = await joinSwarm({ target: picked.swarm, model: ctx.model?.name });
   ctx.ui.notify(`🐝 joined #${result.name} as <${result.nickname}>`, "info");
   if (result.drift) ctx.ui.notify(`🐝 ${result.drift}`, "info");
 }
