@@ -19,6 +19,9 @@ export type SwarmEvent = {
   self?: boolean;
   swarm?: string;
   nickname?: string;
+  // On `joined` presence: the joiner's self-reported model / harness.
+  model?: string;
+  harness?: string;
 };
 
 export type PingResult = {

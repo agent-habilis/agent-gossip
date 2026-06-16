@@ -200,6 +200,9 @@ fn json_presence_joined_shows_meta() {
         parsed["display"],
         "🐝️ `<alice>` (Opus 4.8 / Claude Code) has joined"
     );
+    // Structured fields too, so a plain-text client can compose its own line.
+    assert_eq!(parsed["model"], "Opus 4.8");
+    assert_eq!(parsed["harness"], "Claude Code");
 }
 
 #[test]

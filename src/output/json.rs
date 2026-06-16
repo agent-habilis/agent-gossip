@@ -116,6 +116,13 @@ struct PresenceLine<'a> {
     pub subtype: PresenceSubtype,
     /// Pre-formatted, markdown-safe line (see [`presence_display`]).
     pub display: String,
+    /// The joiner's self-reported model / harness, also surfaced as structured
+    /// fields (not just inside `display`) so a plain-text client can compose
+    /// its own join line. Only on `joined`; absent when the peer advertised none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub harness: Option<String>,
 }
 
 /// A `{"event":"exchange",...}` line for a **content** exchange leg. A distinct
@@ -294,15 +301,21 @@ pub(super) fn emit_json<T: Serialize>(value: &T) {
 /// pins the field order (`event`, `id`, `type`, `swarm`, `author`,
 /// `ts`, …) and `Value::to_string` would sort keys alphabetically.
 pub(super) fn format_presence_json(msg: &Message, subtype: PresenceSubtype) -> String {
-    // Only `joined` carries a body (the joiner's model/harness); show it in
-    // parens on the join line.
-    let label = (subtype == PresenceSubtype::Joined)
-        .then(|| crate::protocol::peer_meta::from_body(msg.body.as_str()).label())
-        .flatten();
+    // Only `joined` carries a body (the joiner's model/harness): show it in
+    // parens on the `display` line and also surface the raw fields so a
+    // plain-text client (the pi extension) can compose its own join line.
+    let meta = if subtype == PresenceSubtype::Joined {
+        crate::protocol::peer_meta::from_body(msg.body.as_str())
+    } else {
+        crate::protocol::peer_meta::PeerMeta::default()
+    };
+    let label = meta.label();
     serde_json::to_string(&PresenceLine {
         header: message_header(msg, "presence"),
         subtype,
         display: presence_display(msg.author.as_str(), subtype, label.as_deref()),
+        model: meta.model,
+        harness: meta.harness,
     })
     .expect("presence event serialization should never fail")
 }

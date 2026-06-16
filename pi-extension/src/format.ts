@@ -3,7 +3,13 @@ import type { NotifyType, Peer, SwarmEvent } from "./types";
 
 export function formatPresence(event: SwarmEvent): string | null {
   if (event.subtype === "alive") return null;
-  if (event.subtype === "joined") return `🐝 <${event.author}> joined`;
+  if (event.subtype === "joined") {
+    // The daemon ships the joiner's model/harness as structured fields; show
+    // them in parens right after the nick (matching the Claude Code plugin's
+    // join line), keeping pi's own terse verb.
+    const meta = [event.model, event.harness].filter(Boolean).join(" / ");
+    return meta ? `🐝 <${event.author}> (${meta}) joined` : `🐝 <${event.author}> joined`;
+  }
   if (event.subtype === "left") return `🐝 <${event.author}> left`;
   return null;
 }
