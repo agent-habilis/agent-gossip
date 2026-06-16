@@ -18,7 +18,7 @@ ran `/swarm:create` or `/swarm:join` earlier in this session (the
 `ready` event gave you `$NAME`) and have not since left. If you are
 **not** in a swarm, print:
 ```
-Not in a swarm.
+🐝 Not in a swarm.
 ```
 and STOP.
 

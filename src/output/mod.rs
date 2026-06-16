@@ -454,7 +454,16 @@ impl Output {
             |mode| match mode {
                 OutputMode::Human => {
                     let (open, close) = self.nick_ansi(msg.author.as_str(), stderr_color());
-                    eprintln!("{open}<{}>{close} has {subtype}", msg.author);
+                    // `joined` carries the joiner's model/harness; show it.
+                    let label = (*subtype == crate::protocol::PresenceSubtype::Joined)
+                        .then(|| crate::protocol::peer_meta::from_body(msg.body.as_str()).label())
+                        .flatten();
+                    match label {
+                        Some(label) => {
+                            eprintln!("{open}<{}>{close} ({label}) has {subtype}", msg.author);
+                        }
+                        None => eprintln!("{open}<{}>{close} has {subtype}", msg.author),
+                    }
                 }
                 OutputMode::Json => emit(&format_presence_json(msg, *subtype)),
                 OutputMode::Silent => {}

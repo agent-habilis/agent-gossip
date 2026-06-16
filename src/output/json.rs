@@ -238,9 +238,14 @@ fn exchange_progress_display(
 }
 
 /// `display` line for a presence event: `` 🐝️ `<author>` has joined `` /
-/// `… has left`. See [`msg_display`] for the backtick rationale.
-fn presence_display(author: &str, subtype: PresenceSubtype) -> String {
-    format!("🐝️ `<{author}>` has {subtype}")
+/// `… has left`. A joiner that advertised model/harness gets it in parens:
+/// `` 🐝️ `<author>` (Opus 4.8 / Claude Code) has joined ``. See
+/// [`msg_display`] for the backtick rationale.
+fn presence_display(author: &str, subtype: PresenceSubtype, meta: Option<&str>) -> String {
+    match meta {
+        Some(meta) => format!("🐝️ `<{author}>` ({meta}) has {subtype}"),
+        None => format!("🐝️ `<{author}>` has {subtype}"),
+    }
 }
 
 /// `display` line for a `peer_timeout` event.
@@ -289,10 +294,15 @@ pub(super) fn emit_json<T: Serialize>(value: &T) {
 /// pins the field order (`event`, `id`, `type`, `swarm`, `author`,
 /// `ts`, …) and `Value::to_string` would sort keys alphabetically.
 pub(super) fn format_presence_json(msg: &Message, subtype: PresenceSubtype) -> String {
+    // Only `joined` carries a body (the joiner's model/harness); show it in
+    // parens on the join line.
+    let label = (subtype == PresenceSubtype::Joined)
+        .then(|| crate::protocol::peer_meta::from_body(msg.body.as_str()).label())
+        .flatten();
     serde_json::to_string(&PresenceLine {
         header: message_header(msg, "presence"),
         subtype,
-        display: presence_display(msg.author.as_str(), subtype),
+        display: presence_display(msg.author.as_str(), subtype, label.as_deref()),
     })
     .expect("presence event serialization should never fail")
 }

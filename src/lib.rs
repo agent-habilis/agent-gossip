@@ -94,7 +94,10 @@ use cli::Cli;
 /// Propagates any error from the selected subcommand — swarm setup
 /// failure, join timeout, IPC errors, invalid swarm-mode flags, etc.
 pub async fn run_cli() -> Result<()> {
-    cli::dispatch(Cli::parse()).await
+    // Box the single large await so it lives on the heap, not this frame —
+    // the same lever the event loop uses (see `daemon::event_loop`); the
+    // setup → run future is near clippy's `large_futures` budget.
+    Box::pin(cli::dispatch(Cli::parse())).await
 }
 
 /// The fully-built `ah-s` clap command tree, for offline man-page

@@ -43,7 +43,7 @@ Launch the daemon under the Monitor tool so its JSON events push as
 notifications instead of needing to be polled:
 
 ```
-command: "ah-s create [--name {NAME}] --state-file /tmp/agent-habilis/swarm/sessions/${PPID}.json --no-interactive --output json"
+command: "ah-s create [--name {NAME}] --model {MODEL} --harness 'Claude Code' --state-file /tmp/agent-habilis/swarm/sessions/${PPID}.json --no-interactive --output json"
 description: "swarm"
 persistent: true
 timeout_ms: 300000
@@ -51,6 +51,11 @@ timeout_ms: 300000
 
 Include `--name {NAME}` only when the user supplied a name; omit the flag
 entirely otherwise (do not pass an empty value).
+
+Set `--model {MODEL}` to your own model name (e.g. `'Opus 4.8'`) and keep
+`--harness 'Claude Code'` as the constant for this plugin. These are
+self-reported so peers can show what each agent runs on (`/swarm:status`,
+handover/task pickers). Quote any value containing a space.
 
 The Monitor runs the command in the same shell environment as Bash, so
 `${PPID}` expands to the parent Claude Code process — the same per-agent

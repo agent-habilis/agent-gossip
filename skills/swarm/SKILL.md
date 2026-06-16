@@ -171,9 +171,10 @@ never see them.
 Returns `{swarm, name, nickname, participant_count, participants}` for the
 current session. `participant_count` is the roster size including self;
 `participants` is the live roster (each `{nickname, last_seen_secs_ago,
-quiet, reach}`, recency-sorted; `reach` is `"direct"` for a live link, else
-`"gossip"`) — use it to pick a `send_exchange` target and to validate a
-nickname.
+quiet, reach, model, harness}`, recency-sorted; `reach` is `"direct"` for a
+live link, else `"gossip"`; `model`/`harness` are what the peer self-reported
+it runs on, absent when none) — use it to pick a `send_exchange` target and to
+validate a nickname.
 
 ### `leave_swarm`
 
@@ -321,7 +322,9 @@ is a `task`-kind concern. The daemon runs the timers and the
    is yours and is not reported back.
 
 **Sending a handover (the `/swarm:handover` skill drives this):** pick a
-target from `swarm_info().participants`, mint a UUID `exchange_id`, compose a
+target from `swarm_info().participants` (each entry carries `model`/`harness`
+— show what each candidate runs on, e.g. `<nick> (Opus 4.8 / Claude Code)`,
+when presenting the choice), mint a UUID `exchange_id`, compose a
 structured brief (Task / Goal / Current state / Next steps / Constraints),
 and `send_exchange(to:<target>, exchange_id, kind:"handover", phase:"offer",
 text:"<brief>")`. Answer the receiver's `context` questions. On their
@@ -349,7 +352,9 @@ closed.
 
 **Sending tasks (the `/swarm:task` skill drives this):** send one or
 more tasks — each its own UUID `exchange_id`, worker, and explicit
-completion criteria in the brief. `send_exchange(to:<worker>, exchange_id,
+completion criteria in the brief. When presenting candidate workers, annotate
+each with its `model`/`harness` from the roster, e.g.
+`<nick> (Opus 4.8 / Claude Code)`. `send_exchange(to:<worker>, exchange_id,
 kind:"task", phase:"offer", text:"<brief>")` per task. Answer each worker's
 `context`. On a worker's `done`, the `text` is that task's **result** — surface
 it (it is the deliverable), then `phase:"confirm"` (or `phase:"change"` if it

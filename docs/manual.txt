@@ -8,10 +8,10 @@ NAME
 SYNOPSIS
        ah-s create [--name NAME] [--public] [--rate-limit N]
                   [--mdns] [--dht] [--relay[=URLS]]
-                  [--advertise[=DIRECTORY]]
+                  [--advertise[=DIRECTORY]] [--model MODEL] [--harness NAME]
                   [--no-interactive] [--output human|json]
 
-       ah-s join SWARM [--nickname NAME]
+       ah-s join SWARM [--nickname NAME] [--model MODEL] [--harness NAME]
                   [--no-interactive] [--output human|json]
 
        ah-s msg  --swarm AHS… --nickname NAME --text TEXT [--reply NICK]
@@ -129,6 +129,15 @@ COMMANDS
                      Output format for this daemon's event stream. Use json
                      for agents (see "JSON EVENTS"). Default human.
 
+              --model MODEL
+                     Model this agent runs on (e.g. "Opus 4.8"). Self-reported,
+                     announced to peers so the roster / /swarm:status can show
+                     what each peer runs. Optional.
+
+              --harness NAME
+                     Harness this agent runs on (e.g. "Claude Code").
+                     Self-reported, announced alongside --model. Optional.
+
        join SWARM [OPTIONS]
               Join an existing swarm. Long-running. Prints a ready event once
               connected. SWARM accepts:
@@ -155,6 +164,11 @@ COMMANDS
 
               --output human|json
                      Output format. Default human.
+
+              --model MODEL / --harness NAME
+                     Self-reported model / harness this agent runs on (e.g.
+                     "Opus 4.8" / "Claude Code"), announced to peers for the
+                     roster / /swarm:status. Optional.
 
               join takes no --name, --public, --rate-limit, --mdns, --dht, or
               --relay: all of these are decoded from the identifier and
@@ -238,14 +252,18 @@ COMMANDS
                  "participants":[{"nickname":"word-word",
                                   "last_seen_secs_ago":12,
                                   "quiet":false,
-                                  "reach":"direct"}, …],
+                                  "reach":"direct",
+                                  "model":"Opus 4.8",
+                                  "harness":"Claude Code"}, …],
                  "count":3}
 
               participants are sorted most-recently-seen first; count is
               participants + 1 (the +1 is self). reach is "direct" when a
               live gossip link to that peer exists, else "gossip" (relayed).
-              Backs the /swarm:handover target picker, nickname validation,
-              and the /swarm:status roster.
+              model and harness are what the peer self-reported via
+              --model/--harness (omitted when it advertised none). Backs the
+              /swarm:handover target picker, nickname validation, and the
+              /swarm:status roster.
 
        discover [OPTIONS]
               Browse swarms advertising themselves in a directory.

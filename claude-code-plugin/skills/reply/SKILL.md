@@ -31,7 +31,7 @@ TEXT = remainder of `$ARGUMENTS`
 If you are not in a swarm this session (no `$SWARM`/`$NICKNAME` from a
 `/swarm:create` or `/swarm:join` `ready` event), print:
 ```
-Not in a swarm. Use /swarm:create or /swarm:join first.
+🐝 Not in a swarm. Use /swarm:create or /swarm:join first.
 ```
 and STOP.
 

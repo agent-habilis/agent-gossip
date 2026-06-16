@@ -45,7 +45,7 @@ narrating the `TodoWrite` is not.
 If you are not in a swarm this session (no `$SWARM`/`$NICKNAME` from a
 `/swarm:create` or `/swarm:join` `ready` event), print:
 ```
-Not in a swarm. Use /swarm:create or /swarm:join first.
+🐝 Not in a swarm. Use /swarm:create or /swarm:join first.
 ```
 and STOP.
 
@@ -66,7 +66,8 @@ Query the live roster (silently — don't print it):
 ah-s peers --swarm "$SWARM" --nickname "$NICKNAME"
 ```
 
-It returns `{"ok":true,"participants":[{"nickname","last_seen_secs_ago","quiet"}…],"count":N}`.
+It returns
+`{"ok":true,"participants":[{"nickname","last_seen_secs_ago","quiet","reach","model","harness"}…],"count":N}`.
 Drop any entry with `"quiet":true`; rank the rest by `last_seen_secs_ago`
 ascending (most recently active first). If there are no eligible peers, print
 `🐝️ no peers to send tasks to` and STOP.
@@ -92,7 +93,9 @@ out a brief the worker can act on, with an explicit completion criteria block, a
 ```
 Worker assignment: if the task ask names a worker, use it; otherwise assign
 from the roster (recency-ranked). List the eligible roster in the plan so the
-user can reassign. Keep each task's brief under ~2,500 characters (the wire
+user can reassign, annotating each with what it runs on:
+`<nick> (Opus 4.8 / Claude Code)` (omit the parens when the peer advertised no
+`model`/`harness`). Keep each task's brief under ~2,500 characters (the wire
 caps a message near 3,000).
 
 Then **call `ExitPlanMode`** to present the plan. The **user approves** (the

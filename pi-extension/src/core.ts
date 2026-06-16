@@ -1,39 +1,8 @@
-import type { ChildProcess } from "node:child_process";
 import { spawn } from "node:child_process";
-import * as readline from "node:readline";
 import { clearBatch, startWatcher, stopWatcher } from "./daemon";
 import { isValidBody, isValidSwarmName, runSwarmCommand } from "./helpers";
 import { state, stateFilePath } from "./state";
 import type { PingResult, Session } from "./types";
-
-function waitForReady(child: ChildProcess, timeoutMs: number): Promise<string> {
-  return new Promise<string>((resolve, reject) => {
-    const stdout = child.stdout;
-    if (!stdout) {
-      reject(new Error("ah-s spawned without a stdout stream"));
-      return;
-    }
-    const lineReader = readline.createInterface({ input: stdout });
-    const timeout = setTimeout(() => {
-      lineReader.close();
-      child.kill();
-      reject(new Error(`timeout waiting for ready event (${timeoutMs}ms)`));
-    }, timeoutMs);
-
-    lineReader.on("line", (line) => {
-      if (line.includes('"event":"ready"')) {
-        clearTimeout(timeout);
-        lineReader.close();
-        resolve(line);
-      }
-    });
-    child.on("error", (error) => {
-      clearTimeout(timeout);
-      lineReader.close();
-      reject(new Error(`spawn failed: ${error.message}`));
-    });
-  });
-}
 
 export function cleanup(): void {
   stopWatcher();
@@ -59,7 +28,29 @@ export type CreateOptions = {
   advertise?: boolean;
   // Directory to advertise into; omit for the well-known `global`.
   directory?: string;
+  // Model this agent runs on (e.g. "Claude Opus 4.8"), self-reported to peers.
+  model?: string;
 };
+
+export type JoinOptions = {
+  // What to join: an `ahs…` id, a domain, or a supported git repo URL.
+  target: string;
+  // Local nickname; omit for the daemon's random `word-word`.
+  nickname?: string;
+  // Model this agent runs on, self-reported to peers.
+  model?: string;
+};
+
+// The harness label this extension reports to peers (the pi runtime).
+const HARNESS = "pi";
+
+// Self-reported identity flags shared by `create` and `join`: always the
+// harness, plus the model when the runtime exposed one (`ctx.model`).
+function metaArgs(model?: string): string[] {
+  const args = ["--harness", HARNESS];
+  if (model) args.push("--model", model);
+  return args;
+}
 
 // The semantic contract for create options, shared by every caller (the
 // `/swarm-create` command and the swarm_create tool). Returns an error
@@ -87,9 +78,20 @@ export async function createSwarm(options: CreateOptions = {}): Promise<Session>
 
   cleanup();
 
-  const { name, network = "private", relay, mdns, dht, rateLimit, advertise, directory } = options;
+  const {
+    name,
+    network = "private",
+    relay,
+    mdns,
+    dht,
+    rateLimit,
+    advertise,
+    directory,
+    model,
+  } = options;
 
   const args = ["create", "--no-interactive", "--output", "json", "--filter-self"];
+  args.push(...metaArgs(model));
   // Omit --name entirely so the daemon mints a random name (empty is rejected by the CLI).
   if (name) args.push("--name", name);
   if (network === "public") args.push("--public");
@@ -103,7 +105,10 @@ export async function createSwarm(options: CreateOptions = {}): Promise<Session>
   if (filePath) args.push("--state-file", filePath);
 
   const child = spawn("ah-s", args, { stdio: ["ignore", "pipe", "pipe"] });
-  const readyLine = await waitForReady(child, 30_000);
+  // `startWatcher` attaches the single readline and resolves with the `ready`
+  // line; ongoing events (incl. peers already present) flow on from the same
+  // reader — no second one to drop the bundled `joined` lines.
+  const readyLine = await startWatcher({ child, timeoutMs: 30_000 });
   const ready = JSON.parse(readyLine);
 
   if (!ready.swarm || !ready.name || !ready.nickname) {
@@ -121,20 +126,20 @@ export async function createSwarm(options: CreateOptions = {}): Promise<Session>
     drift: typeof ready.drift === "string" ? ready.drift : undefined,
   };
   state.session = session;
-  startWatcher(child);
   return session;
 }
 
-export async function joinSwarm(target: string, nickname?: string): Promise<Session> {
+export async function joinSwarm({ target, nickname, model }: JoinOptions): Promise<Session> {
   cleanup();
 
   const args = ["join", target, "--no-interactive", "--output", "json", "--filter-self"];
+  args.push(...metaArgs(model));
   if (nickname) args.push("--nickname", nickname);
   const filePath = stateFilePath();
   if (filePath) args.push("--state-file", filePath);
 
   const child = spawn("ah-s", args, { stdio: ["ignore", "pipe", "pipe"] });
-  const readyLine = await waitForReady(child, 60_000);
+  const readyLine = await startWatcher({ child, timeoutMs: 60_000 });
   const ready = JSON.parse(readyLine);
 
   if (!ready.swarm || !ready.name || !ready.nickname) {
@@ -152,11 +157,10 @@ export async function joinSwarm(target: string, nickname?: string): Promise<Sess
     drift: typeof ready.drift === "string" ? ready.drift : undefined,
   };
   state.session = session;
-  startWatcher(child);
   return session;
 }
 
-export function sendSwarmMessage(text: string, reply?: string): void {
+export function sendSwarmMessage({ text, reply }: { text: string; reply?: string }): void {
   if (!state.session?.swarm) throw new Error("Not in a swarm");
   if (!isValidBody(text)) {
     throw new Error("Message body must not contain control characters other than tab/newline");

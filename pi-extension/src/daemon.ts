@@ -111,14 +111,53 @@ export function processDaemonLine(line: string): void {
   }
 }
 
-export function startWatcher(child: ChildProcess): void {
+// Attach the single readline that both detects the `ready` line and forwards
+// every other line to `processDaemonLine`. One reader (not a `waitForReady`
+// reader followed by a second one): a second readline would lose the `joined`
+// events the daemon bundles into the same stdout chunk as `ready` — the peers
+// already present when we join. Resolves with the raw `ready` line.
+export function startWatcher({
+  child,
+  timeoutMs,
+}: {
+  child: ChildProcess;
+  timeoutMs: number;
+}): Promise<string> {
   state.daemon = child;
   const stdout = child.stdout;
-  if (!stdout) throw new Error("daemon spawned without a stdout stream");
-  const lineReader = readline.createInterface({ input: stdout });
-  lineReader.on("line", processDaemonLine);
-  child.on("exit", () => {
-    state.daemon = null;
+  if (!stdout) {
+    return Promise.reject(new Error("daemon spawned without a stdout stream"));
+  }
+  return new Promise<string>((resolve, reject) => {
+    const lineReader = readline.createInterface({ input: stdout });
+    let settled = false;
+    const timeout = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      lineReader.close();
+      child.kill();
+      reject(new Error(`timeout waiting for ready event (${timeoutMs}ms)`));
+    }, timeoutMs);
+
+    lineReader.on("line", (line) => {
+      if (!settled && line.includes('"event":"ready"')) {
+        settled = true;
+        clearTimeout(timeout);
+        resolve(line);
+        return;
+      }
+      processDaemonLine(line);
+    });
+    child.on("error", (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      lineReader.close();
+      reject(new Error(`spawn failed: ${error.message}`));
+    });
+    child.on("exit", () => {
+      state.daemon = null;
+    });
   });
 }
 

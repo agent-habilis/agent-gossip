@@ -22,6 +22,10 @@ pub(crate) struct HandlerCtx<'a> {
     /// the per-message self-echo check is a string compare, not a fresh
     /// key-derivation + allocation on every inbound message.
     pub our_pubkey: &'a str,
+    /// This node's self-reported model / harness (from `--model`/`--harness`),
+    /// built once at loop setup and announced in every `joined` we send so
+    /// peers can show what we run on. Empty when the flags were omitted.
+    pub self_meta: &'a crate::protocol::peer_meta::PeerMeta,
     pub max_peers: usize,
     /// Well-known rendezvous endpoint id. Its co-hosted pseudo-node
     /// shows up as a gossip neighbor on participant endpoints; it is

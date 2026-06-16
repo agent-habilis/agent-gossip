@@ -134,6 +134,11 @@ async fn run_session(resolved: Resolved, shared: SharedServerOpts) -> Result<()>
         drift.as_deref(),
     )
     .await?;
+    // Self-reported model / harness, announced in our `joined` body. Set here
+    // (not in `setup_swarm`) to keep its arg count in budget — same
+    // late-assignment pattern as `live_count`.
+    cfg.model = shared.model;
+    cfg.harness = shared.harness;
     // Advertising (`create --advertise`): start the re-broadcast task. It
     // reaches the directory over this swarm's own lookups. The handle is
     // held for the session's lifetime — on the CLI the process exits (via

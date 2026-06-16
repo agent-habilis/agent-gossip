@@ -352,14 +352,18 @@ impl Message {
         Self::new(swarm, author, MessageKind::Msg { reply: None }, body)
     }
 
-    pub(crate) fn new_joined(swarm: &SwarmId, author: &Nickname) -> Self {
+    pub(crate) fn new_joined(
+        swarm: &SwarmId,
+        author: &Nickname,
+        meta: &crate::protocol::peer_meta::PeerMeta,
+    ) -> Self {
         Self::new(
             swarm,
             author,
             MessageKind::Presence {
                 subtype: PresenceSubtype::Joined,
             },
-            empty_body(),
+            crate::protocol::peer_meta::to_body(meta),
         )
     }
 
@@ -1237,7 +1241,7 @@ mod tests {
             fn prop_presence_round_trip(is_join in any::<bool>()) {
                 let test_nick = Nickname::from("test-nick");
                 let msg = if is_join {
-                    Message::new_joined(&sid(), &test_nick)
+                    Message::new_joined(&sid(), &test_nick, &crate::protocol::peer_meta::PeerMeta::default())
                 } else {
                     Message::new_left(&sid(), &test_nick)
                 };

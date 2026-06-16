@@ -113,6 +113,7 @@ async function cmdCreate(args: string, ctx: ExtensionCommandContext): Promise<vo
     return;
   }
 
+  options.model = ctx.model?.name;
   ctx.ui.notify(options.name ? `🐝 creating #${options.name}...` : "🐝 creating swarm...", "info");
   const result = await createSwarm(options);
   ctx.ui.notify(`🐝 created #${result.name}\n/swarm-join ${result.swarm}`, "info");
@@ -130,7 +131,7 @@ async function cmdJoin(args: string, ctx: ExtensionCommandContext): Promise<void
   }
 
   ctx.ui.notify(`🐝 joining ${target.slice(0, 40)}...`, "info");
-  const result = await joinSwarm(target);
+  const result = await joinSwarm({ target, model: ctx.model?.name });
   ctx.ui.notify(`🐝 joined #${result.name} as <${result.nickname}>`, "info");
   if (result.drift) ctx.ui.notify(`🐝 ${result.drift}`, "info");
 }
@@ -160,7 +161,7 @@ async function cmdMsg(args: string, ctx: ExtensionCommandContext): Promise<void>
   }
 
   try {
-    sendSwarmMessage(text);
+    sendSwarmMessage({ text });
     ctx.ui.notify(`🐝 <${session.nickname}>: ${text}`, "info");
   } catch (error) {
     ctx.ui.notify(`🐝 send failed: ${error instanceof Error ? error.message : "unknown"}`, "error");

@@ -182,13 +182,24 @@ fn json_body_escapes_backslashes() {
 
 #[test]
 fn json_presence_joined() {
-    let msg = Message::new_joined(&sid(), &nick("alice"));
+    let msg = Message::new_joined(&sid(), &nick("alice"), &crate::protocol::peer_meta::PeerMeta::default());
     let parsed = parse(&format_presence_json(&msg, PresenceSubtype::Joined));
     assert_eq!(parsed["event"], "message");
     assert_eq!(parsed["type"], "presence");
     assert_eq!(parsed["subtype"], "joined");
     assert_eq!(parsed["author"], "alice");
     assert_eq!(parsed["swarm"], "ahstest");
+}
+
+#[test]
+fn json_presence_joined_shows_meta() {
+    let meta = crate::protocol::peer_meta::PeerMeta::from_refs(Some("Opus 4.8"), Some("Claude Code"));
+    let msg = Message::new_joined(&sid(), &nick("alice"), &meta);
+    let parsed = parse(&format_presence_json(&msg, PresenceSubtype::Joined));
+    assert_eq!(
+        parsed["display"],
+        "🐝️ `<alice>` (Opus 4.8 / Claude Code) has joined"
+    );
 }
 
 #[test]
@@ -361,7 +372,7 @@ fn json_output_is_single_line() {
             false,
         ),
         format_presence_json(
-            &Message::new_joined(&sid(), &nick("charlie")),
+            &Message::new_joined(&sid(), &nick("charlie"), &crate::protocol::peer_meta::PeerMeta::default()),
             PresenceSubtype::Joined,
         ),
         format_presence_json(
@@ -524,7 +535,7 @@ mod prop {
         fn prop_presence_json_is_valid(is_join in any::<bool>()) {
             let test_nick = crate::protocol::Nickname::from("test-nick");
             let (msg, subtype) = if is_join {
-                (Message::new_joined(&sid(), &test_nick), PresenceSubtype::Joined)
+                (Message::new_joined(&sid(), &test_nick, &crate::protocol::peer_meta::PeerMeta::default()), PresenceSubtype::Joined)
             } else {
                 (Message::new_left(&sid(), &test_nick), PresenceSubtype::Left)
             };

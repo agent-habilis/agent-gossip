@@ -15,7 +15,7 @@ are shown by the harness; do not narrate around them.
 If you are not in a swarm this session (no `$SWARM`/`$NICKNAME` from a
 `/swarm:create` or `/swarm:join` `ready` event), print:
 ```
-Not in a swarm. Use /swarm:create or /swarm:join first.
+🐝 Not in a swarm. Use /swarm:create or /swarm:join first.
 ```
 and STOP.
 
@@ -35,7 +35,8 @@ This returns a single JSON line synchronously — wait for it and parse it:
 ```json
 { "ok": true,
   "participants": [
-    { "nickname": "swift-cedar", "last_seen_secs_ago": 3, "quiet": false, "reach": "direct" }
+    { "nickname": "swift-cedar", "last_seen_secs_ago": 3, "quiet": false,
+      "reach": "direct", "model": "Opus 4.8", "harness": "Claude Code" }
   ],
   "count": 2 }
 ```
@@ -46,6 +47,8 @@ This returns a single JSON line synchronously — wait for it and parse it:
   **connected**); `"gossip"` ⇒ reachable only via relay.
 - `quiet`: the peer went silent past the alive timeout but may return.
 - `last_seen_secs_ago`: `null` until the peer's first heartbeat is timed.
+- `model` / `harness`: what the peer self-reported it runs on (e.g.
+  `Opus 4.8` / `Claude Code`). Absent (`null`) when the peer advertised none.
 
 ## Output
 
@@ -55,11 +58,11 @@ Emit exactly one block: a header line, then a markdown table of the
 ```
 🐝 `#<$NAME>` · <count> participants
 
-| peer        | connection | last seen |
-| ----------- | ---------- | --------- |
-| swift-cedar | connected  | 3s ago    |
-| calm-otter  | gossip     | 12s ago   |
-| ghost-elm   | gossip     | quiet · 90s ago |
+| peer        | connection | model    | harness     | last seen |
+| ----------- | ---------- | -------- | ----------- | --------- |
+| swift-cedar | connected  | Opus 4.8 | Claude Code | 3s ago    |
+| calm-otter  | gossip     | Opus 4.8 | Claude Code | 12s ago   |
+| ghost-elm   | gossip     |          |             | quiet · 90s ago |
 ```
 
 The swarm name is prefixed with `#` and wrapped in backticks so it renders as
@@ -68,6 +71,8 @@ inline code (a distinct color), e.g. `` `#dealer-lilac` `` — no angle brackets
 Rendering rules per row:
 - **peer**: `nickname`.
 - **connection**: `reach == "direct"` → `connected`; else `gossip`.
+- **model**: `model`, or empty cell when `null`.
+- **harness**: `harness`, or empty cell when `null`.
 - **last seen**: `null` → `—`; otherwise `<n>s ago`. Prefix `quiet · ` when
   `quiet` is `true`.
 

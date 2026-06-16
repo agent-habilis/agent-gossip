@@ -298,6 +298,11 @@ pub(crate) async fn setup_swarm(
         name: swarm_name,
         output,
         interactive,
+        // Set by the CLI path (`run_session`) from `--model`/`--harness` before
+        // `run`; left `None` on the embed/MCP paths (same late-assignment
+        // pattern as `live_count` / `driver`).
+        model: None,
+        harness: None,
         endpoint,
         router,
         max_peers,

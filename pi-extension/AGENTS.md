@@ -37,6 +37,9 @@ From inside pi, test each slash command:
 - Use `type` aliases, not `interface`. All types in a single `// -- types --` block at the top.
 - Avoid single-letter variable names. Use descriptive names (3+ chars).
 - `event` not `ev`, `message` not `m`, `lineReader` not `rl`, `error` not `e`.
+- Functions with 2+ parameters take a single object argument (named params),
+  not positional — except callbacks whose signature the pi API dictates
+  (command handlers, tool `execute`, event listeners).
 
 ## Architecture
 

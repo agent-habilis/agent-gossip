@@ -75,6 +75,7 @@ pub(crate) async fn handle_gossip_event(
                     ctx.author,
                     ctx.identity,
                     ctx.endpoint,
+                    ctx.self_meta,
                 )
                 .await;
                 state.announced = true;

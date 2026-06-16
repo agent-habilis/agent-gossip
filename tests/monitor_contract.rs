@@ -1303,3 +1303,45 @@ async fn test_peers_roster_shape() {
         "joiner should see the creator/beacon as a direct (rendezvous) link"
     );
 }
+
+/// A node started with `--model`/`--harness` advertises them in its `joined`
+/// body; a peer's roster reports them per participant.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_peers_roster_reports_model_and_harness() {
+    let (creator, swarm) = JsonNode::create();
+    let joiner = JsonNode::join_with_flags(
+        &swarm,
+        "meta-joiner",
+        &[("--model", "Opus 4.8"), ("--harness", "Claude Code")],
+    );
+
+    // The joiner's metadata rides its `joined` announce, so it trails roster
+    // convergence — poll the creator's roster until the joiner entry carries it.
+    let deadline = Instant::now() + MSG_TIMEOUT;
+    let mut found = None;
+    while Instant::now() < deadline {
+        let roster: serde_json::Value =
+            serde_json::from_str(&common::cli_peers(&swarm, &creator.nickname))
+                .expect("peers response is JSON");
+        found = roster["participants"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|entry| entry["nickname"].as_str() == Some(joiner.nickname.as_str()))
+            .map(|entry| {
+                (
+                    entry["model"].as_str().map(str::to_owned),
+                    entry["harness"].as_str().map(str::to_owned),
+                )
+            });
+        if matches!(&found, Some((Some(_), Some(_)))) {
+            break;
+        }
+        std::thread::sleep(POLL);
+    }
+    assert_eq!(
+        found,
+        Some((Some("Opus 4.8".to_owned()), Some("Claude Code".to_owned()))),
+        "creator's roster should report the joiner's model/harness"
+    );
+}

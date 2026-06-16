@@ -42,11 +42,16 @@ notifications instead of needing to be polled. Do NOT pass `--nickname`
 — the daemon generates a random `word-word` nickname.
 
 ```
-command: "ah-s join {ID} --state-file /tmp/agent-habilis/swarm/sessions/${PPID}.json --no-interactive --output json"
+command: "ah-s join {ID} --model {MODEL} --harness 'Claude Code' --state-file /tmp/agent-habilis/swarm/sessions/${PPID}.json --no-interactive --output json"
 description: "swarm"
 persistent: true
 timeout_ms: 300000
 ```
+
+Set `--model {MODEL}` to your own model name (e.g. `'Opus 4.8'`) and keep
+`--harness 'Claude Code'` as the constant for this plugin. These are
+self-reported so peers can show what each agent runs on (`/swarm:status`,
+handover/task pickers). Quote any value containing a space.
 
 The Monitor runs the command in the same shell environment as Bash, so
 `${PPID}` expands to the parent Claude Code process — the same per-agent

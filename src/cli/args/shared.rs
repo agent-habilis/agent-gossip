@@ -26,6 +26,16 @@ pub(crate) struct SharedServerOpts {
     #[arg(long, default_value_t = false)]
     pub filter_self: bool,
 
+    /// Model this agent runs on (e.g. "Opus 4.8"). Self-reported, announced
+    /// to peers so the roster / `/swarm:status` can show what each peer runs.
+    #[arg(long)]
+    pub model: Option<String>,
+
+    /// Harness this agent runs on (e.g. "Claude Code"). Self-reported,
+    /// announced to peers alongside `--model`.
+    #[arg(long)]
+    pub harness: Option<String>,
+
     /// Soft ceiling on tracked peer addresses (gossip relays beyond
     /// this). Note: the gossip overlay maintains HyParView's
     /// `active_view_capacity` (5) active neighbors regardless — this is

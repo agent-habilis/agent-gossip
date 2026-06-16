@@ -74,8 +74,13 @@ pub(super) async fn announce_arrival(
     author: &Nickname,
     identity: &Identity,
     endpoint: &Endpoint,
+    meta: &crate::protocol::peer_meta::PeerMeta,
 ) {
-    broadcast_msg(sender, &Message::new_joined(swarm, author).signed(identity)).await;
+    broadcast_msg(
+        sender,
+        &Message::new_joined(swarm, author, meta).signed(identity),
+    )
+    .await;
     broadcast_peer_info(sender, swarm, author, identity, endpoint).await;
 }
 

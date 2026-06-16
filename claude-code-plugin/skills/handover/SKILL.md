@@ -41,7 +41,7 @@ screen, period.
 If you are not in a swarm this session (no `$SWARM`/`$NICKNAME` from a
 `/swarm:create` or `/swarm:join` `ready` event), print:
 ```
-Not in a swarm. Use /swarm:create or /swarm:join first.
+🐝 Not in a swarm. Use /swarm:create or /swarm:join first.
 ```
 and STOP.
 
@@ -99,15 +99,23 @@ Now that the task is set, choose who runs it. Query the live roster:
 ah-s peers --swarm "$SWARM" --nickname "$NICKNAME"
 ```
 
-It returns `{"ok":true,"participants":[{"nickname","last_seen_secs_ago","quiet"}…],"count":N}`
+It returns
+`{"ok":true,"participants":[{"nickname","last_seen_secs_ago","quiet","reach","model","harness"}…],"count":N}`
 (read it silently — don't print the roster). Drop any entry with
 `"quiet":true`; rank the rest by `last_seen_secs_ago` ascending (most
 recently active first). Show an `AskUserQuestion` — question "Hand
 `<one-line task>` to which peer?", header `swarm:handover`, options = the
-**top 3** by recency (label = the nickname wrapped in angle brackets, e.g.
-`<cable-spark>`, not `cable-spark`; description = "active Ns ago"). The
-free-text "Other" entry lets the user type a nickname; re-validate it against
-the roster. The chosen nickname (without the brackets) is `$TARGET`.
+**top 3** by recency. For each option:
+- **label** = the nickname wrapped in angle brackets, e.g. `<cable-spark>`
+  (not `cable-spark`).
+- **description** = the peer's `model` / `harness` then recency, e.g.
+  `Opus 4.8 / Claude Code · active 3s ago`. The widget renders the
+  description as dimmed secondary text. Omit the metadata part when the peer
+  advertised none (just `active Ns ago`); join `model`/`harness` with ` / `,
+  or show just the one present.
+
+The free-text "Other" entry lets the user type a nickname; re-validate it
+against the roster. The chosen nickname (without the brackets) is `$TARGET`.
 
 If the roster has no eligible peers, print `🐝️ no peers to hand over to`
 and STOP.

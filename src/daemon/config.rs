@@ -149,6 +149,11 @@ pub(crate) struct EventLoopConfig {
     /// global.
     pub output: output::Output,
     pub interactive: bool,
+    /// This node's self-reported model / harness (`--model`/`--harness`),
+    /// announced in our `joined` body so peers can show what we run on.
+    /// `None` when the flag was omitted.
+    pub model: Option<String>,
+    pub harness: Option<String>,
     pub endpoint: Endpoint,
     /// iroh router whose accept loop routes inbound gossip
     /// connections. Must be held alive for the whole event loop —

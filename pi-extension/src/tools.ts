@@ -81,6 +81,7 @@ export function registerTools(pi: ExtensionAPI): void {
         rateLimit: params.rate_limit,
         advertise: params.advertise,
         directory: params.directory,
+        model: ctx.model?.name,
       };
       const invalid = validateCreateOptions(options);
       if (invalid) {
@@ -116,7 +117,11 @@ export function registerTools(pi: ExtensionAPI): void {
       if (!requireAgentSwarm(ctx)) {
         return toolError("ah-s CLI not found on PATH");
       }
-      const result = await joinSwarm(params.target, params.nickname);
+      const result = await joinSwarm({
+        target: params.target,
+        nickname: params.nickname,
+        model: ctx.model?.name,
+      });
       return {
         content: [{ type: "text", text: "ok" }],
         details: { swarm: result.swarm, name: result.name, nickname: result.nickname },
@@ -149,7 +154,7 @@ export function registerTools(pi: ExtensionAPI): void {
         return toolError("Not in a swarm. Use swarm_create or swarm_join first.");
       }
       try {
-        sendSwarmMessage(params.text, params.reply);
+        sendSwarmMessage({ text: params.text, reply: params.reply });
         return { content: [{ type: "text", text: "ok" }], details: null };
       } catch (error) {
         return toolError(`Send failed: ${error instanceof Error ? error.message : "unknown"}`);
