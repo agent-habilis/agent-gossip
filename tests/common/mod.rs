@@ -21,8 +21,48 @@ use std::time::{Duration, Instant};
 pub(crate) use agent_habilis_swarm::SOCKET_DIR;
 
 pub(crate) const CONNECT_TIMEOUT: Duration = Duration::from_mins(1);
-pub(crate) const MSG_TIMEOUT: Duration = Duration::from_secs(30);
+/// Steady-state delivery budget: how long a meshed peer may take to surface a
+/// message/presence/handover leg. The suite-wide standard for every positive
+/// (adaptive, break-on-success) delivery wait. A meshed in-process round trip
+/// is normally sub-second; the headroom is for a loaded CI host running the
+/// suite in a **debug** build, where crypto is ~10x slower than release and two
+/// concurrent in-process meshes can stall a delivery well past a tighter
+/// budget. `wait_for`/`wait_until` are adaptive, so a healthy run returns
+/// immediately and only a genuine stall pays the ceiling.
+pub(crate) const MSG_TIMEOUT: Duration = Duration::from_mins(1);
 pub(crate) const POLL: Duration = Duration::from_millis(250);
+
+/// Budget for a delivery asserted **after a disruption** (beacon death,
+/// SIGSTOP freeze, rendezvous migration, creator departure). Re-meshing waits
+/// on the fixed 15s heal cadence, so a recovery that just missed a tick needs
+/// another cycle — the steady-state `MSG_TIMEOUT` (30s) sits right on that
+/// cliff and flakes on a loaded host. 90s clears several cycles; `wait_until`
+/// is adaptive, so a healthy run returns in seconds and only a genuine stall
+/// pays the ceiling. One named constant so every post-disruption assertion
+/// across the suite uses the same floor.
+pub(crate) const RECOVERY_TIMEOUT: Duration = Duration::from_secs(90);
+
+/// Serializes the daemon-spawning reliability tests (`#[test]`, sync) —
+/// beacon migration, sleep/wake heal, anti-entropy, flap storms. They assert
+/// recovery within heal-cadence-gated budgets; run concurrently (libtest
+/// `--test-threads`), their active windows starve each other's timing and
+/// miss those budgets — a flaky failure that is **not** a product bug (real
+/// daemons mesh in ~3s; verified out-of-band). Holding this gate for the
+/// test's duration lets at most one run at a time while lighter tests still
+/// parallelize. Each integration binary is its own process, so this `static`
+/// serializes within a binary, not across them. (The async in-process
+/// adversarial suite does **not** use this — a multi-thread runtime keeps it
+/// responsive; a cross-runtime async mutex starved it instead.)
+static SERIAL_GATE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Acquire the [`SERIAL_GATE`]; hold the returned guard for the whole test.
+/// Poison-tolerant: a failing (panicking) test must not cascade-poison the
+/// gate and spuriously fail the others. For `#[test]` (sync) tests only.
+pub(crate) fn serial_guard() -> std::sync::MutexGuard<'static, ()> {
+    SERIAL_GATE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
 
 /// Use the freshly built test binary to avoid stale release output formats.
 pub(crate) fn bin() -> PathBuf {
@@ -208,6 +248,73 @@ pub(crate) fn cli_poll(swarm: &str, nickname: &str, after: Option<&str>) -> Stri
     String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
 
+/// Spawn `ah-s task …` and return the raw `Output` (no success
+/// assertion — callers that test the unknown-participant / rate-limit
+/// failure paths inspect it).
+pub(crate) fn cli_task_raw(
+    swarm: &str,
+    nickname: &str,
+    to: &str,
+    task_id: &str,
+    kind: &str,
+    phase: &str,
+    text: &str,
+) -> Output {
+    test_cmd()
+        .args([
+            "task",
+            "--swarm",
+            swarm,
+            "--nickname",
+            nickname,
+            "--to",
+            to,
+            "--task-id",
+            task_id,
+            "--kind",
+            kind,
+            "--phase",
+            phase,
+            "--text",
+            text,
+        ])
+        .output()
+        .expect("task command failed to spawn")
+}
+
+/// `cli_task_raw` + assert success.
+pub(crate) fn cli_task_checked(
+    swarm: &str,
+    nickname: &str,
+    to: &str,
+    task_id: &str,
+    kind: &str,
+    phase: &str,
+    text: &str,
+) {
+    let out = cli_task_raw(swarm, nickname, to, task_id, kind, phase, text);
+    assert!(
+        out.status.success(),
+        "task failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// Spawn `ah-s peers …`, assert success, return trimmed stdout (the
+/// raw `{ok, participants, count}` JSON line).
+pub(crate) fn cli_peers(swarm: &str, nickname: &str) -> String {
+    let out = test_cmd()
+        .args(["peers", "--swarm", swarm, "--nickname", nickname])
+        .output()
+        .expect("peers command failed to spawn");
+    assert!(
+        out.status.success(),
+        "peers failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stdout).trim().to_string()
+}
+
 /// Spawn `ah-s ping … `, assert success. Fire-and-forget — the RTT
 /// report lands on the target daemon's own output stream, not here.
 pub(crate) fn cli_ping(swarm: &str, nickname: &str) {
@@ -226,7 +333,8 @@ pub(crate) fn cli_ping(swarm: &str, nickname: &str) {
 
 use agent_habilis_swarm::embed::{CreateConfig, JoinConfig, SwarmSession};
 use agent_habilis_swarm::{
-    Message, MessageBody, MessageId, MessageKind, Nickname, OutputEvent, PresenceSubtype, SwarmName,
+    Message, MessageBody, MessageId, MessageKind, Nickname, OutputEvent, PresenceSubtype,
+    SwarmName, TaskId, TaskKind, TaskPhase,
 };
 use tokio::sync::mpsc::UnboundedReceiver;
 
@@ -328,6 +436,59 @@ impl InProcNode {
             .send(MessageBody::new(text).expect("valid body"), reply)
             .await?;
         Ok(sent.map(|msg| msg.id))
+    }
+
+    /// Send one task leg to `target`, correlated by `task_id`; returns the
+    /// new id (or `None` if the sender-side rate limiter dropped it). Panics
+    /// on transport error — addressee validation is `broadcast_task`'s job.
+    pub(crate) async fn task(
+        &self,
+        target: &str,
+        task_id: &TaskId,
+        kind: TaskKind,
+        phase: TaskPhase,
+        text: &str,
+    ) -> Option<MessageId> {
+        let to = Nickname::new(target).expect("valid target nickname");
+        let sent = self
+            .session
+            .task(
+                to,
+                task_id.clone(),
+                kind,
+                phase,
+                MessageBody::new(text).expect("valid body"),
+            )
+            .await
+            .expect("in-process task failed");
+        sent.map(|msg| msg.id)
+    }
+
+    /// Captured task legs (any phase; includes self echoes — filter on
+    /// `is_self`/author as needed).
+    pub(crate) fn tasks(&mut self) -> Vec<(&Message, bool)> {
+        self.pump();
+        self.drained
+            .iter()
+            .filter_map(|event| match event {
+                OutputEvent::Task { msg, is_self } => Some((&**msg, *is_self)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Wait until a task leg of `phase` (from any author) is surfaced.
+    pub(crate) async fn wait_task(&mut self, phase: TaskPhase, timeout: Duration) -> bool {
+        self.wait_for(timeout, |events| {
+            events.iter().any(|event| {
+                matches!(
+                    event,
+                    OutputEvent::Task { msg, .. }
+                        if matches!(&msg.kind, MessageKind::Task { phase: got, .. } if *got == phase)
+                )
+            })
+        })
+        .await
     }
 
     /// Clean shutdown (broadcasts `Left`).

@@ -34,7 +34,7 @@ use crate::util::tuning::{
 use super::config::{CoHostPolicy, DriverMode, EventLoopConfig, SessionRequest};
 use super::ctx::HandlerCtx;
 use super::state::EventLoopState;
-use super::{ipc, setup, timers};
+use super::{ipc, setup, task, timers};
 
 /// Never returns normally — exits the process on ctrl-c / SIGTERM.
 pub(crate) async fn run(cfg: EventLoopConfig) -> Result<()> {
@@ -294,6 +294,11 @@ async fn event_loop(loop_state: EventLoop) -> Result<()> {
             _ = intervals.sweep.tick() => {
                 timers::note_tick_gap("sweep", &mut anchors.sweep, &mut anchors.sweep_wall, Duration::from_secs(sweep_interval_secs()));
                 lifecycle::heartbeat::tick_sweep(&mut state, &output);
+                // Task timers ride the sweep cadence (each gates on its own
+                // elapsed-time budget): evict idle-debounce-expired tasks, then
+                // keepalive the ones whose ball we still hold.
+                task::tick_task_sweep(&mut state, &sender, &swarm_str, &author, &output).await;
+                task::tick_task_keepalive(&mut state, &sender, &swarm_str, &author).await;
             }
             _ = intervals.heal.tick() => {
                 let (mono_gap, wall_gap) = timers::note_tick_gap("heal", &mut anchors.heal, &mut anchors.heal_wall, Duration::from_secs(HEAL_INTERVAL_SECS));

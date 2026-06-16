@@ -12,9 +12,12 @@ use iroh::{Endpoint, protocol::Router};
 use iroh_gossip::api::GossipTopic;
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
 
+use crate::daemon::state::RosterSnapshot;
 use crate::output;
 use crate::protocol::swarm::SwarmName;
-use crate::protocol::{Message, MessageBody, MessageId, Nickname, SwarmId};
+use crate::protocol::{
+    Message, MessageBody, MessageId, Nickname, SwarmId, TaskId, TaskKind, TaskPhase,
+};
 
 use crate::beacon;
 
@@ -32,6 +35,22 @@ pub(crate) enum SessionRequest {
     Poll {
         after: Option<MessageId>,
         resp: oneshot::Sender<Vec<Message>>,
+    },
+    /// Send one leg of a task exchange to `to`, correlated by `task_id`.
+    /// Echoes back the canonical [`Message`] (`None` ⇒ dropped by the
+    /// sender-side rate limiter), like [`Send`](SessionRequest::Send).
+    /// Addressee validation for `Offer` lives in `broadcast_task`.
+    Task {
+        to: Nickname,
+        task_id: TaskId,
+        kind: TaskKind,
+        phase: TaskPhase,
+        body: MessageBody,
+        resp: oneshot::Sender<Result<Option<Message>>>,
+    },
+    /// Snapshot the live participant roster (active + quiet, recency-sorted).
+    Peers {
+        resp: oneshot::Sender<RosterSnapshot>,
     },
     /// Broadcast pre-built wire bytes **verbatim** — no signing, no chain
     /// stamping. The escape hatch the `adversarial` feature uses to inject

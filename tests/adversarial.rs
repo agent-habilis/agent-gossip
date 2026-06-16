@@ -24,9 +24,14 @@ use std::time::Duration;
 
 use agent_habilis_swarm::OutputEvent;
 use agent_habilis_swarm::harness::adversarial::{self, CraftedMsg};
-use common::InProcNode;
+use common::{InProcNode, MSG_TIMEOUT};
 
-const T: Duration = Duration::from_secs(30);
+// Delivery-barrier budget. These tests assert a message *is* delivered (so
+// the adversarial one was dropped / the gap surfaces); the fast path passes
+// in well under a second. It is an ordinary in-process delivery, so it tracks
+// the suite's steady-state standard (`common::MSG_TIMEOUT`) for the headroom a
+// loaded debug-build host needs — see that constant's note.
+const T: Duration = MSG_TIMEOUT;
 
 /// A victim + attacker pair on a fresh loopback swarm, **meshed** (a warmup
 /// from the attacker is observed by the victim) so injected bytes are
@@ -49,7 +54,7 @@ fn surfaced(victim: &mut InProcNode, body: &str) -> bool {
 
 // ── Defended: these MUST pass ──────────────────────────────────────────
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn unsigned_message_is_dropped() {
     let (mut victim, attacker) = meshed_pair("unsigned").await;
     // No `.sign(..)` → empty signature. The victim must reject it.
@@ -70,7 +75,7 @@ async fn unsigned_message_is_dropped() {
     attacker.leave().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn tampered_message_is_dropped() {
     let (mut victim, attacker) = meshed_pair("tampered").await;
     let key = adversarial::new_key();
@@ -93,7 +98,7 @@ async fn tampered_message_is_dropped() {
     attacker.leave().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn equivocation_surfaces_a_fork() {
     let (mut victim, attacker) = meshed_pair("fork").await;
     let key = adversarial::new_key();
@@ -125,7 +130,7 @@ async fn equivocation_surfaces_a_fork() {
     attacker.leave().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn forged_message_does_not_suppress_genuine_with_replayed_id() {
     // Authenticity must be checked BEFORE dedup: an unsigned/forged message
     // carrying a replayed id must not poison the dedup window and suppress the
@@ -168,7 +173,7 @@ async fn forged_message_does_not_suppress_genuine_with_replayed_id() {
     attacker.leave().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn directed_replies_to_third_party_do_not_leak_into_indexes() {
     // A reply addressed to someone else is relayed but never logged. It must
     // therefore never be folded into the fork/DAG indexes — otherwise those
@@ -215,7 +220,7 @@ async fn directed_replies_to_third_party_do_not_leak_into_indexes() {
 // it). When a gap is closed the assert holds, no panic fires, and the test
 // goes RED — convert it to a positive assertion then.
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[should_panic(expected = "OPEN GAP")]
 async fn gap_future_timestamp_is_accepted() {
     // A validly-signed message with an absurd FUTURE timestamp and no parents
@@ -237,7 +242,7 @@ async fn gap_future_timestamp_is_accepted() {
     attacker.leave().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[should_panic(expected = "OPEN GAP")]
 async fn gap_nickname_impersonation_is_accepted() {
     // The attacker posts under the *victim's* display nickname but with its
@@ -260,7 +265,7 @@ async fn gap_nickname_impersonation_is_accepted() {
     attacker.leave().await;
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[should_panic(expected = "OPEN GAP")]
 async fn gap_sybil_identities_are_accepted() {
     // Five messages from five brand-new keys. There is no membership control
@@ -302,7 +307,7 @@ async fn gap_sybil_identities_are_accepted() {
 /// "close and re-open"), so this is a realistic flood-pressure path.
 /// `sever_gossip` flips the same `gossip_open` flag the real terminal
 /// `None` arm does, so the loop cannot tell the difference.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn severed_gossip_stream_resubscribes_and_backfills() {
     let (mut victim, attacker) = meshed_pair("sever").await;
     victim.session.sever_gossip().await.expect("sever");

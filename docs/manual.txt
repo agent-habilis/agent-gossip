@@ -20,6 +20,13 @@ SYNOPSIS
 
        ah-s ping --swarm AHS… --nickname NAME
 
+       ah-s task --swarm AHS… --nickname NAME --to NICK --task-id UUID
+                  --kind handover|execute
+                  --phase offer|accept|decline|context|progress|done|confirm|change|cancel
+                  --text TEXT
+
+       ah-s peers --swarm AHS… --nickname NAME
+
        ah-s discover [--directory DIRECTORY]
                   [--mdns] [--dht] [--relay[=URLS]]
                   [--no-interactive] [--output human|json]
@@ -189,6 +196,54 @@ COMMANDS
               Ping/pong probes are never rate-limited, logged, or surfaced as
               messages.
 
+       task --swarm AHS… --nickname NAME --to NICK --task-id UUID
+            --kind KIND --phase PHASE --text TEXT
+              Send one leg of a task exchange to a specific peer. A task is
+              a directed, phased exchange correlated by --task-id; handover
+              (delegate a task/plan) is one --kind, execute the other. Mint
+              one UUID for the opening offer and reuse it on every leg.
+
+                offer    opens the exchange, carrying the task brief
+                accept   receiver takes it on (entry decision)
+                decline  receiver (or a busy peer) refuses
+                context  either side supplies more context (the Q&A)
+                progress receiver liveness + done/total beat (plumbing)
+                done     receiver requests close (a handover's done just
+                         asks to close; an execute task's done adds
+                         verification steps)
+                confirm  initiator confirms the close (terminal)
+                change   initiator requests a revision (execute; loops to
+                         context)
+                cancel   either side aborts
+
+              The leg is delivered to all members (gossip floods) but
+              surfaced and logged only by its addressee and the sender's
+              own echo — a third peer relays it without ever seeing it,
+              the same privacy a directed `msg --reply` has. The receiving
+              daemon emits a task (or task_progress) event on its --output
+              json stream (see "JSON EVENTS"). --phase offer validates --to
+              against the live roster and errors on an unknown nickname;
+              later phases skip the check so a transient peer flap
+              mid-exchange does not wedge the conversation. Content legs are
+              counted against the same per-author rate limit as msg and a
+              whole-task 100-message cap; progress is exempt. The daemon
+              runs a 5-minute idle-debounce timeout and a keepalive for the
+              party that holds the ball.
+
+       peers --swarm AHS… --nickname NAME
+              List the live participant roster of a swarm. Queries the
+              running daemon and prints a JSON object:
+
+                {"ok":true,
+                 "participants":[{"nickname":"word-word",
+                                  "last_seen_secs_ago":12,
+                                  "quiet":false}, …],
+                 "count":3}
+
+              participants are sorted most-recently-seen first; count is
+              participants + 1 (the +1 is self). Backs the /swarm:handover
+              target picker and nickname validation.
+
        discover [OPTIONS]
               Browse swarms advertising themselves in a directory.
               Long-running. Interactive by default on a TTY (a live picker;
@@ -304,7 +359,10 @@ JSON EVENTS
        never surface.
 
        ready  First event. Carries the build version, swarm id, name, and
-              your nickname.
+              your nickname. Carries an optional "drift" field (a warning
+              string, omitted when absent) when the installed skill has
+              fallen behind this binary; run `ah-s status` to inspect, then
+              `ah-s setup --execute` to refresh.
 
                  {"event":"ready","version":"0.4.4 (1c362892 dirty:false)",
                   "swarm":"ahs1...","name":"demo","nickname":"calm-otter"}
@@ -358,6 +416,42 @@ JSON EVENTS
                  {"event":"ping_report",
                   "peers":[{"nickname":"word-word","rtt_ms":42}],
                   "responded":1,"known":2}
+
+       task
+              One per content task leg addressed to this member (and the
+              sender's own echo, with "self":true). A distinct top-level
+              event — never the "message" family — so agents branch on
+              "event". Carries the addressee (to), the task_id, kind, phase,
+              body, and a pre-built display line.
+
+                 {"event":"task","id":"<uuid>","swarm":"ahs…",
+                  "author":"word-word","pubkey":"<hex>","ts":1234567890,
+                  "to":"word-word","task_id":"<uuid>","kind":"handover",
+                  "phase":"offer","body":"…brief…",
+                  "display":"🐝️ task handover offer `<from>` → `<to>`: …",
+                  "self":false}
+
+              Content legs also land in the poll / fetch_messages buffer
+              (raw records with "type":"task") for the two parties only.
+              See the task command for the phase meanings.
+
+       task_progress
+              The receiver's liveness + percent beat (the progress phase) —
+              a widget update, never a chat line or a poll/fetch record.
+              done/total are omitted when progress is indeterminate.
+
+                 {"event":"task_progress","id":"<uuid>","swarm":"ahs…",
+                  "author":"word-word","ts":1234567890,"to":"word-word",
+                  "task_id":"<uuid>","kind":"execute","done":35,"total":100,
+                  "display":"🐝️ task execute progress `<from>` → `<to>`: 35/100",
+                  "self":false}
+
+       task_timeout
+              A task crossed its 5-minute idle-debounce timeout and was
+              evicted by the daemon. Marks the tasks widget entry as timed
+              out.
+
+                 {"event":"task_timeout","task_id":"<uuid>"}
 
        swarm_found / swarm_lost
               From ah-s discover --output json, one per directory change.
@@ -424,13 +518,15 @@ MCP SERVER
               ("loopback" or "public"), a name, rate_limit_per_min (default
               60, 0 disables), advertise (bool) and directory (string;
               advertise requires network "public"). All are baked into the
-              identifier. Returns the swarm id and your nickname. There is no
-              discover tool; the advertise arg still lets the swarm be found
+              identifier. Returns the swarm id and your nickname, plus an
+              optional drift warning if the installed skill is stale. There is
+              no discover tool; the advertise arg still lets the swarm be found
               by CLI discover or embed scanners.
 
        join_swarm
               Join an existing swarm by its ahs… identifier (and an optional
               nickname). The config decodes from the id, so no other args.
+              Like create_swarm, may carry an optional drift warning.
 
        leave_swarm
               Leave the active swarm and tear the session down.
@@ -456,6 +552,13 @@ MCP SERVER
        swarm_info
               Report the active swarm: its identifier, name, your nickname,
               and the current participant roster.
+
+       swarm_version
+              Report the binary version and whether the installed skill is
+              still in sync with it. A local check — needs no active swarm.
+              Returns {version, skill_up_to_date, skill_state, drift?}; when
+              skill_up_to_date is false the binary was upgraded past the
+              install — re-run `ah-s setup --execute` to refresh.
 
        IMPLICIT CURSOR
               First fetch_messages() with no after: full history (up to

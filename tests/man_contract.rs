@@ -36,6 +36,8 @@ fn man_prints_manual_to_stdout() {
         "join",
         "poll",
         "discover",
+        "task",
+        "peers",
     ] {
         assert!(
             stdout.contains(marker),

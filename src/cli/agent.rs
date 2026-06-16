@@ -190,6 +190,24 @@ pub(crate) fn states(home: &Path) -> Vec<(Agent, PathBuf, AgentState)> {
         .collect()
 }
 
+/// The one canonical "skill out of date" nag, shared by the `ready`-event
+/// drift warning (below) and the MCP `swarm_version` tool — one source of
+/// truth so the two can't drift apart. `ah-s setup --execute` refreshes every
+/// installed integration, so the message names no specific one.
+pub(crate) const SKILL_DRIFT_MSG: &str =
+    "⚠️ swarm skill out of date. Run `ah-s setup --execute` to update";
+
+/// A one-line drift warning if any installed integration has fallen behind the
+/// binary (`OutOfDate`), else `None`. The daemon folds this into its `ready`
+/// event so a stale skill nags the agent at swarm start; `ah-s status` is the
+/// on-demand counterpart.
+pub(crate) fn drift_warning(home: &Path) -> Option<String> {
+    let any_stale = states(home)
+        .into_iter()
+        .any(|(_, _, state)| state == AgentState::OutOfDate);
+    any_stale.then(|| SKILL_DRIFT_MSG.to_owned())
+}
+
 #[cfg(test)]
 mod tests {
     use super::{Agent, CC_PLUGIN, GENERIC_SKILL, PI_EXTENSION};
@@ -240,6 +258,27 @@ mod tests {
         // A diverged copy → out of sync.
         std::fs::write(&file, format!("{GENERIC_SKILL}\n")).unwrap();
         assert!(!Agent::Generic.in_sync(&home));
+
+        std::fs::remove_dir_all(&home).unwrap();
+    }
+
+    #[test]
+    fn drift_warning_fires_only_for_a_diverged_install() {
+        let home = std::env::temp_dir().join(format!("ah-s-drift-{}", std::process::id()));
+        let dir = Agent::Generic.install_path(&home);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("SKILL.md");
+
+        // Installed and matching → no warning (claude-code/pi are absent).
+        std::fs::write(&file, GENERIC_SKILL).unwrap();
+        assert!(super::drift_warning(&home).is_none());
+
+        // Diverged install → the canonical drift warning.
+        std::fs::write(&file, format!("{GENERIC_SKILL}\n")).unwrap();
+        let warning = super::drift_warning(&home).expect("diverged install warns");
+        assert_eq!(warning, super::SKILL_DRIFT_MSG);
+        assert!(warning.contains("out of date"));
+        assert!(warning.contains("ah-s setup --execute"));
 
         std::fs::remove_dir_all(&home).unwrap();
     }

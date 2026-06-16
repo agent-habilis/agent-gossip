@@ -13,16 +13,27 @@ use std::time::{Duration, Instant};
 
 use agent_habilis_swarm::RATE_LIMIT_PER_MIN;
 use common::{
-    CONNECT_TIMEOUT, InProcNode, MSG_TIMEOUT, Msg, Node, POLL, SOCKET_DIR, cli_message,
-    cli_message_raw, cli_ping, cli_poll, tmp_log, trace_log, wait_total, wait_until,
+    CONNECT_TIMEOUT, InProcNode, MSG_TIMEOUT, Msg, Node, POLL, RECOVERY_TIMEOUT, SOCKET_DIR,
+    cli_message, cli_message_raw, cli_ping, cli_poll, serial_guard, tmp_log, trace_log, wait_total,
+    wait_until,
 };
+
+/// How long a survivor needs to claim a dead beacon's seed-derived
+/// rendezvous (the claim-if-free handoff). The heal tick is a fixed 15s
+/// `const`, and a claim takes **≥2 cycles** (the first confirms the old
+/// beacon is gone, the next binds) — so the real floor is ~34s. We wait
+/// `2 * HEAL_INTERVAL_SECS + margin` before a fresh peer can bootstrap
+/// through the migrated beacon. Irreducible (the cadence is a `const`),
+/// and shared by every post-departure-join test so they can't drift to a
+/// too-short value (the cause of a flaky `test_first_message_…`).
+const RENDEZVOUS_HANDOFF: Duration = Duration::from_secs(36);
 
 // ── tests ─────────────────────────────────────────────────────────────────────
 
 /// Basic sanity: a broadcast message is received by the non-sending node.
 /// The node whose IPC socket is used will NOT receive its own broadcast;
 /// the peer will. We check total delivery across both nodes = 1.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_two_node_message_delivery() {
     let creator = InProcNode::create("net2node").await;
     let mut joiner = InProcNode::join(&creator.swarm, "joiner-2node").await;
@@ -43,7 +54,7 @@ async fn test_two_node_message_delivery() {
 /// (`Ok(None)`) rather than broadcast. Mirrors the receiver-side
 /// `rate_limiter_drops_excess_messages_from_flooding_peer`. One node is
 /// enough — the limiter is checked before any mesh interaction.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn sender_rate_limits_own_excess_messages() {
     let node = InProcNode::create("net-send-rl").await;
 
@@ -67,7 +78,7 @@ async fn sender_rate_limits_own_excess_messages() {
 /// Three-node full-mesh: a broadcast should reach at least 2 of the 3 nodes
 /// (the sender never receives its own broadcast). This test also documents
 /// the known HyParView relay bug where the second joiner may not receive messages.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_three_node_full_delivery() {
     let alpha = InProcNode::create("net3node").await;
     let mut beta = InProcNode::join(&alpha.swarm, "beta-3node").await;
@@ -87,7 +98,7 @@ async fn test_three_node_full_delivery() {
 }
 
 /// A reply addressed to its target is delivered to the addressee.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_reply_delivery() {
     let mut creator = InProcNode::create("netreply").await;
     let mut joiner = InProcNode::join(&creator.swarm, "joiner-reply").await;
@@ -108,7 +119,7 @@ async fn test_reply_delivery() {
 /// Directed replies are only surfaced to the addressee, not to uninvolved
 /// peers. In a 3-node swarm, if A sends and B replies to A, observer C
 /// should NOT see the reply — saving tokens for peers it is not addressed to.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_reply_only_visible_to_addressee() {
     let mut alpha = InProcNode::create("netfilter").await;
     let mut beta = InProcNode::join(&alpha.swarm, "beta-filter").await;
@@ -170,7 +181,7 @@ fn test_ipc_socket_isolation() {
 }
 
 /// Send from both sides and verify each receives the other's message.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_bidirectional_messaging() {
     let mut creator = InProcNode::create("netbidir").await;
     let mut joiner = InProcNode::join(&creator.swarm, "joiner-bidir").await;
@@ -291,7 +302,7 @@ fn test_control_char_body_rejected() {
 }
 
 /// When a peer joins, the other node receives a SWARM 1.0 'joined' presence block.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_presence_block_delivery() {
     let mut creator = InProcNode::create("netpresence").await;
     let _joiner = InProcNode::join(&creator.swarm, "joiner-presence").await;
@@ -307,7 +318,7 @@ async fn test_presence_block_delivery() {
 }
 
 /// Multiple concurrent `ask` calls all get distinct IDs and all arrive.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_concurrent_asks() {
     const ASK_COUNT: usize = 5;
     let mut creator = InProcNode::create("netconc").await;
@@ -339,7 +350,7 @@ async fn test_concurrent_asks() {
 /// `read_dir` returns first — non-deterministic when multiple sockets share the
 /// same swarm prefix. This test documents that bug and will pass once `ask`
 /// accepts `--nickname`.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_ask_targets_specific_agent_three_peers() {
     let alpha = InProcNode::create("netpick3").await;
     let mut beta = InProcNode::join(&alpha.swarm, "beta-pick3").await;
@@ -392,7 +403,7 @@ async fn test_ask_targets_specific_agent_three_peers() {
 
 /// Graceful shutdown: SIGINT fires the ctrl-c handler which broadcasts a `left`
 /// presence message before exiting. We verify the creator receives the `left` event.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_graceful_shutdown_handler_fires() {
     let mut creator = InProcNode::create("netshutdown").await;
     let joiner = InProcNode::join(&creator.swarm, "joiner-shutdown").await;
@@ -424,7 +435,7 @@ async fn test_graceful_shutdown_handler_fires() {
 ///
 /// Each step waits for the observer to confirm the event before proceeding,
 /// so the causal ordering is enforced by the test driver itself.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_interleaved_join_leave_order() {
     let mut observer = InProcNode::create("netorder").await;
 
@@ -697,6 +708,8 @@ fn test_ping_reports_peer_rtt() {
 /// rendezvous via `ensure`, and peers that arrive later connect to it.
 #[test]
 fn test_join_empty_swarm_succeeds_and_reseeds() {
+    // Serialize against the other timing-sensitive tests (see `serial_guard`).
+    let _serial = serial_guard();
     // Create a swarm, then kill its only member — the swarm is empty.
     let (creator, swarm) = Node::create();
     assert!(creator.wait_ready(&swarm), "creator socket never appeared");
@@ -742,6 +755,8 @@ fn test_join_empty_swarm_succeeds_and_reseeds() {
 /// claim-if-free on the deterministic loopback port).
 #[test]
 fn test_join_after_creator_departed_with_surviving_member() {
+    // Serialize against the other timing-sensitive tests (see `serial_guard`).
+    let _serial = serial_guard();
     // 1. Creator + a bystander that will outlive it.
     let (creator, swarm) = Node::create();
     let bystander = Node::join(&swarm, "bystander");
@@ -762,9 +777,11 @@ fn test_join_after_creator_departed_with_surviving_member() {
     //    on its next heal tick (~HEAL_INTERVAL_SECS).
     creator.sigint();
     drop(creator);
-    // Allow detection of the departure + one heal tick for the
-    // bystander to win the freed port and stand its rendezvous up.
-    std::thread::sleep(Duration::from_secs(22));
+    // Wait the full claim-if-free handoff floor before a fresh peer
+    // bootstraps: the bystander needs ≥2 heal cycles to win the freed port
+    // and stand its rendezvous up (see `RENDEZVOUS_HANDOFF`). 22s (~1 heal
+    // tick) raced the migration and flaked under load.
+    std::thread::sleep(RENDEZVOUS_HANDOFF);
 
     // 3. A brand-new joiner that never saw the creator. Its only
     //    bootstrap target is the seed-derived rendezvous id; reaching
@@ -802,6 +819,8 @@ fn test_join_after_creator_departed_with_surviving_member() {
 /// resent and existing peers never integrate it.
 #[test]
 fn test_first_message_after_post_departure_join_is_delivered() {
+    // Serialize against the other timing-sensitive tests (see `serial_guard`).
+    let _serial = serial_guard();
     let (creator, swarm) = Node::create();
     let bystander = Node::join(&swarm, "fm-bystander");
     assert!(creator.wait_ready(&swarm), "creator socket never appeared");
@@ -818,8 +837,13 @@ fn test_first_message_after_post_departure_join_is_delivered() {
 
     creator.sigint();
     drop(creator);
-    // One heal tick for the bystander to claim the freed rendezvous.
-    std::thread::sleep(Duration::from_secs(22));
+    // Wait the full claim-if-free handoff floor so the bystander has
+    // actually claimed the freed rendezvous before the latecomer joins —
+    // this test exercises post-departure-join *delivery*, not migration
+    // speed, so the migration must complete first (see `RENDEZVOUS_HANDOFF`).
+    // The old 22s (~1 heal tick) let the latecomer join mid-migration and
+    // flaked under CI load.
+    std::thread::sleep(RENDEZVOUS_HANDOFF);
 
     let joiner = Node::join(&swarm, "fm-joiner");
     assert!(
@@ -830,14 +854,18 @@ fn test_first_message_after_post_departure_join_is_delivered() {
     );
 
     // First broadcast, sent immediately after `ready` (the exact bug
-    // trigger): joiner -> bystander.
+    // trigger): joiner -> bystander. Post-disruption delivery, so it gets
+    // `RECOVERY_TIMEOUT`, not the steady-state `MSG_TIMEOUT`: routing the
+    // joiner's first message waits on its `NeighborUp` re-announce, which is
+    // gated by the 15s heal cadence, so a join that just missed a heal tick
+    // legitimately needs another cycle.
     let j2b_id = cli_message(&swarm, &joiner.nickname, "j2b first");
     assert!(!j2b_id.is_empty(), "joiner msg returned empty id");
     assert!(
         wait_until(
             || bystander.count_from(&joiner.nickname, "j2b first"),
             1,
-            MSG_TIMEOUT
+            RECOVERY_TIMEOUT
         ) >= 1,
         "joiner's first message was NOT received by the existing peer\nbystander msgs: {:?}",
         bystander.messages(),
@@ -852,7 +880,7 @@ fn test_first_message_after_post_departure_join_is_delivered() {
         wait_until(
             || joiner.count_from(&bystander.nickname, "b2j first"),
             1,
-            MSG_TIMEOUT
+            RECOVERY_TIMEOUT
         ) >= 1,
         "existing peer's message was NOT received by the joiner\njoiner msgs: {:?}",
         joiner.messages(),
@@ -865,7 +893,7 @@ fn test_first_message_after_post_departure_join_is_delivered() {
 /// observable here; only the view is filtered). A message sent *after*
 /// it joined must still arrive, proving the node is meshed and only
 /// the horizon, not connectivity, hides the old messages.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_join_horizon_hides_pre_join_history() {
     let creator = InProcNode::create("nethorizon").await;
     let mut early = InProcNode::join(&creator.swarm, "jh-early").await;
@@ -942,9 +970,11 @@ fn assert_received(receiver: &Node, sender: &str, body: &str, within: Duration) 
 /// power loss) is the production failure mode.
 #[test]
 fn test_creator_sigkill_independence() {
-    // >= 2 * HEAL_INTERVAL_SECS (15s) + margin for claim-if-free and a
-    // cold joiner's connect. Irreducible (heal cadence is a `const`).
-    let handoff = Duration::from_secs(36);
+    // Serialize against the other timing-sensitive tests (see `serial_guard`).
+    let _serial = serial_guard();
+    // The claim-if-free handoff floor (see `RENDEZVOUS_HANDOFF`): >= 2 heal
+    // cycles + margin for the claim and a cold joiner's connect.
+    let handoff = RENDEZVOUS_HANDOFF;
 
     let (creator, swarm) = Node::create_flags("itest", &SHORT_EVICT);
     let alpha = Node::join_flags(&swarm, "ck-alpha", &SHORT_EVICT);
@@ -960,7 +990,7 @@ fn test_creator_sigkill_independence() {
     creator.kill();
     drop(creator);
     let _ = cli_message(&swarm, &alpha.nickname, "ck-survive");
-    assert_received(&bravo, &alpha.nickname, "ck-survive", MSG_TIMEOUT);
+    assert_received(&bravo, &alpha.nickname, "ck-survive", RECOVERY_TIMEOUT);
 
     // A brand-new joiner can only reach the swarm if a survivor now
     // serves the seed-derived rendezvous.
@@ -973,7 +1003,7 @@ fn test_creator_sigkill_independence() {
         charlie.log_tail(20),
     );
     let _ = cli_message(&swarm, &charlie.nickname, "ck-newcomer");
-    assert_received(&alpha, &charlie.nickname, "ck-newcomer", MSG_TIMEOUT);
+    assert_received(&alpha, &charlie.nickname, "ck-newcomer", RECOVERY_TIMEOUT);
 }
 
 /// Sleep/wake: `SIGSTOP` a peer past the (shortened) alive-timeout so
@@ -981,6 +1011,8 @@ fn test_creator_sigkill_independence() {
 /// re-meshes it and traffic resumes.
 #[test]
 fn test_sleep_wake_heal_recovery() {
+    // Serialize against the other timing-sensitive tests (see `serial_guard`).
+    let _serial = serial_guard();
     // Past ALIVE_TIMEOUT_SECS + SWEEP_INTERVAL_SECS (+margin) so the
     // sweeper evicts the frozen peer.
     let asleep = Duration::from_secs(8);
@@ -1006,12 +1038,7 @@ fn test_sleep_wake_heal_recovery() {
     sleeper.cont();
     std::thread::sleep(wake_settle);
     let _ = cli_message(&swarm, &creator.nickname, "sw-post");
-    assert_received(
-        &sleeper,
-        &creator.nickname,
-        "sw-post",
-        Duration::from_mins(1),
-    );
+    assert_received(&sleeper, &creator.nickname, "sw-post", RECOVERY_TIMEOUT);
 }
 
 /// Fixed-node-id reconnect must be *fast*. A `SIGSTOP`/`SIGCONT` peer
@@ -1028,6 +1055,8 @@ fn test_sleep_wake_heal_recovery() {
 /// docs/iroh-ecosystem-research.md.
 #[test]
 fn test_fixed_id_reconnect_admits_fast() {
+    // Serialize against the other timing-sensitive tests (see `serial_guard`).
+    let _serial = serial_guard();
     // Past SHORT_EVICT (3+1s) + margin so the sleeper is evicted.
     let asleep = Duration::from_secs(8);
     // Above our re-mesh cost (~1-2 fixed 15s heal cycles + resume
@@ -1078,6 +1107,8 @@ fn test_resume_triggers_hard_rebootstrap() {
         ("--sweep-interval-secs", "1"),
         ("--heal-stall-threshold-secs", "20"),
     ];
+    // Serialize against the other timing-sensitive tests (see `serial_guard`).
+    let _serial = serial_guard();
     // > stall threshold (20s), > evict window (3+1s).
     let asleep = Duration::from_secs(30);
     // tokio burst-fires the missed heal tick on SIGCONT; this is
@@ -1114,12 +1145,7 @@ fn test_resume_triggers_hard_rebootstrap() {
         trace.lines().rev().take(30).collect::<Vec<_>>().join("\n"),
     );
     let _ = cli_message(&swarm, &creator.nickname, "rb-post");
-    assert_received(
-        &sleeper,
-        &creator.nickname,
-        "rb-post",
-        Duration::from_mins(1),
-    );
+    assert_received(&sleeper, &creator.nickname, "rb-post", RECOVERY_TIMEOUT);
 }
 
 /// Anti-entropy backfill: a peer that briefly freezes — but stays a
@@ -1132,6 +1158,8 @@ fn test_resume_triggers_hard_rebootstrap() {
 /// anti-entropy cycle; the adaptive probe pays only real latency.
 #[test]
 fn test_anti_entropy_set_convergence() {
+    // Serialize against the other timing-sensitive tests (see `serial_guard`).
+    let _serial = serial_guard();
     // Well under the ~90s alive-timeout: the peer stays a member.
     let gap = Duration::from_secs(25);
     // Several 10s anti-entropy cycles, plus a heal if the freeze
@@ -1173,6 +1201,8 @@ fn test_large_gap_reconnect_replication() {
     const PRELUDE: usize = 120;
     const GAP: usize = 30;
     const TOTAL: usize = PRELUDE + GAP;
+    // Serialize against the other timing-sensitive tests (see `serial_guard`).
+    let _serial = serial_guard();
     // Production alive-timeout (no `SHORT_EVICT`) so alpha stays a member
     // while frozen; a faster max-resend so the deep backfill converges
     // inside the window.
@@ -1240,7 +1270,7 @@ fn test_large_gap_reconnect_replication() {
 /// dropped spam to a peer. Drops happen on the send side (before the log
 /// push, `broadcast.rs`) and the receive side (before the log push,
 /// `recv.rs`); either way the excess is absent from what backfills peers.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn rate_dropped_messages_are_not_retained_for_backfill() {
     let sender = InProcNode::create("net-rl-backfill").await;
     let mut receiver = InProcNode::join(&sender.swarm, "rl-backfill-recv").await;
@@ -1283,6 +1313,8 @@ fn test_interior_gap_recovered_via_rolling_window() {
     const GAP: usize = 40; // interior gap (frozen peer misses these)
     const TAIL: usize = 80; // newer tail
     const TOTAL: usize = OLD + GAP + TAIL;
+    // Serialize against the other timing-sensitive tests (see `serial_guard`).
+    let _serial = serial_guard();
     let envs = [("--antientropy-max-resend", "128")];
 
     let (creator, swarm) = Node::create_args("itest", &["--rate-limit", "0"], &envs);
@@ -1357,6 +1389,8 @@ fn test_interior_gap_recovered_via_rolling_window() {
 #[test]
 fn test_steady_state_no_resend_churn() {
     const COUNT: usize = 150; // > one 70-id window ⇒ the rolling older window is active
+    // Serialize against the other timing-sensitive tests (see `serial_guard`).
+    let _serial = serial_guard();
     let envs = [
         ("RUST_LOG", "agent_habilis_swarm::gossip=debug"),
         ("--log-max-bytes", "0"), // no rotation, so the full log is one file
@@ -1419,6 +1453,8 @@ fn test_steady_state_no_resend_churn() {
 #[test]
 fn test_multi_round_throttled_backfill() {
     const GAP: usize = 40;
+    // Serialize against the other timing-sensitive tests (see `serial_guard`).
+    let _serial = serial_guard();
     let envs = [("--antientropy-max-resend", "5")]; // tiny budget ⇒ many rounds
 
     let (creator, swarm) = Node::create_args("itest", &["--rate-limit", "0"], &envs);
@@ -1464,7 +1500,7 @@ fn test_multi_round_throttled_backfill() {
 /// each must still see the *other's* same-named messages. Regression guard
 /// for the nickname→pubkey self-echo fix (a nickname-keyed self-echo would
 /// have each node silently drop the other as its own echo).
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn same_nickname_peers_communicate() {
     let mut alpha = InProcNode::create_with_nick("samenick", "dup").await;
     let mut beta = InProcNode::join(&alpha.swarm, "dup").await;
@@ -1500,7 +1536,7 @@ async fn same_nickname_peers_communicate() {
 /// The `--output json` `message` event exposes the author's full public key,
 /// so an agent can key trust/disambiguation on the key rather than the
 /// (non-unique) nickname.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn message_event_carries_full_pubkey() {
     let alpha = InProcNode::create("pubkeyjson").await;
     let mut beta = InProcNode::join(&alpha.swarm, "pk-beta").await;
@@ -1528,7 +1564,7 @@ async fn message_event_carries_full_pubkey() {
 /// A nickname is never "burned": after a member leaves, a new member can
 /// take the same display name and communicate normally (ephemeral keys mean
 /// the name was never *claimed* — only the key is the identity).
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn nickname_reusable_after_peer_leaves() {
     let mut observer = InProcNode::create("reuse").await;
     let first = InProcNode::join(&observer.swarm, "ditto").await;
@@ -1571,6 +1607,8 @@ const STARVE_EVICT: [(&str, &str); 3] = [
 /// not eternal silence. The survivor must also stay functional.
 #[test]
 fn test_starvation_watchdog_recovers_loudly() {
+    // Serialize against the other timing-sensitive tests (see `serial_guard`).
+    let _serial = serial_guard();
     // Threshold (6s) + at most one heal tick (fixed 15s) + margin.
     let detect = Duration::from_secs(45);
 
@@ -1604,6 +1642,8 @@ fn test_starvation_watchdog_recovers_loudly() {
 /// idles past the threshold.
 #[test]
 fn test_lone_creator_never_trips_starvation() {
+    // Serialize against the other timing-sensitive tests (see `serial_guard`).
+    let _serial = serial_guard();
     let (creator, swarm) = Node::create_flags("itest", &STARVE_EVICT);
     assert!(creator.wait_ready(&swarm), "creator never ready");
     // Threshold (6s) + two heal ticks (15s each) of opportunity to misfire.
@@ -1629,13 +1669,15 @@ fn test_flap_storm_all_rosters_recover() {
         ("--starvation-threshold-secs", "6"),
         ("--active-view-capacity", "2"),
     ];
+    // Serialize against the other timing-sensitive tests (see `serial_guard`).
+    let _serial = serial_guard();
     // Stop window: past the 3+1s evict so victims get swept; resume gap
     // long enough for partial re-meshing before the next round hits.
     let stop_window = Duration::from_secs(8);
     let resume_gap = Duration::from_secs(5);
     // Recovery bound: starvation threshold (6s) + a couple of fixed 15s
     // heal ticks for re-bridge/re-announce to propagate, plus margin.
-    let recover = Duration::from_secs(90);
+    let recover = RECOVERY_TIMEOUT;
 
     let (creator, swarm) = Node::create_flags("itest", &CAP2_STARVE);
     let joiners: Vec<Node> = (0..4)

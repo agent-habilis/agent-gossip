@@ -35,7 +35,7 @@ const ROSTER_TIMEOUT: Duration = Duration::from_secs(15);
 /// **and** a fresh broadcast at the end still fans out to every member —
 /// the latter is the durable proof that the gossip overlay survived the
 /// quiet period without silently degrading.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn mesh_stays_meshed_no_spurious_flaps() {
     let mut creator = InProcNode::create("stab-steady").await;
     let swarm = creator.swarm.clone();
@@ -96,7 +96,7 @@ async fn mesh_stays_meshed_no_spurious_flaps() {
 /// **Concurrent joins.** Five joiners launched simultaneously must all
 /// bootstrap, mesh, and receive a creator broadcast. Catches loopback
 /// rendezvous-ladder and `BEACON_COHOST_GRACE` contention regressions.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn concurrent_joins_all_mesh_and_receive() {
     let mut creator = InProcNode::create("stab-concurrent").await;
     let swarm = creator.swarm.clone();
@@ -131,7 +131,7 @@ async fn concurrent_joins_all_mesh_and_receive() {
 /// node broadcasts a unique body and *every other* node receives all the
 /// others' broadcasts. A single-origin test would miss asymmetric overlay
 /// defects (e.g. only the creator can reach all peers).
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn fanout_complete_from_each_origin() {
     let mut creator = InProcNode::create("stab-fanout").await;
     let swarm = creator.swarm.clone();
@@ -175,7 +175,7 @@ async fn fanout_complete_from_each_origin() {
 /// **Roster convergence.** Every node's view of the participant set
 /// reaches the full N within a budget — each node surfaces N−1 `joined`
 /// presence events for the other peers.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn roster_converges_to_4() {
     let mut creator = InProcNode::create("stab-roster").await;
     let swarm = creator.swarm.clone();
@@ -204,7 +204,7 @@ async fn roster_converges_to_4() {
 /// hold and still fan a late broadcast out to all 7 peers. This is the
 /// regression guard that the active-view raise took effect: revert the const to
 /// 5 and this test churns/fails.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn above_old_cap_swarm_stays_full_mesh() {
     const JOINERS: usize = 7; // 8 nodes total — > old cap (5), ≤ new cap (32)
     let mut creator = InProcNode::create("stab-cap").await;

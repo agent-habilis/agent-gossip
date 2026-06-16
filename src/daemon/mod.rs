@@ -37,6 +37,7 @@ pub(crate) mod state;
 // The session state file the daemon writes for external readers (its
 // sole writer). Daemon-session state, not a generic `util` helper.
 mod state_file;
+pub(crate) mod task;
 pub(crate) mod timers;
 
 mod event_loop;

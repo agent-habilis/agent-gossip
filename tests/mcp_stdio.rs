@@ -327,6 +327,28 @@ fn tools_require_session_and_error_when_absent() {
 }
 
 #[test]
+fn swarm_version_works_without_a_session() {
+    let mut client = McpClient::spawn();
+    // Unlike the messaging tools, version is a local check — no swarm needed.
+    let resp = client.tool_call(30, "swarm_version", serde_json::json!({}));
+    let json = tool_result_json(&resp).expect("swarm_version should return a JSON result");
+    assert!(
+        json["version"]
+            .as_str()
+            .is_some_and(|text| !text.is_empty()),
+        "swarm_version must report a non-empty build string, got: {json}"
+    );
+    assert!(
+        json["skill_up_to_date"].is_boolean(),
+        "swarm_version must report skill_up_to_date, got: {json}"
+    );
+    assert!(
+        json["skill_state"].as_str().is_some(),
+        "swarm_version must report skill_state, got: {json}"
+    );
+}
+
+#[test]
 fn create_swarm_twice_errors_cleanly() {
     let mut client = McpClient::spawn();
     let first = client.tool_call(20, "create_swarm", serde_json::json!({ "name": "twice1" }));
@@ -752,4 +774,132 @@ fn rate_limiter_drops_excess_messages_from_flooding_peer() {
         flood_count >= 1,
         "receiver should see at least one message through the rate limiter, got 0"
     );
+}
+
+// ─── task + roster ───────────────────────────────────────────────
+
+const MCP_TASK_ID: &str = "550e8400-e29b-41d4-a716-446655440000";
+
+/// A task `offer` sent (via `send_task`) by the joiner to the creator
+/// surfaces on the creator's `fetch_messages` as a raw record with
+/// `type:"task"`, the `to`/`task_id`/`kind`/`phase` fields, and the body.
+#[test]
+fn send_task_surfaces_to_addressee_via_fetch() {
+    let (mut creator, mut joiner, _swarm, creator_nick) = create_pair(700);
+
+    let sent = tool_result_json(&joiner.tool_call(
+        710,
+        "send_task",
+        serde_json::json!({
+            "to": creator_nick,
+            "task_id": MCP_TASK_ID,
+            "kind": "handover",
+            "phase": "offer",
+            "text": "## Task\nport it",
+        }),
+    ))
+    .expect("send_task should succeed");
+    // The echo is the authoritative task record.
+    assert_eq!(sent["message"]["type"], "task");
+    assert_eq!(sent["message"]["phase"], "offer");
+    assert_eq!(sent["message"]["to"], creator_nick);
+
+    // The creator fetches and sees the task leg addressed to it.
+    let deadline = Instant::now() + MSG_TIMEOUT;
+    let mut probe = 720;
+    let task = loop {
+        let fetched = tool_result_json(&creator.tool_call(
+            probe,
+            "fetch_messages",
+            serde_json::json!({ "after": BOGUS_UUID }),
+        ))
+        .expect("fetch_messages must succeed");
+        let found = fetched["messages"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|msg| msg["type"] == "task")
+            .cloned();
+        if let Some(found) = found {
+            break found;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "creator never received the task; buffer: {}",
+            fetched["messages"]
+        );
+        probe += 1;
+        std::thread::sleep(Duration::from_millis(100));
+    };
+    assert_eq!(task["task_id"], MCP_TASK_ID);
+    assert_eq!(task["kind"], "handover");
+    assert_eq!(task["phase"], "offer");
+    assert_eq!(task["to"], creator_nick);
+    assert_eq!(task["body"], "## Task\nport it");
+}
+
+/// `send_task --phase offer` to a nickname that is not a current
+/// participant is rejected with an `unknown participant` error.
+#[test]
+fn send_task_offer_to_unknown_participant_errors() {
+    let mut client = McpClient::spawn();
+    let _ = client.create_and_get_swarm(730);
+    let resp = client.tool_call(
+        731,
+        "send_task",
+        serde_json::json!({
+            "to": "ghost-peer",
+            "task_id": MCP_TASK_ID,
+            "kind": "handover",
+            "phase": "offer",
+            "text": "brief",
+        }),
+    );
+    let err = tool_error(&resp).expect("task offer to unknown participant should error");
+    assert!(
+        err.contains("unknown participant"),
+        "expected unknown-participant error, got: {err}"
+    );
+}
+
+/// `swarm_info` now reports the participant count and the live roster
+/// (each peer's nickname, recency, quiet flag).
+#[test]
+fn swarm_info_reports_participant_roster() {
+    let (mut creator, mut joiner, _swarm, _creator_nick) = create_pair(740);
+    let joiner_nick = tool_result_json(&joiner.tool_call(741, "swarm_info", serde_json::json!({})))
+        .expect("joiner swarm_info")["nickname"]
+        .as_str()
+        .expect("nickname")
+        .to_string();
+
+    // Poll the creator's roster until it has converged to both members.
+    let deadline = Instant::now() + MSG_TIMEOUT;
+    let mut probe = 742;
+    let info = loop {
+        let info = tool_result_json(&creator.tool_call(probe, "swarm_info", serde_json::json!({})))
+            .expect("creator swarm_info");
+        if info["participant_count"].as_u64() == Some(2) {
+            break info;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "creator roster never converged: {info}"
+        );
+        probe += 1;
+        std::thread::sleep(Duration::from_millis(100));
+    };
+    assert_eq!(info["participant_count"], 2);
+    let participants = info["participants"].as_array().expect("participants array");
+    assert!(
+        participants
+            .iter()
+            .any(|entry| entry["nickname"].as_str() == Some(joiner_nick.as_str())),
+        "creator roster should list the joiner: {participants:?}"
+    );
+    for entry in participants {
+        assert!(entry["nickname"].is_string());
+        assert!(entry.get("last_seen_secs_ago").is_some());
+        assert!(entry["quiet"].is_boolean());
+    }
 }

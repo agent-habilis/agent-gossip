@@ -20,9 +20,11 @@ use super::swarm::SwarmId;
 
 mod body;
 mod id;
+mod task_id;
 
 pub use body::{BodyError, MessageBody};
 pub use id::{IdError, MessageId};
+pub use task_id::{TaskId, TaskIdError};
 
 /// Maximum serialized message size — a network-wide wire contract kept
 /// under iroh-gossip's payload budget so a message we accept always fits
@@ -67,6 +69,139 @@ impl fmt::Display for PresenceSubtype {
     }
 }
 
+/// Behavior a task implements — the discriminator future task behaviors
+/// route on. A task is the generic mechanism (a directed, multi-leg
+/// exchange keyed by [`TaskId`]); `kind` says *which* behavior is using it.
+/// `Handover` delegates a task/plan; `Execute` (run + report + verify) is
+/// the roadmap behavior on the same envelope.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TaskKind {
+    Handover,
+    Execute,
+}
+
+impl fmt::Display for TaskKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TaskKind::Handover => write!(f, "handover"),
+            TaskKind::Execute => write!(f, "execute"),
+        }
+    }
+}
+
+/// Error parsing a [`TaskKind`] from its lowercase string form.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TaskKindError(String);
+
+impl fmt::Display for TaskKindError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "invalid task kind '{}' (expected handover|execute)",
+            self.0
+        )
+    }
+}
+
+impl std::error::Error for TaskKindError {}
+
+impl std::str::FromStr for TaskKind {
+    type Err = TaskKindError;
+
+    fn from_str(raw: &str) -> Result<Self, Self::Err> {
+        match raw {
+            "handover" => Ok(TaskKind::Handover),
+            "execute" => Ok(TaskKind::Execute),
+            other => Err(TaskKindError(other.to_owned())),
+        }
+    }
+}
+
+/// Phase of a task exchange — the generic, behavior-agnostic lifecycle
+/// every task behavior shares. `Offer` opens with the brief; `Accept`/
+/// `Decline` are the entry decision; `Context` carries the bidirectional
+/// Q&A; `Progress` is the receiver's liveness+percent heartbeat (plumbing,
+/// like `Alive`); `Done` requests close; `Confirm`/`Change` are the
+/// initiator's verify decision (`Change` loops back to `Context`); `Cancel`
+/// aborts. See the daemon task state machine for the transitions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TaskPhase {
+    Offer,
+    Accept,
+    Decline,
+    Context,
+    Progress,
+    Done,
+    Confirm,
+    Change,
+    Cancel,
+}
+
+impl fmt::Display for TaskPhase {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TaskPhase::Offer => write!(f, "offer"),
+            TaskPhase::Accept => write!(f, "accept"),
+            TaskPhase::Decline => write!(f, "decline"),
+            TaskPhase::Context => write!(f, "context"),
+            TaskPhase::Progress => write!(f, "progress"),
+            TaskPhase::Done => write!(f, "done"),
+            TaskPhase::Confirm => write!(f, "confirm"),
+            TaskPhase::Change => write!(f, "change"),
+            TaskPhase::Cancel => write!(f, "cancel"),
+        }
+    }
+}
+
+/// Error parsing a [`TaskPhase`] from its lowercase string form.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TaskPhaseError(String);
+
+impl fmt::Display for TaskPhaseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "invalid phase '{}' (expected offer|accept|decline|context|progress|done|confirm|change|cancel)",
+            self.0
+        )
+    }
+}
+
+impl std::error::Error for TaskPhaseError {}
+
+/// Parse a phase from its lowercase string. The CLI `--phase` parser and the
+/// MCP `send_task` tool both delegate here, so the accepted set is defined
+/// once (and [`TaskPhase`]'s `Display` is its inverse).
+impl std::str::FromStr for TaskPhase {
+    type Err = TaskPhaseError;
+
+    fn from_str(raw: &str) -> Result<Self, Self::Err> {
+        match raw {
+            "offer" => Ok(TaskPhase::Offer),
+            "accept" => Ok(TaskPhase::Accept),
+            "decline" => Ok(TaskPhase::Decline),
+            "context" => Ok(TaskPhase::Context),
+            "progress" => Ok(TaskPhase::Progress),
+            "done" => Ok(TaskPhase::Done),
+            "confirm" => Ok(TaskPhase::Confirm),
+            "change" => Ok(TaskPhase::Change),
+            "cancel" => Ok(TaskPhase::Cancel),
+            other => Err(TaskPhaseError(other.to_owned())),
+        }
+    }
+}
+
+/// Is this phase a **content** leg (counts toward the per-task message
+/// cap, rate-limited and logged like `Msg`)? `Progress` is the only
+/// non-content task phase — it is liveness plumbing (exempt from the cap
+/// and the rate limit, never logged), the rest carry real conversation.
+#[must_use]
+pub(crate) fn is_content_phase(phase: TaskPhase) -> bool {
+    !matches!(phase, TaskPhase::Progress)
+}
+
 /// Message kind — three types cover all protocol needs:
 /// - `Msg`: content. `reply: None` = open message, `reply: Some(nick)` = directed at a peer.
 /// - `Presence`: agent lifecycle (joined/left), empty body, no `reply`.
@@ -101,6 +236,21 @@ pub enum MessageKind {
     Pong {
         to: Nickname,
     },
+    /// One leg of a task exchange, addressed to `to` and correlated by
+    /// `task_id` (so both sides group the legs into one conversation).
+    /// `kind` is the behavior (handover/execute); `phase` the lifecycle
+    /// position. Delivered to every peer (gossip floods) but surfaced and
+    /// logged only by the addressee and the sender — third parties relay
+    /// without retaining, exactly like a directed `Msg`. **Content** phases
+    /// are rate-limited and logged with `Msg`; the `Progress` phase is
+    /// liveness plumbing (rate-limit-exempt, never logged). Not part of the
+    /// per-author hash chain or DAG (presence-like).
+    Task {
+        to: Nickname,
+        task_id: TaskId,
+        kind: TaskKind,
+        phase: TaskPhase,
+    },
 }
 
 impl fmt::Display for MessageKind {
@@ -112,6 +262,7 @@ impl fmt::Display for MessageKind {
             MessageKind::Digest => write!(f, "digest"),
             MessageKind::Ping => write!(f, "ping"),
             MessageKind::Pong { .. } => write!(f, "pong"),
+            MessageKind::Task { .. } => write!(f, "task"),
         }
     }
 }
@@ -250,6 +401,33 @@ impl Message {
     /// A `Pong` response addressed to the original pinger (`to`).
     pub(crate) fn new_pong(swarm: &SwarmId, author: &Nickname, to: Nickname) -> Self {
         Self::new(swarm, author, MessageKind::Pong { to }, empty_body())
+    }
+
+    /// One leg of a task exchange addressed to `to`, correlated by
+    /// `task_id`. `Offer` carries the task brief in the body; `Context`
+    /// the Q&A; `Progress` a `done/total` fraction; `Done`/`Change`/
+    /// `Decline`/`Cancel` an optional summary/reason; `Accept`/`Confirm`
+    /// an optional note.
+    pub(crate) fn new_task(
+        swarm: &SwarmId,
+        author: &Nickname,
+        to: Nickname,
+        task_id: TaskId,
+        kind: TaskKind,
+        phase: TaskPhase,
+        body: MessageBody,
+    ) -> Self {
+        Self::new(
+            swarm,
+            author,
+            MessageKind::Task {
+                to,
+                task_id,
+                kind,
+                phase,
+            },
+            body,
+        )
     }
 
     /// Create a `PeerInfo` message. The body carries endpoint address data
@@ -566,6 +744,67 @@ mod tests {
     }
 
     #[test]
+    fn test_task_round_trip() {
+        use super::{TaskId, TaskKind, TaskPhase};
+        let target = nick("calm-otter");
+        let task_id = TaskId::random();
+        let msg = Message::new_task(
+            &sid(),
+            &nick("word-word"),
+            target.clone(),
+            task_id.clone(),
+            TaskKind::Handover,
+            TaskPhase::Offer,
+            MessageBody::from("## Task\nport the parser"),
+        );
+        let bytes = msg.serialize().unwrap();
+        let wire = String::from_utf8_lossy(&bytes);
+        assert!(wire.contains("\"type\":\"task\""));
+        assert!(wire.contains("\"kind\":\"handover\""));
+        assert!(wire.contains("\"phase\":\"offer\""));
+        let parsed = Message::parse(&bytes).unwrap();
+        assert_eq!(
+            parsed.kind,
+            MessageKind::Task {
+                to: target,
+                task_id,
+                kind: TaskKind::Handover,
+                phase: TaskPhase::Offer,
+            }
+        );
+        assert_eq!(parsed.body, msg.body);
+    }
+
+    #[test]
+    fn task_phase_from_str_round_trips_display() {
+        use super::TaskPhase;
+        for phase in [
+            TaskPhase::Offer,
+            TaskPhase::Accept,
+            TaskPhase::Decline,
+            TaskPhase::Context,
+            TaskPhase::Progress,
+            TaskPhase::Done,
+            TaskPhase::Confirm,
+            TaskPhase::Change,
+            TaskPhase::Cancel,
+        ] {
+            let rendered = phase.to_string();
+            assert_eq!(rendered.parse::<TaskPhase>().unwrap(), phase);
+        }
+        assert!("bogus".parse::<TaskPhase>().is_err());
+    }
+
+    #[test]
+    fn task_kind_from_str_round_trips_display() {
+        use super::TaskKind;
+        for kind in [TaskKind::Handover, TaskKind::Execute] {
+            assert_eq!(kind.to_string().parse::<TaskKind>().unwrap(), kind);
+        }
+        assert!("bogus".parse::<TaskKind>().is_err());
+    }
+
+    #[test]
     fn test_ext_round_trip() {
         let mut msg =
             Message::new_message(&sid(), &nick("word-word"), MessageBody::from("With ext."));
@@ -675,7 +914,8 @@ mod tests {
             | MessageKind::PeerInfo
             | MessageKind::Digest
             | MessageKind::Ping
-            | MessageKind::Pong { .. } => {
+            | MessageKind::Pong { .. }
+            | MessageKind::Task { .. } => {
                 panic!("expected Msg kind")
             }
         }
@@ -717,6 +957,75 @@ mod tests {
                 Message::fixture(MessageKind::Msg { reply: None }, "hello").signed(&identity());
             msg.author = "impostor-bot".into();
             assert!(!msg.verify_signature());
+        }
+
+        #[test]
+        fn tampered_task_target_breaks_signature() {
+            use super::super::{TaskId, TaskKind, TaskPhase};
+            let task_id = TaskId::random();
+            let mut msg = Message::fixture(
+                MessageKind::Task {
+                    to: "calm-otter".into(),
+                    task_id: task_id.clone(),
+                    kind: TaskKind::Handover,
+                    phase: TaskPhase::Offer,
+                },
+                "brief",
+            )
+            .signed(&identity());
+            assert!(msg.verify_signature());
+            msg.kind = MessageKind::Task {
+                to: "evil-otter".into(),
+                task_id,
+                kind: TaskKind::Handover,
+                phase: TaskPhase::Offer,
+            };
+            assert!(!msg.verify_signature(), "task `to` is a signed field");
+        }
+
+        #[test]
+        fn tampered_task_phase_breaks_signature() {
+            use super::super::{TaskId, TaskKind, TaskPhase};
+            let task_id = TaskId::random();
+            let mut msg = Message::fixture(
+                MessageKind::Task {
+                    to: "calm-otter".into(),
+                    task_id: task_id.clone(),
+                    kind: TaskKind::Handover,
+                    phase: TaskPhase::Offer,
+                },
+                "brief",
+            )
+            .signed(&identity());
+            msg.kind = MessageKind::Task {
+                to: "calm-otter".into(),
+                task_id,
+                kind: TaskKind::Handover,
+                phase: TaskPhase::Confirm,
+            };
+            assert!(!msg.verify_signature(), "task `phase` is a signed field");
+        }
+
+        #[test]
+        fn tampered_task_id_breaks_signature() {
+            use super::super::{TaskId, TaskKind, TaskPhase};
+            let mut msg = Message::fixture(
+                MessageKind::Task {
+                    to: "calm-otter".into(),
+                    task_id: TaskId::random(),
+                    kind: TaskKind::Handover,
+                    phase: TaskPhase::Offer,
+                },
+                "brief",
+            )
+            .signed(&identity());
+            msg.kind = MessageKind::Task {
+                to: "calm-otter".into(),
+                task_id: TaskId::random(),
+                kind: TaskKind::Handover,
+                phase: TaskPhase::Offer,
+            };
+            assert!(!msg.verify_signature(), "task `task_id` is a signed field");
         }
 
         #[test]
@@ -823,6 +1132,22 @@ mod tests {
                     reply: Some(Nickname::from("addressed-nick")),
                 },
                 "Rust is a systems language.",
+            );
+            let bytes = msg.serialize().unwrap();
+            let wire = String::from_utf8(bytes).unwrap();
+            insta::assert_snapshot!(wire);
+        }
+
+        #[test]
+        fn snap_wire_task_offer() {
+            let msg = Message::fixture(
+                MessageKind::Task {
+                    to: Nickname::from("addressed-nick"),
+                    task_id: super::super::TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
+                    kind: super::super::TaskKind::Handover,
+                    phase: super::super::TaskPhase::Offer,
+                },
+                "## Task\nport the parser",
             );
             let bytes = msg.serialize().unwrap();
             let wire = String::from_utf8(bytes).unwrap();

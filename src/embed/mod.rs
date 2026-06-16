@@ -16,6 +16,7 @@ use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio::task::JoinHandle;
 
 use crate::daemon::setup::{SetupKind, setup_swarm};
+use crate::daemon::state::RosterSnapshot;
 use crate::daemon::{
     CoHostPolicy, CreateParams, DriverMode, EventLoopConfig, JoinParams, Resolved, SessionRequest,
 };
@@ -25,7 +26,9 @@ use crate::protocol::swarm::{
     DEFAULT_DIRECTORY, DirectorySelection, LookupOpts, LookupSet, Swarm, SwarmConfig, SwarmName,
     resolve_lookups,
 };
-use crate::protocol::{Message, MessageBody, MessageId, Nickname, SwarmId};
+use crate::protocol::{
+    Message, MessageBody, MessageId, Nickname, SwarmId, TaskId, TaskKind, TaskPhase,
+};
 use crate::resolver::JoinTarget;
 use crate::util::tuning::{
     DEFAULT_MAX_DIRECT_PEERS, EMBED_INBOUND_CAP, advertise_interval_secs, directory_expiry_secs,
@@ -227,7 +230,7 @@ async fn create_setup(
     .resolve()
     .map_err(|_| CreateError::AdvertiseRequiresReachable)?;
     let mut elc = setup_swarm(
-        kind, author, /* interactive */ false, max_peers, None, output,
+        kind, author, /* interactive */ false, max_peers, None, output, /* drift */ None,
     )
     .await
     .map_err(|error| CreateError::Setup(error.context("setup_swarm failed")))?;
@@ -254,7 +257,7 @@ async fn join_setup(cfg: JoinConfig, output: Output) -> Result<EventLoopConfig, 
     .await
     .map_err(JoinError::Resolve)?;
     setup_swarm(
-        kind, author, /* interactive */ false, max_peers, None, output,
+        kind, author, /* interactive */ false, max_peers, None, output, /* drift */ None,
     )
     .await
     .map_err(|error| JoinError::Setup(error.context("setup_swarm failed")))
@@ -377,6 +380,52 @@ impl InProcessSession {
                 after,
                 resp: resp_tx,
             })
+            .await
+            .map_err(|_| anyhow::anyhow!("swarm event loop has stopped"))?;
+        resp_rx
+            .await
+            .map_err(|_| anyhow::anyhow!("swarm event loop dropped the response"))
+    }
+
+    /// Send one leg of a task exchange; returns the canonical
+    /// [`Message`] or `None` when the sender-side rate limiter dropped it.
+    ///
+    /// # Errors
+    /// Fails if the event loop has stopped or dropped the response.
+    pub(crate) async fn task(
+        &self,
+        to: Nickname,
+        task_id: TaskId,
+        kind: TaskKind,
+        phase: TaskPhase,
+        body: MessageBody,
+    ) -> anyhow::Result<Option<Message>> {
+        let (resp_tx, resp_rx) = oneshot::channel();
+        self.req_tx
+            .send(SessionRequest::Task {
+                to,
+                task_id,
+                kind,
+                phase,
+                body,
+                resp: resp_tx,
+            })
+            .await
+            .map_err(|_| anyhow::anyhow!("swarm event loop has stopped"))?;
+        match resp_rx.await {
+            Ok(result) => result,
+            Err(_) => Err(anyhow::anyhow!("swarm event loop dropped the response")),
+        }
+    }
+
+    /// Snapshot the live participant roster (active + quiet, recency-sorted).
+    ///
+    /// # Errors
+    /// Fails if the event loop has stopped or dropped the response.
+    pub(crate) async fn peers(&self) -> anyhow::Result<RosterSnapshot> {
+        let (resp_tx, resp_rx) = oneshot::channel();
+        self.req_tx
+            .send(SessionRequest::Peers { resp: resp_tx })
             .await
             .map_err(|_| anyhow::anyhow!("swarm event loop has stopped"))?;
         resp_rx
@@ -526,6 +575,7 @@ impl SwarmSession {
             DEFAULT_MAX_DIRECT_PEERS,
             /* state_file */ None,
             output,
+            /* drift */ None,
         )
         .await?;
         elc.cohost = cohost;
@@ -608,6 +658,24 @@ impl SwarmSession {
     /// Fails if the event loop has stopped or dropped the response.
     pub async fn fetch(&self, after: Option<MessageId>) -> anyhow::Result<Vec<Message>> {
         self.core.fetch(after).await
+    }
+
+    /// Send one leg of a task exchange to `to`, correlated by `task_id`.
+    /// Returns the canonical [`Message`] the loop built, or `None` when the
+    /// sender-side rate limiter dropped it. Addressee validation (for
+    /// `Offer`) happens in `broadcast_task` — see the MCP `send_task` tool.
+    ///
+    /// # Errors
+    /// Fails if the event loop has stopped or dropped the response.
+    pub async fn task(
+        &self,
+        to: Nickname,
+        task_id: TaskId,
+        kind: TaskKind,
+        phase: TaskPhase,
+        body: MessageBody,
+    ) -> anyhow::Result<Option<Message>> {
+        self.core.task(to, task_id, kind, phase, body).await
     }
 
     /// Broadcast pre-built wire bytes **verbatim** into the swarm — no

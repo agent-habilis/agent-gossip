@@ -18,9 +18,24 @@ pub(crate) fn run(sh: &Shell) -> TaskOutcome {
     .run()?;
 
     output::status("Running", "tests");
-    cmd!(sh, "cargo test --features adversarial -- --test-threads=4")
-        .quiet()
-        .run()?;
+    // Two runs at different parallelism: the suites want opposite thread
+    // counts. The subprocess reliability tests (`gossip_network.rs`:
+    // SIGSTOP storms, beacon migration, anti-entropy) oversubscribe the
+    // host at -j4 and starve each other's heal-cadence-gated recovery, so
+    // they want -j2. The in-process adversarial suite is the reverse — it
+    // needs the worker threads that higher parallelism provides to keep its
+    // mesh responsive, and flakes at -j2 — so it wants -j4. Daemons mesh
+    // fine either way (verified out-of-band); this is purely test-host
+    // scheduling. So: everything except adversarial at 2, then the
+    // adversarial suite alone at 4. (GitHub CI runs only the first — it does
+    // not enable the `adversarial` feature.)
+    cmd!(sh, "cargo test -- --test-threads=2").quiet().run()?;
+    cmd!(
+        sh,
+        "cargo test --features adversarial --test adversarial -- --test-threads=4"
+    )
+    .quiet()
+    .run()?;
 
     // The reliability invariants (ungraceful SIGKILL death, sleep/wake
     // heal recovery, anti-entropy backfill) run here every time — they

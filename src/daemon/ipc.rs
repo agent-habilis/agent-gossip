@@ -16,7 +16,7 @@ use crate::protocol::{Message, Nickname, SwarmId};
 use crate::transport::ipc::{IpcCommand, json_ack, json_error, json_ok_msg, json_rate_limited};
 use crate::util::tuning::ping_window_secs;
 
-use crate::gossip::{SendOutcome, broadcast_message, broadcast_msg};
+use crate::gossip::{SendOutcome, TaskLeg, broadcast_message, broadcast_msg, broadcast_task};
 
 /// Returns `true` if the handler broadcast anything, so the caller
 /// can refresh `last_sent_at` for heartbeat suppression.
@@ -79,5 +79,56 @@ pub(crate) async fn handle_ipc_command(
             let _ = resp_tx.send(json_ack());
             true
         }
+        IpcCommand::Task {
+            swarm: _,
+            to,
+            task_id,
+            kind,
+            phase,
+            body,
+        } => {
+            // `broadcast_task` validates the addressee (Offer only); an
+            // unknown participant comes back through the `Err` arm below as
+            // `{"ok":false,"error":"unknown participant '<nick>'"}`.
+            tracing::debug!(%to, %task_id, %kind, %phase, "IPC task command received");
+            let leg = TaskLeg {
+                to,
+                task_id,
+                kind,
+                phase,
+                body,
+            };
+            match broadcast_task(swarm, author, leg, state, sender, output).await {
+                Ok(SendOutcome::Sent(msg_id, msg)) => {
+                    let _ = resp_tx.send(json_ok_msg(&msg_id, &msg));
+                    true
+                }
+                Ok(SendOutcome::RateLimited) => {
+                    let _ = resp_tx.send(json_rate_limited());
+                    false
+                }
+                Err(error) => {
+                    let _ = resp_tx.send(json_error(&error.to_string()));
+                    false
+                }
+            }
+        }
+        IpcCommand::Peers { swarm: _ } => {
+            let _ = resp_tx.send(peers_response(state));
+            false
+        }
     }
+}
+
+/// Serialize the live roster snapshot as the `ah-s peers` response.
+/// `ok:true` plus the snapshot's `participants` (recency-sorted) and
+/// `count` (`participants.len() + 1`).
+fn peers_response(state: &EventLoopState) -> String {
+    let snapshot = state.roster_snapshot();
+    serde_json::json!({
+        "ok": true,
+        "participants": snapshot.participants,
+        "count": snapshot.count,
+    })
+    .to_string()
 }

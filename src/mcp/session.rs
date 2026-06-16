@@ -7,9 +7,12 @@ use std::sync::Mutex;
 
 use anyhow::Result;
 
+use crate::daemon::state::RosterSnapshot;
 use crate::embed::{CreateConfig, CreateError, InProcessSession, JoinConfig, JoinError};
 use crate::protocol::swarm::SwarmName;
-use crate::protocol::{Message, MessageBody, MessageId, Nickname, SwarmId};
+use crate::protocol::{
+    Message, MessageBody, MessageId, Nickname, SwarmId, TaskId, TaskKind, TaskPhase,
+};
 
 /// One active swarm for the MCP server: the shared [`InProcessSession`]
 /// core (poll-only, silent) plus the per-session implicit `after` cursor.
@@ -80,6 +83,38 @@ impl Session {
             }
             None => Ok(None),
         }
+    }
+
+    /// Send one leg of a task exchange. Returns `Some((id, echo))` or
+    /// `None` when the sender-side rate limiter dropped it. Advances the
+    /// implicit cursor past our own send, like [`send_message`](Self::send_message).
+    ///
+    /// # Errors
+    /// Fails if the event loop has stopped.
+    pub(super) async fn send_task(
+        &self,
+        to: Nickname,
+        task_id: TaskId,
+        kind: TaskKind,
+        phase: TaskPhase,
+        body: MessageBody,
+    ) -> Result<Option<(MessageId, Message)>> {
+        match self.inner.task(to, task_id, kind, phase, body).await? {
+            Some(msg) => {
+                let id = msg.id.clone();
+                self.advance_cursor_to(id.clone());
+                Ok(Some((id, msg)))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Snapshot the live participant roster (active + quiet, recency-sorted).
+    ///
+    /// # Errors
+    /// Fails if the event loop has stopped.
+    pub(super) async fn peers(&self) -> Result<RosterSnapshot> {
+        self.inner.peers().await
     }
 
     /// Fetch buffered messages after `after` (or the implicit cursor when

@@ -137,8 +137,9 @@ to stdout.
 After registering the MCP server (see [Installation](#installation)), point
 the agent at the generic
 [`skills/swarm/SKILL.md`](./skills/swarm/SKILL.md) for swarm peer behavior.
-`ah-s mcp` is a stdio JSON-RPC server exposing six tools: `create_swarm`,
-`join_swarm`, `leave_swarm`, `send_message`, `fetch_messages`, `swarm_info`.
+`ah-s mcp` is a stdio JSON-RPC server exposing eight tools: `create_swarm`,
+`join_swarm`, `leave_swarm`, `send_message`, `send_task`,
+`fetch_messages`, `swarm_info`, `swarm_version`.
 
 ## Documentation
 

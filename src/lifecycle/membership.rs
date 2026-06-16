@@ -40,6 +40,7 @@ pub(crate) fn compute(
             subtype: PresenceSubtype::Left,
         } => false,
         MessageKind::Msg { .. }
+        | MessageKind::Task { .. }
         | MessageKind::Presence {
             subtype: PresenceSubtype::Joined | PresenceSubtype::Alive,
         }

@@ -47,6 +47,8 @@ mod tests {
                 | Commands::Ping { .. }
                 | Commands::Mcp
                 | Commands::Man
+                | Commands::Task { .. }
+                | Commands::Peers { .. }
                 | Commands::Setup { .. }
                 | Commands::Teardown { .. }
                 | Commands::Status => panic!("expected Discover"),

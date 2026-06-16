@@ -104,6 +104,34 @@ fn json_signed_message_exposes_full_pubkey() {
 }
 
 #[test]
+fn ready_event_drift_is_present_only_when_stale() {
+    use super::OutputEvent;
+    let make = |drift: Option<&str>| {
+        super::json::event_json(&OutputEvent::Ready {
+            swarm: sid(),
+            name: crate::protocol::swarm::SwarmName::new("team").unwrap(),
+            nickname: nick("alice"),
+            drift: drift.map(str::to_owned),
+        })
+        .expect("ready event produces a JSON line")
+    };
+
+    // In sync: no `drift` key on the wire.
+    let clean = parse(&make(None));
+    assert_eq!(clean["event"], "ready");
+    assert!(clean.get("drift").is_none());
+
+    // Stale: the warning rides along verbatim.
+    let stale = parse(&make(Some(
+        "⚠️ swarm skill out of date. Run `ah-s setup --execute` to update",
+    )));
+    assert_eq!(
+        stale["drift"],
+        "⚠️ swarm skill out of date. Run `ah-s setup --execute` to update"
+    );
+}
+
+#[test]
 fn fork_event_json_shape() {
     use super::OutputEvent;
     let pubkey = "deadbeef".repeat(8); // 64 hex
@@ -171,6 +199,115 @@ fn json_presence_left() {
     assert_eq!(parsed["author"], "bob");
 }
 
+// ── task type ──────────────────────────────────────────────
+
+#[test]
+fn task_event_json_shape() {
+    use super::OutputEvent;
+    use crate::protocol::{TaskId, TaskKind, TaskPhase};
+    let msg = Message::new_task(
+        &sid(),
+        &nick("drift-oak"),
+        nick("calm-otter"),
+        TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
+        TaskKind::Handover,
+        TaskPhase::Offer,
+        body("## Task\nport the parser"),
+    );
+    // Routed through `event_json` so the captured-event form is
+    // byte-identical to the stdout `--output json` line.
+    let json = super::json::event_json(&OutputEvent::Task {
+        msg: Box::new(msg),
+        is_self: false,
+    })
+    .expect("task event produces a JSON line");
+    let parsed = parse(&json);
+    assert_eq!(parsed["event"], "task");
+    assert_eq!(parsed["author"], "drift-oak");
+    assert_eq!(parsed["to"], "calm-otter");
+    assert_eq!(parsed["task_id"], "550e8400-e29b-41d4-a716-446655440000");
+    assert_eq!(parsed["kind"], "handover");
+    assert_eq!(parsed["phase"], "offer");
+    assert_eq!(parsed["body"], "## Task\nport the parser");
+    assert_eq!(parsed["self"], false);
+    assert!(parsed["id"].is_string());
+    assert!(parsed["ts"].is_number());
+    assert_eq!(
+        parsed["display"],
+        "🐝️ task handover offer `<drift-oak>` → `<calm-otter>`: ## Task\nport the parser"
+    );
+    // Distinct top-level event — never the `message` family, no `type` key.
+    assert!(parsed.get("type").is_none());
+}
+
+#[test]
+fn task_self_echo_flag() {
+    use super::OutputEvent;
+    use crate::protocol::{TaskId, TaskKind, TaskPhase};
+    let msg = Message::new_task(
+        &sid(),
+        &nick("drift-oak"),
+        nick("calm-otter"),
+        TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
+        TaskKind::Handover,
+        TaskPhase::Confirm,
+        body("looks good"),
+    );
+    let json = super::json::event_json(&OutputEvent::Task {
+        msg: Box::new(msg),
+        is_self: true,
+    })
+    .expect("task event produces a JSON line");
+    let parsed = parse(&json);
+    assert_eq!(parsed["self"], true);
+    assert_eq!(parsed["phase"], "confirm");
+}
+
+#[test]
+fn task_progress_event_json_shape() {
+    use super::OutputEvent;
+    use crate::protocol::{TaskId, TaskKind, TaskPhase};
+    let msg = Message::new_task(
+        &sid(),
+        &nick("calm-otter"),
+        nick("drift-oak"),
+        TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
+        TaskKind::Execute,
+        TaskPhase::Progress,
+        body("35/100"),
+    );
+    let json = super::json::event_json(&OutputEvent::Task {
+        msg: Box::new(msg),
+        is_self: false,
+    })
+    .expect("progress event produces a JSON line");
+    let parsed = parse(&json);
+    // The Progress phase renders as a distinct `task_progress` event with a
+    // parsed `done`/`total`, never as a content `task` event.
+    assert_eq!(parsed["event"], "task_progress");
+    assert_eq!(parsed["task_id"], "550e8400-e29b-41d4-a716-446655440000");
+    assert_eq!(parsed["done"], 35);
+    assert_eq!(parsed["total"], 100);
+    assert!(parsed.get("phase").is_none());
+    assert_eq!(
+        parsed["display"],
+        "🐝️ task execute progress `<calm-otter>` → `<drift-oak>`: 35/100"
+    );
+}
+
+#[test]
+fn task_timeout_event_json_shape() {
+    use super::OutputEvent;
+    use crate::protocol::TaskId;
+    let json = super::json::event_json(&OutputEvent::TaskTimeout {
+        task_id: TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
+    })
+    .expect("task_timeout event produces a JSON line");
+    let parsed = parse(&json);
+    assert_eq!(parsed["event"], "task_timeout");
+    assert_eq!(parsed["task_id"], "550e8400-e29b-41d4-a716-446655440000");
+}
+
 // ── peer_timeout / peer_return shape ───────────────────────
 
 #[test]
@@ -231,7 +368,45 @@ fn json_output_is_single_line() {
 
 mod snapshots {
     use super::{format_msg_json, format_presence_json};
-    use crate::protocol::{Message, MessageKind, PresenceSubtype};
+    use crate::protocol::{Message, MessageKind, PresenceSubtype, TaskId, TaskKind, TaskPhase};
+
+    fn snap_task(kind: TaskKind, phase: TaskPhase, body: &str) -> String {
+        super::super::json::format_task_json(
+            &Message::fixture(
+                MessageKind::Task {
+                    to: crate::protocol::Nickname::from("calm-otter"),
+                    task_id: TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
+                    kind,
+                    phase,
+                },
+                body,
+            ),
+            false,
+        )
+    }
+
+    #[test]
+    fn snap_task_offer() {
+        insta::assert_snapshot!(snap_task(
+            TaskKind::Handover,
+            TaskPhase::Offer,
+            "## Task\nport the parser"
+        ));
+    }
+
+    #[test]
+    fn snap_task_confirm() {
+        insta::assert_snapshot!(snap_task(
+            TaskKind::Handover,
+            TaskPhase::Confirm,
+            "looks good"
+        ));
+    }
+
+    #[test]
+    fn snap_task_progress() {
+        insta::assert_snapshot!(snap_task(TaskKind::Execute, TaskPhase::Progress, "35/100"));
+    }
 
     #[test]
     fn snap_msg_message() {

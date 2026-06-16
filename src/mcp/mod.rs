@@ -2,14 +2,16 @@
 //!
 //! Runs as a stdio JSON-RPC server that AI clients (Codex, Cursor,
 //! Claude Desktop, Claude Code) can spawn as a child process.
-//! Exposes six tools that wrap the existing swarm lifecycle:
+//! Exposes eight tools that wrap the existing swarm lifecycle:
 //!
 //! - `create_swarm`
 //! - `join_swarm`
 //! - `leave_swarm`
 //! - `send_message`
+//! - `send_task`
 //! - `fetch_messages`
 //! - `swarm_info`
+//! - `swarm_version`
 //!
 //! # Polling-only
 //!
@@ -43,9 +45,13 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
+use crate::daemon::state::RosterEntry;
 use crate::embed::{CreateConfig, CreateError, JoinConfig};
 use crate::protocol::swarm::{LookupSet, RelayLadder, RelaySelection, SwarmName};
-use crate::protocol::{Message, MessageBody, MessageId, Nickname, SwarmId};
+use crate::protocol::{
+    Message, MessageBody, MessageId, Nickname, SwarmId, TaskId, TaskKind, TaskKindError, TaskPhase,
+    TaskPhaseError,
+};
 use crate::resolver::JoinTarget;
 use crate::util::tuning::DEFAULT_MAX_DIRECT_PEERS;
 use session::Session;
@@ -175,6 +181,48 @@ struct FetchMessagesArgs {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct SendTaskArgs {
+    /// Addressee: the peer's nickname this task leg is directed at.
+    /// For `phase: "offer"` it must be a current participant.
+    to: String,
+    /// Task correlation id (UUID): mint a fresh one for the opening
+    /// `offer`, then echo the same id on every later leg of that task.
+    task_id: String,
+    /// Task behavior: "handover" (delegate a task/plan) or "execute".
+    kind: String,
+    /// Lifecycle phase: "offer" (the brief), "accept"/"decline" (entry),
+    /// "context" (Q&A), "progress" (a done/total beat), "done" (request
+    /// close + verification instructions), "confirm"/"change" (the
+    /// initiator's verify decision), "cancel".
+    phase: String,
+    /// Leg body: the brief for "offer"; a question/answer for "context";
+    /// `done/total` (e.g. "35/100") for "progress"; the summary +
+    /// verification instructions for "done"; a reason for the rest.
+    text: String,
+}
+
+/// Parse a task phase string into [`TaskPhase`], delegating to its
+/// `FromStr` (the single phase mapping) and surfacing a bad value as MCP
+/// `invalid_params`.
+fn parse_task_phase(raw: &str) -> Result<TaskPhase, McpError> {
+    raw.parse()
+        .map_err(|error: TaskPhaseError| McpError::invalid_params(error.to_string(), None))
+}
+
+/// Parse a task kind string into [`TaskKind`].
+fn parse_task_kind(raw: &str) -> Result<TaskKind, McpError> {
+    raw.parse()
+        .map_err(|error: TaskKindError| McpError::invalid_params(error.to_string(), None))
+}
+
+/// Parse a task id string into [`TaskId`].
+fn parse_task_id(raw: &str) -> Result<TaskId, McpError> {
+    raw.parse().map_err(|error: crate::protocol::TaskIdError| {
+        McpError::invalid_params(error.to_string(), None)
+    })
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct NoArgs {}
 
 // ── response shapes ──────────────────────────────────────────────
@@ -198,6 +246,29 @@ impl From<&Session> for SwarmRef {
     }
 }
 
+/// `create_swarm` / `join_swarm` output: the swarm identity plus an optional
+/// skill-drift warning surfaced at swarm start — the MCP analogue of the CLI
+/// `ready` event's `drift`, so the generic client warns about a stale skill at
+/// the same moment Claude Code and pi do. Omitted when the install is current.
+#[derive(Debug, Serialize)]
+struct JoinedResult {
+    #[serde(flatten)]
+    swarm: SwarmRef,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    drift: Option<&'static str>,
+}
+
+/// `swarm_info` tool output: the session identity plus the live roster
+/// (`participant_count` = participants + 1 for self, and the per-peer
+/// recency list that backs a handover sender's target picker).
+#[derive(Debug, Serialize)]
+struct SwarmInfoResult {
+    #[serde(flatten)]
+    swarm: SwarmRef,
+    participant_count: usize,
+    participants: Vec<RosterEntry>,
+}
+
 #[derive(Debug, Serialize)]
 struct SendMessageResult {
     id: MessageId,
@@ -217,6 +288,24 @@ struct FetchMessagesResult {
 #[derive(Debug, Serialize)]
 struct LeaveResult {
     ok: bool,
+}
+
+/// `swarm_version` tool output: the binary build string and whether the
+/// installed generic skill still matches it (drift detection — the binary can
+/// be upgraded while the on-disk skill stays stale).
+#[derive(Debug, Serialize)]
+struct VersionResult {
+    /// Crate version + git short sha + dirty flag.
+    version: &'static str,
+    /// True iff the installed generic skill is byte-identical to this binary's
+    /// embedded copy.
+    skill_up_to_date: bool,
+    /// Installed-skill state: "up to date" / "out of date" / "not set up" /
+    /// "absent".
+    skill_state: &'static str,
+    /// Remediation when the install has drifted, omitted when current.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    drift: Option<&'static str>,
 }
 
 // ── tool impls ───────────────────────────────────────────────────
@@ -287,7 +376,10 @@ impl AgentSwarmServer {
             }
             CreateError::Setup(error) => McpError::internal_error(error.to_string(), None),
         })?;
-        let result = SwarmRef::from(&session);
+        let result = JoinedResult {
+            swarm: SwarmRef::from(&session),
+            drift: generic_skill_drift(),
+        };
         *guard = Some(session);
         ok_json(result)
     }
@@ -311,7 +403,10 @@ impl AgentSwarmServer {
                 .as_deref()
                 .is_none_or(|candidate| candidate == existing.nickname().as_str());
             if matches!(&target, JoinTarget::Swarm(id) if id == existing.swarm()) && same_nickname {
-                return ok_json(SwarmRef::from(existing));
+                return ok_json(JoinedResult {
+                    swarm: SwarmRef::from(existing),
+                    drift: generic_skill_drift(),
+                });
             }
             return Err(already_in_swarm_error(existing));
         }
@@ -328,7 +423,10 @@ impl AgentSwarmServer {
         })
         .await
         .map_err(to_mcp_error)?;
-        let result = SwarmRef::from(&session);
+        let result = JoinedResult {
+            swarm: SwarmRef::from(&session),
+            drift: generic_skill_drift(),
+        };
         *guard = Some(session);
         ok_json(result)
     }
@@ -399,14 +497,75 @@ impl AgentSwarmServer {
         })
     }
 
-    #[tool(description = "Return the current session's swarm id, nickname, and participant count.")]
+    #[tool(
+        description = "Return the current session's swarm id, nickname, participant count, and the live participant roster (each peer's nickname + how long ago it was last seen, recency-sorted). Use the roster to pick a handover target."
+    )]
     async fn swarm_info(
         &self,
         Parameters(_): Parameters<NoArgs>,
     ) -> Result<CallToolResult, McpError> {
         let guard = self.session.lock().await;
         let session = guard.as_ref().ok_or_else(not_in_swarm_error)?;
-        ok_json(SwarmRef::from(session))
+        let swarm = SwarmRef::from(session);
+        let roster = session.peers().await.map_err(to_mcp_error)?;
+        ok_json(SwarmInfoResult {
+            swarm,
+            participant_count: roster.count,
+            participants: roster.participants,
+        })
+    }
+
+    #[tool(
+        description = "Report the swarm binary version and whether the installed skill is still up to date with it. A local check — needs no active swarm. `ah-s setup` copies the skill onto disk, so upgrading the binary can leave the skill stale; when `skill_up_to_date` is false, re-run `ah-s setup --execute` to refresh."
+    )]
+    async fn swarm_version(
+        &self,
+        Parameters(_): Parameters<NoArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        use crate::cli::agent::{self, Agent, AgentState};
+        let state =
+            agent::home_dir().map_or(AgentState::Absent, |home| Agent::Generic.state(&home));
+        ok_json(VersionResult {
+            version: crate::VERSION,
+            skill_up_to_date: state == AgentState::UpToDate,
+            skill_state: state.label(),
+            drift: (state == AgentState::OutOfDate).then_some(agent::SKILL_DRIFT_MSG),
+        })
+    }
+
+    #[tool(
+        description = "Send one leg of a task exchange to a specific peer. A task is a directed, phased exchange correlated by `task_id` (mint a UUID for the opening \"offer\", echo it on every later leg). `kind` is the behavior (\"handover\" delegates a task/plan; \"execute\" runs+verifies). Phases: \"offer\" (brief), \"accept\"/\"decline\" (entry), \"context\" (Q&A), \"progress\" (a done/total beat, e.g. text \"35/100\"), \"done\" (request close + verification instructions), \"confirm\"/\"change\" (verify), \"cancel\". For \"offer\" the `to` nickname must be a current participant (check `swarm_info`). Returns the new message id and authoritative echo, or `{rate_limited:true}` if the sender-side limiter dropped it."
+    )]
+    async fn send_task(
+        &self,
+        Parameters(args): Parameters<SendTaskArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let guard = self.session.lock().await;
+        let session = guard.as_ref().ok_or_else(not_in_swarm_error)?;
+        let to = Nickname::new(args.to).map_err(|error| {
+            McpError::invalid_params(format!("invalid task target: {error}"), None)
+        })?;
+        let task_id = parse_task_id(&args.task_id)?;
+        let kind = parse_task_kind(&args.kind)?;
+        let phase = parse_task_phase(&args.phase)?;
+        let body = MessageBody::new(args.text)
+            .map_err(|error| McpError::invalid_params(format!("{error}"), None))?;
+        // The daemon's `broadcast_task` validates the addressee (offer
+        // only), so we don't repeat it here. An unknown participant comes back
+        // as an error; re-classify it as `invalid_params` since it's bad input,
+        // not an internal fault.
+        match session.send_task(to, task_id, kind, phase, body).await {
+            Ok(Some((id, message))) => ok_json(SendMessageResult { id, message }),
+            Ok(None) => ok_json(serde_json::json!({ "rate_limited": true })),
+            Err(error) => {
+                let message = error.to_string();
+                if message.contains("unknown participant") {
+                    Err(McpError::invalid_params(message, None))
+                } else {
+                    Err(McpError::internal_error(message, None))
+                }
+            }
+        }
     }
 }
 
@@ -415,6 +574,16 @@ impl ServerHandler for AgentSwarmServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
     }
+}
+
+/// [`crate::cli::agent::SKILL_DRIFT_MSG`] when the installed generic skill has
+/// drifted behind this binary, else `None`. Lets `create_swarm`/`join_swarm`
+/// carry the same startup nudge the CLI folds into its `ready` event.
+fn generic_skill_drift() -> Option<&'static str> {
+    use crate::cli::agent::{self, Agent, AgentState};
+    agent::home_dir()
+        .is_ok_and(|home| Agent::Generic.state(&home) == AgentState::OutOfDate)
+        .then_some(agent::SKILL_DRIFT_MSG)
 }
 
 fn not_in_swarm_error() -> McpError {

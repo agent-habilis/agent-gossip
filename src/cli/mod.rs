@@ -17,14 +17,16 @@ use crate::protocol::{MessageId, Nickname};
 use crate::resolver::JoinTarget;
 use crate::transport::ipc::{self, IpcCommand};
 
-mod agent;
+pub(crate) mod agent;
 mod args;
 mod discover;
 mod setup;
 mod status;
 
 pub(crate) use args::Cli;
-use args::{Commands, CreateOpts, MsgOpts, PingOpts, PollOpts, SharedServerOpts};
+use args::{
+    Commands, CreateOpts, MsgOpts, PeersOpts, PingOpts, PollOpts, SharedServerOpts, TaskOpts,
+};
 
 /// `join` has no `--public`/`--name`: both are encoded in the `ahs…`
 /// identifier and auto-detected. Without this, clap rejects them with
@@ -74,6 +76,8 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
         Commands::Msg { opts } => msg(opts).await,
         Commands::Poll { opts } => poll(opts).await,
         Commands::Ping { opts } => ping(opts).await,
+        Commands::Task { opts } => task(opts).await,
+        Commands::Peers { opts } => peers(opts).await,
         Commands::Discover { opts } => {
             crate::util::tuning::init(opts.shared.tuning());
             discover::discover(opts).await
@@ -114,6 +118,12 @@ async fn run_session(resolved: Resolved, shared: SharedServerOpts) -> Result<()>
         shared.filter_self,
         Some(author.as_str().to_owned()),
     );
+    // Nag once at startup if an installed integration has fallen behind this
+    // binary. CLI-only: the embed/MCP paths pass `None` so in-process tests
+    // stay hermetic. `ah-s status` is the on-demand counterpart.
+    let drift = agent::home_dir()
+        .ok()
+        .and_then(|home| agent::drift_warning(&home));
     let mut cfg = setup_swarm(
         kind,
         author,
@@ -121,6 +131,7 @@ async fn run_session(resolved: Resolved, shared: SharedServerOpts) -> Result<()>
         shared.max_peers,
         shared.state_file,
         out,
+        drift.as_deref(),
     )
     .await?;
     // Advertising (`create --advertise`): start the re-broadcast task. It
@@ -179,6 +190,28 @@ struct MsgResponse {
     rate_limited: bool,
 }
 
+/// Reduce an IPC send response (`msg` / `handover`, same
+/// `{ok,id,error,rate_limited}` shape) to the new message id, or a
+/// descriptive error. `what` names the operation for the rate-limit and
+/// missing-id messages. A rate-limited send is a deliberate drop, not a
+/// failure — surfaced as a (still non-zero) error so scripts see it wasn't
+/// sent.
+fn finish_send(resp: &str, what: &str) -> Result<MessageId> {
+    let parsed: MsgResponse = serde_json::from_str(resp)?;
+    if parsed.rate_limited {
+        anyhow::bail!("rate limit exceeded — {what} not sent");
+    }
+    if !parsed.ok {
+        anyhow::bail!(
+            "{}",
+            parsed.error.unwrap_or_else(|| "unknown error".to_string())
+        );
+    }
+    parsed
+        .id
+        .ok_or_else(|| anyhow::anyhow!("{what} response missing id"))
+}
+
 /// Post a message to a swarm via the running server's IPC socket.
 async fn msg(opts: MsgOpts) -> Result<()> {
     let MsgOpts {
@@ -194,23 +227,7 @@ async fn msg(opts: MsgOpts) -> Result<()> {
     };
 
     let resp = ipc::send(&cmd, &nickname).await?;
-    let parsed: MsgResponse = serde_json::from_str(&resp)?;
-
-    // A rate-limited send is a deliberate drop, not a failure — surface it
-    // distinctly (still non-zero, so scripts see the message wasn't sent).
-    if parsed.rate_limited {
-        anyhow::bail!("rate limit exceeded — message not sent");
-    }
-    if !parsed.ok {
-        anyhow::bail!(
-            "{}",
-            parsed.error.unwrap_or_else(|| "unknown error".to_string())
-        );
-    }
-
-    let id = parsed
-        .id
-        .ok_or_else(|| anyhow::anyhow!("msg response missing id"))?;
+    let id = finish_send(&resp, "message")?;
     // `msg` has no `--output` flag — always the human confirmation.
     // No nickname is rendered here (only `message posted` + id).
     let out = Output::new(OutputMode::Human, false, None);
@@ -251,5 +268,44 @@ async fn ping(opts: PingOpts) -> Result<()> {
             parsed.error.unwrap_or_else(|| "unknown error".to_string())
         );
     }
+    Ok(())
+}
+
+/// Send one leg of a task exchange via the running daemon's IPC socket.
+/// The receiving daemon surfaces a `task` (or `task_progress`) event; this
+/// command itself only confirms the send (or reports a rate-limit /
+/// unknown-participant / oversize error).
+async fn task(opts: TaskOpts) -> Result<()> {
+    let TaskOpts {
+        swarm,
+        nickname,
+        to,
+        task_id,
+        kind,
+        phase,
+        text,
+    } = opts;
+    let cmd = IpcCommand::Task {
+        swarm,
+        to,
+        task_id,
+        kind,
+        phase,
+        body: text,
+    };
+    let resp = ipc::send(&cmd, &nickname).await?;
+    let id = finish_send(&resp, "task")?;
+    let out = Output::new(OutputMode::Human, false, None);
+    out.msg_posted(&id);
+    Ok(())
+}
+
+/// Query the running daemon's live participant roster. Always emits the
+/// raw IPC JSON (`{ok, participants, count}`), like `poll`.
+async fn peers(opts: PeersOpts) -> Result<()> {
+    let PeersOpts { swarm, nickname } = opts;
+    let cmd = IpcCommand::Peers { swarm };
+    let resp = ipc::send(&cmd, &nickname).await?;
+    println!("{resp}");
     Ok(())
 }

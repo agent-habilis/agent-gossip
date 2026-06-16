@@ -266,11 +266,19 @@ async fn handle_gossip_received(content: Bytes, state: &mut EventLoopState, ctx:
     // break membership/anti-entropy. Keyed on the verified pubkey.
     let rate_ok = match &message.kind {
         MessageKind::Msg { .. } => state.rate_limiter.check(&message.pubkey),
+        // Content task legs share the `Msg` quota; the `Progress` phase is
+        // liveness plumbing (the receiver's percent+keepalive heartbeat) and
+        // is exempt with the other plumbing kinds — rate-limiting it would let
+        // a busy task wrongly trip the silence timeout.
+        MessageKind::Task { phase, .. } if crate::protocol::message::is_content_phase(*phase) => {
+            state.rate_limiter.check(&message.pubkey)
+        }
         MessageKind::Presence { .. }
         | MessageKind::PeerInfo
         | MessageKind::Digest
         | MessageKind::Ping
-        | MessageKind::Pong { .. } => true,
+        | MessageKind::Pong { .. }
+        | MessageKind::Task { .. } => true,
     };
     if !rate_ok {
         let notice = format!("rate limit exceeded for [{}], dropping", message.author);
@@ -286,25 +294,7 @@ async fn handle_gossip_received(content: Bytes, state: &mut EventLoopState, ctx:
     let observed = lifecycle::observe(&message, state, ctx);
     let surfaceable = observed.surfaceable;
 
-    // Embed push: hand every surviving inbound message to the facade
-    // before kind routing, so the consumer sees msg / presence /
-    // peer_info alike. Non-blocking by construction (bounded
-    // broadcast); a send error or full ring is intentionally dropped
-    // so a slow embedder never stalls the gossip loop. The
-    // receiver_count gate skips the per-message clone while no
-    // consumer is subscribed (always, until the embedder calls
-    // messages(); forever for CLI/MCP where the field is None).
-    // `surfaceable` keeps pre-join backlog off the embed channel too.
-    if let Some(tx) = ctx.external_msg_tx
-        && tx.receiver_count() > 0
-        && surfaceable
-        && !matches!(
-            message.kind,
-            MessageKind::Digest | MessageKind::Ping | MessageKind::Pong { .. }
-        )
-    {
-        let _ = tx.send(message.clone());
-    }
+    maybe_push_embed(ctx, &message, surfaceable);
 
     match &message.kind {
         MessageKind::PeerInfo => {
@@ -360,6 +350,17 @@ async fn handle_gossip_received(content: Bytes, state: &mut EventLoopState, ctx:
                 return;
             }
         }
+        MessageKind::Task { to, phase, .. } => {
+            // Only the addressee is a party: advance its coarse state machine
+            // (resets the debounce, advances the phase, counts content). A
+            // third-party relay tracks nothing.
+            if to == ctx.author {
+                crate::daemon::task::observe(&mut state.tasks, &message, false, Instant::now());
+            }
+            if !lifecycle::handle_task(ctx.output, &message, to, *phase, surfaceable, ctx.author) {
+                return;
+            }
+        }
     }
 
     if is_loggable(&message.kind) {
@@ -395,6 +396,34 @@ async fn handle_gossip_received(content: Bytes, state: &mut EventLoopState, ctx:
                 state.forget_msg_seq(&evicted.pubkey, seq, &evicted_hash);
             }
         }
+    }
+}
+
+/// Hand a surviving inbound message to the embed facade before kind
+/// routing, so the consumer sees `msg` / `presence` / `peer_info` /
+/// `handover` alike. Non-blocking by construction (bounded broadcast); a send error
+/// or full ring is intentionally dropped so a slow embedder never stalls
+/// the gossip loop. The `receiver_count` gate skips the per-message clone
+/// while no consumer is subscribed (always, until the embedder calls
+/// `messages()`; forever for CLI/MCP where the field is `None`).
+/// `surfaceable` keeps pre-join backlog off the embed channel too; plumbing
+/// kinds (digest/ping/pong) are excluded.
+fn maybe_push_embed(ctx: &HandlerCtx<'_>, message: &Message, surfaceable: bool) {
+    if let Some(tx) = ctx.external_msg_tx
+        && tx.receiver_count() > 0
+        && surfaceable
+        && !matches!(
+            message.kind,
+            MessageKind::Digest
+                | MessageKind::Ping
+                | MessageKind::Pong { .. }
+                | MessageKind::Task {
+                    phase: crate::protocol::TaskPhase::Progress,
+                    ..
+                }
+        )
+    {
+        let _ = tx.send(message.clone());
     }
 }
 
@@ -465,6 +494,13 @@ fn is_loggable(kind: &MessageKind) -> bool {
             | MessageKind::Digest
             | MessageKind::Ping
             | MessageKind::Pong { .. }
+            // The `Progress` task phase is liveness plumbing — never retained
+            // or surfaced via poll/fetch, only emitted as a `task_progress`
+            // widget event. Content task legs stay loggable like `Msg`.
+            | MessageKind::Task {
+                phase: crate::protocol::TaskPhase::Progress,
+                ..
+            }
     )
 }
 

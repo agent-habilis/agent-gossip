@@ -7,6 +7,7 @@ use tokio::time::Instant as TokioInstant;
 
 use bytes::Bytes;
 use iroh::EndpointId;
+use serde::Serialize;
 
 use super::bounded_id_set::BoundedIdSet;
 use super::message_log::MessageLog;
@@ -14,7 +15,7 @@ use super::rate_limit::SwarmRateLimiter;
 use crate::daemon::state_file::StateFile;
 use crate::output;
 use crate::protocol::identity::Identity;
-use crate::protocol::{Message, MessageId, Nickname};
+use crate::protocol::{Message, MessageId, Nickname, TaskId};
 use crate::util::bounded_fifo_set::BoundedFifoSet;
 use crate::util::bounded_queue::BoundedQueue;
 use crate::util::cooldown::Cooldown;
@@ -27,6 +28,27 @@ use crate::util::tuning::{
 /// `RELINK_COOLDOWN_SECS` as a `Duration` — the window both per-endpoint
 /// throttles (`relink`, `peerinfo`) use.
 const RELINK_COOLDOWN: Duration = Duration::from_secs(RELINK_COOLDOWN_SECS);
+
+/// One participant in a [`RosterSnapshot`]. `last_seen_secs_ago` is
+/// `None` until the peer's first heartbeat is timed; `quiet` marks a
+/// peer heartbeat-evicted past `ALIVE_TIMEOUT_SECS` (still returnable).
+/// Serialized directly into the `ah-s peers` response and the MCP
+/// `swarm_info` roster.
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct RosterEntry {
+    pub nickname: Nickname,
+    pub last_seen_secs_ago: Option<u64>,
+    pub quiet: bool,
+}
+
+/// Live participant roster: every known peer (active + quiet) sorted
+/// most-recently-seen first, plus `count == participants.len() + 1` (the
+/// `+1` is self — same definition as the statusline `participant_count`).
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct RosterSnapshot {
+    pub participants: Vec<RosterEntry>,
+    pub count: usize,
+}
 
 /// All mutable state owned by the event loop.
 ///
@@ -96,6 +118,18 @@ pub(crate) struct EventLoopState {
     /// (cap `QUIET_CAP`): drained on return, so without the cap a churn /
     /// sybil stream of one-shot nicknames would grow it without bound.
     pub quiet: BoundedFifoSet<Nickname>,
+    /// Recency companion to `quiet`: nickname -> the `last_seen` instant a
+    /// quiet peer had when it was evicted, so [`roster_snapshot`] can still
+    /// report how long ago it was last heard (the eviction drops its
+    /// `last_seen` entry). Pruned to `quiet`'s membership on every sweep, so
+    /// it stays bounded by `QUIET_CAP`; `roster_snapshot` only reads it for
+    /// peers currently in `quiet`, so a stale entry never surfaces.
+    pub quiet_since: HashMap<Nickname, Instant>,
+    /// In-flight task exchanges this node is a party to, keyed by `task_id`
+    /// (see [`crate::daemon::task`]). The coarse state machine + the two
+    /// task timers (debounce sweep, ball-owner keepalive) read/write this;
+    /// the skill owns the content. Third-party relays never insert here.
+    pub tasks: HashMap<TaskId, crate::daemon::task::TaskRecord>,
     /// Presentation layer: participants for whom we have *surfaced* an
     /// arrival (synthetic `joined`, real `Presence::Joined`, or
     /// `peer_return`). Gates departure surfacing so a participant whose
@@ -253,8 +287,10 @@ impl EventLoopState {
             relink: Cooldown::new(RELINK_COOLDOWN),
             peerinfo: Cooldown::new(RELINK_COOLDOWN),
             participants: HashSet::new(),
+            tasks: HashMap::new(),
             last_seen: HashMap::new(),
             quiet: BoundedFifoSet::new(QUIET_CAP),
+            quiet_since: HashMap::new(),
             surfaced: HashSet::new(),
             last_sent_at: now,
             joined_at: crate::util::clock::unix_secs(),
@@ -326,6 +362,38 @@ impl EventLoopState {
         }
         if let Some(live) = self.live_count.as_ref() {
             live.store(count, Ordering::Relaxed);
+        }
+    }
+
+    /// Snapshot the live roster (active participants + quiet evictees),
+    /// sorted most-recently-seen first. Backs `ah-s peers`, the MCP
+    /// `swarm_info` roster, and the handover sender's target picker /
+    /// nickname validation.
+    pub(crate) fn roster_snapshot(&self) -> RosterSnapshot {
+        let now = Instant::now();
+        let secs_since = |seen: &Instant| now.duration_since(*seen).as_secs();
+        let mut participants: Vec<RosterEntry> = self
+            .participants
+            .iter()
+            .map(|nick| RosterEntry {
+                nickname: nick.clone(),
+                // Active peers: their live `last_seen`.
+                last_seen_secs_ago: self.last_seen.get(nick).map(secs_since),
+                quiet: false,
+            })
+            .chain(self.quiet.iter().map(|nick| RosterEntry {
+                nickname: nick.clone(),
+                // Quiet peers: their last-heard instant, retained in
+                // `quiet_since` (the eviction drops `last_seen`).
+                last_seen_secs_ago: self.quiet_since.get(nick).map(secs_since),
+                quiet: true,
+            }))
+            .collect();
+        // Most-recently-seen first; unknown recency (no heartbeat yet) sorts last.
+        participants.sort_by_key(|entry| entry.last_seen_secs_ago.unwrap_or(u64::MAX));
+        RosterSnapshot {
+            participants,
+            count: self.participants.len() + 1,
         }
     }
 

@@ -9,7 +9,7 @@ import {
   sendSwarmMessage,
   validateCreateOptions,
 } from "./core";
-import { isValidBody, requireAgentSwarm } from "./helpers";
+import { formatSwarmMessage, isValidBody, requireAgentSwarm, runSwarmCommand } from "./helpers";
 import { state } from "./state";
 
 export function registerCommands(pi: ExtensionAPI): void {
@@ -36,6 +36,10 @@ export function registerCommands(pi: ExtensionAPI): void {
   pi.registerCommand("swarm-ping", {
     description: "Ping all peers in the swarm and measure round-trip time",
     handler: cmdPing,
+  });
+  pi.registerCommand("swarm-version", {
+    description: "Show the swarm binary version and whether the installed extension is up to date",
+    handler: cmdVersion,
   });
 }
 
@@ -112,6 +116,7 @@ async function cmdCreate(args: string, ctx: ExtensionCommandContext): Promise<vo
   ctx.ui.notify(options.name ? `🐝 creating #${options.name}...` : "🐝 creating swarm...", "info");
   const result = await createSwarm(options);
   ctx.ui.notify(`🐝 created #${result.name}\n/swarm-join ${result.swarm}`, "info");
+  if (result.drift) ctx.ui.notify(`🐝 ${result.drift}`, "info");
 }
 
 async function cmdJoin(args: string, ctx: ExtensionCommandContext): Promise<void> {
@@ -127,6 +132,7 @@ async function cmdJoin(args: string, ctx: ExtensionCommandContext): Promise<void
   ctx.ui.notify(`🐝 joining ${target.slice(0, 40)}...`, "info");
   const result = await joinSwarm(target);
   ctx.ui.notify(`🐝 joined #${result.name} as <${result.nickname}>`, "info");
+  if (result.drift) ctx.ui.notify(`🐝 ${result.drift}`, "info");
 }
 
 async function cmdMsg(args: string, ctx: ExtensionCommandContext): Promise<void> {
@@ -217,5 +223,22 @@ async function cmdPing(_args: string, ctx: ExtensionCommandContext): Promise<voi
     ctx.ui.notify(`🐝\n${lines.join("\n")}`, "info");
   } catch (error) {
     ctx.ui.notify(`🐝 ping failed: ${error instanceof Error ? error.message : "unknown"}`, "error");
+  }
+}
+
+// `ah-s status` reports the binary version and whether each installed
+// integration still matches the binary — the on-demand drift check, the
+// counterpart to the startup warning folded into the `ready` event.
+async function cmdVersion(_args: string, ctx: ExtensionCommandContext): Promise<void> {
+  state.ctx = ctx;
+  if (!requireAgentSwarm(ctx)) return;
+
+  try {
+    ctx.ui.notify(formatSwarmMessage(runSwarmCommand(["status"])), "info");
+  } catch (error) {
+    ctx.ui.notify(
+      `🐝 version check failed: ${error instanceof Error ? error.message : "unknown"}`,
+      "error",
+    );
   }
 }

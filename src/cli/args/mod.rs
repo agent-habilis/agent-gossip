@@ -14,18 +14,22 @@ mod join;
 mod lookup;
 mod msg;
 mod output;
+mod peers;
 mod ping;
 mod poll;
 mod shared;
+mod task;
 
 pub(crate) use create::CreateOpts;
 pub(crate) use discover::DiscoverOpts;
 pub(crate) use join::JoinOpts;
 pub(crate) use msg::MsgOpts;
 pub(crate) use output::OutputFormat;
+pub(crate) use peers::PeersOpts;
 pub(crate) use ping::PingOpts;
 pub(crate) use poll::PollOpts;
 pub(crate) use shared::SharedServerOpts;
+pub(crate) use task::TaskOpts;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -100,6 +104,30 @@ pub(crate) enum Commands {
     Discover {
         #[command(flatten)]
         opts: DiscoverOpts,
+    },
+
+    /// Send one leg of a task exchange to a specific peer.
+    ///
+    /// A task is a directed, phased exchange correlated by `--task-id`
+    /// (offer → accept → context → done → confirm/change). `handover` is
+    /// one behavior built on it. The receiving daemon surfaces a `task` (or
+    /// `task_progress`) event on its `--output json` stream. `--phase offer`
+    /// validates `--to` against the live roster and errors on an unknown
+    /// nickname.
+    Task {
+        #[command(flatten)]
+        opts: TaskOpts,
+    },
+
+    /// List the live participant roster of a swarm.
+    ///
+    /// Queries the running daemon for current participants (nicknames +
+    /// how long ago each was last seen), recency-sorted. Backs the
+    /// handover target picker; prints a JSON object with `participants`
+    /// and `count`.
+    Peers {
+        #[command(flatten)]
+        opts: PeersOpts,
     },
 
     /// Run as a Model Context Protocol server over stdio.

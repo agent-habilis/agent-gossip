@@ -16,7 +16,9 @@ use crate::daemon::SessionRequest;
 use crate::daemon::state::EventLoopState;
 use crate::output;
 use crate::protocol::identity::{self, Identity};
-use crate::protocol::{Message, MessageBody, MessageId, Nickname, SwarmId};
+use crate::protocol::{
+    Message, MessageBody, MessageId, MessageKind, Nickname, SwarmId, TaskId, TaskKind, TaskPhase,
+};
 
 /// Fire-and-forget gossip broadcast. Serialize errors are swallowed:
 /// this helper is for presence / `PeerInfo` announcements where a
@@ -123,6 +125,41 @@ pub(crate) async fn handle_stdin_line(
     }
 }
 
+/// Retain a just-built outbound message in the local log (pruning the
+/// fork/DAG indexes on any eviction) and write the dev log. The operator
+/// echo is the caller's responsibility — it differs by kind
+/// (`print_message_ex` for `Msg`, `print_handover` for `Handover`).
+/// Shared by [`commit_outbound`] (after chain stamping) and
+/// [`echo_and_retain`] (no chain stamping).
+fn retain_outbound(state: &mut EventLoopState, msg: &Message) {
+    if let Some(evicted) = state.message_log.push(msg.clone()) {
+        let evicted_hash = evicted.content_hash_hex();
+        state.forget_hash(&evicted_hash);
+        if let Some(seq) = evicted.seq {
+            state.forget_msg_seq(&evicted.pubkey, seq, &evicted_hash);
+        }
+    }
+    crate::logging::messages::log_out(msg);
+}
+
+/// Echo a just-built outbound handover leg to the operator and retain it.
+/// Shared by [`broadcast_handover`]'s meshed and queued paths (no chain
+/// stamping; handover is presence-like).
+/// Echo a just-built outbound task leg to the operator and, for **content**
+/// legs, retain it in the message log for anti-entropy. The `Progress` phase
+/// is liveness plumbing — echoed (so the sender's own widget updates) but
+/// never retained, mirroring its receive-side handling.
+fn echo_and_retain_task(state: &mut EventLoopState, msg: &Message, out: &output::Output) {
+    out.print_task(msg, true);
+    let retain = matches!(
+        &msg.kind,
+        MessageKind::Task { phase, .. } if crate::protocol::message::is_content_phase(*phase)
+    );
+    if retain {
+        retain_outbound(state, msg);
+    }
+}
+
 /// Commit a just-built outbound `Msg` into local state: advance the per-author
 /// hash chain (`seq`/`prev`) and the DAG tips, echo it to the operator, retain
 /// it in the message log (pruning the fork/DAG indexes on eviction), and write
@@ -134,14 +171,7 @@ fn commit_outbound(state: &mut EventLoopState, msg: &Message, out: &output::Outp
     state.self_prev = Some(hash.clone());
     state.note_dag(hash, &msg.parents, msg.timestamp);
     out.print_message_ex(msg, true);
-    if let Some(evicted) = state.message_log.push(msg.clone()) {
-        let evicted_hash = evicted.content_hash_hex();
-        state.forget_hash(&evicted_hash);
-        if let Some(seq) = evicted.seq {
-            state.forget_msg_seq(&evicted.pubkey, seq, &evicted_hash);
-        }
-    }
-    crate::logging::messages::log_out(msg);
+    retain_outbound(state, msg);
 }
 
 /// Outcome of a send through [`broadcast_message`]. `RateLimited` is a
@@ -230,6 +260,96 @@ pub(crate) async fn broadcast_message(
     Ok(SendOutcome::Sent(id, msg))
 }
 
+/// One outbound task leg's payload (addressee + correlation id + behavior +
+/// phase + body), bundled so [`broadcast_task`] stays within the argument
+/// budget. The IPC `task` command and the typed `SessionRequest::Task` both
+/// build it from their carried fields.
+pub(crate) struct TaskLeg {
+    pub to: Nickname,
+    pub task_id: TaskId,
+    pub kind: TaskKind,
+    pub phase: TaskPhase,
+    pub body: MessageBody,
+}
+
+/// Build, sign, log and gossip-broadcast one task leg. Sibling of
+/// [`broadcast_message`] for the typed `Task` kind: **content** legs share the
+/// per-author rate quota and the meshed/unmeshed retain paths, but the
+/// `Progress` phase is liveness plumbing — rate-limit-exempt and never
+/// retained. No hash-chain or DAG stamping (task legs are presence-like —
+/// see [`MessageKind::Task`]). Always echoes the sender's own leg through
+/// `print_task` (a `task`/`task_progress` event with `self:true`), the same
+/// way an outbound `msg` echoes. Showing the leg to its *addressee* is the
+/// receiver-side job of [`lifecycle::handle_task`](crate::lifecycle::handle_task).
+///
+/// This is where `Offer` addressee validation lives: an `Offer` leg must name
+/// a current participant. The CLI, MCP, and embed callers all reach this
+/// function, so validating here covers every path. Later phases skip the check
+/// so a brief peer flap mid-exchange can't wedge the conversation.
+///
+/// # Errors
+/// Returns an `unknown participant` error for an `Offer` to a non-participant;
+/// propagates [`Message::serialize`] failure (oversized brief) and a gossip
+/// broadcast error.
+pub(crate) async fn broadcast_task(
+    swarm: &SwarmId,
+    author: &Nickname,
+    leg: TaskLeg,
+    state: &mut EventLoopState,
+    sender: &GossipSender,
+    out: &output::Output,
+) -> anyhow::Result<SendOutcome> {
+    let TaskLeg {
+        to,
+        task_id,
+        kind,
+        phase,
+        body,
+    } = leg;
+    if matches!(phase, TaskPhase::Offer) && !state.participants.contains(to.as_str()) {
+        return Err(anyhow::anyhow!("unknown participant '{to}'"));
+    }
+    let signer = state.identity.clone();
+    let our_pubkey = identity::encode_pubkey(&signer.public());
+    // Content legs share the Msg quota; Progress (plumbing) is exempt.
+    if crate::protocol::message::is_content_phase(phase) && !state.rate_limiter.check(&our_pubkey) {
+        out.info(&format!("rate limit exceeded for [{author}], dropping"));
+        tracing::debug!(%author, "send rate limit exceeded; not broadcasting task");
+        return Ok(SendOutcome::RateLimited);
+    }
+    let msg = Message::new_task(swarm, author, to, task_id, kind, phase, body).signed(&signer);
+    let bytes = Bytes::from(msg.serialize()?);
+    let id = msg.id.clone();
+    if state.meshed {
+        // Meshed: echo + (content-only) retain locally, then hit the wire. A
+        // transient broadcast error still leaves a content leg in our log for
+        // anti-entropy.
+        echo_and_retain_task(state, &msg, out);
+        sender
+            .broadcast(bytes)
+            .await
+            .map_err(|error| anyhow::anyhow!("{error}"))?;
+    } else if state.pending_outbound.push(bytes) {
+        // Unmeshed: buffered for flush-on-connect; it *will* be sent in order.
+        echo_and_retain_task(state, &msg, out);
+    } else {
+        out.info("pending outbound buffer full; outbound task dropped");
+        tracing::warn!("pending outbound buffer full; outbound task dropped");
+        return Ok(SendOutcome::RateLimited);
+    }
+    // Advance our own coarse state machine for the leg we just sent (resets
+    // our debounce, advances the phase, counts content). Warn once if a
+    // content leg pushed the exchange past its whole-task cap.
+    if crate::daemon::task::observe(&mut state.tasks, &msg, true, Instant::now()) {
+        out.info(&format!(
+            "task exchange exceeded {} messages; wrap it up",
+            crate::util::consts::TASK_CONTENT_CAP
+        ));
+        tracing::warn!("task content cap exceeded");
+    }
+    Ok(SendOutcome::Sent(id, msg))
+}
+
 /// Handle one typed in-process [`SessionRequest`] (embed / MCP). `Send`
 /// broadcasts via the shared helper and echoes the canonical [`Message`]
 /// back on the oneshot; `Poll` returns the join-horizon-filtered buffer.
@@ -256,6 +376,35 @@ pub(crate) async fn handle_session_request(
         }
         SessionRequest::Poll { after, resp } => {
             let _ = resp.send(state.poll_after(after.as_ref(), output));
+            false
+        }
+        SessionRequest::Task {
+            to,
+            task_id,
+            kind,
+            phase,
+            body,
+            resp,
+        } => {
+            let leg = TaskLeg {
+                to,
+                task_id,
+                kind,
+                phase,
+                body,
+            };
+            let outcome = broadcast_task(swarm, author, leg, state, sender, output)
+                .await
+                .map(|sent| match sent {
+                    SendOutcome::Sent(_id, msg) => Some(msg),
+                    SendOutcome::RateLimited => None,
+                });
+            let sent_ok = matches!(outcome, Ok(Some(_)));
+            let _ = resp.send(outcome);
+            sent_ok
+        }
+        SessionRequest::Peers { resp } => {
+            let _ = resp.send(state.roster_snapshot());
             false
         }
         // Raw injection (adversarial only): broadcast the bytes verbatim, no

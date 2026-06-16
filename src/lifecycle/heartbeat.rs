@@ -41,20 +41,23 @@ pub(crate) async fn tick_alive(
 pub(crate) fn tick_sweep(state: &mut EventLoopState, out: &output::Output) {
     let now = Instant::now();
     let timeout = Duration::from_secs(alive_timeout_secs());
-    let expired: Vec<(Nickname, u64)> = state
+    let expired: Vec<(Nickname, Instant, u64)> = state
         .last_seen
         .iter()
         .filter_map(|(nick, seen)| {
             let age = now.duration_since(*seen);
-            (age > timeout).then(|| (nick.clone(), age.as_secs()))
+            (age > timeout).then(|| (nick.clone(), *seen, age.as_secs()))
         })
         .collect();
-    for (nick, age) in expired {
+    for (nick, seen, age) in expired {
         state.last_seen.remove(nick.as_str());
         if state.participants.remove(nick.as_str()) {
             state.write_participant_count();
             if state.surfaced.remove(nick.as_str()) {
                 state.quiet.insert(nick.clone());
+                // Retain the last-heard instant so the roster can still
+                // report this evictee's recency (its `last_seen` is gone).
+                state.quiet_since.insert(nick.clone(), seen);
                 out.peer_timeout(&nick, age);
                 tracing::debug!(nickname = %nick, age_secs = age, "peer evicted (silence timeout)");
             } else {
@@ -66,6 +69,13 @@ pub(crate) fn tick_sweep(state: &mut EventLoopState, out: &output::Output) {
             }
         }
     }
+    // Keep `quiet_since` bounded to current `quiet` membership: peers that
+    // returned (drained from `quiet`) or fell off the bounded `quiet` FIFO
+    // drop their stale recency here.
+    let quiet = &state.quiet;
+    state
+        .quiet_since
+        .retain(|nick, _| quiet.contains(nick.as_str()));
 }
 
 #[cfg(test)]
@@ -105,6 +115,36 @@ mod tests {
         assert!(!state.participants.contains("swift-cedar"));
         assert!(state.quiet.contains("swift-cedar"));
         assert!(!state.surfaced.contains("swift-cedar"));
+    }
+
+    #[test]
+    fn quiet_peer_reports_real_recency_in_roster() {
+        // Regression: a quiet peer must still report how long ago it was
+        // last heard (not `null`), even though eviction drops `last_seen`.
+        let mut state = fresh_state();
+        let expired_at = Instant::now()
+            .checked_sub(Duration::from_secs(alive_timeout_secs() + 10))
+            .unwrap();
+        state.last_seen.insert(nick("calm-otter"), expired_at);
+        state.participants.insert(nick("calm-otter"));
+        state.surfaced.insert(nick("calm-otter"));
+
+        tick_sweep(&mut state, &output::Output::silent());
+
+        let roster = state.roster_snapshot();
+        let entry = roster
+            .participants
+            .iter()
+            .find(|entry| entry.nickname.as_str() == "calm-otter")
+            .expect("quiet peer present in roster");
+        assert!(entry.quiet, "evicted peer is marked quiet");
+        let secs = entry
+            .last_seen_secs_ago
+            .expect("quiet peer reports real recency, not null");
+        assert!(
+            secs >= alive_timeout_secs(),
+            "recency reflects the actual silence age, got {secs}s"
+        );
     }
 
     #[test]

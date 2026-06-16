@@ -71,6 +71,8 @@ mod tests {
             | Commands::Discover { .. }
             | Commands::Mcp
             | Commands::Man
+            | Commands::Task { .. }
+            | Commands::Peers { .. }
             | Commands::Setup { .. }
             | Commands::Teardown { .. }
             | Commands::Status => panic!("expected Create"),
@@ -139,6 +141,8 @@ mod tests {
             | Commands::Discover { .. }
             | Commands::Mcp
             | Commands::Man
+            | Commands::Task { .. }
+            | Commands::Peers { .. }
             | Commands::Setup { .. }
             | Commands::Teardown { .. }
             | Commands::Status => panic!("expected Create"),

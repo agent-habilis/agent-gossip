@@ -16,7 +16,10 @@ use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use common::{CONNECT_TIMEOUT, InProcNode, MSG_TIMEOUT, POLL, socket_path, tmp_log, wait_until};
+use common::{
+    CONNECT_TIMEOUT, InProcNode, MSG_TIMEOUT, POLL, RECOVERY_TIMEOUT, socket_path, tmp_log,
+    wait_until,
+};
 
 /// A node running in JSON output mode, with stdout captured to a log file.
 struct JsonNode {
@@ -220,7 +223,7 @@ fn three_peers(suffix: &str) -> (JsonNode, JsonNode, JsonNode, String) {
 
 /// The `ready` event has the expected JSON shape with `swarm`, `name`,
 /// and `nickname`.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_ready_event_shape() {
     let mut creator = InProcNode::create("readyshape").await;
     let swarm = creator.swarm.clone();
@@ -252,7 +255,7 @@ async fn test_ready_event_shape() {
 /// Three peers: creator surfaces a membership `joined` presence for
 /// both joiners. Arrival is surfaced once, via nickname-keyed
 /// presence (not a transport-level event).
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_peer_discovery_three_peers() {
     let (mut creator, _joiner_a, _joiner_b) = common::three_peers("disco").await;
 
@@ -263,7 +266,7 @@ async fn test_peer_discovery_three_peers() {
 }
 
 /// Message from joiner-A is received by creator AND joiner-B with correct JSON shape.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_cross_peer_message_delivery() {
     let (mut creator, joiner_a, mut joiner_b) = common::three_peers("xpeer").await;
 
@@ -297,7 +300,7 @@ async fn test_cross_peer_message_delivery() {
 }
 
 /// Messages from both joiners are received by the other peers.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_bidirectional_multi_peer() {
     let (mut creator, joiner_a, joiner_b) = common::three_peers("bidir").await;
 
@@ -319,7 +322,7 @@ async fn test_bidirectional_multi_peer() {
 }
 
 /// Reply addressing: `reply` field carries the target nickname.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_reply_addressing_json() {
     let (mut creator, mut joiner_a, joiner_b) = common::three_peers("reply").await;
     let a_nick = joiner_a.nickname.clone();
@@ -354,7 +357,7 @@ async fn test_reply_addressing_json() {
 /// Directed replies are only surfaced to the addressee, not to uninvolved
 /// peers. With 3 peers, if A sends and B replies to A, peer C should NOT
 /// see the reply in its JSON output or poll buffer.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_reply_filtering_json() {
     let (mut creator, mut joiner_a, mut joiner_b) = common::three_peers("rfilt").await;
     let a_nick = joiner_a.nickname.clone();
@@ -390,7 +393,7 @@ async fn test_reply_filtering_json() {
 /// Self-echo suppression: the sender does NOT see its own message in JSON output
 /// (the event loop skips messages where author == self). Messages sent via IPC
 /// are echoed back with `"self":true`.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_self_echo_suppression() {
     let mut creator = InProcNode::create("monecho").await;
     let mut joiner = InProcNode::join(&creator.swarm, "mon-echo").await;
@@ -464,7 +467,7 @@ fn test_peer_departure_event() {
 }
 
 /// Presence `joined` events have the correct JSON shape.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_presence_joined_event_shape() {
     let mut creator = InProcNode::create("monjshape").await;
     let _joiner = InProcNode::join(&creator.swarm, "mon-joined-shape").await;
@@ -492,7 +495,7 @@ async fn test_presence_joined_event_shape() {
 }
 
 /// Info events have the expected shape.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_info_event_shape() {
     let mut creator = InProcNode::create("moninfo").await;
 
@@ -516,7 +519,7 @@ async fn test_info_event_shape() {
 }
 
 /// Every JSON line from the daemon is valid JSON (no partial lines, no corruption).
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_all_lines_are_valid_json() {
     let mut creator = InProcNode::create("monvalid").await;
     let joiner = InProcNode::join(&creator.swarm, "mon-valid-json").await;
@@ -540,7 +543,7 @@ async fn test_all_lines_are_valid_json() {
 }
 
 /// Every message event has all fields the Monitor event handler needs.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_message_event_has_all_required_fields() {
     let mut creator = InProcNode::create("monfields").await;
     let joiner = InProcNode::join(&creator.swarm, "mon-fields").await;
@@ -603,9 +606,12 @@ fn test_creator_departure_peers_survive() {
     assert!(joiner_a.is_alive(), "joiner_a died after creator departure");
     assert!(joiner_b.is_alive(), "joiner_b died after creator departure");
 
-    // Joiners should still be able to exchange messages.
+    // Joiners should still be able to exchange messages. This is a
+    // post-disruption delivery: the creator may have been the relay hub
+    // between the two joiners, so re-meshing waits on the heal cadence —
+    // budget it with `RECOVERY_TIMEOUT`, not the steady-state `MSG_TIMEOUT`.
     cli_send(&swarm, "survive-alpha", "still-here");
-    let delivered = wait_until(|| joiner_b.msg_events().len(), 1, MSG_TIMEOUT);
+    let delivered = wait_until(|| joiner_b.msg_events().len(), 1, RECOVERY_TIMEOUT);
     assert!(
         delivered >= 1,
         "joiner_b did not receive message from joiner_a after creator left"
@@ -703,9 +709,11 @@ fn test_creator_departure_four_peers_survive() {
     assert!(joiner_b.is_alive(), "joiner_b died after creator departure");
     assert!(joiner_c.is_alive(), "joiner_c died after creator departure");
 
-    // Verify cross-peer messaging still works.
+    // Verify cross-peer messaging still works. Post-disruption deliveries
+    // (the creator just left) re-mesh on the heal cadence, so they get
+    // `RECOVERY_TIMEOUT` rather than the steady-state `MSG_TIMEOUT`.
     cli_send(&swarm, "four-alpha", "post-creator-msg");
-    let post_count = wait_until(|| joiner_b.msg_events().len(), 1, MSG_TIMEOUT);
+    let post_count = wait_until(|| joiner_b.msg_events().len(), 1, RECOVERY_TIMEOUT);
     assert!(
         post_count >= 1,
         "joiner_b did not receive message after creator left"
@@ -721,7 +729,7 @@ fn test_creator_departure_four_peers_survive() {
                 .count()
         },
         1,
-        MSG_TIMEOUT,
+        RECOVERY_TIMEOUT,
     );
     assert!(
         relay_count >= 1,
@@ -734,7 +742,7 @@ fn test_creator_departure_four_peers_survive() {
 /// A heartbeat `Presence::Alive` never appears as a `message` event in
 /// the JSON output — it's an internal keepalive. Fast check: no timing
 /// dependency beyond a brief settle.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_alive_presence_is_silent_in_json() {
     let mut creator = InProcNode::create("monsilent").await;
     let mut joiner = InProcNode::join(&creator.swarm, "silent-alpha").await;
@@ -984,7 +992,7 @@ fn test_pre_join_ghost_peer_never_surfaces() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn create_with_nickname_uses_custom_name() {
     let node = InProcNode::create_with_nick("nickjoin", "pinned-manager").await;
     assert_eq!(
@@ -994,7 +1002,7 @@ async fn create_with_nickname_uses_custom_name() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn create_without_nickname_uses_random_name() {
     let node = InProcNode::create("randnick").await;
     let nick = &node.nickname;
@@ -1019,4 +1027,230 @@ async fn create_without_nickname_uses_random_name() {
         "second word '{}' should be lowercase ASCII",
         parts[1]
     );
+}
+
+// ── task + peers wire contract ───────────────────────────────────────────────
+
+const WIRE_TASK_ID: &str = "550e8400-e29b-41d4-a716-446655440000";
+
+/// The `task` event wire shape: a leg sent from the creator to a specific
+/// joiner is surfaced on **that joiner's** `--output json` stream with the
+/// documented fields, and is **absent** from a third peer's stream
+/// (delivered for relay, never surfaced to a bystander).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_task_event_wire_contract() {
+    let (creator, joiner_a, joiner_b, swarm) = three_peers("ho");
+    let addressee = joiner_a.nickname.clone();
+
+    common::cli_task_checked(
+        &swarm,
+        &creator.nickname,
+        &addressee,
+        WIRE_TASK_ID,
+        "handover",
+        "offer",
+        "## Task\nport it",
+    );
+
+    // Give the leg time to propagate and be written to the addressee's log.
+    let deadline = Instant::now() + MSG_TIMEOUT;
+    let mut task = None;
+    while Instant::now() < deadline {
+        if let Some(event) = joiner_a
+            .json_events()
+            .into_iter()
+            .find(|value| value["event"] == "task")
+        {
+            task = Some(event);
+            break;
+        }
+        std::thread::sleep(POLL);
+    }
+    let task = task.expect("addressee never surfaced a task event");
+    assert_eq!(task["event"], "task");
+    assert_eq!(task["task_id"], WIRE_TASK_ID);
+    assert_eq!(task["kind"], "handover");
+    assert_eq!(task["phase"], "offer");
+    assert_eq!(task["to"], addressee);
+    assert_eq!(task["author"], creator.nickname);
+    assert_eq!(task["body"], "## Task\nport it");
+    assert_eq!(task["self"], false);
+    assert!(task["id"].is_string());
+    assert!(task["ts"].is_number());
+    assert!(
+        task["display"]
+            .as_str()
+            .unwrap()
+            .starts_with("🐝️ task handover offer"),
+        "display: {}",
+        task["display"]
+    );
+    // A distinct top-level event — never the `message` family.
+    assert!(task.get("type").is_none());
+
+    // The bystander relayed it but must never surface it.
+    assert!(
+        joiner_b
+            .json_events()
+            .iter()
+            .all(|value| value["event"] != "task"),
+        "a third peer must not surface a task addressed to someone else"
+    );
+}
+
+/// `ah-s task --phase offer` to a nickname that is not a current
+/// participant exits non-zero with an `unknown participant` error.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_task_unknown_participant_errors() {
+    let (creator, _joiner_a, _joiner_b, swarm) = three_peers("ho-unknown");
+
+    let out = common::cli_task_raw(
+        &swarm,
+        &creator.nickname,
+        "ghost-peer",
+        WIRE_TASK_ID,
+        "handover",
+        "offer",
+        "brief",
+    );
+    assert!(
+        !out.status.success(),
+        "task offer to an unknown participant must exit non-zero"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("unknown participant"),
+        "expected an unknown-participant error, got: {stderr}"
+    );
+}
+
+/// Task timers: while both peers are alive the ball-owner's daemon
+/// keepalive prevents a spurious idle-timeout; once the ball-owner dies,
+/// the other party's debounce fires a `task_timeout`. Run with shortened
+/// timers (`--task-timeout-secs 3`, keepalive 1s, sweep 1s).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_task_idle_timeout_after_owner_dies() {
+    let timers: &[(&str, &str)] = &[
+        ("--task-timeout-secs", "3"),
+        ("--task-keepalive-secs", "1"),
+        ("--sweep-interval-secs", "1"),
+    ];
+    let (creator, swarm) = JsonNode::create_with_flags(timers);
+    let mut joiner = JsonNode::join_with_flags(&swarm, "tk-bob", timers);
+    assert!(creator.wait_ready(&swarm));
+    assert!(joiner.wait_ready(&swarm));
+
+    // The creator must see the joiner before it can offer.
+    let saw_join = wait_until(
+        || {
+            creator
+                .presence_events()
+                .iter()
+                .filter(|value| value["subtype"] == "joined")
+                .count()
+        },
+        1,
+        MSG_TIMEOUT,
+    );
+    assert!(saw_join >= 1, "creator never saw the joiner join");
+
+    let tid = WIRE_TASK_ID;
+    // Creator offers; joiner accepts → the joiner (receiver) holds the ball.
+    common::cli_task_checked(
+        &swarm,
+        &creator.nickname,
+        "tk-bob",
+        tid,
+        "handover",
+        "offer",
+        "port it",
+    );
+    let saw_offer = wait_until(
+        || {
+            joiner
+                .json_events()
+                .iter()
+                .filter(|value| value["event"] == "task" && value["phase"] == "offer")
+                .count()
+        },
+        1,
+        MSG_TIMEOUT,
+    );
+    assert!(saw_offer >= 1, "joiner never surfaced the offer");
+    common::cli_task_checked(
+        &swarm,
+        "tk-bob",
+        &creator.nickname,
+        tid,
+        "handover",
+        "accept",
+        "ok",
+    );
+
+    // Both alive well past the 3s timeout: the joiner's keepalive must keep
+    // the task alive — no spurious `task_timeout` on the creator.
+    std::thread::sleep(Duration::from_secs(5));
+    assert!(
+        creator
+            .json_events()
+            .iter()
+            .all(|value| value["event"] != "task_timeout"),
+        "keepalive should prevent a spurious task_timeout while the owner is alive"
+    );
+
+    // Kill the ball-owner. Its keepalive stops; the creator's debounce fires.
+    let _ = joiner.child.kill();
+    let timed_out = wait_until(
+        || {
+            creator
+                .json_events()
+                .iter()
+                .filter(|value| value["event"] == "task_timeout" && value["task_id"] == tid)
+                .count()
+        },
+        1,
+        RECOVERY_TIMEOUT,
+    );
+    assert!(
+        timed_out >= 1,
+        "creator should emit task_timeout after the ball-owner died"
+    );
+}
+
+/// `ah-s peers` returns the live roster: `ok`, a `count` (participants + 1
+/// for self), and a `participants` array carrying nickname + recency +
+/// quiet flag for each known peer.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_peers_roster_shape() {
+    let (creator, joiner_a, joiner_b, swarm) = three_peers("peers");
+
+    // Poll until the creator's roster has converged to both joiners.
+    let deadline = Instant::now() + MSG_TIMEOUT;
+    let mut roster = serde_json::Value::Null;
+    while Instant::now() < deadline {
+        roster = serde_json::from_str(&common::cli_peers(&swarm, &creator.nickname))
+            .expect("peers response is JSON");
+        if roster["count"].as_u64() == Some(3) {
+            break;
+        }
+        std::thread::sleep(POLL);
+    }
+
+    assert_eq!(roster["ok"], true);
+    assert_eq!(roster["count"], 3, "creator + 2 joiners");
+    let participants = roster["participants"]
+        .as_array()
+        .expect("participants is an array");
+    let nicks: Vec<&str> = participants
+        .iter()
+        .filter_map(|entry| entry["nickname"].as_str())
+        .collect();
+    assert!(nicks.contains(&joiner_a.nickname.as_str()));
+    assert!(nicks.contains(&joiner_b.nickname.as_str()));
+    // Each entry carries the documented fields.
+    for entry in participants {
+        assert!(entry["nickname"].is_string());
+        assert!(entry.get("last_seen_secs_ago").is_some());
+        assert!(entry["quiet"].is_boolean());
+    }
 }

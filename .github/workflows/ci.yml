@@ -55,7 +55,14 @@ jobs:
       # strip, panic=abort) with thin LTO + 16 codegen units — fast
       # enough build for CI, fast enough crypto/network paths for
       # integration tests. See Cargo.toml `[profile.ci]`.
-      - run: cargo test --profile ci -- --test-threads=4
+      #
+      # `--test-threads=2`, not 4 (kept in sync with `cargo task ci`/`test`):
+      # the daemon-spawning reliability tests in `gossip_network.rs` assert
+      # heal-cadence-gated recovery (beacon migration, SIGSTOP storms,
+      # anti-entropy). At 4 those active windows overlap and starve each
+      # other's timing, flaking even though the daemons mesh fine; 2 still
+      # overlaps the long deliberate sleeps for speed.
+      - run: cargo test --profile ci -- --test-threads=2
 
   pi-extension:
     runs-on: ubuntu-latest

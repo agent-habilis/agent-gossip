@@ -118,6 +118,7 @@ export async function createSwarm(options: CreateOptions = {}): Promise<Session>
     name: ready.name,
     nickname: ready.nickname,
     pid: child.pid,
+    drift: typeof ready.drift === "string" ? ready.drift : undefined,
   };
   state.session = session;
   startWatcher(child);
@@ -148,6 +149,7 @@ export async function joinSwarm(target: string, nickname?: string): Promise<Sess
     name: ready.name,
     nickname: ready.nickname,
     pid: child.pid,
+    drift: typeof ready.drift === "string" ? ready.drift : undefined,
   };
   state.session = session;
   startWatcher(child);

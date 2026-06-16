@@ -15,7 +15,8 @@ use std::time::Instant;
 use crate::daemon::ctx::HandlerCtx;
 use crate::daemon::state::EventLoopState;
 use crate::output;
-use crate::protocol::{Message, MessageKind, Nickname, PresenceSubtype};
+use crate::protocol::message::is_content_phase;
+use crate::protocol::{Message, MessageKind, Nickname, PresenceSubtype, TaskPhase};
 
 use crate::gossip;
 
@@ -182,6 +183,31 @@ pub(crate) fn handle_msg(
         | MessageKind::PeerInfo
         | MessageKind::Digest
         | MessageKind::Ping
-        | MessageKind::Pong { .. } => false,
+        | MessageKind::Pong { .. }
+        | MessageKind::Task { .. } => false,
     }
+}
+
+/// A task leg: surfaced + logged only by the addressee (`to ==
+/// self_author`) and, via the sender's echo path, the sender itself —
+/// third parties relay it without retaining, exactly like a directed
+/// `Msg` (see [`handle_msg`]). Returns whether to **log** (content phases
+/// only — the `Progress` phase is liveness plumbing, surfaced as a
+/// `task_progress` widget event but never retained). `surfaceable` gates
+/// only the *display* (join-horizon), never the relay/log.
+pub(crate) fn handle_task(
+    out: &output::Output,
+    message: &Message,
+    to: &Nickname,
+    phase: TaskPhase,
+    surfaceable: bool,
+    self_author: &Nickname,
+) -> bool {
+    if to != self_author {
+        return false;
+    }
+    if surfaceable {
+        out.print_task(message, false);
+    }
+    is_content_phase(phase)
 }

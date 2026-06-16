@@ -18,6 +18,9 @@ pub(crate) mod peer_addr;
 pub(crate) mod swarm;
 mod wordlist;
 
-pub(crate) use message::{Message, MessageBody, MessageId, MessageKind, PresenceSubtype};
+pub(crate) use message::{
+    Message, MessageBody, MessageId, MessageKind, PresenceSubtype, TaskId, TaskIdError, TaskKind,
+    TaskKindError, TaskPhase, TaskPhaseError,
+};
 pub(crate) use nickname::Nickname;
 pub(crate) use swarm::SwarmId;

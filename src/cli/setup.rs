@@ -186,13 +186,27 @@ fn remove_existing(path: &Path) -> Result<()> {
 }
 
 /// Run `pi <args>`, surfacing a clear error when `pi` is missing or fails.
+/// Output is captured (not inherited) so pi's own chatter never breaks the
+/// cargo-style status formatting; on failure its stderr is folded into the
+/// error so the failure stays diagnosable.
 fn pi(args: &[&str]) -> Result<()> {
-    let status = Command::new("pi")
+    let output = Command::new("pi")
         .args(args)
-        .status()
+        .output()
         .context("running `pi` (is the pi CLI on PATH?)")?;
-    if !status.success() {
-        bail!("`pi {}` failed with {status}", args.join(" "));
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let detail = stderr.trim();
+        let suffix = if detail.is_empty() {
+            String::new()
+        } else {
+            format!(":\n{detail}")
+        };
+        bail!(
+            "`pi {}` failed with {}{suffix}",
+            args.join(" "),
+            output.status
+        );
     }
     Ok(())
 }

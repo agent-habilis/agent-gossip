@@ -158,6 +158,11 @@ pub(crate) async fn setup_swarm(
     max_peers: usize,
     state_file: Option<PathBuf>,
     output: output::Output,
+    // Skill-drift warning folded into the `ready` event. Computed by the CLI
+    // (the real `ah-s create`/`join` path) from the on-disk install; `None` on
+    // the embed/library and MCP paths, which keeps the in-process tests
+    // hermetic (no dependence on the dev machine's install state).
+    drift: Option<&str>,
 ) -> Result<EventLoopConfig> {
     // Create mints the config from the caller's choices; join decodes it
     // from the id — one source of truth either way.
@@ -195,7 +200,7 @@ pub(crate) async fn setup_swarm(
                 output.info(&format!("advertising on #{directory}"));
             }
             output.swarm_id_line(&swarm_id);
-            output.ready(&swarm_id, &name, &author);
+            output.ready(&swarm_id, &name, &author, drift);
             lifecycle::log_ready(
                 &id_str,
                 name.as_str(),
@@ -252,7 +257,7 @@ pub(crate) async fn setup_swarm(
             // `EventLoopConfig::cohost`.
             let topic = gossip.subscribe(topic_id, vec![rdv.id]).await?;
 
-            output.ready(&swarm_id, &swarm.name, &author);
+            output.ready(&swarm_id, &swarm.name, &author, drift);
             lifecycle::log_ready(
                 &id_str,
                 swarm.name.as_str(),

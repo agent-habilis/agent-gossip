@@ -84,6 +84,23 @@ fn log(direction: &'static str, msg: &Message) {
             presence = %subtype,
             "presence"
         ),
+        MessageKind::Task {
+            to,
+            task_id,
+            kind,
+            phase,
+        } => tracing::info!(
+            target: "agent_habilis_swarm::messages",
+            dir = direction,
+            author = %msg.author,
+            ts = msg.timestamp,
+            to = %to,
+            task_id = %task_id,
+            kind = %kind,
+            phase = %phase,
+            body = %if log_raw() { msg.body.as_str().to_owned() } else { redacted_body(msg) },
+            "task"
+        ),
         // Plumbing — exhaustive so a new kind forces a decision.
         MessageKind::Presence {
             subtype: PresenceSubtype::Alive,
