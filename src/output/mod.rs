@@ -4,7 +4,7 @@ use std::sync::LazyLock;
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::protocol::swarm::SwarmName;
-use crate::protocol::{Message, MessageId, MessageKind, Nickname, SwarmId, TaskId};
+use crate::protocol::{ExchangeId, Message, MessageId, MessageKind, Nickname, SwarmId};
 
 mod json;
 #[cfg(test)]
@@ -86,19 +86,19 @@ pub enum OutputEvent {
         peers: Vec<PingPeer>,
         known: usize,
     },
-    /// One leg of a task exchange surfaced to the addressee (or the
+    /// One leg of an exchange surfaced to the addressee (or the
     /// sender's own echo). Carries the full `Message` so the JSON sink can
-    /// render `to`/`task_id`/`kind`/`phase`/`body`. The JSON sink renders
-    /// the `Progress` phase as a `task_progress` event and every other
-    /// phase as a `task` event.
-    Task {
+    /// render `to`/`exchange_id`/`kind`/`phase`/`body`. The JSON sink renders
+    /// the `Progress` phase as a `exchange_progress` event and every other
+    /// phase as an `exchange` event.
+    Exchange {
         msg: Box<Message>,
         is_self: bool,
     },
-    /// A task was evicted for crossing its idle-debounce timeout (the
-    /// daemon's per-task silence sweep). Daemon-originated — no `Message`.
-    TaskTimeout {
-        task_id: TaskId,
+    /// An exchange was evicted for crossing its idle-debounce timeout (the
+    /// daemon-side per-exchange silence sweep). Daemon-originated — no `Message`.
+    ExchangeTimeout {
+        exchange_id: ExchangeId,
     },
 }
 
@@ -391,8 +391,8 @@ impl Output {
     /// Surface a handover leg. Distinct top-level `handover` event (not
     /// the `message` family) so skills branch on `event`. When
     /// `filter_self` is enabled, self-authored legs are suppressed.
-    pub(crate) fn print_task(&self, msg: &Message, is_self: bool) {
-        let MessageKind::Task {
+    pub(crate) fn print_exchange(&self, msg: &Message, is_self: bool) {
+        let MessageKind::Exchange {
             to, kind, phase, ..
         } = &msg.kind
         else {
@@ -403,7 +403,7 @@ impl Output {
         }
         let (to, kind, phase) = (to.clone(), *kind, *phase);
         self.dispatch(
-            || OutputEvent::Task {
+            || OutputEvent::Exchange {
                 msg: Box::new(msg.clone()),
                 is_self,
             },
@@ -412,31 +412,31 @@ impl Output {
                     let (open, close) = self.nick_ansi(msg.author.as_str(), stdout_color());
                     let (to_open, to_close) = self.nick_ansi(to.as_str(), stdout_color());
                     println!(
-                        "task {kind} {phase} {open}<{}>{close} → {to_open}<{to}>{to_close}: {}",
+                        "exchange {kind} {phase} {open}<{}>{close} → {to_open}<{to}>{to_close}: {}",
                         msg.author, msg.body
                     );
                 }
-                OutputMode::Json => json::print_task_json(msg, is_self),
+                OutputMode::Json => json::print_exchange_json(msg, is_self),
                 OutputMode::Silent => {}
             },
         );
     }
 
-    /// A task crossed its idle-debounce timeout and was evicted by the
-    /// daemon's per-task silence sweep (the task analogue of
+    /// An exchange crossed its idle-debounce timeout and was evicted by the
+    /// daemon's per-exchange silence sweep (the exchange analogue of
     /// [`peer_timeout`](Self::peer_timeout)). Human mode prints a stderr
-    /// note; JSON mode emits a `task_timeout` event for the widget.
-    pub(crate) fn task_timeout(&self, task_id: &TaskId) {
+    /// note; JSON mode emits a `exchange_timeout` event for the widget.
+    pub(crate) fn exchange_timeout(&self, exchange_id: &ExchangeId) {
         self.dispatch(
-            || OutputEvent::TaskTimeout {
-                task_id: task_id.clone(),
+            || OutputEvent::ExchangeTimeout {
+                exchange_id: exchange_id.clone(),
             },
             |mode| match mode {
                 OutputMode::Human => {
-                    eprintln!("task {task_id} timed out");
+                    eprintln!("exchange {exchange_id} timed out");
                 }
-                OutputMode::Json => emit_json(&SimpleEvent::TaskTimeout {
-                    task_id: task_id.as_str(),
+                OutputMode::Json => emit_json(&SimpleEvent::ExchangeTimeout {
+                    exchange_id: exchange_id.as_str(),
                 }),
                 OutputMode::Silent => {}
             },
@@ -642,7 +642,7 @@ impl Output {
             | MessageKind::Digest
             | MessageKind::Ping
             | MessageKind::Pong { .. }
-            | MessageKind::Task { .. } => {
+            | MessageKind::Exchange { .. } => {
                 println!("{open}<{}>{close}: {}", msg.author, msg.body);
             }
         }

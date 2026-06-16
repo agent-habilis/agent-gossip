@@ -19,8 +19,8 @@ pub(crate) mod swarm;
 mod wordlist;
 
 pub(crate) use message::{
-    Message, MessageBody, MessageId, MessageKind, PresenceSubtype, TaskId, TaskIdError, TaskKind,
-    TaskKindError, TaskPhase, TaskPhaseError,
+    ExchangeId, ExchangeIdError, ExchangeKind, ExchangeKindError, ExchangePhase,
+    ExchangePhaseError, Message, MessageBody, MessageId, MessageKind, PresenceSubtype,
 };
 pub(crate) use nickname::Nickname;
 pub(crate) use swarm::SwarmId;

@@ -10,6 +10,7 @@ use clap::{Parser, Subcommand};
 
 mod create;
 mod discover;
+mod exchange;
 mod join;
 mod lookup;
 mod msg;
@@ -18,10 +19,10 @@ mod peers;
 mod ping;
 mod poll;
 mod shared;
-mod task;
 
 pub(crate) use create::CreateOpts;
 pub(crate) use discover::DiscoverOpts;
+pub(crate) use exchange::ExchangeOpts;
 pub(crate) use join::JoinOpts;
 pub(crate) use msg::MsgOpts;
 pub(crate) use output::OutputFormat;
@@ -29,7 +30,6 @@ pub(crate) use peers::PeersOpts;
 pub(crate) use ping::PingOpts;
 pub(crate) use poll::PollOpts;
 pub(crate) use shared::SharedServerOpts;
-pub(crate) use task::TaskOpts;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -106,17 +106,17 @@ pub(crate) enum Commands {
         opts: DiscoverOpts,
     },
 
-    /// Send one leg of a task exchange to a specific peer.
+    /// Send one leg of an exchange to a specific peer.
     ///
-    /// A task is a directed, phased exchange correlated by `--task-id`
+    /// An exchange is a directed, phased conversation correlated by `--exchange-id`
     /// (offer → accept → context → done → confirm/change). `handover` is
-    /// one behavior built on it. The receiving daemon surfaces a `task` (or
-    /// `task_progress`) event on its `--output json` stream. `--phase offer`
+    /// one behavior built on it. The receiving daemon surfaces an `exchange` (or
+    /// `exchange_progress`) event on its `--output json` stream. `--phase offer`
     /// validates `--to` against the live roster and errors on an unknown
     /// nickname.
-    Task {
+    Exchange {
         #[command(flatten)]
-        opts: TaskOpts,
+        opts: ExchangeOpts,
     },
 
     /// List the live participant roster of a swarm.

@@ -16,7 +16,7 @@ use crate::daemon::state::RosterSnapshot;
 use crate::output;
 use crate::protocol::swarm::SwarmName;
 use crate::protocol::{
-    Message, MessageBody, MessageId, Nickname, SwarmId, TaskId, TaskKind, TaskPhase,
+    ExchangeId, ExchangeKind, ExchangePhase, Message, MessageBody, MessageId, Nickname, SwarmId,
 };
 
 use crate::beacon;
@@ -36,15 +36,15 @@ pub(crate) enum SessionRequest {
         after: Option<MessageId>,
         resp: oneshot::Sender<Vec<Message>>,
     },
-    /// Send one leg of a task exchange to `to`, correlated by `task_id`.
+    /// Send one leg of an exchange to `to`, correlated by `exchange_id`.
     /// Echoes back the canonical [`Message`] (`None` ⇒ dropped by the
     /// sender-side rate limiter), like [`Send`](SessionRequest::Send).
-    /// Addressee validation for `Offer` lives in `broadcast_task`.
-    Task {
+    /// Addressee validation for `Offer` lives in `broadcast_exchange`.
+    Exchange {
         to: Nickname,
-        task_id: TaskId,
-        kind: TaskKind,
-        phase: TaskPhase,
+        exchange_id: ExchangeId,
+        kind: ExchangeKind,
+        phase: ExchangePhase,
         body: MessageBody,
         resp: oneshot::Sender<Result<Option<Message>>>,
     },

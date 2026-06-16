@@ -251,26 +251,26 @@ pub(crate) fn cli_poll(swarm: &str, nickname: &str, after: Option<&str>) -> Stri
 /// Spawn `ah-s task …` and return the raw `Output` (no success
 /// assertion — callers that test the unknown-participant / rate-limit
 /// failure paths inspect it).
-pub(crate) fn cli_task_raw(
+pub(crate) fn cli_exchange_raw(
     swarm: &str,
     nickname: &str,
     to: &str,
-    task_id: &str,
+    exchange_id: &str,
     kind: &str,
     phase: &str,
     text: &str,
 ) -> Output {
     test_cmd()
         .args([
-            "task",
+            "exchange",
             "--swarm",
             swarm,
             "--nickname",
             nickname,
             "--to",
             to,
-            "--task-id",
-            task_id,
+            "--exchange-id",
+            exchange_id,
             "--kind",
             kind,
             "--phase",
@@ -282,17 +282,17 @@ pub(crate) fn cli_task_raw(
         .expect("task command failed to spawn")
 }
 
-/// `cli_task_raw` + assert success.
-pub(crate) fn cli_task_checked(
+/// `cli_exchange_raw` + assert success.
+pub(crate) fn cli_exchange_checked(
     swarm: &str,
     nickname: &str,
     to: &str,
-    task_id: &str,
+    exchange_id: &str,
     kind: &str,
     phase: &str,
     text: &str,
 ) {
-    let out = cli_task_raw(swarm, nickname, to, task_id, kind, phase, text);
+    let out = cli_exchange_raw(swarm, nickname, to, exchange_id, kind, phase, text);
     assert!(
         out.status.success(),
         "task failed: {}",
@@ -333,8 +333,8 @@ pub(crate) fn cli_ping(swarm: &str, nickname: &str) {
 
 use agent_habilis_swarm::embed::{CreateConfig, JoinConfig, SwarmSession};
 use agent_habilis_swarm::{
-    Message, MessageBody, MessageId, MessageKind, Nickname, OutputEvent, PresenceSubtype,
-    SwarmName, TaskId, TaskKind, TaskPhase,
+    ExchangeId, ExchangeKind, ExchangePhase, Message, MessageBody, MessageId, MessageKind,
+    Nickname, OutputEvent, PresenceSubtype, SwarmName,
 };
 use tokio::sync::mpsc::UnboundedReceiver;
 
@@ -438,23 +438,23 @@ impl InProcNode {
         Ok(sent.map(|msg| msg.id))
     }
 
-    /// Send one task leg to `target`, correlated by `task_id`; returns the
+    /// Send one task leg to `target`, correlated by `exchange_id`; returns the
     /// new id (or `None` if the sender-side rate limiter dropped it). Panics
-    /// on transport error — addressee validation is `broadcast_task`'s job.
-    pub(crate) async fn task(
+    /// on transport error — addressee validation is `broadcast_exchange`'s job.
+    pub(crate) async fn exchange(
         &self,
         target: &str,
-        task_id: &TaskId,
-        kind: TaskKind,
-        phase: TaskPhase,
+        exchange_id: &ExchangeId,
+        kind: ExchangeKind,
+        phase: ExchangePhase,
         text: &str,
     ) -> Option<MessageId> {
         let to = Nickname::new(target).expect("valid target nickname");
         let sent = self
             .session
-            .task(
+            .exchange(
                 to,
-                task_id.clone(),
+                exchange_id.clone(),
                 kind,
                 phase,
                 MessageBody::new(text).expect("valid body"),
@@ -466,25 +466,25 @@ impl InProcNode {
 
     /// Captured task legs (any phase; includes self echoes — filter on
     /// `is_self`/author as needed).
-    pub(crate) fn tasks(&mut self) -> Vec<(&Message, bool)> {
+    pub(crate) fn exchanges(&mut self) -> Vec<(&Message, bool)> {
         self.pump();
         self.drained
             .iter()
             .filter_map(|event| match event {
-                OutputEvent::Task { msg, is_self } => Some((&**msg, *is_self)),
+                OutputEvent::Exchange { msg, is_self } => Some((&**msg, *is_self)),
                 _ => None,
             })
             .collect()
     }
 
     /// Wait until a task leg of `phase` (from any author) is surfaced.
-    pub(crate) async fn wait_task(&mut self, phase: TaskPhase, timeout: Duration) -> bool {
+    pub(crate) async fn wait_exchange(&mut self, phase: ExchangePhase, timeout: Duration) -> bool {
         self.wait_for(timeout, |events| {
             events.iter().any(|event| {
                 matches!(
                     event,
-                    OutputEvent::Task { msg, .. }
-                        if matches!(&msg.kind, MessageKind::Task { phase: got, .. } if *got == phase)
+                    OutputEvent::Exchange { msg, .. }
+                        if matches!(&msg.kind, MessageKind::Exchange { phase: got, .. } if *got == phase)
                 )
             })
         })

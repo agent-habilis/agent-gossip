@@ -84,9 +84,9 @@ fn log(direction: &'static str, msg: &Message) {
             presence = %subtype,
             "presence"
         ),
-        MessageKind::Task {
+        MessageKind::Exchange {
             to,
-            task_id,
+            exchange_id,
             kind,
             phase,
         } => tracing::info!(
@@ -95,11 +95,11 @@ fn log(direction: &'static str, msg: &Message) {
             author = %msg.author,
             ts = msg.timestamp,
             to = %to,
-            task_id = %task_id,
+            exchange_id = %exchange_id,
             kind = %kind,
             phase = %phase,
             body = %if log_raw() { msg.body.as_str().to_owned() } else { redacted_body(msg) },
-            "task"
+            "exchange"
         ),
         // Plumbing — exhaustive so a new kind forces a decision.
         MessageKind::Presence {

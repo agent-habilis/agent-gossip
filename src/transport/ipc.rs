@@ -9,7 +9,9 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncWriteExt, BufReader};
 use tokio::sync::mpsc;
 
-use crate::protocol::{MessageBody, MessageId, Nickname, SwarmId, TaskId, TaskKind, TaskPhase};
+use crate::protocol::{
+    ExchangeId, ExchangeKind, ExchangePhase, MessageBody, MessageId, Nickname, SwarmId,
+};
 use crate::util::bounded_read::{LineRead, read_bounded_line};
 use crate::util::consts::{MAX_IPC_COMMAND_BYTES, MAX_IPC_RESPONSE_BYTES, SOCKET_DIR};
 use crate::util::swarm_prefix;
@@ -58,21 +60,21 @@ pub(crate) enum IpcCommand {
     /// `--output json` stream. Fire-and-forget — the ack is immediate.
     #[serde(rename = "ping")]
     Ping { swarm: SwarmId },
-    /// Send one leg of a task exchange to `to`, correlated by `task_id`.
-    /// `Offer` carries the task brief; later phases the Q&A / progress /
+    /// Send one leg of an exchange to `to`, correlated by `exchange_id`.
+    /// `Offer` carries the exchange brief; later phases the Q&A / progress /
     /// outcome. The daemon validates `to` against the live roster for
     /// `Offer` only.
-    #[serde(rename = "task")]
-    Task {
+    #[serde(rename = "exchange")]
+    Exchange {
         swarm: SwarmId,
         to: Nickname,
-        task_id: TaskId,
-        kind: TaskKind,
-        phase: TaskPhase,
+        exchange_id: ExchangeId,
+        kind: ExchangeKind,
+        phase: ExchangePhase,
         body: MessageBody,
     },
     /// Query the live participant roster (nicknames + recency) — backs the
-    /// task sender's target picker and nickname validation.
+    /// exchange sender's target picker and nickname validation.
     #[serde(rename = "peers")]
     Peers { swarm: SwarmId },
 }
@@ -83,7 +85,7 @@ impl IpcCommand {
             IpcCommand::Msg { swarm, .. }
             | IpcCommand::Poll { swarm, .. }
             | IpcCommand::Ping { swarm }
-            | IpcCommand::Task { swarm, .. }
+            | IpcCommand::Exchange { swarm, .. }
             | IpcCommand::Peers { swarm } => swarm,
         }
     }
@@ -280,8 +282,8 @@ pub(crate) async fn send(cmd: &IpcCommand, nickname: &Nickname) -> Result<String
 #[cfg(test)]
 mod tests {
     use super::{
-        IpcCommand, IpcMessage, MessageBody, MessageId, Nickname, SwarmId, TaskId, TaskKind,
-        TaskPhase, json_error, json_ok, listen, mpsc, send, socket_path,
+        ExchangeId, ExchangeKind, ExchangePhase, IpcCommand, IpcMessage, MessageBody, MessageId,
+        Nickname, SwarmId, json_error, json_ok, listen, mpsc, send, socket_path,
     };
 
     // ── pure functions ─────────────────────────────────────────────
@@ -356,7 +358,7 @@ mod tests {
             IpcCommand::Msg { reply, .. } => assert_eq!(reply, Some(target)),
             IpcCommand::Poll { .. }
             | IpcCommand::Ping { .. }
-            | IpcCommand::Task { .. }
+            | IpcCommand::Exchange { .. }
             | IpcCommand::Peers { .. } => panic!("expected Msg"),
         }
     }
@@ -374,7 +376,7 @@ mod tests {
             IpcCommand::Poll { after, .. } => assert_eq!(after, Some(id)),
             IpcCommand::Msg { .. }
             | IpcCommand::Ping { .. }
-            | IpcCommand::Task { .. }
+            | IpcCommand::Exchange { .. }
             | IpcCommand::Peers { .. } => panic!("expected Poll"),
         }
     }
@@ -391,38 +393,38 @@ mod tests {
             IpcCommand::Ping { swarm } => assert_eq!(swarm.as_str(), "ahstest"),
             IpcCommand::Msg { .. }
             | IpcCommand::Poll { .. }
-            | IpcCommand::Task { .. }
+            | IpcCommand::Exchange { .. }
             | IpcCommand::Peers { .. } => panic!("expected Ping"),
         }
     }
 
     #[test]
-    fn ipc_command_task_round_trip() {
-        let cmd = IpcCommand::Task {
+    fn ipc_command_exchange_round_trip() {
+        let cmd = IpcCommand::Exchange {
             swarm: SwarmId::from("ahstest"),
             to: Nickname::from("calm-otter"),
-            task_id: TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
-            kind: TaskKind::Handover,
-            phase: TaskPhase::Offer,
+            exchange_id: ExchangeId::from("550e8400-e29b-41d4-a716-446655440000"),
+            kind: ExchangeKind::Handover,
+            phase: ExchangePhase::Offer,
             body: MessageBody::from("## Task\nport the parser"),
         };
         let json = serde_json::to_string(&cmd).unwrap();
-        assert!(json.contains("\"command\":\"task\""));
+        assert!(json.contains("\"command\":\"exchange\""));
         assert!(json.contains("\"kind\":\"handover\""));
         assert!(json.contains("\"phase\":\"offer\""));
         let parsed: IpcCommand = serde_json::from_str(&json).unwrap();
         match parsed {
-            IpcCommand::Task {
+            IpcCommand::Exchange {
                 to, kind, phase, ..
             } => {
                 assert_eq!(to, Nickname::from("calm-otter"));
-                assert_eq!(kind, TaskKind::Handover);
-                assert_eq!(phase, TaskPhase::Offer);
+                assert_eq!(kind, ExchangeKind::Handover);
+                assert_eq!(phase, ExchangePhase::Offer);
             }
             IpcCommand::Msg { .. }
             | IpcCommand::Poll { .. }
             | IpcCommand::Ping { .. }
-            | IpcCommand::Peers { .. } => panic!("expected Task"),
+            | IpcCommand::Peers { .. } => panic!("expected Exchange"),
         }
     }
 
@@ -439,7 +441,7 @@ mod tests {
             IpcCommand::Msg { .. }
             | IpcCommand::Poll { .. }
             | IpcCommand::Ping { .. }
-            | IpcCommand::Task { .. } => panic!("expected Peers"),
+            | IpcCommand::Exchange { .. } => panic!("expected Peers"),
         }
     }
 
@@ -624,7 +626,7 @@ mod tests {
                     }
                     IpcCommand::Poll { .. }
                     | IpcCommand::Ping { .. }
-                    | IpcCommand::Task { .. }
+                    | IpcCommand::Exchange { .. }
                     | IpcCommand::Peers { .. } => {
                         let _ = resp_tx.send(json_error("unexpected command"));
                     }

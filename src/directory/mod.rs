@@ -153,7 +153,7 @@ impl Listings {
     /// `Updated` matters because every advertiser re-ads on a fixed
     /// interval — surfacing each would repaint the picker / spam the
     /// JSON stream every tick with identical data.
-    pub(crate) fn observe(&mut self, body: &str, now: Instant) -> Option<ListingChange> {
+    pub(crate) fn note(&mut self, body: &str, now: Instant) -> Option<ListingChange> {
         let ad = Ad::parse(body)?;
         // `ad.id` is a `SwarmId` (shallow charset check only); the
         // structural `Swarm` decode below is the real validity gate, so
@@ -316,7 +316,7 @@ mod tests {
     }
 
     #[test]
-    fn observe_found_then_updated_then_expire_lost() {
+    fn note_found_then_updated_then_expire_lost() {
         let advertised = advertised_id("demo");
         let body = Ad {
             id: advertised.clone(),
@@ -328,7 +328,7 @@ mod tests {
         let start = Instant::now();
 
         // First sighting ⇒ Found.
-        let first_event = dir.observe(body.as_str(), start);
+        let first_event = dir.note(body.as_str(), start);
         assert!(matches!(first_event, Some(ListingChange::Found(_))));
         let listing = &dir.snapshot()[0];
         assert_eq!(listing.name.as_str(), "demo");
@@ -341,7 +341,7 @@ mod tests {
             peers: 5,
         }
         .to_body();
-        let second_event = dir.observe(refreshed.as_str(), start + Duration::from_secs(20));
+        let second_event = dir.note(refreshed.as_str(), start + Duration::from_secs(20));
         assert!(matches!(second_event, Some(ListingChange::Updated(_))));
         assert_eq!(dir.snapshot()[0].peers, 5);
 
@@ -362,13 +362,13 @@ mod tests {
         let start = Instant::now();
 
         assert!(matches!(
-            dir.observe(body.as_str(), start),
+            dir.note(body.as_str(), start),
             Some(ListingChange::Found(_))
         ));
         // Same peer count ⇒ no event, but liveness is refreshed so the
         // entry survives an expiry sweep past the original timestamp.
         let later = start + Duration::from_secs(50);
-        assert!(dir.observe(body.as_str(), later).is_none());
+        assert!(dir.note(body.as_str(), later).is_none());
         assert!(
             dir.expire(Duration::from_mins(1), start + Duration::from_secs(70))
                 .is_empty(),
@@ -380,8 +380,8 @@ mod tests {
     #[test]
     fn junk_directory_traffic_is_ignored() {
         let mut dir = Listings::new();
-        assert!(dir.observe("", Instant::now()).is_none());
-        assert!(dir.observe("hello peers", Instant::now()).is_none());
+        assert!(dir.note("", Instant::now()).is_none());
+        assert!(dir.note("hello peers", Instant::now()).is_none());
         assert!(dir.snapshot().is_empty());
     }
 }

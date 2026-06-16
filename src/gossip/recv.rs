@@ -16,7 +16,7 @@ use crate::daemon::state::EventLoopState;
 use crate::lifecycle;
 use crate::lookup::add_peer_addr;
 use crate::protocol::identity;
-use crate::protocol::{Message, MessageKind};
+use crate::protocol::{ExchangePhase, Message, MessageKind, Nickname};
 use crate::util::tuning::RECLAIM_WINDOW_SECS;
 
 use super::broadcast::{announce_arrival, broadcast_msg, broadcast_peer_info};
@@ -213,6 +213,25 @@ async fn flush_pending(state: &mut EventLoopState, ctx: &HandlerCtx<'_>, edge: &
 /// rate-check, run the lifecycle observer (heartbeat / membership /
 /// surfacing / horizon), dispatch by kind, and finally push to the
 /// message log if loggable.
+/// Process an inbound exchange leg for its addressee: advance the coarse
+/// state machine (addressee only — a third-party relay tracks nothing), then
+/// surface it via the lifecycle layer. Returns `false` when the caller should
+/// stop processing this message (it is not loggable past this point).
+fn handle_exchange_leg(
+    message: &Message,
+    to: &Nickname,
+    phase: ExchangePhase,
+    surfaceable: bool,
+    state: &mut EventLoopState,
+    ctx: &HandlerCtx<'_>,
+) -> bool {
+    // Only the addressee is a party: a third-party relay tracks nothing.
+    if to == ctx.author {
+        crate::daemon::exchange::ingest(&mut state.exchanges, message, false, Instant::now());
+    }
+    lifecycle::handle_exchange(ctx.output, message, to, phase, surfaceable, ctx.author)
+}
+
 async fn handle_gossip_received(content: Bytes, state: &mut EventLoopState, ctx: &HandlerCtx<'_>) {
     let Ok(message) = Message::parse(&content) else {
         ctx.output.error("Failed to parse message");
@@ -266,11 +285,13 @@ async fn handle_gossip_received(content: Bytes, state: &mut EventLoopState, ctx:
     // break membership/anti-entropy. Keyed on the verified pubkey.
     let rate_ok = match &message.kind {
         MessageKind::Msg { .. } => state.rate_limiter.check(&message.pubkey),
-        // Content task legs share the `Msg` quota; the `Progress` phase is
+        // Content exchange legs share the `Msg` quota; the `Progress` phase is
         // liveness plumbing (the receiver's percent+keepalive heartbeat) and
         // is exempt with the other plumbing kinds — rate-limiting it would let
-        // a busy task wrongly trip the silence timeout.
-        MessageKind::Task { phase, .. } if crate::protocol::message::is_content_phase(*phase) => {
+        // a busy exchange wrongly trip the silence timeout.
+        MessageKind::Exchange { phase, .. }
+            if crate::protocol::message::is_content_phase(*phase) =>
+        {
             state.rate_limiter.check(&message.pubkey)
         }
         MessageKind::Presence { .. }
@@ -278,7 +299,7 @@ async fn handle_gossip_received(content: Bytes, state: &mut EventLoopState, ctx:
         | MessageKind::Digest
         | MessageKind::Ping
         | MessageKind::Pong { .. }
-        | MessageKind::Task { .. } => true,
+        | MessageKind::Exchange { .. } => true,
     };
     if !rate_ok {
         let notice = format!("rate limit exceeded for [{}], dropping", message.author);
@@ -350,14 +371,8 @@ async fn handle_gossip_received(content: Bytes, state: &mut EventLoopState, ctx:
                 return;
             }
         }
-        MessageKind::Task { to, phase, .. } => {
-            // Only the addressee is a party: advance its coarse state machine
-            // (resets the debounce, advances the phase, counts content). A
-            // third-party relay tracks nothing.
-            if to == ctx.author {
-                crate::daemon::task::observe(&mut state.tasks, &message, false, Instant::now());
-            }
-            if !lifecycle::handle_task(ctx.output, &message, to, *phase, surfaceable, ctx.author) {
+        MessageKind::Exchange { to, phase, .. } => {
+            if !handle_exchange_leg(&message, to, *phase, surfaceable, state, ctx) {
                 return;
             }
         }
@@ -417,8 +432,8 @@ fn maybe_push_embed(ctx: &HandlerCtx<'_>, message: &Message, surfaceable: bool) 
             MessageKind::Digest
                 | MessageKind::Ping
                 | MessageKind::Pong { .. }
-                | MessageKind::Task {
-                    phase: crate::protocol::TaskPhase::Progress,
+                | MessageKind::Exchange {
+                    phase: ExchangePhase::Progress,
                     ..
                 }
         )
@@ -494,11 +509,11 @@ fn is_loggable(kind: &MessageKind) -> bool {
             | MessageKind::Digest
             | MessageKind::Ping
             | MessageKind::Pong { .. }
-            // The `Progress` task phase is liveness plumbing — never retained
-            // or surfaced via poll/fetch, only emitted as a `task_progress`
-            // widget event. Content task legs stay loggable like `Msg`.
-            | MessageKind::Task {
-                phase: crate::protocol::TaskPhase::Progress,
+            // The `Progress` exchange phase is liveness plumbing — never retained
+            // or surfaced via poll/fetch, only emitted as a `exchange_progress`
+            // widget event. Content exchange legs stay loggable like `Msg`.
+            | MessageKind::Exchange {
+                phase: ExchangePhase::Progress,
                 ..
             }
     )

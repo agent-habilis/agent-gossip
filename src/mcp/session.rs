@@ -11,7 +11,7 @@ use crate::daemon::state::RosterSnapshot;
 use crate::embed::{CreateConfig, CreateError, InProcessSession, JoinConfig, JoinError};
 use crate::protocol::swarm::SwarmName;
 use crate::protocol::{
-    Message, MessageBody, MessageId, Nickname, SwarmId, TaskId, TaskKind, TaskPhase,
+    ExchangeId, ExchangeKind, ExchangePhase, Message, MessageBody, MessageId, Nickname, SwarmId,
 };
 
 /// One active swarm for the MCP server: the shared [`InProcessSession`]
@@ -85,21 +85,25 @@ impl Session {
         }
     }
 
-    /// Send one leg of a task exchange. Returns `Some((id, echo))` or
+    /// Send one leg of an exchange. Returns `Some((id, echo))` or
     /// `None` when the sender-side rate limiter dropped it. Advances the
     /// implicit cursor past our own send, like [`send_message`](Self::send_message).
     ///
     /// # Errors
     /// Fails if the event loop has stopped.
-    pub(super) async fn send_task(
+    pub(super) async fn send_exchange(
         &self,
         to: Nickname,
-        task_id: TaskId,
-        kind: TaskKind,
-        phase: TaskPhase,
+        exchange_id: ExchangeId,
+        kind: ExchangeKind,
+        phase: ExchangePhase,
         body: MessageBody,
     ) -> Result<Option<(MessageId, Message)>> {
-        match self.inner.task(to, task_id, kind, phase, body).await? {
+        match self
+            .inner
+            .exchange(to, exchange_id, kind, phase, body)
+            .await?
+        {
             Some(msg) => {
                 let id = msg.id.clone();
                 self.advance_cursor_to(id.clone());

@@ -27,7 +27,7 @@ use crate::protocol::swarm::{
     resolve_lookups,
 };
 use crate::protocol::{
-    Message, MessageBody, MessageId, Nickname, SwarmId, TaskId, TaskKind, TaskPhase,
+    ExchangeId, ExchangeKind, ExchangePhase, Message, MessageBody, MessageId, Nickname, SwarmId,
 };
 use crate::resolver::JoinTarget;
 use crate::util::tuning::{
@@ -387,24 +387,24 @@ impl InProcessSession {
             .map_err(|_| anyhow::anyhow!("swarm event loop dropped the response"))
     }
 
-    /// Send one leg of a task exchange; returns the canonical
+    /// Send one leg of an exchange; returns the canonical
     /// [`Message`] or `None` when the sender-side rate limiter dropped it.
     ///
     /// # Errors
     /// Fails if the event loop has stopped or dropped the response.
-    pub(crate) async fn task(
+    pub(crate) async fn exchange(
         &self,
         to: Nickname,
-        task_id: TaskId,
-        kind: TaskKind,
-        phase: TaskPhase,
+        exchange_id: ExchangeId,
+        kind: ExchangeKind,
+        phase: ExchangePhase,
         body: MessageBody,
     ) -> anyhow::Result<Option<Message>> {
         let (resp_tx, resp_rx) = oneshot::channel();
         self.req_tx
-            .send(SessionRequest::Task {
+            .send(SessionRequest::Exchange {
                 to,
-                task_id,
+                exchange_id,
                 kind,
                 phase,
                 body,
@@ -660,22 +660,22 @@ impl SwarmSession {
         self.core.fetch(after).await
     }
 
-    /// Send one leg of a task exchange to `to`, correlated by `task_id`.
+    /// Send one leg of an exchange to `to`, correlated by `exchange_id`.
     /// Returns the canonical [`Message`] the loop built, or `None` when the
     /// sender-side rate limiter dropped it. Addressee validation (for
-    /// `Offer`) happens in `broadcast_task` — see the MCP `send_task` tool.
+    /// `Offer`) happens in `broadcast_exchange` — see the MCP `send_exchange` tool.
     ///
     /// # Errors
     /// Fails if the event loop has stopped or dropped the response.
-    pub async fn task(
+    pub async fn exchange(
         &self,
         to: Nickname,
-        task_id: TaskId,
-        kind: TaskKind,
-        phase: TaskPhase,
+        exchange_id: ExchangeId,
+        kind: ExchangeKind,
+        phase: ExchangePhase,
         body: MessageBody,
     ) -> anyhow::Result<Option<Message>> {
-        self.core.task(to, task_id, kind, phase, body).await
+        self.core.exchange(to, exchange_id, kind, phase, body).await
     }
 
     /// Broadcast pre-built wire bytes **verbatim** into the swarm — no
@@ -897,7 +897,7 @@ impl Directory {
                             let now = Instant::now();
                             let event = {
                                 let mut dir = collector.lock().expect("directory mutex not poisoned");
-                                match dir.observe(message.body.as_str(), now) {
+                                match dir.note(message.body.as_str(), now) {
                                     Some(ListingChange::Found(id)) => dir
                                         .get(&id)
                                         .map(|listing| DirectoryEvent::Found(public_listing(listing))),

@@ -63,8 +63,8 @@ pub mod harness;
 pub use logging::LogSink;
 pub use output::{OutputEvent, event_json};
 pub use protocol::message::{
-    BodyError, IdError, Message, MessageBody, MessageId, MessageKind, PresenceSubtype, TaskId,
-    TaskIdError, TaskKind, TaskKindError, TaskPhase, TaskPhaseError,
+    BodyError, ExchangeId, ExchangeIdError, ExchangeKind, ExchangeKindError, ExchangePhase,
+    ExchangePhaseError, IdError, Message, MessageBody, MessageId, MessageKind, PresenceSubtype,
 };
 pub use protocol::nickname::{Nickname, NicknameError};
 pub use protocol::swarm::{

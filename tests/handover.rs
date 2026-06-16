@@ -17,13 +17,13 @@ mod common;
 
 use std::time::Duration;
 
-use agent_habilis_swarm::{MessageKind, TaskId, TaskKind, TaskPhase};
+use agent_habilis_swarm::{ExchangeId, ExchangeKind, ExchangePhase, MessageKind};
 use common::{InProcNode, MSG_TIMEOUT, three_peers};
 
 /// A fixed, valid task id for these in-process tests. Each test runs an
 /// isolated mesh, so one literal id is fine; a single exchange's legs all
 /// share it (the correlation contract).
-fn task_id() -> TaskId {
+fn exchange_id() -> ExchangeId {
     "550e8400-e29b-41d4-a716-446655440000"
         .parse()
         .expect("valid task id")
@@ -36,14 +36,14 @@ fn task_id() -> TaskId {
 const HANDOVER_WAIT: Duration = MSG_TIMEOUT;
 
 /// A task leg addressed to a peer is surfaced by that peer (and only that
-/// peer), carrying the brief in the body and the `to`/`task_id`/`kind`/
+/// peer), carrying the brief in the body and the `to`/`exchange_id`/`kind`/
 /// `phase` fields.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn task_offer_surfaces_to_addressee() {
     let mut creator = InProcNode::create("ho-direct").await;
     let swarm = creator.swarm.clone();
     let mut joiner = InProcNode::join(&swarm, "ho-bob").await;
-    let tid = task_id();
+    let tid = exchange_id();
 
     // Mesh first: the addressee must be a known participant before offer.
     assert!(
@@ -53,25 +53,33 @@ async fn task_offer_surfaces_to_addressee() {
 
     let brief = "## Task\nport the JSON parser to serde";
     creator
-        .task("ho-bob", &tid, TaskKind::Handover, TaskPhase::Offer, brief)
+        .exchange(
+            "ho-bob",
+            &tid,
+            ExchangeKind::Handover,
+            ExchangePhase::Offer,
+            brief,
+        )
         .await
         .expect("task offer within rate limit");
 
     assert!(
-        joiner.wait_task(TaskPhase::Offer, HANDOVER_WAIT).await,
+        joiner
+            .wait_exchange(ExchangePhase::Offer, HANDOVER_WAIT)
+            .await,
         "addressee should surface the task offer"
     );
-    let legs = joiner.tasks();
+    let legs = joiner.exchanges();
     let (msg, is_self) = legs
         .iter()
-        .find(|(msg, _)| matches!(&msg.kind, MessageKind::Task { phase, .. } if *phase == TaskPhase::Offer))
+        .find(|(msg, _)| matches!(&msg.kind, MessageKind::Exchange { phase, .. } if *phase == ExchangePhase::Offer))
         .expect("offer leg captured");
     assert!(!is_self, "the addressee's copy is not a self-echo");
     assert_eq!(msg.author.as_str(), creator.nickname.as_str());
     assert_eq!(msg.body.as_str(), brief);
-    let MessageKind::Task {
+    let MessageKind::Exchange {
         to,
-        task_id: got_id,
+        exchange_id: got_id,
         kind,
         phase,
     } = &msg.kind
@@ -80,8 +88,8 @@ async fn task_offer_surfaces_to_addressee() {
     };
     assert_eq!(to.as_str(), "ho-bob");
     assert_eq!(got_id.as_str(), tid.as_str());
-    assert_eq!(*kind, TaskKind::Handover);
-    assert_eq!(*phase, TaskPhase::Offer);
+    assert_eq!(*kind, ExchangeKind::Handover);
+    assert_eq!(*phase, ExchangePhase::Offer);
 
     joiner.leave().await;
     creator.leave().await;
@@ -97,24 +105,26 @@ async fn task_self_echoes_to_sender() {
     assert!(creator.wait_presence("ho-bob", true, HANDOVER_WAIT).await);
 
     creator
-        .task(
+        .exchange(
             "ho-bob",
-            &task_id(),
-            TaskKind::Handover,
-            TaskPhase::Offer,
+            &exchange_id(),
+            ExchangeKind::Handover,
+            ExchangePhase::Offer,
             "brief",
         )
         .await
         .expect("within rate limit");
 
     assert!(
-        creator.wait_task(TaskPhase::Offer, HANDOVER_WAIT).await,
+        creator
+            .wait_exchange(ExchangePhase::Offer, HANDOVER_WAIT)
+            .await,
         "sender should see its own task echo"
     );
-    let legs = creator.tasks();
+    let legs = creator.exchanges();
     assert!(
         legs.iter().any(|(msg, is_self)| *is_self
-            && matches!(&msg.kind, MessageKind::Task { phase, .. } if *phase == TaskPhase::Offer)),
+            && matches!(&msg.kind, MessageKind::Exchange { phase, .. } if *phase == ExchangePhase::Offer)),
         "the sender's copy is flagged is_self"
     );
 
@@ -138,11 +148,11 @@ async fn task_not_surfaced_to_third_party() {
     );
 
     creator
-        .task(
+        .exchange(
             &addressee_nick,
-            &task_id(),
-            TaskKind::Handover,
-            TaskPhase::Offer,
+            &exchange_id(),
+            ExchangeKind::Handover,
+            ExchangePhase::Offer,
             "secret brief",
         )
         .await
@@ -150,12 +160,16 @@ async fn task_not_surfaced_to_third_party() {
 
     // Addressee surfaces it…
     assert!(
-        addressee.wait_task(TaskPhase::Offer, HANDOVER_WAIT).await,
+        addressee
+            .wait_exchange(ExchangePhase::Offer, HANDOVER_WAIT)
+            .await,
         "addressee should surface the task"
     );
 
     // …the bystander, given equal time, never does, and never logs it.
-    let bystander_saw = bystander.wait_task(TaskPhase::Offer, HANDOVER_WAIT).await;
+    let bystander_saw = bystander
+        .wait_exchange(ExchangePhase::Offer, HANDOVER_WAIT)
+        .await;
     assert!(
         !bystander_saw,
         "a third party must never surface a task addressed to someone else"
@@ -166,7 +180,7 @@ async fn task_not_surfaced_to_third_party() {
         .await
         .expect("fetch")
         .into_iter()
-        .any(|msg| matches!(msg.kind, MessageKind::Task { .. }));
+        .any(|msg| matches!(msg.kind, MessageKind::Exchange { .. }));
     assert!(
         !logged,
         "a third party must not log/retain a task addressed to someone else"
@@ -178,10 +192,10 @@ async fn task_not_surfaced_to_third_party() {
 }
 
 /// A `progress` leg is plumbing: it surfaces to the addressee as a task
-/// event (rendered `task_progress`) but is **never logged** — it must not
+/// event (rendered `exchange_progress`) but is **never logged** — it must not
 /// appear in the addressee's poll/fetch buffer (unlike content legs).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn task_progress_is_plumbing_not_logged() {
+async fn exchange_progress_is_plumbing_not_logged() {
     let mut alice = InProcNode::create("ho-prog").await;
     let swarm = alice.swarm.clone();
     let mut bob = InProcNode::join(&swarm, "ho-bob").await;
@@ -191,11 +205,11 @@ async fn task_progress_is_plumbing_not_logged() {
             .await
     );
 
-    bob.task(
+    bob.exchange(
         &alice_nick,
-        &task_id(),
-        TaskKind::Execute,
-        TaskPhase::Progress,
+        &exchange_id(),
+        ExchangeKind::Task,
+        ExchangePhase::Progress,
         "35/100",
     )
     .await
@@ -203,7 +217,9 @@ async fn task_progress_is_plumbing_not_logged() {
 
     // The addressee surfaces the progress leg as a task event…
     assert!(
-        alice.wait_task(TaskPhase::Progress, HANDOVER_WAIT).await,
+        alice
+            .wait_exchange(ExchangePhase::Progress, HANDOVER_WAIT)
+            .await,
         "addressee should surface the progress beat"
     );
     // …but it is plumbing — never retained in the poll/fetch buffer.
@@ -213,7 +229,7 @@ async fn task_progress_is_plumbing_not_logged() {
         .await
         .expect("fetch")
         .into_iter()
-        .any(|msg| matches!(&msg.kind, MessageKind::Task { phase, .. } if *phase == TaskPhase::Progress));
+        .any(|msg| matches!(&msg.kind, MessageKind::Exchange { phase, .. } if *phase == ExchangePhase::Progress));
     assert!(!logged, "a progress beat must never be logged/retained");
 
     bob.leave().await;
@@ -221,7 +237,7 @@ async fn task_progress_is_plumbing_not_logged() {
 }
 
 /// A full offer → accept → context → done → confirm exchange surfaces every
-/// leg to the two parties, in both directions, all under one `task_id`.
+/// leg to the two parties, in both directions, all under one `exchange_id`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn task_full_exchange_round_trips() {
     let mut alice = InProcNode::create("ho-full").await;
@@ -234,49 +250,75 @@ async fn task_full_exchange_round_trips() {
     );
 
     let alice_nick = alice.nickname.clone();
-    let tid = task_id();
-    let kind = TaskKind::Handover;
+    let tid = exchange_id();
+    let kind = ExchangeKind::Handover;
 
     // A → B offer, B → A accept (entry), A → B context, B → A done, A → B confirm.
     alice
-        .task("ho-bob", &tid, kind, TaskPhase::Offer, "brief")
+        .exchange("ho-bob", &tid, kind, ExchangePhase::Offer, "brief")
         .await
         .expect("offer");
-    assert!(bob.wait_task(TaskPhase::Offer, HANDOVER_WAIT).await);
+    assert!(bob.wait_exchange(ExchangePhase::Offer, HANDOVER_WAIT).await);
 
-    bob.task(&alice_nick, &tid, kind, TaskPhase::Accept, "taking it on")
-        .await
-        .expect("accept");
-    assert!(alice.wait_task(TaskPhase::Accept, HANDOVER_WAIT).await);
+    bob.exchange(
+        &alice_nick,
+        &tid,
+        kind,
+        ExchangePhase::Accept,
+        "taking it on",
+    )
+    .await
+    .expect("accept");
+    assert!(
+        alice
+            .wait_exchange(ExchangePhase::Accept, HANDOVER_WAIT)
+            .await
+    );
 
     alice
-        .task(
+        .exchange(
             "ho-bob",
             &tid,
             kind,
-            TaskPhase::Context,
+            ExchangePhase::Context,
             "all parser tests green",
         )
         .await
         .expect("context");
-    assert!(bob.wait_task(TaskPhase::Context, HANDOVER_WAIT).await);
+    assert!(
+        bob.wait_exchange(ExchangePhase::Context, HANDOVER_WAIT)
+            .await
+    );
 
-    bob.task(
+    bob.exchange(
         &alice_nick,
         &tid,
         kind,
-        TaskPhase::Done,
+        ExchangePhase::Done,
         "ported; verify with `cargo test parser`",
     )
     .await
     .expect("done");
-    assert!(alice.wait_task(TaskPhase::Done, HANDOVER_WAIT).await);
+    assert!(
+        alice
+            .wait_exchange(ExchangePhase::Done, HANDOVER_WAIT)
+            .await
+    );
 
     alice
-        .task("ho-bob", &tid, kind, TaskPhase::Confirm, "verified, thanks")
+        .exchange(
+            "ho-bob",
+            &tid,
+            kind,
+            ExchangePhase::Confirm,
+            "verified, thanks",
+        )
         .await
         .expect("confirm");
-    assert!(bob.wait_task(TaskPhase::Confirm, HANDOVER_WAIT).await);
+    assert!(
+        bob.wait_exchange(ExchangePhase::Confirm, HANDOVER_WAIT)
+            .await
+    );
 
     bob.leave().await;
     alice.leave().await;

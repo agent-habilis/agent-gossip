@@ -92,22 +92,22 @@ pub(crate) const ALIVE_TIMEOUT_SECS: u64 = 90;
 /// Flag: `--sweep-interval-secs`.
 pub(crate) const SWEEP_INTERVAL_SECS: u64 = 10;
 
-/// Idle-debounce timeout for a task exchange: a task with no leg (content
-/// or keepalive) for this long is evicted (`task_timeout` + a `Cancel`
+/// Idle-debounce timeout for an exchange: an exchange with no leg (content
+/// or keepalive) for this long is evicted (`exchange_timeout` + a `Cancel`
 /// broadcast). 5 minutes — comfortably above the keepalive cadence so a
-/// genuinely-active task is never falsely evicted. Flag:
-/// `--task-timeout-secs` (tests shorten it to seconds).
-pub(crate) const TASK_TIMEOUT_SECS: u64 = 300;
+/// genuinely-active exchange is never falsely evicted. Flag:
+/// `--exchange-timeout-secs` (tests shorten it to seconds).
+pub(crate) const EXCHANGE_TIMEOUT_SECS: u64 = 300;
 
 /// How often the current ball-owner's daemon emits a `Progress` keepalive
-/// for a live task. 1 minute, ≈5× under the debounce, so ~4 missed beats
-/// of slack absorb gossip drops. Flag: `--task-keepalive-secs`.
-pub(crate) const TASK_KEEPALIVE_SECS: u64 = 60;
+/// for a live exchange. 1 minute, ≈5× under the debounce, so ~4 missed beats
+/// of slack absorb gossip drops. Flag: `--exchange-keepalive-secs`.
+pub(crate) const EXCHANGE_KEEPALIVE_SECS: u64 = 60;
 
-/// Whole-task budget of **content** legs (offer/accept/decline/context/
+/// Whole-exchange budget of **content** legs (offer/accept/decline/context/
 /// done/confirm/change/cancel — `progress` is exempt). Hitting it forces
 /// the skill to a terminal decision; the daemon warns once on crossing.
-pub(crate) const TASK_CONTENT_CAP: u32 = 100;
+pub(crate) const EXCHANGE_CONTENT_CAP: u32 = 100;
 
 /// Grace before an unmeshed joiner co-hosts the rendezvous anyway (empty
 /// swarm ⇒ become the beacon for the next joiner). Flag:

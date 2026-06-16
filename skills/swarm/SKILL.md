@@ -42,7 +42,7 @@ Register the MCP server with your agent (stdio JSON-RPC):
 
 `ah-s` must be on `$PATH`. The server exposes eight tools:
 `create_swarm`, `join_swarm`, `leave_swarm`, `send_message`,
-`send_task`, `fetch_messages`, `swarm_info`, `swarm_version`. One
+`send_exchange`, `fetch_messages`, `swarm_info`, `swarm_version`. One
 active swarm per server instance.
 
 ### Keeping this skill current
@@ -131,23 +131,23 @@ If your send exceeded the rate limit it is dropped before the wire and the
 tool returns `{rate_limited: true}` instead (no `id`/`message`). This is a
 deliberate drop, not an error — back off rather than retrying.
 
-### `send_task`
+### `send_exchange`
 
 Send one leg of a **task** exchange to a specific peer. A task is a
-directed, phased exchange correlated by `task_id`; `handover` (delegate a
-task/plan) is one `kind`, `execute` (run + report + verify) the roadmap
-behavior. Mint one UUID `task_id` for the opening `offer` and echo it on
+directed, phased exchange correlated by `exchange_id`; `handover` (delegate a
+task/plan) is one `kind`, `task` (run + report + verify) the other
+behavior. Mint one UUID `exchange_id` for the opening `offer` and echo it on
 every later leg. See "Tasks" below for the full flow.
 
 | arg | required | notes |
 |---|---|---|
 | `to` | yes | Addressee nickname. For `phase: "offer"` it must be a current participant (check `swarm_info`), else the tool errors. |
-| `task_id` | yes | UUID correlating every leg of this task. Fresh per task; same on all its legs. |
-| `kind` | yes | `handover` or `execute`. |
+| `exchange_id` | yes | UUID correlating every leg of this task. Fresh per task; same on all its legs. |
+| `kind` | yes | `handover` or `task`. |
 | `phase` | yes | One of `offer`, `accept`, `decline`, `context`, `progress`, `done`, `confirm`, `change`, `cancel`. |
-| `text` | yes | The brief for `offer`; a Q&A line for `context`; a `done/total` fraction (e.g. `35/100`) for `progress`; for `done`, a short note (a handover's `done` just requests close; an `execute` task's `done` adds verification instructions); a reason for the rest. |
+| `text` | yes | The brief for `offer`; a Q&A line for `context`; a `done/total` fraction (e.g. `35/100`) for `progress`; for `done`, a short note (a handover's `done` just requests close; a `task`'s `done` adds verification instructions); a reason for the rest. |
 
-Returns `{id, message}` (the authoritative record, with `type:"task"`),
+Returns `{id, message}` (the authoritative record, with `type:"exchange"`),
 or `{rate_limited: true}` if dropped (content legs share the per-author
 limit; `progress` is exempt).
 
@@ -171,7 +171,7 @@ never see them.
 Returns `{swarm, name, nickname, participant_count, participants}` for the
 current session. `participant_count` is the roster size including self;
 `participants` is the live roster (each `{nickname, last_seen_secs_ago,
-quiet}`, recency-sorted) — use it to pick a `send_task` target and to
+quiet}`, recency-sorted) — use it to pick a `send_exchange` target and to
 validate a nickname.
 
 ### `leave_swarm`
@@ -250,7 +250,7 @@ Message shapes returned by `fetch_messages`:
 
 - `{"id":"...","type":"msg","author":"...","ts":...,"body":"...","reply":null|"<nick>"}`
 - `{"id":"...","type":"presence","author":"...","ts":...,"subtype":"joined"|"left"}`
-- `{"id":"...","type":"task","author":"...","ts":...,"to":"<nick>","task_id":"<uuid>","kind":"handover"|"execute","phase":"offer"|"accept"|"decline"|"context"|"done"|"confirm"|"change"|"cancel","body":"..."}` — a task leg addressed to you (see "Tasks" below).
+- `{"id":"...","type":"exchange","author":"...","ts":...,"to":"<nick>","exchange_id":"<uuid>","kind":"handover"|"task","phase":"offer"|"accept"|"decline"|"context"|"done"|"confirm"|"change"|"cancel","body":"..."}` — a task leg addressed to you (see "Tasks" below).
 
 1. **Display format:**
 
@@ -269,8 +269,8 @@ Message shapes returned by `fetch_messages`:
 
    - **Presence (joined/left):** display only.
    - **Reply (`msg` with `reply`):** display only.
-   - **Task (`type:"task"`):** do NOT display as a plain line — drive the
-     receiver flow (see "Tasks" below). `task_progress` records are widget
+   - **Task (`type:"exchange"`):** do NOT display as a plain line — drive the
+     receiver flow (see "Tasks" below). `exchange_progress` records are widget
      updates only, never a chat line.
    - **Body is exactly `ping`:** do NOT display it. Auto-reply silently
      with `send_message(text: "pong", reply: <ping-author>)`, then print:
@@ -292,24 +292,24 @@ Message shapes returned by `fetch_messages`:
 ## Tasks
 
 A task is a directed, phased exchange between two agents, correlated by a
-`task_id` and surfaced only to the two parties. `handover` (delegate a
+`exchange_id` and surfaced only to the two parties. `handover` (delegate a
 task/plan) is the common `kind`. Over MCP it is polling-based (no push):
-task legs arrive as `type:"task"` records on `fetch_messages`, and you send
-legs with `send_task`, reusing the same `task_id` on every leg.
+task legs arrive as `type:"exchange"` records on `fetch_messages`, and you send
+legs with `send_exchange`, reusing the same `exchange_id` on every leg.
 
 A **handover** completes at the *handoff*, not at the work:
 `offer → accept → [context] → done → confirm`. The receiver requests close
 (`done`) once it has what it needs; the initiator **auto-confirms**; the
 task is then done, and the receiver runs the work **on its own** (untracked
 by the initiator). A handover has **no** work verification or `change` — that
-is an `execute`-kind concern. The daemon runs the timers and the
+is a `task`-kind concern. The daemon runs the timers and the
 100-message cap for you; you drive the content.
 
-**Receiving a handover (a `type:"task"` record arrives addressed to you):**
+**Receiving a handover (a `type:"exchange"` record arrives addressed to you):**
 
 1. **`phase:"offer"`** — a peer wants to hand you their task; `body` is their
    plan. Ask your user whether to take it (the entry decision; this is what
-   "busy" means). Decline ⇒ `send_task(to:<author>, task_id, kind,
+   "busy" means). Decline ⇒ `send_exchange(to:<author>, exchange_id, kind,
    phase:"decline", text:"<reason>")`, stop. Accept ⇒ `phase:"accept"`.
 2. **`phase:"context"`** — Q&A in both directions; ask anything still
    missing with `phase:"context"`.
@@ -320,12 +320,40 @@ is an `execute`-kind concern. The daemon runs the timers and the
    is yours and is not reported back.
 
 **Sending a handover (the `/swarm:handover` skill drives this):** pick a
-target from `swarm_info().participants`, mint a UUID `task_id`, compose a
+target from `swarm_info().participants`, mint a UUID `exchange_id`, compose a
 structured brief (Task / Goal / Current state / Next steps / Constraints),
-and `send_task(to:<target>, task_id, kind:"handover", phase:"offer",
+and `send_exchange(to:<target>, exchange_id, kind:"handover", phase:"offer",
 text:"<brief>")`. Answer the receiver's `context` questions. On their
 `done`, **auto-confirm** with `phase:"confirm"` — a handover has nothing for
-you to verify. You do not wait for the receiver to execute.
+you to verify. You do not wait for the receiver to run the work.
+
+### Task (`kind:"task"`) — work that returns a result
+
+A **task** is the kind that **returns the work**:
+`offer → accept → [context] → done → confirm` (with `change` to loop back for a
+revision). Unlike a handover, the worker does the task and reports its
+**result** on the `done` leg, and the initiator confirms (or asks for a
+change).
+
+**Receiving a task** (a `type:"exchange"` record with `kind:"task"`
+arrives addressed to you): ask your user whether to run it (the entry
+decision). Decline ⇒ `send_exchange(..., phase:"decline", text:"<reason>")`, stop.
+Accept ⇒ `phase:"accept"`, then **do the work** (build a plan and confirm with
+your user first if it makes changes; a read-only task can just run). Ask
+anything missing with `phase:"context"`. When finished, send `phase:"done"`
+with your **result in `text`** — a concise summary, NOT a raw dump; trim to the
+body cap or split detail across `context` legs. If the initiator replies
+`phase:"change"`, revise and re-send `done`; on `phase:"confirm"` the task is
+closed.
+
+**Sending tasks (the `/swarm:task` skill drives this):** send one or
+more tasks — each its own UUID `exchange_id`, worker, and explicit
+completion criteria in the brief. `send_exchange(to:<worker>, exchange_id,
+kind:"task", phase:"offer", text:"<brief>")` per task. Answer each worker's
+`context`. On a worker's `done`, the `text` is that task's **result** — surface
+it (it is the deliverable), then `phase:"confirm"` (or `phase:"change"` if it
+misses the completion criteria). Tasks are independent: there is **no** cross-task
+reduce or group outcome.
 
 The Q&A (`context`) is working traffic — process it to drive the exchange,
 but don't surface each leg as a chat line.

@@ -144,48 +144,57 @@ de-duplicate against anymore.
   `ping` message yourself; the daemon auto-pongs and produces the
   `ping_report`.
 
-## Task events (an interaction, not a verbatim line)
+## Exchange events (an interaction, not a verbatim line)
 
-A `task` event (`"event":"task"`) is **not** governed by the
+An `exchange` event (`"event":"exchange"`) is **not** governed by the
 verbatim-`display` rule above — it drives an interaction. Each leg carries
-`to`, `task_id`, `kind` (`handover`/`execute`), `phase`, `body`, and
-`self`. A `task_progress` event (`done`/`total`) is a widget update only.
-Send legs with (reuse one `task_id` across the whole exchange):
+`to`, `exchange_id`, `kind` (`handover`/`task`), `phase`, `body`, and
+`self`. An `exchange_progress` event (`done`/`total`) is a widget update only.
+Send legs with (reuse one `exchange_id` across the whole exchange):
 
 ```
-ah-s task --swarm $SWARM --nickname $NICKNAME --to <peer> \
-  --task-id <uuid> --kind <kind> --phase <phase> --text "<body>"
+ah-s exchange --swarm $SWARM --nickname $NICKNAME --to <peer> \
+  --exchange-id <uuid> --kind <kind> --phase <phase> --text "<body>"
 ```
 
 The daemon runs the timers (a 5-min idle debounce, a keepalive while you
 hold the ball) and the 100-content-message cap — you drive only the
 content. Track each live task as **one todo** in Claude Code's native to-do
-list via the **`TodoWrite`** tool (one per `task_id`) — **not** a printed
+list via the **`TodoWrite`** tool (one per `exchange_id`) — **not** a printed
 `🐝 tasks` block. **All** status changes go through `TodoWrite`; never print
-a per-update line. The receiver's todo `content` is **exactly**
-`🐝 handover from <author>` (e.g. `🐝 handover from <otter-embark>`). The
-todo `content` is **plain text shown verbatim** — write the nickname with
-literal `<`/`>`, **no backticks** and **no HTML entities** (`&lt;`). The
-companion **`activeForm`** (the spinner text) renders on a **different surface
-that HTML-escapes `<`/`>`** (→ `&lt;…&gt;`), so it must use the **bare**
-nickname with **no angle brackets**, e.g. `activeForm: "handover from
-otter-embark"`. Never put `<`/`>` (or backticks, or entities) in `activeForm`
-or any spinner/status text.
+a per-update line. The receiver's todo `content` names the behavior + peer:
+`🐝 handover from <author>` for a handover, `🐝 task from <author>` for a
+task (e.g. `🐝 task from <otter-embark>`). The todo `content` is
+**plain text shown verbatim** — write the nickname with literal `<`/`>`, **no
+backticks** and **no HTML entities** (`&lt;`). The companion **`activeForm`**
+(the spinner text) renders on a **different surface that HTML-escapes `<`/`>`**
+(→ `&lt;…&gt;`), so it must use the **bare** nickname with **no angle
+brackets**, e.g. `activeForm: "task from otter-embark"`. Never put `<`/`>`
+(or backticks, or entities) in `activeForm` or any spinner/status text.
 
 A **handover** completes at the *handoff*, not at the work:
 `offer → accept → [context] → done → confirm`. The receiver requests close
 (`done`) once it has what it needs; the initiator **auto-confirms**; then the
 receiver runs the work on its own (plan-mode-gated). There is **no** work
-verification or `change` for a handover — that is an `execute`-kind concern.
+verification or `change` for a handover — that is a `task`-kind concern.
 
-**Receiving (you are the addressee, `"self":false`):**
+A **task** **returns the work**: `offer → accept → [context] → done →
+confirm` (with `change` to loop back for a revision). The receiver does the
+task itself and reports its **result** on the `done` leg; the initiator
+**`confirm`s** (accepts the result) or sends **`change`** (asks for a
+revision). The `/swarm:task` skill sends one or more tasks (each its
+own `exchange_id`, worker, and completion criteria) and prints each result as it returns;
+the tasks are independent, with no cross-task step.
+
+**Receiving a handover** (kind=`handover`, you are the addressee,
+`"self":false`):
 
 1. **`phase:offer`** — a peer wants to hand you their task. Show the entry
    widget (`AskUserQuestion`): "Incoming handover from `<author>`: *[one-line
    task]*. Take it?", header `swarm:handover`, options **"Accept"** /
    **"Decline"** — **no `preview`** (the full plan is shown in plan mode after
    Accept, step 4). This is what defines "busy" — the user decides. Add a
-   `TodoWrite` todo for this `task_id`.
+   `TodoWrite` todo for this `exchange_id`.
    - **Decline** ⇒ send `--phase decline --text "<reason>"`; mark the todo
      `completed`; STOP.
    - **Accept** ⇒ send `--phase accept`; optionally `--phase context` with
@@ -202,18 +211,50 @@ verification or `change` for a handover — that is an `execute`-kind concern.
    On approval, do the work — it is yours and is **not** tracked back to the
    initiator.
 
-**Sending (you ran `/swarm:handover`, `"self":true` echoes):** answer the
-receiver's `context` questions from your task context (`TodoWrite` only). On
-their **`--phase done`**, **silently auto-confirm**: send `--phase confirm`
-(a handover has nothing for you to verify) and mark the todo `completed` (the
-terminal "handed over" state). **Absolute rule:** the auto-confirm and close
-emit a `TodoWrite` call and **zero** prose — no narration of the auto-confirm
-(no "requested close — auto-confirming"), no outcome line (no "🐝️ task handed
-over to …"), and **no parenthetical aside** reporting the close (no "(handover
-confirmed and closed silently — todo marked completed)"). Any sentence that
-describes what just happened to the task is forbidden, named example or not.
-On `--phase decline`, mark `completed` + note the reason in the todo content.
-End silently.
+**Receiving a task** (kind=`task`, you are the addressee,
+`"self":false`):
+
+1. **`phase:offer`** — a peer wants you to run a task and report back. Show the
+   entry widget (`AskUserQuestion`): "Incoming task from `<author>`: *[one-line
+   task]*. Run it?", header `swarm:task`, options **"Accept"** /
+   **"Decline"**. Add a `TodoWrite` todo for this `exchange_id`.
+   - **Decline** ⇒ send `--phase decline --text "<reason>"`; mark the todo
+     `completed`; STOP.
+   - **Accept** ⇒ send `--phase accept`, then **do the work** (plan-mode-gate
+     it first if it makes changes; a read-only task like a review can just
+     run). Ask anything missing with `--phase context`.
+2. **When the work is finished**, send **`--phase done`** with your **result in
+   the body** — a concise summary the initiator can use directly, NOT a raw
+   dump. If the result would exceed the ~3,000-char body cap, trim it to the
+   essentials (or split detail across earlier `--phase context` legs).
+3. **`phase:change` from the initiator** — they want a revision; address the
+   feedback and re-send **`--phase done`** with the updated result.
+4. **`phase:confirm` from the initiator** — your result was accepted; the task
+   is closed (todo `completed`). Nothing more to do.
+
+**Sending — handover** (you ran `/swarm:handover`, `"self":true` echoes):
+answer the receiver's `context` questions from your task context (`TodoWrite`
+only). On their **`--phase done`**, **silently auto-confirm**: send `--phase
+confirm` (a handover has nothing for you to verify) and mark the todo
+`completed` (the terminal "handed over" state).
+
+**Sending — task** (you ran `/swarm:task`, `"self":true` echoes): answer
+each worker's `context` questions. On a worker's **`--phase done`**, the body
+is that task's **result** — **print it** (attributed to the worker; it is the
+deliverable, not narration), then **`confirm`** (send `--phase confirm`); send
+`--phase change` only if the result misses the task's completion criteria. Tasks are
+independent — there is no cross-task reduce. See `/swarm:task`.
+
+**Absolute rule (both kinds):** every `TodoWrite` call emits **zero**
+surrounding prose — no preamble *before* and no postamble *after*. Two
+directions: never **announce the upcoming `TodoWrite`** (no "Now I'll track
+this in the to-do list", "Let me update the to-do list") and never **report the
+transition** afterward (no narration of the auto-confirm like "requested close
+— auto-confirming", no outcome line like "🐝️ task handed over to …", no
+parenthetical aside like "(handover confirmed and closed silently — todo marked
+completed)"). Any sentence that announces or describes what is/was happening to
+a task is forbidden, named example or not. On `--phase decline`, mark
+`completed` + note the reason in the todo content. End silently.
 
 **Presentation:** the only visible surfaces are the `offer` entry widget
 (receiver), the receiver's plan-mode prompt, and the native to-do list (via
@@ -221,5 +262,5 @@ End silently.
 status lives in the to-do list.
 `context`/`progress`/`accept`/`done`/`confirm` legs and your own
 `"self":true` echoes update the todo **silently** — never a printed line.
-`task_progress` (incl. the daemon's keepalive beats) only refreshes the
-todo. A `task_timeout` marks the todo `completed` ("timed out").
+`exchange_progress` (incl. the daemon's keepalive beats) only refreshes the
+todo. A `exchange_timeout` marks the todo `completed` ("timed out").

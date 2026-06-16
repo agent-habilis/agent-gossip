@@ -12,7 +12,9 @@ use std::io::Write;
 use serde::Serialize;
 
 use super::OutputEvent;
-use crate::protocol::{Message, MessageKind, Nickname, PresenceSubtype, TaskKind, TaskPhase};
+use crate::protocol::{
+    ExchangeKind, ExchangePhase, Message, MessageKind, Nickname, PresenceSubtype,
+};
 
 /// One-shot events (everything except the `"event":"message"` family).
 /// `#[serde(tag = "event")]` inlines the discriminator as the first field.
@@ -49,8 +51,8 @@ pub(super) enum SimpleEvent<'a> {
         pubkey: &'a str,
         seq: u64,
     },
-    TaskTimeout {
-        task_id: &'a str,
+    ExchangeTimeout {
+        exchange_id: &'a str,
     },
     Info {
         message: &'a str,
@@ -116,11 +118,11 @@ struct PresenceLine<'a> {
     pub display: String,
 }
 
-/// A `{"event":"task",...}` line for a **content** task leg. A distinct
+/// A `{"event":"exchange",...}` line for a **content** exchange leg. A distinct
 /// top-level event (not the `message` family) so skills branch on
 /// `event`; field order is part of the wire format.
 #[derive(Serialize)]
-struct TaskLine<'a> {
+struct ExchangeLine<'a> {
     pub event: &'static str,
     pub id: &'a str,
     pub swarm: &'a str,
@@ -129,29 +131,29 @@ struct TaskLine<'a> {
     pub pubkey: Option<&'a str>,
     pub ts: i64,
     pub to: &'a str,
-    pub task_id: &'a str,
-    pub kind: TaskKind,
-    pub phase: TaskPhase,
+    pub exchange_id: &'a str,
+    pub kind: ExchangeKind,
+    pub phase: ExchangePhase,
     pub body: &'a str,
-    /// Pre-formatted, markdown-safe line (see [`task_display`]).
+    /// Pre-formatted, markdown-safe line (see [`exchange_display`]).
     pub display: String,
     #[serde(rename = "self")]
     pub is_self: bool,
 }
 
-/// A `{"event":"task_progress",...}` line for the `Progress` phase — the
+/// A `{"event":"exchange_progress",...}` line for the `Progress` phase — the
 /// receiver's liveness+percent heartbeat. `done`/`total` are `None` when
 /// the receiver reports indeterminate progress (no fraction in the body).
 #[derive(Serialize)]
-struct TaskProgressLine<'a> {
+struct ExchangeProgressLine<'a> {
     pub event: &'static str,
     pub id: &'a str,
     pub swarm: &'a str,
     pub author: &'a str,
     pub ts: i64,
     pub to: &'a str,
-    pub task_id: &'a str,
-    pub kind: TaskKind,
+    pub exchange_id: &'a str,
+    pub kind: ExchangeKind,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub done: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -201,31 +203,37 @@ fn msg_display(author: &str, body: &str, reply: Option<&str>) -> String {
     }
 }
 
-/// `display` line for a `task` event:
-/// `` 🐝️ task handover offer `<author>` → `<to>`: body ``. See
+/// `display` line for an `exchange` event:
+/// `` 🐝️ exchange handover offer `<author>` → `<to>`: body ``. See
 /// [`msg_display`] for the backtick rationale. The skill may render a
 /// richer interaction (the tasks widget, collapsed status lines) instead
 /// of echoing this verbatim; it is the canonical line for raw
 /// `--output json` consumers.
-fn task_display(author: &str, to: &str, kind: TaskKind, phase: TaskPhase, body: &str) -> String {
-    format!("🐝️ task {kind} {phase} `<{author}>` → `<{to}>`: {body}")
-}
-
-/// `display` line for a `task_progress` event:
-/// `` 🐝️ task handover progress `<author>` → `<to>`: 35/100 `` (or
-/// `working` when indeterminate).
-fn task_progress_display(
+fn exchange_display(
     author: &str,
     to: &str,
-    kind: TaskKind,
+    kind: ExchangeKind,
+    phase: ExchangePhase,
+    body: &str,
+) -> String {
+    format!("🐝️ exchange {kind} {phase} `<{author}>` → `<{to}>`: {body}")
+}
+
+/// `display` line for a `exchange_progress` event:
+/// `` 🐝️ exchange handover progress `<author>` → `<to>`: 35/100 `` (or
+/// `working` when indeterminate).
+fn exchange_progress_display(
+    author: &str,
+    to: &str,
+    kind: ExchangeKind,
     done: Option<u64>,
     total: Option<u64>,
 ) -> String {
     match (done, total) {
         (Some(done), Some(total)) => {
-            format!("🐝️ task {kind} progress `<{author}>` → `<{to}>`: {done}/{total}")
+            format!("🐝️ exchange {kind} progress `<{author}>` → `<{to}>`: {done}/{total}")
         }
-        _ => format!("🐝️ task {kind} progress `<{author}>` → `<{to}>`: working"),
+        _ => format!("🐝️ exchange {kind} progress `<{author}>` → `<{to}>`: working"),
     }
 }
 
@@ -310,7 +318,7 @@ pub(super) fn format_msg_json(msg: &Message, is_self: bool) -> String {
         | MessageKind::Digest
         | MessageKind::Ping
         | MessageKind::Pong { .. }
-        | MessageKind::Task { .. } => {
+        | MessageKind::Exchange { .. } => {
             unreachable!("format_msg_json only handles Msg")
         }
     }
@@ -320,50 +328,56 @@ pub(super) fn print_message_json(msg: &Message, is_self: bool) {
     emit(&format_msg_json(msg, is_self));
 }
 
-/// Format a task leg as its JSON line. Only `Task` kinds reach here
+/// Format an exchange leg as its JSON line. Only `Exchange` kinds reach here
 /// (callers match first). The `Progress` phase renders as a
-/// `task_progress` event; every other (content) phase as a `task` event.
-pub(super) fn format_task_json(msg: &Message, is_self: bool) -> String {
-    let MessageKind::Task {
+/// `exchange_progress` event; every other (content) phase as an `exchange` event.
+pub(super) fn format_exchange_json(msg: &Message, is_self: bool) -> String {
+    let MessageKind::Exchange {
         to,
-        task_id,
+        exchange_id,
         kind,
         phase,
     } = &msg.kind
     else {
-        unreachable!("format_task_json only handles Task")
+        unreachable!("format_exchange_json only handles Exchange")
     };
-    if matches!(phase, TaskPhase::Progress) {
+    if matches!(phase, ExchangePhase::Progress) {
         let (done, total) = parse_progress(msg.body.as_str());
-        return serde_json::to_string(&TaskProgressLine {
-            event: "task_progress",
+        return serde_json::to_string(&ExchangeProgressLine {
+            event: "exchange_progress",
             id: msg.id.as_str(),
             swarm: msg.swarm.as_str(),
             author: msg.author.as_str(),
             ts: msg.timestamp,
             to: to.as_str(),
-            task_id: task_id.as_str(),
+            exchange_id: exchange_id.as_str(),
             kind: *kind,
             done,
             total,
-            display: task_progress_display(msg.author.as_str(), to.as_str(), *kind, done, total),
+            display: exchange_progress_display(
+                msg.author.as_str(),
+                to.as_str(),
+                *kind,
+                done,
+                total,
+            ),
             is_self,
         })
-        .expect("task_progress event serialization should never fail");
+        .expect("exchange_progress event serialization should never fail");
     }
-    serde_json::to_string(&TaskLine {
-        event: "task",
+    serde_json::to_string(&ExchangeLine {
+        event: "exchange",
         id: msg.id.as_str(),
         swarm: msg.swarm.as_str(),
         author: msg.author.as_str(),
         pubkey: (!msg.pubkey.is_empty()).then_some(msg.pubkey.as_str()),
         ts: msg.timestamp,
         to: to.as_str(),
-        task_id: task_id.as_str(),
+        exchange_id: exchange_id.as_str(),
         kind: *kind,
         phase: *phase,
         body: msg.body.as_str(),
-        display: task_display(
+        display: exchange_display(
             msg.author.as_str(),
             to.as_str(),
             *kind,
@@ -372,11 +386,11 @@ pub(super) fn format_task_json(msg: &Message, is_self: bool) -> String {
         ),
         is_self,
     })
-    .expect("task event serialization should never fail")
+    .expect("exchange event serialization should never fail")
 }
 
-pub(super) fn print_task_json(msg: &Message, is_self: bool) {
-    emit(&format_task_json(msg, is_self));
+pub(super) fn print_exchange_json(msg: &Message, is_self: bool) {
+    emit(&format_exchange_json(msg, is_self));
 }
 
 /// Render a captured [`OutputEvent`] to the exact JSON line the
@@ -401,12 +415,14 @@ pub fn event_json(event: &OutputEvent) -> Option<String> {
             drift: drift.as_deref(),
         }),
         OutputEvent::Message { msg, is_self } => return Some(format_msg_json(msg, *is_self)),
-        OutputEvent::Task { msg, is_self } => {
-            return Some(format_task_json(msg, *is_self));
+        OutputEvent::Exchange { msg, is_self } => {
+            return Some(format_exchange_json(msg, *is_self));
         }
-        OutputEvent::TaskTimeout { task_id } => serde_json::to_string(&SimpleEvent::TaskTimeout {
-            task_id: task_id.as_str(),
-        }),
+        OutputEvent::ExchangeTimeout { exchange_id } => {
+            serde_json::to_string(&SimpleEvent::ExchangeTimeout {
+                exchange_id: exchange_id.as_str(),
+            })
+        }
         OutputEvent::Presence { msg } => {
             let MessageKind::Presence { subtype } = &msg.kind else {
                 return None;

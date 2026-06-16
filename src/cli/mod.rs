@@ -25,7 +25,7 @@ mod status;
 
 pub(crate) use args::Cli;
 use args::{
-    Commands, CreateOpts, MsgOpts, PeersOpts, PingOpts, PollOpts, SharedServerOpts, TaskOpts,
+    Commands, CreateOpts, ExchangeOpts, MsgOpts, PeersOpts, PingOpts, PollOpts, SharedServerOpts,
 };
 
 /// `join` has no `--public`/`--name`: both are encoded in the `ahs…`
@@ -76,7 +76,7 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
         Commands::Msg { opts } => msg(opts).await,
         Commands::Poll { opts } => poll(opts).await,
         Commands::Ping { opts } => ping(opts).await,
-        Commands::Task { opts } => task(opts).await,
+        Commands::Exchange { opts } => exchange(opts).await,
         Commands::Peers { opts } => peers(opts).await,
         Commands::Discover { opts } => {
             crate::util::tuning::init(opts.shared.tuning());
@@ -271,30 +271,30 @@ async fn ping(opts: PingOpts) -> Result<()> {
     Ok(())
 }
 
-/// Send one leg of a task exchange via the running daemon's IPC socket.
-/// The receiving daemon surfaces a `task` (or `task_progress`) event; this
+/// Send one leg of an exchange via the running daemon's IPC socket.
+/// The receiving daemon surfaces an `exchange` (or `exchange_progress`) event; this
 /// command itself only confirms the send (or reports a rate-limit /
 /// unknown-participant / oversize error).
-async fn task(opts: TaskOpts) -> Result<()> {
-    let TaskOpts {
+async fn exchange(opts: ExchangeOpts) -> Result<()> {
+    let ExchangeOpts {
         swarm,
         nickname,
         to,
-        task_id,
+        exchange_id,
         kind,
         phase,
         text,
     } = opts;
-    let cmd = IpcCommand::Task {
+    let cmd = IpcCommand::Exchange {
         swarm,
         to,
-        task_id,
+        exchange_id,
         kind,
         phase,
         body: text,
     };
     let resp = ipc::send(&cmd, &nickname).await?;
-    let id = finish_send(&resp, "task")?;
+    let id = finish_send(&resp, "exchange")?;
     let out = Output::new(OutputMode::Human, false, None);
     out.msg_posted(&id);
     Ok(())

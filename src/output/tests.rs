@@ -199,33 +199,36 @@ fn json_presence_left() {
     assert_eq!(parsed["author"], "bob");
 }
 
-// ── task type ──────────────────────────────────────────────
+// ── exchange type ──────────────────────────────────────────────
 
 #[test]
-fn task_event_json_shape() {
+fn exchange_event_json_shape() {
     use super::OutputEvent;
-    use crate::protocol::{TaskId, TaskKind, TaskPhase};
-    let msg = Message::new_task(
+    use crate::protocol::{ExchangeId, ExchangeKind, ExchangePhase};
+    let msg = Message::new_exchange(
         &sid(),
         &nick("drift-oak"),
         nick("calm-otter"),
-        TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
-        TaskKind::Handover,
-        TaskPhase::Offer,
+        ExchangeId::from("550e8400-e29b-41d4-a716-446655440000"),
+        ExchangeKind::Handover,
+        ExchangePhase::Offer,
         body("## Task\nport the parser"),
     );
     // Routed through `event_json` so the captured-event form is
     // byte-identical to the stdout `--output json` line.
-    let json = super::json::event_json(&OutputEvent::Task {
+    let json = super::json::event_json(&OutputEvent::Exchange {
         msg: Box::new(msg),
         is_self: false,
     })
-    .expect("task event produces a JSON line");
+    .expect("exchange event produces a JSON line");
     let parsed = parse(&json);
-    assert_eq!(parsed["event"], "task");
+    assert_eq!(parsed["event"], "exchange");
     assert_eq!(parsed["author"], "drift-oak");
     assert_eq!(parsed["to"], "calm-otter");
-    assert_eq!(parsed["task_id"], "550e8400-e29b-41d4-a716-446655440000");
+    assert_eq!(
+        parsed["exchange_id"],
+        "550e8400-e29b-41d4-a716-446655440000"
+    );
     assert_eq!(parsed["kind"], "handover");
     assert_eq!(parsed["phase"], "offer");
     assert_eq!(parsed["body"], "## Task\nport the parser");
@@ -234,7 +237,7 @@ fn task_event_json_shape() {
     assert!(parsed["ts"].is_number());
     assert_eq!(
         parsed["display"],
-        "🐝️ task handover offer `<drift-oak>` → `<calm-otter>`: ## Task\nport the parser"
+        "🐝️ exchange handover offer `<drift-oak>` → `<calm-otter>`: ## Task\nport the parser"
     );
     // Distinct top-level event — never the `message` family, no `type` key.
     assert!(parsed.get("type").is_none());
@@ -243,69 +246,75 @@ fn task_event_json_shape() {
 #[test]
 fn task_self_echo_flag() {
     use super::OutputEvent;
-    use crate::protocol::{TaskId, TaskKind, TaskPhase};
-    let msg = Message::new_task(
+    use crate::protocol::{ExchangeId, ExchangeKind, ExchangePhase};
+    let msg = Message::new_exchange(
         &sid(),
         &nick("drift-oak"),
         nick("calm-otter"),
-        TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
-        TaskKind::Handover,
-        TaskPhase::Confirm,
+        ExchangeId::from("550e8400-e29b-41d4-a716-446655440000"),
+        ExchangeKind::Handover,
+        ExchangePhase::Confirm,
         body("looks good"),
     );
-    let json = super::json::event_json(&OutputEvent::Task {
+    let json = super::json::event_json(&OutputEvent::Exchange {
         msg: Box::new(msg),
         is_self: true,
     })
-    .expect("task event produces a JSON line");
+    .expect("exchange event produces a JSON line");
     let parsed = parse(&json);
     assert_eq!(parsed["self"], true);
     assert_eq!(parsed["phase"], "confirm");
 }
 
 #[test]
-fn task_progress_event_json_shape() {
+fn exchange_progress_event_json_shape() {
     use super::OutputEvent;
-    use crate::protocol::{TaskId, TaskKind, TaskPhase};
-    let msg = Message::new_task(
+    use crate::protocol::{ExchangeId, ExchangeKind, ExchangePhase};
+    let msg = Message::new_exchange(
         &sid(),
         &nick("calm-otter"),
         nick("drift-oak"),
-        TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
-        TaskKind::Execute,
-        TaskPhase::Progress,
+        ExchangeId::from("550e8400-e29b-41d4-a716-446655440000"),
+        ExchangeKind::Task,
+        ExchangePhase::Progress,
         body("35/100"),
     );
-    let json = super::json::event_json(&OutputEvent::Task {
+    let json = super::json::event_json(&OutputEvent::Exchange {
         msg: Box::new(msg),
         is_self: false,
     })
     .expect("progress event produces a JSON line");
     let parsed = parse(&json);
-    // The Progress phase renders as a distinct `task_progress` event with a
-    // parsed `done`/`total`, never as a content `task` event.
-    assert_eq!(parsed["event"], "task_progress");
-    assert_eq!(parsed["task_id"], "550e8400-e29b-41d4-a716-446655440000");
+    // The Progress phase renders as a distinct `exchange_progress` event with a
+    // parsed `done`/`total`, never as a content `exchange` event.
+    assert_eq!(parsed["event"], "exchange_progress");
+    assert_eq!(
+        parsed["exchange_id"],
+        "550e8400-e29b-41d4-a716-446655440000"
+    );
     assert_eq!(parsed["done"], 35);
     assert_eq!(parsed["total"], 100);
     assert!(parsed.get("phase").is_none());
     assert_eq!(
         parsed["display"],
-        "🐝️ task execute progress `<calm-otter>` → `<drift-oak>`: 35/100"
+        "🐝️ exchange task progress `<calm-otter>` → `<drift-oak>`: 35/100"
     );
 }
 
 #[test]
-fn task_timeout_event_json_shape() {
+fn exchange_timeout_event_json_shape() {
     use super::OutputEvent;
-    use crate::protocol::TaskId;
-    let json = super::json::event_json(&OutputEvent::TaskTimeout {
-        task_id: TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
+    use crate::protocol::ExchangeId;
+    let json = super::json::event_json(&OutputEvent::ExchangeTimeout {
+        exchange_id: ExchangeId::from("550e8400-e29b-41d4-a716-446655440000"),
     })
-    .expect("task_timeout event produces a JSON line");
+    .expect("exchange_timeout event produces a JSON line");
     let parsed = parse(&json);
-    assert_eq!(parsed["event"], "task_timeout");
-    assert_eq!(parsed["task_id"], "550e8400-e29b-41d4-a716-446655440000");
+    assert_eq!(parsed["event"], "exchange_timeout");
+    assert_eq!(
+        parsed["exchange_id"],
+        "550e8400-e29b-41d4-a716-446655440000"
+    );
 }
 
 // ── peer_timeout / peer_return shape ───────────────────────
@@ -368,14 +377,16 @@ fn json_output_is_single_line() {
 
 mod snapshots {
     use super::{format_msg_json, format_presence_json};
-    use crate::protocol::{Message, MessageKind, PresenceSubtype, TaskId, TaskKind, TaskPhase};
+    use crate::protocol::{
+        ExchangeId, ExchangeKind, ExchangePhase, Message, MessageKind, PresenceSubtype,
+    };
 
-    fn snap_task(kind: TaskKind, phase: TaskPhase, body: &str) -> String {
-        super::super::json::format_task_json(
+    fn snap_exchange(kind: ExchangeKind, phase: ExchangePhase, body: &str) -> String {
+        super::super::json::format_exchange_json(
             &Message::fixture(
-                MessageKind::Task {
+                MessageKind::Exchange {
                     to: crate::protocol::Nickname::from("calm-otter"),
-                    task_id: TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
+                    exchange_id: ExchangeId::from("550e8400-e29b-41d4-a716-446655440000"),
                     kind,
                     phase,
                 },
@@ -386,26 +397,30 @@ mod snapshots {
     }
 
     #[test]
-    fn snap_task_offer() {
-        insta::assert_snapshot!(snap_task(
-            TaskKind::Handover,
-            TaskPhase::Offer,
+    fn snap_exchange_offer() {
+        insta::assert_snapshot!(snap_exchange(
+            ExchangeKind::Handover,
+            ExchangePhase::Offer,
             "## Task\nport the parser"
         ));
     }
 
     #[test]
-    fn snap_task_confirm() {
-        insta::assert_snapshot!(snap_task(
-            TaskKind::Handover,
-            TaskPhase::Confirm,
+    fn snap_exchange_confirm() {
+        insta::assert_snapshot!(snap_exchange(
+            ExchangeKind::Handover,
+            ExchangePhase::Confirm,
             "looks good"
         ));
     }
 
     #[test]
-    fn snap_task_progress() {
-        insta::assert_snapshot!(snap_task(TaskKind::Execute, TaskPhase::Progress, "35/100"));
+    fn snap_exchange_progress() {
+        insta::assert_snapshot!(snap_exchange(
+            ExchangeKind::Task,
+            ExchangePhase::Progress,
+            "35/100"
+        ));
     }
 
     #[test]

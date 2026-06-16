@@ -15,7 +15,7 @@ use super::rate_limit::SwarmRateLimiter;
 use crate::daemon::state_file::StateFile;
 use crate::output;
 use crate::protocol::identity::Identity;
-use crate::protocol::{Message, MessageId, Nickname, TaskId};
+use crate::protocol::{ExchangeId, Message, MessageId, Nickname};
 use crate::util::bounded_fifo_set::BoundedFifoSet;
 use crate::util::bounded_queue::BoundedQueue;
 use crate::util::cooldown::Cooldown;
@@ -125,11 +125,11 @@ pub(crate) struct EventLoopState {
     /// it stays bounded by `QUIET_CAP`; `roster_snapshot` only reads it for
     /// peers currently in `quiet`, so a stale entry never surfaces.
     pub quiet_since: HashMap<Nickname, Instant>,
-    /// In-flight task exchanges this node is a party to, keyed by `task_id`
-    /// (see [`crate::daemon::task`]). The coarse state machine + the two
-    /// task timers (debounce sweep, ball-owner keepalive) read/write this;
+    /// In-flight exchanges this node is a party to, keyed by `exchange_id`
+    /// (see [`crate::daemon::exchange`]). The coarse state machine + the two
+    /// exchange timers (debounce sweep, ball-owner keepalive) read/write this;
     /// the skill owns the content. Third-party relays never insert here.
-    pub tasks: HashMap<TaskId, crate::daemon::task::TaskRecord>,
+    pub exchanges: HashMap<ExchangeId, crate::daemon::exchange::ExchangeRecord>,
     /// Presentation layer: participants for whom we have *surfaced* an
     /// arrival (synthetic `joined`, real `Presence::Joined`, or
     /// `peer_return`). Gates departure surfacing so a participant whose
@@ -287,7 +287,7 @@ impl EventLoopState {
             relink: Cooldown::new(RELINK_COOLDOWN),
             peerinfo: Cooldown::new(RELINK_COOLDOWN),
             participants: HashSet::new(),
-            tasks: HashMap::new(),
+            exchanges: HashMap::new(),
             last_seen: HashMap::new(),
             quiet: BoundedFifoSet::new(QUIET_CAP),
             quiet_since: HashMap::new(),

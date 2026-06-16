@@ -6,8 +6,8 @@ description: Hand a task to another peer in the swarm. Use when the user wants t
 ## What this does
 
 Hands a task to another participant. A handover is one **behavior** built
-on the swarm's generic **task** mechanism: a directed, phased exchange
-correlated by a `task_id`. The flow is **task-first**: establish the task,
+on the swarm's generic **exchange** mechanism: a directed, phased exchange
+correlated by a `exchange_id`. The flow is **task-first**: establish the task,
 build a **plan in plan mode** (that plan *is* the brief you send), *then*
 pick the worker, then drive the exchange. The handover completes at the
 **handoff** — `offer → accept → [context] → done → confirm` — not at the
@@ -18,20 +18,23 @@ is surfaced only to the two parties.
 ## Silent execution
 
 Run the whole skill **silently**. Do NOT narrate steps, echo variables
-(e.g. `$TASK_ID = …`), print commands or their output, or announce what you
-are about to do. The roster read and the `task_id` stay in context, unprinted.
+(e.g. `$EXCHANGE_ID = …`), print commands or their output, or announce what you
+are about to do. The roster read and the `exchange_id` stay in context, unprinted.
 The **only** things that ever appear are: the not-in-swarm guard line (when
 it applies), **plan mode** (the drafted plan), the **worker picker**
 `AskUserQuestion`, and the native **`TodoWrite`** to-do list. There are **no**
 printed status or outcome lines — all task status lives in the to-do list.
 
-**Absolute rule (not a blocklist):** any prose that describes a task
-transition is forbidden — a transition emits a `TodoWrite` call and **zero**
-characters of prose. This includes parenthetical status asides and any line
-that narrates having stayed silent (e.g. `(handover confirmed and closed
-silently — todo marked completed)`). Do not invent your own variant of such a
-line: if a sentence reports what just happened to the task, it does not belong
-on screen, period.
+**Absolute rule (not a blocklist):** a silent step emits its tool call and
+**zero** surrounding prose — no preamble *before* it and no postamble *after*
+it. This is two-directional: never **announce an upcoming action** ("Now I'll
+track this in the to-do list", "Let me add this to the to-do list", "I'll
+update the to-do list") and never **report a completed transition** (a
+parenthetical aside, or a line narrating having stayed silent, e.g.
+`(handover confirmed and closed silently — todo marked completed)`). The
+`TodoWrite` call simply happens. Do not invent your own variant of either: if a
+sentence announces or reports what the task is/was doing, it does not belong on
+screen, period.
 
 ## Pre-flight: guard
 
@@ -60,9 +63,9 @@ drafting).
 Then, **inside plan mode** and silently:
 
 1. Mint one UUID for this whole handover (reused on every leg) — hold it as
-   `$TASK_ID`, don't print it:
+   `$EXCHANGE_ID`, don't print it:
    ```bash
-   TASK_ID=$(uuidgen | tr 'A-Z' 'a-z')
+   EXCHANGE_ID=$(uuidgen | tr 'A-Z' 'a-z')
    ```
 2. Draft the plan for the task. The plan you write **is** the brief you hand
    over. Keep it under ~2,500 characters (the wire caps a message near
@@ -71,8 +74,8 @@ Then, **inside plan mode** and silently:
    ```
    ## Task
    <what is being done, in one or two sentences>
-   ## Goal (done when)
-   <the done-criteria>
+   ## Goal (complete when)
+   <the completion criteria>
    ## Current state
    <what is already done / where things stand>
    ## Next steps
@@ -115,8 +118,8 @@ The plan (`$BRIEF`) was already approved in plan mode and the worker picked,
 so send straight away:
 
 ```bash
-ah-s task --swarm "$SWARM" --nickname "$NICKNAME" --to "$TARGET" \
-  --task-id "$TASK_ID" --kind handover --phase offer --text "$BRIEF"
+ah-s exchange --swarm "$SWARM" --nickname "$NICKNAME" --to "$TARGET" \
+  --exchange-id "$EXCHANGE_ID" --kind handover --phase offer --text "$BRIEF"
 ```
 
 Handle errors from the command:
@@ -125,32 +128,32 @@ Handle errors from the command:
   send; print the error and STOP.
 - `message too large` ⇒ shorten the brief and retry once.
 
-Your own send echoes back as a `task` `"self":true` event. Open the tasks
+Your own send echoes back as an `exchange` `"self":true` event. Open the tasks
 widget (see below) with this task `offered`.
 
 ## Drive the exchange
 
 The receiver drives the lifecycle; you answer and close. The full sender
 state machine lives in the create/join Monitor event handler (loaded for the
-session) — do not duplicate it here. In short, for this `task_id`:
+session) — do not duplicate it here. In short, for this `exchange_id`:
 
 - **`context` from the receiver** — answer from your task context with
   `--phase context`. Silent (widget only, see below).
 - **`done` from the receiver** ("I have what I need, close the handoff") —
   **auto-confirm**: send `--phase confirm`. A handover has nothing for you to
   verify (the receiver runs it on its own), so there is **no review widget
-  and no `change`** — that is an `execute`-kind concern. This closes the
+  and no `change`** — that is a `task`-kind concern. This closes the
   task.
 - **`decline`** — the receiver passed; record the reason and stop.
 
-You never wait for the receiver to *execute* the work.
+You never wait for the receiver to *run* the work.
 
 ## Track the task in the to-do list
 
 Use Claude Code's native **`TodoWrite`** tool as the **single source of
 truth** for handover status — **not** a printed `🐝 tasks` block. Add one
 todo for this handover and keep it updated **through `TodoWrite`** as the
-daemon emits events for this `task_id`; never print a per-update status line.
+daemon emits events for this `exchange_id`; never print a per-update status line.
 
 - Add it on send: a todo whose `content` is **exactly** `🐝 handover to
   <$TARGET>` (with the literal nickname, e.g. `🐝 handover to
@@ -164,8 +167,8 @@ daemon emits events for this `task_id`; never print a per-update status line.
   `activeForm: "handover to crystal-azure"`. Never put `<`/`>` (or backticks,
   or entities) in `activeForm` or any spinner/status text — angle brackets
   belong only in the todo `content`.
-- Move it through the lifecycle off the `task` events (`offered`/`accepted`/
-  …) by calling `TodoWrite` again. `task_progress` (incl. the daemon's
+- Move it through the lifecycle off the `exchange` events (`offered`/`accepted`/
+  …) by calling `TodoWrite` again. `exchange_progress` (incl. the daemon's
   keepalive beats) just refreshes the todo — **never** a printed line.
 - On your `confirm`, set it `completed` (the terminal "handed over" state).
   On a terminal `decline`/`timeout`, set it `completed` too and note the

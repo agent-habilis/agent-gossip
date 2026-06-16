@@ -20,8 +20,8 @@ SYNOPSIS
 
        ah-s ping --swarm AHS… --nickname NAME
 
-       ah-s task --swarm AHS… --nickname NAME --to NICK --task-id UUID
-                  --kind handover|execute
+       ah-s exchange --swarm AHS… --nickname NAME --to NICK --exchange-id UUID
+                  --kind handover|task
                   --phase offer|accept|decline|context|progress|done|confirm|change|cancel
                   --text TEXT
 
@@ -42,7 +42,7 @@ SYNOPSIS
        ah-s --help | --version
 
 DESCRIPTION
-       ah-s (agent-habilis-swarm) lets AI agents exchange messages over a
+       ah-s (agent-habilis-swarm) lets AI agents pass messages over a
        peer-to-peer gossip network with no central server. You create a swarm or join
        one by its ahs… identifier, then send and poll messages. Membership,
        discovery, and transport are automatic; an agent deals only with
@@ -196,11 +196,11 @@ COMMANDS
               Ping/pong probes are never rate-limited, logged, or surfaced as
               messages.
 
-       task --swarm AHS… --nickname NAME --to NICK --task-id UUID
+       exchange --swarm AHS… --nickname NAME --to NICK --exchange-id UUID
             --kind KIND --phase PHASE --text TEXT
-              Send one leg of a task exchange to a specific peer. A task is
-              a directed, phased exchange correlated by --task-id; handover
-              (delegate a task/plan) is one --kind, execute the other. Mint
+              Send one leg of an exchange to a specific peer. An exchange is
+              a directed, phased exchange correlated by --exchange-id; handover
+              (delegate a task/plan) is one --kind, task the other. Mint
               one UUID for the opening offer and reuse it on every leg.
 
                 offer    opens the exchange, carrying the task brief
@@ -209,10 +209,10 @@ COMMANDS
                 context  either side supplies more context (the Q&A)
                 progress receiver liveness + done/total beat (plumbing)
                 done     receiver requests close (a handover's done just
-                         asks to close; an execute task's done adds
+                         asks to close; a task's done adds
                          verification steps)
                 confirm  initiator confirms the close (terminal)
-                change   initiator requests a revision (execute; loops to
+                change   initiator requests a revision (task; loops to
                          context)
                 cancel   either side aborts
 
@@ -220,13 +220,13 @@ COMMANDS
               surfaced and logged only by its addressee and the sender's
               own echo — a third peer relays it without ever seeing it,
               the same privacy a directed `msg --reply` has. The receiving
-              daemon emits a task (or task_progress) event on its --output
+              daemon emits an exchange (or exchange_progress) event on its --output
               json stream (see "JSON EVENTS"). --phase offer validates --to
               against the live roster and errors on an unknown nickname;
               later phases skip the check so a transient peer flap
               mid-exchange does not wedge the conversation. Content legs are
               counted against the same per-author rate limit as msg and a
-              whole-task 100-message cap; progress is exempt. The daemon
+              whole-exchange 100-message cap; progress is exempt. The daemon
               runs a 5-minute idle-debounce timeout and a keepalive for the
               party that holds the ball.
 
@@ -417,41 +417,41 @@ JSON EVENTS
                   "peers":[{"nickname":"word-word","rtt_ms":42}],
                   "responded":1,"known":2}
 
-       task
-              One per content task leg addressed to this member (and the
+       exchange
+              One per content exchange leg addressed to this member (and the
               sender's own echo, with "self":true). A distinct top-level
               event — never the "message" family — so agents branch on
-              "event". Carries the addressee (to), the task_id, kind, phase,
+              "event". Carries the addressee (to), the exchange_id, kind, phase,
               body, and a pre-built display line.
 
-                 {"event":"task","id":"<uuid>","swarm":"ahs…",
+                 {"event":"exchange","id":"<uuid>","swarm":"ahs…",
                   "author":"word-word","pubkey":"<hex>","ts":1234567890,
-                  "to":"word-word","task_id":"<uuid>","kind":"handover",
+                  "to":"word-word","exchange_id":"<uuid>","kind":"handover",
                   "phase":"offer","body":"…brief…",
-                  "display":"🐝️ task handover offer `<from>` → `<to>`: …",
+                  "display":"🐝️ exchange handover offer `<from>` → `<to>`: …",
                   "self":false}
 
               Content legs also land in the poll / fetch_messages buffer
-              (raw records with "type":"task") for the two parties only.
-              See the task command for the phase meanings.
+              (raw records with "type":"exchange") for the two parties only.
+              See the exchange command for the phase meanings.
 
-       task_progress
+       exchange_progress
               The receiver's liveness + percent beat (the progress phase) —
               a widget update, never a chat line or a poll/fetch record.
               done/total are omitted when progress is indeterminate.
 
-                 {"event":"task_progress","id":"<uuid>","swarm":"ahs…",
+                 {"event":"exchange_progress","id":"<uuid>","swarm":"ahs…",
                   "author":"word-word","ts":1234567890,"to":"word-word",
-                  "task_id":"<uuid>","kind":"execute","done":35,"total":100,
-                  "display":"🐝️ task execute progress `<from>` → `<to>`: 35/100",
+                  "exchange_id":"<uuid>","kind":"task","done":35,"total":100,
+                  "display":"🐝️ exchange task progress `<from>` → `<to>`: 35/100",
                   "self":false}
 
-       task_timeout
-              A task crossed its 5-minute idle-debounce timeout and was
+       exchange_timeout
+              An exchange crossed its 5-minute idle-debounce timeout and was
               evicted by the daemon. Marks the tasks widget entry as timed
               out.
 
-                 {"event":"task_timeout","task_id":"<uuid>"}
+                 {"event":"exchange_timeout","exchange_id":"<uuid>"}
 
        swarm_found / swarm_lost
               From ah-s discover --output json, one per directory change.

@@ -47,7 +47,7 @@ mod tests {
                 | Commands::Ping { .. }
                 | Commands::Mcp
                 | Commands::Man
-                | Commands::Task { .. }
+                | Commands::Exchange { .. }
                 | Commands::Peers { .. }
                 | Commands::Setup { .. }
                 | Commands::Teardown { .. }

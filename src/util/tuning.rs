@@ -136,16 +136,16 @@ pub(crate) fn sweep_interval_secs() -> u64 {
     current().sweep_interval_secs
 }
 
-/// Idle-debounce timeout for a task exchange (seconds). Hidden flag
-/// `--task-timeout-secs` so integration tests exercise eviction in seconds.
-pub(crate) fn task_timeout_secs() -> u64 {
-    current().task_timeout_secs
+/// Idle-debounce timeout for an exchange (seconds). Hidden flag
+/// `--exchange-timeout-secs` so integration tests exercise eviction in seconds.
+pub(crate) fn exchange_timeout_secs() -> u64 {
+    current().exchange_timeout_secs
 }
 
-/// How often the ball-owner's daemon emits a task keepalive (seconds).
-/// Hidden flag `--task-keepalive-secs`.
-pub(crate) fn task_keepalive_secs() -> u64 {
-    current().task_keepalive_secs
+/// How often the ball-owner's daemon emits an exchange keepalive (seconds).
+/// Hidden flag `--exchange-keepalive-secs`.
+pub(crate) fn exchange_keepalive_secs() -> u64 {
+    current().exchange_keepalive_secs
 }
 
 /// Grace before an **unmeshed joiner** co-hosts the rendezvous anyway
@@ -175,8 +175,8 @@ pub(crate) fn ping_window_secs() -> u64 {
 pub(crate) struct Tuning {
     pub alive_timeout_secs: u64,
     pub sweep_interval_secs: u64,
-    pub task_timeout_secs: u64,
-    pub task_keepalive_secs: u64,
+    pub exchange_timeout_secs: u64,
+    pub exchange_keepalive_secs: u64,
     pub cohost_grace_secs: u64,
     pub ping_window_secs: u64,
     pub heal_stall_threshold_secs: u64,
@@ -194,8 +194,8 @@ impl Tuning {
     pub(crate) const DEFAULTS: Self = Self {
         alive_timeout_secs: crate::util::consts::ALIVE_TIMEOUT_SECS,
         sweep_interval_secs: crate::util::consts::SWEEP_INTERVAL_SECS,
-        task_timeout_secs: crate::util::consts::TASK_TIMEOUT_SECS,
-        task_keepalive_secs: crate::util::consts::TASK_KEEPALIVE_SECS,
+        exchange_timeout_secs: crate::util::consts::EXCHANGE_TIMEOUT_SECS,
+        exchange_keepalive_secs: crate::util::consts::EXCHANGE_KEEPALIVE_SECS,
         cohost_grace_secs: crate::util::consts::BEACON_COHOST_GRACE_SECS,
         ping_window_secs: crate::util::consts::PING_WINDOW_SECS,
         heal_stall_threshold_secs: crate::util::consts::HEAL_STALL_THRESHOLD_SECS,

@@ -16,7 +16,7 @@ use crate::daemon::ctx::HandlerCtx;
 use crate::daemon::state::EventLoopState;
 use crate::output;
 use crate::protocol::message::is_content_phase;
-use crate::protocol::{Message, MessageKind, Nickname, PresenceSubtype, TaskPhase};
+use crate::protocol::{ExchangePhase, Message, MessageKind, Nickname, PresenceSubtype};
 
 use crate::gossip;
 
@@ -184,22 +184,22 @@ pub(crate) fn handle_msg(
         | MessageKind::Digest
         | MessageKind::Ping
         | MessageKind::Pong { .. }
-        | MessageKind::Task { .. } => false,
+        | MessageKind::Exchange { .. } => false,
     }
 }
 
-/// A task leg: surfaced + logged only by the addressee (`to ==
+/// A exchange leg: surfaced + logged only by the addressee (`to ==
 /// self_author`) and, via the sender's echo path, the sender itself —
 /// third parties relay it without retaining, exactly like a directed
 /// `Msg` (see [`handle_msg`]). Returns whether to **log** (content phases
 /// only — the `Progress` phase is liveness plumbing, surfaced as a
-/// `task_progress` widget event but never retained). `surfaceable` gates
+/// `exchange_progress` widget event but never retained). `surfaceable` gates
 /// only the *display* (join-horizon), never the relay/log.
-pub(crate) fn handle_task(
+pub(crate) fn handle_exchange(
     out: &output::Output,
     message: &Message,
     to: &Nickname,
-    phase: TaskPhase,
+    phase: ExchangePhase,
     surfaceable: bool,
     self_author: &Nickname,
 ) -> bool {
@@ -207,7 +207,7 @@ pub(crate) fn handle_task(
         return false;
     }
     if surfaceable {
-        out.print_task(message, false);
+        out.print_exchange(message, false);
     }
     is_content_phase(phase)
 }

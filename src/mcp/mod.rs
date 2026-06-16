@@ -8,7 +8,7 @@
 //! - `join_swarm`
 //! - `leave_swarm`
 //! - `send_message`
-//! - `send_task`
+//! - `send_exchange`
 //! - `fetch_messages`
 //! - `swarm_info`
 //! - `swarm_version`
@@ -49,8 +49,8 @@ use crate::daemon::state::RosterEntry;
 use crate::embed::{CreateConfig, CreateError, JoinConfig};
 use crate::protocol::swarm::{LookupSet, RelayLadder, RelaySelection, SwarmName};
 use crate::protocol::{
-    Message, MessageBody, MessageId, Nickname, SwarmId, TaskId, TaskKind, TaskKindError, TaskPhase,
-    TaskPhaseError,
+    ExchangeId, ExchangeKind, ExchangeKindError, ExchangePhase, ExchangePhaseError, Message,
+    MessageBody, MessageId, Nickname, SwarmId,
 };
 use crate::resolver::JoinTarget;
 use crate::util::tuning::DEFAULT_MAX_DIRECT_PEERS;
@@ -182,13 +182,13 @@ struct FetchMessagesArgs {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct SendTaskArgs {
-    /// Addressee: the peer's nickname this task leg is directed at.
+    /// Addressee: the peer's nickname this exchange leg is directed at.
     /// For `phase: "offer"` it must be a current participant.
     to: String,
     /// Task correlation id (UUID): mint a fresh one for the opening
-    /// `offer`, then echo the same id on every later leg of that task.
-    task_id: String,
-    /// Task behavior: "handover" (delegate a task/plan) or "execute".
+    /// `offer`, then echo the same id on every later leg of that exchange.
+    exchange_id: String,
+    /// Task behavior: "handover" (delegate a task/plan) or "task".
     kind: String,
     /// Lifecycle phase: "offer" (the brief), "accept"/"decline" (entry),
     /// "context" (Q&A), "progress" (a done/total beat), "done" (request
@@ -201,25 +201,26 @@ struct SendTaskArgs {
     text: String,
 }
 
-/// Parse a task phase string into [`TaskPhase`], delegating to its
+/// Parse an exchange phase string into [`ExchangePhase`], delegating to its
 /// `FromStr` (the single phase mapping) and surfacing a bad value as MCP
 /// `invalid_params`.
-fn parse_task_phase(raw: &str) -> Result<TaskPhase, McpError> {
+fn parse_exchange_phase(raw: &str) -> Result<ExchangePhase, McpError> {
     raw.parse()
-        .map_err(|error: TaskPhaseError| McpError::invalid_params(error.to_string(), None))
+        .map_err(|error: ExchangePhaseError| McpError::invalid_params(error.to_string(), None))
 }
 
-/// Parse a task kind string into [`TaskKind`].
-fn parse_task_kind(raw: &str) -> Result<TaskKind, McpError> {
+/// Parse an exchange kind string into [`ExchangeKind`].
+fn parse_exchange_kind(raw: &str) -> Result<ExchangeKind, McpError> {
     raw.parse()
-        .map_err(|error: TaskKindError| McpError::invalid_params(error.to_string(), None))
+        .map_err(|error: ExchangeKindError| McpError::invalid_params(error.to_string(), None))
 }
 
-/// Parse a task id string into [`TaskId`].
-fn parse_task_id(raw: &str) -> Result<TaskId, McpError> {
-    raw.parse().map_err(|error: crate::protocol::TaskIdError| {
-        McpError::invalid_params(error.to_string(), None)
-    })
+/// Parse an exchange id string into [`ExchangeId`].
+fn parse_exchange_id(raw: &str) -> Result<ExchangeId, McpError> {
+    raw.parse()
+        .map_err(|error: crate::protocol::ExchangeIdError| {
+            McpError::invalid_params(error.to_string(), None)
+        })
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -534,27 +535,30 @@ impl AgentSwarmServer {
     }
 
     #[tool(
-        description = "Send one leg of a task exchange to a specific peer. A task is a directed, phased exchange correlated by `task_id` (mint a UUID for the opening \"offer\", echo it on every later leg). `kind` is the behavior (\"handover\" delegates a task/plan; \"execute\" runs+verifies). Phases: \"offer\" (brief), \"accept\"/\"decline\" (entry), \"context\" (Q&A), \"progress\" (a done/total beat, e.g. text \"35/100\"), \"done\" (request close + verification instructions), \"confirm\"/\"change\" (verify), \"cancel\". For \"offer\" the `to` nickname must be a current participant (check `swarm_info`). Returns the new message id and authoritative echo, or `{rate_limited:true}` if the sender-side limiter dropped it."
+        description = "Send one leg of an exchange to a specific peer. An exchange is a directed, phased conversation correlated by `exchange_id` (mint a UUID for the opening \"offer\", echo it on every later leg). `kind` is the behavior (\"handover\" delegates a task/plan; \"task\" runs+verifies). Phases: \"offer\" (brief), \"accept\"/\"decline\" (entry), \"context\" (Q&A), \"progress\" (a done/total beat, e.g. text \"35/100\"), \"done\" (request close + verification instructions), \"confirm\"/\"change\" (verify), \"cancel\". For \"offer\" the `to` nickname must be a current participant (check `swarm_info`). Returns the new message id and authoritative echo, or `{rate_limited:true}` if the sender-side limiter dropped it."
     )]
-    async fn send_task(
+    async fn send_exchange(
         &self,
         Parameters(args): Parameters<SendTaskArgs>,
     ) -> Result<CallToolResult, McpError> {
         let guard = self.session.lock().await;
         let session = guard.as_ref().ok_or_else(not_in_swarm_error)?;
         let to = Nickname::new(args.to).map_err(|error| {
-            McpError::invalid_params(format!("invalid task target: {error}"), None)
+            McpError::invalid_params(format!("invalid exchange target: {error}"), None)
         })?;
-        let task_id = parse_task_id(&args.task_id)?;
-        let kind = parse_task_kind(&args.kind)?;
-        let phase = parse_task_phase(&args.phase)?;
+        let exchange_id = parse_exchange_id(&args.exchange_id)?;
+        let kind = parse_exchange_kind(&args.kind)?;
+        let phase = parse_exchange_phase(&args.phase)?;
         let body = MessageBody::new(args.text)
             .map_err(|error| McpError::invalid_params(format!("{error}"), None))?;
-        // The daemon's `broadcast_task` validates the addressee (offer
+        // The daemon's `broadcast_exchange` validates the addressee (offer
         // only), so we don't repeat it here. An unknown participant comes back
         // as an error; re-classify it as `invalid_params` since it's bad input,
         // not an internal fault.
-        match session.send_task(to, task_id, kind, phase, body).await {
+        match session
+            .send_exchange(to, exchange_id, kind, phase, body)
+            .await
+        {
             Ok(Some((id, message))) => ok_json(SendMessageResult { id, message }),
             Ok(None) => ok_json(serde_json::json!({ "rate_limited": true })),
             Err(error) => {

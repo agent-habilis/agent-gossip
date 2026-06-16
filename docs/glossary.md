@@ -168,35 +168,48 @@ and broadcasting the id makes the swarm open to anyone who finds it.
 Browse a directory's live swarms (`ah-s discover`) and join one — the consumer
 side of **advertise**.
 
-### task
+### exchange
 
-*Layer: messaging · keyed by `task_id` (correlation) + the two parties' nicknames.*
+*Layer: messaging · keyed by `exchange_id` (correlation) + the two parties' nicknames.*
 
-A typed, phased, directed exchange (`MessageKind::Task`, phases
+A typed, phased, directed conversation (`MessageKind::Exchange`, phases
 `offer`/`accept`/`decline`/`context`/`progress`/`done`/`confirm`/`change`/`cancel`)
-correlated by a `task_id`, with a `kind` discriminator (`handover` |
-`execute`). The generic **mechanism**: a directed, multi-leg conversation
-whose *coarse* lifecycle (phase advance, the per-task idle-debounce timeout,
+correlated by an `exchange_id`, with a `kind` discriminator (`handover` |
+`task`). The generic **mechanism**: a directed, multi-leg conversation
+whose *coarse* lifecycle (phase advance, the per-exchange idle-debounce timeout,
 the ball-owner keepalive, the 100-content-message cap) is owned by the daemon
-state machine (`daemon::task`), while the *content* is owned by the skill. Like
+state machine (`daemon::exchange`), while the *content* is owned by the skill. Like
 a directed `Msg --reply`, a leg is delivered to all members for relay but
 **surfaced and logged only by its addressee and the sender's own echo** — a
 third party never sees it. Content legs are rate-limited with `Msg`; the
 `progress` phase is liveness plumbing (rate-limit-exempt, never logged). Not
 part of the per-author hash chain or DAG (presence-like).
 
-Code: `MessageKind::Task`, `lifecycle::handle_task`, `broadcast_task`,
-`daemon::task`.
+Code: `MessageKind::Exchange`, `lifecycle::handle_exchange`, `broadcast_exchange`,
+`daemon::exchange`.
 
 ### handover
 
-*Layer: behavior on top of **task**.*
+*Layer: behavior on top of **exchange**.*
 
-The behavior that delegates a task/plan to another agent — `TaskKind::Handover`
-on the task mechanism, driven entirely by the skill (`/swarm:handover`). It
+The behavior that delegates a task/plan to another agent — `ExchangeKind::Handover`
+on the exchange mechanism, driven entirely by the skill (`/swarm:handover`). It
 runs `offer → accept → context → done → confirm`, ending at the close
-handshake. "A handover is a behavior that uses the task mechanism"; it adds no
+handshake. "A handover is a behavior that uses the exchange mechanism"; it adds no
 wire type of its own.
+
+### task
+
+*Layer: behavior on top of **exchange**.*
+
+The behavior that runs work and **returns the result** — `ExchangeKind::Task`
+on the exchange mechanism, driven by the skill (`/swarm:task`). It runs
+`offer → accept → [context] → done → confirm`, where the worker reports its
+result on `done` and the initiator confirms (or `change`s for a revision) —
+the difference from **handover**, which closes without a result. `/swarm:task`
+sends one or more independent tasks (each its own `exchange_id`, worker,
+and completion criteria) and surfaces each result as it returns; there is no
+group-level outcome. Like handover, it adds no wire type of its own.
 
 ## Layering
 

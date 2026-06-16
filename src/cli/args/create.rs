@@ -104,7 +104,7 @@ mod tests {
             | Commands::Discover { .. }
             | Commands::Mcp
             | Commands::Man
-            | Commands::Task { .. }
+            | Commands::Exchange { .. }
             | Commands::Peers { .. }
             | Commands::Setup { .. }
             | Commands::Teardown { .. }
@@ -129,7 +129,7 @@ mod tests {
             | Commands::Discover { .. }
             | Commands::Mcp
             | Commands::Man
-            | Commands::Task { .. }
+            | Commands::Exchange { .. }
             | Commands::Peers { .. }
             | Commands::Setup { .. }
             | Commands::Teardown { .. }
@@ -151,7 +151,7 @@ mod tests {
             | Commands::Discover { .. }
             | Commands::Mcp
             | Commands::Man
-            | Commands::Task { .. }
+            | Commands::Exchange { .. }
             | Commands::Peers { .. }
             | Commands::Setup { .. }
             | Commands::Teardown { .. }
@@ -190,7 +190,7 @@ mod tests {
                 | Commands::Discover { .. }
                 | Commands::Mcp
                 | Commands::Man
-                | Commands::Task { .. }
+                | Commands::Exchange { .. }
                 | Commands::Peers { .. }
                 | Commands::Setup { .. }
                 | Commands::Teardown { .. }
@@ -243,7 +243,7 @@ mod tests {
             | Commands::Discover { .. }
             | Commands::Mcp
             | Commands::Man
-            | Commands::Task { .. }
+            | Commands::Exchange { .. }
             | Commands::Peers { .. }
             | Commands::Setup { .. }
             | Commands::Teardown { .. }
