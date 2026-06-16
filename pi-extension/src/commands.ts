@@ -27,6 +27,10 @@ export function registerCommands(pi: ExtensionAPI): void {
     description: "Send a message to the current swarm",
     handler: cmdMsg,
   });
+  pi.registerCommand("swarm-reply", {
+    description: "Send a message addressed to a specific peer (/swarm-reply {nick} {text})",
+    handler: cmdReply,
+  });
   pi.registerCommand("swarm-leave", {
     description: "Leave the current swarm",
     handler: cmdLeave,
@@ -171,6 +175,45 @@ async function cmdMsg(args: string, ctx: ExtensionCommandContext): Promise<void>
     ctx.ui.notify(`🐝 <${session.nickname}>: ${text}`, "info");
   } catch (error) {
     ctx.ui.notify(`🐝 send failed: ${error instanceof Error ? error.message : "unknown"}`, "error");
+  }
+}
+
+async function cmdReply(args: string, ctx: ExtensionCommandContext): Promise<void> {
+  state.ctx = ctx;
+  if (!requireAgentSwarm(ctx)) return;
+
+  // First whitespace-delimited token is the target nickname (angle brackets
+  // optional); the rest is the message body.
+  const match = args.trim().match(/^(\S+)\s+([\s\S]+)$/u);
+  if (!match) {
+    ctx.ui.notify("🐝 usage: /swarm-reply {nick} {text}", "error");
+    return;
+  }
+  const target = match[1].replace(/^<|>$/gu, "");
+  const text = match[2];
+
+  if (!isValidBody(text)) {
+    ctx.ui.notify(
+      "🐝 message body must not contain control characters other than tab/newline",
+      "error",
+    );
+    return;
+  }
+
+  const session = state.session;
+  if (!session) {
+    ctx.ui.notify("🐝 not in a swarm", "error");
+    return;
+  }
+
+  try {
+    sendSwarmMessage({ text, reply: target });
+    ctx.ui.notify(`🐝 <${session.nickname}> → <${target}>: ${text}`, "info");
+  } catch (error) {
+    ctx.ui.notify(
+      `🐝 reply failed: ${error instanceof Error ? error.message : "unknown"}`,
+      "error",
+    );
   }
 }
 
