@@ -22,6 +22,26 @@ export type SwarmEvent = {
   // On `joined` presence: the joiner's self-reported model / harness.
   model?: string;
   harness?: string;
+  // On `exchange` / `exchange_progress` events.
+  exchange_id?: string;
+  kind?: ExchangeKind;
+  phase?: string;
+  to?: string;
+  display?: string;
+};
+
+export type ExchangeKind = "handover" | "task";
+
+// One in-flight exchange this node is a party to, tracked so the receiver and
+// initiator legs can be told apart and the agent can be driven through it.
+export type ExchangeRecord = {
+  exchangeId: string;
+  kind: ExchangeKind;
+  // The other party's nickname.
+  peer: string;
+  role: "initiator" | "receiver";
+  // One-line summary of the offer, for prompts/notifications.
+  task?: string;
 };
 
 export type PingResult = {

@@ -1,6 +1,6 @@
 import type { ChildProcess } from "node:child_process";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { Session, SwarmEvent } from "./types";
+import type { ExchangeRecord, Session, SwarmEvent } from "./types";
 
 export type AppState = {
   daemon: ChildProcess | null;
@@ -17,6 +17,8 @@ export type AppState = {
   pingPending: boolean;
   pingStartTime: number;
   pongMap: Map<string, number>;
+  // In-flight exchanges this node is a party to, keyed by exchange_id.
+  exchanges: Map<string, ExchangeRecord>;
   stateFileId: string | undefined;
 };
 
@@ -33,6 +35,7 @@ export const state: AppState = {
   pingPending: false,
   pingStartTime: 0,
   pongMap: new Map(),
+  exchanges: new Map(),
   stateFileId: undefined,
 };
 

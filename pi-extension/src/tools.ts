@@ -9,6 +9,7 @@ import {
   joinSwarm,
   leaveSwarm,
   pingPeers,
+  sendExchange,
   sendSwarmMessage,
   validateCreateOptions,
 } from "./core";
@@ -194,6 +195,55 @@ export function registerTools(pi: ExtensionAPI): void {
         return { content: [{ type: "text", text: "ok" }], details: null };
       } catch (error) {
         return toolError(`Send failed: ${error instanceof Error ? error.message : "unknown"}`);
+      }
+    },
+  });
+
+  pi.registerTool({
+    name: "swarm_exchange",
+    label: "Swarm Exchange",
+    description: "Send one leg of an in-flight handover/task exchange to a peer",
+    promptSnippet: "Advance a handover or task exchange leg by leg",
+    promptGuidelines: [
+      "Use swarm_exchange to advance a handover or task you are a party to, reusing the exchange_id from the offer that started it",
+      'Receiving a handover: after accepting, ask anything unclear with phase "context", then send phase "done" when you have what you need; once the initiator confirms, do the work yourself',
+      'Receiving a task: after accepting, do the work, then send phase "done" with your result in text',
+      'Initiator: answer the receiver\'s "context" questions with phase "context"',
+    ],
+    parameters: Type.Object({
+      exchange_id: Type.String({
+        description: "The exchange's UUID (reuse the one from the offer)",
+      }),
+      to: Type.String({ description: "The other party's nickname" }),
+      kind: Type.String({ description: '"handover" or "task" — match the exchange' }),
+      phase: Type.String({
+        description: "Lifecycle phase: accept, decline, context, done, confirm, change, cancel",
+      }),
+      text: Type.Optional(
+        Type.String({
+          description:
+            "Leg body: a question/answer for context, the result for a task's done, an optional reason otherwise",
+        }),
+      ),
+    }),
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx: ExtensionContext) {
+      if (!requireAgentSwarm(ctx)) {
+        return toolError("ah-s CLI not found on PATH");
+      }
+      if (!state.session?.swarm) {
+        return toolError("Not in a swarm. Use swarm_create or swarm_join first.");
+      }
+      try {
+        sendExchange({
+          to: params.to,
+          exchangeId: params.exchange_id,
+          kind: params.kind === "task" ? "task" : "handover",
+          phase: params.phase,
+          text: params.text,
+        });
+        return { content: [{ type: "text", text: "ok" }], details: null };
+      } catch (error) {
+        return toolError(`Exchange failed: ${error instanceof Error ? error.message : "unknown"}`);
       }
     },
   });
