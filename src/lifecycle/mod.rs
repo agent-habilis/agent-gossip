@@ -123,6 +123,7 @@ pub(crate) async fn handle_presence(
         if state.participants.remove(message.author.as_str()) {
             state.write_participant_count();
         }
+        state.participant_endpoints.remove(message.author.as_str());
         state.quiet.remove(message.author.as_str());
         // Only announce a departure for a peer whose arrival we
         // surfaced — keeps the join-horizon view symmetric. A `left`

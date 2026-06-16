@@ -171,8 +171,9 @@ never see them.
 Returns `{swarm, name, nickname, participant_count, participants}` for the
 current session. `participant_count` is the roster size including self;
 `participants` is the live roster (each `{nickname, last_seen_secs_ago,
-quiet}`, recency-sorted) — use it to pick a `send_exchange` target and to
-validate a nickname.
+quiet, reach}`, recency-sorted; `reach` is `"direct"` for a live link, else
+`"gossip"`) — use it to pick a `send_exchange` target and to validate a
+nickname.
 
 ### `leave_swarm`
 

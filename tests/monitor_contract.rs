@@ -1219,18 +1219,31 @@ async fn test_exchange_idle_timeout_after_owner_dies() {
 
 /// `ah-s peers` returns the live roster: `ok`, a `count` (participants + 1
 /// for self), and a `participants` array carrying nickname + recency +
-/// quiet flag for each known peer.
+/// quiet flag + reach (direct/gossip) for each known peer.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_peers_roster_shape() {
     let (creator, joiner_a, joiner_b, swarm) = three_peers("peers");
 
-    // Poll until the creator's roster has converged to both joiners.
+    let reach_values = |roster: &serde_json::Value| -> Vec<String> {
+        roster["participants"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|entry| entry["reach"].as_str().map(str::to_owned))
+            .collect()
+    };
+
+    // Poll until the creator's roster has converged to both joiners *and*
+    // at least one of them resolves to a live direct link — the reach tag is
+    // populated from flooded PeerInfo, so it trails roster convergence.
     let deadline = Instant::now() + MSG_TIMEOUT;
     let mut roster = serde_json::Value::Null;
     while Instant::now() < deadline {
         roster = serde_json::from_str(&common::cli_peers(&swarm, &creator.nickname))
             .expect("peers response is JSON");
-        if roster["count"].as_u64() == Some(3) {
+        if roster["count"].as_u64() == Some(3)
+            && reach_values(&roster).iter().any(|reach| reach == "direct")
+        {
             break;
         }
         std::thread::sleep(POLL);
@@ -1247,10 +1260,46 @@ async fn test_peers_roster_shape() {
         .collect();
     assert!(nicks.contains(&joiner_a.nickname.as_str()));
     assert!(nicks.contains(&joiner_b.nickname.as_str()));
-    // Each entry carries the documented fields.
+    // Each entry carries the documented fields, with a valid reach tag.
     for entry in participants {
         assert!(entry["nickname"].is_string());
         assert!(entry.get("last_seen_secs_ago").is_some());
         assert!(entry["quiet"].is_boolean());
+        let reach = entry["reach"].as_str().expect("reach is a string");
+        assert!(reach == "direct" || reach == "gossip", "unexpected reach: {reach}");
     }
+    assert!(
+        reach_values(&roster).iter().any(|reach| reach == "direct"),
+        "at least one peer should resolve to a live direct link in a localhost mesh"
+    );
+
+    // Regression: a joiner reaches the creator (the beacon) only through the
+    // rendezvous link, which is kept out of `linked_endpoints`. The roster
+    // must still tag the beacon `direct` — earlier this always read `gossip`
+    // from a joiner's perspective.
+    let creator_reach_from_joiner = |view: &serde_json::Value| -> Option<String> {
+        view["participants"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|entry| entry["nickname"].as_str() == Some(creator.nickname.as_str()))
+            .and_then(|entry| entry["reach"].as_str().map(str::to_owned))
+    };
+    let joiner_deadline = Instant::now() + MSG_TIMEOUT;
+    let mut joiner_reach = None;
+    while Instant::now() < joiner_deadline {
+        let joiner_roster: serde_json::Value =
+            serde_json::from_str(&common::cli_peers(&swarm, &joiner_a.nickname))
+                .expect("peers response is JSON");
+        joiner_reach = creator_reach_from_joiner(&joiner_roster);
+        if joiner_reach.as_deref() == Some("direct") {
+            break;
+        }
+        std::thread::sleep(POLL);
+    }
+    assert_eq!(
+        joiner_reach.as_deref(),
+        Some("direct"),
+        "joiner should see the creator/beacon as a direct (rendezvous) link"
+    );
 }

@@ -455,7 +455,22 @@ async fn handle_peer_info(
     else {
         return;
     };
-    if peer_id == ctx.endpoint.id() || peer_id == ctx.rendezvous_id {
+    if peer_id == ctx.endpoint.id() {
+        return;
+    }
+    // This `PeerInfo` is signed by `message.author` and carries that author's
+    // own endpoint — the one binding from a nickname to a node id. Record it
+    // for the roster's `direct`/`gossip` tag; last-writer-wins, so a restart's
+    // fresh endpoint replaces the old. The beacon gossips *as* the rendezvous,
+    // so it advertises `rendezvous_id` here — record that too, so a joiner can
+    // tell its rendezvous link belongs to the beacon's nickname.
+    state
+        .participant_endpoints
+        .insert(message.author.clone(), peer_id);
+    // The rendezvous is overlay plumbing, not a dialable participant peer:
+    // the binding above is recorded, but skip the known-endpoints/re-bridge
+    // dial path for it.
+    if peer_id == ctx.rendezvous_id {
         return;
     }
     // Remember every advertised peer for the rendezvous-independent

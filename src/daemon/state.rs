@@ -29,9 +29,21 @@ use crate::util::tuning::{
 /// throttles (`relink`, `peerinfo`) use.
 const RELINK_COOLDOWN: Duration = Duration::from_secs(RELINK_COOLDOWN_SECS);
 
+/// How we currently reach a participant: `Direct` when we hold a live gossip
+/// link to its self-advertised endpoint, else `Gossip` (relayed). Derived
+/// from `linked_endpoints` without surfacing the node id — see
+/// `participant_endpoints`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum Reach {
+    Direct,
+    Gossip,
+}
+
 /// One participant in a [`RosterSnapshot`]. `last_seen_secs_ago` is
 /// `None` until the peer's first heartbeat is timed; `quiet` marks a
-/// peer heartbeat-evicted past `ALIVE_TIMEOUT_SECS` (still returnable).
+/// peer heartbeat-evicted past `ALIVE_TIMEOUT_SECS` (still returnable);
+/// `reach` is `direct` only while we hold a live link to it.
 /// Serialized directly into the `ah-s peers` response and the MCP
 /// `swarm_info` roster.
 #[derive(Debug, Clone, Serialize)]
@@ -39,6 +51,7 @@ pub(crate) struct RosterEntry {
     pub nickname: Nickname,
     pub last_seen_secs_ago: Option<u64>,
     pub quiet: bool,
+    pub reach: Reach,
 }
 
 /// Live participant roster: every known peer (active + quiet) sorted
@@ -111,6 +124,22 @@ pub(crate) struct EventLoopState {
     /// Implicit-heartbeat tracker: nickname -> last time we heard
     /// anything from that participant. Drives sweep-based eviction.
     pub last_seen: HashMap<Nickname, Instant>,
+    /// Bridge from membership back to transport: nickname -> the endpoint id
+    /// that nickname last self-advertised in a signed `PeerInfo`. That
+    /// signature is the only thing tying a nickname to an endpoint (the
+    /// signing key is deliberately not the transport key), so this is the one
+    /// place the roster can tell whether a participant is a live link.
+    /// Last-writer-wins (a restart re-advertises a new endpoint under the same
+    /// name). Pruned with `participants`, so it stays bounded by the roster.
+    /// Feeds only the derived `reach` boolean in `roster_snapshot` — the node
+    /// id never leaves this layer.
+    pub participant_endpoints: HashMap<Nickname, EndpointId>,
+    /// The swarm's rendezvous endpoint id, once known. Paired with
+    /// `rendezvous_linked` so `reach_of` can count the rendezvous link as a
+    /// live link to the beacon: the beacon gossips *as* the rendezvous, so a
+    /// joiner's only link to it is that pseudo-node link (kept out of
+    /// `linked_endpoints` by design). `None` until the loop learns it.
+    pub rendezvous_id: Option<EndpointId>,
     /// Heartbeat layer: participants we've evicted as quiet (silent
     /// past `ALIVE_TIMEOUT_SECS`) but who may still reappear. Any
     /// message from a nickname in this set triggers a symmetric
@@ -289,6 +318,8 @@ impl EventLoopState {
             participants: HashSet::new(),
             exchanges: HashMap::new(),
             last_seen: HashMap::new(),
+            participant_endpoints: HashMap::new(),
+            rendezvous_id: None,
             quiet: BoundedFifoSet::new(QUIET_CAP),
             quiet_since: HashMap::new(),
             surfaced: HashSet::new(),
@@ -380,13 +411,16 @@ impl EventLoopState {
                 // Active peers: their live `last_seen`.
                 last_seen_secs_ago: self.last_seen.get(nick).map(secs_since),
                 quiet: false,
+                reach: self.reach_of(nick),
             })
             .chain(self.quiet.iter().map(|nick| RosterEntry {
                 nickname: nick.clone(),
                 // Quiet peers: their last-heard instant, retained in
-                // `quiet_since` (the eviction drops `last_seen`).
+                // `quiet_since` (the eviction drops `last_seen`). A quiet
+                // peer has no live link, so it is always `Gossip`.
                 last_seen_secs_ago: self.quiet_since.get(nick).map(secs_since),
                 quiet: true,
+                reach: Reach::Gossip,
             }))
             .collect();
         // Most-recently-seen first; unknown recency (no heartbeat yet) sorts last.
@@ -395,6 +429,21 @@ impl EventLoopState {
             participants,
             count: self.participants.len() + 1,
         }
+    }
+
+    /// `Direct` only when this nickname's last self-advertised endpoint is a
+    /// live link right now; otherwise `Gossip`. A live link is a neighbor in
+    /// `linked_endpoints`, or the rendezvous itself when we're linked to it —
+    /// the beacon gossips *as* the rendezvous, so a joiner's only link to the
+    /// beacon is that one. A peer we haven't yet seen a `PeerInfo` from (or
+    /// whose link dropped) reads `Gossip` and flips to `Direct` once its next
+    /// advertisement lands.
+    fn reach_of(&self, nick: &Nickname) -> Reach {
+        let linked = self.participant_endpoints.get(nick).is_some_and(|endpoint| {
+            self.linked_endpoints.contains(endpoint)
+                || (self.rendezvous_id == Some(*endpoint) && self.rendezvous_linked)
+        });
+        if linked { Reach::Direct } else { Reach::Gossip }
     }
 
     /// `true` if we re-dialed + re-flooded `peer` within the last
@@ -579,7 +628,7 @@ const MAX_DAG_PARENTS: usize = 16;
 mod tests {
     use super::{
         Duration, EndpointId, EventLoopState, Instant, KNOWN_ENDPOINTS_CAP, MessageId, Nickname,
-        QUIET_CAP, RELINK_COOLDOWN_SECS,
+        QUIET_CAP, RELINK_COOLDOWN_SECS, Reach,
     };
 
     fn nick(name: &str) -> Nickname {
@@ -723,6 +772,69 @@ mod tests {
             !state.known_endpoints.contains(&first),
             "oldest evicted past the cap"
         );
+    }
+
+    #[test]
+    fn roster_reach_tags_only_live_links_direct() {
+        let mut state = fresh_state();
+        let linked_ep = endpoint_id(1);
+        let stale_ep = endpoint_id(2);
+        // A participant whose advertised endpoint is a live link → direct.
+        state.participants.insert(nick("linked"));
+        state.participant_endpoints.insert(nick("linked"), linked_ep);
+        state.linked_endpoints.insert(linked_ep);
+        // Advertised, but the endpoint is not (any longer) a live link → gossip.
+        state.participants.insert(nick("unlinked"));
+        state.participant_endpoints.insert(nick("unlinked"), stale_ep);
+        // No PeerInfo seen yet → no binding → gossip.
+        state.participants.insert(nick("unknown"));
+        // Quiet evictees are never live-linked → gossip.
+        state.quiet.insert(nick("quiet"));
+
+        let snapshot = state.roster_snapshot();
+        let reach = |name: &str| {
+            snapshot
+                .participants
+                .iter()
+                .find(|entry| entry.nickname.as_str() == name)
+                .unwrap_or_else(|| panic!("{name} missing from roster"))
+                .reach
+        };
+        assert_eq!(reach("linked"), Reach::Direct);
+        assert_eq!(reach("unlinked"), Reach::Gossip);
+        assert_eq!(reach("unknown"), Reach::Gossip);
+        assert_eq!(reach("quiet"), Reach::Gossip);
+    }
+
+    #[test]
+    fn roster_reach_counts_the_rendezvous_link_for_the_beacon() {
+        // The beacon gossips *as* the rendezvous, so a joiner's only link to
+        // it is the rendezvous link (kept out of `linked_endpoints`). The
+        // beacon's `PeerInfo` advertises the rendezvous endpoint, so the
+        // roster must still tag it `direct` while we're rendezvous-linked.
+        let mut state = fresh_state();
+        let rendezvous_ep = endpoint_id(7);
+        state.rendezvous_id = Some(rendezvous_ep);
+        state.participants.insert(nick("beacon"));
+        state
+            .participant_endpoints
+            .insert(nick("beacon"), rendezvous_ep);
+
+        let reach = |current: &EventLoopState| {
+            current
+                .roster_snapshot()
+                .participants
+                .iter()
+                .find(|entry| entry.nickname.as_str() == "beacon")
+                .expect("beacon in roster")
+                .reach
+        };
+
+        state.rendezvous_linked = true;
+        assert_eq!(reach(&state), Reach::Direct, "linked rendezvous → direct");
+
+        state.rendezvous_linked = false;
+        assert_eq!(reach(&state), Reach::Gossip, "rendezvous down → gossip");
     }
 
     #[test]

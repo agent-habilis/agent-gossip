@@ -237,12 +237,15 @@ COMMANDS
                 {"ok":true,
                  "participants":[{"nickname":"word-word",
                                   "last_seen_secs_ago":12,
-                                  "quiet":false}, …],
+                                  "quiet":false,
+                                  "reach":"direct"}, …],
                  "count":3}
 
               participants are sorted most-recently-seen first; count is
-              participants + 1 (the +1 is self). Backs the /swarm:handover
-              target picker and nickname validation.
+              participants + 1 (the +1 is self). reach is "direct" when a
+              live gossip link to that peer exists, else "gossip" (relayed).
+              Backs the /swarm:handover target picker, nickname validation,
+              and the /swarm:status roster.
 
        discover [OPTIONS]
               Browse swarms advertising themselves in a directory.

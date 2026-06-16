@@ -863,7 +863,7 @@ fn send_exchange_offer_to_unknown_participant_errors() {
 }
 
 /// `swarm_info` now reports the participant count and the live roster
-/// (each peer's nickname, recency, quiet flag).
+/// (each peer's nickname, recency, quiet flag, reach tag).
 #[test]
 fn swarm_info_reports_participant_roster() {
     let (mut creator, mut joiner, _swarm, _creator_nick) = create_pair(740);
@@ -901,5 +901,7 @@ fn swarm_info_reports_participant_roster() {
         assert!(entry["nickname"].is_string());
         assert!(entry.get("last_seen_secs_ago").is_some());
         assert!(entry["quiet"].is_boolean());
+        let reach = entry["reach"].as_str().expect("reach is a string");
+        assert!(reach == "direct" || reach == "gossip", "unexpected reach: {reach}");
     }
 }

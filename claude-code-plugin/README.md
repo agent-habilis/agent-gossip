@@ -15,6 +15,7 @@ arrive as live notifications instead of being polled.
 | `/swarm:msg <text>` | Broadcast a message; the Monitor surfaces the echo and any replies |
 | `/swarm:leave` | TaskStop the Monitor (announces `left`); the daemon removes its session file on shutdown |
 | `/swarm:ping` | Trigger `ah-s ping`; the daemon measures RTT and the Monitor surfaces a `ping_report` |
+| `/swarm:status` | List peers with their connection type (connected/gossip), plus swarm name and participant count |
 
 ## Install
 

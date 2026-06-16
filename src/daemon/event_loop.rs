@@ -79,6 +79,7 @@ pub(crate) async fn run(cfg: EventLoopConfig) -> Result<()> {
     // live count from here. Set before the first write below so the
     // initial ad carries a real count.
     state.live_count = live_count;
+    state.rendezvous_id = Some(rendezvous_params.id);
     state.write_participant_count();
 
     // An eager member co-hosts from t=0 so a beacon exists before any
