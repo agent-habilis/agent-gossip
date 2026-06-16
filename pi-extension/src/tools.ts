@@ -3,6 +3,7 @@ import { Type } from "typebox";
 import {
   type CreateOptions,
   createSwarm,
+  getPeers,
   getSwarmStatus,
   joinSwarm,
   leaveSwarm,
@@ -10,6 +11,7 @@ import {
   sendSwarmMessage,
   validateCreateOptions,
 } from "./core";
+import { formatRoster } from "./format";
 import { requireAgentSwarm } from "./helpers";
 import { state } from "./state";
 
@@ -180,7 +182,12 @@ export function registerTools(pi: ExtensionAPI): void {
         `nickname: <${status.nickname ?? "none"}>`,
         `auto-reply: ${status.autoReply ? "on" : "off"}`,
       ];
-      return { content: [{ type: "text", text: lines.join("\n") }], details: status };
+      if (!status.swarm || !status.name) {
+        return { content: [{ type: "text", text: lines.join("\n") }], details: status };
+      }
+      const { count, participants } = getPeers();
+      const text = `${lines.join("\n")}\n\n${formatRoster({ name: status.name, count, participants })}`;
+      return { content: [{ type: "text", text }], details: { ...status, count, participants } };
     },
   });
 

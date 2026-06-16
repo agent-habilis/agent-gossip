@@ -2,6 +2,7 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-c
 import {
   type CreateOptions,
   createSwarm,
+  getPeers,
   getSwarmStatus,
   joinSwarm,
   leaveSwarm,
@@ -9,6 +10,7 @@ import {
   sendSwarmMessage,
   validateCreateOptions,
 } from "./core";
+import { formatRoster } from "./format";
 import { formatSwarmMessage, isValidBody, requireAgentSwarm, runSwarmCommand } from "./helpers";
 import { state } from "./state";
 
@@ -28,6 +30,10 @@ export function registerCommands(pi: ExtensionAPI): void {
   pi.registerCommand("swarm-leave", {
     description: "Leave the current swarm",
     handler: cmdLeave,
+  });
+  pi.registerCommand("swarm-status", {
+    description: "List swarm peers with connection type, model, and harness",
+    handler: cmdStatus,
   });
   pi.registerCommand("swarm-monitor", {
     description: "Control swarm monitoring — toggle auto-reply or view the feed",
@@ -172,6 +178,25 @@ async function cmdLeave(_args: string, ctx: ExtensionCommandContext): Promise<vo
   const name = state.session?.name;
   leaveSwarm();
   ctx.ui.notify(name ? `🐝 left #${name}` : "🐝 left", "info");
+}
+
+async function cmdStatus(_args: string, ctx: ExtensionCommandContext): Promise<void> {
+  state.ctx = ctx;
+  if (!requireAgentSwarm(ctx)) return;
+  const session = state.session;
+  if (!session) {
+    ctx.ui.notify("🐝 not in a swarm", "error");
+    return;
+  }
+  try {
+    const { count, participants } = getPeers();
+    ctx.ui.notify(formatRoster({ name: session.name, count, participants }), "info");
+  } catch (error) {
+    ctx.ui.notify(
+      `🐝 status failed: ${error instanceof Error ? error.message : "unknown"}`,
+      "error",
+    );
+  }
 }
 
 async function cmdMonitor(args: string, ctx: ExtensionCommandContext): Promise<void> {

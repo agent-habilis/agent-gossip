@@ -1,5 +1,5 @@
 import { state } from "./state";
-import type { NotifyType, SwarmEvent } from "./types";
+import type { NotifyType, Peer, SwarmEvent } from "./types";
 
 export function formatPresence(event: SwarmEvent): string | null {
   if (event.subtype === "alive") return null;
@@ -54,6 +54,41 @@ export function getNotifyType(event: SwarmEvent): NotifyType {
   }
   if (event.event === "peer_timeout") return "error";
   return "info";
+}
+
+export function formatRoster({
+  name,
+  count,
+  participants,
+}: {
+  name: string;
+  count: number;
+  participants: Peer[];
+}): string {
+  const header = `🐝 #${name} · ${count} participants`;
+  if (participants.length === 0) return `${header}\n(just you — no peers yet)`;
+  // pi's notify renders plain text (no markdown), so align columns by padding
+  // rather than emitting a markdown table.
+  const headings = ["peer", "connection", "model", "harness", "last seen"];
+  const rows = participants.map((peer) => [
+    peer.nickname,
+    peer.reach === "direct" ? "connected" : "gossip",
+    peer.model ?? "",
+    peer.harness ?? "",
+    peer.lastSeenSecsAgo == null
+      ? "—"
+      : `${peer.quiet ? "quiet · " : ""}${peer.lastSeenSecsAgo}s ago`,
+  ]);
+  const widths = headings.map((heading, column) =>
+    Math.max(heading.length, ...rows.map((row) => row[column].length)),
+  );
+  const line = (cells: string[]) =>
+    cells
+      .map((cell, column) => cell.padEnd(widths[column]))
+      .join("  ")
+      .trimEnd();
+  const separator = widths.map((width) => "─".repeat(width)).join("  ");
+  return [header, "", line(headings), separator, ...rows.map(line)].join("\n");
 }
 
 export function isQuestion(event: SwarmEvent): boolean {

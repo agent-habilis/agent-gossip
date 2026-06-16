@@ -26,4 +26,16 @@ export type PingResult = {
   rtt: number;
 };
 
+export type Peer = {
+  nickname: string;
+  // "direct" => a live link (shown as "connected"); "gossip" => relayed.
+  reach: "direct" | "gossip";
+  // Self-reported by the peer; absent when it advertised none.
+  model?: string;
+  harness?: string;
+  // null until the peer's first heartbeat is timed.
+  lastSeenSecsAgo: number | null;
+  quiet: boolean;
+};
+
 export type NotifyType = "info" | "warning" | "error";

@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { clearBatch, startWatcher, stopWatcher } from "./daemon";
 import { isValidBody, isValidSwarmName, runSwarmCommand } from "./helpers";
 import { state, stateFilePath } from "./state";
-import type { PingResult, Session } from "./types";
+import type { Peer, PingResult, Session } from "./types";
 
 export function cleanup(): void {
   stopWatcher();
@@ -196,6 +196,40 @@ export function getSwarmStatus(): {
 
 export function leaveSwarm(): void {
   cleanup();
+}
+
+// Query the live roster via `ah-s peers`. Throws when not in a swarm.
+export function getPeers(): { count: number; participants: Peer[] } {
+  if (!state.session?.swarm) throw new Error("Not in a swarm");
+  const raw = runSwarmCommand([
+    "peers",
+    "--swarm",
+    state.session.swarm,
+    "--nickname",
+    state.session.nickname,
+  ]);
+  const parsed = JSON.parse(raw) as {
+    count: number;
+    participants: Array<{
+      nickname: string;
+      last_seen_secs_ago?: number | null;
+      quiet?: boolean;
+      reach?: string;
+      model?: string;
+      harness?: string;
+    }>;
+  };
+  return {
+    count: parsed.count,
+    participants: parsed.participants.map((entry) => ({
+      nickname: entry.nickname,
+      reach: entry.reach === "direct" ? "direct" : "gossip",
+      model: entry.model,
+      harness: entry.harness,
+      lastSeenSecsAgo: entry.last_seen_secs_ago ?? null,
+      quiet: Boolean(entry.quiet),
+    })),
+  };
 }
 
 export async function pingPeers(): Promise<PingResult[]> {
