@@ -71,6 +71,8 @@ pub(crate) async fn handle_ipc_command(
                 t1: now,
                 deadline: now + Duration::from_secs(ping_window_secs()),
                 pongs: HashMap::new(),
+                // CLI/IPC consumes the `ping_report` event, not a channel.
+                resp: None,
             }));
             broadcast_msg(
                 sender,

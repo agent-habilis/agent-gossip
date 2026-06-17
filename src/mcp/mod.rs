@@ -2,15 +2,17 @@
 //!
 //! Runs as a stdio JSON-RPC server that AI clients (Codex, Cursor,
 //! Claude Desktop, Claude Code) can spawn as a child process.
-//! Exposes eight tools that wrap the existing swarm lifecycle:
+//! Exposes ten tools that wrap the existing swarm lifecycle:
 //!
 //! - `create_swarm`
 //! - `join_swarm`
+//! - `discover_swarms`
 //! - `leave_swarm`
 //! - `send_message`
 //! - `send_exchange`
 //! - `fetch_messages`
 //! - `swarm_info`
+//! - `ping`
 //! - `swarm_version`
 //!
 //! # Polling-only
@@ -43,10 +45,11 @@ use rmcp::{
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 
 use crate::daemon::state::RosterEntry;
-use crate::embed::{CreateConfig, CreateError, JoinConfig};
+use crate::embed::{CreateConfig, CreateError, Directory, JoinConfig};
 use crate::protocol::swarm::{LookupSet, RelayLadder, RelaySelection, SwarmName};
 use crate::protocol::{
     ExchangeId, ExchangeKind, ExchangeKindError, ExchangePhase, ExchangePhaseError, Message,
@@ -141,6 +144,13 @@ struct CreateSwarmArgs {
     /// Omit for the well-known `global` directory.
     #[serde(default)]
     directory: Option<String>,
+    /// Self-reported model (e.g. "Opus 4.8"). Announced to peers so their
+    /// roster / status shows what this agent runs on. Omit to advertise none.
+    #[serde(default)]
+    model: Option<String>,
+    /// Self-reported harness (e.g. "Claude Code"). Announced alongside `model`.
+    #[serde(default)]
+    harness: Option<String>,
 }
 
 fn default_rate_limit() -> u16 {
@@ -157,6 +167,22 @@ struct JoinSwarmArgs {
     /// Optional nickname in `word-word` form. Random if omitted.
     #[serde(default)]
     nickname: Option<String>,
+    /// Self-reported model (e.g. "Opus 4.8"). Announced to peers so their
+    /// roster / status shows what this agent runs on. Omit to advertise none.
+    #[serde(default)]
+    model: Option<String>,
+    /// Self-reported harness (e.g. "Claude Code"). Announced alongside `model`.
+    #[serde(default)]
+    harness: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct DiscoverSwarmsArgs {
+    /// Directory to browse. Omit for the well-known `global` directory.
+    /// Only swarms advertised into this directory over the same (public)
+    /// lookups are visible.
+    #[serde(default)]
+    directory: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -271,6 +297,28 @@ struct SwarmInfoResult {
 }
 
 #[derive(Debug, Serialize)]
+struct DiscoveredSwarm {
+    /// The advertised swarm's id — pass to `join_swarm`.
+    swarm: SwarmId,
+    name: String,
+    peers: usize,
+    /// `true` if advertised on the public network.
+    public: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct DiscoverResult {
+    /// Advertised swarms found, most-peers first.
+    swarms: Vec<DiscoveredSwarm>,
+}
+
+#[derive(Debug, Serialize)]
+struct PingResult {
+    /// Peers that answered, each `{nickname, rtt_ms}` (round-trip milliseconds).
+    peers: Vec<crate::output::PingPeer>,
+}
+
+#[derive(Debug, Serialize)]
 struct SendMessageResult {
     id: MessageId,
     /// Full authoritative record of the message just sent (id,
@@ -370,6 +418,8 @@ impl AgentSwarmServer {
             directory,
             rate_limit_per_min: args.rate_limit_per_min,
             max_peers: DEFAULT_MAX_DIRECT_PEERS,
+            model: args.model,
+            harness: args.harness,
         };
         let session = Session::create(cfg).await.map_err(|error| match error {
             CreateError::AdvertiseRequiresReachable => {
@@ -421,6 +471,8 @@ impl AgentSwarmServer {
             target,
             nickname,
             max_peers: DEFAULT_MAX_DIRECT_PEERS,
+            model: args.model,
+            harness: args.harness,
         })
         .await
         .map_err(to_mcp_error)?;
@@ -444,6 +496,55 @@ impl AgentSwarmServer {
             active.leave().await;
         }
         ok_json(LeaveResult { ok: true })
+    }
+
+    #[tool(
+        description = "Browse a directory for advertised swarms — no id needed. Returns swarms others published with `create_swarm { advertise: true }`, most peers first; pass a returned `swarm` to `join_swarm`. Joins nothing. Collects for a few seconds, so the call blocks briefly. Only swarms advertised into the same directory over the public network are visible."
+    )]
+    async fn discover_swarms(
+        &self,
+        Parameters(args): Parameters<DiscoverSwarmsArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        // One-shot collection window, mirroring the pi extension: wait up to
+        // `MAX` for the first listing, then return `GRACE` after the last one
+        // (so a quiet directory returns fast once it has stopped producing).
+        const GRACE: Duration = Duration::from_millis(1500);
+        const MAX: Duration = Duration::from_secs(8);
+
+        let mut directory = Directory::open(args.directory, LookupSet::default())
+            .await
+            .map_err(|error| McpError::internal_error(error.to_string(), None))?;
+        let mut events = directory
+            .events()
+            .expect("a freshly opened Directory yields its event stream once");
+        let deadline = Instant::now() + MAX;
+        let mut seen_any = false;
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                break;
+            }
+            let wait = if seen_any { GRACE.min(remaining) } else { remaining };
+            match tokio::time::timeout(wait, events.recv()).await {
+                Ok(Some(_)) => seen_any = true,
+                // Channel closed, or quiet for `wait` (the post-hit grace, or
+                // `MAX` with no hit at all) — either way, done collecting.
+                Ok(None) | Err(_) => break,
+            }
+        }
+        let mut swarms: Vec<DiscoveredSwarm> = directory
+            .snapshot()
+            .into_iter()
+            .map(|listing| DiscoveredSwarm {
+                swarm: listing.swarm,
+                name: listing.name.as_str().to_owned(),
+                peers: listing.peers,
+                public: listing.public,
+            })
+            .collect();
+        swarms.sort_by_key(|listing| std::cmp::Reverse(listing.peers));
+        let _ = directory.close().await;
+        ok_json(DiscoverResult { swarms })
     }
 
     #[tool(
@@ -514,6 +615,16 @@ impl AgentSwarmServer {
             participant_count: roster.count,
             participants: roster.participants,
         })
+    }
+
+    #[tool(
+        description = "Measure round-trip time to each peer. Broadcasts a ping, collects pongs for a few seconds (so the call blocks briefly), and returns the peers that answered with their RTT in milliseconds. Requires an active swarm; an empty list means no peer answered."
+    )]
+    async fn ping(&self, Parameters(_): Parameters<NoArgs>) -> Result<CallToolResult, McpError> {
+        let guard = self.session.lock().await;
+        let session = guard.as_ref().ok_or_else(not_in_swarm_error)?;
+        let peers = session.ping().await.map_err(to_mcp_error)?;
+        ok_json(PingResult { peers })
     }
 
     #[tool(

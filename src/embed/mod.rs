@@ -47,6 +47,12 @@ pub struct JoinConfig {
     pub nickname: Option<Nickname>,
     /// Max direct peer connections before gossip relays the rest.
     pub max_peers: usize,
+    /// Self-reported model (e.g. `"Opus 4.8"`), announced to peers so the
+    /// roster shows what this agent runs on. `None` ⇒ advertise nothing.
+    pub model: Option<String>,
+    /// Self-reported harness (e.g. `"Claude Code"`), announced alongside
+    /// `model`. `None` ⇒ advertise nothing.
+    pub harness: Option<String>,
 }
 
 impl JoinConfig {
@@ -60,6 +66,8 @@ impl JoinConfig {
             target,
             nickname: None,
             max_peers: DEFAULT_MAX_DIRECT_PEERS,
+            model: None,
+            harness: None,
         }
     }
 }
@@ -96,6 +104,12 @@ pub struct CreateConfig {
     pub rate_limit_per_min: u16,
     /// Max direct peer connections before gossip relays the rest.
     pub max_peers: usize,
+    /// Self-reported model (e.g. `"Opus 4.8"`), announced to peers so the
+    /// roster shows what this agent runs on. `None` ⇒ advertise nothing.
+    pub model: Option<String>,
+    /// Self-reported harness (e.g. `"Claude Code"`), announced alongside
+    /// `model`. `None` ⇒ advertise nothing.
+    pub harness: Option<String>,
 }
 
 impl CreateConfig {
@@ -113,6 +127,8 @@ impl CreateConfig {
             directory: None,
             rate_limit_per_min: crate::util::consts::RATE_LIMIT_PER_MIN,
             max_peers: DEFAULT_MAX_DIRECT_PEERS,
+            model: None,
+            harness: None,
         }
     }
 }
@@ -234,6 +250,10 @@ async fn create_setup(
     )
     .await
     .map_err(|error| CreateError::Setup(error.context("setup_swarm failed")))?;
+    // Self-reported identity, announced in our `joined` body — same
+    // late-assignment the CLI uses (keeps `setup_swarm`'s arg count in budget).
+    elc.model = cfg.model;
+    elc.harness = cfg.harness;
     // When advertising, start the re-broadcast task (tied to this session);
     // it reaches the directory over this swarm's own lookups (moved into the
     // at-most-once closure, so no clone).
@@ -256,11 +276,15 @@ async fn join_setup(cfg: JoinConfig, output: Output) -> Result<EventLoopConfig, 
     .resolve()
     .await
     .map_err(JoinError::Resolve)?;
-    setup_swarm(
+    let mut elc = setup_swarm(
         kind, author, /* interactive */ false, max_peers, None, output, /* drift */ None,
     )
     .await
-    .map_err(|error| JoinError::Setup(error.context("setup_swarm failed")))
+    .map_err(|error| JoinError::Setup(error.context("setup_swarm failed")))?;
+    // Self-reported identity, announced in our `joined` body (see `create_setup`).
+    elc.model = cfg.model;
+    elc.harness = cfg.harness;
+    Ok(elc)
 }
 
 /// The in-process session core shared by the public [`SwarmSession`] (embed
@@ -426,6 +450,20 @@ impl InProcessSession {
         let (resp_tx, resp_rx) = oneshot::channel();
         self.req_tx
             .send(SessionRequest::Peers { resp: resp_tx })
+            .await
+            .map_err(|_| anyhow::anyhow!("swarm event loop has stopped"))?;
+        resp_rx
+            .await
+            .map_err(|_| anyhow::anyhow!("swarm event loop dropped the response"))
+    }
+
+    /// Run an RTT round and return the per-peer round-trip rows. Blocks for
+    /// the ping window (the round finalizes on its deadline), so a quiet swarm
+    /// returns an empty list after that delay.
+    pub(crate) async fn ping(&self) -> anyhow::Result<Vec<crate::output::PingPeer>> {
+        let (resp_tx, resp_rx) = oneshot::channel();
+        self.req_tx
+            .send(SessionRequest::Ping { resp: resp_tx })
             .await
             .map_err(|_| anyhow::anyhow!("swarm event loop has stopped"))?;
         resp_rx

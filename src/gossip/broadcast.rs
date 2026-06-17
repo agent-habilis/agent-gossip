@@ -414,6 +414,26 @@ pub(crate) async fn handle_session_request(
             let _ = resp.send(state.roster_snapshot());
             false
         }
+        SessionRequest::Ping { resp } => {
+            // Arm a fresh round carrying the responder; the deadline-driven
+            // `finalize_ping_round` delivers the RTT rows through it. Mirrors
+            // the IPC `Ping` handler, which leaves `resp` unset and emits the
+            // `ping_report` event instead.
+            let now = tokio::time::Instant::now();
+            state.ping_round = Some(Box::new(crate::daemon::state::PingRound {
+                t1: now,
+                deadline: now
+                    + std::time::Duration::from_secs(crate::util::tuning::ping_window_secs()),
+                pongs: std::collections::HashMap::new(),
+                resp: Some(resp),
+            }));
+            broadcast_msg(
+                sender,
+                &Message::new_ping(swarm, author).signed(&state.identity),
+            )
+            .await;
+            true
+        }
         // Raw injection (adversarial only): broadcast the bytes verbatim, no
         // signing or chain stamping — a malicious/crafted message on the wire.
         #[cfg(feature = "adversarial")]

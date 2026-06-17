@@ -121,6 +121,15 @@ impl Session {
         self.inner.peers().await
     }
 
+    /// Run an RTT round and return the per-peer rows. Blocks for the ping
+    /// window (a few seconds) while pongs are collected.
+    ///
+    /// # Errors
+    /// Fails if the event loop has stopped.
+    pub(super) async fn ping(&self) -> Result<Vec<crate::output::PingPeer>> {
+        self.inner.ping().await
+    }
+
     /// Fetch buffered messages after `after` (or the implicit cursor when
     /// `None`). Auto-advances the cursor and returns the advanced id.
     ///

@@ -309,6 +309,11 @@ pub(crate) struct PingRound {
     pub t1: TokioInstant,
     pub deadline: TokioInstant,
     pub pongs: HashMap<Nickname, TokioInstant>,
+    /// When set (the embed/MCP `ping` request), the finalized RTT rows are
+    /// delivered here instead of only emitted as a `ping_report` event — the
+    /// in-process driver has no event stream to read the report from. `None`
+    /// for the CLI/IPC path, which consumes the event.
+    pub resp: Option<tokio::sync::oneshot::Sender<Vec<output::PingPeer>>>,
 }
 
 impl EventLoopState {

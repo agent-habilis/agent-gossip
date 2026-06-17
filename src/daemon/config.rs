@@ -52,6 +52,12 @@ pub(crate) enum SessionRequest {
     Peers {
         resp: oneshot::Sender<RosterSnapshot>,
     },
+    /// Run an RTT round: broadcast a ping, collect pongs for the ping window,
+    /// then deliver the per-peer RTT rows. The response arrives only when the
+    /// round finalizes (after the window), not immediately.
+    Ping {
+        resp: oneshot::Sender<Vec<output::PingPeer>>,
+    },
     /// Broadcast pre-built wire bytes **verbatim** — no signing, no chain
     /// stamping. The escape hatch the `adversarial` feature uses to inject
     /// crafted/malicious messages (bad signature, equivocation, backdating)

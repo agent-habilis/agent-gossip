@@ -69,7 +69,7 @@ mod tests {
             | Commands::Poll { .. }
             | Commands::Ping { .. }
             | Commands::Discover { .. }
-            | Commands::Mcp
+            | Commands::Mcp { .. }
             | Commands::Man
             | Commands::Exchange { .. }
             | Commands::Peers { .. }
@@ -139,7 +139,7 @@ mod tests {
             | Commands::Poll { .. }
             | Commands::Ping { .. }
             | Commands::Discover { .. }
-            | Commands::Mcp
+            | Commands::Mcp { .. }
             | Commands::Man
             | Commands::Exchange { .. }
             | Commands::Peers { .. }

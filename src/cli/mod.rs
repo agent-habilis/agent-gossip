@@ -82,7 +82,20 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
             crate::util::tuning::init(opts.shared.tuning());
             discover::discover(opts).await
         }
-        Commands::Mcp => crate::mcp::run().await,
+        Commands::Mcp {
+            directory_private,
+            ping_window_secs,
+        } => {
+            // The MCP server holds no `SharedServerOpts`; install just the two
+            // hidden knobs the suite varies (loopback directory, short ping
+            // window) over the production defaults.
+            crate::util::tuning::init(crate::util::tuning::Tuning {
+                ping_window_secs,
+                directory_private,
+                ..crate::util::tuning::Tuning::DEFAULTS
+            });
+            crate::mcp::run().await
+        }
         // The manual is embedded at compile time (`include_str!`), so the
         // binary documents itself with no repo checkout.
         Commands::Man => {

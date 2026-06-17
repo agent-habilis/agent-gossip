@@ -555,6 +555,12 @@ fn finalize_ping_round(state: &mut EventLoopState, output: &output::Output) {
         })
         .collect();
     peers.sort_by(|left, right| left.nickname.as_str().cmp(right.nickname.as_str()));
+    // The embed/MCP `ping` request waits on this channel (no event stream to
+    // read the report from); the CLI/IPC path leaves it unset and consumes the
+    // `ping_report` event below instead.
+    if let Some(resp) = round.resp {
+        let _ = resp.send(peers.clone());
+    }
     // `known` must never be less than the number that responded: a peer can
     // pong and then leave the roster before this ~10s finalize, which would
     // otherwise report responded > known. Clamp so the count stays coherent.

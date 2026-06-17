@@ -136,7 +136,18 @@ pub(crate) enum Commands {
     /// (Codex, Cursor, Claude Desktop, Claude Code). Reads JSON-RPC from
     /// stdin, writes to stdout; the caller is expected to be an MCP client
     /// that manages this process's lifetime.
-    Mcp,
+    Mcp {
+        /// Browse directories over the loopback ladder and relax the
+        /// advertise→public guard (test-only). Mirrors the server commands'
+        /// hidden flag so the directory path runs hermetically.
+        #[arg(long, hide = true, default_value_t = false)]
+        directory_private: bool,
+
+        /// How long `ping` collects pongs (seconds). Hidden; tests shorten it
+        /// so a `ping` round-trip doesn't wait the full window.
+        #[arg(long, hide = true, default_value_t = crate::util::consts::PING_WINDOW_SECS)]
+        ping_window_secs: u64,
+    },
 
     /// Print the full agent manual to stdout.
     ///

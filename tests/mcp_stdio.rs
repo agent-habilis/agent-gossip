@@ -7,7 +7,8 @@
 mod common;
 
 use agent_habilis_swarm::RATE_LIMIT_PER_MIN;
-use common::{CONNECT_TIMEOUT, MSG_TIMEOUT};
+use common::{CONNECT_TIMEOUT, MSG_TIMEOUT, POLL, flag_args, test_cmd, tmp_log};
+use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, ChildStdin, Stdio};
 use std::time::{Duration, Instant};
@@ -28,8 +29,15 @@ struct McpClient {
 
 impl McpClient {
     fn spawn() -> Self {
-        let mut child = common::test_cmd()
+        Self::spawn_with_args(&[])
+    }
+
+    /// Spawn the MCP server with extra `mcp`-subcommand flags (e.g. the hidden
+    /// `--directory-private` so the directory path runs on the loopback ladder).
+    fn spawn_with_args(extra: &[&str]) -> Self {
+        let mut child = test_cmd()
             .arg("mcp")
+            .args(extra)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -198,7 +206,16 @@ fn tool_error(response: &serde_json::Value) -> Option<String> {
 /// The probe polls every 100ms for up to 10s. This is deterministic
 /// on both fast and loaded machines — no fixed fudge factor.
 fn create_pair(base_id: u64) -> (McpClient, McpClient, String, String) {
-    let mut creator = McpClient::spawn();
+    create_pair_with(base_id, &[])
+}
+
+/// Like [`create_pair`] but spawns the creator with extra `mcp` flags (e.g. a
+/// short `--ping-window-secs` so a `ping` round finalizes fast).
+fn create_pair_with(
+    base_id: u64,
+    creator_args: &[&str],
+) -> (McpClient, McpClient, String, String) {
+    let mut creator = McpClient::spawn_with_args(creator_args);
     let mut joiner = McpClient::spawn();
     let (swarm, creator_nick) = creator.create_and_get_swarm(base_id);
     tool_result_json(&joiner.tool_call(
@@ -256,7 +273,7 @@ fn mcp_stdout_is_pure_jsonrpc_through_full_lifecycle() {
     // Separate test that captures all stdout bytes and asserts every
     // non-empty line is JSON-RPC 2.0. Guards against any future
     // println! leak (the bug that motivated OutputMode::Silent).
-    let mut child = common::test_cmd()
+    let mut child = test_cmd()
         .arg("mcp")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -904,4 +921,171 @@ fn swarm_info_reports_participant_roster() {
         let reach = entry["reach"].as_str().expect("reach is a string");
         assert!(reach == "direct" || reach == "gossip", "unexpected reach: {reach}");
     }
+}
+
+/// Self-reported model/harness round-trips both ways: a creator and joiner
+/// each pass their own `model`/`harness`, and each sees the *other's* values
+/// in its `swarm_info` roster. Proves both `create_swarm` and `join_swarm`
+/// plumb the fields through to the announced presence.
+#[test]
+fn create_and_join_self_report_model_harness() {
+    let mut creator = McpClient::spawn();
+    let mut joiner = McpClient::spawn();
+
+    let created = tool_result_json(&creator.tool_call(
+        760,
+        "create_swarm",
+        serde_json::json!({ "name": "mcpmeta", "model": "Opus 4.8", "harness": "Claude Code" }),
+    ))
+    .expect("create_swarm must succeed");
+    let swarm = created["swarm"].as_str().expect("swarm id").to_string();
+    let creator_nick = created["nickname"].as_str().expect("nickname").to_string();
+
+    let join_result = tool_result_json(&joiner.tool_call(
+        761,
+        "join_swarm",
+        serde_json::json!({ "swarm": swarm, "model": "Sonnet 4.6", "harness": "pi" }),
+    ))
+    .expect("join_swarm must succeed");
+    let joiner_nick = join_result["nickname"].as_str().expect("nickname").to_string();
+
+    // Each side polls its roster for the *other* peer, then asserts the
+    // self-reported metadata surfaced.
+    let find_peer = |client: &mut McpClient, base: u64, peer: &str| -> serde_json::Value {
+        let deadline = Instant::now() + MSG_TIMEOUT;
+        let mut probe = base;
+        loop {
+            let info =
+                tool_result_json(&client.tool_call(probe, "swarm_info", serde_json::json!({})))
+                    .expect("swarm_info");
+            if let Some(entry) = info["participants"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .find(|entry| entry["nickname"].as_str() == Some(peer))
+                .cloned()
+            {
+                break entry;
+            }
+            assert!(Instant::now() < deadline, "{peer} never surfaced: {info}");
+            probe += 1;
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    };
+
+    let joiner_entry = find_peer(&mut creator, 762, &joiner_nick);
+    assert_eq!(joiner_entry["model"].as_str(), Some("Sonnet 4.6"), "{joiner_entry}");
+    assert_eq!(joiner_entry["harness"].as_str(), Some("pi"), "{joiner_entry}");
+
+    let creator_entry = find_peer(&mut joiner, 780, &creator_nick);
+    assert_eq!(creator_entry["model"].as_str(), Some("Opus 4.8"), "{creator_entry}");
+    assert_eq!(creator_entry["harness"].as_str(), Some("Claude Code"), "{creator_entry}");
+}
+
+/// Loopback timings so the advertise→discover round runs in seconds: short
+/// co-host grace (the advertiser becomes the directory beacon fast) and
+/// frequent re-ads (so the discoverer's collection window catches one).
+const DIR_FLAGS: [(&str, &str); 4] = [
+    ("--directory-private", ""),
+    ("--beacon-cohost-grace-secs", "2"),
+    ("--advertise-interval-secs", "2"),
+    ("--alive-timeout-secs", "5"),
+];
+
+/// `discover_swarms` finds a swarm advertised into the same directory. A CLI
+/// advertiser lists itself over the loopback ladder; an MCP server (also on
+/// loopback via the hidden `--directory-private`) browses and sees it.
+#[test]
+fn discover_swarms_finds_an_advertised_swarm() {
+    let adv_log = tmp_log("mcp-disc-adv");
+    let adv_file = File::create(&adv_log).unwrap();
+    let mut advertiser = test_cmd()
+        .args([
+            "create",
+            "--advertise",
+            "mcdir",
+            "--name",
+            "mcpdisc",
+            "--nickname",
+            "adv",
+            "--no-interactive",
+            "--output",
+            "json",
+        ])
+        .args(flag_args(&DIR_FLAGS))
+        .stdout(Stdio::from(adv_file.try_clone().unwrap()))
+        .stderr(Stdio::from(adv_file))
+        .spawn()
+        .expect("spawn advertiser");
+
+    // Wait until the advertiser has started (its `ready` JSON carries `swarm`)
+    // so the discoverer's first window isn't spent waiting for it to come up.
+    let up_deadline = Instant::now() + CONNECT_TIMEOUT;
+    while Instant::now() < up_deadline
+        && !fs::read_to_string(&adv_log).unwrap_or_default().contains("\"swarm\"")
+    {
+        std::thread::sleep(POLL);
+    }
+
+    let mut client = McpClient::spawn_with_args(&["--directory-private"]);
+    let deadline = Instant::now() + CONNECT_TIMEOUT;
+    let mut id = 800;
+    let found = loop {
+        let resp =
+            client.tool_call(id, "discover_swarms", serde_json::json!({ "directory": "mcdir" }));
+        let json = tool_result_json(&resp).expect("discover_swarms returns a result");
+        let hit = json["swarms"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|listing| listing["name"].as_str() == Some("mcpdisc"));
+        if hit {
+            break true;
+        }
+        if Instant::now() > deadline {
+            break false;
+        }
+        id += 1;
+    };
+
+    let _ = advertiser.kill();
+    let _ = advertiser.wait();
+    let _ = fs::remove_file(&adv_log);
+    assert!(found, "discover_swarms never found the advertised swarm");
+}
+
+/// `ping` reports a round-trip time for a linked peer. The pinger uses a short
+/// window (hidden `--ping-window-secs`) so the round finalizes in seconds.
+#[test]
+fn ping_reports_rtt_to_a_peer() {
+    let (mut creator, mut joiner, _swarm, _creator_nick) =
+        create_pair_with(900, &["--ping-window-secs", "2"]);
+    let joiner_nick =
+        tool_result_json(&joiner.tool_call(901, "swarm_info", serde_json::json!({})))
+            .expect("joiner swarm_info")["nickname"]
+            .as_str()
+            .expect("nickname")
+            .to_string();
+
+    // One round may miss if the mesh just linked; retry within budget.
+    let deadline = Instant::now() + MSG_TIMEOUT;
+    let mut id = 902;
+    let rtt = loop {
+        let resp = creator.tool_call(id, "ping", serde_json::json!({}));
+        let json = tool_result_json(&resp).expect("ping returns a result");
+        let hit = json["peers"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|peer| peer["nickname"].as_str() == Some(joiner_nick.as_str()))
+            .and_then(|peer| peer["rtt_ms"].as_u64());
+        if let Some(rtt) = hit {
+            break Some(rtt);
+        }
+        if Instant::now() > deadline {
+            break None;
+        }
+        id += 1;
+    };
+    assert!(rtt.is_some(), "ping never reported an RTT for the joiner");
 }
