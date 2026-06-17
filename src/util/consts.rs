@@ -146,6 +146,14 @@ pub(crate) const DIRECTORY_EXPIRY_SECS: u64 = 60;
 /// `--antientropy-max-resend`.
 pub(crate) const ANTIENTROPY_MAX_RESEND: usize = 64;
 
+/// How often the CLI daemon checks whether its spawning agent is still alive
+/// by re-reading its parent pid. When the parent dies (hard-kill / reinstall),
+/// the daemon is orphaned and reparents away; on the next check it self-quits
+/// through the normal `left`-broadcasting shutdown so it never lingers in the
+/// swarm. Sub-second precision isn't needed — a second or two of orphan
+/// lifetime is fine. Flag: `--ppid-watch-interval-ms` (tests shorten it).
+pub(crate) const PPID_WATCH_INTERVAL_MS: u64 = 1500;
+
 /// Soft resident-memory threshold (`MiB`) above which the daemon emits a
 /// one-shot `warn` on its slow prune tick — the in-process leak-visibility
 /// signal. (Resident memory = the physical RAM the process holds; the resident

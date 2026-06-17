@@ -82,6 +82,10 @@ pub(crate) struct SharedServerOpts {
     #[arg(long, hide = true, default_value_t = consts::PING_WINDOW_SECS)]
     pub ping_window_secs: u64,
 
+    /// How often the daemon checks for orphaning by its spawning agent (millis).
+    #[arg(long, hide = true, default_value_t = consts::PPID_WATCH_INTERVAL_MS)]
+    pub ppid_watch_interval_ms: u64,
+
     /// Heal inter-tick gap above which the process hard re-bootstraps (seconds).
     #[arg(long, hide = true, default_value_t = consts::HEAL_STALL_THRESHOLD_SECS)]
     pub heal_stall_threshold_secs: u64,
@@ -126,6 +130,7 @@ impl SharedServerOpts {
             exchange_keepalive_secs: self.exchange_keepalive_secs,
             cohost_grace_secs: self.beacon_cohost_grace_secs,
             ping_window_secs: self.ping_window_secs,
+            ppid_watch_interval_ms: self.ppid_watch_interval_ms,
             heal_stall_threshold_secs: self.heal_stall_threshold_secs,
             starvation_threshold_secs: self.starvation_threshold_secs,
             advertise_interval_secs: self.advertise_interval_secs,

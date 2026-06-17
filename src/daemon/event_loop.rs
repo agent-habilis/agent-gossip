@@ -28,7 +28,8 @@ use crate::{beacon, gossip, lifecycle, lookup};
 use crate::transport::ipc::{IpcMessage, listen};
 use crate::util::tuning::{
     ALIVE_INTERVAL_SECS, ANTIENTROPY_INTERVAL_SECS, HEAL_INTERVAL_SECS, RECLAIM_INTERVAL_MS,
-    RESUBSCRIBE_MAX_ATTEMPTS, STATE_REFRESH_SECS, heal_stall_threshold_secs, sweep_interval_secs,
+    RESUBSCRIBE_MAX_ATTEMPTS, STATE_REFRESH_SECS, heal_stall_threshold_secs,
+    ppid_watch_interval_ms, sweep_interval_secs,
 };
 
 use super::config::{CoHostPolicy, DriverMode, EventLoopConfig, SessionRequest};
@@ -119,7 +120,7 @@ pub(crate) async fn run(cfg: EventLoopConfig) -> Result<()> {
     // `gossip::handle_gossip_event`.
 
     let intervals = build_maintenance_intervals().await;
-    let quit_rx = spawn_quit_signal_tasks();
+    let quit_rx = spawn_quit_signal_tasks(exit_on_quit);
 
     // `_router` stays owned in this scope so its accept loop outlives
     // the event loop below (dropping it makes the daemon unreachable
@@ -430,7 +431,7 @@ async fn announce_and_maybe_exit(
 /// daemon for a `/swarm:*` session) tends to send; without catching it
 /// the default action terminated the daemon without cleanup, stranding a
 /// ghost pill on the statusline. Only SIGKILL stays uncatchable.
-fn spawn_quit_signal_tasks() -> mpsc::Receiver<()> {
+fn spawn_quit_signal_tasks(exit_on_quit: bool) -> mpsc::Receiver<()> {
     let (quit_tx, quit_rx) = mpsc::channel::<()>(1);
     let ctrl_c_tx = quit_tx.clone();
     tokio::spawn(async move {
@@ -451,7 +452,60 @@ fn spawn_quit_signal_tasks() -> mpsc::Receiver<()> {
             let _ = signal_tx.send(()).await;
         });
     }
+    // Only the CLI daemon owns a process to exit; the embed/MCP driver runs
+    // in-process with no parent of its own to lose, so it must never self-quit
+    // on a host reparent.
+    #[cfg(unix)]
+    if exit_on_quit {
+        spawn_orphan_watch(quit_tx);
+    }
     quit_rx
+}
+
+/// Detect orphaning by the spawning agent and route it through the same quit
+/// channel as a signal. A hard-killed parent (`kill -9`, a reinstall, an IDE
+/// restart) can't run any cleanup, so the spawned daemon is reparented instead
+/// of terminated and would otherwise linger in the swarm forever. The daemon
+/// watches its *own* parent — the only mechanism that survives SIGKILL and is
+/// identical on macOS and Linux (`PR_SET_PDEATHSIG` and kqueue `NOTE_EXIT` are
+/// each platform-specific). When the parent vanishes we feed `quit_tx`, reusing
+/// the SIGTERM path that broadcasts `left` and exits cleanly.
+#[cfg(unix)]
+#[expect(unsafe_code, reason = "libc::getppid FFI; no safe wrapper, always succeeds")]
+fn spawn_orphan_watch(quit_tx: mpsc::Sender<()>) {
+    let original_ppid = unsafe { libc::getppid() };
+    if !orphan_watch_warranted(original_ppid) {
+        return;
+    }
+    let interval = Duration::from_millis(ppid_watch_interval_ms());
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(interval).await;
+            let current_ppid = unsafe { libc::getppid() };
+            if parent_lost(original_ppid, current_ppid) {
+                let _ = quit_tx.send(()).await;
+                return;
+            }
+        }
+    });
+}
+
+/// Whether the orphan watch is worth running. Skip it when the daemon already
+/// has no agent to lose — a parent pid of 1 means it was launched detached
+/// straight from init/launchd, so it must never self-terminate.
+#[cfg(unix)]
+fn orphan_watch_warranted(original_ppid: i32) -> bool {
+    original_ppid > 1
+}
+
+/// The orphaning test: the parent pid changed from the one captured at startup.
+/// Comparing against the *original* (not against `1`) is what makes this correct
+/// on both platforms — macOS reparents an orphan to launchd (1), but under
+/// systemd Linux reparents to a subreaper at some other pid. Pid reuse can't
+/// fool it: the reaper's pid won't coincidentally equal the original parent's.
+#[cfg(unix)]
+fn parent_lost(original_ppid: i32, current_ppid: i32) -> bool {
+    original_ppid != current_ppid
 }
 
 /// Resolve the IPC receiver: reuse a pre-wired channel (MCP/embed) or,
@@ -1015,7 +1069,10 @@ async fn recv_opt<T>(rx: &mut Option<mpsc::Receiver<T>>) -> Option<T> {
 mod tests {
     use std::time::Duration;
 
-    use super::{CoHostPolicy, claims_at_startup, is_resume, is_wall_resume, probes_before_claim};
+    use super::{
+        CoHostPolicy, claims_at_startup, is_resume, is_wall_resume, orphan_watch_warranted,
+        parent_lost, probes_before_claim,
+    };
 
     #[test]
     fn directory_advertiser_claims_at_startup_with_probe() {
@@ -1038,6 +1095,24 @@ mod tests {
         assert!(!probes_before_claim(CoHostPolicy::Eager));
         assert!(!claims_at_startup(CoHostPolicy::Deferred));
         assert!(!claims_at_startup(CoHostPolicy::Never));
+    }
+
+    #[test]
+    fn orphan_watch_fires_only_on_a_parent_change() {
+        // The agent that spawned us is alive ⇒ same ppid ⇒ stay running.
+        assert!(!parent_lost(4242, 4242));
+        // The agent died ⇒ reparented to launchd (1) ⇒ orphaned, quit.
+        assert!(parent_lost(4242, 1));
+        // …or, under a systemd subreaper, to some other pid ⇒ still orphaned.
+        assert!(parent_lost(4242, 990));
+    }
+
+    #[test]
+    fn orphan_watch_skips_an_already_detached_daemon() {
+        // Spawned by a normal agent ⇒ worth watching.
+        assert!(orphan_watch_warranted(4242));
+        // Launched detached straight from init/launchd ⇒ no parent to lose.
+        assert!(!orphan_watch_warranted(1));
     }
 
     #[test]

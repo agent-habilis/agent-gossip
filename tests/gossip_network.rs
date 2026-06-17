@@ -8,14 +8,14 @@
 mod common;
 
 use std::fs::{self, File};
-use std::process::Stdio;
+use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use agent_habilis_swarm::RATE_LIMIT_PER_MIN;
 use common::{
-    CONNECT_TIMEOUT, InProcNode, MSG_TIMEOUT, Msg, Node, POLL, RECOVERY_TIMEOUT, SOCKET_DIR,
-    cli_message, cli_message_raw, cli_ping, cli_poll, serial_guard, tmp_log, trace_log, wait_total,
-    wait_until,
+    CONNECT_TIMEOUT, InProcNode, MSG_TIMEOUT, Msg, Node, POLL, RECOVERY_TIMEOUT, SOCKET_DIR, bin,
+    cli_message, cli_message_raw, cli_peers, cli_ping, cli_poll, serial_guard, socket_path,
+    tmp_log, trace_log, wait_total, wait_until,
 };
 
 /// How long a survivor needs to claim a dead beacon's seed-derived
@@ -563,7 +563,7 @@ fn test_state_file_removed_on_signal() {
             fs::read_to_string(&log).unwrap_or_default()
         );
 
-        let _ = std::process::Command::new("kill")
+        let _ = Command::new("kill")
             .args([signal, &child.id().to_string()])
             .status();
 
@@ -1004,6 +1004,122 @@ fn test_creator_sigkill_independence() {
     );
     let _ = cli_message(&swarm, &charlie.nickname, "ck-newcomer");
     assert_received(&alpha, &charlie.nickname, "ck-newcomer", RECOVERY_TIMEOUT);
+}
+
+/// Reaps a child on drop — `std::process::Child` does not, so a test that
+/// panics before its explicit kill would otherwise leak the process.
+struct KillOnDrop(std::process::Child);
+impl Drop for KillOnDrop {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+/// Orphan self-termination: when the agent that spawned the daemon is
+/// hard-killed, the daemon is reparented (not killed) and would otherwise
+/// linger in the swarm forever. The `getppid` watcher must notice the
+/// reparent and exit through the graceful `left`-broadcasting path.
+///
+/// To orphan the daemon without killing the test, we launch it under a
+/// throwaway shell that backgrounds it and then `exec`s `sleep` to stay
+/// alive as its parent. Killing that shell (not the daemon) is what an
+/// agent reinstall / `kill -9` does in production.
+#[test]
+fn test_orphaned_daemon_self_terminates() {
+    let _serial = serial_guard();
+
+    let (observer, swarm) = Node::create_named("itest-orphan");
+    assert!(observer.wait_ready(&swarm), "observer never ready");
+
+    // Background the joiner under a shell, record its pid, then `exec sleep`
+    // so the shell's pid *is* the joiner's parent for the rest of its life.
+    // A 200ms watch interval means orphaning is noticed in well under a second.
+    let pid_file = tmp_log("orphan-pid");
+    let joiner_log = tmp_log("orphan-joiner-out");
+    let script = format!(
+        "'{bin}' --log-dir '{dir}' join {swarm} --nickname orphan-joiner \
+            --ppid-watch-interval-ms 200 --output json >'{out}' 2>&1 & \
+         echo $! >'{pid}'; exec sleep 600",
+        bin = bin().display(),
+        dir = common::test_log_dir(),
+        swarm = swarm,
+        out = joiner_log.display(),
+        pid = pid_file.display(),
+    );
+    // `std::process::Child` has no kill-on-drop, so guard the intermediate
+    // shell: if an assertion panics before the explicit kill below, this drop
+    // still reaps it (which orphans the daemon → the watcher terminates it).
+    let mut parent = KillOnDrop(
+        Command::new("sh")
+            .arg("-c")
+            .arg(&script)
+            .spawn()
+            .expect("failed to spawn the intermediate parent shell"),
+    );
+
+    // Wait until the joiner is meshed: its socket exists and the observer's
+    // roster lists it. Only then does its graceful `left` have a live link.
+    let joiner_sock = socket_path(&swarm, "orphan-joiner");
+    let deadline = Instant::now() + CONNECT_TIMEOUT;
+    while Instant::now() < deadline
+        && !(std::path::Path::new(&joiner_sock).exists()
+            && cli_peers(&swarm, &observer.nickname).contains("orphan-joiner"))
+    {
+        std::thread::sleep(POLL);
+    }
+    assert!(
+        cli_peers(&swarm, &observer.nickname).contains("orphan-joiner"),
+        "joiner never meshed with the observer\nobserver:\n{}",
+        observer.log_tail(15),
+    );
+
+    let joiner_pid = fs::read_to_string(&pid_file)
+        .expect("joiner pid file never written")
+        .trim()
+        .to_string();
+    assert!(!joiner_pid.is_empty(), "joiner pid file was empty");
+
+    // Orphan the daemon: kill its parent (the shell, now `sleep`), NOT the
+    // daemon. The daemon reparents → `getppid` changes → it self-quits.
+    let _ = Command::new("kill")
+        .args(["-KILL", &parent.0.id().to_string()])
+        .status();
+    let _ = parent.0.wait();
+
+    // (a) The daemon process is gone — the watcher fired and it exited.
+    let pid_alive = || {
+        Command::new("kill")
+            .args(["-0", &joiner_pid])
+            .status()
+            .is_ok_and(|status| status.success())
+    };
+    let death_deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < death_deadline && pid_alive() {
+        std::thread::sleep(POLL);
+    }
+    assert!(
+        !pid_alive(),
+        "orphaned daemon (pid {joiner_pid}) did not exit after its parent died",
+    );
+
+    // (b) It left *gracefully*: the observer drops it from the roster fast.
+    // A silent death would keep it until the 90s alive-timeout, far beyond
+    // this window — so a quick drop proves the `left` broadcast was received.
+    let drop_deadline = Instant::now() + Duration::from_secs(15);
+    while Instant::now() < drop_deadline
+        && cli_peers(&swarm, &observer.nickname).contains("orphan-joiner")
+    {
+        std::thread::sleep(POLL);
+    }
+    assert!(
+        !cli_peers(&swarm, &observer.nickname).contains("orphan-joiner"),
+        "observer never received the orphaned daemon's graceful 'left'\nobserver:\n{}",
+        observer.log_tail(15),
+    );
+
+    let _ = fs::remove_file(&pid_file);
+    let _ = fs::remove_file(&joiner_log);
 }
 
 /// Sleep/wake: `SIGSTOP` a peer past the (shortened) alive-timeout so

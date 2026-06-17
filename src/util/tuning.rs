@@ -166,6 +166,14 @@ pub(crate) fn ping_window_secs() -> u64 {
     current().ping_window_secs
 }
 
+/// How often the CLI daemon re-reads its parent pid to detect orphaning.
+/// Default [`crate::util::consts::PPID_WATCH_INTERVAL_MS`]; hidden flag
+/// `--ppid-watch-interval-ms` so the subprocess test sees the self-exit in
+/// milliseconds instead of the production seconds.
+pub(crate) fn ppid_watch_interval_ms() -> u64 {
+    current().ppid_watch_interval_ms.max(1)
+}
+
 /// Process tuning sourced **once** at daemon startup from the hidden CLI
 /// flags (`--alive-timeout-secs`, …). Replaces the former env-var reads: an
 /// experiment is now an edit-the-const + commit, and a subprocess test passes
@@ -179,6 +187,7 @@ pub(crate) struct Tuning {
     pub exchange_keepalive_secs: u64,
     pub cohost_grace_secs: u64,
     pub ping_window_secs: u64,
+    pub ppid_watch_interval_ms: u64,
     pub heal_stall_threshold_secs: u64,
     pub starvation_threshold_secs: u64,
     pub advertise_interval_secs: u64,
@@ -198,6 +207,7 @@ impl Tuning {
         exchange_keepalive_secs: crate::util::consts::EXCHANGE_KEEPALIVE_SECS,
         cohost_grace_secs: crate::util::consts::BEACON_COHOST_GRACE_SECS,
         ping_window_secs: crate::util::consts::PING_WINDOW_SECS,
+        ppid_watch_interval_ms: crate::util::consts::PPID_WATCH_INTERVAL_MS,
         heal_stall_threshold_secs: crate::util::consts::HEAL_STALL_THRESHOLD_SECS,
         starvation_threshold_secs: crate::util::consts::STARVATION_THRESHOLD_SECS,
         advertise_interval_secs: crate::util::consts::ADVERTISE_INTERVAL_SECS,

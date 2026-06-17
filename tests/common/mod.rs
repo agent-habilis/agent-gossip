@@ -72,7 +72,7 @@ pub(crate) fn bin() -> PathBuf {
 /// Per-test-process log dir so `cargo task test` never writes into
 /// the operator's default `agent-habilis/swarm/logs`. Passed via the
 /// global `--log-dir` flag.
-fn test_log_dir() -> &'static str {
+pub(crate) fn test_log_dir() -> &'static str {
     static DIR: OnceLock<String> = OnceLock::new();
     DIR.get_or_init(|| {
         let dir = std::env::temp_dir().join(format!("ah-s-test-logs-{}", std::process::id()));
