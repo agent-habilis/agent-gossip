@@ -42,6 +42,10 @@ export function registerCommands(pi: ExtensionAPI): void {
     description: "Hand a task off to a peer (/swarm-handover {task})",
     handler: cmdHandover,
   });
+  pi.registerCommand("swarm-task", {
+    description: "Send a task to a peer and get the result back (/swarm-task {task})",
+    handler: cmdTask,
+  });
   pi.registerCommand("swarm-leave", {
     description: "Leave the current swarm",
     handler: cmdLeave,
@@ -261,6 +265,39 @@ async function cmdReply(args: string, ctx: ExtensionCommandContext): Promise<voi
   }
 }
 
+// Read the roster and let the user pick an active peer. Returns the chosen
+// peer, or null when the roster is empty/failed or the picker was cancelled.
+async function selectWorker(ctx: ExtensionCommandContext, title: string): Promise<Peer | null> {
+  let participants: Peer[];
+  try {
+    participants = getPeers().participants;
+  } catch (error) {
+    ctx.ui.notify(`🐝 ${error instanceof Error ? error.message : "roster failed"}`, "error");
+    return null;
+  }
+  const eligible = participants
+    .filter((peer) => !peer.quiet)
+    .sort(
+      (left, right) =>
+        (left.lastSeenSecsAgo ?? Number.POSITIVE_INFINITY) -
+        (right.lastSeenSecsAgo ?? Number.POSITIVE_INFINITY),
+    );
+  if (eligible.length === 0) {
+    ctx.ui.notify("🐝 no peers available", "info");
+    return null;
+  }
+  // Label carries the model/harness so the choice is informed; map back to the
+  // peer for the nickname.
+  const byLabel = new Map(
+    eligible.map((peer): [string, Peer] => {
+      const meta = [peer.model, peer.harness].filter(Boolean).join(" / ");
+      return [`<${peer.nickname}>${meta ? ` (${meta})` : ""}`, peer];
+    }),
+  );
+  const choice = await ctx.ui.select(title, [...byLabel.keys()]);
+  return (choice ? byLabel.get(choice) : undefined) ?? null;
+}
+
 async function cmdHandover(args: string, ctx: ExtensionCommandContext): Promise<void> {
   state.ctx = ctx;
   if (!requireAgentSwarm(ctx)) return;
@@ -273,44 +310,35 @@ async function cmdHandover(args: string, ctx: ExtensionCommandContext): Promise<
     ctx.ui.notify("🐝 usage: /swarm-handover {task}", "error");
     return;
   }
-
-  let participants: Peer[];
-  try {
-    participants = getPeers().participants;
-  } catch (error) {
-    ctx.ui.notify(`🐝 ${error instanceof Error ? error.message : "roster failed"}`, "error");
-    return;
-  }
-  const eligible = participants
-    .filter((peer) => !peer.quiet)
-    .sort(
-      (left, right) =>
-        (left.lastSeenSecsAgo ?? Number.POSITIVE_INFINITY) -
-        (right.lastSeenSecsAgo ?? Number.POSITIVE_INFINITY),
-    );
-  if (eligible.length === 0) {
-    ctx.ui.notify("🐝 no peers to hand over to", "info");
-    return;
-  }
-
-  // Label carries the model/harness so the choice is informed; map back to the
-  // peer for the nickname.
-  const byLabel = new Map(
-    eligible.map((peer): [string, Peer] => {
-      const meta = [peer.model, peer.harness].filter(Boolean).join(" / ");
-      return [`<${peer.nickname}>${meta ? ` (${meta})` : ""}`, peer];
-    }),
-  );
-  const choice = await ctx.ui.select(`Hand "${task.slice(0, 60)}" to which peer?`, [
-    ...byLabel.keys(),
-  ]);
-  const worker = choice ? byLabel.get(choice) : undefined;
+  const worker = await selectWorker(ctx, `Hand "${task.slice(0, 60)}" to which peer?`);
   if (!worker) return;
 
   // The agent composes the brief and sends it via swarm_handover (mirrors the
   // Claude Code plan-as-brief flow, agent-driven).
   injectAgent(
     `🐝 Compose a concise handover brief (what to do, the goal, current state, constraints) for this task and send it to <${worker.nickname}> with the swarm_handover tool (to "${worker.nickname}"):\n\n${task}`,
+  );
+}
+
+async function cmdTask(args: string, ctx: ExtensionCommandContext): Promise<void> {
+  state.ctx = ctx;
+  if (!requireAgentSwarm(ctx)) return;
+  if (!state.session) {
+    ctx.ui.notify("🐝 not in a swarm", "error");
+    return;
+  }
+  const task = args.trim();
+  if (!task) {
+    ctx.ui.notify("🐝 usage: /swarm-task {task}", "error");
+    return;
+  }
+  const worker = await selectWorker(ctx, `Send "${task.slice(0, 60)}" to which peer?`);
+  if (!worker) return;
+
+  // The agent composes the task brief and sends it via swarm_task; the worker
+  // runs it and returns a result the agent then confirms or revises.
+  injectAgent(
+    `🐝 Compose a task brief with an explicit completion criterion for this task and send it to <${worker.nickname}> with the swarm_task tool (to "${worker.nickname}"):\n\n${task}`,
   );
 }
 

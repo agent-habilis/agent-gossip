@@ -276,12 +276,24 @@ function handleExchangeEvent(event: SwarmEvent): void {
         );
       }
       break;
+    case "change":
+      // Task receiver: the initiator wants a revision of the returned result.
+      if (existing.role === "receiver" && kind === "task") {
+        injectAgent(
+          `🐝 <${author}> asked for a revision on the task (exchange ${exchangeId}): ${event.body ?? ""}\n` +
+            `Revise and re-send the swarm_exchange tool phase "done" (exchange_id "${exchangeId}", to "${author}", kind "task") with the updated result.`,
+        );
+      }
+      break;
     case "confirm":
-      // Receiver side: the handoff is closed — now do the work.
       if (existing.role === "receiver" && kind === "handover") {
+        // Receiver side of a handover: the handoff is closed — now do the work.
         injectAgent(
           `🐝 Handover ${exchangeId} confirmed by <${author}>. Do the work now (confirm with the user first if it makes changes). It is yours and is not reported back.`,
         );
+      } else if (existing.role === "receiver" && kind === "task") {
+        // Receiver side of a task: the result was accepted — nothing more to do.
+        ctx?.ui.notify(`🐝 <${author}> accepted your task result`, "info");
       }
       state.exchanges.delete(exchangeId);
       break;

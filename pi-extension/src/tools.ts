@@ -306,6 +306,63 @@ export function registerTools(pi: ExtensionAPI): void {
   });
 
   pi.registerTool({
+    name: "swarm_task",
+    label: "Swarm Task",
+    description: "Send a task to a peer to run and report back (you confirm or revise the result)",
+    promptSnippet: "Delegate a task to a peer and get the result back",
+    promptGuidelines: [
+      "Use swarm_task when the user wants a peer to run work and return the result",
+      "Include an explicit completion criterion in text so the worker knows when it is done",
+      "Pick `to` from the current roster (swarm_status). The worker returns its result; you confirm it (swarm_exchange phase confirm) or ask for a revision (phase change)",
+    ],
+    parameters: Type.Object({
+      to: Type.String({
+        description: "The peer's nickname to send the task to (must be a current participant)",
+      }),
+      text: Type.String({
+        description:
+          "The task brief: what to do, the completion criterion, and what to report back",
+      }),
+    }),
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx: ExtensionContext) {
+      if (!requireAgentSwarm(ctx)) {
+        return toolError("ah-s CLI not found on PATH");
+      }
+      if (!state.session?.swarm) {
+        return toolError("Not in a swarm. Use swarm_create or swarm_join first.");
+      }
+      const exchangeId = randomUUID();
+      const task = params.text
+        .split("\n")
+        .find((line) => line.trim())
+        ?.slice(0, 120);
+      state.exchanges.set(exchangeId, {
+        exchangeId,
+        kind: "task",
+        peer: params.to,
+        role: "initiator",
+        task,
+      });
+      try {
+        sendExchange({
+          to: params.to,
+          exchangeId,
+          kind: "task",
+          phase: "offer",
+          text: params.text,
+        });
+      } catch (error) {
+        state.exchanges.delete(exchangeId);
+        return toolError(`Task failed: ${error instanceof Error ? error.message : "unknown"}`);
+      }
+      return {
+        content: [{ type: "text", text: `task offered to <${params.to}>` }],
+        details: { exchange_id: exchangeId, to: params.to },
+      };
+    },
+  });
+
+  pi.registerTool({
     name: "swarm_status",
     label: "Swarm Status",
     description: "Get current swarm connection status and recent activity",
