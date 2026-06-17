@@ -132,7 +132,7 @@ struct CreateSwarmArgs {
     #[serde(default = "default_rate_limit")]
     rate_limit_per_min: u16,
     /// List this swarm in a directory so others can find it with
-    /// `ah-s discover` (no id to share). Requires `network: "public"`. Note:
+    /// `ahs discover` (no id to share). Requires `network: "public"`. Note:
     /// advertising broadcasts the join token — the swarm becomes open to
     /// anyone discovering the directory.
     #[serde(default)]
@@ -517,7 +517,7 @@ impl AgentSwarmServer {
     }
 
     #[tool(
-        description = "Report the swarm binary version and whether the installed skill is still up to date with it. A local check — needs no active swarm. `ah-s setup` copies the skill onto disk, so upgrading the binary can leave the skill stale; when `skill_up_to_date` is false, re-run `ah-s setup --execute` to refresh."
+        description = "Report the swarm binary version and whether the installed skill is still up to date with it. A local check — needs no active swarm. `ahs setup` copies the skill onto disk, so upgrading the binary can leave the skill stale; when `skill_up_to_date` is false, re-run `ahs setup --execute` to refresh."
     )]
     async fn swarm_version(
         &self,

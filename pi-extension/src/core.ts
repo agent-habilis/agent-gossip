@@ -105,7 +105,7 @@ export async function createSwarm(options: CreateOptions = {}): Promise<Session>
   const filePath = stateFilePath();
   if (filePath) args.push("--state-file", filePath);
 
-  const child = spawn("ah-s", args, { stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn("ahs", args, { stdio: ["ignore", "pipe", "pipe"] });
   // `startWatcher` attaches the single readline and resolves with the `ready`
   // line; ongoing events (incl. peers already present) flow on from the same
   // reader — no second one to drop the bundled `joined` lines.
@@ -117,7 +117,7 @@ export async function createSwarm(options: CreateOptions = {}): Promise<Session>
   }
 
   if (typeof child.pid !== "number") {
-    throw new Error("ah-s spawned without a pid");
+    throw new Error("ahs spawned without a pid");
   }
   const session: Session = {
     swarm: ready.swarm,
@@ -139,7 +139,7 @@ export async function joinSwarm({ target, nickname, model }: JoinOptions): Promi
   const filePath = stateFilePath();
   if (filePath) args.push("--state-file", filePath);
 
-  const child = spawn("ah-s", args, { stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn("ahs", args, { stdio: ["ignore", "pipe", "pipe"] });
   const readyLine = await startWatcher({ child, timeoutMs: 60_000 });
   const ready = JSON.parse(readyLine);
 
@@ -148,7 +148,7 @@ export async function joinSwarm({ target, nickname, model }: JoinOptions): Promi
   }
 
   if (typeof child.pid !== "number") {
-    throw new Error("ah-s spawned without a pid");
+    throw new Error("ahs spawned without a pid");
   }
   const session: Session = {
     swarm: ready.swarm,
@@ -181,7 +181,7 @@ export function sendSwarmMessage({ text, reply }: { text: string; reply?: string
   runSwarmCommand(args);
 }
 
-// Send one leg of an exchange (`ah-s exchange`). `text` is required by the CLI
+// Send one leg of an exchange (`ahs exchange`). `text` is required by the CLI
 // but may be empty for legs without a body (accept/confirm/cancel).
 export function sendExchange({
   to,
@@ -234,7 +234,7 @@ export function leaveSwarm(): void {
   cleanup();
 }
 
-// Browse a directory for advertised swarms. Spawns `ah-s discover`, collects
+// Browse a directory for advertised swarms. Spawns `ahs discover`, collects
 // swarm_found/swarm_lost lines, then resolves: ~`graceMs` after the first hit
 // (to gather a few more), or at `maxMs` if nothing shows. Discovery joins no
 // swarm — the child is always killed before resolving.
@@ -250,7 +250,7 @@ export function discoverSwarms({
   return new Promise((resolve) => {
     const args = ["discover", "--no-interactive", "--output", "json"];
     if (directory && directory !== "global") args.push("--directory", directory);
-    const child = spawn("ah-s", args, { stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn("ahs", args, { stdio: ["ignore", "pipe", "pipe"] });
     const found = new Map<string, DiscoveredSwarm>();
     let graceTimer: ReturnType<typeof setTimeout> | null = null;
     let settled = false;
@@ -304,7 +304,7 @@ export function discoverSwarms({
   });
 }
 
-// Query the live roster via `ah-s peers`. Throws when not in a swarm.
+// Query the live roster via `ahs peers`. Throws when not in a swarm.
 export function getPeers(): { count: number; participants: Peer[] } {
   if (!state.session?.swarm) throw new Error("Not in a swarm");
   const raw = runSwarmCommand([

@@ -64,7 +64,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       # Pull the once-built man pages into ./man so the archive can bundle
-      # them; Homebrew installs them from there (see Formula/ah-s.rb).
+      # them; Homebrew installs them from there (see Formula/ahs.rb).
       - name: Download man pages
         uses: actions/download-artifact@v4
         with:
@@ -72,7 +72,7 @@ jobs:
           path: man
       - uses: taiki-e/upload-rust-binary-action@v1
         with:
-          bin: ah-s
+          bin: ahs
           target: ${{ matrix.target }}
           archive: $bin-$tag-$target
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -91,18 +91,18 @@ jobs:
         with:
           ref: main # commit the formula bump onto main, not the tag
           token: ${{ secrets.GITHUB_TOKEN }}
-      - name: Bump Formula/ah-s.rb to the released version + checksums
+      - name: Bump Formula/ahs.rb to the released version + checksums
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
         run: |
           ver="${TAG#v}"
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern '*.sha256' --dir /tmp --clobber
-          sed -i -E "s/^  version \"[^\"]*\"/  version \"$ver\"/" Formula/ah-s.rb
+          sed -i -E "s/^  version \"[^\"]*\"/  version \"$ver\"/" Formula/ahs.rb
           for target in aarch64-apple-darwin x86_64-unknown-linux-musl aarch64-unknown-linux-musl; do
-            sum=$(cut -d' ' -f1 "/tmp/ah-s-v$ver-$target.sha256")
+            sum=$(cut -d' ' -f1 "/tmp/ahs-v$ver-$target.sha256")
             # Replace the sha256 line immediately following this target's url line.
-            perl -0pi -e "s{(${target}\.tar\.gz\"\s*\n\s*sha256 \")[0-9a-f]{64}}{\${1}${sum}}g" Formula/ah-s.rb
+            perl -0pi -e "s{(${target}\.tar\.gz\"\s*\n\s*sha256 \")[0-9a-f]{64}}{\${1}${sum}}g" Formula/ahs.rb
           done
       - name: Commit the formula bump
         env:
@@ -110,6 +110,6 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Formula/ah-s.rb
+          git add Formula/ahs.rb
           git diff --cached --quiet || git commit -m "chore: update Homebrew formula for ${TAG}"
           git push origin main

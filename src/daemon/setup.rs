@@ -159,7 +159,7 @@ pub(crate) async fn setup_swarm(
     state_file: Option<PathBuf>,
     output: output::Output,
     // Skill-drift warning folded into the `ready` event. Computed by the CLI
-    // (the real `ah-s create`/`join` path) from the on-disk install; `None` on
+    // (the real `ahs create`/`join` path) from the on-disk install; `None` on
     // the embed/library and MCP paths, which keeps the in-process tests
     // hermetic (no dependence on the dev machine's install state).
     drift: Option<&str>,

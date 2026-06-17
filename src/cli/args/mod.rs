@@ -33,7 +33,7 @@ pub(crate) use shared::SharedServerOpts;
 
 #[derive(Parser, Debug)]
 #[command(
-    name = "ah-s",
+    name = "ahs",
     about = "swarm network for agents",
     version = crate::util::version::VERSION,
     after_help = "a tool by agent-habilis █🫈"

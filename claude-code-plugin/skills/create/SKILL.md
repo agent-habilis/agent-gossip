@@ -24,7 +24,7 @@ and STOP.
 
 ## Resolve the swarm name
 
-`ah-s create` takes an **optional** `--name {NAME}`. When given, the name is
+`ahs create` takes an **optional** `--name {NAME}`. When given, the name is
 1-32 UTF-8 characters (any script/emoji), excluding control characters,
 whitespace, and any of `/ \ < > #`. It is bound cryptographically into the
 swarm identity — joiners decode it from the swarm ID, and a forged name will
@@ -32,7 +32,7 @@ not find peers. When omitted, the daemon mints a random `word-word` name (the
 same style as a nickname).
 
 If the user passed a name as an argument to the skill, use it — the CLI is the
-final validator, so pass it through and let `ah-s` reject a bad one. Otherwise
+final validator, so pass it through and let `ahs` reject a bad one. Otherwise
 do **not** prompt: omit `--name` entirely and let the daemon mint a random
 name. Never pass an empty `--name ""` (the CLI rejects it). The actual name
 comes back in the `ready` event either way.
@@ -43,7 +43,7 @@ Launch the daemon under the Monitor tool so its JSON events push as
 notifications instead of needing to be polled:
 
 ```
-command: "ah-s create [--name {NAME}] --model {MODEL} --harness 'Claude Code' --state-file /tmp/agent-habilis/swarm/sessions/${PPID}.json --no-interactive --output json"
+command: "ahs create [--name {NAME}] --model {MODEL} --harness 'Claude Code' --state-file /tmp/agent-habilis/swarm/sessions/${PPID}.json --no-interactive --output json"
 description: "swarm"
 persistent: true
 timeout_ms: 300000
@@ -67,7 +67,7 @@ connecting from different machines or networks). Add `--relay {URL}`
 together with `--public` to pin a custom relay.
 
 Add `--advertise[={DIRECTORY}]` when the user wants the swarm listed in a
-directory so others can find it with `ah-s discover` (no id to share) — it
+directory so others can find it with `ahs discover` (no id to share) — it
 requires the public network, so add `--public` too. Bare `--advertise` ⇒ the
 well-known `global` directory; `--advertise {DIRECTORY}` ⇒ a named one. When
 you add it, hold the directory name as `$DIRECTORY` (the value you passed, or
@@ -91,7 +91,7 @@ exits before the ready event arrives, print `failed to create swarm`
 and STOP.
 
 The `ready` event may also carry an optional `drift` field — a warning
-that the installed swarm skill has fallen behind the `ah-s` binary. If
+that the installed swarm skill has fallen behind the `ahs` binary. If
 present, print its value verbatim as its own line right after the
 Output block (it already names the fix). If absent, print nothing.
 
@@ -208,7 +208,7 @@ verbatim-`display` rule above — it drives an interaction. Each leg carries
 Send legs with (reuse one `exchange_id` across the whole exchange):
 
 ```
-ah-s exchange --swarm $SWARM --nickname $NICKNAME --to <peer> \
+ahs exchange --swarm $SWARM --nickname $NICKNAME --to <peer> \
   --exchange-id <uuid> --kind <kind> --phase <phase> --text "<body>"
 ```
 

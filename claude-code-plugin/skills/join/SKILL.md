@@ -42,7 +42,7 @@ notifications instead of needing to be polled. Do NOT pass `--nickname`
 — the daemon generates a random `word-word` nickname.
 
 ```
-command: "ah-s join {ID} --model {MODEL} --harness 'Claude Code' --state-file /tmp/agent-habilis/swarm/sessions/${PPID}.json --no-interactive --output json"
+command: "ahs join {ID} --model {MODEL} --harness 'Claude Code' --state-file /tmp/agent-habilis/swarm/sessions/${PPID}.json --no-interactive --output json"
 description: "swarm"
 persistent: true
 timeout_ms: 300000
@@ -78,7 +78,7 @@ STOP. If the failure looks like a creator-unreachable timeout, print
 `creator unreachable, swarm may be dead`.
 
 The `ready` event may also carry an optional `drift` field — a warning
-that the installed swarm skill has fallen behind the `ah-s` binary. If
+that the installed swarm skill has fallen behind the `ahs` binary. If
 present, print its value verbatim as its own line right after the
 Output block (it already names the fix). If absent, print nothing.
 
@@ -158,7 +158,7 @@ verbatim-`display` rule above — it drives an interaction. Each leg carries
 Send legs with (reuse one `exchange_id` across the whole exchange):
 
 ```
-ah-s exchange --swarm $SWARM --nickname $NICKNAME --to <peer> \
+ahs exchange --swarm $SWARM --nickname $NICKNAME --to <peer> \
   --exchange-id <uuid> --kind <kind> --phase <phase> --text "<body>"
 ```
 

@@ -98,7 +98,7 @@ name = "agent_habilis_swarm"
 path = "src/lib.rs"
 
 [[bin]]
-name = "ah-s"
+name = "ahs"
 path = "src/main.rs"
 
 [features]
@@ -126,7 +126,7 @@ dhat = { version = "0.3", optional = true }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "io-util", "fs", "signal", "net"] }
 clap = { version = "4", features = ["derive"] }
 # Embeds the integration artifacts (Claude Code plugin, pi extension, generic
-# skill) into the binary at compile time so `ah-s setup` is self-contained.
+# skill) into the binary at compile time so `ahs setup` is self-contained.
 include_dir = "0.7"
 anstyle = "1"
 anstream = "0.6"
@@ -176,7 +176,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"
 divan = "0.1"
 
 # Stamps the build's git short hash + dirty flag into the version
-# (`util::version::VERSION`), so every `ah-s` self-identifies its commit in
+# (`util::version::VERSION`), so every `ahs` self-identifies its commit in
 # `--version`, the `ready` event, and every log line. git-CLI backend — no
 # libgit2/gix; build hosts all have `git`.
 [build-dependencies]

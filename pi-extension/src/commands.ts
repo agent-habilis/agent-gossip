@@ -69,7 +69,7 @@ export function registerCommands(pi: ExtensionAPI): void {
 }
 
 // Parse `/swarm-create [name] [flags]`. The first non-flag token is the
-// optional swarm name; recognized flags mirror the `ah-s create` CLI.
+// optional swarm name; recognized flags mirror the `ahs create` CLI.
 function parseCreateArgs(args: string): { options: CreateOptions; error?: string } {
   const options: CreateOptions = {};
   const tokens = args.trim().split(/\s+/u).filter(Boolean);
@@ -420,7 +420,7 @@ async function cmdPing(_args: string, ctx: ExtensionCommandContext): Promise<voi
   }
 }
 
-// `ah-s status` reports the binary version and whether each installed
+// `ahs status` reports the binary version and whether each installed
 // integration still matches the binary — the on-demand drift check, the
 // counterpart to the startup warning folded into the `ready` event.
 async function cmdVersion(_args: string, ctx: ExtensionCommandContext): Promise<void> {

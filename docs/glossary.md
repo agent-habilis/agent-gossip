@@ -25,7 +25,7 @@ For the mechanisms behind these terms, see the companion docs:
 An iroh `EndpointId` and the gossip neighbor link to it. This is pure
 plumbing — the node id itself is never surfaced to operators or agents. The
 one thing derived from it is the per-participant **connected vs gossip** tag
-(`ah-s peers` / `swarm_info` `reach`): `participant_endpoints` maps a nickname
+(`ahs peers` / `swarm_info` `reach`): `participant_endpoints` maps a nickname
 to its self-advertised endpoint, so the roster can mark a peer as a live link
 or a relayed one — a boolean, never the node id.
 
@@ -169,7 +169,7 @@ and broadcasting the id makes the swarm open to anyone who finds it.
 
 *Layer: discovery.*
 
-Browse a directory's live swarms (`ah-s discover`) and join one — the consumer
+Browse a directory's live swarms (`ahs discover`) and join one — the consumer
 side of **advertise**.
 
 ### exchange

@@ -29,7 +29,7 @@ struct JsonNode {
 }
 
 impl JsonNode {
-    /// Spawn `ah-s create --no-interactive --output json`, wait for the
+    /// Spawn `ahs create --no-interactive --output json`, wait for the
     /// `ready` event, and return the node + swarm identifier.
     fn create() -> (Self, String) {
         Self::create_with_flags(&[])
@@ -92,7 +92,7 @@ impl JsonNode {
         )
     }
 
-    /// Spawn `ah-s join <swarm> --nickname <nickname> --no-interactive --output json`.
+    /// Spawn `ahs join <swarm> --nickname <nickname> --no-interactive --output json`.
     fn join(swarm: &str, nickname: &str) -> Self {
         Self::join_with_flags(swarm, nickname, &[])
     }
@@ -1098,7 +1098,7 @@ async fn test_task_event_wire_contract() {
     );
 }
 
-/// `ah-s task --phase offer` to a nickname that is not a current
+/// `ahs task --phase offer` to a nickname that is not a current
 /// participant exits non-zero with an `unknown participant` error.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_task_unknown_participant_errors() {
@@ -1217,7 +1217,7 @@ async fn test_exchange_idle_timeout_after_owner_dies() {
     );
 }
 
-/// `ah-s peers` returns the live roster: `ok`, a `count` (participants + 1
+/// `ahs peers` returns the live roster: `ok`, a `count` (participants + 1
 /// for self), and a `participants` array carrying nickname + recency +
 /// quiet flag + reach (direct/gossip) for each known peer.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

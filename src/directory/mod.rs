@@ -2,7 +2,7 @@
 //! down").
 //!
 //! A swarm created with `--advertise[=<name>]` re-broadcasts its own
-//! `ahs…` id into a **directory**; `ah-s discover` browses it. A directory
+//! `ahs…` id into a **directory**; `ahs discover` browses it. A directory
 //! is not a server — it is itself a well-known public [`Swarm`] derived
 //! deterministically from its name, so a publisher and a discoverer that
 //! name the same directory derive the same swarm and mesh over the
@@ -35,7 +35,7 @@ use crate::protocol::{MessageBody, SwarmId};
 const DIRECTORY_BASE_SEED: [u8; 32] = *b"agent-habilis-swarm/directory/v1";
 
 /// The well-known [`Swarm`] for a directory, reached over `lookups`. Both
-/// `--advertise <name>` and `ah-s discover --directory <name>` call this; the
+/// `--advertise <name>` and `ahs discover --directory <name>` call this; the
 /// seed + rendezvous are name-derived (so they're identical regardless of
 /// `lookups`), but the **topic** mixes in the config bytes — which include the
 /// lookups — so an advertiser and a discoverer meet only when they pass the
@@ -105,7 +105,7 @@ pub(crate) struct Listing {
     /// Local instant of the most recent ad; drives expiry.
     pub last_seen: Instant,
     /// Unix seconds when this swarm was *first* seen in the directory
-    /// (preserved across re-ads). Display-only — the `ah-s discover` picker
+    /// (preserved across re-ads). Display-only — the `ahs discover` picker
     /// renders it as an ISO-8601 timestamp.
     pub first_seen_unix: i64,
 }

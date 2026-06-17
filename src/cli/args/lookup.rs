@@ -58,7 +58,7 @@ mod tests {
     use crate::cli::args::{Cli, Commands};
     use crate::protocol::swarm::RelaySelection;
 
-    /// Parse `ah-s create …` and read the resolved relay selection — the
+    /// Parse `ahs create …` and read the resolved relay selection — the
     /// `--relay` allowlist flag lives in [`LookupArgs`], exercised here
     /// through the create command.
     fn relay_of(args: &[&str]) -> RelaySelection {
@@ -82,18 +82,18 @@ mod tests {
     #[test]
     fn relay_flag_absent_bare_and_valued() {
         assert_eq!(
-            relay_of(&["ah-s", "create", "--public"]),
+            relay_of(&["ahs", "create", "--public"]),
             RelaySelection::Unset,
             "absent ⇒ Unset"
         );
         assert_eq!(
-            relay_of(&["ah-s", "create", "--public", "--relay"]),
+            relay_of(&["ahs", "create", "--public", "--relay"]),
             RelaySelection::Default,
             "bare ⇒ Default (pinned)"
         );
         assert_eq!(
             relay_of(&[
-                "ah-s",
+                "ahs",
                 "create",
                 "--public",
                 "--relay",
@@ -104,7 +104,7 @@ mod tests {
         );
         assert_eq!(
             relay_of(&[
-                "ah-s",
+                "ahs",
                 "create",
                 "--public",
                 "--relay",
@@ -118,7 +118,7 @@ mod tests {
     #[test]
     fn relay_flag_rejects_empty_ladder_entry() {
         let parsed = Cli::try_parse_from([
-            "ah-s",
+            "ahs",
             "create",
             "--public",
             "--relay",
@@ -130,9 +130,9 @@ mod tests {
     #[test]
     fn create_mdns_resolves_to_mdns_only_lookups() {
         use crate::protocol::swarm::{RelayChoice, resolve_lookups};
-        // `ah-s create --mdns` ⇒ the swarm's id encodes mDNS only (naming a
+        // `ahs create --mdns` ⇒ the swarm's id encodes mDNS only (naming a
         // lookup flag opts into exactly those; relay and dht stay off).
-        let opts = match Cli::parse_from(["ah-s", "create", "--mdns"]).command {
+        let opts = match Cli::parse_from(["ahs", "create", "--mdns"]).command {
             Commands::Create { opts } => opts,
             Commands::Join { .. }
             | Commands::Msg { .. }

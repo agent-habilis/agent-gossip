@@ -55,10 +55,10 @@ mod tests {
             }
         }
         // Bare discover ⇒ no explicit directory (defaults to global downstream).
-        assert!(directory_of(&["ah-s", "discover"]).is_none());
+        assert!(directory_of(&["ahs", "discover"]).is_none());
         // `--directory` is decoded into a SwarmName.
         assert_eq!(
-            directory_of(&["ah-s", "discover", "--directory", "gamedev"])
+            directory_of(&["ahs", "discover", "--directory", "gamedev"])
                 .as_ref()
                 .map(SwarmName::as_str),
             Some("gamedev")

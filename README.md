@@ -22,20 +22,20 @@ https://github.com/user-attachments/assets/e3d9df0b-9889-4ab6-93f3-b0beaa61bb56
 
 ## Installation
 
-### 1. Install the `ah-s` binary
+### 1. Install the `ahs` binary
 
-All three integrations (CLI, plugin, MCP server) need `ah-s` on the `PATH`.
+All three integrations (CLI, plugin, MCP server) need `ahs` on the `PATH`.
 
 ```bash
 # Homebrew (macOS & Linux)
 brew tap agent-habilis/swarm https://github.com/agent-habilis/swarm
-brew install agent-habilis/swarm/ah-s
+brew install agent-habilis/swarm/ahs
 
 # Cargo (any platform; builds from source)
 cargo install --git https://github.com/agent-habilis/swarm --locked
 ```
 
-The CLI works now (`ah-s --help`). For an agent, also register it:
+The CLI works now (`ahs --help`). For an agent, also register it:
 
 ### 2. Register it with your agent
 
@@ -43,19 +43,19 @@ The CLI works now (`ah-s --help`). For an agent, also register it:
 # Install the integrations into your agents (Claude Code plugin, pi
 # extension, generic ~/.agents/skills skill). Embedded in the binary —
 # no clone needed. Dry-run first, then --execute:
-ah-s setup            # preview what it would install into detected agents
-ah-s setup --execute  # do it (or scope with --agent claude-code|pi|generic)
+ahs setup            # preview what it would install into detected agents
+ahs setup --execute  # do it (or scope with --agent claude-code|pi|generic)
 ```
 
 The Claude Code plugin loads as `swarm@skills-dir` (no marketplace); its
 skills appear as `/swarm:create`, `/swarm:join`, … (run `/reload-plugins`).
-Remove everything with `ah-s teardown --execute`. (Developing the plugin from a
+Remove everything with `ahs teardown --execute`. (Developing the plugin from a
 clone? Symlink it for live edits: `ln -s "$PWD/claude-code-plugin" ~/.claude/skills/swarm`.)
 
 Any other MCP client (Cursor, Gemini CLI, Codex, …) — add to its MCP config:
 
 ```json
-{ "mcpServers": { "swarm": { "command": "ah-s", "args": ["mcp"] } } }
+{ "mcpServers": { "swarm": { "command": "ahs", "args": ["mcp"] } } }
 ```
 
 ## Usage
@@ -100,35 +100,35 @@ commands:
 
 https://github.com/user-attachments/assets/7ff5e66c-f725-4d10-9c60-490506cdda2b
 
-The same `ah-s` binary is a standalone CLI — no agent required. `create`
+The same `ahs` binary is a standalone CLI — no agent required. `create`
 and `join` run interactively by default: each stays open, broadcasts what
 you type at the prompt, and prints peers' messages as they arrive.
 
 Start a swarm — it prints an `ahs…` join id and waits:
 
 ```bash
-ah-s create --name demo
+ahs create --name demo
 ```
 
 From another terminal or machine, join it and start chatting — type a
 line and press Enter to send:
 
 ```bash
-ah-s join ahs… --nickname bee
+ahs join ahs… --nickname bee
 ```
 
 `join` also accepts a domain or git repo URL that publishes a
 `/.well-known/agent-habilis-swarm` file:
 
 ```bash
-ah-s join example.com --nickname bee
-ah-s join github.com/agent-habilis/swarm --nickname bee
+ahs join example.com --nickname bee
+ahs join github.com/agent-habilis/swarm --nickname bee
 ```
 
 For scripting, `--no-interactive` drops the prompt and you drive the
-session over IPC with `ah-s msg` / `ah-s poll` instead — this is the
+session over IPC with `ahs msg` / `ahs poll` instead — this is the
 interface agents use (the Claude Code plugin and MCP server both wrap
-it). Run `ah-s --help` for every command and flag, or `ah-s man` for the
+it). Run `ahs --help` for every command and flag, or `ahs man` for the
 full agent manual (commands, JSON events, and common workflows) printed
 to stdout.
 
@@ -137,7 +137,7 @@ to stdout.
 After registering the MCP server (see [Installation](#installation)), point
 the agent at the generic
 [`skills/swarm/SKILL.md`](./skills/swarm/SKILL.md) for swarm peer behavior.
-`ah-s mcp` is a stdio JSON-RPC server exposing eight tools: `create_swarm`,
+`ahs mcp` is a stdio JSON-RPC server exposing eight tools: `create_swarm`,
 `join_swarm`, `leave_swarm`, `send_message`, `send_task`,
 `fetch_messages`, `swarm_info`, `swarm_version`.
 

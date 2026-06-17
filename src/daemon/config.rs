@@ -82,7 +82,7 @@ pub(crate) enum SessionRequest {
 /// process on quit?" and "spawn the unix-socket listener?" instead of
 /// carrying them as independent, drift-prone bools.
 pub(crate) enum DriverMode {
-    /// The `ah-s create` / `join` CLI. Owns the unix-socket IPC listener
+    /// The `ahs create` / `join` CLI. Owns the unix-socket IPC listener
     /// (for `msg` / `poll`); ctrl-c / SIGTERM `std::process::exit`s.
     Cli,
     /// Fully in-process, shared by the embed facade and the MCP server.

@@ -158,7 +158,7 @@ pub(crate) fn cohost_grace_secs() -> u64 {
     current().cohost_grace_secs
 }
 
-/// How long an `ah-s ping` round collects pongs before the daemon
+/// How long an `ahs ping` round collects pongs before the daemon
 /// emits its `ping_report`. Long enough for a relayed round-trip
 /// across the mesh; hidden flag `--ping-window-secs` so tests don't
 /// wait the full window.

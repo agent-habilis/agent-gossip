@@ -182,7 +182,7 @@ pub(crate) fn home_dir() -> Result<PathBuf> {
 }
 
 /// Each agent, its install path, and its state — in display order. Drives
-/// `ah-s status`.
+/// `ahs status`.
 pub(crate) fn states(home: &Path) -> Vec<(Agent, PathBuf, AgentState)> {
     Agent::ALL
         .into_iter()
@@ -192,14 +192,14 @@ pub(crate) fn states(home: &Path) -> Vec<(Agent, PathBuf, AgentState)> {
 
 /// The one canonical "skill out of date" nag, shared by the `ready`-event
 /// drift warning (below) and the MCP `swarm_version` tool — one source of
-/// truth so the two can't drift apart. `ah-s setup --execute` refreshes every
+/// truth so the two can't drift apart. `ahs setup --execute` refreshes every
 /// installed integration, so the message names no specific one.
 pub(crate) const SKILL_DRIFT_MSG: &str =
-    "⚠️ swarm skill out of date. Run `ah-s setup --execute` to update";
+    "⚠️ swarm skill out of date. Run `ahs setup --execute` to update";
 
 /// A one-line drift warning if any installed integration has fallen behind the
 /// binary (`OutOfDate`), else `None`. The daemon folds this into its `ready`
-/// event so a stale skill nags the agent at swarm start; `ah-s status` is the
+/// event so a stale skill nags the agent at swarm start; `ahs status` is the
 /// on-demand counterpart.
 pub(crate) fn drift_warning(home: &Path) -> Option<String> {
     let any_stale = states(home)
@@ -244,7 +244,7 @@ mod tests {
 
     #[test]
     fn generic_in_sync_only_when_skill_matches_embedded() {
-        let home = std::env::temp_dir().join(format!("ah-s-insync-{}", std::process::id()));
+        let home = std::env::temp_dir().join(format!("ahs-insync-{}", std::process::id()));
         let dir = Agent::Generic.install_path(&home);
         std::fs::create_dir_all(&dir).unwrap();
 
@@ -264,7 +264,7 @@ mod tests {
 
     #[test]
     fn drift_warning_fires_only_for_a_diverged_install() {
-        let home = std::env::temp_dir().join(format!("ah-s-drift-{}", std::process::id()));
+        let home = std::env::temp_dir().join(format!("ahs-drift-{}", std::process::id()));
         let dir = Agent::Generic.install_path(&home);
         std::fs::create_dir_all(&dir).unwrap();
         let file = dir.join("SKILL.md");
@@ -278,7 +278,7 @@ mod tests {
         let warning = super::drift_warning(&home).expect("diverged install warns");
         assert_eq!(warning, super::SKILL_DRIFT_MSG);
         assert!(warning.contains("out of date"));
-        assert!(warning.contains("ah-s setup --execute"));
+        assert!(warning.contains("ahs setup --execute"));
 
         std::fs::remove_dir_all(&home).unwrap();
     }

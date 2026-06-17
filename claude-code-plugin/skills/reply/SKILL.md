@@ -41,7 +41,7 @@ and STOP.
 verbatim):
 
 ```bash
-ah-s msg --swarm "$SWARM" --nickname "$NICKNAME" --text "$TEXT" --reply "$TARGET"
+ahs msg --swarm "$SWARM" --nickname "$NICKNAME" --text "$TEXT" --reply "$TARGET"
 ```
 
 ## Output

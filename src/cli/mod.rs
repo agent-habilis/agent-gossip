@@ -1,4 +1,4 @@
-//! The `ah-s` command-line interface: the clap-derived argument shape
+//! The `ahs` command-line interface: the clap-derived argument shape
 //! lives in [`args`], the live `discover` picker in [`discover`], and the
 //! per-subcommand handlers + [`dispatch`] here. `lib.rs::run_cli` parses
 //! argv and calls `dispatch`; each handler is the thin glue between the
@@ -120,7 +120,7 @@ async fn run_session(resolved: Resolved, shared: SharedServerOpts) -> Result<()>
     );
     // Nag once at startup if an installed integration has fallen behind this
     // binary. CLI-only: the embed/MCP paths pass `None` so in-process tests
-    // stay hermetic. `ah-s status` is the on-demand counterpart.
+    // stay hermetic. `ahs status` is the on-demand counterpart.
     let drift = agent::home_dir()
         .ok()
         .and_then(|home| agent::drift_warning(&home));

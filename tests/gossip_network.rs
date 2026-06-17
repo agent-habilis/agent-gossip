@@ -1,6 +1,6 @@
 //! Integration tests for the gossip network.
 //!
-//! Each test spawns real `ah-s` processes, exercises the network,
+//! Each test spawns real `ahs` processes, exercises the network,
 //! and asserts on what each node actually received. Tests are independent —
 //! each creates its own swarm so IPC sockets never collide.
 //!
@@ -538,7 +538,7 @@ fn test_state_file_removed_on_signal() {
         let log = tmp_log(&format!("statefile{signal}"));
         let file = File::create(&log).unwrap();
         let state_file = std::env::temp_dir().join(format!(
-            "ah-s-statefile-test-{}-{signal}.json",
+            "ahs-statefile-test-{}-{signal}.json",
             std::process::id()
         ));
         let _ = fs::remove_file(&state_file);
@@ -645,7 +645,7 @@ fn test_poll_returns_messages() {
     );
 }
 
-/// `ah-s ping` is daemon-owned: the transient command arms a round over
+/// `ahs ping` is daemon-owned: the transient command arms a round over
 /// IPC, the daemon broadcasts a probe, every peer auto-pongs, and the
 /// originator emits a `ping_report` on its own output stream listing
 /// each responder's RTT. The probe/pong never surface as chat. A short

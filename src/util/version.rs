@@ -1,6 +1,6 @@
 //! The single source of truth for the build's version string: the crate
 //! version plus the git short hash and dirty flag stamped by `build.rs`
-//! (via vergen). Surfaced in `ah-s --version`, the `ready` event, and a
+//! (via vergen). Surfaced in `ahs --version`, the `ready` event, and a
 //! once-per-daemon "daemon starting" log line (one log file == one process ==
 //! one build), so a node self-identifies which commit it is running.
 

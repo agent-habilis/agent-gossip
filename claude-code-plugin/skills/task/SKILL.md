@@ -63,7 +63,7 @@ Establish *what* is being sent **before** choosing who runs it:
 Query the live roster (silently — don't print it):
 
 ```bash
-ah-s peers --swarm "$SWARM" --nickname "$NICKNAME"
+ahs peers --swarm "$SWARM" --nickname "$NICKNAME"
 ```
 
 It returns
@@ -110,7 +110,7 @@ independent). For each task, send its opening offer to its worker
 with that task's brief:
 
 ```bash
-ah-s exchange --swarm "$SWARM" --nickname "$NICKNAME" --to "$WORKER" \
+ahs exchange --swarm "$SWARM" --nickname "$NICKNAME" --to "$WORKER" \
   --exchange-id "$EXCHANGE_ID" --kind task --phase offer --text "$BRIEF"
 ```
 
