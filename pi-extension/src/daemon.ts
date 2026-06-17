@@ -121,7 +121,7 @@ export function processDaemonLine(line: string): void {
 
 // Push a message into the pi session so the LLM agent acts on it (drive its
 // side of an exchange). Mirrors the auto-reply delivery in `flushMessageBatch`.
-function injectAgent(text: string): void {
+export function injectAgent(text: string): void {
   if (!state.pi) return;
   try {
     if (state.ctx?.isIdle?.() ?? true) {

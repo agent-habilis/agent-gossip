@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import {
@@ -245,6 +246,62 @@ export function registerTools(pi: ExtensionAPI): void {
       } catch (error) {
         return toolError(`Exchange failed: ${error instanceof Error ? error.message : "unknown"}`);
       }
+    },
+  });
+
+  pi.registerTool({
+    name: "swarm_handover",
+    label: "Swarm Handover",
+    description: "Hand a task or plan to a peer (a handover: the receiver runs it on its own)",
+    promptSnippet: "Delegate a task to a peer via a handover",
+    promptGuidelines: [
+      "Use swarm_handover when the user wants to hand a task or plan to another agent to run",
+      "Compose a clear brief in text: what to do, the goal, current state, and constraints",
+      "Pick `to` from the current roster (swarm_status). The handoff closes when the receiver signals done; the extension auto-confirms",
+    ],
+    parameters: Type.Object({
+      to: Type.String({
+        description: "The peer's nickname to hand the task to (must be a current participant)",
+      }),
+      text: Type.String({
+        description: "The handover brief: what to do, the goal, current state, and constraints",
+      }),
+    }),
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx: ExtensionContext) {
+      if (!requireAgentSwarm(ctx)) {
+        return toolError("ah-s CLI not found on PATH");
+      }
+      if (!state.session?.swarm) {
+        return toolError("Not in a swarm. Use swarm_create or swarm_join first.");
+      }
+      const exchangeId = randomUUID();
+      const task = params.text
+        .split("\n")
+        .find((line) => line.trim())
+        ?.slice(0, 120);
+      state.exchanges.set(exchangeId, {
+        exchangeId,
+        kind: "handover",
+        peer: params.to,
+        role: "initiator",
+        task,
+      });
+      try {
+        sendExchange({
+          to: params.to,
+          exchangeId,
+          kind: "handover",
+          phase: "offer",
+          text: params.text,
+        });
+      } catch (error) {
+        state.exchanges.delete(exchangeId);
+        return toolError(`Handover failed: ${error instanceof Error ? error.message : "unknown"}`);
+      }
+      return {
+        content: [{ type: "text", text: `handover offered to <${params.to}>` }],
+        details: { exchange_id: exchangeId, to: params.to },
+      };
     },
   });
 

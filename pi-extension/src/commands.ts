@@ -11,10 +11,11 @@ import {
   sendSwarmMessage,
   validateCreateOptions,
 } from "./core";
+import { injectAgent } from "./daemon";
 import { formatRoster } from "./format";
 import { formatSwarmMessage, isValidBody, requireAgentSwarm, runSwarmCommand } from "./helpers";
 import { state } from "./state";
-import type { DiscoveredSwarm } from "./types";
+import type { DiscoveredSwarm, Peer } from "./types";
 
 export function registerCommands(pi: ExtensionAPI): void {
   pi.registerCommand("swarm-create", {
@@ -36,6 +37,10 @@ export function registerCommands(pi: ExtensionAPI): void {
   pi.registerCommand("swarm-reply", {
     description: "Send a message addressed to a specific peer (/swarm-reply {nick} {text})",
     handler: cmdReply,
+  });
+  pi.registerCommand("swarm-handover", {
+    description: "Hand a task off to a peer (/swarm-handover {task})",
+    handler: cmdHandover,
   });
   pi.registerCommand("swarm-leave", {
     description: "Leave the current swarm",
@@ -254,6 +259,59 @@ async function cmdReply(args: string, ctx: ExtensionCommandContext): Promise<voi
       "error",
     );
   }
+}
+
+async function cmdHandover(args: string, ctx: ExtensionCommandContext): Promise<void> {
+  state.ctx = ctx;
+  if (!requireAgentSwarm(ctx)) return;
+  if (!state.session) {
+    ctx.ui.notify("🐝 not in a swarm", "error");
+    return;
+  }
+  const task = args.trim();
+  if (!task) {
+    ctx.ui.notify("🐝 usage: /swarm-handover {task}", "error");
+    return;
+  }
+
+  let participants: Peer[];
+  try {
+    participants = getPeers().participants;
+  } catch (error) {
+    ctx.ui.notify(`🐝 ${error instanceof Error ? error.message : "roster failed"}`, "error");
+    return;
+  }
+  const eligible = participants
+    .filter((peer) => !peer.quiet)
+    .sort(
+      (left, right) =>
+        (left.lastSeenSecsAgo ?? Number.POSITIVE_INFINITY) -
+        (right.lastSeenSecsAgo ?? Number.POSITIVE_INFINITY),
+    );
+  if (eligible.length === 0) {
+    ctx.ui.notify("🐝 no peers to hand over to", "info");
+    return;
+  }
+
+  // Label carries the model/harness so the choice is informed; map back to the
+  // peer for the nickname.
+  const byLabel = new Map(
+    eligible.map((peer): [string, Peer] => {
+      const meta = [peer.model, peer.harness].filter(Boolean).join(" / ");
+      return [`<${peer.nickname}>${meta ? ` (${meta})` : ""}`, peer];
+    }),
+  );
+  const choice = await ctx.ui.select(`Hand "${task.slice(0, 60)}" to which peer?`, [
+    ...byLabel.keys(),
+  ]);
+  const worker = choice ? byLabel.get(choice) : undefined;
+  if (!worker) return;
+
+  // The agent composes the brief and sends it via swarm_handover (mirrors the
+  // Claude Code plan-as-brief flow, agent-driven).
+  injectAgent(
+    `🐝 Compose a concise handover brief (what to do, the goal, current state, constraints) for this task and send it to <${worker.nickname}> with the swarm_handover tool (to "${worker.nickname}"):\n\n${task}`,
+  );
 }
 
 async function cmdLeave(_args: string, ctx: ExtensionCommandContext): Promise<void> {
