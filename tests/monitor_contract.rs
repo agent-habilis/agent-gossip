@@ -1266,7 +1266,10 @@ async fn test_peers_roster_shape() {
         assert!(entry.get("last_seen_secs_ago").is_some());
         assert!(entry["quiet"].is_boolean());
         let reach = entry["reach"].as_str().expect("reach is a string");
-        assert!(reach == "direct" || reach == "gossip", "unexpected reach: {reach}");
+        assert!(
+            reach == "direct" || reach == "gossip",
+            "unexpected reach: {reach}"
+        );
     }
     assert!(
         reach_values(&roster).iter().any(|reach| reach == "direct"),
@@ -1343,5 +1346,103 @@ async fn test_peers_roster_reports_model_and_harness() {
         found,
         Some((Some("Opus 4.8".to_owned()), Some("Claude Code".to_owned()))),
         "creator's roster should report the joiner's model/harness"
+    );
+}
+
+/// Poll/stream parity: a `msg` returned by `ahs poll --output json` is the
+/// **byte-identical** object the live `--output json` stream emitted for the
+/// same message — except for the leading `seq` the poll record adds as its
+/// cursor. This is the contract a Monitor-less fallback relies on: parse one
+/// shape, emit `display` verbatim, whether reading the stream or polling.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_poll_record_matches_stream_line() {
+    let (creator, swarm) = JsonNode::create();
+    let joiner = JsonNode::join(&swarm, "parity-joiner");
+    assert!(creator.wait_ready(&swarm));
+    assert!(joiner.wait_ready(&swarm));
+    std::thread::sleep(Duration::from_secs(3));
+
+    // Joiner sends; the creator surfaces it on its stream and can poll it.
+    cli_send(&swarm, &joiner.nickname, "parity body");
+
+    // Find the creator's stream line for this message.
+    let deadline = Instant::now() + MSG_TIMEOUT;
+    let mut stream_msg = None;
+    while Instant::now() < deadline {
+        stream_msg = creator
+            .msg_events()
+            .into_iter()
+            .find(|value| value["body"] == "parity body");
+        if stream_msg.is_some() {
+            break;
+        }
+        std::thread::sleep(POLL);
+    }
+    let stream_msg = stream_msg.expect("creator stream should surface the message");
+
+    // Poll the creator and find the same message.
+    let poll_json = common::cli_poll(&swarm, &creator.nickname, None);
+    let polled: Vec<serde_json::Value> =
+        serde_json::from_str(&poll_json).expect("poll JSON parses");
+    let mut poll_msg = polled
+        .into_iter()
+        .find(|value| value["body"] == "parity body")
+        .expect("poll should return the message");
+
+    // The poll record carries a `seq`; the stream line does not. Strip it and
+    // the two objects must be identical (same fields, same values, incl.
+    // `display` and `self`).
+    assert!(poll_msg["seq"].is_u64(), "poll record must carry a seq");
+    poll_msg
+        .as_object_mut()
+        .expect("poll record is an object")
+        .remove("seq");
+    assert_eq!(
+        poll_msg, stream_msg,
+        "poll record (sans seq) must byte-match the stream line"
+    );
+}
+
+/// A `ping_report` is a transient event — never in the old message log — yet it
+/// is now drainable via `poll`, so a Monitor-less fallback can still render the
+/// RTT table. The originator of the ping surfaces the report on its own stream
+/// *and* in its poll buffer.
+#[test]
+fn test_ping_report_is_pollable() {
+    let (creator, swarm) = JsonNode::create_with_flags(&[("--ping-window-secs", "2")]);
+    let joiner = JsonNode::join_with_flags(&swarm, "ping-pollee", &[]);
+    assert!(creator.wait_ready(&swarm));
+    assert!(joiner.wait_ready(&swarm));
+    std::thread::sleep(Duration::from_secs(3));
+
+    // Creator arms a ping; the report lands ~2s later on its stream and ring.
+    common::cli_ping(&swarm, &creator.nickname);
+
+    let deadline = Instant::now() + MSG_TIMEOUT;
+    let mut report = None;
+    while Instant::now() < deadline {
+        let poll_json = common::cli_poll(&swarm, &creator.nickname, None);
+        if let Ok(polled) = serde_json::from_str::<Vec<serde_json::Value>>(&poll_json) {
+            report = polled
+                .into_iter()
+                .find(|value| value["event"] == "ping_report");
+            if report.is_some() {
+                break;
+            }
+        }
+        std::thread::sleep(POLL);
+    }
+    let report = report.expect("ping_report should be drainable via poll");
+
+    assert!(report["seq"].is_u64(), "pollable ping_report carries a seq");
+    assert!(
+        report["display"]
+            .as_str()
+            .is_some_and(|line| line.contains("ping")),
+        "ping_report display should render the RTT table: {report}"
+    );
+    assert!(
+        report["peers"].is_array(),
+        "ping_report carries the per-peer RTT rows: {report}"
     );
 }

@@ -416,6 +416,23 @@ pub(super) fn print_exchange_json(msg: &Message, is_self: bool) {
     emit(&format_exchange_json(msg, is_self));
 }
 
+/// Render a `seq`-tagged surfaced event to the exact stream JSON line, with the
+/// daemon-local `seq` flattened in as a leading field so a `poll` client can
+/// advance its `--after` cursor. The body after `seq` is byte-identical to the
+/// live `--output json` line for the same event (same [`event_json`]
+/// renderer) — the parity guarantee `poll` rests on. `None` for events that
+/// produce no JSON line (e.g. `SwarmId`).
+#[must_use]
+pub fn surfaced_event_json(seq: u64, event: &OutputEvent) -> Option<String> {
+    let line = event_json(event)?;
+    // `line` is a JSON object string starting with `{`. Splice `"seq":N,`
+    // right after the opening brace so `seq` leads and the rest is unchanged.
+    // (Re-parsing to a Value would reorder keys; the wire format pins order.)
+    let rest = line.strip_prefix('{')?;
+    let sep = if rest.starts_with('}') { "" } else { "," };
+    Some(format!("{{\"seq\":{seq}{sep}{rest}"))
+}
+
 /// Render a captured [`OutputEvent`] to the exact JSON line the
 /// daemon writes in `--output json` mode. Reuses the same serializers
 /// as the `Stream` sink, so in-process tests assert the byte-identical

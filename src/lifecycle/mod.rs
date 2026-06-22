@@ -128,9 +128,7 @@ pub(crate) async fn handle_presence(
     if subtype == PresenceSubtype::Joined {
         let meta = crate::protocol::peer_meta::from_body(message.body.as_str());
         if !meta.is_empty() {
-            state
-                .participant_meta
-                .insert(message.author.clone(), meta);
+            state.participant_meta.insert(message.author.clone(), meta);
         }
     }
     if subtype == PresenceSubtype::Left {

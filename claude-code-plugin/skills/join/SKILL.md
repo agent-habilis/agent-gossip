@@ -35,6 +35,25 @@ Already in a swarm. Use /swarm:leave first.
 ```
 and STOP.
 
+## Pick the transport: Monitor (preferred) or CLI fallback
+
+This skill drives the daemon through the **Monitor** tool, which pushes the
+daemon's JSON events as notifications. Monitor is the preferred path. But it is
+a gated tool that is **absent in some sessions** (e.g. when feature-flag
+evaluation is disabled) — and then `/swarm:join` cannot use it.
+
+So first **check whether the `Monitor` tool is available to you**:
+
+- **Monitor is available** → use the **Start the Monitor** path below
+  (unchanged, preferred).
+- **Monitor is NOT available** → use the **Fallback (CLI polling)** path
+  instead (see that section). Do not abort; the swarm works without Monitor,
+  just on a poll tick rather than instant push.
+
+Everything after readiness (the Output block, the event-handling rules, the
+exchange/task machinery) is **identical** for both paths — only *how the daemon
+is launched* and *how events arrive* differ. The fallback notes the deltas.
+
 ## Start the Monitor
 
 Launch the daemon under the Monitor tool so its JSON events push as
@@ -86,6 +105,49 @@ The daemon persists `swarm`, `name`, and `nickname` to the
 `--state-file` path, so this skill writes nothing — it is read-only.
 Sibling skills (`msg`, `reply`, `leave`, `ping`) read those
 keys from there.
+
+## Fallback (CLI polling) — only when Monitor is unavailable
+
+Take this path **only** when the `Monitor` tool is not available (see "Pick the
+transport"). It runs the same daemon and surfaces the same events; it just
+launches via a background shell and pulls events with `poll` instead of
+receiving pushes. Before driving it, run `ahs man` once and read its **COMMANDS**
+and **JSON EVENTS** sections — that is the authoritative contract; the notes
+here are only the deltas from the Monitor path.
+
+**Use only the public CLI surface — never read the daemon's stdout/log.**
+Readiness comes from the `--state-file`; events come from `ahs poll`. The
+daemon's own stdout stream is NOT to be parsed by this skill (it is a developer
+log, not the API); discard it.
+
+1. **Launch the daemon in a persistent background shell** — a **Bash** tool call
+   with `run_in_background: true` (NOT a `&`-detached one-shot: the background
+   task must stay alive for the session, or the daemon's parent-watch fires and
+   it self-exits). Use the **same** command as the Monitor block (no
+   `--nickname`); send its stdout to `/dev/null` (you will not read it —
+   readiness and events come from `--state-file` and `poll`):
+   ```
+   ahs join {ID} --model {MODEL} --harness 'Claude Code' --state-file /tmp/agent-habilis/swarm/sessions/${PPID}.json --no-interactive --output json
+   ```
+   `${PPID}` verbatim.
+2. **Readiness via the state-file** (not the `ready` event — you are not reading
+   the stream): poll `/tmp/agent-habilis/swarm/sessions/${PPID}.json` until it
+   exists and contains valid `swarm`/`name`/`nickname`; read `$SWARM`/`$NAME`/
+   `$NICKNAME` from it. If it never appears, print `failed to join swarm` and
+   STOP (same failure contract).
+3. **Print the same Output block** as the Monitor path (below).
+4. **Event handling = the Monitor event handler, polled.** Run a poll tick:
+   `ahs poll --swarm $SWARM --nickname $NICKNAME --after $LAST --output json`
+   (omit `--after` on the first poll). Each returned object is **the same event
+   the Monitor handler describes** — same `event`/`type`/`display`/`self`/
+   exchange fields — plus a leading `seq`. So apply the **"Monitor event
+   handler"** section below **verbatim**: emit each event's `display` as-is,
+   skip the same events, drive the same exchange/`TodoWrite` machinery. Track
+   `$LAST` = the `seq` of the last event you handled; advance it each tick. If a
+   poll reports the `--after seq` aged out, re-baseline from the returned set.
+   Drive the tick with the `loop` skill / a `ScheduleWakeup` (~20–30s idle,
+   faster while an exchange is mid-flight). **Events surface on the tick, not
+   instantly** — that is the only behavioral difference.
 
 ## Output
 

@@ -382,7 +382,7 @@ pub(crate) async fn handle_session_request(
             sent_ok
         }
         SessionRequest::Poll { after, resp } => {
-            let _ = resp.send(state.poll_after(after.as_ref(), output));
+            let _ = resp.send(state.poll_since(after));
             false
         }
         SessionRequest::Exchange {

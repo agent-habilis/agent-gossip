@@ -17,7 +17,7 @@ mod common;
 
 use std::time::Duration;
 
-use agent_habilis_swarm::{ExchangeId, ExchangeKind, ExchangePhase, MessageKind};
+use agent_habilis_swarm::{ExchangeId, ExchangeKind, ExchangePhase, MessageKind, OutputEvent};
 use common::{InProcNode, MSG_TIMEOUT, three_peers};
 
 /// A fixed, valid task id for these in-process tests. Each test runs an
@@ -180,7 +180,7 @@ async fn task_not_surfaced_to_third_party() {
         .await
         .expect("fetch")
         .into_iter()
-        .any(|msg| matches!(msg.kind, MessageKind::Exchange { .. }));
+        .any(|item| matches!(item.event, OutputEvent::Exchange { .. }));
     assert!(
         !logged,
         "a third party must not log/retain a task addressed to someone else"
@@ -229,7 +229,13 @@ async fn exchange_progress_is_plumbing_not_logged() {
         .await
         .expect("fetch")
         .into_iter()
-        .any(|msg| matches!(&msg.kind, MessageKind::Exchange { phase, .. } if *phase == ExchangePhase::Progress));
+        .any(|item| {
+            matches!(
+                item.event,
+                OutputEvent::Exchange { msg, .. }
+                    if matches!(&msg.kind, MessageKind::Exchange { phase, .. } if *phase == ExchangePhase::Progress)
+            )
+        });
     assert!(!logged, "a progress beat must never be logged/retained");
 
     bob.leave().await;

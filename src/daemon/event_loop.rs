@@ -248,6 +248,23 @@ async fn event_loop(loop_state: EventLoop) -> Result<()> {
 
     log_daemon_start(&author);
 
+    // Mirror every surfaced event into `state.surfaced_events` (the
+    // `poll`/`fetch` history) via an `Output` tap. Kept entirely inside the
+    // loop: `EventLoopConfig` carries no receiver. `with_tap` attaches to the
+    // CLI `Stream` sink AND the embed/MCP `Capture` sink (so embed `fetch` /
+    // MCP `fetch_messages` see the same events) — the embed path relies on
+    // that. The channel is unbounded but drained every iteration, so it holds
+    // at most one iteration's worth of events.
+    //
+    // Note this taps the event loop's OWN `output` only; the IPC socket
+    // listener was handed a separate `output.clone()` in `run()` BEFORE this
+    // tap, so its clone is untapped. That is fine: the listener uses its clone
+    // only for socket bind/accept errors, and IPC-command events are surfaced
+    // by the loop's tapped `output` here (the listener just forwards parsed
+    // commands over a channel).
+    let (surfaced_tx, mut surfaced_rx) = mpsc::unbounded_channel::<output::OutputEvent>();
+    let output = output.with_tap(surfaced_tx);
+
     let mut stdin_reader = BufReader::new(tokio::io::stdin());
     let mut stdin_open = interactive;
 
@@ -355,9 +372,62 @@ async fn event_loop(loop_state: EventLoop) -> Result<()> {
                 break;
             }
         }
+        drain_surfaced(&mut surfaced_rx, &mut state);
     }
 
     Ok(())
+}
+
+/// Drain the `Output` tap into the surfaced-events ring. Runs after the arm
+/// that produced the events, before the next iteration can serve a `poll`, so
+/// a poll never misses an event surfaced in a prior iteration. `try_recv` is
+/// non-blocking; the channel is empty in the steady state.
+///
+/// Keeps only events that belong in the `poll`/`fetch` history; drops the rest.
+fn drain_surfaced(
+    surfaced_rx: &mut mpsc::UnboundedReceiver<output::OutputEvent>,
+    state: &mut EventLoopState,
+) {
+    while let Ok(event) = surfaced_rx.try_recv() {
+        if is_pollable(&event) {
+            state.surfaced_events.push(event);
+        }
+    }
+}
+
+/// Whether a surfaced event belongs in the `poll`/`fetch` history — an explicit
+/// allow-list of the documented pollable contract (chat, presence joined/left,
+/// content exchange legs, and the transient `ping_report`/`peer_timeout`/
+/// `peer_return`/`exchange_timeout`/`fork`). Deliberately an allow-list, not
+/// "everything except X": operational notices (`info`/`error`/`msg_posted`) and
+/// startup events (`ready`/`swarm_id`) also flow through the same `Output` tap,
+/// and must NOT enter the ring — they are developer/stream plumbing the poll
+/// contract never promised, and `poll_since`'s own eviction notices would
+/// otherwise feed back into the ring being polled. The `exchange` `Progress`
+/// beat is excluded too (a liveness widget update, never a retained record).
+fn is_pollable(event: &output::OutputEvent) -> bool {
+    use output::OutputEvent;
+    match event {
+        OutputEvent::Message { .. }
+        | OutputEvent::Presence { .. }
+        | OutputEvent::PingReport { .. }
+        | OutputEvent::PeerTimeout { .. }
+        | OutputEvent::PeerReturn { .. }
+        | OutputEvent::ExchangeTimeout { .. }
+        | OutputEvent::Fork { .. } => true,
+        OutputEvent::Exchange { msg, .. } => !matches!(
+            msg.kind,
+            crate::protocol::MessageKind::Exchange {
+                phase: crate::protocol::ExchangePhase::Progress,
+                ..
+            }
+        ),
+        OutputEvent::Info { .. }
+        | OutputEvent::Error { .. }
+        | OutputEvent::MsgPosted { .. }
+        | OutputEvent::Ready { .. }
+        | OutputEvent::SwarmId { .. } => false,
+    }
 }
 
 /// Graceful shutdown: remove the statusline state file first, then
@@ -471,7 +541,10 @@ fn spawn_quit_signal_tasks(exit_on_quit: bool) -> mpsc::Receiver<()> {
 /// each platform-specific). When the parent vanishes we feed `quit_tx`, reusing
 /// the SIGTERM path that broadcasts `left` and exits cleanly.
 #[cfg(unix)]
-#[expect(unsafe_code, reason = "libc::getppid FFI; no safe wrapper, always succeeds")]
+#[expect(
+    unsafe_code,
+    reason = "libc::getppid FFI; no safe wrapper, always succeeds"
+)]
 fn spawn_orphan_watch(quit_tx: mpsc::Sender<()>) {
     let original_ppid = unsafe { libc::getppid() };
     if !orphan_watch_warranted(original_ppid) {

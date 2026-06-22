@@ -11,11 +11,11 @@ mod json;
 mod tests;
 
 pub(crate) use json::PingPeer;
-pub use json::event_json;
 use json::{
     SimpleEvent, emit, emit_json, format_presence_json, peer_return_display, peer_timeout_display,
     ping_report_display, print_message_json,
 };
+pub use json::{event_json, surfaced_event_json};
 
 /// Output mode — chosen per event loop at construction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -160,16 +160,32 @@ pub(crate) enum Output {
     /// Write to the process stdout/stderr in the given mode (CLI /
     /// MCP-silent). `self_nick` is the local member's nickname, used to
     /// paint your own `<nick>` distinctly from peers' in Human mode.
+    ///
+    /// `tap` is an optional fan-out: when set, every surfaced
+    /// [`OutputEvent`] is *also* sent here, in addition to being rendered
+    /// to stdout. The CLI daemon attaches one so the event loop can mirror
+    /// the surfaced stream into its local `surfaced_events` ring (the
+    /// `poll`/`fetch` history), without each emit site needing `&mut
+    /// state`. The tap carries the *same* structured events the `Capture`
+    /// sink would, so a tapped event renders byte-identically through
+    /// [`event_json`] later. Self-filtering still applies before the tap
+    /// (a suppressed self-message is neither printed nor tapped).
     Stream {
         mode: OutputMode,
         filter_self: bool,
         self_nick: Option<String>,
+        tap: Option<UnboundedSender<OutputEvent>>,
     },
     /// Push structured events into an in-process channel (embed
     /// facade / tests). Mode-agnostic: every event is captured.
+    ///
+    /// `tap` mirrors each event into the daemon's `surfaced_events` ring,
+    /// exactly as the `Stream` tap does — so the embed facade's `fetch`
+    /// (pull) sees the same events its `events()` subscription (push) does.
     Capture {
         tx: UnboundedSender<OutputEvent>,
         filter_self: bool,
+        tap: Option<UnboundedSender<OutputEvent>>,
     },
 }
 
@@ -179,6 +195,38 @@ impl Output {
             mode,
             filter_self,
             self_nick,
+            tap: None,
+        }
+    }
+
+    /// Attach a fan-out `tap`, returning the tapped sink. Every surfaced
+    /// [`OutputEvent`] is then *also* sent to `tap` (the daemon's
+    /// `surfaced_events` mirror) in addition to being rendered/captured.
+    /// Applies to BOTH the `Stream` sink (CLI daemon) and the `Capture` sink
+    /// (embed/MCP — so its `fetch` sees the same events its `events()`
+    /// subscription does); replaces any existing tap (there is only ever one
+    /// attach site). Lets the event loop wrap the sink it was handed without
+    /// `EventLoopConfig` carrying a receiver.
+    pub(crate) fn with_tap(self, tap: UnboundedSender<OutputEvent>) -> Self {
+        match self {
+            Output::Stream {
+                mode,
+                filter_self,
+                self_nick,
+                tap: _,
+            } => Output::Stream {
+                mode,
+                filter_self,
+                self_nick,
+                tap: Some(tap),
+            },
+            Output::Capture {
+                tx, filter_self, ..
+            } => Output::Capture {
+                tx,
+                filter_self,
+                tap: Some(tap),
+            },
         }
     }
 
@@ -188,6 +236,7 @@ impl Output {
             mode: OutputMode::Silent,
             filter_self: false,
             self_nick: None,
+            tap: None,
         }
     }
 
@@ -281,6 +330,7 @@ impl Output {
         Self::Capture {
             tx,
             filter_self: false,
+            tap: None,
         }
     }
 
@@ -291,15 +341,27 @@ impl Output {
     }
 
     /// The one sink skeleton every event method shares: in `Capture`
-    /// mode push the structured [`OutputEvent`]; in `Stream` mode hand
-    /// the chosen [`OutputMode`] to `stream`, which renders that
-    /// event's own human / JSON / (silent) form. Factoring this out is
-    /// what removes the ~10× duplicated `match Stream/Capture`.
+    /// mode push the structured [`OutputEvent`]; in `Stream` mode render
+    /// that event's own human / JSON / (silent) form, and — when a `tap`
+    /// is attached — *also* push the structured event so the daemon's
+    /// `surfaced_events` ring sees the identical stream. Factoring this
+    /// out is what removes the ~10× duplicated `match Stream/Capture`.
     fn dispatch(&self, event: impl FnOnce() -> OutputEvent, stream: impl FnOnce(OutputMode)) {
         match self {
-            Output::Stream { mode, .. } => stream(*mode),
-            Output::Capture { tx, .. } => {
-                let _ = tx.send(event());
+            Output::Stream { mode, tap, .. } => {
+                stream(*mode);
+                if let Some(tap) = tap {
+                    let _ = tap.send(event());
+                }
+            }
+            Output::Capture { tx, tap, .. } => {
+                // Build once; the live `events()` subscription and the
+                // `surfaced_events` ring (tap) each get a copy.
+                let event = event();
+                if let Some(tap) = tap {
+                    let _ = tap.send(event.clone());
+                }
+                let _ = tx.send(event);
             }
         }
     }
@@ -605,25 +667,39 @@ impl Output {
         // Not routed through `dispatch`: `peers` is owned and each arm
         // consumes (or drops) it, so there is nothing to clone.
         match self {
-            Output::Capture { tx, .. } => {
+            Output::Capture { tx, tap, .. } => {
+                if let Some(tap) = tap {
+                    let _ = tap.send(OutputEvent::PingReport {
+                        peers: peers.clone(),
+                        known,
+                    });
+                }
                 let _ = tx.send(OutputEvent::PingReport { peers, known });
             }
-            Output::Stream { mode, .. } => match mode {
-                OutputMode::Human => {
-                    for peer in &peers {
-                        let (open, close) = self.nick_ansi(peer.nickname.as_str(), stderr_color());
-                        eprintln!("{open}<{}>{close} {}ms", peer.nickname, peer.rtt_ms);
+            Output::Stream { mode, tap, .. } => {
+                match mode {
+                    OutputMode::Human => {
+                        for peer in &peers {
+                            let (open, close) =
+                                self.nick_ansi(peer.nickname.as_str(), stderr_color());
+                            eprintln!("{open}<{}>{close} {}ms", peer.nickname, peer.rtt_ms);
+                        }
+                        eprintln!("{}/{known} online", peers.len());
                     }
-                    eprintln!("{}/{known} online", peers.len());
+                    OutputMode::Json => emit_json(&SimpleEvent::PingReport {
+                        responded: peers.len(),
+                        display: ping_report_display(&peers, known),
+                        peers: peers.clone(),
+                        known,
+                    }),
+                    OutputMode::Silent => {}
                 }
-                OutputMode::Json => emit_json(&SimpleEvent::PingReport {
-                    responded: peers.len(),
-                    display: ping_report_display(&peers, known),
-                    peers,
-                    known,
-                }),
-                OutputMode::Silent => {}
-            },
+                // Mirror into the daemon's surfaced-events ring so `poll`
+                // can return the same `ping_report` the stream just showed.
+                if let Some(tap) = tap {
+                    let _ = tap.send(OutputEvent::PingReport { peers, known });
+                }
+            }
         }
     }
 

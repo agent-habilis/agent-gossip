@@ -15,7 +15,7 @@ use super::rate_limit::SwarmRateLimiter;
 use crate::daemon::state_file::StateFile;
 use crate::output;
 use crate::protocol::identity::Identity;
-use crate::protocol::{ExchangeId, Message, MessageId, Nickname};
+use crate::protocol::{ExchangeId, MessageId, Nickname};
 use crate::util::bounded_fifo_set::BoundedFifoSet;
 use crate::util::bounded_queue::BoundedQueue;
 use crate::util::cooldown::Cooldown;
@@ -237,6 +237,14 @@ pub(crate) struct EventLoopState {
     /// non-advertising case (no shared counter to maintain).
     pub live_count: Option<Arc<AtomicUsize>>,
     pub message_log: MessageLog,
+    /// Local, seq-ordered record of everything surfaced to the
+    /// operator/agent — the history `poll` / `fetch_messages` drain. Fed by
+    /// the [`Output`](crate::output::Output) tap (the event loop mirrors each
+    /// surfaced [`OutputEvent`] here), so it carries the *same* events the
+    /// `--output json` stream shows, transient events included. Cursored by a
+    /// monotonic local `seq` (see [`super::surfaced::SurfacedEvents`]) —
+    /// deliberately separate from `message_log`'s cross-node `eviction_key`.
+    pub surfaced_events: super::surfaced::SurfacedEvents,
     /// Rolling start index for the anti-entropy digest window: each round
     /// advertises `message_log[digest_cursor ..]` (up to
     /// `ANTIENTROPY_DIGEST_MAX_IDS`), then advances/wraps so a log larger
@@ -352,6 +360,9 @@ impl EventLoopState {
             state_file,
             live_count: None,
             message_log: MessageLog::new(message_log_size()),
+            surfaced_events: super::surfaced::SurfacedEvents::new(
+                crate::util::consts::SURFACED_EVENTS_CAP,
+            ),
             digest_cursor: 0,
             rate_limiter: SwarmRateLimiter::from_per_min(rate_limit_per_min),
             identity,
@@ -370,34 +381,37 @@ impl EventLoopState {
         }
     }
 
-    /// The buffered messages after `after`, join-horizon filtered (never
-    /// surfaces a message stamped before this process joined). The single
-    /// source of truth for both the CLI socket `poll` and the typed
-    /// in-process `Poll` (embed `fetch` / MCP `fetch_messages`). Emits the
-    /// evicted-cursor notice through `output` when `after` aged out.
-    pub(crate) fn poll_after(
-        &self,
-        after: Option<&MessageId>,
-        output: &output::Output,
-    ) -> Vec<Message> {
-        let (mut messages, evicted) = self.message_log.messages_after(after);
+    /// The events surfaced after the `after` seq cursor, in surfacing order —
+    /// the single source of truth for the CLI socket `poll` and the typed
+    /// in-process `Poll` (embed `fetch` / MCP `fetch_messages`). Reads the
+    /// local [`surfaced_events`](Self::surfaced_events) ring, NOT the
+    /// cross-node message log, so one `seq` cursor walks chat, presence,
+    /// exchange legs, and the transient events alike. Join-horizon needs no
+    /// re-filtering here: a pre-join message is never *surfaced*, so it never
+    /// entered this ring.
+    ///
+    /// Diagnostics (cursor aged out, response capped) go to the developer log
+    /// via `tracing`, **not** through the daemon's user-facing `Output`: that
+    /// `Output` carries the surfaced-events tap, so an `info`/`error` notice
+    /// emitted here would feed straight back into the very ring being polled
+    /// (and, on the embed/Capture path, into the live `events()` subscription).
+    pub(crate) fn poll_since(&self, after: Option<u64>) -> Vec<super::surfaced::SurfacedEvent> {
+        let (mut events, evicted) = self.surfaced_events.since(after);
         if evicted {
-            output.info("poll: --after ID was evicted from buffer, returning all messages");
+            tracing::debug!(
+                "poll: --after seq aged out of the ring; returning all surfaced events"
+            );
         }
-        messages.retain(|message| message.timestamp >= self.joined_at);
-        // Cap the response to the fixed IPC window (independent of the
-        // configurable log size). Normally a no-op — the default log equals
-        // the window — but a larger configured log surfaces only the most
-        // recent `POLL_RESPONSE_MAX_MSGS` here (deep history still backs
-        // anti-entropy recovery).
-        if messages.len() > crate::util::consts::POLL_RESPONSE_MAX_MSGS {
-            let drop_count = messages.len() - crate::util::consts::POLL_RESPONSE_MAX_MSGS;
-            messages.drain(0..drop_count);
-            output
-                .info("poll: log exceeds the response window, returning the most recent messages");
+        // Cap the response to the fixed IPC window. The ring is sized to match
+        // the window (see `SURFACED_EVENTS_CAP`), so in the steady state this is
+        // a no-op; it only trims if a future ring grows past the window.
+        if events.len() > crate::util::consts::POLL_RESPONSE_MAX_MSGS {
+            let drop_count = events.len() - crate::util::consts::POLL_RESPONSE_MAX_MSGS;
+            events.drain(0..drop_count);
+            tracing::debug!(dropped = drop_count, "poll: response capped to the window");
         }
-        tracing::debug!(returned = messages.len(), evicted, "poll served");
-        messages
+        tracing::debug!(returned = events.len(), evicted, "poll served");
+        events
     }
 
     /// Write `participant_count = participants.len() + 1` (we add 1
@@ -464,10 +478,13 @@ impl EventLoopState {
     /// whose link dropped) reads `Gossip` and flips to `Direct` once its next
     /// advertisement lands.
     fn reach_of(&self, nick: &Nickname) -> Reach {
-        let linked = self.participant_endpoints.get(nick).is_some_and(|endpoint| {
-            self.linked_endpoints.contains(endpoint)
-                || (self.rendezvous_id == Some(*endpoint) && self.rendezvous_linked)
-        });
+        let linked = self
+            .participant_endpoints
+            .get(nick)
+            .is_some_and(|endpoint| {
+                self.linked_endpoints.contains(endpoint)
+                    || (self.rendezvous_id == Some(*endpoint) && self.rendezvous_linked)
+            });
         if linked { Reach::Direct } else { Reach::Gossip }
     }
 
@@ -806,11 +823,15 @@ mod tests {
         let stale_ep = endpoint_id(2);
         // A participant whose advertised endpoint is a live link → direct.
         state.participants.insert(nick("linked"));
-        state.participant_endpoints.insert(nick("linked"), linked_ep);
+        state
+            .participant_endpoints
+            .insert(nick("linked"), linked_ep);
         state.linked_endpoints.insert(linked_ep);
         // Advertised, but the endpoint is not (any longer) a live link → gossip.
         state.participants.insert(nick("unlinked"));
-        state.participant_endpoints.insert(nick("unlinked"), stale_ep);
+        state
+            .participant_endpoints
+            .insert(nick("unlinked"), stale_ep);
         // No PeerInfo seen yet → no binding → gossip.
         state.participants.insert(nick("unknown"));
         // Quiet evictees are never live-linked → gossip.

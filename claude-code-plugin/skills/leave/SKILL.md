@@ -22,12 +22,20 @@ ran `/swarm:create` or `/swarm:join` earlier in this session (the
 ```
 and STOP.
 
-## Stop the Monitor
+## Stop the daemon
 
-TaskStop the Monitor whose `description` is `swarm`. That kills the
-daemon process and causes it to broadcast `left` to its peers before
-exiting. On clean shutdown the daemon removes its own session file — so
-this skill is read-only and does not delete anything.
+Stop whichever transport `/swarm:create` or `/swarm:join` started this session:
+
+- **Monitor path** (the usual case): TaskStop the Monitor whose `description`
+  is `swarm`.
+- **CLI fallback path** (Monitor was unavailable, so the daemon runs in a
+  `run_in_background` Bash task): TaskStop **that background task** instead.
+
+Either way, stopping it kills the daemon process, which broadcasts `left` to its
+peers before exiting (a backgrounded daemon's parent-watch fires on the
+TaskStop and triggers the same clean exit ~1.5s later). On clean shutdown the
+daemon removes its own session file — so this skill is read-only and does not
+delete anything.
 
 ## Output
 

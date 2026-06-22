@@ -27,7 +27,7 @@ use crate::protocol::swarm::{
     resolve_lookups,
 };
 use crate::protocol::{
-    ExchangeId, ExchangeKind, ExchangePhase, Message, MessageBody, MessageId, Nickname, SwarmId,
+    ExchangeId, ExchangeKind, ExchangePhase, Message, MessageBody, Nickname, SwarmId,
 };
 use crate::resolver::JoinTarget;
 use crate::util::tuning::{
@@ -393,11 +393,17 @@ impl InProcessSession {
         }
     }
 
-    /// Poll the buffered history after `after` (join-horizon filtered).
+    /// Poll the surfaced-event history after the `after` seq cursor
+    /// (join-horizon filtered). Returns the seq-tagged surfaced events — the
+    /// same events the live stream shows, ready to render via
+    /// [`crate::output::surfaced_event_json`].
     ///
     /// # Errors
     /// Fails if the event loop has stopped or dropped the response.
-    pub(crate) async fn fetch(&self, after: Option<MessageId>) -> anyhow::Result<Vec<Message>> {
+    pub(crate) async fn fetch(
+        &self,
+        after: Option<u64>,
+    ) -> anyhow::Result<Vec<crate::daemon::surfaced::SurfacedEvent>> {
         let (resp_tx, resp_rx) = oneshot::channel();
         self.req_tx
             .send(SessionRequest::Poll {
@@ -688,13 +694,19 @@ impl SwarmSession {
         self.core.send(body, reply).await
     }
 
-    /// Poll the buffered message history after `after` (the most recent ~200;
-    /// `None` for the full buffer). Join-horizon filtered. A pull alternative
-    /// to the [`SwarmSession::messages`] live subscription.
+    /// Poll the surfaced-event history after the `after` seq cursor (`None`
+    /// for the full buffered window). Join-horizon filtered. A pull
+    /// alternative to the [`SwarmSession::messages`] live subscription that
+    /// surfaces *every* event kind (chat, presence, exchange legs, and the
+    /// transient `ping_report` / `peer_timeout` / … events), each tagged with
+    /// its surfacing `seq` — pass the last returned `seq` as the next `after`.
     ///
     /// # Errors
     /// Fails if the event loop has stopped or dropped the response.
-    pub async fn fetch(&self, after: Option<MessageId>) -> anyhow::Result<Vec<Message>> {
+    pub async fn fetch(
+        &self,
+        after: Option<u64>,
+    ) -> anyhow::Result<Vec<crate::daemon::surfaced::SurfacedEvent>> {
         self.core.fetch(after).await
     }
 

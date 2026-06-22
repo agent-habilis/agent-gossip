@@ -34,6 +34,9 @@ pub(crate) mod rate_limit;
 mod rate_limit;
 pub(crate) mod setup;
 pub(crate) mod state;
+// Local, seq-ordered record of surfaced events — the `poll` / `fetch_messages`
+// history. Distinct from `message_log` (the cross-node anti-entropy buffer).
+pub(crate) mod surfaced;
 // The session state file the daemon writes for external readers (its
 // sole writer). Daemon-session state, not a generic `util` helper.
 pub(crate) mod exchange;

@@ -197,13 +197,12 @@ struct SendMessageArgs {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct FetchMessagesArgs {
-    /// Explicit cursor override. Usually omit this: the server
-    /// auto-tracks the last message it handed back, so repeat calls
-    /// return only new traffic (first call sees full history ~200
-    /// messages). Pass an explicit id only to replay from a
-    /// specific point.
+    /// Explicit cursor override (a `seq`). Usually omit this: the server
+    /// auto-tracks the last `seq` it handed back, so repeat calls return
+    /// only new traffic (first call sees full history ~200 events). Pass an
+    /// explicit `seq` only to replay from a specific point.
     #[serde(default)]
-    after: Option<String>,
+    after: Option<u64>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -330,8 +329,14 @@ struct SendMessageResult {
 
 #[derive(Debug, Serialize)]
 struct FetchMessagesResult {
-    messages: Vec<Message>,
-    current_id: Option<MessageId>,
+    /// Surfaced events since the cursor, each the *same* JSON object the live
+    /// `--output json` stream emits (carrying `seq`, `event`/`type`,
+    /// `display`, `self`, …) — chat, presence, exchange legs, and the
+    /// transient `ping_report` / `peer_timeout` / … events alike.
+    messages: Vec<serde_json::Value>,
+    /// The newest `seq` returned (the next `after`), or `None` when nothing
+    /// new arrived.
+    current_seq: Option<u64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -524,7 +529,11 @@ impl AgentSwarmServer {
             if remaining.is_zero() {
                 break;
             }
-            let wait = if seen_any { GRACE.min(remaining) } else { remaining };
+            let wait = if seen_any {
+                GRACE.min(remaining)
+            } else {
+                remaining
+            };
             match tokio::time::timeout(wait, events.recv()).await {
                 Ok(Some(_)) => seen_any = true,
                 // Channel closed, or quiet for `wait` (the post-hit grace, or
@@ -578,7 +587,7 @@ impl AgentSwarmServer {
     }
 
     #[tool(
-        description = "Return buffered messages from the current swarm. The server auto-tracks a per-session cursor, so repeat calls with no args return only new traffic (first call sees full history, up to ~200 messages). Pass `after` only to explicitly replay from a specific id. Never returns `alive` heartbeats — those are internal plumbing."
+        description = "Return buffered events from the current swarm — chat, presence, exchange legs, and transient events (ping_report, peer_timeout, …), each the same JSON object the live event stream emits. The server auto-tracks a per-session `seq` cursor, so repeat calls with no args return only new traffic (first call sees full history, up to ~200 events). Pass `after` (a seq) only to explicitly replay from a point. Never returns `alive` heartbeats — those are internal plumbing."
     )]
     async fn fetch_messages(
         &self,
@@ -586,16 +595,34 @@ impl AgentSwarmServer {
     ) -> Result<CallToolResult, McpError> {
         let guard = self.session.lock().await;
         let session = guard.as_ref().ok_or_else(not_in_swarm_error)?;
-        let after = match args.after {
-            None => None,
-            Some(raw) => Some(MessageId::new(raw).map_err(|error| {
-                McpError::invalid_params(format!("invalid after cursor: {error}"), None)
-            })?),
-        };
-        let (messages, current_id) = session.fetch_messages(after).await.map_err(to_mcp_error)?;
+        let events = session
+            .fetch_messages(args.after)
+            .await
+            .map_err(to_mcp_error)?;
+        // Render each surfaced event to the stream-identical JSON object, then
+        // parse back to a `Value` so it embeds in the structured result.
+        // `current_seq` is the seq of the last event ACTUALLY included, not of
+        // the raw batch: every pollable event is expected to render, but if one
+        // ever fails to (a bug — log it), the cursor must not advance past an
+        // event the client never received, or it would silently lose it.
+        let mut messages: Vec<serde_json::Value> = Vec::with_capacity(events.len());
+        let mut current_seq: Option<u64> = None;
+        for item in &events {
+            if let Some(value) = crate::output::surfaced_event_json(item.seq, &item.event)
+                .and_then(|line| serde_json::from_str::<serde_json::Value>(&line).ok())
+            {
+                messages.push(value);
+                current_seq = Some(item.seq);
+            } else {
+                tracing::warn!(
+                    seq = item.seq,
+                    "fetch_messages: surfaced event failed to render; omitting and not advancing cursor past it"
+                );
+            }
+        }
         ok_json(FetchMessagesResult {
             messages,
-            current_id,
+            current_seq,
         })
     }
 

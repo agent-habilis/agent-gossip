@@ -60,6 +60,22 @@ pub(crate) const DEFAULT_MESSAGE_LOG_SIZE: usize = 1000;
 /// log just means `poll` surfaces the most-recent `POLL_RESPONSE_MAX_MSGS`.
 pub(crate) const POLL_RESPONSE_MAX_MSGS: usize = 1000;
 
+/// Capacity of the daemon-local **surfaced-events** ring — the seq-ordered
+/// history `poll` / `fetch_messages` drain. Distinct from the message log:
+/// that is the cross-node anti-entropy buffer (evicted by a deterministic
+/// `eviction_key`); this is a *local* record of what was surfaced to the
+/// operator/agent (msg + presence + exchange legs **and** the transient
+/// events — `ping_report`, `peer_timeout`/`return`, `exchange_timeout`,
+/// `fork` — that never entered the message log). Oldest-drop on overflow.
+///
+/// Sized **equal to** the poll response window so the ring never holds more
+/// than a single `poll` returns: ring eviction and the response cap coincide,
+/// so the response cap is a no-op in the steady state and no surfaced event is
+/// ever dropped *after* `since()` selected it but *before* the client could
+/// read it (a larger ring would silently lose the oldest events on a full
+/// first poll, with the client's cursor advancing past them).
+pub(crate) const SURFACED_EVENTS_CAP: usize = POLL_RESPONSE_MAX_MSGS;
+
 /// Max bytes for one stdin line. A raw message body larger than the wire
 /// cap can never form a valid message, so the line read is capped there.
 pub(crate) const MAX_STDIN_LINE_BYTES: usize = MAX_MESSAGE_SIZE;
@@ -69,10 +85,13 @@ pub(crate) const MAX_STDIN_LINE_BYTES: usize = MAX_MESSAGE_SIZE;
 pub(crate) const MAX_IPC_COMMAND_BYTES: usize = 2 * MAX_MESSAGE_SIZE;
 
 /// Max bytes for one IPC response line: a poll returns at most
-/// [`POLL_RESPONSE_MAX_MSGS`] messages, each ≤ the wire cap. Fixed (not tied
-/// to the configurable log size) so the `poll` client has a stable read
-/// bound.
-pub(crate) const MAX_IPC_RESPONSE_BYTES: usize = POLL_RESPONSE_MAX_MSGS * MAX_MESSAGE_SIZE;
+/// [`POLL_RESPONSE_MAX_MSGS`] events. Each rendered event is larger than its
+/// raw body — the `display` field re-renders the body with a markdown prefix
+/// (≈ a second copy of the body) and the JSON envelope (`seq`/`event`/`id`/
+/// `pubkey`/… field names + a `ping_report` peer table) adds more — so budget
+/// **3×** the wire cap per event, not 1×, or a window of large-body messages
+/// overruns this bound and the `poll` client errors ("IPC response too large").
+pub(crate) const MAX_IPC_RESPONSE_BYTES: usize = 3 * POLL_RESPONSE_MAX_MSGS * MAX_MESSAGE_SIZE;
 
 // ── Daemon tuning defaults ────────────────────────────────────────
 //

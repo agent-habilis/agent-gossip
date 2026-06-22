@@ -60,8 +60,9 @@ pub mod harness;
 // (otherwise `pub(crate)`) modules; re-exporting them from the crate
 // root is what makes them externally reachable and satisfies
 // `unreachable_pub`.
+pub use daemon::surfaced::SurfacedEvent;
 pub use logging::LogSink;
-pub use output::{OutputEvent, event_json};
+pub use output::{OutputEvent, event_json, surfaced_event_json};
 pub use protocol::message::{
     BodyError, ExchangeId, ExchangeIdError, ExchangeKind, ExchangeKindError, ExchangePhase,
     ExchangePhaseError, IdError, Message, MessageBody, MessageId, MessageKind, PresenceSubtype,

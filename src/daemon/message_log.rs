@@ -1,6 +1,6 @@
 use std::collections::{HashSet, VecDeque};
 
-use crate::protocol::{Message, MessageId};
+use crate::protocol::Message;
 
 /// One anti-entropy digest window: the inclusive `[lo, hi]` timestamp
 /// range it covers and the compact (raw 16-byte UUID) ids the sender holds
@@ -134,22 +134,6 @@ impl MessageLog {
             .cloned()
             .collect()
     }
-
-    /// Return messages after the given ID, or all messages if `after` is None.
-    /// Returns (messages, evicted) where evicted is true if the requested ID
-    /// was not found in the buffer (likely evicted due to capacity).
-    pub(crate) fn messages_after(&self, after: Option<&MessageId>) -> (Vec<Message>, bool) {
-        match after {
-            None => (self.messages.iter().cloned().collect(), false),
-            Some(id) => {
-                let pos = self.messages.iter().position(|msg| &msg.id == id);
-                match pos {
-                    Some(idx) => (self.messages.iter().skip(idx + 1).cloned().collect(), false),
-                    None => (self.messages.iter().cloned().collect(), true),
-                }
-            }
-        }
-    }
 }
 
 /// Total order deciding which message is evicted on overflow (smallest is
@@ -278,59 +262,6 @@ mod tests {
     // ── MessageLog ─────────────────────────────────────────────────
 
     #[test]
-    fn message_log_returns_all_when_no_after() {
-        let mut log = MessageLog::new(10);
-        let m1 = msg("first");
-        let m2 = msg("second");
-        log.push(m1);
-        log.push(m2);
-        let (msgs, evicted) = log.messages_after(None);
-        assert_eq!(msgs.len(), 2);
-        assert!(!evicted);
-    }
-
-    #[test]
-    fn message_log_returns_after_id() {
-        let mut log = MessageLog::new(10);
-        let m1 = msg("first");
-        let id1 = m1.id.clone();
-        let m2 = msg("second");
-        let m3 = msg("third");
-        log.push(m1);
-        log.push(m2);
-        log.push(m3);
-        let (msgs, evicted) = log.messages_after(Some(&id1));
-        assert_eq!(msgs.len(), 2);
-        assert_eq!(msgs[0].body.as_str(), "second");
-        assert_eq!(msgs[1].body.as_str(), "third");
-        assert!(!evicted);
-    }
-
-    #[test]
-    fn message_log_returns_all_with_evicted_flag_when_id_not_found() {
-        let mut log = MessageLog::new(2);
-        let m1 = msg_at("first", 10); // lowest ts → the one evicted
-        let id1 = m1.id.clone();
-        log.push(m1);
-        log.push(msg_at("second", 20));
-        log.push(msg_at("third", 30)); // over cap → evicts "first"
-        let (msgs, evicted) = log.messages_after(Some(&id1));
-        assert!(evicted);
-        assert_eq!(msgs.len(), 2);
-    }
-
-    #[test]
-    fn message_log_after_last_returns_empty() {
-        let mut log = MessageLog::new(10);
-        let stored = msg("only");
-        let id = stored.id.clone();
-        log.push(stored);
-        let (msgs, evicted) = log.messages_after(Some(&id));
-        assert!(msgs.is_empty());
-        assert!(!evicted);
-    }
-
-    #[test]
     fn message_log_evicts_lowest_key_when_full() {
         // Eviction drops the smallest eviction key (here: oldest timestamp),
         // not the front, so retention is independent of push order. Push the
@@ -349,9 +280,9 @@ mod tests {
     }
 
     mod prop {
-        use proptest::{prop_assert, prop_assert_eq, proptest};
+        use proptest::{prop_assert, proptest};
 
-        use super::{MessageLog, msg, msg_at};
+        use super::{MessageLog, msg};
 
         proptest! {
             #![proptest_config(crate::proptest_support::config())]
@@ -365,58 +296,6 @@ mod tests {
                     log.push(msg(&format!("m{i}")));
                 }
                 prop_assert!(log.messages.len() <= cap);
-            }
-
-            #[test]
-            fn prop_messages_after_none_returns_all(
-                count in 0..50usize,
-            ) {
-                let mut log = MessageLog::new(100);
-                for i in 0..count {
-                    log.push(msg(&format!("m{i}")));
-                }
-                let (msgs, evicted) = log.messages_after(None);
-                prop_assert_eq!(msgs.len(), count);
-                prop_assert!(!evicted);
-            }
-
-            #[test]
-            fn prop_messages_after_valid_id_excludes_prefix(
-                before in 1..20usize,
-                after in 0..20usize,
-            ) {
-                let mut log = MessageLog::new(100);
-                let mut ids = Vec::new();
-                for i in 0..(before + after) {
-                    let stored = msg(&format!("m{i}"));
-                    ids.push(stored.id.clone());
-                    log.push(stored);
-                }
-                // Query after the `before`-th message (0-indexed: before - 1)
-                let pivot = &ids[before - 1];
-                let (msgs, evicted) = log.messages_after(Some(pivot));
-                prop_assert_eq!(msgs.len(), after);
-                prop_assert!(!evicted);
-            }
-
-            #[test]
-            fn prop_evicted_id_returns_all_with_flag(
-                cap in 1..10usize,
-                extra in 1..20usize,
-            ) {
-                let mut log = MessageLog::new(cap);
-                // ts=0 makes "evicted" the lowest key, so it is always the
-                // one dropped once the log overflows (fills use ts >= 1).
-                let first = msg_at("evicted", 0);
-                let evicted_id = first.id.clone();
-                log.push(first);
-                // Push enough to evict
-                for i in 0..(cap + extra) {
-                    log.push(msg_at(&format!("fill{i}"), i64::try_from(i).unwrap() + 1));
-                }
-                let (msgs, evicted) = log.messages_after(Some(&evicted_id));
-                prop_assert!(evicted);
-                prop_assert_eq!(msgs.len(), log.messages.len());
             }
         }
     }

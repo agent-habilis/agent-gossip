@@ -584,8 +584,11 @@ fn test_state_file_removed_on_signal() {
     }
 }
 
-/// The poll command retrieves buffered messages from a running swarm process.
-/// Calling poll with --after returns only messages after that ID.
+/// The poll command retrieves buffered events from a running swarm process,
+/// each carrying its surfacing `seq`. Calling poll with `--after <seq>` returns
+/// only events surfaced after that seq. The records are the same shape the live
+/// `--output json` stream emits (`event`/`type`/`display`/`self`), so a fallback
+/// agent parses one shape whether it reads the stream or polls.
 #[test]
 fn test_poll_returns_messages() {
     let (creator, swarm) = Node::create();
@@ -602,12 +605,12 @@ fn test_poll_returns_messages() {
     cli_message(&swarm, &joiner.nickname, "second message");
     std::thread::sleep(Duration::from_millis(500));
 
-    // Poll all messages from joiner's process.
+    // Poll all events from joiner's process.
     let all_json = cli_poll(&swarm, &joiner.nickname, None);
     let all: Vec<serde_json::Value> = serde_json::from_str(&all_json)
         .unwrap_or_else(|error| panic!("failed to parse poll JSON: {error}\nraw: {all_json}"));
 
-    // Should have at least the 2 messages we sent (plus possible presence messages).
+    // Should have at least the 2 messages we sent (plus possible presence).
     let msg_bodies: Vec<&str> = all.iter().filter_map(|msg| msg["body"].as_str()).collect();
     assert!(
         msg_bodies.contains(&"hello from poll test"),
@@ -618,31 +621,48 @@ fn test_poll_returns_messages() {
         "second message missing from poll: {msg_bodies:?}"
     );
 
-    // Find the ID of the first sent message and poll with --after.
-    let first_msg = all
+    // Stream-parity shape: each record carries a monotonic `seq`, and a `msg`
+    // record carries the pre-built `display` and the `self` flag (the joiner
+    // authored these, so `self` is true).
+    let first = all
         .iter()
-        .find(|msg| msg["body"].as_str() == Some("hello from poll test"))
+        .find(|event| event["body"].as_str() == Some("hello from poll test"))
         .expect("first message not found");
-    let first_id = first_msg["id"].as_str().expect("message has no id");
+    assert!(
+        first["seq"].is_u64(),
+        "poll record must carry a seq: {first}"
+    );
+    assert_eq!(first["event"], "message");
+    assert_eq!(first["type"], "msg");
+    assert_eq!(first["display"], "🐝️ `<joiner-poll>`: hello from poll test");
+    assert_eq!(first["self"], true, "joiner authored it → self:true");
 
-    let after_json = cli_poll(&swarm, &joiner.nickname, Some(first_id));
+    // Poll with `--after <seq>` of the first message → excludes it, keeps the
+    // second (the unified seq cursor).
+    let first_seq = first["seq"].as_u64().expect("seq is u64");
+    let after_json = cli_poll(&swarm, &joiner.nickname, Some(&first_seq.to_string()));
     let after: Vec<serde_json::Value> = serde_json::from_str(&after_json).unwrap_or_else(|error| {
         panic!("failed to parse after-poll JSON: {error}\nraw: {after_json}")
     });
-
-    // Should NOT contain the first message, but should contain the second.
     let after_bodies: Vec<&str> = after
         .iter()
-        .filter_map(|msg| msg["body"].as_str())
+        .filter_map(|event| event["body"].as_str())
         .collect();
     assert!(
         !after_bodies.contains(&"hello from poll test"),
-        "--after should exclude the referenced message"
+        "--after should exclude events at/before the referenced seq"
     );
     assert!(
         after_bodies.contains(&"second message"),
         "second message missing from --after poll: {after_bodies:?}"
     );
+    // Every returned seq is strictly greater than the cursor.
+    for event in &after {
+        assert!(
+            event["seq"].as_u64().expect("seq") > first_seq,
+            "--after must only return events with seq > cursor: {event}"
+        );
+    }
 }
 
 /// `ahs ping` is daemon-owned: the transient command arms a round over

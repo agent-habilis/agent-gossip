@@ -46,6 +46,19 @@ joins no swarm and writes no session, so there is no `--state-file` /
 `${PPID}`. Hold the Monitor's **task id** — you TaskStop it on every exit
 path below.
 
+**Fallback when Monitor is unavailable.** `swarm_found`/`swarm_lost` surface
+**only** on `ahs discover`'s live stdout stream — there is no public pull API
+for them (discover joins no swarm, so there is no `poll` and no `--state-file`).
+The other skills' poll fallback therefore does **not** apply, and this skill
+must **not** scrape the daemon's stdout/log (that is a developer stream, not the
+API). So when Monitor is unavailable, `/swarm:discover` cannot run. Print:
+```
+🐝 Discovery needs the Monitor tool, which isn't available in this session.
+Ask whoever runs the swarm for its `ahs…` id and use `/swarm:join <id>` directly.
+```
+and STOP. (`/swarm:create` and `/swarm:join` still work via their CLI fallback;
+only the directory browse does not.)
+
 ## First render — only after the first swarm appears
 
 Print these two lines **first**, as markdown — `#$DIR` is an inline code

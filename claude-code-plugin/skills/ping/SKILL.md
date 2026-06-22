@@ -8,8 +8,9 @@ description: Ping all peers in the current swarm and report RTT per peer. Use to
 Produce ZERO agent prose between steps. No status updates, no
 acknowledgements, no narrating what you are about to do or just did.
 This skill emits no direct output — the report arrives later on the
-create/join Monitor. Tool calls are shown by the harness; do not
-narrate around them.
+create/join session's event handler (the Monitor, or the CLI poll tick
+in fallback mode). Tool calls are shown by the harness; do not narrate
+around them.
 
 ## Pre-flight: guard
 
@@ -36,9 +37,10 @@ immediately — do **not** wait here and do **not** print anything.
 ## Output
 
 Nothing from this skill. A few seconds later the daemon emits a
-`ping_report` event on its `--output json` stream, and the
-`/swarm:create`/`/swarm:join` Monitor event handler renders the RTT
-table (the `🐝️ ping` block). The report only appears if a create/join
+`ping_report` event, and the `/swarm:create`/`/swarm:join` event handler
+renders the RTT table (the `🐝️ ping` block). Under Monitor it arrives as a
+push; in CLI fallback mode `ping_report` is pollable like any other event, so
+it surfaces on the next poll tick. The report only appears if a create/join
 session is live — which it always is when you are in a swarm.
 
 ## Notes

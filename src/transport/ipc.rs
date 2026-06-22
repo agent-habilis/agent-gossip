@@ -52,8 +52,11 @@ pub(crate) enum IpcCommand {
     #[serde(rename = "poll")]
     Poll {
         swarm: SwarmId,
+        /// Surfaced-event seq cursor: return events surfaced after this seq.
+        /// Omitted on the first poll (returns the buffered history). The
+        /// per-event `seq` in the response is the value to pass next.
         #[serde(skip_serializing_if = "Option::is_none")]
-        after: Option<MessageId>,
+        after: Option<u64>,
     },
     /// Arm an RTT round: the daemon broadcasts a ping probe, collects
     /// pongs for a fixed window, and emits a `ping_report` on its
@@ -282,8 +285,8 @@ pub(crate) async fn send(cmd: &IpcCommand, nickname: &Nickname) -> Result<String
 #[cfg(test)]
 mod tests {
     use super::{
-        ExchangeId, ExchangeKind, ExchangePhase, IpcCommand, IpcMessage, MessageBody, MessageId,
-        Nickname, SwarmId, json_error, json_ok, listen, mpsc, send, socket_path,
+        ExchangeId, ExchangeKind, ExchangePhase, IpcCommand, IpcMessage, MessageBody, Nickname,
+        SwarmId, json_error, json_ok, listen, mpsc, send, socket_path,
     };
 
     // ── pure functions ─────────────────────────────────────────────
@@ -365,15 +368,14 @@ mod tests {
 
     #[test]
     fn ipc_command_poll_round_trip() {
-        let id = MessageId::from("550e8400-e29b-41d4-a716-446655440000");
         let cmd = IpcCommand::Poll {
             swarm: SwarmId::from("ahstest"),
-            after: Some(id.clone()),
+            after: Some(42),
         };
         let json = serde_json::to_string(&cmd).unwrap();
         let parsed: IpcCommand = serde_json::from_str(&json).unwrap();
         match parsed {
-            IpcCommand::Poll { after, .. } => assert_eq!(after, Some(id)),
+            IpcCommand::Poll { after, .. } => assert_eq!(after, Some(42)),
             IpcCommand::Msg { .. }
             | IpcCommand::Ping { .. }
             | IpcCommand::Exchange { .. }

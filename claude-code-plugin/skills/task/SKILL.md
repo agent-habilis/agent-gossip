@@ -123,9 +123,10 @@ Each send echoes back as a `task` `"self":true` event.
 
 ## Drive each task
 
-The per-task mechanics live in the create/join Monitor event handler
-(loaded for the session) — do not duplicate them here. For **each** task's
-`exchange_id`:
+The per-task mechanics live in the create/join event handler (loaded for the
+session) — do not duplicate them here. (If that session is on the CLI fallback
+rather than Monitor, the worker's legs arrive on the poll tick, not instantly —
+same handling, slightly later.) For **each** task's `exchange_id`:
 
 - **`context` from the worker** — answer from your task context with `--phase
   context`. Silent (todo only).

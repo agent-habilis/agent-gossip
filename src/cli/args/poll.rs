@@ -3,7 +3,7 @@
 
 use clap::Parser;
 
-use crate::protocol::{MessageId, Nickname, SwarmId};
+use crate::protocol::{Nickname, SwarmId};
 
 use super::output::OutputFormat;
 
@@ -17,9 +17,11 @@ pub(crate) struct PollOpts {
     #[arg(long)]
     pub nickname: Nickname,
 
-    /// Only return messages after this message ID
+    /// Only return events surfaced after this sequence number. Omit on the
+    /// first poll to get the buffered history; then pass the last returned
+    /// event's `seq` to receive only newer events.
     #[arg(long)]
-    pub after: Option<MessageId>,
+    pub after: Option<u64>,
 
     /// Output format: human (default) or json (structured JSON)
     #[arg(long, default_value = "human")]

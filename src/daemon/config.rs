@@ -16,7 +16,7 @@ use crate::daemon::state::RosterSnapshot;
 use crate::output;
 use crate::protocol::swarm::SwarmName;
 use crate::protocol::{
-    ExchangeId, ExchangeKind, ExchangePhase, Message, MessageBody, MessageId, Nickname, SwarmId,
+    ExchangeId, ExchangeKind, ExchangePhase, Message, MessageBody, Nickname, SwarmId,
 };
 
 use crate::beacon;
@@ -33,8 +33,8 @@ pub(crate) enum SessionRequest {
         resp: oneshot::Sender<Result<Option<Message>>>,
     },
     Poll {
-        after: Option<MessageId>,
-        resp: oneshot::Sender<Vec<Message>>,
+        after: Option<u64>,
+        resp: oneshot::Sender<Vec<crate::daemon::surfaced::SurfacedEvent>>,
     },
     /// Send one leg of an exchange to `to`, correlated by `exchange_id`.
     /// Echoes back the canonical [`Message`] (`None` ⇒ dropped by the

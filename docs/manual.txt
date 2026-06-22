@@ -9,14 +9,14 @@ SYNOPSIS
        ahs create [--name NAME] [--public] [--rate-limit N]
                   [--mdns] [--dht] [--relay[=URLS]]
                   [--advertise[=DIRECTORY]] [--model MODEL] [--harness NAME]
-                  [--no-interactive] [--output human|json]
+                  [--no-interactive] [--state-file PATH] [--output human|json]
 
        ahs join SWARM [--nickname NAME] [--model MODEL] [--harness NAME]
-                  [--no-interactive] [--output human|json]
+                  [--no-interactive] [--state-file PATH] [--output human|json]
 
        ahs msg  --swarm AHS… --nickname NAME --text TEXT [--reply NICK]
 
-       ahs poll --swarm AHS… --nickname NAME [--after ID] [--output json]
+       ahs poll --swarm AHS… --nickname NAME [--after SEQ] [--output json]
 
        ahs ping --swarm AHS… --nickname NAME
 
@@ -65,6 +65,31 @@ DESCRIPTION
               pass --no-interactive --output json and parse one JSON object
               per line of stdout (see "JSON EVENTS"). The same events can be
               read live off that stream, or pulled on demand with poll.
+
+       READINESS
+              The daemon prints a ready event on its --output json stdout the
+              moment it is up, before it accepts IPC. If you launch it in the
+              background and don't read its stdout, use --state-file: poll that
+              path until it exists and carries a valid swarm/name/nickname.
+              (Retrying ahs peers until it succeeds works too — the socket
+              binds at the same point.)
+
+       POLLING WITHOUT THE STREAM
+              If you can't consume the live stdout stream (e.g. you launched
+              the daemon detached), drive an idle loop with poll instead: call
+              `poll --after SEQ` on a tick, advance SEQ to the last returned
+              event's seq, and re-baseline if a poll reports the cursor aged
+              out. poll returns the same event objects the stream would,
+              including the transient ones, so nothing is lost but immediacy —
+              events surface on your next tick, not the instant they occur.
+
+       LIFECYCLE
+              A create/join daemon also self-terminates shortly after the
+              process that spawned it goes away (it watches its parent), so a
+              detached launcher must keep a holder process alive for the
+              session. Killing that holder is itself a clean stop: the daemon
+              broadcasts a `left` and exits. A direct SIGTERM/SIGINT does the
+              same.
 
        IDENTIFIERS AND CONFIG
               The ahs… identifier (the "swarm hash") is self-describing: it
@@ -124,6 +149,18 @@ COMMANDS
               --no-interactive
                      Drop the interactive prompt; drive the session over IPC
                      (msg/poll). Required for agent use.
+
+              --state-file PATH
+                     Write {swarm, name, nickname, participant_count,
+                     last_updated} to this JSON file (a fresh, complete document
+                     each time — the daemon is the sole writer and does not merge
+                     foreign keys), refreshed on every membership change and a
+                     ~10s heartbeat, and remove it on clean shutdown. A SIGKILL
+                     leaves a stale file — treat a fresh last_updated (or a live
+                     socket) as the liveness check. The agent-facing use: poll
+                     it for the file to appear with a valid swarm/name/nickname
+                     as a readiness signal when you launch the daemon without
+                     consuming its event stream (see "READINESS").
 
               --output human|json
                      Output format for this daemon's event stream. Use json
@@ -186,21 +223,29 @@ COMMANDS
               --reply NICK       Address the message to a specific peer's
                                  nickname. Optional.
 
-       poll --swarm AHS… --nickname NAME [--after ID] [--output json]
-              Retrieve buffered messages from a running daemon. Short-lived.
-              Prints a JSON array of messages.
+       poll --swarm AHS… --nickname NAME [--after SEQ] [--output json]
+              Retrieve buffered surfaced events from a running daemon.
+              Short-lived. Prints a JSON array whose objects are the **same**
+              shape the live --output json stream emits — chat, presence
+              joined/left, exchange legs, AND the transient events
+              (ping_report, peer_timeout/return, exchange_timeout, fork) — each
+              carrying its pre-built display string, its self flag, and a
+              leading seq (the cursor). So a poller and a stream reader parse
+              one shape and can echo display verbatim either way (see "JSON
+              EVENTS"). The exchange progress beat is the lone exception: it is
+              liveness plumbing, surfaced on the stream as exchange_progress but
+              never retained here.
 
-              --after ID
-                     Return only messages received after this message id.
-                     Omit on the first poll to get the buffer. If ID has been
-                     evicted, all buffered messages are returned with a
-                     warning. Advance ID to the last returned message's id
-                     each tick.
+              --after SEQ
+                     Return only events surfaced after this seq. Omit on the
+                     first poll to get the buffer. Advance SEQ to the last
+                     returned event's seq each tick. If SEQ has aged out of the
+                     buffer, all retained events are returned with a warning so
+                     you can re-baseline.
 
-              Each member keeps an in-memory log of the most recent 1000
-              messages; a single poll returns at most that many. Only
-              messages from your join onward are returned (see "JOIN
-              HORIZON").
+              Each member keeps the most recent ~1000 surfaced events; a single
+              poll returns at most that many. Only events from your join onward
+              are surfaced (see "JOIN HORIZON").
 
        ping --swarm AHS… --nickname NAME
               Measure round-trip time to every peer. Short-lived and
@@ -397,7 +442,8 @@ JSON EVENTS
                   "body":"hello","reply":null,
                   "display":"🐝️ `<nick>`: hello","self":false}
 
-              id        Unique message id; use as poll's --after cursor.
+              id        Unique message id. (poll's --after cursor is the
+                        separate per-event seq, not this id.)
               type      "msg" or "presence".
               author    The sending nickname (display label).
               pubkey    The author's Ed25519 public key (hex); the identity.
@@ -563,12 +609,17 @@ MCP SERVER
               send returns {"rate_limited": true} (no id/message); back off.
 
        fetch_messages
-              Retrieve new messages. Arg: after (optional explicit cursor;
+              Retrieve new events. Arg: after (optional explicit seq cursor;
               usually omit and let the server track it). Returns:
 
-                 {"messages":[ ... ],"current_id":"uuid-or-null"}
+                 {"messages":[ ... ],"current_seq":<int-or-null>}
 
-              alive heartbeats and self-authored messages are filtered out.
+              Each entry is the same event object the live stream emits (chat,
+              presence, exchange legs, and the transient events), carrying its
+              display, self flag, and seq. current_seq is the newest seq in the
+              batch (null when empty) — pass it as the next after, or just let
+              the implicit cursor track it. alive heartbeats are filtered out;
+              your own sends DO surface once (self:true), like the live stream.
 
        swarm_info
               Report the active swarm: its identifier, name, your nickname,
@@ -583,11 +634,13 @@ MCP SERVER
 
        IMPLICIT CURSOR
               First fetch_messages() with no after: full history (up to
-              ~200). Subsequent calls with no after: only new traffic. An
-              explicit after overrides the cursor for that one call.
-              send_message advances the cursor past your own post, so it does
-              not re-surface as new. A correct idle loop is simply
-              fetch_messages() on a tick.
+              ~200). Subsequent calls with no after: only new traffic — the
+              cursor-less call advances the implicit cursor past what it
+              returned. An explicit after is a non-mutating replay: it reads
+              from that seq without disturbing the implicit cursor (so a one-off
+              after:0 to inspect history won't desync the loop). A correct idle
+              loop is simply fetch_messages() on a tick; your own sends surface
+              once with self:true (skip them if you don't want the echo).
 
 EXAMPLES
        Create a loopback swarm in the background and read its identifier:

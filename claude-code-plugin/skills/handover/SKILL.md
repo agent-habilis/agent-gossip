@@ -142,8 +142,10 @@ widget (see below) with this task `offered`.
 ## Drive the exchange
 
 The receiver drives the lifecycle; you answer and close. The full sender
-state machine lives in the create/join Monitor event handler (loaded for the
-session) — do not duplicate it here. In short, for this `exchange_id`:
+state machine lives in the create/join event handler (loaded for the session) —
+do not duplicate it here. (If that session is on the CLI fallback rather than
+Monitor, the receiver's legs arrive on the poll tick, not instantly — same
+handling, slightly later.) In short, for this `exchange_id`:
 
 - **`context` from the receiver** — answer from your task context with
   `--phase context`. Silent (widget only, see below).

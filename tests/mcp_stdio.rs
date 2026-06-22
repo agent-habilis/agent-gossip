@@ -13,11 +13,11 @@ use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, ChildStdin, Stdio};
 use std::time::{Duration, Instant};
 
-/// A UUID the server has never seen. Passing it as `after` lands
-/// in the "evicted-id fallback" path, which returns the full
-/// buffered log regardless of the implicit cursor — the only way
-/// tests can inspect every message without disturbing cursor state.
-const BOGUS_UUID: &str = "00000000-0000-0000-0000-000000000000";
+/// The before-anything seq cursor. Passing `0` as `after` returns the full
+/// buffered log and, being an *explicit* override, never advances the
+/// session's implicit cursor — the only way tests can inspect every event
+/// without disturbing cursor state.
+const FROM_START: u64 = 0;
 
 /// Wrapper that spawns the binary, streams a conversation, and
 /// collects responses keyed by id. Tests drive it synchronously.
@@ -211,10 +211,7 @@ fn create_pair(base_id: u64) -> (McpClient, McpClient, String, String) {
 
 /// Like [`create_pair`] but spawns the creator with extra `mcp` flags (e.g. a
 /// short `--ping-window-secs` so a `ping` round finalizes fast).
-fn create_pair_with(
-    base_id: u64,
-    creator_args: &[&str],
-) -> (McpClient, McpClient, String, String) {
+fn create_pair_with(base_id: u64, creator_args: &[&str]) -> (McpClient, McpClient, String, String) {
     let mut creator = McpClient::spawn_with_args(creator_args);
     let mut joiner = McpClient::spawn();
     let (swarm, creator_nick) = creator.create_and_get_swarm(base_id);
@@ -230,9 +227,9 @@ fn create_pair_with(
     // gossip has linked the two nodes. Once this lands, the
     // creator's initial `joined` (re-)announce has propagated and
     // any subsequent broadcast from the joiner will reach the
-    // creator. Use BOGUS_UUID on `after` so the implicit cursor
+    // creator. Use FROM_START (seq 0) on `after` so the implicit cursor
     // doesn't hide buffered events (fetch_messages returns the full
-    // buffer on unknown `after`) and also doesn't advance.
+    // buffer) and, being explicit, doesn't advance the implicit cursor.
     // Suite-wide peer-link budget (shared with the other integration
     // binaries) — generous enough for threaded `cargo test` contention.
     let deadline = Instant::now() + CONNECT_TIMEOUT;
@@ -241,7 +238,7 @@ fn create_pair_with(
         let fetched = tool_result_json(&joiner.tool_call(
             probe_id,
             "fetch_messages",
-            serde_json::json!({ "after": BOGUS_UUID }),
+            serde_json::json!({ "after": FROM_START }),
         ))
         .expect("linkage-probe fetch_messages must succeed");
         let linked = fetched["messages"]
@@ -556,11 +553,11 @@ fn send_empty_body_works() {
     assert_eq!(echo["body"].as_str(), Some(""));
     assert!(echo["ts"].is_i64());
 
-    // BOGUS_UUID dodges the implicit cursor to inspect the buffer.
+    // FROM_START dodges the implicit cursor to inspect the whole buffer.
     let fetched = tool_result_json(&client.tool_call(
         102,
         "fetch_messages",
-        serde_json::json!({ "after": BOGUS_UUID }),
+        serde_json::json!({ "after": FROM_START }),
     ))
     .expect("fetch");
     let msgs = fetched["messages"].as_array().unwrap();
@@ -571,21 +568,32 @@ fn send_empty_body_works() {
 }
 
 #[test]
-fn fetch_messages_with_unknown_after_returns_buffer() {
-    // Documented behavior: if `after` isn't in the buffer, poll
-    // returns all buffered messages (with an info event in JSON
-    // mode, which is suppressed in Silent). Must not crash.
+fn fetch_messages_with_out_of_range_after_is_graceful() {
+    // A cursor past the newest seq (nothing newer) returns an empty batch
+    // without crashing; `after: 0` returns the whole buffer. Both must be
+    // well-formed arrays.
     let mut client = McpClient::spawn();
     client.create_and_get_swarm(110);
     let _ = client.tool_call(111, "send_message", serde_json::json!({ "text": "a" }));
 
-    let fetched = tool_result_json(&client.tool_call(
+    let far_future = tool_result_json(&client.tool_call(
         112,
         "fetch_messages",
-        serde_json::json!({ "after": BOGUS_UUID }),
+        serde_json::json!({ "after": 1_000_000_u64 }),
     ))
-    .expect("fetch with unknown after");
-    assert!(fetched["messages"].is_array());
+    .expect("fetch with far-future cursor");
+    assert!(
+        far_future["messages"].as_array().is_some_and(Vec::is_empty),
+        "a cursor past the newest seq returns an empty batch"
+    );
+
+    let from_start = tool_result_json(&client.tool_call(
+        113,
+        "fetch_messages",
+        serde_json::json!({ "after": FROM_START }),
+    ))
+    .expect("fetch from start");
+    assert!(from_start["messages"].is_array());
 }
 
 #[test]
@@ -611,93 +619,93 @@ fn reply_to_unknown_nickname_still_succeeds() {
 
 #[test]
 fn fetch_messages_cursor_returns_only_new_since_last_call() {
-    // The server auto-tracks an implicit cursor across every tool
-    // call: `send_message` advances it past the sent id, and
-    // `fetch_messages` advances it past the last returned id.
-    // So cursor-less fetches after a burst of self-sends return
-    // nothing new — the agent already has the echo from each
-    // `send_message` return.
+    // The server auto-tracks an implicit `seq` cursor: `fetch_messages`
+    // advances it past the last returned event. A self-send surfaces once
+    // (with self:true, matching the live stream), so the *first* cursor-less
+    // fetch sees the self-sends; the *next* cursor-less fetch is empty (the
+    // cursor advanced past them). Explicit `after` overrides the cursor.
     let mut client = McpClient::spawn();
     client.create_and_get_swarm(200);
 
-    // Send three messages, capturing the first id so we can later
-    // replay from before `send_message` advanced the cursor.
-    let first = tool_result_json(&client.tool_call(
-        201,
-        "send_message",
-        serde_json::json!({ "text": "one" }),
+    // Capture the seq just before the sends so we can replay from there.
+    let baseline = tool_result_json(&client.tool_call(
+        205,
+        "fetch_messages",
+        serde_json::json!({ "after": FROM_START }),
     ))
-    .expect("send ok");
-    let first_send_id = first["id"].as_str().unwrap().to_string();
-    for (i, body) in ["two", "three"].iter().enumerate() {
+    .expect("baseline fetch");
+    let before_seq = baseline["current_seq"].as_u64().unwrap_or(0);
+
+    for (i, body) in ["one", "two", "three"].iter().enumerate() {
         client.tool_call(
-            202 + i as u64,
+            201 + i as u64,
             "send_message",
             serde_json::json!({ "text": body }),
         );
     }
 
-    // Cursor-less fetch: implicit cursor is now past all three
-    // self-sends, so delta is empty.
-    let initial_fetch =
-        tool_result_json(&client.tool_call(210, "fetch_messages", serde_json::json!({})))
-            .expect("initial fetch");
-    let msgs1 = initial_fetch["messages"]
-        .as_array()
-        .expect("messages array");
-    assert!(
-        msgs1.is_empty(),
-        "implicit cursor should be past all self-sends, got {msgs1:?}"
-    );
-
-    // Explicit `after` overrides the implicit cursor — replay
-    // from after the first send yields the remaining two.
+    // Explicit replay from before the sends yields the three self-sends
+    // (now surfaced, each self:true), overriding the implicit cursor.
     let replay = tool_result_json(&client.tool_call(
         211,
         "fetch_messages",
-        serde_json::json!({ "after": first_send_id }),
+        serde_json::json!({ "after": before_seq }),
     ))
     .expect("explicit replay");
-    let replay_msgs = replay["messages"].as_array().unwrap();
-    assert_eq!(
-        replay_msgs.len(),
-        2,
-        "explicit after must override implicit cursor, expected 2 got {replay_msgs:?}"
+    let bodies: Vec<&str> = replay["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|event| event["body"].as_str())
+        .collect();
+    assert!(
+        ["one", "two", "three"]
+            .iter()
+            .all(|body| bodies.contains(body)),
+        "explicit after must replay the three self-sends, got {bodies:?}"
     );
-    let cursor = replay["current_id"]
-        .as_str()
-        .expect("current_id should be a string when batch non-empty")
-        .to_string();
+    let cursor = replay["current_seq"]
+        .as_u64()
+        .expect("current_seq should be set when batch non-empty");
     assert_eq!(
-        replay_msgs.last().unwrap()["id"].as_str(),
-        Some(cursor.as_str()),
-        "current_id must match id of last message in batch"
+        replay["messages"].as_array().unwrap().last().unwrap()["seq"].as_u64(),
+        Some(cursor),
+        "current_seq must match the last event's seq in the batch"
     );
 
-    // Send one more, then fetch with the cursor. Only the new message.
+    // Send one more, then fetch with the cursor → only the new message.
     let _ = client.tool_call(220, "send_message", serde_json::json!({ "text": "four" }));
-    let second = tool_result_json(&client.tool_call(
-        221,
-        "fetch_messages",
-        serde_json::json!({ "after": cursor }),
-    ))
-    .expect("delta fetch");
-    let msgs2 = second["messages"].as_array().unwrap();
-    assert_eq!(
-        msgs2.len(),
-        1,
-        "delta fetch should return only the new msg, got {}",
-        msgs2.len()
-    );
-    assert_eq!(msgs2[0]["body"].as_str(), Some("four"));
-    let cursor2 = second["current_id"].as_str().unwrap().to_string();
-    assert_ne!(
-        cursor2, cursor,
-        "current_id must advance past the old cursor"
+    let cursor2 = {
+        let deadline = Instant::now() + CONNECT_TIMEOUT;
+        loop {
+            let second = tool_result_json(&client.tool_call(
+                221,
+                "fetch_messages",
+                serde_json::json!({ "after": cursor }),
+            ))
+            .expect("delta fetch");
+            let surfaced_four = second["messages"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|event| event["body"].as_str() == Some("four"));
+            if surfaced_four {
+                break second["current_seq"].as_u64().unwrap();
+            }
+            assert!(
+                Instant::now() < deadline,
+                "delta fetch never surfaced 'four'"
+            );
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    };
+    assert!(
+        cursor2 > cursor,
+        "current_seq must advance past the old cursor"
     );
 
     // Fetch again with the new cursor — nothing newer, empty batch,
-    // null current_id.
+    // null current_seq.
     let third = tool_result_json(&client.tool_call(
         222,
         "fetch_messages",
@@ -710,9 +718,9 @@ fn fetch_messages_cursor_returns_only_new_since_last_call() {
         "fetch with up-to-date cursor should be empty, got {msgs3:?}"
     );
     assert!(
-        third["current_id"].is_null(),
-        "empty batch → null current_id, got: {}",
-        third["current_id"]
+        third["current_seq"].is_null(),
+        "empty batch → null current_seq, got: {}",
+        third["current_seq"]
     );
 }
 
@@ -740,7 +748,7 @@ fn rate_limiter_drops_excess_messages_from_flooding_peer() {
     }
 
     // Poll fetch_messages until the count stops growing (gossip has
-    // fully caught up). BOGUS_UUID keeps the implicit cursor out of
+    // fully caught up). FROM_START keeps the implicit cursor out of
     // the way so we always see the full buffer. Suite-wide gossip-
     // delivery budget (breaks early once the count stabilises).
     let deadline = Instant::now() + MSG_TIMEOUT;
@@ -752,7 +760,7 @@ fn rate_limiter_drops_excess_messages_from_flooding_peer() {
         let fetched = tool_result_json(&receiver.tool_call(
             500,
             "fetch_messages",
-            serde_json::json!({ "after": BOGUS_UUID }),
+            serde_json::json!({ "after": FROM_START }),
         ))
         .expect("fetch");
         let msgs = fetched["messages"].as_array().expect("messages array");
@@ -798,8 +806,9 @@ fn rate_limiter_drops_excess_messages_from_flooding_peer() {
 const MCP_EXCHANGE_ID: &str = "550e8400-e29b-41d4-a716-446655440000";
 
 /// A task `offer` sent (via `send_exchange`) by the joiner to the creator
-/// surfaces on the creator's `fetch_messages` as a raw record with
-/// `type:"exchange"`, the `to`/`exchange_id`/`kind`/`phase` fields, and the body.
+/// surfaces on the creator's `fetch_messages` as the stream-shaped
+/// `event:"exchange"` record with the `to`/`exchange_id`/`kind`/`phase`/`body`
+/// fields (plus `display` and `self`).
 #[test]
 fn send_exchange_surfaces_to_addressee_via_fetch() {
     let (mut creator, mut joiner, _swarm, creator_nick) = create_pair(700);
@@ -828,14 +837,14 @@ fn send_exchange_surfaces_to_addressee_via_fetch() {
         let fetched = tool_result_json(&creator.tool_call(
             probe,
             "fetch_messages",
-            serde_json::json!({ "after": BOGUS_UUID }),
+            serde_json::json!({ "after": FROM_START }),
         ))
         .expect("fetch_messages must succeed");
         let found = fetched["messages"]
             .as_array()
             .into_iter()
             .flatten()
-            .find(|msg| msg["type"] == "exchange")
+            .find(|event| event["event"] == "exchange")
             .cloned();
         if let Some(found) = found {
             break found;
@@ -919,7 +928,10 @@ fn swarm_info_reports_participant_roster() {
         assert!(entry.get("last_seen_secs_ago").is_some());
         assert!(entry["quiet"].is_boolean());
         let reach = entry["reach"].as_str().expect("reach is a string");
-        assert!(reach == "direct" || reach == "gossip", "unexpected reach: {reach}");
+        assert!(
+            reach == "direct" || reach == "gossip",
+            "unexpected reach: {reach}"
+        );
     }
 }
 
@@ -947,7 +959,10 @@ fn create_and_join_self_report_model_harness() {
         serde_json::json!({ "swarm": swarm, "model": "Sonnet 4.6", "harness": "pi" }),
     ))
     .expect("join_swarm must succeed");
-    let joiner_nick = join_result["nickname"].as_str().expect("nickname").to_string();
+    let joiner_nick = join_result["nickname"]
+        .as_str()
+        .expect("nickname")
+        .to_string();
 
     // Each side polls its roster for the *other* peer, then asserts the
     // self-reported metadata surfaced.
@@ -974,12 +989,28 @@ fn create_and_join_self_report_model_harness() {
     };
 
     let joiner_entry = find_peer(&mut creator, 762, &joiner_nick);
-    assert_eq!(joiner_entry["model"].as_str(), Some("Sonnet 4.6"), "{joiner_entry}");
-    assert_eq!(joiner_entry["harness"].as_str(), Some("pi"), "{joiner_entry}");
+    assert_eq!(
+        joiner_entry["model"].as_str(),
+        Some("Sonnet 4.6"),
+        "{joiner_entry}"
+    );
+    assert_eq!(
+        joiner_entry["harness"].as_str(),
+        Some("pi"),
+        "{joiner_entry}"
+    );
 
     let creator_entry = find_peer(&mut joiner, 780, &creator_nick);
-    assert_eq!(creator_entry["model"].as_str(), Some("Opus 4.8"), "{creator_entry}");
-    assert_eq!(creator_entry["harness"].as_str(), Some("Claude Code"), "{creator_entry}");
+    assert_eq!(
+        creator_entry["model"].as_str(),
+        Some("Opus 4.8"),
+        "{creator_entry}"
+    );
+    assert_eq!(
+        creator_entry["harness"].as_str(),
+        Some("Claude Code"),
+        "{creator_entry}"
+    );
 }
 
 /// Loopback timings so the advertise→discover round runs in seconds: short
@@ -1022,7 +1053,9 @@ fn discover_swarms_finds_an_advertised_swarm() {
     // so the discoverer's first window isn't spent waiting for it to come up.
     let up_deadline = Instant::now() + CONNECT_TIMEOUT;
     while Instant::now() < up_deadline
-        && !fs::read_to_string(&adv_log).unwrap_or_default().contains("\"swarm\"")
+        && !fs::read_to_string(&adv_log)
+            .unwrap_or_default()
+            .contains("\"swarm\"")
     {
         std::thread::sleep(POLL);
     }
@@ -1031,8 +1064,11 @@ fn discover_swarms_finds_an_advertised_swarm() {
     let deadline = Instant::now() + CONNECT_TIMEOUT;
     let mut id = 800;
     let found = loop {
-        let resp =
-            client.tool_call(id, "discover_swarms", serde_json::json!({ "directory": "mcdir" }));
+        let resp = client.tool_call(
+            id,
+            "discover_swarms",
+            serde_json::json!({ "directory": "mcdir" }),
+        );
         let json = tool_result_json(&resp).expect("discover_swarms returns a result");
         let hit = json["swarms"]
             .as_array()
@@ -1060,12 +1096,11 @@ fn discover_swarms_finds_an_advertised_swarm() {
 fn ping_reports_rtt_to_a_peer() {
     let (mut creator, mut joiner, _swarm, _creator_nick) =
         create_pair_with(900, &["--ping-window-secs", "2"]);
-    let joiner_nick =
-        tool_result_json(&joiner.tool_call(901, "swarm_info", serde_json::json!({})))
-            .expect("joiner swarm_info")["nickname"]
-            .as_str()
-            .expect("nickname")
-            .to_string();
+    let joiner_nick = tool_result_json(&joiner.tool_call(901, "swarm_info", serde_json::json!({})))
+        .expect("joiner swarm_info")["nickname"]
+        .as_str()
+        .expect("nickname")
+        .to_string();
 
     // One round may miss if the mesh just linked; retry within budget.
     let deadline = Instant::now() + MSG_TIMEOUT;

@@ -54,11 +54,18 @@ pub(crate) async fn handle_ipc_command(
             }
         }
         IpcCommand::Poll { swarm: _, after } => {
-            // Shared with the typed in-process `Poll` (join-horizon
-            // filtered); the CLI socket just serializes the result.
-            let messages = state.poll_after(after.as_ref(), output);
-            let resp = serde_json::to_string(&messages)
-                .expect("serializing poll response (Vec<Message>) is infallible");
+            // Surfaced-events ring, seq-cursored. Each event renders to the
+            // *same* JSON line the live `--output json` stream emits (via
+            // `surfaced_event_json`), with its `seq` flattened in so the client
+            // advances `--after`. The array is built by hand (not
+            // `serde_json::to_string`) because the per-event lines are already
+            // serialized strings whose field order is the pinned wire format.
+            let events = state.poll_since(after);
+            let lines: Vec<String> = events
+                .iter()
+                .filter_map(|item| output::surfaced_event_json(item.seq, &item.event))
+                .collect();
+            let resp = format!("[{}]", lines.join(","));
             let _ = resp_tx.send(resp);
             false
         }
