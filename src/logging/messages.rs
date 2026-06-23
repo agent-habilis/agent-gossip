@@ -101,12 +101,22 @@ fn log(direction: &'static str, msg: &Message) {
             body = %if log_raw() { msg.body.as_str().to_owned() } else { redacted_body(msg) },
             "exchange"
         ),
+        // Durable state event: worth an info line (membership/settings change),
+        // body redacted by default like a `Msg`.
+        MessageKind::State => tracing::info!(
+            target: "agent_habilis_swarm::messages",
+            dir = direction,
+            author = %msg.author,
+            ts = msg.timestamp,
+            body = %if log_raw() { msg.body.as_str().to_owned() } else { redacted_body(msg) },
+            "state"
+        ),
         // Plumbing — exhaustive so a new kind forces a decision.
         MessageKind::Presence {
             subtype: PresenceSubtype::Alive,
         }
         | MessageKind::PeerInfo
-        | MessageKind::Digest
+        | MessageKind::Digest | MessageKind::StateDigest
         | MessageKind::Ping
         | MessageKind::Pong { .. } => tracing::trace!(
             target: "agent_habilis_swarm::messages",

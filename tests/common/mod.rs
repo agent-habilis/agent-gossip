@@ -418,6 +418,27 @@ impl InProcNode {
         self.send_to(None, text).await
     }
 
+    /// Append a durable state event with `text` as its payload.
+    pub(crate) async fn append_state(&self, text: &str) {
+        self.session
+            .append_state(MessageBody::new(text).expect("valid body"))
+            .await
+            .expect("in-process append_state failed");
+    }
+
+    /// The derived swarm state — event payloads, sorted for set comparison
+    /// (same-second events tie on timestamp and order by id, so a stable sort
+    /// of the values is the convergence check).
+    pub(crate) async fn state_sorted(&self) -> Vec<String> {
+        let mut bodies = self
+            .session
+            .state_snapshot()
+            .await
+            .expect("in-process state_snapshot failed");
+        bodies.sort();
+        bodies
+    }
+
     /// Send a message addressed to `target`; returns the new id.
     pub(crate) async fn reply(&self, target: &str, text: &str) -> MessageId {
         self.send_to(Some(target), text)

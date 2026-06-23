@@ -251,6 +251,21 @@ pub enum MessageKind {
         kind: ExchangeKind,
         phase: ExchangePhase,
     },
+    /// A durable swarm-state event (membership edits, settings, …). Carried
+    /// on the same gossip topic as everything else but routed to a **separate,
+    /// un-pruned** log (`daemon::state_log`); swarm state is the deterministic
+    /// fold over that log. The payload lives opaquely in `body` — the log layer
+    /// never interprets it; projections (a future allowlist, …) do. Signed like
+    /// any message; never rate-limited, never entered into the chat
+    /// message-log, never surfaced via poll/fetch.
+    State,
+    /// Anti-entropy digest for the **state** log — the dedicated counterpart to
+    /// [`Digest`](MessageKind::Digest). Body is the Base58-packed ids of the
+    /// `State` events the sender holds; a receiver re-broadcasts any state event
+    /// absent from that set, so a cold/late joiner (advertising an empty set)
+    /// pulls the whole state log. Separate from `Digest` for its own
+    /// gossip-message and resend budgets. Plumbing like `Digest`.
+    StateDigest,
 }
 
 impl fmt::Display for MessageKind {
@@ -263,6 +278,8 @@ impl fmt::Display for MessageKind {
             MessageKind::Ping => write!(f, "ping"),
             MessageKind::Pong { .. } => write!(f, "pong"),
             MessageKind::Exchange { .. } => write!(f, "exchange"),
+            MessageKind::State => write!(f, "state"),
+            MessageKind::StateDigest => write!(f, "state_digest"),
         }
     }
 }
@@ -450,6 +467,22 @@ impl Message {
     /// recent message ids we hold) in the body.
     pub(crate) fn new_digest(swarm: &SwarmId, author: &Nickname, ids_json: MessageBody) -> Self {
         Self::new(swarm, author, MessageKind::Digest, ids_json)
+    }
+
+    /// A durable state event whose opaque payload is `body`. Routed to the
+    /// un-pruned `daemon::state_log`, not the chat message-log.
+    pub(crate) fn new_state(swarm: &SwarmId, author: &Nickname, body: MessageBody) -> Self {
+        Self::new(swarm, author, MessageKind::State, body)
+    }
+
+    /// A state anti-entropy digest whose `body` is the Base58-packed ids of the
+    /// `State` events the sender holds (`StateLog::packed_ids`).
+    pub(crate) fn new_state_digest(
+        swarm: &SwarmId,
+        author: &Nickname,
+        packed_ids: MessageBody,
+    ) -> Self {
+        Self::new(swarm, author, MessageKind::StateDigest, packed_ids)
     }
 
     /// Serialize to compact JSON bytes for the gossip wire.
@@ -918,9 +951,10 @@ mod tests {
             MessageKind::Msg { reply } => assert_eq!(reply, Some(target)),
             MessageKind::Presence { .. }
             | MessageKind::PeerInfo
-            | MessageKind::Digest
+            | MessageKind::Digest | MessageKind::StateDigest
             | MessageKind::Ping
             | MessageKind::Pong { .. }
+            | MessageKind::State
             | MessageKind::Exchange { .. } => {
                 panic!("expected Msg kind")
             }

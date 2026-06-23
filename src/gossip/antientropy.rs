@@ -155,6 +155,69 @@ pub(crate) async fn handle_digest(message: &Message, state: &EventLoopState, ctx
     }
 }
 
+/// Broadcast a **state** anti-entropy digest: the Base58-packed ids of every
+/// `State` event we hold (the whole set — `STATE_LOG_CAP` keeps it inside one
+/// gossip message). A holder re-sends any state event a peer's digest omits, so
+/// a cold/late joiner (advertising an empty set) pulls the full state log.
+/// Broadcast whenever meshed — even with an empty state log, so a fresh joiner
+/// advertises its (empty) set and gets backfilled. Tiny when empty.
+pub(crate) async fn broadcast_state_digest(
+    state: &EventLoopState,
+    sender: &GossipSender,
+    swarm: &SwarmId,
+    author: &Nickname,
+) {
+    if !state.meshed {
+        return;
+    }
+    let Ok(body) = MessageBody::new(state.state_log.packed_ids()) else {
+        return;
+    };
+    broadcast_msg(
+        sender,
+        &Message::new_state_digest(swarm, author, body).signed(&state.identity),
+    )
+    .await;
+}
+
+/// Handle a received state digest: re-broadcast every `State` event the sender
+/// omitted, in deterministic order, up to a **own** resend budget (separate
+/// from the chat digest's, so a busy chat log can't starve state backfill).
+pub(crate) async fn handle_state_digest(
+    message: &Message,
+    state: &EventLoopState,
+    ctx: &HandlerCtx<'_>,
+) {
+    // The packed-id blob: raw 16-byte UUIDs, Base58-encoded — same wire form the
+    // chat `WireWindow` uses, so a malformed blob is just "they have nothing".
+    let raw = bs58::decode(message.body.as_str())
+        .into_vec()
+        .unwrap_or_default();
+    let have: HashSet<[u8; 16]> = raw
+        .chunks_exact(16)
+        .map(|chunk| {
+            let mut id = [0u8; 16];
+            id.copy_from_slice(chunk);
+            id
+        })
+        .collect();
+    let mut budget = antientropy_max_resend();
+    let mut resent = 0usize;
+    for event in state.state_log.missing_from(&have) {
+        if budget == 0 {
+            break;
+        }
+        if let Ok(bytes) = event.serialize() {
+            let _ = ctx.sender.broadcast(Bytes::from(bytes)).await;
+            resent += 1;
+            budget -= 1;
+        }
+    }
+    if resent > 0 {
+        tracing::debug!(resent, "state anti-entropy: resent state events a peer lacked");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
@@ -252,6 +315,35 @@ mod tests {
             ids: String::new(),
         };
         assert_eq!(empty.decode_ids().map(|set| set.len()), Some(0));
+    }
+
+    /// A **state** digest advertising a full-cap state log must fit one gossip
+    /// message — the regression guard for the overflow that 36-char id strings
+    /// caused. `STATE_LOG_CAP` is sized for exactly this.
+    #[test]
+    fn state_digest_fits_gossip_cap() {
+        use crate::daemon::state_log::StateLog;
+
+        let swarm = SwarmId::from(
+            "ahs6bLvZNPGxuqnsbaPVGwf277NyTp8cYPCMiBxXED8d6TyBZpDDzZADkKHL7tTB1EjFagbCXYZ",
+        );
+        let author = Nickname::from("a-fairly-long-nickname");
+        let mut log = StateLog::new();
+        for index in 0..crate::util::tuning::STATE_LOG_CAP {
+            let mut event =
+                Message::new_state(&swarm, &author, MessageBody::from(format!("s{index}").as_str()));
+            event.timestamp = 1_700_000_000 + i64::try_from(index).unwrap();
+            assert!(log.insert(event), "fill to cap");
+        }
+        let body = MessageBody::new(log.packed_ids()).expect("packed ids have no control chars");
+        let digest = Message::new_state_digest(&swarm, &author, body);
+        let wire = digest.serialize().expect("serialize state digest");
+        assert!(
+            wire.len() <= crate::util::consts::MAX_MESSAGE_SIZE,
+            "full-cap state digest is {} bytes, over the {}-byte gossip cap",
+            wire.len(),
+            crate::util::consts::MAX_MESSAGE_SIZE
+        );
     }
 
     /// The full digest body survives a serde round-trip, preserving the

@@ -39,6 +39,38 @@ pub(crate) async fn broadcast_msg(sender: &GossipSender, msg: &Message) {
     }
 }
 
+/// Author + broadcast a durable `State` event, retaining it locally first.
+/// Gossip never echoes to self, so the author must hold what it authored or the
+/// state anti-entropy path could never serve it. Unlike [`broadcast_message`],
+/// state events skip the rate limiter and the per-author `Msg` hash chain —
+/// they live in their own un-pruned log. When unmeshed the bytes are buffered
+/// for flush-on-connect; even if that buffer is full the event is safe in the
+/// local state log, so anti-entropy backfills peers once meshed.
+///
+/// # Errors
+/// Serialization or broadcast failure.
+pub(crate) async fn broadcast_state(
+    swarm: &SwarmId,
+    author: &Nickname,
+    body: MessageBody,
+    state: &mut EventLoopState,
+    sender: &GossipSender,
+) -> anyhow::Result<()> {
+    let signed = Message::new_state(swarm, author, body).signed(&state.identity);
+    state.state_log.insert(signed.clone());
+    crate::logging::messages::log_out(&signed);
+    let bytes = signed.serialize()?;
+    if state.meshed {
+        sender
+            .broadcast(Bytes::from(bytes))
+            .await
+            .map_err(|error| anyhow::anyhow!("{error}"))?;
+    } else {
+        let _ = state.pending_outbound.push(Bytes::from(bytes));
+    }
+    Ok(())
+}
+
 /// Broadcast a `PeerInfo` carrying our endpoint address so peers can
 /// dial us directly. Unlike `joined`, `PeerInfo` never enters the
 /// message log (`handle_peer_info` returns before the log push), so
@@ -412,6 +444,16 @@ pub(crate) async fn handle_session_request(
         }
         SessionRequest::Peers { resp } => {
             let _ = resp.send(state.roster_snapshot());
+            false
+        }
+        SessionRequest::AppendState { body, resp } => {
+            let outcome = broadcast_state(swarm, author, body, state, sender).await;
+            let sent_ok = outcome.is_ok();
+            let _ = resp.send(outcome);
+            sent_ok
+        }
+        SessionRequest::StateSnapshot { resp } => {
+            let _ = resp.send(state.state_log.replay_bodies());
             false
         }
         SessionRequest::Ping { resp } => {

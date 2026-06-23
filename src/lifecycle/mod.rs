@@ -195,9 +195,10 @@ pub(crate) fn handle_msg(
         }
         MessageKind::Presence { .. }
         | MessageKind::PeerInfo
-        | MessageKind::Digest
+        | MessageKind::Digest | MessageKind::StateDigest
         | MessageKind::Ping
         | MessageKind::Pong { .. }
+        | MessageKind::State
         | MessageKind::Exchange { .. } => false,
     }
 }

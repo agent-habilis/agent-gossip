@@ -428,7 +428,7 @@ impl Output {
         if matches!(
             msg.kind,
             MessageKind::PeerInfo
-                | MessageKind::Digest
+                | MessageKind::Digest | MessageKind::StateDigest
                 | MessageKind::Ping
                 | MessageKind::Pong { .. }
         ) {
@@ -724,9 +724,10 @@ impl Output {
             MessageKind::Msg { reply: None }
             | MessageKind::Presence { .. }
             | MessageKind::PeerInfo
-            | MessageKind::Digest
+            | MessageKind::Digest | MessageKind::StateDigest
             | MessageKind::Ping
             | MessageKind::Pong { .. }
+            | MessageKind::State
             | MessageKind::Exchange { .. } => {
                 println!("{open}<{}>{close}: {}", msg.author, msg.body);
             }

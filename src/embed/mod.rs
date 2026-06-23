@@ -477,6 +477,34 @@ impl InProcessSession {
             .map_err(|_| anyhow::anyhow!("swarm event loop dropped the response"))
     }
 
+    /// Author + broadcast a durable state event (the write primitive for
+    /// state-backed features). Retained locally and gossiped to peers.
+    pub(crate) async fn append_state(&self, body: MessageBody) -> anyhow::Result<()> {
+        let (resp_tx, resp_rx) = oneshot::channel();
+        self.req_tx
+            .send(SessionRequest::AppendState {
+                body,
+                resp: resp_tx,
+            })
+            .await
+            .map_err(|_| anyhow::anyhow!("swarm event loop has stopped"))?;
+        resp_rx
+            .await
+            .map_err(|_| anyhow::anyhow!("swarm event loop dropped the response"))?
+    }
+
+    /// The derived swarm state — event payloads in deterministic replay order.
+    pub(crate) async fn state_snapshot(&self) -> anyhow::Result<Vec<String>> {
+        let (resp_tx, resp_rx) = oneshot::channel();
+        self.req_tx
+            .send(SessionRequest::StateSnapshot { resp: resp_tx })
+            .await
+            .map_err(|_| anyhow::anyhow!("swarm event loop has stopped"))?;
+        resp_rx
+            .await
+            .map_err(|_| anyhow::anyhow!("swarm event loop dropped the response"))
+    }
+
     /// Broadcast pre-built wire bytes verbatim (no signing/chain). Testkit
     /// only — the injection point for crafted/malicious messages.
     ///
@@ -692,6 +720,25 @@ impl SwarmSession {
         reply: Option<Nickname>,
     ) -> anyhow::Result<Option<Message>> {
         self.core.send(body, reply).await
+    }
+
+    /// Append a durable state event (the write primitive future state-backed
+    /// features build on): it is retained in this node's un-pruned state log
+    /// and gossiped to peers, who reconcile it via state anti-entropy.
+    ///
+    /// # Errors
+    /// Fails if the event loop has stopped or the broadcast failed.
+    pub async fn append_state(&self, body: MessageBody) -> anyhow::Result<()> {
+        self.core.append_state(body).await
+    }
+
+    /// The derived swarm state — event payloads in deterministic replay order
+    /// (the substrate's generic read until typed projections land).
+    ///
+    /// # Errors
+    /// Fails if the event loop has stopped or dropped the response.
+    pub async fn state_snapshot(&self) -> anyhow::Result<Vec<String>> {
+        self.core.state_snapshot().await
     }
 
     /// Poll the surfaced-event history after the `after` seq cursor (`None`

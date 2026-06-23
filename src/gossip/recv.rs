@@ -297,9 +297,12 @@ async fn handle_gossip_received(content: Bytes, state: &mut EventLoopState, ctx:
         }
         MessageKind::Presence { .. }
         | MessageKind::PeerInfo
-        | MessageKind::Digest
+        | MessageKind::Digest | MessageKind::StateDigest
         | MessageKind::Ping
         | MessageKind::Pong { .. }
+        // Durable state events are infrequent and load-bearing; rate-limiting
+        // them (or their anti-entropy backfill) would drop membership state.
+        | MessageKind::State
         | MessageKind::Exchange { .. } => true,
     };
     if !rate_ok {
@@ -356,6 +359,16 @@ async fn handle_gossip_received(content: Bytes, state: &mut EventLoopState, ctx:
             }
             return;
         }
+        MessageKind::State => {
+            // Durable state: record in the un-pruned state log (dedup by id);
+            // never chat-logged or poll/fetch-surfaced. See `daemon::state_log`.
+            state.state_log.insert(message);
+            return;
+        }
+        MessageKind::StateDigest => {
+            antientropy::handle_state_digest(&message, state, ctx).await;
+            return;
+        }
         MessageKind::Presence { subtype } => {
             lifecycle::handle_presence(
                 &message,
@@ -379,38 +392,47 @@ async fn handle_gossip_received(content: Bytes, state: &mut EventLoopState, ctx:
         }
     }
 
-    if is_loggable(&message.kind) {
-        // Fork (equivocation) detection + cross-author DAG folding are coupled
-        // to logging: only a message we actually **retain** is folded into the
-        // indexes, so `by_hash`/`dag_heads`/`author_seqs` stay bounded by the
-        // log window (pruned on eviction below). A rate-dropped Msg, or a reply
-        // addressed to another peer, returned earlier and never reaches here —
-        // so it can no longer leak a permanent index entry. Only `Msg` carries
-        // a `seq`/parents; presence is loggable but not indexed.
-        if matches!(message.kind, MessageKind::Msg { .. }) {
-            let hash = identity::content_hash_hex(&canonical);
-            // A second, *different* content hash at an already-seen
-            // `(pubkey, seq)` is cryptographic proof of equivocation — surface
-            // a `fork` once per offending key (order-independent; we keep both).
-            if let Some(seq) = message.seq
-                && state.note_msg_seq(&message.pubkey, seq, hash.clone())
-            {
-                ctx.output.fork(&message.author, &message.pubkey, seq);
-                tracing::warn!(author = %message.author, seq, "fork detected: conflicting messages at same seq");
-            }
-            // Fold into the DAG tip set; flag a message whose timestamp
-            // precedes a referenced parent (backdating).
-            if state.note_dag(hash, &message.parents, message.timestamp) {
-                tracing::warn!(author = %message.author, "message timestamp precedes a referenced parent; possible backdating");
-            }
+    retain_and_index(message, &canonical, state, ctx);
+}
+
+/// Fork detection, cross-author DAG folding, and chat-log retention for a
+/// surviving inbound message. Coupled to logging on purpose: only a message we
+/// actually **retain** is folded into the indexes, so `by_hash`/`dag_heads`/
+/// `author_seqs` stay bounded by the log window (pruned on eviction). A
+/// rate-dropped `Msg`, a reply to another peer, or a `State` event returned
+/// earlier and never reaches here. Only `Msg` carries `seq`/parents; presence
+/// is loggable but not indexed.
+fn retain_and_index(
+    message: Message,
+    canonical: &[u8],
+    state: &mut EventLoopState,
+    ctx: &HandlerCtx<'_>,
+) {
+    if !is_loggable(&message.kind) {
+        return;
+    }
+    if matches!(message.kind, MessageKind::Msg { .. }) {
+        let hash = identity::content_hash_hex(canonical);
+        // A second, *different* content hash at an already-seen `(pubkey, seq)`
+        // is cryptographic proof of equivocation — surface a `fork` once per
+        // offending key (order-independent; we keep both).
+        if let Some(seq) = message.seq
+            && state.note_msg_seq(&message.pubkey, seq, hash.clone())
+        {
+            ctx.output.fork(&message.author, &message.pubkey, seq);
+            tracing::warn!(author = %message.author, seq, "fork detected: conflicting messages at same seq");
         }
-        if let Some(evicted) = state.message_log.push(message) {
-            // Keep the DAG + fork indexes bounded with the log window.
-            let evicted_hash = evicted.content_hash_hex();
-            state.forget_hash(&evicted_hash);
-            if let Some(seq) = evicted.seq {
-                state.forget_msg_seq(&evicted.pubkey, seq, &evicted_hash);
-            }
+        // Fold into the DAG tip set; flag a backdated timestamp.
+        if state.note_dag(hash, &message.parents, message.timestamp) {
+            tracing::warn!(author = %message.author, "message timestamp precedes a referenced parent; possible backdating");
+        }
+    }
+    if let Some(evicted) = state.message_log.push(message) {
+        // Keep the DAG + fork indexes bounded with the log window.
+        let evicted_hash = evicted.content_hash_hex();
+        state.forget_hash(&evicted_hash);
+        if let Some(seq) = evicted.seq {
+            state.forget_msg_seq(&evicted.pubkey, seq, &evicted_hash);
         }
     }
 }
@@ -522,9 +544,13 @@ fn is_loggable(kind: &MessageKind) -> bool {
         MessageKind::Presence {
             subtype: crate::protocol::PresenceSubtype::Alive
         } | MessageKind::PeerInfo
-            | MessageKind::Digest
+            | MessageKind::Digest | MessageKind::StateDigest
             | MessageKind::Ping
             | MessageKind::Pong { .. }
+            // Durable state lives in its own un-pruned log, never the chat
+            // message-log / poll-fetch buffer (it also returns before reaching
+            // here; this keeps the predicate honest if that changes).
+            | MessageKind::State
             // The `Progress` exchange phase is liveness plumbing — never retained
             // or surfaced via poll/fetch, only emitted as a `exchange_progress`
             // widget event. Content exchange legs stay loggable like `Msg`.

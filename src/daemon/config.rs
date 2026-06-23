@@ -58,6 +58,18 @@ pub(crate) enum SessionRequest {
     Ping {
         resp: oneshot::Sender<Vec<output::PingPeer>>,
     },
+    /// Author + broadcast a durable `State` event (the write primitive future
+    /// state-backed features build on). Retained locally + gossiped; the
+    /// response carries any send error.
+    AppendState {
+        body: MessageBody,
+        resp: oneshot::Sender<Result<()>>,
+    },
+    /// Snapshot the derived state — event payloads in deterministic replay
+    /// order. The substrate's generic read until typed projections land.
+    StateSnapshot {
+        resp: oneshot::Sender<Vec<String>>,
+    },
     /// Broadcast pre-built wire bytes **verbatim** — no signing, no chain
     /// stamping. The escape hatch the `adversarial` feature uses to inject
     /// crafted/malicious messages (bad signature, equivocation, backdating)

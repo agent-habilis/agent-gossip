@@ -49,6 +49,70 @@ async fn test_two_node_message_delivery() {
     assert_eq!(received[0].body.as_str(), "hello from the network");
 }
 
+/// Durable state log, live propagation: a creator appends state events; a
+/// meshed joiner converges to the same derived state via gossip. State rides
+/// the same topic but its own un-pruned log, surfaced through `state_snapshot`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_state_log_propagates_to_a_peer() {
+    let creator = InProcNode::create("netstate").await;
+    let joiner = InProcNode::join(&creator.swarm, "joiner-state").await;
+
+    // Mesh first (a delivered message proves the link), so the state events
+    // broadcast onto a live overlay rather than the unmeshed buffer.
+    creator.send("link").await;
+
+    creator.append_state("alpha").await;
+    creator.append_state("beta").await;
+
+    let want = vec!["alpha".to_string(), "beta".to_string()];
+    let deadline = Instant::now() + MSG_TIMEOUT;
+    let mut got = joiner.state_sorted().await;
+    while got != want && Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        got = joiner.state_sorted().await;
+    }
+    assert_eq!(got, want, "joiner never converged to the creator's state log");
+    // The author holds its own events too (gossip never echoes to self).
+    assert_eq!(creator.state_sorted().await, want);
+}
+
+/// Durable state log, anti-entropy backfill: a peer that joins **after** the
+/// state events are live (so nothing is buffered to flush to it) must still
+/// reconstruct the full un-pruned log via the state digest — the durability
+/// guarantee. Three nodes: creator+early are meshed so the appends broadcast
+/// live (not into the unmeshed buffer); the late joiner can only pull.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_state_log_backfills_a_late_joiner() {
+    let creator = InProcNode::create("netstatelate").await;
+    let early = InProcNode::join(&creator.swarm, "early-state").await;
+    // Mesh so appends go out live, leaving the creator's outbound buffer empty.
+    creator.send("link").await;
+
+    creator.append_state("alpha").await;
+    creator.append_state("beta").await;
+
+    let want = vec!["alpha".to_string(), "beta".to_string()];
+    // Confirm the live path first.
+    let deadline = Instant::now() + MSG_TIMEOUT;
+    let mut early_got = early.state_sorted().await;
+    while early_got != want && Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        early_got = early.state_sorted().await;
+    }
+    assert_eq!(early_got, want, "early peer never got the live state");
+
+    // The late joiner arrives after all state traffic; only anti-entropy can
+    // backfill it (within an antientropy interval once it advertises its set).
+    let late = InProcNode::join(&creator.swarm, "late-state").await;
+    let late_deadline = Instant::now() + RECOVERY_TIMEOUT;
+    let mut late_got = late.state_sorted().await;
+    while late_got != want && Instant::now() < late_deadline {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        late_got = late.state_sorted().await;
+    }
+    assert_eq!(late_got, want, "late joiner never backfilled state via anti-entropy");
+}
+
 /// Sender-side rate limiting, symmetric with the receiver: a node may
 /// emit up to its per-author quota, then its own sends are dropped
 /// (`Ok(None)`) rather than broadcast. Mirrors the receiver-side

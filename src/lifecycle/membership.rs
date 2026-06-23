@@ -36,16 +36,21 @@ pub(crate) fn compute(
 ) -> MembershipUpdate {
     let returned = state.quiet.contains(author.as_str());
     let joined_new = match kind {
+        // A `Left` is explicit departure; durable state events never mark a
+        // peer present either — anti-entropy backfill replays historical state
+        // whose author may have long since left, and resurrecting them would
+        // forge membership.
         MessageKind::Presence {
             subtype: PresenceSubtype::Left,
-        } => false,
+        }
+        | MessageKind::State => false,
         MessageKind::Msg { .. }
         | MessageKind::Exchange { .. }
         | MessageKind::Presence {
             subtype: PresenceSubtype::Joined | PresenceSubtype::Alive,
         }
         | MessageKind::PeerInfo
-        | MessageKind::Digest
+        | MessageKind::Digest | MessageKind::StateDigest
         | MessageKind::Ping
         | MessageKind::Pong { .. } => !state.participants.contains(author.as_str()),
     };

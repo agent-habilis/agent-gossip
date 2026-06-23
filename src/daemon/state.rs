@@ -237,6 +237,11 @@ pub(crate) struct EventLoopState {
     /// non-advertising case (no shared counter to maintain).
     pub live_count: Option<Arc<AtomicUsize>>,
     pub message_log: MessageLog,
+    /// The durable, un-pruned log of signed `State` events (membership edits,
+    /// settings, …) — separate from `message_log` so swarm state never ages out
+    /// of the chat retention window. Swarm state is the deterministic fold over
+    /// this log; see [`super::state_log`].
+    pub state_log: super::state_log::StateLog,
     /// Local, seq-ordered record of everything surfaced to the
     /// operator/agent — the history `poll` / `fetch_messages` drain. Fed by
     /// the [`Output`](crate::output::Output) tap (the event loop mirrors each
@@ -360,6 +365,7 @@ impl EventLoopState {
             state_file,
             live_count: None,
             message_log: MessageLog::new(message_log_size()),
+            state_log: super::state_log::StateLog::new(),
             surfaced_events: super::surfaced::SurfacedEvents::new(
                 crate::util::consts::SURFACED_EVENTS_CAP,
             ),

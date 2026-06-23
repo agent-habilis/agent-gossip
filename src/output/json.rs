@@ -338,9 +338,10 @@ pub(super) fn format_msg_json(msg: &Message, is_self: bool) -> String {
         .expect("message event serialization should never fail"),
         MessageKind::Presence { .. }
         | MessageKind::PeerInfo
-        | MessageKind::Digest
+        | MessageKind::Digest | MessageKind::StateDigest
         | MessageKind::Ping
         | MessageKind::Pong { .. }
+        | MessageKind::State
         | MessageKind::Exchange { .. } => {
             unreachable!("format_msg_json only handles Msg")
         }
