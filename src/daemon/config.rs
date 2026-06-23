@@ -67,9 +67,7 @@ pub(crate) enum SessionRequest {
     },
     /// Snapshot the derived state — event payloads in deterministic replay
     /// order. The substrate's generic read until typed projections land.
-    StateSnapshot {
-        resp: oneshot::Sender<Vec<String>>,
-    },
+    StateSnapshot { resp: oneshot::Sender<Vec<String>> },
     /// Broadcast pre-built wire bytes **verbatim** — no signing, no chain
     /// stamping. The escape hatch the `adversarial` feature uses to inject
     /// crafted/malicious messages (bad signature, equivocation, backdating)

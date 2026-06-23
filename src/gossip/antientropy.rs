@@ -214,7 +214,10 @@ pub(crate) async fn handle_state_digest(
         }
     }
     if resent > 0 {
-        tracing::debug!(resent, "state anti-entropy: resent state events a peer lacked");
+        tracing::debug!(
+            resent,
+            "state anti-entropy: resent state events a peer lacked"
+        );
     }
 }
 
@@ -330,8 +333,11 @@ mod tests {
         let author = Nickname::from("a-fairly-long-nickname");
         let mut log = StateLog::new();
         for index in 0..crate::util::tuning::STATE_LOG_CAP {
-            let mut event =
-                Message::new_state(&swarm, &author, MessageBody::from(format!("s{index}").as_str()));
+            let mut event = Message::new_state(
+                &swarm,
+                &author,
+                MessageBody::from(format!("s{index}").as_str()),
+            );
             event.timestamp = 1_700_000_000 + i64::try_from(index).unwrap();
             assert!(log.insert(event), "fill to cap");
         }

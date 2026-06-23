@@ -50,7 +50,8 @@ pub(crate) fn compute(
             subtype: PresenceSubtype::Joined | PresenceSubtype::Alive,
         }
         | MessageKind::PeerInfo
-        | MessageKind::Digest | MessageKind::StateDigest
+        | MessageKind::Digest
+        | MessageKind::StateDigest
         | MessageKind::Ping
         | MessageKind::Pong { .. } => !state.participants.contains(author.as_str()),
     };

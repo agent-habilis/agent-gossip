@@ -71,7 +71,10 @@ async fn test_state_log_propagates_to_a_peer() {
         tokio::time::sleep(Duration::from_millis(100)).await;
         got = joiner.state_sorted().await;
     }
-    assert_eq!(got, want, "joiner never converged to the creator's state log");
+    assert_eq!(
+        got, want,
+        "joiner never converged to the creator's state log"
+    );
     // The author holds its own events too (gossip never echoes to self).
     assert_eq!(creator.state_sorted().await, want);
 }
@@ -110,7 +113,10 @@ async fn test_state_log_backfills_a_late_joiner() {
         tokio::time::sleep(Duration::from_millis(200)).await;
         late_got = late.state_sorted().await;
     }
-    assert_eq!(late_got, want, "late joiner never backfilled state via anti-entropy");
+    assert_eq!(
+        late_got, want,
+        "late joiner never backfilled state via anti-entropy"
+    );
 }
 
 /// Sender-side rate limiting, symmetric with the receiver: a node may

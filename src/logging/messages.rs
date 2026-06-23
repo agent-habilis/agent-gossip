@@ -116,7 +116,8 @@ fn log(direction: &'static str, msg: &Message) {
             subtype: PresenceSubtype::Alive,
         }
         | MessageKind::PeerInfo
-        | MessageKind::Digest | MessageKind::StateDigest
+        | MessageKind::Digest
+        | MessageKind::StateDigest
         | MessageKind::Ping
         | MessageKind::Pong { .. } => tracing::trace!(
             target: "agent_habilis_swarm::messages",

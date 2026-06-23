@@ -951,7 +951,8 @@ mod tests {
             MessageKind::Msg { reply } => assert_eq!(reply, Some(target)),
             MessageKind::Presence { .. }
             | MessageKind::PeerInfo
-            | MessageKind::Digest | MessageKind::StateDigest
+            | MessageKind::Digest
+            | MessageKind::StateDigest
             | MessageKind::Ping
             | MessageKind::Pong { .. }
             | MessageKind::State

@@ -24,8 +24,8 @@ pub(crate) mod ipc;
 // the gossip anti-entropy layer (and its tests) can name `MessageLog` /
 // `DigestWindow`; still crate-internal.
 pub(crate) mod message_log;
-pub(crate) mod state_log;
 pub(crate) mod params;
+pub(crate) mod state_log;
 // Normally private to the daemon; widened to `pub(crate)` only under the
 // `bench` feature so `harness::bench` can reach `SwarmRateLimiter`. Non-bench
 // builds keep the original surface.
