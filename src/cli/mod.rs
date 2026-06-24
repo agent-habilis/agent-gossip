@@ -63,15 +63,19 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
     // `directory_private` guard while building its `SetupKind`, before the
     // event loop. Replaces the former env-var overrides.
     match cli.command {
+        // The event-loop futures (`create`/`join`/`discover`/`mcp::run`) are
+        // boxed: each holds a full `EventLoopState`/session, so they sit right at
+        // clippy's `large_futures` 16 KiB threshold — boxing keeps the dispatch
+        // future small and the size off the knife's edge as those types grow.
         Commands::Create { opts } => {
             crate::util::tuning::init(opts.shared.tuning());
-            create(opts).await
+            Box::pin(create(opts)).await
         }
         Commands::Join { opts } => {
             reject_id_encoded_flag("--public", opts.public)?;
             reject_id_encoded_flag("--name", opts.name.is_some())?;
             crate::util::tuning::init(opts.shared.tuning());
-            join(opts.swarm, opts.nickname, opts.shared).await
+            Box::pin(join(opts.swarm, opts.nickname, opts.shared)).await
         }
         Commands::Msg { opts } => msg(opts).await,
         Commands::Poll { opts } => poll(opts).await,
@@ -80,7 +84,7 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
         Commands::Peers { opts } => peers(opts).await,
         Commands::Discover { opts } => {
             crate::util::tuning::init(opts.shared.tuning());
-            discover::discover(opts).await
+            Box::pin(discover::discover(opts)).await
         }
         Commands::Mcp {
             directory_private,
@@ -94,7 +98,7 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
                 directory_private,
                 ..crate::util::tuning::Tuning::DEFAULTS
             });
-            crate::mcp::run().await
+            Box::pin(crate::mcp::run()).await
         }
         // The manual is embedded at compile time (`include_str!`), so the
         // binary documents itself with no repo checkout.
