@@ -654,6 +654,162 @@ fn test_state_file_removed_on_signal() {
     }
 }
 
+/// `ahs ready --state-file PATH` is the CLI-fallback readiness gate: it blocks
+/// until the daemon writing PATH flips the file's `ready` flag to true (set
+/// only once the event loop is serving), then exits 0. This covers the gate
+/// against an already-up daemon and asserts the file then carries `ready:true`
+/// plus the minted identity the caller reads next.
+#[test]
+fn test_ready_gate_succeeds_when_serving() {
+    let log = tmp_log("ready-before");
+    let file = File::create(&log).unwrap();
+    let state_file =
+        std::env::temp_dir().join(format!("ahs-ready-before-{}.json", std::process::id()));
+    let _ = fs::remove_file(&state_file);
+
+    let mut child = common::test_cmd()
+        .args(["create", "--name", "ready-test", "--no-interactive"])
+        .arg("--state-file")
+        .arg(&state_file)
+        .stdout(Stdio::from(file.try_clone().unwrap()))
+        .stderr(Stdio::from(file))
+        .spawn()
+        .expect("failed to spawn create --state-file");
+
+    // Gate against the live daemon: exits 0 once it is serving.
+    let status = common::test_cmd()
+        .arg("ready")
+        .arg("--state-file")
+        .arg(&state_file)
+        .args(["--timeout-secs", "60"])
+        .status()
+        .expect("failed to run ahs ready");
+    assert!(
+        status.success(),
+        "ahs ready should exit 0 against a serving daemon\nlog:\n{}",
+        fs::read_to_string(&log).unwrap_or_default()
+    );
+
+    // The gate returning means the file is complete and serving — the caller
+    // reads identity + ready:true from it.
+    let parsed: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&state_file).unwrap()).unwrap();
+    assert_eq!(parsed["ready"], true, "gate returned but ready is not true");
+    assert_eq!(parsed["name"], "ready-test");
+    assert!(
+        parsed["swarm"]
+            .as_str()
+            .is_some_and(|swarm| swarm.starts_with("ahs"))
+    );
+    assert!(parsed["nickname"].as_str().is_some());
+
+    let _ = Command::new("kill")
+        .args(["-TERM", &child.id().to_string()])
+        .status();
+    let _ = child.wait();
+    let _ = fs::remove_file(&log);
+    let _ = fs::remove_file(&state_file);
+}
+
+/// The race the gate exists for: `ahs ready` is started *before* the daemon, so
+/// the state file does not exist yet. The gate must block (file-appears, then
+/// ready-flips) and still exit 0 once the daemon comes up and serves.
+#[test]
+fn test_ready_gate_waits_for_a_late_daemon() {
+    let log = tmp_log("ready-after");
+    let file = File::create(&log).unwrap();
+    let state_file =
+        std::env::temp_dir().join(format!("ahs-ready-after-{}.json", std::process::id()));
+    let _ = fs::remove_file(&state_file);
+
+    // Start the gate first — nothing has written the file yet.
+    let mut gate = common::test_cmd()
+        .arg("ready")
+        .arg("--state-file")
+        .arg(&state_file)
+        .args(["--timeout-secs", "60"])
+        .spawn()
+        .expect("failed to spawn ahs ready");
+
+    // Launch the daemon a beat later, writing the same state file.
+    std::thread::sleep(Duration::from_millis(500));
+    let mut child = common::test_cmd()
+        .args(["create", "--name", "ready-race", "--no-interactive"])
+        .arg("--state-file")
+        .arg(&state_file)
+        .stdout(Stdio::from(file.try_clone().unwrap()))
+        .stderr(Stdio::from(file))
+        .spawn()
+        .expect("failed to spawn create --state-file");
+
+    let status = gate.wait().expect("ahs ready never exited");
+    assert!(
+        status.success(),
+        "ahs ready started before the daemon should still exit 0 once it serves\nlog:\n{}",
+        fs::read_to_string(&log).unwrap_or_default()
+    );
+
+    let _ = Command::new("kill")
+        .args(["-TERM", &child.id().to_string()])
+        .status();
+    let _ = child.wait();
+    let _ = fs::remove_file(&log);
+    let _ = fs::remove_file(&state_file);
+}
+
+/// With no daemon ever writing the file, the gate must give up at the timeout
+/// and exit non-zero (the `failed to {create,join} swarm` contract the skills
+/// rely on).
+#[test]
+fn test_ready_gate_times_out_without_a_daemon() {
+    let state_file = std::env::temp_dir().join(format!(
+        "ahs-ready-timeout-{}-never.json",
+        std::process::id()
+    ));
+    let _ = fs::remove_file(&state_file);
+
+    let status = common::test_cmd()
+        .arg("ready")
+        .arg("--state-file")
+        .arg(&state_file)
+        .args(["--timeout-secs", "2"])
+        .status()
+        .expect("failed to run ahs ready");
+    assert!(
+        !status.success(),
+        "ahs ready should exit non-zero when no daemon ever writes the state file"
+    );
+}
+
+/// A stale `ready:true` left by a prior daemon killed with SIGKILL must NOT
+/// satisfy the gate: the gate checks `last_updated` freshness, so an old
+/// timestamp (no live daemon refreshing it) is rejected and the gate times
+/// out. Without the freshness check this file would be a false-positive ready.
+#[test]
+fn test_ready_gate_rejects_a_stale_ready_file() {
+    let state_file =
+        std::env::temp_dir().join(format!("ahs-ready-stale-{}.json", std::process::id()));
+    // ready:true but last_updated far in the past (well beyond READY_FRESH_SECS).
+    fs::write(
+        &state_file,
+        br#"{"last_updated":1000000000,"name":"stale","nickname":"old-nick","participant_count":1,"ready":true,"swarm":"ahsdeadbeef"}"#,
+    )
+    .unwrap();
+
+    let status = common::test_cmd()
+        .arg("ready")
+        .arg("--state-file")
+        .arg(&state_file)
+        .args(["--timeout-secs", "2"])
+        .status()
+        .expect("failed to run ahs ready");
+    assert!(
+        !status.success(),
+        "ahs ready must reject a stale ready:true file (last_updated too old) and time out"
+    );
+    let _ = fs::remove_file(&state_file);
+}
+
 /// The poll command retrieves buffered events from a running swarm process,
 /// each carrying its surfacing `seq`. Calling poll with `--after <seq>` returns
 /// only events surfaced after that seq. The records are the same shape the live

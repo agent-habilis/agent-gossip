@@ -25,7 +25,7 @@ use crate::util::bounded_read::{LineRead, read_bounded_line};
 use crate::util::consts::MAX_STDIN_LINE_BYTES;
 use crate::{beacon, gossip, lifecycle, lookup};
 // Bare `ipc` is `daemon::ipc`; transport's socket server is by-item.
-use crate::transport::ipc::{IpcMessage, listen};
+use crate::transport::ipc::IpcMessage;
 use crate::util::tuning::{
     ALIVE_INTERVAL_SECS, ANTIENTROPY_INTERVAL_SECS, HEAL_INTERVAL_SECS, RECLAIM_INTERVAL_MS,
     RESUBSCRIBE_MAX_ATTEMPTS, STATE_REFRESH_SECS, heal_stall_threshold_secs,
@@ -107,20 +107,27 @@ pub(crate) async fn run(cfg: EventLoopConfig) -> Result<()> {
 
     let (sender, receiver) = topic.split();
 
-    let ipc_rx = spawn_ipc_rx(
-        ipc_listener_disabled,
-        &swarm_str,
-        &author,
-        // The IPC listener runs as its own task; hand it an owned
-        // clone (cheap — `Capture` is an `Arc`-backed sender).
-        output.clone(),
-    );
+    let ipc_rx = spawn_ipc_rx(ipc_listener_disabled, &swarm_str, &author, &output);
 
     // Arrival announce is deferred to the first `NeighborUp` — see
     // `gossip::handle_gossip_event`.
 
     let intervals = build_maintenance_intervals().await;
     let quit_rx = spawn_quit_signal_tasks(exit_on_quit);
+
+    // Flip `ready` to `true` only once the daemon can actually serve, then
+    // re-write the state file (the earlier write reported `ready: false`).
+    // "Serving" means: in CLI mode the IPC socket is bound — `spawn_ipc_rx`
+    // binds *synchronously*, so a `Some` receiver proves an accepting socket
+    // exists and a gate that observes the flag is guaranteed a subsequent
+    // `poll`/`msg` connect succeeds; a `None` here is a bind failure, and we
+    // must NOT advertise readiness (the daemon still gossips, but has no IPC).
+    // In-process mode (embed/MCP) has no socket by design (`req_rx` drives it)
+    // and no `--state-file`, so it is always considered serving.
+    if ipc_listener_disabled || ipc_rx.is_some() {
+        state.ready = true;
+        state.write_participant_count();
+    }
 
     // `_router` stays owned in this scope so its accept loop outlives
     // the event loop below (dropping it makes the daemon unreachable
@@ -589,7 +596,7 @@ fn spawn_ipc_rx(
     disable_ipc_listener: bool,
     swarm: &SwarmId,
     author: &Nickname,
-    output: output::Output,
+    output: &output::Output,
 ) -> Option<mpsc::Receiver<IpcMessage>> {
     // In-process mode (embed / MCP): no socket. Returning `None` leaves
     // the loop's IPC `select!` arm inert (it pends forever), so the
@@ -598,8 +605,26 @@ fn spawn_ipc_rx(
     if disable_ipc_listener {
         return None;
     }
+    // Bind synchronously here, *before* the caller marks the session ready,
+    // so an accepting socket always exists by the time the readiness flag
+    // flips. Only the (always-running) accept loop is spawned. A bind
+    // failure is non-fatal — the daemon still gossips; it just can't take
+    // IPC — matching the prior best-effort behavior, only now observed
+    // before readiness rather than racing it.
+    let listener = match crate::transport::ipc::bind(swarm, author) {
+        Ok(listener) => listener,
+        Err(error) => {
+            output.error(&format!("IPC: {error}"));
+            tracing::warn!(%error, "IPC: failed to bind socket");
+            return None;
+        }
+    };
     let (ipc_tx, rx) = mpsc::channel::<IpcMessage>(32);
-    tokio::spawn(listen(swarm.clone(), author.clone(), ipc_tx, output));
+    tokio::spawn(crate::transport::ipc::serve(
+        listener,
+        ipc_tx,
+        output.clone(),
+    ));
     Some(rx)
 }
 

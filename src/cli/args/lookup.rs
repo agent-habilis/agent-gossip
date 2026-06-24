@@ -73,6 +73,7 @@ mod tests {
             | Commands::Man
             | Commands::Exchange { .. }
             | Commands::Peers { .. }
+            | Commands::Ready { .. }
             | Commands::Setup { .. }
             | Commands::Teardown { .. }
             | Commands::Status => panic!("expected Create"),
@@ -143,6 +144,7 @@ mod tests {
             | Commands::Man
             | Commands::Exchange { .. }
             | Commands::Peers { .. }
+            | Commands::Ready { .. }
             | Commands::Setup { .. }
             | Commands::Teardown { .. }
             | Commands::Status => panic!("expected Create"),

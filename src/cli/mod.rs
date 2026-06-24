@@ -25,7 +25,8 @@ mod status;
 
 pub(crate) use args::Cli;
 use args::{
-    Commands, CreateOpts, ExchangeOpts, MsgOpts, PeersOpts, PingOpts, PollOpts, SharedServerOpts,
+    Commands, CreateOpts, ExchangeOpts, MsgOpts, PeersOpts, PingOpts, PollOpts, ReadyOpts,
+    SharedServerOpts,
 };
 
 /// `join` has no `--public`/`--name`: both are encoded in the `ahs…`
@@ -82,6 +83,7 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
         Commands::Ping { opts } => ping(opts).await,
         Commands::Exchange { opts } => exchange(opts).await,
         Commands::Peers { opts } => peers(opts).await,
+        Commands::Ready { opts } => ready(opts).await,
         Commands::Discover { opts } => {
             crate::util::tuning::init(opts.shared.tuning());
             Box::pin(discover::discover(opts)).await
@@ -330,4 +332,78 @@ async fn peers(opts: PeersOpts) -> Result<()> {
     let resp = ipc::send(&cmd, &nickname).await?;
     println!("{resp}");
     Ok(())
+}
+
+/// Block until the daemon's `--state-file` reports it is *freshly* serving
+/// (the `ready` flag is `true` and `last_updated` is recent), then exit 0.
+/// A pure gate — prints nothing; the caller reads the identity from the same
+/// file. Times out non-zero.
+///
+/// Robustness: a missing, unreadable, malformed, or stale-but-not-yet-ready
+/// file is "not ready yet, keep polling" — only the deadline fails the gate.
+/// This tolerates a half-written or old-schema file the daemon is about to
+/// atomically overwrite, and the freshness check rejects a `ready: true`
+/// left behind by a prior daemon that was killed with SIGKILL.
+async fn ready(opts: ReadyOpts) -> Result<()> {
+    let ReadyOpts {
+        state_file,
+        timeout_secs,
+    } = opts;
+    // Saturating add: an absurd `--timeout-secs` must not panic the gate
+    // (`Instant + Duration` panics on overflow); clamp to a far-future
+    // deadline instead.
+    let now = tokio::time::Instant::now();
+    let deadline = now
+        .checked_add(std::time::Duration::from_secs(timeout_secs))
+        .unwrap_or_else(|| {
+            now + std::time::Duration::from_secs(crate::util::tuning::READY_MAX_SECS)
+        });
+    loop {
+        // Read off the runtime's blocking pool: a `--state-file` on a hung
+        // mount must not block a worker thread. A read error (malformed/torn/
+        // old-schema file) is treated as not-ready, not a hard failure — the
+        // daemon may be mid-overwrite. A *persistent* error (e.g. a bad path)
+        // can't self-heal and just spins to the deadline, so log it so the
+        // cause is recoverable.
+        let path = state_file.clone();
+        let read =
+            tokio::task::spawn_blocking(move || crate::daemon::state_file::read_snapshot(&path))
+                .await?;
+        match read {
+            Ok(Some(snapshot)) if snapshot.ready && ready_is_fresh(snapshot.last_updated) => {
+                return Ok(());
+            }
+            Ok(_) => {}
+            Err(error) => {
+                tracing::debug!(%error, path = %state_file.display(), "ahs ready: state-file read failed; retrying");
+            }
+        }
+        if tokio::time::Instant::now() >= deadline {
+            anyhow::bail!(
+                "daemon at {} not ready within {timeout_secs}s",
+                state_file.display()
+            );
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(
+            crate::util::tuning::READY_POLL_INTERVAL_MS,
+        ))
+        .await;
+    }
+}
+
+/// True when a `ready: true` state-file write is recent enough to trust —
+/// `last_updated` within `READY_FRESH_SECS` of now in *either* direction. A
+/// live daemon refreshes `last_updated` every `STATE_REFRESH_SECS`, so a value
+/// older than the window means the writer is gone (e.g. a leftover file from a
+/// daemon killed by SIGKILL). A value far in the *future* is equally
+/// untrustworthy — a stale file whose age only looks recent because the wall
+/// clock stepped backward (NTP correction, VM restore) — so it is rejected
+/// too. `clock::unix_secs` is non-negative, so the `i64` math below cannot
+/// underflow into the past.
+fn ready_is_fresh(last_updated: u64) -> bool {
+    let now = crate::util::clock::unix_secs();
+    let last_updated = i64::try_from(last_updated).unwrap_or(i64::MAX);
+    let skew = now - last_updated; // >0: file is in the past; <0: in the future
+    let window = i64::try_from(crate::util::tuning::READY_FRESH_SECS).unwrap_or(i64::MAX);
+    skew.abs() <= window
 }

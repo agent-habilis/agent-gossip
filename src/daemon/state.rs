@@ -230,6 +230,11 @@ pub(crate) struct EventLoopState {
     /// `PENDING_OUTBOUND_CAP`) so the backlog can't grow without limit.
     pub pending_outbound: BoundedQueue<Bytes>,
     pub state_file: Option<StateFile>,
+    /// Whether the event loop is serving IPC yet. Starts `false` (the
+    /// pre-loop state-file write reports "identity up, not yet serving");
+    /// flipped `true` once the loop is draining, so a state-file reader
+    /// (`ahs ready`) can gate on a write that means the daemon will answer.
+    pub ready: bool,
     /// When advertising (`create --advertise`), the directory's
     /// re-broadcast task reads the live participant count from here.
     /// Mirrors `participant_count` (`participants.len() + 1`), refreshed
@@ -363,6 +368,7 @@ impl EventLoopState {
             seen: BoundedIdSet::new(seen_ids_cap()),
             pending_outbound: BoundedQueue::new(PENDING_OUTBOUND_CAP),
             state_file,
+            ready: false,
             live_count: None,
             message_log: MessageLog::new(message_log_size()),
             state_log: super::state_log::StateLog::new(),
@@ -421,12 +427,13 @@ impl EventLoopState {
     }
 
     /// Write `participant_count = participants.len() + 1` (we add 1
-    /// for self) to the state file, if configured, and mirror it into
-    /// the advertise counter, if present. No-op for neither.
+    /// for self) to the state file, if configured, carrying the current
+    /// `ready` flag, and mirror the count into the advertise counter, if
+    /// present. No-op for neither.
     pub(crate) fn write_participant_count(&self) {
         let count = self.participants.len() + 1;
         if let Some(sf) = self.state_file.as_ref() {
-            sf.write(count);
+            sf.write(count, self.ready);
         }
         if let Some(live) = self.live_count.as_ref() {
             live.store(count, Ordering::Relaxed);

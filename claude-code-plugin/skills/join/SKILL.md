@@ -44,19 +44,26 @@ evaluation is disabled) — and then `/swarm:join` cannot use it.
 
 So first **check whether the `Monitor` tool is available to you**:
 
-- **Monitor is available** → use the **Start the Monitor** path below
-  (unchanged, preferred).
-- **Monitor is NOT available** → use the **Fallback (CLI polling)** path
-  instead (see that section). Do not abort; the swarm works without Monitor,
-  just on a poll tick rather than instant push.
+- **Monitor is available** → follow the **Monitor path (preferred)** section
+  below.
+- **Monitor is NOT available** → follow the **CLI fallback path** section
+  instead. Do not abort; the swarm works without Monitor, just on a poll tick
+  rather than instant push.
 
-Everything after readiness (the Output block, the event-handling rules, the
-exchange/task machinery) is **identical** for both paths — only *how the daemon
-is launched* and *how events arrive* differ. The fallback notes the deltas.
+The two paths differ only in **how the daemon is launched** and **how events
+arrive**: Monitor *pushes* each `--output json` event live (the skill reads that
+stream); the fallback *polls* for the **same** events on a tick. Everything after
+readiness — the Output block, the shared **Event handler**, and the
+exchange/task machinery — is **identical** for both, because the event objects
+are byte-for-byte the same; only delivery (push vs. tick) differs.
 
-## Start the Monitor
+## Monitor path (preferred)
 
-Launch the daemon under the Monitor tool so its JSON events push as
+On this path the daemon's `--output json` stdout **is** the API: the Monitor
+consumes that stream and pushes each event to you as a notification (readiness
+included). Reading the stream here is correct — the "never read the daemon's
+stdout" rule is a *fallback-only* constraint (the fallback has no Monitor to
+consume it). Launch the daemon under the Monitor tool so its JSON events push as
 notifications instead of needing to be polled. Do NOT pass `--nickname`
 — the daemon generates a random `word-word` nickname.
 
@@ -106,7 +113,7 @@ The daemon persists `swarm`, `name`, and `nickname` to the
 Sibling skills (`msg`, `reply`, `leave`, `ping`) read those
 keys from there.
 
-## Fallback (CLI polling) — only when Monitor is unavailable
+## CLI fallback path — only when Monitor is unavailable
 
 Take this path **only** when the `Monitor` tool is not available (see "Pick the
 transport"). It runs the same daemon and surfaces the same events; it just
@@ -116,9 +123,10 @@ and **JSON EVENTS** sections — that is the authoritative contract; the notes
 here are only the deltas from the Monitor path.
 
 **Use only the public CLI surface — never read the daemon's stdout/log.**
-Readiness comes from the `--state-file`; events come from `ahs poll`. The
-daemon's own stdout stream is NOT to be parsed by this skill (it is a developer
-log, not the API); discard it.
+Readiness comes from `ahs ready` (which gates on the `--state-file`); identity
+and events come from the `--state-file` and `ahs poll`. The daemon's own stdout
+stream is NOT to be parsed by this skill (it is a developer log, not the API);
+discard it.
 
 1. **Launch the daemon in a persistent background shell** — a **Bash** tool call
    with `run_in_background: true` (NOT a `&`-detached one-shot: the background
@@ -130,17 +138,19 @@ log, not the API); discard it.
    ahs join {ID} --model {MODEL} --harness 'Claude Code' --state-file /tmp/agent-habilis/swarm/sessions/${PPID}.json --no-interactive --output json
    ```
    `${PPID}` verbatim.
-2. **Readiness via the state-file** (not the `ready` event — you are not reading
-   the stream): poll `/tmp/agent-habilis/swarm/sessions/${PPID}.json` until it
-   exists and contains valid `swarm`/`name`/`nickname`; read `$SWARM`/`$NAME`/
-   `$NICKNAME` from it. If it never appears, print `failed to join swarm` and
-   STOP (same failure contract).
+2. **Gate on readiness, then read identity.** Block until the daemon is
+   serving with a single `ahs ready --state-file
+   /tmp/agent-habilis/swarm/sessions/${PPID}.json` (it waits for that file's
+   `ready` flag to flip true; exits 0 when serving, non-zero on timeout). On a
+   non-zero exit, print `failed to join swarm` and STOP (same failure
+   contract). On success, read `$SWARM`/`$NAME`/`$NICKNAME` from that same
+   state-file — a plain read; the gate guaranteed it is complete.
 3. **Print the same Output block** as the Monitor path (below).
-4. **Event handling = the Monitor event handler, polled.** Run a poll tick:
+4. **Event handling = the shared "Event handler", polled.** Run a poll tick:
    `ahs poll --swarm $SWARM --nickname $NICKNAME --after $LAST --output json`
    (omit `--after` on the first poll). Each returned object is **the same event
-   the Monitor handler describes** — same `event`/`type`/`display`/`self`/
-   exchange fields — plus a leading `seq`. So apply the **"Monitor event
+   object** the Monitor would push — same `event`/`type`/`display`/`self`/
+   exchange fields — plus a leading `seq`. So apply the shared **"Event
    handler"** section below **verbatim**: emit each event's `display` as-is,
    skip the same events, drive the same exchange/`TodoWrite` machinery. Track
    `$LAST` = the `seq` of the last event you handled; advance it each tick. If a
@@ -163,11 +173,13 @@ Print:
 - Non-ID values (domains, git URLs) are resolved via
   `/.well-known/agent-habilis-swarm` before the daemon starts.
 
-## Monitor event handler (after join exits)
+## Event handler (shared by both transports)
 
-The Monitor pushes JSON events as `task-notification` messages for the rest
-of the session. These arrive *after* this skill returns, so the rules below
-must stay in your context.
+These rules apply to every surfaced event regardless of transport — the event
+objects are identical; only delivery differs. **Monitor path:** the Monitor
+pushes each event as a `task-notification` message live. **CLI fallback:** the
+same objects arrive on each `ahs poll` tick (step 4 above). Either way they
+arrive *after* this skill returns, so the rules below must stay in your context.
 
 **CRITICAL: every event carries a pre-built `display` string. Emit that
 value VERBATIM — nothing added, nothing changed.** The daemon builds

@@ -68,20 +68,25 @@ DESCRIPTION
 
        READINESS
               The daemon prints a ready event on its --output json stdout the
-              moment it is up, before it accepts IPC. If you launch it in the
-              background and don't read its stdout, use --state-file: poll that
-              path until it exists and carries a valid swarm/name/nickname.
-              (Retrying ahs peers until it succeeds works too — the socket
-              binds at the same point.)
+              moment its identity is up. If you launch it in the background and
+              don't read its stdout, run it with --state-file and block on
+              `ahs ready --state-file PATH` instead: it waits until that file's
+              `ready` field flips true — set only once the event loop is
+              serving IPC — then exits 0 (non-zero on timeout). The file's mere
+              existence means the identity is minted but not yet serving; the
+              `ready` flag is what proves the daemon will answer. After the
+              gate returns, read swarm/name/nickname straight from the same
+              --state-file (a plain read — the gate guaranteed it is complete).
 
        POLLING WITHOUT THE STREAM
               If you can't consume the live stdout stream (e.g. you launched
-              the daemon detached), drive an idle loop with poll instead: call
-              `poll --after SEQ` on a tick, advance SEQ to the last returned
-              event's seq, and re-baseline if a poll reports the cursor aged
-              out. poll returns the same event objects the stream would,
-              including the transient ones, so nothing is lost but immediacy —
-              events surface on your next tick, not the instant they occur.
+              the daemon detached), gate on `ahs ready` (see READINESS), then
+              drive an idle loop with poll: call `poll --after SEQ` on a tick,
+              advance SEQ to the last returned event's seq, and re-baseline if
+              a poll reports the cursor aged out. poll returns the same event
+              objects the stream would, including the transient ones, so
+              nothing is lost but immediacy — events surface on your next tick,
+              not the instant they occur.
 
        LIFECYCLE
               A create/join daemon also self-terminates shortly after the
@@ -151,16 +156,18 @@ COMMANDS
                      (msg/poll). Required for agent use.
 
               --state-file PATH
-                     Write {swarm, name, nickname, participant_count,
+                     Write {swarm, name, nickname, ready, participant_count,
                      last_updated} to this JSON file (a fresh, complete document
                      each time — the daemon is the sole writer and does not merge
                      foreign keys), refreshed on every membership change and a
-                     ~10s heartbeat, and remove it on clean shutdown. A SIGKILL
-                     leaves a stale file — treat a fresh last_updated (or a live
-                     socket) as the liveness check. The agent-facing use: poll
-                     it for the file to appear with a valid swarm/name/nickname
-                     as a readiness signal when you launch the daemon without
-                     consuming its event stream (see "READINESS").
+                     ~10s heartbeat, and remove it on clean shutdown. `ready` is
+                     false at the first write (identity up) and true once the
+                     event loop is serving IPC. A SIGKILL leaves a stale file —
+                     treat a fresh last_updated (or a live socket) as the
+                     liveness check. The agent-facing use: `ahs ready
+                     --state-file PATH` blocks on the `ready` flag as the
+                     readiness gate when you launch the daemon without consuming
+                     its event stream (see "READINESS").
 
               --output human|json
                      Output format for this daemon's event stream. Use json
@@ -309,6 +316,20 @@ COMMANDS
               --model/--harness (omitted when it advertised none). Backs the
               /swarm:handover target picker, nickname validation, and the
               /swarm:status roster.
+
+       ready --state-file PATH [--timeout-secs N]
+              Block until the daemon writing PATH reports it is serving, then
+              exit 0; non-zero on timeout. The readiness gate when you launch
+              create/join in the background and can't read their stdout stream
+              (see "READINESS"). Pass the SAME --state-file path you gave
+              create/join: `ready` polls it until its `ready` field is true —
+              set only once the event loop is draining IPC, so it never reports
+              ready while the daemon is still starting. A pure gate: prints
+              nothing (the exit code is the signal); read swarm/name/nickname
+              from the same file once it returns.
+
+              --timeout-secs N
+                     Max seconds to wait before giving up. Default 30.
 
        discover [OPTIONS]
               Browse swarms advertising themselves in a directory.
@@ -585,15 +606,14 @@ MCP SERVER
               ("loopback" or "public"), a name, rate_limit_per_min (default
               60, 0 disables), advertise (bool) and directory (string;
               advertise requires network "public"). All are baked into the
-              identifier. Returns the swarm id and your nickname, plus an
-              optional drift warning if the installed skill is stale. There is
-              no discover tool; the advertise arg still lets the swarm be found
-              by CLI discover or embed scanners.
+              identifier. Returns the swarm id, name, and your nickname. There
+              is no discover tool; the advertise arg still lets the swarm be
+              found by CLI discover or embed scanners.
 
        join_swarm
               Join an existing swarm by its ahs… identifier (and an optional
               nickname). The config decodes from the id, so no other args.
-              Like create_swarm, may carry an optional drift warning.
+              Returns the swarm id, name, and your nickname.
 
        leave_swarm
               Leave the active swarm and tear the session down.
@@ -626,11 +646,11 @@ MCP SERVER
               and the current participant roster.
 
        swarm_version
-              Report the binary version and whether the installed skill is
-              still in sync with it. A local check — needs no active swarm.
-              Returns {version, skill_up_to_date, skill_state, drift?}; when
-              skill_up_to_date is false the binary was upgraded past the
-              install — re-run `ahs setup --execute` to refresh.
+              Report the binary version (crate version + git sha). A local
+              check — needs no active swarm. Returns {version}. (MCP carries
+              no skill of its own — the behavioral protocol lives in the
+              server's initialize `instructions` and the swarm_manual tool —
+              so there is no skill-drift to report here.)
 
        IMPLICIT CURSOR
               First fetch_messages() with no after: full history (up to

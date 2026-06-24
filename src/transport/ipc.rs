@@ -135,38 +135,37 @@ pub(crate) fn json_rate_limited() -> String {
     serde_json::json!({"ok": false, "rate_limited": true}).to_string()
 }
 
-/// Server-side: listen on the local socket and forward commands to the event loop.
-pub(crate) async fn listen(
-    swarm: SwarmId,
-    nickname: Nickname,
-    tx: mpsc::Sender<IpcMessage>,
-    output: crate::output::Output,
-) {
-    let path = socket_path(&swarm, &nickname);
+/// Bind the local IPC socket synchronously, returning the listening
+/// socket. Done *before* the daemon marks itself ready so that "ready"
+/// can never precede an accepting socket: a `ready` gate that observes
+/// the readiness flag is then guaranteed a subsequent `connect` succeeds.
+///
+/// # Errors
+/// An invalid socket name, or the OS refusing the bind.
+pub(crate) fn bind(swarm: &SwarmId, nickname: &Nickname) -> Result<Listener> {
+    let path = socket_path(swarm, nickname);
 
     // Best-effort cleanup of a stale socket file and (re)create the parent dir.
     let _ = std::fs::remove_file(&path);
     let _ = std::fs::create_dir_all(SOCKET_DIR);
 
-    let name = match to_name(&path) {
-        Ok(socket_name) => socket_name,
-        Err(error) => {
-            output.error(&format!("IPC: invalid socket name: {error}"));
-            tracing::warn!(%error, "IPC: invalid socket name");
-            return;
-        }
-    };
-
-    let listener: Listener = match ListenerOptions::new().name(name).create_tokio() {
-        Ok(bound) => bound,
-        Err(error) => {
-            output.error(&format!("IPC: failed to bind socket: {error}"));
-            tracing::warn!(%error, "IPC: failed to bind socket");
-            return;
-        }
-    };
+    let name = to_name(&path)?;
+    let listener = ListenerOptions::new()
+        .name(name)
+        .create_tokio()
+        .map_err(|error| anyhow::anyhow!("failed to bind IPC socket {path}: {error}"))?;
     tracing::info!(?path, "IPC socket listening");
+    Ok(listener)
+}
 
+/// Server-side accept loop over an already-[`bind`]-ed socket: forward
+/// each connection's command to the event loop. Spawned after `bind`
+/// returns, so by the time this runs the socket is already accepting.
+pub(crate) async fn serve(
+    listener: Listener,
+    tx: mpsc::Sender<IpcMessage>,
+    output: crate::output::Output,
+) {
     // Accept errors are retried forever: they are almost always
     // transient (fd exhaustion under load, an aborted handshake), and
     // the old `break` permanently killed msg/poll for the process
@@ -286,7 +285,7 @@ pub(crate) async fn send(cmd: &IpcCommand, nickname: &Nickname) -> Result<String
 mod tests {
     use super::{
         ExchangeId, ExchangeKind, ExchangePhase, IpcCommand, IpcMessage, MessageBody, Nickname,
-        SwarmId, json_error, json_ok, listen, mpsc, send, socket_path,
+        SwarmId, bind, json_error, json_ok, mpsc, send, serve, socket_path,
     };
 
     // ── pure functions ─────────────────────────────────────────────
@@ -603,21 +602,10 @@ mod tests {
 
         let (tx, mut rx) = mpsc::channel::<IpcMessage>(8);
 
-        // Start listener in background
-        let swarm_clone = swarm.clone();
-        let nickname_clone = nickname.clone();
-        let listener_handle = tokio::spawn(async move {
-            listen(
-                swarm_clone,
-                nickname_clone,
-                tx,
-                crate::output::Output::silent(),
-            )
-            .await;
-        });
-
-        // Give the listener a moment to bind.
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        // Bind synchronously (no sleep needed — the socket is accepting the
+        // instant `bind` returns), then spawn the accept loop.
+        let listener = bind(&swarm, &nickname).expect("bind IPC socket");
+        let listener_handle = tokio::spawn(serve(listener, tx, crate::output::Output::silent()));
 
         // Spawn a handler that responds to messages
         let handler = tokio::spawn(async move {
@@ -684,12 +672,8 @@ mod tests {
         let swarm = SwarmId::new(format!("ahsipcquiet{pid_b58}")).unwrap();
         let nickname = Nickname::from("idle-nick");
         let (tx, mut rx) = mpsc::channel::<IpcMessage>(8);
-        let listener_handle = tokio::spawn(listen(
-            swarm.clone(),
-            nickname.clone(),
-            tx,
-            crate::output::Output::silent(),
-        ));
+        let listener = bind(&swarm, &nickname).expect("bind IPC socket");
+        let listener_handle = tokio::spawn(serve(listener, tx, crate::output::Output::silent()));
         // Echo handler so a healthy command still round-trips while the
         // idle connection is parked.
         let handler = tokio::spawn(async move {
@@ -697,7 +681,6 @@ mod tests {
                 let _ = resp_tx.send(json_ok("healthy"));
             }
         });
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
         // Park a silent connection.
         let path = socket_path(&swarm, &nickname);

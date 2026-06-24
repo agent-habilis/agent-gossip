@@ -32,6 +32,26 @@ impl McpClient {
         Self::spawn_with_args(&[])
     }
 
+    /// Spawn the MCP server without performing the handshake — for tests that
+    /// assert on the `initialize` response itself.
+    fn spawn_raw() -> Self {
+        let mut child = test_cmd()
+            .arg("mcp")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn ahs mcp");
+        let stdin = child.stdin.take().expect("child stdin");
+        let stdout = child.stdout.take().expect("child stdout");
+        let reader = BufReader::new(stdout);
+        McpClient {
+            child,
+            stdin,
+            reader,
+        }
+    }
+
     /// Spawn the MCP server with extra `mcp`-subcommand flags (e.g. the hidden
     /// `--directory-private` so the directory path runs on the loopback ladder).
     fn spawn_with_args(extra: &[&str]) -> Self {
@@ -152,13 +172,16 @@ impl Drop for McpClient {
 /// response. Returns None if the response is an error or the shape
 /// is unexpected.
 fn tool_result_json(response: &serde_json::Value) -> Option<serde_json::Value> {
+    serde_json::from_str(&tool_result_text(response)?).ok()
+}
+
+fn tool_result_text(response: &serde_json::Value) -> Option<String> {
     let content = response
         .get("result")?
         .get("content")?
         .as_array()?
         .first()?;
-    let text = content.get("text")?.as_str()?;
-    serde_json::from_str(text).ok()
+    Some(content.get("text")?.as_str()?.to_string())
 }
 
 fn tool_error(response: &serde_json::Value) -> Option<String> {
@@ -352,13 +375,41 @@ fn swarm_version_works_without_a_session() {
             .is_some_and(|text| !text.is_empty()),
         "swarm_version must report a non-empty build string, got: {json}"
     );
+    // MCP carries no skill of its own, so the version result is version-only —
+    // the former skill-drift fields are gone.
     assert!(
-        json["skill_up_to_date"].is_boolean(),
-        "swarm_version must report skill_up_to_date, got: {json}"
+        json.get("skill_up_to_date").is_none() && json.get("skill_state").is_none(),
+        "swarm_version must not report skill fields over MCP, got: {json}"
     );
+}
+
+#[test]
+fn swarm_manual_returns_the_manual_without_a_session() {
+    let mut client = McpClient::spawn();
+    let resp = client.tool_call(31, "swarm_manual", serde_json::json!({}));
+    let text = tool_result_text(&resp).expect("swarm_manual should return text content");
     assert!(
-        json["skill_state"].as_str().is_some(),
-        "swarm_version must report skill_state, got: {json}"
+        text.contains("COMMANDS") && text.contains("JSON EVENTS"),
+        "swarm_manual must return the full manual, got {} chars",
+        text.len()
+    );
+}
+
+#[test]
+fn initialize_carries_behavioral_instructions() {
+    // The server's `instructions` is the MCP-half of the old generic skill:
+    // a capable client surfaces it at handshake, so MCP needs no skill.
+    let mut client = McpClient::spawn_raw();
+    client.send(
+        r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"t","version":"0.1"}}}"#,
+    );
+    let resp = client.recv_until_response(1);
+    let instructions = resp["result"]["instructions"]
+        .as_str()
+        .expect("initialize result must carry instructions");
+    assert!(
+        instructions.contains("fetch_messages") && instructions.contains("swarm_manual"),
+        "instructions must teach the poll loop and point to swarm_manual"
     );
 }
 

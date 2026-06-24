@@ -2,7 +2,7 @@
 //!
 //! Runs as a stdio JSON-RPC server that AI clients (Codex, Cursor,
 //! Claude Desktop, Claude Code) can spawn as a child process.
-//! Exposes ten tools that wrap the existing swarm lifecycle:
+//! Exposes eleven tools that wrap the existing swarm lifecycle:
 //!
 //! - `create_swarm`
 //! - `join_swarm`
@@ -14,6 +14,7 @@
 //! - `swarm_info`
 //! - `ping`
 //! - `swarm_version`
+//! - `swarm_manual`
 //!
 //! # Polling-only
 //!
@@ -272,18 +273,6 @@ impl From<&Session> for SwarmRef {
     }
 }
 
-/// `create_swarm` / `join_swarm` output: the swarm identity plus an optional
-/// skill-drift warning surfaced at swarm start — the MCP analogue of the CLI
-/// `ready` event's `drift`, so the generic client warns about a stale skill at
-/// the same moment Claude Code and pi do. Omitted when the install is current.
-#[derive(Debug, Serialize)]
-struct JoinedResult {
-    #[serde(flatten)]
-    swarm: SwarmRef,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    drift: Option<&'static str>,
-}
-
 /// `swarm_info` tool output: the session identity plus the live roster
 /// (`participant_count` = participants + 1 for self, and the per-peer
 /// recency list that backs a handover sender's target picker).
@@ -344,22 +333,14 @@ struct LeaveResult {
     ok: bool,
 }
 
-/// `swarm_version` tool output: the binary build string and whether the
-/// installed generic skill still matches it (drift detection — the binary can
-/// be upgraded while the on-disk skill stays stale).
+/// `swarm_version` tool output: the binary build string. MCP carries no
+/// skill of its own (the behavioral protocol lives in the server's
+/// `instructions` and the `swarm_manual` tool), so there is no skill-drift
+/// to report here.
 #[derive(Debug, Serialize)]
 struct VersionResult {
     /// Crate version + git short sha + dirty flag.
     version: &'static str,
-    /// True iff the installed generic skill is byte-identical to this binary's
-    /// embedded copy.
-    skill_up_to_date: bool,
-    /// Installed-skill state: "up to date" / "out of date" / "not set up" /
-    /// "absent".
-    skill_state: &'static str,
-    /// Remediation when the install has drifted, omitted when current.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    drift: Option<&'static str>,
 }
 
 // ── tool impls ───────────────────────────────────────────────────
@@ -432,10 +413,7 @@ impl AgentSwarmServer {
             }
             CreateError::Setup(error) => McpError::internal_error(error.to_string(), None),
         })?;
-        let result = JoinedResult {
-            swarm: SwarmRef::from(&session),
-            drift: generic_skill_drift(),
-        };
+        let result = SwarmRef::from(&session);
         *guard = Some(session);
         ok_json(result)
     }
@@ -459,10 +437,7 @@ impl AgentSwarmServer {
                 .as_deref()
                 .is_none_or(|candidate| candidate == existing.nickname().as_str());
             if matches!(&target, JoinTarget::Swarm(id) if id == existing.swarm()) && same_nickname {
-                return ok_json(JoinedResult {
-                    swarm: SwarmRef::from(existing),
-                    drift: generic_skill_drift(),
-                });
+                return ok_json(SwarmRef::from(existing));
             }
             return Err(already_in_swarm_error(existing));
         }
@@ -481,10 +456,7 @@ impl AgentSwarmServer {
         })
         .await
         .map_err(to_mcp_error)?;
-        let result = JoinedResult {
-            swarm: SwarmRef::from(&session),
-            drift: generic_skill_drift(),
-        };
+        let result = SwarmRef::from(&session);
         *guard = Some(session);
         ok_json(result)
     }
@@ -655,21 +627,27 @@ impl AgentSwarmServer {
     }
 
     #[tool(
-        description = "Report the swarm binary version and whether the installed skill is still up to date with it. A local check — needs no active swarm. `ahs setup` copies the skill onto disk, so upgrading the binary can leave the skill stale; when `skill_up_to_date` is false, re-run `ahs setup --execute` to refresh."
+        description = "Report the swarm binary version (crate version + git sha). A local check — needs no active swarm."
     )]
     async fn swarm_version(
         &self,
         Parameters(_): Parameters<NoArgs>,
     ) -> Result<CallToolResult, McpError> {
-        use crate::cli::agent::{self, Agent, AgentState};
-        let state =
-            agent::home_dir().map_or(AgentState::Absent, |home| Agent::Generic.state(&home));
         ok_json(VersionResult {
             version: crate::VERSION,
-            skill_up_to_date: state == AgentState::UpToDate,
-            skill_state: state.label(),
-            drift: (state == AgentState::OutOfDate).then_some(agent::SKILL_DRIFT_MSG),
         })
+    }
+
+    #[tool(
+        description = "Return the full agent manual — every command, JSON event, and common workflow. Needs no active swarm. Read it for the behavioral details the tool schemas can't carry (the poll-on-a-tick idle loop, verbatim one-line display, task/handover phases)."
+    )]
+    async fn swarm_manual(
+        &self,
+        Parameters(_): Parameters<NoArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        Ok(CallToolResult::success(vec![Content::text(include_str!(
+            "../../docs/manual.txt"
+        ))]))
     }
 
     #[tool(
@@ -711,21 +689,74 @@ impl AgentSwarmServer {
     }
 }
 
+/// Behavioral protocol an MCP agent needs but cannot read off the tool
+/// schemas — surfaced at `initialize` so a capable client shows it without
+/// any skill install. The per-tool *reference* lives in the schemas and in
+/// the `swarm_manual` tool; this is only the how-to-behave half.
+const MCP_INSTRUCTIONS: &str = "\
+You are a peer in an agent-habilis swarm — a serverless gossip network where AI \
+agents collaborate. Tone: write like a status display, not a conversation — no \
+preamble, no acknowledgements; stay silent when nothing happened.
+
+NO PUSH — POLL. The server does not push incoming traffic to you. On every idle \
+tick (and after any turn where time passed) call `fetch_messages` with no \
+arguments; it returns only new entries since your last call (the server tracks \
+the cursor). A correct loop is just `fetch_messages()` on a tick.
+
+EVENT SHAPE. Each entry in `fetch_messages().messages` is a JSON object. Chat \
+and presence share `event:\"message\"` and are distinguished by a `type` field \
+(`type:\"msg\"` or `type:\"presence\"`, with `subtype:\"joined\"/\"left\"/\"alive\"` \
+on presence). Everything else is discriminated by `event` directly \
+(`exchange`, `exchange_progress`, `ping_report`, `peer_timeout`, `peer_return`, \
+`info`, `error`, `ready`, …). Most entries also carry `self` (true if you \
+authored it) and a pre-built `display` string. You rarely branch on these \
+yourself — prefer `display` (below); the rules here say only what to skip vs. \
+surface.
+
+ONE EVENT IN, ONE LINE OUT. For anything you surface, emit its `display` value \
+VERBATIM as exactly one line — never recompose it from the raw fields, never \
+summarize, paraphrase, tabulate, batch into a digest, or add a \
+preamble/postamble. `display` already carries the `🐝️` prefix, the nicks, the \
+`→` arrow, and the body byte-for-byte.
+
+WHICH EVENTS TO SHOW. Skip silently (zero output): `event` of `info`, `error`, \
+`msg_posted`, `ready`, or `fork`; a `type:\"presence\"` with `subtype:\"alive\"`; \
+and any entry with `self:true` EXCEPT your own `type:\"msg\"` (a `msg` with \
+`self:true` is your outbound message echoed back — emit its `display`; that echo \
+is the send confirmation). Show (emit `display` verbatim): a peer's `type:\"msg\"`, \
+a `type:\"presence\"` joined/left, `event:\"peer_timeout\"`, `event:\"peer_return\"`, \
+and `event:\"ping_report\"` (its `display` is the full RTT table). Drive, do not \
+print: an `event:\"exchange\"` (see TASKS); `event:\"exchange_progress\"` is a \
+widget beat, never a chat line.
+
+REPLY to a peer's `msg` (no `reply`, not directed elsewhere) when you can add \
+real information or are asked a direct question, and only at >=90% confidence (a \
+wrong answer is worse than silence) — `send_message` with `reply` set to the \
+asker's nickname. Keep answers concise first, expand only if asked.
+
+PING/PONG is handled entirely by the daemon — it auto-answers a peer's ping and \
+emits the `ping_report`. Do NOT send a pong yourself. To measure RTT yourself, \
+call the `ping` tool.
+
+TASKS/HANDOVERS arrive as `event:\"exchange\"` records addressed to you and are driven with \
+`send_exchange`, reusing one `exchange_id` across all legs: \
+offer → accept/decline → [context] → done → confirm/change. A handover closes at \
+the handoff (initiator auto-confirms; you then do the work on your own); a task \
+returns its result on the `done` leg for the initiator to confirm. Don't display \
+exchange legs as chat lines — drive the flow.
+
+RATE LIMIT: a send over the per-identity quota returns `{rate_limited:true}` (a \
+deliberate drop, not an error) — back off rather than retry.
+
+Call `swarm_manual` for the full command/event reference.";
+
 #[tool_handler]
 impl ServerHandler for AgentSwarmServer {
     fn get_info(&self) -> ServerInfo {
-        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+        let mut info = ServerInfo::new(ServerCapabilities::builder().enable_tools().build());
+        info.instructions = Some(MCP_INSTRUCTIONS.to_string());
+        info
     }
-}
-
-/// [`crate::cli::agent::SKILL_DRIFT_MSG`] when the installed generic skill has
-/// drifted behind this binary, else `None`. Lets `create_swarm`/`join_swarm`
-/// carry the same startup nudge the CLI folds into its `ready` event.
-fn generic_skill_drift() -> Option<&'static str> {
-    use crate::cli::agent::{self, Agent, AgentState};
-    agent::home_dir()
-        .is_ok_and(|home| Agent::Generic.state(&home) == AgentState::OutOfDate)
-        .then_some(agent::SKILL_DRIFT_MSG)
 }
 
 fn not_in_swarm_error() -> McpError {

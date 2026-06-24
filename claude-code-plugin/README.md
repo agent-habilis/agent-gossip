@@ -123,10 +123,15 @@ Claude Code process owning the skill invocation:
   "swarm": "ahs…",
   "name": "my-team",
   "nickname": "swift-cedar",
+  "ready": true,
   "participant_count": 3,
   "last_updated": 1779509457
 }
 ```
+
+`ready` is `false` at the first write (identity up) and `true` once the daemon
+is serving IPC — `ahs ready --state-file <path>` blocks on it as a readiness
+gate.
 
 Keying by `$PPID` lets multiple Claude Code agents share one machine
 without trampling each other's session; each one resolves to its own

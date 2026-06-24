@@ -287,6 +287,22 @@ pub(crate) const IPC_ACCEPT_BACKOFF_MAX_SECS: u64 = 5;
 /// real `msg`/`poll` round-trip, so only a hung client ever hits it.
 pub(crate) const IPC_IO_TIMEOUT_SECS: u64 = 10;
 
+/// `ahs ready` gate: how long to wait for the daemon's `--state-file` to
+/// report `ready: true` before giving up (the `--timeout-secs` default),
+/// and the fixed interval between file reads while waiting. 30s covers a
+/// cold daemon start (the file appears sub-second once the process is up).
+/// Client-side, so these are not part of the daemon `Tuning` struct.
+pub(crate) const READY_MAX_SECS: u64 = 30;
+pub(crate) const READY_POLL_INTERVAL_MS: u64 = 100;
+
+/// How fresh a `ready: true` state-file write must be for the gate to trust
+/// it. A live daemon rewrites the file every `STATE_REFRESH_SECS` (10s), so
+/// a `last_updated` older than this window means the writer is gone — e.g. a
+/// `ready: true` file left behind by a prior daemon killed with SIGKILL (which
+/// skips the file-removing shutdown path). Two heartbeats of slack absorbs a
+/// missed refresh without trusting a truly stale file.
+pub(crate) const READY_FRESH_SECS: u64 = 2 * STATE_REFRESH_SECS;
+
 /// Upper bound on the healer's detached rendezvous connect-probe.
 /// Generous enough to absorb a public relay/lookup warmup after a
 /// real network change, capped well under `HEAL_INTERVAL_SECS` so at

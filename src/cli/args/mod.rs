@@ -18,6 +18,7 @@ mod output;
 mod peers;
 mod ping;
 mod poll;
+mod ready;
 mod shared;
 
 pub(crate) use create::CreateOpts;
@@ -29,6 +30,7 @@ pub(crate) use output::OutputFormat;
 pub(crate) use peers::PeersOpts;
 pub(crate) use ping::PingOpts;
 pub(crate) use poll::PollOpts;
+pub(crate) use ready::ReadyOpts;
 pub(crate) use shared::SharedServerOpts;
 
 #[derive(Parser, Debug)]
@@ -128,6 +130,19 @@ pub(crate) enum Commands {
     Peers {
         #[command(flatten)]
         opts: PeersOpts,
+    },
+
+    /// Wait until a swarm daemon is serving, then exit.
+    ///
+    /// The readiness gate for driving the daemon over the CLI: launch
+    /// `create`/`join` in the background with a `--state-file`, then
+    /// `ahs ready --state-file <path>` blocks until that file reports the
+    /// daemon is serving, exiting 0 (non-zero on timeout). A pure gate —
+    /// prints nothing; read the swarm/nickname from the state-file once it
+    /// returns.
+    Ready {
+        #[command(flatten)]
+        opts: ReadyOpts,
     },
 
     /// Run as a Model Context Protocol server over stdio.
