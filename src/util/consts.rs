@@ -76,6 +76,12 @@ pub(crate) const POLL_RESPONSE_MAX_MSGS: usize = 1000;
 /// first poll, with the client's cursor advancing past them).
 pub(crate) const SURFACED_EVENTS_CAP: usize = POLL_RESPONSE_MAX_MSGS;
 
+/// Max concurrent parked long-poll waiters per daemon. A blocking `poll` /
+/// `fetch_messages` registers a waiter when the buffer is empty; over this cap
+/// the read degrades to an immediate (empty) return rather than parking, so the
+/// registry can never grow without bound (the bounded-everything discipline).
+pub(crate) const POLL_WAITERS_CAP: usize = 64;
+
 /// Max bytes for one stdin line. A raw message body larger than the wire
 /// cap can never form a valid message, so the line read is capped there.
 pub(crate) const MAX_STDIN_LINE_BYTES: usize = MAX_MESSAGE_SIZE;

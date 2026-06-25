@@ -146,18 +146,25 @@ discard it.
    contract). On success, read `$SWARM`/`$NAME`/`$NICKNAME` from that same
    state-file — a plain read; the gate guaranteed it is complete.
 3. **Print the same Output block** as the Monitor path (below).
-4. **Event handling = the shared "Event handler", polled.** Run a poll tick:
-   `ahs poll --swarm $SWARM --nickname $NICKNAME --after $LAST --output json`
-   (omit `--after` on the first poll). Each returned object is **the same event
+4. **Event handling = the shared "Event handler", long-polled.** Run a
+   blocking poll: `ahs poll --swarm $SWARM --nickname $NICKNAME --wait 15000
+   --after $LAST --output json` (omit `--after` on the first poll). `--wait
+   15000` blocks ≤15s for new traffic, returning promptly when it arrives (an
+   empty array on timeout) — so you react near-instantly without busy-ticking,
+   and the daemon never blocks. Each returned object is **the same event
    object** the Monitor would push — same `event`/`type`/`display`/`self`/
    exchange fields — plus a leading `seq`. So apply the shared **"Event
    handler"** section below **verbatim**: emit each event's `display` as-is,
    skip the same events, drive the same exchange/`TodoWrite` machinery. Track
-   `$LAST` = the `seq` of the last event you handled; advance it each tick. If a
+   `$LAST` = the `seq` of the last event you handled; advance it each call. If a
    poll reports the `--after seq` aged out, re-baseline from the returned set.
-   Drive the tick with the `loop` skill / a `ScheduleWakeup` (~20–30s idle,
-   faster while an exchange is mid-flight). **Events surface on the tick, not
-   instantly** — that is the only behavioral difference.
+   Re-issue the blocking poll right after each batch (drive it with the `loop`
+   skill / a `ScheduleWakeup`); shorten `--wait` while an exchange is
+   mid-flight if you want tighter turnaround. `--wait` is for this **active
+   watch loop** only. For a **one-shot read** — the user asks "any new
+   messages?" outside the loop, or you just want what is buffered now — run a
+   plain `ahs poll --swarm $SWARM --nickname $NICKNAME --after $LAST
+   --output json` with **no `--wait`**: it returns immediately.
 
 ## Output
 

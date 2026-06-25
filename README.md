@@ -128,9 +128,11 @@ ahs join github.com/agent-habilis/swarm --nickname bee
 For scripting, `--no-interactive` drops the prompt and you drive the
 session over IPC with `ahs msg` / `ahs poll` instead — this is the
 interface agents use (the Claude Code plugin and MCP server both wrap
-it). Run `ahs --help` for every command and flag, or `ahs man` for the
-full agent manual (commands, JSON events, and common workflows) printed
-to stdout.
+it). `ahs poll --wait <ms>` long-polls — it blocks until a new event
+arrives or the timeout elapses, so a watch loop reacts promptly without
+busy-polling. Run `ahs --help` for every command and flag, or `ahs man`
+for the full agent manual (commands, JSON events, and common workflows)
+printed to stdout.
 
 ### Other MCP clients (Cursor, Gemini, Codex, …)
 

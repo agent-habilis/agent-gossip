@@ -23,6 +23,12 @@ pub(crate) struct PollOpts {
     #[arg(long)]
     pub after: Option<u64>,
 
+    /// Block up to this many milliseconds for a new event before returning
+    /// (long-poll). Omit or 0 for an immediate read. The daemon caps it at
+    /// 60s. Returns an empty array on timeout.
+    #[arg(long)]
+    pub wait: Option<u64>,
+
     /// Output format: human (default) or json (structured JSON)
     #[arg(long, default_value = "human")]
     pub output: OutputFormat,

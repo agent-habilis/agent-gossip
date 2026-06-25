@@ -305,14 +305,14 @@ async fn event_loop(loop_state: EventLoop) -> Result<()> {
     let mut resubscribe_attempts: u32 = 0;
 
     loop {
-        let ping_deadline = state.ping_round.as_ref().map(|round| round.deadline);
         tokio::select! {
             result = read_bounded_line(&mut stdin_reader, MAX_STDIN_LINE_BYTES), if stdin_open => {
                 stdin_open = handle_stdin_arm(result, &sender, &swarm_str, &author, &mut state, &output).await;
             }
-            () = sleep_until_opt(ping_deadline) => {
+            () = sleep_until_opt(state.ping_round.as_ref().map(|round| round.deadline)) => {
                 finalize_ping_round(&mut state, &output);
             }
+            () = sleep_until_opt(state.earliest_poll_deadline()) => poll_deadline_arm(&mut state),
             ipc_msg = recv_opt(&mut ipc_rx) => {
                 if !handle_ipc_arm(ipc_msg, &swarm_str, &author, &mut state, &sender, &output).await {
                     ipc_rx = None;
@@ -362,7 +362,7 @@ async fn event_loop(loop_state: EventLoop) -> Result<()> {
             _ = intervals.state_refresh.tick() => timers::tick_state_refresh(&state, &endpoint).await,
             _ = recv_opt(&mut external_quit_rx) => {
                 // External quit is always embedded (MCP): never hard-exit (`false`).
-                announce_and_maybe_exit(&sender, &swarm_str, &swarm_name, &author, &state, &output, false).await;
+                announce_and_maybe_exit(&sender, &swarm_str, &swarm_name, &author, &mut state, &output, false).await;
                 break;
             }
             req = recv_opt(&mut external_req_rx) => {
@@ -376,7 +376,7 @@ async fn event_loop(loop_state: EventLoop) -> Result<()> {
                 }
             }
             _ = quit_rx.recv() => {
-                announce_and_maybe_exit(&sender, &swarm_str, &swarm_name, &author, &state, &output, exit_on_quit).await;
+                announce_and_maybe_exit(&sender, &swarm_str, &swarm_name, &author, &mut state, &output, exit_on_quit).await;
                 break;
             }
         }
@@ -386,10 +386,12 @@ async fn event_loop(loop_state: EventLoop) -> Result<()> {
     Ok(())
 }
 
-/// Drain the `Output` tap into the surfaced-events ring. Runs after the arm
-/// that produced the events, before the next iteration can serve a `poll`, so
-/// a poll never misses an event surfaced in a prior iteration. `try_recv` is
-/// non-blocking; the channel is empty in the steady state.
+/// Drain the `Output` tap into the surfaced-events ring, then fulfill any
+/// long-poll waiter the newly-drained events advanced past (fulfill must follow
+/// the drain). Runs after the arm that produced the events, before the next
+/// iteration can serve a `poll`, so a poll never misses an event surfaced in a
+/// prior iteration. `try_recv` is non-blocking; the channel is empty in the
+/// steady state.
 ///
 /// Keeps only events that belong in the `poll`/`fetch` history; drops the rest.
 fn drain_surfaced(
@@ -401,6 +403,7 @@ fn drain_surfaced(
             state.surfaced_events.push(event);
         }
     }
+    state.fulfill_ready_poll_waiters();
 }
 
 /// Whether a surfaced event belongs in the `poll`/`fetch` history — an explicit
@@ -484,10 +487,14 @@ async fn announce_and_maybe_exit(
     swarm: &SwarmId,
     name: &SwarmName,
     author: &Nickname,
-    state: &EventLoopState,
+    state: &mut EventLoopState,
     output: &output::Output,
     exit_on_quit: bool,
 ) {
+    // Empty out any parked long-poll waiters first, so a held call returns a
+    // clean timeout (empty) rather than a dropped-channel error — and before
+    // the `exit_on_quit` path below may `std::process::exit`.
+    state.close_poll_waiters();
     shutdown(sender, swarm, name, author, state, output).await;
     #[cfg(not(feature = "dhat-heap"))]
     if exit_on_quit {
@@ -637,6 +644,13 @@ async fn sleep_until_opt(deadline: Option<tokio::time::Instant>) {
         Some(at) => tokio::time::sleep_until(at).await,
         None => std::future::pending::<()>().await,
     }
+}
+
+/// The earliest long-poll deadline elapsed: fulfill any waiter a same-instant
+/// event made ready (so it wins over the timeout), then expire the rest.
+fn poll_deadline_arm(state: &mut EventLoopState) {
+    state.fulfill_ready_poll_waiters();
+    state.expire_poll_waiters(tokio::time::Instant::now());
 }
 
 /// Build and emit the `ping_report` for the elapsed round, then clear

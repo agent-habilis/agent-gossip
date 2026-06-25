@@ -10,7 +10,7 @@ use tokio::sync::oneshot;
 use std::collections::HashMap;
 use std::time::Duration;
 
-use crate::daemon::state::{EventLoopState, PingRound};
+use crate::daemon::state::{EventLoopState, PingRound, PollResponder};
 use crate::output;
 use crate::protocol::{Message, Nickname, SwarmId};
 use crate::transport::ipc::{IpcCommand, json_ack, json_error, json_ok_msg, json_rate_limited};
@@ -53,20 +53,24 @@ pub(crate) async fn handle_ipc_command(
                 }
             }
         }
-        IpcCommand::Poll { swarm: _, after } => {
+        IpcCommand::Poll {
+            swarm: _,
+            after,
+            wait_ms,
+        } => {
             // Surfaced-events ring, seq-cursored. Each event renders to the
             // *same* JSON line the live `--output json` stream emits (via
             // `surfaced_event_json`), with its `seq` flattened in so the client
-            // advances `--after`. The array is built by hand (not
-            // `serde_json::to_string`) because the per-event lines are already
-            // serialized strings whose field order is the pinned wire format.
-            let events = state.poll_since(after);
-            let lines: Vec<String> = events
-                .iter()
-                .filter_map(|item| output::surfaced_event_json(item.seq, &item.event))
-                .collect();
-            let resp = format!("[{}]", lines.join(","));
-            let _ = resp_tx.send(resp);
+            // advances `--after`. `poll_or_register` responds now if events are
+            // buffered, else (with `wait_ms`) parks a waiter the loop fulfills
+            // on the next surfaced event or expires at the deadline. A parked
+            // waiter broadcasts nothing → `false`.
+            state.poll_or_register(
+                after,
+                wait_ms,
+                tokio::time::Instant::now(),
+                PollResponder::Json(resp_tx),
+            );
             false
         }
         IpcCommand::Ping { swarm: _ } => {

@@ -137,8 +137,12 @@ impl Session {
     pub(super) async fn fetch_messages(
         &self,
         after: Option<u64>,
+        wait_ms: Option<u64>,
     ) -> Result<Vec<crate::daemon::surfaced::SurfacedEvent>> {
-        let events = self.inner.fetch(self.effective_after(after)).await?;
+        let events = self
+            .inner
+            .fetch(self.effective_after(after), wait_ms)
+            .await?;
         if after.is_none()
             && let Some(seq) = events.last().map(|item| item.seq)
         {
@@ -213,7 +217,7 @@ mod tests {
         // Poll up to ~10 s for the message to propagate via gossip.
         let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
         while tokio::time::Instant::now() < deadline {
-            if let Ok(events) = session.fetch_messages(None).await {
+            if let Ok(events) = session.fetch_messages(None, None).await {
                 for entry in &events {
                     if let Some(msg) = as_message(&entry.event)
                         && msg.author.as_str() == author
@@ -279,6 +283,109 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn long_poll_blocks_then_returns_on_peer_traffic() {
+        let creator = Session::create(create_cfg("lp", "alice-lp"))
+            .await
+            .expect("create");
+        let swarm = creator.swarm().clone();
+        let joiner = Session::join(join_cfg(&swarm, "bob-lp"))
+            .await
+            .expect("join");
+
+        // Mesh first (a delivered message proves the link) so the long-poll
+        // below is waiting on a *fresh* event, not racing initial bootstrap.
+        creator
+            .send_message(MessageBody::from("warmup"), None)
+            .await
+            .expect("send warmup")
+            .expect("within rate limit");
+        assert!(
+            wait_for_gossip(&joiner, "alice-lp", "warmup")
+                .await
+                .is_some(),
+            "mesh established"
+        );
+
+        // Baseline the joiner's cursor past the warmup, then block on a fetch
+        // with a generous wait while the creator sends after a short delay.
+        // `tokio::join!` runs both concurrently without `'static` (so neither
+        // session needs cloning).
+        let after = joiner
+            .fetch_messages(None, None)
+            .await
+            .expect("baseline")
+            .last()
+            .map(|item| item.seq);
+
+        let started = tokio::time::Instant::now();
+        let delayed_send = async {
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            creator
+                .send_message(MessageBody::from("after warmup"), None)
+                .await
+                .expect("send")
+                .expect("within rate limit");
+        };
+        // The blocking fetch should resolve as soon as the gossiped "after
+        // warmup" lands — well under its 10s wait — not spin to the timeout.
+        // A single long-poll may return before gossip propagation completes, so
+        // re-issue until the message shows (each call still blocks).
+        let watch = async {
+            loop {
+                let events = joiner
+                    .fetch_messages(after, Some(10_000))
+                    .await
+                    .expect("long-poll fetch");
+                if events
+                    .iter()
+                    .filter_map(|item| as_message(&item.event))
+                    .any(|msg| msg.body.as_str() == "after warmup")
+                {
+                    break;
+                }
+            }
+        };
+        let watch = tokio::time::timeout(Duration::from_secs(15), watch);
+        let ((), watched) = tokio::join!(delayed_send, watch);
+        assert!(
+            watched.is_ok(),
+            "long-poll delivered the post-warmup message"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(12),
+            "resolved before the long-poll wait timeout"
+        );
+
+        joiner.leave().await;
+        creator.leave().await;
+    }
+
+    #[tokio::test]
+    async fn long_poll_times_out_empty_with_no_traffic() {
+        let session = Session::create(create_cfg("lp-empty", "alice-empty"))
+            .await
+            .expect("create");
+        // Lone session, cursor at head, no traffic: a short wait returns empty.
+        let head = session
+            .fetch_messages(None, None)
+            .await
+            .expect("baseline")
+            .last()
+            .map(|item| item.seq);
+        let started = tokio::time::Instant::now();
+        let events = session
+            .fetch_messages(head, Some(400))
+            .await
+            .expect("long-poll fetch");
+        assert!(events.is_empty(), "no traffic → empty batch");
+        assert!(
+            started.elapsed() >= Duration::from_millis(300),
+            "actually blocked for ~the wait, not an immediate return"
+        );
+        session.leave().await;
+    }
+
+    #[tokio::test]
     async fn send_message_returns_full_echo_and_surfaces_self() {
         // send_message returns an authoritative echo (id, author, ts, body)
         // so callers don't need to re-fetch to see their own send. With
@@ -302,7 +409,7 @@ mod tests {
         let mut saw_self = false;
         let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
         while tokio::time::Instant::now() < deadline && !saw_self {
-            let events = alice.fetch_messages(None).await.expect("fetch");
+            let events = alice.fetch_messages(None, None).await.expect("fetch");
             saw_self = events.iter().any(|item| {
                 matches!(
                     &item.event,
@@ -341,7 +448,7 @@ mod tests {
         let mut replay_from: Option<u64> = None;
         let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
         while tokio::time::Instant::now() < deadline {
-            let events = alice.fetch_messages(None).await.expect("first fetch");
+            let events = alice.fetch_messages(None, None).await.expect("first fetch");
             let bob_join_idx = events.iter().position(|item| {
                 as_message(&item.event).is_some_and(|msg| {
                     matches!(
@@ -364,7 +471,7 @@ mod tests {
 
         // Second fetch with no new traffic: cursor advanced past everything
         // buffered, so the delta must be empty.
-        let empty_delta = alice.fetch_messages(None).await.expect("delta fetch");
+        let empty_delta = alice.fetch_messages(None, None).await.expect("delta fetch");
         assert!(
             empty_delta.is_empty(),
             "second cursor-less fetch must return delta (empty), got {empty_delta:?}"
@@ -378,7 +485,10 @@ mod tests {
         let mut saw_body = false;
         let delta_deadline = tokio::time::Instant::now() + Duration::from_secs(10);
         while tokio::time::Instant::now() < delta_deadline && !saw_body {
-            let events = alice.fetch_messages(None).await.expect("delta fetch 2");
+            let events = alice
+                .fetch_messages(None, None)
+                .await
+                .expect("delta fetch 2");
             saw_body = events
                 .iter()
                 .filter_map(|item| as_message(&item.event))
@@ -395,7 +505,7 @@ mod tests {
         // Explicit `after` is a non-mutating replay from an earlier seq: it must
         // re-surface bob's message regardless of where the implicit cursor sits.
         let forced = alice
-            .fetch_messages(Some(replay_from))
+            .fetch_messages(Some(replay_from), None)
             .await
             .expect("explicit fetch");
         assert!(
@@ -408,7 +518,10 @@ mod tests {
 
         // And the explicit replay must NOT have disturbed the implicit cursor:
         // a following cursor-less fetch sees no new traffic (empty).
-        let after_replay = alice.fetch_messages(None).await.expect("post-replay fetch");
+        let after_replay = alice
+            .fetch_messages(None, None)
+            .await
+            .expect("post-replay fetch");
         assert!(
             after_replay.is_empty(),
             "explicit replay must not advance the implicit cursor, got {after_replay:?}"

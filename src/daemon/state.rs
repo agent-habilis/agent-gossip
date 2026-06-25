@@ -318,6 +318,71 @@ pub(crate) struct EventLoopState {
     /// a fresh ping replaces any in-flight round. Boxed to keep the
     /// rarely-set round off the hot event-loop future's stack size.
     pub ping_round: Option<Box<PingRound>>,
+    /// Parked long-poll waiters: blocking `poll` / `fetch_messages` calls that
+    /// found the buffer empty and are waiting for a new surfaced event or their
+    /// deadline. Bounded by [`POLL_WAITERS_CAP`](crate::util::consts::POLL_WAITERS_CAP);
+    /// fulfilled right after `drain_surfaced`, expired by the loop's poll-deadline
+    /// arm — the same shape as `ping_round`. The daemon never blocks on these.
+    pub poll_waiters: Vec<PollWaiter>,
+}
+
+/// How a fulfilled/expired long-poll waiter's batch is delivered, per
+/// transport: the CLI/IPC path wants the JSON-array string the `Poll` arm
+/// builds today; the in-process path wants the typed events the caller renders.
+pub(crate) enum PollResponder {
+    Json(tokio::sync::oneshot::Sender<String>),
+    Typed(tokio::sync::oneshot::Sender<Vec<super::surfaced::SurfacedEvent>>),
+}
+
+impl PollResponder {
+    /// Send the empty result for this transport (a timeout, a registry-full
+    /// degrade, or shutdown). Dropped receiver is fine — the client already
+    /// went away.
+    fn send_empty(self) {
+        match self {
+            PollResponder::Json(tx) => {
+                let _ = tx.send("[]".to_string());
+            }
+            PollResponder::Typed(tx) => {
+                let _ = tx.send(Vec::new());
+            }
+        }
+    }
+
+    /// Send a fulfilled batch for this transport.
+    fn send_batch(self, events: Vec<super::surfaced::SurfacedEvent>) {
+        match self {
+            PollResponder::Json(tx) => {
+                let _ = tx.send(render_poll_array(&events));
+            }
+            PollResponder::Typed(tx) => {
+                let _ = tx.send(events);
+            }
+        }
+    }
+}
+
+/// A blocked poll, waiting for `surfaced_events` to advance past `wait_from`
+/// or for `deadline` to elapse.
+pub(crate) struct PollWaiter {
+    /// Respond once `surfaced_events.latest_seq() > wait_from`. Captured from
+    /// the live ring at registration so any later push is caught.
+    wait_from: u64,
+    deadline: TokioInstant,
+    responder: PollResponder,
+}
+
+/// Render surfaced events to the `poll` JSON-array string — the single source
+/// of truth shared by the immediate `Poll` arm and a fulfilled long-poll, so
+/// the two can never drift. Mirrors the per-event `filter_map` the IPC `Poll`
+/// arm uses (`surfaced_event_json` returns `None` for an unrenderable event,
+/// which is dropped, never `unwrap`ped).
+pub(crate) fn render_poll_array(events: &[super::surfaced::SurfacedEvent]) -> String {
+    let lines: Vec<String> = events
+        .iter()
+        .filter_map(|item| output::surfaced_event_json(item.seq, &item.event))
+        .collect();
+    format!("[{}]", lines.join(","))
 }
 
 /// An in-flight RTT round. `t1` is when the probe was broadcast;
@@ -390,6 +455,7 @@ impl EventLoopState {
             degraded: false,
             resident_memory_warned: false,
             ping_round: None,
+            poll_waiters: Vec::new(),
         }
     }
 
@@ -424,6 +490,134 @@ impl EventLoopState {
         }
         tracing::debug!(returned = events.len(), evicted, "poll served");
         events
+    }
+
+    /// Register a blocking poll that found the buffer empty. The wait baseline
+    /// is `after`, or the ring's current `latest_seq()` for a cursor-less call,
+    /// captured here (synchronously, from the live ring) so any push after this
+    /// point carries `seq > wait_from` and is caught by the next `fulfill`.
+    ///
+    /// Returns `None` once the waiter is parked. If the registry is at
+    /// `POLL_WAITERS_CAP`, the waiter is **not** parked and the responder is
+    /// handed back so the caller degrades to an immediate (empty) response —
+    /// the registry can never grow without bound.
+    pub(crate) fn register_poll_waiter(
+        &mut self,
+        after: Option<u64>,
+        deadline: TokioInstant,
+        responder: PollResponder,
+    ) -> Option<PollResponder> {
+        if self.poll_waiters.len() >= crate::util::consts::POLL_WAITERS_CAP {
+            return Some(responder);
+        }
+        let wait_from = after.unwrap_or_else(|| self.surfaced_events.latest_seq());
+        self.poll_waiters.push(PollWaiter {
+            wait_from,
+            deadline,
+            responder,
+        });
+        None
+    }
+
+    /// Serve a `poll` / `fetch_messages` read, blocking if asked. The single
+    /// policy shared by the CLI/IPC and in-process arms so they can't drift:
+    ///
+    /// 1. if the buffer already has events past `after`, respond immediately
+    ///    (never make a caller with pending events wait);
+    /// 2. else if `wait_ms` is `None`/`0`, respond immediately with empty;
+    /// 3. else register a waiter with deadline `now + clamp(wait_ms,
+    ///    LONGPOLL_MAX_MS)` — and if the registry is full, respond empty.
+    ///
+    /// `now` is the registration instant (passed in so tests can pin it).
+    pub(crate) fn poll_or_register(
+        &mut self,
+        after: Option<u64>,
+        wait_ms: Option<u64>,
+        now: TokioInstant,
+        responder: PollResponder,
+    ) {
+        let events = self.poll_since(after);
+        if !events.is_empty() {
+            responder.send_batch(events);
+            return;
+        }
+        let wait_ms = wait_ms
+            .unwrap_or(0)
+            .min(crate::util::tuning::LONGPOLL_MAX_MS);
+        if wait_ms == 0 {
+            responder.send_empty();
+            return;
+        }
+        let deadline = now + Duration::from_millis(wait_ms);
+        if let Some(unregistered) = self.register_poll_waiter(after, deadline, responder) {
+            unregistered.send_empty(); // registry full → degrade to immediate
+        }
+    }
+
+    /// Deliver to every parked waiter whose baseline the ring has advanced past
+    /// (`latest_seq() > wait_from`). Called right after `drain_surfaced` each
+    /// loop iteration; the batch is computed via [`poll_since`](Self::poll_since)
+    /// so the response cap + logging match an immediate poll exactly.
+    pub(crate) fn fulfill_ready_poll_waiters(&mut self) {
+        let latest = self.surfaced_events.latest_seq();
+        if self
+            .poll_waiters
+            .iter()
+            .all(|waiter| waiter.wait_from >= latest)
+        {
+            return; // nothing advanced; cheap fast path
+        }
+        // Split ready vs. still-waiting without borrowing `self` across the
+        // `poll_since` call (which needs `&self`).
+        let mut still_waiting = Vec::with_capacity(self.poll_waiters.len());
+        let ready: Vec<PollWaiter> = std::mem::take(&mut self.poll_waiters)
+            .into_iter()
+            .filter_map(|waiter| {
+                if waiter.wait_from < latest {
+                    Some(waiter)
+                } else {
+                    still_waiting.push(waiter);
+                    None
+                }
+            })
+            .collect();
+        for waiter in ready {
+            let batch = self.poll_since(Some(waiter.wait_from));
+            waiter.responder.send_batch(batch);
+        }
+        self.poll_waiters = still_waiting;
+    }
+
+    /// The earliest waiter deadline, for the loop's `sleep_until_opt` arm.
+    /// `None` (no waiters) makes that arm pend forever.
+    pub(crate) fn earliest_poll_deadline(&self) -> Option<TokioInstant> {
+        self.poll_waiters.iter().map(|waiter| waiter.deadline).min()
+    }
+
+    /// Send the empty (timeout) result to every waiter whose deadline has
+    /// passed and drop it.
+    pub(crate) fn expire_poll_waiters(&mut self, now: TokioInstant) {
+        let survivors: Vec<PollWaiter> = std::mem::take(&mut self.poll_waiters)
+            .into_iter()
+            .filter_map(|waiter| {
+                if waiter.deadline <= now {
+                    waiter.responder.send_empty();
+                    None
+                } else {
+                    Some(waiter)
+                }
+            })
+            .collect();
+        self.poll_waiters = survivors;
+    }
+
+    /// Drain every parked waiter with an empty result — called on event-loop
+    /// shutdown so a held long-poll returns a clean timeout-empty rather than a
+    /// dropped-channel error.
+    pub(crate) fn close_poll_waiters(&mut self) {
+        for waiter in std::mem::take(&mut self.poll_waiters) {
+            waiter.responder.send_empty();
+        }
     }
 
     /// Write `participant_count = participants.len() + 1` (we add 1
@@ -1233,5 +1427,108 @@ mod tests {
         );
         assert!(state.meshed);
         assert!(!state.degraded);
+    }
+
+    // ── long-poll waiter registry ──────────────────────────────────
+
+    use super::PollResponder;
+    use tokio::time::Instant as TokioInstant;
+
+    fn peer_return(name: &str) -> crate::output::OutputEvent {
+        crate::output::OutputEvent::PeerReturn {
+            nickname: nick(name),
+        }
+    }
+
+    #[tokio::test]
+    async fn waiter_fulfilled_by_a_new_event() {
+        let mut state = fresh_state();
+        let (tx, rx) = tokio::sync::oneshot::channel::<String>();
+        // Empty ring → register a waiter baselined at latest_seq() (0).
+        assert!(
+            state
+                .register_poll_waiter(
+                    None,
+                    TokioInstant::now() + Duration::from_secs(30),
+                    PollResponder::Json(tx)
+                )
+                .is_none(),
+            "registered, not degraded"
+        );
+        // A new event lands and the loop drains+fulfills.
+        state.surfaced_events.push(peer_return("a"));
+        state.fulfill_ready_poll_waiters();
+        let body = rx.await.expect("waiter was fulfilled");
+        assert!(
+            body.starts_with('[') && body.len() > 2,
+            "non-empty batch: {body}"
+        );
+        assert!(state.poll_waiters.is_empty(), "fulfilled waiter removed");
+    }
+
+    #[tokio::test]
+    async fn waiter_expires_empty_at_deadline() {
+        let mut state = fresh_state();
+        let (tx, rx) = tokio::sync::oneshot::channel::<String>();
+        let past = TokioInstant::now();
+        state.register_poll_waiter(None, past, PollResponder::Json(tx));
+        // No event; the deadline (now) has passed.
+        state.expire_poll_waiters(TokioInstant::now() + Duration::from_millis(1));
+        assert_eq!(rx.await.expect("waiter expired"), "[]", "timeout → empty");
+        assert!(state.poll_waiters.is_empty());
+    }
+
+    #[tokio::test]
+    async fn registry_at_cap_degrades_to_immediate() {
+        let mut state = fresh_state();
+        let deadline = TokioInstant::now() + Duration::from_secs(30);
+        // Fill the registry to the cap with throwaway waiters.
+        for _ in 0..crate::util::consts::POLL_WAITERS_CAP {
+            let (tx, _rx) = tokio::sync::oneshot::channel::<String>();
+            assert!(
+                state
+                    .register_poll_waiter(None, deadline, PollResponder::Json(tx))
+                    .is_none()
+            );
+        }
+        // One more must be handed back (degrade), not parked.
+        let (tx, _rx) = tokio::sync::oneshot::channel::<String>();
+        assert!(
+            state
+                .register_poll_waiter(None, deadline, PollResponder::Json(tx))
+                .is_some(),
+            "over the cap → responder returned to caller"
+        );
+        assert_eq!(
+            state.poll_waiters.len(),
+            crate::util::consts::POLL_WAITERS_CAP
+        );
+    }
+
+    #[tokio::test]
+    async fn poll_or_register_responds_immediately_when_buffered() {
+        let mut state = fresh_state();
+        state.surfaced_events.push(peer_return("a"));
+        let (tx, rx) = tokio::sync::oneshot::channel::<String>();
+        // Buffer has events → respond now even though wait_ms is set; no waiter.
+        state.poll_or_register(
+            None,
+            Some(5_000),
+            TokioInstant::now(),
+            PollResponder::Json(tx),
+        );
+        let body = rx.await.expect("immediate response");
+        assert!(body.len() > 2, "non-empty: {body}");
+        assert!(state.poll_waiters.is_empty(), "never parked");
+    }
+
+    #[tokio::test]
+    async fn poll_or_register_immediate_empty_when_no_wait() {
+        let mut state = fresh_state();
+        let (tx, rx) = tokio::sync::oneshot::channel::<String>();
+        // Empty buffer, wait_ms None → immediate empty, no waiter.
+        state.poll_or_register(None, None, TokioInstant::now(), PollResponder::Json(tx));
+        assert_eq!(rx.await.expect("immediate"), "[]");
+        assert!(state.poll_waiters.is_empty());
     }
 }

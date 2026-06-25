@@ -56,6 +56,14 @@ impl SurfacedEvents {
         seq
     }
 
+    /// The newest assigned seq, or 0 when nothing has been surfaced yet
+    /// (`next_seq` starts at 1). A long-poll waiter baselines on this: a
+    /// `wait_from` of 0 on an empty ring fires only once a genuinely new event
+    /// (seq 1) lands. Climbs monotonically and is unaffected by eviction.
+    pub(crate) fn latest_seq(&self) -> u64 {
+        self.next_seq - 1
+    }
+
     /// The events surfaced after `after`, in seq order, plus an `evicted` flag.
     ///
     /// - `after == None` → the whole buffer (a first poll), `evicted == false`.
@@ -182,6 +190,21 @@ mod tests {
         );
         // Still returns the current window so the caller can re-baseline.
         assert_eq!(events.len(), 2);
+    }
+
+    #[test]
+    fn latest_seq_starts_at_zero_climbs_and_survives_eviction() {
+        let mut buf = SurfacedEvents::new(2);
+        assert_eq!(buf.latest_seq(), 0, "fresh ring has no surfaced events");
+        buf.push(peer_return("a"));
+        assert_eq!(buf.latest_seq(), 1);
+        buf.push(peer_return("b"));
+        buf.push(peer_return("c")); // evicts seq 1; ring {2,3}
+        assert_eq!(
+            buf.latest_seq(),
+            3,
+            "latest_seq tracks the newest assigned seq, not the retained front"
+        );
     }
 
     #[test]

@@ -648,6 +648,38 @@ fn fetch_messages_with_out_of_range_after_is_graceful() {
 }
 
 #[test]
+fn fetch_messages_wait_ms_long_polls_then_times_out_empty() {
+    // The `wait_ms` arg threads MCP → session → embed → daemon and back over
+    // stdio: against a lone session with no new traffic, a short long-poll
+    // blocks ~the wait and returns a well-formed empty batch (not an error,
+    // not an immediate return). The blocking-resolves-on-traffic behavior is
+    // covered behaviorally at the embed layer (session.rs); here we assert the
+    // wire round-trip + timeout shape. (Cursor first advanced past history.)
+    let mut client = McpClient::spawn();
+    client.create_and_get_swarm(130);
+    // Advance the implicit cursor past any startup/self events.
+    let _ = client.tool_call(131, "fetch_messages", serde_json::json!({}));
+
+    let started = Instant::now();
+    let resp = tool_result_json(&client.tool_call(
+        132,
+        "fetch_messages",
+        serde_json::json!({ "wait_ms": 500 }),
+    ))
+    .expect("long-poll fetch returns a JSON result");
+    let elapsed = started.elapsed();
+
+    assert!(
+        resp["messages"].as_array().is_some_and(Vec::is_empty),
+        "no traffic → empty messages: {resp}"
+    );
+    assert!(
+        elapsed >= Duration::from_millis(300),
+        "wait_ms must actually block (~500ms), took {elapsed:?}"
+    );
+}
+
+#[test]
 fn reply_to_unknown_nickname_still_succeeds() {
     // We don't validate the reply target nickname at the protocol
     // level — the message is broadcast, peers can still receive it.

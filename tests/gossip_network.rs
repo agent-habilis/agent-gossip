@@ -14,8 +14,8 @@ use std::time::{Duration, Instant};
 use agent_habilis_swarm::RATE_LIMIT_PER_MIN;
 use common::{
     CONNECT_TIMEOUT, InProcNode, MSG_TIMEOUT, Msg, Node, POLL, RECOVERY_TIMEOUT, SOCKET_DIR, bin,
-    cli_message, cli_message_raw, cli_peers, cli_ping, cli_poll, serial_guard, socket_path,
-    tmp_log, trace_log, wait_total, wait_until,
+    cli_message, cli_message_raw, cli_peers, cli_ping, cli_poll, cli_poll_wait, serial_guard,
+    socket_path, tmp_log, trace_log, wait_total, wait_until,
 };
 
 /// How long a survivor needs to claim a dead beacon's seed-derived
@@ -889,6 +889,60 @@ fn test_poll_returns_messages() {
             "--after must only return events with seq > cursor: {event}"
         );
     }
+}
+
+/// `poll --wait <ms>` long-polls: with no new traffic it blocks for ~the wait
+/// then returns an empty array; when a peer sends mid-wait it returns promptly,
+/// well before the timeout. The daemon never blocks — only the held call waits.
+#[test]
+fn test_poll_wait_blocks_then_resolves_and_times_out() {
+    let (creator, swarm) = Node::create();
+    let joiner = Node::join(&swarm, "joiner-wait");
+    assert!(creator.wait_ready(&swarm), "creator socket never appeared");
+    assert!(joiner.wait_ready(&swarm), "joiner socket never appeared");
+    std::thread::sleep(Duration::from_secs(2)); // presence settles
+
+    // Baseline the joiner's cursor to "now" so the waits below see only new
+    // events: a first full poll, then advance past its newest seq.
+    let baseline = cli_poll(&swarm, &joiner.nickname, None);
+    let baseline: Vec<serde_json::Value> = serde_json::from_str(&baseline).unwrap();
+    let last_seq = baseline
+        .iter()
+        .filter_map(|event| event["seq"].as_u64())
+        .max();
+    let after = last_seq.map(|seq| seq.to_string());
+
+    // (1) Timeout: no traffic, a 1s wait returns `[]` after ~blocking ~1s.
+    let (empty, timeout_elapsed) =
+        cli_poll_wait(&swarm, &joiner.nickname, after.as_deref(), "1000");
+    assert_eq!(empty, "[]", "no traffic → empty array");
+    assert!(
+        timeout_elapsed >= Duration::from_millis(700),
+        "should have blocked ~1s, took {timeout_elapsed:?}"
+    );
+
+    // (2) Resolves on traffic: start a blocking 15s wait, have the creator
+    // send ~400ms in; the poll must return the message well under the timeout.
+    let swarm_for_send = swarm.clone();
+    let creator_nick = creator.nickname.clone();
+    let sender = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(400));
+        cli_message(&swarm_for_send, &creator_nick, "via long-poll");
+    });
+    let (got, resolve_elapsed) = cli_poll_wait(&swarm, &joiner.nickname, after.as_deref(), "15000");
+    sender.join().unwrap();
+    let events: Vec<serde_json::Value> = serde_json::from_str(&got)
+        .unwrap_or_else(|error| panic!("parse long-poll JSON: {error}\nraw: {got}"));
+    assert!(
+        events
+            .iter()
+            .any(|event| event["body"].as_str() == Some("via long-poll")),
+        "long-poll returned the message: {got}"
+    );
+    assert!(
+        resolve_elapsed < Duration::from_secs(14),
+        "resolved before the 15s timeout, took {resolve_elapsed:?}"
+    );
 }
 
 /// `ahs ping` is daemon-owned: the transient command arms a round over

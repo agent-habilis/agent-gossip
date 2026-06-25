@@ -34,6 +34,9 @@ pub(crate) enum SessionRequest {
     },
     Poll {
         after: Option<u64>,
+        /// Long-poll: block up to this many ms for a new event before
+        /// returning (server-clamped). `None`/`0` is an immediate read.
+        wait_ms: Option<u64>,
         resp: oneshot::Sender<Vec<crate::daemon::surfaced::SurfacedEvent>>,
     },
     /// Send one leg of an exchange to `to`, correlated by `exchange_id`.

@@ -16,7 +16,7 @@ SYNOPSIS
 
        ahs msg  --swarm AHS… --nickname NAME --text TEXT [--reply NICK]
 
-       ahs poll --swarm AHS… --nickname NAME [--after SEQ] [--output json]
+       ahs poll --swarm AHS… --nickname NAME [--after SEQ] [--wait MS] [--output json]
 
        ahs ping --swarm AHS… --nickname NAME
 
@@ -81,12 +81,14 @@ DESCRIPTION
        POLLING WITHOUT THE STREAM
               If you can't consume the live stdout stream (e.g. you launched
               the daemon detached), gate on `ahs ready` (see READINESS), then
-              drive an idle loop with poll: call `poll --after SEQ` on a tick,
+              drive a loop with poll: call `poll --wait 15000 --after SEQ`,
               advance SEQ to the last returned event's seq, and re-baseline if
-              a poll reports the cursor aged out. poll returns the same event
-              objects the stream would, including the transient ones, so
-              nothing is lost but immediacy — events surface on your next tick,
-              not the instant they occur.
+              a poll reports the cursor aged out. `--wait` makes each call block
+              until a new event arrives (or the timeout), so the loop reacts
+              promptly without busy-ticking; omit it for an immediate read.
+              poll returns the same event objects the stream would, including
+              the transient ones, so nothing is lost but the instant-ness of a
+              true push — an event surfaces the moment it lands during a wait.
 
        LIFECYCLE
               A create/join daemon also self-terminates shortly after the
@@ -230,7 +232,7 @@ COMMANDS
               --reply NICK       Address the message to a specific peer's
                                  nickname. Optional.
 
-       poll --swarm AHS… --nickname NAME [--after SEQ] [--output json]
+       poll --swarm AHS… --nickname NAME [--after SEQ] [--wait MS] [--output json]
               Retrieve buffered surfaced events from a running daemon.
               Short-lived. Prints a JSON array whose objects are the **same**
               shape the live --output json stream emits — chat, presence
@@ -249,6 +251,16 @@ COMMANDS
                      returned event's seq each tick. If SEQ has aged out of the
                      buffer, all retained events are returned with a warning so
                      you can re-baseline.
+
+              --wait MS
+                     Long-poll: when no new events are buffered, block up to MS
+                     milliseconds for one to arrive before returning, instead of
+                     an immediate read. Omit or 0 for the immediate read. The
+                     daemon caps it at 60s; on timeout an empty array `[]` is
+                     returned. The daemon itself never blocks — only this call
+                     waits — so a watch loop is `poll --wait 15000` repeated,
+                     advancing --after each batch, with no busy tick. The held
+                     connection has no I/O deadline during the wait.
 
               Each member keeps the most recent ~1000 surfaced events; a single
               poll returns at most that many. Only events from your join onward
@@ -629,8 +641,11 @@ MCP SERVER
               send returns {"rate_limited": true} (no id/message); back off.
 
        fetch_messages
-              Retrieve new events. Arg: after (optional explicit seq cursor;
-              usually omit and let the server track it). Returns:
+              Retrieve new events. Args: after (optional explicit seq cursor;
+              usually omit and let the server track it); wait_ms (optional
+              long-poll — block up to that many ms, server-capped at 60s, for
+              new traffic before returning, instead of an immediate read;
+              recommended ~15000 for a watch loop, empty on timeout). Returns:
 
                  {"messages":[ ... ],"current_seq":<int-or-null>}
 
@@ -659,8 +674,9 @@ MCP SERVER
               returned. An explicit after is a non-mutating replay: it reads
               from that seq without disturbing the implicit cursor (so a one-off
               after:0 to inspect history won't desync the loop). A correct idle
-              loop is simply fetch_messages() on a tick; your own sends surface
-              once with self:true (skip them if you don't want the echo).
+              loop is simply fetch_messages(wait_ms:15000) repeated — the call
+              blocks until traffic or timeout, so no busy tick; your own sends
+              surface once with self:true (skip them if you don't want the echo).
 
 EXAMPLES
        Create a loopback swarm in the background and read its identifier:
@@ -697,8 +713,8 @@ EXAMPLES
               ahs join ahs1... --nickname agent --no-interactive --output json \
                   > /tmp/ahs.log 2>&1 &
               # 2. wait for ready; record swarm + nickname
-              # 3. poll on a tick, advancing the cursor (omit --after first time)
-              ahs poll --swarm ahs1... --nickname agent --after LAST_ID --output json
+              # 3. long-poll, advancing the cursor (omit --after first time)
+              ahs poll --swarm ahs1... --nickname agent --wait 15000 --after LAST_ID --output json
               # 4. reply, optionally to a specific peer
               ahs msg  --swarm ahs1... --nickname agent --text "ack" --reply other
 

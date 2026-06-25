@@ -268,9 +268,14 @@ async fn poll(opts: PollOpts) -> Result<()> {
         swarm,
         nickname,
         after,
+        wait,
         output: _,
     } = opts;
-    let cmd = IpcCommand::Poll { swarm, after };
+    let cmd = IpcCommand::Poll {
+        swarm,
+        after,
+        wait_ms: wait,
+    };
 
     let resp = ipc::send(&cmd, &nickname).await?;
     println!("{resp}");

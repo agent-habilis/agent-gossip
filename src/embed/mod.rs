@@ -403,11 +403,13 @@ impl InProcessSession {
     pub(crate) async fn fetch(
         &self,
         after: Option<u64>,
+        wait_ms: Option<u64>,
     ) -> anyhow::Result<Vec<crate::daemon::surfaced::SurfacedEvent>> {
         let (resp_tx, resp_rx) = oneshot::channel();
         self.req_tx
             .send(SessionRequest::Poll {
                 after,
+                wait_ms,
                 resp: resp_tx,
             })
             .await
@@ -748,13 +750,18 @@ impl SwarmSession {
     /// transient `ping_report` / `peer_timeout` / … events), each tagged with
     /// its surfacing `seq` — pass the last returned `seq` as the next `after`.
     ///
+    /// `wait_ms` long-polls: when the buffer is empty, block up to that many
+    /// ms (server-clamped) for a new event before returning, instead of an
+    /// immediate empty read. `None`/`0` is the immediate read.
+    ///
     /// # Errors
     /// Fails if the event loop has stopped or dropped the response.
     pub async fn fetch(
         &self,
         after: Option<u64>,
+        wait_ms: Option<u64>,
     ) -> anyhow::Result<Vec<crate::daemon::surfaced::SurfacedEvent>> {
-        self.core.fetch(after).await
+        self.core.fetch(after, wait_ms).await
     }
 
     /// Send one leg of an exchange to `to`, correlated by `exchange_id`.

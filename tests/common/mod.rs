@@ -248,6 +248,45 @@ pub(crate) fn cli_poll(swarm: &str, nickname: &str, after: Option<&str>) -> Stri
     String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
 
+/// `ahs poll --wait <wait_ms>` (long-poll), returning the JSON stdout and how
+/// long the call took — so a test can assert it blocked / resolved promptly.
+pub(crate) fn cli_poll_wait(
+    swarm: &str,
+    nickname: &str,
+    after: Option<&str>,
+    wait_ms: &str,
+) -> (String, Duration) {
+    let mut args = vec![
+        "poll",
+        "--swarm",
+        swarm,
+        "--nickname",
+        nickname,
+        "--wait",
+        wait_ms,
+        "--output",
+        "json",
+    ];
+    if let Some(id) = after {
+        args.extend(["--after", id]);
+    }
+    let started = Instant::now();
+    let out = test_cmd()
+        .args(&args)
+        .output()
+        .expect("poll --wait command failed to spawn");
+    let elapsed = started.elapsed();
+    assert!(
+        out.status.success(),
+        "poll --wait failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    (
+        String::from_utf8_lossy(&out.stdout).trim().to_string(),
+        elapsed,
+    )
+}
+
 /// Spawn `ahs task …` and return the raw `Output` (no success
 /// assertion — callers that test the unknown-participant / rate-limit
 /// failure paths inspect it).

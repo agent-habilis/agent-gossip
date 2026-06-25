@@ -57,6 +57,12 @@ pub(crate) enum IpcCommand {
         /// per-event `seq` in the response is the value to pass next.
         #[serde(skip_serializing_if = "Option::is_none")]
         after: Option<u64>,
+        /// Long-poll: block up to this many ms for a new event before
+        /// returning (server-clamped to `LONGPOLL_MAX_MS`). Omitted/`0` is an
+        /// immediate read. Skipped when `None` so the wire stays byte-stable
+        /// for callers that never set it.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        wait_ms: Option<u64>,
     },
     /// Arm an RTT round: the daemon broadcasts a ping probe, collects
     /// pongs for a fixed window, and emits a `ping_report` on its
@@ -370,8 +376,12 @@ mod tests {
         let cmd = IpcCommand::Poll {
             swarm: SwarmId::from("ahstest"),
             after: Some(42),
+            wait_ms: None,
         };
         let json = serde_json::to_string(&cmd).unwrap();
+        // `wait_ms: None` is skipped on the wire, keeping the format byte-stable
+        // for callers that never long-poll.
+        assert!(!json.contains("wait_ms"), "None wait_ms must not serialize");
         let parsed: IpcCommand = serde_json::from_str(&json).unwrap();
         match parsed {
             IpcCommand::Poll { after, .. } => assert_eq!(after, Some(42)),
@@ -451,9 +461,11 @@ mod tests {
         let cmd = IpcCommand::Poll {
             swarm: SwarmId::from("ahstest"),
             after: None,
+            wait_ms: None,
         };
         let json = serde_json::to_string(&cmd).unwrap();
         assert!(!json.contains("after"));
+        assert!(!json.contains("wait_ms"));
     }
 
     // ── property-based tests ───────────────────────────────────────

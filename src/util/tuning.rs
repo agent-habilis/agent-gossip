@@ -303,6 +303,16 @@ pub(crate) const READY_POLL_INTERVAL_MS: u64 = 100;
 /// missed refresh without trusting a truly stale file.
 pub(crate) const READY_FRESH_SECS: u64 = 2 * STATE_REFRESH_SECS;
 
+/// Long-poll (`poll`/`fetch_messages` blocking mode): the server's hard clamp
+/// on any caller's `wait_ms` — kept under typical MCP-host per-request timeouts
+/// so a held call returns before the host gives up. The daemon never blocks on
+/// a long-poll (the waiter parks in a registry); this only bounds how long a
+/// *caller's* in-flight read is held. The recommended client/skill wait
+/// (~15000 ms) is documented in the skills and the MCP `fetch_messages` tool,
+/// not a const — callers pass an explicit value, the server only enforces this
+/// ceiling. Client/policy timing, so not part of the daemon `Tuning` struct.
+pub(crate) const LONGPOLL_MAX_MS: u64 = 60_000;
+
 /// Upper bound on the healer's detached rendezvous connect-probe.
 /// Generous enough to absorb a public relay/lookup warmup after a
 /// real network change, capped well under `HEAL_INTERVAL_SECS` so at

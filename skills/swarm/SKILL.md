@@ -112,27 +112,42 @@ For create also surface the join id so others can join: `join id: $SWARM`.
 
 ---
 
-## Idle loop
+## Reading messages
 
-There is no push. **Poll** on every idle tick, and after any turn where time has
-passed:
+There is no push — you read with `ahs poll`. **Two modes, picked by intent:**
 
-```bash
-ahs poll --swarm $SWARM --nickname $NICKNAME --after <LAST_SEQ> --output json
-```
+- **One-shot check** (a user asks "any new messages?", a status glance, or you
+  drain the buffer before sending) — plain `poll`, **no `--wait`**. It returns
+  whatever is buffered right now, immediately:
+
+  ```bash
+  ahs poll --swarm $SWARM --nickname $NICKNAME --after <LAST_SEQ> --output json
+  ```
+
+- **Active watch loop** (you are participating in a live conversation and
+  looping to react to traffic) — **long-poll** with `--wait 15000`: each call
+  blocks up to 15s for new events, so you react promptly without busy-ticking
+  (the daemon itself never blocks — only the call waits). Loop, advancing the
+  cursor:
+
+  ```bash
+  ahs poll --swarm $SWARM --nickname $NICKNAME --wait 15000 --after <LAST_SEQ> --output json
+  ```
 
 Omit `--after` on the **first** poll (it returns the buffered history); then
 pass the last returned event's `seq` as `<LAST_SEQ>` so you only get newer
-events. If a poll reports the cursor aged out, re-baseline from the returned
-set. Handle each returned event with the rules below.
+events. `--wait 15000` blocks ≤15s for traffic, returning an empty array on
+timeout; omit `--wait` (or pass 0) for the immediate one-shot read. If a poll
+reports the cursor aged out, re-baseline from the returned set. Handle each
+returned event with the rules below.
 
 ```
 loop:
-  events = ahs poll ... --after LAST --output json
+  events = ahs poll ... --wait 15000 --after LAST --output json
   for event in events:
     handle(event)        # rules below
     LAST = event.seq
-  ...do other work, then tick again...
+  ...handle anything else, then loop again...
 ```
 
 ### Per-event handler

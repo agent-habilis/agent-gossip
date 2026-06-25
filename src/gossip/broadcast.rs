@@ -413,8 +413,20 @@ pub(crate) async fn handle_session_request(
             }));
             sent_ok
         }
-        SessionRequest::Poll { after, resp } => {
-            let _ = resp.send(state.poll_since(after));
+        SessionRequest::Poll {
+            after,
+            wait_ms,
+            resp,
+        } => {
+            // Same policy as the CLI/IPC `Poll` arm: respond now if events are
+            // buffered, else (with `wait_ms`) park a typed waiter the loop
+            // fulfills/expires. A parked waiter broadcasts nothing → `false`.
+            state.poll_or_register(
+                after,
+                wait_ms,
+                tokio::time::Instant::now(),
+                crate::daemon::state::PollResponder::Typed(resp),
+            );
             false
         }
         SessionRequest::Exchange {
