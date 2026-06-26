@@ -149,12 +149,14 @@ Use Claude Code's native **`TodoWrite`** tool as the **single source of truth**
 for task status — never a printed status block. On send, add **one todo per
 task**:
 
-- `content` is **exactly** `🐝 <one-line task> · <worker>` — the nickname
-  written with literal `<`/`>` (e.g. `🐝 review src/net · <crystal-azure>`),
-  status `in_progress`. The companion **`activeForm`** renders on a surface
-  that **HTML-escapes** `<`/`>`, so it uses the **bare** nickname with **no**
-  angle brackets, e.g. `activeForm: "review src/net · crystal-azure"`. Never
-  put `<`/`>` (or backticks, or entities) in `activeForm`.
+- `content` is **exactly** `🐝 <one-line task> · <worker>` (e.g. `🐝 review
+  src/net · <crystal-azure>`), status `in_progress`. The companion
+  **`activeForm`** uses the same text without the `🐝`, e.g.
+  `activeForm: "review src/net · <crystal-azure>"`. Write the nickname as
+  `<worker>` with literal angle brackets and **no backticks** in **both**
+  fields — the widget shows text verbatim: markdown isn't rendered (backticks
+  would show literally) and `<`/`>` aren't escaped. Use this exact format;
+  don't invent a `task to <worker>` phrasing.
 - Move each todo through its lifecycle off that task's events
   (`accepted`/`progress`) via `TodoWrite`; on your `confirm` set it
   `completed`. On `decline`/`exchange_timeout` set it `completed` and note "dropped

@@ -166,17 +166,13 @@ todo for this handover and keep it updated **through `TodoWrite`** as the
 daemon emits events for this `exchange_id`; never print a per-update status line.
 
 - Add it on send: a todo whose `content` is **exactly** `🐝 handover to
-  <$TARGET>` (with the literal nickname, e.g. `🐝 handover to
-  <crystal-azure>`), status `in_progress`. The todo `content` is **plain
-  text shown verbatim** — write the nickname with literal `<`/`>`, **no
-  backticks** and **no HTML entities** (`&lt;`). The `🐝` prefix labels it as
-  a swarm task (`TodoWrite` has no widget title).
-- The companion **`activeForm`** (the present-continuous spinner text) renders
-  on a **different surface that HTML-escapes `<`/`>`** (→ `&lt;…&gt;`), so it
-  must use the **bare** nickname with **no angle brackets**, e.g.
-  `activeForm: "handover to crystal-azure"`. Never put `<`/`>` (or backticks,
-  or entities) in `activeForm` or any spinner/status text — angle brackets
-  belong only in the todo `content`.
+  <$TARGET>` (e.g. `🐝 handover to <crystal-azure>`), status `in_progress`.
+  The `🐝` prefix labels it as a swarm task (`TodoWrite` has no widget title).
+  The companion **`activeForm`** uses the same text without the `🐝`, e.g.
+  `activeForm: "handover to <crystal-azure>"`. Write the nickname as
+  `<$TARGET>` with literal angle brackets and **no backticks** in **both**
+  fields — the widget shows text verbatim: markdown isn't rendered (backticks
+  would show literally) and `<`/`>` aren't escaped.
 - Move it through the lifecycle off the `exchange` events (`offered`/`accepted`/
   …) by calling `TodoWrite` again. `exchange_progress` (incl. the daemon's
   keepalive beats) just refreshes the todo — **never** a printed line.
