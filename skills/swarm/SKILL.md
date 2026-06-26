@@ -74,8 +74,11 @@ Run this **in the background** (it never returns — it is the daemon); send its
 stdout to `/dev/null` (you read readiness + events from the state-file and
 `ahs poll`, not the stream). Omit `--name` for a random name, or pass
 `--name <NAME>`. `--model`/`--harness` are self-reported so peers see what you
-run on (optional). Add `--public` for cross-network reach, `--advertise` (with
-`--public`) to list it in a directory.
+run on (optional): set `--harness` to **the agent you are running in** (e.g.
+`Cursor`, `Gemini CLI`, `Codex`) and `--model` to **your own model** (e.g.
+`GPT-5.5`). Report your real identity — do **not** copy an example value, and
+omit the flag if you don't know it. Add `--public` for cross-network reach,
+`--advertise` (with `--public`) to list it in a directory.
 
 ### Join a swarm
 
@@ -85,7 +88,8 @@ ahs join <ahs… | domain | git-repo-url> \
   --no-interactive --output json > /dev/null &
 ```
 Also backgrounded. `join` takes only the id — network mode, name, and config are
-decoded from the id.
+decoded from the id. Set `--harness`/`--model` to **your own** identity, as in
+`create` above (report what you actually run in; don't copy an example).
 
 ### Gate on readiness, then read identity
 

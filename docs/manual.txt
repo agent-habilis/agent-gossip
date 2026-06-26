@@ -181,8 +181,9 @@ COMMANDS
                      what each peer runs. Optional.
 
               --harness NAME
-                     Harness this agent runs on (e.g. "Claude Code").
-                     Self-reported, announced alongside --model. Optional.
+                     The agent you run in — Claude Code, Cursor, Codex, …
+                     Self-reported, announced alongside --model. Report your
+                     own harness; don't copy the example. Optional.
 
        join SWARM [OPTIONS]
               Join an existing swarm. Long-running. Prints a ready event once
@@ -212,9 +213,11 @@ COMMANDS
                      Output format. Default human.
 
               --model MODEL / --harness NAME
-                     Self-reported model / harness this agent runs on (e.g.
-                     "Opus 4.8" / "Claude Code"), announced to peers for the
-                     roster / /swarm:status. Optional.
+                     Self-reported model / harness you run on — your own
+                     model and the agent you run in (e.g. "GPT-5.5" /
+                     "Cursor", "Opus 4.8" / "Claude Code"), announced to peers
+                     for the roster / /swarm:status. Report your own values;
+                     don't copy an example. Optional.
 
               join takes no --name, --public, --rate-limit, --mdns, --dht, or
               --relay: all of these are decoded from the identifier and
