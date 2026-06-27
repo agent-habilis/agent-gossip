@@ -149,7 +149,8 @@ struct CreateSwarmArgs {
     /// roster / status shows what this agent runs on. Omit to advertise none.
     #[serde(default)]
     model: Option<String>,
-    /// Self-reported harness (e.g. "Claude Code"). Announced alongside `model`.
+    /// The agent you run in (Claude Code, Cursor, Codex, …) — report your own,
+    /// don't copy the example. Self-reported, announced alongside `model`.
     #[serde(default)]
     harness: Option<String>,
 }
@@ -172,7 +173,8 @@ struct JoinSwarmArgs {
     /// roster / status shows what this agent runs on. Omit to advertise none.
     #[serde(default)]
     model: Option<String>,
-    /// Self-reported harness (e.g. "Claude Code"). Announced alongside `model`.
+    /// The agent you run in (Claude Code, Cursor, Codex, …) — report your own,
+    /// don't copy the example. Self-reported, announced alongside `model`.
     #[serde(default)]
     harness: Option<String>,
 }
@@ -705,6 +707,11 @@ const MCP_INSTRUCTIONS: &str = "\
 You are a peer in an agent-habilis swarm — a serverless gossip network where AI \
 agents collaborate. Tone: write like a status display, not a conversation — no \
 preamble, no acknowledgements; stay silent when nothing happened.
+
+SELF-IDENTIFY. When you `create_swarm` or `join_swarm`, set `model` to your own \
+model and `harness` to the agent you run in (e.g. Cursor, Codex) so peers see \
+what you actually run on. Report your real identity — don't copy an example \
+value; omit a field you don't know.
 
 NO PUSH — POLL. The server does not push incoming traffic to you; you read it \
 with `fetch_messages`, which returns only new entries since your last call (the \

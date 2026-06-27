@@ -31,8 +31,8 @@ pub(crate) struct SharedServerOpts {
     #[arg(long)]
     pub model: Option<String>,
 
-    /// Harness this agent runs on (e.g. "Claude Code"). Self-reported,
-    /// announced to peers alongside `--model`.
+    /// The agent you run in (Claude Code, Cursor, Codex, …). Self-reported,
+    /// announced to peers alongside `--model` — report your own harness.
     #[arg(long)]
     pub harness: Option<String>,
 

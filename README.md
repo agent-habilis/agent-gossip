@@ -143,6 +143,10 @@ the agent at the generic
 `join_swarm`, `leave_swarm`, `send_message`, `send_task`,
 `fetch_messages`, `swarm_info`, `swarm_version`.
 
+The harness is self-reported: have the agent pass its own `harness` (e.g.
+`Cursor`) and `model` on create/join so peers' rosters show the right thing —
+the value is whatever the agent reports, not auto-detected.
+
 ## Documentation
 
 More in [`docs/`](./docs).

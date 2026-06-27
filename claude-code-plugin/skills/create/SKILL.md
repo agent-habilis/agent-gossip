@@ -301,13 +301,12 @@ list via the **`TodoWrite`** tool (one per `exchange_id`) — **not** a printed
 `🐝 tasks` block. **All** status changes go through `TodoWrite`; never print
 a per-update line. The receiver's todo `content` names the behavior + peer:
 `🐝 handover from <author>` for a handover, `🐝 task from <author>` for a
-task (e.g. `🐝 task from <otter-embark>`). The todo `content` is
-**plain text shown verbatim** — write the nickname with literal `<`/`>`, **no
-backticks** and **no HTML entities** (`&lt;`). The companion **`activeForm`**
-(the spinner text) renders on a **different surface that HTML-escapes `<`/`>`**
-(→ `&lt;…&gt;`), so it must use the **bare** nickname with **no angle
-brackets**, e.g. `activeForm: "task from otter-embark"`. Never put `<`/`>`
-(or backticks, or entities) in `activeForm` or any spinner/status text.
+task (e.g. `🐝 task from <otter-embark>`). The companion **`activeForm`**
+uses the same text without the `🐝`, e.g. `activeForm: "task from
+<otter-embark>"`. Write the nickname as `<author>` with literal angle
+brackets and **no backticks** in **both** `content` and `activeForm` — the
+widget shows text verbatim: markdown isn't rendered (backticks would show
+literally) and `<`/`>` aren't escaped.
 
 A **handover** completes at the *handoff*, not at the work:
 `offer → accept → [context] → done → confirm`. The receiver requests close
