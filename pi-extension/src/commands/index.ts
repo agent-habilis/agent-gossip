@@ -149,7 +149,7 @@ async function cmdCreate(args: string, ctx: ExtensionCommandContext): Promise<vo
   }
 
   options.model = ctx.model?.name;
-  notify(options.name ? `creating \`#${options.name}\`...` : "creating swarm...");
+  notify(options.name ? `creating \`#${options.name}\`…` : "creating swarm…");
   const result = await createSwarm(options);
   notify(`created \`#${result.name}\``);
   notify(`\`/swarm-join ${result.swarm}\``);
@@ -166,7 +166,7 @@ async function cmdJoin(args: string, ctx: ExtensionCommandContext): Promise<void
     return;
   }
 
-  notify(`joining swarm ${target} ...`);
+  notify(`joining swarm ${target}…`);
   const result = await joinSwarm({ target, model: ctx.model?.name });
   notify(`joined \`#${result.name}\` as \`<${result.nickname}>\``);
   if (result.drift) notify(result.drift);
@@ -177,7 +177,7 @@ async function cmdDiscover(args: string, ctx: ExtensionCommandContext): Promise<
   if (!requireAgentSwarm(ctx)) return;
 
   const directory = args.trim() || "global";
-  notify(`discovering \`#${directory}\`...`);
+  notify(`discovering \`#${directory}\`…`);
 
   const swarms = await discoverSwarms({
     directory: directory === "global" ? undefined : directory,
@@ -199,7 +199,7 @@ async function cmdDiscover(args: string, ctx: ExtensionCommandContext): Promise<
   const picked = choice ? byOption.get(choice) : undefined;
   if (!picked) return;
 
-  notify(`joining \`#${picked.name}\`...`);
+  notify(`joining \`#${picked.name}\`…`);
   const result = await joinSwarm({
     target: picked.swarm,
     model: ctx.model?.name,
@@ -423,7 +423,7 @@ async function cmdPing(_args: string, ctx: ExtensionCommandContext): Promise<voi
     return;
   }
 
-  notify("pinging peers...");
+  notify("pinging peers…");
 
   try {
     const results = await pingPeers();
