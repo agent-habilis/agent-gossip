@@ -44,9 +44,9 @@ talks to the sibling CLI calls over a local socket.
 
 ### Keeping this skill current
 
-`ahsw setup` copies this skill onto disk, so upgrading the `ahsw` binary can leave
+`ahsw plug` copies this skill onto disk, so upgrading the `ahsw` binary can leave
 the installed copy stale — running old instructions silently. `ahsw status`
-reports whether the installed skill drifted; re-run `ahsw setup --execute` to
+reports whether the installed skill drifted; re-run `ahsw plug` to
 refresh. Worth a check after upgrading `ahsw`.
 
 ---

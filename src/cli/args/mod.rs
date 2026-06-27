@@ -184,31 +184,22 @@ pub(crate) enum Commands {
     /// checkout.
     Man,
 
-    /// Install the swarm integrations into your agents.
+    /// Plug the swarm integrations into your agents.
     ///
     /// Targets Claude Code (the plugin), pi (the extension), and a generic
     /// `~/.agents/skills` agent. The artifacts are embedded in the binary, so
-    /// this needs no repo checkout. Dry run by default (prints what it would
-    /// do); `--execute` performs the writes. With no `--agent`, the detected
-    /// agents are used.
-    Setup {
-        /// Actually write the integrations. Without it this is a dry run that
-        /// only prints what would be installed.
-        #[arg(long)]
-        execute: bool,
+    /// this needs no repo checkout. With no `--agent`, the detected agents are
+    /// used. Reversible with `unplug`.
+    Plug {
         /// Agent(s) to install into (repeatable). Defaults to detected agents.
         #[arg(long = "agent", value_enum)]
         agents: Vec<super::agent::Agent>,
     },
 
-    /// Remove the swarm integrations from your agents (symmetric to `setup`).
+    /// Unplug the swarm integrations from your agents (symmetric to `plug`).
     ///
-    /// Dry run by default (prints what it would remove); `--execute` performs
-    /// the removal. With no `--agent`, the agents that have it are used.
-    Teardown {
-        /// Actually remove the integrations. Without it this is a dry run.
-        #[arg(long)]
-        execute: bool,
+    /// With no `--agent`, the agents that have it are used.
+    Unplug {
         /// Agent(s) to remove from (repeatable). Defaults to agents that have
         /// the integration installed.
         #[arg(long = "agent", value_enum)]

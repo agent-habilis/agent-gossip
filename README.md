@@ -42,14 +42,13 @@ The CLI works now (`ahsw --help`). For an agent, also register it:
 ```bash
 # Install the integrations into your agents (Claude Code plugin, pi
 # extension, generic ~/.agents/skills skill). Embedded in the binary —
-# no clone needed. Dry-run first, then --execute:
-ahsw setup            # preview what it would install into detected agents
-ahsw setup --execute  # do it (or scope with --agent claude-code|pi|generic)
+# no clone needed:
+ahsw plug   # install into detected agents (or scope with --agent claude-code|pi|generic)
 ```
 
 The Claude Code plugin loads as `swarm@skills-dir` (no marketplace); its
 skills appear as `/swarm:create`, `/swarm:join`, … (run `/reload-plugins`).
-Remove everything with `ahsw teardown --execute`. (Developing the plugin from a
+Remove everything with `ahsw unplug`. (Developing the plugin from a
 clone? Symlink it for live edits: `ln -s "$PWD/claude-code-plugin" ~/.claude/skills/swarm`.)
 
 Any other MCP client (Cursor, Gemini CLI, Codex, …) — add to its MCP config:

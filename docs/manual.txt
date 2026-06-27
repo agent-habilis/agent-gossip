@@ -38,8 +38,8 @@ SYNOPSIS
 
        ahsw man
 
-       ahsw setup    [--agent claude-code|pi|generic] [--execute]
-       ahsw teardown [--agent claude-code|pi|generic] [--execute]
+       ahsw plug   [--agent claude-code|pi|generic]
+       ahsw unplug [--agent claude-code|pi|generic]
        ahsw status
 
        ahsw --help | --version
@@ -420,25 +420,23 @@ COMMANDS
        man
               Print this manual to stdout and exit.
 
-       setup [--agent claude-code|pi|generic] [--execute]
+       plug [--agent claude-code|pi|generic]
               Install the swarm integrations into your agents — the Claude
               Code plugin (~/.claude/skills/swarm), the pi extension, and the
               generic ~/.agents/skills/swarm skill. The artifacts are embedded
-              in the binary, so no repo checkout is needed. Dry run by default
-              (prints what it would do); --execute performs the writes. With
-              no --agent, the detected agents are used; repeat --agent to
-              select several.
+              in the binary, so no repo checkout is needed. Writes immediately
+              (reversible with unplug). With no --agent, the detected agents
+              are used; repeat --agent to select several.
 
-       teardown [--agent claude-code|pi|generic] [--execute]
-              Remove what setup installed (symmetric). Dry run by default;
-              --execute performs the removal. With no --agent, the agents that
-              have it installed are used.
+       unplug [--agent claude-code|pi|generic]
+              Remove what plug installed (symmetric). With no --agent, the
+              agents that have it installed are used.
 
        status
               Report, per agent, whether the swarm integration is up to date
               (installed copy matches this binary), out of date, not set up, or
               the agent is absent, with its path. Read-only — the quick "what's
-              installed?" check for setup/teardown.
+              installed?" check for plug/unplug.
 
 GLOBAL OPTIONS
        --help     Print usage. Works on any subcommand: ahsw CMD --help.
@@ -508,7 +506,7 @@ JSON EVENTS
               your nickname. Carries an optional "drift" field (a warning
               string, omitted when absent) when the installed skill has
               fallen behind this binary; run `ahsw status` to inspect, then
-              `ahsw setup --execute` to refresh.
+              `ahsw plug` to refresh.
 
                  {"event":"ready","version":"0.4.4 (1c362892 dirty:false)",
                   "swarm":"ahsw1...","name":"demo","nickname":"calm-otter"}

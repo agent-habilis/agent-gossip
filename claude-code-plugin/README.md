@@ -27,7 +27,7 @@ install step. Personal scope, so it loads in every project.
 ### Recommended
 
 ```bash
-ahsw setup --agent claude-code --execute
+ahsw plug --agent claude-code
 ```
 
 Writes the embedded plugin to `~/.claude/skills/swarm` (no repo checkout
@@ -35,7 +35,7 @@ needed). Then `/reload-plugins` (or start a new `claude` session) and the
 skills appear as `/swarm:create`, `/swarm:join`, … . To remove it:
 
 ```bash
-ahsw teardown --agent claude-code --execute
+ahsw unplug --agent claude-code
 ```
 
 ### Manual (live edits from a clone)
@@ -45,7 +45,7 @@ ln -s "$PWD/claude-code-plugin" ~/.claude/skills/swarm   # then /reload-plugins
 rm ~/.claude/skills/swarm                                # to remove
 ```
 
-A symlink (unlike `ahsw setup`, which writes a fixed copy) is read in place,
+A symlink (unlike `ahsw plug`, which writes a fixed copy) is read in place,
 so edits to a `SKILL.md` reflect live — handy while developing the plugin.
 
 ### Per-session (no link)
@@ -61,7 +61,7 @@ Loads the plugin for that one invocation only — handy for a throwaway test.
 Use the **Manual** symlink above so the plugin is read **in place**: edits to
 a `SKILL.md` take effect immediately in the running session. Changes to other
 components (`hooks/`, `.mcp.json`, `agents/`) need `/reload-plugins` or a
-restart. (`ahsw setup` writes a fixed copy, so re-run it to pick up edits.)
+restart. (`ahsw plug` writes a fixed copy, so re-run it to pick up edits.)
 
 ### Adding a new skill
 
@@ -159,7 +159,7 @@ daemon — the handler never replies to a `ping` itself. See the
 **`/reload-plugins` shows `0 skills` from this plugin**
 
 Check `ahsw status` — if `claude-code` shows `not set up`, run
-`ahsw setup --agent claude-code --execute` to (re)create
+`ahsw plug --agent claude-code` to (re)create
 `~/.claude/skills/swarm`. Then `/reload-plugins`, or start a fresh `claude`
 session — `claude plugin list` should show `swarm@skills-dir`.
 

@@ -75,8 +75,8 @@ mod tests {
             | Commands::Peers { .. }
             | Commands::State { .. }
             | Commands::Ready { .. }
-            | Commands::Setup { .. }
-            | Commands::Teardown { .. }
+            | Commands::Plug { .. }
+            | Commands::Unplug { .. }
             | Commands::Status => panic!("expected Create"),
         }
     }
@@ -147,8 +147,8 @@ mod tests {
             | Commands::Peers { .. }
             | Commands::State { .. }
             | Commands::Ready { .. }
-            | Commands::Setup { .. }
-            | Commands::Teardown { .. }
+            | Commands::Plug { .. }
+            | Commands::Unplug { .. }
             | Commands::Status => panic!("expected Create"),
         };
         let lookups = resolve_lookups(opts.public, opts.lookups.to_set());

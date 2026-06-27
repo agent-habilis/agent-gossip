@@ -12,7 +12,7 @@ calls are shown by the harness; do not narrate around them.
 
 ## What this checks
 
-`ahsw setup` copies the skill onto disk, so upgrading the `ahsw`
+`ahsw plug` copies the skill onto disk, so upgrading the `ahsw`
 binary can leave the installed skill stale — running old instructions
 silently. This reports the binary version and, for each agent, whether
 its installed skill matches the binary (`up to date` / `out of date`),
@@ -27,5 +27,5 @@ ahsw status
 ## Output
 
 Print the command's output verbatim. If any agent shows `out of date`,
-the line already names the fix (`ahsw setup --agent <agent> --execute`)
+the line already names the fix (`ahsw plug --agent <agent>`)
 — surface it as-is; do not paraphrase or act on it without the user.

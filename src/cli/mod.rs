@@ -20,7 +20,7 @@ use crate::transport::ipc::{self, IpcCommand};
 pub(crate) mod agent;
 mod args;
 mod discover;
-mod setup;
+mod plug;
 mod status;
 
 pub(crate) use args::Cli;
@@ -111,8 +111,8 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
         }
         // Embedded integration artifacts written to the agents' skills dirs —
         // self-contained, no repo checkout needed (like `Man`).
-        Commands::Setup { execute, agents } => setup::setup(execute, &agents),
-        Commands::Teardown { execute, agents } => setup::teardown(execute, &agents),
+        Commands::Plug { agents } => plug::plug(&agents),
+        Commands::Unplug { agents } => plug::unplug(&agents),
         Commands::Status => status::run(),
     }
 }

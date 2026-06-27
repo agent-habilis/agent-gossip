@@ -123,11 +123,11 @@ fn ready_event_drift_is_present_only_when_stale() {
 
     // Stale: the warning rides along verbatim.
     let stale = parse(&make(Some(
-        "⚠️ swarm skill out of date. Run `ahsw setup --execute` to update",
+        "⚠️ swarm skill out of date. Run `ahsw plug` to update",
     )));
     assert_eq!(
         stale["drift"],
-        "⚠️ swarm skill out of date. Run `ahsw setup --execute` to update"
+        "⚠️ swarm skill out of date. Run `ahsw plug` to update"
     );
 }
 

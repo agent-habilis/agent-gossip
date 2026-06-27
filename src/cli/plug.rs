@@ -1,7 +1,7 @@
-//! `ahsw setup` / `ahsw teardown`: install or remove the swarm integrations
+//! `ahsw plug` / `ahsw unplug`: install or remove the swarm integrations
 //! across agents. Each artifact is embedded at compile time (like the manual),
 //! so a brew/cargo-installed binary carries them with no repo or external
-//! installer. Both commands are dry-run by default; `--execute` mutates.
+//! installer. Both act immediately; `plug` is reversible with `unplug`.
 
 use std::path::Path;
 use std::process::Command;
@@ -20,36 +20,35 @@ enum Op {
     Remove,
 }
 
-/// Install the embedded integrations into the selected agents. Dry run unless
-/// `execute`.
+/// Install the embedded integrations into the selected agents.
 ///
 /// # Errors
 /// `$HOME` unset, a filesystem error, or `pi install` failing.
-pub(crate) fn setup(execute: bool, agents: &[Agent]) -> Result<()> {
+pub(crate) fn plug(agents: &[Agent]) -> Result<()> {
     let home = home_dir()?;
     let mut acted = 0;
     for agent in resolve(&home, agents, Op::Install) {
-        if install(agent, &home, execute)? {
+        if install(agent, &home)? {
             acted += 1;
         }
     }
-    finish(execute, acted, "set up");
+    finish(acted, "set up");
     Ok(())
 }
 
-/// Remove the integrations from the selected agents — symmetric to [`setup`].
+/// Remove the integrations from the selected agents — symmetric to [`plug`].
 ///
 /// # Errors
 /// `$HOME` unset, or a filesystem error while removing.
-pub(crate) fn teardown(execute: bool, agents: &[Agent]) -> Result<()> {
+pub(crate) fn unplug(agents: &[Agent]) -> Result<()> {
     let home = home_dir()?;
     let mut acted = 0;
     for agent in resolve(&home, agents, Op::Remove) {
-        if remove(agent, &home, execute)? {
+        if remove(agent, &home)? {
             acted += 1;
         }
     }
-    finish(execute, acted, "removed");
+    finish(acted, "removed");
     Ok(())
 }
 
@@ -82,28 +81,23 @@ fn dedup(agents: &[Agent]) -> Vec<Agent> {
 
 /// `acted` counts agents actually installed/removed (not those skipped as
 /// absent), so the summary never overstates what happened.
-fn finish(execute: bool, acted: usize, verb: &str) {
+fn finish(acted: usize, verb: &str) {
     if acted == 0 {
         warn("nothing to do (try --agent claude-code|pi|generic)");
-    } else if execute {
-        status("Finished", &format!("{verb} swarm · {acted} agent(s)"));
     } else {
-        warn("dry run; re-run with --execute to apply");
+        status("Finished", &format!("{verb} swarm · {acted} agent(s)"));
     }
 }
 
-/// Install the integration for one agent. `--execute` is authoritative: it
-/// removes any existing install first, then writes fresh. Returns whether it
-/// acted (always — every selected agent is installed); symmetric with [`remove`].
-fn install(agent: Agent, home: &Path, execute: bool) -> Result<bool> {
+/// Install the integration for one agent: remove any existing install first,
+/// then write fresh. Returns whether it acted (always — every selected agent
+/// is installed); symmetric with [`remove`].
+fn install(agent: Agent, home: &Path) -> Result<bool> {
     let path = agent.install_path(home);
     status(
         "Setting up",
         &format!("{} ({})", agent.label(), path.display()),
     );
-    if !execute {
-        return Ok(true);
-    }
     match agent {
         Agent::ClaudeCode => {
             remove_existing(&path)?;
@@ -129,7 +123,7 @@ fn install(agent: Agent, home: &Path, execute: bool) -> Result<bool> {
 /// Remove the integration for one agent — symmetric with [`install`]. Returns
 /// whether it acted: `false` (a logged skip) when the agent has nothing
 /// installed, so the caller's summary counts only real removals.
-fn remove(agent: Agent, home: &Path, execute: bool) -> Result<bool> {
+fn remove(agent: Agent, home: &Path) -> Result<bool> {
     let path = agent.install_path(home);
     if !agent.installed(home) {
         status_warn(
@@ -142,9 +136,6 @@ fn remove(agent: Agent, home: &Path, execute: bool) -> Result<bool> {
         "Removing",
         &format!("{} ({})", agent.label(), path.display()),
     );
-    if !execute {
-        return Ok(true);
-    }
     if agent == Agent::Pi {
         // Best-effort deregister before deleting the source it points at.
         let _ = pi(&["remove", &path.to_string_lossy()]);
