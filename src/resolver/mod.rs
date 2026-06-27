@@ -111,7 +111,7 @@ struct WellKnown {
 /// variant instead of re-sniffing a `String`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum JoinTarget {
-    /// A literal `ahs…` id — resolves with no I/O.
+    /// A literal `🐝…` id — resolves with no I/O.
     Swarm(SwarmId),
     /// A domain or git-repo URL; carries the resolved well-known URL.
     WellKnown(String),
@@ -135,7 +135,7 @@ impl FromStr for JoinTarget {
 
     fn from_str(input: &str) -> Result<Self, Self::Err> {
         let trimmed = input.trim();
-        // A literal `ahs…` id is the no-I/O case. Shallow `SwarmId`
+        // A literal `🐝…` id is the no-I/O case. Shallow `SwarmId`
         // validation here; the full structural decode happens in `resolve`.
         if let Ok(id) = trimmed.parse::<SwarmId>() {
             return Ok(JoinTarget::Swarm(id));
@@ -374,7 +374,7 @@ mod tests {
 
     #[test]
     fn join_target_classifies_inputs() {
-        // A literal `ahs…` id ⇒ Swarm (no I/O to resolve).
+        // A literal `🐝…` id ⇒ Swarm (no I/O to resolve).
         let id = known_swarm_id();
         assert!(matches!(id.parse::<JoinTarget>(), Ok(JoinTarget::Swarm(_))));
         // A bare domain ⇒ WellKnown carrying the well-known URL.

@@ -127,7 +127,7 @@ fn discover_event_json(event: &DirectoryEvent) -> String {
 
 /// What the interactive picker resolved to.
 enum PickerOutcome {
-    /// A swarm was chosen — carries its full `ahs…` id.
+    /// A swarm was chosen — carries its full `🐝…` id.
     Selected(String),
     /// User quit (`q` / esc / ctrl-c) or the directory closed.
     Quit,
@@ -256,7 +256,7 @@ async fn run_picker(
 
 /// Redraw the picker **in place**, overwriting only its own lines (never
 /// clearing the screen): lowercase chrome, the directory + each swarm name
-/// in yellow, the full `ahs…` id, peer count, and a local first-seen
+/// in yellow, the full `🐝…` id, peer count, and a local first-seen
 /// timestamp (`YYYY-MM-DD HH:MM`). `selected` is the highlighted row.
 ///
 /// `prev_lines` is the line count of the previous render: when non-zero the

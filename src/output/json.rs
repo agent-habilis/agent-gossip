@@ -503,7 +503,7 @@ pub fn surfaced_event_json(seq: u64, event: &OutputEvent) -> Option<String> {
 /// as the `Stream` sink, so in-process tests assert the byte-identical
 /// wire format the `/swarm` skill + MCP clients parse. `None` for events
 /// that produce no JSON line in JSON mode (`SwarmId` is the bare stderr
-/// `ahs…` line, never JSON).
+/// `🐝…` line, never JSON).
 #[must_use]
 pub fn event_json(event: &OutputEvent) -> Option<String> {
     let json = match event {

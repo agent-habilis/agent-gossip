@@ -70,7 +70,7 @@ fn body(text: &str) -> crate::protocol::MessageBody {
 }
 
 fn sid() -> crate::protocol::SwarmId {
-    crate::protocol::SwarmId::from("ahstest")
+    crate::protocol::SwarmId::from("🐝test")
 }
 
 #[test]
@@ -80,7 +80,7 @@ fn json_message_has_all_fields() {
     let parsed = parse(&json);
     assert_eq!(parsed["event"], "message");
     assert_eq!(parsed["type"], "msg");
-    assert_eq!(parsed["swarm"], "ahstest");
+    assert_eq!(parsed["swarm"], "🐝test");
     assert_eq!(parsed["author"], "alice");
     assert_eq!(parsed["body"], "hello");
     assert!(parsed["reply"].is_null());
@@ -192,7 +192,7 @@ fn json_presence_joined() {
     assert_eq!(parsed["type"], "presence");
     assert_eq!(parsed["subtype"], "joined");
     assert_eq!(parsed["author"], "alice");
-    assert_eq!(parsed["swarm"], "ahstest");
+    assert_eq!(parsed["swarm"], "🐝test");
 }
 
 #[test]

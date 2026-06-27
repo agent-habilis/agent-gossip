@@ -83,7 +83,7 @@ omit the flag if you don't know it. Add `--public` for cross-network reach,
 ### Join a swarm
 
 ```bash
-ahs join <ahs… | domain | git-repo-url> \
+ahs join <🐝… | domain | git-repo-url> \
   --model "<MODEL>" --harness "<HARNESS>" --state-file <SF> \
   --no-interactive --output json > /dev/null &
 ```

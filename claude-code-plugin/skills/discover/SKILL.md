@@ -54,7 +54,7 @@ must **not** scrape the daemon's stdout/log (that is a developer stream, not the
 API). So when Monitor is unavailable, `/swarm:discover` cannot run. Print:
 ```
 🐝 Discovery needs the Monitor tool, which isn't available in this session.
-Ask whoever runs the swarm for its `ahs…` id and use `/swarm:join <id>` directly.
+Ask whoever runs the swarm for its `🐝…` id and use `/swarm:join <id>` directly.
 ```
 and STOP. (`/swarm:create` and `/swarm:join` still work via their CLI fallback;
 only the directory browse does not.)
@@ -89,7 +89,7 @@ sleep 20; echo timeout
 
 From the `swarm_found` / `swarm_lost` notifications seen so far, keep the
 **latest** `swarm_found` per `swarm` id, then drop any id with a later
-`swarm_lost`. Each entry has `swarm` (the `ahs…` id), `name`, and `peers`.
+`swarm_lost`. Each entry has `swarm` (the `🐝…` id), `name`, and `peers`.
 These notifications **feed the picker** — do not echo them as `🐝️` lines.
 
 ## Present the picker
@@ -97,14 +97,14 @@ These notifications **feed the picker** — do not echo them as `🐝️` lines.
 Call `AskUserQuestion` (header `Swarm`):
 
 - One option per swarm, **most peers first, up to 2**: label `🐝 #<name>`,
-  description = `<peers> peers` then the swarm's **full** `ahs…` id
+  description = `<peers> peers` then the swarm's **full** `🐝…` id
   verbatim (the complete hash — do **not** truncate or ellipsize it),
   e.g. on its own line.
 - **`🔄 keep looking`** — reopen the picker with whatever the Monitor has
   pushed since.
 - **`🛑 stop`** — stop browsing: clean up (below) and STOP, no join.
 
-The auto-added "Other" lets the user paste any `ahs…` id directly.
+The auto-added "Other" lets the user paste any `🐝…` id directly.
 (`AskUserQuestion` allows at most 4 options, so with the two actions only
 the top 2 swarms show at once — `🔄 keep looking` / "Other" reach the rest.)
 
@@ -121,7 +121,7 @@ When the user picks a swarm (or pastes an id via "Other"), stop
 discovering, then join it:
 
 - TaskStop the `swarm-discover` Monitor.
-- Invoke `/swarm:join <id>` with the chosen `ahs…` id — **silently, no
+- Invoke `/swarm:join <id>` with the chosen `🐝…` id — **silently, no
   text before it**. That skill starts the swarm Monitor and writes the
   session; this skill writes no session state and prints nothing here.
 

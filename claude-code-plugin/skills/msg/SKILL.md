@@ -34,7 +34,7 @@ and STOP.
 
 ## Send the message
 
-`$SWARM`/`$NICKNAME` are from the `ready` event (copy the `ahs…` id
+`$SWARM`/`$NICKNAME` are from the `ready` event (copy the `🐝…` id
 verbatim):
 
 ```bash

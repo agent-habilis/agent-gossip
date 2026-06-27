@@ -1,6 +1,6 @@
 ---
 name: join
-description: Join an existing swarm by `ahs…` id, domain, or git repo URL; attaches the daemon under a Monitor for live event push.
+description: Join an existing swarm by `🐝…` id, domain, or git repo URL; attaches the daemon under a Monitor for live event push.
 ---
 
 ## Quiet mode
@@ -14,12 +14,12 @@ do not narrate around them.
 
 ## Arguments
 
-Parse `$ARGUMENTS` — it should be a swarm ID (`ahs...`), a domain, or a
+Parse `$ARGUMENTS` — it should be a swarm ID (`🐝...`), a domain, or a
 git repo URL.
 
 If empty, print:
 ```
-Usage: /swarm:join {ahs... | domain | repo-url}
+Usage: /swarm:join {🐝... | domain | repo-url}
 ```
 STOP.
 
@@ -88,12 +88,12 @@ key the sibling skills (`msg`, `leave`, …) use to find this file. Type
 
 The first event from the Monitor will be:
 ```
-{"event":"ready","swarm":"ahs...","name":"...","nickname":"..."}
+{"event":"ready","swarm":"🐝...","name":"...","nickname":"..."}
 ```
 
 From this event, hold three values for the rest of the skill:
 
-- `$SWARM`    = `ready.swarm`    (the `ahs...` id)
+- `$SWARM`    = `ready.swarm`    (the `🐝...` id)
 - `$NAME`     = `ready.name`     (the swarm name, decoded from the id)
 - `$NICKNAME` = `ready.nickname` (your assigned `word-word` nick for
   this session)

@@ -8,7 +8,7 @@ use crate::protocol::{Nickname, SwarmId};
 
 #[derive(Parser, Debug)]
 pub(crate) struct PingOpts {
-    /// Swarm identifier (ahs...)
+    /// Swarm identifier (🐝...)
     #[arg(long)]
     pub swarm: SwarmId,
 

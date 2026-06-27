@@ -163,7 +163,7 @@ fn default_rate_limit() -> u16 {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct JoinSwarmArgs {
-    /// Swarm identifier (ahs…), a domain (example.com), or a git
+    /// Swarm identifier (🐝…), a domain (example.com), or a git
     /// repo URL (github.com/user/repo, gitlab.com/user/repo,
     /// bitbucket.org/user/repo). Non-id values are resolved via
     /// `/.well-known/agent-habilis-swarm`.
@@ -441,7 +441,7 @@ impl AgentSwarmServer {
     }
 
     #[tool(
-        description = "Join an existing swarm. Accepts an ahs… identifier, a domain (resolves /.well-known/agent-habilis-swarm), or a git repo URL. Idempotent when called for the same swarm id with the same nickname. Poll `fetch_messages` to observe incoming traffic; the server auto-tracks a per-session cursor so repeat cursor-less calls return only new entries."
+        description = "Join an existing swarm. Accepts an 🐝… identifier, a domain (resolves /.well-known/agent-habilis-swarm), or a git repo URL. Idempotent when called for the same swarm id with the same nickname. Poll `fetch_messages` to observe incoming traffic; the server auto-tracks a per-session cursor so repeat cursor-less calls return only new entries."
     )]
     async fn join_swarm(
         &self,

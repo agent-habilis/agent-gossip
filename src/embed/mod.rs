@@ -5,7 +5,7 @@
 //! IPC. Inbound traffic is pushed over a bounded broadcast channel;
 //! outbound sends go through a dedicated channel into the same shared
 //! broadcast path the CLI/IPC uses. No `iroh` type is exposed: targets
-//! are resolved internally from a string (`ahs…` / domain / git URL).
+//! are resolved internally from a string (`🐝…` / domain / git URL).
 
 use std::fmt;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -37,7 +37,7 @@ use crate::util::tuning::{
 /// How to join a swarm.
 #[derive(Debug, Clone)]
 pub struct JoinConfig {
-    /// What to join: an `ahs…` id, a domain serving
+    /// What to join: an `🐝…` id, a domain serving
     /// `/.well-known/agent-habilis-swarm`, or a supported git repo URL —
     /// classified into a [`JoinTarget`] at the boundary (parse a string
     /// with [`str::parse`]). Resolved internally; the network mode and
@@ -59,7 +59,7 @@ impl JoinConfig {
     /// A config for `target` with a random nickname and the default
     /// peer cap. Set [`JoinConfig::nickname`] / [`JoinConfig::max_peers`]
     /// afterwards to override. Build the [`JoinTarget`] by parsing a
-    /// string (`"ahs…".parse()?`).
+    /// string (`"🐝…".parse()?`).
     #[must_use]
     pub fn new(target: JoinTarget) -> Self {
         Self {
@@ -94,7 +94,7 @@ pub struct CreateConfig {
     /// CLI `--mdns`/`--dht`/`--relay` flags.
     pub lookups: LookupSet,
     /// List this swarm in a directory so discoverers can find it
-    /// without its `ahs…` id. Requires `public`. Default `false`.
+    /// without its `🐝…` id. Requires `public`. Default `false`.
     pub advertise: bool,
     /// The directory to advertise into when `advertise` is set.
     /// `None` ⇒ the well-known `global` directory.
@@ -174,7 +174,7 @@ impl std::error::Error for CreateError {
 }
 
 /// Why [`SwarmSession::join`] failed — the symmetric counterpart to
-/// [`CreateError`]. `Resolve` is a bad target (an `ahs…` id, a domain, or a
+/// [`CreateError`]. `Resolve` is a bad target (an `🐝…` id, a domain, or a
 /// git-repo URL and its well-known file); `Setup` is an endpoint/gossip
 /// failure. The MCP server maps both to an internal error.
 #[derive(Debug)]
@@ -882,7 +882,7 @@ pub(crate) const DIRECTORY_ADVERTISER_COHOST: CoHostPolicy = CoHostPolicy::Eager
 
 /// Spawn the directory re-broadcast task for `cfg`'s swarm: wire a fresh
 /// live-participant counter into `cfg.live_count`, then re-send the
-/// swarm's `ahs…` id (with that count) into `directory` every
+/// swarm's `🐝…` id (with that count) into `directory` every
 /// `ADVERTISE_INTERVAL_SECS` over the swarm's own `lookups`. Returns the
 /// task handle so the owner can abort it (the inner directory session is
 /// dropped with the task, closing that membership). A directory-join

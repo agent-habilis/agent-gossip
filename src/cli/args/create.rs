@@ -51,7 +51,7 @@ pub(crate) struct CreateOpts {
     pub nickname: Option<Nickname>,
 
     /// List this swarm in a directory so others can find it with
-    /// `ahs discover` — no `ahs…` id to share. Optional-value, like
+    /// `ahs discover` — no `🐝…` id to share. Optional-value, like
     /// `--relay`: absent ⇒ unlisted; bare `--advertise` ⇒ the default
     /// `global` directory; `--advertise <directory>` ⇒ that named directory.
     /// Requires `--public` (a directory listing only makes sense for a

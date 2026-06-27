@@ -396,7 +396,7 @@ fn test_swarm_name(name: &str) -> SwarmName {
 }
 
 impl InProcNode {
-    /// Create a new private swarm. `self.swarm` holds the `ahs…` id.
+    /// Create a new private swarm. `self.swarm` holds the `🐝…` id.
     pub(crate) async fn create(name: &str) -> Self {
         Self::from_session(
             SwarmSession::create(CreateConfig::new(test_swarm_name(name)))
@@ -455,7 +455,7 @@ impl InProcNode {
         }
     }
 
-    /// Join `swarm` (an `ahs…` id) with an explicit nickname.
+    /// Join `swarm` (a `🐝…` id) with an explicit nickname.
     pub(crate) async fn join(swarm: &str, nickname: &str) -> Self {
         let target = swarm.parse().expect("valid test join target");
         let mut cfg = JoinConfig::new(target);
@@ -882,7 +882,7 @@ pub(crate) struct Node {
 }
 
 impl Node {
-    /// Spawn `ahs create`, wait for ahs... and the assigned nickname.
+    /// Spawn `ahs create`, wait for 🐝... and the assigned nickname.
     pub(crate) fn create() -> (Self, String) {
         Self::create_named("itest")
     }

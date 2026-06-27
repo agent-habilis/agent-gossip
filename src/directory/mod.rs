@@ -2,7 +2,7 @@
 //! down").
 //!
 //! A swarm created with `--advertise[=<name>]` re-broadcasts its own
-//! `ahs…` id into a **directory**; `ahs discover` browses it. A directory
+//! `🐝…` id into a **directory**; `ahs discover` browses it. A directory
 //! is not a server — it is itself a well-known public [`Swarm`] derived
 //! deterministically from its name, so a publisher and a discoverer that
 //! name the same directory derive the same swarm and mesh over the
@@ -64,7 +64,7 @@ pub(crate) fn directory_config(lookups: LookupOpts) -> SwarmConfig {
     }
 }
 
-/// A directory advertisement: the advertised swarm's `ahs…` id plus its
+/// A directory advertisement: the advertised swarm's `🐝…` id plus its
 /// live participant count. The id already encodes the swarm name and
 /// network mode, so a discoverer decodes those locally — nothing else need
 /// be on the wire. Serialized as a JSON object (room for future fields;
@@ -124,7 +124,7 @@ pub(crate) enum ListingChange {
 }
 
 /// Upper bound on tracked listings. The directory is an open public mesh
-/// (anyone can mint and broadcast valid `ahs…` ids), so the map is
+/// (anyone can mint and broadcast valid `🐝…` ids), so the map is
 /// capped — a new id past the cap evicts the stalest entry — mirroring
 /// the bounded-set discipline the rest of the daemon follows for
 /// adversary-reachable collections.

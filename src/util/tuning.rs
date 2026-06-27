@@ -53,7 +53,7 @@ pub(crate) const ANTIENTROPY_INTERVAL_SECS: u64 = 10;
 /// deep interior gaps without re-sending the out-of-window remainder). At
 /// 70 ids each (~140 total) the body packs ids as raw 16-byte UUIDs
 /// Base58-encoded (~22 chars/id) to ~3.1 KB; plus the `{windows:[…]}` and
-/// message envelope (the `ahs…` id alone is ~80 chars) it stays under
+/// message envelope (the `🐝…` id alone is ~80 chars) it stays under
 /// `MAX_MESSAGE_SIZE` (3840) — guarded by the `digest_fits_gossip_cap`
 /// test. Sized to a single gossip message, **not** the (larger,
 /// configurable) log, which the rolling cursor sweeps across rounds.
@@ -375,7 +375,7 @@ pub(crate) const QUIET_CAP: usize = 1024;
 /// still maintains links independently — this only throttles *our* piling-on.
 pub(crate) const RELINK_COOLDOWN_SECS: u64 = 10;
 
-/// How often an advertising `create` re-broadcasts its `ahs…` id into
+/// How often an advertising `create` re-broadcasts its `🐝…` id into
 /// the directory. Short enough that a fresh discoverer sees every live
 /// swarm within one cycle (the join-horizon only surfaces ads stamped
 /// after the discoverer joined), long enough that the directory stays

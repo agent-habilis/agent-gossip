@@ -19,7 +19,7 @@ const sends: RecordedSend[] = [];
 
 beforeEach(() => {
   sends.length = 0;
-  state.session = { swarm: "ahs-test", name: "test", nickname: "me" };
+  state.session = { swarm: "🐝-test", name: "test", nickname: "me" };
   state.ctx = { isIdle: () => true } as unknown as ExtensionContext;
   state.pi = {
     sendMessage: (

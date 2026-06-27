@@ -298,7 +298,7 @@ fn test_stdout_format_parseable() {
 #[test]
 fn test_no_server_error() {
     // All-`1` Base58 payload — valid charset, can't match a real swarm.
-    let fake_swarm = "ahs1111111111111111111111111111111111111111111111111111111111111";
+    let fake_swarm = "🐝1111111111111111111111111111111111111111111111111111111111111";
     let out = cli_message_raw(fake_swarm, "ghost-nick", "hello");
     assert!(
         !out.status.success(),
@@ -699,7 +699,7 @@ fn test_ready_gate_succeeds_when_serving() {
     assert!(
         parsed["swarm"]
             .as_str()
-            .is_some_and(|swarm| swarm.starts_with("ahs"))
+            .is_some_and(|swarm| swarm.starts_with("🐝"))
     );
     assert!(parsed["nickname"].as_str().is_some());
 
@@ -792,7 +792,7 @@ fn test_ready_gate_rejects_a_stale_ready_file() {
     // ready:true but last_updated far in the past (well beyond READY_FRESH_SECS).
     fs::write(
         &state_file,
-        br#"{"last_updated":1000000000,"name":"stale","nickname":"old-nick","participant_count":1,"ready":true,"swarm":"ahsdeadbeef"}"#,
+        r#"{"last_updated":1000000000,"name":"stale","nickname":"old-nick","participant_count":1,"ready":true,"swarm":"🐝deadbeef"}"#,
     )
     .unwrap();
 

@@ -35,7 +35,7 @@ export type CreateOptions = {
 };
 
 export type JoinOptions = {
-  // What to join: an `ahs…` id, a domain, or a supported git repo URL.
+  // What to join: a `🐝…` id, a domain, or a supported git repo URL.
   target: string;
   // Local nickname; omit for the daemon's random `word-word`.
   nickname?: string;

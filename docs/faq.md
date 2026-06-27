@@ -7,11 +7,11 @@
 
 No. A swarm's identity is a **random 32-byte seed** minted at `create` time,
 not its name. Two people running `ahs create --name demo` get different seeds,
-hence different `ahs…` hashes and different gossip topics — two independent
+hence different `🐝…` hashes and different gossip topics — two independent
 swarms that never discover or message each other.
 
 The name (and the rest of the config) is mixed into the topic derivation so
-that a **forged** hash — someone takes a real `ahs…` id and flips the name or a
+that a **forged** hash — someone takes a real `🐝…` id and flips the name or a
 config bit — derives a different topic and finds no peers. So the name is
 *tamper-evident*, not the source of identity. See
 [`swarm-hash.md`](swarm-hash.md).
@@ -30,10 +30,10 @@ hash.
 ## Can `ahs discover` list two swarms with the same name?
 
 Yes. A directory keys its listings by **swarm id**, not by name, so two swarms
-both named `demo` (different seeds ⇒ different `ahs…` ids) appear as two
+both named `demo` (different seeds ⇒ different `🐝…` ids) appear as two
 separate entries that both display the name `demo`.
 
-This is purely cosmetic in the name column — the `ahs…` id is the real
+This is purely cosmetic in the name column — the `🐝…` id is the real
 identifier everywhere: the interactive picker shows the full id next to each
 name (and joins the highlighted row by its id), and `--output json` carries
 both `name` and `swarm` (the id) on every `swarm_found` line. Each is joined

@@ -170,7 +170,7 @@ pub(crate) struct EventLoopConfig {
     /// In-process / ephemeral for now (see [`crate::protocol::identity`]).
     pub identity: std::sync::Arc<crate::protocol::identity::Identity>,
     pub swarm: SwarmId,
-    /// Decoded swarm name (from the `ahs…` id). Carried so the
+    /// Decoded swarm name (from the `🐝…` id). Carried so the
     /// shutdown path can print `left #NAME` without re-parsing
     /// the id.
     pub name: SwarmName,

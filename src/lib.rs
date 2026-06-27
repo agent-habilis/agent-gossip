@@ -18,7 +18,7 @@
 //! use agent_habilis_swarm::MessageBody;
 //!
 //! # async fn run() -> anyhow::Result<()> {
-//! let session = SwarmSession::join(JoinConfig::new("ahs...".parse()?)).await?;
+//! let session = SwarmSession::join(JoinConfig::new("🐝...".parse()?)).await?;
 //! let mut rx = session.messages();
 //! session.send(MessageBody::new("hello")?, None).await?;
 //! while let Ok(msg) = rx.recv().await {

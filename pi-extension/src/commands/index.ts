@@ -162,7 +162,7 @@ async function cmdJoin(args: string, ctx: ExtensionCommandContext): Promise<void
 
   const target = args.trim();
   if (!target) {
-    notifyError("usage: /swarm-join {ahs... | domain | repo-url}");
+    notifyError("usage: /swarm-join {🐝... | domain | repo-url}");
     return;
   }
 
@@ -188,7 +188,7 @@ async function cmdDiscover(args: string, ctx: ExtensionCommandContext): Promise<
   }
 
   // Option label carries name + peers + a short id so distinct swarms never
-  // collide; map it back to the full `ahs…` id for the join.
+  // collide; map it back to the full `🐝…` id for the join.
   const byOption = new Map(
     swarms.map((swarm): [string, DiscoveredSwarm] => [
       `#${swarm.name} · ${swarm.peers} peers · ${swarm.swarm.slice(0, 14)}…`,

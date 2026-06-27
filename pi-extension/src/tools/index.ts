@@ -115,7 +115,7 @@ export function registerTools(pi: ExtensionAPI): void {
     ],
     parameters: Type.Object({
       target: Type.String({
-        description: "Swarm identifier (ahs...), domain (example.com), or git repo URL",
+        description: "Swarm identifier (🐝...), domain (example.com), or git repo URL",
       }),
       nickname: Type.Optional(
         Type.String({ description: "Optional nickname override (auto-generated if omitted)" }),

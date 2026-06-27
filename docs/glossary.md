@@ -10,7 +10,7 @@ being mistaken for an identity. When reading or changing code, hold the
 following meanings.
 
 For the mechanisms behind these terms, see the companion docs:
-[swarm-hash.md](./swarm-hash.md) (the `ahs…` token),
+[swarm-hash.md](./swarm-hash.md) (the `🐝…` token),
 [discovery.md](./discovery.md) (rendezvous, beacon, lookups, directories),
 [gossip.md](./gossip.md) (message fan-out),
 [topologies.md](./topologies.md) (network shapes), and
@@ -53,7 +53,7 @@ reach for **participant** instead.
 
 *Layer: identity · keyed by seed.*
 
-The `ahs…` id: a self-describing token carrying the `seed`, the name, and the
+The `🐝…` id: a self-describing token carrying the `seed`, the name, and the
 swarm's **config** (rate limit plus lookups). The config is mixed into the
 gossip topic, so every member necessarily shares it, and `join` needs nothing
 beyond the hash itself.
@@ -151,7 +151,7 @@ State: `quiet`.
 *Layer: discovery · keyed by directory name.*
 
 A named, well-known public `Swarm` (`derive_secret(DIRECTORY_BASE_SEED,
-name)`) that swarms **advertise** their `ahs…` id into and that **discover**
+name)`) that swarms **advertise** their `🐝…` id into and that **discover**
 browses. It is not a server — it is itself a swarm, with its own rendezvous,
 reached via the lookups. The default directory is `global`.
 

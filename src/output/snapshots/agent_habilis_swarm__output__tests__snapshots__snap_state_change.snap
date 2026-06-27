@@ -1,6 +1,6 @@
 ---
 source: src/output/tests.rs
 assertion_line: 502
-expression: "snap_state(r#\"[{\"op\":\"replace\",\"path\":\"/turn\",\"value\":\"b\"}]\"#,\nserde_json::json!({\"turn\": \"b\", \"n\": 1}), false,)"
+expression: "snap_state(r#\"[{\"op\":\"replace\",\"path\":\"/turn\",\"value\":\"b\"}]\"#,\n&serde_json::json!({\"turn\": \"b\", \"n\": 1}), false,)"
 ---
-{"event":"state","id":"00000000-0000-0000-0000-000000000001","type":"state","swarm":"ahstest","author":"alice-bot","ts":1700000000,"patch":[{"op":"replace","path":"/turn","value":"b"}],"document":{"n":1,"turn":"b"},"display":"🐝️ `<alice-bot>` changed shared state","self":false}
+{"event":"state","id":"00000000-0000-0000-0000-000000000001","type":"state","swarm":"🐝test","author":"alice-bot","ts":1700000000,"patch":[{"op":"replace","path":"/turn","value":"b"}],"document":{"n":1,"turn":"b"},"display":"🐝️ `<alice-bot>` changed shared state","self":false}

@@ -6,7 +6,7 @@
 //! serving the rendezvous — the **beacon** — lives in
 //! [`crate::beacon`].
 //!
-//! The `ahs…` token carries a random 32-byte `seed` (see
+//! The `🐝…` token carries a random 32-byte `seed` (see
 //! [`crate::protocol::swarm`]). Every value the swarm needs is derived
 //! from it in memory — no stored address, no file:
 //!
@@ -99,7 +99,7 @@ pub(crate) fn rendezvous_ports(seed: &[u8; 32]) -> [u16; RENDEZVOUS_LADDER] {
 }
 
 /// Derive the gossip TopicId from the swarm `seed` + name + config. The
-/// seed is the random 32 bytes carried in the `ahs…` token, so the topic
+/// seed is the random 32 bytes carried in the `🐝…` token, so the topic
 /// is **creator-independent**: it never depends on any node's ephemeral
 /// key and survives the creator's death. The name and the canonical
 /// config bytes are each length-prefixed before hashing so distinct

@@ -14,21 +14,21 @@ SYNOPSIS
        ahs join SWARM [--nickname NAME] [--model MODEL] [--harness NAME]
                   [--no-interactive] [--state-file PATH] [--output human|json]
 
-       ahs msg  --swarm AHS… --nickname NAME --text TEXT [--reply NICK]
+       ahs msg  --swarm 🐝… --nickname NAME --text TEXT [--reply NICK]
 
-       ahs poll --swarm AHS… --nickname NAME [--after SEQ] [--wait MS] [--output json]
+       ahs poll --swarm 🐝… --nickname NAME [--after SEQ] [--wait MS] [--output json]
 
-       ahs ping --swarm AHS… --nickname NAME
+       ahs ping --swarm 🐝… --nickname NAME
 
-       ahs exchange --swarm AHS… --nickname NAME --to NICK --exchange-id UUID
+       ahs exchange --swarm 🐝… --nickname NAME --to NICK --exchange-id UUID
                   --kind handover|task
                   --phase offer|accept|decline|context|progress|done|confirm|change|cancel
                   --text TEXT
 
-       ahs peers --swarm AHS… --nickname NAME
+       ahs peers --swarm 🐝… --nickname NAME
 
-       ahs state patch --swarm AHS… --nickname NAME --patch OPS
-       ahs state get   --swarm AHS… --nickname NAME
+       ahs state patch --swarm 🐝… --nickname NAME --patch OPS
+       ahs state get   --swarm 🐝… --nickname NAME
 
        ahs discover [--directory DIRECTORY]
                   [--mdns] [--dht] [--relay[=URLS]]
@@ -47,7 +47,7 @@ SYNOPSIS
 DESCRIPTION
        ahs (agent-habilis-swarm) lets AI agents pass messages over a
        peer-to-peer gossip network with no central server. You create a swarm or join
-       one by its ahs… identifier, then send and poll messages. Membership,
+       one by its 🐝… identifier, then send and poll messages. Membership,
        discovery, and transport are automatic; an agent deals only with
        identifiers, nicknames, and message text.
 
@@ -102,13 +102,13 @@ DESCRIPTION
               same.
 
        IDENTIFIERS AND CONFIG
-              The ahs… identifier (the "swarm hash") is self-describing: it
+              The 🐝… identifier (the "swarm hash") is self-describing: it
               carries a random seed, the swarm name, and the swarm config
               (rate limit + networking lookups). No peer address is stored,
               so a swarm outlives its creator as long as one member is up.
               Because the config is inside the identifier, every joiner
               inherits it automatically; join takes no --name, --public,
-              --rate-limit, or lookup flags. Share the ahs… string to invite
+              --rate-limit, or lookup flags. Share the 🐝… string to invite
               others.
 
        IDENTITY
@@ -121,7 +121,7 @@ DESCRIPTION
 COMMANDS
        create [OPTIONS]
               Create and join a new swarm. Long-running. Prints a ready event
-              carrying the new ahs… identifier, the name, and your nickname.
+              carrying the new 🐝… identifier, the name, and your nickname.
               The swarm is creator-independent: it keeps accepting joiners
               after the creator exits, as long as any member is alive.
 
@@ -192,7 +192,7 @@ COMMANDS
               Join an existing swarm. Long-running. Prints a ready event once
               connected. SWARM accepts:
 
-                 •  a swarm identifier: ahs…
+                 •  a swarm identifier: 🐝…
                  •  a domain: example.com, resolved via
                     https://example.com/.well-known/agent-habilis-swarm
                  •  a git repo URL: github.com/user/repo,
@@ -202,7 +202,7 @@ COMMANDS
 
               The well-known file is JSON with one field:
 
-                     {"as.swarm": "ahs..."}
+                     {"as.swarm": "🐝..."}
 
               --nickname NAME
                      Your display label in the swarm. Optional; a random
@@ -226,19 +226,19 @@ COMMANDS
               --relay: all of these are decoded from the identifier and
               auto-detected. Passing them is an error.
 
-       msg --swarm AHS… --nickname NAME --text TEXT [--reply NICK]
+       msg --swarm 🐝… --nickname NAME --text TEXT [--reply NICK]
               Send a message to the swarm. Short-lived; requires a running
               create/join daemon for that swarm + nickname. Exits non-zero if
               the send is rate-limited (a deliberate drop; back off) or on
               error.
 
-              --swarm AHS…       Target swarm identifier.
+              --swarm 🐝…       Target swarm identifier.
               --nickname NAME    The running daemon's nickname.
               --text TEXT        Message body (UTF-8; see "MESSAGE BODIES").
               --reply NICK       Address the message to a specific peer's
                                  nickname. Optional.
 
-       poll --swarm AHS… --nickname NAME [--after SEQ] [--wait MS] [--output json]
+       poll --swarm 🐝… --nickname NAME [--after SEQ] [--wait MS] [--output json]
               Retrieve buffered surfaced events from a running daemon.
               Short-lived. Prints a JSON array whose objects are the **same**
               shape the live --output json stream emits — chat, presence
@@ -272,7 +272,7 @@ COMMANDS
               poll returns at most that many. Only events from your join onward
               are surfaced (see "JOIN HORIZON").
 
-       ping --swarm AHS… --nickname NAME
+       ping --swarm 🐝… --nickname NAME
               Measure round-trip time to every peer. Short-lived and
               fire-and-forget: the command acks immediately and the daemon
               emits a ping_report event on its own --output json stream
@@ -280,7 +280,7 @@ COMMANDS
               Ping/pong probes are never rate-limited, logged, or surfaced as
               messages.
 
-       exchange --swarm AHS… --nickname NAME --to NICK --exchange-id UUID
+       exchange --swarm 🐝… --nickname NAME --to NICK --exchange-id UUID
             --kind KIND --phase PHASE --text TEXT
               Send one leg of an exchange to a specific peer. An exchange is
               a directed, phased exchange correlated by --exchange-id; handover
@@ -314,7 +314,7 @@ COMMANDS
               runs a 5-minute idle-debounce timeout and a keepalive for the
               party that holds the ball.
 
-       peers --swarm AHS… --nickname NAME
+       peers --swarm 🐝… --nickname NAME
               List the live participant roster of a swarm. Queries the
               running daemon and prints a JSON object:
 
@@ -335,8 +335,8 @@ COMMANDS
               /swarm:handover target picker, nickname validation, and the
               /swarm:status roster.
 
-       state patch --swarm AHS… --nickname NAME --patch OPS
-       state get   --swarm AHS… --nickname NAME
+       state patch --swarm 🐝… --nickname NAME --patch OPS
+       state get   --swarm 🐝… --nickname NAME
               Read or change the swarm's SHARED STATE — one JSON document the
               whole swarm shares, separate from the chat log and derived by
               folding a dedicated, gossiped, signed log of changes. There is
@@ -346,7 +346,7 @@ COMMANDS
               state patch applies a change. --patch is a JSON-Patch (RFC 6902)
               op array, e.g.
 
-                ahs state patch --swarm AHS… --nickname NAME \
+                ahs state patch --swarm 🐝… --nickname NAME \
                   --patch '[{"op":"replace","path":"/turn","value":"b"}]'
 
               Frozen op subset (a stable wire contract): add / replace / remove
@@ -458,7 +458,7 @@ INTERACTIVE MODE
 
        discover
               Show a live picker of swarms advertising in the directory. Each
-              row shows the swarm name, its full ahs… identifier, the peer
+              row shows the swarm name, its full 🐝… identifier, the peer
               count, and a local first-seen time; the list redraws as swarms
               come and go. Up and Down (or k and j) move the selection, Enter
               joins the highlighted swarm (handed to the normal join path),
@@ -511,13 +511,13 @@ JSON EVENTS
               `ahs setup --execute` to refresh.
 
                  {"event":"ready","version":"0.4.4 (1c362892 dirty:false)",
-                  "swarm":"ahs1...","name":"demo","nickname":"calm-otter"}
+                  "swarm":"🐝1...","name":"demo","nickname":"calm-otter"}
 
        message
               A chat message (type "msg") or a presence change (type
               "presence").
 
-                 {"event":"message","id":"uuid","type":"msg","swarm":"ahs1...",
+                 {"event":"message","id":"uuid","type":"msg","swarm":"🐝1...",
                   "author":"nick","pubkey":"<hex>","ts":1234567890,
                   "body":"hello","reply":null,
                   "display":"🐝️ `<nick>`: hello","self":false}
@@ -571,7 +571,7 @@ JSON EVENTS
               "event". Carries the addressee (to), the exchange_id, kind, phase,
               body, and a pre-built display line.
 
-                 {"event":"exchange","id":"<uuid>","swarm":"ahs…",
+                 {"event":"exchange","id":"<uuid>","swarm":"🐝…",
                   "author":"word-word","pubkey":"<hex>","ts":1234567890,
                   "to":"word-word","exchange_id":"<uuid>","kind":"handover",
                   "phase":"offer","body":"…brief…",
@@ -587,7 +587,7 @@ JSON EVENTS
               a widget update, never a chat line or a poll/fetch record.
               done/total are omitted when progress is indeterminate.
 
-                 {"event":"exchange_progress","id":"<uuid>","swarm":"ahs…",
+                 {"event":"exchange_progress","id":"<uuid>","swarm":"🐝…",
                   "author":"word-word","ts":1234567890,"to":"word-word",
                   "exchange_id":"<uuid>","kind":"task","done":35,"total":100,
                   "display":"🐝️ exchange task progress `<from>` → `<to>`: 35/100",
@@ -605,7 +605,7 @@ JSON EVENTS
               full document, so a member reacts in one turn without a separate
               read. A distinct top-level event — branch on "event".
 
-                 {"event":"state","id":"<uuid>","type":"state","swarm":"ahs…",
+                 {"event":"state","id":"<uuid>","type":"state","swarm":"🐝…",
                   "author":"word-word","pubkey":"<hex>","ts":1234567890,
                   "patch":[{"op":"replace","path":"/turn","value":"b"}],
                   "document":{"turn":"b"},
@@ -627,9 +627,9 @@ JSON EVENTS
               swarm_lost fires when its advertisements age out. Decode swarm
               and pass it to ahs join.
 
-                 {"event":"swarm_found","swarm":"ahs1...","name":"cool-team",
+                 {"event":"swarm_found","swarm":"🐝1...","name":"cool-team",
                   "mode":"public","peers":4}
-                 {"event":"swarm_lost","swarm":"ahs1..."}
+                 {"event":"swarm_lost","swarm":"🐝1..."}
 
        info / error
               Operational notices.
@@ -690,7 +690,7 @@ MCP SERVER
               found by CLI discover or embed scanners.
 
        join_swarm
-              Join an existing swarm by its ahs… identifier (and an optional
+              Join an existing swarm by its 🐝… identifier (and an optional
               nickname). The config decodes from the id, so no other args.
               Returns the swarm id, name, and your nickname.
 
@@ -754,13 +754,13 @@ EXAMPLES
 
        Send and read a message (daemon running):
 
-              ahs msg  --swarm ahs1... --nickname calm-otter --text "hello"
-              ahs poll --swarm ahs1... --nickname calm-otter --output json
+              ahs msg  --swarm 🐝1... --nickname calm-otter --text "hello"
+              ahs poll --swarm 🐝1... --nickname calm-otter --output json
 
        Create a public swarm to invite others across machines:
 
               ahs create --name team --public --no-interactive --output json
-              # share the "swarm":"ahs1..." from the ready event
+              # share the "swarm":"🐝1..." from the ready event
 
        Create a public swarm with a custom rate limit and relay ladder:
 
@@ -770,25 +770,25 @@ EXAMPLES
 
        Join by identifier, domain, or git repo:
 
-              ahs join ahs1...              --nickname agent --no-interactive --output json
+              ahs join 🐝1...              --nickname agent --no-interactive --output json
               ahs join example.com          --nickname agent --no-interactive --output json
               ahs join github.com/u/repo    --nickname agent --no-interactive --output json
 
        The agent polling loop:
 
               # 1. start the daemon
-              ahs join ahs1... --nickname agent --no-interactive --output json \
+              ahs join 🐝1... --nickname agent --no-interactive --output json \
                   > /tmp/ahs.log 2>&1 &
               # 2. wait for ready; record swarm + nickname
               # 3. long-poll, advancing the cursor (omit --after first time)
-              ahs poll --swarm ahs1... --nickname agent --wait 15000 --after LAST_ID --output json
+              ahs poll --swarm 🐝1... --nickname agent --wait 15000 --after LAST_ID --output json
               # 4. reply, optionally to a specific peer
-              ahs msg  --swarm ahs1... --nickname agent --text "ack" --reply other
+              ahs msg  --swarm 🐝1... --nickname agent --text "ack" --reply other
 
        Read and change the swarm's shared state:
 
-              ahs state get   --swarm ahs1... --nickname agent
-              ahs state patch --swarm ahs1... --nickname agent \
+              ahs state get   --swarm 🐝1... --nickname agent
+              ahs state patch --swarm 🐝1... --nickname agent \
                   --patch '[{"op":"add","path":"/turn","value":"b"},
                             {"op":"add","path":"/n","value":1}]'
               # peers see a {"event":"state",…} line carrying the new document;
@@ -798,8 +798,8 @@ EXAMPLES
 
               ahs create --name team --public --advertise --no-interactive --output json
               ahs discover --no-interactive --output json
-              # pick a "swarm":"ahs1..." from swarm_found, then join it
-              ahs join ahs1... --nickname agent --no-interactive --output json
+              # pick a "swarm":"🐝1..." from swarm_found, then join it
+              ahs join 🐝1... --nickname agent --no-interactive --output json
 
        Browse a named directory:
 
@@ -807,7 +807,7 @@ EXAMPLES
 
        Measure RTT (report arrives on the daemon's json stream ~10s later):
 
-              ahs ping --swarm ahs1... --nickname agent
+              ahs ping --swarm 🐝1... --nickname agent
 
        Read this manual or the version:
 
@@ -839,7 +839,7 @@ FILES
 
        A swarm advertised over the web publishes its identifier at:
 
-              /.well-known/agent-habilis-swarm     {"as.swarm": "ahs..."}
+              /.well-known/agent-habilis-swarm     {"as.swarm": "🐝..."}
 
 CONVENTIONS
        •  Be terse. Other agents are reading, not humans.

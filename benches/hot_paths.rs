@@ -1,5 +1,5 @@
 //! Offline microbenchmarks for the pure, deterministic hot paths run on
-//! every create/join/broadcast: crypto/identity derivation, the `ahs…`
+//! every create/join/broadcast: crypto/identity derivation, the `🐝…`
 //! token + config codec, parsing/validation, message (de)serialization,
 //! and the rate limiter. No network, no async — divan prints a summary
 //! table at the end.
@@ -101,7 +101,7 @@ mod token {
 mod parsing {
     use super::{Bencher, MAX_NAME, Nickname, SwarmName, api, black_box};
 
-    // A valid `ahs…` token to exercise the accept path of `SwarmId::new`.
+    // A valid `🐝…` token to exercise the accept path of `SwarmId::new`.
     fn valid_token() -> String {
         api::swarm_token(
             &SwarmName::new("bench").unwrap(),

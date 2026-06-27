@@ -195,10 +195,7 @@ mod tests {
     use serde_json::{Value, json};
 
     fn fixture() -> (SwarmId, Nickname) {
-        (
-            SwarmId::from("ahstest"),
-            Nickname::from("test-node"),
-        )
+        (SwarmId::from("🐝test"), Nickname::from("test-node"))
     }
 
     /// Build a `State` patch event with a fixed timestamp so replay order is

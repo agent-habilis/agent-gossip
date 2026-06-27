@@ -29,7 +29,7 @@ use args::{
     SharedServerOpts, StateAction, StateOpts,
 };
 
-/// `join` has no `--public`/`--name`: both are encoded in the `ahs…`
+/// `join` has no `--public`/`--name`: both are encoded in the `🐝…`
 /// identifier and auto-detected. Without this, clap rejects them with
 /// a generic "unexpected argument" + a misleading "pass as a value"
 /// tip; this gives the real reason instead.
@@ -193,7 +193,7 @@ async fn create(opts: CreateOpts) -> Result<()> {
     run_session(resolved, opts.shared).await
 }
 
-/// Join an existing swarm by its identifier (ahs...), a domain, or a
+/// Join an existing swarm by its identifier (🐝...), a domain, or a
 /// supported git repo URL. The swarm's config (lookups + rate limit) is
 /// decoded from the id — `join` takes no lookup/rate flags.
 async fn join(

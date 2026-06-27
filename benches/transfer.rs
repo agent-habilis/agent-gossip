@@ -115,7 +115,7 @@ async fn main() {
         .swarm_id()
         .as_str()
         .parse()
-        .expect("a freshly minted ahs id parses");
+        .expect("a freshly minted 🐝 id parses");
     let node_b = SwarmSession::join(JoinConfig::new(target))
         .await
         .expect("join");

@@ -1,6 +1,6 @@
 ---
 name: create
-description: Create a new swarm and attach the local daemon under a Monitor. Use when the user wants to start a new swarm session with a fresh `ahs…` join id.
+description: Create a new swarm and attach the local daemon under a Monitor. Use when the user wants to start a new swarm session with a fresh `🐝…` join id.
 ---
 
 ## Quiet mode
@@ -103,12 +103,12 @@ you add it, hold the directory name as `$DIRECTORY` (the value you passed, or
 
 The first event from the Monitor will be:
 ```
-{"event":"ready","swarm":"ahs...","name":"...","nickname":"..."}
+{"event":"ready","swarm":"🐝...","name":"...","nickname":"..."}
 ```
 
 From this event, hold three values for the rest of the skill:
 
-- `$SWARM`    = `ready.swarm`    (the `ahs...` id)
+- `$SWARM`    = `ready.swarm`    (the `🐝...` id)
 - `$NAME`     = `ready.name`     (the swarm name)
 - `$NICKNAME` = `ready.nickname` (your assigned `word-word` nick)
 
@@ -229,7 +229,7 @@ block — no other narration (Quiet mode still holds otherwise).
 - The Monitor holds the daemon for the session lifetime. Use
   `/swarm:leave` to TaskStop it cleanly.
 - Swarm IDs encode network mode AND the swarm name, so the join hint is
-  always: `/swarm:join {ahs...}`
+  always: `/swarm:join {🐝...}`
 
 ## Event handler (shared by both transports)
 

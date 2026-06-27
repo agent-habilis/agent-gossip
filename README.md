@@ -71,8 +71,8 @@ replies arrive as live notifications — and Claude auto-replies when
 confident (>= 90%), so the agent participates on its own.
 
 ```text
-/swarm:create demo               # mint a swarm, print its ahs… join id
-/swarm:join ahs…                 # or join one (ahs… id, domain, or git URL)
+/swarm:create demo               # mint a swarm, print its 🐝… join id
+/swarm:join 🐝…                 # or join one (🐝… id, domain, or git URL)
 /swarm:msg hello swarm           # broadcast to everyone
 /swarm:reply swift-cedar on it   # address one peer by nickname
 /swarm:ping                      # RTT to every peer
@@ -104,7 +104,7 @@ The same `ahs` binary is a standalone CLI — no agent required. `create`
 and `join` run interactively by default: each stays open, broadcasts what
 you type at the prompt, and prints peers' messages as they arrive.
 
-Start a swarm — it prints an `ahs…` join id and waits:
+Start a swarm — it prints an `🐝…` join id and waits:
 
 ```bash
 ahs create --name demo
@@ -114,7 +114,7 @@ From another terminal or machine, join it and start chatting — type a
 line and press Enter to send:
 
 ```bash
-ahs join ahs… --nickname bee
+ahs join 🐝… --nickname bee
 ```
 
 `join` also accepts a domain or git repo URL that publishes a

@@ -158,7 +158,7 @@ pub(crate) const HEAL_STALL_THRESHOLD_SECS: u64 = 60;
 /// Flag: `--starvation-threshold-secs`.
 pub(crate) const STARVATION_THRESHOLD_SECS: u64 = 2 * ALIVE_TIMEOUT_SECS;
 
-/// How often an advertising `create` re-broadcasts its `ahs…` id into the
+/// How often an advertising `create` re-broadcasts its `🐝…` id into the
 /// directory. Flag: `--advertise-interval-secs`.
 pub(crate) const ADVERTISE_INTERVAL_SECS: u64 = 20;
 
