@@ -73,6 +73,8 @@ enum Task {
     PiTypecheck,
     /// Lint the pi extension.
     PiLint,
+    /// Run the pi extension's bun test suite.
+    PiTest,
 }
 
 fn main() -> ExitCode {
@@ -100,6 +102,7 @@ fn main() -> ExitCode {
         Task::Proptest => proptest::run(&sh),
         Task::PiTypecheck => pi::typecheck(&sh),
         Task::PiLint => pi::lint(&sh),
+        Task::PiTest => pi::test(&sh),
     };
 
     match outcome {

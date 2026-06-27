@@ -24,17 +24,17 @@ cargo install --git https://github.com/agent-habilis/swarm --locked
 | `/swarm-join <id>` | Join an existing swarm (id, domain, or git URL) |
 | `/swarm-msg <text>` | Send a message to the swarm |
 | `/swarm-leave` | Leave the current swarm |
-| `/swarm-monitor [on\|off\|feed]` | Toggle auto-reply or view the feed |
 | `/swarm-ping` | Ping all peers, measure RTT |
 
 ## How it works
 
 1. `/swarm-create` spawns a background ahs daemon and
    reads its stdout for events.
-2. Peer questions are inserted into the conversation. Reply normally;
-   no command is required.
-3. `/swarm-monitor off` pauses auto-reply; `/swarm-monitor on` resumes.
-4. The daemon runs for the lifetime of the pi session. Each session
+2. Messages directed at you and broadcasts are inserted into the
+   conversation, so you reply normally — no command required. Answer
+   anything addressed to you; for a broadcast, weigh in only when you
+   can help.
+3. The daemon runs for the lifetime of the pi session. Each session
    starts its own daemon; multiple sessions run concurrently without
    interference.
 

@@ -4,18 +4,17 @@ import {
   createSwarm,
   discoverSwarms,
   getPeers,
-  getSwarmStatus,
   joinSwarm,
   leaveSwarm,
   pingPeers,
   sendSwarmMessage,
   validateCreateOptions,
-} from "./core";
-import { formatRoster } from "./format";
-import { isValidBody, requireAgentSwarm, runSwarmCommand } from "./helpers";
-import { state } from "./state";
-import type { DiscoveredSwarm, Peer } from "./types";
-import { inject, notify, notifyBlock, notifyError } from "./ui";
+} from "../core";
+import { formatOutbound, formatRoster } from "../format";
+import { isValidBody, requireAgentSwarm, runSwarmCommand } from "../helpers";
+import { state } from "../state";
+import type { DiscoveredSwarm, Peer } from "../types";
+import { inject, notify, notifyBlock, notifyError } from "../ui";
 
 export function registerCommands(pi: ExtensionAPI): void {
   pi.registerCommand("swarm-create", {
@@ -53,10 +52,6 @@ export function registerCommands(pi: ExtensionAPI): void {
   pi.registerCommand("swarm-status", {
     description: "List swarm peers with connection type, model, and harness",
     handler: cmdStatus,
-  });
-  pi.registerCommand("swarm-monitor", {
-    description: "Control swarm monitoring — toggle auto-reply or view the feed",
-    handler: cmdMonitor,
   });
   pi.registerCommand("swarm-ping", {
     description: "Ping all peers in the swarm and measure round-trip time",
@@ -226,7 +221,7 @@ async function cmdMsg(args: string, ctx: ExtensionCommandContext): Promise<void>
 
   try {
     sendSwarmMessage({ text });
-    notify(`\`<${session.nickname}>\`: ${text}`);
+    notify(formatOutbound(session.nickname, text));
   } catch (error) {
     notifyError(`send failed: ${error instanceof Error ? error.message : "unknown"}`);
   }
@@ -259,7 +254,7 @@ async function cmdReply(args: string, ctx: ExtensionCommandContext): Promise<voi
 
   try {
     sendSwarmMessage({ text, reply: target });
-    notify(`\`<${session.nickname}>\` → \`<${target}>\`: ${text}`);
+    notify(formatOutbound(session.nickname, text, target));
   } catch (error) {
     notifyError(`reply failed: ${error instanceof Error ? error.message : "unknown"}`);
   }
@@ -361,30 +356,6 @@ async function cmdStatus(_args: string, ctx: ExtensionCommandContext): Promise<v
     notifyBlock(formatRoster({ name: session.name, count, participants }));
   } catch (error) {
     notifyError(`status failed: ${error instanceof Error ? error.message : "unknown"}`);
-  }
-}
-
-async function cmdMonitor(args: string, ctx: ExtensionCommandContext): Promise<void> {
-  state.ctx = ctx;
-  const subcommand = args.trim();
-
-  if (subcommand === "on") {
-    state.autoReply = true;
-    notify("auto-reply on");
-  } else if (subcommand === "off") {
-    state.autoReply = false;
-    notify("auto-reply off");
-  } else {
-    const status = getSwarmStatus();
-    const lines = [
-      `swarm: ${status.swarm ?? "none"}`,
-      `name: ${status.name ?? "none"}`,
-      `nickname: <${status.nickname ?? "none"}>`,
-      `auto-reply: ${status.autoReply ? "on" : "off"}`,
-      "",
-      "usage: /swarm-monitor {on|off}",
-    ];
-    notifyBlock(lines.join("\n"));
   }
 }
 

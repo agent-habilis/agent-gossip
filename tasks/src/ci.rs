@@ -43,6 +43,7 @@ pub(crate) fn run(sh: &Shell) -> TaskOutcome {
 
     crate::pi::typecheck(sh)?;
     crate::pi::lint(sh)?;
+    crate::pi::test(sh)?;
 
     crate::util::sweep_stale_artifacts(sh);
     Ok(())

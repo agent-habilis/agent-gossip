@@ -1,9 +1,9 @@
 import { spawn } from "node:child_process";
 import * as readline from "node:readline";
-import { clearBatch, startWatcher, stopWatcher } from "./daemon";
-import { isValidBody, isValidSwarmName, runSwarmCommand } from "./helpers";
-import { state, stateFilePath } from "./state";
-import type { DiscoveredSwarm, ExchangeKind, Peer, PingResult, Session } from "./types";
+import { clearBatch, startWatcher, stopWatcher } from "../daemon";
+import { isValidBody, isValidSwarmName, runSwarmCommand } from "../helpers";
+import { state, stateFilePath } from "../state";
+import type { DiscoveredSwarm, ExchangeKind, Peer, PingResult, Session } from "../types";
 
 export function cleanup(): void {
   stopWatcher();
@@ -13,6 +13,7 @@ export function cleanup(): void {
   state.droppedPending = 0;
   state.pingPending = false;
   state.pongMap.clear();
+  state.policySent = false;
 }
 
 export type CreateOptions = {
@@ -220,13 +221,11 @@ export function getSwarmStatus(): {
   swarm: string | null;
   name: string | null;
   nickname: string | null;
-  autoReply: boolean;
 } {
   return {
     swarm: state.session?.swarm ?? null,
     name: state.session?.name ?? null,
     nickname: state.session?.nickname ?? null,
-    autoReply: state.autoReply,
   };
 }
 

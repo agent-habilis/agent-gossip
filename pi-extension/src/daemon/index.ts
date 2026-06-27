@@ -1,12 +1,19 @@
 import type { ChildProcess } from "node:child_process";
 import * as readline from "node:readline";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { sendExchange } from "./core";
-import { formatDisplay, isQuestion } from "./format";
-import { runSwarmCommand } from "./helpers";
-import { state } from "./state";
-import type { ExchangeKind, SwarmEvent } from "./types";
-import { BEE, inject, notifyError, notifyWarning, notify as pushDisplay } from "./ui";
+import { sendExchange } from "../core";
+import { engagementKind, formatDisplay } from "../format";
+import { runSwarmCommand } from "../helpers";
+import { state } from "../state";
+import type { ExchangeKind, SwarmEvent } from "../types";
+import {
+  BEE,
+  inject,
+  injectSilent,
+  notifyError,
+  notifyWarning,
+  notify as pushDisplay,
+} from "../ui";
 
 const BATCH_DELAY_MS = 100;
 
@@ -17,6 +24,12 @@ const BATCH_DELAY_MS = 100;
 // "(+N dropped)" notice on the next successful flush.
 const PENDING_CAP = 256;
 const BATCH_CAP = 128;
+
+// Injected silently once per session (into context, never printed) so the agent
+// knows the standing reply policy: answer anything addressed to it, weigh in on
+// a broadcast only when it can help.
+const REPLY_POLICY =
+  "Swarm messages. Reply with swarm_send to any addressed to you (→ you); for a broadcast, reply only if you can clearly help — otherwise take no action. Send plain text — do not add the 🐝, the swarm UI adds it.";
 
 function pushPending(event: SwarmEvent): void {
   if (state.pendingMessages.length >= PENDING_CAP) {
@@ -65,7 +78,16 @@ export function flushMessageBatch(): void {
   const batch = state.messageBatch.splice(0);
   if (batch.length === 0 || !state.pi) return;
 
-  const lines = batch.map((message) => `${BEE} \`<${message.author}>\`: ${message.body}`);
+  // Deliver the standing policy once per session, into context only — never
+  // printed (it used to ride on every batch and cluttered the transcript).
+  if (!state.policySent && injectSilent(REPLY_POLICY)) state.policySent = true;
+
+  const myNick = state.session?.nickname;
+  const lines = batch.map((message) =>
+    engagementKind(message, myNick) === "directed"
+      ? `${BEE} \`<${message.author}>\` → you: ${message.body}`
+      : `${BEE} \`<${message.author}>\`: ${message.body}`,
+  );
   if (!inject(lines.join("\n"))) {
     for (const message of batch) pushPending(message);
   }
@@ -91,8 +113,10 @@ export function processDaemonLine(line: string): void {
 
   const output = formatDisplay(event);
 
-  if (isQuestion(event)) {
-    if (state.autoReply && state.pi) {
+  // Directed and broadcast peer messages wake the agent (inject → turn); a
+  // reply aimed at another peer, presence, and lifecycle lines are display-only.
+  if (engagementKind(event, state.session?.nickname)) {
+    if (state.pi) {
       if (state.messageBatch.length >= BATCH_CAP) {
         state.messageBatch.shift();
         state.droppedPending += 1;
@@ -100,11 +124,11 @@ export function processDaemonLine(line: string): void {
       state.messageBatch.push(event);
       if (state.messageBatchTimer) clearTimeout(state.messageBatchTimer);
       state.messageBatchTimer = setTimeout(flushMessageBatch, BATCH_DELAY_MS);
-    } else if (output) {
+    } else {
       pushPending(event);
     }
   } else if (output) {
-    if (state.autoReply && state.pi) {
+    if (state.pi) {
       pushDisplay(output);
     } else {
       pushPending(event);

@@ -26,8 +26,6 @@ From inside pi, test each slash command:
 /swarm-create cool-team --public --rate-limit 30   # named, public, custom rate limit
 /swarm-join {ahs...}       # join an existing swarm
 /swarm-msg hello           # send a message
-/swarm-monitor             # show status
-/swarm-monitor feed        # show recent activity
 /swarm-ping                # ping all peers
 /swarm-leave               # leave the swarm
 ```

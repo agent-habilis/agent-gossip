@@ -13,10 +13,11 @@ import {
   sendExchange,
   sendSwarmMessage,
   validateCreateOptions,
-} from "./core";
-import { formatRoster } from "./format";
-import { requireAgentSwarm } from "./helpers";
-import { state } from "./state";
+} from "../core";
+import { formatRoster } from "../format";
+import { requireAgentSwarm } from "../helpers";
+import { state } from "../state";
+import { BEE } from "../ui";
 
 function toolError(text: string) {
   return {
@@ -174,12 +175,16 @@ export function registerTools(pi: ExtensionAPI): void {
     promptSnippet: "Broadcast a message to the agent swarm",
     promptGuidelines: [
       "Use swarm_send when the user asks to send a message to other agents in the swarm",
-      "Use swarm_send when the agent needs to ask the swarm for help and auto-reply is off",
+      "Use swarm_send to reply to a peer (set reply to their nickname) or to ask the swarm for help",
+      "Send plain text — never prefix or append the 🐝 emoji; the swarm UI adds it for you",
       "Do not call swarm_status before sending. Use your memory of whether you joined or created a swarm.",
       "If not currently in a swarm, inform the user instead of calling swarm_status first.",
     ],
     parameters: Type.Object({
-      text: Type.String({ description: "Message text to send to the swarm (UTF-8)" }),
+      text: Type.String({
+        description:
+          "Message text to send to the swarm (UTF-8). Plain text — do not include the 🐝 marker; the UI adds it.",
+      }),
       reply: Type.Optional(
         Type.String({ description: "Target peer's nickname to address this message to" }),
       ),
@@ -193,7 +198,13 @@ export function registerTools(pi: ExtensionAPI): void {
       }
       try {
         sendSwarmMessage({ text: params.text, reply: params.reply });
-        return { content: [{ type: "text", text: "ok" }], details: null };
+        // Show the sent line as the result (plain text — tool results don't
+        // render markdown, so no backticks; the daemon filters self anyway).
+        const nick = state.session.nickname;
+        const line = params.reply
+          ? `${BEE} <${nick}> → <${params.reply}>: ${params.text}`
+          : `${BEE} <${nick}>: ${params.text}`;
+        return { content: [{ type: "text", text: line }], details: null };
       } catch (error) {
         return toolError(`Send failed: ${error instanceof Error ? error.message : "unknown"}`);
       }
@@ -378,7 +389,6 @@ export function registerTools(pi: ExtensionAPI): void {
         `swarm: ${status.swarm ?? "none"}`,
         `name: ${status.name ?? "none"}`,
         `nickname: <${status.nickname ?? "none"}>`,
-        `auto-reply: ${status.autoReply ? "on" : "off"}`,
       ];
       if (!status.swarm || !status.name) {
         return { content: [{ type: "text", text: lines.join("\n") }], details: status };
@@ -433,42 +443,6 @@ export function registerTools(pi: ExtensionAPI): void {
       } catch (error) {
         return toolError(`Ping failed: ${error instanceof Error ? error.message : "unknown"}`);
       }
-    },
-  });
-
-  pi.registerTool({
-    name: "swarm_monitor",
-    label: "Swarm Monitor",
-    description: "Toggle auto-reply or view swarm activity feed",
-    promptSnippet: "Toggle swarm auto-reply or view recent activity feed",
-    promptGuidelines: [
-      "Use swarm_monitor to toggle auto-reply when the user wants to enable or disable automatic responses to swarm questions",
-      "Use swarm_monitor to view recent swarm activity",
-    ],
-    parameters: Type.Object({
-      action: Type.String({
-        description:
-          'Action: "on" to enable auto-reply, "off" to disable, "status" to view current state and feed',
-      }),
-    }),
-    async execute(_toolCallId, params) {
-      const action = params.action;
-      if (action === "on") {
-        state.autoReply = true;
-        return { content: [{ type: "text", text: "Auto-reply enabled" }], details: null };
-      }
-      if (action === "off") {
-        state.autoReply = false;
-        return { content: [{ type: "text", text: "Auto-reply disabled" }], details: null };
-      }
-      const status = getSwarmStatus();
-      const lines = [
-        `swarm: ${status.swarm ?? "none"}`,
-        `name: ${status.name ?? "none"}`,
-        `nickname: [${status.nickname ?? "none"}]`,
-        `auto-reply: ${status.autoReply ? "on" : "off"}`,
-      ];
-      return { content: [{ type: "text", text: lines.join("\n") }], details: status };
     },
   });
 }

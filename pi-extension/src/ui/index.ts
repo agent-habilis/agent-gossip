@@ -1,6 +1,6 @@
 import { type ExtensionAPI, type Theme, getMarkdownTheme } from "@earendil-works/pi-coding-agent";
 import { Markdown, Text } from "@earendil-works/pi-tui";
-import { state } from "./state";
+import { state } from "../state";
 
 // Every swarm line is prefixed with this, applied once in `send()` — call
 // sites never write it themselves. Exported for `flushMessageBatch`, which
@@ -43,6 +43,26 @@ export function notifyError(text: string): void {
 // send threw) so a caller can re-queue — see `flushMessageBatch`.
 export function inject(text: string): boolean {
   return send("swarm-inject", text, true);
+}
+
+// Add to the model's context without rendering it or forcing a turn — for
+// standing instructions the agent should know but the user shouldn't see.
+// `display: false` keeps it out of the transcript (the harness still feeds it to
+// the model as a user message); no trigger means it's context, not an action.
+// No bee prefix and no renderer: it is never shown.
+export function injectSilent(text: string): boolean {
+  const pi = state.pi;
+  if (!pi) return false;
+  const idle = state.ctx?.isIdle?.() ?? true;
+  try {
+    pi.sendMessage(
+      { customType: "swarm-context", content: text, display: false },
+      idle ? {} : { deliverAs: "nextTurn" },
+    );
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function send(customType: string, text: string, trigger: boolean): boolean {

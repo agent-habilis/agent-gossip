@@ -1,6 +1,6 @@
 import { execSync } from "node:child_process";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { notifyError } from "./ui";
+import { notifyError } from "../ui";
 
 function isControlChar(ch: string): boolean {
   const code = ch.codePointAt(0) ?? 0;

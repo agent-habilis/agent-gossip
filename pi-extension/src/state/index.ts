@@ -1,11 +1,10 @@
 import type { ChildProcess } from "node:child_process";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { ExchangeRecord, Session, SwarmEvent } from "./types";
+import type { ExchangeRecord, Session, SwarmEvent } from "../types";
 
 export type AppState = {
   daemon: ChildProcess | null;
   session: Session | null;
-  autoReply: boolean;
   pendingMessages: SwarmEvent[];
   // Events shed from the capped buffers while the UI was unavailable;
   // surfaced as one "(+N dropped)" notice on the next flush.
@@ -20,12 +19,13 @@ export type AppState = {
   // In-flight exchanges this node is a party to, keyed by exchange_id.
   exchanges: Map<string, ExchangeRecord>;
   stateFileId: string | undefined;
+  // The standing reply policy is injected (silently) once per swarm session.
+  policySent: boolean;
 };
 
 export const state: AppState = {
   daemon: null,
   session: null,
-  autoReply: true,
   pendingMessages: [],
   droppedPending: 0,
   messageBatch: [],
@@ -37,6 +37,7 @@ export const state: AppState = {
   pongMap: new Map(),
   exchanges: new Map(),
   stateFileId: undefined,
+  policySent: false,
 };
 
 export function stateFilePath(): string | null {

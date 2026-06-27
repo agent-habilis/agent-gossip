@@ -9,7 +9,8 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "lint": "biome check .",
-    "format": "biome format --write ."
+    "format": "biome format --write .",
+    "test": "bun test"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",

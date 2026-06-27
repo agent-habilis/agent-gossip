@@ -22,6 +22,14 @@ pub(crate) fn lint(sh: &Shell) -> TaskOutcome {
     Ok(())
 }
 
+pub(crate) fn test(sh: &Shell) -> TaskOutcome {
+    ensure_pi_deps(sh)?;
+    output::status("Testing", "pi-extension");
+    let _guard = sh.push_dir("pi-extension");
+    cmd!(sh, "bun test").quiet().run()?;
+    Ok(())
+}
+
 fn ensure_pi_deps(sh: &Shell) -> TaskOutcome {
     if pi_deps_are_fresh() {
         return Ok(());

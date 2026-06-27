@@ -1,5 +1,5 @@
-import { state } from "./state";
-import type { Peer, SwarmEvent } from "./types";
+import { state } from "../state";
+import type { Peer, SwarmEvent } from "../types";
 
 export function formatPresence(event: SwarmEvent): string | null {
   if (event.subtype === "alive") return null;
@@ -31,6 +31,12 @@ export function formatMessage(event: SwarmEvent): string | null {
   }
 
   return `\`<${event.author}>\`: ${event.body}`;
+}
+
+// Our own sent message, echoed into the transcript (the daemon filters self
+// from its stream, so we surface it here). No bee — `notify` prepends it.
+export function formatOutbound(nick: string, text: string, reply?: string): string {
+  return reply ? `\`<${nick}>\` → \`<${reply}>\`: ${text}` : `\`<${nick}>\`: ${text}`;
 }
 
 export function formatPeerLifecycle(event: SwarmEvent): string | null {
@@ -89,13 +95,19 @@ export function formatRoster({
   return [header, "", line(headings), separator, ...rows.map(line)].join("\n");
 }
 
-export function isQuestion(event: SwarmEvent): boolean {
-  return (
-    event.type === "msg" &&
-    !event.reply &&
-    !event.self &&
-    !!event.body &&
-    event.body !== "ping" &&
-    event.body !== "pong"
-  );
+export type EngagementKind = "directed" | "broadcast";
+
+// Whether an incoming peer message should wake the agent, and how. "directed"
+// when it is addressed to us (reply === our nick) — always answer; "broadcast"
+// when it went to the whole swarm — answer only if we can help. null means no
+// engagement: our own echo, ping/pong, a reply aimed at another peer, or a
+// non-message (presence/lifecycle) — those are display-only.
+export function engagementKind(
+  event: SwarmEvent,
+  myNick: string | undefined,
+): EngagementKind | null {
+  if (event.type !== "msg" || event.self || !event.body) return null;
+  if (event.body === "ping" || event.body === "pong") return null;
+  if (event.reply) return event.reply === myNick ? "directed" : null;
+  return "broadcast";
 }
