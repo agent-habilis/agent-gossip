@@ -25,6 +25,7 @@ pub(crate) mod ipc;
 // `DigestWindow`; still crate-internal.
 pub(crate) mod message_log;
 pub(crate) mod params;
+pub(crate) mod state_doc;
 pub(crate) mod state_log;
 // Normally private to the daemon; widened to `pub(crate)` only under the
 // `bench` feature so `harness::bench` can reach `SwarmRateLimiter`. Non-bench

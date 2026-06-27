@@ -41,11 +41,13 @@ pub(crate) async fn broadcast_msg(sender: &GossipSender, msg: &Message) {
 
 /// Author + broadcast a durable `State` event, retaining it locally first.
 /// Gossip never echoes to self, so the author must hold what it authored or the
-/// state anti-entropy path could never serve it. Unlike [`broadcast_message`],
-/// state events skip the rate limiter and the per-author `Msg` hash chain —
-/// they live in their own un-pruned log. When unmeshed the bytes are buffered
-/// for flush-on-connect; even if that buffer is full the event is safe in the
-/// local state log, so anti-entropy backfills peers once meshed.
+/// state anti-entropy path could never serve it. The low-level primitive: it
+/// does not itself rate-limit (the patch path [`broadcast_state_patch`] charges
+/// the per-identity quota before calling in; the substrate membership path is
+/// exempt) and skips the per-author `Msg` hash chain — state lives in its own
+/// un-pruned log. When unmeshed the bytes are buffered for flush-on-connect;
+/// even if that buffer is full the event is safe in the local state log, so
+/// anti-entropy backfills peers once meshed.
 ///
 /// # Errors
 /// Serialization or broadcast failure.
@@ -55,11 +57,24 @@ pub(crate) async fn broadcast_state(
     body: MessageBody,
     state: &mut EventLoopState,
     sender: &GossipSender,
+    output: &output::Output,
 ) -> anyhow::Result<()> {
     let signed = Message::new_state(swarm, author, body).signed(&state.identity);
-    state.state_log.insert(signed.clone());
-    crate::logging::messages::log_out(&signed);
+    // Serialize **before** the local insert: an oversize body fails here and the
+    // event never enters the log, so the author can't hold a patch it can never
+    // gossip (anti-entropy can't resend an un-serializable event either) — that
+    // would diverge permanently. A failed *broadcast* below still inserts and is
+    // recoverable via anti-entropy; only a failed *serialize* is blocked.
     let bytes = signed.serialize()?;
+    crate::logging::messages::log_out(&signed);
+    let before = crate::daemon::state_doc::derive_document(&state.state_log);
+    state.state_log.insert(signed.clone());
+    let after = crate::daemon::state_doc::derive_document(&state.state_log);
+    // Surface our own change (is_self) when the document actually changed — a
+    // no-op patch (and non-patch substrate state) surfaces nothing.
+    if after != before {
+        output.state_changed(&signed, &after, true);
+    }
     if state.meshed {
         sender
             .broadcast(Bytes::from(bytes))
@@ -69,6 +84,43 @@ pub(crate) async fn broadcast_state(
         let _ = state.pending_outbound.push(Bytes::from(bytes));
     }
     Ok(())
+}
+
+/// The outcome of an attempted shared-state write.
+pub(crate) enum StatePatchOutcome {
+    Applied,
+    RateLimited,
+    Invalid(String),
+}
+
+/// The single shared-state write helper, shared by the IPC `state_patch`
+/// command and the embed `StatePatch` request. Validates the patch against the
+/// current document (frozen subset + applies cleanly), charges the per-identity
+/// message rate limit (F2), then composes the body and gossips via
+/// [`broadcast_state`]. No size check here — `Message::serialize` is the single
+/// size gate, inside `broadcast_state`.
+///
+/// # Errors
+/// Propagates a `broadcast_state` failure (oversize body / broadcast refusal).
+pub(crate) async fn broadcast_state_patch(
+    swarm: &SwarmId,
+    author: &Nickname,
+    patch: serde_json::Value,
+    state: &mut EventLoopState,
+    sender: &GossipSender,
+    output: &output::Output,
+) -> anyhow::Result<StatePatchOutcome> {
+    let current = crate::daemon::state_doc::derive_document(&state.state_log);
+    if let Err(why) = crate::daemon::state_doc::validate_patch(&patch, &current) {
+        return Ok(StatePatchOutcome::Invalid(why));
+    }
+    let pubkey = identity::encode_pubkey(&state.identity.public());
+    if !state.rate_limiter.check(&pubkey) {
+        return Ok(StatePatchOutcome::RateLimited);
+    }
+    let body = crate::daemon::state_doc::patch_body(patch)?;
+    broadcast_state(swarm, author, body, state, sender, output).await?;
+    Ok(StatePatchOutcome::Applied)
 }
 
 /// Broadcast a `PeerInfo` carrying our endpoint address so peers can
@@ -459,13 +511,28 @@ pub(crate) async fn handle_session_request(
             false
         }
         SessionRequest::AppendState { body, resp } => {
-            let outcome = broadcast_state(swarm, author, body, state, sender).await;
+            let outcome = broadcast_state(swarm, author, body, state, sender, output).await;
             let sent_ok = outcome.is_ok();
             let _ = resp.send(outcome);
             sent_ok
         }
         SessionRequest::StateSnapshot { resp } => {
             let _ = resp.send(state.state_log.replay_bodies());
+            false
+        }
+        SessionRequest::StatePatch { patch, resp } => {
+            let outcome = broadcast_state_patch(swarm, author, patch, state, sender, output).await;
+            let sent = matches!(outcome, Ok(StatePatchOutcome::Applied));
+            let _ = resp.send(match outcome {
+                Ok(StatePatchOutcome::Applied) => Ok(()),
+                Ok(StatePatchOutcome::Invalid(why)) => Err(anyhow::anyhow!(why)),
+                Ok(StatePatchOutcome::RateLimited) => Err(anyhow::anyhow!("rate limited")),
+                Err(error) => Err(error),
+            });
+            sent
+        }
+        SessionRequest::StateDocument { resp } => {
+            let _ = resp.send(crate::daemon::state_doc::derive_document(&state.state_log));
             false
         }
         SessionRequest::Ping { resp } => {

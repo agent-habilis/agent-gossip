@@ -357,7 +357,7 @@ async fn event_loop(loop_state: EventLoop) -> Result<()> {
             _ = intervals.antientropy.tick() => {
                 timers::note_tick_gap("antientropy", &mut anchors.antientropy, &mut anchors.antientropy_wall, Duration::from_secs(ANTIENTROPY_INTERVAL_SECS));
                 gossip::antientropy::broadcast_digest(&mut state, &sender, &swarm_str, &author).await;
-                gossip::antientropy::broadcast_state_digest(&state, &sender, &swarm_str, &author).await;
+                gossip::antientropy::broadcast_state_digest(&mut state, &sender, &swarm_str, &author).await;
             }
             _ = intervals.state_refresh.tick() => timers::tick_state_refresh(&state, &endpoint).await,
             _ = recv_opt(&mut external_quit_rx) => {
@@ -425,6 +425,7 @@ fn is_pollable(event: &output::OutputEvent) -> bool {
         | OutputEvent::PeerTimeout { .. }
         | OutputEvent::PeerReturn { .. }
         | OutputEvent::ExchangeTimeout { .. }
+        | OutputEvent::StateChanged { .. }
         | OutputEvent::Fork { .. } => true,
         OutputEvent::Exchange { msg, .. } => !matches!(
             msg.kind,

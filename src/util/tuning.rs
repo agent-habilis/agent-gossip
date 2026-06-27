@@ -29,17 +29,6 @@ pub(crate) fn seen_ids_cap() -> usize {
 /// spams while offline can't grow memory unbounded.
 pub(crate) const PENDING_OUTBOUND_CAP: usize = 64;
 
-/// Memory bound on the un-pruned state log: a safety valve, **not** normal
-/// retention. State events are signature-authenticated but not yet
-/// *authorized* (admission control is a future feature), so any peer can author
-/// them; without a bound an un-pruned log is a memory-exhaustion vector. Sized
-/// so the complete set of compact (16-byte) ids fits one dedicated `StateDigest`
-/// gossip message well under `MAX_MESSAGE_SIZE`, and far above any legitimate
-/// membership-edit volume. New events past the cap are rejected (reject-newest,
-/// preserving established state); the real fix for abuse is authorization, not a
-/// larger number.
-pub(crate) const STATE_LOG_CAP: usize = 128;
-
 /// How many distinct peer endpoint ids we remember for the
 /// rendezvous-independent re-bridge (`gossip::heal::rebridge_known`).
 /// Survives `NeighborDown` (unlike `linked_endpoints`) so a node that

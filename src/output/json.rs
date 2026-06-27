@@ -170,6 +170,28 @@ struct ExchangeProgressLine<'a> {
     pub is_self: bool,
 }
 
+/// A `{"event":"state",...}` line for a shared-state change. Its own top-level
+/// event (not the `message` family) so skills branch on `event`. Carries the
+/// patch delta and the freshly-derived document; field order is part of the
+/// wire format.
+#[derive(Serialize)]
+struct StateLine<'a> {
+    event: &'static str,
+    id: &'a str,
+    #[serde(rename = "type")]
+    ty: &'static str,
+    swarm: &'a str,
+    author: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pubkey: Option<&'a str>,
+    ts: i64,
+    patch: serde_json::Value,
+    document: &'a serde_json::Value,
+    display: String,
+    #[serde(rename = "self")]
+    is_self: bool,
+}
+
 /// Parse a `Progress` body's `done/total` fraction (e.g. `"35/100"`).
 /// Returns `(None, None)` for an empty or unparseable body — an
 /// indeterminate "still working" beat.
@@ -418,6 +440,47 @@ pub(super) fn print_exchange_json(msg: &Message, is_self: bool) {
     emit(&format_exchange_json(msg, is_self));
 }
 
+/// `display` line for a `state` event: `` 🐝️ `<author>` changed shared state ``,
+/// or `🐝️ you changed shared state` for your own write. A peer's nick is
+/// backtick-wrapped like every other event so the skill's markdown renderer
+/// keeps the `<nick>`; "you" is plain text (not a nick).
+fn state_display(author: &str, is_self: bool) -> String {
+    if is_self {
+        "🐝️ you changed shared state".to_owned()
+    } else {
+        format!("🐝️ `<{author}>` changed shared state")
+    }
+}
+
+/// Render a `StateChanged` event as its `{"event":"state",...}` JSON line: the
+/// header, the patch op-array (the delta, pulled out of the `State` body), the
+/// freshly-derived `document`, the `display` line, and `self`.
+pub(super) fn format_state_json(
+    event: &Message,
+    document: &serde_json::Value,
+    is_self: bool,
+) -> String {
+    // The op array lives inside the State body `{"k":"patch","ops":[...]}`.
+    let patch = serde_json::from_str::<serde_json::Value>(event.body.as_str())
+        .ok()
+        .and_then(|body| body.get("ops").cloned())
+        .unwrap_or(serde_json::Value::Null);
+    serde_json::to_string(&StateLine {
+        event: "state",
+        id: event.id.as_str(),
+        ty: "state",
+        swarm: event.swarm.as_str(),
+        author: event.author.as_str(),
+        pubkey: (!event.pubkey.is_empty()).then_some(event.pubkey.as_str()),
+        ts: event.timestamp,
+        patch,
+        document,
+        display: state_display(event.author.as_str(), is_self),
+        is_self,
+    })
+    .expect("state event serialization should never fail")
+}
+
 /// Render a `seq`-tagged surfaced event to the exact stream JSON line, with the
 /// daemon-local `seq` flattened in as a leading field so a `poll` client can
 /// advance its `--after` cursor. The body after `seq` is byte-identical to the
@@ -505,6 +568,11 @@ pub fn event_json(event: &OutputEvent) -> Option<String> {
                 known: *known,
             })
         }
+        OutputEvent::StateChanged {
+            event,
+            document,
+            is_self,
+        } => return Some(format_state_json(event, document, *is_self)),
         OutputEvent::SwarmId { .. } => return None,
     };
     json.ok()

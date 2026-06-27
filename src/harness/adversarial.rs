@@ -53,6 +53,22 @@ impl CraftedMsg {
         }
     }
 
+    /// A crafted shared-state patch (`MessageKind::State`) from `author`, whose
+    /// body is the `{"k":"patch","ops":<ops>}` envelope the reducer parses.
+    /// `ops` is taken verbatim, so a test can inject an out-of-subset /
+    /// non-applying / malformed op array that a correct client's boundary
+    /// validation would have rejected — and assert the receiver folds it as a
+    /// deterministic no-op (never a panic, never a partial apply). Unsigned
+    /// until [`sign`](CraftedMsg::sign).
+    pub fn state_patch(swarm: &SwarmId, author: &str, ops: serde_json::Value) -> Self {
+        let author = Nickname::new(author.to_owned()).expect("test author is a valid nickname");
+        let body = crate::daemon::state_doc::patch_body(ops)
+            .expect("state patch envelope composes from any ops value");
+        Self {
+            msg: Message::new_state(swarm, &author, body),
+        }
+    }
+
     /// Stamp the per-author hash chain (Phase 2): `seq` + optional `prev`.
     pub fn chain(mut self, seq: u64, prev: Option<String>) -> Self {
         self.msg = self.msg.with_chain(seq, prev);

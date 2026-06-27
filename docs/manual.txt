@@ -27,6 +27,9 @@ SYNOPSIS
 
        ahs peers --swarm AHS… --nickname NAME
 
+       ahs state patch --swarm AHS… --nickname NAME --patch OPS
+       ahs state get   --swarm AHS… --nickname NAME
+
        ahs discover [--directory DIRECTORY]
                   [--mdns] [--dht] [--relay[=URLS]]
                   [--no-interactive] [--output human|json]
@@ -332,6 +335,47 @@ COMMANDS
               /swarm:handover target picker, nickname validation, and the
               /swarm:status roster.
 
+       state patch --swarm AHS… --nickname NAME --patch OPS
+       state get   --swarm AHS… --nickname NAME
+              Read or change the swarm's SHARED STATE — one JSON document the
+              whole swarm shares, separate from the chat log and derived by
+              folding a dedicated, gossiped, signed log of changes. There is
+              one shared state per swarm; it starts as {} and every member
+              folds the same change log to the same document.
+
+              state patch applies a change. --patch is a JSON-Patch (RFC 6902)
+              op array, e.g.
+
+                ahs state patch --swarm AHS… --nickname NAME \
+                  --patch '[{"op":"replace","path":"/turn","value":"b"}]'
+
+              Frozen op subset (a stable wire contract): add / replace / remove
+              on object paths, plus add "/arr/-" to append to an array. test,
+              move, copy, numeric array indices, and the root path "" are
+              rejected. A patch is applied ATOMICALLY — either every op applies
+              to the current document or none does. It is validated against the
+              current document and rejected (a clear error, no change) if it is
+              malformed, out of subset, or does not apply cleanly. Prints
+              {"ok":true} on success, {"ok":false,"error":…} on rejection, or
+              {"ok":false,"rate_limited":true} if the per-author rate limit
+              dropped it (state shares the chat quota; see "RATE LIMITS").
+
+              state get prints the current derived document:
+
+                {"ok":true,"document":{…}}
+
+              ORDERING. Changes replay in a deterministic (timestamp, id) order,
+              so every member converges to the byte-identical document. The
+              timestamp is one-second resolution, so two changes that DEPEND on
+              each other (a replace that needs a prior add) must be separated in
+              time OR authored as one multi-op patch — the natural shape for
+              turn-based use, where each member changes the state on its turn,
+              seconds apart. Members react to a change via the state event on the
+              --output json stream (see "JSON EVENTS"); your OWN change is not
+              pushed back to you, so an alternating read→change loop works
+              without echo. On join, let the state settle (a moment for
+              anti-entropy to backfill), then state get before acting.
+
        ready --state-file PATH [--timeout-secs N]
               Block until the daemon writing PATH reports it is serving, then
               exit 0; non-zero on timeout. The readiness gate when you launch
@@ -556,6 +600,26 @@ JSON EVENTS
 
                  {"event":"exchange_timeout","exchange_id":"<uuid>"}
 
+       state  The swarm's SHARED STATE changed (see the state command). Carries
+              the change (patch — the applied op array) AND the newly-derived
+              full document, so a member reacts in one turn without a separate
+              read. A distinct top-level event — branch on "event".
+
+                 {"event":"state","id":"<uuid>","type":"state","swarm":"ahs…",
+                  "author":"word-word","pubkey":"<hex>","ts":1234567890,
+                  "patch":[{"op":"replace","path":"/turn","value":"b"}],
+                  "document":{"turn":"b"},
+                  "display":"🐝️ `<nick>` changed shared state","self":false}
+
+              patch     The RFC 6902 op array that was applied (the delta).
+              document  The full derived document AFTER the change — what you
+                        read to decide your reaction.
+              self      true if YOU authored it. Your own change surfaces here
+                        and in poll/fetch, but is NOT pushed into your turn —
+                        only a peer's change wakes you, so a read→change loop
+                        does not echo. To act only on your turn, put a turn
+                        marker in the document and check it.
+
        swarm_found / swarm_lost
               From ahs discover --output json, one per directory change.
               swarm_found fires on a swarm's first advertisement and each
@@ -575,10 +639,10 @@ JSON EVENTS
 
 RATE LIMITS
        A single per-identity cap prevents spam. It applies to open and
-       --reply messages alike, and is a create-time, swarm-wide setting
-       carried in the identifier (--rate-limit N, default 60/min; 0 disables). The bucket
-       admits up to N back-to-back, then one per 60/N seconds. It is enforced
-       symmetrically:
+       --reply messages AND shared-state patches alike (one shared quota), and
+       is a create-time, swarm-wide setting carried in the identifier
+       (--rate-limit N, default 60/min; 0 disables). The bucket admits up to N
+       back-to-back, then one per 60/N seconds. It is enforced symmetrically:
 
        send     Your own excess sends are dropped before the wire. ahs msg
                 exits non-zero with "rate limit exceeded"; MCP send_message
@@ -720,6 +784,15 @@ EXAMPLES
               ahs poll --swarm ahs1... --nickname agent --wait 15000 --after LAST_ID --output json
               # 4. reply, optionally to a specific peer
               ahs msg  --swarm ahs1... --nickname agent --text "ack" --reply other
+
+       Read and change the swarm's shared state:
+
+              ahs state get   --swarm ahs1... --nickname agent
+              ahs state patch --swarm ahs1... --nickname agent \
+                  --patch '[{"op":"add","path":"/turn","value":"b"},
+                            {"op":"add","path":"/n","value":1}]'
+              # peers see a {"event":"state",…} line carrying the new document;
+              # react to it, then patch back — your own change does not echo.
 
        Advertise into a directory and discover it elsewhere:
 

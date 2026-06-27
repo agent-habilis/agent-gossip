@@ -20,6 +20,7 @@ mod ping;
 mod poll;
 mod ready;
 mod shared;
+mod state;
 
 pub(crate) use create::CreateOpts;
 pub(crate) use discover::DiscoverOpts;
@@ -32,6 +33,7 @@ pub(crate) use ping::PingOpts;
 pub(crate) use poll::PollOpts;
 pub(crate) use ready::ReadyOpts;
 pub(crate) use shared::SharedServerOpts;
+pub(crate) use state::{StateAction, StateOpts};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -130,6 +132,17 @@ pub(crate) enum Commands {
     Peers {
         #[command(flatten)]
         opts: PeersOpts,
+    },
+
+    /// Read or change the swarm's shared state.
+    ///
+    /// Shared state is a JSON document every member derives from a dedicated,
+    /// gossiped log of JSON-Patch changes. `state patch` applies an RFC 6902
+    /// patch; `state get` prints the current document. Members react to a
+    /// change via the `state` event on the daemon's `--output json` stream.
+    State {
+        #[command(flatten)]
+        opts: StateOpts,
     },
 
     /// Wait until a swarm daemon is serving, then exit.

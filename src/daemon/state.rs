@@ -260,6 +260,11 @@ pub(crate) struct EventLoopState {
     /// `ANTIENTROPY_DIGEST_MAX_IDS`), then advances/wraps so a log larger
     /// than one digest is swept over several rounds.
     pub digest_cursor: usize,
+    /// The same rolling start index, for the **state** anti-entropy digest's
+    /// older-portion window. Separate from `digest_cursor` so chat and state
+    /// sweep their (independently sized, unbounded for state) logs on their own
+    /// cursors.
+    pub state_digest_cursor: usize,
     pub rate_limiter: SwarmRateLimiter,
     /// This member's signing identity (Ed25519). Shared with the
     /// send path so messages we author are signed before broadcast.
@@ -441,6 +446,7 @@ impl EventLoopState {
                 crate::util::consts::SURFACED_EVENTS_CAP,
             ),
             digest_cursor: 0,
+            state_digest_cursor: 0,
             rate_limiter: SwarmRateLimiter::from_per_min(rate_limit_per_min),
             identity,
             self_seq: 0,

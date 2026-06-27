@@ -484,6 +484,36 @@ mod snapshots {
         );
         insta::assert_snapshot!(format_presence_json(&msg, PresenceSubtype::Left));
     }
+
+    /// The `{"event":"state",…}` line a shared-state change emits on the
+    /// `--output json` stream: header + the applied `patch` op array + the
+    /// newly-derived `document` + `display` + `self`. Field order is wire-pinned.
+    fn snap_state(ops: &str, document: &serde_json::Value, is_self: bool) -> String {
+        let body = format!(r#"{{"k":"patch","ops":{ops}}}"#);
+        super::super::json::format_state_json(
+            &Message::fixture(MessageKind::State, &body),
+            document,
+            is_self,
+        )
+    }
+
+    #[test]
+    fn snap_state_change() {
+        insta::assert_snapshot!(snap_state(
+            r#"[{"op":"replace","path":"/turn","value":"b"}]"#,
+            &serde_json::json!({"turn": "b", "n": 1}),
+            false,
+        ));
+    }
+
+    #[test]
+    fn snap_state_self() {
+        insta::assert_snapshot!(snap_state(
+            r#"[{"op":"add","path":"/n","value":1}]"#,
+            &serde_json::json!({"n": 1}),
+            true,
+        ));
+    }
 }
 
 mod prop {

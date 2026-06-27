@@ -71,6 +71,17 @@ pub(crate) enum SessionRequest {
     /// Snapshot the derived state — event payloads in deterministic replay
     /// order. The substrate's generic read until typed projections land.
     StateSnapshot { resp: oneshot::Sender<Vec<String>> },
+    /// Apply a JSON-Patch change to the shared state: validate against the
+    /// current document + rate-limit, compose the body, then sign + gossip.
+    /// `Err` carries an invalid-patch or rate-limited reason.
+    StatePatch {
+        patch: serde_json::Value,
+        resp: oneshot::Sender<Result<()>>,
+    },
+    /// Read the current derived shared-state document (the JSON-Patch fold).
+    StateDocument {
+        resp: oneshot::Sender<serde_json::Value>,
+    },
     /// Broadcast pre-built wire bytes **verbatim** — no signing, no chain
     /// stamping. The escape hatch the `adversarial` feature uses to inject
     /// crafted/malicious messages (bad signature, equivocation, backdating)

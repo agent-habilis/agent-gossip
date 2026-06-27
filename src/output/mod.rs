@@ -100,6 +100,14 @@ pub enum OutputEvent {
     ExchangeTimeout {
         exchange_id: ExchangeId,
     },
+    /// A shared-state change: the patch event, the freshly-derived document, and
+    /// whether it was our own write. Drives the reaction hook and the human
+    /// `🐝 … changed shared state` line.
+    StateChanged {
+        event: Box<Message>,
+        document: serde_json::Value,
+        is_self: bool,
+    },
 }
 
 /// ANSI styling for the Human-mode `<nick>` / `#swarm` tokens.
@@ -504,6 +512,53 @@ impl Output {
                 OutputMode::Silent => {}
             },
         );
+    }
+
+    /// Surface a shared-state change: the human `🐝 … changed shared state`
+    /// line, the structured `state` event for the agent API (poll / `--output
+    /// json` / embed `events()`), and the surfaced-ring mirror. F5: a *self*
+    /// change goes to poll/UI but is **never** delivered to the embed `events()`
+    /// reaction channel, so an agent is never woken by its own patch (alternation
+    /// stays loop-safe without a per-consumer guard). On the CLI/Monitor path the
+    /// self-skip is the Monitor's job.
+    pub(crate) fn state_changed(&self, event: &Message, document: &serde_json::Value, is_self: bool) {
+        let make = || OutputEvent::StateChanged {
+            event: Box::new(event.clone()),
+            document: document.clone(),
+            is_self,
+        };
+        match self {
+            Output::Stream { mode, tap, .. } => {
+                match mode {
+                    OutputMode::Human => self.print_state_human(event, is_self),
+                    OutputMode::Json => emit(&json::format_state_json(event, document, is_self)),
+                    OutputMode::Silent => {}
+                }
+                if let Some(tap) = tap {
+                    let _ = tap.send(make());
+                }
+            }
+            Output::Capture { tx, tap, .. } => {
+                let evt = make();
+                // Poll/fetch history + human UI always see it.
+                if let Some(tap) = tap {
+                    let _ = tap.send(evt.clone());
+                }
+                // F5: never wake an agent on its own patch.
+                if !is_self {
+                    let _ = tx.send(evt);
+                }
+            }
+        }
+    }
+
+    fn print_state_human(&self, event: &Message, is_self: bool) {
+        if is_self {
+            eprintln!("🐝️ you changed shared state");
+        } else {
+            let (open, close) = self.nick_ansi(event.author.as_str(), stderr_color());
+            eprintln!("🐝️ {open}<{}>{close} changed shared state", event.author);
+        }
     }
 
     pub(crate) fn print_presence(&self, msg: &Message) {

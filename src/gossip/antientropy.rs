@@ -155,14 +155,22 @@ pub(crate) async fn handle_digest(message: &Message, state: &EventLoopState, ctx
     }
 }
 
-/// Broadcast a **state** anti-entropy digest: the Base58-packed ids of every
-/// `State` event we hold (the whole set — `STATE_LOG_CAP` keeps it inside one
-/// gossip message). A holder re-sends any state event a peer's digest omits, so
-/// a cold/late joiner (advertising an empty set) pulls the full state log.
-/// Broadcast whenever meshed — even with an empty state log, so a fresh joiner
-/// advertises its (empty) set and gets backfilled. Tiny when empty.
+/// Broadcast a **state** anti-entropy digest. The state log is unbounded, so —
+/// like the chat digest — it is advertised in **windows** rather than one flat
+/// set that would overflow a gossip message past ~170 ids. A holder re-sends any
+/// state event a peer's advertised window omits, so a cold/late joiner pulls the
+/// full state log over several rounds. Broadcast whenever meshed — even with an
+/// empty log, so a fresh joiner advertises its (empty) set and gets backfilled.
+///
+/// State needs **complete** history convergence (chat is content with recent
+/// context), so the windowing adds two things the chat digest lacks: a member
+/// whose set fits one window advertises it open at **both** ends
+/// ([`bootstrap_window`](crate::daemon::state_log::StateLog::bootstrap_window)),
+/// and on the `start == 0` older sweep the bottom is opened so events *below*
+/// the member's oldest held event are pulled too. Together they guarantee a
+/// joiner reconciles the whole log, not just the tail.
 pub(crate) async fn broadcast_state_digest(
-    state: &EventLoopState,
+    state: &mut EventLoopState,
     sender: &GossipSender,
     swarm: &SwarmId,
     author: &Nickname,
@@ -170,7 +178,35 @@ pub(crate) async fn broadcast_state_digest(
     if !state.meshed {
         return;
     }
-    let Ok(body) = MessageBody::new(state.state_log.packed_ids()) else {
+    let recent = ANTIENTROPY_DIGEST_WINDOW_IDS;
+    let windows = if state.state_log.len() <= recent {
+        // Whole set fits one window: advertise it open at both ends so a holder
+        // fills every gap below, inside, and above — the full-history bootstrap.
+        state.state_digest_cursor = 0;
+        vec![WireWindow::encode(&state.state_log.bootstrap_window())]
+    } else {
+        let Some(newest) = state.state_log.recent_window(recent) else {
+            return; // unreachable (len > recent ⇒ non-empty), but stay total.
+        };
+        let mut windows = vec![WireWindow::encode(&newest)];
+        let older_len = state.state_log.older_len(recent);
+        let start = state.state_digest_cursor % older_len;
+        if let Some(mut older) = state.state_log.older_window(recent, start, recent) {
+            // Open the bottom on the lowest sweep so a peer missing events below
+            // its oldest held event (e.g. it received a live patch before
+            // backfilling history) still pulls them.
+            if start == 0 {
+                older.lo = i64::MIN;
+            }
+            state.state_digest_cursor = (start + older.ids.len()) % older_len;
+            windows.push(WireWindow::encode(&older));
+        }
+        windows
+    };
+    let Ok(json) = serde_json::to_string(&DigestBody { windows }) else {
+        return;
+    };
+    let Ok(body) = MessageBody::new(json) else {
         return;
     };
     broadcast_msg(
@@ -180,37 +216,50 @@ pub(crate) async fn broadcast_state_digest(
     .await;
 }
 
-/// Handle a received state digest: re-broadcast every `State` event the sender
-/// omitted, in deterministic order, up to a **own** resend budget (separate
+/// Handle a received state digest: for each advertised window, re-broadcast our
+/// held state events the sender lacks **within that window** (oldest-first, so a
+/// catching-up joiner fills bottom-up), up to a **own** resend budget (separate
 /// from the chat digest's, so a busy chat log can't starve state backfill).
+///
+/// Unlike the chat digest, the windows' `have` ids are **unioned** before the
+/// diff. State events authored in a burst share a one-second timestamp, so the
+/// recent (`[lo, MAX]`) and older (`[MIN, hi]`) windows' ranges overlap; a
+/// per-window `have` would then treat an event the sender holds, but listed
+/// under the *other* window, as missing and re-send it forever — wasting the
+/// budget and starving the genuinely-missing tail. Unioning first means we only
+/// ever resend what the sender truly lacks.
 pub(crate) async fn handle_state_digest(
     message: &Message,
     state: &EventLoopState,
     ctx: &HandlerCtx<'_>,
 ) {
-    // The packed-id blob: raw 16-byte UUIDs, Base58-encoded — same wire form the
-    // chat `WireWindow` uses, so a malformed blob is just "they have nothing".
-    let raw = bs58::decode(message.body.as_str())
-        .into_vec()
-        .unwrap_or_default();
-    let have: HashSet<[u8; 16]> = raw
-        .chunks_exact(16)
-        .map(|chunk| {
-            let mut id = [0u8; 16];
-            id.copy_from_slice(chunk);
-            id
-        })
-        .collect();
+    let Ok(body) = serde_json::from_str::<DigestBody>(message.body.as_str()) else {
+        return;
+    };
+    let mut have: HashSet<[u8; 16]> = HashSet::new();
+    for window in &body.windows {
+        if let Some(ids) = window.decode_ids() {
+            have.extend(ids);
+        }
+    }
     let mut budget = antientropy_max_resend();
     let mut resent = 0usize;
-    for event in state.state_log.missing_from(&have) {
+    for window in &body.windows {
         if budget == 0 {
             break;
         }
-        if let Ok(bytes) = event.serialize() {
-            let _ = ctx.sender.broadcast(Bytes::from(bytes)).await;
-            resent += 1;
-            budget -= 1;
+        for event in state
+            .state_log
+            .missing_in_window(window.lo, window.hi, &have, budget)
+        {
+            if let Ok(bytes) = event.serialize() {
+                let _ = ctx.sender.broadcast(Bytes::from(bytes)).await;
+                // Mark it sent so the next (overlapping) window doesn't re-send
+                // it and waste budget — equal-timestamp ranges overlap heavily.
+                have.insert(event.id.as_uuid_bytes());
+                resent += 1;
+                budget -= 1;
+            }
         }
     }
     if resent > 0 {
@@ -320,9 +369,10 @@ mod tests {
         assert_eq!(empty.decode_ids().map(|set| set.len()), Some(0));
     }
 
-    /// A **state** digest advertising a full-cap state log must fit one gossip
-    /// message — the regression guard for the overflow that 36-char id strings
-    /// caused. `STATE_LOG_CAP` is sized for exactly this.
+    /// A **state** digest over a large (unbounded) log must still fit one gossip
+    /// message — the windowed body caps it at two `ANTIENTROPY_DIGEST_WINDOW_IDS`
+    /// windows, the regression guard for the overflow that advertising the whole
+    /// flat id set would cause once the log grows past ~170 events.
     #[test]
     fn state_digest_fits_gossip_cap() {
         use crate::daemon::state_log::StateLog;
@@ -332,21 +382,29 @@ mod tests {
         );
         let author = Nickname::from("a-fairly-long-nickname");
         let mut log = StateLog::new();
-        for index in 0..crate::util::tuning::STATE_LOG_CAP {
+        // Far more than one window's worth, so both the newest and a full older
+        // window are populated — the worst case for digest size.
+        let total = ANTIENTROPY_DIGEST_WINDOW_IDS * 4;
+        for index in 0..total {
             let mut event = Message::new_state(
                 &swarm,
                 &author,
                 MessageBody::from(format!("s{index}").as_str()),
             );
             event.timestamp = 1_700_000_000 + i64::try_from(index).unwrap();
-            assert!(log.insert(event), "fill to cap");
+            assert!(log.insert(event), "fill the log");
         }
-        let body = MessageBody::new(log.packed_ids()).expect("packed ids have no control chars");
+        let recent = ANTIENTROPY_DIGEST_WINDOW_IDS;
+        let newest = log.recent_window(recent).expect("non-empty");
+        let older = log.older_window(recent, 0, recent).expect("older portion");
+        let windows = vec![WireWindow::encode(&newest), WireWindow::encode(&older)];
+        let json = serde_json::to_string(&DigestBody { windows }).expect("serialize body");
+        let body = MessageBody::new(json).expect("digest body has no control chars");
         let digest = Message::new_state_digest(&swarm, &author, body);
         let wire = digest.serialize().expect("serialize state digest");
         assert!(
             wire.len() <= crate::util::consts::MAX_MESSAGE_SIZE,
-            "full-cap state digest is {} bytes, over the {}-byte gossip cap",
+            "windowed state digest is {} bytes, over the {}-byte gossip cap",
             wire.len(),
             crate::util::consts::MAX_MESSAGE_SIZE
         );

@@ -475,14 +475,15 @@ impl Message {
         Self::new(swarm, author, MessageKind::State, body)
     }
 
-    /// A state anti-entropy digest whose `body` is the Base58-packed ids of the
-    /// `State` events the sender holds (`StateLog::packed_ids`).
+    /// A state anti-entropy digest whose `body` is the windowed digest the
+    /// sender advertises (a `DigestBody` of `WireWindow`s over the `State`
+    /// events it holds — the unbounded analogue of the chat digest).
     pub(crate) fn new_state_digest(
         swarm: &SwarmId,
         author: &Nickname,
-        packed_ids: MessageBody,
+        body: MessageBody,
     ) -> Self {
-        Self::new(swarm, author, MessageKind::StateDigest, packed_ids)
+        Self::new(swarm, author, MessageKind::StateDigest, body)
     }
 
     /// Serialize to compact JSON bytes for the gossip wire.
@@ -1210,6 +1211,20 @@ mod tests {
                     subtype: PresenceSubtype::Joined,
                 },
                 "",
+            );
+            let bytes = msg.serialize().unwrap();
+            let wire = String::from_utf8(bytes).unwrap();
+            insta::assert_snapshot!(wire);
+        }
+
+        #[test]
+        fn snap_wire_state_patch() {
+            // A shared-state change rides `MessageKind::State`; its body is the
+            // tagged patch envelope (`k:"patch"`) the reducer parses. Pinning
+            // the wire bytes guards the discriminator + frozen-subset op shape.
+            let msg = Message::fixture(
+                MessageKind::State,
+                r#"{"k":"patch","ops":[{"op":"replace","path":"/turn","value":"b"}]}"#,
             );
             let bytes = msg.serialize().unwrap();
             let wire = String::from_utf8(bytes).unwrap();

@@ -123,6 +123,25 @@ impl Session {
         self.inner.ping().await
     }
 
+    /// Apply a JSON-Patch change to the shared state. The op array is
+    /// validated against the current document (frozen RFC 6902 subset) and
+    /// rate-limited; a rejected patch surfaces its reason as an error.
+    ///
+    /// # Errors
+    /// Fails if the patch is invalid/inapplicable, rate-limited, or the event
+    /// loop has stopped.
+    pub(super) async fn apply_state_patch(&self, patch: serde_json::Value) -> Result<()> {
+        self.inner.apply_patch(patch).await
+    }
+
+    /// The current derived shared-state document (the JSON-Patch fold).
+    ///
+    /// # Errors
+    /// Fails if the event loop has stopped.
+    pub(super) async fn state_document(&self) -> Result<serde_json::Value> {
+        self.inner.state_document().await
+    }
+
     /// Fetch surfaced events after `after`, or after the implicit seq cursor
     /// when `after` is `None`.
     ///
@@ -209,6 +228,7 @@ mod tests {
             | OutputEvent::Info { .. }
             | OutputEvent::Error { .. }
             | OutputEvent::PingReport { .. }
+            | OutputEvent::StateChanged { .. }
             | OutputEvent::ExchangeTimeout { .. } => None,
         }
     }

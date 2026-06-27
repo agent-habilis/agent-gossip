@@ -507,6 +507,35 @@ impl InProcessSession {
             .map_err(|_| anyhow::anyhow!("swarm event loop dropped the response"))
     }
 
+    /// Apply a JSON-Patch change to the shared state. The op array (frozen
+    /// subset) is validated against the current document and rate-limited; a
+    /// rejected patch returns an error.
+    pub(crate) async fn apply_patch(&self, patch: serde_json::Value) -> anyhow::Result<()> {
+        let (resp_tx, resp_rx) = oneshot::channel();
+        self.req_tx
+            .send(SessionRequest::StatePatch {
+                patch,
+                resp: resp_tx,
+            })
+            .await
+            .map_err(|_| anyhow::anyhow!("swarm event loop has stopped"))?;
+        resp_rx
+            .await
+            .map_err(|_| anyhow::anyhow!("swarm event loop dropped the response"))?
+    }
+
+    /// The current derived shared-state document (the JSON-Patch fold).
+    pub(crate) async fn state_document(&self) -> anyhow::Result<serde_json::Value> {
+        let (resp_tx, resp_rx) = oneshot::channel();
+        self.req_tx
+            .send(SessionRequest::StateDocument { resp: resp_tx })
+            .await
+            .map_err(|_| anyhow::anyhow!("swarm event loop has stopped"))?;
+        resp_rx
+            .await
+            .map_err(|_| anyhow::anyhow!("swarm event loop dropped the response"))
+    }
+
     /// Broadcast pre-built wire bytes verbatim (no signing/chain). Testkit
     /// only — the injection point for crafted/malicious messages.
     ///
@@ -741,6 +770,26 @@ impl SwarmSession {
     /// Fails if the event loop has stopped or dropped the response.
     pub async fn state_snapshot(&self) -> anyhow::Result<Vec<String>> {
         self.core.state_snapshot().await
+    }
+
+    /// Apply a JSON-Patch change to the shared state (frozen subset:
+    /// add/replace/remove on object paths + add `/arr/-`). Validated against the
+    /// current document and rate-limited.
+    ///
+    /// # Errors
+    /// Fails if the patch is out of subset / does not apply, the rate limit is
+    /// exceeded, or the event loop has stopped.
+    pub async fn apply_patch(&self, patch: serde_json::Value) -> anyhow::Result<()> {
+        self.core.apply_patch(patch).await
+    }
+
+    /// The current derived shared-state document (the JSON-Patch fold over the
+    /// state log).
+    ///
+    /// # Errors
+    /// Fails if the event loop has stopped or dropped the response.
+    pub async fn state_document(&self) -> anyhow::Result<serde_json::Value> {
+        self.core.state_document().await
     }
 
     /// Poll the surfaced-event history after the `after` seq cursor (`None`

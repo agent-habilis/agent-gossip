@@ -73,6 +73,7 @@ mod tests {
             | Commands::Man
             | Commands::Exchange { .. }
             | Commands::Peers { .. }
+            | Commands::State { .. }
             | Commands::Ready { .. }
             | Commands::Setup { .. }
             | Commands::Teardown { .. }
@@ -144,6 +145,7 @@ mod tests {
             | Commands::Man
             | Commands::Exchange { .. }
             | Commands::Peers { .. }
+            | Commands::State { .. }
             | Commands::Ready { .. }
             | Commands::Setup { .. }
             | Commands::Teardown { .. }

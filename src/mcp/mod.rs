@@ -2,7 +2,7 @@
 //!
 //! Runs as a stdio JSON-RPC server that AI clients (Codex, Cursor,
 //! Claude Desktop, Claude Code) can spawn as a child process.
-//! Exposes eleven tools that wrap the existing swarm lifecycle:
+//! Exposes thirteen tools that wrap the existing swarm lifecycle:
 //!
 //! - `create_swarm`
 //! - `join_swarm`
@@ -11,6 +11,8 @@
 //! - `send_message`
 //! - `send_exchange`
 //! - `fetch_messages`
+//! - `apply_state_patch`
+//! - `get_state`
 //! - `swarm_info`
 //! - `ping`
 //! - `swarm_version`
@@ -257,6 +259,16 @@ fn parse_exchange_id(raw: &str) -> Result<ExchangeId, McpError> {
         .map_err(|error: crate::protocol::ExchangeIdError| {
             McpError::invalid_params(error.to_string(), None)
         })
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct ApplyStatePatchArgs {
+    /// The JSON-Patch (RFC 6902) op array, e.g.
+    /// `[{"op":"replace","path":"/turn","value":"b"}]`. Frozen subset:
+    /// `add`/`replace`/`remove` on object paths + `add "/arr/-"` (append); no
+    /// `test`/`move`/`copy`, numeric array indices, or root path "". Validated
+    /// against the current document and rejected if it does not apply cleanly.
+    patch: serde_json::Value,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -569,7 +581,7 @@ impl AgentSwarmServer {
     }
 
     #[tool(
-        description = "Return buffered events from the current swarm — chat, presence, exchange legs, and transient events (ping_report, peer_timeout, …), each the same JSON object the live event stream emits. The server auto-tracks a per-session `seq` cursor, so repeat calls with no args return only new traffic (first call sees full history, up to ~200 events). Pass `after` (a seq) only to explicitly replay from a point. Pass `wait_ms` (~15000) to long-poll — block up to that many ms (server-capped at 60s) for new traffic before returning — only while actively watching a live conversation in a loop; on timeout `messages` is empty. Omit `wait_ms` for a one-shot read (e.g. the user asks to check for new messages), which returns whatever is buffered right away. Never returns `alive` heartbeats — those are internal plumbing."
+        description = "Return buffered events from the current swarm — chat, presence, exchange legs, shared-state changes (event \"state\", carrying the patch and the newly-derived `document`), and transient events (ping_report, peer_timeout, …), each the same JSON object the live event stream emits. The server auto-tracks a per-session `seq` cursor, so repeat calls with no args return only new traffic (first call sees full history, up to ~200 events). Pass `after` (a seq) only to explicitly replay from a point. Pass `wait_ms` (~15000) to long-poll — block up to that many ms (server-capped at 60s) for new traffic before returning — only while actively watching a live conversation in a loop; on timeout `messages` is empty. Omit `wait_ms` for a one-shot read (e.g. the user asks to check for new messages), which returns whatever is buffered right away. Never returns `alive` heartbeats — those are internal plumbing."
     )]
     async fn fetch_messages(
         &self,
@@ -697,6 +709,34 @@ impl AgentSwarmServer {
             }
         }
     }
+
+    #[tool(
+        description = "Apply a JSON-Patch (RFC 6902) change to the swarm's shared state — a single JSON document every member derives from a gossiped log of patches. `patch` is the op array, e.g. [{\"op\":\"replace\",\"path\":\"/turn\",\"value\":\"b\"}]. Frozen subset: add/replace/remove on object paths + add \"/arr/-\" (append); no test/move/copy, numeric array indices, or root path. The patch is validated against the current document and rejected (invalid_params) if malformed, out-of-subset, or it does not apply cleanly. Peers react to the resulting `state` event; read the new document with `get_state` (or from the `state` event's `document` field in `fetch_messages`)."
+    )]
+    async fn apply_state_patch(
+        &self,
+        Parameters(args): Parameters<ApplyStatePatchArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let guard = self.session.lock().await;
+        let session = guard.as_ref().ok_or_else(not_in_swarm_error)?;
+        match session.apply_state_patch(args.patch).await {
+            Ok(()) => ok_json(serde_json::json!({ "ok": true })),
+            Err(error) => Err(McpError::invalid_params(error.to_string(), None)),
+        }
+    }
+
+    #[tool(
+        description = "Return the swarm's current shared-state document — the JSON value derived by folding every gossiped JSON-Patch change in deterministic order. Starts as {} before any patch. Requires an active swarm. Read it to decide your next `apply_state_patch`."
+    )]
+    async fn get_state(
+        &self,
+        Parameters(_): Parameters<NoArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let guard = self.session.lock().await;
+        let session = guard.as_ref().ok_or_else(not_in_swarm_error)?;
+        let document = session.state_document().await.map_err(to_mcp_error)?;
+        ok_json(serde_json::json!({ "document": document }))
+    }
 }
 
 /// Behavioral protocol an MCP agent needs but cannot read off the tool
@@ -727,9 +767,9 @@ EVENT SHAPE. Each entry in `fetch_messages().messages` is a JSON object. Chat \
 and presence share `event:\"message\"` and are distinguished by a `type` field \
 (`type:\"msg\"` or `type:\"presence\"`, with `subtype:\"joined\"/\"left\"/\"alive\"` \
 on presence). Everything else is discriminated by `event` directly \
-(`exchange`, `exchange_progress`, `ping_report`, `peer_timeout`, `peer_return`, \
-`info`, `error`, `ready`, …). Most entries also carry `self` (true if you \
-authored it) and a pre-built `display` string. You rarely branch on these \
+(`state`, `exchange`, `exchange_progress`, `ping_report`, `peer_timeout`, \
+`peer_return`, `info`, `error`, `ready`, …). Most entries also carry `self` \
+(true if you authored it) and a pre-built `display` string. You rarely branch on these \
 yourself — prefer `display` (below); the rules here say only what to skip vs. \
 surface.
 
@@ -767,6 +807,15 @@ exchange legs as chat lines — drive the flow.
 
 RATE LIMIT: a send over the per-identity quota returns `{rate_limited:true}` (a \
 deliberate drop, not an error) — back off rather than retry.
+
+SHARED STATE is one JSON document the whole swarm shares, separate from chat. \
+Read it with `get_state`; change it with `apply_state_patch` (an RFC 6902 patch). \
+Every member folds the same gossiped patch log to the same document. A peer's \
+change arrives as an `event:\"state\"` entry in `fetch_messages` carrying the \
+`patch` and the newly-derived `document` — react to that (read `document`, decide, \
+`apply_state_patch` back); your own changes come back with `self:true` (don't act \
+on them). To build a turn-based interaction, put a turn marker in the document and \
+act only when it is yours.
 
 Call `swarm_manual` for the full command/event reference.";
 

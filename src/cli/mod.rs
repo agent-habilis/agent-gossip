@@ -26,7 +26,7 @@ mod status;
 pub(crate) use args::Cli;
 use args::{
     Commands, CreateOpts, ExchangeOpts, MsgOpts, PeersOpts, PingOpts, PollOpts, ReadyOpts,
-    SharedServerOpts,
+    SharedServerOpts, StateAction, StateOpts,
 };
 
 /// `join` has no `--public`/`--name`: both are encoded in the `ahs…`
@@ -83,6 +83,7 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
         Commands::Ping { opts } => ping(opts).await,
         Commands::Exchange { opts } => exchange(opts).await,
         Commands::Peers { opts } => peers(opts).await,
+        Commands::State { opts } => state(opts).await,
         Commands::Ready { opts } => ready(opts).await,
         Commands::Discover { opts } => {
             crate::util::tuning::init(opts.shared.tuning());
@@ -334,6 +335,33 @@ async fn exchange(opts: ExchangeOpts) -> Result<()> {
 async fn peers(opts: PeersOpts) -> Result<()> {
     let PeersOpts { swarm, nickname } = opts;
     let cmd = IpcCommand::Peers { swarm };
+    let resp = ipc::send(&cmd, &nickname).await?;
+    println!("{resp}");
+    Ok(())
+}
+
+/// Read or change the swarm's shared state via the running daemon. Emits the
+/// raw IPC JSON response — `{ok,...}` for `patch`, `{ok,document}` for `get`.
+async fn state(opts: StateOpts) -> Result<()> {
+    let (cmd, nickname) = match opts.action {
+        StateAction::Patch {
+            swarm,
+            nickname,
+            patch,
+        } => {
+            let op_array: serde_json::Value = serde_json::from_str(&patch).map_err(|error| {
+                anyhow::anyhow!("--patch must be a JSON array of RFC 6902 ops: {error}")
+            })?;
+            (
+                IpcCommand::StatePatch {
+                    swarm,
+                    patch: op_array,
+                },
+                nickname,
+            )
+        }
+        StateAction::Get { swarm, nickname } => (IpcCommand::StateGet { swarm }, nickname),
+    };
     let resp = ipc::send(&cmd, &nickname).await?;
     println!("{resp}");
     Ok(())

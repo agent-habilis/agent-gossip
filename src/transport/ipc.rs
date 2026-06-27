@@ -86,6 +86,17 @@ pub(crate) enum IpcCommand {
     /// exchange sender's target picker and nickname validation.
     #[serde(rename = "peers")]
     Peers { swarm: SwarmId },
+    /// Apply a JSON-Patch change to the swarm's shared state. `patch` is the
+    /// RFC 6902 op array (frozen subset); the daemon validates it against the
+    /// current document, then signs + gossips it.
+    #[serde(rename = "state_patch")]
+    StatePatch {
+        swarm: SwarmId,
+        patch: serde_json::Value,
+    },
+    /// Read the current derived shared-state document.
+    #[serde(rename = "state_get")]
+    StateGet { swarm: SwarmId },
 }
 
 impl IpcCommand {
@@ -95,7 +106,9 @@ impl IpcCommand {
             | IpcCommand::Poll { swarm, .. }
             | IpcCommand::Ping { swarm }
             | IpcCommand::Exchange { swarm, .. }
-            | IpcCommand::Peers { swarm } => swarm,
+            | IpcCommand::Peers { swarm }
+            | IpcCommand::StatePatch { swarm, .. }
+            | IpcCommand::StateGet { swarm } => swarm,
         }
     }
 }
@@ -367,7 +380,9 @@ mod tests {
             IpcCommand::Poll { .. }
             | IpcCommand::Ping { .. }
             | IpcCommand::Exchange { .. }
-            | IpcCommand::Peers { .. } => panic!("expected Msg"),
+            | IpcCommand::Peers { .. }
+            | IpcCommand::StatePatch { .. }
+            | IpcCommand::StateGet { .. } => panic!("expected Msg"),
         }
     }
 
@@ -388,7 +403,9 @@ mod tests {
             IpcCommand::Msg { .. }
             | IpcCommand::Ping { .. }
             | IpcCommand::Exchange { .. }
-            | IpcCommand::Peers { .. } => panic!("expected Poll"),
+            | IpcCommand::Peers { .. }
+            | IpcCommand::StatePatch { .. }
+            | IpcCommand::StateGet { .. } => panic!("expected Poll"),
         }
     }
 
@@ -405,7 +422,9 @@ mod tests {
             IpcCommand::Msg { .. }
             | IpcCommand::Poll { .. }
             | IpcCommand::Exchange { .. }
-            | IpcCommand::Peers { .. } => panic!("expected Ping"),
+            | IpcCommand::Peers { .. }
+            | IpcCommand::StatePatch { .. }
+            | IpcCommand::StateGet { .. } => panic!("expected Ping"),
         }
     }
 
@@ -435,7 +454,9 @@ mod tests {
             IpcCommand::Msg { .. }
             | IpcCommand::Poll { .. }
             | IpcCommand::Ping { .. }
-            | IpcCommand::Peers { .. } => panic!("expected Exchange"),
+            | IpcCommand::Peers { .. }
+            | IpcCommand::StatePatch { .. }
+            | IpcCommand::StateGet { .. } => panic!("expected Exchange"),
         }
     }
 
@@ -452,7 +473,9 @@ mod tests {
             IpcCommand::Msg { .. }
             | IpcCommand::Poll { .. }
             | IpcCommand::Ping { .. }
-            | IpcCommand::Exchange { .. } => panic!("expected Peers"),
+            | IpcCommand::Exchange { .. }
+            | IpcCommand::StatePatch { .. }
+            | IpcCommand::StateGet { .. } => panic!("expected Peers"),
         }
     }
 
@@ -629,7 +652,9 @@ mod tests {
                     IpcCommand::Poll { .. }
                     | IpcCommand::Ping { .. }
                     | IpcCommand::Exchange { .. }
-                    | IpcCommand::Peers { .. } => {
+                    | IpcCommand::Peers { .. }
+                    | IpcCommand::StatePatch { .. }
+                    | IpcCommand::StateGet { .. } => {
                         let _ = resp_tx.send(json_error("unexpected command"));
                     }
                 }

@@ -215,6 +215,53 @@ sends one or more independent tasks (each its own `exchange_id`, worker,
 and completion criteria) and surfaces each result as it returns; there is no
 group-level outcome. Like handover, it adds no wire type of its own.
 
+### shared state
+
+*Layer: state · one document per swarm, derived from the **state log**.*
+
+A single JSON document the whole swarm shares, separate from the chat message
+log. It is never sent whole on the wire: every member **derives** it by folding
+the **state log** (the `(timestamp, id)`-ordered replay of every **change**)
+from `{}`. Same event set ⇒ byte-identical document on every member (see the
+*Shared state converges deterministically* invariant). One shared state per
+swarm; no namespacing. Read with `ahs state get`; changed with `ahs state
+patch`. A change surfaces as the `state` event, carrying both the change and the
+newly-derived document.
+
+Code: `daemon::state_doc` (the reducer `JsonDoc` + `derive_document`),
+`OutputEvent::StateChanged`.
+
+### state log
+
+*Layer: state · `MessageKind::State`, its own un-pruned, unbounded store.*
+
+The signed `State` events a swarm folds into its **shared state** — distinct
+from the chat **message log** in three ways: it is **un-pruned and unbounded**
+(the fold needs the complete set, so nothing ages out), dedup-keyed by id, and
+reconciled by its **own** anti-entropy digest (windowed like the chat digest,
+but advertised open at both ends so a late joiner backfills the *whole* log, not
+just a recent tail). Bounding its total growth (compaction/snapshots) is
+deferred; the per-author **rate limit** — which state shares with chat — bounds
+the growth *rate*.
+
+Code: `daemon::state_log::StateLog`, `gossip::antientropy::{broadcast,handle}_state_digest`.
+
+### change (state patch)
+
+*Layer: state · a JSON-Patch op array in a `State` event body.*
+
+One modification to the **shared state**: a JSON-Patch (RFC 6902) op array,
+restricted to a **frozen subset** — `add`/`replace`/`remove` on object paths,
+plus `add "/arr/-"` (append) — so patch semantics stay a stable wire contract
+across versions (`test`/`move`/`copy`, numeric array indices, and the root path
+`""` are rejected). Applied **atomically** (all ops or none) and validated at
+the author boundary; on replay a change that is malformed, out of subset, or
+does not apply against the document-at-that-point is a **deterministic
+whole-patch no-op** (never partial), so a crafted change can never diverge
+members.
+
+Code: `daemon::state_doc::{validate_patch, patch_body, apply_patch_body}`.
+
 ## Layering
 
 Don't conflate the three: **rendezvous** / **beacon** bootstrap a swarm you
@@ -246,6 +293,25 @@ participant lifecycle.
 The `Nickname` that wrote a message. It is the same value-type as a
 participant id; the distinct word marks "sender of *this* message", not a
 separate concept.
+
+### Shared state converges deterministically
+
+Every member derives the **shared state** by folding the **state log** in one
+total order — `(timestamp, id)` — that every member computes identically, with a
+failed/out-of-subset **change** as a deterministic no-op. So the document is a
+pure function of the *set* of changes: the same set always yields the
+byte-identical document, regardless of arrival order. Convergence is
+unconditional.
+
+*Causal faithfulness* is the weaker, conditional property: that a change lands
+*after* the change it depends on. The timestamp is one-second resolution, so two
+*dependent* changes authored in the same second can sort by the `id` tiebreak in
+either order — convergent, but the `replace` might fold before its `add` and
+no-op. Phase 1 resolves this by **timing, not a clock**: changes are turn-based
+(seconds apart) and a member changes the state on its turn, so dependent changes
+are naturally separated; multi-step updates that must be atomic go in **one**
+multi-op patch. Sub-second concurrent multi-writer causality is out of scope
+(a future causal DAG via per-author `seq`/`parents`).
 
 ### Lookups are independently sufficient
 

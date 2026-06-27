@@ -416,6 +416,32 @@ impl InProcNode {
         )
     }
 
+    /// Create a private swarm with rate limiting **disabled**
+    /// (`rate_limit_per_min = 0`, baked into the swarm id and inherited by
+    /// joiners), so a single author can drive a high volume of patches without
+    /// the send-side limiter throttling — the volume/backfill convergence tests.
+    pub(crate) async fn create_unlimited(name: &str) -> Self {
+        let mut cfg = CreateConfig::new(test_swarm_name(name));
+        cfg.rate_limit_per_min = 0;
+        Self::from_session(
+            SwarmSession::create(cfg)
+                .await
+                .expect("in-process create failed"),
+        )
+    }
+
+    /// Create a private swarm with a specific per-author rate limit, so a test
+    /// can trip the limiter deterministically with a small flood.
+    pub(crate) async fn create_rate_limited(name: &str, per_min: u16) -> Self {
+        let mut cfg = CreateConfig::new(test_swarm_name(name));
+        cfg.rate_limit_per_min = per_min;
+        Self::from_session(
+            SwarmSession::create(cfg)
+                .await
+                .expect("in-process create failed"),
+        )
+    }
+
     fn from_session(mut session: SwarmSession) -> Self {
         let rx = session.events().expect("events() receiver");
         let swarm = session.swarm_id().to_string();
@@ -476,6 +502,63 @@ impl InProcNode {
             .expect("in-process state_snapshot failed");
         bodies.sort();
         bodies
+    }
+
+    /// Apply a JSON-Patch change to the shared state. Panics if the patch is
+    /// rejected (invalid / out-of-subset / rate-limited / loop stopped) — use
+    /// [`Self::try_apply_patch`] to exercise rejection deliberately.
+    pub(crate) async fn apply_patch(&self, patch: serde_json::Value) {
+        self.try_apply_patch(patch)
+            .await
+            .expect("in-process apply_patch failed");
+    }
+
+    /// Like [`Self::apply_patch`] but returns the raw result, so a test can
+    /// assert an invalid/out-of-subset patch or a rate-limited flood is rejected.
+    pub(crate) async fn try_apply_patch(&self, patch: serde_json::Value) -> anyhow::Result<()> {
+        self.session.apply_patch(patch).await
+    }
+
+    /// The current derived shared-state document (the JSON-Patch fold over the
+    /// state log).
+    pub(crate) async fn state_document(&self) -> serde_json::Value {
+        self.session
+            .state_document()
+            .await
+            .expect("in-process state_document failed")
+    }
+
+    /// Captured shared-state changes so far, each `(derived document, is_self)`.
+    pub(crate) fn state_changes(&mut self) -> Vec<(serde_json::Value, bool)> {
+        self.pump();
+        self.drained
+            .iter()
+            .filter_map(|event| match event {
+                OutputEvent::StateChanged {
+                    document, is_self, ..
+                } => Some((document.clone(), *is_self)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Wait until a state change **from a peer** (`is_self == false`) whose
+    /// freshly-derived document satisfies `pred` is captured — the reaction-hook
+    /// check (a self-change never satisfies it, exercising the F5 self-wake guard).
+    pub(crate) async fn wait_state_change(
+        &mut self,
+        timeout: Duration,
+        mut pred: impl FnMut(&serde_json::Value) -> bool,
+    ) -> bool {
+        self.wait_for(timeout, |events| {
+            events.iter().any(|event| {
+                matches!(
+                    event,
+                    OutputEvent::StateChanged { document, is_self: false, .. } if pred(document)
+                )
+            })
+        })
+        .await
     }
 
     /// Send a message addressed to `target`; returns the new id.

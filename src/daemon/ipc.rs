@@ -17,7 +17,8 @@ use crate::transport::ipc::{IpcCommand, json_ack, json_error, json_ok_msg, json_
 use crate::util::tuning::ping_window_secs;
 
 use crate::gossip::{
-    ExchangeLeg, SendOutcome, broadcast_exchange, broadcast_message, broadcast_msg,
+    ExchangeLeg, SendOutcome, StatePatchOutcome, broadcast_exchange, broadcast_message,
+    broadcast_msg, broadcast_state_patch,
 };
 
 /// Returns `true` if the handler broadcast anything, so the caller
@@ -130,6 +131,32 @@ pub(crate) async fn handle_ipc_command(
         }
         IpcCommand::Peers { swarm: _ } => {
             let _ = resp_tx.send(peers_response(state));
+            false
+        }
+        IpcCommand::StatePatch { swarm: _, patch } => {
+            match broadcast_state_patch(swarm, author, patch, state, sender, output).await {
+                Ok(StatePatchOutcome::Applied) => {
+                    let _ = resp_tx.send(json_ack());
+                    true
+                }
+                Ok(StatePatchOutcome::RateLimited) => {
+                    let _ = resp_tx.send(json_rate_limited());
+                    false
+                }
+                Ok(StatePatchOutcome::Invalid(why)) => {
+                    let _ = resp_tx.send(json_error(&why));
+                    false
+                }
+                Err(error) => {
+                    let _ = resp_tx.send(json_error(&error.to_string()));
+                    false
+                }
+            }
+        }
+        IpcCommand::StateGet { swarm: _ } => {
+            let document = crate::daemon::state_doc::derive_document(&state.state_log);
+            let _ =
+                resp_tx.send(serde_json::json!({ "ok": true, "document": document }).to_string());
             false
         }
     }

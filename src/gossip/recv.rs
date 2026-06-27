@@ -285,7 +285,13 @@ async fn handle_gossip_received(content: Bytes, state: &mut EventLoopState, ctx:
     // Alive, digest, PeerInfo) are exempt — rate-limiting them would
     // break membership/anti-entropy. Keyed on the verified pubkey.
     let rate_ok = match &message.kind {
-        MessageKind::Msg { .. } => state.rate_limiter.check(&message.pubkey),
+        // Author-driven content shares one per-identity quota: chat messages and
+        // shared-state patches alike — symmetric with the send-side checks
+        // (`broadcast_message` / `broadcast_state_patch`). A rate-dropped state
+        // patch isn't lost forever: it never enters this node's state log, so
+        // anti-entropy re-offers it on a later round once it scrolls out of the
+        // seen-set, pacing backfill instead of dropping it.
+        MessageKind::Msg { .. } | MessageKind::State => state.rate_limiter.check(&message.pubkey),
         // Content exchange legs share the `Msg` quota; the `Progress` phase is
         // liveness plumbing (the receiver's percent+keepalive heartbeat) and
         // is exempt with the other plumbing kinds — rate-limiting it would let
@@ -295,14 +301,13 @@ async fn handle_gossip_received(content: Bytes, state: &mut EventLoopState, ctx:
         {
             state.rate_limiter.check(&message.pubkey)
         }
+        // `StateDigest` stays exempt with the other anti-entropy plumbing —
+        // rate-limiting it would break backfill.
         MessageKind::Presence { .. }
         | MessageKind::PeerInfo
         | MessageKind::Digest | MessageKind::StateDigest
         | MessageKind::Ping
         | MessageKind::Pong { .. }
-        // Durable state events are infrequent and load-bearing; rate-limiting
-        // them (or their anti-entropy backfill) would drop membership state.
-        | MessageKind::State
         | MessageKind::Exchange { .. } => true,
     };
     if !rate_ok {
@@ -360,9 +365,19 @@ async fn handle_gossip_received(content: Bytes, state: &mut EventLoopState, ctx:
             return;
         }
         MessageKind::State => {
-            // Durable state: record in the un-pruned state log (dedup by id);
-            // never chat-logged or poll/fetch-surfaced. See `daemon::state_log`.
-            state.state_log.insert(message);
+            // Durable state: record in the un-pruned state log (dedup by id),
+            // then surface a `StateChanged` carrying the freshly-derived document
+            // — but only when the doc actually changed *and* we're past the join
+            // horizon (`surfaceable`), so a backfilling joiner updates its doc
+            // silently instead of reacting to replayed intermediate states.
+            // `is_self == false`: a received patch is never our own.
+            let before = crate::daemon::state_doc::derive_document(&state.state_log);
+            if state.state_log.insert(message.clone()) {
+                let after = crate::daemon::state_doc::derive_document(&state.state_log);
+                if surfaceable && after != before {
+                    ctx.output.state_changed(&message, &after, false);
+                }
+            }
             return;
         }
         MessageKind::StateDigest => {
@@ -453,6 +468,8 @@ fn maybe_push_embed(ctx: &HandlerCtx<'_>, message: &Message, surfaceable: bool) 
         && !matches!(
             message.kind,
             MessageKind::Digest
+                | MessageKind::StateDigest
+                | MessageKind::State
                 | MessageKind::Ping
                 | MessageKind::Pong { .. }
                 | MessageKind::Exchange {
