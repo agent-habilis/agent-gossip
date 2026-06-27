@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import * as readline from "node:readline";
 import { clearBatch, startWatcher, stopWatcher } from "../daemon";
 import { isValidBody, isValidSwarmName, runSwarmCommand } from "../helpers";
@@ -335,6 +335,56 @@ export function getPeers(): { count: number; participants: Peer[] } {
       quiet: Boolean(entry.quiet),
     })),
   };
+}
+
+// Read the current derived shared-state document via `ahs state get`. Throws
+// when not in a swarm. Uses execFileSync (no shell), consistent with
+// applyStatePatch — its JSON `--patch` arg must never touch the shell.
+export function getStateDocument(): Record<string, unknown> {
+  if (!state.session?.swarm) throw new Error("Not in a swarm");
+  const raw = execFileSync(
+    "ahs",
+    ["state", "get", "--swarm", state.session.swarm, "--nickname", state.session.nickname],
+    { encoding: "utf-8", timeout: 15_000 },
+  ).trim();
+  const parsed = JSON.parse(raw) as { ok: boolean; document?: Record<string, unknown> };
+  return parsed.document ?? {};
+}
+
+// Apply an RFC 6902 patch to the shared state via `ahs state patch`. The CLI
+// exits 0 even on rejection/rate-limit and prints `{ok,…}`, so the outcome is
+// read from stdout, not the exit code. The JSON `--patch` arg goes through
+// execFileSync (no shell) — `runSwarmCommand`'s quoting would mangle it.
+export function applyStatePatch({ patch }: { patch: string }): {
+  ok: boolean;
+  error?: string;
+  rateLimited?: boolean;
+} {
+  if (!state.session?.swarm) throw new Error("Not in a swarm");
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(patch);
+  } catch {
+    throw new Error("patch must be a JSON array of RFC 6902 ops");
+  }
+  if (!Array.isArray(parsed)) throw new Error("patch must be a JSON array of RFC 6902 ops");
+
+  const raw = execFileSync(
+    "ahs",
+    [
+      "state",
+      "patch",
+      "--swarm",
+      state.session.swarm,
+      "--nickname",
+      state.session.nickname,
+      "--patch",
+      patch,
+    ],
+    { encoding: "utf-8", timeout: 15_000 },
+  ).trim();
+  const resp = JSON.parse(raw) as { ok: boolean; error?: string; rate_limited?: boolean };
+  return { ok: resp.ok, error: resp.error, rateLimited: resp.rate_limited };
 }
 
 export async function pingPeers(): Promise<PingResult[]> {

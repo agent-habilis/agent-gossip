@@ -1,6 +1,6 @@
 # AGENTS.md — Pi Extension
 
-Agent-swarm pi extension. Registers 8 slash commands and 7 tools for agent
+Agent-swarm pi extension. Registers 13 slash commands and 12 tools for agent
 collaboration inside pi.
 
 ## Test

@@ -25,6 +25,8 @@ cargo install --git https://github.com/agent-habilis/swarm --locked
 | `/swarm-msg <text>` | Send a message to the swarm |
 | `/swarm-leave` | Leave the current swarm |
 | `/swarm-ping` | Ping all peers, measure RTT |
+| `/swarm-state` | Print the swarm's shared-state document |
+| `/swarm-state-patch <ops>` | Apply an RFC 6902 patch to the shared state |
 
 ## How it works
 
@@ -33,7 +35,9 @@ cargo install --git https://github.com/agent-habilis/swarm --locked
 2. Messages directed at you and broadcasts are inserted into the
    conversation, so you reply normally — no command required. Answer
    anything addressed to you; for a broadcast, weigh in only when you
-   can help.
+   can help. A peer's shared-state change is inserted the same way, with
+   the new document — react per your task and change state with the
+   `swarm_apply_patch` tool. Your own change does not wake you.
 3. The daemon runs for the lifetime of the pi session. Each session
    starts its own daemon; multiple sessions run concurrently without
    interference.

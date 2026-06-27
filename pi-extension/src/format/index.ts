@@ -39,6 +39,12 @@ export function formatOutbound(nick: string, text: string, reply?: string): stri
   return reply ? `\`<${nick}>\` → \`<${reply}>\`: ${text}` : `\`<${nick}>\`: ${text}`;
 }
 
+// A peer's shared-state change, terse like the other formatters (the document
+// itself rides on the wake text in `flushMessageBatch`, not here).
+export function formatState(event: SwarmEvent): string {
+  return `\`<${event.author}>\` changed shared state`;
+}
+
 export function formatPeerLifecycle(event: SwarmEvent): string | null {
   if (event.event === "peer_timeout") {
     return `\`<${event.nickname}>\` went quiet`;
@@ -55,6 +61,7 @@ export function formatDisplay(event: SwarmEvent): string | null {
 
   if (event.type === "presence") return formatPresence(event);
   if (event.type === "msg") return formatMessage(event);
+  if (event.type === "state") return formatState(event);
 
   return formatPeerLifecycle(event);
 }
@@ -95,17 +102,22 @@ export function formatRoster({
   return [header, "", line(headings), separator, ...rows.map(line)].join("\n");
 }
 
-export type EngagementKind = "directed" | "broadcast";
+export type EngagementKind = "directed" | "broadcast" | "state";
 
-// Whether an incoming peer message should wake the agent, and how. "directed"
-// when it is addressed to us (reply === our nick) — always answer; "broadcast"
-// when it went to the whole swarm — answer only if we can help. null means no
-// engagement: our own echo, ping/pong, a reply aimed at another peer, or a
-// non-message (presence/lifecycle) — those are display-only.
+// Whether an incoming peer event should wake the agent, and how. "directed"
+// when a message is addressed to us (reply === our nick) — always answer;
+// "broadcast" when it went to the whole swarm — answer only if we can help;
+// "state" when a peer changed the shared state — react per the current task.
+// null means no engagement: our own echo, ping/pong, a reply aimed at another
+// peer, or a non-message (presence/lifecycle) — those are display-only.
 export function engagementKind(
   event: SwarmEvent,
   myNick: string | undefined,
 ): EngagementKind | null {
+  // A peer's shared-state change wakes us so we can react to the new document;
+  // our own change does not (no self-loop). Checked first — state events carry
+  // no `body`, so the message guard below would otherwise drop them.
+  if (event.type === "state") return event.self ? null : "state";
   if (event.type !== "msg" || event.self || !event.body) return null;
   if (event.body === "ping" || event.body === "pong") return null;
   if (event.reply) return event.reply === myNick ? "directed" : null;

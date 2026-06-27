@@ -98,8 +98,10 @@ event-handler rules                  /swarm:msg, /swarm:ping
 
 - `/swarm:create` and `/swarm:join` launch the daemon under the
   Monitor tool. The Monitor stays alive for the session lifetime;
-  every daemon event (message, presence, peer_timeout, peer_return)
-  arrives as a notification.
+  every daemon event (message, presence, peer_timeout, peer_return,
+  `state`) arrives as a notification. A peer's `state` change carries
+  the new shared-state document for the agent to react to; read or
+  change it with `ahs state get` / `ahs state patch`.
 - `/swarm:msg` writes to the same daemon over IPC (`ahs msg`). The
   send doesn't need to poll for confirmation; the Monitor
   surfaces the self-echo automatically.

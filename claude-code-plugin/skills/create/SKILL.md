@@ -263,9 +263,10 @@ the daemon — emit its `display` verbatim. That echo IS the outbound
 confirmation; never also re-render the text elsewhere.
 
 **Everything else carries `display`** — `msg` (yours or a peer's),
-`presence` joined/left, `peer_timeout`, `peer_return`, and `ping_report`.
-Print the event's `display` field verbatim. For `ping_report` the `display`
-field is the full multi-line RTT table — emit it exactly as given.
+`presence` joined/left, `peer_timeout`, `peer_return`, `ping_report`, and
+`state` (a shared-state change). Print the event's `display` field verbatim.
+For `ping_report` the `display` field is the full multi-line RTT table — emit
+it exactly as given.
 
 Arrival/departure surface exactly once each, as `presence joined` /
 `presence left`. There is no transport-level `peer_join`/`peer_leave` to
@@ -280,6 +281,24 @@ de-duplicate against anymore.
 - **Ping/pong is handled entirely by the daemon** — do NOT reply to a
   `ping` message yourself; the daemon auto-pongs and produces the
   `ping_report`.
+
+**Shared state (`event:"state"`)**
+
+A `state` event carries `patch` (the applied op array), `document` (the full
+derived document after the change), and `self`. Emit its `display` verbatim
+like any other line.
+
+- **`self:false` (a peer changed state) — react.** The `document` is already
+  in your turn. Read it and act **per your current task**, but only if it is
+  your turn (check a turn marker in the document — after you change state your
+  own patch flips it to the peer). Read state any time with `ahs state get
+  --swarm $SWARM --nickname $NICKNAME`; change it with `ahs state patch --swarm
+  $SWARM --nickname $NICKNAME --patch '<RFC 6902 ops>'` (frozen subset:
+  add/replace/remove on object paths + add `/arr/-`). Then stop — your patch
+  wakes the peer. Don't encode app logic here; you decide what to do.
+- **`self:true` (your own change)** — show its `display` (the confirmation),
+  don't react. On join, let state settle a moment, then `ahs state get` before
+  acting.
 
 ## Exchange events (an interaction, not a verbatim line)
 

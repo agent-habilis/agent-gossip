@@ -9,7 +9,12 @@ import { flushMessageBatch, processDaemonLine } from "./index";
 // flipped the directed path to a no-turn print — types and lint stayed green,
 // so only an executing test guards it.
 
-type RecordedSend = { customType: string; display: boolean; options: Record<string, unknown> };
+type RecordedSend = {
+  customType: string;
+  display: boolean;
+  content: string;
+  options: Record<string, unknown>;
+};
 const sends: RecordedSend[] = [];
 
 beforeEach(() => {
@@ -18,10 +23,15 @@ beforeEach(() => {
   state.ctx = { isIdle: () => true } as unknown as ExtensionContext;
   state.pi = {
     sendMessage: (
-      message: { customType: string; display: boolean },
+      message: { customType: string; display: boolean; content?: string },
       options: Record<string, unknown> = {},
     ) => {
-      sends.push({ customType: message.customType, display: message.display, options });
+      sends.push({
+        customType: message.customType,
+        display: message.display,
+        content: message.content ?? "",
+        options,
+      });
     },
   } as unknown as ExtensionAPI;
   state.messageBatch = [];
@@ -66,6 +76,36 @@ test("a presence line is a pure print, no turn", () => {
   expect(sends).toHaveLength(1);
   expect(sends[0]?.customType).toBe("swarm-info");
   expect(sends[0]?.options.triggerTurn).toBeUndefined();
+});
+
+test("a peer's state change wakes the agent with the document", () => {
+  feed({
+    event: "state",
+    type: "state",
+    author: "ada",
+    self: false,
+    patch: [{ op: "replace", path: "/turn", value: "me" }],
+    document: { turn: "me", n: 1 },
+  });
+  flushMessageBatch();
+  expect(sends).toHaveLength(1);
+  expect(sends[0]?.customType).toBe("swarm-inject");
+  expect(sends[0]?.options.triggerTurn).toBe(true);
+  // The derived document rides in the wake text so the agent reacts in one go.
+  expect(sends[0]?.content).toContain('"turn": "me"');
+  expect(sends[0]?.content).toContain("changed shared state");
+});
+
+test("our own state change neither wakes nor prints", () => {
+  feed({
+    event: "state",
+    type: "state",
+    author: "me",
+    self: true,
+    document: { turn: "ada", n: 2 },
+  });
+  flushMessageBatch();
+  expect(sends).toHaveLength(0);
 });
 
 test("ping/pong never wakes the agent", () => {

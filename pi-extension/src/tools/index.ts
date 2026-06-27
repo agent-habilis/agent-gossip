@@ -3,9 +3,11 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { Type } from "typebox";
 import {
   type CreateOptions,
+  applyStatePatch,
   createSwarm,
   discoverSwarms,
   getPeers,
+  getStateDocument,
   getSwarmStatus,
   joinSwarm,
   leaveSwarm,
@@ -396,6 +398,79 @@ export function registerTools(pi: ExtensionAPI): void {
       const { count, participants } = getPeers();
       const text = `${lines.join("\n")}\n\n${formatRoster({ name: status.name, count, participants })}`;
       return { content: [{ type: "text", text }], details: { ...status, count, participants } };
+    },
+  });
+
+  pi.registerTool({
+    name: "swarm_get_state",
+    label: "Swarm Get State",
+    description:
+      "Read the swarm's current shared-state document (the JSON every member converges on)",
+    promptSnippet: "Read the swarm's shared-state document",
+    promptGuidelines: [
+      "Use swarm_get_state to read the shared state before deciding your next swarm_apply_patch",
+      "On joining a swarm, let the state settle a moment (anti-entropy backfill), then read it once",
+    ],
+    parameters: Type.Object({}),
+    async execute(_toolCallId, _params, _signal, _onUpdate, ctx: ExtensionContext) {
+      if (!requireAgentSwarm(ctx)) {
+        return toolError("ahs CLI not found on PATH");
+      }
+      if (!state.session?.swarm) {
+        return toolError("Not in a swarm. Use swarm_create or swarm_join first.");
+      }
+      try {
+        const document = getStateDocument();
+        return {
+          content: [{ type: "text", text: JSON.stringify(document, null, 2) }],
+          details: { document },
+        };
+      } catch (error) {
+        return toolError(`Get state failed: ${error instanceof Error ? error.message : "unknown"}`);
+      }
+    },
+  });
+
+  pi.registerTool({
+    name: "swarm_apply_patch",
+    label: "Swarm Apply Patch",
+    description: "Apply a JSON-Patch (RFC 6902) change to the swarm's shared state",
+    promptSnippet: "Change the swarm's shared state with a JSON-Patch",
+    promptGuidelines: [
+      "Use swarm_apply_patch to change the shared state — pass the RFC 6902 op array",
+      'Frozen subset: add/replace/remove on object paths, plus add "/arr/-" to append. No test/move/copy, numeric array indices, or root path ""',
+      "React to a peer's change (the state event), never your own. To act only on your turn, put a turn marker in the document and check it before patching",
+      "Put dependent ops in one patch (it is applied atomically); a rejected patch returns ok:false with an error",
+    ],
+    parameters: Type.Object({
+      patch: Type.Array(Type.Object({}, { additionalProperties: true }), {
+        description: 'RFC 6902 op array, e.g. [{"op":"replace","path":"/turn","value":"b"}]',
+      }),
+    }),
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx: ExtensionContext) {
+      if (!requireAgentSwarm(ctx)) {
+        return toolError("ahs CLI not found on PATH");
+      }
+      if (!state.session?.swarm) {
+        return toolError("Not in a swarm. Use swarm_create or swarm_join first.");
+      }
+      try {
+        const result = applyStatePatch({ patch: JSON.stringify(params.patch) });
+        if (result.ok) {
+          return { content: [{ type: "text", text: "ok — shared state changed" }], details: null };
+        }
+        if (result.rateLimited) {
+          return {
+            content: [{ type: "text", text: "rate limited — back off (shared chat quota)" }],
+            details: { rate_limited: true },
+          };
+        }
+        return toolError(result.error ?? "patch rejected");
+      } catch (error) {
+        return toolError(
+          `Apply patch failed: ${error instanceof Error ? error.message : "unknown"}`,
+        );
+      }
     },
   });
 

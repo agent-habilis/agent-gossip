@@ -83,11 +83,22 @@ export function flushMessageBatch(): void {
   if (!state.policySent && injectSilent(REPLY_POLICY)) state.policySent = true;
 
   const myNick = state.session?.nickname;
-  const lines = batch.map((message) =>
-    engagementKind(message, myNick) === "directed"
+  const lines = batch.map((message) => {
+    const kind = engagementKind(message, myNick);
+    if (kind === "state") {
+      // Carry the freshly-derived document into the turn so the agent reacts in
+      // one go (no separate read). Guidance is task-agnostic — the agent decides.
+      const document = JSON.stringify(message.document ?? {}, null, 2);
+      return `${BEE} \`<${message.author}>\` changed shared state. New document:
+\`\`\`json
+${document}
+\`\`\`
+React per your current task — act only on your turn (check a turn marker in the document), then apply your change with swarm_apply_patch.`;
+    }
+    return kind === "directed"
       ? `${BEE} \`<${message.author}>\` → you: ${message.body}`
-      : `${BEE} \`<${message.author}>\`: ${message.body}`,
-  );
+      : `${BEE} \`<${message.author}>\`: ${message.body}`;
+  });
   if (!inject(lines.join("\n"))) {
     for (const message of batch) pushPending(message);
   }

@@ -1,7 +1,7 @@
 import { beforeEach, expect, test } from "bun:test";
 import { state } from "../state";
 import type { SwarmEvent } from "../types";
-import { engagementKind, formatDisplay, formatMessage, formatOutbound } from "./index";
+import { engagementKind, formatDisplay, formatMessage, formatOutbound, formatState } from "./index";
 
 const ev = (over: Partial<SwarmEvent>): SwarmEvent => ({ event: "message", type: "msg", ...over });
 
@@ -60,4 +60,23 @@ test("formatDisplay drops self and info/error, renders presence and messages", (
     formatDisplay(ev({ event: "presence", type: "presence", subtype: "joined", author: "ada" })),
   ).toBe("`<ada>` joined");
   expect(formatDisplay(ev({ author: "ada", body: "hi", reply: null }))).toBe("`<ada>`: hi");
+});
+
+test("engagementKind: a peer state change engages as state; our own does not", () => {
+  expect(
+    engagementKind(ev({ event: "state", type: "state", author: "ada", self: false }), "me"),
+  ).toBe("state");
+  expect(
+    engagementKind(ev({ event: "state", type: "state", author: "me", self: true }), "me"),
+  ).toBeNull();
+});
+
+test("formatState renders a peer state change; formatDisplay drops our own", () => {
+  expect(formatState(ev({ event: "state", type: "state", author: "ada" }))).toBe(
+    "`<ada>` changed shared state",
+  );
+  expect(formatDisplay(ev({ event: "state", type: "state", author: "ada", self: false }))).toBe(
+    "`<ada>` changed shared state",
+  );
+  expect(formatDisplay(ev({ event: "state", type: "state", author: "me", self: true }))).toBeNull();
 });

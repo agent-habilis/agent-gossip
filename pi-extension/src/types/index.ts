@@ -28,6 +28,10 @@ export type SwarmEvent = {
   phase?: string;
   to?: string;
   display?: string;
+  // On a `state` event: the applied RFC 6902 op array (the delta) and the full
+  // derived document AFTER the change — what you read to decide your reaction.
+  patch?: Array<Record<string, unknown>>;
+  document?: Record<string, unknown>;
 };
 
 export type ExchangeKind = "handover" | "task";

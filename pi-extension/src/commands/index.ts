@@ -1,9 +1,11 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import {
   type CreateOptions,
+  applyStatePatch,
   createSwarm,
   discoverSwarms,
   getPeers,
+  getStateDocument,
   joinSwarm,
   leaveSwarm,
   pingPeers,
@@ -52,6 +54,14 @@ export function registerCommands(pi: ExtensionAPI): void {
   pi.registerCommand("swarm-status", {
     description: "List swarm peers with connection type, model, and harness",
     handler: cmdStatus,
+  });
+  pi.registerCommand("swarm-state", {
+    description: "Print the swarm's current shared-state document",
+    handler: cmdState,
+  });
+  pi.registerCommand("swarm-state-patch", {
+    description: "Apply an RFC 6902 patch to shared state (/swarm-state-patch {ops-json})",
+    handler: cmdStatePatch,
   });
   pi.registerCommand("swarm-ping", {
     description: "Ping all peers in the swarm and measure round-trip time",
@@ -356,6 +366,51 @@ async function cmdStatus(_args: string, ctx: ExtensionCommandContext): Promise<v
     notifyBlock(formatRoster({ name: session.name, count, participants }));
   } catch (error) {
     notifyError(`status failed: ${error instanceof Error ? error.message : "unknown"}`);
+  }
+}
+
+async function cmdState(_args: string, ctx: ExtensionCommandContext): Promise<void> {
+  state.ctx = ctx;
+  if (!requireAgentSwarm(ctx)) return;
+  if (!state.session) {
+    notifyError("not in a swarm");
+    return;
+  }
+  try {
+    // Plain block (not markdown) so the JSON isn't reflowed — same as the roster.
+    notifyBlock(JSON.stringify(getStateDocument(), null, 2));
+  } catch (error) {
+    notifyError(`state failed: ${error instanceof Error ? error.message : "unknown"}`);
+  }
+}
+
+async function cmdStatePatch(args: string, ctx: ExtensionCommandContext): Promise<void> {
+  state.ctx = ctx;
+  if (!requireAgentSwarm(ctx)) return;
+  if (!state.session) {
+    notifyError("not in a swarm");
+    return;
+  }
+  const ops = args.trim();
+  if (!ops) {
+    notifyError(
+      'usage: /swarm-state-patch {ops-json}  e.g. [{"op":"replace","path":"/turn","value":"b"}]',
+    );
+    return;
+  }
+  try {
+    // The incoming self `state` event isn't displayed, so confirm here at send
+    // time (mirrors how /swarm-msg confirms an outbound message).
+    const result = applyStatePatch({ patch: ops });
+    if (result.ok) {
+      notify("changed shared state");
+    } else if (result.rateLimited) {
+      notify("rate limited — backing off (shared chat quota)");
+    } else {
+      notifyError(result.error ?? "patch rejected");
+    }
+  } catch (error) {
+    notifyError(`state patch failed: ${error instanceof Error ? error.message : "unknown"}`);
   }
 }
 
