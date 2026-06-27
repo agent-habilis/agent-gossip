@@ -67,5 +67,3 @@ export type Peer = {
   lastSeenSecsAgo: number | null;
   quiet: boolean;
 };
-
-export type NotifyType = "info" | "warning" | "error";

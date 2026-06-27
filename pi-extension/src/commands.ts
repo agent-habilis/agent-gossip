@@ -11,11 +11,11 @@ import {
   sendSwarmMessage,
   validateCreateOptions,
 } from "./core";
-import { injectAgent } from "./daemon";
 import { formatRoster } from "./format";
-import { formatSwarmMessage, isValidBody, requireAgentSwarm, runSwarmCommand } from "./helpers";
+import { isValidBody, requireAgentSwarm, runSwarmCommand } from "./helpers";
 import { state } from "./state";
 import type { DiscoveredSwarm, Peer } from "./types";
+import { inject, notify, notifyBlock, notifyError } from "./ui";
 
 export function registerCommands(pi: ExtensionAPI): void {
   pi.registerCommand("swarm-create", {
@@ -70,7 +70,10 @@ export function registerCommands(pi: ExtensionAPI): void {
 
 // Parse `/swarm-create [name] [flags]`. The first non-flag token is the
 // optional swarm name; recognized flags mirror the `ahs create` CLI.
-function parseCreateArgs(args: string): { options: CreateOptions; error?: string } {
+function parseCreateArgs(args: string): {
+  options: CreateOptions;
+  error?: string;
+} {
   const options: CreateOptions = {};
   const tokens = args.trim().split(/\s+/u).filter(Boolean);
 
@@ -105,7 +108,10 @@ function parseCreateArgs(args: string): { options: CreateOptions; error?: string
         }
         const parsed = Number(raw);
         if (!Number.isInteger(parsed) || parsed < 0) {
-          return { options, error: `invalid --rate-limit value: ${raw ?? "(missing)"}` };
+          return {
+            options,
+            error: `invalid --rate-limit value: ${raw ?? "(missing)"}`,
+          };
         }
         options.rateLimit = parsed;
         break;
@@ -126,23 +132,23 @@ async function cmdCreate(args: string, ctx: ExtensionCommandContext): Promise<vo
 
   const { options, error } = parseCreateArgs(args);
   if (error) {
-    ctx.ui.notify(
-      `🐝 ${error}\nusage: /swarm-create [name] [--public] [--mdns] [--dht] [--relay[=urls]] [--rate-limit N] [--advertise[=dir]]`,
-      "error",
+    notifyError(
+      `${error}\nusage: /swarm-create [name] [--public] [--mdns] [--dht] [--relay[=urls]] [--rate-limit N] [--advertise[=dir]]`,
     );
     return;
   }
   const invalid = validateCreateOptions(options);
   if (invalid) {
-    ctx.ui.notify(`🐝 ${invalid}`, "error");
+    notifyError(invalid);
     return;
   }
 
   options.model = ctx.model?.name;
-  ctx.ui.notify(options.name ? `🐝 creating #${options.name}...` : "🐝 creating swarm...", "info");
+  notify(options.name ? `creating \`#${options.name}\`...` : "creating swarm...");
   const result = await createSwarm(options);
-  ctx.ui.notify(`🐝 created #${result.name}\n/swarm-join ${result.swarm}`, "info");
-  if (result.drift) ctx.ui.notify(`🐝 ${result.drift}`, "info");
+  notify(`created \`#${result.name}\``);
+  notify(`\`/swarm-join ${result.swarm}\``);
+  if (result.drift) notify(result.drift);
 }
 
 async function cmdJoin(args: string, ctx: ExtensionCommandContext): Promise<void> {
@@ -151,14 +157,14 @@ async function cmdJoin(args: string, ctx: ExtensionCommandContext): Promise<void
 
   const target = args.trim();
   if (!target) {
-    ctx.ui.notify("🐝 usage: /swarm-join {ahs... | domain | repo-url}", "error");
+    notifyError("usage: /swarm-join {ahs... | domain | repo-url}");
     return;
   }
 
-  ctx.ui.notify(`🐝 joining ${target.slice(0, 40)}...`, "info");
+  notify(`joining swarm ${target} ...`);
   const result = await joinSwarm({ target, model: ctx.model?.name });
-  ctx.ui.notify(`🐝 joined #${result.name} as <${result.nickname}>`, "info");
-  if (result.drift) ctx.ui.notify(`🐝 ${result.drift}`, "info");
+  notify(`joined \`#${result.name}\` as \`<${result.nickname}>\``);
+  if (result.drift) notify(result.drift);
 }
 
 async function cmdDiscover(args: string, ctx: ExtensionCommandContext): Promise<void> {
@@ -166,13 +172,13 @@ async function cmdDiscover(args: string, ctx: ExtensionCommandContext): Promise<
   if (!requireAgentSwarm(ctx)) return;
 
   const directory = args.trim() || "global";
-  ctx.ui.notify(`🐝 discovering #${directory}...`, "info");
+  notify(`discovering \`#${directory}\`...`);
 
   const swarms = await discoverSwarms({
     directory: directory === "global" ? undefined : directory,
   });
   if (swarms.length === 0) {
-    ctx.ui.notify(`🐝 no swarms found in #${directory}`, "info");
+    notify(`no swarms found in \`#${directory}\``);
     return;
   }
 
@@ -188,10 +194,13 @@ async function cmdDiscover(args: string, ctx: ExtensionCommandContext): Promise<
   const picked = choice ? byOption.get(choice) : undefined;
   if (!picked) return;
 
-  ctx.ui.notify(`🐝 joining #${picked.name}...`, "info");
-  const result = await joinSwarm({ target: picked.swarm, model: ctx.model?.name });
-  ctx.ui.notify(`🐝 joined #${result.name} as <${result.nickname}>`, "info");
-  if (result.drift) ctx.ui.notify(`🐝 ${result.drift}`, "info");
+  notify(`joining \`#${picked.name}\`...`);
+  const result = await joinSwarm({
+    target: picked.swarm,
+    model: ctx.model?.name,
+  });
+  notify(`joined \`#${result.name}\` as \`<${result.nickname}>\``);
+  if (result.drift) notify(result.drift);
 }
 
 async function cmdMsg(args: string, ctx: ExtensionCommandContext): Promise<void> {
@@ -200,29 +209,26 @@ async function cmdMsg(args: string, ctx: ExtensionCommandContext): Promise<void>
 
   const text = args.trim();
   if (!text) {
-    ctx.ui.notify("🐝 usage: /swarm-msg {text}", "error");
+    notifyError("usage: /swarm-msg {text}");
     return;
   }
 
   if (!isValidBody(text)) {
-    ctx.ui.notify(
-      "🐝 message body must not contain control characters other than tab/newline",
-      "error",
-    );
+    notifyError("message body must not contain control characters other than tab/newline");
     return;
   }
 
   const session = state.session;
   if (!session) {
-    ctx.ui.notify("🐝 not in a swarm", "error");
+    notifyError("not in a swarm");
     return;
   }
 
   try {
     sendSwarmMessage({ text });
-    ctx.ui.notify(`🐝 <${session.nickname}>: ${text}`, "info");
+    notify(`\`<${session.nickname}>\`: ${text}`);
   } catch (error) {
-    ctx.ui.notify(`🐝 send failed: ${error instanceof Error ? error.message : "unknown"}`, "error");
+    notifyError(`send failed: ${error instanceof Error ? error.message : "unknown"}`);
   }
 }
 
@@ -234,34 +240,28 @@ async function cmdReply(args: string, ctx: ExtensionCommandContext): Promise<voi
   // optional); the rest is the message body.
   const match = args.trim().match(/^(\S+)\s+([\s\S]+)$/u);
   if (!match) {
-    ctx.ui.notify("🐝 usage: /swarm-reply {nick} {text}", "error");
+    notifyError("usage: /swarm-reply {nick} {text}");
     return;
   }
   const target = match[1].replace(/^<|>$/gu, "");
   const text = match[2];
 
   if (!isValidBody(text)) {
-    ctx.ui.notify(
-      "🐝 message body must not contain control characters other than tab/newline",
-      "error",
-    );
+    notifyError("message body must not contain control characters other than tab/newline");
     return;
   }
 
   const session = state.session;
   if (!session) {
-    ctx.ui.notify("🐝 not in a swarm", "error");
+    notifyError("not in a swarm");
     return;
   }
 
   try {
     sendSwarmMessage({ text, reply: target });
-    ctx.ui.notify(`🐝 <${session.nickname}> → <${target}>: ${text}`, "info");
+    notify(`\`<${session.nickname}>\` → \`<${target}>\`: ${text}`);
   } catch (error) {
-    ctx.ui.notify(
-      `🐝 reply failed: ${error instanceof Error ? error.message : "unknown"}`,
-      "error",
-    );
+    notifyError(`reply failed: ${error instanceof Error ? error.message : "unknown"}`);
   }
 }
 
@@ -272,7 +272,7 @@ async function selectWorker(ctx: ExtensionCommandContext, title: string): Promis
   try {
     participants = getPeers().participants;
   } catch (error) {
-    ctx.ui.notify(`🐝 ${error instanceof Error ? error.message : "roster failed"}`, "error");
+    notifyError(`${error instanceof Error ? error.message : "roster failed"}`);
     return null;
   }
   const eligible = participants
@@ -283,7 +283,7 @@ async function selectWorker(ctx: ExtensionCommandContext, title: string): Promis
         (right.lastSeenSecsAgo ?? Number.POSITIVE_INFINITY),
     );
   if (eligible.length === 0) {
-    ctx.ui.notify("🐝 no peers available", "info");
+    notify("no peers available");
     return null;
   }
   // Label carries the model/harness so the choice is informed; map back to the
@@ -302,12 +302,12 @@ async function cmdHandover(args: string, ctx: ExtensionCommandContext): Promise<
   state.ctx = ctx;
   if (!requireAgentSwarm(ctx)) return;
   if (!state.session) {
-    ctx.ui.notify("🐝 not in a swarm", "error");
+    notifyError("not in a swarm");
     return;
   }
   const task = args.trim();
   if (!task) {
-    ctx.ui.notify("🐝 usage: /swarm-handover {task}", "error");
+    notifyError("usage: /swarm-handover {task}");
     return;
   }
   const worker = await selectWorker(ctx, `Hand "${task.slice(0, 60)}" to which peer?`);
@@ -315,8 +315,8 @@ async function cmdHandover(args: string, ctx: ExtensionCommandContext): Promise<
 
   // The agent composes the brief and sends it via swarm_handover (mirrors the
   // Claude Code plan-as-brief flow, agent-driven).
-  injectAgent(
-    `🐝 Compose a concise handover brief (what to do, the goal, current state, constraints) for this task and send it to <${worker.nickname}> with the swarm_handover tool (to "${worker.nickname}"):\n\n${task}`,
+  inject(
+    `Compose a concise handover brief (what to do, the goal, current state, constraints) for this task and send it to \`<${worker.nickname}>\` with the swarm_handover tool (to "${worker.nickname}"):\n\n${task}`,
   );
 }
 
@@ -324,12 +324,12 @@ async function cmdTask(args: string, ctx: ExtensionCommandContext): Promise<void
   state.ctx = ctx;
   if (!requireAgentSwarm(ctx)) return;
   if (!state.session) {
-    ctx.ui.notify("🐝 not in a swarm", "error");
+    notifyError("not in a swarm");
     return;
   }
   const task = args.trim();
   if (!task) {
-    ctx.ui.notify("🐝 usage: /swarm-task {task}", "error");
+    notifyError("usage: /swarm-task {task}");
     return;
   }
   const worker = await selectWorker(ctx, `Send "${task.slice(0, 60)}" to which peer?`);
@@ -337,15 +337,15 @@ async function cmdTask(args: string, ctx: ExtensionCommandContext): Promise<void
 
   // The agent composes the task brief and sends it via swarm_task; the worker
   // runs it and returns a result the agent then confirms or revises.
-  injectAgent(
-    `🐝 Compose a task brief with an explicit completion criterion for this task and send it to <${worker.nickname}> with the swarm_task tool (to "${worker.nickname}"):\n\n${task}`,
+  inject(
+    `Compose a task brief with an explicit completion criterion for this task and send it to \`<${worker.nickname}>\` with the swarm_task tool (to "${worker.nickname}"):\n\n${task}`,
   );
 }
 
 async function cmdLeave(_args: string, ctx: ExtensionCommandContext): Promise<void> {
   const name = state.session?.name;
   leaveSwarm();
-  ctx.ui.notify(name ? `🐝 left #${name}` : "🐝 left", "info");
+  notify(name ? `left \`#${name}\`` : "left");
 }
 
 async function cmdStatus(_args: string, ctx: ExtensionCommandContext): Promise<void> {
@@ -353,17 +353,14 @@ async function cmdStatus(_args: string, ctx: ExtensionCommandContext): Promise<v
   if (!requireAgentSwarm(ctx)) return;
   const session = state.session;
   if (!session) {
-    ctx.ui.notify("🐝 not in a swarm", "error");
+    notifyError("not in a swarm");
     return;
   }
   try {
     const { count, participants } = getPeers();
-    ctx.ui.notify(formatRoster({ name: session.name, count, participants }), "info");
+    notifyBlock(formatRoster({ name: session.name, count, participants }));
   } catch (error) {
-    ctx.ui.notify(
-      `🐝 status failed: ${error instanceof Error ? error.message : "unknown"}`,
-      "error",
-    );
+    notifyError(`status failed: ${error instanceof Error ? error.message : "unknown"}`);
   }
 }
 
@@ -373,10 +370,10 @@ async function cmdMonitor(args: string, ctx: ExtensionCommandContext): Promise<v
 
   if (subcommand === "on") {
     state.autoReply = true;
-    ctx.ui.notify("🐝 auto-reply on", "info");
+    notify("auto-reply on");
   } else if (subcommand === "off") {
     state.autoReply = false;
-    ctx.ui.notify("🐝 auto-reply off", "info");
+    notify("auto-reply off");
   } else {
     const status = getSwarmStatus();
     const lines = [
@@ -385,9 +382,9 @@ async function cmdMonitor(args: string, ctx: ExtensionCommandContext): Promise<v
       `nickname: <${status.nickname ?? "none"}>`,
       `auto-reply: ${status.autoReply ? "on" : "off"}`,
       "",
-      "🐝 usage: /swarm-monitor {on|off}",
+      "usage: /swarm-monitor {on|off}",
     ];
-    ctx.ui.notify(`🐝\n${lines.join("\n")}`, "info");
+    notifyBlock(lines.join("\n"));
   }
 }
 
@@ -396,27 +393,33 @@ async function cmdPing(_args: string, ctx: ExtensionCommandContext): Promise<voi
   if (!requireAgentSwarm(ctx)) return;
 
   if (!state.session?.swarm) {
-    ctx.ui.notify("🐝 not in a swarm", "error");
+    notifyError("not in a swarm");
     return;
   }
 
-  ctx.ui.notify("🐝 pinging peers...", "info");
+  notify("pinging peers...");
 
   try {
     const results = await pingPeers();
     if (results.length === 0) {
-      ctx.ui.notify("🐝 no peers responded", "info");
+      notify("no peers responded");
       return;
     }
 
-    const lines = ["Ping results", "| peer | RTT |", "|---|---|"];
-    for (const result of results) {
-      lines.push(`| ${result.author} | ${result.rtt}ms |`);
-    }
-    lines.push(`${results.length} online`);
-    ctx.ui.notify(`🐝\n${lines.join("\n")}`, "info");
+    const rows = results.map((result) => `| \`<${result.author}>\` | ${result.rtt}ms |`);
+    notify(
+      [
+        "ping results",
+        "",
+        "| peer | RTT |",
+        "| --- | --- |",
+        ...rows,
+        "",
+        `${results.length} online`,
+      ].join("\n"),
+    );
   } catch (error) {
-    ctx.ui.notify(`🐝 ping failed: ${error instanceof Error ? error.message : "unknown"}`, "error");
+    notifyError(`ping failed: ${error instanceof Error ? error.message : "unknown"}`);
   }
 }
 
@@ -428,11 +431,8 @@ async function cmdVersion(_args: string, ctx: ExtensionCommandContext): Promise<
   if (!requireAgentSwarm(ctx)) return;
 
   try {
-    ctx.ui.notify(formatSwarmMessage(runSwarmCommand(["status"])), "info");
+    notifyBlock(runSwarmCommand(["status"]));
   } catch (error) {
-    ctx.ui.notify(
-      `🐝 version check failed: ${error instanceof Error ? error.message : "unknown"}`,
-      "error",
-    );
+    notifyError(`version check failed: ${error instanceof Error ? error.message : "unknown"}`);
   }
 }

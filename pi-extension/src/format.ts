@@ -1,5 +1,5 @@
 import { state } from "./state";
-import type { NotifyType, Peer, SwarmEvent } from "./types";
+import type { Peer, SwarmEvent } from "./types";
 
 export function formatPresence(event: SwarmEvent): string | null {
   if (event.subtype === "alive") return null;
@@ -8,9 +8,9 @@ export function formatPresence(event: SwarmEvent): string | null {
     // them in parens right after the nick (matching the Claude Code plugin's
     // join line), keeping pi's own terse verb.
     const meta = [event.model, event.harness].filter(Boolean).join(" / ");
-    return meta ? `🐝 <${event.author}> (${meta}) joined` : `🐝 <${event.author}> joined`;
+    return meta ? `\`<${event.author}>\` (${meta}) joined` : `\`<${event.author}>\` joined`;
   }
-  if (event.subtype === "left") return `🐝 <${event.author}> left`;
+  if (event.subtype === "left") return `\`<${event.author}>\` left`;
   return null;
 }
 
@@ -18,27 +18,27 @@ export function formatMessage(event: SwarmEvent): string | null {
   if (!event.body) return null;
 
   if (event.body === "ping" && !event.reply) {
-    return "🐝 ping → pong";
+    return "ping → pong";
   }
 
   if (event.body === "pong") {
     if (state.pingPending) return null;
-    return `🐝 pong from <${event.author}>`;
+    return `pong from \`<${event.author}>\``;
   }
 
   if (event.reply) {
-    return `🐝 <${event.author}> → <${event.reply}>: ${event.body}`;
+    return `\`<${event.author}>\` → \`<${event.reply}>\`: ${event.body}`;
   }
 
-  return `🐝 <${event.author}>: ${event.body}`;
+  return `\`<${event.author}>\`: ${event.body}`;
 }
 
 export function formatPeerLifecycle(event: SwarmEvent): string | null {
   if (event.event === "peer_timeout") {
-    return `🐝 <${event.nickname}> went quiet`;
+    return `\`<${event.nickname}>\` went quiet`;
   }
   if (event.event === "peer_return") {
-    return `🐝 <${event.nickname}> came back`;
+    return `\`<${event.nickname}>\` came back`;
   }
   return null;
 }
@@ -53,14 +53,6 @@ export function formatDisplay(event: SwarmEvent): string | null {
   return formatPeerLifecycle(event);
 }
 
-export function getNotifyType(event: SwarmEvent): NotifyType {
-  // Presence (joined/left) is plain "info" — a peer leaving is not a warning,
-  // so pi must not prefix the line with "Warning:".
-  if (event.type === "presence") return "info";
-  if (event.event === "peer_timeout") return "error";
-  return "info";
-}
-
 export function formatRoster({
   name,
   count,
@@ -70,10 +62,11 @@ export function formatRoster({
   count: number;
   participants: Peer[];
 }): string {
-  const header = `🐝 #${name} · ${count} participants`;
+  const header = `#${name} · ${count} participants`;
   if (participants.length === 0) return `${header}\n(just you — no peers yet)`;
-  // pi's notify renders plain text (no markdown), so align columns by padding
-  // rather than emitting a markdown table.
+  // Rendered via `notifyBlock` (plain text, no markdown), so align columns by
+  // padding rather than emitting a markdown table; nicks stay plain here (no
+  // backticks) — markdown reflow would break the alignment.
   const headings = ["peer", "connection", "model", "harness", "last seen"];
   const rows = participants.map((peer) => [
     peer.nickname,

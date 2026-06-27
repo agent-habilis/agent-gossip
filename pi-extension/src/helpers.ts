@@ -1,5 +1,6 @@
 import { execSync } from "node:child_process";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { notifyError } from "./ui";
 
 function isControlChar(ch: string): boolean {
   const code = ch.codePointAt(0) ?? 0;
@@ -35,9 +36,9 @@ export function agentSwarmAvailable(): boolean {
   }
 }
 
-export function requireAgentSwarm(ctx: ExtensionContext): boolean {
+export function requireAgentSwarm(_ctx: ExtensionContext): boolean {
   if (!agentSwarmAvailable()) {
-    ctx.ui.notify("🐝 ahs CLI not found on PATH", "error");
+    notifyError("ahs CLI not found on PATH");
     return false;
   }
   return true;
@@ -48,12 +49,4 @@ export function runSwarmCommand(args: string[]): string {
     encoding: "utf-8",
     timeout: 15_000,
   }).trim();
-}
-
-export function formatSwarmMessage(text: string): string {
-  const lines = text.split("\n");
-  if (lines.length === 1) {
-    return `🐝 ${lines[0]}`;
-  }
-  return `🐝\n${lines.join("\n")}`;
 }

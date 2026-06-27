@@ -2,10 +2,11 @@ import type { ChildProcess } from "node:child_process";
 import * as readline from "node:readline";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { sendExchange } from "./core";
-import { formatDisplay, getNotifyType, isQuestion } from "./format";
+import { formatDisplay, isQuestion } from "./format";
 import { runSwarmCommand } from "./helpers";
 import { state } from "./state";
 import type { ExchangeKind, SwarmEvent } from "./types";
+import { BEE, inject, notifyError, notifyWarning, notify as pushDisplay } from "./ui";
 
 const BATCH_DELAY_MS = 100;
 
@@ -64,16 +65,8 @@ export function flushMessageBatch(): void {
   const batch = state.messageBatch.splice(0);
   if (batch.length === 0 || !state.pi) return;
 
-  const lines = batch.map((message) => `🐝 <${message.author}>: ${message.body}`);
-  const text = lines.join("\n");
-
-  try {
-    if (state.ctx?.isIdle?.() ?? true) {
-      state.pi.sendUserMessage(text);
-    } else {
-      state.pi.sendUserMessage(text, { deliverAs: "steer" });
-    }
-  } catch {
+  const lines = batch.map((message) => `${BEE} \`<${message.author}>\`: ${message.body}`);
+  if (!inject(lines.join("\n"))) {
     for (const message of batch) pushPending(message);
   }
 }
@@ -111,26 +104,11 @@ export function processDaemonLine(line: string): void {
       pushPending(event);
     }
   } else if (output) {
-    if (state.ctx) {
-      state.ctx.ui.notify(output, getNotifyType(event));
+    if (state.autoReply && state.pi) {
+      pushDisplay(output);
     } else {
       pushPending(event);
     }
-  }
-}
-
-// Push a message into the pi session so the LLM agent acts on it (drive its
-// side of an exchange). Mirrors the auto-reply delivery in `flushMessageBatch`.
-export function injectAgent(text: string): void {
-  if (!state.pi) return;
-  try {
-    if (state.ctx?.isIdle?.() ?? true) {
-      state.pi.sendUserMessage(text);
-    } else {
-      state.pi.sendUserMessage(text, { deliverAs: "steer" });
-    }
-  } catch {
-    /* session unavailable */
   }
 }
 
@@ -190,31 +168,28 @@ async function handleIncomingOffer(
       /* best effort */
     }
     state.exchanges.delete(exchangeId);
-    ctx.ui.notify(`🐝 declined ${kind} from <${author}>`, "info");
+    pushDisplay(`declined ${kind} from \`<${author}>\``);
     return;
   }
 
   try {
     sendExchange({ to: author, exchangeId, kind, phase: "accept" });
   } catch (error) {
-    ctx.ui.notify(
-      `🐝 accept failed: ${error instanceof Error ? error.message : "unknown"}`,
-      "error",
-    );
+    notifyError(`accept failed: ${error instanceof Error ? error.message : "unknown"}`);
     state.exchanges.delete(exchangeId);
     return;
   }
 
   const tool = `the swarm_exchange tool (exchange_id "${exchangeId}", to "${author}", kind "${kind}")`;
   if (kind === "handover") {
-    injectAgent(
-      `🐝 You accepted a handover from <${author}>. Brief:\n\n${event.body ?? ""}\n\n` +
+    inject(
+      `You accepted a handover from \`<${author}>\`. Brief:\n\n${event.body ?? ""}\n\n` +
         `Ask anything unclear with ${tool} phase "context". When you have what you need, send phase "done"; ` +
-        `<${author}> will confirm, then you do the work yourself (confirm with the user first if it makes changes).`,
+        `\`<${author}>\` will confirm, then you do the work yourself (confirm with the user first if it makes changes).`,
     );
   } else {
-    injectAgent(
-      `🐝 You accepted a task from <${author}>. Brief:\n\n${event.body ?? ""}\n\n` +
+    inject(
+      `You accepted a task from \`<${author}>\`. Brief:\n\n${event.body ?? ""}\n\n` +
         `Do the work (confirm with the user first if it makes changes), asking anything unclear with ${tool} phase "context". ` +
         `When finished, send ${tool} phase "done" with your result in the text.`,
     );
@@ -243,19 +218,16 @@ function handleExchangeEvent(event: SwarmEvent): void {
   const ctx = state.ctx;
   switch (event.phase) {
     case "context":
-      injectAgent(
-        `🐝 Question from <${author}> on the ${kind} (exchange ${exchangeId}): ${event.body ?? ""}\n` +
+      inject(
+        `Question from \`<${author}>\` on the ${kind} (exchange ${exchangeId}): ${event.body ?? ""}\n` +
           `Answer with the swarm_exchange tool phase "context" (exchange_id "${exchangeId}", to "${author}", kind "${kind}").`,
       );
       break;
     case "accept":
-      ctx?.ui.notify(`🐝 <${author}> accepted the ${kind}`, "info");
+      pushDisplay(`\`<${author}>\` accepted the ${kind}`);
       break;
     case "decline":
-      ctx?.ui.notify(
-        `🐝 <${author}> declined the ${kind}${event.body ? `: ${event.body}` : ""}`,
-        "info",
-      );
+      pushDisplay(`\`<${author}>\` declined the ${kind}${event.body ? `: ${event.body}` : ""}`);
       state.exchanges.delete(exchangeId);
       break;
     case "done":
@@ -266,12 +238,12 @@ function handleExchangeEvent(event: SwarmEvent): void {
         } catch {
           /* best effort */
         }
-        ctx?.ui.notify(`🐝 handed over to <${author}>`, "info");
+        pushDisplay(`handed over to \`<${author}>\``);
         state.exchanges.delete(exchangeId);
       } else if (existing.role === "initiator" && kind === "task") {
         // Task result returns here (Phase F drives the confirm/change loop).
-        injectAgent(
-          `🐝 <${author}> returned the task result (exchange ${exchangeId}):\n\n${event.body ?? ""}\n\n` +
+        inject(
+          `\`<${author}>\` returned the task result (exchange ${exchangeId}):\n\n${event.body ?? ""}\n\n` +
             `If it meets the criteria, send the swarm_exchange tool phase "confirm" (exchange_id "${exchangeId}", to "${author}", kind "task"); otherwise phase "change" with feedback.`,
         );
       }
@@ -279,8 +251,8 @@ function handleExchangeEvent(event: SwarmEvent): void {
     case "change":
       // Task receiver: the initiator wants a revision of the returned result.
       if (existing.role === "receiver" && kind === "task") {
-        injectAgent(
-          `🐝 <${author}> asked for a revision on the task (exchange ${exchangeId}): ${event.body ?? ""}\n` +
+        inject(
+          `\`<${author}>\` asked for a revision on the task (exchange ${exchangeId}): ${event.body ?? ""}\n` +
             `Revise and re-send the swarm_exchange tool phase "done" (exchange_id "${exchangeId}", to "${author}", kind "task") with the updated result.`,
         );
       }
@@ -288,17 +260,17 @@ function handleExchangeEvent(event: SwarmEvent): void {
     case "confirm":
       if (existing.role === "receiver" && kind === "handover") {
         // Receiver side of a handover: the handoff is closed — now do the work.
-        injectAgent(
-          `🐝 Handover ${exchangeId} confirmed by <${author}>. Do the work now (confirm with the user first if it makes changes). It is yours and is not reported back.`,
+        inject(
+          `Handover ${exchangeId} confirmed by \`<${author}>\`. Do the work now (confirm with the user first if it makes changes). It is yours and is not reported back.`,
         );
       } else if (existing.role === "receiver" && kind === "task") {
         // Receiver side of a task: the result was accepted — nothing more to do.
-        ctx?.ui.notify(`🐝 <${author}> accepted your task result`, "info");
+        pushDisplay(`\`<${author}>\` accepted your task result`);
       }
       state.exchanges.delete(exchangeId);
       break;
     case "cancel":
-      ctx?.ui.notify(`🐝 <${author}> cancelled the ${kind}`, "info");
+      pushDisplay(`\`<${author}>\` cancelled the ${kind}`);
       state.exchanges.delete(exchangeId);
       break;
     default:
@@ -375,17 +347,16 @@ export function clearBatch(): void {
   state.messageBatch = [];
 }
 
-export function flushPending(ctx: ExtensionContext): void {
+export function flushPending(_ctx: ExtensionContext): void {
   if (state.droppedPending > 0) {
-    ctx.ui.notify(
-      `🐝 ${state.droppedPending} earlier swarm event(s) were dropped while the UI was unavailable`,
-      "warning",
+    notifyWarning(
+      `${state.droppedPending} earlier swarm event(s) were dropped while the UI was unavailable`,
     );
     state.droppedPending = 0;
   }
   const messages = state.pendingMessages.splice(0);
   for (const message of messages) {
     const output = formatDisplay(message);
-    if (output) ctx.ui.notify(output, getNotifyType(message));
+    if (output) pushDisplay(output);
   }
 }
