@@ -31,17 +31,17 @@ mod tests {
 
     #[test]
     fn truncates_to_16_chars() {
-        assert_eq!(swarm_prefix("ahsabcdefghijkmnpqrs").chars().count(), 16);
+        assert_eq!(swarm_prefix("ahswabcdefghijkmnpqrs").chars().count(), 16);
     }
 
     #[test]
     fn short_input_unchanged() {
-        assert_eq!(swarm_prefix("ahsabcd"), "ahsabcd");
+        assert_eq!(swarm_prefix("ahswabcd"), "ahswabcd");
     }
 
     #[test]
     fn result_is_a_prefix_of_input() {
-        let input = "ahsabcdefghijkmnpqrstuvwx";
+        let input = "ahswabcdefghijkmnpqrstuvwx";
         assert!(input.starts_with(&swarm_prefix(input)));
     }
 }

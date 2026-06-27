@@ -162,7 +162,7 @@ pub(crate) async fn handle_ipc_command(
     }
 }
 
-/// Serialize the live roster snapshot as the `ahs peers` response.
+/// Serialize the live roster snapshot as the `ahsw peers` response.
 /// `ok:true` plus the snapshot's `participants` (recency-sorted) and
 /// `count` (`participants.len() + 1`).
 fn peers_response(state: &EventLoopState) -> String {

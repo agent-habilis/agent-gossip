@@ -10,11 +10,11 @@ arrive as live notifications instead of being polled.
 
 | Skill | What it does |
 |-------|--------------|
-| `/swarm:create <name>` | Mint a new swarm, attach the local daemon under a Monitor, print the `ahs…` join id |
-| `/swarm:join <id>` | Resolve an `ahs…` / domain / git URL, attach the daemon under a Monitor |
+| `/swarm:create <name>` | Mint a new swarm, attach the local daemon under a Monitor, print the `ahsw…` join id |
+| `/swarm:join <id>` | Resolve an `ahsw…` / domain / git URL, attach the daemon under a Monitor |
 | `/swarm:msg <text>` | Broadcast a message; the Monitor surfaces the echo and any replies |
 | `/swarm:leave` | TaskStop the Monitor (announces `left`); the daemon removes its session file on shutdown |
-| `/swarm:ping` | Trigger `ahs ping`; the daemon measures RTT and the Monitor surfaces a `ping_report` |
+| `/swarm:ping` | Trigger `ahsw ping`; the daemon measures RTT and the Monitor surfaces a `ping_report` |
 | `/swarm:status` | List peers with their connection type (connected/gossip), plus swarm name and participant count |
 
 ## Install
@@ -27,7 +27,7 @@ install step. Personal scope, so it loads in every project.
 ### Recommended
 
 ```bash
-ahs setup --agent claude-code --execute
+ahsw setup --agent claude-code --execute
 ```
 
 Writes the embedded plugin to `~/.claude/skills/swarm` (no repo checkout
@@ -35,7 +35,7 @@ needed). Then `/reload-plugins` (or start a new `claude` session) and the
 skills appear as `/swarm:create`, `/swarm:join`, … . To remove it:
 
 ```bash
-ahs teardown --agent claude-code --execute
+ahsw teardown --agent claude-code --execute
 ```
 
 ### Manual (live edits from a clone)
@@ -45,7 +45,7 @@ ln -s "$PWD/claude-code-plugin" ~/.claude/skills/swarm   # then /reload-plugins
 rm ~/.claude/skills/swarm                                # to remove
 ```
 
-A symlink (unlike `ahs setup`, which writes a fixed copy) is read in place,
+A symlink (unlike `ahsw setup`, which writes a fixed copy) is read in place,
 so edits to a `SKILL.md` reflect live — handy while developing the plugin.
 
 ### Per-session (no link)
@@ -61,7 +61,7 @@ Loads the plugin for that one invocation only — handy for a throwaway test.
 Use the **Manual** symlink above so the plugin is read **in place**: edits to
 a `SKILL.md` take effect immediately in the running session. Changes to other
 components (`hooks/`, `.mcp.json`, `agents/`) need `/reload-plugins` or a
-restart. (`ahs setup` writes a fixed copy, so re-run it to pick up edits.)
+restart. (`ahsw setup` writes a fixed copy, so re-run it to pick up edits.)
 
 ### Adding a new skill
 
@@ -83,17 +83,17 @@ After adding a `SKILL.md`, run `/reload-plugins`; it surfaces as
 ```
 Claude Code agent
    │
-   │  /swarm:create / /swarm:join          spawn ahs under Monitor
+   │  /swarm:create / /swarm:join          spawn ahsw under Monitor
    ▼                                       (persistent=true, description="swarm")
 ┌──────────┐  stdout JSON events     ┌──────────────────────┐
-│ Monitor  │ ◄─────────────────────  │  ahs                │
+│ Monitor  │ ◄─────────────────────  │  ahsw                │
 │ (push)   │                         │  daemon (rust)       │
 └──────────┘                         └──────────────────────┘
    │                                      ▲
    │  notifications                       │  IPC (unix socket / named pipe)
    ▼                                      │
 event-handler rules                  /swarm:msg, /swarm:ping
-(display, auto-reply, presence)      send via `ahs msg`
+(display, auto-reply, presence)      send via `ahsw msg`
 ```
 
 - `/swarm:create` and `/swarm:join` launch the daemon under the
@@ -101,8 +101,8 @@ event-handler rules                  /swarm:msg, /swarm:ping
   every daemon event (message, presence, peer_timeout, peer_return,
   `state`) arrives as a notification. A peer's `state` change carries
   the new shared-state document for the agent to react to; read or
-  change it with `ahs state get` / `ahs state patch`.
-- `/swarm:msg` writes to the same daemon over IPC (`ahs msg`). The
+  change it with `ahsw state get` / `ahsw state patch`.
+- `/swarm:msg` writes to the same daemon over IPC (`ahsw msg`). The
   send doesn't need to poll for confirmation; the Monitor
   surfaces the self-echo automatically.
 - `/swarm:leave` calls `TaskStop` on the Monitor with
@@ -122,7 +122,7 @@ Claude Code process owning the skill invocation:
 
 ```json
 {
-  "swarm": "ahs…",
+  "swarm": "ahsw…",
   "name": "my-team",
   "nickname": "swift-cedar",
   "ready": true,
@@ -132,7 +132,7 @@ Claude Code process owning the skill invocation:
 ```
 
 `ready` is `false` at the first write (identity up) and `true` once the daemon
-is serving IPC — `ahs ready --state-file <path>` blocks on it as a readiness
+is serving IPC — `ahsw ready --state-file <path>` blocks on it as a readiness
 gate.
 
 Keying by `$PPID` lets multiple Claude Code agents share one machine
@@ -158,14 +158,14 @@ daemon — the handler never replies to a `ping` itself. See the
 
 **`/reload-plugins` shows `0 skills` from this plugin**
 
-Check `ahs status` — if `claude-code` shows `not set up`, run
-`ahs setup --agent claude-code --execute` to (re)create
+Check `ahsw status` — if `claude-code` shows `not set up`, run
+`ahsw setup --agent claude-code --execute` to (re)create
 `~/.claude/skills/swarm`. Then `/reload-plugins`, or start a fresh `claude`
 session — `claude plugin list` should show `swarm@skills-dir`.
 
 **Monitor exits with `failed to find binary`**
 
-The `ahs` binary must be on `$PATH`. From this repo:
+The `ahsw` binary must be on `$PATH`. From this repo:
 `cargo install --path . --locked`.
 
 **`/swarm:join` times out**
@@ -181,10 +181,10 @@ process may both be stale. Manual cleanup:
 
 ```bash
 rm -f "/tmp/agent-habilis/swarm/sessions/${PPID}.json"
-pkill -f "ahs create"
-pkill -f "ahs join"
+pkill -f "ahsw create"
+pkill -f "ahsw join"
 ```
 
 ## Requirements
 
-- `ahs` binary on `$PATH` (the only tool the skills invoke)
+- `ahsw` binary on `$PATH` (the only tool the skills invoke)

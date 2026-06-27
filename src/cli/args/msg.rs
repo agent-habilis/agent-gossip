@@ -7,7 +7,7 @@ use crate::protocol::{MessageBody, Nickname, SwarmId};
 
 #[derive(Parser, Debug)]
 pub(crate) struct MsgOpts {
-    /// Swarm identifier (ahs...)
+    /// Swarm identifier (ahsw...)
     #[arg(long)]
     pub swarm: SwarmId,
 

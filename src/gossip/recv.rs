@@ -340,7 +340,7 @@ async fn handle_gossip_received(content: Bytes, state: &mut EventLoopState, ctx:
             // pinger. The daemon owns this — no agent involvement. Pong
             // is gossip-broadcast (no unicast transport), so one probe in
             // an N-node swarm fans out to N flooded pongs; acceptable for
-            // the small swarms and rare manual `ahs ping` this serves.
+            // the small swarms and rare manual `ahsw ping` this serves.
             broadcast_msg(
                 ctx.sender,
                 &Message::new_pong(ctx.swarm, ctx.author, message.author.clone())

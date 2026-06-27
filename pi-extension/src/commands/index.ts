@@ -74,7 +74,7 @@ export function registerCommands(pi: ExtensionAPI): void {
 }
 
 // Parse `/swarm-create [name] [flags]`. The first non-flag token is the
-// optional swarm name; recognized flags mirror the `ahs create` CLI.
+// optional swarm name; recognized flags mirror the `ahsw create` CLI.
 function parseCreateArgs(args: string): {
   options: CreateOptions;
   error?: string;
@@ -162,7 +162,7 @@ async function cmdJoin(args: string, ctx: ExtensionCommandContext): Promise<void
 
   const target = args.trim();
   if (!target) {
-    notifyError("usage: /swarm-join {ahs... | domain | repo-url}");
+    notifyError("usage: /swarm-join {ahsw... | domain | repo-url}");
     return;
   }
 
@@ -188,7 +188,7 @@ async function cmdDiscover(args: string, ctx: ExtensionCommandContext): Promise<
   }
 
   // Option label carries name + peers + a short id so distinct swarms never
-  // collide; map it back to the full `ahs…` id for the join.
+  // collide; map it back to the full `ahsw…` id for the join.
   const byOption = new Map(
     swarms.map((swarm): [string, DiscoveredSwarm] => [
       `#${swarm.name} · ${swarm.peers} peers · ${swarm.swarm.slice(0, 14)}…`,
@@ -449,7 +449,7 @@ async function cmdPing(_args: string, ctx: ExtensionCommandContext): Promise<voi
   }
 }
 
-// `ahs status` reports the binary version and whether each installed
+// `ahsw status` reports the binary version and whether each installed
 // integration still matches the binary — the on-demand drift check, the
 // counterpart to the startup warning folded into the `ready` event.
 async function cmdVersion(_args: string, ctx: ExtensionCommandContext): Promise<void> {

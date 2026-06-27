@@ -8,7 +8,7 @@ use crate::protocol::{Nickname, SwarmId};
 
 #[derive(Parser, Debug)]
 pub(crate) struct PeersOpts {
-    /// Swarm identifier (ahs...)
+    /// Swarm identifier (ahsw...)
     #[arg(long)]
     pub swarm: SwarmId,
 

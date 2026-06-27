@@ -154,7 +154,7 @@ mod tests {
 
     fn msg(id: &str) -> Message {
         Message::new_message(
-            &crate::protocol::SwarmId::from("ahstest"),
+            &crate::protocol::SwarmId::from("ahswtest"),
             &crate::protocol::Nickname::from("author"),
             crate::protocol::MessageBody::from(id),
         )

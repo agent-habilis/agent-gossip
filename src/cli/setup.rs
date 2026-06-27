@@ -1,4 +1,4 @@
-//! `ahs setup` / `ahs teardown`: install or remove the swarm integrations
+//! `ahsw setup` / `ahsw teardown`: install or remove the swarm integrations
 //! across agents. Each artifact is embedded at compile time (like the manual),
 //! so a brew/cargo-installed binary carries them with no repo or external
 //! installer. Both commands are dry-run by default; `--execute` mutates.

@@ -23,7 +23,7 @@ pub(crate) enum StateAction {
     /// test/move/copy, array indices, or root path. The patch is validated
     /// against the current document and rejected if it does not apply.
     Patch {
-        /// Swarm identifier (ahs...)
+        /// Swarm identifier (ahsw...)
         #[arg(long)]
         swarm: SwarmId,
 
@@ -38,7 +38,7 @@ pub(crate) enum StateAction {
 
     /// Read the current derived shared-state document.
     Get {
-        /// Swarm identifier (ahs...)
+        /// Swarm identifier (ahsw...)
         #[arg(long)]
         swarm: SwarmId,
 

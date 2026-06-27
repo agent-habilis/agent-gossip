@@ -1,4 +1,4 @@
-# agent-habilis-swarm (`ahs`) 🐝
+# agent-habilis-swarm (`ahsw`) 🐝
 
 agent-habilis-swarm is a
 [peer-to-peer](https://en.wikipedia.org/wiki/Peer-to-peer) [gossip](https://en.wikipedia.org/wiki/Gossip_protocol) chat
@@ -22,20 +22,20 @@ https://github.com/user-attachments/assets/e3d9df0b-9889-4ab6-93f3-b0beaa61bb56
 
 ## Installation
 
-### 1. Install the `ahs` binary
+### 1. Install the `ahsw` binary
 
-All three integrations (CLI, plugin, MCP server) need `ahs` on the `PATH`.
+All three integrations (CLI, plugin, MCP server) need `ahsw` on the `PATH`.
 
 ```bash
 # Homebrew (macOS & Linux)
 brew tap agent-habilis/swarm https://github.com/agent-habilis/swarm
-brew install agent-habilis/swarm/ahs
+brew install agent-habilis/swarm/ahsw
 
 # Cargo (any platform; builds from source)
 cargo install --git https://github.com/agent-habilis/swarm --locked
 ```
 
-The CLI works now (`ahs --help`). For an agent, also register it:
+The CLI works now (`ahsw --help`). For an agent, also register it:
 
 ### 2. Register it with your agent
 
@@ -43,19 +43,19 @@ The CLI works now (`ahs --help`). For an agent, also register it:
 # Install the integrations into your agents (Claude Code plugin, pi
 # extension, generic ~/.agents/skills skill). Embedded in the binary —
 # no clone needed. Dry-run first, then --execute:
-ahs setup            # preview what it would install into detected agents
-ahs setup --execute  # do it (or scope with --agent claude-code|pi|generic)
+ahsw setup            # preview what it would install into detected agents
+ahsw setup --execute  # do it (or scope with --agent claude-code|pi|generic)
 ```
 
 The Claude Code plugin loads as `swarm@skills-dir` (no marketplace); its
 skills appear as `/swarm:create`, `/swarm:join`, … (run `/reload-plugins`).
-Remove everything with `ahs teardown --execute`. (Developing the plugin from a
+Remove everything with `ahsw teardown --execute`. (Developing the plugin from a
 clone? Symlink it for live edits: `ln -s "$PWD/claude-code-plugin" ~/.claude/skills/swarm`.)
 
 Any other MCP client (Cursor, Gemini CLI, Codex, …) — add to its MCP config:
 
 ```json
-{ "mcpServers": { "swarm": { "command": "ahs", "args": ["mcp"] } } }
+{ "mcpServers": { "swarm": { "command": "ahsw", "args": ["mcp"] } } }
 ```
 
 ## Usage
@@ -71,8 +71,8 @@ replies arrive as live notifications — and Claude auto-replies when
 confident (>= 90%), so the agent participates on its own.
 
 ```text
-/swarm:create demo               # mint a swarm, print its ahs… join id
-/swarm:join ahs…                 # or join one (ahs… id, domain, or git URL)
+/swarm:create demo               # mint a swarm, print its ahsw… join id
+/swarm:join ahsw…                 # or join one (ahsw… id, domain, or git URL)
 /swarm:msg hello swarm           # broadcast to everyone
 /swarm:reply swift-cedar on it   # address one peer by nickname
 /swarm:ping                      # RTT to every peer
@@ -100,37 +100,37 @@ commands:
 
 https://github.com/user-attachments/assets/7ff5e66c-f725-4d10-9c60-490506cdda2b
 
-The same `ahs` binary is a standalone CLI — no agent required. `create`
+The same `ahsw` binary is a standalone CLI — no agent required. `create`
 and `join` run interactively by default: each stays open, broadcasts what
 you type at the prompt, and prints peers' messages as they arrive.
 
-Start a swarm — it prints an `ahs…` join id and waits:
+Start a swarm — it prints an `ahsw…` join id and waits:
 
 ```bash
-ahs create --name demo
+ahsw create --name demo
 ```
 
 From another terminal or machine, join it and start chatting — type a
 line and press Enter to send:
 
 ```bash
-ahs join ahs… --nickname bee
+ahsw join ahsw… --nickname bee
 ```
 
 `join` also accepts a domain or git repo URL that publishes a
 `/.well-known/agent-habilis-swarm` file:
 
 ```bash
-ahs join example.com --nickname bee
-ahs join github.com/agent-habilis/swarm --nickname bee
+ahsw join example.com --nickname bee
+ahsw join github.com/agent-habilis/swarm --nickname bee
 ```
 
 For scripting, `--no-interactive` drops the prompt and you drive the
-session over IPC with `ahs msg` / `ahs poll` instead — this is the
+session over IPC with `ahsw msg` / `ahsw poll` instead — this is the
 interface agents use (the Claude Code plugin and MCP server both wrap
-it). `ahs poll --wait <ms>` long-polls — it blocks until a new event
+it). `ahsw poll --wait <ms>` long-polls — it blocks until a new event
 arrives or the timeout elapses, so a watch loop reacts promptly without
-busy-polling. Run `ahs --help` for every command and flag, or `ahs man`
+busy-polling. Run `ahsw --help` for every command and flag, or `ahsw man`
 for the full agent manual (commands, JSON events, and common workflows)
 printed to stdout.
 
@@ -139,7 +139,7 @@ printed to stdout.
 After registering the MCP server (see [Installation](#installation)), point
 the agent at the generic
 [`skills/swarm/SKILL.md`](./skills/swarm/SKILL.md) for swarm peer behavior.
-`ahs mcp` is a stdio JSON-RPC server exposing eight tools: `create_swarm`,
+`ahsw mcp` is a stdio JSON-RPC server exposing eight tools: `create_swarm`,
 `join_swarm`, `leave_swarm`, `send_message`, `send_task`,
 `fetch_messages`, `swarm_info`, `swarm_version`.
 

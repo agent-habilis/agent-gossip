@@ -2,7 +2,7 @@
 //!
 //! - [`message`]: the `Message` envelope + its value types
 //!   (`MessageBody`, `MessageId`) + the size cap.
-//! - [`swarm`]: the `ahs…` identifier (`SwarmId` shallow string +
+//! - [`swarm`]: the `ahsw…` identifier (`SwarmId` shallow string +
 //!   `Swarm` decoded form) + `SwarmName` / `SwarmConfig` (rate limit +
 //!   lookups) / relay-ladder parsing.
 //! - [`nickname`]: the `Nickname` newtype.

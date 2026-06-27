@@ -67,7 +67,7 @@ impl CreateParams {
 }
 
 impl JoinParams {
-    /// Resolve the target (`ahs…` id / domain / git URL) into a [`Swarm`]
+    /// Resolve the target (`ahsw…` id / domain / git URL) into a [`Swarm`]
     /// and default the nickname. `join` never advertises.
     ///
     /// # Errors

@@ -1,4 +1,4 @@
-//! The swarm-wide config carried in the `ahs…` id — the lookup
+//! The swarm-wide config carried in the `ahsw…` id — the lookup
 //! allowlist (`mdns`/`dht`/`relay`) and the per-author rate limit — plus
 //! its byte codec and the `--advertise` directory selection. A swarm's
 //! network reach is fully described by its lookups: no lookups means

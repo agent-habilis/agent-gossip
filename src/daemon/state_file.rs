@@ -11,7 +11,7 @@
 //! (no read-merge: there are no foreign keys to preserve).
 //!
 //! `ready` is `false` at the early identity write and flips to `true`
-//! once the event loop is serving IPC, so a reader (e.g. `ahs ready`)
+//! once the event loop is serving IPC, so a reader (e.g. `ahsw ready`)
 //! can gate on it rather than on the file's mere existence.
 //! `participant_count` is the total number of agents in the swarm,
 //! including self. `last_updated` is a unix timestamp the daemon
@@ -22,7 +22,7 @@
 //! File shape (keys are serialized in sorted order — `serde_json::Map` is a
 //! `BTreeMap` here, no `preserve_order` feature):
 //! ```json
-//! {"last_updated":1776720604,"name":"cool-team","nickname":"treat-empire","participant_count":3,"ready":true,"swarm":"ahs..."}
+//! {"last_updated":1776720604,"name":"cool-team","nickname":"treat-empire","participant_count":3,"ready":true,"swarm":"ahsw..."}
 //! ```
 //!
 //! Writes are atomic (tempfile + rename on the same filesystem), so a
@@ -112,7 +112,7 @@ impl Drop for StateFile {
     }
 }
 
-/// What a reader (the `ahs ready` gate) needs out of a state file: whether
+/// What a reader (the `ahsw ready` gate) needs out of a state file: whether
 /// the daemon is serving (`ready`) and how fresh that claim is
 /// (`last_updated`, unix seconds — the daemon rewrites it on a fixed
 /// heartbeat, so a gate can reject a stale `ready: true` left by a prior
@@ -190,14 +190,14 @@ mod tests {
         let path = unique_path("shape");
         let state_file = StateFile::new(
             path.clone(),
-            &SwarmId::from("ahsabcd"),
+            &SwarmId::from("ahswabcd"),
             &Nickname::from("treat-empire"),
             &name("cool-team"),
         );
         state_file.write(3, true);
         let contents = std::fs::read_to_string(&path).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&contents).unwrap();
-        assert_eq!(parsed["swarm"], "ahsabcd");
+        assert_eq!(parsed["swarm"], "ahswabcd");
         assert_eq!(parsed["name"], "cool-team");
         assert_eq!(parsed["nickname"], "treat-empire");
         assert_eq!(parsed["ready"], true);
@@ -211,7 +211,7 @@ mod tests {
         let path = unique_path("overwrite");
         let state_file = StateFile::new(
             path.clone(),
-            &SwarmId::from("ahsxyzw"),
+            &SwarmId::from("ahswxyzw"),
             &Nickname::from("swift-cedar"),
             &name("cool-team"),
         );
@@ -230,7 +230,7 @@ mod tests {
         let path = unique_path("remove");
         let state_file = StateFile::new(
             path.clone(),
-            &SwarmId::from("ahstest"),
+            &SwarmId::from("ahswtest"),
             &Nickname::from("n"),
             &name("cool-team"),
         );
@@ -246,7 +246,7 @@ mod tests {
         {
             let state_file = StateFile::new(
                 path.clone(),
-                &SwarmId::from("ahstest"),
+                &SwarmId::from("ahswtest"),
                 &Nickname::from("n"),
                 &name("cool-team"),
             );
@@ -268,7 +268,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
         let state_file = StateFile::new(
             path.clone(),
-            &SwarmId::from("ahstest"),
+            &SwarmId::from("ahswtest"),
             &Nickname::from("n"),
             &name("cool-team"),
         );
@@ -287,14 +287,14 @@ mod tests {
         std::fs::write(&path, br#"{"name":"stale","auto_reply":false,"junk":1}"#).unwrap();
         let state_file = StateFile::new(
             path.clone(),
-            &SwarmId::from("ahsfresh"),
+            &SwarmId::from("ahswfresh"),
             &Nickname::from("swift-cedar"),
             &name("cool-team"),
         );
         state_file.write(3, true);
         let parsed: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        assert_eq!(parsed["swarm"], "ahsfresh");
+        assert_eq!(parsed["swarm"], "ahswfresh");
         assert_eq!(parsed["name"], "cool-team");
         assert_eq!(parsed["nickname"], "swift-cedar");
         assert_eq!(parsed["participant_count"], 3);
@@ -309,7 +309,7 @@ mod tests {
         let path = unique_path("snapshot");
         let state_file = StateFile::new(
             path.clone(),
-            &SwarmId::from("ahsround"),
+            &SwarmId::from("ahswround"),
             &Nickname::from("treat-empire"),
             &name("cool-team"),
         );
@@ -337,10 +337,10 @@ mod tests {
         std::fs::write(&path, b"not json").unwrap();
         assert!(super::read_snapshot(&path).is_err());
         // JSON object missing the `ready` / `last_updated` fields the gate needs.
-        std::fs::write(&path, br#"{"swarm":"ahsx","name":"n"}"#).unwrap();
+        std::fs::write(&path, br#"{"swarm":"ahswx","name":"n"}"#).unwrap();
         assert!(super::read_snapshot(&path).is_err());
         // Has `ready` but still missing `last_updated`.
-        std::fs::write(&path, br#"{"ready":true,"swarm":"ahsround"}"#).unwrap();
+        std::fs::write(&path, br#"{"ready":true,"swarm":"ahswround"}"#).unwrap();
         assert!(super::read_snapshot(&path).is_err());
         let _ = std::fs::remove_file(&path);
     }

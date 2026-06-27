@@ -2,7 +2,7 @@
 //! down").
 //!
 //! A swarm created with `--advertise[=<name>]` re-broadcasts its own
-//! `ahs…` id into a **directory**; `ahs discover` browses it. A directory
+//! `ahsw…` id into a **directory**; `ahsw discover` browses it. A directory
 //! is not a server — it is itself a well-known public [`Swarm`] derived
 //! deterministically from its name, so a publisher and a discoverer that
 //! name the same directory derive the same swarm and mesh over the
@@ -35,7 +35,7 @@ use crate::protocol::{MessageBody, SwarmId};
 const DIRECTORY_BASE_SEED: [u8; 32] = *b"agent-habilis-swarm/directory/v1";
 
 /// The well-known [`Swarm`] for a directory, reached over `lookups`. Both
-/// `--advertise <name>` and `ahs discover --directory <name>` call this; the
+/// `--advertise <name>` and `ahsw discover --directory <name>` call this; the
 /// seed + rendezvous are name-derived (so they're identical regardless of
 /// `lookups`), but the **topic** mixes in the config bytes — which include the
 /// lookups — so an advertiser and a discoverer meet only when they pass the
@@ -64,7 +64,7 @@ pub(crate) fn directory_config(lookups: LookupOpts) -> SwarmConfig {
     }
 }
 
-/// A directory advertisement: the advertised swarm's `ahs…` id plus its
+/// A directory advertisement: the advertised swarm's `ahsw…` id plus its
 /// live participant count. The id already encodes the swarm name and
 /// network mode, so a discoverer decodes those locally — nothing else need
 /// be on the wire. Serialized as a JSON object (room for future fields;
@@ -105,7 +105,7 @@ pub(crate) struct Listing {
     /// Local instant of the most recent ad; drives expiry.
     pub last_seen: Instant,
     /// Unix seconds when this swarm was *first* seen in the directory
-    /// (preserved across re-ads). Display-only — the `ahs discover` picker
+    /// (preserved across re-ads). Display-only — the `ahsw discover` picker
     /// renders it as an ISO-8601 timestamp.
     pub first_seen_unix: i64,
 }
@@ -124,7 +124,7 @@ pub(crate) enum ListingChange {
 }
 
 /// Upper bound on tracked listings. The directory is an open public mesh
-/// (anyone can mint and broadcast valid `ahs…` ids), so the map is
+/// (anyone can mint and broadcast valid `ahsw…` ids), so the map is
 /// capped — a new id past the cap evicts the stalest entry — mirroring
 /// the bounded-set discipline the rest of the daemon follows for
 /// adversary-reachable collections.

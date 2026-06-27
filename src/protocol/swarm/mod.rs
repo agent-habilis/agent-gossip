@@ -1,6 +1,6 @@
 //! The swarm identifier, at two levels:
 //!
-//! - [`SwarmId`] — the validated `ahs…` *string* (shallow: prefix +
+//! - [`SwarmId`] — the validated `ahsw…` *string* (shallow: prefix +
 //!   length + Base58 charset). Cheap boundary check at the CLI / IPC
 //!   edge. Code: [`id`].
 //! - [`Swarm`] — the *decoded* structure (32-byte seed + name +
@@ -34,7 +34,7 @@ pub(crate) use lookup::{
 pub use lookup::{LookupSet, RelayLadder, RelayLadderError, RelaySelection};
 pub use name::{NameError, SwarmName};
 
-const PREFIX: &str = "ahs";
+const PREFIX: &str = "ahsw";
 
 /// Id format version. A single byte reserved so the encoding can evolve;
 /// an unknown version is rejected.
@@ -46,7 +46,7 @@ const SEED_LEN: usize = 32;
 /// 1-byte length field).
 const NAME_MAX_BYTES: usize = super::ident::MAX_CHARS * 4;
 
-/// A swarm identifier — Base58Check payload with an `ahs` prefix.
+/// A swarm identifier — Base58Check payload with an `ahsw` prefix.
 ///
 /// The token carries the random `seed` plus the swarm's [`SwarmConfig`]
 /// (rate limit + lookups); **no peer address is ever stored**. The
@@ -221,7 +221,7 @@ impl FromStr for Swarm {
     fn from_str(s: &str) -> Result<Self> {
         let payload = s
             .strip_prefix(PREFIX)
-            .context("Invalid swarm prefix: expected 'ahs'")?;
+            .context("Invalid swarm prefix: expected 'ahsw'")?;
         let bytes = base58check_decode(payload)?;
         Self::decode_bytes(&bytes)
     }
@@ -257,7 +257,7 @@ mod swarm_tests {
     fn round_trip_loopback() {
         let swarm = Swarm::new(dummy_seed(), dummy_name(), SwarmConfig::loopback());
         let encoded = swarm.to_string();
-        assert!(encoded.starts_with("ahs"));
+        assert!(encoded.starts_with("ahsw"));
         let decoded: Swarm = encoded.parse().unwrap();
         assert_eq!(decoded.seed(), swarm.seed());
         assert_eq!(decoded.name, swarm.name);
@@ -414,7 +414,7 @@ mod swarm_tests {
             #[test]
             fn prop_prefix(seed in arb_seed(), name in arb_name()) {
                 let swarm = Swarm::new(seed, name, SwarmConfig::loopback());
-                prop_assert!(swarm.to_string().starts_with("ahs"));
+                prop_assert!(swarm.to_string().starts_with("ahsw"));
             }
 
             #[test]

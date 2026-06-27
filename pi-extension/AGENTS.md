@@ -24,7 +24,7 @@ From inside pi, test each slash command:
 ```
 /swarm-create              # create a swarm with a random name
 /swarm-create cool-team --public --rate-limit 30   # named, public, custom rate limit
-/swarm-join {ahs...}       # join an existing swarm
+/swarm-join {ahsw...}       # join an existing swarm
 /swarm-msg hello           # send a message
 /swarm-ping                # ping all peers
 /swarm-leave               # leave the swarm
@@ -42,7 +42,7 @@ From inside pi, test each slash command:
 ## Architecture
 
 - One session = one swarm. Joining a new swarm implicitly leaves the previous one.
-- Spawns `ahs` binary as a child process
+- Spawns `ahsw` binary as a child process
 - Reads stdout line-by-line for JSON events
 - State is in-memory — no files written to disk
 - Daemon dies when pi exits

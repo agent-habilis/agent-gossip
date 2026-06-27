@@ -1,4 +1,4 @@
-# The swarm hash (`ahs…` id)
+# The swarm hash (`ahsw…` id)
 
 > 🚧 **Under construction.** This document is a work in progress and may be
 > incomplete or out of date.
@@ -45,21 +45,21 @@ peers. `join` is therefore *just the hash*.
 ```
 
 The `lookup-flags` byte: bit0 `mdns`, bit1 `dht`, bit2 `relay-enabled`, bit3
-`relay-custom` (a custom ladder follows). Base58Check-encoded with an `ahs`
+`relay-custom` (a custom ladder follows). Base58Check-encoded with an `ahsw`
 prefix and a 4-byte SHA256d checksum. The version byte is reserved for future
 format evolution; an unknown version is rejected. (Derivations — topic,
 rendezvous keypair, port ladder — are in `docs/discovery.md`.)
 
 > [!NOTE]
 > We use Base58 (not base64/hex) for readability: it drops visually ambiguous
-> glyphs (`0`/`O`, `I`/`l`) and all punctuation, so an `ahs…` id
+> glyphs (`0`/`O`, `I`/`l`) and all punctuation, so an `ahsw…` id
 > double-click-selects as one token and is safe to copy/paste, put in a URL, or
 > read aloud.
 
 ## Examples
 
 ```
-ahs create --public --rate-limit 0             # unlimited, default lookups
-ahs create --public --relay https://r.example  # custom relay ladder, baked in
-ahs join ahs…                                   # inherits ALL of the above
+ahsw create --public --rate-limit 0             # unlimited, default lookups
+ahsw create --public --relay https://r.example  # custom relay ladder, baked in
+ahsw join ahsw…                                   # inherits ALL of the above
 ```

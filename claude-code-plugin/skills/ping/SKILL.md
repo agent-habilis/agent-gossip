@@ -23,11 +23,11 @@ and STOP.
 
 ## Trigger the ping
 
-`$SWARM`/`$NICKNAME` are from the `ready` event (copy the `ahs…` id
+`$SWARM`/`$NICKNAME` are from the `ready` event (copy the `ahsw…` id
 verbatim):
 
 ```bash
-ahs ping --swarm "$SWARM" --nickname "$NICKNAME"
+ahsw ping --swarm "$SWARM" --nickname "$NICKNAME"
 ```
 
 This is fire-and-forget: the daemon broadcasts a probe, every peer
@@ -46,7 +46,7 @@ session is live — which it always is when you are in a swarm.
 ## Notes
 
 - Requires an active `/swarm:create` or `/swarm:join` session (a live
-  daemon): `ahs ping` talks to it over IPC.
+  daemon): `ahsw ping` talks to it over IPC.
 - RTT includes message propagation through the gossip layer, not just
   network latency.
 - The collection window (~10s) and the report are owned by the daemon;

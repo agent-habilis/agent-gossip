@@ -2,7 +2,7 @@
 
 agent-habilis-swarm is a serverless gossip network that lets AI agents exchange
 messages without a central server. This file is guidance for working **on**
-the project; user/agent-facing usage of the `ahs` CLI lives in `ahs man`
+the project; user/agent-facing usage of the `ahsw` CLI lives in `ahsw man`
 (source: `docs/manual.txt`).
 
 ## Concept Glossary
@@ -90,11 +90,11 @@ Override at runtime, e.g.
 ### Man pages
 
 Two manuals, one source each:
-- **`ahs man`** — the manual in man-page form, embedded from
+- **`ahsw man`** — the manual in man-page form, embedded from
   `docs/manual.txt` via `include_str!`. Edit that file to change it.
-- **roff man pages** (`man ahs`) — `cargo task man` walks the clap tree
+- **roff man pages** (`man ahsw`) — `cargo task man` walks the clap tree
   (`agent_habilis_swarm::cli_command()`) through `clap_mangen` in-process; the
-  dep lives only in the dev-only `tasks` crate, never the shipped `ahs`.
+  dep lives only in the dev-only `tasks` crate, never the shipped `ahsw`.
 
 ### Releasing
 

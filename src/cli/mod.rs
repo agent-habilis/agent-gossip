@@ -1,4 +1,4 @@
-//! The `ahs` command-line interface: the clap-derived argument shape
+//! The `ahsw` command-line interface: the clap-derived argument shape
 //! lives in [`args`], the live `discover` picker in [`discover`], and the
 //! per-subcommand handlers + [`dispatch`] here. `lib.rs::run_cli` parses
 //! argv and calls `dispatch`; each handler is the thin glue between the
@@ -29,7 +29,7 @@ use args::{
     SharedServerOpts, StateAction, StateOpts,
 };
 
-/// `join` has no `--public`/`--name`: both are encoded in the `ahs…`
+/// `join` has no `--public`/`--name`: both are encoded in the `ahsw…`
 /// identifier and auto-detected. Without this, clap rejects them with
 /// a generic "unexpected argument" + a misleading "pass as a value"
 /// tip; this gives the real reason instead.
@@ -140,7 +140,7 @@ async fn run_session(resolved: Resolved, shared: SharedServerOpts) -> Result<()>
     );
     // Nag once at startup if an installed integration has fallen behind this
     // binary. CLI-only: the embed/MCP paths pass `None` so in-process tests
-    // stay hermetic. `ahs status` is the on-demand counterpart.
+    // stay hermetic. `ahsw status` is the on-demand counterpart.
     let drift = agent::home_dir()
         .ok()
         .and_then(|home| agent::drift_warning(&home));
@@ -193,7 +193,7 @@ async fn create(opts: CreateOpts) -> Result<()> {
     run_session(resolved, opts.shared).await
 }
 
-/// Join an existing swarm by its identifier (ahs...), a domain, or a
+/// Join an existing swarm by its identifier (ahsw...), a domain, or a
 /// supported git repo URL. The swarm's config (lookups + rate limit) is
 /// decoded from the id — `join` takes no lookup/rate flags.
 async fn join(
@@ -408,7 +408,7 @@ async fn ready(opts: ReadyOpts) -> Result<()> {
             }
             Ok(_) => {}
             Err(error) => {
-                tracing::debug!(%error, path = %state_file.display(), "ahs ready: state-file read failed; retrying");
+                tracing::debug!(%error, path = %state_file.display(), "ahsw ready: state-file read failed; retrying");
             }
         }
         if tokio::time::Instant::now() >= deadline {

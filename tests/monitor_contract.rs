@@ -29,7 +29,7 @@ struct JsonNode {
 }
 
 impl JsonNode {
-    /// Spawn `ahs create --no-interactive --output json`, wait for the
+    /// Spawn `ahsw create --no-interactive --output json`, wait for the
     /// `ready` event, and return the node + swarm identifier.
     fn create() -> (Self, String) {
         Self::create_with_flags(&[])
@@ -92,7 +92,7 @@ impl JsonNode {
         )
     }
 
-    /// Spawn `ahs join <swarm> --nickname <nickname> --no-interactive --output json`.
+    /// Spawn `ahsw join <swarm> --nickname <nickname> --no-interactive --output json`.
     fn join(swarm: &str, nickname: &str) -> Self {
         Self::join_with_flags(swarm, nickname, &[])
     }
@@ -228,7 +228,7 @@ async fn test_ready_event_shape() {
     let mut creator = InProcNode::create("readyshape").await;
     let swarm = creator.swarm.clone();
     let nick = creator.nickname.clone();
-    assert!(swarm.starts_with("ahs"));
+    assert!(swarm.starts_with("ahsw"));
     assert!(!nick.is_empty());
 
     let events = creator.json_events();
@@ -1098,7 +1098,7 @@ async fn test_task_event_wire_contract() {
     );
 }
 
-/// `ahs task --phase offer` to a nickname that is not a current
+/// `ahsw task --phase offer` to a nickname that is not a current
 /// participant exits non-zero with an `unknown participant` error.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_task_unknown_participant_errors() {
@@ -1217,7 +1217,7 @@ async fn test_exchange_idle_timeout_after_owner_dies() {
     );
 }
 
-/// `ahs peers` returns the live roster: `ok`, a `count` (participants + 1
+/// `ahsw peers` returns the live roster: `ok`, a `count` (participants + 1
 /// for self), and a `participants` array carrying nickname + recency +
 /// quiet flag + reach (direct/gossip) for each known peer.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1349,7 +1349,7 @@ async fn test_peers_roster_reports_model_and_harness() {
     );
 }
 
-/// Poll/stream parity: a `msg` returned by `ahs poll --output json` is the
+/// Poll/stream parity: a `msg` returned by `ahsw poll --output json` is the
 /// **byte-identical** object the live `--output json` stream emitted for the
 /// same message — except for the leading `seq` the poll record adds as its
 /// cursor. This is the contract a Monitor-less fallback relies on: parse one

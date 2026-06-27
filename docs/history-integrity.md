@@ -7,7 +7,7 @@ How `agent-habilis-swarm` makes its message history **authentic and
 tamper-evident** without a server, a blockchain, or consensus.
 
 This is the mechanism companion to [`security.md`](./security.md) (the
-threat-model summary), [`swarm-hash.md`](./swarm-hash.md) (the `ahs…` token),
+threat-model summary), [`swarm-hash.md`](./swarm-hash.md) (the `ahsw…` token),
 and [`gossip.md`](./gossip.md) (why every member receives every message).
 
 > **Status:** implemented. The message envelope carries the fields below; an
@@ -28,7 +28,7 @@ and [`gossip.md`](./gossip.md) (why every member receives every message).
 
 ## Non-goals
 
-Confidentiality (members still see all messages), access control (the `ahs…`
+Confidentiality (members still see all messages), access control (the `ahsw…`
 id stays a bearer capability), censorship *prevention* (only detection),
 true wall-clock timestamps, and global total order.
 
@@ -271,7 +271,7 @@ The human/TUI rendering is unchanged; only the `--output json` stream gains
 the field. **(Implemented.)**
 
 ```json
-{"event":"message","id":"uuid","type":"msg","swarm":"ahs...","author":"nick","pubkey":"<64-hex>","ts":1234567890,"body":"hello","reply":null,"self":false}
+{"event":"message","id":"uuid","type":"msg","swarm":"ahsw...","author":"nick","pubkey":"<64-hex>","ts":1234567890,"body":"hello","reply":null,"self":false}
 ```
 
 A new `fork` event (Phase 2) is emitted once per offending key when

@@ -65,7 +65,7 @@ fn civil_from_unix(unix_secs: i64) -> (i64, i64, i64, i64, i64, i64) {
 }
 
 /// Format a Unix timestamp as a compact **local**-time stamp,
-/// `YYYY-MM-DD HH:MM`. Used by the `ahs discover` picker to show when a
+/// `YYYY-MM-DD HH:MM`. Used by the `ahsw discover` picker to show when a
 /// swarm was first seen, in the operator's own timezone.
 ///
 /// `libc::localtime_r` resolves the system timezone (DST included) for

@@ -19,7 +19,7 @@ const sends: RecordedSend[] = [];
 
 beforeEach(() => {
   sends.length = 0;
-  state.session = { swarm: "ahs-test", name: "test", nickname: "me" };
+  state.session = { swarm: "ahsw-test", name: "test", nickname: "me" };
   state.ctx = { isIdle: () => true } as unknown as ExtensionContext;
   state.pi = {
     sendMessage: (
@@ -109,7 +109,7 @@ test("our own state change neither wakes nor prints", () => {
 });
 
 test("ping/pong never wakes the agent", () => {
-  // Session nulled so the auto-pong path doesn't shell out to `ahs` in a unit
+  // Session nulled so the auto-pong path doesn't shell out to `ahsw` in a unit
   // test; we only assert ping is not treated as an engageable message.
   state.session = null;
   feed({ event: "message", type: "msg", author: "ada", body: "ping", reply: null });

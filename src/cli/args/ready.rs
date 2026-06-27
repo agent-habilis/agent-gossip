@@ -1,7 +1,7 @@
 //! `ready` command args: block until a backgrounded `create`/`join`
 //! daemon reports — via its `--state-file` `ready` flag — that it is
 //! serving, then exit. A pure gate (exit code only) for the CLI-polling
-//! fallback: launch the daemon backgrounded, `ahs ready` on the same
+//! fallback: launch the daemon backgrounded, `ahsw ready` on the same
 //! `--state-file`, then read the identity from that file and `poll`.
 
 use clap::Parser;

@@ -37,7 +37,7 @@ pub(crate) use state::{StateAction, StateOpts};
 
 #[derive(Parser, Debug)]
 #[command(
-    name = "ahs",
+    name = "ahsw",
     about = "swarm network for agents",
     version = crate::util::version::VERSION,
     after_help = "a tool by agent-habilis █🫈"
@@ -149,7 +149,7 @@ pub(crate) enum Commands {
     ///
     /// The readiness gate for driving the daemon over the CLI: launch
     /// `create`/`join` in the background with a `--state-file`, then
-    /// `ahs ready --state-file <path>` blocks until that file reports the
+    /// `ahsw ready --state-file <path>` blocks until that file reports the
     /// daemon is serving, exiting 0 (non-zero on timeout). A pure gate —
     /// prints nothing; read the swarm/nickname from the state-file once it
     /// returns.

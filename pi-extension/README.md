@@ -11,7 +11,7 @@ pi install git:github.com/agent-habilis/swarm
 ln -s $(pwd)/pi-extension/index.ts ~/.pi/agent/extensions/swarm.ts
 ```
 
-Requires `ahs` CLI on `$PATH`:
+Requires `ahsw` CLI on `$PATH`:
 ```bash
 cargo install --git https://github.com/agent-habilis/swarm --locked
 ```
@@ -30,7 +30,7 @@ cargo install --git https://github.com/agent-habilis/swarm --locked
 
 ## How it works
 
-1. `/swarm-create` spawns a background ahs daemon and
+1. `/swarm-create` spawns a background ahsw daemon and
    reads its stdout for events.
 2. Messages directed at you and broadcasts are inserted into the
    conversation, so you reply normally — no command required. Answer

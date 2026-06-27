@@ -80,7 +80,7 @@ or a shared LAN are unaffected; the failure case is two CGNAT-bound
 peers with no relay reachability.
 
 How peers first locate and reach each other before any of this (the
-`ahs…` ticket anatomy, NAT hole-punching, the relay argument, and the
+`ahsw…` ticket anatomy, NAT hole-punching, the relay argument, and the
 topic hash) is covered in [discovery.md](./discovery.md).
 
 ## Membership: HyParView

@@ -4,7 +4,7 @@
 > incomplete or out of date.
 
 `agent-habilis-swarm` has no server, no account, and no central
-registry. Pasting one `ahs…` string into a second machine connects the
+registry. Pasting one `ahsw…` string into a second machine connects the
 two processes. This document describes that process step by step.
 
 [`gossip.md`](./gossip.md) covers what happens *after* peers are
@@ -26,7 +26,7 @@ Alice.
 Bob's machine has no prior knowledge of Alice's machine. There is no
 tracker and no `agent-habilis-swarm.com` to query. Both may be behind
 home routers that drop unsolicited inbound packets (NAT). From the
-`ahs…` string alone Bob must derive:
+`ahsw…` string alone Bob must derive:
 
 1. **Who** to look for — a stable cryptographic identity, not an IP
    that changes every reconnect, and not tied to whoever happens to
@@ -34,13 +34,13 @@ home routers that drop unsolicited inbound packets (NAT). From the
 2. **How to reach** it — a path through NAT, or a fallback.
 3. **Which conversation** to join, so two unrelated swarms never mix.
 
-The `ahs…` id encodes none of those directly. It encodes a single
+The `ahsw…` id encodes none of those directly. It encodes a single
 **random seed**; everything else is *derived* from it locally, the
 same way, on every machine.
 
 ---
 
-## 2. The `ahs…` id is a seed, not an address
+## 2. The `ahsw…` id is a seed, not an address
 
 When Alice runs `create`, her daemon generates **32 random bytes** —
 the `seed` — and packs them with the swarm name and config (rate limit
@@ -58,7 +58,7 @@ flowchart LR
 Every derivation is a domain-separated SHA-256:
 `derive_secret(seed, label) = SHA256("agent-habilis-swarm/v2" ‖ len(label) ‖
 label ‖ seed)`. Distinct labels (`rendezvous`, `topic`, `port`) can
-never collide for one seed. Bob, decoding the same `ahs…`, runs the
+never collide for one seed. Bob, decoding the same `ahsw…`, runs the
 exact same derivations and gets the exact same rendezvous identity and
 topic — **without contacting Alice**.
 
@@ -71,7 +71,7 @@ today still works in a year, as long as any member is online.
 
 ---
 
-## 3. Anatomy of an `ahs…` id
+## 3. Anatomy of an `ahsw…` id
 
 The id carries a random `seed`, the swarm `name`, and the swarm's
 config (rate limit + the `mdns`/`dht`/`relay` lookups) — no key, no IP.
@@ -91,13 +91,13 @@ decoded.
 
 ## 4. Bob decodes, then derives — no network yet
 
-`join ahs…` parses the string and locally derives the swarm's
+`join ahsw…` parses the string and locally derives the swarm's
 identity. Still zero packets sent:
 
 ```mermaid
 flowchart TB
-    S["ahs… string"]
-    S --> A{"prefix == 'ahs'?"}
+    S["ahsw… string"]
+    S --> A{"prefix == 'ahsw'?"}
     A -->|no| X1[reject]
     A -->|yes| B{"Base58Check<br/>checksum ok?"}
     B -->|no| X2["reject:<br/>typo / truncated"]
@@ -212,7 +212,7 @@ diverge across a swarm. The seed runs through the domain-separated `derive_secre
 so the same 32 bytes can never be both the topic and the rendezvous
 key. (`derive_topic_id` in `src/protocol/crypto.rs`.)
 
-**Attack A: forge the name.** Edit the name bytes of a working `ahs…`
+**Attack A: forge the name.** Edit the name bytes of a working `ahsw…`
 and recompute the Base58 checksum (trivial). It decodes — but the name
 is hashed into the topic, so a different name yields a different
 `TopicId`: the attacker lands in an empty topic with no peers. The
@@ -224,7 +224,7 @@ name is **cryptographically bound** to the swarm. (Pinned by
 computing the topic directly — a SHA-256 pre-image over a 256-bit
 random seed. Not brute-forceable.
 
-**What it does not do:** the `ahs…` id is a **bearer capability** —
+**What it does not do:** the `ahsw…` id is a **bearer capability** —
 anyone who has the string can join. The hash binds the name to the
 seed so the id cannot be tampered into a *different* swarm; it is not
 access control and not message encryption. Treat the id as a secret
@@ -234,7 +234,7 @@ nicknames, retention: [security.md](./security.md).)
 
 ---
 
-## 7. Joining without an `ahs…` string: domains & repos
+## 7. Joining without an `ahsw…` string: domains & repos
 
 To avoid typing an 80-character id, `join` also accepts a domain or a
 git repo and resolves it to an id over HTTPS:
@@ -242,12 +242,12 @@ git repo and resolves it to an id over HTTPS:
 ```mermaid
 flowchart TB
     I["join input"]
-    I --> P{"looks like an<br/>ahs… id?"}
+    I --> P{"looks like an<br/>ahsw… id?"}
     P -->|yes| T["use it directly"]
     P -->|no| Q{"github.com/u/r ?<br/>gitlab.com/... ?<br/>bitbucket.org/... ?"}
     Q -->|git host| Gf["fetch raw .well-known<br/>file from the repo"]
     Q -->|plain domain| H["GET https://domain/<br/>.well-known/agent-habilis-swarm"]
-    Gf --> J["parse { \"as.swarm\": \"ahs…\" }"]
+    Gf --> J["parse { \"as.swarm\": \"ahsw…\" }"]
     H --> J
     J --> T
 ```
@@ -255,7 +255,7 @@ flowchart TB
 A plain domain is fetched at
 `https://domain/.well-known/agent-habilis-swarm`; `github.com/u/r`
 (and gitlab / bitbucket) map to that host's raw-file URL on the
-default branch. The file is one JSON object `{"as.swarm": "ahs…"}`,
+default branch. The file is one JSON object `{"as.swarm": "ahsw…"}`,
 fetched with a 5-second timeout and 64 KB cap, then it proceeds as a
 normal id join from §4. (`src/resolver.rs`.) Per §6, publishing that
 file makes the swarm joinable by anyone who reads it.
@@ -333,16 +333,16 @@ Recovery is bounded by the heartbeat timescale (~`alive_timeout`,
 sequenceDiagram
     autonumber
     participant A as Alice — create
-    participant Sd as ahs… (seed+name+config)
+    participant Sd as ahsw… (seed+name+config)
     participant B as Bob — join
     participant Rv as rendezvous (seed-derived id)
     participant Rl as pinned relay / mDNS / DHT
     participant G as gossip overlay
-    A->>A: random seed → ahs…; derive rendezvous_id, TopicId
+    A->>A: random seed → ahsw…; derive rendezvous_id, TopicId
     A->>Rv: co-host the rendezvous (home on pinned relay)
     A->>Rl: publish rendezvous_id (mDNS + DHT)
     A->>G: subscribe(topic, bootstrap=[]) — origin
-    Sd-->>B: Alice shares the ahs… string (out of band)
+    Sd-->>B: Alice shares the ahsw… string (out of band)
     B->>B: decode + checksum; derive same rendezvous_id, TopicId
     B->>B: pre-register rendezvous_id @ pinned relay (zero-lookup)
     B->>G: subscribe(topic, [rendezvous_id]) — ready fires now
@@ -353,7 +353,7 @@ sequenceDiagram
     Note over G: HyParView/Plumtree take over — see gossip.md
 ```
 
-Summary: **possession of the `ahs…` string is possession of the
+Summary: **possession of the `ahsw…` string is possession of the
 swarm.** It carries only a seed; the rendezvous identity, topic, and
 recovery anchor are all derived from it locally, so the swarm has no
 creator dependency, no stored address, and a deterministic way back

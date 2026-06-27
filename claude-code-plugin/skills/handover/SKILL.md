@@ -96,7 +96,7 @@ continue below.
 Now that the task is set, choose who runs it. Query the live roster:
 
 ```bash
-ahs peers --swarm "$SWARM" --nickname "$NICKNAME"
+ahsw peers --swarm "$SWARM" --nickname "$NICKNAME"
 ```
 
 It returns
@@ -126,7 +126,7 @@ The plan (`$BRIEF`) was already approved in plan mode and the worker picked,
 so send straight away:
 
 ```bash
-ahs exchange --swarm "$SWARM" --nickname "$NICKNAME" --to "$TARGET" \
+ahsw exchange --swarm "$SWARM" --nickname "$NICKNAME" --to "$TARGET" \
   --exchange-id "$EXCHANGE_ID" --kind handover --phase offer --text "$BRIEF"
 ```
 

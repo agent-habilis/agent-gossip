@@ -2,4 +2,4 @@
 source: src/output/tests.rs
 expression: "snap_exchange(ExchangeKind::Handover, ExchangePhase::Offer,\n\"## Task\\nport the parser\")"
 ---
-{"event":"exchange","id":"00000000-0000-0000-0000-000000000001","swarm":"ahstest","author":"alice-bot","ts":1700000000,"to":"calm-otter","exchange_id":"550e8400-e29b-41d4-a716-446655440000","kind":"handover","phase":"offer","body":"## Task\nport the parser","display":"🐝️ exchange handover offer `<alice-bot>` → `<calm-otter>`: ## Task\nport the parser","self":false}
+{"event":"exchange","id":"00000000-0000-0000-0000-000000000001","swarm":"ahswtest","author":"alice-bot","ts":1700000000,"to":"calm-otter","exchange_id":"550e8400-e29b-41d4-a716-446655440000","kind":"handover","phase":"offer","body":"## Task\nport the parser","display":"🐝️ exchange handover offer `<alice-bot>` → `<calm-otter>`: ## Task\nport the parser","self":false}

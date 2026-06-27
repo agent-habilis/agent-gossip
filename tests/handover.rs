@@ -10,7 +10,7 @@
 //! wire the skills consume.
 //!
 //! The CLI/stdout/Unix-socket wire contract (the exact `{"event":"handover"}`
-//! line, the unknown-participant error, and `ahs peers`) lives in
+//! line, the unknown-participant error, and `ahsw peers`) lives in
 //! `monitor_contract.rs`; the MCP surface in `mcp_stdio.rs`.
 
 mod common;

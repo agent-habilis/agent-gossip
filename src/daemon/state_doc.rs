@@ -196,7 +196,7 @@ mod tests {
 
     fn fixture() -> (SwarmId, Nickname) {
         (
-            SwarmId::from("ahstest"),
+            SwarmId::from("ahswtest"),
             Nickname::from("test-node"),
         )
     }
