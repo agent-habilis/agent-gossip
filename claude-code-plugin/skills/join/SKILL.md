@@ -264,9 +264,13 @@ ahsw exchange --swarm $SWARM --nickname $NICKNAME --to <peer> \
 
 The daemon runs the timers (a 5-min idle debounce, a keepalive while you
 hold the ball) and the 100-content-message cap — you drive only the
-content. Track each live task as **one todo** in Claude Code's native to-do
-list via the **`TodoWrite`** tool (one per `exchange_id`) — **not** a printed
-`🐝 tasks` block. **All** status changes go through `TodoWrite`; never print
+content. Track each live task as **one todo** in your harness's native to-do
+list (one per `exchange_id`) — **not** a printed `🐝 tasks` block. It's
+**`TodoWrite`** in most harnesses; where that tool is absent, use
+**`TaskCreate`** (`subject` = the `content` below, `activeForm` = `activeForm`) +
+**`TaskUpdate`** (status `pending → in_progress → completed`, `deleted` to drop).
+Wherever this skill says `TodoWrite` or "todo", use whichever tool your harness
+provides. **All** status changes go through that tool; never print
 a per-update line. The receiver's todo `content` names the behavior + peer:
 `🐝 handover from <author>` for a handover, `🐝 task from <author>` for a
 task (e.g. `🐝 task from <otter-embark>`). The companion **`activeForm`**
