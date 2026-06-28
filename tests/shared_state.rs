@@ -315,3 +315,60 @@ async fn two_agents_ping_pong_via_shared_state() {
     alice.leave().await;
     bob.leave().await;
 }
+
+/// Compare-and-set (`--if-doc-hash`): a patch guarded by a stale document hash
+/// is rejected without mutating; the same patch with the current hash applies.
+/// This is the optimistic-concurrency guard that stops a concurrent peer's
+/// change from being silently clobbered. The guard is local to the author, so a
+/// single node exercises it fully.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cas_rejects_stale_hash_and_accepts_current() {
+    let node = InProcNode::create("ss-cas").await;
+    // Each patch adds a *distinct* key, so the fold is order-independent — the
+    // test exercises the CAS guard, not the `(timestamp, id)` tie-break that a
+    // same-key replace within one second would expose.
+    node.apply_patch(json!([{"op": "add", "path": "/seed", "value": "x"}]))
+        .await;
+
+    let before = node.state_document().await;
+    let hash = agent_habilis_swarm::document_hash(&before);
+
+    // A guard hash that doesn't match the current document is rejected, and the
+    // document is left unchanged.
+    let stale = node
+        .try_apply_patch_if(
+            json!([{"op": "add", "path": "/a", "value": 1}]),
+            Some("deadbeef".to_owned()),
+        )
+        .await;
+    assert!(stale.is_err(), "stale-hash patch must be rejected");
+    assert!(
+        stale.unwrap_err().to_string().contains("stale document"),
+        "rejection names the cause"
+    );
+    assert_eq!(
+        node.state_document().await,
+        before,
+        "a rejected CAS patch must not mutate the document"
+    );
+
+    // The same patch with the *current* hash applies.
+    node.try_apply_patch_if(
+        json!([{"op": "add", "path": "/a", "value": 1}]),
+        Some(hash.clone()),
+    )
+    .await
+    .expect("current-hash patch applies");
+    assert_eq!(node.state_document().await["a"], json!(1));
+
+    // The now-superseded hash is stale and re-rejected.
+    let after = node
+        .try_apply_patch_if(
+            json!([{"op": "add", "path": "/b", "value": 2}]),
+            Some(hash),
+        )
+        .await;
+    assert!(after.is_err(), "a superseded hash must be rejected");
+
+    node.leave().await;
+}

@@ -13,7 +13,9 @@ use std::time::Duration;
 use crate::daemon::state::{EventLoopState, PingRound, PollResponder};
 use crate::output;
 use crate::protocol::{Message, Nickname, SwarmId};
-use crate::transport::ipc::{IpcCommand, json_ack, json_error, json_ok_msg, json_rate_limited};
+use crate::transport::ipc::{
+    IpcCommand, json_ack, json_error, json_ok_msg, json_rate_limited, json_stale,
+};
 use crate::util::tuning::ping_window_secs;
 
 use crate::gossip::{
@@ -133,33 +135,44 @@ pub(crate) async fn handle_ipc_command(
             let _ = resp_tx.send(peers_response(state));
             false
         }
-        IpcCommand::StatePatch { swarm: _, patch } => {
-            match broadcast_state_patch(swarm, author, patch, state, sender, output).await {
-                Ok(StatePatchOutcome::Applied) => {
-                    let _ = resp_tx.send(json_ack());
-                    true
-                }
-                Ok(StatePatchOutcome::RateLimited) => {
-                    let _ = resp_tx.send(json_rate_limited());
-                    false
-                }
-                Ok(StatePatchOutcome::Invalid(why)) => {
-                    let _ = resp_tx.send(json_error(&why));
-                    false
-                }
-                Err(error) => {
-                    let _ = resp_tx.send(json_error(&error.to_string()));
-                    false
-                }
-            }
+        IpcCommand::StatePatch {
+            swarm: _,
+            patch,
+            if_doc_hash,
+        } => {
+            let outcome =
+                broadcast_state_patch(swarm, author, patch, if_doc_hash, state, sender, output)
+                    .await;
+            let (response, broadcast) = state_patch_response(outcome);
+            let _ = resp_tx.send(response);
+            broadcast
         }
         IpcCommand::StateGet { swarm: _ } => {
-            let document = crate::daemon::state_doc::derive_document(&state.state_log);
-            let _ =
-                resp_tx.send(serde_json::json!({ "ok": true, "document": document }).to_string());
+            let _ = resp_tx.send(state_get_response(state));
             false
         }
     }
+}
+
+/// Map a state-patch outcome to its IPC response JSON and whether anything was
+/// broadcast (so the caller can refresh the heartbeat clock). A `Stale` conflict
+/// gets the structured `stale` marker; only `Applied` counts as a broadcast.
+fn state_patch_response(outcome: anyhow::Result<StatePatchOutcome>) -> (String, bool) {
+    match outcome {
+        Ok(StatePatchOutcome::Applied) => (json_ack(), true),
+        Ok(StatePatchOutcome::RateLimited) => (json_rate_limited(), false),
+        Ok(StatePatchOutcome::Invalid(why)) => (json_error(&why), false),
+        Ok(StatePatchOutcome::Stale(why)) => (json_stale(&why), false),
+        Err(error) => (json_error(&error.to_string()), false),
+    }
+}
+
+/// The `ahsw state get` response: the derived document plus its `doc_hash`
+/// (the compare-and-set token a later `state patch --if-doc-hash` passes back).
+fn state_get_response(state: &EventLoopState) -> String {
+    let document = crate::daemon::state_doc::derive_document(&state.state_log);
+    let doc_hash = crate::daemon::state_doc::document_hash(&document);
+    serde_json::json!({ "ok": true, "document": document, "doc_hash": doc_hash }).to_string()
 }
 
 /// Serialize the live roster snapshot as the `ahsw peers` response.

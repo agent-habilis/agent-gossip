@@ -440,15 +440,64 @@ pub(super) fn print_exchange_json(msg: &Message, is_self: bool) {
     emit(&format_exchange_json(msg, is_self));
 }
 
-/// `display` line for a `state` event: `` 🐝️ `<author>` changed shared state ``,
-/// or `🐝️ you changed shared state` for your own write. A peer's nick is
-/// backtick-wrapped like every other event so the skill's markdown renderer
-/// keeps the `<nick>`; "you" is plain text (not a nick).
-fn state_display(author: &str, is_self: bool) -> String {
-    if is_self {
-        "🐝️ you changed shared state".to_owned()
+/// Make a peer-controlled patch path safe to splice into the `state` display.
+/// The path is attacker-influenced (the frozen subset only requires a non-empty
+/// path with a `/`), and the display feeds both a markdown renderer and a raw
+/// terminal `eprintln`, so strip control characters (a `\n` would forge a second
+/// line; `MessageBody` permits newlines) and backticks (which would unbalance
+/// the code span around the nick), and cap the length so one op can't flood it.
+fn sanitize_path(path: &str) -> String {
+    path.chars()
+        .filter(|ch| !ch.is_control() && *ch != '`')
+        .take(80)
+        .collect()
+}
+
+/// The `changed …` clause for a `state` display, built from a `State` body's
+/// already-parsed op array: the touched paths (sanitized, deduped, capped so the
+/// line stays bounded), or `shared state` when no paths are present. Lets the
+/// display name *what* changed so a reader needn't shadow it with a chat line.
+fn state_change_summary(ops: Option<&serde_json::Value>) -> String {
+    const MAX: usize = 6;
+    let mut paths: Vec<String> = Vec::new();
+    if let Some(arr) = ops.and_then(serde_json::Value::as_array) {
+        for op in arr {
+            if let Some(path) = op.get("path").and_then(serde_json::Value::as_str) {
+                let clean = sanitize_path(path);
+                if !clean.is_empty() && !paths.iter().any(|seen| seen == &clean) {
+                    paths.push(clean);
+                }
+            }
+        }
+    }
+    if paths.is_empty() {
+        "shared state".to_owned()
+    } else if paths.len() > MAX {
+        format!("{} (+{} more)", paths[..MAX].join(", "), paths.len() - MAX)
     } else {
-        format!("🐝️ `<{author}>` changed shared state")
+        paths.join(", ")
+    }
+}
+
+/// The `changed …` clause from a raw `State` body (parses once, then defers to
+/// [`state_change_summary`]). For the human render path, which holds the body
+/// string rather than the parsed ops.
+pub(super) fn state_change_summary_from_body(body: &str) -> String {
+    let ops = serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|parsed| parsed.get("ops").cloned());
+    state_change_summary(ops.as_ref())
+}
+
+/// `display` line for a `state` event: `` 🐝️ `<author>` changed /board, /turn ``,
+/// or `🐝️ you changed …` for your own write (`shared state` when the touched
+/// paths aren't known). A peer's nick is backtick-wrapped like every other event
+/// so the skill's markdown renderer keeps the `<nick>`; "you" is plain text.
+fn state_display(author: &str, is_self: bool, what: &str) -> String {
+    if is_self {
+        format!("🐝️ you changed {what}")
+    } else {
+        format!("🐝️ `<{author}>` changed {what}")
     }
 }
 
@@ -461,10 +510,12 @@ pub(super) fn format_state_json(
     is_self: bool,
 ) -> String {
     // The op array lives inside the State body `{"k":"patch","ops":[...]}`.
-    let patch = serde_json::from_str::<serde_json::Value>(event.body.as_str())
+    // Parse the State body once: the `ops` array feeds both the `patch` field
+    // (the delta) and the touched-paths summary in the `display`.
+    let ops = serde_json::from_str::<serde_json::Value>(event.body.as_str())
         .ok()
-        .and_then(|body| body.get("ops").cloned())
-        .unwrap_or(serde_json::Value::Null);
+        .and_then(|body| body.get("ops").cloned());
+    let what = state_change_summary(ops.as_ref());
     serde_json::to_string(&StateLine {
         event: "state",
         id: event.id.as_str(),
@@ -473,9 +524,9 @@ pub(super) fn format_state_json(
         author: event.author.as_str(),
         pubkey: (!event.pubkey.is_empty()).then_some(event.pubkey.as_str()),
         ts: event.timestamp,
-        patch,
+        patch: ops.unwrap_or(serde_json::Value::Null),
         document,
-        display: state_display(event.author.as_str(), is_self),
+        display: state_display(event.author.as_str(), is_self, &what),
         is_self,
     })
     .expect("state event serialization should never fail")

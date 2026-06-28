@@ -93,6 +93,10 @@ pub(crate) enum IpcCommand {
     StatePatch {
         swarm: SwarmId,
         patch: serde_json::Value,
+        /// Optional compare-and-set guard — the `doc_hash` from the caller's
+        /// last `state_get`. Rejected if the document changed since.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        if_doc_hash: Option<String>,
     },
     /// Read the current derived shared-state document.
     #[serde(rename = "state_get")]
@@ -152,6 +156,14 @@ pub(crate) fn json_error(error: &str) -> String {
 /// (it is a deliberate drop, not a failure).
 pub(crate) fn json_rate_limited() -> String {
     serde_json::json!({"ok": false, "rate_limited": true}).to_string()
+}
+
+/// Response for a state patch rejected by the `--if-doc-hash` compare-and-set
+/// guard. The `stale` flag lets a client tell a **retryable** conflict (re-read
+/// and retry) apart from a structurally-bad patch, without scraping the error
+/// text; `error` still carries the human-readable reason.
+pub(crate) fn json_stale(error: &str) -> String {
+    serde_json::json!({"ok": false, "stale": true, "error": error}).to_string()
 }
 
 /// Bind the local IPC socket synchronously, returning the listening

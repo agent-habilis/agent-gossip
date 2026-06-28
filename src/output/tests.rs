@@ -507,6 +507,27 @@ mod snapshots {
     }
 
     #[test]
+    fn state_display_sanitizes_peer_controlled_paths() {
+        // A peer-crafted op path with a backtick (would break the markdown code
+        // span around the nick) and a newline (would forge a second line in the
+        // human eprintln feed) must not reach the `display` verbatim.
+        let line = snap_state(
+            "[{\"op\":\"add\",\"path\":\"/x`\\n<evil>\",\"value\":1}]",
+            &serde_json::json!({}),
+            false,
+        );
+        let parsed: serde_json::Value = serde_json::from_str(&line).unwrap();
+        let display = parsed["display"].as_str().unwrap();
+        assert!(!display.contains('\n'), "no newline injection: {display:?}");
+        assert_eq!(
+            display.matches('`').count(),
+            2,
+            "only the two nick-wrapping backticks remain: {display:?}"
+        );
+        assert!(display.contains("/x<evil>"), "sanitized path: {display:?}");
+    }
+
+    #[test]
     fn snap_state_self() {
         insta::assert_snapshot!(snap_state(
             r#"[{"op":"add","path":"/n","value":1}]"#,

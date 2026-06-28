@@ -231,6 +231,19 @@ pub(crate) fn derive_document(state_log: &StateLog) -> Value {
     doc.value
 }
 
+/// Stable content hash of a derived document, for optimistic concurrency
+/// (compare-and-set). `serde_json` serializes object keys in sorted order
+/// (`preserve_order` is off in `Cargo.toml`), so the bytes — and thus the hash —
+/// are deterministic for a given document regardless of the order its patches
+/// folded. `state get` returns this; `state patch --if-doc-hash` compares the
+/// caller's value against the current document's, rejecting a stale write.
+/// Re-exported at the crate root for embed/SDK consumers doing CAS.
+#[must_use]
+pub fn document_hash(doc: &Value) -> String {
+    let bytes = serde_json::to_vec(doc).unwrap_or_default();
+    crate::protocol::identity::content_hash_hex(&bytes)
+}
+
 /// Validate a patch at the *write* boundary: it must be in the frozen subset
 /// **and** apply cleanly to the current document. No size check here — the
 /// op-array is not the signed envelope; `Message::serialize` is the single size
@@ -354,5 +367,22 @@ mod tests {
         )
         .unwrap_err();
         assert!(missing.contains("does not apply"), "got: {missing}");
+    }
+
+    #[test]
+    fn document_hash_is_content_addressed_and_key_order_independent() {
+        use super::document_hash;
+        // Same content, keys written in a different order in the literal — the
+        // derived `Value` is identical (Map is sorted, `preserve_order` off), so
+        // the hash matches. This is what makes CAS reliable across peers.
+        let doc = json!({"turn": "b", "n": 1});
+        let reordered = json!({"n": 1, "turn": "b"});
+        assert_eq!(document_hash(&doc), document_hash(&reordered));
+        // Different content ⇒ different hash.
+        assert_ne!(
+            document_hash(&doc),
+            document_hash(&json!({"turn": "r", "n": 1}))
+        );
+        assert_eq!(document_hash(&doc).len(), 64, "sha256 hex");
     }
 }

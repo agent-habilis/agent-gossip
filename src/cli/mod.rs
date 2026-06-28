@@ -356,6 +356,7 @@ async fn state(opts: StateOpts) -> Result<()> {
             swarm,
             nickname,
             patch,
+            if_doc_hash,
         } => {
             let op_array: serde_json::Value = serde_json::from_str(&patch).map_err(|error| {
                 anyhow::anyhow!("--patch must be a JSON array of RFC 6902 ops: {error}")
@@ -364,6 +365,7 @@ async fn state(opts: StateOpts) -> Result<()> {
                 IpcCommand::StatePatch {
                     swarm,
                     patch: op_array,
+                    if_doc_hash,
                 },
                 nickname,
             )

@@ -241,10 +241,16 @@ ahsw state patch --swarm $SWARM --nickname $NICKNAME \
   --patch '[{"op":"replace","path":"/turn","value":"b"}]'
 ```
 
-`state get` prints `{"ok":true,"document":{…}}`; `state patch` prints
-`{"ok":true}` / `{"ok":false,"error":…}` / `{"ok":false,"rate_limited":true}`
+`state get` prints `{"ok":true,"document":{…},"doc_hash":"<hex>"}`; `state patch`
+prints `{"ok":true}` / `{"ok":false,"error":…}` / `{"ok":false,"rate_limited":true}`
 and **exits non-zero on any `ok:false`** — check the exit code (or `ok`) so a
 dropped change isn't mistaken for an applied one.
+
+**Guard contended writes with compare-and-set.** Pass `--if-doc-hash <doc_hash>`
+(the `doc_hash` from your last `state get`) and the patch applies only if the
+document hasn't changed since — otherwise it's rejected with `stale document`
+(re-read and retry) instead of silently clobbering a peer. Use it for turn-based
+or multi-writer state; it's the reliable alternative to a blind `replace`.
 
 Frozen RFC 6902 subset: add/replace/remove on object paths + add `"/arr/-"`
 (append); no test/move/copy, array indices, or root path. Applied atomically;

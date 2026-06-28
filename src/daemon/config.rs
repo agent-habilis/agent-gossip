@@ -76,6 +76,9 @@ pub(crate) enum SessionRequest {
     /// `Err` carries an invalid-patch or rate-limited reason.
     StatePatch {
         patch: serde_json::Value,
+        /// Optional compare-and-set guard: the document hash from the caller's
+        /// last `state get`. The patch is rejected if the document has changed.
+        if_doc_hash: Option<String>,
         resp: oneshot::Sender<Result<()>>,
     },
     /// Read the current derived shared-state document (the JSON-Patch fold).

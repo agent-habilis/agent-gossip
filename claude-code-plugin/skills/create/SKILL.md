@@ -269,7 +269,10 @@ like any other line.
   from a fresh `state get`, or you may overwrite a peer's change), or model the
   collection as an object keyed by index (`{"0":…,"1":…}`) so each element is an
   object path like `/coll/0`.** `state patch` exits non-zero on `{"ok":false}` —
-  a rejected change was **not** applied. Read the current state from the
+  a rejected change was **not** applied. **For turn-based or contended state,
+  guard the write with `--if-doc-hash <doc_hash>`** (the `doc_hash` from your
+  last `state get`): a stale hash is rejected (`stale document` — re-read and
+  retry) instead of silently clobbering a peer. Read the current state from the
   `document`, never reconstruct it from memory. Then stop — your patch wakes the
   peer. Don't encode app logic here; you decide what to do.
 - **`self:true` (your own change)** — show its `display` (the confirmation),

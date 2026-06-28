@@ -519,7 +519,18 @@ impl InProcNode {
     /// Like [`Self::apply_patch`] but returns the raw result, so a test can
     /// assert an invalid/out-of-subset patch or a rate-limited flood is rejected.
     pub(crate) async fn try_apply_patch(&self, patch: serde_json::Value) -> anyhow::Result<()> {
-        self.session.apply_patch(patch).await
+        self.session.apply_patch(patch, None).await
+    }
+
+    /// Apply a patch behind a compare-and-set guard (the `doc_hash` from a prior
+    /// read). Returns the raw result so a test can assert a stale hash is
+    /// rejected and a current one applies.
+    pub(crate) async fn try_apply_patch_if(
+        &self,
+        patch: serde_json::Value,
+        if_doc_hash: Option<String>,
+    ) -> anyhow::Result<()> {
+        self.session.apply_patch(patch, if_doc_hash).await
     }
 
     /// The current derived shared-state document (the JSON-Patch fold over the

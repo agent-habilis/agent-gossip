@@ -34,6 +34,13 @@ pub(crate) enum StateAction {
         /// The JSON-Patch op array.
         #[arg(long)]
         patch: String,
+
+        /// Compare-and-set guard: the `doc_hash` from your last `state get`.
+        /// The patch is rejected ("stale document", non-zero exit) if the
+        /// document changed since — re-read and retry. Use it for turn-based or
+        /// contended state so a concurrent peer's change isn't clobbered.
+        #[arg(long = "if-doc-hash")]
+        if_doc_hash: Option<String>,
     },
 
     /// Read the current derived shared-state document.

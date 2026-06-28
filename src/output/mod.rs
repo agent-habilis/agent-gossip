@@ -553,11 +553,12 @@ impl Output {
     }
 
     fn print_state_human(&self, event: &Message, is_self: bool) {
+        let what = json::state_change_summary_from_body(event.body.as_str());
         if is_self {
-            eprintln!("🐝️ you changed shared state");
+            eprintln!("🐝️ you changed {what}");
         } else {
             let (open, close) = self.nick_ansi(event.author.as_str(), stderr_color());
-            eprintln!("🐝️ {open}<{}>{close} changed shared state", event.author);
+            eprintln!("🐝️ {open}<{}>{close} changed {what}", event.author);
         }
     }
 

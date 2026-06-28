@@ -130,8 +130,12 @@ impl Session {
     /// # Errors
     /// Fails if the patch is invalid/inapplicable, rate-limited, or the event
     /// loop has stopped.
-    pub(super) async fn apply_state_patch(&self, patch: serde_json::Value) -> Result<()> {
-        self.inner.apply_patch(patch).await
+    pub(super) async fn apply_state_patch(
+        &self,
+        patch: serde_json::Value,
+        if_doc_hash: Option<String>,
+    ) -> Result<()> {
+        self.inner.apply_patch(patch, if_doc_hash).await
     }
 
     /// The current derived shared-state document (the JSON-Patch fold).

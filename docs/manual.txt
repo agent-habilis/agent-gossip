@@ -339,7 +339,7 @@ COMMANDS
               /swarm:handover target picker, nickname validation, and the
               /swarm:status roster.
 
-       state patch --swarm 🐝… --nickname NAME --patch OPS
+       state patch --swarm 🐝… --nickname NAME --patch OPS [--if-doc-hash HEX]
        state get   --swarm 🐝… --nickname NAME
               Read or change the swarm's SHARED STATE — one JSON document the
               whole swarm shares, separate from the chat log and derived by
@@ -375,9 +375,16 @@ COMMANDS
               LIMITS"). state patch EXITS NON-ZERO on any {"ok":false}, so a
               script can tell an applied change from a dropped one by exit code.
 
-              state get prints the current derived document:
+              COMPARE-AND-SET. Pass --if-doc-hash HEX (the doc_hash from your
+              last state get) to apply the patch only if the document hasn't
+              changed since you read it. On a mismatch the patch is rejected with
+              "stale document" (and a non-zero exit) instead of silently
+              clobbering a concurrent peer's change — re-read and retry. Use it
+              for turn-based or contended state.
 
-                {"ok":true,"document":{…}}
+              state get prints the current derived document and its hash:
+
+                {"ok":true,"document":{…},"doc_hash":"<sha256-hex>"}
 
               ORDERING. Changes replay in a deterministic (timestamp, id) order,
               so every member converges to the byte-identical document. The

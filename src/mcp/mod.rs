@@ -269,6 +269,12 @@ struct ApplyStatePatchArgs {
     /// `test`/`move`/`copy`, numeric array indices, or root path "". Validated
     /// against the current document and rejected if it does not apply cleanly.
     patch: serde_json::Value,
+    /// Optional compare-and-set guard: the `doc_hash` from your last
+    /// `get_state`. The patch is rejected with a "stale document" error if the
+    /// document changed since — re-`get_state` and retry. Use it for turn-based
+    /// or contended state so a concurrent peer's change isn't clobbered.
+    #[serde(default)]
+    if_doc_hash: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -719,7 +725,7 @@ impl AgentSwarmServer {
     ) -> Result<CallToolResult, McpError> {
         let guard = self.session.lock().await;
         let session = guard.as_ref().ok_or_else(not_in_swarm_error)?;
-        match session.apply_state_patch(args.patch).await {
+        match session.apply_state_patch(args.patch, args.if_doc_hash).await {
             Ok(()) => ok_json(serde_json::json!({ "ok": true })),
             Err(error) => Err(McpError::invalid_params(error.to_string(), None)),
         }
@@ -735,7 +741,8 @@ impl AgentSwarmServer {
         let guard = self.session.lock().await;
         let session = guard.as_ref().ok_or_else(not_in_swarm_error)?;
         let document = session.state_document().await.map_err(to_mcp_error)?;
-        ok_json(serde_json::json!({ "document": document }))
+        let doc_hash = crate::daemon::state_doc::document_hash(&document);
+        ok_json(serde_json::json!({ "document": document, "doc_hash": doc_hash }))
     }
 }
 

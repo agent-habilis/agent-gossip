@@ -90,7 +90,26 @@ pub(crate) async fn broadcast_state(
 pub(crate) enum StatePatchOutcome {
     Applied,
     RateLimited,
+    /// The patch is structurally bad (malformed / out of subset / doesn't apply)
+    /// — a permanent failure; retrying the same patch won't help.
     Invalid(String),
+    /// `--if-doc-hash` didn't match the current document — a **retryable**
+    /// compare-and-set conflict (re-read and retry), distinct from `Invalid`.
+    Stale(String),
+}
+
+/// Collapse a [`broadcast_state_patch`] outcome into the `Result<()>` the embed
+/// `StatePatch` request returns: applied is `Ok`, every other case an error
+/// (the invalid/stale reason verbatim, or `rate limited`).
+fn state_patch_reply(outcome: anyhow::Result<StatePatchOutcome>) -> anyhow::Result<()> {
+    match outcome {
+        Ok(StatePatchOutcome::Applied) => Ok(()),
+        Ok(StatePatchOutcome::Invalid(why) | StatePatchOutcome::Stale(why)) => {
+            Err(anyhow::anyhow!(why))
+        }
+        Ok(StatePatchOutcome::RateLimited) => Err(anyhow::anyhow!("rate limited")),
+        Err(error) => Err(error),
+    }
 }
 
 /// The single shared-state write helper, shared by the IPC `state_patch`
@@ -106,11 +125,25 @@ pub(crate) async fn broadcast_state_patch(
     swarm: &SwarmId,
     author: &Nickname,
     patch: serde_json::Value,
+    if_doc_hash: Option<String>,
     state: &mut EventLoopState,
     sender: &GossipSender,
     output: &output::Output,
 ) -> anyhow::Result<StatePatchOutcome> {
     let current = crate::daemon::state_doc::derive_document(&state.state_log);
+    // Optimistic-concurrency guard: reject if the document moved since the
+    // caller's last read. The per-swarm event loop is single-threaded, so this
+    // check and the insert below are atomic — no peer patch can interleave. A
+    // stale write never reaches the wire, so this needs no fold-contract change.
+    if let Some(expected) = &if_doc_hash {
+        let actual = crate::daemon::state_doc::document_hash(&current);
+        if *expected != actual {
+            return Ok(StatePatchOutcome::Stale(format!(
+                "stale document: --if-doc-hash {expected} no longer matches the current \
+                 document ({actual}); re-read with `state get` and retry"
+            )));
+        }
+    }
     if let Err(why) = crate::daemon::state_doc::validate_patch(&patch, &current) {
         return Ok(StatePatchOutcome::Invalid(why));
     }
@@ -520,15 +553,16 @@ pub(crate) async fn handle_session_request(
             let _ = resp.send(state.state_log.replay_bodies());
             false
         }
-        SessionRequest::StatePatch { patch, resp } => {
-            let outcome = broadcast_state_patch(swarm, author, patch, state, sender, output).await;
-            let sent = matches!(outcome, Ok(StatePatchOutcome::Applied));
-            let _ = resp.send(match outcome {
-                Ok(StatePatchOutcome::Applied) => Ok(()),
-                Ok(StatePatchOutcome::Invalid(why)) => Err(anyhow::anyhow!(why)),
-                Ok(StatePatchOutcome::RateLimited) => Err(anyhow::anyhow!("rate limited")),
-                Err(error) => Err(error),
-            });
+        SessionRequest::StatePatch {
+            patch,
+            if_doc_hash,
+            resp,
+        } => {
+            let outcome =
+                broadcast_state_patch(swarm, author, patch, if_doc_hash, state, sender, output)
+                    .await;
+            let sent = matches!(&outcome, Ok(StatePatchOutcome::Applied));
+            let _ = resp.send(state_patch_reply(outcome));
             sent
         }
         SessionRequest::StateDocument { resp } => {

@@ -262,6 +262,23 @@ members.
 
 Code: `daemon::state_doc::{validate_patch, patch_body, apply_patch_body}`.
 
+### compare-and-set (CAS) by document hash
+
+*Layer: state · an optional precondition on a **change**.*
+
+The optimistic-concurrency guard for contended **shared state**. `state get`
+returns a `doc_hash` — `daemon::state_doc::document_hash`, the SHA-256 of the
+canonically-serialized derived **document**. A **change** may carry that hash as
+`--if-doc-hash`; the author's daemon rejects it (`stale document`, no broadcast)
+if the current document's hash differs, i.e. a peer changed it since the read.
+Because the per-swarm event loop is single-threaded, the check and the insert
+are atomic, and a rejected change never reaches the wire — so this needs no
+fold-contract change. It turns a blind `replace` (last-writer-wins) into a safe
+read-then-write for turn-based or multi-writer state.
+
+Code: `daemon::state_doc::document_hash`, the `if_doc_hash` guard in
+`gossip::broadcast::broadcast_state_patch`.
+
 ## Layering
 
 Don't conflate the three: **rendezvous** / **beacon** bootstrap a swarm you

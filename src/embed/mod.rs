@@ -510,11 +510,16 @@ impl InProcessSession {
     /// Apply a JSON-Patch change to the shared state. The op array (frozen
     /// subset) is validated against the current document and rate-limited; a
     /// rejected patch returns an error.
-    pub(crate) async fn apply_patch(&self, patch: serde_json::Value) -> anyhow::Result<()> {
+    pub(crate) async fn apply_patch(
+        &self,
+        patch: serde_json::Value,
+        if_doc_hash: Option<String>,
+    ) -> anyhow::Result<()> {
         let (resp_tx, resp_rx) = oneshot::channel();
         self.req_tx
             .send(SessionRequest::StatePatch {
                 patch,
+                if_doc_hash,
                 resp: resp_tx,
             })
             .await
@@ -779,8 +784,12 @@ impl SwarmSession {
     /// # Errors
     /// Fails if the patch is out of subset / does not apply, the rate limit is
     /// exceeded, or the event loop has stopped.
-    pub async fn apply_patch(&self, patch: serde_json::Value) -> anyhow::Result<()> {
-        self.core.apply_patch(patch).await
+    pub async fn apply_patch(
+        &self,
+        patch: serde_json::Value,
+        if_doc_hash: Option<String>,
+    ) -> anyhow::Result<()> {
+        self.core.apply_patch(patch, if_doc_hash).await
     }
 
     /// The current derived shared-state document (the JSON-Patch fold over the
