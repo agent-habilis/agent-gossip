@@ -1,30 +1,26 @@
-import { state } from "../state";
-import type { Peer, SwarmEvent } from "../types";
+import type { Peer, PingResult, SwarmEvent } from "../types";
 
 export function formatPresence(event: SwarmEvent): string | null {
   if (event.subtype === "alive") return null;
   if (event.subtype === "joined") {
     // The daemon ships the joiner's model/harness as structured fields; show
-    // them in parens right after the nick (matching the Claude Code plugin's
-    // join line), keeping pi's own terse verb.
+    // them in parens right after the nick, matching the Claude Code plugin's
+    // join line verbatim.
     const meta = [event.model, event.harness].filter(Boolean).join(" / ");
-    return meta ? `\`<${event.author}>\` (${meta}) joined` : `\`<${event.author}>\` joined`;
+    return meta ? `\`<${event.author}>\` (${meta}) has joined` : `\`<${event.author}>\` has joined`;
   }
-  if (event.subtype === "left") return `\`<${event.author}>\` left`;
+  if (event.subtype === "left") return `\`<${event.author}>\` has left`;
   return null;
 }
 
 export function formatMessage(event: SwarmEvent): string | null {
   if (!event.body) return null;
 
-  if (event.body === "ping" && !event.reply) {
-    return "ping → pong";
-  }
-
-  if (event.body === "pong") {
-    if (state.pingPending) return null;
-    return `pong from \`<${event.author}>\``;
-  }
+  // Ambient ping/pong is handled silently (the daemon/extension auto-pongs and
+  // RTT is tracked for /swarm-ping) — never surfaced, matching the Claude Code
+  // plugin which leaves ping/pong entirely to the daemon.
+  if (event.body === "ping" && !event.reply) return null;
+  if (event.body === "pong") return null;
 
   if (event.reply) {
     return `\`<${event.author}>\` → \`<${event.reply}>\`: ${event.body}`;
@@ -100,6 +96,19 @@ export function formatRoster({
       .trimEnd();
   const separator = widths.map((width) => "─".repeat(width)).join("  ");
   return [header, "", line(headings), separator, ...rows.map(line)].join("\n");
+}
+
+// Shared RTT report for /swarm-ping and the swarm_ping tool — one source so the
+// two never drift. No bee prefix (the UI/agent adds it). The footer counts
+// responders only; pi has no reliable known-peer total at this point (a peer
+// can pong yet be absent from a post-wait roster), so it deliberately omits a
+// denominator rather than print a fabricated or impossible one.
+export function formatPingReport(results: PingResult[]): string {
+  if (results.length === 0) return "ping: no peers responded";
+  const rows = results.map((result) => `| \`<${result.author}>\` | ${result.rtt}ms |`);
+  return ["ping", "", "| peer | RTT |", "|---|---|", ...rows, "", `${results.length} online`].join(
+    "\n",
+  );
 }
 
 export type EngagementKind = "directed" | "broadcast" | "state";

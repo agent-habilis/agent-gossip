@@ -5,7 +5,7 @@ import { state } from "../state";
 // Every swarm line is prefixed with this, applied once in `send()` — call
 // sites never write it themselves. Exported for `flushMessageBatch`, which
 // builds one bee per peer line.
-export const BEE = "🐝";
+export const BEE = "🐝️";
 
 // The single output library for the extension: everything user- or
 // agent-facing goes through `pi.sendMessage` here, never `sendUserMessage`.

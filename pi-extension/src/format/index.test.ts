@@ -1,14 +1,8 @@
-import { beforeEach, expect, test } from "bun:test";
-import { state } from "../state";
+import { expect, test } from "bun:test";
 import type { SwarmEvent } from "../types";
 import { engagementKind, formatDisplay, formatMessage, formatOutbound, formatState } from "./index";
 
 const ev = (over: Partial<SwarmEvent>): SwarmEvent => ({ event: "message", type: "msg", ...over });
-
-beforeEach(() => {
-  // formatMessage suppresses pongs while a ping we sent is still outstanding.
-  state.pingPending = false;
-});
 
 test("engagementKind: a reply addressed to us is directed", () => {
   expect(engagementKind(ev({ author: "a", body: "hi", reply: "me" }), "me")).toBe("directed");
@@ -41,10 +35,8 @@ test("formatMessage wraps author and addressee as code spans", () => {
   );
 });
 
-test("formatMessage handles ping and pong (and suppresses pong while pinging)", () => {
-  expect(formatMessage(ev({ author: "ada", body: "ping", reply: null }))).toBe("ping → pong");
-  expect(formatMessage(ev({ author: "ada", body: "pong" }))).toBe("pong from `<ada>`");
-  state.pingPending = true;
+test("formatMessage stays silent on ambient ping/pong (daemon handles them)", () => {
+  expect(formatMessage(ev({ author: "ada", body: "ping", reply: null }))).toBeNull();
   expect(formatMessage(ev({ author: "ada", body: "pong" }))).toBeNull();
 });
 
@@ -58,7 +50,7 @@ test("formatDisplay drops self and info/error, renders presence and messages", (
   expect(formatDisplay(ev({ event: "error", body: "x" }))).toBeNull();
   expect(
     formatDisplay(ev({ event: "presence", type: "presence", subtype: "joined", author: "ada" })),
-  ).toBe("`<ada>` joined");
+  ).toBe("`<ada>` has joined");
   expect(formatDisplay(ev({ author: "ada", body: "hi", reply: null }))).toBe("`<ada>`: hi");
 });
 

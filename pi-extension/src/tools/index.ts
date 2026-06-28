@@ -16,9 +16,10 @@ import {
   sendSwarmMessage,
   validateCreateOptions,
 } from "../core";
-import { formatRoster } from "../format";
+import { formatPingReport, formatRoster } from "../format";
 import { requireAgentSwarm } from "../helpers";
 import { state } from "../state";
+import { trackStart } from "../todo";
 import { BEE } from "../ui";
 
 function toolError(text: string) {
@@ -311,6 +312,7 @@ export function registerTools(pi: ExtensionAPI): void {
         state.exchanges.delete(exchangeId);
         return toolError(`Handover failed: ${error instanceof Error ? error.message : "unknown"}`);
       }
+      trackStart({ kind: "handover", peer: params.to, role: "initiator", task });
       return {
         content: [{ type: "text", text: `handover offered to <${params.to}>` }],
         details: { exchange_id: exchangeId, to: params.to },
@@ -368,6 +370,7 @@ export function registerTools(pi: ExtensionAPI): void {
         state.exchanges.delete(exchangeId);
         return toolError(`Task failed: ${error instanceof Error ? error.message : "unknown"}`);
       }
+      trackStart({ kind: "task", peer: params.to, role: "initiator", task });
       return {
         content: [{ type: "text", text: `task offered to <${params.to}>` }],
         details: { exchange_id: exchangeId, to: params.to },
@@ -457,7 +460,10 @@ export function registerTools(pi: ExtensionAPI): void {
       try {
         const result = applyStatePatch({ patch: JSON.stringify(params.patch) });
         if (result.ok) {
-          return { content: [{ type: "text", text: "ok — shared state changed" }], details: null };
+          return {
+            content: [{ type: "text", text: JSON.stringify(params.patch, null, 2) }],
+            details: { patch: params.patch },
+          };
         }
         if (result.rateLimited) {
           return {
@@ -506,15 +512,10 @@ export function registerTools(pi: ExtensionAPI): void {
       }
       try {
         const results = await pingPeers();
-        if (results.length === 0) {
-          return { content: [{ type: "text", text: "No peers responded" }], details: null };
-        }
-        const lines = ["| peer | RTT |", "|---|---|"];
-        for (const result of results) {
-          lines.push(`| ${result.author} | ${result.rtt}ms |`);
-        }
-        lines.push(`${results.length} peer(s) online`);
-        return { content: [{ type: "text", text: lines.join("\n") }], details: { peers: results } };
+        return {
+          content: [{ type: "text", text: formatPingReport(results) }],
+          details: { peers: results },
+        };
       } catch (error) {
         return toolError(`Ping failed: ${error instanceof Error ? error.message : "unknown"}`);
       }
