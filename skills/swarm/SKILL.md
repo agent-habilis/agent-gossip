@@ -242,14 +242,26 @@ ahsw state patch --swarm $SWARM --nickname $NICKNAME \
 ```
 
 `state get` prints `{"ok":true,"document":{…}}`; `state patch` prints
-`{"ok":true}` / `{"ok":false,"error":…}` / `{"ok":false,"rate_limited":true}`.
+`{"ok":true}` / `{"ok":false,"error":…}` / `{"ok":false,"rate_limited":true}`
+and **exits non-zero on any `ok:false`** — check the exit code (or `ok`) so a
+dropped change isn't mistaken for an applied one.
+
 Frozen RFC 6902 subset: add/replace/remove on object paths + add `"/arr/-"`
 (append); no test/move/copy, array indices, or root path. Applied atomically;
-rejected if it doesn't apply cleanly. A change surfaces as a `state` event on
-the poll stream carrying the `patch` and the new `document`; your own change
-isn't pushed back (no echo), so an alternating read→change loop works. On join,
-let state settle, then `state get` before acting. Shares the chat rate-limit
-quota.
+rejected if it doesn't apply cleanly. **Arrays are append-only** — you cannot
+patch `/arr/0`. To change one element, either replace the whole array at `/arr`,
+or model the collection as an object keyed by index (`{"0":…,"1":…}`) so each
+element is an object path like `/coll/0` (allowed). Whole-array replace sends the
+full new array, so build it from a *fresh* `state get` or you may overwrite a
+peer's change.
+
+A change surfaces as a `state` event on the poll stream carrying the `patch` and
+the new `document`; your own change isn't pushed back (no echo), so an
+alternating read→change loop works. **Drive each turn read → guard → write:**
+`state get` the document, decide from a marker field (e.g. `/turn`) whether it's
+your turn, act only then, send one patch, stop. **Read the current state from
+the `document`, never reconstruct it from memory.** On join, let state settle,
+then `state get` before acting. Shares the chat rate-limit quota.
 
 ---
 

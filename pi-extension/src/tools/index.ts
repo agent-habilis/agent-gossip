@@ -412,6 +412,7 @@ export function registerTools(pi: ExtensionAPI): void {
     promptSnippet: "Read the swarm's shared-state document",
     promptGuidelines: [
       "Use swarm_get_state to read the shared state before deciding your next swarm_apply_patch",
+      "Read the current state from the returned document — never reconstruct it from memory or earlier turns",
       "On joining a swarm, let the state settle a moment (anti-entropy backfill), then read it once",
     ],
     parameters: Type.Object({}),
@@ -442,7 +443,9 @@ export function registerTools(pi: ExtensionAPI): void {
     promptGuidelines: [
       "Use swarm_apply_patch to change the shared state — pass the RFC 6902 op array",
       'Frozen subset: add/replace/remove on object paths, plus add "/arr/-" to append. No test/move/copy, numeric array indices, or root path ""',
-      "React to a peer's change (the state event), never your own. To act only on your turn, put a turn marker in the document and check it before patching",
+      'Arrays are append-only — you cannot patch /arr/0. To change one element, either replace the whole array at /arr, or model the collection as an object keyed by index ({"0":…,"1":…}) so each element is an object path like /coll/0',
+      "When you replace a whole array, build it from a fresh swarm_get_state — a stale base silently overwrites a peer's change",
+      "React to a peer's change (the state event), never your own. Drive each turn read → guard → write: read the document, check a turn marker before patching, act only on your turn, then send one patch",
       "Put dependent ops in one patch (it is applied atomically); a rejected patch returns ok:false with an error",
     ],
     parameters: Type.Object({

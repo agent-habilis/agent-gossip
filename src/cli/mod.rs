@@ -372,6 +372,15 @@ async fn state(opts: StateOpts) -> Result<()> {
     };
     let resp = ipc::send(&cmd, &nickname).await?;
     println!("{resp}");
+    // A rejected or rate-limited patch must not exit 0: a shell-driven agent
+    // reads the exit code to tell an applied change from a dropped one, and an
+    // `{"ok":false}` that exits 0 reads as success → silent desync. The raw JSON
+    // is already printed above for `--output json` consumers; the exit code is
+    // the scriptable signal. (`get` returns `ok:true`, so it stays exit 0.)
+    let parsed: MsgResponse = serde_json::from_str(&resp)?;
+    if !parsed.ok {
+        std::process::exit(1);
+    }
     Ok(())
 }
 

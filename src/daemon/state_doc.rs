@@ -42,6 +42,52 @@ enum FrozenOp {
     Remove { path: String },
 }
 
+impl FrozenOp {
+    fn path(&self) -> &str {
+        match self {
+            FrozenOp::Add { path, .. }
+            | FrozenOp::Replace { path, .. }
+            | FrozenOp::Remove { path } => path,
+        }
+    }
+}
+
+/// Why a single frozen op did not apply. Distinguishes a *permanent* rejection
+/// (a numeric array index — never valid in the frozen subset) from a *transient*
+/// one (a missing key — a peer may add it later), so the write boundary can tell
+/// the author whether re-reading and retrying could ever help.
+#[derive(Debug, Clone, Copy)]
+enum ApplyReject {
+    /// A numeric (non-`-`) index into an array — out of the frozen subset.
+    ArrayIndex,
+    /// `replace`/`remove` of a key that isn't present (or a missing parent).
+    MissingKey,
+    /// The parent exists but is neither an object nor an array-append target.
+    NotAnObject,
+    /// The path has no `/` separator.
+    BadPath,
+}
+
+impl ApplyReject {
+    fn message(self, path: &str) -> String {
+        match self {
+            ApplyReject::ArrayIndex => format!(
+                "numeric array indices aren't supported by the frozen patch subset: path \"{path}\". \
+                 Replace the whole array at its parent path, or model the collection as an object \
+                 keyed by index (e.g. {{\"0\":…,\"1\":…}}) so each element is an object path."
+            ),
+            ApplyReject::MissingKey => format!(
+                "patch does not apply to the current shared state: nothing at \"{path}\" to change \
+                 (re-read the state and retry)."
+            ),
+            ApplyReject::NotAnObject => {
+                format!("patch does not apply: the parent of \"{path}\" is not an object.")
+            }
+            ApplyReject::BadPath => format!("invalid patch path \"{path}\" (must contain '/')."),
+        }
+    }
+}
+
 fn parse_ops(ops: &Value) -> Option<Vec<FrozenOp>> {
     let arr = ops.as_array()?;
     let mut parsed = Vec::with_capacity(arr.len());
@@ -82,42 +128,58 @@ fn unescape(token: &str) -> String {
     token.replace("~1", "/").replace("~0", "~")
 }
 
-/// Apply one frozen op to `doc`. `None` means it does not apply; the caller
-/// then discards the whole patch (atomic no-op).
-fn apply_one(doc: &mut Value, op: &FrozenOp) -> Option<()> {
+/// Apply one frozen op to `doc`. `Err` means it does not apply (with the reason);
+/// the caller then discards the whole patch (atomic no-op).
+fn apply_one(doc: &mut Value, op: &FrozenOp) -> Result<(), ApplyReject> {
     match op {
         FrozenOp::Add { path, value } => {
-            let (parent_ptr, key) = split_parent(path)?;
-            let parent = doc.pointer_mut(parent_ptr)?;
+            let (parent_ptr, key) = split_parent(path).ok_or(ApplyReject::BadPath)?;
+            let parent = doc.pointer_mut(parent_ptr).ok_or(ApplyReject::MissingKey)?;
             if let Some(map) = parent.as_object_mut() {
                 map.insert(key, value.clone());
-                Some(())
+                Ok(())
             } else if let Some(arr) = parent.as_array_mut() {
                 // Append only — numeric indices are out of subset.
                 if key == "-" {
                     arr.push(value.clone());
-                    Some(())
+                    Ok(())
                 } else {
-                    None
+                    Err(ApplyReject::ArrayIndex)
                 }
             } else {
-                None
+                Err(ApplyReject::NotAnObject)
             }
         }
         FrozenOp::Replace { path, value } => {
-            let (parent_ptr, key) = split_parent(path)?;
-            let map = doc.pointer_mut(parent_ptr)?.as_object_mut()?;
-            if map.contains_key(&key) {
-                map.insert(key, value.clone());
-                Some(())
+            let (parent_ptr, key) = split_parent(path).ok_or(ApplyReject::BadPath)?;
+            let parent = doc.pointer_mut(parent_ptr).ok_or(ApplyReject::MissingKey)?;
+            if let Some(map) = parent.as_object_mut() {
+                if map.contains_key(&key) {
+                    map.insert(key, value.clone());
+                    Ok(())
+                } else {
+                    Err(ApplyReject::MissingKey)
+                }
+            } else if parent.is_array() {
+                Err(ApplyReject::ArrayIndex)
             } else {
-                None
+                Err(ApplyReject::NotAnObject)
             }
         }
         FrozenOp::Remove { path } => {
-            let (parent_ptr, key) = split_parent(path)?;
-            let map = doc.pointer_mut(parent_ptr)?.as_object_mut()?;
-            map.remove(&key).map(|_removed| ())
+            let (parent_ptr, key) = split_parent(path).ok_or(ApplyReject::BadPath)?;
+            let parent = doc.pointer_mut(parent_ptr).ok_or(ApplyReject::MissingKey)?;
+            if let Some(map) = parent.as_object_mut() {
+                if map.remove(&key).is_some() {
+                    Ok(())
+                } else {
+                    Err(ApplyReject::MissingKey)
+                }
+            } else if parent.is_array() {
+                Err(ApplyReject::ArrayIndex)
+            } else {
+                Err(ApplyReject::NotAnObject)
+            }
         }
     }
 }
@@ -134,7 +196,7 @@ fn apply_patch_body(doc: &mut Value, body: &str) {
     };
     let mut working = doc.clone();
     for op in &frozen {
-        if apply_one(&mut working, op).is_none() {
+        if apply_one(&mut working, op).is_err() {
             return;
         }
     }
@@ -181,8 +243,7 @@ pub(crate) fn validate_patch(ops: &Value, current: &Value) -> Result<(), String>
     })?;
     let mut working = current.clone();
     for op in &frozen {
-        apply_one(&mut working, op)
-            .ok_or_else(|| "patch does not apply to the current shared state".to_owned())?;
+        apply_one(&mut working, op).map_err(|reject| reject.message(op.path()))?;
     }
     Ok(())
 }
@@ -210,16 +271,16 @@ mod tests {
     fn folds_add_replace_remove_and_array_append() {
         let (swarm, author) = fixture();
         let mut log = StateLog::new();
-        log.insert(patch_event(&swarm, &author, 10, json!([{"op":"add","path":"/fen","value":"start"}])));
-        log.insert(patch_event(&swarm, &author, 20, json!([{"op":"add","path":"/moves","value":[]}])));
-        log.insert(patch_event(&swarm, &author, 30, json!([{"op":"add","path":"/moves/-","value":"e4"}])));
-        log.insert(patch_event(&swarm, &author, 40, json!([{"op":"replace","path":"/fen","value":"after-e4"}])));
+        log.insert(patch_event(&swarm, &author, 10, json!([{"op":"add","path":"/title","value":"start"}])));
+        log.insert(patch_event(&swarm, &author, 20, json!([{"op":"add","path":"/items","value":[]}])));
+        log.insert(patch_event(&swarm, &author, 30, json!([{"op":"add","path":"/items/-","value":"first"}])));
+        log.insert(patch_event(&swarm, &author, 40, json!([{"op":"replace","path":"/title","value":"updated"}])));
         log.insert(patch_event(&swarm, &author, 50, json!([{"op":"add","path":"/turn","value":"b"},{"op":"add","path":"/scratch","value":1}])));
         log.insert(patch_event(&swarm, &author, 60, json!([{"op":"remove","path":"/scratch"}])));
 
         assert_eq!(
             derive_document(&log),
-            json!({"fen":"after-e4","moves":["e4"],"turn":"b"})
+            json!({"title":"updated","items":["first"],"turn":"b"})
         );
     }
 
@@ -271,5 +332,27 @@ mod tests {
         assert!(validate_patch(&json!([{"op":"replace","path":"/missing","value":2}]), &current).is_err());
         // root path
         assert!(validate_patch(&json!([{"op":"replace","path":"","value":{}}]), &current).is_err());
+    }
+
+    #[test]
+    fn array_index_rejection_names_the_cause() {
+        // A numeric index into an array is a *permanent* rejection — the message
+        // must say so (and name the path), not the generic "does not apply".
+        let current = json!({"items": ["a", "b"]});
+        let err = validate_patch(
+            &json!([{"op":"replace","path":"/items/0","value":"z"}]),
+            &current,
+        )
+        .unwrap_err();
+        assert!(err.contains("numeric array indices"), "got: {err}");
+        assert!(err.contains("/items/0"), "got: {err}");
+
+        // A missing object key stays the transient "does not apply" wording.
+        let missing = validate_patch(
+            &json!([{"op":"replace","path":"/nope","value":1}]),
+            &current,
+        )
+        .unwrap_err();
+        assert!(missing.contains("does not apply"), "got: {missing}");
     }
 }

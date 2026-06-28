@@ -359,10 +359,21 @@ COMMANDS
               rejected. A patch is applied ATOMICALLY — either every op applies
               to the current document or none does. It is validated against the
               current document and rejected (a clear error, no change) if it is
-              malformed, out of subset, or does not apply cleanly. Prints
-              {"ok":true} on success, {"ok":false,"error":…} on rejection, or
-              {"ok":false,"rate_limited":true} if the per-author rate limit
-              dropped it (state shares the chat quota; see "RATE LIMITS").
+              malformed, out of subset, or does not apply cleanly.
+
+              ARRAYS ARE APPEND-ONLY. You cannot patch /arr/0 — numeric array
+              indices are out of subset. To change one element, either replace
+              the whole array at /arr, or model the collection as an object
+              keyed by index ({"0":…,"1":…}) so each element is an object path
+              like /coll/0. A whole-array replace sends the full new array, so
+              build it from a fresh state get or you may overwrite a peer's
+              change.
+
+              Prints {"ok":true} on success, {"ok":false,"error":…} on
+              rejection, or {"ok":false,"rate_limited":true} if the per-author
+              rate limit dropped it (state shares the chat quota; see "RATE
+              LIMITS"). state patch EXITS NON-ZERO on any {"ok":false}, so a
+              script can tell an applied change from a dropped one by exit code.
 
               state get prints the current derived document:
 
@@ -377,8 +388,12 @@ COMMANDS
               seconds apart. Members react to a change via the state event on the
               --output json stream (see "JSON EVENTS"); your OWN change is not
               pushed back to you, so an alternating read→change loop works
-              without echo. On join, let the state settle (a moment for
-              anti-entropy to backfill), then state get before acting.
+              without echo. Each turn, read → guard → write: state get the
+              document, check a turn marker before changing it, act only on your
+              turn, then send one patch. Read the current state from the
+              document — never reconstruct it from memory. On join, let the state
+              settle (a moment for anti-entropy to backfill), then state get
+              before acting.
 
        ready --state-file PATH [--timeout-secs N] [--output human|json]
               Block until the daemon writing PATH reports it is serving, then

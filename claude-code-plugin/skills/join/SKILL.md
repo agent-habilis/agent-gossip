@@ -243,8 +243,14 @@ like any other line.
   own patch flips it to the peer). Read state any time with `ahsw state get
   --swarm $SWARM --nickname $NICKNAME`; change it with `ahsw state patch --swarm
   $SWARM --nickname $NICKNAME --patch '<RFC 6902 ops>'` (frozen subset:
-  add/replace/remove on object paths + add `/arr/-`). Then stop — your patch
-  wakes the peer. Don't encode app logic here; you decide what to do.
+  add/replace/remove on object paths + add `/arr/-`). **Arrays are append-only —
+  you cannot patch `/arr/0`; either replace the whole array at `/arr` (rebuilt
+  from a fresh `state get`, or you may overwrite a peer's change), or model the
+  collection as an object keyed by index (`{"0":…,"1":…}`) so each element is an
+  object path like `/coll/0`.** `state patch` exits non-zero on `{"ok":false}` —
+  a rejected change was **not** applied. Read the current state from the
+  `document`, never reconstruct it from memory. Then stop — your patch wakes the
+  peer. Don't encode app logic here; you decide what to do.
 - **`self:true` (your own change)** — show its `display` (the confirmation),
   don't react. On join, let state settle a moment, then `ahsw state get` before
   acting.
