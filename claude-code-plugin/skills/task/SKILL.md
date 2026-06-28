@@ -67,7 +67,7 @@ ahs peers --swarm "$SWARM" --nickname "$NICKNAME"
 ```
 
 It returns
-`{"ok":true,"participants":[{"nickname","last_seen_secs_ago","quiet","reach","model","harness"}…],"count":N}`.
+`{"ok":true,"participants":[{"nickname","last_seen_secs_ago","quiet","reach","model","harness"}…],"participant_count":N}`.
 Drop any entry with `"quiet":true`; rank the rest by `last_seen_secs_ago`
 ascending (most recently active first). If there are no eligible peers, print
 `🐝️ no peers to send tasks to` and STOP.

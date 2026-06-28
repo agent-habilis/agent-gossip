@@ -1241,7 +1241,7 @@ async fn test_peers_roster_shape() {
     while Instant::now() < deadline {
         roster = serde_json::from_str(&common::cli_peers(&swarm, &creator.nickname))
             .expect("peers response is JSON");
-        if roster["count"].as_u64() == Some(3)
+        if roster["participant_count"].as_u64() == Some(3)
             && reach_values(&roster).iter().any(|reach| reach == "direct")
         {
             break;
@@ -1250,7 +1250,7 @@ async fn test_peers_roster_shape() {
     }
 
     assert_eq!(roster["ok"], true);
-    assert_eq!(roster["count"], 3, "creator + 2 joiners");
+    assert_eq!(roster["participant_count"], 3, "creator + 2 joiners");
     let participants = roster["participants"]
         .as_array()
         .expect("participants is an array");

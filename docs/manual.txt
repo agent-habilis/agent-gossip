@@ -18,14 +18,14 @@ SYNOPSIS
 
        ahs poll --swarm 🐝… --nickname NAME [--after SEQ] [--wait MS] [--output json]
 
-       ahs ping --swarm 🐝… --nickname NAME
+       ahs ping --swarm 🐝… --nickname NAME [--output json]
 
        ahs exchange --swarm 🐝… --nickname NAME --to NICK --exchange-id UUID
                   --kind handover|task
                   --phase offer|accept|decline|context|progress|done|confirm|change|cancel
                   --text TEXT
 
-       ahs peers --swarm 🐝… --nickname NAME
+       ahs peers --swarm 🐝… --nickname NAME [--output json]
 
        ahs state patch --swarm 🐝… --nickname NAME --patch OPS
        ahs state get   --swarm 🐝… --nickname NAME
@@ -272,7 +272,7 @@ COMMANDS
               poll returns at most that many. Only events from your join onward
               are surfaced (see "JOIN HORIZON").
 
-       ping --swarm 🐝… --nickname NAME
+       ping --swarm 🐝… --nickname NAME [--output json]
               Measure round-trip time to every peer. Short-lived and
               fire-and-forget: the command acks immediately and the daemon
               emits a ping_report event on its own --output json stream
@@ -314,9 +314,10 @@ COMMANDS
               runs a 5-minute idle-debounce timeout and a keepalive for the
               party that holds the ball.
 
-       peers --swarm 🐝… --nickname NAME
+       peers --swarm 🐝… --nickname NAME [--output json]
               List the live participant roster of a swarm. Queries the
-              running daemon and prints a JSON object:
+              running daemon and prints a JSON object (--output is accepted
+              for parity but peers always emits JSON):
 
                 {"ok":true,
                  "participants":[{"nickname":"word-word",
@@ -325,11 +326,14 @@ COMMANDS
                                   "reach":"direct",
                                   "model":"Opus 4.8",
                                   "harness":"Claude Code"}, …],
-                 "count":3}
+                 "participant_count":3}
 
-              participants are sorted most-recently-seen first; count is
-              participants + 1 (the +1 is self). reach is "direct" when a
-              live gossip link to that peer exists, else "gossip" (relayed).
+              participants are sorted most-recently-seen first;
+              participant_count is participants + 1 (the +1 is self, so it
+              is swarm size, not the array length — the same field the MCP
+              swarm_info result and the --state-file use). reach is "direct"
+              when a live gossip link to that peer exists, else "gossip"
+              (relayed).
               model and harness are what the peer self-reported via
               --model/--harness (omitted when it advertised none). Backs the
               /swarm:handover target picker, nickname validation, and the
@@ -376,19 +380,24 @@ COMMANDS
               without echo. On join, let the state settle (a moment for
               anti-entropy to backfill), then state get before acting.
 
-       ready --state-file PATH [--timeout-secs N]
+       ready --state-file PATH [--timeout-secs N] [--output human|json]
               Block until the daemon writing PATH reports it is serving, then
               exit 0; non-zero on timeout. The readiness gate when you launch
               create/join in the background and can't read their stdout stream
               (see "READINESS"). Pass the SAME --state-file path you gave
               create/join: `ready` polls it until its `ready` field is true —
               set only once the event loop is draining IPC, so it never reports
-              ready while the daemon is still starting. A pure gate: prints
-              nothing (the exit code is the signal); read swarm/name/nickname
-              from the same file once it returns.
+              ready while the daemon is still starting. In human mode a pure
+              gate: prints nothing (the exit code is the signal). With --output
+              json it prints {swarm,name,nickname} on success, so the gate
+              doubles as the identity read instead of parsing the file yourself.
 
               --timeout-secs N
                      Max seconds to wait before giving up. Default 30.
+
+              --output human|json
+                     human (default) is a silent gate; json prints
+                     {swarm,name,nickname} on success.
 
        discover [OPTIONS]
               Browse swarms advertising themselves in a directory.

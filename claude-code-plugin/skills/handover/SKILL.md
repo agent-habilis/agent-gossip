@@ -100,7 +100,7 @@ ahs peers --swarm "$SWARM" --nickname "$NICKNAME"
 ```
 
 It returns
-`{"ok":true,"participants":[{"nickname","last_seen_secs_ago","quiet","reach","model","harness"}…],"count":N}`
+`{"ok":true,"participants":[{"nickname","last_seen_secs_ago","quiet","reach","model","harness"}…],"participant_count":N}`
 (read it silently — don't print the roster). Drop any entry with
 `"quiet":true`; rank the rest by `last_seen_secs_ago` ascending (most
 recently active first). Show an `AskUserQuestion` — question "Hand

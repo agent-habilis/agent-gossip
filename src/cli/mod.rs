@@ -25,8 +25,8 @@ mod status;
 
 pub(crate) use args::Cli;
 use args::{
-    Commands, CreateOpts, ExchangeOpts, MsgOpts, PeersOpts, PingOpts, PollOpts, ReadyOpts,
-    SharedServerOpts, StateAction, StateOpts,
+    Commands, CreateOpts, ExchangeOpts, MsgOpts, OutputFormat, PeersOpts, PingOpts, PollOpts,
+    ReadyOpts, SharedServerOpts, StateAction, StateOpts,
 };
 
 /// `join` has no `--public`/`--name`: both are encoded in the `🐝…`
@@ -288,7 +288,11 @@ async fn poll(opts: PollOpts) -> Result<()> {
 /// acks immediately and emits the `ping_report` on its own
 /// `--output json` stream once the collection window closes.
 async fn ping(opts: PingOpts) -> Result<()> {
-    let PingOpts { swarm, nickname } = opts;
+    let PingOpts {
+        swarm,
+        nickname,
+        output: _,
+    } = opts;
     let cmd = IpcCommand::Ping { swarm };
     let resp = ipc::send(&cmd, &nickname).await?;
     let parsed: MsgResponse = serde_json::from_str(&resp)?;
@@ -331,9 +335,13 @@ async fn exchange(opts: ExchangeOpts) -> Result<()> {
 }
 
 /// Query the running daemon's live participant roster. Always emits the
-/// raw IPC JSON (`{ok, participants, count}`), like `poll`.
+/// raw IPC JSON (`{ok, participants, participant_count}`), like `poll`.
 async fn peers(opts: PeersOpts) -> Result<()> {
-    let PeersOpts { swarm, nickname } = opts;
+    let PeersOpts {
+        swarm,
+        nickname,
+        output: _,
+    } = opts;
     let cmd = IpcCommand::Peers { swarm };
     let resp = ipc::send(&cmd, &nickname).await?;
     println!("{resp}");
@@ -369,8 +377,9 @@ async fn state(opts: StateOpts) -> Result<()> {
 
 /// Block until the daemon's `--state-file` reports it is *freshly* serving
 /// (the `ready` flag is `true` and `last_updated` is recent), then exit 0.
-/// A pure gate — prints nothing; the caller reads the identity from the same
-/// file. Times out non-zero.
+/// In `human` mode a pure gate — prints nothing; with `--output json` it
+/// prints `{swarm,name,nickname}` on success, so the gate doubles as the
+/// identity read instead of the caller parsing the file. Times out non-zero.
 ///
 /// Robustness: a missing, unreadable, malformed, or stale-but-not-yet-ready
 /// file is "not ready yet, keep polling" — only the deadline fails the gate.
@@ -381,6 +390,7 @@ async fn ready(opts: ReadyOpts) -> Result<()> {
     let ReadyOpts {
         state_file,
         timeout_secs,
+        output,
     } = opts;
     // Saturating add: an absurd `--timeout-secs` must not panic the gate
     // (`Instant + Duration` panics on overflow); clamp to a far-future
@@ -404,6 +414,9 @@ async fn ready(opts: ReadyOpts) -> Result<()> {
                 .await?;
         match read {
             Ok(Some(snapshot)) if snapshot.ready && ready_is_fresh(snapshot.last_updated) => {
+                if matches!(output, OutputFormat::Json) {
+                    print_ready_identity(&state_file);
+                }
                 return Ok(());
             }
             Ok(_) => {}
@@ -422,6 +435,25 @@ async fn ready(opts: ReadyOpts) -> Result<()> {
         ))
         .await;
     }
+}
+
+/// Print the session identity as a JSON object for `ahs ready --output json`,
+/// omitting any field the state file lacks — so a degenerate (identity-less)
+/// file yields `{}` rather than `{"swarm":null,…}` that a caller might splice
+/// into the next command as the literal string "null".
+fn print_ready_identity(state_file: &std::path::Path) {
+    let identity = crate::daemon::state_file::read_identity(state_file);
+    let mut obj = serde_json::Map::new();
+    for (key, value) in [
+        ("swarm", identity.swarm),
+        ("name", identity.name),
+        ("nickname", identity.nickname),
+    ] {
+        if let Some(value) = value {
+            obj.insert(key.to_owned(), value.into());
+        }
+    }
+    println!("{}", serde_json::Value::Object(obj));
 }
 
 /// True when a `ready: true` state-file write is recent enough to trust —

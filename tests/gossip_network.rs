@@ -810,6 +810,45 @@ fn test_ready_gate_rejects_a_stale_ready_file() {
     let _ = fs::remove_file(&state_file);
 }
 
+/// `ahs ready --output json` doubles as the identity read: on a fresh
+/// `ready:true` file it prints `{swarm,name,nickname}` and exits 0, so a
+/// fallback caller learns its own identity from the gate without parsing the
+/// state file (or guessing its `${PPID}` name) itself.
+#[test]
+fn test_ready_gate_emits_identity_json_on_success() {
+    let state_file =
+        std::env::temp_dir().join(format!("ahs-ready-json-{}.json", std::process::id()));
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    fs::write(
+        &state_file,
+        format!(
+            r#"{{"last_updated":{now},"name":"cool-team","nickname":"calm-otter","participant_count":1,"ready":true,"swarm":"🐝deadbeef"}}"#
+        ),
+    )
+    .unwrap();
+
+    let output = common::test_cmd()
+        .arg("ready")
+        .arg("--state-file")
+        .arg(&state_file)
+        .args(["--timeout-secs", "5", "--output", "json"])
+        .output()
+        .expect("failed to run ahs ready");
+    assert!(
+        output.status.success(),
+        "a fresh ready:true file should pass the gate"
+    );
+    let parsed: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("ready --output json prints a JSON object");
+    assert_eq!(parsed["swarm"], "🐝deadbeef");
+    assert_eq!(parsed["name"], "cool-team");
+    assert_eq!(parsed["nickname"], "calm-otter");
+    let _ = fs::remove_file(&state_file);
+}
+
 /// The poll command retrieves buffered events from a running swarm process,
 /// each carrying its surfacing `seq`. Calling poll with `--after <seq>` returns
 /// only events surfaced after that seq. The records are the same shape the live

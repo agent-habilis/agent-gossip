@@ -314,7 +314,7 @@ export function getPeers(): { count: number; participants: Peer[] } {
     state.session.nickname,
   ]);
   const parsed = JSON.parse(raw) as {
-    count: number;
+    participant_count: number;
     participants: Array<{
       nickname: string;
       last_seen_secs_ago?: number | null;
@@ -325,7 +325,7 @@ export function getPeers(): { count: number; participants: Peer[] } {
     }>;
   };
   return {
-    count: parsed.count,
+    count: parsed.participant_count,
     participants: parsed.participants.map((entry) => ({
       nickname: entry.nickname,
       reach: entry.reach === "direct" ? "direct" : "gossip",

@@ -128,7 +128,7 @@ pub(crate) enum Commands {
     /// Queries the running daemon for current participants (nicknames +
     /// how long ago each was last seen), recency-sorted. Backs the
     /// handover target picker; prints a JSON object with `participants`
-    /// and `count`.
+    /// and `participant_count`.
     Peers {
         #[command(flatten)]
         opts: PeersOpts,
@@ -150,9 +150,10 @@ pub(crate) enum Commands {
     /// The readiness gate for driving the daemon over the CLI: launch
     /// `create`/`join` in the background with a `--state-file`, then
     /// `ahs ready --state-file <path>` blocks until that file reports the
-    /// daemon is serving, exiting 0 (non-zero on timeout). A pure gate —
-    /// prints nothing; read the swarm/nickname from the state-file once it
-    /// returns.
+    /// daemon is serving, exiting 0 (non-zero on timeout). In `human` mode a
+    /// silent gate (exit code only); with `--output json` it prints
+    /// `{swarm,name,nickname}` on success, so the gate doubles as the
+    /// identity read.
     Ready {
         #[command(flatten)]
         opts: ReadyOpts,

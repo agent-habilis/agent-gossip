@@ -38,11 +38,11 @@ This returns a single JSON line synchronously — wait for it and parse it:
     { "nickname": "swift-cedar", "last_seen_secs_ago": 3, "quiet": false,
       "reach": "direct", "model": "Opus 4.8", "harness": "Claude Code" }
   ],
-  "count": 2 }
+  "participant_count": 2 }
 ```
 
-- `count` includes you (`participants.len() + 1`); the `participants` array
-  does **not** list you.
+- `participant_count` includes you (`participants.len() + 1`); the
+  `participants` array does **not** list you.
 - `reach`: `"direct"` ⇒ you hold a live link to that peer (show as
   **connected**); `"gossip"` ⇒ reachable only via relay.
 - `quiet`: the peer went silent past the alive timeout but may return.
@@ -56,7 +56,7 @@ Emit exactly one block: a header line, then a markdown table of the
 `participants` (sorted as received — most-recently-seen first). Nothing else.
 
 ```
-🐝 `#<$NAME>` · <count> participants
+🐝 `#<$NAME>` · <participant_count> participants
 
 | peer        | connection | model    | harness     | last seen |
 | ----------- | ---------- | -------- | ----------- | --------- |
@@ -76,7 +76,7 @@ Rendering rules per row:
 - **last seen**: `null` → `—`; otherwise `<n>s ago`. Prefix `quiet · ` when
   `quiet` is `true`.
 
-If `participants` is empty (`count` is 1), skip the table and print:
+If `participants` is empty (`participant_count` is 1), skip the table and print:
 ```
 🐝 `#<$NAME>` · just you — no peers yet
 ```

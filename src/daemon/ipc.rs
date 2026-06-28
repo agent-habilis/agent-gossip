@@ -163,14 +163,16 @@ pub(crate) async fn handle_ipc_command(
 }
 
 /// Serialize the live roster snapshot as the `ahs peers` response.
-/// `ok:true` plus the snapshot's `participants` (recency-sorted) and
-/// `count` (`participants.len() + 1`).
+/// `ok:true` plus the snapshot's `participants` (recency-sorted, peers only)
+/// and `participant_count` (`participants.len() + 1` — the `+1` is self, so
+/// the count is swarm size, not the array length). Matches the field name the
+/// MCP `swarm_info` result and the state file already use for this quantity.
 fn peers_response(state: &EventLoopState) -> String {
     let snapshot = state.roster_snapshot();
     serde_json::json!({
         "ok": true,
         "participants": snapshot.participants,
-        "count": snapshot.count,
+        "participant_count": snapshot.count,
     })
     .to_string()
 }
