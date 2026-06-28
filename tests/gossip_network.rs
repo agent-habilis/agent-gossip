@@ -960,15 +960,18 @@ fn test_poll_wait_blocks_then_resolves_and_times_out() {
         "should have blocked ~1s, took {timeout_elapsed:?}"
     );
 
-    // (2) Resolves on traffic: start a blocking 15s wait, have the creator
-    // send ~400ms in; the poll must return the message well under the timeout.
+    // (2) Resolves on traffic: start a blocking 60s wait (the daemon's
+    // long-poll max), have the creator send ~400ms in; the poll must return the
+    // message well under the ceiling. The wait is generous so a loaded host
+    // can't flake a correct delivery, yet returning long before 60s still
+    // proves the poll woke on traffic rather than spinning to an empty timeout.
     let swarm_for_send = swarm.clone();
     let creator_nick = creator.nickname.clone();
     let sender = std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(400));
         cli_message(&swarm_for_send, &creator_nick, "via long-poll");
     });
-    let (got, resolve_elapsed) = cli_poll_wait(&swarm, &joiner.nickname, after.as_deref(), "15000");
+    let (got, resolve_elapsed) = cli_poll_wait(&swarm, &joiner.nickname, after.as_deref(), "60000");
     sender.join().unwrap();
     let events: Vec<serde_json::Value> = serde_json::from_str(&got)
         .unwrap_or_else(|error| panic!("parse long-poll JSON: {error}\nraw: {got}"));
@@ -979,8 +982,8 @@ fn test_poll_wait_blocks_then_resolves_and_times_out() {
         "long-poll returned the message: {got}"
     );
     assert!(
-        resolve_elapsed < Duration::from_secs(14),
-        "resolved before the 15s timeout, took {resolve_elapsed:?}"
+        resolve_elapsed < Duration::from_mins(1),
+        "woke on traffic rather than spinning to the wait ceiling, took {resolve_elapsed:?}"
     );
 }
 

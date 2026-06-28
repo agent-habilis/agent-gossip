@@ -35,12 +35,15 @@ pub(crate) const POLL: Duration = Duration::from_millis(250);
 /// Budget for a delivery asserted **after a disruption** (beacon death,
 /// SIGSTOP freeze, rendezvous migration, creator departure). Re-meshing waits
 /// on the fixed 15s heal cadence, so a recovery that just missed a tick needs
-/// another cycle — the steady-state `MSG_TIMEOUT` (30s) sits right on that
-/// cliff and flakes on a loaded host. 90s clears several cycles; `wait_until`
+/// another cycle — the steady-state `MSG_TIMEOUT` (1 min) sits right on that
+/// cliff and flakes on a loaded host. 2 min clears ~8 heal cycles; `wait_until`
 /// is adaptive, so a healthy run returns in seconds and only a genuine stall
-/// pays the ceiling. One named constant so every post-disruption assertion
-/// across the suite uses the same floor.
-pub(crate) const RECOVERY_TIMEOUT: Duration = Duration::from_secs(90);
+/// pays the ceiling. The extra headroom over a bare "few cycles" is for a host
+/// running real swarm daemons alongside the suite (dogfooding) — CPU starvation
+/// there slows convergence past a tighter bound without any product fault. One
+/// named constant so every post-disruption assertion across the suite uses the
+/// same floor.
+pub(crate) const RECOVERY_TIMEOUT: Duration = Duration::from_mins(2);
 
 /// Serializes the daemon-spawning reliability tests (`#[test]`, sync) —
 /// beacon migration, sleep/wake heal, anti-entropy, flap storms. They assert

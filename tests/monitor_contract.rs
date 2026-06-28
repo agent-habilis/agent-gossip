@@ -17,8 +17,8 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use common::{
-    CONNECT_TIMEOUT, InProcNode, MSG_TIMEOUT, POLL, RECOVERY_TIMEOUT, socket_path, tmp_log,
-    wait_until,
+    CONNECT_TIMEOUT, InProcNode, MSG_TIMEOUT, POLL, RECOVERY_TIMEOUT, serial_guard, socket_path,
+    tmp_log, wait_until,
 };
 
 /// A node running in JSON output mode, with stdout captured to a log file.
@@ -436,6 +436,10 @@ async fn test_self_echo_suppression() {
 /// presence `left` event with the correct JSON shape.
 #[test]
 fn test_peer_departure_event() {
+    // Disruption/recovery test — serialize against the other heavy departure
+    // tests so concurrent SIGINTs don't starve each other's heal cycles (the
+    // same gate gossip_network's reliability tests use).
+    let _serial = serial_guard();
     let (creator, joiner_a, _joiner_b, _swarm) = three_peers("depart");
 
     joiner_a.sigint();
@@ -576,6 +580,9 @@ async fn test_message_event_has_all_required_fields() {
 /// to pass messages.
 #[test]
 fn test_creator_departure_peers_survive() {
+    // Disruption/recovery test — serialize so concurrent SIGINTs don't starve
+    // each other's heal cycles (see `serial_guard`).
+    let _serial = serial_guard();
     let (creator, swarm) = JsonNode::create();
     let mut joiner_a = JsonNode::join(&swarm, "survive-alpha");
     let mut joiner_b = JsonNode::join(&swarm, "survive-beta");
@@ -659,6 +666,9 @@ fn test_creator_hard_kill_peers_survive() {
 /// continue exchanging messages.
 #[test]
 fn test_creator_departure_four_peers_survive() {
+    // Disruption/recovery test — serialize so concurrent SIGINTs don't starve
+    // each other's heal cycles (see `serial_guard`).
+    let _serial = serial_guard();
     let (creator, swarm) = JsonNode::create();
     let mut joiner_a = JsonNode::join(&swarm, "four-alpha");
     let mut joiner_b = JsonNode::join(&swarm, "four-beta");

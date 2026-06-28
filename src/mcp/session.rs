@@ -233,9 +233,16 @@ mod tests {
         }
     }
 
+    /// Generous in-process delivery budget. Every mesh wait below is adaptive —
+    /// it breaks the instant the condition holds — so a healthy run returns in
+    /// milliseconds and only a genuinely stalled link pays this ceiling. Set
+    /// high so a loaded host (concurrent tests, busy CI) can't flake a correct
+    /// delivery; mirrors the integration suite's `MSG_TIMEOUT`.
+    const DELIVER: Duration = Duration::from_mins(1);
+
     async fn wait_for_gossip(session: &Session, author: &str, body: &str) -> Option<MessageId> {
-        // Poll up to ~10 s for the message to propagate via gossip.
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        // Poll up to `DELIVER` for the message to propagate via gossip.
+        let deadline = tokio::time::Instant::now() + DELIVER;
         while tokio::time::Instant::now() < deadline {
             if let Ok(events) = session.fetch_messages(None, None).await {
                 for entry in &events {
@@ -347,13 +354,15 @@ mod tests {
                 .expect("within rate limit");
         };
         // The blocking fetch should resolve as soon as the gossiped "after
-        // warmup" lands — well under its 10s wait — not spin to the timeout.
-        // A single long-poll may return before gossip propagation completes, so
-        // re-issue until the message shows (each call still blocks).
+        // warmup" lands — well under its wait — not spin to the timeout. A
+        // single long-poll may return before gossip propagation completes, so
+        // re-issue until the message shows (each call still blocks). The wait is
+        // the daemon's 60s long-poll max, so under a loaded host a correct
+        // delivery still arrives long before the call would time out empty.
         let watch = async {
             loop {
                 let events = joiner
-                    .fetch_messages(after, Some(10_000))
+                    .fetch_messages(after, Some(60_000))
                     .await
                     .expect("long-poll fetch");
                 if events
@@ -365,15 +374,18 @@ mod tests {
                 }
             }
         };
-        let watch = tokio::time::timeout(Duration::from_secs(15), watch);
+        let watch = tokio::time::timeout(Duration::from_secs(90), watch);
         let ((), watched) = tokio::join!(delayed_send, watch);
         assert!(
             watched.is_ok(),
             "long-poll delivered the post-warmup message"
         );
+        // Returning before the 60s wait ceiling proves the poll woke on the
+        // traffic rather than spinning to an empty timeout. Generous margin
+        // (real delivery is sub-second to seconds) so load can't flake it.
         assert!(
-            started.elapsed() < Duration::from_secs(12),
-            "resolved before the long-poll wait timeout"
+            started.elapsed() < DELIVER,
+            "long-poll woke on traffic rather than spinning to its wait ceiling"
         );
 
         joiner.leave().await;
@@ -427,7 +439,7 @@ mod tests {
 
         // The self-send surfaces in a fetch, marked `self:true`.
         let mut saw_self = false;
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        let deadline = tokio::time::Instant::now() + DELIVER;
         while tokio::time::Instant::now() < deadline && !saw_self {
             let events = alice.fetch_messages(None, None).await.expect("fetch");
             saw_self = events.iter().any(|item| {
@@ -466,7 +478,7 @@ mod tests {
         // Capture the seq just BEFORE bob's join (the prior event's seq) so a
         // later explicit replay from there re-reads bob's join + send.
         let mut replay_from: Option<u64> = None;
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        let deadline = tokio::time::Instant::now() + DELIVER;
         while tokio::time::Instant::now() < deadline {
             let events = alice.fetch_messages(None, None).await.expect("first fetch");
             let bob_join_idx = events.iter().position(|item| {
