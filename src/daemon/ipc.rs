@@ -162,7 +162,7 @@ pub(crate) async fn handle_ipc_command(
     }
 }
 
-/// Serialize the live roster snapshot as the `ahs peers` response.
+/// Serialize the live roster snapshot as the `ahsw peers` response.
 /// `ok:true` plus the snapshot's `participants` (recency-sorted, peers only)
 /// and `participant_count` (`participants.len() + 1` — the `+1` is self, so
 /// the count is swarm size, not the array length). Matches the field name the

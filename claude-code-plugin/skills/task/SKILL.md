@@ -63,7 +63,7 @@ Establish *what* is being sent **before** choosing who runs it:
 Query the live roster (silently — don't print it):
 
 ```bash
-ahs peers --swarm "$SWARM" --nickname "$NICKNAME"
+ahsw peers --swarm "$SWARM" --nickname "$NICKNAME"
 ```
 
 It returns
@@ -110,7 +110,7 @@ independent). For each task, send its opening offer to its worker
 with that task's brief:
 
 ```bash
-ahs exchange --swarm "$SWARM" --nickname "$NICKNAME" --to "$WORKER" \
+ahsw exchange --swarm "$SWARM" --nickname "$NICKNAME" --to "$WORKER" \
   --exchange-id "$EXCHANGE_ID" --kind task --phase offer --text "$BRIEF"
 ```
 
@@ -145,9 +145,14 @@ runs once they all finish.
 
 ## Track tasks in the to-do list
 
-Use Claude Code's native **`TodoWrite`** tool as the **single source of truth**
-for task status — never a printed status block. On send, add **one todo per
-task**:
+Use your harness's native to-do list as the **single source of truth** for task
+status — never a printed status block. It's **`TodoWrite`** in most harnesses;
+where that tool is absent, use **`TaskCreate`** (`subject` = the `content` line
+below, `activeForm` = `activeForm`) + **`TaskUpdate`** (status
+`pending → in_progress → completed`, `deleted` to drop), one task per
+`exchange_id`. The lifecycle is identical either way; wherever this skill says
+`TodoWrite` or "todo", use whichever tool your harness provides. On send, add
+**one todo per task**:
 
 - `content` is **exactly** `🐝 <one-line task> · <worker>` (e.g. `🐝 review
   src/net · <crystal-azure>`), status `in_progress`. The companion

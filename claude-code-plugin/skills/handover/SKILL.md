@@ -96,7 +96,7 @@ continue below.
 Now that the task is set, choose who runs it. Query the live roster:
 
 ```bash
-ahs peers --swarm "$SWARM" --nickname "$NICKNAME"
+ahsw peers --swarm "$SWARM" --nickname "$NICKNAME"
 ```
 
 It returns
@@ -126,7 +126,7 @@ The plan (`$BRIEF`) was already approved in plan mode and the worker picked,
 so send straight away:
 
 ```bash
-ahs exchange --swarm "$SWARM" --nickname "$NICKNAME" --to "$TARGET" \
+ahsw exchange --swarm "$SWARM" --nickname "$NICKNAME" --to "$TARGET" \
   --exchange-id "$EXCHANGE_ID" --kind handover --phase offer --text "$BRIEF"
 ```
 
@@ -160,10 +160,15 @@ You never wait for the receiver to *run* the work.
 
 ## Track the task in the to-do list
 
-Use Claude Code's native **`TodoWrite`** tool as the **single source of
-truth** for handover status — **not** a printed `🐝 tasks` block. Add one
-todo for this handover and keep it updated **through `TodoWrite`** as the
-daemon emits events for this `exchange_id`; never print a per-update status line.
+Use your harness's native to-do list as the **single source of truth** for
+handover status — **not** a printed `🐝 tasks` block. It's **`TodoWrite`** in
+most harnesses; where that tool is absent, use **`TaskCreate`** (`subject` = the
+`content` line below, `activeForm` = `activeForm`) + **`TaskUpdate`** (status
+`pending → in_progress → completed`, `deleted` to drop), one task per
+`exchange_id`. The lifecycle is identical either way; wherever this skill says
+`TodoWrite` or "todo", use whichever tool your harness provides. Add one
+todo for this handover and keep it updated as the daemon emits events for this
+`exchange_id`; never print a per-update status line.
 
 - Add it on send: a todo whose `content` is **exactly** `🐝 handover to
   <$TARGET>` (e.g. `🐝 handover to <crystal-azure>`), status `in_progress`.

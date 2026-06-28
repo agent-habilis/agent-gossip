@@ -27,7 +27,7 @@ and STOP.
 verbatim):
 
 ```bash
-ahs peers --swarm "$SWARM" --nickname "$NICKNAME"
+ahsw peers --swarm "$SWARM" --nickname "$NICKNAME"
 ```
 
 This returns a single JSON line synchronously — wait for it and parse it:
@@ -84,6 +84,6 @@ If `participants` is empty (`participant_count` is 1), skip the table and print:
 ## Notes
 
 - Read-only. Requires an active `/swarm:create` or `/swarm:join` session (a
-  live daemon): `ahs peers` talks to it over IPC.
+  live daemon): `ahsw peers` talks to it over IPC.
 - The `connected` vs `gossip` tag converges as peers re-advertise — a brand-new
   neighbor can briefly show `gossip` until its next address broadcast.

@@ -11,7 +11,7 @@
 //! (no read-merge: there are no foreign keys to preserve).
 //!
 //! `ready` is `false` at the early identity write and flips to `true`
-//! once the event loop is serving IPC, so a reader (e.g. `ahs ready`)
+//! once the event loop is serving IPC, so a reader (e.g. `ahsw ready`)
 //! can gate on it rather than on the file's mere existence.
 //! `participant_count` is the total number of agents in the swarm,
 //! including self. `last_updated` is a unix timestamp the daemon
@@ -112,7 +112,7 @@ impl Drop for StateFile {
     }
 }
 
-/// What the `ahs ready` gate needs out of a state file on every poll: whether
+/// What the `ahsw ready` gate needs out of a state file on every poll: whether
 /// the daemon is serving (`ready`) and how fresh that claim is (`last_updated`,
 /// unix seconds — the daemon rewrites it on a fixed heartbeat, so a stale
 /// `ready: true` left by a prior daemon killed with SIGKILL is rejected). The
@@ -123,7 +123,7 @@ pub(crate) struct ReadySnapshot {
     pub last_updated: u64,
 }
 
-/// Best-effort session identity for `ahs ready --output json`. Each field is
+/// Best-effort session identity for `ahsw ready --output json`. Each field is
 /// `None` when the state file is unreadable, not JSON, or predates that field
 /// — so the JSON the gate prints carries only the keys actually present.
 pub(crate) struct SessionIdentity {

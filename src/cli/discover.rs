@@ -105,7 +105,7 @@ fn sigterm_stream() -> Signal {
     signal(SignalKind::terminate()).expect("register SIGTERM handler")
 }
 
-/// One directory change as a JSON line for `ahs discover --output json`.
+/// One directory change as a JSON line for `ahsw discover --output json`.
 /// `Found`/`Updated` both surface as `swarm_found` (upsert semantics —
 /// the agent treats a re-ad as a refresh); a departure is `swarm_lost`.
 fn discover_event_json(event: &DirectoryEvent) -> String {
@@ -246,9 +246,9 @@ async fn run_picker(
     drop(raw);
     // Restore autowrap, then erase only the picker's own block so the
     // discover chrome leaves no trace: the `join` handoff (or the shell
-    // prompt on quit) takes its place, while the `$ ahs discover` prompt and
+    // prompt on quit) takes its place, while the `$ ahsw discover` prompt and
     // everything above stay put — i.e. selecting a swarm lands in the same
-    // terminal state as a direct `ahs join`.
+    // terminal state as a direct `ahsw join`.
     print_str(ENABLE_WRAP);
     erase_block(prev_lines);
     outcome

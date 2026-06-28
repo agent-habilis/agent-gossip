@@ -1,6 +1,6 @@
-//! `ahs status`: report this machine's swarm setup in cargo-style groups — the
+//! `ahsw status`: report this machine's swarm setup in cargo-style groups — the
 //! binary's version, then each agent's integration state (set up / not set up /
-//! absent). The read-only counterpart to `setup`/`teardown`; mirrors
+//! absent). The read-only counterpart to `plug`/`unplug`; mirrors
 //! `../browse`'s `ah-b status`.
 
 use anyhow::Result;
@@ -11,7 +11,7 @@ use super::agent::{self, AgentState};
 
 pub(super) fn run() -> Result<()> {
     output::status(
-        "ahs",
+        "ahsw",
         &format!("version: {}", crate::util::version::VERSION),
     );
 
@@ -28,7 +28,7 @@ pub(super) fn run() -> Result<()> {
             AgentState::OutOfDate => {
                 output::status_warn("skill", &msg);
                 warnings.push(format!(
-                    "{} skill is out of date — run `ahs setup --agent {} --execute` to update",
+                    "{} skill is out of date — run `ahsw plug --agent {}` to update",
                     agent.label(),
                     agent.label()
                 ));

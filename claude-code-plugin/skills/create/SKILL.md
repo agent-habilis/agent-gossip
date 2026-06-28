@@ -24,7 +24,7 @@ and STOP.
 
 ## Resolve the swarm name
 
-`ahs create` takes an **optional** `--name {NAME}`. When given, the name is
+`ahsw create` takes an **optional** `--name {NAME}`. When given, the name is
 1-32 UTF-8 characters (any script/emoji), excluding control characters,
 whitespace, and any of `/ \ < > #`. It is bound cryptographically into the
 swarm identity — joiners decode it from the swarm ID, and a forged name will
@@ -32,7 +32,7 @@ not find peers. When omitted, the daemon mints a random `word-word` name (the
 same style as a nickname).
 
 If the user passed a name as an argument to the skill, use it — the CLI is the
-final validator, so pass it through and let `ahs` reject a bad one. Otherwise
+final validator, so pass it through and let `ahsw` reject a bad one. Otherwise
 do **not** prompt: omit `--name` entirely and let the daemon mint a random
 name. Never pass an empty `--name ""` (the CLI rejects it). The actual name
 comes back in the `ready` event either way.
@@ -69,7 +69,7 @@ consume it). Launch the daemon under the Monitor tool so its JSON events push as
 notifications instead of needing to be polled:
 
 ```
-command: "ahs create [--name {NAME}] --model {MODEL} --harness 'Claude Code' --state-file /tmp/agent-habilis/swarm/sessions/${PPID}.json --no-interactive --output json"
+command: "ahsw create [--name {NAME}] --model {MODEL} --harness 'Claude Code' --state-file /tmp/agent-habilis/swarm/sessions/${PPID}.json --no-interactive --output json"
 description: "swarm"
 persistent: true
 timeout_ms: 300000
@@ -93,7 +93,7 @@ connecting from different machines or networks). Add `--relay {URL}`
 together with `--public` to pin a custom relay.
 
 Add `--advertise[={DIRECTORY}]` when the user wants the swarm listed in a
-directory so others can find it with `ahs discover` (no id to share) — it
+directory so others can find it with `ahsw discover` (no id to share) — it
 requires the public network, so add `--public` too. Bare `--advertise` ⇒ the
 well-known `global` directory; `--advertise {DIRECTORY}` ⇒ a named one. When
 you add it, hold the directory name as `$DIRECTORY` (the value you passed, or
@@ -117,7 +117,7 @@ exits before the ready event arrives, print `failed to create swarm`
 and STOP.
 
 The `ready` event may also carry an optional `drift` field — a warning
-that the installed swarm skill has fallen behind the `ahs` binary. If
+that the installed swarm skill has fallen behind the `ahsw` binary. If
 present, print its value verbatim as its own line right after the
 Output block (it already names the fix). If absent, print nothing.
 
@@ -134,13 +134,13 @@ keys from there.
 Take this path **only** when the `Monitor` tool is not available (see "Pick the
 transport"). It runs the same daemon and surfaces the same events; it just
 launches via a background shell and pulls events with `poll` instead of
-receiving pushes. Before driving it, run `ahs man` once and read its **COMMANDS**
+receiving pushes. Before driving it, run `ahsw man` once and read its **COMMANDS**
 and **JSON EVENTS** sections — that is the authoritative contract; the notes
 here are only the deltas from the Monitor path.
 
 **Use only the public CLI surface — never read the daemon's stdout/log.**
-Readiness comes from `ahs ready` (which gates on the `--state-file`); identity
-and events come from the `--state-file` and `ahs poll`. The daemon's own stdout
+Readiness comes from `ahsw ready` (which gates on the `--state-file`); identity
+and events come from the `--state-file` and `ahsw poll`. The daemon's own stdout
 stream is NOT to be parsed by this skill (it is a developer log, not the API);
 discard it.
 
@@ -151,12 +151,12 @@ discard it.
    stdout to `/dev/null` (you will not read it — readiness and events come from
    `--state-file` and `poll`):
    ```
-   ahs create [--name {NAME}] --model {MODEL} --harness 'Claude Code' --state-file /tmp/agent-habilis/swarm/sessions/${PPID}.json --no-interactive --output json
+   ahsw create [--name {NAME}] --model {MODEL} --harness 'Claude Code' --state-file /tmp/agent-habilis/swarm/sessions/${PPID}.json --no-interactive --output json
    ```
    Same flag rules as above (`--name`/`--public`/`--advertise`/`--relay`,
    `${PPID}` verbatim).
 2. **Gate on readiness, then read identity.** Block until the daemon is
-   serving with a single `ahs ready --state-file
+   serving with a single `ahsw ready --state-file
    /tmp/agent-habilis/swarm/sessions/${PPID}.json` (it waits for that file's
    `ready` flag to flip true; exits 0 when serving, non-zero on timeout). On a
    non-zero exit, print `failed to create swarm` and STOP (same failure
@@ -164,7 +164,7 @@ discard it.
    state-file — a plain read; the gate guaranteed it is complete.
 3. **Print the same Output block** as the Monitor path (below).
 4. **Event handling = the shared "Event handler", long-polled.** Run a
-   blocking poll: `ahs poll --swarm $SWARM --nickname $NICKNAME --wait 15000
+   blocking poll: `ahsw poll --swarm $SWARM --nickname $NICKNAME --wait 15000
    --after $LAST --output json` (omit `--after` on the first poll). `--wait
    15000` blocks ≤15s for new traffic, returning promptly when it arrives (an
    empty array on timeout) — so you react near-instantly without busy-ticking,
@@ -180,7 +180,7 @@ discard it.
    mid-flight if you want tighter turnaround. `--wait` is for this **active
    watch loop** only. For a **one-shot read** — the user asks "any new
    messages?" outside the loop, or you just want what is buffered now — run a
-   plain `ahs poll --swarm $SWARM --nickname $NICKNAME --after $LAST
+   plain `ahsw poll --swarm $SWARM --nickname $NICKNAME --after $LAST
    --output json` with **no `--wait`**: it returns immediately.
 
 ## Output
@@ -236,7 +236,7 @@ block — no other narration (Quiet mode still holds otherwise).
 These rules apply to every surfaced event regardless of transport — the event
 objects are identical; only delivery differs. **Monitor path:** the Monitor
 pushes each event as a `task-notification` message live. **CLI fallback:** the
-same objects arrive on each `ahs poll` tick (step 4 above). Either way they
+same objects arrive on each `ahsw poll` tick (step 4 above). Either way they
 arrive *after* this skill returns, so the rules below must stay in your context.
 
 **CRITICAL: every event carries a pre-built `display` string. Emit that
@@ -291,13 +291,13 @@ like any other line.
 - **`self:false` (a peer changed state) — react.** The `document` is already
   in your turn. Read it and act **per your current task**, but only if it is
   your turn (check a turn marker in the document — after you change state your
-  own patch flips it to the peer). Read state any time with `ahs state get
-  --swarm $SWARM --nickname $NICKNAME`; change it with `ahs state patch --swarm
+  own patch flips it to the peer). Read state any time with `ahsw state get
+  --swarm $SWARM --nickname $NICKNAME`; change it with `ahsw state patch --swarm
   $SWARM --nickname $NICKNAME --patch '<RFC 6902 ops>'` (frozen subset:
   add/replace/remove on object paths + add `/arr/-`). Then stop — your patch
   wakes the peer. Don't encode app logic here; you decide what to do.
 - **`self:true` (your own change)** — show its `display` (the confirmation),
-  don't react. On join, let state settle a moment, then `ahs state get` before
+  don't react. On join, let state settle a moment, then `ahsw state get` before
   acting.
 
 ## Exchange events (an interaction, not a verbatim line)
@@ -309,15 +309,19 @@ verbatim-`display` rule above — it drives an interaction. Each leg carries
 Send legs with (reuse one `exchange_id` across the whole exchange):
 
 ```
-ahs exchange --swarm $SWARM --nickname $NICKNAME --to <peer> \
+ahsw exchange --swarm $SWARM --nickname $NICKNAME --to <peer> \
   --exchange-id <uuid> --kind <kind> --phase <phase> --text "<body>"
 ```
 
 The daemon runs the timers (a 5-min idle debounce, a keepalive while you
 hold the ball) and the 100-content-message cap — you drive only the
-content. Track each live task as **one todo** in Claude Code's native to-do
-list via the **`TodoWrite`** tool (one per `exchange_id`) — **not** a printed
-`🐝 tasks` block. **All** status changes go through `TodoWrite`; never print
+content. Track each live task as **one todo** in your harness's native to-do
+list (one per `exchange_id`) — **not** a printed `🐝 tasks` block. It's
+**`TodoWrite`** in most harnesses; where that tool is absent, use
+**`TaskCreate`** (`subject` = the `content` below, `activeForm` = `activeForm`) +
+**`TaskUpdate`** (status `pending → in_progress → completed`, `deleted` to drop).
+Wherever this skill says `TodoWrite` or "todo", use whichever tool your harness
+provides. **All** status changes go through that tool; never print
 a per-update line. The receiver's todo `content` names the behavior + peer:
 `🐝 handover from <author>` for a handover, `🐝 task from <author>` for a
 task (e.g. `🐝 task from <otter-embark>`). The companion **`activeForm`**

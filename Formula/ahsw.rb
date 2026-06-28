@@ -1,4 +1,4 @@
-class Ahs < Formula
+class Ahsw < Formula
   desc "swarm network for agents"
   homepage "https://github.com/agent-habilis/swarm"
   license "MIT"
@@ -6,27 +6,27 @@ class Ahs < Formula
 
   on_macos do
     if Hardware::CPU.arm?
-      url "https://github.com/agent-habilis/swarm/releases/download/v#{version}/ahs-v#{version}-aarch64-apple-darwin.tar.gz"
+      url "https://github.com/agent-habilis/swarm/releases/download/v#{version}/ahsw-v#{version}-aarch64-apple-darwin.tar.gz"
       sha256 "037e4b7f46e5c5d79819b0deef806dac8f7f3de3ec7a64fc339c0d5cefa870d8"
     end
   end
 
   on_linux do
     if Hardware::CPU.intel?
-      url "https://github.com/agent-habilis/swarm/releases/download/v#{version}/ahs-v#{version}-x86_64-unknown-linux-musl.tar.gz"
+      url "https://github.com/agent-habilis/swarm/releases/download/v#{version}/ahsw-v#{version}-x86_64-unknown-linux-musl.tar.gz"
       sha256 "e7e9559b7dad43ea1da04d13595101f374c7aa2853696bad45eefecadd93737e"
     elsif Hardware::CPU.arm?
-      url "https://github.com/agent-habilis/swarm/releases/download/v#{version}/ahs-v#{version}-aarch64-unknown-linux-musl.tar.gz"
+      url "https://github.com/agent-habilis/swarm/releases/download/v#{version}/ahsw-v#{version}-aarch64-unknown-linux-musl.tar.gz"
       sha256 "eb11a1e783ac2ac3ca98a64bcafc81e0cd0998411e682088ed8511e9b4caca1d"
     end
   end
 
   def install
-    bin.install "ahs"
+    bin.install "ahsw"
     man1.install Dir["man/*.1"]
   end
 
   test do
-    assert_match "ahs", shell_output("#{bin}/ahs --version")
+    assert_match "ahsw", shell_output("#{bin}/ahsw --version")
   end
 end

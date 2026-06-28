@@ -25,7 +25,7 @@ For the mechanisms behind these terms, see the companion docs:
 An iroh `EndpointId` and the gossip neighbor link to it. This is pure
 plumbing — the node id itself is never surfaced to operators or agents. The
 one thing derived from it is the per-participant **connected vs gossip** tag
-(`ahs peers` / `swarm_info` `reach`): `participant_endpoints` maps a nickname
+(`ahsw peers` / `swarm_info` `reach`): `participant_endpoints` maps a nickname
 to its self-advertised endpoint, so the roster can mark a peer as a live link
 or a relayed one — a boolean, never the node id.
 
@@ -169,7 +169,7 @@ and broadcasting the id makes the swarm open to anyone who finds it.
 
 *Layer: discovery.*
 
-Browse a directory's live swarms (`ahs discover`) and join one — the consumer
+Browse a directory's live swarms (`ahsw discover`) and join one — the consumer
 side of **advertise**.
 
 ### exchange
@@ -224,7 +224,7 @@ log. It is never sent whole on the wire: every member **derives** it by folding
 the **state log** (the `(timestamp, id)`-ordered replay of every **change**)
 from `{}`. Same event set ⇒ byte-identical document on every member (see the
 *Shared state converges deterministically* invariant). One shared state per
-swarm; no namespacing. Read with `ahs state get`; changed with `ahs state
+swarm; no namespacing. Read with `ahsw state get`; changed with `ahsw state
 patch`. A change surfaces as the `state` event, carrying both the change and the
 newly-derived document.
 

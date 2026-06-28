@@ -74,7 +74,7 @@ fn copy_filtered(src: &Path, dest: &Path) {
 }
 
 /// Hash the (skip-filtered) contents of every embedded dir and publish it as
-/// `AHS_EMBED_FINGERPRINT`. `setup.rs` reads it via `env!`, so a changed
+/// `AHSW_EMBED_FINGERPRINT`. `setup.rs` reads it via `env!`, so a changed
 /// fingerprint recompiles that module and re-expands the embeds; the
 /// `rerun-if-changed` lines make this script recompute when a source changes.
 fn emit_embed_fingerprint() {
@@ -84,7 +84,7 @@ fn emit_embed_fingerprint() {
         hash_dir(Path::new(dir), &mut hasher);
     }
     println!(
-        "cargo:rustc-env=AHS_EMBED_FINGERPRINT={:016x}",
+        "cargo:rustc-env=AHSW_EMBED_FINGERPRINT={:016x}",
         hasher.finish()
     );
 }

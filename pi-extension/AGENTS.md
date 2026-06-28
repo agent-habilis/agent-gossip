@@ -42,7 +42,7 @@ From inside pi, test each slash command:
 ## Architecture
 
 - One session = one swarm. Joining a new swarm implicitly leaves the previous one.
-- Spawns `ahs` binary as a child process
+- Spawns `ahsw` binary as a child process
 - Reads stdout line-by-line for JSON events
 - State is in-memory — no files written to disk
 - Daemon dies when pi exits

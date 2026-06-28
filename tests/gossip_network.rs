@@ -1,6 +1,6 @@
 //! Integration tests for the gossip network.
 //!
-//! Each test spawns real `ahs` processes, exercises the network,
+//! Each test spawns real `ahsw` processes, exercises the network,
 //! and asserts on what each node actually received. Tests are independent —
 //! each creates its own swarm so IPC sockets never collide.
 //!
@@ -608,7 +608,7 @@ fn test_state_file_removed_on_signal() {
         let log = tmp_log(&format!("statefile{signal}"));
         let file = File::create(&log).unwrap();
         let state_file = std::env::temp_dir().join(format!(
-            "ahs-statefile-test-{}-{signal}.json",
+            "ahsw-statefile-test-{}-{signal}.json",
             std::process::id()
         ));
         let _ = fs::remove_file(&state_file);
@@ -654,7 +654,7 @@ fn test_state_file_removed_on_signal() {
     }
 }
 
-/// `ahs ready --state-file PATH` is the CLI-fallback readiness gate: it blocks
+/// `ahsw ready --state-file PATH` is the CLI-fallback readiness gate: it blocks
 /// until the daemon writing PATH flips the file's `ready` flag to true (set
 /// only once the event loop is serving), then exits 0. This covers the gate
 /// against an already-up daemon and asserts the file then carries `ready:true`
@@ -664,7 +664,7 @@ fn test_ready_gate_succeeds_when_serving() {
     let log = tmp_log("ready-before");
     let file = File::create(&log).unwrap();
     let state_file =
-        std::env::temp_dir().join(format!("ahs-ready-before-{}.json", std::process::id()));
+        std::env::temp_dir().join(format!("ahsw-ready-before-{}.json", std::process::id()));
     let _ = fs::remove_file(&state_file);
 
     let mut child = common::test_cmd()
@@ -683,10 +683,10 @@ fn test_ready_gate_succeeds_when_serving() {
         .arg(&state_file)
         .args(["--timeout-secs", "60"])
         .status()
-        .expect("failed to run ahs ready");
+        .expect("failed to run ahsw ready");
     assert!(
         status.success(),
-        "ahs ready should exit 0 against a serving daemon\nlog:\n{}",
+        "ahsw ready should exit 0 against a serving daemon\nlog:\n{}",
         fs::read_to_string(&log).unwrap_or_default()
     );
 
@@ -711,7 +711,7 @@ fn test_ready_gate_succeeds_when_serving() {
     let _ = fs::remove_file(&state_file);
 }
 
-/// The race the gate exists for: `ahs ready` is started *before* the daemon, so
+/// The race the gate exists for: `ahsw ready` is started *before* the daemon, so
 /// the state file does not exist yet. The gate must block (file-appears, then
 /// ready-flips) and still exit 0 once the daemon comes up and serves.
 #[test]
@@ -719,7 +719,7 @@ fn test_ready_gate_waits_for_a_late_daemon() {
     let log = tmp_log("ready-after");
     let file = File::create(&log).unwrap();
     let state_file =
-        std::env::temp_dir().join(format!("ahs-ready-after-{}.json", std::process::id()));
+        std::env::temp_dir().join(format!("ahsw-ready-after-{}.json", std::process::id()));
     let _ = fs::remove_file(&state_file);
 
     // Start the gate first — nothing has written the file yet.
@@ -729,7 +729,7 @@ fn test_ready_gate_waits_for_a_late_daemon() {
         .arg(&state_file)
         .args(["--timeout-secs", "60"])
         .spawn()
-        .expect("failed to spawn ahs ready");
+        .expect("failed to spawn ahsw ready");
 
     // Launch the daemon a beat later, writing the same state file.
     std::thread::sleep(Duration::from_millis(500));
@@ -742,10 +742,10 @@ fn test_ready_gate_waits_for_a_late_daemon() {
         .spawn()
         .expect("failed to spawn create --state-file");
 
-    let status = gate.wait().expect("ahs ready never exited");
+    let status = gate.wait().expect("ahsw ready never exited");
     assert!(
         status.success(),
-        "ahs ready started before the daemon should still exit 0 once it serves\nlog:\n{}",
+        "ahsw ready started before the daemon should still exit 0 once it serves\nlog:\n{}",
         fs::read_to_string(&log).unwrap_or_default()
     );
 
@@ -763,7 +763,7 @@ fn test_ready_gate_waits_for_a_late_daemon() {
 #[test]
 fn test_ready_gate_times_out_without_a_daemon() {
     let state_file = std::env::temp_dir().join(format!(
-        "ahs-ready-timeout-{}-never.json",
+        "ahsw-ready-timeout-{}-never.json",
         std::process::id()
     ));
     let _ = fs::remove_file(&state_file);
@@ -774,10 +774,10 @@ fn test_ready_gate_times_out_without_a_daemon() {
         .arg(&state_file)
         .args(["--timeout-secs", "2"])
         .status()
-        .expect("failed to run ahs ready");
+        .expect("failed to run ahsw ready");
     assert!(
         !status.success(),
-        "ahs ready should exit non-zero when no daemon ever writes the state file"
+        "ahsw ready should exit non-zero when no daemon ever writes the state file"
     );
 }
 
@@ -788,7 +788,7 @@ fn test_ready_gate_times_out_without_a_daemon() {
 #[test]
 fn test_ready_gate_rejects_a_stale_ready_file() {
     let state_file =
-        std::env::temp_dir().join(format!("ahs-ready-stale-{}.json", std::process::id()));
+        std::env::temp_dir().join(format!("ahsw-ready-stale-{}.json", std::process::id()));
     // ready:true but last_updated far in the past (well beyond READY_FRESH_SECS).
     fs::write(
         &state_file,
@@ -802,22 +802,22 @@ fn test_ready_gate_rejects_a_stale_ready_file() {
         .arg(&state_file)
         .args(["--timeout-secs", "2"])
         .status()
-        .expect("failed to run ahs ready");
+        .expect("failed to run ahsw ready");
     assert!(
         !status.success(),
-        "ahs ready must reject a stale ready:true file (last_updated too old) and time out"
+        "ahsw ready must reject a stale ready:true file (last_updated too old) and time out"
     );
     let _ = fs::remove_file(&state_file);
 }
 
-/// `ahs ready --output json` doubles as the identity read: on a fresh
+/// `ahsw ready --output json` doubles as the identity read: on a fresh
 /// `ready:true` file it prints `{swarm,name,nickname}` and exits 0, so a
 /// fallback caller learns its own identity from the gate without parsing the
 /// state file (or guessing its `${PPID}` name) itself.
 #[test]
 fn test_ready_gate_emits_identity_json_on_success() {
     let state_file =
-        std::env::temp_dir().join(format!("ahs-ready-json-{}.json", std::process::id()));
+        std::env::temp_dir().join(format!("ahsw-ready-json-{}.json", std::process::id()));
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -836,7 +836,7 @@ fn test_ready_gate_emits_identity_json_on_success() {
         .arg(&state_file)
         .args(["--timeout-secs", "5", "--output", "json"])
         .output()
-        .expect("failed to run ahs ready");
+        .expect("failed to run ahsw ready");
     assert!(
         output.status.success(),
         "a fresh ready:true file should pass the gate"
@@ -984,7 +984,7 @@ fn test_poll_wait_blocks_then_resolves_and_times_out() {
     );
 }
 
-/// `ahs ping` is daemon-owned: the transient command arms a round over
+/// `ahsw ping` is daemon-owned: the transient command arms a round over
 /// IPC, the daemon broadcasts a probe, every peer auto-pongs, and the
 /// originator emits a `ping_report` on its own output stream listing
 /// each responder's RTT. The probe/pong never surface as chat. A short

@@ -1,4 +1,4 @@
-//! The `ahs` command-line interface: the clap-derived argument shape
+//! The `ahsw` command-line interface: the clap-derived argument shape
 //! lives in [`args`], the live `discover` picker in [`discover`], and the
 //! per-subcommand handlers + [`dispatch`] here. `lib.rs::run_cli` parses
 //! argv and calls `dispatch`; each handler is the thin glue between the
@@ -20,7 +20,7 @@ use crate::transport::ipc::{self, IpcCommand};
 pub(crate) mod agent;
 mod args;
 mod discover;
-mod setup;
+mod plug;
 mod status;
 
 pub(crate) use args::Cli;
@@ -111,8 +111,8 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
         }
         // Embedded integration artifacts written to the agents' skills dirs —
         // self-contained, no repo checkout needed (like `Man`).
-        Commands::Setup { execute, agents } => setup::setup(execute, &agents),
-        Commands::Teardown { execute, agents } => setup::teardown(execute, &agents),
+        Commands::Plug { agents } => plug::plug(&agents),
+        Commands::Unplug { agents } => plug::unplug(&agents),
         Commands::Status => status::run(),
     }
 }
@@ -140,7 +140,7 @@ async fn run_session(resolved: Resolved, shared: SharedServerOpts) -> Result<()>
     );
     // Nag once at startup if an installed integration has fallen behind this
     // binary. CLI-only: the embed/MCP paths pass `None` so in-process tests
-    // stay hermetic. `ahs status` is the on-demand counterpart.
+    // stay hermetic. `ahsw status` is the on-demand counterpart.
     let drift = agent::home_dir()
         .ok()
         .and_then(|home| agent::drift_warning(&home));
@@ -421,7 +421,7 @@ async fn ready(opts: ReadyOpts) -> Result<()> {
             }
             Ok(_) => {}
             Err(error) => {
-                tracing::debug!(%error, path = %state_file.display(), "ahs ready: state-file read failed; retrying");
+                tracing::debug!(%error, path = %state_file.display(), "ahsw ready: state-file read failed; retrying");
             }
         }
         if tokio::time::Instant::now() >= deadline {
@@ -437,7 +437,7 @@ async fn ready(opts: ReadyOpts) -> Result<()> {
     }
 }
 
-/// Print the session identity as a JSON object for `ahs ready --output json`,
+/// Print the session identity as a JSON object for `ahsw ready --output json`,
 /// omitting any field the state file lacks — so a degenerate (identity-less)
 /// file yields `{}` rather than `{"swarm":null,…}` that a caller might splice
 /// into the next command as the literal string "null".

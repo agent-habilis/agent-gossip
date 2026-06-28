@@ -33,7 +33,7 @@ mod tests {
     #[test]
     fn ping_accepts_output_flag() {
         let cli = Cli::parse_from([
-            "ahs", "ping", "--swarm", "🐝AbCdEf1234", "--nickname", "my-nick", "--output", "json",
+            "ahsw", "ping", "--swarm", "🐝AbCdEf1234", "--nickname", "my-nick", "--output", "json",
         ]);
         let Commands::Ping { opts } = cli.command else {
             panic!("expected Ping command");

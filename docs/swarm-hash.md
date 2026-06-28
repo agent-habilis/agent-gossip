@@ -59,7 +59,7 @@ rendezvous keypair, port ladder — are in `docs/discovery.md`.)
 ## Examples
 
 ```
-ahs create --public --rate-limit 0             # unlimited, default lookups
-ahs create --public --relay https://r.example  # custom relay ladder, baked in
-ahs join 🐝…                                     # inherits ALL of the above
+ahsw create --public --rate-limit 0             # unlimited, default lookups
+ahsw create --public --relay https://r.example  # custom relay ladder, baked in
+ahsw join 🐝…                                    # inherits ALL of the above
 ```

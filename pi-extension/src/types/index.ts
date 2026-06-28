@@ -4,7 +4,7 @@ export type Session = {
   nickname: string;
   pid?: number;
   // Set when the `ready` event reports the installed extension has fallen
-  // behind the `ahs` binary — surfaced once at swarm start.
+  // behind the `ahsw` binary — surfaced once at swarm start.
   drift?: string;
 };
 

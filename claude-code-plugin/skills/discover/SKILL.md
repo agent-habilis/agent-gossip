@@ -1,6 +1,6 @@
 ---
 name: discover
-description: Browse swarms advertising in a directory and join one. Runs `ahs discover` under a Monitor and shows a refreshable picker; pick a swarm to hand off to `/swarm:join`.
+description: Browse swarms advertising in a directory and join one. Runs `ahsw discover` under a Monitor and shows a refreshable picker; pick a swarm to hand off to `/swarm:join`.
 ---
 
 ## Quiet mode
@@ -29,13 +29,13 @@ Browsing is **always** allowed — discover joins no swarm, so there is no
 
 ## Start the Monitor
 
-Launch `ahs discover` under the Monitor tool so its JSON events push as
+Launch `ahsw discover` under the Monitor tool so its JSON events push as
 notifications, exactly like `/swarm:create` and `/swarm:join`. Use a
 **distinct description** (`swarm-discover`, not `swarm`) so `/swarm:leave`
 never stops it and it never collides with a real swarm session.
 
 ```
-command: "ahs discover --directory $DIR --no-interactive --output json"
+command: "ahsw discover --directory $DIR --no-interactive --output json"
 description: "swarm-discover"
 persistent: true
 timeout_ms: 300000
@@ -47,7 +47,7 @@ joins no swarm and writes no session, so there is no `--state-file` /
 path below.
 
 **Fallback when Monitor is unavailable.** `swarm_found`/`swarm_lost` surface
-**only** on `ahs discover`'s live stdout stream — there is no public pull API
+**only** on `ahsw discover`'s live stdout stream — there is no public pull API
 for them (discover joins no swarm, so there is no `poll` and no `--state-file`).
 The other skills' poll fallback therefore does **not** apply, and this skill
 must **not** scrape the daemon's stdout/log (that is a developer stream, not the
@@ -128,7 +128,7 @@ discovering, then join it:
 ## Always clean up
 
 On **every** exit path — a join hand-off, the user stopping, or any error
-— **TaskStop the `swarm-discover` Monitor** so `ahs discover` never leaks.
+— **TaskStop the `swarm-discover` Monitor** so `ahsw discover` never leaks.
 
 ## Notes
 
