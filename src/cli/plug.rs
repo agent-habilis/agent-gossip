@@ -85,7 +85,8 @@ fn finish(acted: usize, verb: &str) {
     if acted == 0 {
         warn("nothing to do (try --agent claude-code|pi|generic)");
     } else {
-        status("Finished", &format!("{verb} swarm · {acted} agent(s)"));
+        let noun = if acted == 1 { "agent" } else { "agents" };
+        status("Finished", &format!("{verb} swarm · {acted} {noun}"));
     }
 }
 
