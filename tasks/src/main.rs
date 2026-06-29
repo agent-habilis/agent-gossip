@@ -16,6 +16,7 @@ mod man;
 mod pi;
 mod proptest;
 mod release;
+mod run;
 mod test;
 mod util;
 
@@ -67,6 +68,12 @@ enum Task {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    /// Run the binary (`cargo run`). Extra args go to `ahsw`
+    /// (e.g. `cargo task run create`).
+    Run {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
     /// Install the binary.
     Install,
     /// Run tests with coverage.
@@ -112,6 +119,7 @@ fn main() -> ExitCode {
         } => build::run(&sh, target.as_deref(), arch.as_deref(), release),
         Task::Bench { args } => bench::run(&sh, &args),
         Task::Release { args } => release::run(&sh, &args),
+        Task::Run { args } => run::run(&sh, &args),
         Task::Install => install::run(&sh),
         Task::Coverage => coverage::run(&sh),
         Task::Ci => ci::run(&sh),
