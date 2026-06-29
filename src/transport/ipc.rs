@@ -163,14 +163,6 @@ pub(crate) fn json_error(error: &str) -> String {
     serde_json::json!({"ok": false, "error": error}).to_string()
 }
 
-/// Response for a send dropped by the sender-side rate limiter. `ok:false`
-/// keeps error-only readers from treating it as a success; the
-/// `rate_limited` flag lets aware callers tell it apart from a real error
-/// (it is a deliberate drop, not a failure).
-pub(crate) fn json_rate_limited() -> String {
-    serde_json::json!({"ok": false, "rate_limited": true}).to_string()
-}
-
 /// Response for a state patch rejected by the `--if-doc-hash` compare-and-set
 /// guard. The `stale` flag lets a client tell a **retryable** conflict (re-read
 /// and retry) apart from a structurally-bad patch, without scraping the error

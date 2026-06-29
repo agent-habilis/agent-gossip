@@ -31,8 +31,8 @@ directly**.
 ## Briefing
 
 - **Network variants** to create: private (default); public; mDNS-only;
-  DHT-only; relay (default ladder, and a custom relay); a per-author rate limit;
-  advertised into a directory (public + advertise).
+  DHT-only; relay (default ladder, and a custom relay); advertised into a
+  directory (public + advertise).
 - **Join forms:** by swarm id (every round); optionally by domain or git repo
   URL (these need a host serving the `.well-known` descriptor — optional).
 - **Version/drift:** the creator runs the version check.

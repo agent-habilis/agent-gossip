@@ -26,8 +26,8 @@ use super::{CoHostPolicy, DriverMode, EventLoopConfig};
 pub(crate) enum SetupKind {
     Create {
         name: SwarmName,
-        /// The swarm-wide config (rate limit + lookups) baked into the
-        /// minted id and mixed into the topic.
+        /// The swarm-wide config (lookups) baked into the minted id and
+        /// mixed into the topic.
         config: SwarmConfig,
         /// The directory this swarm advertises into, if any. Drives the
         /// `advertising on #<directory>` startup line; the re-broadcast
@@ -166,9 +166,9 @@ pub(crate) async fn setup_swarm(
 ) -> Result<EventLoopConfig> {
     // Create mints the config from the caller's choices; join decodes it
     // from the id — one source of truth either way.
-    let (lookups, rate_limit_per_min) = match &kind {
-        SetupKind::Create { config, .. } => (config.lookups.clone(), config.rate_limit_per_min),
-        SetupKind::Join { swarm } => (swarm.lookups().clone(), swarm.rate_limit_per_min()),
+    let lookups = match &kind {
+        SetupKind::Create { config, .. } => config.lookups.clone(),
+        SetupKind::Join { swarm } => swarm.lookups().clone(),
     };
 
     // The off-loop rung channel: the backgrounded startup probe and the
@@ -301,7 +301,6 @@ pub(crate) async fn setup_swarm(
         endpoint,
         router,
         max_peers,
-        rate_limit_per_min,
         rendezvous_params: rdv,
         rung_rx,
         cohost,

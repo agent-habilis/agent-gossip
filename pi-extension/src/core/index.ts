@@ -24,8 +24,6 @@ export type CreateOptions = {
   relay?: string;
   mdns?: boolean;
   dht?: boolean;
-  // Per-author messages-per-minute cap baked into the id. 0 disables.
-  rateLimit?: number;
   // List the swarm in a directory; requires network "public".
   advertise?: boolean;
   // Directory to advertise into; omit for the well-known `global`.
@@ -54,12 +52,6 @@ export function validateCreateOptions(options: CreateOptions): string | undefine
   if (options.name !== undefined && !isValidSwarmName(options.name)) {
     return "invalid name — must be 1-32 chars, no whitespace or / \\ < > #";
   }
-  if (
-    options.rateLimit !== undefined &&
-    (!Number.isInteger(options.rateLimit) || options.rateLimit < 0)
-  ) {
-    return `invalid rate limit: ${options.rateLimit}`;
-  }
   if (options.advertise && options.network !== "public") {
     return "advertise requires public network";
   }
@@ -72,17 +64,7 @@ export async function createSwarm(options: CreateOptions = {}): Promise<Session>
 
   cleanup();
 
-  const {
-    name,
-    network = "private",
-    relay,
-    mdns,
-    dht,
-    rateLimit,
-    advertise,
-    directory,
-    model,
-  } = options;
+  const { name, network = "private", relay, mdns, dht, advertise, directory, model } = options;
 
   const args = ["create", "--no-interactive", "--output", "json", "--filter-self"];
   // Omit --name entirely so the daemon mints a random name (empty is rejected by the CLI).
@@ -92,7 +74,6 @@ export async function createSwarm(options: CreateOptions = {}): Promise<Session>
   if (dht) args.push("--dht");
   // Optional-value flag: `--relay=urls` for a custom ladder, bare `--relay` for the default.
   if (relay !== undefined) args.push(relay ? `--relay=${relay}` : "--relay");
-  if (rateLimit !== undefined) args.push("--rate-limit", String(rateLimit));
   if (advertise) args.push(directory ? `--advertise=${directory}` : "--advertise");
   const filePath = stateFilePath();
   if (filePath) args.push("--state-file", filePath);
@@ -353,14 +334,12 @@ export function getStateDocument(): Record<string, unknown> {
   return parsed.document ?? {};
 }
 
-// Apply an RFC 6902 patch to the shared state via `ahsw state patch`. The CLI
-// exits 0 even on rejection/rate-limit and prints `{ok,…}`, so the outcome is
-// read from stdout, not the exit code. The JSON `--patch` arg goes through
-// execFileSync (no shell) — `runSwarmCommand`'s quoting would mangle it.
+// Apply an RFC 6902 patch to the shared state via `ahsw state patch`. The
+// outcome is read from the `{ok,…}` JSON on stdout. The JSON `--patch` arg goes
+// through execFileSync (no shell) — `runSwarmCommand`'s quoting would mangle it.
 export function applyStatePatch({ patch }: { patch: string }): {
   ok: boolean;
   error?: string;
-  rateLimited?: boolean;
 } {
   if (!state.session?.swarm) throw new Error("Not in a swarm");
   let parsed: unknown;
@@ -385,8 +364,8 @@ export function applyStatePatch({ patch }: { patch: string }): {
     ],
     { encoding: "utf-8", timeout: 15_000 },
   ).trim();
-  const resp = JSON.parse(raw) as { ok: boolean; error?: string; rate_limited?: boolean };
-  return { ok: resp.ok, error: resp.error, rateLimited: resp.rate_limited };
+  const resp = JSON.parse(raw) as { ok: boolean; error?: string };
+  return { ok: resp.ok, error: resp.error };
 }
 
 // Read the derived `meta`-channel document via `ahsw meta get`. The meta

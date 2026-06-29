@@ -54,9 +54,9 @@ reach for **participant** instead.
 *Layer: identity · keyed by seed.*
 
 The `🐝…` id: a self-describing token carrying the `seed`, the name, and the
-swarm's **config** (rate limit plus lookups). The config is mixed into the
-gossip topic, so every member necessarily shares it, and `join` needs nothing
-beyond the hash itself.
+swarm's **config** (lookups). The config is mixed into the gossip topic, so
+every member necessarily shares it, and `join` needs nothing beyond the hash
+itself.
 
 Code: `protocol::swarm` (`Swarm` / `SwarmConfig`). Byte layout:
 [swarm-hash.md](./swarm-hash.md).
@@ -185,9 +185,8 @@ the ball-owner keepalive, the 100-content-message cap) is owned by the daemon
 state machine (`daemon::exchange`), while the *content* is owned by the skill. Like
 a directed `Msg --reply`, a leg is delivered to all members for relay but
 **surfaced and logged only by its addressee and the sender's own echo** — a
-third party never sees it. Content legs are rate-limited with `Msg`; the
-`progress` phase is liveness plumbing (rate-limit-exempt, never logged). Not
-part of the per-author hash chain or DAG (presence-like).
+third party never sees it. The `progress` phase is liveness plumbing (never
+logged). Not part of the per-author hash chain or DAG (presence-like).
 
 Code: `MessageKind::Exchange`, `lifecycle::handle_exchange`, `broadcast_exchange`,
 `daemon::exchange`.
@@ -214,6 +213,21 @@ the difference from **handover**, which closes without a result. `/swarm:task`
 sends one or more independent tasks (each its own `exchange_id`, worker,
 and completion criteria) and surfaces each result as it returns; there is no
 group-level outcome. Like handover, it adds no wire type of its own.
+
+### part
+
+*Layer: protocol — a header on **message**.*
+
+One slice of a body too large for a single gossip message. When a `msg` or an
+exchange leg's body exceeds `MAX_MESSAGE_SIZE`, the sender splits it into several
+ordinary signed messages, each carrying a `part` header — a `group` (a UUID
+shared by the body's parts), an `idx`, and the `total` count. Each part is a real
+message (own id/seq/signature) retained in the **message log**, so a missing part
+heals through anti-entropy like any message. The receiver reassembles the parts
+of a `group` (keyed also by author key, so a crafted cross-author part can't
+inject a slice) into the one logical message it surfaces; the raw parts never
+surface. Capped at `MAX_MESSAGE_PARTS` per body — a larger body is refused on
+send. The split is invisible to agents: a body sends and arrives whole.
 
 ### shared state
 
@@ -250,9 +264,7 @@ log per channel (`State` for `state`, `Meta` for `meta`), distinct from the chat
 needs the complete set, so nothing ages out), dedup-keyed by id, and reconciled
 by its **own** anti-entropy digest (windowed like the chat digest, but
 advertised open at both ends so a late joiner backfills the *whole* log, not
-just a recent tail). Bounding total growth (compaction/snapshots) is deferred;
-the per-author **rate limit** — which state shares with chat — bounds the growth
-*rate*.
+just a recent tail). Bounding total growth (compaction/snapshots) is deferred.
 
 Code: `daemon::state_log::StateLog`, `gossip::antientropy::{broadcast,handle}_state_digest`.
 

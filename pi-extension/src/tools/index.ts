@@ -61,12 +61,6 @@ export function registerTools(pi: ExtensionAPI): void {
             'Relay lookup: omit for off, "" for the default n0 prod ladder, or a comma-separated a,b,c of relay URLs.',
         }),
       ),
-      rate_limit: Type.Optional(
-        Type.Number({
-          description:
-            "Per-author messages-per-minute cap baked into the swarm id (every joiner inherits it). 0 disables. Default 60.",
-        }),
-      ),
       advertise: Type.Optional(
         Type.Boolean({
           description:
@@ -87,7 +81,6 @@ export function registerTools(pi: ExtensionAPI): void {
         mdns: params.mdns,
         dht: params.dht,
         relay: params.relay,
-        rateLimit: params.rate_limit,
         advertise: params.advertise,
         directory: params.directory,
         model: ctx.model?.name,
@@ -466,12 +459,6 @@ export function registerTools(pi: ExtensionAPI): void {
           return {
             content: [{ type: "text", text: JSON.stringify(params.patch, null, 2) }],
             details: { patch: params.patch },
-          };
-        }
-        if (result.rateLimited) {
-          return {
-            content: [{ type: "text", text: "rate limited — back off (shared chat quota)" }],
-            details: { rate_limited: true },
           };
         }
         return toolError(result.error ?? "patch rejected");

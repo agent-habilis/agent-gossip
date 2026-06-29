@@ -3,8 +3,8 @@
 //! - [`message`]: the `Message` envelope + its value types
 //!   (`MessageBody`, `MessageId`) + the size cap.
 //! - [`swarm`]: the `🐝…` identifier (`SwarmId` shallow string +
-//!   `Swarm` decoded form) + `SwarmName` / `SwarmConfig` (rate limit +
-//!   lookups) / relay-ladder parsing.
+//!   `Swarm` decoded form) + `SwarmName` / `SwarmConfig` (lookups) /
+//!   relay-ladder parsing.
 //! - [`nickname`]: the `Nickname` newtype.
 //! - [`crypto`]: seed → rendezvous identity + gossip topic.
 //! - [`peer_addr`]: the `PeerInfo` address JSON codec.
@@ -20,7 +20,8 @@ mod wordlist;
 
 pub(crate) use message::{
     Channel, ExchangeId, ExchangeIdError, ExchangeKind, ExchangeKindError, ExchangePhase,
-    ExchangePhaseError, Message, MessageBody, MessageId, MessageKind, PresenceSubtype,
+    ExchangePhaseError, Message, MessageBody, MessageId, MessageKind, Part, PartGroup,
+    PresenceSubtype,
 };
 pub(crate) use nickname::Nickname;
 pub(crate) use swarm::SwarmId;

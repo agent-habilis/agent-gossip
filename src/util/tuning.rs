@@ -93,15 +93,6 @@ pub(crate) fn gossip_passive_view_capacity() -> usize {
 /// the consumer observes `RecvError::Lagged` (see `embed::SwarmSession`).
 pub(crate) const EMBED_INBOUND_CAP: usize = 1024;
 
-// The per-identity message rate (`RATE_LIMIT_PER_MIN`) is a published
-// contract enforced on both send and receive, so it lives in the shared
-// crate — see `crate::util::consts::RATE_LIMIT_PER_MIN`. The prune TTL below is a
-// private memory-management knob, not part of that contract.
-
-/// Rate-limiter entries idle longer than this (seconds) are pruned, so
-/// the per-author bucket map can't grow unbounded as nicknames churn.
-pub(crate) const RATE_LIMITER_TTL_SECS: u64 = 600;
-
 /// Soft resident-memory threshold (`MiB`) above which the daemon emits a
 /// one-shot `warn` (log + JSON `info` event) on its slow prune tick — the
 /// in-process leak-visibility signal the distributed soak lacked. **Warn-only**:

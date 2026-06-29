@@ -43,8 +43,8 @@ same way, on every machine.
 ## 2. The `🐝…` id is a seed, not an address
 
 When Alice runs `create`, her daemon generates **32 random bytes** —
-the `seed` — and packs them with the swarm name and config (rate limit
-+ lookups). It does **not** put any address or key in the id.
+the `seed` — and packs them with the swarm name and config (lookups).
+It does **not** put any address or key in the id.
 
 ```mermaid
 flowchart LR
@@ -74,7 +74,7 @@ today still works in a year, as long as any member is online.
 ## 3. Anatomy of an `🐝…` id
 
 The id carries a random `seed`, the swarm `name`, and the swarm's
-config (rate limit + the `mdns`/`dht`/`relay` lookups) — no key, no IP.
+config (the `mdns`/`dht`/`relay` lookups) — no key, no IP.
 There is **no peer address stored anywhere**, and a forged id with any
 tampered field hashes to a *different* topic (see §6) and simply finds
 no peers.
@@ -206,7 +206,7 @@ TopicId = SHA256( derive_secret(seed, "topic")  ‖  len(name)  ‖  name  ‖  
 
 Both Alice (`create`) and Bob (`join`) compute it independently from
 the seed, name, and config in the id. Identical inputs → identical topic
-→ same conversation. Because the config (rate limit + lookups) is mixed
+→ same conversation. Because the config (lookups) is mixed
 in, two members meet only if their entire config matches — so it cannot
 diverge across a swarm. The seed runs through the domain-separated `derive_secret` first,
 so the same 32 bytes can never be both the topic and the rendezvous

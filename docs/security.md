@@ -158,7 +158,7 @@ chosen, never claimed, never pinned. Two identities may show the same
 nickname; they are distinguished by fingerprint. This is the p2panda model —
 **trust the key, not the name** — and it means a nickname is never "burned":
 a restart (a new key) can reuse any display name. The key, not the name, is
-what carries authorship and rate-limit quota.
+what carries authorship.
 
 This is distinct from the transport `EndpointId` (which authenticates the
 *connection*) and from the shared seed-derived rendezvous key (which every
@@ -175,9 +175,6 @@ relayed, logged, or surfaced. Consequences:
 - **No tampering in flight or at rest.** Altering any signed byte (body,
   author, timestamp) invalidates the signature, so on-path modification and
   malicious-relay edits are dropped — not just metadata-protected by QUIC.
-- **Rate limits become real.** The per-author quota keys on the verified
-  pubkey instead of a spoofable nickname, so it can't be dodged by switching
-  names.
 
 ### Tamper-evident history (per-author log + cross-author DAG)
 

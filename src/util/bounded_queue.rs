@@ -42,6 +42,13 @@ impl<T> BoundedQueue<T> {
     pub(crate) fn take(&mut self) -> VecDeque<T> {
         std::mem::take(&mut self.queue)
     }
+
+    /// Free slots before [`push`](Self::push) starts rejecting. Used to admit a
+    /// whole multipart body atomically (all parts or none), so a half-buffered
+    /// body never reaches peers.
+    pub(crate) fn remaining(&self) -> usize {
+        self.capacity - self.queue.len()
+    }
 }
 
 #[cfg(test)]

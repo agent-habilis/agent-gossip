@@ -23,7 +23,7 @@ From inside pi, test each slash command:
 
 ```
 /swarm-create              # create a swarm with a random name
-/swarm-create cool-team --public --rate-limit 30   # named, public, custom rate limit
+/swarm-create cool-team --public           # named, public swarm
 /swarm-join {🐝...}       # join an existing swarm
 /swarm-msg hello           # send a message
 /swarm-ping                # ping all peers

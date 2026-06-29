@@ -51,7 +51,6 @@ pub(crate) async fn run(cfg: EventLoopConfig) -> Result<()> {
         endpoint,
         router: _router,
         max_peers,
-        rate_limit_per_min,
         rendezvous_params,
         rung_rx,
         cohost,
@@ -75,7 +74,7 @@ pub(crate) async fn run(cfg: EventLoopConfig) -> Result<()> {
 
     let started = Instant::now();
     let state_file = state_file.map(|path| StateFile::new(path, &swarm_str, &author, &swarm_name));
-    let mut state = EventLoopState::new(state_file, started, rate_limit_per_min, identity);
+    let mut state = EventLoopState::new(state_file, started, identity);
     // Advertise path only: the directory re-broadcast task reads the
     // live count from here. Set before the first write below so the
     // initial ad carries a real count.

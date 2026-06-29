@@ -27,7 +27,7 @@ pub fn new_key() -> TestKey {
 }
 
 /// The lowercase-hex public key of `key` — the value that appears as the
-/// `pubkey` in the JSON event and is keyed on for rate-limiting.
+/// `pubkey` in the JSON event.
 #[must_use]
 pub fn pubkey_hex(key: &TestKey) -> String {
     identity::encode_pubkey(&key.0.public())

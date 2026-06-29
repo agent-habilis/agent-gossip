@@ -105,22 +105,6 @@ function parseCreateArgs(args: string): {
         options.advertise = true;
         if (inlineValue) options.directory = inlineValue;
         break;
-      case "--rate-limit": {
-        let raw = inlineValue;
-        if (raw === undefined) {
-          index += 1;
-          raw = tokens[index];
-        }
-        const parsed = Number(raw);
-        if (!Number.isInteger(parsed) || parsed < 0) {
-          return {
-            options,
-            error: `invalid --rate-limit value: ${raw ?? "(missing)"}`,
-          };
-        }
-        options.rateLimit = parsed;
-        break;
-      }
       default:
         if (flag.startsWith("--")) return { options, error: `unknown flag: ${flag}` };
         if (options.name !== undefined) return { options, error: `unexpected argument: ${token}` };
@@ -138,7 +122,7 @@ async function cmdCreate(args: string, ctx: ExtensionCommandContext): Promise<vo
   const { options, error } = parseCreateArgs(args);
   if (error) {
     notifyError(
-      `${error}\nusage: /swarm-create [name] [--public] [--mdns] [--dht] [--relay[=urls]] [--rate-limit N] [--advertise[=dir]]`,
+      `${error}\nusage: /swarm-create [name] [--public] [--mdns] [--dht] [--relay[=urls]] [--advertise[=dir]]`,
     );
     return;
   }
@@ -428,8 +412,6 @@ async function cmdStatePatch(args: string, ctx: ExtensionCommandContext): Promis
     const result = applyStatePatch({ patch: ops });
     if (result.ok) {
       notify("you changed shared state");
-    } else if (result.rateLimited) {
-      notify("rate limited — backing off (shared chat quota)");
     } else {
       notifyError(result.error ?? "patch rejected");
     }

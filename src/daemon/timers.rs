@@ -1,7 +1,7 @@
-//! Time-driven housekeeping ticks with no subsystem of their own:
-//! rate-limiter pruning and the state-file liveness heartbeat. The
-//! `Alive`/sweep heartbeat ticks live in `lifecycle::heartbeat`; the
-//! gossip healer in `gossip::heal`.
+//! Time-driven housekeeping ticks with no subsystem of their own: the
+//! warn-only resident-memory leak check and the state-file liveness
+//! heartbeat. The `Alive`/sweep heartbeat ticks live in
+//! `lifecycle::heartbeat`; the gossip healer in `gossip::heal`.
 
 use std::time::{Duration, Instant};
 
@@ -11,10 +11,10 @@ use super::state::EventLoopState;
 use crate::output;
 use crate::util::{resident_memory, tuning};
 
-/// Rate-limiter pruning + the warn-only resident-memory leak check: runs every
-/// `PRUNE_INTERVAL_SECS` (see `run`).
+/// The warn-only resident-memory leak check, run on the slow (1-minute)
+/// housekeeping tick (see `run`'s `intervals.prune`). Kept on this tick now
+/// that rate-limiter pruning — its original co-tenant — is gone.
 pub(crate) fn tick_prune(state: &mut EventLoopState, output: &output::Output) {
-    state.rate_limiter.prune_inactive();
     warn_on_high_resident_memory(state, output, tuning::resident_memory_warn_mb());
 }
 
@@ -194,12 +194,7 @@ mod tests {
     use crate::protocol::identity::Identity;
 
     fn fresh_state() -> EventLoopState {
-        EventLoopState::new(
-            None,
-            Instant::now(),
-            crate::util::consts::RATE_LIMIT_PER_MIN,
-            Arc::new(Identity::generate()),
-        )
+        EventLoopState::new(None, Instant::now(), Arc::new(Identity::generate()))
     }
 
     // The warn-only resident-memory leak signal: a threshold the live process

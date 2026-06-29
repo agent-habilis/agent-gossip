@@ -61,6 +61,33 @@ impl MessageLog {
         self.messages.len()
     }
 
+    /// The retained parts of multipart `group` authored by `pubkey`, slotted by
+    /// `idx` (first-seen wins per idx); `total` slots, each `None` until its part
+    /// arrives. Keying on `pubkey` as well as `group` is the security boundary: a
+    /// peer can only sign parts under its own key, so a crafted part carrying
+    /// someone else's `group` forms a separate, never-completing set and can't
+    /// inject a slice into the victim's body.
+    pub(crate) fn collect_parts<'a>(
+        &'a self,
+        group: &crate::protocol::PartGroup,
+        pubkey: &str,
+        total: u32,
+    ) -> Vec<Option<&'a Message>> {
+        let mut slots: Vec<Option<&Message>> = vec![None; total as usize];
+        for msg in &self.messages {
+            let Some(part) = &msg.part else { continue };
+            if part.group == *group
+                && part.total == total
+                && msg.pubkey == pubkey
+                && let Some(slot) = slots.get_mut(part.idx as usize)
+                && slot.is_none()
+            {
+                *slot = Some(msg);
+            }
+        }
+        slots
+    }
+
     /// A contiguous window of the log: up to `max` messages starting at
     /// index `start`, with their inclusive `[lo, hi]` timestamp bounds and
     /// compact ids. `None` if the log is empty or `start` is past the end.
@@ -165,6 +192,57 @@ mod tests {
         let mut message = msg(body);
         message.timestamp = ts;
         message
+    }
+
+    /// A `Msg` carrying a multipart header, signed (notionally) by `pubkey`.
+    fn part_msg(
+        body: &str,
+        pubkey: &str,
+        group: &crate::protocol::PartGroup,
+        idx: u32,
+        total: u32,
+    ) -> Message {
+        let mut message = msg(body);
+        message.pubkey = pubkey.to_owned();
+        message.part = Some(crate::protocol::Part {
+            group: group.clone(),
+            idx,
+            total,
+        });
+        message
+    }
+
+    #[test]
+    fn collect_parts_isolates_by_author() {
+        // Two authors reuse the SAME group id. Each forms its own set; one
+        // author's part never fills another's slot, so a crafted cross-author
+        // part can't inject a slice into the victim's reassembled body.
+        let group = crate::protocol::PartGroup::random();
+        let mut log = MessageLog::new(10);
+        log.push(part_msg("alice-0", "alice", &group, 0, 2));
+        log.push(part_msg("mallory-1", "mallory", &group, 1, 2));
+
+        let alice = log.collect_parts(&group, "alice", 2);
+        assert!(alice[0].is_some(), "alice's own part is collected");
+        assert!(
+            alice[1].is_none(),
+            "mallory's same-group part must not fill alice's missing slot"
+        );
+    }
+
+    #[test]
+    fn collect_parts_slots_by_idx_not_arrival() {
+        let group = crate::protocol::PartGroup::random();
+        let mut log = MessageLog::new(10);
+        log.push(part_msg("b", "a", &group, 1, 3));
+        log.push(part_msg("a", "a", &group, 0, 3));
+        log.push(part_msg("c", "a", &group, 2, 3));
+        let slots = log.collect_parts(&group, "a", 3);
+        let bodies: Vec<&str> = slots
+            .iter()
+            .map(|slot| slot.expect("complete set").body.as_str())
+            .collect();
+        assert_eq!(bodies, vec!["a", "b", "c"], "slotted by idx, not arrival");
     }
 
     // ── windowed digest ────────────────────────────────────────────

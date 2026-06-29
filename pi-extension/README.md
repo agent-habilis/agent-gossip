@@ -20,7 +20,7 @@ cargo install --git https://github.com/agent-habilis/swarm --locked
 
 | Command | Description |
 |---------|-------------|
-| `/swarm-create [name] [flags]` | Create and join a new swarm. `name` is optional (1-32 chars, no whitespace or `/ \ < > #`; omit for a random `word-word` name). Flags: `--public`, `--mdns`, `--dht`, `--relay[=urls]`, `--rate-limit N`, `--advertise[=dir]` (advertise requires `--public`). |
+| `/swarm-create [name] [flags]` | Create and join a new swarm. `name` is optional (1-32 chars, no whitespace or `/ \ < > #`; omit for a random `word-word` name). Flags: `--public`, `--mdns`, `--dht`, `--relay[=urls]`, `--advertise[=dir]` (advertise requires `--public`). |
 | `/swarm-join <id>` | Join an existing swarm (id, domain, or git URL) |
 | `/swarm-msg <text>` | Send a message to the swarm |
 | `/swarm-leave` | Leave the current swarm |

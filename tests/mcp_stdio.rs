@@ -6,7 +6,6 @@
 
 mod common;
 
-use agent_habilis_swarm::RATE_LIMIT_PER_MIN;
 use common::{CONNECT_TIMEOUT, MSG_TIMEOUT, POLL, flag_args, test_cmd, tmp_log};
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Write};
@@ -804,83 +803,6 @@ fn fetch_messages_cursor_returns_only_new_since_last_call() {
         third["current_seq"].is_null(),
         "empty batch → null current_seq, got: {}",
         third["current_seq"]
-    );
-}
-
-// ─── rate limiting (#6) ──────────────────────────────────────────
-
-#[test]
-fn rate_limiter_drops_excess_messages_from_flooding_peer() {
-    // Sender creates a private swarm, receiver joins, gossip links.
-    let (mut sender, mut receiver, _swarm, sender_nick) = create_pair(300);
-
-    // Sender fires many messages in tight succession — twice the
-    // per-identity quota, so excess is dropped regardless of token
-    // refills during the loop. With sender-side limiting the sender
-    // drops most of these before broadcast (the receiver's limiter is
-    // the backstop); either way the flood is bounded well under the
-    // count sent. Referencing the constant keeps this from silently
-    // passing if the quota changes.
-    let message_flood: usize = RATE_LIMIT_PER_MIN as usize * 2;
-    for i in 0..message_flood {
-        let _ = sender.tool_call(
-            400 + i as u64,
-            "send_message",
-            serde_json::json!({ "text": format!("flood {}", i) }),
-        );
-    }
-
-    // Poll fetch_messages until the count stops growing (gossip has
-    // fully caught up). FROM_START keeps the implicit cursor out of
-    // the way so we always see the full buffer. Suite-wide gossip-
-    // delivery budget (breaks early once the count stabilises).
-    let deadline = Instant::now() + MSG_TIMEOUT;
-    let mut last_count: i64 = -1;
-    let mut stable_iters = 0;
-    let mut flood_count: usize = 0;
-    while Instant::now() < deadline {
-        std::thread::sleep(Duration::from_millis(400));
-        let fetched = tool_result_json(&receiver.tool_call(
-            500,
-            "fetch_messages",
-            serde_json::json!({ "after": FROM_START }),
-        ))
-        .expect("fetch");
-        let msgs = fetched["messages"].as_array().expect("messages array");
-        flood_count = msgs
-            .iter()
-            .filter(|msg| {
-                msg.get("type").and_then(|value| value.as_str()) == Some("msg")
-                    && msg.get("author").and_then(|value| value.as_str())
-                        == Some(sender_nick.as_str())
-                    && msg
-                        .get("body")
-                        .and_then(|value| value.as_str())
-                        .is_some_and(|body| body.starts_with("flood "))
-            })
-            .count();
-        if i64::try_from(flood_count).expect("flood_count fits i64") == last_count {
-            stable_iters += 1;
-            if stable_iters >= 3 {
-                break;
-            }
-        } else {
-            stable_iters = 0;
-            last_count = i64::try_from(flood_count).expect("flood_count fits i64");
-        }
-    }
-
-    // The rate limiter should have dropped at least some messages.
-    // We don't pin the exact count — token-bucket behavior is
-    // timing-sensitive — just that it fired at all.
-    assert!(
-        flood_count < message_flood,
-        "rate limiter should drop at least one flood message; receiver got all {flood_count} of {message_flood}"
-    );
-    // And the receiver should have seen at least the burst allowance.
-    assert!(
-        flood_count >= 1,
-        "receiver should see at least one message through the rate limiter, got 0"
     );
 }
 

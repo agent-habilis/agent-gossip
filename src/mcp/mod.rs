@@ -55,6 +55,7 @@ use tokio::sync::Mutex;
 
 use crate::daemon::state::RosterEntry;
 use crate::embed::{CreateConfig, CreateError, Directory, JoinConfig};
+use crate::gossip::StatePatchError;
 use crate::protocol::swarm::{LookupSet, RelayLadder, RelaySelection, SwarmName};
 use crate::protocol::{
     ExchangeId, ExchangeKind, ExchangeKindError, ExchangePhase, ExchangePhaseError, Message,
@@ -134,11 +135,6 @@ struct CreateSwarmArgs {
     /// ordered ladder.
     #[serde(default)]
     relay: Option<String>,
-    /// Per-author messages-per-minute cap baked into the swarm id and
-    /// enforced swarm-wide (every joiner inherits it). `0` disables rate
-    /// limiting. Default 60.
-    #[serde(default = "default_rate_limit")]
-    rate_limit_per_min: u16,
     /// List this swarm in a directory so others can find it with
     /// `ahsw discover` (no id to share). Requires `network: "public"`. Note:
     /// advertising broadcasts the join token — the swarm becomes open to
@@ -149,10 +145,6 @@ struct CreateSwarmArgs {
     /// Omit for the well-known `global` directory.
     #[serde(default)]
     directory: Option<String>,
-}
-
-fn default_rate_limit() -> u16 {
-    crate::util::consts::RATE_LIMIT_PER_MIN
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -256,9 +248,10 @@ struct ApplyStatePatchArgs {
     /// against the current document and rejected if it does not apply cleanly.
     patch: serde_json::Value,
     /// Optional compare-and-set guard: the `doc_hash` from your last
-    /// `get_state`. The patch is rejected with a "stale document" error if the
-    /// document changed since — re-`get_state` and retry. Use it for turn-based
-    /// or contended state so a concurrent peer's change isn't clobbered.
+    /// `get_state`. If the document changed since, the patch returns
+    /// `{ok:false,stale:true}` (retryable) instead of applying — re-`get_state`
+    /// and retry. Use it for turn-based or contended state so a change you have
+    /// already seen isn't clobbered.
     #[serde(default)]
     if_doc_hash: Option<String>,
 }
@@ -433,7 +426,6 @@ impl AgentSwarmServer {
             },
             advertise: args.advertise,
             directory,
-            rate_limit_per_min: args.rate_limit_per_min,
             max_peers: DEFAULT_MAX_DIRECT_PEERS,
         };
         let session = Session::create(cfg).await.map_err(|error| match error {
@@ -572,17 +564,11 @@ impl AgentSwarmServer {
         };
         let body = MessageBody::new(args.text)
             .map_err(|error| McpError::invalid_params(format!("{error}"), None))?;
-        match session
+        let (id, message) = session
             .send_message(body, reply)
             .await
-            .map_err(to_mcp_error)?
-        {
-            Some((id, message)) => ok_json(SendMessageResult { id, message }),
-            // Sender-side rate limiter dropped it (same per-author quota
-            // the receiver enforces). A deliberate drop, not an error, so
-            // the agent can back off rather than retry as a failure.
-            None => ok_json(serde_json::json!({ "rate_limited": true })),
-        }
+            .map_err(to_mcp_error)?;
+        ok_json(SendMessageResult { id, message })
     }
 
     #[tool(
@@ -678,7 +664,7 @@ impl AgentSwarmServer {
     }
 
     #[tool(
-        description = "Send one leg of an exchange to a specific peer. An exchange is a directed, phased conversation correlated by `exchange_id` (mint a UUID for the opening \"offer\", echo it on every later leg). `kind` is the behavior (\"handover\" delegates a task/plan; \"task\" runs+verifies). Phases: \"offer\" (brief), \"accept\"/\"decline\" (entry), \"context\" (Q&A), \"progress\" (a done/total beat, e.g. text \"35/100\"), \"done\" (request close + verification instructions), \"confirm\"/\"change\" (verify), \"cancel\". For \"offer\" the `to` nickname must be a current participant (check `swarm_info`). Returns the new message id and authoritative echo, or `{rate_limited:true}` if the sender-side limiter dropped it."
+        description = "Send one leg of an exchange to a specific peer. An exchange is a directed, phased conversation correlated by `exchange_id` (mint a UUID for the opening \"offer\", echo it on every later leg). `kind` is the behavior (\"handover\" delegates a task/plan; \"task\" runs+verifies). Phases: \"offer\" (brief), \"accept\"/\"decline\" (entry), \"context\" (Q&A), \"progress\" (a done/total beat, e.g. text \"35/100\"), \"done\" (request close + verification instructions), \"confirm\"/\"change\" (verify), \"cancel\". For \"offer\" the `to` nickname must be a current participant (check `swarm_info`). Returns the new message id and authoritative echo."
     )]
     async fn send_exchange(
         &self,
@@ -702,8 +688,7 @@ impl AgentSwarmServer {
             .send_exchange(to, exchange_id, kind, phase, body)
             .await
         {
-            Ok(Some((id, message))) => ok_json(SendMessageResult { id, message }),
-            Ok(None) => ok_json(serde_json::json!({ "rate_limited": true })),
+            Ok((id, message)) => ok_json(SendMessageResult { id, message }),
             Err(error) => {
                 let message = error.to_string();
                 if message.contains("unknown participant") {
@@ -716,7 +701,7 @@ impl AgentSwarmServer {
     }
 
     #[tool(
-        description = "Apply a JSON-Patch (RFC 6902) change to the swarm's shared state — a single JSON document every member derives from a gossiped log of patches. `patch` is the op array, e.g. [{\"op\":\"replace\",\"path\":\"/turn\",\"value\":\"b\"}]. Frozen subset: add/replace/remove on object paths + add \"/arr/-\" (append); no test/move/copy, numeric array indices, or root path. The patch is validated against the current document and rejected (invalid_params) if malformed, out-of-subset, or it does not apply cleanly. Peers react to the resulting `state` event; read the new document with `get_state` (or from the `state` event's `document` field in `fetch_messages`)."
+        description = "Apply a JSON-Patch (RFC 6902) change to the swarm's shared state — a single JSON document every member derives from a gossiped log of patches. `patch` is the op array, e.g. [{\"op\":\"replace\",\"path\":\"/turn\",\"value\":\"b\"}]. Frozen subset: add/replace/remove on object paths + add \"/arr/-\" (append); no test/move/copy, numeric array indices, or root path. Pass `if_doc_hash` (the `doc_hash` from your last get_state) for a compare-and-set guard. Returns `{ok:true}` on apply. A malformed/out-of-subset/non-applying patch is rejected as invalid_params (permanent — don't retry). A compare-and-set conflict returns `{ok:false,stale:true}` instead (retryable — re-run get_state and retry). Peers react to the resulting `state` event; read the new document with `get_state` (or from the `state` event's `document` field in `fetch_messages`)."
     )]
     async fn apply_state_patch(
         &self,
@@ -729,7 +714,15 @@ impl AgentSwarmServer {
             .await
         {
             Ok(()) => ok_json(serde_json::json!({ "ok": true })),
-            Err(error) => Err(McpError::invalid_params(error.to_string(), None)),
+            // A compare-and-set conflict is retryable, not a bad request, so it
+            // returns a structured `stale:true` result the agent can branch on
+            // (mirroring the CLI's `json_stale`) — not an `invalid_params` error.
+            Err(error) => match error.downcast_ref::<StatePatchError>() {
+                Some(StatePatchError::Stale(why)) => {
+                    ok_json(serde_json::json!({ "ok": false, "stale": true, "error": why }))
+                }
+                _ => Err(McpError::invalid_params(error.to_string(), None)),
+            },
         }
     }
 
@@ -837,9 +830,6 @@ offer → accept/decline → [context] → done → confirm/change. A handover c
 the handoff (initiator auto-confirms; you then do the work on your own); a task \
 returns its result on the `done` leg for the initiator to confirm. Don't display \
 exchange legs as chat lines — drive the flow.
-
-RATE LIMIT: a send over the per-identity quota returns `{rate_limited:true}` (a \
-deliberate drop, not an error) — back off rather than retry.
 
 SHARED STATE is one JSON document the whole swarm shares, separate from chat. \
 Read it with `get_state`; change it with `apply_state_patch` (an RFC 6902 patch). \

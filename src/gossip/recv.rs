@@ -232,10 +232,37 @@ fn handle_exchange_leg(
     lifecycle::handle_exchange(ctx.output, message, to, phase, surfaceable, ctx.author)
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "the inbound dispatch: one arm per MessageKind (incl. both channels) kept in one match for routing clarity"
-)]
+/// Surface a reassembled multipart body (a `Msg` or an `Exchange` content leg)
+/// through the same lifecycle path an unsplit message of that kind takes. The
+/// raw parts were already retained; this only surfaces the logical view, so it
+/// does **not** re-retain or re-index.
+fn surface_logical(
+    logical: &Message,
+    surfaceable: bool,
+    state: &mut EventLoopState,
+    ctx: &HandlerCtx<'_>,
+) {
+    match &logical.kind {
+        MessageKind::Msg { .. } => {
+            lifecycle::handle_msg(ctx.output, logical, surfaceable, ctx.author);
+        }
+        MessageKind::Exchange { to, phase, .. } => {
+            handle_exchange_leg(logical, to, *phase, surfaceable, state, ctx);
+        }
+        // Only `Msg` and content `Exchange` legs are ever split (the sender
+        // refuses to split anything else), so other kinds never reach here.
+        MessageKind::Presence { .. }
+        | MessageKind::PeerInfo
+        | MessageKind::Digest
+        | MessageKind::StateDigest
+        | MessageKind::MetaDigest
+        | MessageKind::Ping
+        | MessageKind::Pong { .. }
+        | MessageKind::State
+        | MessageKind::Meta => {}
+    }
+}
+
 async fn handle_gossip_received(content: Bytes, state: &mut EventLoopState, ctx: &HandlerCtx<'_>) {
     let Ok(message) = Message::parse(&content) else {
         ctx.output.error("Failed to parse message");
@@ -269,7 +296,7 @@ async fn handle_gossip_received(content: Bytes, state: &mut EventLoopState, ctx:
     if state.note_inbound(Instant::now()) {
         flush_pending(state, ctx, "inbound traffic resumed").await;
     }
-    // Duplicate suppression: a true repeat delivery must not re-rate-count,
+    // Duplicate suppression: a true repeat delivery must not
     // re-heartbeat, re-run membership, re-embed-forward, re-log, or re-print.
     // Re-broadcasts of `joined`/`Alive` mint fresh ids so they are never
     // falsely suppressed here. Only authenticated messages reach this gate.
@@ -283,46 +310,7 @@ async fn handle_gossip_received(content: Bytes, state: &mut EventLoopState, ctx:
     // Identities are distinguished by their key fingerprint, not the name.
     // Fork (equivocation) detection and DAG folding happen at the log-push
     // site below, coupled to retention so their indexes stay bounded by the
-    // log window — a rate-dropped or relay-to-other Msg is never indexed.
-    // One quota for every Msg (open or reply); plumbing kinds (presence,
-    // Alive, digest, PeerInfo) are exempt — rate-limiting them would
-    // break membership/anti-entropy. Keyed on the verified pubkey.
-    let rate_ok = match &message.kind {
-        // Author-driven content shares one per-identity quota: chat messages and
-        // shared-state patches alike — symmetric with the send-side checks
-        // (`broadcast_message` / `broadcast_state_patch`). A rate-dropped state
-        // patch isn't lost forever: it never enters this node's state log, so
-        // anti-entropy re-offers it on a later round once it scrolls out of the
-        // seen-set, pacing backfill instead of dropping it.
-        MessageKind::Msg { .. } | MessageKind::State | MessageKind::Meta => {
-            state.rate_limiter.check(&message.pubkey)
-        }
-        // Content exchange legs share the `Msg` quota; the `Progress` phase is
-        // liveness plumbing (the receiver's percent+keepalive heartbeat) and
-        // is exempt with the other plumbing kinds — rate-limiting it would let
-        // a busy exchange wrongly trip the silence timeout.
-        MessageKind::Exchange { phase, .. }
-            if crate::protocol::message::is_content_phase(*phase) =>
-        {
-            state.rate_limiter.check(&message.pubkey)
-        }
-        // `StateDigest` stays exempt with the other anti-entropy plumbing —
-        // rate-limiting it would break backfill.
-        MessageKind::Presence { .. }
-        | MessageKind::PeerInfo
-        | MessageKind::Digest
-        | MessageKind::StateDigest
-        | MessageKind::MetaDigest
-        | MessageKind::Ping
-        | MessageKind::Pong { .. }
-        | MessageKind::Exchange { .. } => true,
-    };
-    if !rate_ok {
-        let notice = format!("rate limit exceeded for [{}], dropping", message.author);
-        ctx.output.info(&notice);
-        tracing::debug!(author = %message.author, "rate limit exceeded; dropping");
-        return;
-    }
+    // log window.
 
     // Heartbeat + membership + surfacing + join horizon. The lifecycle
     // layer owns every roster/presentation side effect; the gossip
@@ -330,6 +318,19 @@ async fn handle_gossip_received(content: Bytes, state: &mut EventLoopState, ctx:
     crate::logging::messages::log_in(&message);
     let observed = lifecycle::observe(&message, state, ctx);
     let surfaceable = observed.surfaceable;
+
+    // A part of a split body never surfaces as a raw slice. Retain it for
+    // anti-entropy (so a missing part heals like any message), and when its
+    // group completes, surface the reassembled logical message once — embed-
+    // pushed and dispatched exactly like an ordinary inbound message.
+    if message.part.is_some() {
+        retain_and_index(message.clone(), &canonical, state, ctx);
+        if let Some(logical) = state.reassemble(&message) {
+            maybe_push_embed(ctx, &logical, surfaceable);
+            surface_logical(&logical, surfaceable, state, ctx);
+        }
+        return;
+    }
 
     maybe_push_embed(ctx, &message, surfaceable);
 

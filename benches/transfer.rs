@@ -105,10 +105,8 @@ async fn main() {
 
     eprintln!("transfer bench: {target_mb} MB → {chunk_count} chunks of {CHUNK_BODY_LEN} B");
 
-    // Node A creates a loopback swarm with rate limiting disabled (the cap
-    // is baked into the id, so node B inherits "unlimited" from the hash).
-    let mut create_cfg = CreateConfig::new(SwarmName::new("bench").expect("valid name"));
-    create_cfg.rate_limit_per_min = 0;
+    // Node A creates a loopback swarm.
+    let create_cfg = CreateConfig::new(SwarmName::new("bench").expect("valid name"));
     let node_a = SwarmSession::create(create_cfg).await.expect("create");
 
     let target: JoinTarget = node_a

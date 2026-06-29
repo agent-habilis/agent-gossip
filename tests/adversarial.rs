@@ -341,7 +341,7 @@ async fn severed_gossip_stream_resubscribes_and_backfills() {
 
 // ── Shared-state (Phase 1) adversarial cases ───────────────────────────
 //
-// State patches ride the same crypto + rate-limit gates as chat. A receiver
+// State patches ride the same crypto gates as chat. A receiver
 // must drop unsigned ones, and fold a *signed* but malformed / out-of-subset /
 // non-applying patch as a deterministic whole-patch no-op — never a panic,
 // never a partial apply. The "barrier" here is a real, valid patch from the
@@ -459,49 +459,6 @@ async fn malformed_state_patch_body_is_ignored() {
         victim.state_get().await,
         json!({"ok": 1}),
         "a malformed patch must leave only the valid barrier patch"
-    );
-    victim.leave().await;
-    attacker.leave().await;
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn state_patch_flood_is_rate_limited_on_receive() {
-    // A low swarm-wide quota so a short signed flood trips the victim's
-    // receive-side limiter deterministically (F2 on the receive path).
-    let mut victim = InProcNode::create_rate_limited("adv-state-rl", 5).await;
-    let attacker = InProcNode::join(&victim.swarm, "adv-state-rl-atk").await;
-    attacker.send("warmup").await;
-    assert!(
-        victim.wait_body("warmup", T).await,
-        "victim/attacker meshed"
-    );
-
-    // Flood distinct, valid, signed patches from ONE crafted identity — a few
-    // past the quota of 5 is enough to trip the limiter.
-    let key = adversarial::new_key();
-    let swarm = attacker.session.swarm_id();
-    for index in 0..12 {
-        let bytes = CraftedMsg::state_patch(
-            swarm,
-            "ghost",
-            json!([{"op": "add", "path": format!("/k{index}"), "value": index}]),
-        )
-        .sign(&key)
-        .bytes();
-        attacker.session.inject_raw(bytes).await.expect("inject");
-    }
-
-    // The victim's receive-side limiter must surface a rate-limit notice.
-    let limited = victim
-        .wait_for(T, |events| {
-            events.iter().any(|event| {
-                matches!(event, OutputEvent::Info { message } if message.contains("rate limit"))
-            })
-        })
-        .await;
-    assert!(
-        limited,
-        "a signed state-patch flood must trip the receive-side rate limiter (F2)"
     );
     victim.leave().await;
     attacker.leave().await;

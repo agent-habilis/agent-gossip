@@ -14,7 +14,6 @@
 //! - boundary validation + atomicity (F7): a bad/partial patch never mutates;
 //! - the reaction hook (F8) and the self-wake guard (F5): a peer's change wakes
 //!   an agent with the derived document, its own change does not;
-//! - the shared rate limit (F2): a patch flood is throttled to the quota;
 //! - the unbounded log + windowed anti-entropy: a late joiner reconciles a log
 //!   far larger than one digest window;
 //! - reaction + convergence end-to-end: two agents ping-pong a counter via the
@@ -280,53 +279,6 @@ async fn meta_peer_change_wakes_the_agent_self_change_does_not() {
     peer_change_wakes_for(Channel::Meta).await;
 }
 
-/// The shared rate limit (F2): a burst of patches beyond the per-author quota is
-/// throttled — the sender-side limiter drops the excess rather than broadcasting
-/// it, identical to the chat-message quota. (The limiter is shared across
-/// channels; a fresh node per test keeps the channels' floods isolated.)
-async fn patch_flood_rate_limited_for(channel: Channel) {
-    // A small quota so the flood trips it deterministically and fast.
-    let alice = InProcNode::create_rate_limited(&swarm_name(channel, "ss-rl"), 5).await;
-
-    let mut accepted = 0u32;
-    let mut limited = 0u32;
-    for index in 0..20 {
-        match alice
-            .try_patch(
-                channel,
-                json!([{"op": "add", "path": format!("/k{index}"), "value": index}]),
-            )
-            .await
-        {
-            Ok(()) => accepted += 1,
-            Err(error) if error.to_string().contains("rate limited") => limited += 1,
-            Err(error) => panic!("unexpected apply error on {}: {error}", label(channel)),
-        }
-    }
-
-    assert!(
-        (1..=8).contains(&accepted),
-        "about the quota of {} patches should be accepted, got {accepted}",
-        label(channel)
-    );
-    assert!(
-        limited >= 1,
-        "{} patches beyond the quota must be rate-limited, got {limited}",
-        label(channel)
-    );
-    alice.leave().await;
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn state_patch_flood_is_rate_limited() {
-    patch_flood_rate_limited_for(Channel::State).await;
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn meta_patch_flood_is_rate_limited() {
-    patch_flood_rate_limited_for(Channel::Meta).await;
-}
-
 /// Unbounded log + windowed anti-entropy: drive far more patches than one digest
 /// window holds, then a late joiner — arriving after all traffic, so only
 /// anti-entropy can reach it — reconciles the *whole* log across several windows
@@ -340,7 +292,7 @@ async fn late_joiner_backfills_for(channel: Channel) {
     // is 70), so the rolling older-window cursor is genuinely exercised.
     const PATCHES: usize = 160;
 
-    let alice = InProcNode::create_unlimited(&swarm_name(channel, "ss-backfill")).await;
+    let alice = InProcNode::create(&swarm_name(channel, "ss-backfill")).await;
     let early = InProcNode::join(&alice.swarm, "bf-early").await;
     // Mesh so the appends go out live (the creator's outbound buffer stays
     // empty) — the late joiner can then only be served by anti-entropy.
