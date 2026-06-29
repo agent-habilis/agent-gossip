@@ -1,16 +1,19 @@
 //! `cargo task build [--target TRIPLE | --arch ARCH] [--release]` — build the
-//! `ahs` binary, cross-compiling for a foreign target through a **project-
-//! pinned** zig toolchain. zig is provisioned into `target/tooling/` on first
-//! use (never the dev's global/brew zig), so the cross build is self-contained
-//! and reproducible. `--arch` is sugar for a static-musl Linux target — the
-//! shape we deploy to the Raspberry Pi fleet.
+//! `ahsw` binary, cross-compiling for a foreign target through a **project-
+//! pinned** zig + cargo-zigbuild toolchain. zig is vendored into
+//! `target/tooling/` on first use (never the dev's global/brew zig);
+//! cargo-zigbuild is a regular crate dependency driven as a *library*, not a
+//! global `cargo install`. So the cross build is self-contained and
+//! reproducible. `--arch` is sugar for a static-musl Linux target — the shape
+//! we deploy to the Raspberry Pi fleet.
 
 use std::path::PathBuf;
 
+use clap::Parser;
 use xshell::{Shell, cmd};
 
 use crate::TaskOutcome;
-use crate::util::{ensure_installed, output, repo_root};
+use crate::util::{output, repo_root};
 
 /// Pinned zig version — the one `cargo-zigbuild` is validated against here.
 /// Bump deliberately (and re-test a cross build) for a new toolchain.
@@ -29,38 +32,59 @@ pub(crate) fn run(
         (None, Some(arch)) => Some(format!("{arch}-unknown-linux-musl")),
         (None, None) => None,
     };
-    let profile: &[&str] = if release { &["--release"] } else { &[] };
 
     let Some(triple) = triple else {
         // Plain host build — no cross toolchain needed.
-        cmd!(sh, "cargo build {profile...} --bin ahs").run()?;
+        let profile: &[&str] = if release { &["--release"] } else { &[] };
+        cmd!(sh, "cargo build {profile...} --bin ahsw").run()?;
         return Ok(());
     };
 
-    // Cross build through the project-pinned zig + cargo-zigbuild.
-    let zig_dir = ensure_zig(sh)?;
-    ensure_installed(sh, "cargo-zigbuild", &["zigbuild", "--version"]);
+    // Cross build through the vendored pinned zig + cargo-zigbuild (a library
+    // dependency, not a global install). cargo-zigbuild locates zig via the
+    // `CARGO_ZIGBUILD_ZIG_PATH` env var; setting env in-process is `unsafe`
+    // (edition 2024) and forbidden workspace-wide, so re-exec ourselves once
+    // with the var injected into the *child* environment (xshell `.env` is
+    // safe). The child re-enters here with the var set and runs the real build.
+    if std::env::var_os("CARGO_ZIGBUILD_ZIG_PATH").is_none() {
+        let zig = ensure_zig(sh)?.join("zig");
+        let exe = std::env::current_exe()?;
+        let rel: &[&str] = if release { &["--release"] } else { &[] };
+        cmd!(sh, "{exe} build --target {triple} {rel...}")
+            .env("CARGO_ZIGBUILD_ZIG_PATH", &zig)
+            .run()?;
+        return Ok(());
+    }
+
     let _ = cmd!(sh, "rustup target add {triple}").quiet().run();
 
     output::status(
         "Cross",
-        &format!("ahs → {triple} (pinned zig {ZIG_VERSION})"),
+        &format!("ahsw → {triple} (pinned zig {ZIG_VERSION})"),
     );
-    // Prepend the pinned zig to PATH so cargo-zigbuild resolves *it*, not a
-    // globally-installed zig of some other version.
-    let path = format!(
-        "{}:{}",
-        zig_dir.display(),
-        std::env::var("PATH").unwrap_or_default()
-    );
-    cmd!(
-        sh,
-        "cargo zigbuild {profile...} --target {triple} --bin ahs"
-    )
-    .env("PATH", path)
-    .run()?;
+
+    // Drive cargo-zigbuild in-process. Its cross-link wrapper re-execs *this*
+    // binary as `<exe> zig cc …` (it resolves itself via `current_exe()`); the
+    // hidden `Zig` subcommand in main.rs handles that. `parse_from` feeds the
+    // same flags the `cargo zigbuild` CLI would take.
+    let mut args = vec![
+        "cargo-zigbuild".to_owned(),
+        "--target".to_owned(),
+        triple.clone(),
+        "--bin".to_owned(),
+        "ahsw".to_owned(),
+    ];
+    if release {
+        args.push("--release".to_owned());
+    }
+    let mut build = cargo_zigbuild::Build::parse_from(args);
+    build.enable_zig_ar = true; // mirrors cargo-zigbuild's own bin; needed for musl ar
+    build
+        .execute()
+        .map_err(|err| -> Box<dyn std::error::Error> { err.into() })?;
+
     let dir = if release { "release" } else { "debug" };
-    output::status("Built", &format!("target/{triple}/{dir}/ahs"));
+    output::status("Built", &format!("target/{triple}/{dir}/ahsw"));
     Ok(())
 }
 

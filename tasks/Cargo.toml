@@ -11,6 +11,10 @@ publish = false
 # automatically, not a binary anyone installs.
 clap = { version = "4", features = ["derive"] }
 xshell = "0.2"
+# Cross-compile driver, used as a *library* (not a global `cargo install`): the
+# `build` task calls `Build::execute()` directly, and `main`'s hidden `zig`
+# subcommand delegates to its `Zig` shim — see tasks/src/build.rs.
+cargo-zigbuild = "0.23"
 # `cargo task man` generates roff pages in-process: it walks the swarm
 # crate's clap tree (`cli_command`) through `clap_mangen`. This makes the
 # swarm lib a build dependency of the task runner.

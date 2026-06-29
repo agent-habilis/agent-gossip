@@ -37,9 +37,10 @@ struct Cli {
 enum Task {
     /// Run unit tests.
     Test,
-    /// Build the `ahs` binary. Cross-compile with `--target <triple>` or the
+    /// Build the `ahsw` binary. Cross-compile with `--target <triple>` or the
     /// `--arch <arch>` shorthand (static-musl Linux, for the Pi fleet) through a
-    /// project-pinned zig toolchain — self-contained, never the global zig.
+    /// project-pinned zig + cargo-zigbuild toolchain — self-contained, never the
+    /// global zig or a global `cargo install`.
     Build {
         /// Full target triple, e.g. `aarch64-unknown-linux-musl`.
         #[arg(long)]
@@ -91,9 +92,24 @@ enum Task {
     PiLint,
     /// Run the pi extension's bun test suite.
     PiTest,
+    /// Internal: cargo-zigbuild's `zig cc`/`c++`/`ar` shim. cargo-zigbuild's
+    /// cross-link wrapper re-execs THIS binary as `<exe> zig …` (it resolves
+    /// itself via `current_exe()`), so the cross build in `build` can only link
+    /// if this arm exists. Not for human use.
+    #[command(hide = true, subcommand)]
+    Zig(cargo_zigbuild::Zig),
 }
 
 fn main() -> ExitCode {
+    // cargo-zigbuild is a multi-call binary: for the archiver step it copies
+    // THIS executable to `ar`/`lib`/`dlltool` and dispatches on argv[0]. When
+    // the cross build invokes one of those copies, stand in for cargo-zigbuild
+    // exactly as its own `main` does. (The `cc`/`c++`/`ranlib` wrappers are
+    // instead scripts that call `<exe> zig …`, handled by `Task::Zig`.)
+    if let Some(code) = run_as_zig_multicall() {
+        return code;
+    }
+
     let cli = Cli::parse();
     let sh = match Shell::new() {
         Ok(sh) => sh,
@@ -124,6 +140,7 @@ fn main() -> ExitCode {
         Task::PiTypecheck => pi::typecheck(&sh),
         Task::PiLint => pi::lint(&sh),
         Task::PiTest => pi::test(&sh),
+        Task::Zig(zig) => zig.execute().map_err(|err| -> Box<dyn std::error::Error> { err.into() }),
     };
 
     match outcome {
@@ -133,4 +150,39 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// Mirror of cargo-zigbuild's `main` program-name dispatch: when this binary is
+/// invoked under the name of a tool cargo-zigbuild copies itself to (`ar` /
+/// `lib` / `dlltool` / `install_name_tool`), run that tool via the library and
+/// return the exit code. Returns `None` for a normal `cargo task …` invocation.
+fn run_as_zig_multicall() -> Option<ExitCode> {
+    use cargo_zigbuild::Zig;
+
+    let mut args = std::env::args();
+    let program = args.next()?;
+    let name = std::path::Path::new(&program)
+        .file_stem()?
+        .to_string_lossy()
+        .into_owned();
+
+    let result = if name.eq_ignore_ascii_case("ar") {
+        Zig::Ar { args: args.collect() }.execute()
+    } else if name.eq_ignore_ascii_case("lib") {
+        Zig::Lib { args: args.collect() }.execute()
+    } else if name.ends_with("dlltool") {
+        Zig::Dlltool { args: args.collect() }.execute()
+    } else if name.eq_ignore_ascii_case("install_name_tool") {
+        cargo_zigbuild::macos::install_name_tool::execute(args)
+    } else {
+        return None;
+    };
+
+    Some(match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            util::output::error(&error.to_string());
+            ExitCode::FAILURE
+        }
+    })
 }
