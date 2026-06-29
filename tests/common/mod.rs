@@ -35,12 +35,15 @@ pub(crate) const POLL: Duration = Duration::from_millis(250);
 /// Budget for a delivery asserted **after a disruption** (beacon death,
 /// SIGSTOP freeze, rendezvous migration, creator departure). Re-meshing waits
 /// on the fixed 15s heal cadence, so a recovery that just missed a tick needs
-/// another cycle — the steady-state `MSG_TIMEOUT` (30s) sits right on that
-/// cliff and flakes on a loaded host. 90s clears several cycles; `wait_until`
+/// another cycle — the steady-state `MSG_TIMEOUT` (1 min) sits right on that
+/// cliff and flakes on a loaded host. 2 min clears ~8 heal cycles; `wait_until`
 /// is adaptive, so a healthy run returns in seconds and only a genuine stall
-/// pays the ceiling. One named constant so every post-disruption assertion
-/// across the suite uses the same floor.
-pub(crate) const RECOVERY_TIMEOUT: Duration = Duration::from_secs(90);
+/// pays the ceiling. The extra headroom over a bare "few cycles" is for a host
+/// running real swarm daemons alongside the suite (dogfooding) — CPU starvation
+/// there slows convergence past a tighter bound without any product fault. One
+/// named constant so every post-disruption assertion across the suite uses the
+/// same floor.
+pub(crate) const RECOVERY_TIMEOUT: Duration = Duration::from_mins(2);
 
 /// Serializes the daemon-spawning reliability tests (`#[test]`, sync) —
 /// beacon migration, sleep/wake heal, anti-entropy, flap storms. They assert
@@ -66,7 +69,7 @@ pub(crate) fn serial_guard() -> std::sync::MutexGuard<'static, ()> {
 
 /// Use the freshly built test binary to avoid stale release output formats.
 pub(crate) fn bin() -> PathBuf {
-    PathBuf::from(env!("CARGO_BIN_EXE_ahs"))
+    PathBuf::from(env!("CARGO_BIN_EXE_ahsw"))
 }
 
 /// Per-test-process log dir so `cargo task test` never writes into
@@ -75,7 +78,7 @@ pub(crate) fn bin() -> PathBuf {
 pub(crate) fn test_log_dir() -> &'static str {
     static DIR: OnceLock<String> = OnceLock::new();
     DIR.get_or_init(|| {
-        let dir = std::env::temp_dir().join(format!("ahs-test-logs-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("ahsw-test-logs-{}", std::process::id()));
         let _ = fs::create_dir_all(&dir);
         dir.to_string_lossy().into_owned()
     })
@@ -108,7 +111,7 @@ fn apply_flags(cmd: &mut Command, pairs: &[(&str, &str)]) {
     }
 }
 
-/// Turn `(flag, value)` tuning pairs into CLI args for a spawned `ahs`
+/// Turn `(flag, value)` tuning pairs into CLI args for a spawned `ahsw`
 /// (replaces the former `.envs(...)` overrides). An empty value yields a
 /// bare flag — e.g. the boolean `("--directory-private", "")`. For pair lists
 /// that never include `RUST_LOG` (directory / monitor spawns); use
@@ -131,7 +134,7 @@ static COUNTER: AtomicU32 = AtomicU32::new(0);
 pub(crate) fn tmp_log(tag: &str) -> PathBuf {
     let sequence = COUNTER.fetch_add(1, Ordering::Relaxed);
     std::env::temp_dir().join(format!(
-        "ahs-test-{}-{}-{}.log",
+        "ahsw-test-{}-{}-{}.log",
         tag,
         std::process::id(),
         sequence
@@ -173,7 +176,7 @@ pub(crate) fn wait_until(count_fn: impl Fn() -> usize, target: usize, timeout: D
 
 // ── CLI helpers ───────────────────────────────────────────────────
 
-/// Spawn `ahs msg …` and return the raw `Output`
+/// Spawn `ahsw msg …` and return the raw `Output`
 /// (no success assertion — callers that test failure paths inspect it).
 pub(crate) fn cli_msg_raw(swarm: &str, nickname: &str, body: &str, reply: Option<&str>) -> Output {
     let mut args = vec![
@@ -221,7 +224,7 @@ pub(crate) fn cli_msg_checked(
     String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
 
-/// Spawn `ahs poll … --output json`, assert success,
+/// Spawn `ahsw poll … --output json`, assert success,
 /// return trimmed stdout.
 pub(crate) fn cli_poll(swarm: &str, nickname: &str, after: Option<&str>) -> String {
     let mut args = vec![
@@ -248,7 +251,7 @@ pub(crate) fn cli_poll(swarm: &str, nickname: &str, after: Option<&str>) -> Stri
     String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
 
-/// `ahs poll --wait <wait_ms>` (long-poll), returning the JSON stdout and how
+/// `ahsw poll --wait <wait_ms>` (long-poll), returning the JSON stdout and how
 /// long the call took — so a test can assert it blocked / resolved promptly.
 pub(crate) fn cli_poll_wait(
     swarm: &str,
@@ -287,8 +290,8 @@ pub(crate) fn cli_poll_wait(
     )
 }
 
-/// Spawn `ahs task …` and return the raw `Output` (no success
-/// assertion — callers that test the unknown-participant / rate-limit
+/// Spawn `ahsw task …` and return the raw `Output` (no success
+/// assertion — callers that test the unknown-participant
 /// failure paths inspect it).
 pub(crate) fn cli_exchange_raw(
     swarm: &str,
@@ -339,7 +342,7 @@ pub(crate) fn cli_exchange_checked(
     );
 }
 
-/// Spawn `ahs peers …`, assert success, return trimmed stdout (the
+/// Spawn `ahsw peers …`, assert success, return trimmed stdout (the
 /// raw `{ok, participants, count}` JSON line).
 pub(crate) fn cli_peers(swarm: &str, nickname: &str) -> String {
     let out = test_cmd()
@@ -354,7 +357,7 @@ pub(crate) fn cli_peers(swarm: &str, nickname: &str) -> String {
     String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
 
-/// Spawn `ahs ping … `, assert success. Fire-and-forget — the RTT
+/// Spawn `ahsw ping … `, assert success. Fire-and-forget — the RTT
 /// report lands on the target daemon's own output stream, not here.
 pub(crate) fn cli_ping(swarm: &str, nickname: &str) {
     let out = test_cmd()
@@ -368,11 +371,64 @@ pub(crate) fn cli_ping(swarm: &str, nickname: &str) {
     );
 }
 
+/// The CLI subcommand for a channel (`state` / `meta`) — `Channel::label` is
+/// `pub(crate)`, not reachable from this external test crate.
+pub(crate) fn channel_subcommand(channel: Channel) -> &'static str {
+    match channel {
+        Channel::State => "state",
+        Channel::Meta => "meta",
+    }
+}
+
+/// Spawn `ahsw <channel> get … `, assert success, return trimmed stdout (the
+/// raw `{ok, document, doc_hash}` JSON line). Drives the real CLI → IPC socket
+/// → daemon read path the embed harness bypasses.
+pub(crate) fn cli_channel_get(channel: Channel, swarm: &str, nickname: &str) -> String {
+    let out = test_cmd()
+        .args([channel_subcommand(channel), "get"])
+        .args(["--swarm", swarm, "--nickname", nickname])
+        .output()
+        .expect("channel get failed to spawn");
+    assert!(
+        out.status.success(),
+        "{} get failed: {}",
+        channel_subcommand(channel),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stdout).trim().to_string()
+}
+
+/// Spawn `ahsw <channel> patch …` (optionally `--if-doc-hash`), returning the
+/// raw [`Output`](std::process::Output). The CLI **exits non-zero** on a
+/// rejected `{ok:false}` patch (the scriptable exit-code contract), so this
+/// returns the status + stdout unjudged for the caller to assert on.
+pub(crate) fn cli_channel_patch(
+    channel: Channel,
+    swarm: &str,
+    nickname: &str,
+    ops: &str,
+    if_doc_hash: Option<&str>,
+) -> Output {
+    let mut cmd = test_cmd();
+    cmd.args([channel_subcommand(channel), "patch"]).args([
+        "--swarm",
+        swarm,
+        "--nickname",
+        nickname,
+        "--patch",
+        ops,
+    ]);
+    if let Some(hash) = if_doc_hash {
+        cmd.args(["--if-doc-hash", hash]);
+    }
+    cmd.output().expect("channel patch failed to spawn")
+}
+
 // ── In-process harness (embed::SwarmSession) ──────────────────────
 
 use agent_habilis_swarm::embed::{CreateConfig, JoinConfig, SwarmSession};
 use agent_habilis_swarm::{
-    ExchangeId, ExchangeKind, ExchangePhase, Message, MessageBody, MessageId, MessageKind,
+    Channel, ExchangeId, ExchangeKind, ExchangePhase, Message, MessageBody, MessageId, MessageKind,
     Nickname, OutputEvent, PresenceSubtype, SwarmName,
 };
 use tokio::sync::mpsc::UnboundedReceiver;
@@ -396,7 +452,7 @@ fn test_swarm_name(name: &str) -> SwarmName {
 }
 
 impl InProcNode {
-    /// Create a new private swarm. `self.swarm` holds the `ahs…` id.
+    /// Create a new private swarm. `self.swarm` holds the `🐝…` id.
     pub(crate) async fn create(name: &str) -> Self {
         Self::from_session(
             SwarmSession::create(CreateConfig::new(test_swarm_name(name)))
@@ -429,7 +485,7 @@ impl InProcNode {
         }
     }
 
-    /// Join `swarm` (an `ahs…` id) with an explicit nickname.
+    /// Join `swarm` (a `🐝…` id) with an explicit nickname.
     pub(crate) async fn join(swarm: &str, nickname: &str) -> Self {
         let target = swarm.parse().expect("valid test join target");
         let mut cfg = JoinConfig::new(target);
@@ -441,41 +497,162 @@ impl InProcNode {
         )
     }
 
-    /// Broadcast a plain message; returns the new message id. Panics if
-    /// the sender-side rate limiter dropped it — callers stay within the
-    /// quota; use [`Self::try_send`] to exercise the limit deliberately.
+    /// Broadcast a plain message; returns the new message id.
     pub(crate) async fn send(&self, text: &str) -> MessageId {
-        self.try_send(text)
+        self.send_to(None, text)
             .await
             .expect("in-process send failed")
-            .expect("send within rate limit")
     }
 
-    /// Like [`Self::send`] but returns the raw outcome: `Ok(None)` when
-    /// the sender-side rate limiter dropped the message.
-    pub(crate) async fn try_send(&self, text: &str) -> anyhow::Result<Option<MessageId>> {
-        self.send_to(None, text).await
+    /// Apply a JSON-Patch change to the shared state. Panics if the patch is
+    /// rejected (invalid / out-of-subset / loop stopped) — use
+    /// [`Self::try_state_patch`] to exercise rejection deliberately.
+    pub(crate) async fn state_patch(&self, patch: serde_json::Value) {
+        self.try_state_patch(patch)
+            .await
+            .expect("in-process state_patch failed");
     }
 
-    /// Append a durable state event with `text` as its payload.
-    pub(crate) async fn append_state(&self, text: &str) {
+    /// Like [`Self::state_patch`] but returns the raw result, so a test can
+    /// assert an invalid/out-of-subset patch is rejected.
+    pub(crate) async fn try_state_patch(&self, patch: serde_json::Value) -> anyhow::Result<()> {
+        self.session.state_patch(patch, None).await
+    }
+
+    /// Apply a state patch behind a compare-and-set guard (the `doc_hash` from a
+    /// prior read). Returns the raw result so a test can assert a stale hash is
+    /// rejected and a current one applies.
+    pub(crate) async fn try_state_patch_if(
+        &self,
+        patch: serde_json::Value,
+        if_doc_hash: Option<String>,
+    ) -> anyhow::Result<()> {
+        self.session.state_patch(patch, if_doc_hash).await
+    }
+
+    /// The current derived shared-state document (the JSON-Patch fold over the
+    /// state log).
+    pub(crate) async fn state_get(&self) -> serde_json::Value {
         self.session
-            .append_state(MessageBody::new(text).expect("valid body"))
+            .state_get()
             .await
-            .expect("in-process append_state failed");
+            .expect("in-process state_get failed")
     }
 
-    /// The derived swarm state — event payloads, sorted for set comparison
-    /// (same-second events tie on timestamp and order by id, so a stable sort
-    /// of the values is the convergence check).
-    pub(crate) async fn state_sorted(&self) -> Vec<String> {
-        let mut bodies = self
-            .session
-            .state_snapshot()
+    /// Apply a JSON-Patch change to the `meta` channel. Panics on rejection —
+    /// use [`Self::try_meta_patch`] to exercise rejection deliberately.
+    pub(crate) async fn meta_patch(&self, patch: serde_json::Value) {
+        self.try_meta_patch(patch)
             .await
-            .expect("in-process state_snapshot failed");
-        bodies.sort();
-        bodies
+            .expect("in-process meta_patch failed");
+    }
+
+    /// Like [`Self::meta_patch`] but returns the raw result.
+    pub(crate) async fn try_meta_patch(&self, patch: serde_json::Value) -> anyhow::Result<()> {
+        self.session.meta_patch(patch, None).await
+    }
+
+    /// Apply a `meta` patch behind a compare-and-set guard (the `doc_hash` from a
+    /// prior read).
+    pub(crate) async fn try_meta_patch_if(
+        &self,
+        patch: serde_json::Value,
+        if_doc_hash: Option<String>,
+    ) -> anyhow::Result<()> {
+        self.session.meta_patch(patch, if_doc_hash).await
+    }
+
+    /// The current derived `meta`-channel document.
+    pub(crate) async fn meta_get(&self) -> serde_json::Value {
+        self.session
+            .meta_get()
+            .await
+            .expect("in-process meta_get failed")
+    }
+
+    // ── channel-parameterized dispatch ──
+    // The behavioral tests run against both channels by selecting one at the
+    // call site; these forward to the `state_*` / `meta_*` twins above so a
+    // single test body covers `Channel::State` and `Channel::Meta`.
+
+    /// Apply a patch to `channel`. Panics on rejection.
+    pub(crate) async fn patch(&self, channel: Channel, patch: serde_json::Value) {
+        match channel {
+            Channel::State => self.state_patch(patch).await,
+            Channel::Meta => self.meta_patch(patch).await,
+        }
+    }
+
+    /// Apply a patch to `channel`, returning the raw result.
+    pub(crate) async fn try_patch(
+        &self,
+        channel: Channel,
+        patch: serde_json::Value,
+    ) -> anyhow::Result<()> {
+        match channel {
+            Channel::State => self.try_state_patch(patch).await,
+            Channel::Meta => self.try_meta_patch(patch).await,
+        }
+    }
+
+    /// Apply a CAS-guarded patch to `channel`, returning the raw result.
+    pub(crate) async fn try_patch_if(
+        &self,
+        channel: Channel,
+        patch: serde_json::Value,
+        if_doc_hash: Option<String>,
+    ) -> anyhow::Result<()> {
+        match channel {
+            Channel::State => self.try_state_patch_if(patch, if_doc_hash).await,
+            Channel::Meta => self.try_meta_patch_if(patch, if_doc_hash).await,
+        }
+    }
+
+    /// The current derived document for `channel`.
+    pub(crate) async fn get(&self, channel: Channel) -> serde_json::Value {
+        match channel {
+            Channel::State => self.state_get().await,
+            Channel::Meta => self.meta_get().await,
+        }
+    }
+
+    /// Captured changes on `channel` so far, each `(derived document, is_self)`.
+    pub(crate) fn changes(&mut self, channel: Channel) -> Vec<(serde_json::Value, bool)> {
+        self.pump();
+        self.drained
+            .iter()
+            .filter_map(|event| match event {
+                OutputEvent::StateChanged {
+                    channel: chan,
+                    document,
+                    is_self,
+                    ..
+                } if *chan == channel => Some((document.clone(), *is_self)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Wait until a change on `channel` **from a peer** (`is_self == false`)
+    /// whose freshly-derived document satisfies `pred` is captured — the
+    /// reaction-hook check (a self-change never satisfies it, exercising the F5
+    /// self-wake guard).
+    pub(crate) async fn wait_change(
+        &mut self,
+        channel: Channel,
+        timeout: Duration,
+        mut pred: impl FnMut(&serde_json::Value) -> bool,
+    ) -> bool {
+        self.wait_for(timeout, |events| {
+            events.iter().any(|event| {
+                matches!(
+                    event,
+                    OutputEvent::StateChanged { channel: chan, document, is_self: false, .. }
+                        if *chan == channel && pred(document)
+                )
+            })
+        })
+        .await
     }
 
     /// Send a message addressed to `target`; returns the new id.
@@ -483,24 +660,24 @@ impl InProcNode {
         self.send_to(Some(target), text)
             .await
             .expect("in-process reply failed")
-            .expect("reply within rate limit")
     }
 
-    /// Shared send path for [`Self::try_send`] and [`Self::reply`]:
+    /// Shared send path for [`Self::send`] and [`Self::reply`]:
     /// `target` `None` is an open broadcast, `Some` a directed reply.
-    async fn send_to(&self, target: Option<&str>, text: &str) -> anyhow::Result<Option<MessageId>> {
+    async fn send_to(&self, target: Option<&str>, text: &str) -> anyhow::Result<MessageId> {
         let reply = target.map(|nick| Nickname::new(nick).expect("valid target nickname"));
         // `send` returns the canonical `Message`; the harness only needs its id.
         let sent = self
             .session
             .send(MessageBody::new(text).expect("valid body"), reply)
             .await?;
-        Ok(sent.map(|msg| msg.id))
+        Ok(sent.id)
     }
 
     /// Send one task leg to `target`, correlated by `exchange_id`; returns the
-    /// new id (or `None` if the sender-side rate limiter dropped it). Panics
-    /// on transport error — addressee validation is `broadcast_exchange`'s job.
+    /// new id. Panics on transport error — addressee validation is
+    /// `broadcast_exchange`'s job. (Returns `Option` purely for caller
+    /// ergonomics; a successful leg is always `Some`.)
     pub(crate) async fn exchange(
         &self,
         target: &str,
@@ -521,7 +698,7 @@ impl InProcNode {
             )
             .await
             .expect("in-process task failed");
-        sent.map(|msg| msg.id)
+        Some(sent.id)
     }
 
     /// Captured task legs (any phase; includes self echoes — filter on
@@ -786,7 +963,7 @@ pub(crate) async fn three_peers(suffix: &str) -> (InProcNode, InProcNode, InProc
     (creator, joiner_a, joiner_b)
 }
 
-// ── Subprocess harness (real `ahs` processes) ─────
+// ── Subprocess harness (real `ahsw` processes) ─────
 //
 // For the reliability / contract tests that must exercise the shipped
 // binary: real SIGKILL / SIGSTOP-SIGCONT, real stdout, real
@@ -799,12 +976,12 @@ pub(crate) struct Node {
 }
 
 impl Node {
-    /// Spawn `ahs create`, wait for ahs... and the assigned nickname.
+    /// Spawn `ahsw create`, wait for 🐝... and the assigned nickname.
     pub(crate) fn create() -> (Self, String) {
         Self::create_named("itest")
     }
 
-    /// Spawn `ahs create --name <name>`. Uses a fixed name by default
+    /// Spawn `ahsw create --name <name>`. Uses a fixed name by default
     /// since tests don't care what the swarm is called — only that creation
     /// and join round-trip.
     pub(crate) fn create_named(name: &str) -> (Self, String) {
@@ -819,8 +996,7 @@ impl Node {
     }
 
     /// Like [`create_flags`](Self::create_flags) but also passes extra raw
-    /// `create` CLI args (e.g. `["--rate-limit", "0"]` to lift the send-side
-    /// cap for a burst).
+    /// `create` CLI args (e.g. `["--public"]`).
     pub(crate) fn create_args(
         name: &str,
         extra: &[&str],
@@ -847,10 +1023,10 @@ impl Node {
             let content = fs::read_to_string(&log).unwrap_or_default();
             for line in content.lines() {
                 let trimmed = line.trim();
-                // Human-mode create prints `others can join with: ahs
+                // Human-mode create prints `others can join with: ahsw
                 // join <id>`; pull the id token out of that hint.
                 if swarm_id.is_none()
-                    && let Some((_, after)) = trimmed.split_once("ahs join ")
+                    && let Some((_, after)) = trimmed.split_once("ahsw join ")
                 {
                     swarm_id = after.split_whitespace().next().map(str::to_owned);
                 }
@@ -884,7 +1060,7 @@ impl Node {
         )
     }
 
-    /// Spawn `ahs join <swarm> --nickname <nickname>`.
+    /// Spawn `ahsw join <swarm> --nickname <nickname>`.
     pub(crate) fn join(swarm: &str, nickname: &str) -> Self {
         Self::join_flags(swarm, nickname, &[])
     }

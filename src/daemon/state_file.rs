@@ -11,7 +11,7 @@
 //! (no read-merge: there are no foreign keys to preserve).
 //!
 //! `ready` is `false` at the early identity write and flips to `true`
-//! once the event loop is serving IPC, so a reader (e.g. `ahs ready`)
+//! once the event loop is serving IPC, so a reader (e.g. `ahsw ready`)
 //! can gate on it rather than on the file's mere existence.
 //! `participant_count` is the total number of agents in the swarm,
 //! including self. `last_updated` is a unix timestamp the daemon
@@ -22,7 +22,7 @@
 //! File shape (keys are serialized in sorted order — `serde_json::Map` is a
 //! `BTreeMap` here, no `preserve_order` feature):
 //! ```json
-//! {"last_updated":1776720604,"name":"cool-team","nickname":"treat-empire","participant_count":3,"ready":true,"swarm":"ahs..."}
+//! {"last_updated":1776720604,"name":"cool-team","nickname":"treat-empire","participant_count":3,"ready":true,"swarm":"🐝..."}
 //! ```
 //!
 //! Writes are atomic (tempfile + rename on the same filesystem), so a
@@ -112,18 +112,46 @@ impl Drop for StateFile {
     }
 }
 
-/// What a reader (the `ahs ready` gate) needs out of a state file: whether
-/// the daemon is serving (`ready`) and how fresh that claim is
-/// (`last_updated`, unix seconds — the daemon rewrites it on a fixed
-/// heartbeat, so a gate can reject a stale `ready: true` left by a prior
-/// daemon killed with SIGKILL). The identity fields (`swarm`/`name`/`nickname`)
-/// are not read here — the binary doesn't consume them (the skill reads them
-/// straight off the JSON), and `ready`/`last_updated` already fail-closed on a
-/// torn or foreign file, so re-validating identity on every poll would be
-/// wasted work.
+/// What the `ahsw ready` gate needs out of a state file on every poll: whether
+/// the daemon is serving (`ready`) and how fresh that claim is (`last_updated`,
+/// unix seconds — the daemon rewrites it on a fixed heartbeat, so a stale
+/// `ready: true` left by a prior daemon killed with SIGKILL is rejected). The
+/// session identity is read separately ([`read_identity`]) only on the success
+/// path, so the poll loop allocates nothing beyond these two fields.
 pub(crate) struct ReadySnapshot {
     pub ready: bool,
     pub last_updated: u64,
+}
+
+/// Best-effort session identity for `ahsw ready --output json`. Each field is
+/// `None` when the state file is unreadable, not JSON, or predates that field
+/// — so the JSON the gate prints carries only the keys actually present.
+pub(crate) struct SessionIdentity {
+    pub swarm: Option<String>,
+    pub name: Option<String>,
+    pub nickname: Option<String>,
+}
+
+/// Read the session identity from the state file. Best-effort: a read/parse
+/// failure yields all-`None` rather than an error, since identity is a
+/// convenience on top of the gate, not part of what it blocks on. Called once,
+/// on success — never in the poll loop (see [`ReadySnapshot`]).
+pub(crate) fn read_identity(path: &Path) -> SessionIdentity {
+    let parsed: Option<serde_json::Value> = std::fs::read_to_string(path)
+        .ok()
+        .and_then(|contents| serde_json::from_str(&contents).ok());
+    let field = |key: &str| {
+        parsed
+            .as_ref()
+            .and_then(|doc| doc.get(key))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned)
+    };
+    SessionIdentity {
+        swarm: field("swarm"),
+        name: field("name"),
+        nickname: field("nickname"),
+    }
 }
 
 /// Read the readiness fields from the state file at `path`. `Ok(None)` when
@@ -330,6 +358,34 @@ mod tests {
     }
 
     #[test]
+    fn read_identity_carries_session_fields() {
+        let path = unique_path("identity");
+        let state_file = StateFile::new(
+            path.clone(),
+            &SwarmId::from("🐝round"),
+            &Nickname::from("treat-empire"),
+            &name("cool-team"),
+        );
+        state_file.write(2, true);
+        let identity = super::read_identity(&path);
+        assert_eq!(identity.swarm.as_deref(), Some("🐝round"));
+        assert_eq!(identity.name.as_deref(), Some("cool-team"));
+        assert_eq!(identity.nickname.as_deref(), Some("treat-empire"));
+        state_file.remove();
+    }
+
+    #[test]
+    fn read_identity_is_all_none_on_a_missing_file() {
+        // Best-effort: a missing/identity-less file yields all-None, so the
+        // gate's JSON omits the keys rather than printing nulls.
+        let path = unique_path("identity-missing");
+        let identity = super::read_identity(&path);
+        assert!(identity.swarm.is_none());
+        assert!(identity.name.is_none());
+        assert!(identity.nickname.is_none());
+    }
+
+    #[test]
     fn read_snapshot_errors_on_malformed() {
         let path = unique_path("malformed");
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -337,10 +393,10 @@ mod tests {
         std::fs::write(&path, b"not json").unwrap();
         assert!(super::read_snapshot(&path).is_err());
         // JSON object missing the `ready` / `last_updated` fields the gate needs.
-        std::fs::write(&path, br#"{"swarm":"ahsx","name":"n"}"#).unwrap();
+        std::fs::write(&path, r#"{"swarm":"🐝x","name":"n"}"#).unwrap();
         assert!(super::read_snapshot(&path).is_err());
         // Has `ready` but still missing `last_updated`.
-        std::fs::write(&path, br#"{"ready":true,"swarm":"ahsround"}"#).unwrap();
+        std::fs::write(&path, r#"{"ready":true,"swarm":"🐝round"}"#).unwrap();
         assert!(super::read_snapshot(&path).is_err());
         let _ = std::fs::remove_file(&path);
     }

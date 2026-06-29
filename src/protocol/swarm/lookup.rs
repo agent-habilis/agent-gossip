@@ -1,8 +1,8 @@
-//! The swarm-wide config carried in the `ahs…` id — the lookup
-//! allowlist (`mdns`/`dht`/`relay`) and the per-author rate limit — plus
-//! its byte codec and the `--advertise` directory selection. A swarm's
-//! network reach is fully described by its lookups: no lookups means
-//! loopback-only; any lookup means reachable across machines.
+//! The swarm-wide config carried in the `🐝…` id — the lookup
+//! allowlist (`mdns`/`dht`/`relay`) — plus its byte codec and the
+//! `--advertise` directory selection. A swarm's network reach is fully
+//! described by its lookups: no lookups means loopback-only; any lookup
+//! means reachable across machines.
 
 use std::fmt;
 use std::str::FromStr;
@@ -164,39 +164,34 @@ pub(super) fn read_u16(bytes: &[u8], pos: &mut usize) -> Result<u16> {
 /// different config is a different swarm (different topic).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SwarmConfig {
-    /// Per-author messages-per-minute cap; `0` means no rate limit.
-    pub rate_limit_per_min: u16,
     pub lookups: LookupOpts,
 }
 
 impl SwarmConfig {
-    /// Default loopback-only config: the standard rate limit, no lookups.
-    /// Test-only since the directory now builds its config from explicit
-    /// lookups and `create` constructs `SwarmConfig` directly.
+    /// Default loopback-only config: no lookups. Test-only since the
+    /// directory now builds its config from explicit lookups and `create`
+    /// constructs `SwarmConfig` directly.
     #[cfg(test)]
     pub(crate) fn loopback() -> Self {
         SwarmConfig {
-            rate_limit_per_min: crate::util::consts::RATE_LIMIT_PER_MIN,
             lookups: LookupOpts::loopback(),
         }
     }
 
-    /// Default reachable-across-machines config: the standard rate limit,
-    /// the all-on lookup preset. Test-only (see [`SwarmConfig::loopback`]).
+    /// Default reachable-across-machines config: the all-on lookup preset.
+    /// Test-only (see [`SwarmConfig::loopback`]).
     #[cfg(test)]
     pub(crate) fn public_preset() -> Self {
         SwarmConfig {
-            rate_limit_per_min: crate::util::consts::RATE_LIMIT_PER_MIN,
             lookups: LookupOpts::public_preset(),
         }
     }
 
-    /// Canonical wire bytes: `[rate_limit u16 LE][lookups…]`. This exact
-    /// byte string is what the id carries and what the topic derivation
-    /// mixes in, so it must be deterministic.
+    /// Canonical wire bytes: `[lookups…]`. This exact byte string is what
+    /// the id carries and what the topic derivation mixes in, so it must be
+    /// deterministic.
     pub(crate) fn to_bytes(&self) -> Vec<u8> {
-        let mut buf = Vec::with_capacity(4);
-        buf.extend_from_slice(&self.rate_limit_per_min.to_le_bytes());
+        let mut buf = Vec::with_capacity(2);
         self.lookups.encode_into(&mut buf);
         buf
     }
@@ -205,15 +200,11 @@ impl SwarmConfig {
     /// (no trailing slack within the length-delimited region we were given).
     pub(crate) fn from_bytes(bytes: &[u8]) -> Result<Self> {
         let mut pos = 0;
-        let rate_limit_per_min = read_u16(bytes, &mut pos).context("truncated rate limit")?;
         let lookups = LookupOpts::decode_from(bytes, &mut pos)?;
         if pos != bytes.len() {
             bail!("trailing bytes in swarm config");
         }
-        Ok(SwarmConfig {
-            rate_limit_per_min,
-            lookups,
-        })
+        Ok(SwarmConfig { lookups })
     }
 }
 
@@ -540,9 +531,8 @@ mod lookup_tests {
     }
 
     #[test]
-    fn config_round_trips_custom_relay_ladder_and_rate() {
+    fn config_round_trips_custom_relay_ladder() {
         let config = SwarmConfig {
-            rate_limit_per_min: 0,
             lookups: LookupOpts {
                 mdns: true,
                 dht: false,
@@ -565,8 +555,8 @@ mod lookup_tests {
 
     #[test]
     fn config_rejects_custom_flag_without_enabled() {
-        // rate(2) + flags with custom(0b1000) but not enabled(0b0100).
-        let bytes = [0u8, 0u8, 0b1000];
+        // flags with custom(0b1000) but not enabled(0b0100).
+        let bytes = [0b1000];
         assert!(SwarmConfig::from_bytes(&bytes).is_err());
     }
 }

@@ -52,7 +52,6 @@ pub(crate) fn tick_sweep(state: &mut EventLoopState, out: &output::Output) {
     for (nick, seen, age) in expired {
         state.last_seen.remove(nick.as_str());
         state.participant_endpoints.remove(nick.as_str());
-        state.participant_meta.remove(nick.as_str());
         if state.participants.remove(nick.as_str()) {
             state.write_participant_count();
             if state.surfaced.remove(nick.as_str()) {
@@ -91,7 +90,6 @@ mod tests {
         EventLoopState::new(
             None,
             Instant::now(),
-            crate::util::consts::RATE_LIMIT_PER_MIN,
             std::sync::Arc::new(crate::protocol::identity::Identity::generate()),
         )
     }

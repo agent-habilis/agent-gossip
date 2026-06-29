@@ -21,34 +21,49 @@ and STOP.
 
 `$NAME` is the swarm name from the same `ready` event.
 
-## Read the roster
+## Read the roster, then the meta doc
 
-`$SWARM`/`$NICKNAME` are from the `ready` event (copy the `ahs…` id
-verbatim):
+`$SWARM`/`$NICKNAME` are from the `ready` event (copy the `🐝…` id
+verbatim). Run both reads (the roster from the daemon, the model/harness from
+the **meta** channel — the binary no longer carries them):
 
 ```bash
-ahs peers --swarm "$SWARM" --nickname "$NICKNAME"
+ahsw peers --swarm "$SWARM" --nickname "$NICKNAME"
+ahsw meta get --swarm "$SWARM" --nickname "$NICKNAME"
 ```
 
-This returns a single JSON line synchronously — wait for it and parse it:
+`ahsw peers` returns a single JSON line synchronously — wait for it and parse:
 
 ```json
 { "ok": true,
   "participants": [
     { "nickname": "swift-cedar", "last_seen_secs_ago": 3, "quiet": false,
-      "reach": "direct", "model": "Opus 4.8", "harness": "Claude Code" }
+      "reach": "direct" }
   ],
-  "count": 2 }
+  "participant_count": 2 }
 ```
 
-- `count` includes you (`participants.len() + 1`); the `participants` array
-  does **not** list you.
+- `participant_count` includes you (`participants.len() + 1`); the
+  `participants` array does **not** list you.
 - `reach`: `"direct"` ⇒ you hold a live link to that peer (show as
   **connected**); `"gossip"` ⇒ reachable only via relay.
 - `quiet`: the peer went silent past the alive timeout but may return.
 - `last_seen_secs_ago`: `null` until the peer's first heartbeat is timed.
-- `model` / `harness`: what the peer self-reported it runs on (e.g.
-  `Opus 4.8` / `Claude Code`). Absent (`null`) when the peer advertised none.
+
+`ahsw meta get` returns the derived **meta** document, where each agent
+self-reports what it runs on under `/peers/<nickname>` (the convention
+`/swarm:create` / `/swarm:join` seed):
+
+```json
+{ "ok": true,
+  "document": { "peers": {
+    "swift-cedar": { "model": "Opus 4.8", "harness": "Claude Code" }
+  } },
+  "doc_hash": "…" }
+```
+
+Look up each roster peer's model/harness by nickname in `document.peers`. A
+peer that has not reported yet is simply absent — render its cells empty.
 
 ## Output
 
@@ -56,7 +71,7 @@ Emit exactly one block: a header line, then a markdown table of the
 `participants` (sorted as received — most-recently-seen first). Nothing else.
 
 ```
-🐝 `#<$NAME>` · <count> participants
+🐝 `#<$NAME>` · <participant_count> participants
 
 | peer        | connection | model    | harness     | last seen |
 | ----------- | ---------- | -------- | ----------- | --------- |
@@ -71,12 +86,12 @@ inline code (a distinct color), e.g. `` `#dealer-lilac` `` — no angle brackets
 Rendering rules per row:
 - **peer**: `nickname`.
 - **connection**: `reach == "direct"` → `connected`; else `gossip`.
-- **model**: `model`, or empty cell when `null`.
-- **harness**: `harness`, or empty cell when `null`.
+- **model**: `document.peers[nickname].model`, or empty cell when absent.
+- **harness**: `document.peers[nickname].harness`, or empty cell when absent.
 - **last seen**: `null` → `—`; otherwise `<n>s ago`. Prefix `quiet · ` when
   `quiet` is `true`.
 
-If `participants` is empty (`count` is 1), skip the table and print:
+If `participants` is empty (`participant_count` is 1), skip the table and print:
 ```
 🐝 `#<$NAME>` · just you — no peers yet
 ```
@@ -84,6 +99,6 @@ If `participants` is empty (`count` is 1), skip the table and print:
 ## Notes
 
 - Read-only. Requires an active `/swarm:create` or `/swarm:join` session (a
-  live daemon): `ahs peers` talks to it over IPC.
+  live daemon): `ahsw peers` talks to it over IPC.
 - The `connected` vs `gossip` tag converges as peers re-advertise — a brand-new
   neighbor can briefly show `gossip` until its next address broadcast.

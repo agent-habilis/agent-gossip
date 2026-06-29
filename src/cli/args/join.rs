@@ -9,7 +9,7 @@ use super::shared::SharedServerOpts;
 
 #[derive(Parser, Debug)]
 pub(crate) struct JoinOpts {
-    /// Swarm identifier (ahs...), a domain (example.com), or a git repo
+    /// Swarm identifier (🐝...), a domain (example.com), or a git repo
     /// URL (github.com/user/repo, gitlab.com/user/repo, bitbucket.org/user/repo).
     /// Non-id values are resolved via /.well-known/agent-habilis-swarm.
     /// Classified + syntactically validated at parse (clap `FromStr`).

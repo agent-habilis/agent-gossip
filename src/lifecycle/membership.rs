@@ -43,7 +43,8 @@ pub(crate) fn compute(
         MessageKind::Presence {
             subtype: PresenceSubtype::Left,
         }
-        | MessageKind::State => false,
+        | MessageKind::State
+        | MessageKind::Meta => false,
         MessageKind::Msg { .. }
         | MessageKind::Exchange { .. }
         | MessageKind::Presence {
@@ -52,6 +53,7 @@ pub(crate) fn compute(
         | MessageKind::PeerInfo
         | MessageKind::Digest
         | MessageKind::StateDigest
+        | MessageKind::MetaDigest
         | MessageKind::Ping
         | MessageKind::Pong { .. } => !state.participants.contains(author.as_str()),
     };
@@ -96,7 +98,6 @@ mod tests {
         EventLoopState::new(
             None,
             Instant::now(),
-            crate::util::consts::RATE_LIMIT_PER_MIN,
             std::sync::Arc::new(crate::protocol::identity::Identity::generate()),
         )
     }

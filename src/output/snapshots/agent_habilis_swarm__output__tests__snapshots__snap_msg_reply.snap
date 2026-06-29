@@ -1,6 +1,6 @@
 ---
 source: src/output/tests.rs
-assertion_line: 250
+assertion_line: 463
 expression: "format_msg_json(&msg, false)"
 ---
 {"event":"message","id":"00000000-0000-0000-0000-000000000001","type":"msg","swarm":"🐝test","author":"alice-bot","ts":1700000000,"body":"Rust is a systems language.","reply":"addressed-nick","display":"🐝️ `<alice-bot>` → `<addressed-nick>`: Rust is a systems language.","self":false}

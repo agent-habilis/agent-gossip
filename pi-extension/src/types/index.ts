@@ -4,7 +4,7 @@ export type Session = {
   nickname: string;
   pid?: number;
   // Set when the `ready` event reports the installed extension has fallen
-  // behind the `ahs` binary — surfaced once at swarm start.
+  // behind the `ahsw` binary — surfaced once at swarm start.
   drift?: string;
 };
 
@@ -28,6 +28,10 @@ export type SwarmEvent = {
   phase?: string;
   to?: string;
   display?: string;
+  // On a `state` event: the applied RFC 6902 op array (the delta) and the full
+  // derived document AFTER the change — what you read to decide your reaction.
+  patch?: Array<Record<string, unknown>>;
+  document?: Record<string, unknown>;
 };
 
 export type ExchangeKind = "handover" | "task";

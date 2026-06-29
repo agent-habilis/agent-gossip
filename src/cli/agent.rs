@@ -1,4 +1,4 @@
-//! The agent/integration model shared by `setup`, `teardown`, and `status`:
+//! The agent/integration model shared by `plug`, `unplug`, and `status`:
 //! the artifacts embedded in this binary, which agents exist, where each one's
 //! integration lives, and whether it's set up / up to date. Mirrors
 //! `../browse`'s `util::skill` (embed + agent + state co-located).
@@ -23,7 +23,7 @@ pub(crate) const GENERIC_SKILL: &str = include_str!("../../skills/swarm/SKILL.md
 /// embeds above — `include_dir!` is otherwise untracked on stable. Anonymous
 /// `const _` so it's evaluated (the `env!` is the load-bearing part) but never
 /// flagged as unused.
-const _: &str = env!("AHS_EMBED_FINGERPRINT");
+const _: &str = env!("AHSW_EMBED_FINGERPRINT");
 
 /// Directory/file names never materialized — build cruft and pi's local deps.
 /// The exact same fragment `build.rs` uses to filter staging + the fingerprint,
@@ -49,7 +49,7 @@ pub(crate) enum AgentState {
     /// Set up, and the installed copy matches the one embedded in this binary.
     UpToDate,
     /// Set up, but the installed copy differs from the embedded one — the
-    /// binary was upgraded past the install. Re-run `setup` to refresh.
+    /// binary was upgraded past the install. Re-run `plug` to refresh.
     OutOfDate,
     /// The agent is present on this machine, but the integration isn't set up.
     NotSetUp,
@@ -82,7 +82,7 @@ impl Agent {
     }
 
     /// The agent's home dir (`~/.claude`, `~/.pi`, `~/.agents`) — its presence
-    /// is the detection signal that seeds `setup`'s default selection.
+    /// is the detection signal that seeds `plug`'s default selection.
     fn agent_dir(self, home: &Path) -> PathBuf {
         let part = match self {
             Agent::ClaudeCode => ".claude",
@@ -139,7 +139,7 @@ impl Agent {
 }
 
 /// Is this embedded path's final component in the skip list? Shared by the
-/// `setup` writer and the `in_sync` comparison so both filter identically.
+/// `plug` writer and the `in_sync` comparison so both filter identically.
 pub(crate) fn skipped(path: &Path) -> bool {
     path.file_name()
         .and_then(|name| name.to_str())
@@ -148,7 +148,7 @@ pub(crate) fn skipped(path: &Path) -> bool {
 
 /// True iff every embedded file under `dir` (skipping [`SKIP`], recursing
 /// subdirs) exists on disk at `dest` with identical bytes. Extra on-disk files
-/// are ignored — only what `setup` would have written must match.
+/// are ignored — only what `plug` would have written must match.
 fn dir_in_sync(dir: &Dir<'_>, dest: &Path) -> bool {
     for file in dir.files() {
         if skipped(file.path()) {
@@ -182,7 +182,7 @@ pub(crate) fn home_dir() -> Result<PathBuf> {
 }
 
 /// Each agent, its install path, and its state — in display order. Drives
-/// `ahs status`.
+/// `ahsw status`.
 pub(crate) fn states(home: &Path) -> Vec<(Agent, PathBuf, AgentState)> {
     Agent::ALL
         .into_iter()
@@ -192,14 +192,13 @@ pub(crate) fn states(home: &Path) -> Vec<(Agent, PathBuf, AgentState)> {
 
 /// The one canonical "skill out of date" nag, shared by the `ready`-event
 /// drift warning (below) and the MCP `swarm_version` tool — one source of
-/// truth so the two can't drift apart. `ahs setup --execute` refreshes every
+/// truth so the two can't drift apart. `ahsw plug` refreshes every
 /// installed integration, so the message names no specific one.
-pub(crate) const SKILL_DRIFT_MSG: &str =
-    "⚠️ swarm skill out of date. Run `ahs setup --execute` to update";
+pub(crate) const SKILL_DRIFT_MSG: &str = "⚠️ swarm skill out of date. Run `ahsw plug` to update";
 
 /// A one-line drift warning if any installed integration has fallen behind the
 /// binary (`OutOfDate`), else `None`. The daemon folds this into its `ready`
-/// event so a stale skill nags the agent at swarm start; `ahs status` is the
+/// event so a stale skill nags the agent at swarm start; `ahsw status` is the
 /// on-demand counterpart.
 pub(crate) fn drift_warning(home: &Path) -> Option<String> {
     let any_stale = states(home)
@@ -244,7 +243,7 @@ mod tests {
 
     #[test]
     fn generic_in_sync_only_when_skill_matches_embedded() {
-        let home = std::env::temp_dir().join(format!("ahs-insync-{}", std::process::id()));
+        let home = std::env::temp_dir().join(format!("ahsw-insync-{}", std::process::id()));
         let dir = Agent::Generic.install_path(&home);
         std::fs::create_dir_all(&dir).unwrap();
 
@@ -264,7 +263,7 @@ mod tests {
 
     #[test]
     fn drift_warning_fires_only_for_a_diverged_install() {
-        let home = std::env::temp_dir().join(format!("ahs-drift-{}", std::process::id()));
+        let home = std::env::temp_dir().join(format!("ahsw-drift-{}", std::process::id()));
         let dir = Agent::Generic.install_path(&home);
         std::fs::create_dir_all(&dir).unwrap();
         let file = dir.join("SKILL.md");
@@ -278,7 +277,7 @@ mod tests {
         let warning = super::drift_warning(&home).expect("diverged install warns");
         assert_eq!(warning, super::SKILL_DRIFT_MSG);
         assert!(warning.contains("out of date"));
-        assert!(warning.contains("ahs setup --execute"));
+        assert!(warning.contains("ahsw plug"));
 
         std::fs::remove_dir_all(&home).unwrap();
     }

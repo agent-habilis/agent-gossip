@@ -5,7 +5,7 @@
 //! IPC. Inbound traffic is pushed over a bounded broadcast channel;
 //! outbound sends go through a dedicated channel into the same shared
 //! broadcast path the CLI/IPC uses. No `iroh` type is exposed: targets
-//! are resolved internally from a string (`ahs…` / domain / git URL).
+//! are resolved internally from a string (`🐝…` / domain / git URL).
 
 use std::fmt;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -37,7 +37,7 @@ use crate::util::tuning::{
 /// How to join a swarm.
 #[derive(Debug, Clone)]
 pub struct JoinConfig {
-    /// What to join: an `ahs…` id, a domain serving
+    /// What to join: an `🐝…` id, a domain serving
     /// `/.well-known/agent-habilis-swarm`, or a supported git repo URL —
     /// classified into a [`JoinTarget`] at the boundary (parse a string
     /// with [`str::parse`]). Resolved internally; the network mode and
@@ -47,27 +47,19 @@ pub struct JoinConfig {
     pub nickname: Option<Nickname>,
     /// Max direct peer connections before gossip relays the rest.
     pub max_peers: usize,
-    /// Self-reported model (e.g. `"Opus 4.8"`), announced to peers so the
-    /// roster shows what this agent runs on. `None` ⇒ advertise nothing.
-    pub model: Option<String>,
-    /// Self-reported harness (e.g. `"Claude Code"`), announced alongside
-    /// `model`. `None` ⇒ advertise nothing.
-    pub harness: Option<String>,
 }
 
 impl JoinConfig {
     /// A config for `target` with a random nickname and the default
     /// peer cap. Set [`JoinConfig::nickname`] / [`JoinConfig::max_peers`]
     /// afterwards to override. Build the [`JoinTarget`] by parsing a
-    /// string (`"ahs…".parse()?`).
+    /// string (`"🐝…".parse()?`).
     #[must_use]
     pub fn new(target: JoinTarget) -> Self {
         Self {
             target,
             nickname: None,
             max_peers: DEFAULT_MAX_DIRECT_PEERS,
-            model: None,
-            harness: None,
         }
     }
 }
@@ -94,22 +86,13 @@ pub struct CreateConfig {
     /// CLI `--mdns`/`--dht`/`--relay` flags.
     pub lookups: LookupSet,
     /// List this swarm in a directory so discoverers can find it
-    /// without its `ahs…` id. Requires `public`. Default `false`.
+    /// without its `🐝…` id. Requires `public`. Default `false`.
     pub advertise: bool,
     /// The directory to advertise into when `advertise` is set.
     /// `None` ⇒ the well-known `global` directory.
     pub directory: Option<SwarmName>,
-    /// Per-author messages-per-minute cap baked into the swarm id and
-    /// enforced swarm-wide. `0` disables rate limiting. Default 60.
-    pub rate_limit_per_min: u16,
     /// Max direct peer connections before gossip relays the rest.
     pub max_peers: usize,
-    /// Self-reported model (e.g. `"Opus 4.8"`), announced to peers so the
-    /// roster shows what this agent runs on. `None` ⇒ advertise nothing.
-    pub model: Option<String>,
-    /// Self-reported harness (e.g. `"Claude Code"`), announced alongside
-    /// `model`. `None` ⇒ advertise nothing.
-    pub harness: Option<String>,
 }
 
 impl CreateConfig {
@@ -125,10 +108,7 @@ impl CreateConfig {
             lookups: LookupSet::default(),
             advertise: false,
             directory: None,
-            rate_limit_per_min: crate::util::consts::RATE_LIMIT_PER_MIN,
             max_peers: DEFAULT_MAX_DIRECT_PEERS,
-            model: None,
-            harness: None,
         }
     }
 }
@@ -174,7 +154,7 @@ impl std::error::Error for CreateError {
 }
 
 /// Why [`SwarmSession::join`] failed — the symmetric counterpart to
-/// [`CreateError`]. `Resolve` is a bad target (an `ahs…` id, a domain, or a
+/// [`CreateError`]. `Resolve` is a bad target (an `🐝…` id, a domain, or a
 /// git-repo URL and its well-known file); `Setup` is an endpoint/gossip
 /// failure. The MCP server maps both to an internal error.
 #[derive(Debug)]
@@ -219,7 +199,6 @@ async fn create_setup(
     output: Output,
 ) -> Result<(EventLoopConfig, Option<JoinHandle<()>>), CreateError> {
     let config = SwarmConfig {
-        rate_limit_per_min: cfg.rate_limit_per_min,
         lookups: resolve_lookups(cfg.public, cfg.lookups),
     };
     // The advertiser reaches the directory over this swarm's own lookups.
@@ -250,10 +229,6 @@ async fn create_setup(
     )
     .await
     .map_err(|error| CreateError::Setup(error.context("setup_swarm failed")))?;
-    // Self-reported identity, announced in our `joined` body — same
-    // late-assignment the CLI uses (keeps `setup_swarm`'s arg count in budget).
-    elc.model = cfg.model;
-    elc.harness = cfg.harness;
     // When advertising, start the re-broadcast task (tied to this session);
     // it reaches the directory over this swarm's own lookups (moved into the
     // at-most-once closure, so no clone).
@@ -276,14 +251,11 @@ async fn join_setup(cfg: JoinConfig, output: Output) -> Result<EventLoopConfig, 
     .resolve()
     .await
     .map_err(JoinError::Resolve)?;
-    let mut elc = setup_swarm(
+    let elc = setup_swarm(
         kind, author, /* interactive */ false, max_peers, None, output, /* drift */ None,
     )
     .await
     .map_err(|error| JoinError::Setup(error.context("setup_swarm failed")))?;
-    // Self-reported identity, announced in our `joined` body (see `create_setup`).
-    elc.model = cfg.model;
-    elc.harness = cfg.harness;
     Ok(elc)
 }
 
@@ -377,7 +349,7 @@ impl InProcessSession {
         &self,
         body: MessageBody,
         reply: Option<Nickname>,
-    ) -> anyhow::Result<Option<Message>> {
+    ) -> anyhow::Result<Message> {
         let (resp_tx, resp_rx) = oneshot::channel();
         self.req_tx
             .send(SessionRequest::Send {
@@ -419,8 +391,7 @@ impl InProcessSession {
             .map_err(|_| anyhow::anyhow!("swarm event loop dropped the response"))
     }
 
-    /// Send one leg of an exchange; returns the canonical
-    /// [`Message`] or `None` when the sender-side rate limiter dropped it.
+    /// Send one leg of an exchange; returns the canonical [`Message`].
     ///
     /// # Errors
     /// Fails if the event loop has stopped or dropped the response.
@@ -431,7 +402,7 @@ impl InProcessSession {
         kind: ExchangeKind,
         phase: ExchangePhase,
         body: MessageBody,
-    ) -> anyhow::Result<Option<Message>> {
+    ) -> anyhow::Result<Message> {
         let (resp_tx, resp_rx) = oneshot::channel();
         self.req_tx
             .send(SessionRequest::Exchange {
@@ -479,13 +450,19 @@ impl InProcessSession {
             .map_err(|_| anyhow::anyhow!("swarm event loop dropped the response"))
     }
 
-    /// Author + broadcast a durable state event (the write primitive for
-    /// state-backed features). Retained locally and gossiped to peers.
-    pub(crate) async fn append_state(&self, body: MessageBody) -> anyhow::Result<()> {
+    /// Apply a JSON-Patch change to the shared state. The op array (frozen
+    /// subset) is validated against the current document; a rejected patch
+    /// returns an error.
+    pub(crate) async fn state_patch(
+        &self,
+        patch: serde_json::Value,
+        if_doc_hash: Option<String>,
+    ) -> anyhow::Result<()> {
         let (resp_tx, resp_rx) = oneshot::channel();
         self.req_tx
-            .send(SessionRequest::AppendState {
-                body,
+            .send(SessionRequest::StatePatch {
+                patch,
+                if_doc_hash,
                 resp: resp_tx,
             })
             .await
@@ -495,11 +472,43 @@ impl InProcessSession {
             .map_err(|_| anyhow::anyhow!("swarm event loop dropped the response"))?
     }
 
-    /// The derived swarm state — event payloads in deterministic replay order.
-    pub(crate) async fn state_snapshot(&self) -> anyhow::Result<Vec<String>> {
+    /// The current derived shared-state document (the JSON-Patch fold).
+    pub(crate) async fn state_get(&self) -> anyhow::Result<serde_json::Value> {
         let (resp_tx, resp_rx) = oneshot::channel();
         self.req_tx
-            .send(SessionRequest::StateSnapshot { resp: resp_tx })
+            .send(SessionRequest::StateGet { resp: resp_tx })
+            .await
+            .map_err(|_| anyhow::anyhow!("swarm event loop has stopped"))?;
+        resp_rx
+            .await
+            .map_err(|_| anyhow::anyhow!("swarm event loop dropped the response"))
+    }
+
+    /// `meta`-channel counterpart of [`state_patch`](Self::state_patch).
+    pub(crate) async fn meta_patch(
+        &self,
+        patch: serde_json::Value,
+        if_doc_hash: Option<String>,
+    ) -> anyhow::Result<()> {
+        let (resp_tx, resp_rx) = oneshot::channel();
+        self.req_tx
+            .send(SessionRequest::MetaPatch {
+                patch,
+                if_doc_hash,
+                resp: resp_tx,
+            })
+            .await
+            .map_err(|_| anyhow::anyhow!("swarm event loop has stopped"))?;
+        resp_rx
+            .await
+            .map_err(|_| anyhow::anyhow!("swarm event loop dropped the response"))?
+    }
+
+    /// `meta`-channel counterpart of [`state_get`](Self::state_get).
+    pub(crate) async fn meta_get(&self) -> anyhow::Result<serde_json::Value> {
+        let (resp_tx, resp_rx) = oneshot::channel();
+        self.req_tx
+            .send(SessionRequest::MetaGet { resp: resp_tx })
             .await
             .map_err(|_| anyhow::anyhow!("swarm event loop has stopped"))?;
         resp_rx
@@ -711,8 +720,7 @@ impl SwarmSession {
     }
 
     /// Build, sign and gossip-broadcast a message. Returns the canonical
-    /// [`Message`] the loop built (read `.id` for the new id), or `None` when
-    /// the sender-side rate limiter dropped it.
+    /// [`Message`] the loop built (read `.id` for the new id).
     ///
     /// # Errors
     /// Fails if the event loop has stopped or dropped the response.
@@ -720,27 +728,53 @@ impl SwarmSession {
         &self,
         body: MessageBody,
         reply: Option<Nickname>,
-    ) -> anyhow::Result<Option<Message>> {
+    ) -> anyhow::Result<Message> {
         self.core.send(body, reply).await
     }
 
-    /// Append a durable state event (the write primitive future state-backed
-    /// features build on): it is retained in this node's un-pruned state log
-    /// and gossiped to peers, who reconcile it via state anti-entropy.
+    /// Apply a JSON-Patch change to the shared state (frozen subset:
+    /// add/replace/remove on object paths + add `/arr/-`). Validated against the
+    /// current document.
     ///
     /// # Errors
-    /// Fails if the event loop has stopped or the broadcast failed.
-    pub async fn append_state(&self, body: MessageBody) -> anyhow::Result<()> {
-        self.core.append_state(body).await
+    /// Fails if the patch is out of subset / does not apply, or the event loop
+    /// has stopped.
+    pub async fn state_patch(
+        &self,
+        patch: serde_json::Value,
+        if_doc_hash: Option<String>,
+    ) -> anyhow::Result<()> {
+        self.core.state_patch(patch, if_doc_hash).await
     }
 
-    /// The derived swarm state — event payloads in deterministic replay order
-    /// (the substrate's generic read until typed projections land).
+    /// The current derived shared-state document (the JSON-Patch fold over the
+    /// state log).
     ///
     /// # Errors
     /// Fails if the event loop has stopped or dropped the response.
-    pub async fn state_snapshot(&self) -> anyhow::Result<Vec<String>> {
-        self.core.state_snapshot().await
+    pub async fn state_get(&self) -> anyhow::Result<serde_json::Value> {
+        self.core.state_get().await
+    }
+
+    /// Apply a JSON-Patch change to the **meta** channel (the swarm-metadata
+    /// counterpart of [`state_patch`](Self::state_patch)).
+    ///
+    /// # Errors
+    /// As [`state_patch`](Self::state_patch).
+    pub async fn meta_patch(
+        &self,
+        patch: serde_json::Value,
+        if_doc_hash: Option<String>,
+    ) -> anyhow::Result<()> {
+        self.core.meta_patch(patch, if_doc_hash).await
+    }
+
+    /// The current derived **meta**-channel document.
+    ///
+    /// # Errors
+    /// Fails if the event loop has stopped or dropped the response.
+    pub async fn meta_get(&self) -> anyhow::Result<serde_json::Value> {
+        self.core.meta_get().await
     }
 
     /// Poll the surfaced-event history after the `after` seq cursor (`None`
@@ -765,9 +799,9 @@ impl SwarmSession {
     }
 
     /// Send one leg of an exchange to `to`, correlated by `exchange_id`.
-    /// Returns the canonical [`Message`] the loop built, or `None` when the
-    /// sender-side rate limiter dropped it. Addressee validation (for
-    /// `Offer`) happens in `broadcast_exchange` — see the MCP `send_exchange` tool.
+    /// Returns the canonical [`Message`] the loop built. Addressee
+    /// validation (for `Offer`) happens in `broadcast_exchange` — see the
+    /// MCP `send_exchange` tool.
     ///
     /// # Errors
     /// Fails if the event loop has stopped or dropped the response.
@@ -778,7 +812,7 @@ impl SwarmSession {
         kind: ExchangeKind,
         phase: ExchangePhase,
         body: MessageBody,
-    ) -> anyhow::Result<Option<Message>> {
+    ) -> anyhow::Result<Message> {
         self.core.exchange(to, exchange_id, kind, phase, body).await
     }
 
@@ -833,7 +867,7 @@ pub(crate) const DIRECTORY_ADVERTISER_COHOST: CoHostPolicy = CoHostPolicy::Eager
 
 /// Spawn the directory re-broadcast task for `cfg`'s swarm: wire a fresh
 /// live-participant counter into `cfg.live_count`, then re-send the
-/// swarm's `ahs…` id (with that count) into `directory` every
+/// swarm's `🐝…` id (with that count) into `directory` every
 /// `ADVERTISE_INTERVAL_SECS` over the swarm's own `lookups`. Returns the
 /// task handle so the owner can abort it (the inner directory session is
 /// dropped with the task, closing that membership). A directory-join

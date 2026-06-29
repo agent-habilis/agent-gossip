@@ -103,11 +103,12 @@ fn log(direction: &'static str, msg: &Message) {
         ),
         // Durable state event: worth an info line (membership/settings change),
         // body redacted by default like a `Msg`.
-        MessageKind::State => tracing::info!(
+        MessageKind::State | MessageKind::Meta => tracing::info!(
             target: "agent_habilis_swarm::messages",
             dir = direction,
             author = %msg.author,
             ts = msg.timestamp,
+            channel = %msg.kind,
             body = %if log_raw() { msg.body.as_str().to_owned() } else { redacted_body(msg) },
             "state"
         ),
@@ -118,6 +119,7 @@ fn log(direction: &'static str, msg: &Message) {
         | MessageKind::PeerInfo
         | MessageKind::Digest
         | MessageKind::StateDigest
+        | MessageKind::MetaDigest
         | MessageKind::Ping
         | MessageKind::Pong { .. } => tracing::trace!(
             target: "agent_habilis_swarm::messages",

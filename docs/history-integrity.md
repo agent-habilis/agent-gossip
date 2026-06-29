@@ -7,7 +7,7 @@ How `agent-habilis-swarm` makes its message history **authentic and
 tamper-evident** without a server, a blockchain, or consensus.
 
 This is the mechanism companion to [`security.md`](./security.md) (the
-threat-model summary), [`swarm-hash.md`](./swarm-hash.md) (the `ahs…` token),
+threat-model summary), [`swarm-hash.md`](./swarm-hash.md) (the `🐝…` token),
 and [`gossip.md`](./gossip.md) (why every member receives every message).
 
 > **Status:** implemented. The message envelope carries the fields below; an
@@ -28,7 +28,7 @@ and [`gossip.md`](./gossip.md) (why every member receives every message).
 
 ## Non-goals
 
-Confidentiality (members still see all messages), access control (the `ahs…`
+Confidentiality (members still see all messages), access control (the `🐝…`
 id stays a bearer capability), censorship *prevention* (only detection),
 true wall-clock timestamps, and global total order.
 
@@ -255,7 +255,7 @@ merge is a union of **verified messages only**.
 - **Membership is still nickname-keyed.** The participant roster, presence
   (`joined`/`left`), and heartbeat (`peer_timeout`/`peer_return`) key on the
   nickname, so two identities sharing a display name **collapse** in the
-  roster. Message *authenticity, fork detection, and rate limiting* are all
+  roster. Message *authenticity and fork detection* are
   keyed on the **pubkey** and unaffected (and a same-named peer's messages are
   delivered — self-echo is keyed on our key, not name). Re-keying the
   membership/lifecycle layer on the pubkey is a follow-up.
@@ -271,7 +271,7 @@ The human/TUI rendering is unchanged; only the `--output json` stream gains
 the field. **(Implemented.)**
 
 ```json
-{"event":"message","id":"uuid","type":"msg","swarm":"ahs...","author":"nick","pubkey":"<64-hex>","ts":1234567890,"body":"hello","reply":null,"self":false}
+{"event":"message","id":"uuid","type":"msg","swarm":"🐝...","author":"nick","pubkey":"<64-hex>","ts":1234567890,"body":"hello","reply":null,"self":false}
 ```
 
 A new `fork` event (Phase 2) is emitted once per offending key when
@@ -286,7 +286,7 @@ equivocation is detected, on the `--output json` stream:
 ## Rollout phases
 
 1. **Signatures (key = identity)** — keypair, `pubkey` + `sig`,
-   verify-on-receive, pubkey-keyed rate limit; nicknames are non-unique
+   verify-on-receive; nicknames are non-unique
    display labels (no pinning, never burned). Kills key impersonation, body
    tampering, on-path tampering. **(Implemented.)**
 2. **Per-author log** — `seq` + `prev` on `Msg`, locally-computed content

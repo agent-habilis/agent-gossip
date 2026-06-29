@@ -6,7 +6,7 @@ use crate::protocol::SwarmId;
 /// The `ahsw pipe` actions — a direct, off-gossip byte stream.
 #[derive(Subcommand, Debug)]
 pub(crate) enum PipeAction {
-    /// Read stdin and serve it to one peer; prints the `ahs pipe connect 🐝…`
+    /// Read stdin and serve it to one peer; prints the `ahsw pipe connect 🐝…`
     /// command on stdout.
     ///
     /// The ticket is a bearer capability — whoever holds it connects. The data
@@ -22,7 +22,7 @@ pub(crate) enum PipeAction {
         #[arg(long, value_parser = parse_rate)]
         throttle: Option<u64>,
         /// Output format: human (default) — a bee status + colored hint — or json,
-        /// a single direct `ahs pipe connect 🐝…` line for machines (no decoration).
+        /// a single direct `ahsw pipe connect 🐝…` line for machines (no decoration).
         #[arg(long, default_value = "human")]
         output: OutputFormat,
     },
@@ -31,7 +31,7 @@ pub(crate) enum PipeAction {
     /// Needs nothing but the ticket — the producer's address and the swarm's
     /// discovery config travel inside it.
     Connect {
-        /// The `🐝…` ticket printed by `ahs pipe listen`.
+        /// The `🐝…` ticket printed by `ahsw pipe listen`.
         ticket: String,
         /// Cap throughput, e.g. `100k`, `2m` (bytes/sec; `k`/`m`/`g` = 1024-based).
         /// Doubles as a way to watch the progress bar on a fast/local link.

@@ -12,7 +12,7 @@ use crate::protocol::{
 
 #[derive(Parser, Debug)]
 pub(crate) struct ExchangeOpts {
-    /// Swarm identifier (ahs...)
+    /// Swarm identifier (🐝...)
     #[arg(long)]
     pub swarm: SwarmId,
 

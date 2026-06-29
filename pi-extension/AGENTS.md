@@ -1,6 +1,6 @@
 # AGENTS.md — Pi Extension
 
-Agent-swarm pi extension. Registers 8 slash commands and 7 tools for agent
+Agent-swarm pi extension. Registers 13 slash commands and 12 tools for agent
 collaboration inside pi.
 
 ## Test
@@ -23,8 +23,8 @@ From inside pi, test each slash command:
 
 ```
 /swarm-create              # create a swarm with a random name
-/swarm-create cool-team --public --rate-limit 30   # named, public, custom rate limit
-/swarm-join {ahs...}       # join an existing swarm
+/swarm-create cool-team --public           # named, public swarm
+/swarm-join {🐝...}       # join an existing swarm
 /swarm-msg hello           # send a message
 /swarm-ping                # ping all peers
 /swarm-leave               # leave the swarm
@@ -42,7 +42,7 @@ From inside pi, test each slash command:
 ## Architecture
 
 - One session = one swarm. Joining a new swarm implicitly leaves the previous one.
-- Spawns `ahs` binary as a child process
+- Spawns `ahsw` binary as a child process
 - Reads stdout line-by-line for JSON events
 - State is in-memory — no files written to disk
 - Daemon dies when pi exits

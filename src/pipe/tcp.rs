@@ -16,7 +16,7 @@ use super::ticket::PipeTicket;
 use super::{PIPE_ALPN, SECRET_LEN};
 
 /// Producer: serve inbound pipe connections by proxying each to `target` (a
-/// local `host:port` TCP service). Prints the consumer's `ahs pipe connect-tcp`
+/// local `host:port` TCP service). Prints the consumer's `ahsw pipe connect-tcp`
 /// command on stdout; serves many.
 ///
 /// # Errors
@@ -28,7 +28,7 @@ pub(crate) async fn listen_tcp(swarm: Option<&str>, target: &str, json: bool) ->
         json,
         &format!("forwarding connecting peers → {target}"),
         // The consumer fills in `--addr` with the local port it wants to expose.
-        &format!("ahs pipe connect-tcp {} --addr HOST:PORT", ticket.encode()),
+        &format!("ahsw pipe connect-tcp {} --addr HOST:PORT", ticket.encode()),
     );
     let target = target.to_owned();
     while let Some(incoming) = endpoint.accept().await {

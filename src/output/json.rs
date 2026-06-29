@@ -116,13 +116,6 @@ struct PresenceLine<'a> {
     pub subtype: PresenceSubtype,
     /// Pre-formatted, markdown-safe line (see [`presence_display`]).
     pub display: String,
-    /// The joiner's self-reported model / harness, also surfaced as structured
-    /// fields (not just inside `display`) so a plain-text client can compose
-    /// its own join line. Only on `joined`; absent when the peer advertised none.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub model: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub harness: Option<String>,
 }
 
 /// A `{"event":"exchange",...}` line for a **content** exchange leg. A distinct
@@ -168,6 +161,28 @@ struct ExchangeProgressLine<'a> {
     pub display: String,
     #[serde(rename = "self")]
     pub is_self: bool,
+}
+
+/// A `{"event":"state",...}` line for a shared-state change. Its own top-level
+/// event (not the `message` family) so skills branch on `event`. Carries the
+/// patch delta and the freshly-derived document; field order is part of the
+/// wire format.
+#[derive(Serialize)]
+struct StateLine<'a> {
+    event: &'static str,
+    id: &'a str,
+    #[serde(rename = "type")]
+    ty: &'static str,
+    swarm: &'a str,
+    author: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pubkey: Option<&'a str>,
+    ts: i64,
+    patch: serde_json::Value,
+    document: &'a serde_json::Value,
+    display: String,
+    #[serde(rename = "self")]
+    is_self: bool,
 }
 
 /// Parse a `Progress` body's `done/total` fraction (e.g. `"35/100"`).
@@ -245,14 +260,10 @@ fn exchange_progress_display(
 }
 
 /// `display` line for a presence event: `` 🐝️ `<author>` has joined `` /
-/// `… has left`. A joiner that advertised model/harness gets it in parens:
-/// `` 🐝️ `<author>` (Opus 4.8 / Claude Code) has joined ``. See
-/// [`msg_display`] for the backtick rationale.
-fn presence_display(author: &str, subtype: PresenceSubtype, meta: Option<&str>) -> String {
-    match meta {
-        Some(meta) => format!("🐝️ `<{author}>` ({meta}) has {subtype}"),
-        None => format!("🐝️ `<{author}>` has {subtype}"),
-    }
+/// `` 🐝️ `<author>` has joined `` / `… has left`. See [`msg_display`] for the
+/// backtick rationale.
+fn presence_display(author: &str, subtype: PresenceSubtype) -> String {
+    format!("🐝️ `<{author}>` has {subtype}")
 }
 
 /// `display` line for a `peer_timeout` event.
@@ -301,21 +312,11 @@ pub(super) fn emit_json<T: Serialize>(value: &T) {
 /// pins the field order (`event`, `id`, `type`, `swarm`, `author`,
 /// `ts`, …) and `Value::to_string` would sort keys alphabetically.
 pub(super) fn format_presence_json(msg: &Message, subtype: PresenceSubtype) -> String {
-    // Only `joined` carries a body (the joiner's model/harness): show it in
-    // parens on the `display` line and also surface the raw fields so a
-    // plain-text client (the pi extension) can compose its own join line.
-    let meta = if subtype == PresenceSubtype::Joined {
-        crate::protocol::peer_meta::from_body(msg.body.as_str())
-    } else {
-        crate::protocol::peer_meta::PeerMeta::default()
-    };
-    let label = meta.label();
+    // Presence carries no body — peer model/harness lives in the `meta` channel.
     serde_json::to_string(&PresenceLine {
         header: message_header(msg, "presence"),
         subtype,
-        display: presence_display(msg.author.as_str(), subtype, label.as_deref()),
-        model: meta.model,
-        harness: meta.harness,
+        display: presence_display(msg.author.as_str(), subtype),
     })
     .expect("presence event serialization should never fail")
 }
@@ -340,9 +341,11 @@ pub(super) fn format_msg_json(msg: &Message, is_self: bool) -> String {
         | MessageKind::PeerInfo
         | MessageKind::Digest
         | MessageKind::StateDigest
+        | MessageKind::MetaDigest
         | MessageKind::Ping
         | MessageKind::Pong { .. }
         | MessageKind::State
+        | MessageKind::Meta
         | MessageKind::Exchange { .. } => {
             unreachable!("format_msg_json only handles Msg")
         }
@@ -418,6 +421,104 @@ pub(super) fn print_exchange_json(msg: &Message, is_self: bool) {
     emit(&format_exchange_json(msg, is_self));
 }
 
+/// Make a peer-controlled patch path safe to splice into the `state` display.
+/// The path is attacker-influenced (the frozen subset only requires a non-empty
+/// path with a `/`), and the display feeds both a markdown renderer and a raw
+/// terminal `eprintln`, so strip:
+/// - control characters (a `\n` would forge a second line; `MessageBody` permits
+///   newlines),
+/// - backticks (which would unbalance the code span around the nick), and
+/// - the markdown link/image metacharacters `[` `]` `(` `)` (so a path like
+///   `[click](https://evil)` can't render as a clickable link),
+///
+/// and cap the length so one op can't flood the line.
+fn sanitize_path(path: &str) -> String {
+    path.chars()
+        .filter(|ch| !ch.is_control() && !matches!(ch, '`' | '[' | ']' | '(' | ')'))
+        .take(80)
+        .collect()
+}
+
+/// The `changed …` clause for a `state` display, built from a `State` body's
+/// already-parsed op array: the touched paths (sanitized, deduped, capped so the
+/// line stays bounded), or `shared state` when no paths are present. Lets the
+/// display name *what* changed so a reader needn't shadow it with a chat line.
+fn state_change_summary(ops: Option<&serde_json::Value>) -> String {
+    const MAX: usize = 6;
+    let mut paths: Vec<String> = Vec::new();
+    if let Some(arr) = ops.and_then(serde_json::Value::as_array) {
+        for op in arr {
+            if let Some(path) = op.get("path").and_then(serde_json::Value::as_str) {
+                let clean = sanitize_path(path);
+                if !clean.is_empty() && !paths.iter().any(|seen| seen == &clean) {
+                    paths.push(clean);
+                }
+            }
+        }
+    }
+    if paths.is_empty() {
+        "shared state".to_owned()
+    } else if paths.len() > MAX {
+        format!("{} (+{} more)", paths[..MAX].join(", "), paths.len() - MAX)
+    } else {
+        paths.join(", ")
+    }
+}
+
+/// The `changed …` clause from a raw `State` body (parses once, then defers to
+/// [`state_change_summary`]). For the human render path, which holds the body
+/// string rather than the parsed ops.
+pub(super) fn state_change_summary_from_body(body: &str) -> String {
+    let ops = serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|parsed| parsed.get("ops").cloned());
+    state_change_summary(ops.as_ref())
+}
+
+/// `display` line for a `state` event: `` 🐝️ `<author>` changed /board, /turn ``,
+/// or `🐝️ you changed …` for your own write (`shared state` when the touched
+/// paths aren't known). A peer's nick is backtick-wrapped like every other event
+/// so the skill's markdown renderer keeps the `<nick>`; "you" is plain text.
+fn state_display(author: &str, is_self: bool, what: &str) -> String {
+    if is_self {
+        format!("🐝️ you changed {what}")
+    } else {
+        format!("🐝️ `<{author}>` changed {what}")
+    }
+}
+
+/// Render a `StateChanged` event as its `{"event":"state",...}` JSON line: the
+/// header, the patch op-array (the delta, pulled out of the `State` body), the
+/// freshly-derived `document`, the `display` line, and `self`.
+pub(super) fn format_state_json(
+    channel: crate::protocol::Channel,
+    event: &Message,
+    document: &serde_json::Value,
+    is_self: bool,
+) -> String {
+    // The op array lives inside the State body `{"k":"patch","ops":[...]}`.
+    // Parse the State body once: the `ops` array feeds both the `patch` field
+    // (the delta) and the touched-paths summary in the `display`.
+    let ops = serde_json::from_str::<serde_json::Value>(event.body.as_str())
+        .ok()
+        .and_then(|body| body.get("ops").cloned());
+    let what = state_change_summary(ops.as_ref());
+    serde_json::to_string(&StateLine {
+        event: channel.label(),
+        id: event.id.as_str(),
+        ty: channel.label(),
+        swarm: event.swarm.as_str(),
+        author: event.author.as_str(),
+        pubkey: (!event.pubkey.is_empty()).then_some(event.pubkey.as_str()),
+        ts: event.timestamp,
+        patch: ops.unwrap_or(serde_json::Value::Null),
+        document,
+        display: state_display(event.author.as_str(), is_self, &what),
+        is_self,
+    })
+    .expect("state event serialization should never fail")
+}
+
 /// Render a `seq`-tagged surfaced event to the exact stream JSON line, with the
 /// daemon-local `seq` flattened in as a leading field so a `poll` client can
 /// advance its `--after` cursor. The body after `seq` is byte-identical to the
@@ -440,7 +541,7 @@ pub fn surfaced_event_json(seq: u64, event: &OutputEvent) -> Option<String> {
 /// as the `Stream` sink, so in-process tests assert the byte-identical
 /// wire format the `/swarm` skill + MCP clients parse. `None` for events
 /// that produce no JSON line in JSON mode (`SwarmId` is the bare stderr
-/// `ahs…` line, never JSON).
+/// `🐝…` line, never JSON).
 #[must_use]
 pub fn event_json(event: &OutputEvent) -> Option<String> {
     let json = match event {
@@ -505,6 +606,12 @@ pub fn event_json(event: &OutputEvent) -> Option<String> {
                 known: *known,
             })
         }
+        OutputEvent::StateChanged {
+            channel,
+            event,
+            document,
+            is_self,
+        } => return Some(format_state_json(*channel, event, document, *is_self)),
         OutputEvent::SwarmId { .. } => return None,
     };
     json.ok()

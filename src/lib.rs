@@ -1,6 +1,6 @@
 //! `agent-habilis-swarm` — a mesh for AI agents.
 //!
-//! This crate ships as **both** a binary (the `ahs`
+//! This crate ships as **both** a binary (the `ahsw`
 //! CLI / MCP server) and a library. The binary is a thin shim over
 //! [`run_cli`]; library consumers embed a swarm in-process via the
 //! [`embed`] module.
@@ -18,7 +18,7 @@
 //! use agent_habilis_swarm::MessageBody;
 //!
 //! # async fn run() -> anyhow::Result<()> {
-//! let session = SwarmSession::join(JoinConfig::new("ahs...".parse()?)).await?;
+//! let session = SwarmSession::join(JoinConfig::new("🐝...".parse()?)).await?;
 //! let mut rx = session.messages();
 //! session.send(MessageBody::new("hello")?, None).await?;
 //! while let Ok(msg) = rx.recv().await {
@@ -65,8 +65,9 @@ pub use daemon::surfaced::SurfacedEvent;
 pub use logging::LogSink;
 pub use output::{OutputEvent, event_json, surfaced_event_json};
 pub use protocol::message::{
-    BodyError, ExchangeId, ExchangeIdError, ExchangeKind, ExchangeKindError, ExchangePhase,
-    ExchangePhaseError, IdError, Message, MessageBody, MessageId, MessageKind, PresenceSubtype,
+    BodyError, Channel, ExchangeId, ExchangeIdError, ExchangeKind, ExchangeKindError,
+    ExchangePhase, ExchangePhaseError, IdError, Message, MessageBody, MessageId, MessageKind, Part,
+    PartGroup, PresenceSubtype,
 };
 pub use protocol::nickname::{Nickname, NicknameError};
 pub use protocol::swarm::{
@@ -76,7 +77,8 @@ pub use protocol::swarm::{
 pub use resolver::{JoinTarget, JoinTargetError};
 // Wire/runtime constants the external test + bench crates assert against; the
 // rest of `util::consts` stays crate-internal.
-pub use util::consts::{MAX_MESSAGE_SIZE, RATE_LIMIT_PER_MIN, SOCKET_DIR};
+pub use daemon::state_doc::document_hash;
+pub use util::consts::{MAX_LOGICAL_BODY_BYTES, MAX_MESSAGE_PARTS, MAX_MESSAGE_SIZE, SOCKET_DIR};
 pub use util::swarm_prefix;
 pub use util::version::VERSION;
 
@@ -87,7 +89,7 @@ use cli::Cli;
 
 /// Parse `argv` and run the selected CLI subcommand to completion.
 ///
-/// This is the entire body of the `ahs` binary; it is
+/// This is the entire body of the `ahsw` binary; it is
 /// public so the thin `src/main.rs` shim (which owns only
 /// process-level concerns: tracing init, terminal echo) can call it.
 /// The subcommand dispatch + per-command logic lives in `cli`.
@@ -102,7 +104,7 @@ pub async fn run_cli() -> Result<()> {
     Box::pin(cli::dispatch(Cli::parse())).await
 }
 
-/// The fully-built `ahs` clap command tree, for offline man-page
+/// The fully-built `ahsw` clap command tree, for offline man-page
 /// generation (`cargo task man` walks it in-process through
 /// `clap_mangen`). Arg surface only; no iroh, no runtime state.
 #[must_use]

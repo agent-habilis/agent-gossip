@@ -11,11 +11,10 @@ use serde::Serialize;
 
 use super::bounded_id_set::BoundedIdSet;
 use super::message_log::MessageLog;
-use super::rate_limit::SwarmRateLimiter;
 use crate::daemon::state_file::StateFile;
 use crate::output;
 use crate::protocol::identity::Identity;
-use crate::protocol::{ExchangeId, MessageId, Nickname};
+use crate::protocol::{ExchangeId, Message, MessageBody, MessageId, Nickname, PartGroup};
 use crate::util::bounded_fifo_set::BoundedFifoSet;
 use crate::util::bounded_queue::BoundedQueue;
 use crate::util::cooldown::Cooldown;
@@ -44,7 +43,7 @@ pub(crate) enum Reach {
 /// `None` until the peer's first heartbeat is timed; `quiet` marks a
 /// peer heartbeat-evicted past `ALIVE_TIMEOUT_SECS` (still returnable);
 /// `reach` is `direct` only while we hold a live link to it.
-/// Serialized directly into the `ahs peers` response and the MCP
+/// Serialized directly into the `ahsw peers` response and the MCP
 /// `swarm_info` roster.
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct RosterEntry {
@@ -52,12 +51,6 @@ pub(crate) struct RosterEntry {
     pub last_seen_secs_ago: Option<u64>,
     pub quiet: bool,
     pub reach: Reach,
-    /// The peer's self-reported model / harness (from `participant_meta`),
-    /// `null` when it advertised none.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub model: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub harness: Option<String>,
 }
 
 /// Live participant roster: every known peer (active + quiet) sorted
@@ -140,11 +133,6 @@ pub(crate) struct EventLoopState {
     /// Feeds only the derived `reach` boolean in `roster_snapshot` — the node
     /// id never leaves this layer.
     pub participant_endpoints: HashMap<Nickname, EndpointId>,
-    /// Each participant's self-reported model/harness, learned from its signed
-    /// `joined` body. Display metadata only (`PeerMeta` is `model`/`harness`).
-    /// Last-writer-wins per nickname; pruned with `participants` (sweep + `Left`)
-    /// so it stays bounded by the roster.
-    pub participant_meta: HashMap<Nickname, crate::protocol::peer_meta::PeerMeta>,
     /// The swarm's rendezvous endpoint id, once known. Paired with
     /// `rendezvous_linked` so `reach_of` can count the rendezvous link as a
     /// live link to the beacon: the beacon gossips *as* the rendezvous, so a
@@ -233,7 +221,7 @@ pub(crate) struct EventLoopState {
     /// Whether the event loop is serving IPC yet. Starts `false` (the
     /// pre-loop state-file write reports "identity up, not yet serving");
     /// flipped `true` once the loop is draining, so a state-file reader
-    /// (`ahs ready`) can gate on a write that means the daemon will answer.
+    /// (`ahsw ready`) can gate on a write that means the daemon will answer.
     pub ready: bool,
     /// When advertising (`create --advertise`), the directory's
     /// re-broadcast task reads the live participant count from here.
@@ -242,11 +230,19 @@ pub(crate) struct EventLoopState {
     /// non-advertising case (no shared counter to maintain).
     pub live_count: Option<Arc<AtomicUsize>>,
     pub message_log: MessageLog,
+    /// Multipart groups already reassembled + surfaced, so a body is surfaced
+    /// once even if a part is re-fetched (via anti-entropy) after its id aged
+    /// out of [`seen`](Self::seen). Bounded — groups are rare and short-lived.
+    pub reassembled_groups: BoundedFifoSet<PartGroup>,
     /// The durable, un-pruned log of signed `State` events (membership edits,
     /// settings, …) — separate from `message_log` so swarm state never ages out
     /// of the chat retention window. Swarm state is the deterministic fold over
     /// this log; see [`super::state_log`].
     pub state_log: super::state_log::StateLog,
+    /// The `meta` channel's log — a second, independent shared-state channel,
+    /// identical machinery to `state_log`. Distinguished only by application
+    /// convention (`meta` for swarm metadata, `state` for the task).
+    pub meta_log: super::state_log::StateLog,
     /// Local, seq-ordered record of everything surfaced to the
     /// operator/agent — the history `poll` / `fetch_messages` drain. Fed by
     /// the [`Output`](crate::output::Output) tap (the event loop mirrors each
@@ -260,7 +256,14 @@ pub(crate) struct EventLoopState {
     /// `ANTIENTROPY_DIGEST_MAX_IDS`), then advances/wraps so a log larger
     /// than one digest is swept over several rounds.
     pub digest_cursor: usize,
-    pub rate_limiter: SwarmRateLimiter,
+    /// The same rolling start index, for the **state** anti-entropy digest's
+    /// older-portion window. Separate from `digest_cursor` so chat and state
+    /// sweep their (independently sized, unbounded for state) logs on their own
+    /// cursors.
+    pub state_digest_cursor: usize,
+    /// The `meta` channel's anti-entropy cursor — independent of
+    /// `state_digest_cursor` so the two logs sweep on their own.
+    pub meta_digest_cursor: usize,
     /// This member's signing identity (Ed25519). Shared with the
     /// send path so messages we author are signed before broadcast.
     /// The public key is the durable identity; the nickname is a
@@ -312,7 +315,7 @@ pub(crate) struct EventLoopState {
     /// tick. Purely observability — never gates behavior (see
     /// `timers::tick_prune`).
     pub resident_memory_warned: bool,
-    /// Active `ahs ping` round, if one is in flight. Armed by the
+    /// Active `ahsw ping` round, if one is in flight. Armed by the
     /// `Ping` IPC command, filled by inbound `Pong`s, and finalized
     /// into a `ping_report` when its `deadline` elapses. One at a time:
     /// a fresh ping replaces any in-flight round. Boxed to keep the
@@ -401,12 +404,10 @@ pub(crate) struct PingRound {
 
 impl EventLoopState {
     /// Build a fresh event-loop state. `now` is passed explicitly so
-    /// tests can pin a deterministic instant; `rate_limit_per_min` is the
-    /// swarm-wide cap decoded from the id (`0` ⇒ no limit).
+    /// tests can pin a deterministic instant.
     pub(crate) fn new(
         state_file: Option<StateFile>,
         now: Instant,
-        rate_limit_per_min: u16,
         identity: Arc<Identity>,
     ) -> Self {
         Self {
@@ -418,7 +419,6 @@ impl EventLoopState {
             exchanges: HashMap::new(),
             last_seen: HashMap::new(),
             participant_endpoints: HashMap::new(),
-            participant_meta: HashMap::new(),
             rendezvous_id: None,
             quiet: BoundedFifoSet::new(QUIET_CAP),
             quiet_since: HashMap::new(),
@@ -436,12 +436,15 @@ impl EventLoopState {
             ready: false,
             live_count: None,
             message_log: MessageLog::new(message_log_size()),
+            reassembled_groups: BoundedFifoSet::new(message_log_size()),
             state_log: super::state_log::StateLog::new(),
+            meta_log: super::state_log::StateLog::new(),
             surfaced_events: super::surfaced::SurfacedEvents::new(
                 crate::util::consts::SURFACED_EVENTS_CAP,
             ),
             digest_cursor: 0,
-            rate_limiter: SwarmRateLimiter::from_per_min(rate_limit_per_min),
+            state_digest_cursor: 0,
+            meta_digest_cursor: 0,
             identity,
             self_seq: 0,
             self_prev: None,
@@ -635,7 +638,7 @@ impl EventLoopState {
     }
 
     /// Snapshot the live roster (active participants + quiet evictees),
-    /// sorted most-recently-seen first. Backs `ahs peers`, the MCP
+    /// sorted most-recently-seen first. Backs `ahsw peers`, the MCP
     /// `swarm_info` roster, and the handover sender's target picker /
     /// nickname validation.
     pub(crate) fn roster_snapshot(&self) -> RosterSnapshot {
@@ -644,29 +647,21 @@ impl EventLoopState {
         let mut participants: Vec<RosterEntry> = self
             .participants
             .iter()
-            .map(|nick| {
-                let meta = self.participant_meta.get(nick);
-                RosterEntry {
-                    nickname: nick.clone(),
-                    // Active peers: their live `last_seen`.
-                    last_seen_secs_ago: self.last_seen.get(nick).map(secs_since),
-                    quiet: false,
-                    reach: self.reach_of(nick),
-                    model: meta.and_then(|meta| meta.model.clone()),
-                    harness: meta.and_then(|meta| meta.harness.clone()),
-                }
+            .map(|nick| RosterEntry {
+                nickname: nick.clone(),
+                // Active peers: their live `last_seen`.
+                last_seen_secs_ago: self.last_seen.get(nick).map(secs_since),
+                quiet: false,
+                reach: self.reach_of(nick),
             })
             .chain(self.quiet.iter().map(|nick| RosterEntry {
                 nickname: nick.clone(),
                 // Quiet peers: their last-heard instant, retained in
                 // `quiet_since` (the eviction drops `last_seen`). A quiet
-                // peer has no live link, so it is always `Gossip`; its meta
-                // was pruned on eviction, so model/harness read `None`.
+                // peer has no live link, so it is always `Gossip`.
                 last_seen_secs_ago: self.quiet_since.get(nick).map(secs_since),
                 quiet: true,
                 reach: Reach::Gossip,
-                model: None,
-                harness: None,
             }))
             .collect();
         // Most-recently-seen first; unknown recency (no heartbeat yet) sorts last.
@@ -728,6 +723,51 @@ impl EventLoopState {
     /// Delegates to the bounded [`BoundedIdSet`].
     pub(crate) fn mark_seen(&mut self, id: &MessageId) -> bool {
         self.seen.mark(id)
+    }
+
+    /// Try to reassemble the multipart body the just-retained `trigger` part
+    /// belongs to. Returns the synthesized logical [`Message`] once every part of
+    /// the group (this author's, slotted by `idx`) is present and the group has
+    /// not been surfaced before; `None` while incomplete or already surfaced. The
+    /// parts stay in the log for anti-entropy; the returned message is a surfacing
+    /// view whose `id` is the group, so sender and receivers name it alike.
+    pub(crate) fn reassemble(&mut self, trigger: &Message) -> Option<Message> {
+        let part = trigger.part.as_ref()?;
+        if self.reassembled_groups.contains(&part.group) {
+            return None;
+        }
+        let slots = self
+            .message_log
+            .collect_parts(&part.group, &trigger.pubkey, part.total);
+        if slots.iter().any(Option::is_none) {
+            return None; // a part is still missing
+        }
+        let mut body = String::new();
+        for slot in &slots {
+            body.push_str(slot.expect("every slot filled above").body.as_str());
+        }
+        // The concatenation of valid bodies is itself valid (no new control
+        // chars), but fail closed rather than surface a malformed body.
+        let body = MessageBody::new(body).ok()?;
+        let logical =
+            Self::synthesize_logical(slots[0].expect("part 0 present"), body, &part.group);
+        self.reassembled_groups.insert(part.group.clone());
+        Some(logical)
+    }
+
+    /// Build the logical-message surfacing view from a body's parts: part 0's
+    /// envelope (kind/author/pubkey/swarm/ts), the concatenated `body`, the group
+    /// as `id`, and no `part`/chain (the view is neither a wire message nor a
+    /// chain entry — the parts are).
+    fn synthesize_logical(first: &Message, body: MessageBody, group: &PartGroup) -> Message {
+        let mut msg = first.clone();
+        msg.id = MessageId::new(group.as_str()).expect("a part group is a valid message id");
+        msg.body = body;
+        msg.part = None;
+        msg.seq = None;
+        msg.prev = None;
+        msg.parents = Vec::new();
+        msg
     }
 
     /// Mark the mesh degraded: a fault path (starvation recovery, hard
@@ -888,7 +928,6 @@ mod tests {
         EventLoopState::new(
             None,
             Instant::now(),
-            crate::util::consts::RATE_LIMIT_PER_MIN,
             std::sync::Arc::new(crate::protocol::identity::Identity::generate()),
         )
     }
@@ -1088,33 +1127,6 @@ mod tests {
 
         state.rendezvous_linked = false;
         assert_eq!(reach(&state), Reach::Gossip, "rendezvous down → gossip");
-    }
-
-    #[test]
-    fn roster_surfaces_and_prunes_participant_meta() {
-        let mut state = fresh_state();
-        state.participants.insert(nick("worker"));
-        state.participant_meta.insert(
-            nick("worker"),
-            crate::protocol::peer_meta::PeerMeta::from_refs(Some("Opus 4.8"), Some("Claude Code")),
-        );
-
-        let entry_model = |current: &EventLoopState| {
-            current
-                .roster_snapshot()
-                .participants
-                .into_iter()
-                .find(|entry| entry.nickname.as_str() == "worker")
-                .map(|entry| (entry.model, entry.harness))
-        };
-        assert_eq!(
-            entry_model(&state),
-            Some((Some("Opus 4.8".to_owned()), Some("Claude Code".to_owned())))
-        );
-
-        // Dropping the meta (as a `Left`/sweep prune does) clears the columns.
-        state.participant_meta.remove("worker");
-        assert_eq!(entry_model(&state), Some((None, None)));
     }
 
     #[test]

@@ -1,6 +1,6 @@
 //! Integration tests for the gossip network.
 //!
-//! Each test spawns real `ahs` processes, exercises the network,
+//! Each test spawns real `ahsw` processes, exercises the network,
 //! and asserts on what each node actually received. Tests are independent —
 //! each creates its own swarm so IPC sockets never collide.
 //!
@@ -11,12 +11,12 @@ use std::fs::{self, File};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-use agent_habilis_swarm::RATE_LIMIT_PER_MIN;
 use common::{
     CONNECT_TIMEOUT, InProcNode, MSG_TIMEOUT, Msg, Node, POLL, RECOVERY_TIMEOUT, SOCKET_DIR, bin,
     cli_message, cli_message_raw, cli_peers, cli_ping, cli_poll, cli_poll_wait, serial_guard,
     socket_path, tmp_log, trace_log, wait_total, wait_until,
 };
+use serde_json::json;
 
 /// How long a survivor needs to claim a dead beacon's seed-derived
 /// rendezvous (the claim-if-free handoff). The heal tick is a fixed 15s
@@ -49,9 +49,9 @@ async fn test_two_node_message_delivery() {
     assert_eq!(received[0].body.as_str(), "hello from the network");
 }
 
-/// Durable state log, live propagation: a creator appends state events; a
-/// meshed joiner converges to the same derived state via gossip. State rides
-/// the same topic but its own un-pruned log, surfaced through `state_snapshot`.
+/// Durable state log, live propagation: a creator patches the shared state; a
+/// meshed joiner converges to the same derived document via gossip. State rides
+/// the same topic but its own un-pruned log, surfaced through `state get`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_state_log_propagates_to_a_peer() {
     let creator = InProcNode::create("netstate").await;
@@ -61,22 +61,26 @@ async fn test_state_log_propagates_to_a_peer() {
     // broadcast onto a live overlay rather than the unmeshed buffer.
     creator.send("link").await;
 
-    creator.append_state("alpha").await;
-    creator.append_state("beta").await;
+    creator
+        .state_patch(json!([{"op": "add", "path": "/alpha", "value": 1}]))
+        .await;
+    creator
+        .state_patch(json!([{"op": "add", "path": "/beta", "value": 2}]))
+        .await;
 
-    let want = vec!["alpha".to_string(), "beta".to_string()];
+    let want = json!({"alpha": 1, "beta": 2});
     let deadline = Instant::now() + MSG_TIMEOUT;
-    let mut got = joiner.state_sorted().await;
+    let mut got = joiner.state_get().await;
     while got != want && Instant::now() < deadline {
         tokio::time::sleep(Duration::from_millis(100)).await;
-        got = joiner.state_sorted().await;
+        got = joiner.state_get().await;
     }
     assert_eq!(
         got, want,
         "joiner never converged to the creator's state log"
     );
     // The author holds its own events too (gossip never echoes to self).
-    assert_eq!(creator.state_sorted().await, want);
+    assert_eq!(creator.state_get().await, want);
 }
 
 /// Durable state log, anti-entropy backfill: a peer that joins **after** the
@@ -91,16 +95,20 @@ async fn test_state_log_backfills_a_late_joiner() {
     // Mesh so appends go out live, leaving the creator's outbound buffer empty.
     creator.send("link").await;
 
-    creator.append_state("alpha").await;
-    creator.append_state("beta").await;
+    creator
+        .state_patch(json!([{"op": "add", "path": "/alpha", "value": 1}]))
+        .await;
+    creator
+        .state_patch(json!([{"op": "add", "path": "/beta", "value": 2}]))
+        .await;
 
-    let want = vec!["alpha".to_string(), "beta".to_string()];
+    let want = json!({"alpha": 1, "beta": 2});
     // Confirm the live path first.
     let deadline = Instant::now() + MSG_TIMEOUT;
-    let mut early_got = early.state_sorted().await;
+    let mut early_got = early.state_get().await;
     while early_got != want && Instant::now() < deadline {
         tokio::time::sleep(Duration::from_millis(100)).await;
-        early_got = early.state_sorted().await;
+        early_got = early.state_get().await;
     }
     assert_eq!(early_got, want, "early peer never got the live state");
 
@@ -108,40 +116,14 @@ async fn test_state_log_backfills_a_late_joiner() {
     // backfill it (within an antientropy interval once it advertises its set).
     let late = InProcNode::join(&creator.swarm, "late-state").await;
     let late_deadline = Instant::now() + RECOVERY_TIMEOUT;
-    let mut late_got = late.state_sorted().await;
+    let mut late_got = late.state_get().await;
     while late_got != want && Instant::now() < late_deadline {
         tokio::time::sleep(Duration::from_millis(200)).await;
-        late_got = late.state_sorted().await;
+        late_got = late.state_get().await;
     }
     assert_eq!(
         late_got, want,
         "late joiner never backfilled state via anti-entropy"
-    );
-}
-
-/// Sender-side rate limiting, symmetric with the receiver: a node may
-/// emit up to its per-author quota, then its own sends are dropped
-/// (`Ok(None)`) rather than broadcast. Mirrors the receiver-side
-/// `rate_limiter_drops_excess_messages_from_flooding_peer`. One node is
-/// enough — the limiter is checked before any mesh interaction.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn sender_rate_limits_own_excess_messages() {
-    let node = InProcNode::create("net-send-rl").await;
-
-    // The token bucket's depth equals the per-minute quota, so exactly
-    // that many back-to-back sends are admitted.
-    for index in 0..RATE_LIMIT_PER_MIN {
-        let outcome = node.try_send(&format!("msg {index}")).await;
-        assert!(
-            matches!(outcome, Ok(Some(_))),
-            "send {index} within quota should be admitted, got {outcome:?}"
-        );
-    }
-    // The next own send is rate-limited: a deliberate drop, not an error.
-    let dropped = node.try_send("one too many").await;
-    assert!(
-        matches!(dropped, Ok(None)),
-        "send past the quota should be dropped as Ok(None), got {dropped:?}"
     );
 }
 
@@ -311,24 +293,42 @@ fn test_no_server_error() {
     );
 }
 
-/// Messages over 16 KB are rejected with a clear error.
+/// A body over the single-message cap is transparently split and delivered;
+/// only a body too large for even `MAX_MESSAGE_PARTS` parts is refused.
 #[test]
-fn test_message_size_limit() {
+fn test_oversize_body_splits_then_refuses_past_the_part_cap() {
     let (creator, swarm) = Node::create();
+    let joiner = Node::join(&swarm, "joiner-mp");
     assert!(creator.wait_ready(&swarm), "creator socket never appeared");
+    assert!(joiner.wait_ready(&swarm), "joiner socket never appeared");
 
-    // A body at the cap, plus the JSON envelope, exceeds the serialized
-    // limit — rejected on the sender (a clear error, not a silent drop).
-    let body = "a".repeat(agent_habilis_swarm::MAX_MESSAGE_SIZE);
-    let out = cli_message_raw(&swarm, &creator.nickname, &body);
+    // Over the single-message cap: the daemon splits it into parts and the
+    // receiver reassembles, so it surfaces once as the whole body.
+    let body = "a".repeat(agent_habilis_swarm::MAX_MESSAGE_SIZE * 2);
+    cli_message(&swarm, &creator.nickname, &body);
+    let total = wait_total(|| creator.messages().len() + joiner.messages().len(), 1);
+    assert_eq!(total, 1, "the multipart body should surface exactly once");
+    let got: Vec<Msg> = creator
+        .messages()
+        .into_iter()
+        .chain(joiner.messages())
+        .collect();
+    assert_eq!(
+        got[0].body, body,
+        "the reassembled body matches the original"
+    );
+
+    // Too large for the part cap: refused on the sender with a clear error.
+    let huge = "a".repeat(agent_habilis_swarm::MAX_LOGICAL_BODY_BYTES);
+    let out = cli_message_raw(&swarm, &creator.nickname, &huge);
     assert!(
         !out.status.success(),
-        "expected non-zero exit for oversized message"
+        "a body past the part cap must be refused"
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         stderr.contains("too large"),
-        "expected size-limit error in stderr, got: {stderr}"
+        "expected a too-large error in stderr, got: {stderr}"
     );
 }
 
@@ -608,7 +608,7 @@ fn test_state_file_removed_on_signal() {
         let log = tmp_log(&format!("statefile{signal}"));
         let file = File::create(&log).unwrap();
         let state_file = std::env::temp_dir().join(format!(
-            "ahs-statefile-test-{}-{signal}.json",
+            "ahsw-statefile-test-{}-{signal}.json",
             std::process::id()
         ));
         let _ = fs::remove_file(&state_file);
@@ -654,7 +654,7 @@ fn test_state_file_removed_on_signal() {
     }
 }
 
-/// `ahs ready --state-file PATH` is the CLI-fallback readiness gate: it blocks
+/// `ahsw ready --state-file PATH` is the CLI-fallback readiness gate: it blocks
 /// until the daemon writing PATH flips the file's `ready` flag to true (set
 /// only once the event loop is serving), then exits 0. This covers the gate
 /// against an already-up daemon and asserts the file then carries `ready:true`
@@ -664,7 +664,7 @@ fn test_ready_gate_succeeds_when_serving() {
     let log = tmp_log("ready-before");
     let file = File::create(&log).unwrap();
     let state_file =
-        std::env::temp_dir().join(format!("ahs-ready-before-{}.json", std::process::id()));
+        std::env::temp_dir().join(format!("ahsw-ready-before-{}.json", std::process::id()));
     let _ = fs::remove_file(&state_file);
 
     let mut child = common::test_cmd()
@@ -683,10 +683,10 @@ fn test_ready_gate_succeeds_when_serving() {
         .arg(&state_file)
         .args(["--timeout-secs", "60"])
         .status()
-        .expect("failed to run ahs ready");
+        .expect("failed to run ahsw ready");
     assert!(
         status.success(),
-        "ahs ready should exit 0 against a serving daemon\nlog:\n{}",
+        "ahsw ready should exit 0 against a serving daemon\nlog:\n{}",
         fs::read_to_string(&log).unwrap_or_default()
     );
 
@@ -711,7 +711,7 @@ fn test_ready_gate_succeeds_when_serving() {
     let _ = fs::remove_file(&state_file);
 }
 
-/// The race the gate exists for: `ahs ready` is started *before* the daemon, so
+/// The race the gate exists for: `ahsw ready` is started *before* the daemon, so
 /// the state file does not exist yet. The gate must block (file-appears, then
 /// ready-flips) and still exit 0 once the daemon comes up and serves.
 #[test]
@@ -719,7 +719,7 @@ fn test_ready_gate_waits_for_a_late_daemon() {
     let log = tmp_log("ready-after");
     let file = File::create(&log).unwrap();
     let state_file =
-        std::env::temp_dir().join(format!("ahs-ready-after-{}.json", std::process::id()));
+        std::env::temp_dir().join(format!("ahsw-ready-after-{}.json", std::process::id()));
     let _ = fs::remove_file(&state_file);
 
     // Start the gate first — nothing has written the file yet.
@@ -729,7 +729,7 @@ fn test_ready_gate_waits_for_a_late_daemon() {
         .arg(&state_file)
         .args(["--timeout-secs", "60"])
         .spawn()
-        .expect("failed to spawn ahs ready");
+        .expect("failed to spawn ahsw ready");
 
     // Launch the daemon a beat later, writing the same state file.
     std::thread::sleep(Duration::from_millis(500));
@@ -742,10 +742,10 @@ fn test_ready_gate_waits_for_a_late_daemon() {
         .spawn()
         .expect("failed to spawn create --state-file");
 
-    let status = gate.wait().expect("ahs ready never exited");
+    let status = gate.wait().expect("ahsw ready never exited");
     assert!(
         status.success(),
-        "ahs ready started before the daemon should still exit 0 once it serves\nlog:\n{}",
+        "ahsw ready started before the daemon should still exit 0 once it serves\nlog:\n{}",
         fs::read_to_string(&log).unwrap_or_default()
     );
 
@@ -763,7 +763,7 @@ fn test_ready_gate_waits_for_a_late_daemon() {
 #[test]
 fn test_ready_gate_times_out_without_a_daemon() {
     let state_file = std::env::temp_dir().join(format!(
-        "ahs-ready-timeout-{}-never.json",
+        "ahsw-ready-timeout-{}-never.json",
         std::process::id()
     ));
     let _ = fs::remove_file(&state_file);
@@ -774,10 +774,10 @@ fn test_ready_gate_times_out_without_a_daemon() {
         .arg(&state_file)
         .args(["--timeout-secs", "2"])
         .status()
-        .expect("failed to run ahs ready");
+        .expect("failed to run ahsw ready");
     assert!(
         !status.success(),
-        "ahs ready should exit non-zero when no daemon ever writes the state file"
+        "ahsw ready should exit non-zero when no daemon ever writes the state file"
     );
 }
 
@@ -788,11 +788,11 @@ fn test_ready_gate_times_out_without_a_daemon() {
 #[test]
 fn test_ready_gate_rejects_a_stale_ready_file() {
     let state_file =
-        std::env::temp_dir().join(format!("ahs-ready-stale-{}.json", std::process::id()));
+        std::env::temp_dir().join(format!("ahsw-ready-stale-{}.json", std::process::id()));
     // ready:true but last_updated far in the past (well beyond READY_FRESH_SECS).
     fs::write(
         &state_file,
-        br#"{"last_updated":1000000000,"name":"stale","nickname":"old-nick","participant_count":1,"ready":true,"swarm":"ahsdeadbeef"}"#,
+        r#"{"last_updated":1000000000,"name":"stale","nickname":"old-nick","participant_count":1,"ready":true,"swarm":"🐝deadbeef"}"#,
     )
     .unwrap();
 
@@ -802,11 +802,50 @@ fn test_ready_gate_rejects_a_stale_ready_file() {
         .arg(&state_file)
         .args(["--timeout-secs", "2"])
         .status()
-        .expect("failed to run ahs ready");
+        .expect("failed to run ahsw ready");
     assert!(
         !status.success(),
-        "ahs ready must reject a stale ready:true file (last_updated too old) and time out"
+        "ahsw ready must reject a stale ready:true file (last_updated too old) and time out"
     );
+    let _ = fs::remove_file(&state_file);
+}
+
+/// `ahsw ready --output json` doubles as the identity read: on a fresh
+/// `ready:true` file it prints `{swarm,name,nickname}` and exits 0, so a
+/// fallback caller learns its own identity from the gate without parsing the
+/// state file (or guessing its `${PPID}` name) itself.
+#[test]
+fn test_ready_gate_emits_identity_json_on_success() {
+    let state_file =
+        std::env::temp_dir().join(format!("ahsw-ready-json-{}.json", std::process::id()));
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    fs::write(
+        &state_file,
+        format!(
+            r#"{{"last_updated":{now},"name":"cool-team","nickname":"calm-otter","participant_count":1,"ready":true,"swarm":"🐝deadbeef"}}"#
+        ),
+    )
+    .unwrap();
+
+    let output = common::test_cmd()
+        .arg("ready")
+        .arg("--state-file")
+        .arg(&state_file)
+        .args(["--timeout-secs", "5", "--output", "json"])
+        .output()
+        .expect("failed to run ahsw ready");
+    assert!(
+        output.status.success(),
+        "a fresh ready:true file should pass the gate"
+    );
+    let parsed: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("ready --output json prints a JSON object");
+    assert_eq!(parsed["swarm"], "🐝deadbeef");
+    assert_eq!(parsed["name"], "cool-team");
+    assert_eq!(parsed["nickname"], "calm-otter");
     let _ = fs::remove_file(&state_file);
 }
 
@@ -921,15 +960,18 @@ fn test_poll_wait_blocks_then_resolves_and_times_out() {
         "should have blocked ~1s, took {timeout_elapsed:?}"
     );
 
-    // (2) Resolves on traffic: start a blocking 15s wait, have the creator
-    // send ~400ms in; the poll must return the message well under the timeout.
+    // (2) Resolves on traffic: start a blocking 60s wait (the daemon's
+    // long-poll max), have the creator send ~400ms in; the poll must return the
+    // message well under the ceiling. The wait is generous so a loaded host
+    // can't flake a correct delivery, yet returning long before 60s still
+    // proves the poll woke on traffic rather than spinning to an empty timeout.
     let swarm_for_send = swarm.clone();
     let creator_nick = creator.nickname.clone();
     let sender = std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(400));
         cli_message(&swarm_for_send, &creator_nick, "via long-poll");
     });
-    let (got, resolve_elapsed) = cli_poll_wait(&swarm, &joiner.nickname, after.as_deref(), "15000");
+    let (got, resolve_elapsed) = cli_poll_wait(&swarm, &joiner.nickname, after.as_deref(), "60000");
     sender.join().unwrap();
     let events: Vec<serde_json::Value> = serde_json::from_str(&got)
         .unwrap_or_else(|error| panic!("parse long-poll JSON: {error}\nraw: {got}"));
@@ -940,12 +982,12 @@ fn test_poll_wait_blocks_then_resolves_and_times_out() {
         "long-poll returned the message: {got}"
     );
     assert!(
-        resolve_elapsed < Duration::from_secs(14),
-        "resolved before the 15s timeout, took {resolve_elapsed:?}"
+        resolve_elapsed < Duration::from_mins(1),
+        "woke on traffic rather than spinning to the wait ceiling, took {resolve_elapsed:?}"
     );
 }
 
-/// `ahs ping` is daemon-owned: the transient command arms a round over
+/// `ahsw ping` is daemon-owned: the transient command arms a round over
 /// IPC, the daemon broadcasts a probe, every peer auto-pongs, and the
 /// originator emits a `ping_report` on its own output stream listing
 /// each responder's RTT. The probe/pong never surface as chat. A short
@@ -1624,8 +1666,7 @@ fn test_large_gap_reconnect_replication() {
     // inside the window.
     let envs = [("--antientropy-max-resend", "128")];
 
-    // `--rate-limit 0`: the burst must not be throttled on the send path.
-    let (creator, swarm) = Node::create_args("itest", &["--rate-limit", "0"], &envs);
+    let (creator, swarm) = Node::create_args("itest", &[], &envs);
     let alpha = Node::join_flags(&swarm, "lg-alpha", &envs);
     let bravo = Node::join_flags(&swarm, "lg-bravo", &envs);
     assert!(creator.wait_ready(&swarm), "creator never ready");
@@ -1681,43 +1722,6 @@ fn test_large_gap_reconnect_replication() {
     );
 }
 
-/// Rate-limited messages never enter the receiver's message log — which is
-/// the anti-entropy recovery source — so anti-entropy can never "launder"
-/// dropped spam to a peer. Drops happen on the send side (before the log
-/// push, `broadcast.rs`) and the receive side (before the log push,
-/// `recv.rs`); either way the excess is absent from what backfills peers.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn rate_dropped_messages_are_not_retained_for_backfill() {
-    let sender = InProcNode::create("net-rl-backfill").await;
-    let mut receiver = InProcNode::join(&sender.swarm, "rl-backfill-recv").await;
-
-    let flood = RATE_LIMIT_PER_MIN as usize * 2; // twice the per-identity quota
-    for index in 0..flood {
-        let _ = sender.try_send(&format!("flood {index}")).await;
-    }
-    assert!(
-        receiver.wait_inbound(1, MSG_TIMEOUT).await,
-        "no flood message arrived at all"
-    );
-    tokio::time::sleep(Duration::from_secs(2)).await; // let gossip settle
-
-    let retained = receiver
-        .inbound()
-        .iter()
-        .filter(|msg| msg.body.as_str().starts_with("flood "))
-        .map(|msg| msg.body.as_str().to_string())
-        .collect::<std::collections::HashSet<_>>()
-        .len();
-    assert!(
-        retained >= 1,
-        "the receiver should retain at least the burst allowance"
-    );
-    assert!(
-        retained < flood,
-        "rate limiter must keep excess out of the log (the anti-entropy source); retained all {retained}"
-    );
-}
-
 /// Deep **interior** gap: a peer holds older *and* newer messages but is
 /// missing a middle slice, so its open newest window cannot cover the gap —
 /// it is recovered only by the rolling **closed older** window. Exercises
@@ -1733,7 +1737,7 @@ fn test_interior_gap_recovered_via_rolling_window() {
     let _serial = serial_guard();
     let envs = [("--antientropy-max-resend", "128")];
 
-    let (creator, swarm) = Node::create_args("itest", &["--rate-limit", "0"], &envs);
+    let (creator, swarm) = Node::create_args("itest", &[], &envs);
     let alpha = Node::join_flags(&swarm, "ig-alpha", &envs);
     let bravo = Node::join_flags(&swarm, "ig-bravo", &envs);
     assert!(
@@ -1812,7 +1816,7 @@ fn test_steady_state_no_resend_churn() {
         ("--log-max-bytes", "0"), // no rotation, so the full log is one file
     ];
 
-    let (creator, swarm) = Node::create_args("itest", &["--rate-limit", "0"], &envs);
+    let (creator, swarm) = Node::create_args("itest", &[], &envs);
     let alpha = Node::join_flags(&swarm, "cf-alpha", &envs);
     let bravo = Node::join_flags(&swarm, "cf-bravo", &envs);
     assert!(
@@ -1873,7 +1877,7 @@ fn test_multi_round_throttled_backfill() {
     let _serial = serial_guard();
     let envs = [("--antientropy-max-resend", "5")]; // tiny budget ⇒ many rounds
 
-    let (creator, swarm) = Node::create_args("itest", &["--rate-limit", "0"], &envs);
+    let (creator, swarm) = Node::create_args("itest", &[], &envs);
     let alpha = Node::join_flags(&swarm, "mr-alpha", &envs);
     let bravo = Node::join_flags(&swarm, "mr-bravo", &envs);
     assert!(

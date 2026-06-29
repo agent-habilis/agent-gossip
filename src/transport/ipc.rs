@@ -86,6 +86,32 @@ pub(crate) enum IpcCommand {
     /// exchange sender's target picker and nickname validation.
     #[serde(rename = "peers")]
     Peers { swarm: SwarmId },
+    /// Apply a JSON-Patch change to the swarm's shared state. `patch` is the
+    /// RFC 6902 op array (frozen subset); the daemon validates it against the
+    /// current document, then signs + gossips it.
+    #[serde(rename = "state_patch")]
+    StatePatch {
+        swarm: SwarmId,
+        patch: serde_json::Value,
+        /// Optional compare-and-set guard — the `doc_hash` from the caller's
+        /// last `state_get`. Rejected if the document changed since.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        if_doc_hash: Option<String>,
+    },
+    /// Read the current derived shared-state document.
+    #[serde(rename = "state_get")]
+    StateGet { swarm: SwarmId },
+    /// `meta`-channel counterpart of [`StatePatch`](IpcCommand::StatePatch).
+    #[serde(rename = "meta_patch")]
+    MetaPatch {
+        swarm: SwarmId,
+        patch: serde_json::Value,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        if_doc_hash: Option<String>,
+    },
+    /// `meta`-channel counterpart of [`StateGet`](IpcCommand::StateGet).
+    #[serde(rename = "meta_get")]
+    MetaGet { swarm: SwarmId },
 }
 
 impl IpcCommand {
@@ -95,7 +121,11 @@ impl IpcCommand {
             | IpcCommand::Poll { swarm, .. }
             | IpcCommand::Ping { swarm }
             | IpcCommand::Exchange { swarm, .. }
-            | IpcCommand::Peers { swarm } => swarm,
+            | IpcCommand::Peers { swarm }
+            | IpcCommand::StatePatch { swarm, .. }
+            | IpcCommand::StateGet { swarm }
+            | IpcCommand::MetaPatch { swarm, .. }
+            | IpcCommand::MetaGet { swarm } => swarm,
         }
     }
 }
@@ -133,12 +163,12 @@ pub(crate) fn json_error(error: &str) -> String {
     serde_json::json!({"ok": false, "error": error}).to_string()
 }
 
-/// Response for a send dropped by the sender-side rate limiter. `ok:false`
-/// keeps error-only readers from treating it as a success; the
-/// `rate_limited` flag lets aware callers tell it apart from a real error
-/// (it is a deliberate drop, not a failure).
-pub(crate) fn json_rate_limited() -> String {
-    serde_json::json!({"ok": false, "rate_limited": true}).to_string()
+/// Response for a state patch rejected by the `--if-doc-hash` compare-and-set
+/// guard. The `stale` flag lets a client tell a **retryable** conflict (re-read
+/// and retry) apart from a structurally-bad patch, without scraping the error
+/// text; `error` still carries the human-readable reason.
+pub(crate) fn json_stale(error: &str) -> String {
+    serde_json::json!({"ok": false, "stale": true, "error": error}).to_string()
 }
 
 /// Bind the local IPC socket synchronously, returning the listening
@@ -271,7 +301,7 @@ pub(crate) async fn send(cmd: &IpcCommand, nickname: &Nickname) -> Result<String
     let path = socket_path(cmd.swarm_id(), nickname);
     let name = to_name(&path).map_err(|error| anyhow::anyhow!("invalid socket name: {error}"))?;
     let stream = Stream::connect(name).await.map_err(|_| anyhow::anyhow!(
-        "No active swarm server running for nickname '{nickname}'. Start one with `ahs create` or `ahs join {{ahs...}} --nickname {nickname}`."
+        "No active swarm server running for nickname '{nickname}'. Start one with `ahsw create` or `ahsw join {{🐝...}} --nickname {nickname}`."
     ))?;
     let (read_half, mut write_half) = tokio::io::split(stream);
 
@@ -334,7 +364,7 @@ mod tests {
         );
         assert!(path.starts_with("/tmp/agent-habilis/swarm/sockets/"));
         assert!(path.ends_with("-my-nick.sock"));
-        assert!(path.contains("abcdefghijkmnpqr")); // 16 chars, 🐝 stripped
+        assert!(path.contains("🐝abcdefghijkmnpq")); // 16 chars
     }
 
     // ── IpcCommand serialization ───────────────────────────────────
@@ -367,7 +397,11 @@ mod tests {
             IpcCommand::Poll { .. }
             | IpcCommand::Ping { .. }
             | IpcCommand::Exchange { .. }
-            | IpcCommand::Peers { .. } => panic!("expected Msg"),
+            | IpcCommand::Peers { .. }
+            | IpcCommand::StatePatch { .. }
+            | IpcCommand::MetaPatch { .. }
+            | IpcCommand::MetaGet { .. }
+            | IpcCommand::StateGet { .. } => panic!("expected Msg"),
         }
     }
 
@@ -388,7 +422,11 @@ mod tests {
             IpcCommand::Msg { .. }
             | IpcCommand::Ping { .. }
             | IpcCommand::Exchange { .. }
-            | IpcCommand::Peers { .. } => panic!("expected Poll"),
+            | IpcCommand::Peers { .. }
+            | IpcCommand::StatePatch { .. }
+            | IpcCommand::MetaPatch { .. }
+            | IpcCommand::MetaGet { .. }
+            | IpcCommand::StateGet { .. } => panic!("expected Poll"),
         }
     }
 
@@ -405,7 +443,11 @@ mod tests {
             IpcCommand::Msg { .. }
             | IpcCommand::Poll { .. }
             | IpcCommand::Exchange { .. }
-            | IpcCommand::Peers { .. } => panic!("expected Ping"),
+            | IpcCommand::Peers { .. }
+            | IpcCommand::StatePatch { .. }
+            | IpcCommand::MetaPatch { .. }
+            | IpcCommand::MetaGet { .. }
+            | IpcCommand::StateGet { .. } => panic!("expected Ping"),
         }
     }
 
@@ -435,7 +477,11 @@ mod tests {
             IpcCommand::Msg { .. }
             | IpcCommand::Poll { .. }
             | IpcCommand::Ping { .. }
-            | IpcCommand::Peers { .. } => panic!("expected Exchange"),
+            | IpcCommand::Peers { .. }
+            | IpcCommand::StatePatch { .. }
+            | IpcCommand::MetaPatch { .. }
+            | IpcCommand::MetaGet { .. }
+            | IpcCommand::StateGet { .. } => panic!("expected Exchange"),
         }
     }
 
@@ -452,7 +498,11 @@ mod tests {
             IpcCommand::Msg { .. }
             | IpcCommand::Poll { .. }
             | IpcCommand::Ping { .. }
-            | IpcCommand::Exchange { .. } => panic!("expected Peers"),
+            | IpcCommand::Exchange { .. }
+            | IpcCommand::StatePatch { .. }
+            | IpcCommand::MetaPatch { .. }
+            | IpcCommand::MetaGet { .. }
+            | IpcCommand::StateGet { .. } => panic!("expected Peers"),
         }
     }
 
@@ -596,13 +646,9 @@ mod tests {
             }
 
             #[test]
-            fn prop_swarm_prefix_strips_bee_and_prefixes_the_body(swarm in arb_swarm()) {
-                // The stem drops the `🐝` brand (path safety) and is a prefix of
-                // the de-branded id, so socket/log filenames stay ASCII.
-                let stem = swarm_prefix(swarm.as_str());
-                let body = swarm.as_str().strip_prefix('🐝').unwrap_or(swarm.as_str());
-                prop_assert!(body.starts_with(&stem));
-                prop_assert!(!stem.contains('🐝'));
+            fn prop_swarm_prefix_is_prefix_of_input(swarm in arb_swarm()) {
+                let prefix = swarm_prefix(swarm.as_str());
+                prop_assert!(swarm.as_str().starts_with(&prefix));
             }
         }
     }
@@ -633,7 +679,11 @@ mod tests {
                     IpcCommand::Poll { .. }
                     | IpcCommand::Ping { .. }
                     | IpcCommand::Exchange { .. }
-                    | IpcCommand::Peers { .. } => {
+                    | IpcCommand::Peers { .. }
+                    | IpcCommand::StatePatch { .. }
+                    | IpcCommand::MetaPatch { .. }
+                    | IpcCommand::MetaGet { .. }
+                    | IpcCommand::StateGet { .. } => {
                         let _ = resp_tx.send(json_error("unexpected command"));
                     }
                 }

@@ -1,16 +1,18 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import {
   type CreateOptions,
+  applyStatePatch,
   createSwarm,
   discoverSwarms,
   getPeers,
+  getStateDocument,
   joinSwarm,
   leaveSwarm,
   pingPeers,
   sendSwarmMessage,
   validateCreateOptions,
 } from "../core";
-import { formatOutbound, formatRoster } from "../format";
+import { formatOutbound, formatPingReport, formatRoster } from "../format";
 import { isValidBody, requireAgentSwarm, runSwarmCommand } from "../helpers";
 import { state } from "../state";
 import type { DiscoveredSwarm, Peer } from "../types";
@@ -53,6 +55,14 @@ export function registerCommands(pi: ExtensionAPI): void {
     description: "List swarm peers with connection type, model, and harness",
     handler: cmdStatus,
   });
+  pi.registerCommand("swarm-state", {
+    description: "Print the swarm's current shared-state document",
+    handler: cmdState,
+  });
+  pi.registerCommand("swarm-state-patch", {
+    description: "Apply an RFC 6902 patch to shared state (/swarm-state-patch {ops-json})",
+    handler: cmdStatePatch,
+  });
   pi.registerCommand("swarm-ping", {
     description: "Ping all peers in the swarm and measure round-trip time",
     handler: cmdPing,
@@ -64,7 +74,7 @@ export function registerCommands(pi: ExtensionAPI): void {
 }
 
 // Parse `/swarm-create [name] [flags]`. The first non-flag token is the
-// optional swarm name; recognized flags mirror the `ahs create` CLI.
+// optional swarm name; recognized flags mirror the `ahsw create` CLI.
 function parseCreateArgs(args: string): {
   options: CreateOptions;
   error?: string;
@@ -95,22 +105,6 @@ function parseCreateArgs(args: string): {
         options.advertise = true;
         if (inlineValue) options.directory = inlineValue;
         break;
-      case "--rate-limit": {
-        let raw = inlineValue;
-        if (raw === undefined) {
-          index += 1;
-          raw = tokens[index];
-        }
-        const parsed = Number(raw);
-        if (!Number.isInteger(parsed) || parsed < 0) {
-          return {
-            options,
-            error: `invalid --rate-limit value: ${raw ?? "(missing)"}`,
-          };
-        }
-        options.rateLimit = parsed;
-        break;
-      }
       default:
         if (flag.startsWith("--")) return { options, error: `unknown flag: ${flag}` };
         if (options.name !== undefined) return { options, error: `unexpected argument: ${token}` };
@@ -128,7 +122,7 @@ async function cmdCreate(args: string, ctx: ExtensionCommandContext): Promise<vo
   const { options, error } = parseCreateArgs(args);
   if (error) {
     notifyError(
-      `${error}\nusage: /swarm-create [name] [--public] [--mdns] [--dht] [--relay[=urls]] [--rate-limit N] [--advertise[=dir]]`,
+      `${error}\nusage: /swarm-create [name] [--public] [--mdns] [--dht] [--relay[=urls]] [--advertise[=dir]]`,
     );
     return;
   }
@@ -139,10 +133,24 @@ async function cmdCreate(args: string, ctx: ExtensionCommandContext): Promise<vo
   }
 
   options.model = ctx.model?.name;
-  notify(options.name ? `creating \`#${options.name}\`...` : "creating swarm...");
   const result = await createSwarm(options);
-  notify(`created \`#${result.name}\``);
-  notify(`\`/swarm-join ${result.swarm}\``);
+  // One notify so the confirmation renders as a single block — the bee prefix
+  // is added once (in `send`), not per line, matching the Claude Code plugin.
+  notify(
+    [
+      `created \`#${result.name}\` and joined as \`<${result.nickname}>\``,
+      ...(options.advertise ? [`advertising on \`#${options.directory ?? "global"}\``] : []),
+      `others can join with: \`/swarm-join ${result.swarm}\``,
+    ].join("\n"),
+  );
+  if (result.drift) notify(result.drift);
+}
+
+// Join a swarm and print the standard confirmation — shared by /swarm-join and
+// discover-initiated joins so the wording and drift handling stay in one place.
+async function joinAndReport(target: string, ctx: ExtensionCommandContext): Promise<void> {
+  const result = await joinSwarm({ target, model: ctx.model?.name });
+  notify(`joined \`#${result.name}\` as \`<${result.nickname}>\``);
   if (result.drift) notify(result.drift);
 }
 
@@ -152,14 +160,11 @@ async function cmdJoin(args: string, ctx: ExtensionCommandContext): Promise<void
 
   const target = args.trim();
   if (!target) {
-    notifyError("usage: /swarm-join {ahs... | domain | repo-url}");
+    notifyError("usage: /swarm-join {🐝... | domain | repo-url}");
     return;
   }
 
-  notify(`joining swarm ${target} ...`);
-  const result = await joinSwarm({ target, model: ctx.model?.name });
-  notify(`joined \`#${result.name}\` as \`<${result.nickname}>\``);
-  if (result.drift) notify(result.drift);
+  await joinAndReport(target, ctx);
 }
 
 async function cmdDiscover(args: string, ctx: ExtensionCommandContext): Promise<void> {
@@ -167,35 +172,48 @@ async function cmdDiscover(args: string, ctx: ExtensionCommandContext): Promise<
   if (!requireAgentSwarm(ctx)) return;
 
   const directory = args.trim() || "global";
-  notify(`discovering \`#${directory}\`...`);
+  notify(`discovering \`#${directory}\` directory`);
+  notify("waiting for swarms…");
 
-  const swarms = await discoverSwarms({
-    directory: directory === "global" ? undefined : directory,
-  });
-  if (swarms.length === 0) {
-    notify(`no swarms found in \`#${directory}\``);
+  // Sentinel option that re-polls the directory — mirrors the Claude Code
+  // discover skill's refreshable picker.
+  const KEEP_LOOKING = "🔄 keep looking";
+
+  for (let first = true; ; first = false) {
+    const swarms = await discoverSwarms({
+      directory: directory === "global" ? undefined : directory,
+      // A re-poll on an idle directory shouldn't block the full discovery
+      // window again — only the first sweep waits the default.
+      ...(first ? {} : { maxMs: 3000 }),
+    });
+
+    if (swarms.length === 0) {
+      notify(`no swarms in \`#${directory}\` yet`);
+      const again = await ctx.ui.select(`Discover #${directory}`, [KEEP_LOOKING]);
+      if (again === KEEP_LOOKING) continue;
+      return;
+    }
+
+    // Option label carries name + peers + a short id so distinct swarms never
+    // collide; map it back to the full `🐝…` id for the join.
+    const byOption = new Map(
+      swarms.map((swarm): [string, DiscoveredSwarm] => [
+        `#${swarm.name} · ${swarm.peers} peers · ${swarm.swarm.slice(0, 14)}…`,
+        swarm,
+      ]),
+    );
+    const choice = await ctx.ui.select(`Swarms in #${directory}`, [
+      ...byOption.keys(),
+      KEEP_LOOKING,
+    ]);
+    if (!choice) return;
+    if (choice === KEEP_LOOKING) continue;
+    const picked = byOption.get(choice);
+    if (!picked) return;
+
+    await joinAndReport(picked.swarm, ctx);
     return;
   }
-
-  // Option label carries name + peers + a short id so distinct swarms never
-  // collide; map it back to the full `ahs…` id for the join.
-  const byOption = new Map(
-    swarms.map((swarm): [string, DiscoveredSwarm] => [
-      `#${swarm.name} · ${swarm.peers} peers · ${swarm.swarm.slice(0, 14)}…`,
-      swarm,
-    ]),
-  );
-  const choice = await ctx.ui.select(`Swarms in #${directory}`, [...byOption.keys()]);
-  const picked = choice ? byOption.get(choice) : undefined;
-  if (!picked) return;
-
-  notify(`joining \`#${picked.name}\`...`);
-  const result = await joinSwarm({
-    target: picked.swarm,
-    model: ctx.model?.name,
-  });
-  notify(`joined \`#${result.name}\` as \`<${result.nickname}>\``);
-  if (result.drift) notify(result.drift);
 }
 
 async function cmdMsg(args: string, ctx: ExtensionCommandContext): Promise<void> {
@@ -359,6 +377,49 @@ async function cmdStatus(_args: string, ctx: ExtensionCommandContext): Promise<v
   }
 }
 
+async function cmdState(_args: string, ctx: ExtensionCommandContext): Promise<void> {
+  state.ctx = ctx;
+  if (!requireAgentSwarm(ctx)) return;
+  if (!state.session) {
+    notifyError("not in a swarm");
+    return;
+  }
+  try {
+    // Plain block (not markdown) so the JSON isn't reflowed — same as the roster.
+    notifyBlock(JSON.stringify(getStateDocument(), null, 2));
+  } catch (error) {
+    notifyError(`state failed: ${error instanceof Error ? error.message : "unknown"}`);
+  }
+}
+
+async function cmdStatePatch(args: string, ctx: ExtensionCommandContext): Promise<void> {
+  state.ctx = ctx;
+  if (!requireAgentSwarm(ctx)) return;
+  if (!state.session) {
+    notifyError("not in a swarm");
+    return;
+  }
+  const ops = args.trim();
+  if (!ops) {
+    notifyError(
+      'usage: /swarm-state-patch {ops-json}  e.g. [{"op":"replace","path":"/turn","value":"b"}]',
+    );
+    return;
+  }
+  try {
+    // The incoming self `state` event isn't displayed, so confirm here at send
+    // time (mirrors how /swarm-msg confirms an outbound message).
+    const result = applyStatePatch({ patch: ops });
+    if (result.ok) {
+      notify("you changed shared state");
+    } else {
+      notifyError(result.error ?? "patch rejected");
+    }
+  } catch (error) {
+    notifyError(`state patch failed: ${error instanceof Error ? error.message : "unknown"}`);
+  }
+}
+
 async function cmdPing(_args: string, ctx: ExtensionCommandContext): Promise<void> {
   state.ctx = ctx;
   if (!requireAgentSwarm(ctx)) return;
@@ -368,33 +429,16 @@ async function cmdPing(_args: string, ctx: ExtensionCommandContext): Promise<voi
     return;
   }
 
-  notify("pinging peers...");
+  notify("pinging peers…");
 
   try {
-    const results = await pingPeers();
-    if (results.length === 0) {
-      notify("no peers responded");
-      return;
-    }
-
-    const rows = results.map((result) => `| \`<${result.author}>\` | ${result.rtt}ms |`);
-    notify(
-      [
-        "ping results",
-        "",
-        "| peer | RTT |",
-        "| --- | --- |",
-        ...rows,
-        "",
-        `${results.length} online`,
-      ].join("\n"),
-    );
+    notify(formatPingReport(await pingPeers()));
   } catch (error) {
     notifyError(`ping failed: ${error instanceof Error ? error.message : "unknown"}`);
   }
 }
 
-// `ahs status` reports the binary version and whether each installed
+// `ahsw status` reports the binary version and whether each installed
 // integration still matches the binary — the on-demand drift check, the
 // counterpart to the startup warning folded into the `ready` event.
 async function cmdVersion(_args: string, ctx: ExtensionCommandContext): Promise<void> {

@@ -1,6 +1,6 @@
 //! `ahsw pipe` — a P2P byte stream over a dedicated direct
 //! QUIC connection, off the gossip log. The producer ([`listen`]) reads stdin
-//! and prints the consumer's `ahs pipe connect 🐝…` command on stdout; the
+//! and prints the consumer's `ahsw pipe connect 🐝…` command on stdout; the
 //! consumer ([`connect`]) redeems the ticket and writes the stream to stdout.
 //! The ticket is a bearer capability (a
 //! random secret) carrying the producer's address + the swarm's discovery

@@ -141,7 +141,6 @@ pub(crate) async fn recover_from_starvation(state: &mut EventLoopState, ctx: &Ha
         ctx.author,
         ctx.identity,
         ctx.endpoint,
-        ctx.self_meta,
     )
     .await;
     let now = Instant::now();

@@ -1,4 +1,4 @@
-//! The pipe producer: read a source, print the consumer's `ahs pipe connect`
+//! The pipe producer: read a source, print the consumer's `ahsw pipe connect`
 //! command on stdout, then stream the source, once, to the first peer that
 //! presents the ticket's secret.
 
@@ -17,7 +17,7 @@ use super::ticket::PipeTicket;
 use super::{PIPE_ALPN, SECRET_LEN, wait_online};
 
 /// Serve stdin to the first peer presenting the ticket's secret. The consumer's
-/// **`ahs pipe connect <ticket>` command is printed to stdout** (the producer's
+/// **`ahsw pipe connect <ticket>` command is printed to stdout** (the producer's
 /// stdout carries no data — that flows over the network); stderr is reserved for
 /// errors. `swarm` selects the discovery config (`None` ⇒ a public default).
 ///
@@ -29,7 +29,7 @@ pub(crate) async fn listen(swarm: Option<&str>, throttle: Option<u64>, json: boo
     super::announce(
         json,
         "waiting for a peer to connect…",
-        &format!("ahs pipe connect {}", ticket.encode()),
+        &format!("ahsw pipe connect {}", ticket.encode()),
     );
     match serve(
         &endpoint,
@@ -164,7 +164,7 @@ pub(crate) async fn serve<R: AsyncRead + Unpin>(
     outcome
 }
 
-/// The byte length of stdin when it is a regular file (`ahs pipe listen < file`),
+/// The byte length of stdin when it is a regular file (`ahsw pipe listen < file`),
 /// else `None` — a pipe / FIFO (`cat file |`, `tail -f |`) hides any length, so
 /// the receiver shows an indeterminate indicator instead.
 #[expect(

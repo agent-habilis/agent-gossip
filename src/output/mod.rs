@@ -100,6 +100,15 @@ pub enum OutputEvent {
     ExchangeTimeout {
         exchange_id: ExchangeId,
     },
+    /// A shared-state change: the patch event, the freshly-derived document, and
+    /// whether it was our own write. Drives the reaction hook and the human
+    /// `🐝 … changed shared state` line.
+    StateChanged {
+        channel: crate::protocol::Channel,
+        event: Box<Message>,
+        document: serde_json::Value,
+        is_self: bool,
+    },
 }
 
 /// ANSI styling for the Human-mode `<nick>` / `#swarm` tokens.
@@ -113,7 +122,7 @@ pub(crate) mod style {
     pub(super) const PEER_NICK: &str = "\x1b[1;36m";
     /// Bold yellow — a swarm name.
     pub(crate) const SWARM: &str = "\x1b[1;33m";
-    /// Bold blue — the runnable hint (`ahs join` on create, `ahs pipe connect`
+    /// Bold blue — the runnable hint (`ahsw join` on create, `ahsw pipe connect`
     /// on the pipe producer).
     pub(crate) const BLUE: &str = "\x1b[1;34m";
     /// Bold — the highlighted row in the `discover` picker.
@@ -397,8 +406,8 @@ impl Output {
     }
 
     /// Surface the swarm identifier at startup (stderr). Human mode
-    /// prints the runnable join command (`ahs join <id>`); JSON mode
-    /// prints the bare `ahs…` id (the integration harness greps this);
+    /// prints the runnable join command (`ahsw join <id>`); JSON mode
+    /// prints the bare `🐝…` id (the integration harness greps this);
     /// Silent suppresses it.
     pub(crate) fn swarm_id_line(&self, id: &SwarmId) {
         self.dispatch(
@@ -410,7 +419,7 @@ impl Output {
                     } else {
                         ("", "")
                     };
-                    eprintln!("others can join with: {open}ahs join {id}{close}");
+                    eprintln!("others can join with: {open}ahsw join {id}{close}");
                 }
                 OutputMode::Json => eprintln!("{id}"),
                 OutputMode::Silent => {}
@@ -507,6 +516,64 @@ impl Output {
         );
     }
 
+    /// Surface a shared-state change: the human `🐝 … changed shared state`
+    /// line, the structured `state` event for the agent API (poll / `--output
+    /// json` / embed `events()`), and the surfaced-ring mirror. F5: a *self*
+    /// change goes to poll/UI but is **never** delivered to the embed `events()`
+    /// reaction channel, so an agent is never woken by its own patch (alternation
+    /// stays loop-safe without a per-consumer guard). On the CLI/Monitor path the
+    /// self-skip is the Monitor's job.
+    pub(crate) fn state_changed(
+        &self,
+        channel: crate::protocol::Channel,
+        event: &Message,
+        document: &serde_json::Value,
+        is_self: bool,
+    ) {
+        let make = || OutputEvent::StateChanged {
+            channel,
+            event: Box::new(event.clone()),
+            document: document.clone(),
+            is_self,
+        };
+        match self {
+            Output::Stream { mode, tap, .. } => {
+                match mode {
+                    OutputMode::Human => self.print_state_human(channel, event, is_self),
+                    OutputMode::Json => {
+                        emit(&json::format_state_json(channel, event, document, is_self));
+                    }
+                    OutputMode::Silent => {}
+                }
+                if let Some(tap) = tap {
+                    let _ = tap.send(make());
+                }
+            }
+            Output::Capture { tx, tap, .. } => {
+                let evt = make();
+                // Poll/fetch history + human UI always see it.
+                if let Some(tap) = tap {
+                    let _ = tap.send(evt.clone());
+                }
+                // F5: never wake an agent on its own patch.
+                if !is_self {
+                    let _ = tx.send(evt);
+                }
+            }
+        }
+    }
+
+    fn print_state_human(&self, channel: crate::protocol::Channel, event: &Message, is_self: bool) {
+        let what = json::state_change_summary_from_body(event.body.as_str());
+        let ch = channel.label();
+        if is_self {
+            eprintln!("🐝️ you changed {what} ({ch})");
+        } else {
+            let (open, close) = self.nick_ansi(event.author.as_str(), stderr_color());
+            eprintln!("🐝️ {open}<{}>{close} changed {what} ({ch})", event.author);
+        }
+    }
+
     pub(crate) fn print_presence(&self, msg: &Message) {
         let MessageKind::Presence { subtype } = &msg.kind else {
             return;
@@ -518,16 +585,7 @@ impl Output {
             |mode| match mode {
                 OutputMode::Human => {
                     let (open, close) = self.nick_ansi(msg.author.as_str(), stderr_color());
-                    // `joined` carries the joiner's model/harness; show it.
-                    let label = (*subtype == crate::protocol::PresenceSubtype::Joined)
-                        .then(|| crate::protocol::peer_meta::from_body(msg.body.as_str()).label())
-                        .flatten();
-                    match label {
-                        Some(label) => {
-                            eprintln!("{open}<{}>{close} ({label}) has {subtype}", msg.author);
-                        }
-                        None => eprintln!("{open}<{}>{close} has {subtype}", msg.author),
-                    }
+                    eprintln!("{open}<{}>{close} has {subtype}", msg.author);
                 }
                 OutputMode::Json => emit(&format_presence_json(msg, *subtype)),
                 OutputMode::Silent => {}
@@ -662,7 +720,7 @@ impl Output {
         self.error(&error.to_string());
     }
 
-    /// Emit the result of an `ahs ping` round: per-peer RTT, plus how
+    /// Emit the result of an `ahsw ping` round: per-peer RTT, plus how
     /// many of the known peers responded (the responder count is just
     /// `peers.len()`). `known` is the current participant roster size.
     pub(crate) fn ping_report(&self, peers: Vec<PingPeer>, known: usize) {
@@ -728,9 +786,11 @@ impl Output {
             | MessageKind::PeerInfo
             | MessageKind::Digest
             | MessageKind::StateDigest
+            | MessageKind::MetaDigest
             | MessageKind::Ping
             | MessageKind::Pong { .. }
             | MessageKind::State
+            | MessageKind::Meta
             | MessageKind::Exchange { .. } => {
                 println!("{open}<{}>{close}: {}", msg.author, msg.body);
             }

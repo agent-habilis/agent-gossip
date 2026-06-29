@@ -6,7 +6,7 @@
 //! serving the rendezvous — the **beacon** — lives in
 //! [`crate::beacon`].
 //!
-//! The `ahs…` token carries a random 32-byte `seed` (see
+//! The `🐝…` token carries a random 32-byte `seed` (see
 //! [`crate::protocol::swarm`]). Every value the swarm needs is derived
 //! from it in memory — no stored address, no file:
 //!
@@ -99,7 +99,7 @@ pub(crate) fn rendezvous_ports(seed: &[u8; 32]) -> [u16; RENDEZVOUS_LADDER] {
 }
 
 /// Derive the gossip TopicId from the swarm `seed` + name + config. The
-/// seed is the random 32 bytes carried in the `ahs…` token, so the topic
+/// seed is the random 32 bytes carried in the `🐝…` token, so the topic
 /// is **creator-independent**: it never depends on any node's ephemeral
 /// key and survives the creator's death. The name and the canonical
 /// config bytes are each length-prefixed before hashing so distinct
@@ -108,7 +108,7 @@ pub(crate) fn rendezvous_ports(seed: &[u8; 32]) -> [u16; RENDEZVOUS_LADDER] {
 /// The seed is first run through the domain-separated [`derive_secret`]
 /// so a `seed` can never produce the same 32 bytes for the topic and for
 /// the rendezvous key. Binding the name *and* the config means a forged
-/// token (same seed, swapped name or tampered rate limit / lookups)
+/// token (same seed, swapped name or tampered lookups)
 /// hashes to a different topic and the joiner finds no peers — so every
 /// member of a swarm provably shares the same config.
 pub(crate) fn derive_topic_id(seed: &[u8; 32], name: &SwarmName, config_bytes: &[u8]) -> TopicId {

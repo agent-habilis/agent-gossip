@@ -8,24 +8,30 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
-use crate::protocol::token::PREFIX;
+use super::PREFIX;
 
 const MIN_LEN: usize = 7;
 const MAX_LEN: usize = 512;
 
-/// A swarm identifier — the encoded `🐝…` Base58Check string.
+/// A swarm identifier — the encoded `🐝...` Base58Check string.
 ///
-/// Validation is shallow: the `🐝` prefix, length 7..=512 bytes, Base58
-/// charset (`[1-9A-HJ-NP-Za-km-z]`) on the remainder. Full structural
-/// decoding lives in `Swarm::from_str`; the newtype rejects obvious typos
-/// at the CLI / IPC boundary without paying the decode cost on every flow.
+/// Validation is shallow: prefix `🐝`, length 7..=512, Base58
+/// charset (`[1-9A-HJ-NP-Za-km-z]`). Full structural decoding lives
+/// in `Swarm::from_str`; the newtype rejects obvious typos at the
+/// CLI / IPC boundary without paying the decode cost on every flow.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct SwarmId(String);
 
+/// The pre-rename prefix. An id carrying it was minted by an older,
+/// wire-incompatible binary — worth a distinct message so a paster of a
+/// stale id isn't left guessing.
+const LEGACY_PREFIX: &str = "ahs";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SwarmIdError {
     MissingPrefix,
+    LegacyPrefix,
     Length(usize),
     Charset(String),
 }
@@ -34,6 +40,10 @@ impl fmt::Display for SwarmIdError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             SwarmIdError::MissingPrefix => write!(formatter, "swarm id must start with '{PREFIX}'"),
+            SwarmIdError::LegacyPrefix => write!(
+                formatter,
+                "swarm id uses the legacy '{LEGACY_PREFIX}' prefix from an older, incompatible version — ask for a current '{PREFIX}' id"
+            ),
             SwarmIdError::Length(len) => {
                 write!(
                     formatter,
@@ -61,6 +71,9 @@ impl SwarmId {
     pub(crate) fn new(value: impl Into<String>) -> Result<Self, SwarmIdError> {
         let value = value.into();
         if !value.starts_with(PREFIX) {
+            if value.starts_with(LEGACY_PREFIX) {
+                return Err(SwarmIdError::LegacyPrefix);
+            }
             return Err(SwarmIdError::MissingPrefix);
         }
         if value.len() < MIN_LEN || value.len() > MAX_LEN {
@@ -116,7 +129,7 @@ mod swarm_id_tests {
     use super::{SwarmId, SwarmIdError};
 
     #[test]
-    fn new_accepts_well_formed() {
+    fn new_accepts_well_formed_id() {
         SwarmId::new("🐝AbCdEf1234").unwrap();
     }
 
@@ -126,6 +139,13 @@ mod swarm_id_tests {
             SwarmId::new("noprefix12345"),
             Err(SwarmIdError::MissingPrefix)
         ));
+    }
+
+    #[test]
+    fn new_flags_legacy_ahs_prefix() {
+        let err = SwarmId::new("ahsAbCdEf1234").unwrap_err();
+        assert_eq!(err, SwarmIdError::LegacyPrefix);
+        assert!(err.to_string().contains("legacy"));
     }
 
     #[test]

@@ -37,11 +37,11 @@ and STOP.
 
 ## Send the reply
 
-`$SWARM`/`$NICKNAME` are from the `ready` event (copy the `ahs…` id
+`$SWARM`/`$NICKNAME` are from the `ready` event (copy the `🐝…` id
 verbatim):
 
 ```bash
-ahs msg --swarm "$SWARM" --nickname "$NICKNAME" --text "$TEXT" --reply "$TARGET"
+ahsw msg --swarm "$SWARM" --nickname "$NICKNAME" --text "$TEXT" --reply "$TARGET"
 ```
 
 ## Output

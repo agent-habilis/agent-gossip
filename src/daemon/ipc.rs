@@ -13,15 +13,21 @@ use std::time::Duration;
 use crate::daemon::state::{EventLoopState, PingRound, PollResponder};
 use crate::output;
 use crate::protocol::{Message, Nickname, SwarmId};
-use crate::transport::ipc::{IpcCommand, json_ack, json_error, json_ok_msg, json_rate_limited};
+use crate::transport::ipc::{IpcCommand, json_ack, json_error, json_ok_msg, json_stale};
 use crate::util::tuning::ping_window_secs;
 
 use crate::gossip::{
-    ExchangeLeg, SendOutcome, broadcast_exchange, broadcast_message, broadcast_msg,
+    ExchangeLeg, StatePatchOutcome, broadcast_exchange, broadcast_message, broadcast_msg,
+    broadcast_state_patch,
 };
 
 /// Returns `true` if the handler broadcast anything, so the caller
 /// can refresh `last_sent_at` for heartbeat suppression.
+#[expect(
+    clippy::too_many_lines,
+    reason = "a dispatch match with one arm per IpcCommand; the state/meta channel pair doubles \
+              the patch/get arms but each is a thin delegate"
+)]
 pub(crate) async fn handle_ipc_command(
     cmd: IpcCommand,
     resp_tx: oneshot::Sender<String>,
@@ -39,13 +45,9 @@ pub(crate) async fn handle_ipc_command(
         } => {
             tracing::debug!(addressed = reply.is_some(), "IPC msg command received");
             match broadcast_message(swarm, author, body, reply, state, sender, output).await {
-                Ok(SendOutcome::Sent(msg_id, msg)) => {
+                Ok((msg_id, msg)) => {
                     let _ = resp_tx.send(json_ok_msg(&msg_id, &msg));
                     true
-                }
-                Ok(SendOutcome::RateLimited) => {
-                    let _ = resp_tx.send(json_rate_limited());
-                    false
                 }
                 Err(error) => {
                     let _ = resp_tx.send(json_error(&error.to_string()));
@@ -114,13 +116,9 @@ pub(crate) async fn handle_ipc_command(
                 body,
             };
             match broadcast_exchange(swarm, author, leg, state, sender, output).await {
-                Ok(SendOutcome::Sent(msg_id, msg)) => {
+                Ok((msg_id, msg)) => {
                     let _ = resp_tx.send(json_ok_msg(&msg_id, &msg));
                     true
-                }
-                Ok(SendOutcome::RateLimited) => {
-                    let _ = resp_tx.send(json_rate_limited());
-                    false
                 }
                 Err(error) => {
                     let _ = resp_tx.send(json_error(&error.to_string()));
@@ -132,18 +130,97 @@ pub(crate) async fn handle_ipc_command(
             let _ = resp_tx.send(peers_response(state));
             false
         }
+        IpcCommand::StatePatch {
+            swarm: _,
+            patch,
+            if_doc_hash,
+        } => {
+            let outcome = broadcast_state_patch(
+                swarm,
+                author,
+                patch,
+                if_doc_hash,
+                state,
+                sender,
+                output,
+                crate::protocol::Channel::State,
+            )
+            .await;
+            let (response, broadcast) = state_patch_response(outcome);
+            let _ = resp_tx.send(response);
+            broadcast
+        }
+        IpcCommand::StateGet { swarm: _ } => {
+            let _ = resp_tx.send(state_get_response(state, crate::protocol::Channel::State));
+            false
+        }
+        IpcCommand::MetaPatch {
+            swarm: _,
+            patch,
+            if_doc_hash,
+        } => {
+            let outcome = broadcast_state_patch(
+                swarm,
+                author,
+                patch,
+                if_doc_hash,
+                state,
+                sender,
+                output,
+                crate::protocol::Channel::Meta,
+            )
+            .await;
+            let (response, broadcast) = state_patch_response(outcome);
+            let _ = resp_tx.send(response);
+            broadcast
+        }
+        IpcCommand::MetaGet { swarm: _ } => {
+            let _ = resp_tx.send(state_get_response(state, crate::protocol::Channel::Meta));
+            false
+        }
     }
 }
 
-/// Serialize the live roster snapshot as the `ahs peers` response.
-/// `ok:true` plus the snapshot's `participants` (recency-sorted) and
-/// `count` (`participants.len() + 1`).
+/// Map a state-patch outcome to its IPC response JSON and whether anything was
+/// broadcast (so the caller can refresh the heartbeat clock). A `Stale` conflict
+/// gets the structured `stale` marker; only `Applied` counts as a broadcast.
+fn state_patch_response(outcome: anyhow::Result<StatePatchOutcome>) -> (String, bool) {
+    match outcome {
+        Ok(StatePatchOutcome::Applied) => (json_ack(), true),
+        Ok(StatePatchOutcome::Invalid(why)) => (json_error(&why), false),
+        Ok(StatePatchOutcome::Stale(why)) => (json_stale(&why), false),
+        Err(error) => (json_error(&error.to_string()), false),
+    }
+}
+
+/// The `ahsw state get` response: the derived document plus its `doc_hash`
+/// (the compare-and-set token a later `state patch --if-doc-hash` passes back).
+fn state_get_response(state: &EventLoopState, channel: crate::protocol::Channel) -> String {
+    let log = match channel {
+        crate::protocol::Channel::State => &state.state_log,
+        crate::protocol::Channel::Meta => &state.meta_log,
+    };
+    let document = crate::daemon::state_doc::derive_document(log);
+    // Serialize the document once and reuse those exact bytes for both the
+    // content hash (the CAS token) and the response body. `document_hash` hashes
+    // the same `serde_json` encoding, so the hash is unchanged; splicing the
+    // serialized JSON and the hex hash verbatim is safe (both are inert text).
+    let doc_json = serde_json::to_string(&document).unwrap_or_else(|_| "null".to_owned());
+    let doc_hash = crate::protocol::identity::content_hash_hex(doc_json.as_bytes());
+    format!(r#"{{"ok":true,"document":{doc_json},"doc_hash":"{doc_hash}"}}"#)
+}
+
+/// Serialize the live roster snapshot as the `ahsw peers` response.
+/// `ok:true` plus the snapshot's `participants` (recency-sorted, peers only)
+/// and `participant_count` (`participants.len() + 1` — the `+1` is self, so
+/// the count is swarm size, not the array length). Matches the field name the
+/// MCP `swarm_info` result and the state file already use for this quantity.
 fn peers_response(state: &EventLoopState) -> String {
     let snapshot = state.roster_snapshot();
     serde_json::json!({
         "ok": true,
         "participants": snapshot.participants,
-        "count": snapshot.count,
+        "participant_count": snapshot.count,
     })
     .to_string()
 }

@@ -5,6 +5,7 @@ import { sendExchange } from "../core";
 import { engagementKind, formatDisplay } from "../format";
 import { runSwarmCommand } from "../helpers";
 import { state } from "../state";
+import { trackStart, trackStatus } from "../todo";
 import type { ExchangeKind, SwarmEvent } from "../types";
 import {
   BEE,
@@ -29,7 +30,7 @@ const BATCH_CAP = 128;
 // knows the standing reply policy: answer anything addressed to it, weigh in on
 // a broadcast only when it can help.
 const REPLY_POLICY =
-  "Swarm messages. Reply with swarm_send to any addressed to you (→ you); for a broadcast, reply only if you can clearly help — otherwise take no action. Send plain text — do not add the 🐝, the swarm UI adds it.";
+  "Swarm messages. Reply with swarm_send to any addressed to you (→ you); for a broadcast, reply only when you are ≥90% confident you can help — otherwise take no action. Ping/pong is automatic; never reply to a ping. Replies are plain text, not threaded — do not add the 🐝️, the swarm UI adds it.";
 
 function pushPending(event: SwarmEvent): void {
   if (state.pendingMessages.length >= PENDING_CAP) {
@@ -83,11 +84,22 @@ export function flushMessageBatch(): void {
   if (!state.policySent && injectSilent(REPLY_POLICY)) state.policySent = true;
 
   const myNick = state.session?.nickname;
-  const lines = batch.map((message) =>
-    engagementKind(message, myNick) === "directed"
+  const lines = batch.map((message) => {
+    const kind = engagementKind(message, myNick);
+    if (kind === "state") {
+      // Carry the freshly-derived document into the turn so the agent reacts in
+      // one go (no separate read). Guidance is task-agnostic — the agent decides.
+      const document = JSON.stringify(message.document ?? {}, null, 2);
+      return `${BEE} \`<${message.author}>\` changed shared state. New document:
+\`\`\`json
+${document}
+\`\`\`
+React per your current task — act only on your turn (check a turn marker in the document), then apply your change with swarm_apply_patch.`;
+    }
+    return kind === "directed"
       ? `${BEE} \`<${message.author}>\` → you: ${message.body}`
-      : `${BEE} \`<${message.author}>\`: ${message.body}`,
-  );
+      : `${BEE} \`<${message.author}>\`: ${message.body}`;
+  });
   if (!inject(lines.join("\n"))) {
     for (const message of batch) pushPending(message);
   }
@@ -192,7 +204,7 @@ async function handleIncomingOffer(
       /* best effort */
     }
     state.exchanges.delete(exchangeId);
-    pushDisplay(`declined ${kind} from \`<${author}>\``);
+    trackStatus({ kind, peer: author, role: "receiver", status: "declined" });
     return;
   }
 
@@ -204,6 +216,7 @@ async function handleIncomingOffer(
     return;
   }
 
+  trackStart({ kind, peer: author, role: "receiver", task: summary, status: "accepted" });
   const tool = `the swarm_exchange tool (exchange_id "${exchangeId}", to "${author}", kind "${kind}")`;
   if (kind === "handover") {
     inject(
@@ -248,10 +261,15 @@ function handleExchangeEvent(event: SwarmEvent): void {
       );
       break;
     case "accept":
-      pushDisplay(`\`<${author}>\` accepted the ${kind}`);
+      trackStatus({ kind, peer: author, role: existing.role, status: "accepted" });
       break;
     case "decline":
-      pushDisplay(`\`<${author}>\` declined the ${kind}${event.body ? `: ${event.body}` : ""}`);
+      trackStatus({
+        kind,
+        peer: author,
+        role: existing.role,
+        status: event.body ? `declined: ${event.body}` : "declined",
+      });
       state.exchanges.delete(exchangeId);
       break;
     case "done":
@@ -262,7 +280,7 @@ function handleExchangeEvent(event: SwarmEvent): void {
         } catch {
           /* best effort */
         }
-        pushDisplay(`handed over to \`<${author}>\``);
+        trackStatus({ kind, peer: author, role: existing.role, status: "done" });
         state.exchanges.delete(exchangeId);
       } else if (existing.role === "initiator" && kind === "task") {
         // Task result returns here (Phase F drives the confirm/change loop).
@@ -287,14 +305,15 @@ function handleExchangeEvent(event: SwarmEvent): void {
         inject(
           `Handover ${exchangeId} confirmed by \`<${author}>\`. Do the work now (confirm with the user first if it makes changes). It is yours and is not reported back.`,
         );
+        trackStatus({ kind, peer: author, role: existing.role, status: "confirmed" });
       } else if (existing.role === "receiver" && kind === "task") {
         // Receiver side of a task: the result was accepted — nothing more to do.
-        pushDisplay(`\`<${author}>\` accepted your task result`);
+        trackStatus({ kind, peer: author, role: existing.role, status: "confirmed" });
       }
       state.exchanges.delete(exchangeId);
       break;
     case "cancel":
-      pushDisplay(`\`<${author}>\` cancelled the ${kind}`);
+      trackStatus({ kind, peer: author, role: existing.role, status: "cancelled" });
       state.exchanges.delete(exchangeId);
       break;
     default:

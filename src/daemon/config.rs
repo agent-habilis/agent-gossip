@@ -24,13 +24,12 @@ use crate::beacon;
 /// A typed in-process request from an embed/MCP session to the event
 /// loop — the shared alternative to the CLI's `IpcCommand`-over-socket
 /// (which must serialize). `Send` broadcasts a message and echoes back the
-/// canonical [`Message`] (`None` ⇒ dropped by the sender-side rate
-/// limiter); `Poll` reads the buffered history after a cursor.
+/// canonical [`Message`]; `Poll` reads the buffered history after a cursor.
 pub(crate) enum SessionRequest {
     Send {
         body: MessageBody,
         reply: Option<Nickname>,
-        resp: oneshot::Sender<Result<Option<Message>>>,
+        resp: oneshot::Sender<Result<Message>>,
     },
     Poll {
         after: Option<u64>,
@@ -40,16 +39,16 @@ pub(crate) enum SessionRequest {
         resp: oneshot::Sender<Vec<crate::daemon::surfaced::SurfacedEvent>>,
     },
     /// Send one leg of an exchange to `to`, correlated by `exchange_id`.
-    /// Echoes back the canonical [`Message`] (`None` ⇒ dropped by the
-    /// sender-side rate limiter), like [`Send`](SessionRequest::Send).
-    /// Addressee validation for `Offer` lives in `broadcast_exchange`.
+    /// Echoes back the canonical [`Message`], like
+    /// [`Send`](SessionRequest::Send). Addressee validation for `Offer`
+    /// lives in `broadcast_exchange`.
     Exchange {
         to: Nickname,
         exchange_id: ExchangeId,
         kind: ExchangeKind,
         phase: ExchangePhase,
         body: MessageBody,
-        resp: oneshot::Sender<Result<Option<Message>>>,
+        resp: oneshot::Sender<Result<Message>>,
     },
     /// Snapshot the live participant roster (active + quiet, recency-sorted).
     Peers {
@@ -61,16 +60,30 @@ pub(crate) enum SessionRequest {
     Ping {
         resp: oneshot::Sender<Vec<output::PingPeer>>,
     },
-    /// Author + broadcast a durable `State` event (the write primitive future
-    /// state-backed features build on). Retained locally + gossiped; the
-    /// response carries any send error.
-    AppendState {
-        body: MessageBody,
+    /// Apply a JSON-Patch change to the shared state: validate against the
+    /// current document, compose the body, then sign + gossip.
+    /// `Err` carries an invalid-patch reason.
+    StatePatch {
+        patch: serde_json::Value,
+        /// Optional compare-and-set guard: the document hash from the caller's
+        /// last `state get`. The patch is rejected if the document has changed.
+        if_doc_hash: Option<String>,
         resp: oneshot::Sender<Result<()>>,
     },
-    /// Snapshot the derived state — event payloads in deterministic replay
-    /// order. The substrate's generic read until typed projections land.
-    StateSnapshot { resp: oneshot::Sender<Vec<String>> },
+    /// Read the current derived shared-state document (the JSON-Patch fold).
+    StateGet {
+        resp: oneshot::Sender<serde_json::Value>,
+    },
+    /// `meta`-channel counterpart of [`StatePatch`](SessionRequest::StatePatch).
+    MetaPatch {
+        patch: serde_json::Value,
+        if_doc_hash: Option<String>,
+        resp: oneshot::Sender<Result<()>>,
+    },
+    /// `meta`-channel counterpart of [`StateGet`](SessionRequest::StateGet).
+    MetaGet {
+        resp: oneshot::Sender<serde_json::Value>,
+    },
     /// Broadcast pre-built wire bytes **verbatim** — no signing, no chain
     /// stamping. The escape hatch the `adversarial` feature uses to inject
     /// crafted/malicious messages (bad signature, equivocation, backdating)
@@ -101,7 +114,7 @@ pub(crate) enum SessionRequest {
 /// process on quit?" and "spawn the unix-socket listener?" instead of
 /// carrying them as independent, drift-prone bools.
 pub(crate) enum DriverMode {
-    /// The `ahs create` / `join` CLI. Owns the unix-socket IPC listener
+    /// The `ahsw create` / `join` CLI. Owns the unix-socket IPC listener
     /// (for `msg` / `poll`); ctrl-c / SIGTERM `std::process::exit`s.
     Cli,
     /// Fully in-process, shared by the embed facade and the MCP server.
@@ -159,7 +172,7 @@ pub(crate) struct EventLoopConfig {
     /// In-process / ephemeral for now (see [`crate::protocol::identity`]).
     pub identity: std::sync::Arc<crate::protocol::identity::Identity>,
     pub swarm: SwarmId,
-    /// Decoded swarm name (from the `ahs…` id). Carried so the
+    /// Decoded swarm name (from the `🐝…` id). Carried so the
     /// shutdown path can print `left #NAME` without re-parsing
     /// the id.
     pub name: SwarmName,
@@ -168,11 +181,6 @@ pub(crate) struct EventLoopConfig {
     /// global.
     pub output: output::Output,
     pub interactive: bool,
-    /// This node's self-reported model / harness (`--model`/`--harness`),
-    /// announced in our `joined` body so peers can show what we run on.
-    /// `None` when the flag was omitted.
-    pub model: Option<String>,
-    pub harness: Option<String>,
     pub endpoint: Endpoint,
     /// iroh router whose accept loop routes inbound gossip
     /// connections. Must be held alive for the whole event loop —
@@ -180,10 +188,6 @@ pub(crate) struct EventLoopConfig {
     /// unreachable to new peers.
     pub router: Router,
     pub max_peers: usize,
-    /// Per-author messages-per-minute cap decoded from the swarm id
-    /// (`0` ⇒ no rate limit). Uniform across the swarm because it travels
-    /// in the hash; the event loop builds the `SwarmRateLimiter` from it.
-    pub rate_limit_per_min: u16,
     /// Inputs for (re)building the co-hosted rendezvous endpoint.
     /// `rendezvous_params.id` doubles as the bootstrap-cache heal
     /// anchor and the participant-side neighbor-filter id;

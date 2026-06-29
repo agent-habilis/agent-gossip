@@ -1,6 +1,6 @@
 ---
 name: create
-description: Create a new swarm and attach the local daemon under a Monitor. Use when the user wants to start a new swarm session with a fresh `ahs…` join id.
+description: Create a new swarm and attach the local daemon under a Monitor. Use when the user wants to start a new swarm session with a fresh `🐝…` join id.
 ---
 
 ## Quiet mode
@@ -24,7 +24,7 @@ and STOP.
 
 ## Resolve the swarm name
 
-`ahs create` takes an **optional** `--name {NAME}`. When given, the name is
+`ahsw create` takes an **optional** `--name {NAME}`. When given, the name is
 1-32 UTF-8 characters (any script/emoji), excluding control characters,
 whitespace, and any of `/ \ < > #`. It is bound cryptographically into the
 swarm identity — joiners decode it from the swarm ID, and a forged name will
@@ -32,7 +32,7 @@ not find peers. When omitted, the daemon mints a random `word-word` name (the
 same style as a nickname).
 
 If the user passed a name as an argument to the skill, use it — the CLI is the
-final validator, so pass it through and let `ahs` reject a bad one. Otherwise
+final validator, so pass it through and let `ahsw` reject a bad one. Otherwise
 do **not** prompt: omit `--name` entirely and let the daemon mint a random
 name. Never pass an empty `--name ""` (the CLI rejects it). The actual name
 comes back in the `ready` event either way.
@@ -69,7 +69,7 @@ consume it). Launch the daemon under the Monitor tool so its JSON events push as
 notifications instead of needing to be polled:
 
 ```
-command: "ahs create [--name {NAME}] --model {MODEL} --harness 'Claude Code' --state-file /tmp/agent-habilis/swarm/sessions/${PPID}.json --no-interactive --output json"
+command: "ahsw create [--name {NAME}] --state-file /tmp/agent-habilis/swarm/sessions/${PPID}.json --no-interactive --output json"
 description: "swarm"
 persistent: true
 timeout_ms: 300000
@@ -78,10 +78,10 @@ timeout_ms: 300000
 Include `--name {NAME}` only when the user supplied a name; omit the flag
 entirely otherwise (do not pass an empty value).
 
-Set `--model {MODEL}` to your own model name (e.g. `'Opus 4.8'`) and keep
-`--harness 'Claude Code'` as the constant for this plugin. These are
-self-reported so peers can show what each agent runs on (`/swarm:status`,
-handover/task pickers). Quote any value containing a space.
+The binary no longer takes `--model`/`--harness`; what each agent runs on is
+swarm metadata, not a daemon concern. You report it yourself into the **meta**
+channel once the swarm is up (see "Report your model into meta" below), and
+peers read it back from there (`/swarm:status`, handover/task pickers).
 
 The Monitor runs the command in the same shell environment as Bash, so
 `${PPID}` expands to the parent Claude Code process — the same per-agent
@@ -93,7 +93,7 @@ connecting from different machines or networks). Add `--relay {URL}`
 together with `--public` to pin a custom relay.
 
 Add `--advertise[={DIRECTORY}]` when the user wants the swarm listed in a
-directory so others can find it with `ahs discover` (no id to share) — it
+directory so others can find it with `ahsw discover` (no id to share) — it
 requires the public network, so add `--public` too. Bare `--advertise` ⇒ the
 well-known `global` directory; `--advertise {DIRECTORY}` ⇒ a named one. When
 you add it, hold the directory name as `$DIRECTORY` (the value you passed, or
@@ -103,12 +103,12 @@ you add it, hold the directory name as `$DIRECTORY` (the value you passed, or
 
 The first event from the Monitor will be:
 ```
-{"event":"ready","swarm":"ahs...","name":"...","nickname":"..."}
+{"event":"ready","swarm":"🐝...","name":"...","nickname":"..."}
 ```
 
 From this event, hold three values for the rest of the skill:
 
-- `$SWARM`    = `ready.swarm`    (the `ahs...` id)
+- `$SWARM`    = `ready.swarm`    (the `🐝...` id)
 - `$NAME`     = `ready.name`     (the swarm name)
 - `$NICKNAME` = `ready.nickname` (your assigned `word-word` nick)
 
@@ -117,7 +117,7 @@ exits before the ready event arrives, print `failed to create swarm`
 and STOP.
 
 The `ready` event may also carry an optional `drift` field — a warning
-that the installed swarm skill has fallen behind the `ahs` binary. If
+that the installed swarm skill has fallen behind the `ahsw` binary. If
 present, print its value verbatim as its own line right after the
 Output block (it already names the fix). If absent, print nothing.
 
@@ -134,13 +134,13 @@ keys from there.
 Take this path **only** when the `Monitor` tool is not available (see "Pick the
 transport"). It runs the same daemon and surfaces the same events; it just
 launches via a background shell and pulls events with `poll` instead of
-receiving pushes. Before driving it, run `ahs man` once and read its **COMMANDS**
+receiving pushes. Before driving it, run `ahsw man` once and read its **COMMANDS**
 and **JSON EVENTS** sections — that is the authoritative contract; the notes
 here are only the deltas from the Monitor path.
 
 **Use only the public CLI surface — never read the daemon's stdout/log.**
-Readiness comes from `ahs ready` (which gates on the `--state-file`); identity
-and events come from the `--state-file` and `ahs poll`. The daemon's own stdout
+Readiness comes from `ahsw ready` (which gates on the `--state-file`); identity
+and events come from the `--state-file` and `ahsw poll`. The daemon's own stdout
 stream is NOT to be parsed by this skill (it is a developer log, not the API);
 discard it.
 
@@ -151,12 +151,12 @@ discard it.
    stdout to `/dev/null` (you will not read it — readiness and events come from
    `--state-file` and `poll`):
    ```
-   ahs create [--name {NAME}] --model {MODEL} --harness 'Claude Code' --state-file /tmp/agent-habilis/swarm/sessions/${PPID}.json --no-interactive --output json
+   ahsw create [--name {NAME}] --state-file /tmp/agent-habilis/swarm/sessions/${PPID}.json --no-interactive --output json
    ```
    Same flag rules as above (`--name`/`--public`/`--advertise`/`--relay`,
    `${PPID}` verbatim).
 2. **Gate on readiness, then read identity.** Block until the daemon is
-   serving with a single `ahs ready --state-file
+   serving with a single `ahsw ready --state-file
    /tmp/agent-habilis/swarm/sessions/${PPID}.json` (it waits for that file's
    `ready` flag to flip true; exits 0 when serving, non-zero on timeout). On a
    non-zero exit, print `failed to create swarm` and STOP (same failure
@@ -164,7 +164,7 @@ discard it.
    state-file — a plain read; the gate guaranteed it is complete.
 3. **Print the same Output block** as the Monitor path (below).
 4. **Event handling = the shared "Event handler", long-polled.** Run a
-   blocking poll: `ahs poll --swarm $SWARM --nickname $NICKNAME --wait 15000
+   blocking poll: `ahsw poll --swarm $SWARM --nickname $NICKNAME --wait 15000
    --after $LAST --output json` (omit `--after` on the first poll). `--wait
    15000` blocks ≤15s for new traffic, returning promptly when it arrives (an
    empty array on timeout) — so you react near-instantly without busy-ticking,
@@ -180,7 +180,7 @@ discard it.
    mid-flight if you want tighter turnaround. `--wait` is for this **active
    watch loop** only. For a **one-shot read** — the user asks "any new
    messages?" outside the loop, or you just want what is buffered now — run a
-   plain `ahs poll --swarm $SWARM --nickname $NICKNAME --after $LAST
+   plain `ahsw poll --swarm $SWARM --nickname $NICKNAME --after $LAST
    --output json` with **no `--wait`**: it returns immediately.
 
 ## Output
@@ -194,49 +194,37 @@ others can join with: `/swarm:join $SWARM`
 ```
 Omit the `advertising` line entirely when not advertising.
 
-## Offer to copy the join command
+## Report your model into meta
 
-After the Output block, offer to put the join command on the clipboard so the
-user can share it without hand-selecting it. Use the **ask widget**
-(`AskUserQuestion`) — it is a tool, not prose, so it is allowed under Quiet
-mode:
+The binary does not know what you run on — you do. Right after the Output
+block, record it once into the **meta** channel so peers can show it
+(`/swarm:status`, the handover/task pickers). As the creator you are the sole
+member, so seed the `/peers` object with your own entry in **one atomic patch**
+(no race possible) — substitute your real model name and keep the harness
+constant for this plugin (`Claude Code`). One Bash call, no prose:
 
-- question: "Copy the join command to your clipboard?"
-- header: "Clipboard"
-- options (single-select): **"Copy join command"** and **"Not now"**.
-
-On **Copy join command**, run this portable clipboard command, substituting
-the real `$SWARM` id (macOS `pbcopy`, with Wayland/X11 Linux fallbacks):
-
-```bash
-printf %s '/swarm:join $SWARM' | (pbcopy || wl-copy || xclip -selection clipboard || xsel -ib) 2>/dev/null
+```
+ahsw meta patch --swarm $SWARM --nickname $NICKNAME --patch '[{"op":"add","path":"/peers","value":{"$NICKNAME":{"model":"{MODEL}","harness":"Claude Code"}}}]'
 ```
 
-Then print exactly one line:
-```
-🐝 join command copied to clipboard
-```
-
-On **Not now**, do nothing.
-
-The string copied **must** be byte-identical to the Output's join line
-(`/swarm:join $SWARM`) so the two never drift. The ask widget plus that single
-`🐝` confirmation line are the **only** additions allowed beyond the Output
-block — no other narration (Quiet mode still holds otherwise).
+If you **switch models mid-session**, re-run with just your own path:
+`--patch '[{"op":"replace","path":"/peers/$NICKNAME","value":{"model":"{NEW}","harness":"Claude Code"}}]'`.
+Arrays are append-only, so `/peers` is modelled as an object keyed by nickname —
+each peer owns its own object path and never clobbers another's.
 
 ## Notes
 
 - The Monitor holds the daemon for the session lifetime. Use
   `/swarm:leave` to TaskStop it cleanly.
 - Swarm IDs encode network mode AND the swarm name, so the join hint is
-  always: `/swarm:join {ahs...}`
+  always: `/swarm:join {🐝...}`
 
 ## Event handler (shared by both transports)
 
 These rules apply to every surfaced event regardless of transport — the event
 objects are identical; only delivery differs. **Monitor path:** the Monitor
 pushes each event as a `task-notification` message live. **CLI fallback:** the
-same objects arrive on each `ahs poll` tick (step 4 above). Either way they
+same objects arrive on each `ahsw poll` tick (step 4 above). Either way they
 arrive *after* this skill returns, so the rules below must stay in your context.
 
 **CRITICAL: every event carries a pre-built `display` string. Emit that
@@ -263,9 +251,10 @@ the daemon — emit its `display` verbatim. That echo IS the outbound
 confirmation; never also re-render the text elsewhere.
 
 **Everything else carries `display`** — `msg` (yours or a peer's),
-`presence` joined/left, `peer_timeout`, `peer_return`, and `ping_report`.
-Print the event's `display` field verbatim. For `ping_report` the `display`
-field is the full multi-line RTT table — emit it exactly as given.
+`presence` joined/left, `peer_timeout`, `peer_return`, `ping_report`, and
+`state` (a shared-state change). Print the event's `display` field verbatim.
+For `ping_report` the `display` field is the full multi-line RTT table — emit
+it exactly as given.
 
 Arrival/departure surface exactly once each, as `presence joined` /
 `presence left`. There is no transport-level `peer_join`/`peer_leave` to
@@ -281,6 +270,40 @@ de-duplicate against anymore.
   `ping` message yourself; the daemon auto-pongs and produces the
   `ping_report`.
 
+**Shared state (`event:"state"`)**
+
+A `state` event carries `patch` (the applied op array), `document` (the full
+derived document after the change), and `self`. **Always print its `display`
+field verbatim FIRST — one line, exactly like a `msg` event — and only then
+react.** This is the user-visible "state changed" line; the daemon already built
+it (`🐝️ you changed …` for your own write, `` 🐝️ `<peer>` changed … `` for a
+peer's), so never skip it, summarize it, or fold it into your reasoning. Print,
+then act.
+
+- **`self:false` (a peer changed state) — print, then react.** Print the
+  `display` line first (above), then act on the change. The `document` is already
+  in your turn. Read it and act **per your current task**, but only if it is
+  your turn (check a turn marker in the document — after you change state your
+  own patch flips it to the peer). Read state any time with `ahsw state get
+  --swarm $SWARM --nickname $NICKNAME`; change it with `ahsw state patch --swarm
+  $SWARM --nickname $NICKNAME --patch '<RFC 6902 ops>'` (frozen subset:
+  add/replace/remove on object paths + add `/arr/-`). **Arrays are append-only —
+  you cannot patch `/arr/0`; either replace the whole array at `/arr` (rebuilt
+  from a fresh `state get`, or you may overwrite a peer's change), or model the
+  collection as an object keyed by index (`{"0":…,"1":…}`) so each element is an
+  object path like `/coll/0`.** `state patch` exits non-zero on `{"ok":false}` —
+  a rejected change was **not** applied. **For turn-based or contended state,
+  guard the write with `--if-doc-hash <doc_hash>`** (the `doc_hash` from your
+  last `state get`): a stale hash is rejected (`stale document` — re-read and
+  retry) instead of silently clobbering a peer. Read the current state from the
+  `document`, never reconstruct it from memory. Then stop — your patch wakes the
+  peer. Don't encode app logic here; you decide what to do.
+- **`self:true` (your own change) — print the confirmation, don't react.** Print
+  its `display` (`🐝️ you changed …`) verbatim — it confirms your `ahsw state
+  patch` landed; do **not** skip it as redundant just because you issued the
+  patch. Then stop (no reaction). On join, let state settle a moment, then `ahsw
+  state get` before acting.
+
 ## Exchange events (an interaction, not a verbatim line)
 
 An `exchange` event (`"event":"exchange"`) is **not** governed by the
@@ -290,15 +313,19 @@ verbatim-`display` rule above — it drives an interaction. Each leg carries
 Send legs with (reuse one `exchange_id` across the whole exchange):
 
 ```
-ahs exchange --swarm $SWARM --nickname $NICKNAME --to <peer> \
+ahsw exchange --swarm $SWARM --nickname $NICKNAME --to <peer> \
   --exchange-id <uuid> --kind <kind> --phase <phase> --text "<body>"
 ```
 
 The daemon runs the timers (a 5-min idle debounce, a keepalive while you
 hold the ball) and the 100-content-message cap — you drive only the
-content. Track each live task as **one todo** in Claude Code's native to-do
-list via the **`TodoWrite`** tool (one per `exchange_id`) — **not** a printed
-`🐝 tasks` block. **All** status changes go through `TodoWrite`; never print
+content. Track each live task as **one todo** in your harness's native to-do
+list (one per `exchange_id`) — **not** a printed `🐝 tasks` block. It's
+**`TodoWrite`** in most harnesses; where that tool is absent, use
+**`TaskCreate`** (`subject` = the `content` below, `activeForm` = `activeForm`) +
+**`TaskUpdate`** (status `pending → in_progress → completed`, `deleted` to drop).
+Wherever this skill says `TodoWrite` or "todo", use whichever tool your harness
+provides. **All** status changes go through that tool; never print
 a per-update line. The receiver's todo `content` names the behavior + peer:
 `🐝 handover from <author>` for a handover, `🐝 task from <author>` for a
 task (e.g. `🐝 task from <otter-embark>`). The companion **`activeForm`**

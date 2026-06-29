@@ -26,16 +26,6 @@ pub(crate) struct SharedServerOpts {
     #[arg(long, default_value_t = false)]
     pub filter_self: bool,
 
-    /// Model this agent runs on (e.g. "Opus 4.8"). Self-reported, announced
-    /// to peers so the roster / `/swarm:status` can show what each peer runs.
-    #[arg(long)]
-    pub model: Option<String>,
-
-    /// The agent you run in (Claude Code, Cursor, Codex, …). Self-reported,
-    /// announced to peers alongside `--model` — report your own harness.
-    #[arg(long)]
-    pub harness: Option<String>,
-
     /// Soft ceiling on tracked peer addresses (gossip relays beyond
     /// this). Note: the gossip overlay maintains HyParView's
     /// `active_view_capacity` (5) active neighbors regardless — this is
@@ -78,7 +68,7 @@ pub(crate) struct SharedServerOpts {
     #[arg(long, hide = true, default_value_t = consts::BEACON_COHOST_GRACE_SECS)]
     pub beacon_cohost_grace_secs: u64,
 
-    /// How long an `ahs ping` round collects pongs (seconds).
+    /// How long an `ahsw ping` round collects pongs (seconds).
     #[arg(long, hide = true, default_value_t = consts::PING_WINDOW_SECS)]
     pub ping_window_secs: u64,
 

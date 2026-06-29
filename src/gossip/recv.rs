@@ -16,7 +16,7 @@ use crate::daemon::state::EventLoopState;
 use crate::lifecycle;
 use crate::lookup::add_peer_addr;
 use crate::protocol::identity;
-use crate::protocol::{ExchangePhase, Message, MessageKind, Nickname};
+use crate::protocol::{Channel, ExchangePhase, Message, MessageKind, Nickname};
 use crate::util::tuning::RECLAIM_WINDOW_SECS;
 
 use super::broadcast::{announce_arrival, broadcast_msg, broadcast_peer_info};
@@ -75,7 +75,6 @@ pub(crate) async fn handle_gossip_event(
                     ctx.author,
                     ctx.identity,
                     ctx.endpoint,
-                    ctx.self_meta,
                 )
                 .await;
                 state.announced = true;
@@ -233,6 +232,37 @@ fn handle_exchange_leg(
     lifecycle::handle_exchange(ctx.output, message, to, phase, surfaceable, ctx.author)
 }
 
+/// Surface a reassembled multipart body (a `Msg` or an `Exchange` content leg)
+/// through the same lifecycle path an unsplit message of that kind takes. The
+/// raw parts were already retained; this only surfaces the logical view, so it
+/// does **not** re-retain or re-index.
+fn surface_logical(
+    logical: &Message,
+    surfaceable: bool,
+    state: &mut EventLoopState,
+    ctx: &HandlerCtx<'_>,
+) {
+    match &logical.kind {
+        MessageKind::Msg { .. } => {
+            lifecycle::handle_msg(ctx.output, logical, surfaceable, ctx.author);
+        }
+        MessageKind::Exchange { to, phase, .. } => {
+            handle_exchange_leg(logical, to, *phase, surfaceable, state, ctx);
+        }
+        // Only `Msg` and content `Exchange` legs are ever split (the sender
+        // refuses to split anything else), so other kinds never reach here.
+        MessageKind::Presence { .. }
+        | MessageKind::PeerInfo
+        | MessageKind::Digest
+        | MessageKind::StateDigest
+        | MessageKind::MetaDigest
+        | MessageKind::Ping
+        | MessageKind::Pong { .. }
+        | MessageKind::State
+        | MessageKind::Meta => {}
+    }
+}
+
 async fn handle_gossip_received(content: Bytes, state: &mut EventLoopState, ctx: &HandlerCtx<'_>) {
     let Ok(message) = Message::parse(&content) else {
         ctx.output.error("Failed to parse message");
@@ -266,7 +296,7 @@ async fn handle_gossip_received(content: Bytes, state: &mut EventLoopState, ctx:
     if state.note_inbound(Instant::now()) {
         flush_pending(state, ctx, "inbound traffic resumed").await;
     }
-    // Duplicate suppression: a true repeat delivery must not re-rate-count,
+    // Duplicate suppression: a true repeat delivery must not
     // re-heartbeat, re-run membership, re-embed-forward, re-log, or re-print.
     // Re-broadcasts of `joined`/`Alive` mint fresh ids so they are never
     // falsely suppressed here. Only authenticated messages reach this gate.
@@ -280,37 +310,7 @@ async fn handle_gossip_received(content: Bytes, state: &mut EventLoopState, ctx:
     // Identities are distinguished by their key fingerprint, not the name.
     // Fork (equivocation) detection and DAG folding happen at the log-push
     // site below, coupled to retention so their indexes stay bounded by the
-    // log window — a rate-dropped or relay-to-other Msg is never indexed.
-    // One quota for every Msg (open or reply); plumbing kinds (presence,
-    // Alive, digest, PeerInfo) are exempt — rate-limiting them would
-    // break membership/anti-entropy. Keyed on the verified pubkey.
-    let rate_ok = match &message.kind {
-        MessageKind::Msg { .. } => state.rate_limiter.check(&message.pubkey),
-        // Content exchange legs share the `Msg` quota; the `Progress` phase is
-        // liveness plumbing (the receiver's percent+keepalive heartbeat) and
-        // is exempt with the other plumbing kinds — rate-limiting it would let
-        // a busy exchange wrongly trip the silence timeout.
-        MessageKind::Exchange { phase, .. }
-            if crate::protocol::message::is_content_phase(*phase) =>
-        {
-            state.rate_limiter.check(&message.pubkey)
-        }
-        MessageKind::Presence { .. }
-        | MessageKind::PeerInfo
-        | MessageKind::Digest | MessageKind::StateDigest
-        | MessageKind::Ping
-        | MessageKind::Pong { .. }
-        // Durable state events are infrequent and load-bearing; rate-limiting
-        // them (or their anti-entropy backfill) would drop membership state.
-        | MessageKind::State
-        | MessageKind::Exchange { .. } => true,
-    };
-    if !rate_ok {
-        let notice = format!("rate limit exceeded for [{}], dropping", message.author);
-        ctx.output.info(&notice);
-        tracing::debug!(author = %message.author, "rate limit exceeded; dropping");
-        return;
-    }
+    // log window.
 
     // Heartbeat + membership + surfacing + join horizon. The lifecycle
     // layer owns every roster/presentation side effect; the gossip
@@ -318,6 +318,19 @@ async fn handle_gossip_received(content: Bytes, state: &mut EventLoopState, ctx:
     crate::logging::messages::log_in(&message);
     let observed = lifecycle::observe(&message, state, ctx);
     let surfaceable = observed.surfaceable;
+
+    // A part of a split body never surfaces as a raw slice. Retain it for
+    // anti-entropy (so a missing part heals like any message), and when its
+    // group completes, surface the reassembled logical message once — embed-
+    // pushed and dispatched exactly like an ordinary inbound message.
+    if message.part.is_some() {
+        retain_and_index(message.clone(), &canonical, state, ctx);
+        if let Some(logical) = state.reassemble(&message) {
+            maybe_push_embed(ctx, &logical, surfaceable);
+            surface_logical(&logical, surfaceable, state, ctx);
+        }
+        return;
+    }
 
     maybe_push_embed(ctx, &message, surfaceable);
 
@@ -335,7 +348,7 @@ async fn handle_gossip_received(content: Bytes, state: &mut EventLoopState, ctx:
             // pinger. The daemon owns this — no agent involvement. Pong
             // is gossip-broadcast (no unicast transport), so one probe in
             // an N-node swarm fans out to N flooded pongs; acceptable for
-            // the small swarms and rare manual `ahs ping` this serves.
+            // the small swarms and rare manual `ahsw ping` this serves.
             broadcast_msg(
                 ctx.sender,
                 &Message::new_pong(ctx.swarm, ctx.author, message.author.clone())
@@ -360,13 +373,31 @@ async fn handle_gossip_received(content: Bytes, state: &mut EventLoopState, ctx:
             return;
         }
         MessageKind::State => {
-            // Durable state: record in the un-pruned state log (dedup by id);
-            // never chat-logged or poll/fetch-surfaced. See `daemon::state_log`.
-            state.state_log.insert(message);
+            ingest_channel_event(
+                Channel::State,
+                &mut state.state_log,
+                &message,
+                surfaceable,
+                ctx,
+            );
             return;
         }
         MessageKind::StateDigest => {
-            antientropy::handle_state_digest(&message, state, ctx).await;
+            antientropy::handle_state_digest(Channel::State, &message, state, ctx).await;
+            return;
+        }
+        MessageKind::Meta => {
+            ingest_channel_event(
+                Channel::Meta,
+                &mut state.meta_log,
+                &message,
+                surfaceable,
+                ctx,
+            );
+            return;
+        }
+        MessageKind::MetaDigest => {
+            antientropy::handle_state_digest(Channel::Meta, &message, state, ctx).await;
             return;
         }
         MessageKind::Presence { subtype } => {
@@ -446,6 +477,27 @@ fn retain_and_index(
 /// `messages()`; forever for CLI/MCP where the field is `None`).
 /// `surfaceable` keeps pre-join backlog off the embed channel too; plumbing
 /// kinds (digest/ping/pong) are excluded.
+/// Ingest a durable channel event (`State`/`Meta`) into its `log`: dedup-insert,
+/// then surface a `StateChanged` for `channel` only when the derived doc changed
+/// and we're past the join horizon (a backfilling joiner updates its doc silently
+/// instead of reacting to replayed intermediate states). A received event is
+/// never our own (`is_self = false`). Both channels share this path verbatim.
+fn ingest_channel_event(
+    channel: Channel,
+    log: &mut crate::daemon::state_log::StateLog,
+    message: &Message,
+    surfaceable: bool,
+    ctx: &HandlerCtx<'_>,
+) {
+    let before = crate::daemon::state_doc::derive_document(log);
+    if log.insert(message.clone()) {
+        let after = crate::daemon::state_doc::derive_document(log);
+        if surfaceable && after != before {
+            ctx.output.state_changed(channel, message, &after, false);
+        }
+    }
+}
+
 fn maybe_push_embed(ctx: &HandlerCtx<'_>, message: &Message, surfaceable: bool) {
     if let Some(tx) = ctx.external_msg_tx
         && tx.receiver_count() > 0
@@ -453,6 +505,10 @@ fn maybe_push_embed(ctx: &HandlerCtx<'_>, message: &Message, surfaceable: bool) 
         && !matches!(
             message.kind,
             MessageKind::Digest
+                | MessageKind::StateDigest
+                | MessageKind::MetaDigest
+                | MessageKind::State
+                | MessageKind::Meta
                 | MessageKind::Ping
                 | MessageKind::Pong { .. }
                 | MessageKind::Exchange {
@@ -544,13 +600,14 @@ fn is_loggable(kind: &MessageKind) -> bool {
         MessageKind::Presence {
             subtype: crate::protocol::PresenceSubtype::Alive
         } | MessageKind::PeerInfo
-            | MessageKind::Digest | MessageKind::StateDigest
+            | MessageKind::Digest | MessageKind::StateDigest | MessageKind::MetaDigest
             | MessageKind::Ping
             | MessageKind::Pong { .. }
             // Durable state lives in its own un-pruned log, never the chat
             // message-log / poll-fetch buffer (it also returns before reaching
             // here; this keeps the predicate honest if that changes).
             | MessageKind::State
+            | MessageKind::Meta
             // The `Progress` exchange phase is liveness plumbing — never retained
             // or surfaced via poll/fetch, only emitted as a `exchange_progress`
             // widget event. Content exchange legs stay loggable like `Msg`.

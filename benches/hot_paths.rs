@@ -1,18 +1,16 @@
 //! Offline microbenchmarks for the pure, deterministic hot paths run on
-//! every create/join/broadcast: crypto/identity derivation, the `ahs…`
-//! token + config codec, parsing/validation, message (de)serialization,
-//! and the rate limiter. No network, no async — divan prints a summary
+//! every create/join/broadcast: crypto/identity derivation, the `🐝…`
+//! token + config codec, parsing/validation, and message
+//! (de)serialization. No network, no async — divan prints a summary
 //! table at the end.
 //!
 //! Run: `cargo task bench` (or `cargo bench --features bench`). The
 //! `bench` feature exposes `agent_habilis_swarm::harness::bench`, the in-crate
 //! shim over the otherwise-`pub(crate)` internals.
 
-use agent_habilis_swarm::harness::bench::{
-    self as api, BenchConfig, BenchMessage, BenchRateLimiter,
-};
+use agent_habilis_swarm::harness::bench::{self as api, BenchConfig, BenchMessage};
 use agent_habilis_swarm::{MessageBody, Nickname, SwarmName};
-use divan::counter::{BytesCount, ItemsCount};
+use divan::counter::BytesCount;
 use divan::{Bencher, black_box};
 
 fn main() {
@@ -101,7 +99,7 @@ mod token {
 mod parsing {
     use super::{Bencher, MAX_NAME, Nickname, SwarmName, api, black_box};
 
-    // A valid `ahs…` token to exercise the accept path of `SwarmId::new`.
+    // A valid `🐝…` token to exercise the accept path of `SwarmId::new`.
     fn valid_token() -> String {
         api::swarm_token(
             &SwarmName::new("bench").unwrap(),
@@ -164,58 +162,10 @@ mod message {
     }
 }
 
-mod rate_limit {
-    use std::sync::atomic::{AtomicU64, Ordering};
+mod validation {
+    use super::{MessageBody, black_box};
 
-    use super::{BenchRateLimiter, Bencher, ItemsCount, MessageBody, black_box};
-
-    /// Far above the production cap (60/min) so a bench run never exhausts
-    /// the bucket mid-measurement — we time the per-call cost, not the
-    /// rejection path.
-    const HIGH_QUOTA: u16 = 60_000;
-
-    #[divan::bench]
-    fn check_known_author(bencher: Bencher<'_, '_>) {
-        let limiter = BenchRateLimiter::new(HIGH_QUOTA);
-        let author = "steady-author-pubkey";
-        // Prime the map so every timed call takes the borrow path.
-        limiter.check(author);
-        bencher
-            .counter(ItemsCount::new(1usize))
-            .bench(|| black_box(limiter.check(black_box(author))));
-    }
-
-    // First-sighting path: a never-seen author each iteration drives the
-    // `entry()` insert + governor construction. `with_inputs` builds the
-    // fresh nickname *untimed*, so the measurement is the limiter cost
-    // alone, not `format!`/`Nickname::new`.
-    #[divan::bench]
-    fn check_cold_author(bencher: Bencher<'_, '_>) {
-        let limiter = BenchRateLimiter::new(HIGH_QUOTA);
-        // Atomic so the input generator stays `Fn` (divan requires it)
-        // while still yielding a fresh, never-seen author per iteration.
-        let counter = AtomicU64::new(0);
-        bencher
-            .counter(ItemsCount::new(1usize))
-            .with_inputs(|| {
-                let next = counter.fetch_add(1, Ordering::Relaxed);
-                format!("a{next}")
-            })
-            .bench_refs(|author| black_box(limiter.check(author)));
-    }
-
-    // `rate_limit_per_min == 0` → the unlimited early-return (no lock, no
-    // map) — should be ~free.
-    #[divan::bench]
-    fn check_unlimited(bencher: Bencher<'_, '_>) {
-        let limiter = BenchRateLimiter::new(0);
-        let author = "steady-author-pubkey";
-        bencher
-            .counter(ItemsCount::new(1usize))
-            .bench(|| black_box(limiter.check(black_box(author))));
-    }
-
-    // `MessageBody` is public; keep a tiny validation bench alongside.
+    // `MessageBody` is public; keep a tiny validation bench.
     #[divan::bench]
     fn message_body_new() -> bool {
         MessageBody::new(black_box("a normal chat line")).is_ok()

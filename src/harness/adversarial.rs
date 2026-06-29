@@ -27,7 +27,7 @@ pub fn new_key() -> TestKey {
 }
 
 /// The lowercase-hex public key of `key` — the value that appears as the
-/// `pubkey` in the JSON event and is keyed on for rate-limiting.
+/// `pubkey` in the JSON event.
 #[must_use]
 pub fn pubkey_hex(key: &TestKey) -> String {
     identity::encode_pubkey(&key.0.public())
@@ -50,6 +50,22 @@ impl CraftedMsg {
         let body = MessageBody::new(body.to_owned()).expect("test body is valid");
         Self {
             msg: Message::new_message(swarm, &author, body),
+        }
+    }
+
+    /// A crafted shared-state patch (`MessageKind::State`) from `author`, whose
+    /// body is the `{"k":"patch","ops":<ops>}` envelope the reducer parses.
+    /// `ops` is taken verbatim, so a test can inject an out-of-subset /
+    /// non-applying / malformed op array that a correct client's boundary
+    /// validation would have rejected — and assert the receiver folds it as a
+    /// deterministic no-op (never a panic, never a partial apply). Unsigned
+    /// until [`sign`](CraftedMsg::sign).
+    pub fn state_patch(swarm: &SwarmId, author: &str, ops: serde_json::Value) -> Self {
+        let author = Nickname::new(author.to_owned()).expect("test author is a valid nickname");
+        let body = crate::daemon::state_doc::patch_body(ops)
+            .expect("state patch envelope composes from any ops value");
+        Self {
+            msg: Message::new_state(swarm, &author, body),
         }
     }
 

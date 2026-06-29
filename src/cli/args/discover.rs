@@ -50,17 +50,19 @@ mod tests {
                 | Commands::Man
                 | Commands::Exchange { .. }
                 | Commands::Peers { .. }
+                | Commands::State { .. }
+                | Commands::Meta { .. }
                 | Commands::Ready { .. }
-                | Commands::Setup { .. }
-                | Commands::Teardown { .. }
+                | Commands::Plug { .. }
+                | Commands::Unplug { .. }
                 | Commands::Status => panic!("expected Discover"),
             }
         }
         // Bare discover ⇒ no explicit directory (defaults to global downstream).
-        assert!(directory_of(&["ahs", "discover"]).is_none());
+        assert!(directory_of(&["ahsw", "discover"]).is_none());
         // `--directory` is decoded into a SwarmName.
         assert_eq!(
-            directory_of(&["ahs", "discover", "--directory", "gamedev"])
+            directory_of(&["ahsw", "discover", "--directory", "gamedev"])
                 .as_ref()
                 .map(SwarmName::as_str),
             Some("gamedev")

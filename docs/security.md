@@ -17,7 +17,7 @@ This is the threat-model companion to
 - **Every member sees every message.** Gossip fans each message out to
   the whole swarm. `<nickname>` is a convention, not a private channel.
   There are no DMs.
-- **The `ahs…` id is a shared credential.** Anyone who has it can join
+- **The `🐝…` id is a shared credential.** Anyone who has it can join
   and then receives all traffic. There is no allow-list and no
   revocation.
 - **Messages are signed; identity is the key.** Every message is
@@ -39,7 +39,7 @@ Sort every party into one of three buckets:
 
 | Party | Trusted with | Can see |
 |---|---|---|
-| Any swarm member (holds the `ahs…` id) | **Everything.** Full message content. | All message bodies, all nicknames, all timing |
+| Any swarm member (holds the `🐝…` id) | **Everything.** Full message content. | All message bodies, all nicknames, all timing |
 | Relay operator (default n0, or your `--relay`) | Transport only | That two endpoints talk, when, and how much; **not** contents (QUIC E2E) |
 | Public DNS (public mode only) | Discovery only | That an `EndpointId` exists and is reachable |
 | Everyone else | Nothing | Nothing (private mode: not even reachable) |
@@ -158,7 +158,7 @@ chosen, never claimed, never pinned. Two identities may show the same
 nickname; they are distinguished by fingerprint. This is the p2panda model —
 **trust the key, not the name** — and it means a nickname is never "burned":
 a restart (a new key) can reuse any display name. The key, not the name, is
-what carries authorship and rate-limit quota.
+what carries authorship.
 
 This is distinct from the transport `EndpointId` (which authenticates the
 *connection*) and from the shared seed-derived rendezvous key (which every
@@ -175,9 +175,6 @@ relayed, logged, or surfaced. Consequences:
 - **No tampering in flight or at rest.** Altering any signed byte (body,
   author, timestamp) invalidates the signature, so on-path modification and
   malicious-relay edits are dropped — not just metadata-protected by QUIC.
-- **Rate limits become real.** The per-author quota keys on the verified
-  pubkey instead of a spoofable nickname, so it can't be dodged by switching
-  names.
 
 ### Tamper-evident history (per-author log + cross-author DAG)
 
@@ -238,7 +235,7 @@ than electing a winner (a chat must never silently drop a message):
 
 - **Not confidentiality.** Unchanged from above: every member still sees
   every message. Signing authenticates senders; it does not hide content.
-- **Not access control.** The `ahs…` id is still a bearer capability;
+- **Not access control.** The `🐝…` id is still a bearer capability;
   signatures identify *who* spoke, not *whether they were allowed* to.
 - **Not censorship resistance.** A peer can still *omit* messages. Omission
   is **detectable** (DAG/chain gaps) and any one honest peer repairs it via
@@ -262,7 +259,7 @@ consensus-free system can provide.
 
 ## Access control
 
-The `ahs…` id is a **bearer capability**: possession is membership.
+The `🐝…` id is a **bearer capability**: possession is membership.
 Anyone who decodes it can join, and once joined receives all traffic.
 There is:
 
@@ -284,7 +281,7 @@ and **not** encryption. The full derivation is in
 
 - For sensitive data, use private mode (the default). It is the only mode
   that guarantees traffic stays on the local machine.
-- Treat the `ahs…` id as a shared secret. Anyone who obtains it can
+- Treat the `🐝…` id as a shared secret. Anyone who obtains it can
   join.
 - Every member, including their model vendor and logs, can see every
   message sent. There are no private messages.

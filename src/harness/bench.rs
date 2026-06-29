@@ -12,7 +12,6 @@
     reason = "opaque bench-only newtypes; never surfaced or formatted"
 )]
 
-use crate::daemon::rate_limit::SwarmRateLimiter;
 use crate::protocol::crypto;
 use crate::protocol::swarm::{LookupOpts, RelayChoice, Swarm, SwarmConfig};
 use crate::{Message, MessageBody, Nickname, SwarmId, SwarmName};
@@ -50,10 +49,7 @@ impl BenchConfig {
 }
 
 fn cfg(lookups: LookupOpts) -> SwarmConfig {
-    SwarmConfig {
-        rate_limit_per_min: crate::util::consts::RATE_LIMIT_PER_MIN,
-        lookups,
-    }
+    SwarmConfig { lookups }
 }
 
 // ── crypto / identity ───────────────────────────────────────────────
@@ -89,8 +85,8 @@ pub fn swarm_decode(token: &str) {
     let _ = token.parse::<Swarm>();
 }
 
-/// Encode then decode the config region — exercises the rate-limit +
-/// lookup-flags + relay-URL byte codec in isolation.
+/// Encode then decode the config region — exercises the lookup-flags +
+/// relay-URL byte codec in isolation.
 pub fn config_round_trip(config: &BenchConfig) {
     let _ = SwarmConfig::from_bytes(&config.0.to_bytes());
 }
@@ -132,21 +128,4 @@ impl BenchMessage {
 
 pub fn message_deserialize(bytes: &[u8]) {
     let _: Message = serde_json::from_slice(bytes).expect("round-trips its own serialize");
-}
-
-// ── rate limiter ────────────────────────────────────────────────────
-
-pub struct BenchRateLimiter(SwarmRateLimiter);
-
-impl BenchRateLimiter {
-    #[must_use]
-    pub fn new(per_min: u16) -> Self {
-        Self(SwarmRateLimiter::from_per_min(per_min))
-    }
-
-    /// Keyed by the author's pubkey hex in production; the bench passes any
-    /// distinct string, matching [`SwarmRateLimiter::check`]'s `&str` key.
-    pub fn check(&self, key: &str) -> bool {
-        self.0.check(key)
-    }
 }

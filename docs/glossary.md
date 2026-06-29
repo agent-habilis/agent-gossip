@@ -10,7 +10,7 @@ being mistaken for an identity. When reading or changing code, hold the
 following meanings.
 
 For the mechanisms behind these terms, see the companion docs:
-[swarm-hash.md](./swarm-hash.md) (the `ahs…` token),
+[swarm-hash.md](./swarm-hash.md) (the `🐝…` token),
 [discovery.md](./discovery.md) (rendezvous, beacon, lookups, directories),
 [gossip.md](./gossip.md) (message fan-out),
 [topologies.md](./topologies.md) (network shapes), and
@@ -25,7 +25,7 @@ For the mechanisms behind these terms, see the companion docs:
 An iroh `EndpointId` and the gossip neighbor link to it. This is pure
 plumbing — the node id itself is never surfaced to operators or agents. The
 one thing derived from it is the per-participant **connected vs gossip** tag
-(`ahs peers` / `swarm_info` `reach`): `participant_endpoints` maps a nickname
+(`ahsw peers` / `swarm_info` `reach`): `participant_endpoints` maps a nickname
 to its self-advertised endpoint, so the roster can mark a peer as a live link
 or a relayed one — a boolean, never the node id.
 
@@ -53,10 +53,10 @@ reach for **participant** instead.
 
 *Layer: identity · keyed by seed.*
 
-The `ahs…` id: a self-describing token carrying the `seed`, the name, and the
-swarm's **config** (rate limit plus lookups). The config is mixed into the
-gossip topic, so every member necessarily shares it, and `join` needs nothing
-beyond the hash itself.
+The `🐝…` id: a self-describing token carrying the `seed`, the name, and the
+swarm's **config** (lookups). The config is mixed into the gossip topic, so
+every member necessarily shares it, and `join` needs nothing beyond the hash
+itself.
 
 Code: `protocol::swarm` (`Swarm` / `SwarmConfig`). Byte layout:
 [swarm-hash.md](./swarm-hash.md).
@@ -151,7 +151,7 @@ State: `quiet`.
 *Layer: discovery · keyed by directory name.*
 
 A named, well-known public `Swarm` (`derive_secret(DIRECTORY_BASE_SEED,
-name)`) that swarms **advertise** their `ahs…` id into and that **discover**
+name)`) that swarms **advertise** their `🐝…` id into and that **discover**
 browses. It is not a server — it is itself a swarm, with its own rendezvous,
 reached via the lookups. The default directory is `global`.
 
@@ -169,7 +169,7 @@ and broadcasting the id makes the swarm open to anyone who finds it.
 
 *Layer: discovery.*
 
-Browse a directory's live swarms (`ahs discover`) and join one — the consumer
+Browse a directory's live swarms (`ahsw discover`) and join one — the consumer
 side of **advertise**.
 
 ### exchange
@@ -185,9 +185,8 @@ the ball-owner keepalive, the 100-content-message cap) is owned by the daemon
 state machine (`daemon::exchange`), while the *content* is owned by the skill. Like
 a directed `Msg --reply`, a leg is delivered to all members for relay but
 **surfaced and logged only by its addressee and the sender's own echo** — a
-third party never sees it. Content legs are rate-limited with `Msg`; the
-`progress` phase is liveness plumbing (rate-limit-exempt, never logged). Not
-part of the per-author hash chain or DAG (presence-like).
+third party never sees it. The `progress` phase is liveness plumbing (never
+logged). Not part of the per-author hash chain or DAG (presence-like).
 
 Code: `MessageKind::Exchange`, `lifecycle::handle_exchange`, `broadcast_exchange`,
 `daemon::exchange`.
@@ -214,6 +213,93 @@ the difference from **handover**, which closes without a result. `/swarm:task`
 sends one or more independent tasks (each its own `exchange_id`, worker,
 and completion criteria) and surfaces each result as it returns; there is no
 group-level outcome. Like handover, it adds no wire type of its own.
+
+### part
+
+*Layer: protocol — a header on **message**.*
+
+One slice of a body too large for a single gossip message. When a `msg` or an
+exchange leg's body exceeds `MAX_MESSAGE_SIZE`, the sender splits it into several
+ordinary signed messages, each carrying a `part` header — a `group` (a UUID
+shared by the body's parts), an `idx`, and the `total` count. Each part is a real
+message (own id/seq/signature) retained in the **message log**, so a missing part
+heals through anti-entropy like any message. The receiver reassembles the parts
+of a `group` (keyed also by author key, so a crafted cross-author part can't
+inject a slice) into the one logical message it surfaces; the raw parts never
+surface. Capped at `MAX_MESSAGE_PARTS` per body — a larger body is refused on
+send. The split is invisible to agents: a body sends and arrives whole.
+
+### shared state
+
+*Layer: state · two **channels** per swarm (`state`, `meta`), each a document
+derived from its own **state log**.*
+
+A JSON document the whole swarm shares, separate from the chat message log. It
+is never sent whole on the wire: every member **derives** it by folding the
+**state log** (the `(timestamp, id)`-ordered replay of every **change**) from
+`{}`. Same event set ⇒ byte-identical document on every member (see the *Shared
+state converges deterministically* invariant).
+
+Each swarm carries **two channels**, `state` and `meta` — byte-for-byte the
+same machinery (same reducer, log, anti-entropy, CAS, frozen-subset patch
+rules), differing only by **convention**: `state` is the task working area;
+`meta` holds swarm metadata, by convention `/peers/<nick> = { model, harness }`
+that each agent self-reports. The binary does **not** differentiate them and
+never writes a channel itself — the **only** way to change either is a JSON
+patch (`ahsw state patch` / `ahsw meta patch`). Read with `ahsw state get` /
+`ahsw meta get`. A change surfaces as the `state` / `meta` event, carrying both
+the change and the newly-derived document.
+
+Code: `daemon::state_doc` (the reducer `JsonDoc` + `derive_document`),
+`protocol::Channel`, `OutputEvent::StateChanged`.
+
+### state log
+
+*Layer: state · `MessageKind::State` / `MessageKind::Meta`, one un-pruned,
+unbounded store per **channel**.*
+
+The signed channel events a swarm folds into a **shared state** document — one
+log per channel (`State` for `state`, `Meta` for `meta`), distinct from the chat
+**message log** in three ways: each is **un-pruned and unbounded** (the fold
+needs the complete set, so nothing ages out), dedup-keyed by id, and reconciled
+by its **own** anti-entropy digest (windowed like the chat digest, but
+advertised open at both ends so a late joiner backfills the *whole* log, not
+just a recent tail). Bounding total growth (compaction/snapshots) is deferred.
+
+Code: `daemon::state_log::StateLog`, `gossip::antientropy::{broadcast,handle}_state_digest`.
+
+### change (state patch)
+
+*Layer: state · a JSON-Patch op array in a `State` event body.*
+
+One modification to the **shared state**: a JSON-Patch (RFC 6902) op array,
+restricted to a **frozen subset** — `add`/`replace`/`remove` on object paths,
+plus `add "/arr/-"` (append) — so patch semantics stay a stable wire contract
+across versions (`test`/`move`/`copy`, numeric array indices, and the root path
+`""` are rejected). Applied **atomically** (all ops or none) and validated at
+the author boundary; on replay a change that is malformed, out of subset, or
+does not apply against the document-at-that-point is a **deterministic
+whole-patch no-op** (never partial), so a crafted change can never diverge
+members.
+
+Code: `daemon::state_doc::{validate_patch, patch_body, apply_patch_body}`.
+
+### compare-and-set (CAS) by document hash
+
+*Layer: state · an optional precondition on a **change**.*
+
+The optimistic-concurrency guard for contended **shared state**. `state get`
+returns a `doc_hash` — `daemon::state_doc::document_hash`, the SHA-256 of the
+canonically-serialized derived **document**. A **change** may carry that hash as
+`--if-doc-hash`; the author's daemon rejects it (`stale document`, no broadcast)
+if the current document's hash differs, i.e. a peer changed it since the read.
+Because the per-swarm event loop is single-threaded, the check and the insert
+are atomic, and a rejected change never reaches the wire — so this needs no
+fold-contract change. It turns a blind `replace` (last-writer-wins) into a safe
+read-then-write for turn-based or multi-writer state.
+
+Code: `daemon::state_doc::document_hash`, the `if_doc_hash` guard in
+`gossip::broadcast::broadcast_state_patch`.
 
 ## Layering
 
@@ -246,6 +332,25 @@ participant lifecycle.
 The `Nickname` that wrote a message. It is the same value-type as a
 participant id; the distinct word marks "sender of *this* message", not a
 separate concept.
+
+### Shared state converges deterministically
+
+Every member derives the **shared state** by folding the **state log** in one
+total order — `(timestamp, id)` — that every member computes identically, with a
+failed/out-of-subset **change** as a deterministic no-op. So the document is a
+pure function of the *set* of changes: the same set always yields the
+byte-identical document, regardless of arrival order. Convergence is
+unconditional.
+
+*Causal faithfulness* is the weaker, conditional property: that a change lands
+*after* the change it depends on. The timestamp is one-second resolution, so two
+*dependent* changes authored in the same second can sort by the `id` tiebreak in
+either order — convergent, but the `replace` might fold before its `add` and
+no-op. Phase 1 resolves this by **timing, not a clock**: changes are turn-based
+(seconds apart) and a member changes the state on its turn, so dependent changes
+are naturally separated; multi-step updates that must be atomic go in **one**
+multi-op patch. Sub-second concurrent multi-writer causality is out of scope
+(a future causal DAG via per-author `seq`/`parents`).
 
 ### Lookups are independently sufficient
 

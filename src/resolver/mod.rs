@@ -7,7 +7,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use serde::Deserialize;
 
 use crate::protocol::SwarmId;
-use crate::protocol::swarm::Swarm;
+use crate::protocol::swarm::{Swarm, SwarmIdError};
 
 /// `rustls-no-provider` ships no crypto backend, so a default
 /// `CryptoProvider` must be installed before the first handshake. We use
@@ -111,7 +111,7 @@ struct WellKnown {
 /// variant instead of re-sniffing a `String`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum JoinTarget {
-    /// A literal `ahs…` id — resolves with no I/O.
+    /// A literal `🐝…` id — resolves with no I/O.
     Swarm(SwarmId),
     /// A domain or git-repo URL; carries the resolved well-known URL.
     WellKnown(String),
@@ -135,10 +135,17 @@ impl FromStr for JoinTarget {
 
     fn from_str(input: &str) -> Result<Self, Self::Err> {
         let trimmed = input.trim();
-        // A literal `ahs…` id is the no-I/O case. Shallow `SwarmId`
+        // A literal `🐝…` id is the no-I/O case. Shallow `SwarmId`
         // validation here; the full structural decode happens in `resolve`.
-        if let Ok(id) = trimmed.parse::<SwarmId>() {
-            return Ok(JoinTarget::Swarm(id));
+        match trimmed.parse::<SwarmId>() {
+            Ok(id) => return Ok(JoinTarget::Swarm(id)),
+            // A legacy `ahs…` id is unmistakably a (stale) id, not a domain —
+            // surface the explanatory message instead of letting it fall
+            // through and fail later as a confusing DNS/fetch error.
+            Err(error @ SwarmIdError::LegacyPrefix) => {
+                return Err(JoinTargetError(error.to_string()));
+            }
+            Err(_) => {}
         }
         // Otherwise it's a domain or git-repo URL: classify + validate the
         // form now (provider prefixes, segment counts) and carry the
@@ -214,6 +221,14 @@ mod tests {
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     use super::{JoinTarget, MAX_BODY_BYTES, fetch_and_parse, resolve, resolve_url};
+
+    #[test]
+    fn legacy_ahs_id_reports_stale_prefix_not_a_domain() {
+        let err = "ahs2fpqZJm7Z7zHDxpNa6jGw7GNqpNpFCSzswQdUsW5B2TnKEz9"
+            .parse::<JoinTarget>()
+            .unwrap_err();
+        assert!(err.to_string().contains("legacy"), "got: {err}");
+    }
 
     #[test]
     fn resolve_url_maps_inputs_to_expected_urls() {
@@ -374,7 +389,7 @@ mod tests {
 
     #[test]
     fn join_target_classifies_inputs() {
-        // A literal `ahs…` id ⇒ Swarm (no I/O to resolve).
+        // A literal `🐝…` id ⇒ Swarm (no I/O to resolve).
         let id = known_swarm_id();
         assert!(matches!(id.parse::<JoinTarget>(), Ok(JoinTarget::Swarm(_))));
         // A bare domain ⇒ WellKnown carrying the well-known URL.

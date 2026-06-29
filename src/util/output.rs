@@ -1,4 +1,4 @@
-// cargo-style status output for the `setup`/`teardown`/`status` subcommands —
+// cargo-style status output for the `plug`/`unplug`/`status` subcommands —
 // a right-aligned (12-col) bold verb + message, written through `anstream`
 // (which strips color when stderr isn't a terminal, so piped/agent output
 // stays clean). Mirrors `../browse`'s `util::output`.

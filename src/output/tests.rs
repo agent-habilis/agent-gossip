@@ -123,11 +123,11 @@ fn ready_event_drift_is_present_only_when_stale() {
 
     // Stale: the warning rides along verbatim.
     let stale = parse(&make(Some(
-        "⚠️ swarm skill out of date. Run `ahs setup --execute` to update",
+        "⚠️ swarm skill out of date. Run `ahsw plug` to update",
     )));
     assert_eq!(
         stale["drift"],
-        "⚠️ swarm skill out of date. Run `ahs setup --execute` to update"
+        "⚠️ swarm skill out of date. Run `ahsw plug` to update"
     );
 }
 
@@ -182,32 +182,14 @@ fn json_body_escapes_backslashes() {
 
 #[test]
 fn json_presence_joined() {
-    let msg = Message::new_joined(
-        &sid(),
-        &nick("alice"),
-        &crate::protocol::peer_meta::PeerMeta::default(),
-    );
+    let msg = Message::new_joined(&sid(), &nick("alice"));
     let parsed = parse(&format_presence_json(&msg, PresenceSubtype::Joined));
     assert_eq!(parsed["event"], "message");
     assert_eq!(parsed["type"], "presence");
     assert_eq!(parsed["subtype"], "joined");
     assert_eq!(parsed["author"], "alice");
     assert_eq!(parsed["swarm"], "🐝test");
-}
-
-#[test]
-fn json_presence_joined_shows_meta() {
-    let meta =
-        crate::protocol::peer_meta::PeerMeta::from_refs(Some("Opus 4.8"), Some("Claude Code"));
-    let msg = Message::new_joined(&sid(), &nick("alice"), &meta);
-    let parsed = parse(&format_presence_json(&msg, PresenceSubtype::Joined));
-    assert_eq!(
-        parsed["display"],
-        "🐝️ `<alice>` (Opus 4.8 / Claude Code) has joined"
-    );
-    // Structured fields too, so a plain-text client can compose its own line.
-    assert_eq!(parsed["model"], "Opus 4.8");
-    assert_eq!(parsed["harness"], "Claude Code");
+    assert_eq!(parsed["display"], "🐝️ `<alice>` has joined");
 }
 
 #[test]
@@ -380,11 +362,7 @@ fn json_output_is_single_line() {
             false,
         ),
         format_presence_json(
-            &Message::new_joined(
-                &sid(),
-                &nick("charlie"),
-                &crate::protocol::peer_meta::PeerMeta::default(),
-            ),
+            &Message::new_joined(&sid(), &nick("charlie")),
             PresenceSubtype::Joined,
         ),
         format_presence_json(
@@ -484,6 +462,58 @@ mod snapshots {
         );
         insta::assert_snapshot!(format_presence_json(&msg, PresenceSubtype::Left));
     }
+
+    /// The `{"event":"state",…}` line a shared-state change emits on the
+    /// `--output json` stream: header + the applied `patch` op array + the
+    /// newly-derived `document` + `display` + `self`. Field order is wire-pinned.
+    fn snap_state(ops: &str, document: &serde_json::Value, is_self: bool) -> String {
+        let body = format!(r#"{{"k":"patch","ops":{ops}}}"#);
+        super::super::json::format_state_json(
+            crate::protocol::Channel::State,
+            &Message::fixture(MessageKind::State, &body),
+            document,
+            is_self,
+        )
+    }
+
+    #[test]
+    fn snap_state_change() {
+        insta::assert_snapshot!(snap_state(
+            r#"[{"op":"replace","path":"/turn","value":"b"}]"#,
+            &serde_json::json!({"turn": "b", "n": 1}),
+            false,
+        ));
+    }
+
+    #[test]
+    fn state_display_sanitizes_peer_controlled_paths() {
+        // A peer-crafted op path with a backtick (would break the markdown code
+        // span around the nick) and a newline (would forge a second line in the
+        // human eprintln feed) must not reach the `display` verbatim.
+        let line = snap_state(
+            "[{\"op\":\"add\",\"path\":\"/x`\\n<evil>\",\"value\":1}]",
+            &serde_json::json!({}),
+            false,
+        );
+        let parsed: serde_json::Value = serde_json::from_str(&line).unwrap();
+        let display = parsed["display"].as_str().unwrap();
+        assert!(!display.contains('\n'), "no newline injection: {display:?}");
+        assert_eq!(
+            display.matches('`').count(),
+            2,
+            "only the two nick-wrapping backticks remain: {display:?}"
+        );
+        assert!(display.contains("/x<evil>"), "sanitized path: {display:?}");
+    }
+
+    #[test]
+    fn snap_state_self() {
+        insta::assert_snapshot!(snap_state(
+            r#"[{"op":"add","path":"/n","value":1}]"#,
+            &serde_json::json!({"n": 1}),
+            true,
+        ));
+    }
 }
 
 mod prop {
@@ -547,7 +577,7 @@ mod prop {
         fn prop_presence_json_is_valid(is_join in any::<bool>()) {
             let test_nick = crate::protocol::Nickname::from("test-nick");
             let (msg, subtype) = if is_join {
-                (Message::new_joined(&sid(), &test_nick, &crate::protocol::peer_meta::PeerMeta::default()), PresenceSubtype::Joined)
+                (Message::new_joined(&sid(), &test_nick), PresenceSubtype::Joined)
             } else {
                 (Message::new_left(&sid(), &test_nick), PresenceSubtype::Left)
             };

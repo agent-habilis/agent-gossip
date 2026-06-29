@@ -13,6 +13,7 @@ mod discover;
 mod exchange;
 mod join;
 mod lookup;
+mod meta;
 mod msg;
 mod output;
 mod peers;
@@ -21,11 +22,13 @@ mod pipe;
 mod poll;
 mod ready;
 mod shared;
+mod state;
 
 pub(crate) use create::CreateOpts;
 pub(crate) use discover::DiscoverOpts;
 pub(crate) use exchange::ExchangeOpts;
 pub(crate) use join::JoinOpts;
+pub(crate) use meta::{MetaAction, MetaOpts};
 pub(crate) use msg::MsgOpts;
 pub(crate) use output::OutputFormat;
 pub(crate) use peers::PeersOpts;
@@ -34,10 +37,11 @@ pub(crate) use pipe::PipeAction;
 pub(crate) use poll::PollOpts;
 pub(crate) use ready::ReadyOpts;
 pub(crate) use shared::SharedServerOpts;
+pub(crate) use state::{StateAction, StateOpts};
 
 #[derive(Parser, Debug)]
 #[command(
-    name = "ahs",
+    name = "ahsw",
     about = "swarm network for agents",
     version = crate::util::version::VERSION,
     after_help = "a tool by agent-habilis █🫈"
@@ -128,7 +132,7 @@ pub(crate) enum Commands {
     /// Queries the running daemon for current participants (nicknames +
     /// how long ago each was last seen), recency-sorted. Backs the
     /// handover target picker; prints a JSON object with `participants`
-    /// and `count`.
+    /// and `participant_count`.
     Peers {
         #[command(flatten)]
         opts: PeersOpts,
@@ -136,22 +140,45 @@ pub(crate) enum Commands {
 
     /// Stream stdin to a peer, or a peer's stream to stdout (off-gossip, direct P2P).
     ///
-    /// A standalone byte pipe: `pipe listen` reads stdin and prints
-    /// a `🐝…` ticket on stderr; `pipe connect <ticket>` streams the bytes to
-    /// stdout. No running daemon required.
+    /// A standalone byte pipe: `pipe listen` reads stdin and prints the
+    /// `ahsw pipe connect 🐝…` command on stdout; `pipe connect <ticket>` streams
+    /// the bytes to stdout. No running daemon required.
     Pipe {
         #[command(subcommand)]
         action: PipeAction,
+    },
+
+    /// Read or change the swarm's shared state.
+    ///
+    /// Shared state is a JSON document every member derives from a dedicated,
+    /// gossiped log of JSON-Patch changes. `state patch` applies an RFC 6902
+    /// patch; `state get` prints the current document. Members react to a
+    /// change via the `state` event on the daemon's `--output json` stream.
+    State {
+        #[command(flatten)]
+        opts: StateOpts,
+    },
+
+    /// Read or change the swarm's `meta` channel.
+    ///
+    /// A second shared-state document beside `state`, identical machinery but
+    /// conventionally holding swarm metadata (peer info, …) rather than the task.
+    /// `meta patch` applies an RFC 6902 patch; `meta get` prints the current
+    /// document. The two channels are fully independent.
+    Meta {
+        #[command(flatten)]
+        opts: MetaOpts,
     },
 
     /// Wait until a swarm daemon is serving, then exit.
     ///
     /// The readiness gate for driving the daemon over the CLI: launch
     /// `create`/`join` in the background with a `--state-file`, then
-    /// `ahs ready --state-file <path>` blocks until that file reports the
-    /// daemon is serving, exiting 0 (non-zero on timeout). A pure gate —
-    /// prints nothing; read the swarm/nickname from the state-file once it
-    /// returns.
+    /// `ahsw ready --state-file <path>` blocks until that file reports the
+    /// daemon is serving, exiting 0 (non-zero on timeout). In `human` mode a
+    /// silent gate (exit code only); with `--output json` it prints
+    /// `{swarm,name,nickname}` on success, so the gate doubles as the
+    /// identity read.
     Ready {
         #[command(flatten)]
         opts: ReadyOpts,
@@ -183,31 +210,22 @@ pub(crate) enum Commands {
     /// checkout.
     Man,
 
-    /// Install the swarm integrations into your agents.
+    /// Plug the swarm integrations into your agents.
     ///
     /// Targets Claude Code (the plugin), pi (the extension), and a generic
     /// `~/.agents/skills` agent. The artifacts are embedded in the binary, so
-    /// this needs no repo checkout. Dry run by default (prints what it would
-    /// do); `--execute` performs the writes. With no `--agent`, the detected
-    /// agents are used.
-    Setup {
-        /// Actually write the integrations. Without it this is a dry run that
-        /// only prints what would be installed.
-        #[arg(long)]
-        execute: bool,
+    /// this needs no repo checkout. With no `--agent`, the detected agents are
+    /// used. Reversible with `unplug`.
+    Plug {
         /// Agent(s) to install into (repeatable). Defaults to detected agents.
         #[arg(long = "agent", value_enum)]
         agents: Vec<super::agent::Agent>,
     },
 
-    /// Remove the swarm integrations from your agents (symmetric to `setup`).
+    /// Unplug the swarm integrations from your agents (symmetric to `plug`).
     ///
-    /// Dry run by default (prints what it would remove); `--execute` performs
-    /// the removal. With no `--agent`, the agents that have it are used.
-    Teardown {
-        /// Actually remove the integrations. Without it this is a dry run.
-        #[arg(long)]
-        execute: bool,
+    /// With no `--agent`, the agents that have it are used.
+    Unplug {
         /// Agent(s) to remove from (repeatable). Defaults to agents that have
         /// the integration installed.
         #[arg(long = "agent", value_enum)]

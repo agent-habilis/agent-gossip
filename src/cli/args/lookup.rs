@@ -58,7 +58,7 @@ mod tests {
     use crate::cli::args::{Cli, Commands};
     use crate::protocol::swarm::RelaySelection;
 
-    /// Parse `ahs create …` and read the resolved relay selection — the
+    /// Parse `ahsw create …` and read the resolved relay selection — the
     /// `--relay` allowlist flag lives in [`LookupArgs`], exercised here
     /// through the create command.
     fn relay_of(args: &[&str]) -> RelaySelection {
@@ -74,9 +74,11 @@ mod tests {
             | Commands::Man
             | Commands::Exchange { .. }
             | Commands::Peers { .. }
+            | Commands::State { .. }
+            | Commands::Meta { .. }
             | Commands::Ready { .. }
-            | Commands::Setup { .. }
-            | Commands::Teardown { .. }
+            | Commands::Plug { .. }
+            | Commands::Unplug { .. }
             | Commands::Status => panic!("expected Create"),
         }
     }
@@ -84,18 +86,18 @@ mod tests {
     #[test]
     fn relay_flag_absent_bare_and_valued() {
         assert_eq!(
-            relay_of(&["ahs", "create", "--public"]),
+            relay_of(&["ahsw", "create", "--public"]),
             RelaySelection::Unset,
             "absent ⇒ Unset"
         );
         assert_eq!(
-            relay_of(&["ahs", "create", "--public", "--relay"]),
+            relay_of(&["ahsw", "create", "--public", "--relay"]),
             RelaySelection::Default,
             "bare ⇒ Default (pinned)"
         );
         assert_eq!(
             relay_of(&[
-                "ahs",
+                "ahsw",
                 "create",
                 "--public",
                 "--relay",
@@ -106,7 +108,7 @@ mod tests {
         );
         assert_eq!(
             relay_of(&[
-                "ahs",
+                "ahsw",
                 "create",
                 "--public",
                 "--relay",
@@ -120,7 +122,7 @@ mod tests {
     #[test]
     fn relay_flag_rejects_empty_ladder_entry() {
         let parsed = Cli::try_parse_from([
-            "ahs",
+            "ahsw",
             "create",
             "--public",
             "--relay",
@@ -132,9 +134,9 @@ mod tests {
     #[test]
     fn create_mdns_resolves_to_mdns_only_lookups() {
         use crate::protocol::swarm::{RelayChoice, resolve_lookups};
-        // `ahs create --mdns` ⇒ the swarm's id encodes mDNS only (naming a
+        // `ahsw create --mdns` ⇒ the swarm's id encodes mDNS only (naming a
         // lookup flag opts into exactly those; relay and dht stay off).
-        let opts = match Cli::parse_from(["ahs", "create", "--mdns"]).command {
+        let opts = match Cli::parse_from(["ahsw", "create", "--mdns"]).command {
             Commands::Create { opts } => opts,
             Commands::Join { .. }
             | Commands::Msg { .. }
@@ -146,9 +148,11 @@ mod tests {
             | Commands::Man
             | Commands::Exchange { .. }
             | Commands::Peers { .. }
+            | Commands::State { .. }
+            | Commands::Meta { .. }
             | Commands::Ready { .. }
-            | Commands::Setup { .. }
-            | Commands::Teardown { .. }
+            | Commands::Plug { .. }
+            | Commands::Unplug { .. }
             | Commands::Status => panic!("expected Create"),
         };
         let lookups = resolve_lookups(opts.public, opts.lookups.to_set());

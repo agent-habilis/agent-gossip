@@ -1,4 +1,4 @@
-//! The `ahs` command-line interface: the clap-derived argument shape
+//! The `ahsw` command-line interface: the clap-derived argument shape
 //! lives in [`args`], the live `discover` picker in [`discover`], and the
 //! per-subcommand handlers + [`dispatch`] here. `lib.rs::run_cli` parses
 //! argv and calls `dispatch`; each handler is the thin glue between the
@@ -20,16 +20,16 @@ use crate::transport::ipc::{self, IpcCommand};
 pub(crate) mod agent;
 mod args;
 mod discover;
-mod setup;
+mod plug;
 mod status;
 
 pub(crate) use args::Cli;
 use args::{
-    Commands, CreateOpts, ExchangeOpts, MsgOpts, OutputFormat, PeersOpts, PingOpts, PipeAction,
-    PollOpts, ReadyOpts, SharedServerOpts,
+    Commands, CreateOpts, ExchangeOpts, MetaAction, MetaOpts, MsgOpts, OutputFormat, PeersOpts,
+    PingOpts, PipeAction, PollOpts, ReadyOpts, SharedServerOpts, StateAction, StateOpts,
 };
 
-/// `join` has no `--public`/`--name`: both are encoded in the `ahs…`
+/// `join` has no `--public`/`--name`: both are encoded in the `🐝…`
 /// identifier and auto-detected. Without this, clap rejects them with
 /// a generic "unexpected argument" + a misleading "pass as a value"
 /// tip; this gives the real reason instead.
@@ -84,6 +84,8 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
         Commands::Exchange { opts } => exchange(opts).await,
         Commands::Peers { opts } => peers(opts).await,
         Commands::Pipe { action } => pipe(action).await,
+        Commands::State { opts } => state(opts).await,
+        Commands::Meta { opts } => meta(opts).await,
         Commands::Ready { opts } => ready(opts).await,
         Commands::Discover { opts } => {
             crate::util::tuning::init(opts.shared.tuning());
@@ -111,8 +113,8 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
         }
         // Embedded integration artifacts written to the agents' skills dirs —
         // self-contained, no repo checkout needed (like `Man`).
-        Commands::Setup { execute, agents } => setup::setup(execute, &agents),
-        Commands::Teardown { execute, agents } => setup::teardown(execute, &agents),
+        Commands::Plug { agents } => plug::plug(&agents),
+        Commands::Unplug { agents } => plug::unplug(&agents),
         Commands::Status => status::run(),
     }
 }
@@ -140,7 +142,7 @@ async fn run_session(resolved: Resolved, shared: SharedServerOpts) -> Result<()>
     );
     // Nag once at startup if an installed integration has fallen behind this
     // binary. CLI-only: the embed/MCP paths pass `None` so in-process tests
-    // stay hermetic. `ahs status` is the on-demand counterpart.
+    // stay hermetic. `ahsw status` is the on-demand counterpart.
     let drift = agent::home_dir()
         .ok()
         .and_then(|home| agent::drift_warning(&home));
@@ -154,11 +156,6 @@ async fn run_session(resolved: Resolved, shared: SharedServerOpts) -> Result<()>
         drift.as_deref(),
     )
     .await?;
-    // Self-reported model / harness, announced in our `joined` body. Set here
-    // (not in `setup_swarm`) to keep its arg count in budget — same
-    // late-assignment pattern as `live_count`.
-    cfg.model = shared.model;
-    cfg.harness = shared.harness;
     // Advertising (`create --advertise`): start the re-broadcast task. It
     // reaches the directory over this swarm's own lookups. The handle is
     // held for the session's lifetime — on the CLI the process exits (via
@@ -178,7 +175,6 @@ async fn create(opts: CreateOpts) -> Result<()> {
     // borrow `opts`) before moving `opts.name`/`opts.nickname` out.
     let advertise = opts.advertise_selection();
     let config = SwarmConfig {
-        rate_limit_per_min: opts.rate_limit,
         lookups: resolve_lookups(opts.public, opts.lookups.to_set()),
     };
     // `resolve` validates `--advertise` against the config (never a silent
@@ -193,9 +189,9 @@ async fn create(opts: CreateOpts) -> Result<()> {
     run_session(resolved, opts.shared).await
 }
 
-/// Join an existing swarm by its identifier (ahs...), a domain, or a
-/// supported git repo URL. The swarm's config (lookups + rate limit) is
-/// decoded from the id — `join` takes no lookup/rate flags.
+/// Join an existing swarm by its identifier (🐝...), a domain, or a
+/// supported git repo URL. The swarm's config (lookups) is decoded from
+/// the id — `join` takes no lookup flags.
 async fn join(
     target: JoinTarget,
     nickname: Option<Nickname>,
@@ -211,21 +207,13 @@ struct MsgResponse {
     ok: bool,
     id: Option<MessageId>,
     error: Option<String>,
-    #[serde(default)]
-    rate_limited: bool,
 }
 
-/// Reduce an IPC send response (`msg` / `handover`, same
-/// `{ok,id,error,rate_limited}` shape) to the new message id, or a
-/// descriptive error. `what` names the operation for the rate-limit and
-/// missing-id messages. A rate-limited send is a deliberate drop, not a
-/// failure — surfaced as a (still non-zero) error so scripts see it wasn't
-/// sent.
+/// Reduce an IPC send response (`msg` / `handover`, same `{ok,id,error}`
+/// shape) to the new message id, or a descriptive error. `what` names the
+/// operation for the missing-id message.
 fn finish_send(resp: &str, what: &str) -> Result<MessageId> {
     let parsed: MsgResponse = serde_json::from_str(resp)?;
-    if parsed.rate_limited {
-        anyhow::bail!("rate limit exceeded — {what} not sent");
-    }
     if !parsed.ok {
         anyhow::bail!(
             "{}",
@@ -288,7 +276,11 @@ async fn poll(opts: PollOpts) -> Result<()> {
 /// acks immediately and emits the `ping_report` on its own
 /// `--output json` stream once the collection window closes.
 async fn ping(opts: PingOpts) -> Result<()> {
-    let PingOpts { swarm, nickname } = opts;
+    let PingOpts {
+        swarm,
+        nickname,
+        output: _,
+    } = opts;
     let cmd = IpcCommand::Ping { swarm };
     let resp = ipc::send(&cmd, &nickname).await?;
     let parsed: MsgResponse = serde_json::from_str(&resp)?;
@@ -303,7 +295,7 @@ async fn ping(opts: PingOpts) -> Result<()> {
 
 /// Send one leg of an exchange via the running daemon's IPC socket.
 /// The receiving daemon surfaces an `exchange` (or `exchange_progress`) event; this
-/// command itself only confirms the send (or reports a rate-limit /
+/// command itself only confirms the send (or reports an
 /// unknown-participant / oversize error).
 async fn exchange(opts: ExchangeOpts) -> Result<()> {
     let ExchangeOpts {
@@ -331,9 +323,13 @@ async fn exchange(opts: ExchangeOpts) -> Result<()> {
 }
 
 /// Query the running daemon's live participant roster. Always emits the
-/// raw IPC JSON (`{ok, participants, count}`), like `poll`.
+/// raw IPC JSON (`{ok, participants, participant_count}`), like `poll`.
 async fn peers(opts: PeersOpts) -> Result<()> {
-    let PeersOpts { swarm, nickname } = opts;
+    let PeersOpts {
+        swarm,
+        nickname,
+        output: _,
+    } = opts;
     let cmd = IpcCommand::Peers { swarm };
     let resp = ipc::send(&cmd, &nickname).await?;
     println!("{resp}");
@@ -341,8 +337,8 @@ async fn peers(opts: PeersOpts) -> Result<()> {
 }
 
 /// `ahsw pipe` — a standalone, off-gossip direct byte stream (no daemon).
-/// `listen` reads stdin and prints a ticket on stderr; `connect` redeems one
-/// and streams the peer's bytes to stdout.
+/// `listen` reads stdin and prints the connect command on stdout; `connect`
+/// redeems one and streams the peer's bytes to stdout.
 async fn pipe(action: PipeAction) -> Result<()> {
     match action {
         PipeAction::Listen {
@@ -378,10 +374,82 @@ async fn pipe(action: PipeAction) -> Result<()> {
     }
 }
 
+/// Read or change the swarm's shared state via the running daemon. Emits the
+/// raw IPC JSON response — `{ok,...}` for `patch`, `{ok,document}` for `get`.
+async fn state(opts: StateOpts) -> Result<()> {
+    let (cmd, nickname) = match opts.action {
+        StateAction::Patch {
+            swarm,
+            nickname,
+            patch,
+            if_doc_hash,
+        } => {
+            let op_array: serde_json::Value = serde_json::from_str(&patch).map_err(|error| {
+                anyhow::anyhow!("--patch must be a JSON array of RFC 6902 ops: {error}")
+            })?;
+            (
+                IpcCommand::StatePatch {
+                    swarm,
+                    patch: op_array,
+                    if_doc_hash,
+                },
+                nickname,
+            )
+        }
+        StateAction::Get { swarm, nickname } => (IpcCommand::StateGet { swarm }, nickname),
+    };
+    let resp = ipc::send(&cmd, &nickname).await?;
+    println!("{resp}");
+    // A rejected patch must not exit 0: a shell-driven agent
+    // reads the exit code to tell an applied change from a rejected one, and an
+    // `{"ok":false}` that exits 0 reads as success → silent desync. The raw JSON
+    // is already printed above for `--output json` consumers; the exit code is
+    // the scriptable signal. (`get` returns `ok:true`, so it stays exit 0.)
+    let parsed: MsgResponse = serde_json::from_str(&resp)?;
+    if !parsed.ok {
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
+/// Read or change the swarm's `meta` channel via the running daemon — the
+/// independent counterpart of [`state`]. Same raw-JSON + exit-code contract.
+async fn meta(opts: MetaOpts) -> Result<()> {
+    let (cmd, nickname) = match opts.action {
+        MetaAction::Patch {
+            swarm,
+            nickname,
+            patch,
+            if_doc_hash,
+        } => {
+            let op_array: serde_json::Value = serde_json::from_str(&patch).map_err(|error| {
+                anyhow::anyhow!("--patch must be a JSON array of RFC 6902 ops: {error}")
+            })?;
+            (
+                IpcCommand::MetaPatch {
+                    swarm,
+                    patch: op_array,
+                    if_doc_hash,
+                },
+                nickname,
+            )
+        }
+        MetaAction::Get { swarm, nickname } => (IpcCommand::MetaGet { swarm }, nickname),
+    };
+    let resp = ipc::send(&cmd, &nickname).await?;
+    println!("{resp}");
+    let parsed: MsgResponse = serde_json::from_str(&resp)?;
+    if !parsed.ok {
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
 /// Block until the daemon's `--state-file` reports it is *freshly* serving
 /// (the `ready` flag is `true` and `last_updated` is recent), then exit 0.
-/// A pure gate — prints nothing; the caller reads the identity from the same
-/// file. Times out non-zero.
+/// In `human` mode a pure gate — prints nothing; with `--output json` it
+/// prints `{swarm,name,nickname}` on success, so the gate doubles as the
+/// identity read instead of the caller parsing the file. Times out non-zero.
 ///
 /// Robustness: a missing, unreadable, malformed, or stale-but-not-yet-ready
 /// file is "not ready yet, keep polling" — only the deadline fails the gate.
@@ -392,6 +460,7 @@ async fn ready(opts: ReadyOpts) -> Result<()> {
     let ReadyOpts {
         state_file,
         timeout_secs,
+        output,
     } = opts;
     // Saturating add: an absurd `--timeout-secs` must not panic the gate
     // (`Instant + Duration` panics on overflow); clamp to a far-future
@@ -415,11 +484,14 @@ async fn ready(opts: ReadyOpts) -> Result<()> {
                 .await?;
         match read {
             Ok(Some(snapshot)) if snapshot.ready && ready_is_fresh(snapshot.last_updated) => {
+                if matches!(output, OutputFormat::Json) {
+                    print_ready_identity(&state_file);
+                }
                 return Ok(());
             }
             Ok(_) => {}
             Err(error) => {
-                tracing::debug!(%error, path = %state_file.display(), "ahs ready: state-file read failed; retrying");
+                tracing::debug!(%error, path = %state_file.display(), "ahsw ready: state-file read failed; retrying");
             }
         }
         if tokio::time::Instant::now() >= deadline {
@@ -433,6 +505,25 @@ async fn ready(opts: ReadyOpts) -> Result<()> {
         ))
         .await;
     }
+}
+
+/// Print the session identity as a JSON object for `ahsw ready --output json`,
+/// omitting any field the state file lacks — so a degenerate (identity-less)
+/// file yields `{}` rather than `{"swarm":null,…}` that a caller might splice
+/// into the next command as the literal string "null".
+fn print_ready_identity(state_file: &std::path::Path) {
+    let identity = crate::daemon::state_file::read_identity(state_file);
+    let mut obj = serde_json::Map::new();
+    for (key, value) in [
+        ("swarm", identity.swarm),
+        ("name", identity.name),
+        ("nickname", identity.nickname),
+    ] {
+        if let Some(value) = value {
+            obj.insert(key.to_owned(), value.into());
+        }
+    }
+    println!("{}", serde_json::Value::Object(obj));
 }
 
 /// True when a `ready: true` state-file write is recent enough to trust —

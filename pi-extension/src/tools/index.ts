@@ -3,9 +3,11 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { Type } from "typebox";
 import {
   type CreateOptions,
+  applyStatePatch,
   createSwarm,
   discoverSwarms,
   getPeers,
+  getStateDocument,
   getSwarmStatus,
   joinSwarm,
   leaveSwarm,
@@ -14,9 +16,10 @@ import {
   sendSwarmMessage,
   validateCreateOptions,
 } from "../core";
-import { formatRoster } from "../format";
+import { formatPingReport, formatRoster } from "../format";
 import { requireAgentSwarm } from "../helpers";
 import { state } from "../state";
+import { trackStart } from "../todo";
 import { BEE } from "../ui";
 
 function toolError(text: string) {
@@ -58,12 +61,6 @@ export function registerTools(pi: ExtensionAPI): void {
             'Relay lookup: omit for off, "" for the default n0 prod ladder, or a comma-separated a,b,c of relay URLs.',
         }),
       ),
-      rate_limit: Type.Optional(
-        Type.Number({
-          description:
-            "Per-author messages-per-minute cap baked into the swarm id (every joiner inherits it). 0 disables. Default 60.",
-        }),
-      ),
       advertise: Type.Optional(
         Type.Boolean({
           description:
@@ -76,7 +73,7 @@ export function registerTools(pi: ExtensionAPI): void {
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx: ExtensionContext) {
       if (!requireAgentSwarm(ctx)) {
-        return toolError("ahs CLI not found on PATH");
+        return toolError("ahsw CLI not found on PATH");
       }
       const options: CreateOptions = {
         name: params.name,
@@ -84,7 +81,6 @@ export function registerTools(pi: ExtensionAPI): void {
         mdns: params.mdns,
         dht: params.dht,
         relay: params.relay,
-        rateLimit: params.rate_limit,
         advertise: params.advertise,
         directory: params.directory,
         model: ctx.model?.name,
@@ -113,7 +109,7 @@ export function registerTools(pi: ExtensionAPI): void {
     ],
     parameters: Type.Object({
       target: Type.String({
-        description: "Swarm identifier (ahs...), domain (example.com), or git repo URL",
+        description: "Swarm identifier (🐝...), domain (example.com), or git repo URL",
       }),
       nickname: Type.Optional(
         Type.String({ description: "Optional nickname override (auto-generated if omitted)" }),
@@ -121,7 +117,7 @@ export function registerTools(pi: ExtensionAPI): void {
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx: ExtensionContext) {
       if (!requireAgentSwarm(ctx)) {
-        return toolError("ahs CLI not found on PATH");
+        return toolError("ahsw CLI not found on PATH");
       }
       const result = await joinSwarm({
         target: params.target,
@@ -152,7 +148,7 @@ export function registerTools(pi: ExtensionAPI): void {
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx: ExtensionContext) {
       if (!requireAgentSwarm(ctx)) {
-        return toolError("ahs CLI not found on PATH");
+        return toolError("ahsw CLI not found on PATH");
       }
       const directory = params.directory?.trim() || "global";
       const swarms = await discoverSwarms({
@@ -191,7 +187,7 @@ export function registerTools(pi: ExtensionAPI): void {
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx: ExtensionContext) {
       if (!requireAgentSwarm(ctx)) {
-        return toolError("ahs CLI not found on PATH");
+        return toolError("ahsw CLI not found on PATH");
       }
       if (!state.session?.swarm) {
         return toolError("Not in a swarm. Use swarm_create or swarm_join first.");
@@ -240,7 +236,7 @@ export function registerTools(pi: ExtensionAPI): void {
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx: ExtensionContext) {
       if (!requireAgentSwarm(ctx)) {
-        return toolError("ahs CLI not found on PATH");
+        return toolError("ahsw CLI not found on PATH");
       }
       if (!state.session?.swarm) {
         return toolError("Not in a swarm. Use swarm_create or swarm_join first.");
@@ -280,7 +276,7 @@ export function registerTools(pi: ExtensionAPI): void {
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx: ExtensionContext) {
       if (!requireAgentSwarm(ctx)) {
-        return toolError("ahs CLI not found on PATH");
+        return toolError("ahsw CLI not found on PATH");
       }
       if (!state.session?.swarm) {
         return toolError("Not in a swarm. Use swarm_create or swarm_join first.");
@@ -309,6 +305,7 @@ export function registerTools(pi: ExtensionAPI): void {
         state.exchanges.delete(exchangeId);
         return toolError(`Handover failed: ${error instanceof Error ? error.message : "unknown"}`);
       }
+      trackStart({ kind: "handover", peer: params.to, role: "initiator", task });
       return {
         content: [{ type: "text", text: `handover offered to <${params.to}>` }],
         details: { exchange_id: exchangeId, to: params.to },
@@ -337,7 +334,7 @@ export function registerTools(pi: ExtensionAPI): void {
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx: ExtensionContext) {
       if (!requireAgentSwarm(ctx)) {
-        return toolError("ahs CLI not found on PATH");
+        return toolError("ahsw CLI not found on PATH");
       }
       if (!state.session?.swarm) {
         return toolError("Not in a swarm. Use swarm_create or swarm_join first.");
@@ -366,6 +363,7 @@ export function registerTools(pi: ExtensionAPI): void {
         state.exchanges.delete(exchangeId);
         return toolError(`Task failed: ${error instanceof Error ? error.message : "unknown"}`);
       }
+      trackStart({ kind: "task", peer: params.to, role: "initiator", task });
       return {
         content: [{ type: "text", text: `task offered to <${params.to}>` }],
         details: { exchange_id: exchangeId, to: params.to },
@@ -400,6 +398,79 @@ export function registerTools(pi: ExtensionAPI): void {
   });
 
   pi.registerTool({
+    name: "swarm_get_state",
+    label: "Swarm Get State",
+    description:
+      "Read the swarm's current shared-state document (the JSON every member converges on)",
+    promptSnippet: "Read the swarm's shared-state document",
+    promptGuidelines: [
+      "Use swarm_get_state to read the shared state before deciding your next swarm_apply_patch",
+      "Read the current state from the returned document — never reconstruct it from memory or earlier turns",
+      "On joining a swarm, let the state settle a moment (anti-entropy backfill), then read it once",
+    ],
+    parameters: Type.Object({}),
+    async execute(_toolCallId, _params, _signal, _onUpdate, ctx: ExtensionContext) {
+      if (!requireAgentSwarm(ctx)) {
+        return toolError("ahsw CLI not found on PATH");
+      }
+      if (!state.session?.swarm) {
+        return toolError("Not in a swarm. Use swarm_create or swarm_join first.");
+      }
+      try {
+        const document = getStateDocument();
+        return {
+          content: [{ type: "text", text: JSON.stringify(document, null, 2) }],
+          details: { document },
+        };
+      } catch (error) {
+        return toolError(`Get state failed: ${error instanceof Error ? error.message : "unknown"}`);
+      }
+    },
+  });
+
+  pi.registerTool({
+    name: "swarm_apply_patch",
+    label: "Swarm Apply Patch",
+    description: "Apply a JSON-Patch (RFC 6902) change to the swarm's shared state",
+    promptSnippet: "Change the swarm's shared state with a JSON-Patch",
+    promptGuidelines: [
+      "Use swarm_apply_patch to change the shared state — pass the RFC 6902 op array",
+      'Frozen subset: add/replace/remove on object paths, plus add "/arr/-" to append. No test/move/copy, numeric array indices, or root path ""',
+      'Arrays are append-only — you cannot patch /arr/0. To change one element, either replace the whole array at /arr, or model the collection as an object keyed by index ({"0":…,"1":…}) so each element is an object path like /coll/0',
+      "When you replace a whole array, build it from a fresh swarm_get_state — a stale base silently overwrites a peer's change",
+      "React to a peer's change (the state event), never your own. Drive each turn read → guard → write: read the document, check a turn marker before patching, act only on your turn, then send one patch",
+      "Put dependent ops in one patch (it is applied atomically); a rejected patch returns ok:false with an error",
+    ],
+    parameters: Type.Object({
+      patch: Type.Array(Type.Object({}, { additionalProperties: true }), {
+        description: 'RFC 6902 op array, e.g. [{"op":"replace","path":"/turn","value":"b"}]',
+      }),
+    }),
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx: ExtensionContext) {
+      if (!requireAgentSwarm(ctx)) {
+        return toolError("ahsw CLI not found on PATH");
+      }
+      if (!state.session?.swarm) {
+        return toolError("Not in a swarm. Use swarm_create or swarm_join first.");
+      }
+      try {
+        const result = applyStatePatch({ patch: JSON.stringify(params.patch) });
+        if (result.ok) {
+          return {
+            content: [{ type: "text", text: JSON.stringify(params.patch, null, 2) }],
+            details: { patch: params.patch },
+          };
+        }
+        return toolError(result.error ?? "patch rejected");
+      } catch (error) {
+        return toolError(
+          `Apply patch failed: ${error instanceof Error ? error.message : "unknown"}`,
+        );
+      }
+    },
+  });
+
+  pi.registerTool({
     name: "swarm_leave",
     label: "Swarm Leave",
     description: "Leave the current agent swarm",
@@ -424,22 +495,17 @@ export function registerTools(pi: ExtensionAPI): void {
     parameters: Type.Object({}),
     async execute(_toolCallId, _params, _signal, _onUpdate, ctx: ExtensionContext) {
       if (!requireAgentSwarm(ctx)) {
-        return toolError("ahs CLI not found on PATH");
+        return toolError("ahsw CLI not found on PATH");
       }
       if (!state.session?.swarm) {
         return toolError("Not in a swarm");
       }
       try {
         const results = await pingPeers();
-        if (results.length === 0) {
-          return { content: [{ type: "text", text: "No peers responded" }], details: null };
-        }
-        const lines = ["| peer | RTT |", "|---|---|"];
-        for (const result of results) {
-          lines.push(`| ${result.author} | ${result.rtt}ms |`);
-        }
-        lines.push(`${results.length} peer(s) online`);
-        return { content: [{ type: "text", text: lines.join("\n") }], details: { peers: results } };
+        return {
+          content: [{ type: "text", text: formatPingReport(results) }],
+          details: { peers: results },
+        };
       } catch (error) {
         return toolError(`Ping failed: ${error instanceof Error ? error.message : "unknown"}`);
       }

@@ -2,13 +2,12 @@
 //!
 //! - [`message`]: the `Message` envelope + its value types
 //!   (`MessageBody`, `MessageId`) + the size cap.
-//! - [`swarm`]: the `ahs…` identifier (`SwarmId` shallow string +
-//!   `Swarm` decoded form) + `SwarmName` / `SwarmConfig` (rate limit +
-//!   lookups) / relay-ladder parsing.
+//! - [`swarm`]: the `🐝…` identifier (`SwarmId` shallow string +
+//!   `Swarm` decoded form) + `SwarmName` / `SwarmConfig` (lookups) /
+//!   relay-ladder parsing.
 //! - [`nickname`]: the `Nickname` newtype.
 //! - [`crypto`]: seed → rendezvous identity + gossip topic.
 //! - [`peer_addr`]: the `PeerInfo` address JSON codec.
-//! - [`peer_meta`]: the `joined` model/harness metadata codec.
 
 pub(crate) mod crypto;
 mod ident;
@@ -16,14 +15,14 @@ pub(crate) mod identity;
 pub(crate) mod message;
 pub(crate) mod nickname;
 pub(crate) mod peer_addr;
-pub(crate) mod peer_meta;
 pub(crate) mod swarm;
 pub(crate) mod token;
 mod wordlist;
 
 pub(crate) use message::{
-    ExchangeId, ExchangeIdError, ExchangeKind, ExchangeKindError, ExchangePhase,
-    ExchangePhaseError, Message, MessageBody, MessageId, MessageKind, PresenceSubtype,
+    Channel, ExchangeId, ExchangeIdError, ExchangeKind, ExchangeKindError, ExchangePhase,
+    ExchangePhaseError, Message, MessageBody, MessageId, MessageKind, Part, PartGroup,
+    PresenceSubtype,
 };
 pub(crate) use nickname::Nickname;
 pub(crate) use swarm::SwarmId;

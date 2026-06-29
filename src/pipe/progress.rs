@@ -1,4 +1,4 @@
-//! OSC 9;4 terminal progress for `ahs pipe`, written straight to `/dev/tty`
+//! OSC 9;4 terminal progress for `ahsw pipe`, written straight to `/dev/tty`
 //! (the controlling terminal) so it never touches stdout (the pipe's data /
 //! ticket) or stderr (errors only). With no controlling terminal (piped,
 //! daemon, CI) the writes are skipped.

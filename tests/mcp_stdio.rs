@@ -1,4 +1,4 @@
-//! Integration tests: `ahs mcp` over stdio.
+//! Integration tests: `ahsw mcp` over stdio.
 //!
 //! Spawns the binary, pipes in JSON-RPC, asserts the server's
 //! responses. These are the reliability guarantees we make at the
@@ -6,7 +6,6 @@
 
 mod common;
 
-use agent_habilis_swarm::RATE_LIMIT_PER_MIN;
 use common::{CONNECT_TIMEOUT, MSG_TIMEOUT, POLL, flag_args, test_cmd, tmp_log};
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Write};
@@ -41,7 +40,7 @@ impl McpClient {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .expect("spawn ahs mcp");
+            .expect("spawn ahsw mcp");
         let stdin = child.stdin.take().expect("child stdin");
         let stdout = child.stdout.take().expect("child stdout");
         let reader = BufReader::new(stdout);
@@ -62,7 +61,7 @@ impl McpClient {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .expect("spawn ahs mcp");
+            .expect("spawn ahsw mcp");
         let stdin = child.stdin.take().expect("child stdin");
         let stdout = child.stdout.take().expect("child stdout");
         let reader = BufReader::new(stdout);
@@ -807,83 +806,6 @@ fn fetch_messages_cursor_returns_only_new_since_last_call() {
     );
 }
 
-// ─── rate limiting (#6) ──────────────────────────────────────────
-
-#[test]
-fn rate_limiter_drops_excess_messages_from_flooding_peer() {
-    // Sender creates a private swarm, receiver joins, gossip links.
-    let (mut sender, mut receiver, _swarm, sender_nick) = create_pair(300);
-
-    // Sender fires many messages in tight succession — twice the
-    // per-identity quota, so excess is dropped regardless of token
-    // refills during the loop. With sender-side limiting the sender
-    // drops most of these before broadcast (the receiver's limiter is
-    // the backstop); either way the flood is bounded well under the
-    // count sent. Referencing the constant keeps this from silently
-    // passing if the quota changes.
-    let message_flood: usize = RATE_LIMIT_PER_MIN as usize * 2;
-    for i in 0..message_flood {
-        let _ = sender.tool_call(
-            400 + i as u64,
-            "send_message",
-            serde_json::json!({ "text": format!("flood {}", i) }),
-        );
-    }
-
-    // Poll fetch_messages until the count stops growing (gossip has
-    // fully caught up). FROM_START keeps the implicit cursor out of
-    // the way so we always see the full buffer. Suite-wide gossip-
-    // delivery budget (breaks early once the count stabilises).
-    let deadline = Instant::now() + MSG_TIMEOUT;
-    let mut last_count: i64 = -1;
-    let mut stable_iters = 0;
-    let mut flood_count: usize = 0;
-    while Instant::now() < deadline {
-        std::thread::sleep(Duration::from_millis(400));
-        let fetched = tool_result_json(&receiver.tool_call(
-            500,
-            "fetch_messages",
-            serde_json::json!({ "after": FROM_START }),
-        ))
-        .expect("fetch");
-        let msgs = fetched["messages"].as_array().expect("messages array");
-        flood_count = msgs
-            .iter()
-            .filter(|msg| {
-                msg.get("type").and_then(|value| value.as_str()) == Some("msg")
-                    && msg.get("author").and_then(|value| value.as_str())
-                        == Some(sender_nick.as_str())
-                    && msg
-                        .get("body")
-                        .and_then(|value| value.as_str())
-                        .is_some_and(|body| body.starts_with("flood "))
-            })
-            .count();
-        if i64::try_from(flood_count).expect("flood_count fits i64") == last_count {
-            stable_iters += 1;
-            if stable_iters >= 3 {
-                break;
-            }
-        } else {
-            stable_iters = 0;
-            last_count = i64::try_from(flood_count).expect("flood_count fits i64");
-        }
-    }
-
-    // The rate limiter should have dropped at least some messages.
-    // We don't pin the exact count — token-bucket behavior is
-    // timing-sensitive — just that it fired at all.
-    assert!(
-        flood_count < message_flood,
-        "rate limiter should drop at least one flood message; receiver got all {flood_count} of {message_flood}"
-    );
-    // And the receiver should have seen at least the burst allowance.
-    assert!(
-        flood_count >= 1,
-        "receiver should see at least one message through the rate limiter, got 0"
-    );
-}
-
 // ─── task + roster ───────────────────────────────────────────────
 
 const MCP_EXCHANGE_ID: &str = "550e8400-e29b-41d4-a716-446655440000";
@@ -1018,84 +940,6 @@ fn swarm_info_reports_participant_roster() {
     }
 }
 
-/// Self-reported model/harness round-trips both ways: a creator and joiner
-/// each pass their own `model`/`harness`, and each sees the *other's* values
-/// in its `swarm_info` roster. Proves both `create_swarm` and `join_swarm`
-/// plumb the fields through to the announced presence.
-#[test]
-fn create_and_join_self_report_model_harness() {
-    let mut creator = McpClient::spawn();
-    let mut joiner = McpClient::spawn();
-
-    let created = tool_result_json(&creator.tool_call(
-        760,
-        "create_swarm",
-        serde_json::json!({ "name": "mcpmeta", "model": "Opus 4.8", "harness": "Claude Code" }),
-    ))
-    .expect("create_swarm must succeed");
-    let swarm = created["swarm"].as_str().expect("swarm id").to_string();
-    let creator_nick = created["nickname"].as_str().expect("nickname").to_string();
-
-    let join_result = tool_result_json(&joiner.tool_call(
-        761,
-        "join_swarm",
-        serde_json::json!({ "swarm": swarm, "model": "Sonnet 4.6", "harness": "pi" }),
-    ))
-    .expect("join_swarm must succeed");
-    let joiner_nick = join_result["nickname"]
-        .as_str()
-        .expect("nickname")
-        .to_string();
-
-    // Each side polls its roster for the *other* peer, then asserts the
-    // self-reported metadata surfaced.
-    let find_peer = |client: &mut McpClient, base: u64, peer: &str| -> serde_json::Value {
-        let deadline = Instant::now() + MSG_TIMEOUT;
-        let mut probe = base;
-        loop {
-            let info =
-                tool_result_json(&client.tool_call(probe, "swarm_info", serde_json::json!({})))
-                    .expect("swarm_info");
-            if let Some(entry) = info["participants"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .find(|entry| entry["nickname"].as_str() == Some(peer))
-                .cloned()
-            {
-                break entry;
-            }
-            assert!(Instant::now() < deadline, "{peer} never surfaced: {info}");
-            probe += 1;
-            std::thread::sleep(Duration::from_millis(100));
-        }
-    };
-
-    let joiner_entry = find_peer(&mut creator, 762, &joiner_nick);
-    assert_eq!(
-        joiner_entry["model"].as_str(),
-        Some("Sonnet 4.6"),
-        "{joiner_entry}"
-    );
-    assert_eq!(
-        joiner_entry["harness"].as_str(),
-        Some("pi"),
-        "{joiner_entry}"
-    );
-
-    let creator_entry = find_peer(&mut joiner, 780, &creator_nick);
-    assert_eq!(
-        creator_entry["model"].as_str(),
-        Some("Opus 4.8"),
-        "{creator_entry}"
-    );
-    assert_eq!(
-        creator_entry["harness"].as_str(),
-        Some("Claude Code"),
-        "{creator_entry}"
-    );
-}
-
 /// Loopback timings so the advertise→discover round runs in seconds: short
 /// co-host grace (the advertiser becomes the directory beacon fast) and
 /// frequent re-ads (so the discoverer's collection window catches one).
@@ -1206,4 +1050,82 @@ fn ping_reports_rtt_to_a_peer() {
         id += 1;
     };
     assert!(rtt.is_some(), "ping never reported an RTT for the joiner");
+}
+
+/// Poll a read tool (`get_state` / `get_meta`) on `client` until its `document`
+/// satisfies `pred` or `MSG_TIMEOUT` elapses.
+fn poll_doc(
+    client: &mut McpClient,
+    base_id: u64,
+    tool: &str,
+    mut pred: impl FnMut(&serde_json::Value) -> bool,
+) -> bool {
+    let deadline = Instant::now() + MSG_TIMEOUT;
+    let mut id = base_id;
+    loop {
+        let resp = tool_result_json(&client.tool_call(id, tool, serde_json::json!({})))
+            .unwrap_or_else(|| panic!("{tool} must succeed"));
+        if pred(&resp["document"]) {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        id += 1;
+        std::thread::sleep(POLL);
+    }
+}
+
+/// Both shared-state channels round-trip over MCP: an `apply_*_patch` on one
+/// client is reflected by the other client's `get_*`, and the two channels stay
+/// isolated (a `state` key never appears in `get_meta`, nor vice versa). Proves
+/// the meta MCP tools reach a real, independent second channel.
+#[test]
+fn state_and_meta_round_trip_over_mcp() {
+    let (mut creator, mut joiner, _swarm, _nick) = create_pair(900);
+
+    // state: creator patches, the joiner's get_state reflects it.
+    let patched = tool_result_json(&creator.tool_call(
+        910,
+        "apply_state_patch",
+        serde_json::json!({ "patch": [{"op":"add","path":"/turn","value":"a"}] }),
+    ))
+    .expect("apply_state_patch must succeed");
+    assert_eq!(patched["ok"], true, "apply_state_patch reports ok");
+    assert!(
+        poll_doc(&mut joiner, 911, "get_state", |doc| doc["turn"] == "a"),
+        "joiner's get_state never reflected the creator's state patch"
+    );
+
+    // meta: creator patches, the joiner's get_meta reflects it.
+    let meta_patched = tool_result_json(&creator.tool_call(
+        920,
+        "apply_meta_patch",
+        serde_json::json!({ "patch": [{"op":"add","path":"/peers","value":{"creator":{"model":"Opus 4.8"}}}] }),
+    ))
+    .expect("apply_meta_patch must succeed");
+    assert_eq!(meta_patched["ok"], true, "apply_meta_patch reports ok");
+    assert!(
+        poll_doc(&mut joiner, 921, "get_meta", |doc| doc
+            .pointer("/peers/creator/model")
+            == Some(&serde_json::json!("Opus 4.8"))),
+        "joiner's get_meta never reflected the creator's meta patch"
+    );
+
+    // Channel isolation: the state key isn't in meta, and the meta key isn't in
+    // state.
+    let meta_doc = tool_result_json(&joiner.tool_call(930, "get_meta", serde_json::json!({})))
+        .expect("get_meta must succeed");
+    assert!(
+        meta_doc["document"].get("turn").is_none(),
+        "a state key leaked into the meta document: {}",
+        meta_doc["document"]
+    );
+    let state_doc = tool_result_json(&joiner.tool_call(931, "get_state", serde_json::json!({})))
+        .expect("get_state must succeed");
+    assert!(
+        state_doc["document"].get("peers").is_none(),
+        "a meta key leaked into the state document: {}",
+        state_doc["document"]
+    );
 }

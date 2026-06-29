@@ -2,7 +2,7 @@
 //!
 //! Runs as a stdio JSON-RPC server that AI clients (Codex, Cursor,
 //! Claude Desktop, Claude Code) can spawn as a child process.
-//! Exposes eleven tools that wrap the existing swarm lifecycle:
+//! Exposes fifteen tools that wrap the existing swarm lifecycle:
 //!
 //! - `create_swarm`
 //! - `join_swarm`
@@ -11,6 +11,10 @@
 //! - `send_message`
 //! - `send_exchange`
 //! - `fetch_messages`
+//! - `apply_state_patch`
+//! - `get_state`
+//! - `apply_meta_patch`
+//! - `get_meta`
 //! - `swarm_info`
 //! - `ping`
 //! - `swarm_version`
@@ -51,6 +55,7 @@ use tokio::sync::Mutex;
 
 use crate::daemon::state::RosterEntry;
 use crate::embed::{CreateConfig, CreateError, Directory, JoinConfig};
+use crate::gossip::StatePatchError;
 use crate::protocol::swarm::{LookupSet, RelayLadder, RelaySelection, SwarmName};
 use crate::protocol::{
     ExchangeId, ExchangeKind, ExchangeKindError, ExchangePhase, ExchangePhaseError, Message,
@@ -130,13 +135,8 @@ struct CreateSwarmArgs {
     /// ordered ladder.
     #[serde(default)]
     relay: Option<String>,
-    /// Per-author messages-per-minute cap baked into the swarm id and
-    /// enforced swarm-wide (every joiner inherits it). `0` disables rate
-    /// limiting. Default 60.
-    #[serde(default = "default_rate_limit")]
-    rate_limit_per_min: u16,
     /// List this swarm in a directory so others can find it with
-    /// `ahs discover` (no id to share). Requires `network: "public"`. Note:
+    /// `ahsw discover` (no id to share). Requires `network: "public"`. Note:
     /// advertising broadcasts the join token — the swarm becomes open to
     /// anyone discovering the directory.
     #[serde(default)]
@@ -145,23 +145,11 @@ struct CreateSwarmArgs {
     /// Omit for the well-known `global` directory.
     #[serde(default)]
     directory: Option<String>,
-    /// Self-reported model (e.g. "Opus 4.8"). Announced to peers so their
-    /// roster / status shows what this agent runs on. Omit to advertise none.
-    #[serde(default)]
-    model: Option<String>,
-    /// The agent you run in (Claude Code, Cursor, Codex, …) — report your own,
-    /// don't copy the example. Self-reported, announced alongside `model`.
-    #[serde(default)]
-    harness: Option<String>,
-}
-
-fn default_rate_limit() -> u16 {
-    crate::util::consts::RATE_LIMIT_PER_MIN
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct JoinSwarmArgs {
-    /// Swarm identifier (ahs…), a domain (example.com), or a git
+    /// Swarm identifier (🐝…), a domain (example.com), or a git
     /// repo URL (github.com/user/repo, gitlab.com/user/repo,
     /// bitbucket.org/user/repo). Non-id values are resolved via
     /// `/.well-known/agent-habilis-swarm`.
@@ -169,14 +157,6 @@ struct JoinSwarmArgs {
     /// Optional nickname in `word-word` form. Random if omitted.
     #[serde(default)]
     nickname: Option<String>,
-    /// Self-reported model (e.g. "Opus 4.8"). Announced to peers so their
-    /// roster / status shows what this agent runs on. Omit to advertise none.
-    #[serde(default)]
-    model: Option<String>,
-    /// The agent you run in (Claude Code, Cursor, Codex, …) — report your own,
-    /// don't copy the example. Self-reported, announced alongside `model`.
-    #[serde(default)]
-    harness: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -257,6 +237,40 @@ fn parse_exchange_id(raw: &str) -> Result<ExchangeId, McpError> {
         .map_err(|error: crate::protocol::ExchangeIdError| {
             McpError::invalid_params(error.to_string(), None)
         })
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct ApplyStatePatchArgs {
+    /// The JSON-Patch (RFC 6902) op array, e.g.
+    /// `[{"op":"replace","path":"/turn","value":"b"}]`. Frozen subset:
+    /// `add`/`replace`/`remove` on object paths + `add "/arr/-"` (append); no
+    /// `test`/`move`/`copy`, numeric array indices, or root path "". Validated
+    /// against the current document and rejected if it does not apply cleanly.
+    patch: serde_json::Value,
+    /// Optional compare-and-set guard: the `doc_hash` from your last
+    /// `get_state`. If the document changed since, the patch returns
+    /// `{ok:false,stale:true}` (retryable) instead of applying — re-`get_state`
+    /// and retry. Use it for turn-based or contended state so a change you have
+    /// already seen isn't clobbered.
+    #[serde(default)]
+    if_doc_hash: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct ApplyMetaPatchArgs {
+    /// The JSON-Patch (RFC 6902) op array for the **meta** channel — swarm
+    /// metadata, by convention `/peers/<nickname> = {"model":…,"harness":…}`
+    /// self-reported by each agent, e.g.
+    /// `[{"op":"add","path":"/peers/swift-cedar","value":{"model":"Opus 4.8","harness":"Claude Code"}}]`.
+    /// Same frozen subset as `apply_state_patch`: `add`/`replace`/`remove` on
+    /// object paths + `add "/arr/-"`; no `test`/`move`/`copy`, numeric array
+    /// indices, or root path "". Rejected if it does not apply cleanly.
+    patch: serde_json::Value,
+    /// Optional compare-and-set guard: the `doc_hash` from your last `get_meta`.
+    /// The patch is rejected with a "stale document" error if the document
+    /// changed since — re-`get_meta` and retry.
+    #[serde(default)]
+    if_doc_hash: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -412,10 +426,7 @@ impl AgentSwarmServer {
             },
             advertise: args.advertise,
             directory,
-            rate_limit_per_min: args.rate_limit_per_min,
             max_peers: DEFAULT_MAX_DIRECT_PEERS,
-            model: args.model,
-            harness: args.harness,
         };
         let session = Session::create(cfg).await.map_err(|error| match error {
             CreateError::AdvertiseRequiresReachable => {
@@ -429,7 +440,7 @@ impl AgentSwarmServer {
     }
 
     #[tool(
-        description = "Join an existing swarm. Accepts an ahs… identifier, a domain (resolves /.well-known/agent-habilis-swarm), or a git repo URL. Idempotent when called for the same swarm id with the same nickname. Poll `fetch_messages` to observe incoming traffic; the server auto-tracks a per-session cursor so repeat cursor-less calls return only new entries."
+        description = "Join an existing swarm. Accepts an 🐝… identifier, a domain (resolves /.well-known/agent-habilis-swarm), or a git repo URL. Idempotent when called for the same swarm id with the same nickname. Poll `fetch_messages` to observe incoming traffic; the server auto-tracks a per-session cursor so repeat cursor-less calls return only new entries."
     )]
     async fn join_swarm(
         &self,
@@ -461,8 +472,6 @@ impl AgentSwarmServer {
             target,
             nickname,
             max_peers: DEFAULT_MAX_DIRECT_PEERS,
-            model: args.model,
-            harness: args.harness,
         })
         .await
         .map_err(to_mcp_error)?;
@@ -555,21 +564,15 @@ impl AgentSwarmServer {
         };
         let body = MessageBody::new(args.text)
             .map_err(|error| McpError::invalid_params(format!("{error}"), None))?;
-        match session
+        let (id, message) = session
             .send_message(body, reply)
             .await
-            .map_err(to_mcp_error)?
-        {
-            Some((id, message)) => ok_json(SendMessageResult { id, message }),
-            // Sender-side rate limiter dropped it (same per-author quota
-            // the receiver enforces). A deliberate drop, not an error, so
-            // the agent can back off rather than retry as a failure.
-            None => ok_json(serde_json::json!({ "rate_limited": true })),
-        }
+            .map_err(to_mcp_error)?;
+        ok_json(SendMessageResult { id, message })
     }
 
     #[tool(
-        description = "Return buffered events from the current swarm — chat, presence, exchange legs, and transient events (ping_report, peer_timeout, …), each the same JSON object the live event stream emits. The server auto-tracks a per-session `seq` cursor, so repeat calls with no args return only new traffic (first call sees full history, up to ~200 events). Pass `after` (a seq) only to explicitly replay from a point. Pass `wait_ms` (~15000) to long-poll — block up to that many ms (server-capped at 60s) for new traffic before returning — only while actively watching a live conversation in a loop; on timeout `messages` is empty. Omit `wait_ms` for a one-shot read (e.g. the user asks to check for new messages), which returns whatever is buffered right away. Never returns `alive` heartbeats — those are internal plumbing."
+        description = "Return buffered events from the current swarm — chat, presence, exchange legs, shared-state changes (event \"state\", carrying the patch and the newly-derived `document`), and transient events (ping_report, peer_timeout, …), each the same JSON object the live event stream emits. The server auto-tracks a per-session `seq` cursor, so repeat calls with no args return only new traffic (first call sees full history, up to ~200 events). Pass `after` (a seq) only to explicitly replay from a point. Pass `wait_ms` (~15000) to long-poll — block up to that many ms (server-capped at 60s) for new traffic before returning — only while actively watching a live conversation in a loop; on timeout `messages` is empty. Omit `wait_ms` for a one-shot read (e.g. the user asks to check for new messages), which returns whatever is buffered right away. Never returns `alive` heartbeats — those are internal plumbing."
     )]
     async fn fetch_messages(
         &self,
@@ -661,7 +664,7 @@ impl AgentSwarmServer {
     }
 
     #[tool(
-        description = "Send one leg of an exchange to a specific peer. An exchange is a directed, phased conversation correlated by `exchange_id` (mint a UUID for the opening \"offer\", echo it on every later leg). `kind` is the behavior (\"handover\" delegates a task/plan; \"task\" runs+verifies). Phases: \"offer\" (brief), \"accept\"/\"decline\" (entry), \"context\" (Q&A), \"progress\" (a done/total beat, e.g. text \"35/100\"), \"done\" (request close + verification instructions), \"confirm\"/\"change\" (verify), \"cancel\". For \"offer\" the `to` nickname must be a current participant (check `swarm_info`). Returns the new message id and authoritative echo, or `{rate_limited:true}` if the sender-side limiter dropped it."
+        description = "Send one leg of an exchange to a specific peer. An exchange is a directed, phased conversation correlated by `exchange_id` (mint a UUID for the opening \"offer\", echo it on every later leg). `kind` is the behavior (\"handover\" delegates a task/plan; \"task\" runs+verifies). Phases: \"offer\" (brief), \"accept\"/\"decline\" (entry), \"context\" (Q&A), \"progress\" (a done/total beat, e.g. text \"35/100\"), \"done\" (request close + verification instructions), \"confirm\"/\"change\" (verify), \"cancel\". For \"offer\" the `to` nickname must be a current participant (check `swarm_info`). Returns the new message id and authoritative echo."
     )]
     async fn send_exchange(
         &self,
@@ -685,8 +688,7 @@ impl AgentSwarmServer {
             .send_exchange(to, exchange_id, kind, phase, body)
             .await
         {
-            Ok(Some((id, message))) => ok_json(SendMessageResult { id, message }),
-            Ok(None) => ok_json(serde_json::json!({ "rate_limited": true })),
+            Ok((id, message)) => ok_json(SendMessageResult { id, message }),
             Err(error) => {
                 let message = error.to_string();
                 if message.contains("unknown participant") {
@@ -696,6 +698,75 @@ impl AgentSwarmServer {
                 }
             }
         }
+    }
+
+    #[tool(
+        description = "Apply a JSON-Patch (RFC 6902) change to the swarm's shared state — a single JSON document every member derives from a gossiped log of patches. `patch` is the op array, e.g. [{\"op\":\"replace\",\"path\":\"/turn\",\"value\":\"b\"}]. Frozen subset: add/replace/remove on object paths + add \"/arr/-\" (append); no test/move/copy, numeric array indices, or root path. Pass `if_doc_hash` (the `doc_hash` from your last get_state) for a compare-and-set guard. Returns `{ok:true}` on apply. A malformed/out-of-subset/non-applying patch is rejected as invalid_params (permanent — don't retry). A compare-and-set conflict returns `{ok:false,stale:true}` instead (retryable — re-run get_state and retry). Peers react to the resulting `state` event; read the new document with `get_state` (or from the `state` event's `document` field in `fetch_messages`)."
+    )]
+    async fn apply_state_patch(
+        &self,
+        Parameters(args): Parameters<ApplyStatePatchArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let guard = self.session.lock().await;
+        let session = guard.as_ref().ok_or_else(not_in_swarm_error)?;
+        match session
+            .apply_state_patch(args.patch, args.if_doc_hash)
+            .await
+        {
+            Ok(()) => ok_json(serde_json::json!({ "ok": true })),
+            // A compare-and-set conflict is retryable, not a bad request, so it
+            // returns a structured `stale:true` result the agent can branch on
+            // (mirroring the CLI's `json_stale`) — not an `invalid_params` error.
+            Err(error) => match error.downcast_ref::<StatePatchError>() {
+                Some(StatePatchError::Stale(why)) => {
+                    ok_json(serde_json::json!({ "ok": false, "stale": true, "error": why }))
+                }
+                _ => Err(McpError::invalid_params(error.to_string(), None)),
+            },
+        }
+    }
+
+    #[tool(
+        description = "Return the swarm's current shared-state document — the JSON value derived by folding every gossiped JSON-Patch change in deterministic order. Starts as {} before any patch. Requires an active swarm. Read it to decide your next `apply_state_patch`."
+    )]
+    async fn get_state(
+        &self,
+        Parameters(_): Parameters<NoArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let guard = self.session.lock().await;
+        let session = guard.as_ref().ok_or_else(not_in_swarm_error)?;
+        let document = session.state_get().await.map_err(to_mcp_error)?;
+        let doc_hash = crate::daemon::state_doc::document_hash(&document);
+        ok_json(serde_json::json!({ "document": document, "doc_hash": doc_hash }))
+    }
+
+    #[tool(
+        description = "Apply a JSON-Patch (RFC 6902) change to the swarm's `meta` channel — a second shared-state document beside `state`, byte-for-byte the same machinery, used for swarm metadata rather than the task. By convention agents self-report what they run on under `/peers/<nickname>`, e.g. [{\"op\":\"add\",\"path\":\"/peers/swift-cedar\",\"value\":{\"model\":\"Opus 4.8\",\"harness\":\"Claude Code\"}}]. Same frozen subset and rejection rules as `apply_state_patch`. Peers react to the resulting `meta` event; read the new document with `get_meta`."
+    )]
+    async fn apply_meta_patch(
+        &self,
+        Parameters(args): Parameters<ApplyMetaPatchArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let guard = self.session.lock().await;
+        let session = guard.as_ref().ok_or_else(not_in_swarm_error)?;
+        match session.apply_meta_patch(args.patch, args.if_doc_hash).await {
+            Ok(()) => ok_json(serde_json::json!({ "ok": true })),
+            Err(error) => Err(McpError::invalid_params(error.to_string(), None)),
+        }
+    }
+
+    #[tool(
+        description = "Return the swarm's current `meta`-channel document (the swarm-metadata counterpart of `get_state`) — the JSON value derived by folding every gossiped `meta` patch. Starts as {} before any patch. By convention holds `/peers/<nickname> = {model, harness}`. Requires an active swarm. Read it to decide your next `apply_meta_patch` or to see what peers run on."
+    )]
+    async fn get_meta(
+        &self,
+        Parameters(_): Parameters<NoArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let guard = self.session.lock().await;
+        let session = guard.as_ref().ok_or_else(not_in_swarm_error)?;
+        let document = session.meta_get().await.map_err(to_mcp_error)?;
+        let doc_hash = crate::daemon::state_doc::document_hash(&document);
+        ok_json(serde_json::json!({ "document": document, "doc_hash": doc_hash }))
     }
 }
 
@@ -707,11 +778,6 @@ const MCP_INSTRUCTIONS: &str = "\
 You are a peer in an agent-habilis swarm — a serverless gossip network where AI \
 agents collaborate. Tone: write like a status display, not a conversation — no \
 preamble, no acknowledgements; stay silent when nothing happened.
-
-SELF-IDENTIFY. When you `create_swarm` or `join_swarm`, set `model` to your own \
-model and `harness` to the agent you run in (e.g. Cursor, Codex) so peers see \
-what you actually run on. Report your real identity — don't copy an example \
-value; omit a field you don't know.
 
 NO PUSH — POLL. The server does not push incoming traffic to you; you read it \
 with `fetch_messages`, which returns only new entries since your last call (the \
@@ -727,9 +793,9 @@ EVENT SHAPE. Each entry in `fetch_messages().messages` is a JSON object. Chat \
 and presence share `event:\"message\"` and are distinguished by a `type` field \
 (`type:\"msg\"` or `type:\"presence\"`, with `subtype:\"joined\"/\"left\"/\"alive\"` \
 on presence). Everything else is discriminated by `event` directly \
-(`exchange`, `exchange_progress`, `ping_report`, `peer_timeout`, `peer_return`, \
-`info`, `error`, `ready`, …). Most entries also carry `self` (true if you \
-authored it) and a pre-built `display` string. You rarely branch on these \
+(`state`, `exchange`, `exchange_progress`, `ping_report`, `peer_timeout`, \
+`peer_return`, `info`, `error`, `ready`, …). Most entries also carry `self` \
+(true if you authored it) and a pre-built `display` string. You rarely branch on these \
 yourself — prefer `display` (below); the rules here say only what to skip vs. \
 surface.
 
@@ -765,8 +831,22 @@ the handoff (initiator auto-confirms; you then do the work on your own); a task 
 returns its result on the `done` leg for the initiator to confirm. Don't display \
 exchange legs as chat lines — drive the flow.
 
-RATE LIMIT: a send over the per-identity quota returns `{rate_limited:true}` (a \
-deliberate drop, not an error) — back off rather than retry.
+SHARED STATE is one JSON document the whole swarm shares, separate from chat. \
+Read it with `get_state`; change it with `apply_state_patch` (an RFC 6902 patch). \
+Every member folds the same gossiped patch log to the same document. A peer's \
+change arrives as an `event:\"state\"` entry in `fetch_messages` carrying the \
+`patch` and the newly-derived `document` — react to that (read `document`, decide, \
+`apply_state_patch` back); your own changes come back with `self:true` (don't act \
+on them). To build a turn-based interaction, put a turn marker in the document and \
+act only when it is yours.
+
+META is a SECOND shared-state channel beside `state` — byte-for-byte the same \
+(read with `get_meta`, change with `apply_meta_patch`, peer changes arrive as \
+`event:\"meta\"`), reserved by convention for swarm metadata rather than the task. \
+Report what YOU run on once you are in the swarm: `apply_meta_patch` your own entry \
+under `/peers/<your-nickname> = {\"model\":…,\"harness\":…}` (the binary does not \
+self-report this). Re-patch it if you switch models. Read `/peers` to see what \
+peers run on.
 
 Call `swarm_manual` for the full command/event reference.";
 

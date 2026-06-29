@@ -16,9 +16,10 @@ use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
+use agent_habilis_swarm::Channel;
 use common::{
-    CONNECT_TIMEOUT, InProcNode, MSG_TIMEOUT, POLL, RECOVERY_TIMEOUT, socket_path, tmp_log,
-    wait_until,
+    CONNECT_TIMEOUT, InProcNode, MSG_TIMEOUT, POLL, RECOVERY_TIMEOUT, serial_guard, socket_path,
+    tmp_log, wait_until,
 };
 
 /// A node running in JSON output mode, with stdout captured to a log file.
@@ -29,7 +30,7 @@ struct JsonNode {
 }
 
 impl JsonNode {
-    /// Spawn `ahs create --no-interactive --output json`, wait for the
+    /// Spawn `ahsw create --no-interactive --output json`, wait for the
     /// `ready` event, and return the node + swarm identifier.
     fn create() -> (Self, String) {
         Self::create_with_flags(&[])
@@ -92,7 +93,7 @@ impl JsonNode {
         )
     }
 
-    /// Spawn `ahs join <swarm> --nickname <nickname> --no-interactive --output json`.
+    /// Spawn `ahsw join <swarm> --nickname <nickname> --no-interactive --output json`.
     fn join(swarm: &str, nickname: &str) -> Self {
         Self::join_with_flags(swarm, nickname, &[])
     }
@@ -436,6 +437,10 @@ async fn test_self_echo_suppression() {
 /// presence `left` event with the correct JSON shape.
 #[test]
 fn test_peer_departure_event() {
+    // Disruption/recovery test — serialize against the other heavy departure
+    // tests so concurrent SIGINTs don't starve each other's heal cycles (the
+    // same gate gossip_network's reliability tests use).
+    let _serial = serial_guard();
     let (creator, joiner_a, _joiner_b, _swarm) = three_peers("depart");
 
     joiner_a.sigint();
@@ -576,6 +581,9 @@ async fn test_message_event_has_all_required_fields() {
 /// to pass messages.
 #[test]
 fn test_creator_departure_peers_survive() {
+    // Disruption/recovery test — serialize so concurrent SIGINTs don't starve
+    // each other's heal cycles (see `serial_guard`).
+    let _serial = serial_guard();
     let (creator, swarm) = JsonNode::create();
     let mut joiner_a = JsonNode::join(&swarm, "survive-alpha");
     let mut joiner_b = JsonNode::join(&swarm, "survive-beta");
@@ -659,6 +667,9 @@ fn test_creator_hard_kill_peers_survive() {
 /// continue exchanging messages.
 #[test]
 fn test_creator_departure_four_peers_survive() {
+    // Disruption/recovery test — serialize so concurrent SIGINTs don't starve
+    // each other's heal cycles (see `serial_guard`).
+    let _serial = serial_guard();
     let (creator, swarm) = JsonNode::create();
     let mut joiner_a = JsonNode::join(&swarm, "four-alpha");
     let mut joiner_b = JsonNode::join(&swarm, "four-beta");
@@ -1098,7 +1109,7 @@ async fn test_task_event_wire_contract() {
     );
 }
 
-/// `ahs task --phase offer` to a nickname that is not a current
+/// `ahsw task --phase offer` to a nickname that is not a current
 /// participant exits non-zero with an `unknown participant` error.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_task_unknown_participant_errors() {
@@ -1217,7 +1228,7 @@ async fn test_exchange_idle_timeout_after_owner_dies() {
     );
 }
 
-/// `ahs peers` returns the live roster: `ok`, a `count` (participants + 1
+/// `ahsw peers` returns the live roster: `ok`, a `count` (participants + 1
 /// for self), and a `participants` array carrying nickname + recency +
 /// quiet flag + reach (direct/gossip) for each known peer.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1241,7 +1252,7 @@ async fn test_peers_roster_shape() {
     while Instant::now() < deadline {
         roster = serde_json::from_str(&common::cli_peers(&swarm, &creator.nickname))
             .expect("peers response is JSON");
-        if roster["count"].as_u64() == Some(3)
+        if roster["participant_count"].as_u64() == Some(3)
             && reach_values(&roster).iter().any(|reach| reach == "direct")
         {
             break;
@@ -1250,7 +1261,7 @@ async fn test_peers_roster_shape() {
     }
 
     assert_eq!(roster["ok"], true);
-    assert_eq!(roster["count"], 3, "creator + 2 joiners");
+    assert_eq!(roster["participant_count"], 3, "creator + 2 joiners");
     let participants = roster["participants"]
         .as_array()
         .expect("participants is an array");
@@ -1307,49 +1318,7 @@ async fn test_peers_roster_shape() {
     );
 }
 
-/// A node started with `--model`/`--harness` advertises them in its `joined`
-/// body; a peer's roster reports them per participant.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn test_peers_roster_reports_model_and_harness() {
-    let (creator, swarm) = JsonNode::create();
-    let joiner = JsonNode::join_with_flags(
-        &swarm,
-        "meta-joiner",
-        &[("--model", "Opus 4.8"), ("--harness", "Claude Code")],
-    );
-
-    // The joiner's metadata rides its `joined` announce, so it trails roster
-    // convergence — poll the creator's roster until the joiner entry carries it.
-    let deadline = Instant::now() + MSG_TIMEOUT;
-    let mut found = None;
-    while Instant::now() < deadline {
-        let roster: serde_json::Value =
-            serde_json::from_str(&common::cli_peers(&swarm, &creator.nickname))
-                .expect("peers response is JSON");
-        found = roster["participants"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .find(|entry| entry["nickname"].as_str() == Some(joiner.nickname.as_str()))
-            .map(|entry| {
-                (
-                    entry["model"].as_str().map(str::to_owned),
-                    entry["harness"].as_str().map(str::to_owned),
-                )
-            });
-        if matches!(&found, Some((Some(_), Some(_)))) {
-            break;
-        }
-        std::thread::sleep(POLL);
-    }
-    assert_eq!(
-        found,
-        Some((Some("Opus 4.8".to_owned()), Some("Claude Code".to_owned()))),
-        "creator's roster should report the joiner's model/harness"
-    );
-}
-
-/// Poll/stream parity: a `msg` returned by `ahs poll --output json` is the
+/// Poll/stream parity: a `msg` returned by `ahsw poll --output json` is the
 /// **byte-identical** object the live `--output json` stream emitted for the
 /// same message — except for the leading `seq` the poll record adds as its
 /// cursor. This is the contract a Monitor-less fallback relies on: parse one
@@ -1445,4 +1414,112 @@ fn test_ping_report_is_pollable() {
         report["peers"].is_array(),
         "ping_report carries the per-peer RTT rows: {report}"
     );
+}
+
+/// Shared-state wire contract over the REAL path the in-process harness bypasses:
+/// `ahsw <channel> patch` on one daemon → the change gossips → the peer's
+/// `--output json` stream carries a `{"event":"<chan>","type":"<chan>",...}`
+/// record with the patch + derived document, and `ahsw <channel> get` on the peer
+/// reflects it. Also pins the CLI exit-code contract for `--if-doc-hash`. Run for
+/// both channels (`state`, `meta`) to prove parity end to end.
+fn channel_wire_contract(channel: Channel) {
+    let label = common::channel_subcommand(channel);
+    let (creator, swarm) = JsonNode::create();
+    let joiner = JsonNode::join(&swarm, &format!("wc-{label}-joiner"));
+    assert!(creator.wait_ready(&swarm), "creator never served");
+    assert!(joiner.wait_ready(&swarm), "joiner never served");
+    // Let the two daemons mesh so the patch gossips live to the joiner.
+    std::thread::sleep(Duration::from_secs(3));
+
+    // Patch on the creator via the real CLI → Unix socket → daemon path.
+    let ops = r#"[{"op":"add","path":"/k","value":"v"}]"#;
+    let out = common::cli_channel_patch(channel, &swarm, &creator.nickname, ops, None);
+    assert!(
+        out.status.success(),
+        "{label} patch should exit 0: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let resp: serde_json::Value =
+        serde_json::from_slice(&out.stdout).expect("patch stdout is JSON");
+    assert_eq!(resp["ok"], true, "{label} patch should report ok:true");
+
+    // The joiner surfaces it on its --output json stream as an `event:"<chan>"`
+    // record carrying the patch op array + the freshly-derived document.
+    let want_doc = serde_json::json!({"k": "v"});
+    let deadline = Instant::now() + MSG_TIMEOUT;
+    let mut event = None;
+    while Instant::now() < deadline {
+        let poll = common::cli_poll(&swarm, &joiner.nickname, None);
+        let records: Vec<serde_json::Value> =
+            serde_json::from_str(&poll).expect("poll JSON parses");
+        event = records.into_iter().find(|record| record["event"] == label);
+        if event.is_some() {
+            break;
+        }
+        std::thread::sleep(POLL);
+    }
+    let event = event.unwrap_or_else(|| panic!("joiner never surfaced a {label} event"));
+    assert_eq!(event["type"], label, "{label} event carries type:{label}");
+    assert!(
+        event["patch"].is_array(),
+        "{label} event carries the patch op array: {event}"
+    );
+    assert_eq!(
+        event["document"], want_doc,
+        "{label} event carries the derived document: {event}"
+    );
+
+    // The `<chan> get` command on the joiner returns the same document.
+    let got = common::cli_channel_get(channel, &swarm, &joiner.nickname);
+    let got: serde_json::Value = serde_json::from_str(&got).expect("get stdout is JSON");
+    assert_eq!(got["ok"], true);
+    assert_eq!(
+        got["document"], want_doc,
+        "{label} get on the peer reflects the creator's patch"
+    );
+
+    // CAS exit-code contract: a stale --if-doc-hash is rejected (non-zero exit +
+    // {ok:false}); the current hash applies (exit 0).
+    let current = common::cli_channel_get(channel, &swarm, &creator.nickname);
+    let current: serde_json::Value = serde_json::from_str(&current).unwrap();
+    let hash = current["doc_hash"]
+        .as_str()
+        .expect("doc_hash present")
+        .to_owned();
+
+    let cas_ops = r#"[{"op":"add","path":"/x","value":1}]"#;
+    let stale = common::cli_channel_patch(
+        channel,
+        &swarm,
+        &creator.nickname,
+        cas_ops,
+        Some("deadbeef"),
+    );
+    assert!(
+        !stale.status.success(),
+        "{label} stale-hash patch must exit non-zero"
+    );
+    let stale_resp: serde_json::Value =
+        serde_json::from_slice(&stale.stdout).expect("stale patch stdout is JSON");
+    assert_eq!(
+        stale_resp["ok"], false,
+        "{label} stale patch reports ok:false"
+    );
+
+    let fresh = common::cli_channel_patch(channel, &swarm, &creator.nickname, cas_ops, Some(&hash));
+    assert!(
+        fresh.status.success(),
+        "{label} current-hash patch must exit 0: {}",
+        String::from_utf8_lossy(&fresh.stderr)
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn state_wire_contract_patch_get_event_and_cas() {
+    channel_wire_contract(Channel::State);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn meta_wire_contract_patch_get_event_and_cas() {
+    channel_wire_contract(Channel::Meta);
 }

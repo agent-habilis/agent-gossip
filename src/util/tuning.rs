@@ -29,17 +29,6 @@ pub(crate) fn seen_ids_cap() -> usize {
 /// spams while offline can't grow memory unbounded.
 pub(crate) const PENDING_OUTBOUND_CAP: usize = 64;
 
-/// Memory bound on the un-pruned state log: a safety valve, **not** normal
-/// retention. State events are signature-authenticated but not yet
-/// *authorized* (admission control is a future feature), so any peer can author
-/// them; without a bound an un-pruned log is a memory-exhaustion vector. Sized
-/// so the complete set of compact (16-byte) ids fits one dedicated `StateDigest`
-/// gossip message well under `MAX_MESSAGE_SIZE`, and far above any legitimate
-/// membership-edit volume. New events past the cap are rejected (reject-newest,
-/// preserving established state); the real fix for abuse is authorization, not a
-/// larger number.
-pub(crate) const STATE_LOG_CAP: usize = 128;
-
 /// How many distinct peer endpoint ids we remember for the
 /// rendezvous-independent re-bridge (`gossip::heal::rebridge_known`).
 /// Survives `NeighborDown` (unlike `linked_endpoints`) so a node that
@@ -64,7 +53,7 @@ pub(crate) const ANTIENTROPY_INTERVAL_SECS: u64 = 10;
 /// deep interior gaps without re-sending the out-of-window remainder). At
 /// 70 ids each (~140 total) the body packs ids as raw 16-byte UUIDs
 /// Base58-encoded (~22 chars/id) to ~3.1 KB; plus the `{windows:[…]}` and
-/// message envelope (the `ahs…` id alone is ~80 chars) it stays under
+/// message envelope (the `🐝…` id alone is ~80 chars) it stays under
 /// `MAX_MESSAGE_SIZE` (3840) — guarded by the `digest_fits_gossip_cap`
 /// test. Sized to a single gossip message, **not** the (larger,
 /// configurable) log, which the rolling cursor sweeps across rounds.
@@ -103,15 +92,6 @@ pub(crate) fn gossip_passive_view_capacity() -> usize {
 /// under sustained lag the oldest buffered messages are dropped and
 /// the consumer observes `RecvError::Lagged` (see `embed::SwarmSession`).
 pub(crate) const EMBED_INBOUND_CAP: usize = 1024;
-
-// The per-identity message rate (`RATE_LIMIT_PER_MIN`) is a published
-// contract enforced on both send and receive, so it lives in the shared
-// crate — see `crate::util::consts::RATE_LIMIT_PER_MIN`. The prune TTL below is a
-// private memory-management knob, not part of that contract.
-
-/// Rate-limiter entries idle longer than this (seconds) are pruned, so
-/// the per-author bucket map can't grow unbounded as nicknames churn.
-pub(crate) const RATE_LIMITER_TTL_SECS: u64 = 600;
 
 /// Soft resident-memory threshold (`MiB`) above which the daemon emits a
 /// one-shot `warn` (log + JSON `info` event) on its slow prune tick — the
@@ -169,7 +149,7 @@ pub(crate) fn cohost_grace_secs() -> u64 {
     current().cohost_grace_secs
 }
 
-/// How long an `ahs ping` round collects pongs before the daemon
+/// How long an `ahsw ping` round collects pongs before the daemon
 /// emits its `ping_report`. Long enough for a relayed round-trip
 /// across the mesh; hidden flag `--ping-window-secs` so tests don't
 /// wait the full window.
@@ -287,7 +267,7 @@ pub(crate) const IPC_ACCEPT_BACKOFF_MAX_SECS: u64 = 5;
 /// real `msg`/`poll` round-trip, so only a hung client ever hits it.
 pub(crate) const IPC_IO_TIMEOUT_SECS: u64 = 10;
 
-/// `ahs ready` gate: how long to wait for the daemon's `--state-file` to
+/// `ahsw ready` gate: how long to wait for the daemon's `--state-file` to
 /// report `ready: true` before giving up (the `--timeout-secs` default),
 /// and the fixed interval between file reads while waiting. 30s covers a
 /// cold daemon start (the file appears sub-second once the process is up).
@@ -386,7 +366,7 @@ pub(crate) const QUIET_CAP: usize = 1024;
 /// still maintains links independently — this only throttles *our* piling-on.
 pub(crate) const RELINK_COOLDOWN_SECS: u64 = 10;
 
-/// How often an advertising `create` re-broadcasts its `ahs…` id into
+/// How often an advertising `create` re-broadcasts its `🐝…` id into
 /// the directory. Short enough that a fresh discoverer sees every live
 /// swarm within one cycle (the join-horizon only surfaces ads stamped
 /// after the discoverer joined), long enough that the directory stays
