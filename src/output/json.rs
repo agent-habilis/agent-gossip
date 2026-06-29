@@ -116,13 +116,6 @@ struct PresenceLine<'a> {
     pub subtype: PresenceSubtype,
     /// Pre-formatted, markdown-safe line (see [`presence_display`]).
     pub display: String,
-    /// The joiner's self-reported model / harness, also surfaced as structured
-    /// fields (not just inside `display`) so a plain-text client can compose
-    /// its own join line. Only on `joined`; absent when the peer advertised none.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub model: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub harness: Option<String>,
 }
 
 /// A `{"event":"exchange",...}` line for a **content** exchange leg. A distinct
@@ -267,14 +260,10 @@ fn exchange_progress_display(
 }
 
 /// `display` line for a presence event: `` 🐝️ `<author>` has joined `` /
-/// `… has left`. A joiner that advertised model/harness gets it in parens:
-/// `` 🐝️ `<author>` (Opus 4.8 / Claude Code) has joined ``. See
-/// [`msg_display`] for the backtick rationale.
-fn presence_display(author: &str, subtype: PresenceSubtype, meta: Option<&str>) -> String {
-    match meta {
-        Some(meta) => format!("🐝️ `<{author}>` ({meta}) has {subtype}"),
-        None => format!("🐝️ `<{author}>` has {subtype}"),
-    }
+/// `` 🐝️ `<author>` has joined `` / `… has left`. See [`msg_display`] for the
+/// backtick rationale.
+fn presence_display(author: &str, subtype: PresenceSubtype) -> String {
+    format!("🐝️ `<{author}>` has {subtype}")
 }
 
 /// `display` line for a `peer_timeout` event.
@@ -323,21 +312,11 @@ pub(super) fn emit_json<T: Serialize>(value: &T) {
 /// pins the field order (`event`, `id`, `type`, `swarm`, `author`,
 /// `ts`, …) and `Value::to_string` would sort keys alphabetically.
 pub(super) fn format_presence_json(msg: &Message, subtype: PresenceSubtype) -> String {
-    // Only `joined` carries a body (the joiner's model/harness): show it in
-    // parens on the `display` line and also surface the raw fields so a
-    // plain-text client (the pi extension) can compose its own join line.
-    let meta = if subtype == PresenceSubtype::Joined {
-        crate::protocol::peer_meta::from_body(msg.body.as_str())
-    } else {
-        crate::protocol::peer_meta::PeerMeta::default()
-    };
-    let label = meta.label();
+    // Presence carries no body — peer model/harness lives in the `meta` channel.
     serde_json::to_string(&PresenceLine {
         header: message_header(msg, "presence"),
         subtype,
-        display: presence_display(msg.author.as_str(), subtype, label.as_deref()),
-        model: meta.model,
-        harness: meta.harness,
+        display: presence_display(msg.author.as_str(), subtype),
     })
     .expect("presence event serialization should never fail")
 }
@@ -362,9 +341,11 @@ pub(super) fn format_msg_json(msg: &Message, is_self: bool) -> String {
         | MessageKind::PeerInfo
         | MessageKind::Digest
         | MessageKind::StateDigest
+        | MessageKind::MetaDigest
         | MessageKind::Ping
         | MessageKind::Pong { .. }
         | MessageKind::State
+        | MessageKind::Meta
         | MessageKind::Exchange { .. } => {
             unreachable!("format_msg_json only handles Msg")
         }
@@ -505,6 +486,7 @@ fn state_display(author: &str, is_self: bool, what: &str) -> String {
 /// header, the patch op-array (the delta, pulled out of the `State` body), the
 /// freshly-derived `document`, the `display` line, and `self`.
 pub(super) fn format_state_json(
+    channel: crate::protocol::Channel,
     event: &Message,
     document: &serde_json::Value,
     is_self: bool,
@@ -517,9 +499,9 @@ pub(super) fn format_state_json(
         .and_then(|body| body.get("ops").cloned());
     let what = state_change_summary(ops.as_ref());
     serde_json::to_string(&StateLine {
-        event: "state",
+        event: channel.label(),
         id: event.id.as_str(),
-        ty: "state",
+        ty: channel.label(),
         swarm: event.swarm.as_str(),
         author: event.author.as_str(),
         pubkey: (!event.pubkey.is_empty()).then_some(event.pubkey.as_str()),
@@ -620,10 +602,11 @@ pub fn event_json(event: &OutputEvent) -> Option<String> {
             })
         }
         OutputEvent::StateChanged {
+            channel,
             event,
             document,
             is_self,
-        } => return Some(format_state_json(event, document, *is_self)),
+        } => return Some(format_state_json(*channel, event, document, *is_self)),
         OutputEvent::SwarmId { .. } => return None,
     };
     json.ok()

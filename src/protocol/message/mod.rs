@@ -266,6 +266,47 @@ pub enum MessageKind {
     /// pulls the whole state log. Separate from `Digest` for its own
     /// gossip-message and resend budgets. Plumbing like `Digest`.
     StateDigest,
+    /// A durable event on the **meta** channel — a second shared-state channel,
+    /// byte-for-byte identical to [`State`](MessageKind::State) in every respect
+    /// (own un-pruned log, own anti-entropy, own derived doc). The binary does
+    /// not differentiate the two; the split is application convention (`meta` for
+    /// swarm metadata, `state` for the task).
+    Meta,
+    /// Anti-entropy digest for the **meta** log — the meta-channel counterpart to
+    /// [`StateDigest`](MessageKind::StateDigest).
+    MetaDigest,
+}
+
+/// Which shared-state channel an event/digest belongs to. The two channels share
+/// all machinery; this selects the wire kind, the log, and the surfaced name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Channel {
+    State,
+    Meta,
+}
+
+impl Channel {
+    pub(crate) fn event_kind(self) -> MessageKind {
+        match self {
+            Channel::State => MessageKind::State,
+            Channel::Meta => MessageKind::Meta,
+        }
+    }
+
+    pub(crate) fn digest_kind(self) -> MessageKind {
+        match self {
+            Channel::State => MessageKind::StateDigest,
+            Channel::Meta => MessageKind::MetaDigest,
+        }
+    }
+
+    /// The event name surfaced on the `--output json` stream (`state` / `meta`).
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Channel::State => "state",
+            Channel::Meta => "meta",
+        }
+    }
 }
 
 impl fmt::Display for MessageKind {
@@ -280,6 +321,8 @@ impl fmt::Display for MessageKind {
             MessageKind::Exchange { .. } => write!(f, "exchange"),
             MessageKind::State => write!(f, "state"),
             MessageKind::StateDigest => write!(f, "state_digest"),
+            MessageKind::Meta => write!(f, "meta"),
+            MessageKind::MetaDigest => write!(f, "meta_digest"),
         }
     }
 }
@@ -369,18 +412,16 @@ impl Message {
         Self::new(swarm, author, MessageKind::Msg { reply: None }, body)
     }
 
-    pub(crate) fn new_joined(
-        swarm: &SwarmId,
-        author: &Nickname,
-        meta: &crate::protocol::peer_meta::PeerMeta,
-    ) -> Self {
+    pub(crate) fn new_joined(swarm: &SwarmId, author: &Nickname) -> Self {
+        // Presence carries no body; peer metadata (model/harness) is application
+        // data an agent writes into the `meta` channel, not a presence payload.
         Self::new(
             swarm,
             author,
             MessageKind::Presence {
                 subtype: PresenceSubtype::Joined,
             },
-            crate::protocol::peer_meta::to_body(meta),
+            empty_body(),
         )
     }
 
@@ -470,19 +511,38 @@ impl Message {
     }
 
     /// A durable state event whose opaque payload is `body`. Routed to the
-    /// un-pruned `daemon::state_log`, not the chat message-log.
+    /// un-pruned `daemon::state_log`, not the chat message-log. Test/harness
+    /// constructor; production uses [`new_channel_event`](Self::new_channel_event).
+    #[cfg(any(test, feature = "adversarial"))]
     pub(crate) fn new_state(swarm: &SwarmId, author: &Nickname, body: MessageBody) -> Self {
         Self::new(swarm, author, MessageKind::State, body)
     }
 
-    /// A state anti-entropy digest whose `body` is the windowed digest the
-    /// sender advertises (a `DigestBody` of `WireWindow`s over the `State`
-    /// events it holds — the unbounded analogue of the chat digest).
-    pub(crate) fn new_state_digest(
+    /// A durable event on the given channel (`state` / `meta`).
+    pub(crate) fn new_channel_event(
         swarm: &SwarmId,
         author: &Nickname,
         body: MessageBody,
+        channel: Channel,
     ) -> Self {
+        Self::new(swarm, author, channel.event_kind(), body)
+    }
+
+    /// An anti-entropy digest for the given channel.
+    pub(crate) fn new_channel_digest(
+        swarm: &SwarmId,
+        author: &Nickname,
+        body: MessageBody,
+        channel: Channel,
+    ) -> Self {
+        Self::new(swarm, author, channel.digest_kind(), body)
+    }
+
+    /// A state anti-entropy digest whose `body` is the windowed digest the
+    /// sender advertises. Test-only; production uses
+    /// [`new_channel_digest`](Self::new_channel_digest).
+    #[cfg(test)]
+    pub(crate) fn new_state_digest(swarm: &SwarmId, author: &Nickname, body: MessageBody) -> Self {
         Self::new(swarm, author, MessageKind::StateDigest, body)
     }
 
@@ -954,9 +1014,11 @@ mod tests {
             | MessageKind::PeerInfo
             | MessageKind::Digest
             | MessageKind::StateDigest
+            | MessageKind::MetaDigest
             | MessageKind::Ping
             | MessageKind::Pong { .. }
             | MessageKind::State
+            | MessageKind::Meta
             | MessageKind::Exchange { .. } => {
                 panic!("expected Msg kind")
             }
@@ -1291,7 +1353,7 @@ mod tests {
             fn prop_presence_round_trip(is_join in any::<bool>()) {
                 let test_nick = Nickname::from("test-nick");
                 let msg = if is_join {
-                    Message::new_joined(&sid(), &test_nick, &crate::protocol::peer_meta::PeerMeta::default())
+                    Message::new_joined(&sid(), &test_nick)
                 } else {
                     Message::new_left(&sid(), &test_nick)
                 };

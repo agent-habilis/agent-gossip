@@ -61,16 +61,6 @@ pub(crate) enum SessionRequest {
     Ping {
         resp: oneshot::Sender<Vec<output::PingPeer>>,
     },
-    /// Author + broadcast a durable `State` event (the write primitive future
-    /// state-backed features build on). Retained locally + gossiped; the
-    /// response carries any send error.
-    AppendState {
-        body: MessageBody,
-        resp: oneshot::Sender<Result<()>>,
-    },
-    /// Snapshot the derived state — event payloads in deterministic replay
-    /// order. The substrate's generic read until typed projections land.
-    StateSnapshot { resp: oneshot::Sender<Vec<String>> },
     /// Apply a JSON-Patch change to the shared state: validate against the
     /// current document + rate-limit, compose the body, then sign + gossip.
     /// `Err` carries an invalid-patch or rate-limited reason.
@@ -82,7 +72,17 @@ pub(crate) enum SessionRequest {
         resp: oneshot::Sender<Result<()>>,
     },
     /// Read the current derived shared-state document (the JSON-Patch fold).
-    StateDocument {
+    StateGet {
+        resp: oneshot::Sender<serde_json::Value>,
+    },
+    /// `meta`-channel counterpart of [`StatePatch`](SessionRequest::StatePatch).
+    MetaPatch {
+        patch: serde_json::Value,
+        if_doc_hash: Option<String>,
+        resp: oneshot::Sender<Result<()>>,
+    },
+    /// `meta`-channel counterpart of [`StateGet`](SessionRequest::StateGet).
+    MetaGet {
         resp: oneshot::Sender<serde_json::Value>,
     },
     /// Broadcast pre-built wire bytes **verbatim** — no signing, no chain
@@ -182,11 +182,6 @@ pub(crate) struct EventLoopConfig {
     /// global.
     pub output: output::Output,
     pub interactive: bool,
-    /// This node's self-reported model / harness (`--model`/`--harness`),
-    /// announced in our `joined` body so peers can show what we run on.
-    /// `None` when the flag was omitted.
-    pub model: Option<String>,
-    pub harness: Option<String>,
     pub endpoint: Endpoint,
     /// iroh router whose accept loop routes inbound gossip
     /// connections. Must be held alive for the whole event loop —

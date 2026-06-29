@@ -46,14 +46,6 @@ export type JoinOptions = {
 // The harness label this extension reports to peers (the pi runtime).
 const HARNESS = "pi";
 
-// Self-reported identity flags shared by `create` and `join`: always the
-// harness, plus the model when the runtime exposed one (`ctx.model`).
-function metaArgs(model?: string): string[] {
-  const args = ["--harness", HARNESS];
-  if (model) args.push("--model", model);
-  return args;
-}
-
 // The semantic contract for create options, shared by every caller (the
 // `/swarm-create` command and the swarm_create tool). Returns an error
 // message, or undefined when the options are valid. The daemon stays the
@@ -93,7 +85,6 @@ export async function createSwarm(options: CreateOptions = {}): Promise<Session>
   } = options;
 
   const args = ["create", "--no-interactive", "--output", "json", "--filter-self"];
-  args.push(...metaArgs(model));
   // Omit --name entirely so the daemon mints a random name (empty is rejected by the CLI).
   if (name) args.push("--name", name);
   if (network === "public") args.push("--public");
@@ -128,6 +119,7 @@ export async function createSwarm(options: CreateOptions = {}): Promise<Session>
     drift: typeof ready.drift === "string" ? ready.drift : undefined,
   };
   state.session = session;
+  reportSelfMeta(model);
   return session;
 }
 
@@ -135,7 +127,6 @@ export async function joinSwarm({ target, nickname, model }: JoinOptions): Promi
   cleanup();
 
   const args = ["join", target, "--no-interactive", "--output", "json", "--filter-self"];
-  args.push(...metaArgs(model));
   if (nickname) args.push("--nickname", nickname);
   const filePath = stateFilePath();
   if (filePath) args.push("--state-file", filePath);
@@ -159,6 +150,7 @@ export async function joinSwarm({ target, nickname, model }: JoinOptions): Promi
     drift: typeof ready.drift === "string" ? ready.drift : undefined,
   };
   state.session = session;
+  reportSelfMeta(model);
   return session;
 }
 
@@ -320,17 +312,27 @@ export function getPeers(): { count: number; participants: Peer[] } {
       last_seen_secs_ago?: number | null;
       quiet?: boolean;
       reach?: string;
-      model?: string;
-      harness?: string;
     }>;
   };
+  // Model/harness live in the `meta` channel now (`/peers/<nick>`), not the
+  // roster — each agent self-reports them. Best-effort: a meta read failure
+  // just leaves those columns blank, never breaks the roster.
+  let peerMeta: Record<string, { model?: string; harness?: string }> = {};
+  try {
+    const doc = getMetaDocument();
+    if (doc.peers && typeof doc.peers === "object") {
+      peerMeta = doc.peers as Record<string, { model?: string; harness?: string }>;
+    }
+  } catch {
+    // leave peerMeta empty
+  }
   return {
     count: parsed.participant_count,
     participants: parsed.participants.map((entry) => ({
       nickname: entry.nickname,
       reach: entry.reach === "direct" ? "direct" : "gossip",
-      model: entry.model,
-      harness: entry.harness,
+      model: peerMeta[entry.nickname]?.model,
+      harness: peerMeta[entry.nickname]?.harness,
       lastSeenSecsAgo: entry.last_seen_secs_ago ?? null,
       quiet: Boolean(entry.quiet),
     })),
@@ -385,6 +387,66 @@ export function applyStatePatch({ patch }: { patch: string }): {
   ).trim();
   const resp = JSON.parse(raw) as { ok: boolean; error?: string; rate_limited?: boolean };
   return { ok: resp.ok, error: resp.error, rateLimited: resp.rate_limited };
+}
+
+// Read the derived `meta`-channel document via `ahsw meta get`. The meta
+// channel is byte-for-byte the same machinery as `state`; by convention it
+// holds swarm metadata, e.g. `/peers/<nick> = { model, harness }`.
+export function getMetaDocument(): Record<string, unknown> {
+  if (!state.session?.swarm) throw new Error("Not in a swarm");
+  const raw = execFileSync(
+    "ahsw",
+    ["meta", "get", "--swarm", state.session.swarm, "--nickname", state.session.nickname],
+    { encoding: "utf-8", timeout: 15_000 },
+  ).trim();
+  const parsed = JSON.parse(raw) as { ok: boolean; document?: Record<string, unknown> };
+  return parsed.document ?? {};
+}
+
+// Apply an RFC 6902 patch to the `meta` channel. Like `state patch`, the CLI
+// exits non-zero on a rejected `{ok:false}` patch, so execFileSync throws —
+// callers that tolerate rejection (e.g. reportSelfMeta's seed fallback) wrap it.
+function runMetaPatch(patch: string): void {
+  if (!state.session?.swarm) throw new Error("Not in a swarm");
+  execFileSync(
+    "ahsw",
+    [
+      "meta",
+      "patch",
+      "--swarm",
+      state.session.swarm,
+      "--nickname",
+      state.session.nickname,
+      "--patch",
+      patch,
+    ],
+    { encoding: "utf-8", timeout: 15_000 },
+  );
+}
+
+// Record what this agent runs on into `meta` under `/peers/<nickname>`. The
+// binary no longer self-reports model/harness — it is swarm metadata the agent
+// owns. Best-effort: a failed report must not break create/join, so errors are
+// swallowed (the roster simply shows no model for us). `/peers` is an object
+// keyed by nickname so each peer owns its own path and never clobbers another's.
+function reportSelfMeta(model?: string): void {
+  const session = state.session;
+  if (!session?.swarm) return;
+  const value: Record<string, string> = { harness: HARNESS };
+  if (model) value.model = model;
+  const entry = JSON.stringify(value);
+  const nick = JSON.stringify(session.nickname);
+  try {
+    // The common case: /peers already exists (the creator seeded it).
+    runMetaPatch(`[{"op":"add","path":"/peers/${session.nickname}","value":${entry}}]`);
+  } catch {
+    // /peers not present yet (sole or early member) — create it with our entry.
+    try {
+      runMetaPatch(`[{"op":"add","path":"/peers","value":{${nick}:${entry}}}]`);
+    } catch {
+      // Give up silently; self-report is non-essential.
+    }
+  }
 }
 
 export async function pingPeers(): Promise<PingResult[]> {

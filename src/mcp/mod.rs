@@ -2,7 +2,7 @@
 //!
 //! Runs as a stdio JSON-RPC server that AI clients (Codex, Cursor,
 //! Claude Desktop, Claude Code) can spawn as a child process.
-//! Exposes thirteen tools that wrap the existing swarm lifecycle:
+//! Exposes fifteen tools that wrap the existing swarm lifecycle:
 //!
 //! - `create_swarm`
 //! - `join_swarm`
@@ -13,6 +13,8 @@
 //! - `fetch_messages`
 //! - `apply_state_patch`
 //! - `get_state`
+//! - `apply_meta_patch`
+//! - `get_meta`
 //! - `swarm_info`
 //! - `ping`
 //! - `swarm_version`
@@ -147,14 +149,6 @@ struct CreateSwarmArgs {
     /// Omit for the well-known `global` directory.
     #[serde(default)]
     directory: Option<String>,
-    /// Self-reported model (e.g. "Opus 4.8"). Announced to peers so their
-    /// roster / status shows what this agent runs on. Omit to advertise none.
-    #[serde(default)]
-    model: Option<String>,
-    /// The agent you run in (Claude Code, Cursor, Codex, …) — report your own,
-    /// don't copy the example. Self-reported, announced alongside `model`.
-    #[serde(default)]
-    harness: Option<String>,
 }
 
 fn default_rate_limit() -> u16 {
@@ -171,14 +165,6 @@ struct JoinSwarmArgs {
     /// Optional nickname in `word-word` form. Random if omitted.
     #[serde(default)]
     nickname: Option<String>,
-    /// Self-reported model (e.g. "Opus 4.8"). Announced to peers so their
-    /// roster / status shows what this agent runs on. Omit to advertise none.
-    #[serde(default)]
-    model: Option<String>,
-    /// The agent you run in (Claude Code, Cursor, Codex, …) — report your own,
-    /// don't copy the example. Self-reported, announced alongside `model`.
-    #[serde(default)]
-    harness: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -273,6 +259,23 @@ struct ApplyStatePatchArgs {
     /// `get_state`. The patch is rejected with a "stale document" error if the
     /// document changed since — re-`get_state` and retry. Use it for turn-based
     /// or contended state so a concurrent peer's change isn't clobbered.
+    #[serde(default)]
+    if_doc_hash: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct ApplyMetaPatchArgs {
+    /// The JSON-Patch (RFC 6902) op array for the **meta** channel — swarm
+    /// metadata, by convention `/peers/<nickname> = {"model":…,"harness":…}`
+    /// self-reported by each agent, e.g.
+    /// `[{"op":"add","path":"/peers/swift-cedar","value":{"model":"Opus 4.8","harness":"Claude Code"}}]`.
+    /// Same frozen subset as `apply_state_patch`: `add`/`replace`/`remove` on
+    /// object paths + `add "/arr/-"`; no `test`/`move`/`copy`, numeric array
+    /// indices, or root path "". Rejected if it does not apply cleanly.
+    patch: serde_json::Value,
+    /// Optional compare-and-set guard: the `doc_hash` from your last `get_meta`.
+    /// The patch is rejected with a "stale document" error if the document
+    /// changed since — re-`get_meta` and retry.
     #[serde(default)]
     if_doc_hash: Option<String>,
 }
@@ -432,8 +435,6 @@ impl AgentSwarmServer {
             directory,
             rate_limit_per_min: args.rate_limit_per_min,
             max_peers: DEFAULT_MAX_DIRECT_PEERS,
-            model: args.model,
-            harness: args.harness,
         };
         let session = Session::create(cfg).await.map_err(|error| match error {
             CreateError::AdvertiseRequiresReachable => {
@@ -479,8 +480,6 @@ impl AgentSwarmServer {
             target,
             nickname,
             max_peers: DEFAULT_MAX_DIRECT_PEERS,
-            model: args.model,
-            harness: args.harness,
         })
         .await
         .map_err(to_mcp_error)?;
@@ -725,7 +724,10 @@ impl AgentSwarmServer {
     ) -> Result<CallToolResult, McpError> {
         let guard = self.session.lock().await;
         let session = guard.as_ref().ok_or_else(not_in_swarm_error)?;
-        match session.apply_state_patch(args.patch, args.if_doc_hash).await {
+        match session
+            .apply_state_patch(args.patch, args.if_doc_hash)
+            .await
+        {
             Ok(()) => ok_json(serde_json::json!({ "ok": true })),
             Err(error) => Err(McpError::invalid_params(error.to_string(), None)),
         }
@@ -740,7 +742,36 @@ impl AgentSwarmServer {
     ) -> Result<CallToolResult, McpError> {
         let guard = self.session.lock().await;
         let session = guard.as_ref().ok_or_else(not_in_swarm_error)?;
-        let document = session.state_document().await.map_err(to_mcp_error)?;
+        let document = session.state_get().await.map_err(to_mcp_error)?;
+        let doc_hash = crate::daemon::state_doc::document_hash(&document);
+        ok_json(serde_json::json!({ "document": document, "doc_hash": doc_hash }))
+    }
+
+    #[tool(
+        description = "Apply a JSON-Patch (RFC 6902) change to the swarm's `meta` channel — a second shared-state document beside `state`, byte-for-byte the same machinery, used for swarm metadata rather than the task. By convention agents self-report what they run on under `/peers/<nickname>`, e.g. [{\"op\":\"add\",\"path\":\"/peers/swift-cedar\",\"value\":{\"model\":\"Opus 4.8\",\"harness\":\"Claude Code\"}}]. Same frozen subset and rejection rules as `apply_state_patch`. Peers react to the resulting `meta` event; read the new document with `get_meta`."
+    )]
+    async fn apply_meta_patch(
+        &self,
+        Parameters(args): Parameters<ApplyMetaPatchArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let guard = self.session.lock().await;
+        let session = guard.as_ref().ok_or_else(not_in_swarm_error)?;
+        match session.apply_meta_patch(args.patch, args.if_doc_hash).await {
+            Ok(()) => ok_json(serde_json::json!({ "ok": true })),
+            Err(error) => Err(McpError::invalid_params(error.to_string(), None)),
+        }
+    }
+
+    #[tool(
+        description = "Return the swarm's current `meta`-channel document (the swarm-metadata counterpart of `get_state`) — the JSON value derived by folding every gossiped `meta` patch. Starts as {} before any patch. By convention holds `/peers/<nickname> = {model, harness}`. Requires an active swarm. Read it to decide your next `apply_meta_patch` or to see what peers run on."
+    )]
+    async fn get_meta(
+        &self,
+        Parameters(_): Parameters<NoArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let guard = self.session.lock().await;
+        let session = guard.as_ref().ok_or_else(not_in_swarm_error)?;
+        let document = session.meta_get().await.map_err(to_mcp_error)?;
         let doc_hash = crate::daemon::state_doc::document_hash(&document);
         ok_json(serde_json::json!({ "document": document, "doc_hash": doc_hash }))
     }
@@ -754,11 +785,6 @@ const MCP_INSTRUCTIONS: &str = "\
 You are a peer in an agent-habilis swarm — a serverless gossip network where AI \
 agents collaborate. Tone: write like a status display, not a conversation — no \
 preamble, no acknowledgements; stay silent when nothing happened.
-
-SELF-IDENTIFY. When you `create_swarm` or `join_swarm`, set `model` to your own \
-model and `harness` to the agent you run in (e.g. Cursor, Codex) so peers see \
-what you actually run on. Report your real identity — don't copy an example \
-value; omit a field you don't know.
 
 NO PUSH — POLL. The server does not push incoming traffic to you; you read it \
 with `fetch_messages`, which returns only new entries since your last call (the \
@@ -823,6 +849,14 @@ change arrives as an `event:\"state\"` entry in `fetch_messages` carrying the \
 `apply_state_patch` back); your own changes come back with `self:true` (don't act \
 on them). To build a turn-based interaction, put a turn marker in the document and \
 act only when it is yours.
+
+META is a SECOND shared-state channel beside `state` — byte-for-byte the same \
+(read with `get_meta`, change with `apply_meta_patch`, peer changes arrive as \
+`event:\"meta\"`), reserved by convention for swarm metadata rather than the task. \
+Report what YOU run on once you are in the swarm: `apply_meta_patch` your own entry \
+under `/peers/<your-nickname> = {\"model\":…,\"harness\":…}` (the binary does not \
+self-report this). Re-patch it if you switch models. Read `/peers` to see what \
+peers run on.
 
 Call `swarm_manual` for the full command/event reference.";
 

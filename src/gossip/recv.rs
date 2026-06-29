@@ -16,7 +16,7 @@ use crate::daemon::state::EventLoopState;
 use crate::lifecycle;
 use crate::lookup::add_peer_addr;
 use crate::protocol::identity;
-use crate::protocol::{ExchangePhase, Message, MessageKind, Nickname};
+use crate::protocol::{Channel, ExchangePhase, Message, MessageKind, Nickname};
 use crate::util::tuning::RECLAIM_WINDOW_SECS;
 
 use super::broadcast::{announce_arrival, broadcast_msg, broadcast_peer_info};
@@ -75,7 +75,6 @@ pub(crate) async fn handle_gossip_event(
                     ctx.author,
                     ctx.identity,
                     ctx.endpoint,
-                    ctx.self_meta,
                 )
                 .await;
                 state.announced = true;
@@ -233,6 +232,10 @@ fn handle_exchange_leg(
     lifecycle::handle_exchange(ctx.output, message, to, phase, surfaceable, ctx.author)
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "the inbound dispatch: one arm per MessageKind (incl. both channels) kept in one match for routing clarity"
+)]
 async fn handle_gossip_received(content: Bytes, state: &mut EventLoopState, ctx: &HandlerCtx<'_>) {
     let Ok(message) = Message::parse(&content) else {
         ctx.output.error("Failed to parse message");
@@ -291,7 +294,9 @@ async fn handle_gossip_received(content: Bytes, state: &mut EventLoopState, ctx:
         // patch isn't lost forever: it never enters this node's state log, so
         // anti-entropy re-offers it on a later round once it scrolls out of the
         // seen-set, pacing backfill instead of dropping it.
-        MessageKind::Msg { .. } | MessageKind::State => state.rate_limiter.check(&message.pubkey),
+        MessageKind::Msg { .. } | MessageKind::State | MessageKind::Meta => {
+            state.rate_limiter.check(&message.pubkey)
+        }
         // Content exchange legs share the `Msg` quota; the `Progress` phase is
         // liveness plumbing (the receiver's percent+keepalive heartbeat) and
         // is exempt with the other plumbing kinds — rate-limiting it would let
@@ -305,7 +310,9 @@ async fn handle_gossip_received(content: Bytes, state: &mut EventLoopState, ctx:
         // rate-limiting it would break backfill.
         MessageKind::Presence { .. }
         | MessageKind::PeerInfo
-        | MessageKind::Digest | MessageKind::StateDigest
+        | MessageKind::Digest
+        | MessageKind::StateDigest
+        | MessageKind::MetaDigest
         | MessageKind::Ping
         | MessageKind::Pong { .. }
         | MessageKind::Exchange { .. } => true,
@@ -365,23 +372,31 @@ async fn handle_gossip_received(content: Bytes, state: &mut EventLoopState, ctx:
             return;
         }
         MessageKind::State => {
-            // Durable state: record in the un-pruned state log (dedup by id),
-            // then surface a `StateChanged` carrying the freshly-derived document
-            // — but only when the doc actually changed *and* we're past the join
-            // horizon (`surfaceable`), so a backfilling joiner updates its doc
-            // silently instead of reacting to replayed intermediate states.
-            // `is_self == false`: a received patch is never our own.
-            let before = crate::daemon::state_doc::derive_document(&state.state_log);
-            if state.state_log.insert(message.clone()) {
-                let after = crate::daemon::state_doc::derive_document(&state.state_log);
-                if surfaceable && after != before {
-                    ctx.output.state_changed(&message, &after, false);
-                }
-            }
+            ingest_channel_event(
+                Channel::State,
+                &mut state.state_log,
+                &message,
+                surfaceable,
+                ctx,
+            );
             return;
         }
         MessageKind::StateDigest => {
-            antientropy::handle_state_digest(&message, state, ctx).await;
+            antientropy::handle_state_digest(Channel::State, &message, state, ctx).await;
+            return;
+        }
+        MessageKind::Meta => {
+            ingest_channel_event(
+                Channel::Meta,
+                &mut state.meta_log,
+                &message,
+                surfaceable,
+                ctx,
+            );
+            return;
+        }
+        MessageKind::MetaDigest => {
+            antientropy::handle_state_digest(Channel::Meta, &message, state, ctx).await;
             return;
         }
         MessageKind::Presence { subtype } => {
@@ -461,6 +476,27 @@ fn retain_and_index(
 /// `messages()`; forever for CLI/MCP where the field is `None`).
 /// `surfaceable` keeps pre-join backlog off the embed channel too; plumbing
 /// kinds (digest/ping/pong) are excluded.
+/// Ingest a durable channel event (`State`/`Meta`) into its `log`: dedup-insert,
+/// then surface a `StateChanged` for `channel` only when the derived doc changed
+/// and we're past the join horizon (a backfilling joiner updates its doc silently
+/// instead of reacting to replayed intermediate states). A received event is
+/// never our own (`is_self = false`). Both channels share this path verbatim.
+fn ingest_channel_event(
+    channel: Channel,
+    log: &mut crate::daemon::state_log::StateLog,
+    message: &Message,
+    surfaceable: bool,
+    ctx: &HandlerCtx<'_>,
+) {
+    let before = crate::daemon::state_doc::derive_document(log);
+    if log.insert(message.clone()) {
+        let after = crate::daemon::state_doc::derive_document(log);
+        if surfaceable && after != before {
+            ctx.output.state_changed(channel, message, &after, false);
+        }
+    }
+}
+
 fn maybe_push_embed(ctx: &HandlerCtx<'_>, message: &Message, surfaceable: bool) {
     if let Some(tx) = ctx.external_msg_tx
         && tx.receiver_count() > 0
@@ -469,7 +505,9 @@ fn maybe_push_embed(ctx: &HandlerCtx<'_>, message: &Message, surfaceable: bool) 
             message.kind,
             MessageKind::Digest
                 | MessageKind::StateDigest
+                | MessageKind::MetaDigest
                 | MessageKind::State
+                | MessageKind::Meta
                 | MessageKind::Ping
                 | MessageKind::Pong { .. }
                 | MessageKind::Exchange {
@@ -561,13 +599,14 @@ fn is_loggable(kind: &MessageKind) -> bool {
         MessageKind::Presence {
             subtype: crate::protocol::PresenceSubtype::Alive
         } | MessageKind::PeerInfo
-            | MessageKind::Digest | MessageKind::StateDigest
+            | MessageKind::Digest | MessageKind::StateDigest | MessageKind::MetaDigest
             | MessageKind::Ping
             | MessageKind::Pong { .. }
             // Durable state lives in its own un-pruned log, never the chat
             // message-log / poll-fetch buffer (it also returns before reaching
             // here; this keeps the predicate honest if that changes).
             | MessageKind::State
+            | MessageKind::Meta
             // The `Progress` exchange phase is liveness plumbing — never retained
             // or surfaced via poll/fetch, only emitted as a `exchange_progress`
             // widget event. Content exchange legs stay loggable like `Msg`.

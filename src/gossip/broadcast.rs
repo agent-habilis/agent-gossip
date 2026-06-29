@@ -17,7 +17,7 @@ use crate::daemon::state::EventLoopState;
 use crate::output;
 use crate::protocol::identity::{self, Identity};
 use crate::protocol::{
-    ExchangeId, ExchangeKind, ExchangePhase, Message, MessageBody, MessageId, MessageKind,
+    Channel, ExchangeId, ExchangeKind, ExchangePhase, Message, MessageBody, MessageId, MessageKind,
     Nickname, SwarmId,
 };
 
@@ -58,8 +58,9 @@ pub(crate) async fn broadcast_state(
     state: &mut EventLoopState,
     sender: &GossipSender,
     output: &output::Output,
+    channel: Channel,
 ) -> anyhow::Result<()> {
-    let signed = Message::new_state(swarm, author, body).signed(&state.identity);
+    let signed = Message::new_channel_event(swarm, author, body, channel).signed(&state.identity);
     // Serialize **before** the local insert: an oversize body fails here and the
     // event never enters the log, so the author can't hold a patch it can never
     // gossip (anti-entropy can't resend an un-serializable event either) — that
@@ -67,13 +68,17 @@ pub(crate) async fn broadcast_state(
     // recoverable via anti-entropy; only a failed *serialize* is blocked.
     let bytes = signed.serialize()?;
     crate::logging::messages::log_out(&signed);
-    let before = crate::daemon::state_doc::derive_document(&state.state_log);
-    state.state_log.insert(signed.clone());
-    let after = crate::daemon::state_doc::derive_document(&state.state_log);
+    let log = match channel {
+        Channel::State => &mut state.state_log,
+        Channel::Meta => &mut state.meta_log,
+    };
+    let before = crate::daemon::state_doc::derive_document(log);
+    log.insert(signed.clone());
+    let after = crate::daemon::state_doc::derive_document(log);
     // Surface our own change (is_self) when the document actually changed — a
     // no-op patch (and non-patch substrate state) surfaces nothing.
     if after != before {
-        output.state_changed(&signed, &after, true);
+        output.state_changed(channel, &signed, &after, true);
     }
     if state.meshed {
         sender
@@ -121,6 +126,10 @@ fn state_patch_reply(outcome: anyhow::Result<StatePatchOutcome>) -> anyhow::Resu
 ///
 /// # Errors
 /// Propagates a `broadcast_state` failure (oversize body / broadcast refusal).
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the channel-parameterized state write; every argument is load-bearing"
+)]
 pub(crate) async fn broadcast_state_patch(
     swarm: &SwarmId,
     author: &Nickname,
@@ -129,8 +138,12 @@ pub(crate) async fn broadcast_state_patch(
     state: &mut EventLoopState,
     sender: &GossipSender,
     output: &output::Output,
+    channel: Channel,
 ) -> anyhow::Result<StatePatchOutcome> {
-    let current = crate::daemon::state_doc::derive_document(&state.state_log);
+    let current = crate::daemon::state_doc::derive_document(match channel {
+        Channel::State => &state.state_log,
+        Channel::Meta => &state.meta_log,
+    });
     // Optimistic-concurrency guard: reject if the document moved since the
     // caller's last read. The per-swarm event loop is single-threaded, so this
     // check and the insert below are atomic — no peer patch can interleave. A
@@ -152,7 +165,7 @@ pub(crate) async fn broadcast_state_patch(
         return Ok(StatePatchOutcome::RateLimited);
     }
     let body = crate::daemon::state_doc::patch_body(patch)?;
-    broadcast_state(swarm, author, body, state, sender, output).await?;
+    broadcast_state(swarm, author, body, state, sender, output, channel).await?;
     Ok(StatePatchOutcome::Applied)
 }
 
@@ -191,13 +204,8 @@ pub(super) async fn announce_arrival(
     author: &Nickname,
     identity: &Identity,
     endpoint: &Endpoint,
-    meta: &crate::protocol::peer_meta::PeerMeta,
 ) {
-    broadcast_msg(
-        sender,
-        &Message::new_joined(swarm, author, meta).signed(identity),
-    )
-    .await;
+    broadcast_msg(sender, &Message::new_joined(swarm, author).signed(identity)).await;
     broadcast_peer_info(sender, swarm, author, identity, endpoint).await;
 }
 
@@ -479,6 +487,11 @@ pub(crate) async fn broadcast_exchange(
 /// back on the oneshot; `Poll` returns the join-horizon-filtered buffer.
 /// Returns `true` if anything was broadcast so the caller can refresh
 /// `last_sent_at` (mirrors `handle_ipc_command`).
+#[expect(
+    clippy::too_many_lines,
+    reason = "a dispatch match with one arm per SessionRequest; the state/meta channel pair \
+              doubles the patch/document arms but each is a thin delegate"
+)]
 pub(crate) async fn handle_session_request(
     req: SessionRequest,
     swarm: &SwarmId,
@@ -543,30 +556,52 @@ pub(crate) async fn handle_session_request(
             let _ = resp.send(state.roster_snapshot());
             false
         }
-        SessionRequest::AppendState { body, resp } => {
-            let outcome = broadcast_state(swarm, author, body, state, sender, output).await;
-            let sent_ok = outcome.is_ok();
-            let _ = resp.send(outcome);
-            sent_ok
-        }
-        SessionRequest::StateSnapshot { resp } => {
-            let _ = resp.send(state.state_log.replay_bodies());
-            false
-        }
         SessionRequest::StatePatch {
             patch,
             if_doc_hash,
             resp,
         } => {
-            let outcome =
-                broadcast_state_patch(swarm, author, patch, if_doc_hash, state, sender, output)
-                    .await;
+            let outcome = broadcast_state_patch(
+                swarm,
+                author,
+                patch,
+                if_doc_hash,
+                state,
+                sender,
+                output,
+                Channel::State,
+            )
+            .await;
             let sent = matches!(&outcome, Ok(StatePatchOutcome::Applied));
             let _ = resp.send(state_patch_reply(outcome));
             sent
         }
-        SessionRequest::StateDocument { resp } => {
+        SessionRequest::StateGet { resp } => {
             let _ = resp.send(crate::daemon::state_doc::derive_document(&state.state_log));
+            false
+        }
+        SessionRequest::MetaPatch {
+            patch,
+            if_doc_hash,
+            resp,
+        } => {
+            let outcome = broadcast_state_patch(
+                swarm,
+                author,
+                patch,
+                if_doc_hash,
+                state,
+                sender,
+                output,
+                Channel::Meta,
+            )
+            .await;
+            let sent = matches!(&outcome, Ok(StatePatchOutcome::Applied));
+            let _ = resp.send(state_patch_reply(outcome));
+            sent
+        }
+        SessionRequest::MetaGet { resp } => {
+            let _ = resp.send(crate::daemon::state_doc::derive_document(&state.meta_log));
             false
         }
         SessionRequest::Ping { resp } => {

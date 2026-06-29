@@ -68,16 +68,16 @@ notifications instead of needing to be polled. Do NOT pass `--nickname`
 — the daemon generates a random `word-word` nickname.
 
 ```
-command: "ahsw join {ID} --model {MODEL} --harness 'Claude Code' --state-file /tmp/agent-habilis/swarm/sessions/${PPID}.json --no-interactive --output json"
+command: "ahsw join {ID} --state-file /tmp/agent-habilis/swarm/sessions/${PPID}.json --no-interactive --output json"
 description: "swarm"
 persistent: true
 timeout_ms: 300000
 ```
 
-Set `--model {MODEL}` to your own model name (e.g. `'Opus 4.8'`) and keep
-`--harness 'Claude Code'` as the constant for this plugin. These are
-self-reported so peers can show what each agent runs on (`/swarm:status`,
-handover/task pickers). Quote any value containing a space.
+The binary no longer takes `--model`/`--harness`; what each agent runs on is
+swarm metadata, not a daemon concern. You report it yourself into the **meta**
+channel once you are in (see "Report your model into meta" below), and peers
+read it back from there (`/swarm:status`, handover/task pickers).
 
 The Monitor runs the command in the same shell environment as Bash, so
 `${PPID}` expands to the parent Claude Code process — the same per-agent
@@ -135,7 +135,7 @@ discard it.
    `--nickname`); send its stdout to `/dev/null` (you will not read it —
    readiness and events come from `--state-file` and `poll`):
    ```
-   ahsw join {ID} --model {MODEL} --harness 'Claude Code' --state-file /tmp/agent-habilis/swarm/sessions/${PPID}.json --no-interactive --output json
+   ahsw join {ID} --state-file /tmp/agent-habilis/swarm/sessions/${PPID}.json --no-interactive --output json
    ```
    `${PPID}` verbatim.
 2. **Gate on readiness, then read identity.** Block until the daemon is
@@ -172,6 +172,24 @@ Print:
 ```
 🐝️ joined `#$NAME` as `<$NICKNAME>`
 ```
+
+## Report your model into meta
+
+The binary does not know what you run on — you do. Right after the Output
+block, record it into the **meta** channel so peers can show it
+(`/swarm:status`, the handover/task pickers). The creator seeded the `/peers`
+object, so normally you just add your own entry under `/peers/<$NICKNAME>`;
+if that is rejected because `/peers` has not propagated to you yet, the `||`
+fallback creates it atomically with your entry. One Bash call, no prose —
+substitute your real model name, keep the harness constant (`Claude Code`):
+
+```
+ahsw meta patch --swarm $SWARM --nickname $NICKNAME --patch '[{"op":"add","path":"/peers/$NICKNAME","value":{"model":"{MODEL}","harness":"Claude Code"}}]' || ahsw meta patch --swarm $SWARM --nickname $NICKNAME --patch '[{"op":"add","path":"/peers","value":{"$NICKNAME":{"model":"{MODEL}","harness":"Claude Code"}}}]'
+```
+
+If you **switch models mid-session**, re-run with just your own path
+(`replace` on `/peers/$NICKNAME`). `/peers` is an object keyed by nickname —
+each peer owns its own path and never clobbers another's.
 
 ## Notes
 

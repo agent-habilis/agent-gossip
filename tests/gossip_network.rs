@@ -17,6 +17,7 @@ use common::{
     cli_message, cli_message_raw, cli_peers, cli_ping, cli_poll, cli_poll_wait, serial_guard,
     socket_path, tmp_log, trace_log, wait_total, wait_until,
 };
+use serde_json::json;
 
 /// How long a survivor needs to claim a dead beacon's seed-derived
 /// rendezvous (the claim-if-free handoff). The heal tick is a fixed 15s
@@ -49,9 +50,9 @@ async fn test_two_node_message_delivery() {
     assert_eq!(received[0].body.as_str(), "hello from the network");
 }
 
-/// Durable state log, live propagation: a creator appends state events; a
-/// meshed joiner converges to the same derived state via gossip. State rides
-/// the same topic but its own un-pruned log, surfaced through `state_snapshot`.
+/// Durable state log, live propagation: a creator patches the shared state; a
+/// meshed joiner converges to the same derived document via gossip. State rides
+/// the same topic but its own un-pruned log, surfaced through `state get`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_state_log_propagates_to_a_peer() {
     let creator = InProcNode::create("netstate").await;
@@ -61,22 +62,26 @@ async fn test_state_log_propagates_to_a_peer() {
     // broadcast onto a live overlay rather than the unmeshed buffer.
     creator.send("link").await;
 
-    creator.append_state("alpha").await;
-    creator.append_state("beta").await;
+    creator
+        .state_patch(json!([{"op": "add", "path": "/alpha", "value": 1}]))
+        .await;
+    creator
+        .state_patch(json!([{"op": "add", "path": "/beta", "value": 2}]))
+        .await;
 
-    let want = vec!["alpha".to_string(), "beta".to_string()];
+    let want = json!({"alpha": 1, "beta": 2});
     let deadline = Instant::now() + MSG_TIMEOUT;
-    let mut got = joiner.state_sorted().await;
+    let mut got = joiner.state_get().await;
     while got != want && Instant::now() < deadline {
         tokio::time::sleep(Duration::from_millis(100)).await;
-        got = joiner.state_sorted().await;
+        got = joiner.state_get().await;
     }
     assert_eq!(
         got, want,
         "joiner never converged to the creator's state log"
     );
     // The author holds its own events too (gossip never echoes to self).
-    assert_eq!(creator.state_sorted().await, want);
+    assert_eq!(creator.state_get().await, want);
 }
 
 /// Durable state log, anti-entropy backfill: a peer that joins **after** the
@@ -91,16 +96,20 @@ async fn test_state_log_backfills_a_late_joiner() {
     // Mesh so appends go out live, leaving the creator's outbound buffer empty.
     creator.send("link").await;
 
-    creator.append_state("alpha").await;
-    creator.append_state("beta").await;
+    creator
+        .state_patch(json!([{"op": "add", "path": "/alpha", "value": 1}]))
+        .await;
+    creator
+        .state_patch(json!([{"op": "add", "path": "/beta", "value": 2}]))
+        .await;
 
-    let want = vec!["alpha".to_string(), "beta".to_string()];
+    let want = json!({"alpha": 1, "beta": 2});
     // Confirm the live path first.
     let deadline = Instant::now() + MSG_TIMEOUT;
-    let mut early_got = early.state_sorted().await;
+    let mut early_got = early.state_get().await;
     while early_got != want && Instant::now() < deadline {
         tokio::time::sleep(Duration::from_millis(100)).await;
-        early_got = early.state_sorted().await;
+        early_got = early.state_get().await;
     }
     assert_eq!(early_got, want, "early peer never got the live state");
 
@@ -108,10 +117,10 @@ async fn test_state_log_backfills_a_late_joiner() {
     // backfill it (within an antientropy interval once it advertises its set).
     let late = InProcNode::join(&creator.swarm, "late-state").await;
     let late_deadline = Instant::now() + RECOVERY_TIMEOUT;
-    let mut late_got = late.state_sorted().await;
+    let mut late_got = late.state_get().await;
     while late_got != want && Instant::now() < late_deadline {
         tokio::time::sleep(Duration::from_millis(200)).await;
-        late_got = late.state_sorted().await;
+        late_got = late.state_get().await;
     }
     assert_eq!(
         late_got, want,

@@ -47,12 +47,6 @@ pub struct JoinConfig {
     pub nickname: Option<Nickname>,
     /// Max direct peer connections before gossip relays the rest.
     pub max_peers: usize,
-    /// Self-reported model (e.g. `"Opus 4.8"`), announced to peers so the
-    /// roster shows what this agent runs on. `None` ⇒ advertise nothing.
-    pub model: Option<String>,
-    /// Self-reported harness (e.g. `"Claude Code"`), announced alongside
-    /// `model`. `None` ⇒ advertise nothing.
-    pub harness: Option<String>,
 }
 
 impl JoinConfig {
@@ -66,8 +60,6 @@ impl JoinConfig {
             target,
             nickname: None,
             max_peers: DEFAULT_MAX_DIRECT_PEERS,
-            model: None,
-            harness: None,
         }
     }
 }
@@ -104,12 +96,6 @@ pub struct CreateConfig {
     pub rate_limit_per_min: u16,
     /// Max direct peer connections before gossip relays the rest.
     pub max_peers: usize,
-    /// Self-reported model (e.g. `"Opus 4.8"`), announced to peers so the
-    /// roster shows what this agent runs on. `None` ⇒ advertise nothing.
-    pub model: Option<String>,
-    /// Self-reported harness (e.g. `"Claude Code"`), announced alongside
-    /// `model`. `None` ⇒ advertise nothing.
-    pub harness: Option<String>,
 }
 
 impl CreateConfig {
@@ -127,8 +113,6 @@ impl CreateConfig {
             directory: None,
             rate_limit_per_min: crate::util::consts::RATE_LIMIT_PER_MIN,
             max_peers: DEFAULT_MAX_DIRECT_PEERS,
-            model: None,
-            harness: None,
         }
     }
 }
@@ -250,10 +234,6 @@ async fn create_setup(
     )
     .await
     .map_err(|error| CreateError::Setup(error.context("setup_swarm failed")))?;
-    // Self-reported identity, announced in our `joined` body — same
-    // late-assignment the CLI uses (keeps `setup_swarm`'s arg count in budget).
-    elc.model = cfg.model;
-    elc.harness = cfg.harness;
     // When advertising, start the re-broadcast task (tied to this session);
     // it reaches the directory over this swarm's own lookups (moved into the
     // at-most-once closure, so no clone).
@@ -276,14 +256,11 @@ async fn join_setup(cfg: JoinConfig, output: Output) -> Result<EventLoopConfig, 
     .resolve()
     .await
     .map_err(JoinError::Resolve)?;
-    let mut elc = setup_swarm(
+    let elc = setup_swarm(
         kind, author, /* interactive */ false, max_peers, None, output, /* drift */ None,
     )
     .await
     .map_err(|error| JoinError::Setup(error.context("setup_swarm failed")))?;
-    // Self-reported identity, announced in our `joined` body (see `create_setup`).
-    elc.model = cfg.model;
-    elc.harness = cfg.harness;
     Ok(elc)
 }
 
@@ -479,38 +456,10 @@ impl InProcessSession {
             .map_err(|_| anyhow::anyhow!("swarm event loop dropped the response"))
     }
 
-    /// Author + broadcast a durable state event (the write primitive for
-    /// state-backed features). Retained locally and gossiped to peers.
-    pub(crate) async fn append_state(&self, body: MessageBody) -> anyhow::Result<()> {
-        let (resp_tx, resp_rx) = oneshot::channel();
-        self.req_tx
-            .send(SessionRequest::AppendState {
-                body,
-                resp: resp_tx,
-            })
-            .await
-            .map_err(|_| anyhow::anyhow!("swarm event loop has stopped"))?;
-        resp_rx
-            .await
-            .map_err(|_| anyhow::anyhow!("swarm event loop dropped the response"))?
-    }
-
-    /// The derived swarm state — event payloads in deterministic replay order.
-    pub(crate) async fn state_snapshot(&self) -> anyhow::Result<Vec<String>> {
-        let (resp_tx, resp_rx) = oneshot::channel();
-        self.req_tx
-            .send(SessionRequest::StateSnapshot { resp: resp_tx })
-            .await
-            .map_err(|_| anyhow::anyhow!("swarm event loop has stopped"))?;
-        resp_rx
-            .await
-            .map_err(|_| anyhow::anyhow!("swarm event loop dropped the response"))
-    }
-
     /// Apply a JSON-Patch change to the shared state. The op array (frozen
     /// subset) is validated against the current document and rate-limited; a
     /// rejected patch returns an error.
-    pub(crate) async fn apply_patch(
+    pub(crate) async fn state_patch(
         &self,
         patch: serde_json::Value,
         if_doc_hash: Option<String>,
@@ -530,10 +479,42 @@ impl InProcessSession {
     }
 
     /// The current derived shared-state document (the JSON-Patch fold).
-    pub(crate) async fn state_document(&self) -> anyhow::Result<serde_json::Value> {
+    pub(crate) async fn state_get(&self) -> anyhow::Result<serde_json::Value> {
         let (resp_tx, resp_rx) = oneshot::channel();
         self.req_tx
-            .send(SessionRequest::StateDocument { resp: resp_tx })
+            .send(SessionRequest::StateGet { resp: resp_tx })
+            .await
+            .map_err(|_| anyhow::anyhow!("swarm event loop has stopped"))?;
+        resp_rx
+            .await
+            .map_err(|_| anyhow::anyhow!("swarm event loop dropped the response"))
+    }
+
+    /// `meta`-channel counterpart of [`state_patch`](Self::state_patch).
+    pub(crate) async fn meta_patch(
+        &self,
+        patch: serde_json::Value,
+        if_doc_hash: Option<String>,
+    ) -> anyhow::Result<()> {
+        let (resp_tx, resp_rx) = oneshot::channel();
+        self.req_tx
+            .send(SessionRequest::MetaPatch {
+                patch,
+                if_doc_hash,
+                resp: resp_tx,
+            })
+            .await
+            .map_err(|_| anyhow::anyhow!("swarm event loop has stopped"))?;
+        resp_rx
+            .await
+            .map_err(|_| anyhow::anyhow!("swarm event loop dropped the response"))?
+    }
+
+    /// `meta`-channel counterpart of [`state_get`](Self::state_get).
+    pub(crate) async fn meta_get(&self) -> anyhow::Result<serde_json::Value> {
+        let (resp_tx, resp_rx) = oneshot::channel();
+        self.req_tx
+            .send(SessionRequest::MetaGet { resp: resp_tx })
             .await
             .map_err(|_| anyhow::anyhow!("swarm event loop has stopped"))?;
         resp_rx
@@ -758,25 +739,6 @@ impl SwarmSession {
         self.core.send(body, reply).await
     }
 
-    /// Append a durable state event (the write primitive future state-backed
-    /// features build on): it is retained in this node's un-pruned state log
-    /// and gossiped to peers, who reconcile it via state anti-entropy.
-    ///
-    /// # Errors
-    /// Fails if the event loop has stopped or the broadcast failed.
-    pub async fn append_state(&self, body: MessageBody) -> anyhow::Result<()> {
-        self.core.append_state(body).await
-    }
-
-    /// The derived swarm state — event payloads in deterministic replay order
-    /// (the substrate's generic read until typed projections land).
-    ///
-    /// # Errors
-    /// Fails if the event loop has stopped or dropped the response.
-    pub async fn state_snapshot(&self) -> anyhow::Result<Vec<String>> {
-        self.core.state_snapshot().await
-    }
-
     /// Apply a JSON-Patch change to the shared state (frozen subset:
     /// add/replace/remove on object paths + add `/arr/-`). Validated against the
     /// current document and rate-limited.
@@ -784,12 +746,12 @@ impl SwarmSession {
     /// # Errors
     /// Fails if the patch is out of subset / does not apply, the rate limit is
     /// exceeded, or the event loop has stopped.
-    pub async fn apply_patch(
+    pub async fn state_patch(
         &self,
         patch: serde_json::Value,
         if_doc_hash: Option<String>,
     ) -> anyhow::Result<()> {
-        self.core.apply_patch(patch, if_doc_hash).await
+        self.core.state_patch(patch, if_doc_hash).await
     }
 
     /// The current derived shared-state document (the JSON-Patch fold over the
@@ -797,8 +759,29 @@ impl SwarmSession {
     ///
     /// # Errors
     /// Fails if the event loop has stopped or dropped the response.
-    pub async fn state_document(&self) -> anyhow::Result<serde_json::Value> {
-        self.core.state_document().await
+    pub async fn state_get(&self) -> anyhow::Result<serde_json::Value> {
+        self.core.state_get().await
+    }
+
+    /// Apply a JSON-Patch change to the **meta** channel (the swarm-metadata
+    /// counterpart of [`state_patch`](Self::state_patch)).
+    ///
+    /// # Errors
+    /// As [`state_patch`](Self::state_patch).
+    pub async fn meta_patch(
+        &self,
+        patch: serde_json::Value,
+        if_doc_hash: Option<String>,
+    ) -> anyhow::Result<()> {
+        self.core.meta_patch(patch, if_doc_hash).await
+    }
+
+    /// The current derived **meta**-channel document.
+    ///
+    /// # Errors
+    /// Fails if the event loop has stopped or dropped the response.
+    pub async fn meta_get(&self) -> anyhow::Result<serde_json::Value> {
+        self.core.meta_get().await
     }
 
     /// Poll the surfaced-event history after the `after` seq cursor (`None`

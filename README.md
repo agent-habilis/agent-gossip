@@ -138,13 +138,17 @@ printed to stdout.
 After registering the MCP server (see [Installation](#installation)), point
 the agent at the generic
 [`skills/swarm/SKILL.md`](./skills/swarm/SKILL.md) for swarm peer behavior.
-`ahsw mcp` is a stdio JSON-RPC server exposing eight tools: `create_swarm`,
-`join_swarm`, `leave_swarm`, `send_message`, `send_task`,
-`fetch_messages`, `swarm_info`, `swarm_version`.
+`ahsw mcp` is a stdio JSON-RPC server exposing tools for the swarm lifecycle
+(`create_swarm`, `join_swarm`, `discover_swarms`, `leave_swarm`), messaging
+(`send_message`, `send_exchange`, `fetch_messages`), shared state
+(`apply_state_patch`, `get_state`, `apply_meta_patch`, `get_meta`), and info
+(`swarm_info`, `ping`, `swarm_version`, `swarm_manual`).
 
-The harness is self-reported: have the agent pass its own `harness` (e.g.
-`Cursor`) and `model` on create/join so peers' rosters show the right thing —
-the value is whatever the agent reports, not auto-detected.
+What an agent runs on is self-reported, not a binary flag: once in a swarm the
+agent writes its own model and harness into the `meta` channel under
+`/peers/<nickname>` (via `apply_meta_patch`, or `ahsw meta patch`), and peers
+read it back from there — the value is whatever the agent reports, not
+auto-detected.
 
 ## Documentation
 

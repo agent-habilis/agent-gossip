@@ -101,6 +101,17 @@ pub(crate) enum IpcCommand {
     /// Read the current derived shared-state document.
     #[serde(rename = "state_get")]
     StateGet { swarm: SwarmId },
+    /// `meta`-channel counterpart of [`StatePatch`](IpcCommand::StatePatch).
+    #[serde(rename = "meta_patch")]
+    MetaPatch {
+        swarm: SwarmId,
+        patch: serde_json::Value,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        if_doc_hash: Option<String>,
+    },
+    /// `meta`-channel counterpart of [`StateGet`](IpcCommand::StateGet).
+    #[serde(rename = "meta_get")]
+    MetaGet { swarm: SwarmId },
 }
 
 impl IpcCommand {
@@ -112,7 +123,9 @@ impl IpcCommand {
             | IpcCommand::Exchange { swarm, .. }
             | IpcCommand::Peers { swarm }
             | IpcCommand::StatePatch { swarm, .. }
-            | IpcCommand::StateGet { swarm } => swarm,
+            | IpcCommand::StateGet { swarm }
+            | IpcCommand::MetaPatch { swarm, .. }
+            | IpcCommand::MetaGet { swarm } => swarm,
         }
     }
 }
@@ -394,6 +407,8 @@ mod tests {
             | IpcCommand::Exchange { .. }
             | IpcCommand::Peers { .. }
             | IpcCommand::StatePatch { .. }
+            | IpcCommand::MetaPatch { .. }
+            | IpcCommand::MetaGet { .. }
             | IpcCommand::StateGet { .. } => panic!("expected Msg"),
         }
     }
@@ -417,6 +432,8 @@ mod tests {
             | IpcCommand::Exchange { .. }
             | IpcCommand::Peers { .. }
             | IpcCommand::StatePatch { .. }
+            | IpcCommand::MetaPatch { .. }
+            | IpcCommand::MetaGet { .. }
             | IpcCommand::StateGet { .. } => panic!("expected Poll"),
         }
     }
@@ -436,6 +453,8 @@ mod tests {
             | IpcCommand::Exchange { .. }
             | IpcCommand::Peers { .. }
             | IpcCommand::StatePatch { .. }
+            | IpcCommand::MetaPatch { .. }
+            | IpcCommand::MetaGet { .. }
             | IpcCommand::StateGet { .. } => panic!("expected Ping"),
         }
     }
@@ -468,6 +487,8 @@ mod tests {
             | IpcCommand::Ping { .. }
             | IpcCommand::Peers { .. }
             | IpcCommand::StatePatch { .. }
+            | IpcCommand::MetaPatch { .. }
+            | IpcCommand::MetaGet { .. }
             | IpcCommand::StateGet { .. } => panic!("expected Exchange"),
         }
     }
@@ -487,6 +508,8 @@ mod tests {
             | IpcCommand::Ping { .. }
             | IpcCommand::Exchange { .. }
             | IpcCommand::StatePatch { .. }
+            | IpcCommand::MetaPatch { .. }
+            | IpcCommand::MetaGet { .. }
             | IpcCommand::StateGet { .. } => panic!("expected Peers"),
         }
     }
@@ -666,6 +689,8 @@ mod tests {
                     | IpcCommand::Exchange { .. }
                     | IpcCommand::Peers { .. }
                     | IpcCommand::StatePatch { .. }
+                    | IpcCommand::MetaPatch { .. }
+                    | IpcCommand::MetaGet { .. }
                     | IpcCommand::StateGet { .. } => {
                         let _ = resp_tx.send(json_error("unexpected command"));
                     }

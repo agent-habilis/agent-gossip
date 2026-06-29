@@ -371,11 +371,64 @@ pub(crate) fn cli_ping(swarm: &str, nickname: &str) {
     );
 }
 
+/// The CLI subcommand for a channel (`state` / `meta`) — `Channel::label` is
+/// `pub(crate)`, not reachable from this external test crate.
+pub(crate) fn channel_subcommand(channel: Channel) -> &'static str {
+    match channel {
+        Channel::State => "state",
+        Channel::Meta => "meta",
+    }
+}
+
+/// Spawn `ahsw <channel> get … `, assert success, return trimmed stdout (the
+/// raw `{ok, document, doc_hash}` JSON line). Drives the real CLI → IPC socket
+/// → daemon read path the embed harness bypasses.
+pub(crate) fn cli_channel_get(channel: Channel, swarm: &str, nickname: &str) -> String {
+    let out = test_cmd()
+        .args([channel_subcommand(channel), "get"])
+        .args(["--swarm", swarm, "--nickname", nickname])
+        .output()
+        .expect("channel get failed to spawn");
+    assert!(
+        out.status.success(),
+        "{} get failed: {}",
+        channel_subcommand(channel),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stdout).trim().to_string()
+}
+
+/// Spawn `ahsw <channel> patch …` (optionally `--if-doc-hash`), returning the
+/// raw [`Output`](std::process::Output). The CLI **exits non-zero** on a
+/// rejected `{ok:false}` patch (the scriptable exit-code contract), so this
+/// returns the status + stdout unjudged for the caller to assert on.
+pub(crate) fn cli_channel_patch(
+    channel: Channel,
+    swarm: &str,
+    nickname: &str,
+    ops: &str,
+    if_doc_hash: Option<&str>,
+) -> Output {
+    let mut cmd = test_cmd();
+    cmd.args([channel_subcommand(channel), "patch"]).args([
+        "--swarm",
+        swarm,
+        "--nickname",
+        nickname,
+        "--patch",
+        ops,
+    ]);
+    if let Some(hash) = if_doc_hash {
+        cmd.args(["--if-doc-hash", hash]);
+    }
+    cmd.output().expect("channel patch failed to spawn")
+}
+
 // ── In-process harness (embed::SwarmSession) ──────────────────────
 
 use agent_habilis_swarm::embed::{CreateConfig, JoinConfig, SwarmSession};
 use agent_habilis_swarm::{
-    ExchangeId, ExchangeKind, ExchangePhase, Message, MessageBody, MessageId, MessageKind,
+    Channel, ExchangeId, ExchangeKind, ExchangePhase, Message, MessageBody, MessageId, MessageKind,
     Nickname, OutputEvent, PresenceSubtype, SwarmName,
 };
 use tokio::sync::mpsc::UnboundedReceiver;
@@ -486,81 +539,142 @@ impl InProcNode {
         self.send_to(None, text).await
     }
 
-    /// Append a durable state event with `text` as its payload.
-    pub(crate) async fn append_state(&self, text: &str) {
-        self.session
-            .append_state(MessageBody::new(text).expect("valid body"))
-            .await
-            .expect("in-process append_state failed");
-    }
-
-    /// The derived swarm state — event payloads, sorted for set comparison
-    /// (same-second events tie on timestamp and order by id, so a stable sort
-    /// of the values is the convergence check).
-    pub(crate) async fn state_sorted(&self) -> Vec<String> {
-        let mut bodies = self
-            .session
-            .state_snapshot()
-            .await
-            .expect("in-process state_snapshot failed");
-        bodies.sort();
-        bodies
-    }
-
     /// Apply a JSON-Patch change to the shared state. Panics if the patch is
     /// rejected (invalid / out-of-subset / rate-limited / loop stopped) — use
-    /// [`Self::try_apply_patch`] to exercise rejection deliberately.
-    pub(crate) async fn apply_patch(&self, patch: serde_json::Value) {
-        self.try_apply_patch(patch)
+    /// [`Self::try_state_patch`] to exercise rejection deliberately.
+    pub(crate) async fn state_patch(&self, patch: serde_json::Value) {
+        self.try_state_patch(patch)
             .await
-            .expect("in-process apply_patch failed");
+            .expect("in-process state_patch failed");
     }
 
-    /// Like [`Self::apply_patch`] but returns the raw result, so a test can
+    /// Like [`Self::state_patch`] but returns the raw result, so a test can
     /// assert an invalid/out-of-subset patch or a rate-limited flood is rejected.
-    pub(crate) async fn try_apply_patch(&self, patch: serde_json::Value) -> anyhow::Result<()> {
-        self.session.apply_patch(patch, None).await
+    pub(crate) async fn try_state_patch(&self, patch: serde_json::Value) -> anyhow::Result<()> {
+        self.session.state_patch(patch, None).await
     }
 
-    /// Apply a patch behind a compare-and-set guard (the `doc_hash` from a prior
-    /// read). Returns the raw result so a test can assert a stale hash is
+    /// Apply a state patch behind a compare-and-set guard (the `doc_hash` from a
+    /// prior read). Returns the raw result so a test can assert a stale hash is
     /// rejected and a current one applies.
-    pub(crate) async fn try_apply_patch_if(
+    pub(crate) async fn try_state_patch_if(
         &self,
         patch: serde_json::Value,
         if_doc_hash: Option<String>,
     ) -> anyhow::Result<()> {
-        self.session.apply_patch(patch, if_doc_hash).await
+        self.session.state_patch(patch, if_doc_hash).await
     }
 
     /// The current derived shared-state document (the JSON-Patch fold over the
     /// state log).
-    pub(crate) async fn state_document(&self) -> serde_json::Value {
+    pub(crate) async fn state_get(&self) -> serde_json::Value {
         self.session
-            .state_document()
+            .state_get()
             .await
-            .expect("in-process state_document failed")
+            .expect("in-process state_get failed")
     }
 
-    /// Captured shared-state changes so far, each `(derived document, is_self)`.
-    pub(crate) fn state_changes(&mut self) -> Vec<(serde_json::Value, bool)> {
+    /// Apply a JSON-Patch change to the `meta` channel. Panics on rejection —
+    /// use [`Self::try_meta_patch`] to exercise rejection deliberately.
+    pub(crate) async fn meta_patch(&self, patch: serde_json::Value) {
+        self.try_meta_patch(patch)
+            .await
+            .expect("in-process meta_patch failed");
+    }
+
+    /// Like [`Self::meta_patch`] but returns the raw result.
+    pub(crate) async fn try_meta_patch(&self, patch: serde_json::Value) -> anyhow::Result<()> {
+        self.session.meta_patch(patch, None).await
+    }
+
+    /// Apply a `meta` patch behind a compare-and-set guard (the `doc_hash` from a
+    /// prior read).
+    pub(crate) async fn try_meta_patch_if(
+        &self,
+        patch: serde_json::Value,
+        if_doc_hash: Option<String>,
+    ) -> anyhow::Result<()> {
+        self.session.meta_patch(patch, if_doc_hash).await
+    }
+
+    /// The current derived `meta`-channel document.
+    pub(crate) async fn meta_get(&self) -> serde_json::Value {
+        self.session
+            .meta_get()
+            .await
+            .expect("in-process meta_get failed")
+    }
+
+    // ── channel-parameterized dispatch ──
+    // The behavioral tests run against both channels by selecting one at the
+    // call site; these forward to the `state_*` / `meta_*` twins above so a
+    // single test body covers `Channel::State` and `Channel::Meta`.
+
+    /// Apply a patch to `channel`. Panics on rejection.
+    pub(crate) async fn patch(&self, channel: Channel, patch: serde_json::Value) {
+        match channel {
+            Channel::State => self.state_patch(patch).await,
+            Channel::Meta => self.meta_patch(patch).await,
+        }
+    }
+
+    /// Apply a patch to `channel`, returning the raw result.
+    pub(crate) async fn try_patch(
+        &self,
+        channel: Channel,
+        patch: serde_json::Value,
+    ) -> anyhow::Result<()> {
+        match channel {
+            Channel::State => self.try_state_patch(patch).await,
+            Channel::Meta => self.try_meta_patch(patch).await,
+        }
+    }
+
+    /// Apply a CAS-guarded patch to `channel`, returning the raw result.
+    pub(crate) async fn try_patch_if(
+        &self,
+        channel: Channel,
+        patch: serde_json::Value,
+        if_doc_hash: Option<String>,
+    ) -> anyhow::Result<()> {
+        match channel {
+            Channel::State => self.try_state_patch_if(patch, if_doc_hash).await,
+            Channel::Meta => self.try_meta_patch_if(patch, if_doc_hash).await,
+        }
+    }
+
+    /// The current derived document for `channel`.
+    pub(crate) async fn get(&self, channel: Channel) -> serde_json::Value {
+        match channel {
+            Channel::State => self.state_get().await,
+            Channel::Meta => self.meta_get().await,
+        }
+    }
+
+    /// Captured changes on `channel` so far, each `(derived document, is_self)`.
+    pub(crate) fn changes(&mut self, channel: Channel) -> Vec<(serde_json::Value, bool)> {
         self.pump();
         self.drained
             .iter()
             .filter_map(|event| match event {
                 OutputEvent::StateChanged {
-                    document, is_self, ..
-                } => Some((document.clone(), *is_self)),
+                    channel: chan,
+                    document,
+                    is_self,
+                    ..
+                } if *chan == channel => Some((document.clone(), *is_self)),
                 _ => None,
             })
             .collect()
     }
 
-    /// Wait until a state change **from a peer** (`is_self == false`) whose
-    /// freshly-derived document satisfies `pred` is captured — the reaction-hook
-    /// check (a self-change never satisfies it, exercising the F5 self-wake guard).
-    pub(crate) async fn wait_state_change(
+    /// Wait until a change on `channel` **from a peer** (`is_self == false`)
+    /// whose freshly-derived document satisfies `pred` is captured — the
+    /// reaction-hook check (a self-change never satisfies it, exercising the F5
+    /// self-wake guard).
+    pub(crate) async fn wait_change(
         &mut self,
+        channel: Channel,
         timeout: Duration,
         mut pred: impl FnMut(&serde_json::Value) -> bool,
     ) -> bool {
@@ -568,7 +682,8 @@ impl InProcNode {
             events.iter().any(|event| {
                 matches!(
                     event,
-                    OutputEvent::StateChanged { document, is_self: false, .. } if pred(document)
+                    OutputEvent::StateChanged { channel: chan, document, is_self: false, .. }
+                        if *chan == channel && pred(document)
                 )
             })
         })

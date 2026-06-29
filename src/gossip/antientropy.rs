@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use crate::daemon::ctx::HandlerCtx;
 use crate::daemon::message_log::DigestWindow;
 use crate::daemon::state::EventLoopState;
-use crate::protocol::{Message, MessageBody, Nickname, SwarmId};
+use crate::protocol::{Channel, Message, MessageBody, Nickname, SwarmId};
 use crate::util::tuning::{ANTIENTROPY_DIGEST_WINDOW_IDS, antientropy_max_resend};
 
 use super::broadcast_msg;
@@ -169,36 +169,53 @@ pub(crate) async fn handle_digest(message: &Message, state: &EventLoopState, ctx
 /// and on the `start == 0` older sweep the bottom is opened so events *below*
 /// the member's oldest held event are pulled too. Together they guarantee a
 /// joiner reconciles the whole log, not just the tail.
-pub(crate) async fn broadcast_state_digest(
+/// Sweep both shared-state channels' anti-entropy digests (one tick).
+pub(crate) async fn broadcast_state_digests(
     state: &mut EventLoopState,
     sender: &GossipSender,
     swarm: &SwarmId,
     author: &Nickname,
 ) {
+    broadcast_state_digest(state, sender, swarm, author, Channel::State).await;
+    broadcast_state_digest(state, sender, swarm, author, Channel::Meta).await;
+}
+
+pub(crate) async fn broadcast_state_digest(
+    state: &mut EventLoopState,
+    sender: &GossipSender,
+    swarm: &SwarmId,
+    author: &Nickname,
+    channel: Channel,
+) {
     if !state.meshed {
         return;
     }
     let recent = ANTIENTROPY_DIGEST_WINDOW_IDS;
-    let windows = if state.state_log.len() <= recent {
+    // Select this channel's log + sweep cursor (disjoint fields of `state`).
+    let (log, cursor) = match channel {
+        Channel::State => (&state.state_log, &mut state.state_digest_cursor),
+        Channel::Meta => (&state.meta_log, &mut state.meta_digest_cursor),
+    };
+    let windows = if log.len() <= recent {
         // Whole set fits one window: advertise it open at both ends so a holder
         // fills every gap below, inside, and above — the full-history bootstrap.
-        state.state_digest_cursor = 0;
-        vec![WireWindow::encode(&state.state_log.bootstrap_window())]
+        *cursor = 0;
+        vec![WireWindow::encode(&log.bootstrap_window())]
     } else {
-        let Some(newest) = state.state_log.recent_window(recent) else {
+        let Some(newest) = log.recent_window(recent) else {
             return; // unreachable (len > recent ⇒ non-empty), but stay total.
         };
         let mut windows = vec![WireWindow::encode(&newest)];
-        let older_len = state.state_log.older_len(recent);
-        let start = state.state_digest_cursor % older_len;
-        if let Some(mut older) = state.state_log.older_window(recent, start, recent) {
+        let older_len = log.older_len(recent);
+        let start = *cursor % older_len;
+        if let Some(mut older) = log.older_window(recent, start, recent) {
             // Open the bottom on the lowest sweep so a peer missing events below
             // its oldest held event (e.g. it received a live patch before
             // backfilling history) still pulls them.
             if start == 0 {
                 older.lo = i64::MIN;
             }
-            state.state_digest_cursor = (start + older.ids.len()) % older_len;
+            *cursor = (start + older.ids.len()) % older_len;
             windows.push(WireWindow::encode(&older));
         }
         windows
@@ -211,7 +228,7 @@ pub(crate) async fn broadcast_state_digest(
     };
     broadcast_msg(
         sender,
-        &Message::new_state_digest(swarm, author, body).signed(&state.identity),
+        &Message::new_channel_digest(swarm, author, body, channel).signed(&state.identity),
     )
     .await;
 }
@@ -229,12 +246,17 @@ pub(crate) async fn broadcast_state_digest(
 /// budget and starving the genuinely-missing tail. Unioning first means we only
 /// ever resend what the sender truly lacks.
 pub(crate) async fn handle_state_digest(
+    channel: Channel,
     message: &Message,
     state: &EventLoopState,
     ctx: &HandlerCtx<'_>,
 ) {
     let Ok(body) = serde_json::from_str::<DigestBody>(message.body.as_str()) else {
         return;
+    };
+    let log = match channel {
+        Channel::State => &state.state_log,
+        Channel::Meta => &state.meta_log,
     };
     let mut have: HashSet<[u8; 16]> = HashSet::new();
     for window in &body.windows {
@@ -248,10 +270,7 @@ pub(crate) async fn handle_state_digest(
         if budget == 0 {
             break;
         }
-        for event in state
-            .state_log
-            .missing_in_window(window.lo, window.hi, &have, budget)
-        {
+        for event in log.missing_in_window(window.lo, window.hi, &have, budget) {
             if let Ok(bytes) = event.serialize() {
                 let _ = ctx.sender.broadcast(Bytes::from(bytes)).await;
                 // Mark it sent so the next (overlapping) window doesn't re-send

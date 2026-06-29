@@ -52,12 +52,6 @@ pub(crate) struct RosterEntry {
     pub last_seen_secs_ago: Option<u64>,
     pub quiet: bool,
     pub reach: Reach,
-    /// The peer's self-reported model / harness (from `participant_meta`),
-    /// `null` when it advertised none.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub model: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub harness: Option<String>,
 }
 
 /// Live participant roster: every known peer (active + quiet) sorted
@@ -140,11 +134,6 @@ pub(crate) struct EventLoopState {
     /// Feeds only the derived `reach` boolean in `roster_snapshot` — the node
     /// id never leaves this layer.
     pub participant_endpoints: HashMap<Nickname, EndpointId>,
-    /// Each participant's self-reported model/harness, learned from its signed
-    /// `joined` body. Display metadata only (`PeerMeta` is `model`/`harness`).
-    /// Last-writer-wins per nickname; pruned with `participants` (sweep + `Left`)
-    /// so it stays bounded by the roster.
-    pub participant_meta: HashMap<Nickname, crate::protocol::peer_meta::PeerMeta>,
     /// The swarm's rendezvous endpoint id, once known. Paired with
     /// `rendezvous_linked` so `reach_of` can count the rendezvous link as a
     /// live link to the beacon: the beacon gossips *as* the rendezvous, so a
@@ -247,6 +236,10 @@ pub(crate) struct EventLoopState {
     /// of the chat retention window. Swarm state is the deterministic fold over
     /// this log; see [`super::state_log`].
     pub state_log: super::state_log::StateLog,
+    /// The `meta` channel's log — a second, independent shared-state channel,
+    /// identical machinery to `state_log`. Distinguished only by application
+    /// convention (`meta` for swarm metadata, `state` for the task).
+    pub meta_log: super::state_log::StateLog,
     /// Local, seq-ordered record of everything surfaced to the
     /// operator/agent — the history `poll` / `fetch_messages` drain. Fed by
     /// the [`Output`](crate::output::Output) tap (the event loop mirrors each
@@ -265,6 +258,9 @@ pub(crate) struct EventLoopState {
     /// sweep their (independently sized, unbounded for state) logs on their own
     /// cursors.
     pub state_digest_cursor: usize,
+    /// The `meta` channel's anti-entropy cursor — independent of
+    /// `state_digest_cursor` so the two logs sweep on their own.
+    pub meta_digest_cursor: usize,
     pub rate_limiter: SwarmRateLimiter,
     /// This member's signing identity (Ed25519). Shared with the
     /// send path so messages we author are signed before broadcast.
@@ -423,7 +419,6 @@ impl EventLoopState {
             exchanges: HashMap::new(),
             last_seen: HashMap::new(),
             participant_endpoints: HashMap::new(),
-            participant_meta: HashMap::new(),
             rendezvous_id: None,
             quiet: BoundedFifoSet::new(QUIET_CAP),
             quiet_since: HashMap::new(),
@@ -442,11 +437,13 @@ impl EventLoopState {
             live_count: None,
             message_log: MessageLog::new(message_log_size()),
             state_log: super::state_log::StateLog::new(),
+            meta_log: super::state_log::StateLog::new(),
             surfaced_events: super::surfaced::SurfacedEvents::new(
                 crate::util::consts::SURFACED_EVENTS_CAP,
             ),
             digest_cursor: 0,
             state_digest_cursor: 0,
+            meta_digest_cursor: 0,
             rate_limiter: SwarmRateLimiter::from_per_min(rate_limit_per_min),
             identity,
             self_seq: 0,
@@ -650,29 +647,21 @@ impl EventLoopState {
         let mut participants: Vec<RosterEntry> = self
             .participants
             .iter()
-            .map(|nick| {
-                let meta = self.participant_meta.get(nick);
-                RosterEntry {
-                    nickname: nick.clone(),
-                    // Active peers: their live `last_seen`.
-                    last_seen_secs_ago: self.last_seen.get(nick).map(secs_since),
-                    quiet: false,
-                    reach: self.reach_of(nick),
-                    model: meta.and_then(|meta| meta.model.clone()),
-                    harness: meta.and_then(|meta| meta.harness.clone()),
-                }
+            .map(|nick| RosterEntry {
+                nickname: nick.clone(),
+                // Active peers: their live `last_seen`.
+                last_seen_secs_ago: self.last_seen.get(nick).map(secs_since),
+                quiet: false,
+                reach: self.reach_of(nick),
             })
             .chain(self.quiet.iter().map(|nick| RosterEntry {
                 nickname: nick.clone(),
                 // Quiet peers: their last-heard instant, retained in
                 // `quiet_since` (the eviction drops `last_seen`). A quiet
-                // peer has no live link, so it is always `Gossip`; its meta
-                // was pruned on eviction, so model/harness read `None`.
+                // peer has no live link, so it is always `Gossip`.
                 last_seen_secs_ago: self.quiet_since.get(nick).map(secs_since),
                 quiet: true,
                 reach: Reach::Gossip,
-                model: None,
-                harness: None,
             }))
             .collect();
         // Most-recently-seen first; unknown recency (no heartbeat yet) sorts last.
@@ -1094,33 +1083,6 @@ mod tests {
 
         state.rendezvous_linked = false;
         assert_eq!(reach(&state), Reach::Gossip, "rendezvous down → gossip");
-    }
-
-    #[test]
-    fn roster_surfaces_and_prunes_participant_meta() {
-        let mut state = fresh_state();
-        state.participants.insert(nick("worker"));
-        state.participant_meta.insert(
-            nick("worker"),
-            crate::protocol::peer_meta::PeerMeta::from_refs(Some("Opus 4.8"), Some("Claude Code")),
-        );
-
-        let entry_model = |current: &EventLoopState| {
-            current
-                .roster_snapshot()
-                .participants
-                .into_iter()
-                .find(|entry| entry.nickname.as_str() == "worker")
-                .map(|entry| (entry.model, entry.harness))
-        };
-        assert_eq!(
-            entry_model(&state),
-            Some((Some("Opus 4.8".to_owned()), Some("Claude Code".to_owned())))
-        );
-
-        // Dropping the meta (as a `Left`/sweep prune does) clears the columns.
-        state.participant_meta.remove("worker");
-        assert_eq!(entry_model(&state), Some((None, None)));
     }
 
     #[test]

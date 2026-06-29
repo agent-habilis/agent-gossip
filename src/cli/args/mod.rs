@@ -13,6 +13,7 @@ mod discover;
 mod exchange;
 mod join;
 mod lookup;
+mod meta;
 mod msg;
 mod output;
 mod peers;
@@ -26,6 +27,7 @@ pub(crate) use create::CreateOpts;
 pub(crate) use discover::DiscoverOpts;
 pub(crate) use exchange::ExchangeOpts;
 pub(crate) use join::JoinOpts;
+pub(crate) use meta::{MetaAction, MetaOpts};
 pub(crate) use msg::MsgOpts;
 pub(crate) use output::OutputFormat;
 pub(crate) use peers::PeersOpts;
@@ -143,6 +145,17 @@ pub(crate) enum Commands {
     State {
         #[command(flatten)]
         opts: StateOpts,
+    },
+
+    /// Read or change the swarm's `meta` channel.
+    ///
+    /// A second shared-state document beside `state`, identical machinery but
+    /// conventionally holding swarm metadata (peer info, …) rather than the task.
+    /// `meta patch` applies an RFC 6902 patch; `meta get` prints the current
+    /// document. The two channels are fully independent.
+    Meta {
+        #[command(flatten)]
+        opts: MetaOpts,
     },
 
     /// Wait until a swarm daemon is serving, then exit.

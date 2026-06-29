@@ -172,9 +172,9 @@ impl StateLog {
         }
     }
 
-    /// Event payloads in deterministic replay order — the substrate's generic
-    /// read (the embed `state_snapshot` low-level API), also used to prove
+    /// Event payloads in deterministic replay order — used to prove log
     /// convergence in tests.
+    #[cfg(test)]
     pub(crate) fn replay_bodies(&self) -> Vec<String> {
         #[derive(Default)]
         struct Bodies(Vec<String>);

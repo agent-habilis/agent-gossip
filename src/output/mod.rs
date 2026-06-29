@@ -104,6 +104,7 @@ pub enum OutputEvent {
     /// whether it was our own write. Drives the reaction hook and the human
     /// `🐝 … changed shared state` line.
     StateChanged {
+        channel: crate::protocol::Channel,
         event: Box<Message>,
         document: serde_json::Value,
         is_self: bool,
@@ -521,8 +522,15 @@ impl Output {
     /// reaction channel, so an agent is never woken by its own patch (alternation
     /// stays loop-safe without a per-consumer guard). On the CLI/Monitor path the
     /// self-skip is the Monitor's job.
-    pub(crate) fn state_changed(&self, event: &Message, document: &serde_json::Value, is_self: bool) {
+    pub(crate) fn state_changed(
+        &self,
+        channel: crate::protocol::Channel,
+        event: &Message,
+        document: &serde_json::Value,
+        is_self: bool,
+    ) {
         let make = || OutputEvent::StateChanged {
+            channel,
             event: Box::new(event.clone()),
             document: document.clone(),
             is_self,
@@ -530,8 +538,10 @@ impl Output {
         match self {
             Output::Stream { mode, tap, .. } => {
                 match mode {
-                    OutputMode::Human => self.print_state_human(event, is_self),
-                    OutputMode::Json => emit(&json::format_state_json(event, document, is_self)),
+                    OutputMode::Human => self.print_state_human(channel, event, is_self),
+                    OutputMode::Json => {
+                        emit(&json::format_state_json(channel, event, document, is_self));
+                    }
                     OutputMode::Silent => {}
                 }
                 if let Some(tap) = tap {
@@ -552,13 +562,14 @@ impl Output {
         }
     }
 
-    fn print_state_human(&self, event: &Message, is_self: bool) {
+    fn print_state_human(&self, channel: crate::protocol::Channel, event: &Message, is_self: bool) {
         let what = json::state_change_summary_from_body(event.body.as_str());
+        let ch = channel.label();
         if is_self {
-            eprintln!("🐝️ you changed {what}");
+            eprintln!("🐝️ you changed {what} ({ch})");
         } else {
             let (open, close) = self.nick_ansi(event.author.as_str(), stderr_color());
-            eprintln!("🐝️ {open}<{}>{close} changed {what}", event.author);
+            eprintln!("🐝️ {open}<{}>{close} changed {what} ({ch})", event.author);
         }
     }
 
@@ -573,16 +584,7 @@ impl Output {
             |mode| match mode {
                 OutputMode::Human => {
                     let (open, close) = self.nick_ansi(msg.author.as_str(), stderr_color());
-                    // `joined` carries the joiner's model/harness; show it.
-                    let label = (*subtype == crate::protocol::PresenceSubtype::Joined)
-                        .then(|| crate::protocol::peer_meta::from_body(msg.body.as_str()).label())
-                        .flatten();
-                    match label {
-                        Some(label) => {
-                            eprintln!("{open}<{}>{close} ({label}) has {subtype}", msg.author);
-                        }
-                        None => eprintln!("{open}<{}>{close} has {subtype}", msg.author),
-                    }
+                    eprintln!("{open}<{}>{close} has {subtype}", msg.author);
                 }
                 OutputMode::Json => emit(&format_presence_json(msg, *subtype)),
                 OutputMode::Silent => {}
@@ -783,9 +785,11 @@ impl Output {
             | MessageKind::PeerInfo
             | MessageKind::Digest
             | MessageKind::StateDigest
+            | MessageKind::MetaDigest
             | MessageKind::Ping
             | MessageKind::Pong { .. }
             | MessageKind::State
+            | MessageKind::Meta
             | MessageKind::Exchange { .. } => {
                 println!("{open}<{}>{close}: {}", msg.author, msg.body);
             }

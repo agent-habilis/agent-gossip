@@ -349,10 +349,14 @@ async fn severed_gossip_stream_resubscribes_and_backfills() {
 // first) has had its turn.
 
 /// Poll the victim's derived document until `pred` holds or `timeout` elapses.
-async fn wait_doc(node: &InProcNode, timeout: Duration, mut pred: impl FnMut(&Value) -> bool) -> bool {
+async fn wait_doc(
+    node: &InProcNode,
+    timeout: Duration,
+    mut pred: impl FnMut(&Value) -> bool,
+) -> bool {
     let deadline = Instant::now() + timeout;
     loop {
-        if pred(&node.state_document().await) {
+        if pred(&node.state_get().await) {
             return true;
         }
         if Instant::now() >= deadline {
@@ -376,14 +380,14 @@ async fn unsigned_state_patch_is_dropped() {
     attacker.session.inject_raw(evil).await.expect("inject");
     // Barrier: a real signed patch from the attacker's own identity.
     attacker
-        .apply_patch(json!([{"op": "add", "path": "/ok", "value": 1}]))
+        .state_patch(json!([{"op": "add", "path": "/ok", "value": 1}]))
         .await;
     assert!(
         wait_doc(&victim, T, |doc| doc["ok"] == 1).await,
         "barrier state patch never derived"
     );
     assert!(
-        victim.state_document().await.get("evil").is_none(),
+        victim.state_get().await.get("evil").is_none(),
         "an unsigned state patch must never be folded into the document"
     );
     victim.leave().await;
@@ -398,24 +402,34 @@ async fn out_of_subset_state_patch_is_a_deterministic_no_op() {
 
     // A baseline the victim converges to.
     attacker
-        .apply_patch(json!([{"op": "add", "path": "/n", "value": 1}]))
+        .state_patch(json!([{"op": "add", "path": "/n", "value": 1}]))
         .await;
     assert!(wait_doc(&victim, T, |doc| doc["n"] == 1).await, "baseline");
 
     // A SIGNED but out-of-subset patch (`move`): authentic, so it is ingested
     // into the state log, but the reducer must fold it as a whole-patch no-op.
-    let evil = CraftedMsg::state_patch(swarm, "ghost", json!([{"op": "move", "from": "/n", "path": "/m"}]))
-        .sign(&key)
-        .bytes();
+    let evil = CraftedMsg::state_patch(
+        swarm,
+        "ghost",
+        json!([{"op": "move", "from": "/n", "path": "/m"}]),
+    )
+    .sign(&key)
+    .bytes();
     attacker.session.inject_raw(evil).await.expect("inject");
     // Barrier.
     attacker
-        .apply_patch(json!([{"op": "add", "path": "/done", "value": true}]))
+        .state_patch(json!([{"op": "add", "path": "/done", "value": true}]))
         .await;
-    assert!(wait_doc(&victim, T, |doc| doc["done"] == true).await, "barrier");
+    assert!(
+        wait_doc(&victim, T, |doc| doc["done"] == true).await,
+        "barrier"
+    );
 
-    let doc = victim.state_document().await;
-    assert_eq!(doc["n"], 1, "out-of-subset op must not mutate existing state");
+    let doc = victim.state_get().await;
+    assert_eq!(
+        doc["n"], 1,
+        "out-of-subset op must not mutate existing state"
+    );
     assert!(
         doc.get("m").is_none(),
         "out-of-subset `move` must not apply (not even partially)"
@@ -438,11 +452,11 @@ async fn malformed_state_patch_body_is_ignored() {
     attacker.session.inject_raw(evil).await.expect("inject");
     // Barrier.
     attacker
-        .apply_patch(json!([{"op": "add", "path": "/ok", "value": 1}]))
+        .state_patch(json!([{"op": "add", "path": "/ok", "value": 1}]))
         .await;
     assert!(wait_doc(&victim, T, |doc| doc["ok"] == 1).await, "barrier");
     assert_eq!(
-        victim.state_document().await,
+        victim.state_get().await,
         json!({"ok": 1}),
         "a malformed patch must leave only the valid barrier patch"
     );
@@ -457,7 +471,10 @@ async fn state_patch_flood_is_rate_limited_on_receive() {
     let mut victim = InProcNode::create_rate_limited("adv-state-rl", 5).await;
     let attacker = InProcNode::join(&victim.swarm, "adv-state-rl-atk").await;
     attacker.send("warmup").await;
-    assert!(victim.wait_body("warmup", T).await, "victim/attacker meshed");
+    assert!(
+        victim.wait_body("warmup", T).await,
+        "victim/attacker meshed"
+    );
 
     // Flood distinct, valid, signed patches from ONE crafted identity — a few
     // past the quota of 5 is enough to trip the limiter.

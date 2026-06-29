@@ -217,32 +217,42 @@ group-level outcome. Like handover, it adds no wire type of its own.
 
 ### shared state
 
-*Layer: state · one document per swarm, derived from the **state log**.*
+*Layer: state · two **channels** per swarm (`state`, `meta`), each a document
+derived from its own **state log**.*
 
-A single JSON document the whole swarm shares, separate from the chat message
-log. It is never sent whole on the wire: every member **derives** it by folding
-the **state log** (the `(timestamp, id)`-ordered replay of every **change**)
-from `{}`. Same event set ⇒ byte-identical document on every member (see the
-*Shared state converges deterministically* invariant). One shared state per
-swarm; no namespacing. Read with `ahsw state get`; changed with `ahsw state
-patch`. A change surfaces as the `state` event, carrying both the change and the
-newly-derived document.
+A JSON document the whole swarm shares, separate from the chat message log. It
+is never sent whole on the wire: every member **derives** it by folding the
+**state log** (the `(timestamp, id)`-ordered replay of every **change**) from
+`{}`. Same event set ⇒ byte-identical document on every member (see the *Shared
+state converges deterministically* invariant).
+
+Each swarm carries **two channels**, `state` and `meta` — byte-for-byte the
+same machinery (same reducer, log, anti-entropy, CAS, frozen-subset patch
+rules), differing only by **convention**: `state` is the task working area;
+`meta` holds swarm metadata, by convention `/peers/<nick> = { model, harness }`
+that each agent self-reports. The binary does **not** differentiate them and
+never writes a channel itself — the **only** way to change either is a JSON
+patch (`ahsw state patch` / `ahsw meta patch`). Read with `ahsw state get` /
+`ahsw meta get`. A change surfaces as the `state` / `meta` event, carrying both
+the change and the newly-derived document.
 
 Code: `daemon::state_doc` (the reducer `JsonDoc` + `derive_document`),
-`OutputEvent::StateChanged`.
+`protocol::Channel`, `OutputEvent::StateChanged`.
 
 ### state log
 
-*Layer: state · `MessageKind::State`, its own un-pruned, unbounded store.*
+*Layer: state · `MessageKind::State` / `MessageKind::Meta`, one un-pruned,
+unbounded store per **channel**.*
 
-The signed `State` events a swarm folds into its **shared state** — distinct
-from the chat **message log** in three ways: it is **un-pruned and unbounded**
-(the fold needs the complete set, so nothing ages out), dedup-keyed by id, and
-reconciled by its **own** anti-entropy digest (windowed like the chat digest,
-but advertised open at both ends so a late joiner backfills the *whole* log, not
-just a recent tail). Bounding its total growth (compaction/snapshots) is
-deferred; the per-author **rate limit** — which state shares with chat — bounds
-the growth *rate*.
+The signed channel events a swarm folds into a **shared state** document — one
+log per channel (`State` for `state`, `Meta` for `meta`), distinct from the chat
+**message log** in three ways: each is **un-pruned and unbounded** (the fold
+needs the complete set, so nothing ages out), dedup-keyed by id, and reconciled
+by its **own** anti-entropy digest (windowed like the chat digest, but
+advertised open at both ends so a late joiner backfills the *whole* log, not
+just a recent tail). Bounding total growth (compaction/snapshots) is deferred;
+the per-author **rate limit** — which state shares with chat — bounds the growth
+*rate*.
 
 Code: `daemon::state_log::StateLog`, `gossip::antientropy::{broadcast,handle}_state_digest`.
 

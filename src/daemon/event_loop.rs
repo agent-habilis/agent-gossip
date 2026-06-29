@@ -48,8 +48,6 @@ pub(crate) async fn run(cfg: EventLoopConfig) -> Result<()> {
         name: swarm_name,
         output,
         interactive,
-        model,
-        harness,
         endpoint,
         router: _router,
         max_peers,
@@ -76,9 +74,6 @@ pub(crate) async fn run(cfg: EventLoopConfig) -> Result<()> {
         };
 
     let started = Instant::now();
-    // Built once from `--model`/`--harness`; announced in every `joined` we send.
-    let self_meta =
-        crate::protocol::peer_meta::PeerMeta::from_refs(model.as_deref(), harness.as_deref());
     let state_file = state_file.map(|path| StateFile::new(path, &swarm_str, &author, &swarm_name));
     let mut state = EventLoopState::new(state_file, started, rate_limit_per_min, identity);
     // Advertise path only: the directory re-broadcast task reads the
@@ -148,7 +143,6 @@ pub(crate) async fn run(cfg: EventLoopConfig) -> Result<()> {
         name: swarm_name,
         author,
         output,
-        self_meta,
         max_peers,
         state,
         ipc_rx,
@@ -186,8 +180,6 @@ struct EventLoop {
     name: SwarmName,
     author: Nickname,
     output: output::Output,
-    /// This node's self-reported model / harness, announced in our `joined`.
-    self_meta: crate::protocol::peer_meta::PeerMeta,
     max_peers: usize,
     state: EventLoopState,
     ipc_rx: Option<mpsc::Receiver<IpcMessage>>,
@@ -235,7 +227,6 @@ async fn event_loop(loop_state: EventLoop) -> Result<()> {
         name: swarm_name,
         author,
         output,
-        self_meta,
         max_peers,
         mut state,
         mut ipc_rx,
@@ -292,7 +283,6 @@ async fn event_loop(loop_state: EventLoop) -> Result<()> {
         author: &author,
         identity: identity.as_ref(),
         our_pubkey: &our_pubkey,
-        self_meta: &self_meta,
         max_peers,
         rendezvous_id: rendezvous_params.id,
         external_msg_tx: external_msg_tx.as_ref(),
@@ -357,7 +347,7 @@ async fn event_loop(loop_state: EventLoop) -> Result<()> {
             _ = intervals.antientropy.tick() => {
                 timers::note_tick_gap("antientropy", &mut anchors.antientropy, &mut anchors.antientropy_wall, Duration::from_secs(ANTIENTROPY_INTERVAL_SECS));
                 gossip::antientropy::broadcast_digest(&mut state, &sender, &swarm_str, &author).await;
-                gossip::antientropy::broadcast_state_digest(&mut state, &sender, &swarm_str, &author).await;
+                gossip::antientropy::broadcast_state_digests(&mut state, &sender, &swarm_str, &author).await;
             }
             _ = intervals.state_refresh.tick() => timers::tick_state_refresh(&state, &endpoint).await,
             _ = recv_opt(&mut external_quit_rx) => {
@@ -876,7 +866,6 @@ struct CtxParts<'a> {
     author: &'a Nickname,
     identity: &'a crate::protocol::identity::Identity,
     our_pubkey: &'a str,
-    self_meta: &'a crate::protocol::peer_meta::PeerMeta,
     max_peers: usize,
     rendezvous_id: iroh::EndpointId,
     external_msg_tx: Option<&'a broadcast::Sender<Message>>,
@@ -895,7 +884,6 @@ impl<'a> CtxParts<'a> {
             author: self.author,
             identity: self.identity,
             our_pubkey: self.our_pubkey,
-            self_meta: self.self_meta,
             max_peers: self.max_peers,
             rendezvous_id: self.rendezvous_id,
             external_msg_tx: self.external_msg_tx,

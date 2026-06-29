@@ -1018,84 +1018,6 @@ fn swarm_info_reports_participant_roster() {
     }
 }
 
-/// Self-reported model/harness round-trips both ways: a creator and joiner
-/// each pass their own `model`/`harness`, and each sees the *other's* values
-/// in its `swarm_info` roster. Proves both `create_swarm` and `join_swarm`
-/// plumb the fields through to the announced presence.
-#[test]
-fn create_and_join_self_report_model_harness() {
-    let mut creator = McpClient::spawn();
-    let mut joiner = McpClient::spawn();
-
-    let created = tool_result_json(&creator.tool_call(
-        760,
-        "create_swarm",
-        serde_json::json!({ "name": "mcpmeta", "model": "Opus 4.8", "harness": "Claude Code" }),
-    ))
-    .expect("create_swarm must succeed");
-    let swarm = created["swarm"].as_str().expect("swarm id").to_string();
-    let creator_nick = created["nickname"].as_str().expect("nickname").to_string();
-
-    let join_result = tool_result_json(&joiner.tool_call(
-        761,
-        "join_swarm",
-        serde_json::json!({ "swarm": swarm, "model": "Sonnet 4.6", "harness": "pi" }),
-    ))
-    .expect("join_swarm must succeed");
-    let joiner_nick = join_result["nickname"]
-        .as_str()
-        .expect("nickname")
-        .to_string();
-
-    // Each side polls its roster for the *other* peer, then asserts the
-    // self-reported metadata surfaced.
-    let find_peer = |client: &mut McpClient, base: u64, peer: &str| -> serde_json::Value {
-        let deadline = Instant::now() + MSG_TIMEOUT;
-        let mut probe = base;
-        loop {
-            let info =
-                tool_result_json(&client.tool_call(probe, "swarm_info", serde_json::json!({})))
-                    .expect("swarm_info");
-            if let Some(entry) = info["participants"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .find(|entry| entry["nickname"].as_str() == Some(peer))
-                .cloned()
-            {
-                break entry;
-            }
-            assert!(Instant::now() < deadline, "{peer} never surfaced: {info}");
-            probe += 1;
-            std::thread::sleep(Duration::from_millis(100));
-        }
-    };
-
-    let joiner_entry = find_peer(&mut creator, 762, &joiner_nick);
-    assert_eq!(
-        joiner_entry["model"].as_str(),
-        Some("Sonnet 4.6"),
-        "{joiner_entry}"
-    );
-    assert_eq!(
-        joiner_entry["harness"].as_str(),
-        Some("pi"),
-        "{joiner_entry}"
-    );
-
-    let creator_entry = find_peer(&mut joiner, 780, &creator_nick);
-    assert_eq!(
-        creator_entry["model"].as_str(),
-        Some("Opus 4.8"),
-        "{creator_entry}"
-    );
-    assert_eq!(
-        creator_entry["harness"].as_str(),
-        Some("Claude Code"),
-        "{creator_entry}"
-    );
-}
-
 /// Loopback timings so the advertise→discover round runs in seconds: short
 /// co-host grace (the advertiser becomes the directory beacon fast) and
 /// frequent re-ads (so the discoverer's collection window catches one).
@@ -1206,4 +1128,82 @@ fn ping_reports_rtt_to_a_peer() {
         id += 1;
     };
     assert!(rtt.is_some(), "ping never reported an RTT for the joiner");
+}
+
+/// Poll a read tool (`get_state` / `get_meta`) on `client` until its `document`
+/// satisfies `pred` or `MSG_TIMEOUT` elapses.
+fn poll_doc(
+    client: &mut McpClient,
+    base_id: u64,
+    tool: &str,
+    mut pred: impl FnMut(&serde_json::Value) -> bool,
+) -> bool {
+    let deadline = Instant::now() + MSG_TIMEOUT;
+    let mut id = base_id;
+    loop {
+        let resp = tool_result_json(&client.tool_call(id, tool, serde_json::json!({})))
+            .unwrap_or_else(|| panic!("{tool} must succeed"));
+        if pred(&resp["document"]) {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        id += 1;
+        std::thread::sleep(POLL);
+    }
+}
+
+/// Both shared-state channels round-trip over MCP: an `apply_*_patch` on one
+/// client is reflected by the other client's `get_*`, and the two channels stay
+/// isolated (a `state` key never appears in `get_meta`, nor vice versa). Proves
+/// the meta MCP tools reach a real, independent second channel.
+#[test]
+fn state_and_meta_round_trip_over_mcp() {
+    let (mut creator, mut joiner, _swarm, _nick) = create_pair(900);
+
+    // state: creator patches, the joiner's get_state reflects it.
+    let patched = tool_result_json(&creator.tool_call(
+        910,
+        "apply_state_patch",
+        serde_json::json!({ "patch": [{"op":"add","path":"/turn","value":"a"}] }),
+    ))
+    .expect("apply_state_patch must succeed");
+    assert_eq!(patched["ok"], true, "apply_state_patch reports ok");
+    assert!(
+        poll_doc(&mut joiner, 911, "get_state", |doc| doc["turn"] == "a"),
+        "joiner's get_state never reflected the creator's state patch"
+    );
+
+    // meta: creator patches, the joiner's get_meta reflects it.
+    let meta_patched = tool_result_json(&creator.tool_call(
+        920,
+        "apply_meta_patch",
+        serde_json::json!({ "patch": [{"op":"add","path":"/peers","value":{"creator":{"model":"Opus 4.8"}}}] }),
+    ))
+    .expect("apply_meta_patch must succeed");
+    assert_eq!(meta_patched["ok"], true, "apply_meta_patch reports ok");
+    assert!(
+        poll_doc(&mut joiner, 921, "get_meta", |doc| doc
+            .pointer("/peers/creator/model")
+            == Some(&serde_json::json!("Opus 4.8"))),
+        "joiner's get_meta never reflected the creator's meta patch"
+    );
+
+    // Channel isolation: the state key isn't in meta, and the meta key isn't in
+    // state.
+    let meta_doc = tool_result_json(&joiner.tool_call(930, "get_meta", serde_json::json!({})))
+        .expect("get_meta must succeed");
+    assert!(
+        meta_doc["document"].get("turn").is_none(),
+        "a state key leaked into the meta document: {}",
+        meta_doc["document"]
+    );
+    let state_doc = tool_result_json(&joiner.tool_call(931, "get_state", serde_json::json!({})))
+        .expect("get_state must succeed");
+    assert!(
+        state_doc["document"].get("peers").is_none(),
+        "a meta key leaked into the state document: {}",
+        state_doc["document"]
+    );
 }

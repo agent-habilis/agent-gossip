@@ -97,11 +97,8 @@ pub(crate) fn observe(
         && !matches!(message.kind, MessageKind::Presence { .. })
     {
         state.surfaced.insert(message.author.clone());
-        ctx.output.print_presence(&Message::new_joined(
-            ctx.swarm,
-            &message.author,
-            &crate::protocol::peer_meta::PeerMeta::default(),
-        ));
+        ctx.output
+            .print_presence(&Message::new_joined(ctx.swarm, &message.author));
         tracing::info!(nickname = %message.author, "peer joined");
     }
 
@@ -122,21 +119,11 @@ pub(crate) async fn handle_presence(
     if subtype == PresenceSubtype::Alive {
         return;
     }
-    // Record the joiner's self-reported model/harness on every `Joined`
-    // (first sight, re-announce, or anti-entropy backfill), so the roster
-    // can show it. Keyed by nickname, last-writer-wins.
-    if subtype == PresenceSubtype::Joined {
-        let meta = crate::protocol::peer_meta::from_body(message.body.as_str());
-        if !meta.is_empty() {
-            state.participant_meta.insert(message.author.clone(), meta);
-        }
-    }
     if subtype == PresenceSubtype::Left {
         if state.participants.remove(message.author.as_str()) {
             state.write_participant_count();
         }
         state.participant_endpoints.remove(message.author.as_str());
-        state.participant_meta.remove(message.author.as_str());
         state.quiet.remove(message.author.as_str());
         // Only announce a departure for a peer whose arrival we
         // surfaced — keeps the join-horizon view symmetric. A `left`
@@ -150,7 +137,7 @@ pub(crate) async fn handle_presence(
         // Re-announce so late joiners seed their roster.
         gossip::broadcast_msg(
             ctx.sender,
-            &Message::new_joined(ctx.swarm, ctx.author, ctx.self_meta).signed(ctx.identity),
+            &Message::new_joined(ctx.swarm, ctx.author).signed(ctx.identity),
         )
         .await;
         state.last_sent_at = Instant::now();
@@ -197,9 +184,11 @@ pub(crate) fn handle_msg(
         | MessageKind::PeerInfo
         | MessageKind::Digest
         | MessageKind::StateDigest
+        | MessageKind::MetaDigest
         | MessageKind::Ping
         | MessageKind::Pong { .. }
         | MessageKind::State
+        | MessageKind::Meta
         | MessageKind::Exchange { .. } => false,
     }
 }

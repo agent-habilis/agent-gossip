@@ -135,15 +135,36 @@ impl Session {
         patch: serde_json::Value,
         if_doc_hash: Option<String>,
     ) -> Result<()> {
-        self.inner.apply_patch(patch, if_doc_hash).await
+        self.inner.state_patch(patch, if_doc_hash).await
     }
 
     /// The current derived shared-state document (the JSON-Patch fold).
     ///
     /// # Errors
     /// Fails if the event loop has stopped.
-    pub(super) async fn state_document(&self) -> Result<serde_json::Value> {
-        self.inner.state_document().await
+    pub(super) async fn state_get(&self) -> Result<serde_json::Value> {
+        self.inner.state_get().await
+    }
+
+    /// `meta`-channel counterpart of [`apply_state_patch`](Self::apply_state_patch).
+    ///
+    /// # Errors
+    /// Fails if the patch is invalid/inapplicable, rate-limited, or the event
+    /// loop has stopped.
+    pub(super) async fn apply_meta_patch(
+        &self,
+        patch: serde_json::Value,
+        if_doc_hash: Option<String>,
+    ) -> Result<()> {
+        self.inner.meta_patch(patch, if_doc_hash).await
+    }
+
+    /// `meta`-channel counterpart of [`state_get`](Self::state_get).
+    ///
+    /// # Errors
+    /// Fails if the event loop has stopped.
+    pub(super) async fn meta_get(&self) -> Result<serde_json::Value> {
+        self.inner.meta_get().await
     }
 
     /// Fetch surfaced events after `after`, or after the implicit seq cursor

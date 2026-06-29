@@ -25,8 +25,8 @@ mod status;
 
 pub(crate) use args::Cli;
 use args::{
-    Commands, CreateOpts, ExchangeOpts, MsgOpts, OutputFormat, PeersOpts, PingOpts, PollOpts,
-    ReadyOpts, SharedServerOpts, StateAction, StateOpts,
+    Commands, CreateOpts, ExchangeOpts, MetaAction, MetaOpts, MsgOpts, OutputFormat, PeersOpts,
+    PingOpts, PollOpts, ReadyOpts, SharedServerOpts, StateAction, StateOpts,
 };
 
 /// `join` has no `--public`/`--name`: both are encoded in the `🐝…`
@@ -84,6 +84,7 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
         Commands::Exchange { opts } => exchange(opts).await,
         Commands::Peers { opts } => peers(opts).await,
         Commands::State { opts } => state(opts).await,
+        Commands::Meta { opts } => meta(opts).await,
         Commands::Ready { opts } => ready(opts).await,
         Commands::Discover { opts } => {
             crate::util::tuning::init(opts.shared.tuning());
@@ -154,11 +155,6 @@ async fn run_session(resolved: Resolved, shared: SharedServerOpts) -> Result<()>
         drift.as_deref(),
     )
     .await?;
-    // Self-reported model / harness, announced in our `joined` body. Set here
-    // (not in `setup_swarm`) to keep its arg count in budget — same
-    // late-assignment pattern as `live_count`.
-    cfg.model = shared.model;
-    cfg.harness = shared.harness;
     // Advertising (`create --advertise`): start the re-broadcast task. It
     // reaches the directory over this swarm's own lookups. The handle is
     // held for the session's lifetime — on the CLI the process exits (via
@@ -379,6 +375,39 @@ async fn state(opts: StateOpts) -> Result<()> {
     // `{"ok":false}` that exits 0 reads as success → silent desync. The raw JSON
     // is already printed above for `--output json` consumers; the exit code is
     // the scriptable signal. (`get` returns `ok:true`, so it stays exit 0.)
+    let parsed: MsgResponse = serde_json::from_str(&resp)?;
+    if !parsed.ok {
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
+/// Read or change the swarm's `meta` channel via the running daemon — the
+/// independent counterpart of [`state`]. Same raw-JSON + exit-code contract.
+async fn meta(opts: MetaOpts) -> Result<()> {
+    let (cmd, nickname) = match opts.action {
+        MetaAction::Patch {
+            swarm,
+            nickname,
+            patch,
+            if_doc_hash,
+        } => {
+            let op_array: serde_json::Value = serde_json::from_str(&patch).map_err(|error| {
+                anyhow::anyhow!("--patch must be a JSON array of RFC 6902 ops: {error}")
+            })?;
+            (
+                IpcCommand::MetaPatch {
+                    swarm,
+                    patch: op_array,
+                    if_doc_hash,
+                },
+                nickname,
+            )
+        }
+        MetaAction::Get { swarm, nickname } => (IpcCommand::MetaGet { swarm }, nickname),
+    };
+    let resp = ipc::send(&cmd, &nickname).await?;
+    println!("{resp}");
     let parsed: MsgResponse = serde_json::from_str(&resp)?;
     if !parsed.ok {
         std::process::exit(1);

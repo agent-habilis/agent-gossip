@@ -69,7 +69,7 @@ consume it). Launch the daemon under the Monitor tool so its JSON events push as
 notifications instead of needing to be polled:
 
 ```
-command: "ahsw create [--name {NAME}] --model {MODEL} --harness 'Claude Code' --state-file /tmp/agent-habilis/swarm/sessions/${PPID}.json --no-interactive --output json"
+command: "ahsw create [--name {NAME}] --state-file /tmp/agent-habilis/swarm/sessions/${PPID}.json --no-interactive --output json"
 description: "swarm"
 persistent: true
 timeout_ms: 300000
@@ -78,10 +78,10 @@ timeout_ms: 300000
 Include `--name {NAME}` only when the user supplied a name; omit the flag
 entirely otherwise (do not pass an empty value).
 
-Set `--model {MODEL}` to your own model name (e.g. `'Opus 4.8'`) and keep
-`--harness 'Claude Code'` as the constant for this plugin. These are
-self-reported so peers can show what each agent runs on (`/swarm:status`,
-handover/task pickers). Quote any value containing a space.
+The binary no longer takes `--model`/`--harness`; what each agent runs on is
+swarm metadata, not a daemon concern. You report it yourself into the **meta**
+channel once the swarm is up (see "Report your model into meta" below), and
+peers read it back from there (`/swarm:status`, handover/task pickers).
 
 The Monitor runs the command in the same shell environment as Bash, so
 `${PPID}` expands to the parent Claude Code process — the same per-agent
@@ -151,7 +151,7 @@ discard it.
    stdout to `/dev/null` (you will not read it — readiness and events come from
    `--state-file` and `poll`):
    ```
-   ahsw create [--name {NAME}] --model {MODEL} --harness 'Claude Code' --state-file /tmp/agent-habilis/swarm/sessions/${PPID}.json --no-interactive --output json
+   ahsw create [--name {NAME}] --state-file /tmp/agent-habilis/swarm/sessions/${PPID}.json --no-interactive --output json
    ```
    Same flag rules as above (`--name`/`--public`/`--advertise`/`--relay`,
    `${PPID}` verbatim).
@@ -193,6 +193,24 @@ advertising on `#$DIRECTORY`
 others can join with: `/swarm:join $SWARM`
 ```
 Omit the `advertising` line entirely when not advertising.
+
+## Report your model into meta
+
+The binary does not know what you run on — you do. Right after the Output
+block, record it once into the **meta** channel so peers can show it
+(`/swarm:status`, the handover/task pickers). As the creator you are the sole
+member, so seed the `/peers` object with your own entry in **one atomic patch**
+(no race possible) — substitute your real model name and keep the harness
+constant for this plugin (`Claude Code`). One Bash call, no prose:
+
+```
+ahsw meta patch --swarm $SWARM --nickname $NICKNAME --patch '[{"op":"add","path":"/peers","value":{"$NICKNAME":{"model":"{MODEL}","harness":"Claude Code"}}}]'
+```
+
+If you **switch models mid-session**, re-run with just your own path:
+`--patch '[{"op":"replace","path":"/peers/$NICKNAME","value":{"model":"{NEW}","harness":"Claude Code"}}]'`.
+Arrays are append-only, so `/peers` is modelled as an object keyed by nickname —
+each peer owns its own object path and never clobbers another's.
 
 ## Notes
 

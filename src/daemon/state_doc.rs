@@ -284,12 +284,37 @@ mod tests {
     fn folds_add_replace_remove_and_array_append() {
         let (swarm, author) = fixture();
         let mut log = StateLog::new();
-        log.insert(patch_event(&swarm, &author, 10, json!([{"op":"add","path":"/title","value":"start"}])));
-        log.insert(patch_event(&swarm, &author, 20, json!([{"op":"add","path":"/items","value":[]}])));
-        log.insert(patch_event(&swarm, &author, 30, json!([{"op":"add","path":"/items/-","value":"first"}])));
-        log.insert(patch_event(&swarm, &author, 40, json!([{"op":"replace","path":"/title","value":"updated"}])));
+        log.insert(patch_event(
+            &swarm,
+            &author,
+            10,
+            json!([{"op":"add","path":"/title","value":"start"}]),
+        ));
+        log.insert(patch_event(
+            &swarm,
+            &author,
+            20,
+            json!([{"op":"add","path":"/items","value":[]}]),
+        ));
+        log.insert(patch_event(
+            &swarm,
+            &author,
+            30,
+            json!([{"op":"add","path":"/items/-","value":"first"}]),
+        ));
+        log.insert(patch_event(
+            &swarm,
+            &author,
+            40,
+            json!([{"op":"replace","path":"/title","value":"updated"}]),
+        ));
         log.insert(patch_event(&swarm, &author, 50, json!([{"op":"add","path":"/turn","value":"b"},{"op":"add","path":"/scratch","value":1}])));
-        log.insert(patch_event(&swarm, &author, 60, json!([{"op":"remove","path":"/scratch"}])));
+        log.insert(patch_event(
+            &swarm,
+            &author,
+            60,
+            json!([{"op":"remove","path":"/scratch"}]),
+        ));
 
         assert_eq!(
             derive_document(&log),
@@ -321,15 +346,40 @@ mod tests {
     fn failed_and_out_of_subset_patches_are_no_ops() {
         let (swarm, author) = fixture();
         let mut log = StateLog::new();
-        log.insert(patch_event(&swarm, &author, 10, json!([{"op":"add","path":"/a","value":1}])));
+        log.insert(patch_event(
+            &swarm,
+            &author,
+            10,
+            json!([{"op":"add","path":"/a","value":1}]),
+        ));
         // replace on a missing path — does not apply.
-        log.insert(patch_event(&swarm, &author, 20, json!([{"op":"replace","path":"/missing","value":2}])));
+        log.insert(patch_event(
+            &swarm,
+            &author,
+            20,
+            json!([{"op":"replace","path":"/missing","value":2}]),
+        ));
         // out-of-subset op (move) — whole patch rejected.
-        log.insert(patch_event(&swarm, &author, 30, json!([{"op":"move","from":"/a","path":"/b"}])));
+        log.insert(patch_event(
+            &swarm,
+            &author,
+            30,
+            json!([{"op":"move","from":"/a","path":"/b"}]),
+        ));
         // root path — rejected.
-        log.insert(patch_event(&swarm, &author, 40, json!([{"op":"replace","path":"","value":[]}])));
+        log.insert(patch_event(
+            &swarm,
+            &author,
+            40,
+            json!([{"op":"replace","path":"","value":[]}]),
+        ));
         // atomicity: a valid op followed by a failing one in the same patch — neither applies.
-        log.insert(patch_event(&swarm, &author, 50, json!([{"op":"add","path":"/c","value":3},{"op":"remove","path":"/nope"}])));
+        log.insert(patch_event(
+            &swarm,
+            &author,
+            50,
+            json!([{"op":"add","path":"/c","value":3},{"op":"remove","path":"/nope"}]),
+        ));
 
         assert_eq!(derive_document(&log), json!({"a":1}));
     }
@@ -342,7 +392,13 @@ mod tests {
         // out of subset
         assert!(validate_patch(&json!([{"op":"copy","from":"/a","path":"/b"}]), &current).is_err());
         // does not apply (replace missing)
-        assert!(validate_patch(&json!([{"op":"replace","path":"/missing","value":2}]), &current).is_err());
+        assert!(
+            validate_patch(
+                &json!([{"op":"replace","path":"/missing","value":2}]),
+                &current
+            )
+            .is_err()
+        );
         // root path
         assert!(validate_patch(&json!([{"op":"replace","path":"","value":{}}]), &current).is_err());
     }

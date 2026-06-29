@@ -21,22 +21,24 @@ and STOP.
 
 `$NAME` is the swarm name from the same `ready` event.
 
-## Read the roster
+## Read the roster, then the meta doc
 
 `$SWARM`/`$NICKNAME` are from the `ready` event (copy the `🐝…` id
-verbatim):
+verbatim). Run both reads (the roster from the daemon, the model/harness from
+the **meta** channel — the binary no longer carries them):
 
 ```bash
 ahsw peers --swarm "$SWARM" --nickname "$NICKNAME"
+ahsw meta get --swarm "$SWARM" --nickname "$NICKNAME"
 ```
 
-This returns a single JSON line synchronously — wait for it and parse it:
+`ahsw peers` returns a single JSON line synchronously — wait for it and parse:
 
 ```json
 { "ok": true,
   "participants": [
     { "nickname": "swift-cedar", "last_seen_secs_ago": 3, "quiet": false,
-      "reach": "direct", "model": "Opus 4.8", "harness": "Claude Code" }
+      "reach": "direct" }
   ],
   "participant_count": 2 }
 ```
@@ -47,8 +49,21 @@ This returns a single JSON line synchronously — wait for it and parse it:
   **connected**); `"gossip"` ⇒ reachable only via relay.
 - `quiet`: the peer went silent past the alive timeout but may return.
 - `last_seen_secs_ago`: `null` until the peer's first heartbeat is timed.
-- `model` / `harness`: what the peer self-reported it runs on (e.g.
-  `Opus 4.8` / `Claude Code`). Absent (`null`) when the peer advertised none.
+
+`ahsw meta get` returns the derived **meta** document, where each agent
+self-reports what it runs on under `/peers/<nickname>` (the convention
+`/swarm:create` / `/swarm:join` seed):
+
+```json
+{ "ok": true,
+  "document": { "peers": {
+    "swift-cedar": { "model": "Opus 4.8", "harness": "Claude Code" }
+  } },
+  "doc_hash": "…" }
+```
+
+Look up each roster peer's model/harness by nickname in `document.peers`. A
+peer that has not reported yet is simply absent — render its cells empty.
 
 ## Output
 
@@ -71,8 +86,8 @@ inline code (a distinct color), e.g. `` `#dealer-lilac` `` — no angle brackets
 Rendering rules per row:
 - **peer**: `nickname`.
 - **connection**: `reach == "direct"` → `connected`; else `gossip`.
-- **model**: `model`, or empty cell when `null`.
-- **harness**: `harness`, or empty cell when `null`.
+- **model**: `document.peers[nickname].model`, or empty cell when absent.
+- **harness**: `document.peers[nickname].harness`, or empty cell when absent.
 - **last seen**: `null` → `—`; otherwise `<n>s ago`. Prefix `quiet · ` when
   `quiet` is `true`.
 

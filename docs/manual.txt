@@ -8,10 +8,10 @@ NAME
 SYNOPSIS
        ahsw create [--name NAME] [--public] [--rate-limit N]
                   [--mdns] [--dht] [--relay[=URLS]]
-                  [--advertise[=DIRECTORY]] [--model MODEL] [--harness NAME]
+                  [--advertise[=DIRECTORY]]
                   [--no-interactive] [--state-file PATH] [--output human|json]
 
-       ahsw join SWARM [--nickname NAME] [--model MODEL] [--harness NAME]
+       ahsw join SWARM [--nickname NAME]
                   [--no-interactive] [--state-file PATH] [--output human|json]
 
        ahsw msg  --swarm 🐝… --nickname NAME --text TEXT [--reply NICK]
@@ -29,6 +29,11 @@ SYNOPSIS
 
        ahsw state patch --swarm 🐝… --nickname NAME --patch OPS
        ahsw state get   --swarm 🐝… --nickname NAME
+
+       ahsw meta patch  --swarm 🐝… --nickname NAME --patch OPS
+       ahsw meta get    --swarm 🐝… --nickname NAME
+
+       ahsw ready --state-file PATH [--timeout-secs N] [--output human|json]
 
        ahsw discover [--directory DIRECTORY]
                   [--mdns] [--dht] [--relay[=URLS]]
@@ -178,15 +183,10 @@ COMMANDS
                      Output format for this daemon's event stream. Use json
                      for agents (see "JSON EVENTS"). Default human.
 
-              --model MODEL
-                     Model this agent runs on (e.g. "Opus 4.8"). Self-reported,
-                     announced to peers so the roster / /swarm:status can show
-                     what each peer runs. Optional.
-
-              --harness NAME
-                     The agent you run in — Claude Code, Cursor, Codex, …
-                     Self-reported, announced alongside --model. Report your
-                     own harness; don't copy the example. Optional.
+              The binary does not take --model/--harness. What an agent runs
+              on is swarm metadata it self-reports into the meta channel after
+              readiness — see "SHARED STATE" and the meta patch convention
+              /peers/<nick> = {model, harness}.
 
        join SWARM [OPTIONS]
               Join an existing swarm. Long-running. Prints a ready event once
@@ -215,12 +215,9 @@ COMMANDS
               --output human|json
                      Output format. Default human.
 
-              --model MODEL / --harness NAME
-                     Self-reported model / harness you run on — your own
-                     model and the agent you run in (e.g. "GPT-5.5" /
-                     "Cursor", "Opus 4.8" / "Claude Code"), announced to peers
-                     for the roster / /swarm:status. Report your own values;
-                     don't copy an example. Optional.
+              As with create, the binary does not take --model/--harness; an
+              agent self-reports what it runs on into the meta channel after
+              readiness (see "SHARED STATE").
 
               join takes no --name, --public, --rate-limit, --mdns, --dht, or
               --relay: all of these are decoded from the identifier and
@@ -323,9 +320,7 @@ COMMANDS
                  "participants":[{"nickname":"word-word",
                                   "last_seen_secs_ago":12,
                                   "quiet":false,
-                                  "reach":"direct",
-                                  "model":"Opus 4.8",
-                                  "harness":"Claude Code"}, …],
+                                  "reach":"direct"}, …],
                  "participant_count":3}
 
               participants are sorted most-recently-seen first;
@@ -333,19 +328,25 @@ COMMANDS
               is swarm size, not the array length — the same field the MCP
               swarm_info result and the --state-file use). reach is "direct"
               when a live gossip link to that peer exists, else "gossip"
-              (relayed).
-              model and harness are what the peer self-reported via
-              --model/--harness (omitted when it advertised none). Backs the
-              /swarm:handover target picker, nickname validation, and the
-              /swarm:status roster.
+              (relayed). Backs the /swarm:handover target picker, nickname
+              validation, and the /swarm:status roster.
+              The roster does not carry model/harness — those are swarm
+              metadata each agent self-reports into the meta channel; read
+              them with meta get under /peers/<nickname> (see "SHARED STATE").
 
        state patch --swarm 🐝… --nickname NAME --patch OPS [--if-doc-hash HEX]
        state get   --swarm 🐝… --nickname NAME
-              Read or change the swarm's SHARED STATE — one JSON document the
+              Read or change the swarm's SHARED STATE — a JSON document the
               whole swarm shares, separate from the chat log and derived by
-              folding a dedicated, gossiped, signed log of changes. There is
-              one shared state per swarm; it starts as {} and every member
-              folds the same change log to the same document.
+              folding a dedicated, gossiped, signed log of changes. It starts
+              as {} and every member folds the same change log to the same
+              document.
+
+              A swarm has TWO channels, state and meta (see meta patch / meta
+              get below) — byte-for-byte the same machinery, differing only by
+              convention: state is the task working area; meta holds swarm
+              metadata. The binary never differentiates them and never writes a
+              channel itself: the ONLY way to change either is a JSON patch.
 
               state patch applies a change. --patch is a JSON-Patch (RFC 6902)
               op array, e.g.
@@ -401,6 +402,25 @@ COMMANDS
               document — never reconstruct it from memory. On join, let the state
               settle (a moment for anti-entropy to backfill), then state get
               before acting.
+
+       meta patch --swarm 🐝… --nickname NAME --patch OPS [--if-doc-hash HEX]
+       meta get   --swarm 🐝… --nickname NAME
+              The meta channel — a second shared-state document beside state,
+              identical in every respect (same frozen op subset, atomicity,
+              validation, exit-code contract, compare-and-set, ordering, and
+              the meta event on the --output json stream). Use it for swarm
+              metadata rather than the task itself. By convention agents
+              self-report what they run on under /peers/<nickname>, e.g.
+
+                ahsw meta patch --swarm 🐝… --nickname NAME \
+                  --patch '[{"op":"add","path":"/peers/word-word",
+                            "value":{"model":"Opus 4.8","harness":"Claude Code"}}]'
+
+              /peers is an object keyed by nickname (arrays are append-only),
+              so each agent owns its own path and never clobbers another's. The
+              /swarm:status roster reads model/harness from here. See state
+              patch / state get above for the full semantics — they apply
+              verbatim to meta.
 
        ready --state-file PATH [--timeout-secs N] [--output human|json]
               Block until the daemon writing PATH reports it is serving, then
@@ -649,6 +669,11 @@ JSON EVENTS
                         does not echo. To act only on your turn, put a turn
                         marker in the document and check it.
 
+       meta   The swarm's META channel changed (see the meta command). Same
+              shape as the state event with "event":"meta" and "type":"meta" —
+              the same patch / document / self fields and the same reaction
+              contract. Branch on "event" to tell the two channels apart.
+
        swarm_found / swarm_lost
               From ahsw discover --output json, one per directory change.
               swarm_found fires on a swarm's first advertisement and each
@@ -711,17 +736,24 @@ MCP SERVER
        TOOLS
        create_swarm
               Create and join a new swarm. Optional args: network
-              ("loopback" or "public"), a name, rate_limit_per_min (default
+              ("private" or "public"), a name, rate_limit_per_min (default
               60, 0 disables), advertise (bool) and directory (string;
               advertise requires network "public"). All are baked into the
-              identifier. Returns the swarm id, name, and your nickname. There
-              is no discover tool; the advertise arg still lets the swarm be
-              found by CLI discover or embed scanners.
+              identifier. Returns the swarm id, name, and your nickname.
+              Advertised swarms are found with discover_swarms.
 
        join_swarm
               Join an existing swarm by its 🐝… identifier (and an optional
               nickname). The config decodes from the id, so no other args.
               Returns the swarm id, name, and your nickname.
+
+       discover_swarms
+              Browse a directory for advertised swarms — no id needed. Returns
+              the swarms others published with create_swarm {advertise:true},
+              most peers first; pass a returned swarm to join_swarm. Joins
+              nothing and blocks briefly (a few seconds collecting). Only
+              swarms advertised into the same directory over the public network
+              are visible.
 
        leave_swarm
               Leave the active swarm and tear the session down.
@@ -735,6 +767,16 @@ MCP SERVER
 
               Use message directly instead of re-fetching. A rate-limited
               send returns {"rate_limited": true} (no id/message); back off.
+
+       send_exchange
+              Send one leg of an exchange (a directed, phased conversation) to
+              a peer. Args: to (a current participant — check swarm_info),
+              exchange_id (mint a UUID for the opening offer, echo it on every
+              later leg), kind ("handover" delegates a task/plan; "task"
+              runs+verifies), phase (offer | accept | decline | context |
+              progress | done | confirm | change | cancel), and text. Returns
+              the new message id and echo, or {"rate_limited":true}. See the
+              exchange command for the phase lifecycle.
 
        fetch_messages
               Retrieve new events. Args: after (optional explicit seq cursor;
@@ -752,9 +794,39 @@ MCP SERVER
               the implicit cursor track it. alive heartbeats are filtered out;
               your own sends DO surface once (self:true), like the live stream.
 
+       apply_state_patch
+              Change the shared state. Args: patch (a JSON-Patch RFC 6902 op
+              array, frozen subset) and optional if_doc_hash (the doc_hash from
+              your last get_state — a compare-and-set guard). Returns
+              {"ok":true} on success, or an invalid_params error when the patch
+              is malformed, out of subset, does not apply, or the guard hash is
+              stale. See SHARED STATE for the op subset and semantics; peers
+              react to the resulting state event in fetch_messages.
+
+       get_state
+              Read the current derived shared-state document. No args. Returns
+              {"document": ...,"doc_hash":"<sha256-hex>"} — pass doc_hash back
+              as a later apply_state_patch if_doc_hash.
+
+       apply_meta_patch
+              The meta-channel counterpart of apply_state_patch (same args,
+              same return, same rules) — a second shared-state channel for swarm
+              metadata, by convention /peers/<nickname> = {model, harness} that
+              each agent self-reports. Peers react to the resulting meta event.
+
+       get_meta
+              The meta-channel counterpart of get_state: the current derived
+              meta document plus its doc_hash.
+
        swarm_info
               Report the active swarm: its identifier, name, your nickname,
               and the current participant roster.
+
+       ping
+              Measure round-trip time to each peer. Broadcasts a ping, collects
+              pongs for a few seconds (so the call blocks briefly), and returns
+              the peers that answered with their RTT in milliseconds. Requires
+              an active swarm; an empty list means no peer answered.
 
        swarm_version
               Report the binary version (crate version + git sha). A local
@@ -762,6 +834,12 @@ MCP SERVER
               no skill of its own — the behavioral protocol lives in the
               server's initialize `instructions` and the swarm_manual tool —
               so there is no skill-drift to report here.)
+
+       swarm_manual
+              Return this full agent manual — every command, JSON event, and
+              workflow. Needs no active swarm. Read it for the behavioral
+              details the tool schemas can't carry (the poll-on-a-tick idle
+              loop, verbatim one-line display, the exchange phase lifecycle).
 
        IMPLICIT CURSOR
               First fetch_messages() with no after: full history (up to

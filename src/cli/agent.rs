@@ -194,8 +194,7 @@ pub(crate) fn states(home: &Path) -> Vec<(Agent, PathBuf, AgentState)> {
 /// drift warning (below) and the MCP `swarm_version` tool — one source of
 /// truth so the two can't drift apart. `ahsw plug` refreshes every
 /// installed integration, so the message names no specific one.
-pub(crate) const SKILL_DRIFT_MSG: &str =
-    "⚠️ swarm skill out of date. Run `ahsw plug` to update";
+pub(crate) const SKILL_DRIFT_MSG: &str = "⚠️ swarm skill out of date. Run `ahsw plug` to update";
 
 /// A one-line drift warning if any installed integration has fallen behind the
 /// binary (`OutOfDate`), else `None`. The daemon folds this into its `ready`

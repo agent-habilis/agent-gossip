@@ -182,32 +182,14 @@ fn json_body_escapes_backslashes() {
 
 #[test]
 fn json_presence_joined() {
-    let msg = Message::new_joined(
-        &sid(),
-        &nick("alice"),
-        &crate::protocol::peer_meta::PeerMeta::default(),
-    );
+    let msg = Message::new_joined(&sid(), &nick("alice"));
     let parsed = parse(&format_presence_json(&msg, PresenceSubtype::Joined));
     assert_eq!(parsed["event"], "message");
     assert_eq!(parsed["type"], "presence");
     assert_eq!(parsed["subtype"], "joined");
     assert_eq!(parsed["author"], "alice");
     assert_eq!(parsed["swarm"], "🐝test");
-}
-
-#[test]
-fn json_presence_joined_shows_meta() {
-    let meta =
-        crate::protocol::peer_meta::PeerMeta::from_refs(Some("Opus 4.8"), Some("Claude Code"));
-    let msg = Message::new_joined(&sid(), &nick("alice"), &meta);
-    let parsed = parse(&format_presence_json(&msg, PresenceSubtype::Joined));
-    assert_eq!(
-        parsed["display"],
-        "🐝️ `<alice>` (Opus 4.8 / Claude Code) has joined"
-    );
-    // Structured fields too, so a plain-text client can compose its own line.
-    assert_eq!(parsed["model"], "Opus 4.8");
-    assert_eq!(parsed["harness"], "Claude Code");
+    assert_eq!(parsed["display"], "🐝️ `<alice>` has joined");
 }
 
 #[test]
@@ -380,11 +362,7 @@ fn json_output_is_single_line() {
             false,
         ),
         format_presence_json(
-            &Message::new_joined(
-                &sid(),
-                &nick("charlie"),
-                &crate::protocol::peer_meta::PeerMeta::default(),
-            ),
+            &Message::new_joined(&sid(), &nick("charlie")),
             PresenceSubtype::Joined,
         ),
         format_presence_json(
@@ -491,6 +469,7 @@ mod snapshots {
     fn snap_state(ops: &str, document: &serde_json::Value, is_self: bool) -> String {
         let body = format!(r#"{{"k":"patch","ops":{ops}}}"#);
         super::super::json::format_state_json(
+            crate::protocol::Channel::State,
             &Message::fixture(MessageKind::State, &body),
             document,
             is_self,
@@ -598,7 +577,7 @@ mod prop {
         fn prop_presence_json_is_valid(is_join in any::<bool>()) {
             let test_nick = crate::protocol::Nickname::from("test-nick");
             let (msg, subtype) = if is_join {
-                (Message::new_joined(&sid(), &test_nick, &crate::protocol::peer_meta::PeerMeta::default()), PresenceSubtype::Joined)
+                (Message::new_joined(&sid(), &test_nick), PresenceSubtype::Joined)
             } else {
                 (Message::new_left(&sid(), &test_nick), PresenceSubtype::Left)
             };

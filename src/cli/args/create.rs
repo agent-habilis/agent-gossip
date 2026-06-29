@@ -107,6 +107,7 @@ mod tests {
             | Commands::Exchange { .. }
             | Commands::Peers { .. }
             | Commands::State { .. }
+            | Commands::Meta { .. }
             | Commands::Ready { .. }
             | Commands::Plug { .. }
             | Commands::Unplug { .. }
@@ -134,6 +135,7 @@ mod tests {
             | Commands::Exchange { .. }
             | Commands::Peers { .. }
             | Commands::State { .. }
+            | Commands::Meta { .. }
             | Commands::Ready { .. }
             | Commands::Plug { .. }
             | Commands::Unplug { .. }
@@ -158,6 +160,7 @@ mod tests {
             | Commands::Exchange { .. }
             | Commands::Peers { .. }
             | Commands::State { .. }
+            | Commands::Meta { .. }
             | Commands::Ready { .. }
             | Commands::Plug { .. }
             | Commands::Unplug { .. }
@@ -199,6 +202,7 @@ mod tests {
                 | Commands::Exchange { .. }
                 | Commands::Peers { .. }
                 | Commands::State { .. }
+                | Commands::Meta { .. }
                 | Commands::Ready { .. }
                 | Commands::Plug { .. }
                 | Commands::Unplug { .. }
@@ -254,6 +258,7 @@ mod tests {
             | Commands::Exchange { .. }
             | Commands::Peers { .. }
             | Commands::State { .. }
+            | Commands::Meta { .. }
             | Commands::Ready { .. }
             | Commands::Plug { .. }
             | Commands::Unplug { .. }

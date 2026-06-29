@@ -25,6 +25,11 @@ use crate::gossip::{
 
 /// Returns `true` if the handler broadcast anything, so the caller
 /// can refresh `last_sent_at` for heartbeat suppression.
+#[expect(
+    clippy::too_many_lines,
+    reason = "a dispatch match with one arm per IpcCommand; the state/meta channel pair doubles \
+              the patch/get arms but each is a thin delegate"
+)]
 pub(crate) async fn handle_ipc_command(
     cmd: IpcCommand,
     resp_tx: oneshot::Sender<String>,
@@ -140,15 +145,47 @@ pub(crate) async fn handle_ipc_command(
             patch,
             if_doc_hash,
         } => {
-            let outcome =
-                broadcast_state_patch(swarm, author, patch, if_doc_hash, state, sender, output)
-                    .await;
+            let outcome = broadcast_state_patch(
+                swarm,
+                author,
+                patch,
+                if_doc_hash,
+                state,
+                sender,
+                output,
+                crate::protocol::Channel::State,
+            )
+            .await;
             let (response, broadcast) = state_patch_response(outcome);
             let _ = resp_tx.send(response);
             broadcast
         }
         IpcCommand::StateGet { swarm: _ } => {
-            let _ = resp_tx.send(state_get_response(state));
+            let _ = resp_tx.send(state_get_response(state, crate::protocol::Channel::State));
+            false
+        }
+        IpcCommand::MetaPatch {
+            swarm: _,
+            patch,
+            if_doc_hash,
+        } => {
+            let outcome = broadcast_state_patch(
+                swarm,
+                author,
+                patch,
+                if_doc_hash,
+                state,
+                sender,
+                output,
+                crate::protocol::Channel::Meta,
+            )
+            .await;
+            let (response, broadcast) = state_patch_response(outcome);
+            let _ = resp_tx.send(response);
+            broadcast
+        }
+        IpcCommand::MetaGet { swarm: _ } => {
+            let _ = resp_tx.send(state_get_response(state, crate::protocol::Channel::Meta));
             false
         }
     }
@@ -169,8 +206,12 @@ fn state_patch_response(outcome: anyhow::Result<StatePatchOutcome>) -> (String, 
 
 /// The `ahsw state get` response: the derived document plus its `doc_hash`
 /// (the compare-and-set token a later `state patch --if-doc-hash` passes back).
-fn state_get_response(state: &EventLoopState) -> String {
-    let document = crate::daemon::state_doc::derive_document(&state.state_log);
+fn state_get_response(state: &EventLoopState, channel: crate::protocol::Channel) -> String {
+    let log = match channel {
+        crate::protocol::Channel::State => &state.state_log,
+        crate::protocol::Channel::Meta => &state.meta_log,
+    };
+    let document = crate::daemon::state_doc::derive_document(log);
     let doc_hash = crate::daemon::state_doc::document_hash(&document);
     serde_json::json!({ "ok": true, "document": document, "doc_hash": doc_hash }).to_string()
 }
