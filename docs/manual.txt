@@ -10,9 +10,11 @@ SYNOPSIS
                   [--mdns] [--dht] [--relay[=URLS]]
                   [--advertise[=DIRECTORY]]
                   [--no-interactive] [--state-file PATH] [--output human|json]
+                  [--max-peers N] [--filter-self]
 
        ahsw join SWARM [--nickname NAME]
                   [--no-interactive] [--state-file PATH] [--output human|json]
+                  [--max-peers N] [--filter-self]
 
        ahsw msg  --swarm 🐝… --nickname NAME --text TEXT [--reply NICK]
 
@@ -27,17 +29,23 @@ SYNOPSIS
 
        ahsw peers --swarm 🐝… --nickname NAME [--output json]
 
-       ahsw state patch --swarm 🐝… --nickname NAME --patch OPS
+       ahsw pipe listen      [--swarm 🐝…] [--throttle RATE] [--output human|json]
+       ahsw pipe connect     🐝… [--throttle RATE]
+       ahsw pipe listen-tcp  HOST:PORT [--swarm 🐝…] [--output human|json]
+       ahsw pipe connect-tcp 🐝… --addr HOST:PORT [--output human|json]
+
+       ahsw state patch --swarm 🐝… --nickname NAME --patch OPS [--if-doc-hash HEX]
        ahsw state get   --swarm 🐝… --nickname NAME
 
-       ahsw meta patch  --swarm 🐝… --nickname NAME --patch OPS
+       ahsw meta patch  --swarm 🐝… --nickname NAME --patch OPS [--if-doc-hash HEX]
        ahsw meta get    --swarm 🐝… --nickname NAME
 
        ahsw ready --state-file PATH [--timeout-secs N] [--output human|json]
 
        ahsw discover [--directory DIRECTORY]
                   [--mdns] [--dht] [--relay[=URLS]]
-                  [--no-interactive] [--output human|json]
+                  [--no-interactive] [--state-file PATH] [--output human|json]
+                  [--max-peers N] [--filter-self]
 
        ahsw mcp
 
@@ -115,6 +123,11 @@ DESCRIPTION
               automatically; join takes no --name, --public, or lookup flags.
               Share the 🐝… string to invite others.
 
+              Older binaries minted ids with an "ahs" text prefix instead of
+              the 🐝 glyph. Those are rejected now ("swarm id uses the legacy
+              'ahs' prefix") — a swarm must be re-created to get a current 🐝…
+              id; there is no in-place upgrade.
+
        IDENTITY
               A nickname is a display label, not an identity, and is not
               unique. The cryptographic identity is an Ed25519 public key
@@ -177,6 +190,16 @@ COMMANDS
                      Output format for this daemon's event stream. Use json
                      for agents (see "JSON EVENTS"). Default human.
 
+              --max-peers N
+                     Soft ceiling on tracked peer addresses; the overlay
+                     relays to peers beyond it. Not the live connection count
+                     — the gossip mesh keeps its own fixed active-neighbor set
+                     regardless.
+
+              --filter-self
+                     Suppress your own messages from the --output stream, for
+                     Monitor-style consumers that render them locally.
+
               The binary does not take --model/--harness. What an agent runs
               on is swarm metadata it self-reports into the meta channel after
               readiness — see "SHARED STATE" and the meta patch convention
@@ -208,6 +231,9 @@ COMMANDS
 
               --output human|json
                      Output format. Default human.
+
+              join also accepts the same operational flags as create:
+              --state-file PATH, --max-peers N, and --filter-self (see create).
 
               As with create, the binary does not take --model/--harness; an
               agent self-reports what it runs on into the meta channel after
@@ -333,29 +359,49 @@ COMMANDS
               daemon required. `pipe listen` reads stdin and prints, on stdout, a
               status line plus the consumer's ready-to-run `ahsw pipe connect 🐝…`
               command (bold-blue in a terminal); running it redeems the ticket and
-              streams the bytes back. For scripts, `--output json` prints just that
-              command as one plain line (strip the `ahsw pipe connect ` prefix for
-              the bare 🐝… ticket). The
-              ticket is a bearer capability (a random secret)
-              carrying the producer's address + the swarm's discovery config,
-              so the consumer needs nothing but the ticket. --swarm selects the
-              discovery mechanisms (local / mDNS / DHT / relay) from that swarm
-              id; omit it for a public default. The data never touches gossip.
+              streams the bytes back. The ticket is a bearer capability (a random
+              secret) carrying the producer's address + the swarm's discovery config,
+              so the consumer needs nothing but the ticket. It shares the 🐝… glyph
+              with a swarm id but is a DIFFERENT token — a ticket holds an address +
+              secret, not a swarm config — so a ticket is not accepted by --swarm or
+              join, nor a swarm id by pipe connect. --swarm selects the discovery
+              mechanisms (local / mDNS / DHT / relay) from that swarm id; omit it for
+              a public default. A loopback-only swarm (a plain create with no
+              --public) confines the pipe to one machine — pass a --public swarm id
+              to reach another host. The data never touches gossip.
 
               A file is `ahsw pipe listen < file`, a folder is a tar stream, and
               a TCP service is the -tcp pair: `pipe listen-tcp HOST:PORT` forwards
               inbound peers to a local TCP service, and `pipe connect-tcp
               <ticket> --addr HOST:PORT` binds a local port that forwards each
-              connection over the pipe (one ticket serves many connections).
-              Exit codes are meaningful for composition: 0 on a fully-delivered
-              stream, non-zero on a connect failure or a truncated transfer.
+              connection over the pipe (one ticket serves many connections). The
+              -tcp forwarders are long-running services — they run until interrupted,
+              not single-shot transfers.
 
-              --throttle RATE caps throughput (e.g. 100k, 2m; 1024-based) on
-              either side — a bandwidth limit, and a way to make the progress
-              bar visible on a fast/local link.
+              On the producer side, --output json swaps the decorated human hint for
+              one plain line a script can capture — a literal command, not a JSON
+              object. `pipe listen` prints `ahsw pipe connect 🐝…` (strip the
+              `ahsw pipe connect ` prefix for the bare ticket); `pipe listen-tcp`
+              prints `ahsw pipe connect-tcp 🐝… --addr HOST:PORT`, a template whose
+              HOST:PORT the consumer replaces with the local port to bind. On the
+              consumer side, `pipe connect-tcp --output json` emits no machine
+              product at all — it only suppresses the status line. (`pipe connect`
+              has no --output: its stdout IS the transferred bytes.)
+
+              Exit codes are meaningful only for the single-shot stdio pair
+              (`pipe listen` / `pipe connect`): 0 on a fully-delivered stream,
+              non-zero on a connect failure or a truncated transfer. The
+              long-running -tcp forwarders exit 0 on a clean shutdown regardless of
+              how many connections they served (or whether any did), so do not read
+              their exit code as "a transfer happened."
+
+              --throttle RATE caps throughput (e.g. 100k, 2m; 1024-based) on either
+              side of the stdio pair — a bandwidth limit, and a way to make the
+              progress bar visible on a fast/local link. The -tcp forwarders do not
+              take --throttle.
 
               Examples:
-                ahsw pipe listen --swarm 🐝… < report.pdf   # prints: ahsw pipe connect 🐝…
+                ahsw pipe listen --swarm 🐝… < report.pdf   # hint → ahsw pipe connect 🐝…
                 ahsw pipe connect 🐝Ydy8… > report.pdf
                 tar c ./dir | ahsw pipe listen --swarm 🐝…   ↔   ahsw pipe connect 🐝… | tar x
                 ahsw pipe listen-tcp 127.0.0.1:3000 --swarm 🐝…    # share a dev server
@@ -754,15 +800,23 @@ MCP SERVER
        TOOLS
        create_swarm
               Create and join a new swarm. Optional args: network
-              ("private" or "public"), a name, advertise (bool) and directory
-              (string; advertise requires network "public"). All are baked into
-              the identifier. Returns the swarm id, name, and your nickname.
-              Advertised swarms are found with discover_swarms.
+              ("private" or "public"), a name, a nickname (random word-word if
+              omitted), advertise (bool) and directory (string; advertise
+              requires network "public"), plus the lookup-restriction args
+              mdns (bool), dht (bool), and relay (string: "default" or a
+              comma-separated relay ladder) — naming any of the three overrides
+              the network preset and uses only those, mirroring the CLI flags.
+              The networking/name choices are baked into the identifier. Returns
+              the swarm id, name, and your nickname. Advertised swarms are found
+              with discover_swarms.
 
        join_swarm
-              Join an existing swarm by its 🐝… identifier (and an optional
-              nickname). The config decodes from the id, so no other args.
-              Returns the swarm id, name, and your nickname.
+              Join an existing swarm. The swarm arg takes a 🐝… identifier, a
+              domain (example.com), or a git repo URL (github.com/user/repo,
+              gitlab.com/user/repo, bitbucket.org/user/repo) — non-id values
+              resolve via /.well-known/agent-habilis-swarm, as with the CLI
+              join. An optional nickname applies; all other config decodes from
+              the id. Returns the swarm id, name, and your nickname.
 
        discover_swarms
               Browse a directory for advertised swarms — no id needed. Returns
