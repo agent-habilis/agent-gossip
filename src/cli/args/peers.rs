@@ -33,7 +33,14 @@ mod tests {
     #[test]
     fn peers_accepts_output_flag() {
         let cli = Cli::parse_from([
-            "ahsw", "peers", "--swarm", "🐝AbCdEf1234", "--nickname", "my-nick", "--output", "json",
+            "ahsw",
+            "peers",
+            "--swarm",
+            "🐝AbCdEf1234",
+            "--nickname",
+            "my-nick",
+            "--output",
+            "json",
         ]);
         let Commands::Peers { opts } = cli.command else {
             panic!("expected Peers command");
@@ -43,8 +50,14 @@ mod tests {
 
     #[test]
     fn peers_output_defaults_to_human() {
-        let cli =
-            Cli::parse_from(["ahsw", "peers", "--swarm", "🐝AbCdEf1234", "--nickname", "my-nick"]);
+        let cli = Cli::parse_from([
+            "ahsw",
+            "peers",
+            "--swarm",
+            "🐝AbCdEf1234",
+            "--nickname",
+            "my-nick",
+        ]);
         let Commands::Peers { opts } = cli.command else {
             panic!("expected Peers command");
         };

@@ -521,7 +521,12 @@ impl Output {
     /// reaction channel, so an agent is never woken by its own patch (alternation
     /// stays loop-safe without a per-consumer guard). On the CLI/Monitor path the
     /// self-skip is the Monitor's job.
-    pub(crate) fn state_changed(&self, event: &Message, document: &serde_json::Value, is_self: bool) {
+    pub(crate) fn state_changed(
+        &self,
+        event: &Message,
+        document: &serde_json::Value,
+        is_self: bool,
+    ) {
         let make = || OutputEvent::StateChanged {
             event: Box::new(event.clone()),
             document: document.clone(),
