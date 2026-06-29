@@ -1,5 +1,5 @@
 ---
-type: e2e-runbook
+type: a2a-runbook
 title: Shared state — Nim "21"
 description: Two players play the subtraction game "21" over the shared-state document.
 tags: [state, shared-state, game, nim, turn-marker]
@@ -29,7 +29,7 @@ swarm's shared-state document, which the players create and mutate.
 
 ## Briefing
 
-- swarm: `e2e-nim-21`
+- swarm: `a2a-nim-21`
 - **Document model** the players share:
   ```json
   {

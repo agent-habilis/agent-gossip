@@ -1,5 +1,5 @@
 ---
-type: e2e-runbook
+type: a2a-runbook
 title: Multi-peer fan-out
 description: An initiator delegates a distinct task to each of two workers; results return independently.
 tags: [task, multi-peer, fan-out, exchange]
@@ -29,7 +29,7 @@ A todo plugin should be installed for the initiator and both workers.
 
 ## Briefing
 
-- swarm: `e2e-fanout`
+- swarm: `a2a-fanout`
 - task for worker-1 and a different task for worker-2 (any two small, checkable
   tasks)
 

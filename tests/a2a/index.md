@@ -1,14 +1,14 @@
 ---
-type: e2e-index
-title: Swarm e2e runbooks
-description: Coordinator-set-up end-to-end runbooks that validate swarm behavior and UX, judged by a human.
-tags: [e2e, swarm, runbook, coordinator, okf]
+type: a2a-index
+title: Swarm a2a runbooks
+description: Coordinator-set-up agent-to-agent runbooks that validate swarm behavior and UX, judged by a human.
+tags: [a2a, swarm, runbook, coordinator, okf]
 timestamp: 2026-06-28T00:00:00Z
 ---
 
-# Swarm e2e runbooks
+# Swarm a2a runbooks
 
-This is an [OKF](https://okf.md/) bundle of end-to-end runbooks for the
+This is an [OKF](https://okf.md/) bundle of agent-to-agent runbooks for the
 agent-habilis swarm. A **dedicated coordinator** peer briefs each role's **goal**
 + the scenario by **swarm message** (resetting shared state only when a scenario
 uses it), then observes. The agents then run using **their own skills** — and a

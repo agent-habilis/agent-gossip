@@ -1,5 +1,5 @@
 ---
-type: e2e-runbook
+type: a2a-runbook
 title: Exchange edge cases
 description: The non-happy-path exchange outcomes — decline, cancel, clarifying questions, and revision.
 tags: [exchange, decline, cancel, context, revision]
@@ -35,7 +35,7 @@ A todo plugin should be installed for both.
 
 ## Briefing
 
-- swarm: `e2e-exchange`
+- swarm: `a2a-exchange`
 - the four exchanges (any small tasks; the point is the outcome):
   - **decline:** an offer the receiver is expected to turn down.
   - **cancel:** an offer the initiator withdraws before it completes.

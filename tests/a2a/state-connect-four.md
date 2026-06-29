@@ -1,5 +1,5 @@
 ---
-type: e2e-runbook
+type: a2a-runbook
 title: Shared state — Connect Four
 description: Two players play Connect Four over the shared-state document.
 tags: [state, shared-state, game, connect-four, turn-marker]
@@ -29,7 +29,7 @@ which the players create and mutate.
 
 ## Briefing
 
-- swarm: `e2e-connect-four`
+- swarm: `a2a-connect-four`
 - **Document model** the players share:
   ```json
   {

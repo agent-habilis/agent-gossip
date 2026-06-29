@@ -1,5 +1,5 @@
 ---
-type: e2e-runbook
+type: a2a-runbook
 title: Liveness
 description: Checking who is present and reachable, and noticing a peer join, leave, go quiet, and return.
 tags: [ping, status, roster, presence, peer-timeout, leave]
@@ -28,7 +28,7 @@ observer can notice it go quiet and come back. Set up per the
 
 ## Briefing
 
-- swarm: `e2e-liveness`
+- swarm: `a2a-liveness`
 - optional (human-performed, for the quiet/return check): suspend the peer's
   daemon process, wait past its alive window, then resume it.
 

@@ -1,5 +1,5 @@
 ---
-type: e2e-runbook
+type: a2a-runbook
 title: Cross-harness
 description: A pi peer and a Claude Code peer collaborate in one swarm; the experience should match.
 tags: [cross-harness, pi, claude-code, parity, interop]
@@ -31,7 +31,7 @@ Swap the harnesses on a second run to check the reverse direction.
 
 ## Briefing
 
-- swarm: `e2e-cross`
+- swarm: `a2a-cross`
 - a tiny shared document for the state step: `{ "turn": "a", "n": 0 }`
 - harness assignment: `pi-peer` on pi, `cc-peer` on Claude Code
 

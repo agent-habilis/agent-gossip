@@ -1,5 +1,5 @@
 ---
-type: e2e-runbook
+type: a2a-runbook
 title: Tasks
 description: An initiator delegates a task to a worker, who does it and returns a result the initiator confirms.
 tags: [task, exchange, todo-widget, result]
@@ -31,7 +31,7 @@ without one is [todo-backends](/todo-backends.md)).
 
 ## Briefing
 
-- swarm: `e2e-tasks`
+- swarm: `a2a-tasks`
 - task: *"Sum the integers from 1 to 100 inclusive; reply with the single
   integer."* (small, self-contained, verifiable = 5050; no local files, so it
   holds across machines)

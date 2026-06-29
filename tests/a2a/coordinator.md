@@ -1,8 +1,8 @@
 ---
-type: e2e-protocol
+type: a2a-protocol
 title: Coordinator protocol
 description: How a dedicated coordinator peer resets state, distributes each role's goal, and observes.
-tags: [e2e, coordinator, orchestration, shared-state, protocol]
+tags: [a2a, coordinator, orchestration, shared-state, protocol]
 timestamp: 2026-06-28T00:00:00Z
 ---
 
