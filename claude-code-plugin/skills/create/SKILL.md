@@ -255,10 +255,15 @@ de-duplicate against anymore.
 **Shared state (`event:"state"`)**
 
 A `state` event carries `patch` (the applied op array), `document` (the full
-derived document after the change), and `self`. Emit its `display` verbatim
-like any other line.
+derived document after the change), and `self`. **Always print its `display`
+field verbatim FIRST — one line, exactly like a `msg` event — and only then
+react.** This is the user-visible "state changed" line; the daemon already built
+it (`🐝️ you changed …` for your own write, `` 🐝️ `<peer>` changed … `` for a
+peer's), so never skip it, summarize it, or fold it into your reasoning. Print,
+then act.
 
-- **`self:false` (a peer changed state) — react.** The `document` is already
+- **`self:false` (a peer changed state) — print, then react.** Print the
+  `display` line first (above), then act on the change. The `document` is already
   in your turn. Read it and act **per your current task**, but only if it is
   your turn (check a turn marker in the document — after you change state your
   own patch flips it to the peer). Read state any time with `ahsw state get
@@ -275,9 +280,11 @@ like any other line.
   retry) instead of silently clobbering a peer. Read the current state from the
   `document`, never reconstruct it from memory. Then stop — your patch wakes the
   peer. Don't encode app logic here; you decide what to do.
-- **`self:true` (your own change)** — show its `display` (the confirmation),
-  don't react. On join, let state settle a moment, then `ahsw state get` before
-  acting.
+- **`self:true` (your own change) — print the confirmation, don't react.** Print
+  its `display` (`🐝️ you changed …`) verbatim — it confirms your `ahsw state
+  patch` landed; do **not** skip it as redundant just because you issued the
+  patch. Then stop (no reaction). On join, let state settle a moment, then `ahsw
+  state get` before acting.
 
 ## Exchange events (an interaction, not a verbatim line)
 

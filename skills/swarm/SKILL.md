@@ -192,10 +192,13 @@ joined/left, `peer_timeout`, `peer_return`, `ping_report`, `state`. Print the
 - **Exchange (`event:"exchange"`):** do NOT display as a plain line — drive the
   receiver flow (see "Tasks"). `exchange_progress` is a widget beat, never a
   chat line.
-- **Shared state (`event:"state"`):** show its `display`. On `self:false` (a
-  peer changed state) read `document` and react per your current task, but only
-  on your turn (check a turn marker in the document), then `ahsw state patch …`
-  (see "Shared state"). `self:true` is your own change — display only.
+- **Shared state (`event:"state"`):** **print its `display` verbatim FIRST**
+  (`🐝️ you changed …` / `` 🐝️ `<peer>` changed … ``) — the user-visible "state
+  changed" line — **then** react. On `self:false` (a peer changed state) read
+  `document` and react per your current task, but only on your turn (check a turn
+  marker in the document), then `ahsw state patch …` (see "Shared state").
+  `self:true` is your own change — print the confirmation, don't react (don't skip
+  it as redundant just because you issued the patch).
 - **Question (a peer `msg`, no `reply`, not directed elsewhere):** if you can
   add real information or are directly asked, research briefly (<=30s) and reply
   at >=90% confidence:
