@@ -31,6 +31,21 @@ pub(crate) const LOG_FILE_MAX_BYTES: u64 = 10 * 1024 * 1024; // 10 MiB
 /// iroh-gossip's (so this module pulls in no dependency).
 pub const MAX_MESSAGE_SIZE: usize = 3840;
 
+/// Maximum number of parts a single logical body is split into when it exceeds
+/// [`MAX_MESSAGE_SIZE`]. Each part is an ordinary message that occupies one
+/// message-log slot, so this also bounds how many slots one body consumes and
+/// caps a crafted peer's reassembly buffering. A body that would need more
+/// parts than this is refused on send.
+pub const MAX_MESSAGE_PARTS: usize = 16;
+
+/// Upper bound on a logical (possibly multipart) body the daemon will accept
+/// from a caller — the input ceiling for `msg`/`exchange`. The send path is the
+/// real gate (it refuses a body that needs more than [`MAX_MESSAGE_PARTS`]
+/// parts); this is the generous limit the stdin/IPC readers enforce so an
+/// oversize body still reaches the daemon and gets a clear "too large" error
+/// rather than a truncated read.
+pub const MAX_LOGICAL_BODY_BYTES: usize = MAX_MESSAGE_PARTS * MAX_MESSAGE_SIZE;
+
 /// Default number of recent messages each member retains in its in-memory
 /// log (anti-entropy recovery source + poll/fetch history). A fixed value
 /// (see `tuning::message_log_size`); edit + commit here to change it. A
@@ -69,13 +84,14 @@ pub(crate) const SURFACED_EVENTS_CAP: usize = POLL_RESPONSE_MAX_MSGS;
 /// registry can never grow without bound (the bounded-everything discipline).
 pub(crate) const POLL_WAITERS_CAP: usize = 64;
 
-/// Max bytes for one stdin line. A raw message body larger than the wire
-/// cap can never form a valid message, so the line read is capped there.
-pub(crate) const MAX_STDIN_LINE_BYTES: usize = MAX_MESSAGE_SIZE;
+/// Max bytes for one stdin line. A body up to a full logical (multipart) body
+/// is accepted; the daemon splits it across the wire.
+pub(crate) const MAX_STDIN_LINE_BYTES: usize = MAX_LOGICAL_BODY_BYTES;
 
-/// Max bytes for one IPC command line: the same body in a JSON envelope
-/// (swarm id, nickname, keys). 2× the wire cap is comfortable headroom.
-pub(crate) const MAX_IPC_COMMAND_BYTES: usize = 2 * MAX_MESSAGE_SIZE;
+/// Max bytes for one IPC command line: a full logical body in a JSON envelope
+/// (swarm id, nickname, keys). The daemon splits the body across the wire, so
+/// the command carries the whole thing; budget envelope headroom on top.
+pub(crate) const MAX_IPC_COMMAND_BYTES: usize = MAX_LOGICAL_BODY_BYTES + 2 * MAX_MESSAGE_SIZE;
 
 /// Max bytes for one IPC response line: a poll returns at most
 /// [`POLL_RESPONSE_MAX_MSGS`] events. Each rendered event is larger than its

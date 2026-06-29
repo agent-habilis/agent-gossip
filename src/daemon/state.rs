@@ -14,7 +14,7 @@ use super::message_log::MessageLog;
 use crate::daemon::state_file::StateFile;
 use crate::output;
 use crate::protocol::identity::Identity;
-use crate::protocol::{ExchangeId, MessageId, Nickname};
+use crate::protocol::{ExchangeId, Message, MessageBody, MessageId, Nickname, PartGroup};
 use crate::util::bounded_fifo_set::BoundedFifoSet;
 use crate::util::bounded_queue::BoundedQueue;
 use crate::util::cooldown::Cooldown;
@@ -241,6 +241,10 @@ pub(crate) struct EventLoopState {
     /// non-advertising case (no shared counter to maintain).
     pub live_count: Option<Arc<AtomicUsize>>,
     pub message_log: MessageLog,
+    /// Multipart groups already reassembled + surfaced, so a body is surfaced
+    /// once even if a part is re-fetched (via anti-entropy) after its id aged
+    /// out of [`seen`](Self::seen). Bounded — groups are rare and short-lived.
+    pub reassembled_groups: BoundedFifoSet<PartGroup>,
     /// The durable, un-pruned log of signed `State` events (membership edits,
     /// settings, …) — separate from `message_log` so swarm state never ages out
     /// of the chat retention window. Swarm state is the deterministic fold over
@@ -437,6 +441,7 @@ impl EventLoopState {
             ready: false,
             live_count: None,
             message_log: MessageLog::new(message_log_size()),
+            reassembled_groups: BoundedFifoSet::new(message_log_size()),
             state_log: super::state_log::StateLog::new(),
             surfaced_events: super::surfaced::SurfacedEvents::new(
                 crate::util::consts::SURFACED_EVENTS_CAP,
@@ -729,6 +734,51 @@ impl EventLoopState {
     /// Delegates to the bounded [`BoundedIdSet`].
     pub(crate) fn mark_seen(&mut self, id: &MessageId) -> bool {
         self.seen.mark(id)
+    }
+
+    /// Try to reassemble the multipart body the just-retained `trigger` part
+    /// belongs to. Returns the synthesized logical [`Message`] once every part of
+    /// the group (this author's, slotted by `idx`) is present and the group has
+    /// not been surfaced before; `None` while incomplete or already surfaced. The
+    /// parts stay in the log for anti-entropy; the returned message is a surfacing
+    /// view whose `id` is the group, so sender and receivers name it alike.
+    pub(crate) fn reassemble(&mut self, trigger: &Message) -> Option<Message> {
+        let part = trigger.part.as_ref()?;
+        if self.reassembled_groups.contains(&part.group) {
+            return None;
+        }
+        let slots = self
+            .message_log
+            .collect_parts(&part.group, &trigger.pubkey, part.total);
+        if slots.iter().any(Option::is_none) {
+            return None; // a part is still missing
+        }
+        let mut body = String::new();
+        for slot in &slots {
+            body.push_str(slot.expect("every slot filled above").body.as_str());
+        }
+        // The concatenation of valid bodies is itself valid (no new control
+        // chars), but fail closed rather than surface a malformed body.
+        let body = MessageBody::new(body).ok()?;
+        let logical =
+            Self::synthesize_logical(slots[0].expect("part 0 present"), body, &part.group);
+        self.reassembled_groups.insert(part.group.clone());
+        Some(logical)
+    }
+
+    /// Build the logical-message surfacing view from a body's parts: part 0's
+    /// envelope (kind/author/pubkey/swarm/ts), the concatenated `body`, the group
+    /// as `id`, and no `part`/chain (the view is neither a wire message nor a
+    /// chain entry — the parts are).
+    fn synthesize_logical(first: &Message, body: MessageBody, group: &PartGroup) -> Message {
+        let mut msg = first.clone();
+        msg.id = MessageId::new(group.as_str()).expect("a part group is a valid message id");
+        msg.body = body;
+        msg.part = None;
+        msg.seq = None;
+        msg.prev = None;
+        msg.parents = Vec::new();
+        msg
     }
 
     /// Mark the mesh degraded: a fault path (starvation recovery, hard

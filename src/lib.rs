@@ -65,7 +65,8 @@ pub use logging::LogSink;
 pub use output::{OutputEvent, event_json, surfaced_event_json};
 pub use protocol::message::{
     BodyError, ExchangeId, ExchangeIdError, ExchangeKind, ExchangeKindError, ExchangePhase,
-    ExchangePhaseError, IdError, Message, MessageBody, MessageId, MessageKind, PresenceSubtype,
+    ExchangePhaseError, IdError, Message, MessageBody, MessageId, MessageKind, Part, PartGroup,
+    PresenceSubtype,
 };
 pub use protocol::nickname::{Nickname, NicknameError};
 pub use protocol::swarm::{
@@ -76,7 +77,7 @@ pub use resolver::{JoinTarget, JoinTargetError};
 // Wire/runtime constants the external test + bench crates assert against; the
 // rest of `util::consts` stays crate-internal.
 pub use daemon::state_doc::document_hash;
-pub use util::consts::{MAX_MESSAGE_SIZE, SOCKET_DIR};
+pub use util::consts::{MAX_LOGICAL_BODY_BYTES, MAX_MESSAGE_PARTS, MAX_MESSAGE_SIZE, SOCKET_DIR};
 pub use util::swarm_prefix;
 pub use util::version::VERSION;
 

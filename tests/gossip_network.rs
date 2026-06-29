@@ -284,24 +284,42 @@ fn test_no_server_error() {
     );
 }
 
-/// Messages over 16 KB are rejected with a clear error.
+/// A body over the single-message cap is transparently split and delivered;
+/// only a body too large for even `MAX_MESSAGE_PARTS` parts is refused.
 #[test]
-fn test_message_size_limit() {
+fn test_oversize_body_splits_then_refuses_past_the_part_cap() {
     let (creator, swarm) = Node::create();
+    let joiner = Node::join(&swarm, "joiner-mp");
     assert!(creator.wait_ready(&swarm), "creator socket never appeared");
+    assert!(joiner.wait_ready(&swarm), "joiner socket never appeared");
 
-    // A body at the cap, plus the JSON envelope, exceeds the serialized
-    // limit — rejected on the sender (a clear error, not a silent drop).
-    let body = "a".repeat(agent_habilis_swarm::MAX_MESSAGE_SIZE);
-    let out = cli_message_raw(&swarm, &creator.nickname, &body);
+    // Over the single-message cap: the daemon splits it into parts and the
+    // receiver reassembles, so it surfaces once as the whole body.
+    let body = "a".repeat(agent_habilis_swarm::MAX_MESSAGE_SIZE * 2);
+    cli_message(&swarm, &creator.nickname, &body);
+    let total = wait_total(|| creator.messages().len() + joiner.messages().len(), 1);
+    assert_eq!(total, 1, "the multipart body should surface exactly once");
+    let got: Vec<Msg> = creator
+        .messages()
+        .into_iter()
+        .chain(joiner.messages())
+        .collect();
+    assert_eq!(
+        got[0].body, body,
+        "the reassembled body matches the original"
+    );
+
+    // Too large for the part cap: refused on the sender with a clear error.
+    let huge = "a".repeat(agent_habilis_swarm::MAX_LOGICAL_BODY_BYTES);
+    let out = cli_message_raw(&swarm, &creator.nickname, &huge);
     assert!(
         !out.status.success(),
-        "expected non-zero exit for oversized message"
+        "a body past the part cap must be refused"
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         stderr.contains("too large"),
-        "expected size-limit error in stderr, got: {stderr}"
+        "expected a too-large error in stderr, got: {stderr}"
     );
 }
 

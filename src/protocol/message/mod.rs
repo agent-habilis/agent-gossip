@@ -9,6 +9,7 @@
 use std::fmt;
 
 use anyhow::{Context, Result, bail};
+#[cfg(test)]
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 
@@ -21,10 +22,12 @@ use super::swarm::SwarmId;
 mod body;
 mod exchange_id;
 mod id;
+mod part;
 
 pub use body::{BodyError, MessageBody};
 pub use exchange_id::{ExchangeId, ExchangeIdError};
 pub use id::{IdError, MessageId};
+pub use part::{Part, PartGroup};
 
 /// Maximum serialized message size — a network-wide wire contract kept
 /// under iroh-gossip's payload budget so a message we accept always fits
@@ -339,6 +342,11 @@ pub struct Message {
     /// predecessor. See [`docs/history-integrity.md`].
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub parents: Vec<String>,
+    /// Multipart header: present only on a message that is one slice of a body
+    /// too large for a single message (see [`Part`]). `None` on an ordinary
+    /// message, so its wire form is unchanged. Signed like every other field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub part: Option<Part>,
     /// Extension escape hatch. Add experimental fields here; stable fields get promoted to top-level.
     #[serde(default = "default_ext")]
     pub ext: serde_json::Value,
@@ -359,6 +367,7 @@ impl Message {
             seq: None,
             prev: None,
             parents: Vec::new(),
+            part: None,
             ext: default_ext(),
         }
     }
@@ -546,6 +555,9 @@ impl Message {
         // Parents (DAG causal links) are signed too. Serialized as their
         // deterministic JSON array; empty for no-parent messages.
         field(&serde_json::to_vec(&self.parents).unwrap_or_default());
+        // The multipart header is signed so a part can't be re-grouped or
+        // re-indexed by a relay. `None` (ordinary message) folds as `null`.
+        field(&serde_json::to_vec(&self.part).unwrap_or_default());
         field(&serde_json::to_vec(&self.ext).unwrap_or_default());
         buf
     }
@@ -576,6 +588,21 @@ impl Message {
     pub(crate) fn with_parents(mut self, parents: Vec<String>) -> Self {
         self.parents = parents;
         self
+    }
+
+    /// Stamp the multipart [`Part`] header (which slice of a split body this
+    /// message carries) before signing. `None` leaves it an ordinary message.
+    #[must_use]
+    pub(crate) fn with_part(mut self, part: Option<Part>) -> Self {
+        self.part = part;
+        self
+    }
+
+    /// The serialized wire size **without** the `MAX_MESSAGE_SIZE` gate, for
+    /// deciding how to split a body. `serialize` is the gated counterpart.
+    #[must_use]
+    pub(crate) fn wire_len(&self) -> usize {
+        serde_json::to_vec(self).map_or(usize::MAX, |bytes| bytes.len())
     }
 
     /// Sign this message with `identity`, filling `pubkey` then `sig`.
@@ -635,8 +662,10 @@ impl Message {
 /// Propagates [`Message::serialize`] failure (oversized payload).
 /// The per-author log + DAG position to stamp on an outbound `Msg`: the
 /// chain `seq`/`prev` (Phase 2) and the DAG `parents` (Phase 3). Bundled so
-/// [`build_msg_bytes`] stays within the argument budget; the daemon fills it
-/// from its send cursor + current DAG tips.
+/// [`build_msg_bytes`] stays within the argument budget. Test-only now that the
+/// send path (`gossip::broadcast`) stamps the chain inline to interleave it with
+/// the multipart split.
+#[cfg(test)]
 pub(crate) struct ChainCtx {
     pub seq: u64,
     pub prev: Option<String>,
@@ -655,6 +684,7 @@ impl ChainCtx {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn build_msg_bytes(
     swarm: &SwarmId,
     body: MessageBody,
@@ -690,6 +720,7 @@ impl Message {
             seq: None,
             prev: None,
             parents: Vec::new(),
+            part: None,
             ext: serde_json::json!({}),
         }
     }

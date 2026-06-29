@@ -186,8 +186,11 @@ impl Session {
 mod tests {
     use std::time::Duration;
 
+    use serde_json::json;
+
     use super::{Message, MessageBody, MessageId, Nickname, Session, SwarmId, SwarmName};
     use crate::embed::{CreateConfig, JoinConfig};
+    use crate::gossip::StatePatchError;
     use crate::protocol::{MessageKind, PresenceSubtype};
     use crate::resolver::JoinTarget;
 
@@ -575,5 +578,51 @@ mod tests {
         );
         assert_eq!(second.nickname().as_str(), "cycler-b");
         second.leave().await;
+    }
+
+    /// A compare-and-set conflict and a structurally bad patch must be
+    /// distinguishable without scraping the error text: the stale case carries a
+    /// typed `StatePatchError::Stale` (which the MCP tool surfaces as a retryable
+    /// `stale:true` result), the bad patch carries `StatePatchError::Invalid`.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn apply_state_patch_distinguishes_stale_from_invalid() {
+        let session = Session::create(create_cfg("cas", "alice"))
+            .await
+            .expect("create");
+
+        // A guard hash that can't match the current document is a retryable
+        // Stale conflict (a wrong hash mirrors a document that moved underfoot).
+        let stale = session
+            .apply_state_patch(
+                json!([{"op": "add", "path": "/turn", "value": "a"}]),
+                Some("deadbeef".to_owned()),
+            )
+            .await
+            .expect_err("a stale compare-and-set must be rejected");
+        assert!(
+            matches!(
+                stale.downcast_ref::<StatePatchError>(),
+                Some(StatePatchError::Stale(_))
+            ),
+            "a CAS conflict must surface as StatePatchError::Stale, got: {stale:?}"
+        );
+
+        // A non-applying patch (replace a missing path) — permanent, not Stale.
+        let invalid = session
+            .apply_state_patch(
+                json!([{"op": "replace", "path": "/missing", "value": 1}]),
+                None,
+            )
+            .await
+            .expect_err("a non-applying patch must be rejected");
+        assert!(
+            matches!(
+                invalid.downcast_ref::<StatePatchError>(),
+                Some(StatePatchError::Invalid(_))
+            ),
+            "a non-applying patch must be StatePatchError::Invalid, got: {invalid:?}"
+        );
+
+        session.leave().await;
     }
 }

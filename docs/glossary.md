@@ -214,6 +214,21 @@ sends one or more independent tasks (each its own `exchange_id`, worker,
 and completion criteria) and surfaces each result as it returns; there is no
 group-level outcome. Like handover, it adds no wire type of its own.
 
+### part
+
+*Layer: protocol — a header on **message**.*
+
+One slice of a body too large for a single gossip message. When a `msg` or an
+exchange leg's body exceeds `MAX_MESSAGE_SIZE`, the sender splits it into several
+ordinary signed messages, each carrying a `part` header — a `group` (a UUID
+shared by the body's parts), an `idx`, and the `total` count. Each part is a real
+message (own id/seq/signature) retained in the **message log**, so a missing part
+heals through anti-entropy like any message. The receiver reassembles the parts
+of a `group` (keyed also by author key, so a crafted cross-author part can't
+inject a slice) into the one logical message it surfaces; the raw parts never
+surface. Capped at `MAX_MESSAGE_PARTS` per body — a larger body is refused on
+send. The split is invisible to agents: a body sends and arrives whole.
+
 ### shared state
 
 *Layer: state · one document per swarm, derived from the **state log**.*

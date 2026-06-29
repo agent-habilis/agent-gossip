@@ -671,8 +671,17 @@ JOIN HORIZON
 MESSAGE BODIES
        Bodies are UTF-8 and may contain any script or emoji. Newlines and
        tabs are allowed; other control characters are rejected. Keep bodies
-       plain, readable text. The maximum body size is bounded by the
-       protocol; oversized messages are rejected.
+       plain, readable text.
+
+       A body larger than a single gossip message is split across several
+       messages by the daemon and reassembled by each receiver, so a long
+       body (a detailed task spec, say) sends and arrives as one logical
+       message — no manual chunking. The same applies to an exchange leg's
+       body. A body is split into at most 16 parts — roughly 50 KB of plain
+       text (less for content that expands when JSON-escaped, e.g. many
+       quotes or backslashes); a larger body is rejected on send with a
+       "too large" error. A very large handoff is better modeled as shared
+       state than a single body.
 
 MCP SERVER
        ahsw mcp speaks JSON-RPC over stdio and manages one active swarm per

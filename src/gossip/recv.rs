@@ -233,6 +233,35 @@ fn handle_exchange_leg(
     lifecycle::handle_exchange(ctx.output, message, to, phase, surfaceable, ctx.author)
 }
 
+/// Surface a reassembled multipart body (a `Msg` or an `Exchange` content leg)
+/// through the same lifecycle path an unsplit message of that kind takes. The
+/// raw parts were already retained; this only surfaces the logical view, so it
+/// does **not** re-retain or re-index.
+fn surface_logical(
+    logical: &Message,
+    surfaceable: bool,
+    state: &mut EventLoopState,
+    ctx: &HandlerCtx<'_>,
+) {
+    match &logical.kind {
+        MessageKind::Msg { .. } => {
+            lifecycle::handle_msg(ctx.output, logical, surfaceable, ctx.author);
+        }
+        MessageKind::Exchange { to, phase, .. } => {
+            handle_exchange_leg(logical, to, *phase, surfaceable, state, ctx);
+        }
+        // Only `Msg` and content `Exchange` legs are ever split (the sender
+        // refuses to split anything else), so other kinds never reach here.
+        MessageKind::Presence { .. }
+        | MessageKind::PeerInfo
+        | MessageKind::Digest
+        | MessageKind::StateDigest
+        | MessageKind::Ping
+        | MessageKind::Pong { .. }
+        | MessageKind::State => {}
+    }
+}
+
 async fn handle_gossip_received(content: Bytes, state: &mut EventLoopState, ctx: &HandlerCtx<'_>) {
     let Ok(message) = Message::parse(&content) else {
         ctx.output.error("Failed to parse message");
@@ -288,6 +317,19 @@ async fn handle_gossip_received(content: Bytes, state: &mut EventLoopState, ctx:
     crate::logging::messages::log_in(&message);
     let observed = lifecycle::observe(&message, state, ctx);
     let surfaceable = observed.surfaceable;
+
+    // A part of a split body never surfaces as a raw slice. Retain it for
+    // anti-entropy (so a missing part heals like any message), and when its
+    // group completes, surface the reassembled logical message once — embed-
+    // pushed and dispatched exactly like an ordinary inbound message.
+    if message.part.is_some() {
+        retain_and_index(message.clone(), &canonical, state, ctx);
+        if let Some(logical) = state.reassemble(&message) {
+            maybe_push_embed(ctx, &logical, surfaceable);
+            surface_logical(&logical, surfaceable, state, ctx);
+        }
+        return;
+    }
 
     maybe_push_embed(ctx, &message, surfaceable);
 

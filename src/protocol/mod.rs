@@ -22,7 +22,8 @@ mod wordlist;
 
 pub(crate) use message::{
     ExchangeId, ExchangeIdError, ExchangeKind, ExchangeKindError, ExchangePhase,
-    ExchangePhaseError, Message, MessageBody, MessageId, MessageKind, PresenceSubtype,
+    ExchangePhaseError, Message, MessageBody, MessageId, MessageKind, Part, PartGroup,
+    PresenceSubtype,
 };
 pub(crate) use nickname::Nickname;
 pub(crate) use swarm::SwarmId;

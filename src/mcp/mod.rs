@@ -53,6 +53,7 @@ use tokio::sync::Mutex;
 
 use crate::daemon::state::RosterEntry;
 use crate::embed::{CreateConfig, CreateError, Directory, JoinConfig};
+use crate::gossip::StatePatchError;
 use crate::protocol::swarm::{LookupSet, RelayLadder, RelaySelection, SwarmName};
 use crate::protocol::{
     ExchangeId, ExchangeKind, ExchangeKindError, ExchangePhase, ExchangePhaseError, Message,
@@ -261,9 +262,10 @@ struct ApplyStatePatchArgs {
     /// against the current document and rejected if it does not apply cleanly.
     patch: serde_json::Value,
     /// Optional compare-and-set guard: the `doc_hash` from your last
-    /// `get_state`. The patch is rejected with a "stale document" error if the
-    /// document changed since — re-`get_state` and retry. Use it for turn-based
-    /// or contended state so a concurrent peer's change isn't clobbered.
+    /// `get_state`. If the document changed since, the patch returns
+    /// `{ok:false,stale:true}` (retryable) instead of applying — re-`get_state`
+    /// and retry. Use it for turn-based or contended state so a change you have
+    /// already seen isn't clobbered.
     #[serde(default)]
     if_doc_hash: Option<String>,
 }
@@ -700,7 +702,7 @@ impl AgentSwarmServer {
     }
 
     #[tool(
-        description = "Apply a JSON-Patch (RFC 6902) change to the swarm's shared state — a single JSON document every member derives from a gossiped log of patches. `patch` is the op array, e.g. [{\"op\":\"replace\",\"path\":\"/turn\",\"value\":\"b\"}]. Frozen subset: add/replace/remove on object paths + add \"/arr/-\" (append); no test/move/copy, numeric array indices, or root path. The patch is validated against the current document and rejected (invalid_params) if malformed, out-of-subset, or it does not apply cleanly. Peers react to the resulting `state` event; read the new document with `get_state` (or from the `state` event's `document` field in `fetch_messages`)."
+        description = "Apply a JSON-Patch (RFC 6902) change to the swarm's shared state — a single JSON document every member derives from a gossiped log of patches. `patch` is the op array, e.g. [{\"op\":\"replace\",\"path\":\"/turn\",\"value\":\"b\"}]. Frozen subset: add/replace/remove on object paths + add \"/arr/-\" (append); no test/move/copy, numeric array indices, or root path. Pass `if_doc_hash` (the `doc_hash` from your last get_state) for a compare-and-set guard. Returns `{ok:true}` on apply. A malformed/out-of-subset/non-applying patch is rejected as invalid_params (permanent — don't retry). A compare-and-set conflict returns `{ok:false,stale:true}` instead (retryable — re-run get_state and retry). Peers react to the resulting `state` event; read the new document with `get_state` (or from the `state` event's `document` field in `fetch_messages`)."
     )]
     async fn apply_state_patch(
         &self,
@@ -713,7 +715,15 @@ impl AgentSwarmServer {
             .await
         {
             Ok(()) => ok_json(serde_json::json!({ "ok": true })),
-            Err(error) => Err(McpError::invalid_params(error.to_string(), None)),
+            // A compare-and-set conflict is retryable, not a bad request, so it
+            // returns a structured `stale:true` result the agent can branch on
+            // (mirroring the CLI's `json_stale`) — not an `invalid_params` error.
+            Err(error) => match error.downcast_ref::<StatePatchError>() {
+                Some(StatePatchError::Stale(why)) => {
+                    ok_json(serde_json::json!({ "ok": false, "stale": true, "error": why }))
+                }
+                _ => Err(McpError::invalid_params(error.to_string(), None)),
+            },
         }
     }
 

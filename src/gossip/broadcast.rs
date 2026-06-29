@@ -18,8 +18,9 @@ use crate::output;
 use crate::protocol::identity::Identity;
 use crate::protocol::{
     ExchangeId, ExchangeKind, ExchangePhase, Message, MessageBody, MessageId, MessageKind,
-    Nickname, SwarmId,
+    Nickname, Part, PartGroup, SwarmId,
 };
+use crate::util::consts::{MAX_MESSAGE_PARTS, MAX_MESSAGE_SIZE};
 
 /// Fire-and-forget gossip broadcast. Serialize errors are swallowed:
 /// this helper is for presence / `PeerInfo` announcements where a
@@ -100,15 +101,38 @@ pub(crate) enum StatePatchOutcome {
     Stale(String),
 }
 
+/// A rejected shared-state patch, as a typed error carried inside the
+/// `anyhow::Error` the embed/MCP path returns. Lets a programmatic caller
+/// (`downcast_ref`) tell a retryable compare-and-set conflict (`Stale`) from a
+/// permanent bad patch (`Invalid`) without scraping the message text — the
+/// structured counterpart to the CLI/IPC `json_stale` vs `json_error` split.
+#[derive(Debug)]
+pub(crate) enum StatePatchError {
+    /// `--if-doc-hash` didn't match: re-read with `state get` and retry.
+    Stale(String),
+    /// Structurally bad patch (malformed / out of subset / doesn't apply);
+    /// retrying the same patch won't help.
+    Invalid(String),
+}
+
+impl std::fmt::Display for StatePatchError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let (StatePatchError::Stale(why) | StatePatchError::Invalid(why)) = self;
+        formatter.write_str(why)
+    }
+}
+
+impl std::error::Error for StatePatchError {}
+
 /// Collapse a [`broadcast_state_patch`] outcome into the `Result<()>` the embed
-/// `StatePatch` request returns: applied is `Ok`, every other case an error
-/// (the invalid/stale reason verbatim).
+/// `StatePatch` request returns: applied is `Ok`; a rejection becomes a
+/// [`StatePatchError`] (wrapped in `anyhow`) so callers keep the stale-vs-invalid
+/// distinction; a transport/serialize failure propagates verbatim.
 fn state_patch_reply(outcome: anyhow::Result<StatePatchOutcome>) -> anyhow::Result<()> {
     match outcome {
         Ok(StatePatchOutcome::Applied) => Ok(()),
-        Ok(StatePatchOutcome::Invalid(why) | StatePatchOutcome::Stale(why)) => {
-            Err(anyhow::anyhow!(why))
-        }
+        Ok(StatePatchOutcome::Invalid(why)) => Err(StatePatchError::Invalid(why).into()),
+        Ok(StatePatchOutcome::Stale(why)) => Err(StatePatchError::Stale(why).into()),
         Err(error) => Err(error),
     }
 }
@@ -250,8 +274,8 @@ pub(crate) async fn handle_stdin_line(
 /// fork/DAG indexes on any eviction) and write the dev log. The operator
 /// echo is the caller's responsibility — it differs by kind
 /// (`print_message_ex` for `Msg`, `print_handover` for `Handover`).
-/// Shared by [`commit_outbound`] (after chain stamping) and
-/// [`echo_and_retain`] (no chain stamping).
+/// Shared by [`commit_outbound_part`] (after chain stamping) and
+/// [`echo_and_retain_task`] (no chain stamping).
 fn retain_outbound(state: &mut EventLoopState, msg: &Message) {
     if let Some(evicted) = state.message_log.push(msg.clone()) {
         let evicted_hash = evicted.content_hash_hex();
@@ -272,6 +296,13 @@ fn retain_outbound(state: &mut EventLoopState, msg: &Message) {
 /// never retained, mirroring its receive-side handling.
 fn echo_and_retain_task(state: &mut EventLoopState, msg: &Message, out: &output::Output) {
     out.print_exchange(msg, true);
+    retain_task(state, msg);
+}
+
+/// Retain a just-built outbound exchange leg for anti-entropy **without**
+/// echoing it — the raw parts of a split leg retain silently; the reassembled
+/// logical leg is echoed once. Content legs retain; the `Progress` beat doesn't.
+fn retain_task(state: &mut EventLoopState, msg: &Message) {
     let retain = matches!(
         &msg.kind,
         MessageKind::Exchange { phase, .. } if crate::protocol::message::is_content_phase(*phase)
@@ -282,28 +313,166 @@ fn echo_and_retain_task(state: &mut EventLoopState, msg: &Message, out: &output:
 }
 
 /// Commit a just-built outbound `Msg` into local state: advance the per-author
-/// hash chain (`seq`/`prev`) and the DAG tips, echo it to the operator, retain
-/// it in the message log (pruning the fork/DAG indexes on eviction), and write
-/// the dev log. Shared by the meshed and queued send paths so the chain
-/// bookkeeping can't drift between them.
-fn commit_outbound(state: &mut EventLoopState, msg: &Message, out: &output::Output) {
+/// hash chain (`seq`/`prev`) and the DAG tips, retain it in the message log
+/// (pruning the fork/DAG indexes on eviction), write the dev log, and — when
+/// `echo` — print the operator line. The raw parts of a split body commit
+/// silently (`echo == false`); only the reassembled logical message is echoed.
+/// Shared by the meshed and queued send paths so the chain bookkeeping can't
+/// drift between them.
+fn commit_outbound_part(
+    state: &mut EventLoopState,
+    msg: &Message,
+    out: &output::Output,
+    echo: bool,
+) {
     let hash = msg.content_hash_hex();
     state.self_seq += 1;
     state.self_prev = Some(hash.clone());
     state.note_dag(hash, &msg.parents, msg.timestamp);
-    out.print_message_ex(msg, true);
+    if echo {
+        out.print_message_ex(msg, true);
+    }
     retain_outbound(state, msg);
+}
+
+/// Headroom subtracted from a part's body budget so the first part's measured
+/// envelope still covers later parts, whose `seq` may have grown a digit or two.
+const PART_BUDGET_MARGIN: usize = 16;
+
+/// JSON-escaped byte length of one char inside a `"…"` string. `serde_json` keeps
+/// non-ASCII as UTF-8; only the quote, backslash, and `\n`/`\t`/`\r` expand.
+/// Used to split a body so each part's *serialized* size fits the wire cap.
+fn escaped_char_len(ch: char) -> usize {
+    match ch {
+        '"' | '\\' | '\n' | '\t' | '\r' => 2,
+        ch if (ch as u32) < 0x20 => 6, // other controls → \u00XX (rejected by MessageBody)
+        ch => ch.len_utf8(),
+    }
+}
+
+/// The escaped-body budget per part: the wire cap minus the serialized envelope
+/// of an empty-body part (built with worst-case header digits), minus margin.
+fn part_body_budget(empty_part: &Message) -> usize {
+    MAX_MESSAGE_SIZE.saturating_sub(empty_part.wire_len() + PART_BUDGET_MARGIN)
+}
+
+/// Split `body` into the fewest UTF-8-safe chunks whose JSON-escaped length each
+/// fits `budget`. `None` if it would need more than [`MAX_MESSAGE_PARTS`] parts
+/// (the caller refuses the send) — or `budget` is zero.
+fn split_body(body: &str, budget: usize) -> Option<Vec<&str>> {
+    if budget == 0 {
+        return None;
+    }
+    let mut chunks = Vec::new();
+    let mut start = 0;
+    while start < body.len() {
+        let mut used = 0;
+        let mut end = start;
+        for (offset, ch) in body[start..].char_indices() {
+            let cost = escaped_char_len(ch);
+            if used + cost > budget {
+                break;
+            }
+            used += cost;
+            end = start + offset + ch.len_utf8();
+        }
+        if end == start {
+            return None; // a single char exceeds the budget — never, for a sane budget
+        }
+        chunks.push(&body[start..end]);
+        start = end;
+        if chunks.len() > MAX_MESSAGE_PARTS {
+            return None;
+        }
+    }
+    Some(chunks)
+}
+
+/// Build, chain-stamp, part-tag and sign one outbound `Msg`/reply (without
+/// serializing — the caller measures or serializes).
+#[expect(
+    clippy::too_many_arguments,
+    reason = "a chained, part-tagged Msg needs the kind (reply), body, chain (seq/prev/parents), part header and signer; the daemon stamps these inline to interleave chain stamping with the multipart split"
+)]
+fn build_msg(
+    swarm: &SwarmId,
+    author: &Nickname,
+    reply: Option<&Nickname>,
+    body: MessageBody,
+    seq: u64,
+    prev: Option<String>,
+    parents: Vec<String>,
+    part: Option<Part>,
+    signer: &Identity,
+) -> Message {
+    match reply {
+        None => Message::new_message(swarm, author, body),
+        Some(target) => Message::new_reply(swarm, author, target.clone(), body),
+    }
+    .with_chain(seq, prev)
+    .with_parents(parents)
+    .with_part(part)
+    .signed(signer)
+}
+
+/// Broadcast (or buffer, while unmeshed) one fully-built `Msg` and commit it to
+/// the per-author chain + log. `echo` gates the operator print so the raw parts
+/// of a split body commit silently. Errors if the unmeshed buffer is full.
+async fn send_msg_part(
+    state: &mut EventLoopState,
+    sender: &GossipSender,
+    out: &output::Output,
+    msg: &Message,
+    bytes: Bytes,
+    echo: bool,
+) -> anyhow::Result<()> {
+    if state.meshed {
+        commit_outbound_part(state, msg, out, echo);
+        sender
+            .broadcast(bytes)
+            .await
+            .map_err(|error| anyhow::anyhow!("{error}"))?;
+    } else if state.pending_outbound.push(bytes) {
+        commit_outbound_part(state, msg, out, echo);
+    } else {
+        tracing::warn!("pending outbound buffer full; outbound message dropped");
+        return Err(anyhow::anyhow!(
+            "pending outbound buffer full; message dropped"
+        ));
+    }
+    Ok(())
+}
+
+/// The reassembled logical `Msg` to echo + return after a multipart send. Its
+/// `id` is the part `group`, so the sender and every receiver name the
+/// reassembled body identically. Unsigned / unchained — a local view, not a wire
+/// message (the parts carry the wire bytes and the chain entries).
+fn synthesize_logical_msg(
+    swarm: &SwarmId,
+    author: &Nickname,
+    reply: Option<&Nickname>,
+    body: MessageBody,
+    group: &PartGroup,
+) -> Message {
+    let mut msg = match reply {
+        None => Message::new_message(swarm, author, body),
+        Some(target) => Message::new_reply(swarm, author, target.clone(), body),
+    };
+    msg.id = MessageId::new(group.as_str()).expect("a part group is a valid message id");
+    msg
 }
 
 /// Build, sign, log and gossip-broadcast one outbound message. The
 /// single source of truth for the send path: the CLI socket's IPC `Msg`
 /// command and the typed in-process `SessionRequest::Send` both funnel
-/// through here so they cannot drift. Returns the new id and the canonical
-/// `Message` so callers can echo it without re-parsing.
+/// through here so they cannot drift. A body too large for one message is
+/// transparently split into `part`-tagged messages the receiver reassembles;
+/// the returned [`Message`] is the whole logical body either way.
 ///
 /// # Errors
-/// Propagates a [`Message::serialize`] failure (oversize body) and a gossip
-/// broadcast error, and errors if the unmeshed pending-outbound buffer is full.
+/// Propagates a [`Message::serialize`] failure and a gossip broadcast error,
+/// errors if the unmeshed pending-outbound buffer is full, and refuses a body
+/// that would need more than [`MAX_MESSAGE_PARTS`] parts.
 pub(crate) async fn broadcast_message(
     swarm: &SwarmId,
     author: &Nickname,
@@ -313,46 +482,94 @@ pub(crate) async fn broadcast_message(
     sender: &GossipSender,
     out: &output::Output,
 ) -> anyhow::Result<(MessageId, Message)> {
-    // Our own signing identity: `build_msg_bytes` signs with it. Clone the
-    // Arc first so the immutable read is done before the `&mut state` log
-    // mutations below.
     let signer = state.identity.clone();
-    // Stamp this Msg into our hash chain (Phase 2: seq + prev) and the
-    // cross-author DAG (Phase 3: parents = the tips we've seen). After
-    // building, advance the chain cursor and fold our own message into the
-    // DAG so the next Msg back-links/parents here.
-    let chain = crate::protocol::message::ChainCtx {
-        seq: state.self_seq,
-        prev: state.self_prev.clone(),
-        parents: state.dag_parents(),
-    };
-    let (bytes, msg) =
-        crate::protocol::message::build_msg_bytes(swarm, body, reply, author, &signer, chain)?;
-    let id = msg.id.clone();
-    if state.meshed {
-        // Meshed: commit the chain + retain locally, then hit the wire. A
-        // transient broadcast error still leaves the message in our log, so
-        // anti-entropy can resend it.
-        commit_outbound(state, &msg, out);
-        sender
-            .broadcast(bytes)
-            .await
-            .map_err(|error| anyhow::anyhow!("{error}"))?;
-    } else if state.pending_outbound.push(bytes) {
-        // Unmeshed: buffered for flush-on-connect. Commit the chain now — the
-        // message *will* be sent (in order) once we mesh.
-        commit_outbound(state, &msg, out);
-    } else {
-        // Unmeshed AND the buffer is full: drop this send WITHOUT consuming a
-        // seq, so the per-author chain stays contiguous. Dropping a queued
-        // middle message would orphan its seq and leave peers a dangling
-        // prev/parent that anti-entropy could never fill.
-        tracing::warn!("pending outbound buffer full; outbound message dropped");
+    // Fast path: the whole body in one message. If it fits the wire cap, send it
+    // as today — no `part` header, so an ordinary message's wire form is
+    // unchanged.
+    let single = build_msg(
+        swarm,
+        author,
+        reply.as_ref(),
+        body.clone(),
+        state.self_seq,
+        state.self_prev.clone(),
+        state.dag_parents(),
+        None,
+        &signer,
+    );
+    if single.wire_len() <= MAX_MESSAGE_SIZE {
+        let bytes = Bytes::from(single.serialize()?);
+        let id = single.id.clone();
+        send_msg_part(state, sender, out, &single, bytes, true).await?;
+        return Ok((id, single));
+    }
+    // Too big: split the body across part-tagged messages. Each part is an
+    // ordinary chained `Msg`, retained for anti-entropy; only the reassembled
+    // body is echoed to the operator and returned.
+    let group = PartGroup::random();
+    let max_parts = u32::try_from(MAX_MESSAGE_PARTS).unwrap_or(u32::MAX);
+    // Size the probe against the *largest* part's envelope, not the first's. Each
+    // later part chains off the prior, so even from genesis (empty `prev`/`parents`)
+    // every part after the first carries a 64-char `prev` and one parent hash.
+    // Worst-case both: a full-length `prev` and as many parent hashes as the first
+    // part could hold (its current tips, never fewer than the one-hash link later
+    // parts carry). A 64-char zero string stands in for any content hash.
+    let hash_stub = "0".repeat(64);
+    let probe_parents = vec![hash_stub.clone(); state.dag_parents().len().max(1)];
+    let probe = build_msg(
+        swarm,
+        author,
+        reply.as_ref(),
+        MessageBody::new(String::new()).expect("empty body is valid"),
+        state.self_seq,
+        Some(hash_stub),
+        probe_parents,
+        Some(Part {
+            group: group.clone(),
+            idx: max_parts - 1,
+            total: max_parts,
+        }),
+        &signer,
+    );
+    let budget = part_body_budget(&probe);
+    let chunks = split_body(body.as_str(), budget).ok_or_else(|| {
+        anyhow::anyhow!(
+            "message too large: a {}-byte body needs more than {MAX_MESSAGE_PARTS} parts",
+            body.as_str().len()
+        )
+    })?;
+    let total = u32::try_from(chunks.len()).expect("chunk count is bounded by MAX_MESSAGE_PARTS");
+    // Atomic admission while unmeshed: all parts or none, so a half-buffered body
+    // (which could never reassemble) never reaches peers.
+    if !state.meshed && state.pending_outbound.remaining() < chunks.len() {
         return Err(anyhow::anyhow!(
-            "pending outbound buffer full; message dropped"
+            "pending outbound buffer full; multipart message dropped"
         ));
     }
-    Ok((id, msg))
+    for (idx, chunk) in chunks.iter().enumerate() {
+        let part = Part {
+            group: group.clone(),
+            idx: u32::try_from(idx).expect("idx is bounded by MAX_MESSAGE_PARTS"),
+            total,
+        };
+        let chunk_body = MessageBody::new(*chunk).expect("a substring of a valid body is valid");
+        let msg = build_msg(
+            swarm,
+            author,
+            reply.as_ref(),
+            chunk_body,
+            state.self_seq,
+            state.self_prev.clone(),
+            state.dag_parents(),
+            Some(part),
+            &signer,
+        );
+        let bytes = Bytes::from(msg.serialize()?);
+        send_msg_part(state, sender, out, &msg, bytes, false).await?;
+    }
+    let logical = synthesize_logical_msg(swarm, author, reply.as_ref(), body, &group);
+    out.print_message_ex(&logical, true);
+    Ok((logical.id.clone(), logical))
 }
 
 /// One outbound exchange leg's payload (addressee + correlation id + behavior +
@@ -404,39 +621,169 @@ pub(crate) async fn broadcast_exchange(
         return Err(anyhow::anyhow!("unknown participant '{to}'"));
     }
     let signer = state.identity.clone();
-    let msg =
-        Message::new_exchange(swarm, author, to, exchange_id, kind, phase, body).signed(&signer);
-    let bytes = Bytes::from(msg.serialize()?);
-    let id = msg.id.clone();
+    // Fast path: the whole leg in one message.
+    let single = build_exchange(
+        swarm,
+        author,
+        &to,
+        &exchange_id,
+        kind,
+        phase,
+        body.clone(),
+        None,
+        &signer,
+    );
+    if single.wire_len() <= MAX_MESSAGE_SIZE {
+        let bytes = Bytes::from(single.serialize()?);
+        let id = single.id.clone();
+        send_exchange_leg(state, sender, out, &single, bytes, true).await?;
+        ingest_own_leg(state, &single, out);
+        return Ok((id, single));
+    }
+    // Only content legs are ever large enough to split; the `Progress` beat is a
+    // tiny liveness widget and is never retained/reassembled.
+    if !crate::protocol::message::is_content_phase(phase) {
+        return Err(anyhow::anyhow!("exchange {phase} leg too large to send"));
+    }
+    let group = PartGroup::random();
+    let max_parts = u32::try_from(MAX_MESSAGE_PARTS).unwrap_or(u32::MAX);
+    let probe = build_exchange(
+        swarm,
+        author,
+        &to,
+        &exchange_id,
+        kind,
+        phase,
+        MessageBody::new(String::new()).expect("empty body is valid"),
+        Some(Part {
+            group: group.clone(),
+            idx: max_parts - 1,
+            total: max_parts,
+        }),
+        &signer,
+    );
+    let budget = part_body_budget(&probe);
+    let chunks = split_body(body.as_str(), budget).ok_or_else(|| {
+        anyhow::anyhow!(
+            "exchange leg too large: a {}-byte body needs more than {MAX_MESSAGE_PARTS} parts",
+            body.as_str().len()
+        )
+    })?;
+    let total = u32::try_from(chunks.len()).expect("chunk count is bounded by MAX_MESSAGE_PARTS");
+    if !state.meshed && state.pending_outbound.remaining() < chunks.len() {
+        return Err(anyhow::anyhow!(
+            "pending outbound buffer full; multipart exchange leg dropped"
+        ));
+    }
+    for (idx, chunk) in chunks.iter().enumerate() {
+        let part = Part {
+            group: group.clone(),
+            idx: u32::try_from(idx).expect("idx is bounded by MAX_MESSAGE_PARTS"),
+            total,
+        };
+        let chunk_body = MessageBody::new(*chunk).expect("a substring of a valid body is valid");
+        let msg = build_exchange(
+            swarm,
+            author,
+            &to,
+            &exchange_id,
+            kind,
+            phase,
+            chunk_body,
+            Some(part),
+            &signer,
+        );
+        let bytes = Bytes::from(msg.serialize()?);
+        send_exchange_leg(state, sender, out, &msg, bytes, false).await?;
+    }
+    // Echo + ingest the logical leg once (one content leg toward the cap).
+    let mut logical = Message::new_exchange(swarm, author, to, exchange_id, kind, phase, body);
+    logical.id = MessageId::new(group.as_str()).expect("a part group is a valid message id");
+    out.print_exchange(&logical, true);
+    ingest_own_leg(state, &logical, out);
+    Ok((logical.id.clone(), logical))
+}
+
+/// Build, part-tag and sign one outbound exchange leg (no serialize).
+#[expect(
+    clippy::too_many_arguments,
+    reason = "an exchange leg carries to/exchange_id/kind/phase/body plus the part header and signer; bundling them buys nothing over the existing ExchangeLeg"
+)]
+fn build_exchange(
+    swarm: &SwarmId,
+    author: &Nickname,
+    to: &Nickname,
+    exchange_id: &ExchangeId,
+    kind: ExchangeKind,
+    phase: ExchangePhase,
+    body: MessageBody,
+    part: Option<Part>,
+    signer: &Identity,
+) -> Message {
+    Message::new_exchange(
+        swarm,
+        author,
+        to.clone(),
+        exchange_id.clone(),
+        kind,
+        phase,
+        body,
+    )
+    .with_part(part)
+    .signed(signer)
+}
+
+/// Broadcast (or buffer, while unmeshed) one fully-built exchange leg, retaining
+/// content legs for anti-entropy. `echo` gates the operator print so the raw
+/// parts of a split leg commit silently. Errors if the unmeshed buffer is full.
+async fn send_exchange_leg(
+    state: &mut EventLoopState,
+    sender: &GossipSender,
+    out: &output::Output,
+    msg: &Message,
+    bytes: Bytes,
+    echo: bool,
+) -> anyhow::Result<()> {
     if state.meshed {
-        // Meshed: echo + (content-only) retain locally, then hit the wire. A
-        // transient broadcast error still leaves a content leg in our log for
-        // anti-entropy.
-        echo_and_retain_task(state, &msg, out);
+        // Meshed: retain locally, then hit the wire (a transient broadcast error
+        // still leaves a content leg in our log for anti-entropy).
+        retain_leg(state, msg, out, echo);
         sender
             .broadcast(bytes)
             .await
             .map_err(|error| anyhow::anyhow!("{error}"))?;
     } else if state.pending_outbound.push(bytes) {
-        // Unmeshed: buffered for flush-on-connect; it *will* be sent in order.
-        echo_and_retain_task(state, &msg, out);
+        retain_leg(state, msg, out, echo);
     } else {
         tracing::warn!("pending outbound buffer full; outbound message dropped");
         return Err(anyhow::anyhow!(
             "pending outbound buffer full; message dropped"
         ));
     }
-    // Advance our own coarse state machine for the leg we just sent (resets
-    // our debounce, advances the phase, counts content). Warn once if a
-    // content leg pushed the exchange past its whole-exchange cap.
-    if crate::daemon::exchange::ingest(&mut state.exchanges, &msg, true, Instant::now()) {
+    Ok(())
+}
+
+/// Retain an exchange leg locally, echoing the operator line only when `echo`
+/// (false for the raw parts of a split leg). Content legs retain; `Progress`
+/// doesn't — see [`retain_task`].
+fn retain_leg(state: &mut EventLoopState, msg: &Message, out: &output::Output, echo: bool) {
+    if echo {
+        echo_and_retain_task(state, msg, out);
+    } else {
+        retain_task(state, msg);
+    }
+}
+
+/// Advance our own coarse exchange state machine for a leg we just sent and warn
+/// once if a content leg pushed the exchange past its whole-exchange cap.
+fn ingest_own_leg(state: &mut EventLoopState, msg: &Message, out: &output::Output) {
+    if crate::daemon::exchange::ingest(&mut state.exchanges, msg, true, Instant::now()) {
         out.info(&format!(
             "exchange exceeded {} messages; wrap it up",
             crate::util::consts::EXCHANGE_CONTENT_CAP
         ));
         tracing::warn!("exchange content cap exceeded");
     }
-    Ok((id, msg))
 }
 
 /// Handle one typed in-process [`SessionRequest`] (embed / MCP). `Send`
@@ -641,5 +988,52 @@ mod parse_reply_tests {
             parse_reply_command("/reply <bright-fern> thanks!"),
             Some(("bright-fern", "thanks!"))
         );
+    }
+}
+
+#[cfg(test)]
+mod split_body_tests {
+    use super::{escaped_char_len, split_body};
+    use crate::util::consts::MAX_MESSAGE_PARTS;
+
+    #[test]
+    fn escaped_len_counts_json_escapes() {
+        assert_eq!(escaped_char_len('a'), 1);
+        assert_eq!(escaped_char_len('"'), 2);
+        assert_eq!(escaped_char_len('\\'), 2);
+        assert_eq!(escaped_char_len('\n'), 2);
+        assert_eq!(
+            escaped_char_len('世'),
+            3,
+            "kept as 3-byte UTF-8, not \\u-escaped"
+        );
+    }
+
+    #[test]
+    fn chunks_concatenate_back_and_respect_budget() {
+        let body = "0123456789".repeat(6); // 60 ASCII bytes
+        let chunks = split_body(&body, 16).expect("60 bytes at budget 16 fits in MAX parts");
+        assert!(chunks.len() > 1, "the body must actually split");
+        assert!(chunks.len() <= MAX_MESSAGE_PARTS);
+        assert_eq!(chunks.concat(), body, "chunks reassemble to the original");
+        for chunk in &chunks {
+            let escaped: usize = chunk.chars().map(escaped_char_len).sum();
+            assert!(escaped <= 16, "each chunk's escaped length fits the budget");
+        }
+    }
+
+    #[test]
+    fn splits_multibyte_on_char_boundaries() {
+        let body = "héllo🌍".repeat(8); // 2-byte é and 4-byte emoji
+        let chunks = split_body(&body, 8).expect("fits in MAX parts");
+        assert_eq!(chunks.concat(), body, "no char is split mid-codepoint");
+        assert!(chunks.iter().all(|chunk| !chunk.is_empty()));
+    }
+
+    #[test]
+    fn refuses_a_body_needing_too_many_parts() {
+        let body = "x".repeat(1000);
+        // One byte per part would need 1000 parts, far over MAX_MESSAGE_PARTS.
+        assert!(split_body(&body, 1).is_none());
     }
 }
