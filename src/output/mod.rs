@@ -122,8 +122,9 @@ pub(crate) mod style {
     pub(super) const PEER_NICK: &str = "\x1b[1;36m";
     /// Bold yellow — a swarm name.
     pub(crate) const SWARM: &str = "\x1b[1;33m";
-    /// Bold blue — the runnable `ahsw join <id>` hint on create.
-    pub(super) const BLUE: &str = "\x1b[1;34m";
+    /// Bold blue — the runnable hint (`ahsw join` on create, `ahsw pipe connect`
+    /// on the pipe producer).
+    pub(crate) const BLUE: &str = "\x1b[1;34m";
     /// Bold — the highlighted row in the `discover` picker.
     pub(crate) const BOLD: &str = "\x1b[1m";
 }

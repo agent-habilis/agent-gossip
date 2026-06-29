@@ -325,6 +325,42 @@ COMMANDS
               metadata each agent self-reports into the meta channel; read
               them with meta get under /peers/<nickname> (see "SHARED STATE").
 
+       pipe listen [--swarm 🐝…] [--throttle RATE] [--output human|json]
+       pipe connect 🐝… [--throttle RATE]
+       pipe listen-tcp HOST:PORT [--swarm 🐝…] [--output human|json]
+       pipe connect-tcp 🐝… --addr HOST:PORT [--output human|json]
+              A standalone, off-gossip direct byte pipe between machines — no running
+              daemon required. `pipe listen` reads stdin and prints, on stdout, a
+              status line plus the consumer's ready-to-run `ahsw pipe connect 🐝…`
+              command (bold-blue in a terminal); running it redeems the ticket and
+              streams the bytes back. For scripts, `--output json` prints just that
+              command as one plain line (strip the `ahsw pipe connect ` prefix for
+              the bare 🐝… ticket). The
+              ticket is a bearer capability (a random secret)
+              carrying the producer's address + the swarm's discovery config,
+              so the consumer needs nothing but the ticket. --swarm selects the
+              discovery mechanisms (local / mDNS / DHT / relay) from that swarm
+              id; omit it for a public default. The data never touches gossip.
+
+              A file is `ahsw pipe listen < file`, a folder is a tar stream, and
+              a TCP service is the -tcp pair: `pipe listen-tcp HOST:PORT` forwards
+              inbound peers to a local TCP service, and `pipe connect-tcp
+              <ticket> --addr HOST:PORT` binds a local port that forwards each
+              connection over the pipe (one ticket serves many connections).
+              Exit codes are meaningful for composition: 0 on a fully-delivered
+              stream, non-zero on a connect failure or a truncated transfer.
+
+              --throttle RATE caps throughput (e.g. 100k, 2m; 1024-based) on
+              either side — a bandwidth limit, and a way to make the progress
+              bar visible on a fast/local link.
+
+              Examples:
+                ahsw pipe listen --swarm 🐝… < report.pdf   # prints: ahsw pipe connect 🐝…
+                ahsw pipe connect 🐝Ydy8… > report.pdf
+                tar c ./dir | ahsw pipe listen --swarm 🐝…   ↔   ahsw pipe connect 🐝… | tar x
+                ahsw pipe listen-tcp 127.0.0.1:3000 --swarm 🐝…    # share a dev server
+                ahsw pipe connect-tcp 🐝… --addr 127.0.0.1:8080    # → http://localhost:8080
+
        state patch --swarm 🐝… --nickname NAME --patch OPS [--if-doc-hash HEX]
        state get   --swarm 🐝… --nickname NAME
               Read or change the swarm's SHARED STATE — a JSON document the

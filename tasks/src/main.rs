@@ -4,6 +4,7 @@ use clap::{Parser, Subcommand};
 use xshell::Shell;
 
 mod bench;
+mod build;
 mod ci;
 mod clean;
 mod coverage;
@@ -36,6 +37,21 @@ struct Cli {
 enum Task {
     /// Run unit tests.
     Test,
+    /// Build the `ahs` binary. Cross-compile with `--target <triple>` or the
+    /// `--arch <arch>` shorthand (static-musl Linux, for the Pi fleet) through a
+    /// project-pinned zig toolchain — self-contained, never the global zig.
+    Build {
+        /// Full target triple, e.g. `aarch64-unknown-linux-musl`.
+        #[arg(long)]
+        target: Option<String>,
+        /// Architecture shorthand ⇒ `<arch>-unknown-linux-musl` (e.g.
+        /// `aarch64`, `x86_64`). Mutually exclusive with `--target`.
+        #[arg(long)]
+        arch: Option<String>,
+        /// Optimized release build (default: debug).
+        #[arg(long)]
+        release: bool,
+    },
     /// Run benchmarks. No args = everything; `transfer` = the loopback
     /// transfer soak only; any other arg = a divan filter for the
     /// microbenchmarks (e.g. `bench derive_secret`).
@@ -89,6 +105,11 @@ fn main() -> ExitCode {
 
     let outcome = match cli.task {
         Task::Test => test::run(&sh),
+        Task::Build {
+            target,
+            arch,
+            release,
+        } => build::run(&sh, target.as_deref(), arch.as_deref(), release),
         Task::Bench { args } => bench::run(&sh, &args),
         Task::Release { args } => release::run(&sh, &args),
         Task::Install => install::run(&sh),

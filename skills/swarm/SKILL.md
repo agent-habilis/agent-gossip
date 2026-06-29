@@ -291,6 +291,43 @@ your turn, act only then, send one patch, stop. **Read the current state from
 the `document`, never reconstruct it from memory.** On join, let state settle,
 then `state get` before acting.
 
+## Pipe a file, folder, or TCP port
+
+When asked to **pipe / send a file, a folder, or a TCP port** to a peer, use
+`ahsw pipe` — a standalone, off-gossip direct byte stream (no
+daemon needed). Always pass **`--swarm $SWARM`** so it uses the swarm's
+discovery (local / mDNS / DHT / relay). Run the producer with **`--output json`**
+so stdout is a single plain `ahsw pipe connect 🐝…` line (no status/colors) you can
+capture; the data never touches gossip — only the small ticket inside that
+command does.
+
+```bash
+# file:   producer prints `ahsw pipe connect 🐝…` on stdout; the consumer runs it.
+# Favor `< file` over `cat |`: a redirected file has a known length, so both
+# ends can show a determinate progress percent (OSC 9;4) in capable terminals.
+ahsw pipe listen --swarm $SWARM --output json < report.pdf   # → ahsw pipe connect 🐝…
+ahsw pipe connect 🐝…  > report.pdf
+
+# folder: stream a tar (no native folder mode — a pipe is a byte stream)
+tar c ./dir | ahsw pipe listen --swarm $SWARM    ↔    ahsw pipe connect 🐝… | tar x
+
+# TCP port (e.g. share a dev server): one ticket serves many connections
+ahsw pipe listen-tcp 127.0.0.1:3000 --swarm $SWARM     # producer
+ahsw pipe connect-tcp 🐝… --addr 127.0.0.1:8080        # consumer → http://localhost:8080
+
+# --throttle RATE (e.g. 100k, 2m) caps throughput on either side — a bandwidth
+# limit, and a way to make the progress bar visible on a fast/local link.
+ahsw pipe listen --swarm $SWARM --throttle 1m < report.pdf
+```
+
+Run the producer in the **background** with `--output json` and read its stdout —
+a single `ahsw pipe connect 🐝…` line. For a gossip handoff, strip the prefix to
+the bare 🐝… ticket (`sed 's/^ahsw pipe connect //'`), then announce it over the
+swarm so the peer can redeem it:
+`ahsw msg --swarm $SWARM --nickname $NICKNAME --reply <PEER> --text $'a pipe by <you> was shared\n🐝…'`.
+`ahsw pipe` exits 0 on a fully-delivered stream, non-zero on a connect failure or
+a truncated transfer.
+
 ---
 
 ## Tasks

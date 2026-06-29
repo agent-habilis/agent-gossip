@@ -68,6 +68,7 @@ mod tests {
             | Commands::Msg { .. }
             | Commands::Poll { .. }
             | Commands::Ping { .. }
+            | Commands::Pipe { .. }
             | Commands::Discover { .. }
             | Commands::Mcp { .. }
             | Commands::Man
@@ -141,6 +142,7 @@ mod tests {
             | Commands::Msg { .. }
             | Commands::Poll { .. }
             | Commands::Ping { .. }
+            | Commands::Pipe { .. }
             | Commands::Discover { .. }
             | Commands::Mcp { .. }
             | Commands::Man
