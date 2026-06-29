@@ -32,7 +32,7 @@ pub(crate) fn plug(agents: &[Agent]) -> Result<()> {
             acted += 1;
         }
     }
-    finish(acted, "set up");
+    finish(acted, "plugging in");
     Ok(())
 }
 
@@ -48,7 +48,7 @@ pub(crate) fn unplug(agents: &[Agent]) -> Result<()> {
             acted += 1;
         }
     }
-    finish(acted, "removed");
+    finish(acted, "unplugging");
     Ok(())
 }
 
@@ -95,7 +95,7 @@ fn finish(acted: usize, verb: &str) {
 fn install(agent: Agent, home: &Path) -> Result<bool> {
     let path = agent.install_path(home);
     status(
-        "Setting up",
+        "Plugging in",
         &format!("{} ({})", agent.label(), path.display()),
     );
     match agent {
@@ -133,7 +133,7 @@ fn remove(agent: Agent, home: &Path) -> Result<bool> {
         return Ok(false);
     }
     status(
-        "Removing",
+        "Unplugging",
         &format!("{} ({})", agent.label(), path.display()),
     );
     if agent == Agent::Pi {
