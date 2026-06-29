@@ -329,12 +329,12 @@ mod tests {
     #[test]
     fn socket_path_format() {
         let path = socket_path(
-            &SwarmId::from("ahsabcdefghijkmnpqr"),
+            &SwarmId::from("🐝abcdefghijkmnpqr"),
             &Nickname::from("my-nick"),
         );
         assert!(path.starts_with("/tmp/agent-habilis/swarm/sockets/"));
         assert!(path.ends_with("-my-nick.sock"));
-        assert!(path.contains("ahsabcdefghijkmn")); // 16 chars
+        assert!(path.contains("abcdefghijkmnpqr")); // 16 chars, 🐝 stripped
     }
 
     // ── IpcCommand serialization ───────────────────────────────────
@@ -342,20 +342,20 @@ mod tests {
     #[test]
     fn ipc_command_msg_round_trip() {
         let cmd = IpcCommand::Msg {
-            swarm: SwarmId::from("ahstest"),
+            swarm: SwarmId::from("🐝test"),
             body: MessageBody::from("hello"),
             reply: None,
         };
         let json = serde_json::to_string(&cmd).unwrap();
         let parsed: IpcCommand = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed.swarm_id().as_str(), "ahstest");
+        assert_eq!(parsed.swarm_id().as_str(), "🐝test");
     }
 
     #[test]
     fn ipc_command_msg_with_reply_target() {
         let target = Nickname::from("alice");
         let cmd = IpcCommand::Msg {
-            swarm: SwarmId::from("ahstest"),
+            swarm: SwarmId::from("🐝test"),
             body: MessageBody::from("reply"),
             reply: Some(target.clone()),
         };
@@ -374,7 +374,7 @@ mod tests {
     #[test]
     fn ipc_command_poll_round_trip() {
         let cmd = IpcCommand::Poll {
-            swarm: SwarmId::from("ahstest"),
+            swarm: SwarmId::from("🐝test"),
             after: Some(42),
             wait_ms: None,
         };
@@ -395,13 +395,13 @@ mod tests {
     #[test]
     fn ipc_command_ping_round_trip() {
         let cmd = IpcCommand::Ping {
-            swarm: SwarmId::from("ahstest"),
+            swarm: SwarmId::from("🐝test"),
         };
         let json = serde_json::to_string(&cmd).unwrap();
         assert!(json.contains("\"command\":\"ping\""));
         let parsed: IpcCommand = serde_json::from_str(&json).unwrap();
         match parsed {
-            IpcCommand::Ping { swarm } => assert_eq!(swarm.as_str(), "ahstest"),
+            IpcCommand::Ping { swarm } => assert_eq!(swarm.as_str(), "🐝test"),
             IpcCommand::Msg { .. }
             | IpcCommand::Poll { .. }
             | IpcCommand::Exchange { .. }
@@ -412,7 +412,7 @@ mod tests {
     #[test]
     fn ipc_command_exchange_round_trip() {
         let cmd = IpcCommand::Exchange {
-            swarm: SwarmId::from("ahstest"),
+            swarm: SwarmId::from("🐝test"),
             to: Nickname::from("calm-otter"),
             exchange_id: ExchangeId::from("550e8400-e29b-41d4-a716-446655440000"),
             kind: ExchangeKind::Handover,
@@ -442,13 +442,13 @@ mod tests {
     #[test]
     fn ipc_command_peers_round_trip() {
         let cmd = IpcCommand::Peers {
-            swarm: SwarmId::from("ahstest"),
+            swarm: SwarmId::from("🐝test"),
         };
         let json = serde_json::to_string(&cmd).unwrap();
         assert!(json.contains("\"command\":\"peers\""));
         let parsed: IpcCommand = serde_json::from_str(&json).unwrap();
         match parsed {
-            IpcCommand::Peers { swarm } => assert_eq!(swarm.as_str(), "ahstest"),
+            IpcCommand::Peers { swarm } => assert_eq!(swarm.as_str(), "🐝test"),
             IpcCommand::Msg { .. }
             | IpcCommand::Poll { .. }
             | IpcCommand::Ping { .. }
@@ -459,7 +459,7 @@ mod tests {
     #[test]
     fn ipc_command_poll_no_after_skips_field() {
         let cmd = IpcCommand::Poll {
-            swarm: SwarmId::from("ahstest"),
+            swarm: SwarmId::from("🐝test"),
             after: None,
             wait_ms: None,
         };
@@ -486,7 +486,7 @@ mod tests {
         }
 
         fn arb_swarm() -> impl Strategy<Value = SwarmId> {
-            "ahs[1-9A-HJ-NP-Za-km-z]{4,24}".prop_map(|raw| SwarmId::new(raw).unwrap())
+            "🐝[1-9A-HJ-NP-Za-km-z]{4,24}".prop_map(|raw| SwarmId::new(raw).unwrap())
         }
 
         proptest! {
@@ -596,9 +596,13 @@ mod tests {
             }
 
             #[test]
-            fn prop_swarm_prefix_is_prefix_of_input(swarm in arb_swarm()) {
-                let prefix = swarm_prefix(swarm.as_str());
-                prop_assert!(swarm.as_str().starts_with(&prefix));
+            fn prop_swarm_prefix_strips_bee_and_prefixes_the_body(swarm in arb_swarm()) {
+                // The stem drops the `🐝` brand (path safety) and is a prefix of
+                // the de-branded id, so socket/log filenames stay ASCII.
+                let stem = swarm_prefix(swarm.as_str());
+                let body = swarm.as_str().strip_prefix('🐝').unwrap_or(swarm.as_str());
+                prop_assert!(body.starts_with(&stem));
+                prop_assert!(!stem.contains('🐝'));
             }
         }
     }
@@ -609,7 +613,7 @@ mod tests {
     async fn ipc_listen_and_send_msg() {
         // Base58-encode the pid so the swarm id passes strict charset validation.
         let pid_b58 = bs58::encode(std::process::id().to_le_bytes()).into_string();
-        let swarm = SwarmId::new(format!("ahsipctest{pid_b58}")).unwrap();
+        let swarm = SwarmId::new(format!("🐝ipctest{pid_b58}")).unwrap();
         let nickname = Nickname::from("test-nick");
 
         let (tx, mut rx) = mpsc::channel::<IpcMessage>(8);
@@ -681,7 +685,7 @@ mod tests {
         use tokio::io::AsyncReadExt;
 
         let pid_b58 = bs58::encode(std::process::id().to_le_bytes()).into_string();
-        let swarm = SwarmId::new(format!("ahsipcquiet{pid_b58}")).unwrap();
+        let swarm = SwarmId::new(format!("🐝ipcquiet{pid_b58}")).unwrap();
         let nickname = Nickname::from("idle-nick");
         let (tx, mut rx) = mpsc::channel::<IpcMessage>(8);
         let listener = bind(&swarm, &nickname).expect("bind IPC socket");

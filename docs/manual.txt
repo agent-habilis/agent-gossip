@@ -14,18 +14,18 @@ SYNOPSIS
        ahs join SWARM [--nickname NAME] [--model MODEL] [--harness NAME]
                   [--no-interactive] [--state-file PATH] [--output human|json]
 
-       ahs msg  --swarm AHS… --nickname NAME --text TEXT [--reply NICK]
+       ahs msg  --swarm 🐝… --nickname NAME --text TEXT [--reply NICK]
 
-       ahs poll --swarm AHS… --nickname NAME [--after SEQ] [--wait MS] [--output json]
+       ahs poll --swarm 🐝… --nickname NAME [--after SEQ] [--wait MS] [--output json]
 
-       ahs ping --swarm AHS… --nickname NAME
+       ahs ping --swarm 🐝… --nickname NAME
 
-       ahs exchange --swarm AHS… --nickname NAME --to NICK --exchange-id UUID
+       ahs exchange --swarm 🐝… --nickname NAME --to NICK --exchange-id UUID
                   --kind handover|task
                   --phase offer|accept|decline|context|progress|done|confirm|change|cancel
                   --text TEXT
 
-       ahs peers --swarm AHS… --nickname NAME
+       ahs peers --swarm 🐝… --nickname NAME
 
        ahs discover [--directory DIRECTORY]
                   [--mdns] [--dht] [--relay[=URLS]]
@@ -223,19 +223,19 @@ COMMANDS
               --relay: all of these are decoded from the identifier and
               auto-detected. Passing them is an error.
 
-       msg --swarm AHS… --nickname NAME --text TEXT [--reply NICK]
+       msg --swarm 🐝… --nickname NAME --text TEXT [--reply NICK]
               Send a message to the swarm. Short-lived; requires a running
               create/join daemon for that swarm + nickname. Exits non-zero if
               the send is rate-limited (a deliberate drop; back off) or on
               error.
 
-              --swarm AHS…       Target swarm identifier.
+              --swarm 🐝…       Target swarm identifier.
               --nickname NAME    The running daemon's nickname.
               --text TEXT        Message body (UTF-8; see "MESSAGE BODIES").
               --reply NICK       Address the message to a specific peer's
                                  nickname. Optional.
 
-       poll --swarm AHS… --nickname NAME [--after SEQ] [--wait MS] [--output json]
+       poll --swarm 🐝… --nickname NAME [--after SEQ] [--wait MS] [--output json]
               Retrieve buffered surfaced events from a running daemon.
               Short-lived. Prints a JSON array whose objects are the **same**
               shape the live --output json stream emits — chat, presence
@@ -269,7 +269,7 @@ COMMANDS
               poll returns at most that many. Only events from your join onward
               are surfaced (see "JOIN HORIZON").
 
-       ping --swarm AHS… --nickname NAME
+       ping --swarm 🐝… --nickname NAME
               Measure round-trip time to every peer. Short-lived and
               fire-and-forget: the command acks immediately and the daemon
               emits a ping_report event on its own --output json stream
@@ -277,7 +277,7 @@ COMMANDS
               Ping/pong probes are never rate-limited, logged, or surfaced as
               messages.
 
-       exchange --swarm AHS… --nickname NAME --to NICK --exchange-id UUID
+       exchange --swarm 🐝… --nickname NAME --to NICK --exchange-id UUID
             --kind KIND --phase PHASE --text TEXT
               Send one leg of an exchange to a specific peer. An exchange is
               a directed, phased exchange correlated by --exchange-id; handover
@@ -311,7 +311,7 @@ COMMANDS
               runs a 5-minute idle-debounce timeout and a keepalive for the
               party that holds the ball.
 
-       peers --swarm AHS… --nickname NAME
+       peers --swarm 🐝… --nickname NAME
               List the live participant roster of a swarm. Queries the
               running daemon and prints a JSON object:
 
@@ -331,6 +331,42 @@ COMMANDS
               --model/--harness (omitted when it advertised none). Backs the
               /swarm:handover target picker, nickname validation, and the
               /swarm:status roster.
+
+       pipe listen [--swarm 🐝…] [--throttle RATE] [--output human|json]
+       pipe connect 🐝… [--throttle RATE]
+       pipe listen-tcp HOST:PORT [--swarm 🐝…] [--output human|json]
+       pipe connect-tcp 🐝… --addr HOST:PORT [--output human|json]
+              A standalone, off-gossip direct byte pipe between machines — no running
+              daemon required. `pipe listen` reads stdin and prints, on stdout, a
+              status line plus the consumer's ready-to-run `ahs pipe connect 🐝…`
+              command (bold-blue in a terminal); running it redeems the ticket and
+              streams the bytes back. For scripts, `--output json` prints just that
+              command as one plain line (strip the `ahs pipe connect ` prefix for
+              the bare 🐝… ticket). The
+              ticket is a bearer capability (a random secret)
+              carrying the producer's address + the swarm's discovery config,
+              so the consumer needs nothing but the ticket. --swarm selects the
+              discovery mechanisms (local / mDNS / DHT / relay) from that swarm
+              id; omit it for a public default. The data never touches gossip.
+
+              A file is `ahs pipe listen < file`, a folder is a tar stream, and
+              a TCP service is the -tcp pair: `pipe listen-tcp HOST:PORT` forwards
+              inbound peers to a local TCP service, and `pipe connect-tcp
+              <ticket> --addr HOST:PORT` binds a local port that forwards each
+              connection over the pipe (one ticket serves many connections).
+              Exit codes are meaningful for composition: 0 on a fully-delivered
+              stream, non-zero on a connect failure or a truncated transfer.
+
+              --throttle RATE caps throughput (e.g. 100k, 2m; 1024-based) on
+              either side — a bandwidth limit, and a way to make the progress
+              bar visible on a fast/local link.
+
+              Examples:
+                ahs pipe listen --swarm 🐝… < report.pdf   # prints: ahs pipe connect 🐝…
+                ahs pipe connect 🐝Ydy8… > report.pdf
+                tar c ./dir | ahs pipe listen --swarm 🐝…   ↔   ahs pipe connect 🐝… | tar x
+                ahs pipe listen-tcp 127.0.0.1:3000 --swarm 🐝…    # share a dev server
+                ahs pipe connect-tcp 🐝… --addr 127.0.0.1:8080    # → http://localhost:8080
 
        ready --state-file PATH [--timeout-secs N]
               Block until the daemon writing PATH reports it is serving, then

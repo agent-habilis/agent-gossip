@@ -45,6 +45,7 @@ pub(crate) async fn build_endpoint(
     lookups: &LookupOpts,
     secret_key: Option<SecretKey>,
     bind_port: Option<u16>,
+    alpns: Vec<Vec<u8>>,
 ) -> Result<Endpoint> {
     let is_beacon = secret_key.is_some();
     let network = lookups.network_label();
@@ -87,6 +88,13 @@ pub(crate) async fn build_endpoint(
         builder = builder.secret_key(secret_key);
     }
 
+    // ALPNs the endpoint accepts inbound connections for. Empty for the gossip /
+    // rendezvous endpoints (their Router registers `GOSSIP_ALPN`); the pipe
+    // producer passes its `PIPE_ALPN` so it can `endpoint.accept()` directly.
+    if !alpns.is_empty() {
+        builder = builder.alpns(alpns);
+    }
+
     // Transport config is intentionally left at iroh's defaults: iroh tunes
     // keep-alive / idle (and the per-path multipath settings) for its
     // holepunching, and its own docs warn that adjusting them "may cause
@@ -125,7 +133,7 @@ pub(crate) async fn build_endpoint(
 /// pinned port. Thin intent-named wrapper over `build_endpoint`
 /// so call sites don't carry the rendezvous-only `None, None`.
 pub(crate) async fn build_participant_endpoint(lookups: &LookupOpts) -> Result<Endpoint> {
-    build_endpoint(lookups, None, None).await
+    build_endpoint(lookups, None, None, Vec::new()).await
 }
 
 /// Register a peer's address so the endpoint can connect to it.

@@ -190,14 +190,14 @@ mod tests {
         let path = unique_path("shape");
         let state_file = StateFile::new(
             path.clone(),
-            &SwarmId::from("ahsabcd"),
+            &SwarmId::from("🐝abcd"),
             &Nickname::from("treat-empire"),
             &name("cool-team"),
         );
         state_file.write(3, true);
         let contents = std::fs::read_to_string(&path).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&contents).unwrap();
-        assert_eq!(parsed["swarm"], "ahsabcd");
+        assert_eq!(parsed["swarm"], "🐝abcd");
         assert_eq!(parsed["name"], "cool-team");
         assert_eq!(parsed["nickname"], "treat-empire");
         assert_eq!(parsed["ready"], true);
@@ -211,7 +211,7 @@ mod tests {
         let path = unique_path("overwrite");
         let state_file = StateFile::new(
             path.clone(),
-            &SwarmId::from("ahsxyzw"),
+            &SwarmId::from("🐝xyzw"),
             &Nickname::from("swift-cedar"),
             &name("cool-team"),
         );
@@ -230,7 +230,7 @@ mod tests {
         let path = unique_path("remove");
         let state_file = StateFile::new(
             path.clone(),
-            &SwarmId::from("ahstest"),
+            &SwarmId::from("🐝test"),
             &Nickname::from("n"),
             &name("cool-team"),
         );
@@ -246,7 +246,7 @@ mod tests {
         {
             let state_file = StateFile::new(
                 path.clone(),
-                &SwarmId::from("ahstest"),
+                &SwarmId::from("🐝test"),
                 &Nickname::from("n"),
                 &name("cool-team"),
             );
@@ -268,7 +268,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
         let state_file = StateFile::new(
             path.clone(),
-            &SwarmId::from("ahstest"),
+            &SwarmId::from("🐝test"),
             &Nickname::from("n"),
             &name("cool-team"),
         );
@@ -287,14 +287,14 @@ mod tests {
         std::fs::write(&path, br#"{"name":"stale","auto_reply":false,"junk":1}"#).unwrap();
         let state_file = StateFile::new(
             path.clone(),
-            &SwarmId::from("ahsfresh"),
+            &SwarmId::from("🐝fresh"),
             &Nickname::from("swift-cedar"),
             &name("cool-team"),
         );
         state_file.write(3, true);
         let parsed: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        assert_eq!(parsed["swarm"], "ahsfresh");
+        assert_eq!(parsed["swarm"], "🐝fresh");
         assert_eq!(parsed["name"], "cool-team");
         assert_eq!(parsed["nickname"], "swift-cedar");
         assert_eq!(parsed["participant_count"], 3);
@@ -309,7 +309,7 @@ mod tests {
         let path = unique_path("snapshot");
         let state_file = StateFile::new(
             path.clone(),
-            &SwarmId::from("ahsround"),
+            &SwarmId::from("🐝round"),
             &Nickname::from("treat-empire"),
             &name("cool-team"),
         );

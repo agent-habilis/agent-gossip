@@ -1,4 +1,4 @@
-//! [`SwarmId`] — the validated `ahs…` *string* (shallow: prefix +
+//! [`SwarmId`] — the validated `🐝…` *string* (shallow: prefix +
 //! length + Base58 charset). Cheap boundary check at the CLI / IPC
 //! edge; full structural decoding lives in [`super::Swarm`].
 
@@ -8,17 +8,17 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
-use super::PREFIX;
+use crate::protocol::token::PREFIX;
 
 const MIN_LEN: usize = 7;
 const MAX_LEN: usize = 512;
 
-/// A swarm identifier — the encoded `ahs...` Base58Check string.
+/// A swarm identifier — the encoded `🐝…` Base58Check string.
 ///
-/// Validation is shallow: prefix `ahs`, length 7..=512, Base58
-/// charset (`[1-9A-HJ-NP-Za-km-z]`). Full structural decoding lives
-/// in `Swarm::from_str`; the newtype rejects obvious typos at the
-/// CLI / IPC boundary without paying the decode cost on every flow.
+/// Validation is shallow: the `🐝` prefix, length 7..=512 bytes, Base58
+/// charset (`[1-9A-HJ-NP-Za-km-z]`) on the remainder. Full structural
+/// decoding lives in `Swarm::from_str`; the newtype rejects obvious typos
+/// at the CLI / IPC boundary without paying the decode cost on every flow.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct SwarmId(String);
@@ -116,8 +116,8 @@ mod swarm_id_tests {
     use super::{SwarmId, SwarmIdError};
 
     #[test]
-    fn new_accepts_well_formed_ahs() {
-        SwarmId::new("ahsAbCdEf1234").unwrap();
+    fn new_accepts_well_formed() {
+        SwarmId::new("🐝AbCdEf1234").unwrap();
     }
 
     #[test]
@@ -130,23 +130,23 @@ mod swarm_id_tests {
 
     #[test]
     fn new_rejects_too_short() {
-        assert!(matches!(SwarmId::new("ahsa"), Err(SwarmIdError::Length(_))));
+        assert!(matches!(SwarmId::new("🐝a"), Err(SwarmIdError::Length(_))));
     }
 
     #[test]
     fn new_rejects_invalid_base58_chars() {
         // `0`, `O`, `I`, `l` are not in the Base58 alphabet.
         assert!(matches!(
-            SwarmId::new("ahsAbCdEf0xyz"),
+            SwarmId::new("🐝AbCdEf0xyz"),
             Err(SwarmIdError::Charset(_))
         ));
     }
 
     #[test]
     fn serde_transparent_round_trip() {
-        let id = SwarmId::from("ahsAbCdEf1234");
+        let id = SwarmId::from("🐝AbCdEf1234");
         let json = serde_json::to_string(&id).unwrap();
-        assert_eq!(json, "\"ahsAbCdEf1234\"");
+        assert_eq!(json, "\"🐝AbCdEf1234\"");
         let parsed: SwarmId = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed, id);
     }

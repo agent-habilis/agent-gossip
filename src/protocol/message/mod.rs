@@ -686,7 +686,7 @@ impl Message {
             version: "1.0".into(),
             id: "00000000-0000-0000-0000-000000000001".into(),
             kind,
-            swarm: SwarmId::from("ahstest"),
+            swarm: SwarmId::from("🐝test"),
             author: "alice-bot".into(),
             timestamp: 1_700_000_000,
             body: body.into(),
@@ -712,7 +712,7 @@ mod tests {
     }
 
     fn sid() -> SwarmId {
-        SwarmId::from("ahstest")
+        SwarmId::from("🐝test")
     }
 
     #[test]
@@ -861,7 +861,7 @@ mod tests {
     #[test]
     fn test_unknown_ext_fields_ignored() {
         let json = format!(
-            r#"{{"v":"1.0","id":"{FIXTURE_ID}","type":"msg","swarm":"ahstest","author":"a-b","ts":0,"body":"hi","ext":{{"future_field":"value","another":42}}}}"#
+            r#"{{"v":"1.0","id":"{FIXTURE_ID}","type":"msg","swarm":"🐝test","author":"a-b","ts":0,"body":"hi","ext":{{"future_field":"value","another":42}}}}"#
         );
         let parsed = Message::parse(json.as_bytes()).unwrap();
         assert_eq!(parsed.body.as_str(), "hi");
@@ -871,7 +871,7 @@ mod tests {
     #[test]
     fn test_missing_ext_defaults_to_empty_object() {
         let json = format!(
-            r#"{{"v":"1.0","id":"{FIXTURE_ID}","type":"msg","swarm":"ahstest","author":"a-b","ts":0,"body":"hi"}}"#
+            r#"{{"v":"1.0","id":"{FIXTURE_ID}","type":"msg","swarm":"🐝test","author":"a-b","ts":0,"body":"hi"}}"#
         );
         let parsed = Message::parse(json.as_bytes()).unwrap();
         assert_eq!(parsed.ext, serde_json::json!({}));
@@ -880,7 +880,7 @@ mod tests {
     #[test]
     fn test_version_mismatch_rejected() {
         let json = format!(
-            r#"{{"v":"2.0","id":"{FIXTURE_ID}","type":"msg","swarm":"ahstest","author":"a-b","ts":0,"body":"hi","ext":{{}}}}"#
+            r#"{{"v":"2.0","id":"{FIXTURE_ID}","type":"msg","swarm":"🐝test","author":"a-b","ts":0,"body":"hi","ext":{{}}}}"#
         );
         assert!(Message::parse(json.as_bytes()).is_err());
     }
@@ -891,14 +891,14 @@ mod tests {
     // escapes / spoof the `<nick>`/`#swarm` conventions (bad body/author).
     #[test]
     fn parse_rejects_non_uuid_id() {
-        let json = r#"{"v":"1.0","id":"not-a-uuid","type":"msg","swarm":"ahstest","author":"a-b","ts":0,"body":"hi","ext":{}}"#;
+        let json = r#"{"v":"1.0","id":"not-a-uuid","type":"msg","swarm":"🐝test","author":"a-b","ts":0,"body":"hi","ext":{}}"#;
         assert!(Message::parse(json.as_bytes()).is_err());
     }
 
     #[test]
     fn parse_rejects_control_char_body() {
         let json = format!(
-            r#"{{"v":"1.0","id":"{FIXTURE_ID}","type":"msg","swarm":"ahstest","author":"a-b","ts":0,"body":"evil\u0000body","ext":{{}}}}"#
+            r#"{{"v":"1.0","id":"{FIXTURE_ID}","type":"msg","swarm":"🐝test","author":"a-b","ts":0,"body":"evil\u0000body","ext":{{}}}}"#
         );
         assert!(Message::parse(json.as_bytes()).is_err());
     }
@@ -906,7 +906,7 @@ mod tests {
     #[test]
     fn parse_rejects_unsafe_author_nickname() {
         let json = format!(
-            r#"{{"v":"1.0","id":"{FIXTURE_ID}","type":"msg","swarm":"ahstest","author":"a#b","ts":0,"body":"hi","ext":{{}}}}"#
+            r#"{{"v":"1.0","id":"{FIXTURE_ID}","type":"msg","swarm":"🐝test","author":"a#b","ts":0,"body":"hi","ext":{{}}}}"#
         );
         assert!(Message::parse(json.as_bytes()).is_err());
     }

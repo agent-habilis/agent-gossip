@@ -82,7 +82,7 @@ impl LookupOpts {
 
     /// Append the canonical wire encoding to `buf`:
     /// `[flags u8][if custom: [count u8] ([len u16 LE] url)*]`.
-    fn encode_into(&self, buf: &mut Vec<u8>) {
+    pub(crate) fn encode_into(&self, buf: &mut Vec<u8>) {
         let mut flags: u8 = 0;
         if self.mdns {
             flags |= 0b0001;
@@ -111,7 +111,7 @@ impl LookupOpts {
     }
 
     /// Decode from a cursor over the config region, advancing `pos`.
-    fn decode_from(bytes: &[u8], pos: &mut usize) -> Result<Self> {
+    pub(crate) fn decode_from(bytes: &[u8], pos: &mut usize) -> Result<Self> {
         let flags = *bytes.get(*pos).context("truncated lookup flags")?;
         *pos += 1;
         let mdns = flags & 0b0001 != 0;

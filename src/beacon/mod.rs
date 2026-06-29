@@ -177,7 +177,7 @@ async fn build_rendezvous_endpoint(
             tracing::debug!("public rendezvous already served by a beacon; staying participant");
             return None;
         }
-        let endpoint = build_endpoint(&lookups, Some(params.secret.clone()), None)
+        let endpoint = build_endpoint(&lookups, Some(params.secret.clone()), None, Vec::new())
             .await
             .ok();
         if endpoint.is_some() {
@@ -188,8 +188,13 @@ async fn build_rendezvous_endpoint(
         return endpoint;
     }
     for &port in &params.bind_ports {
-        if let Ok(endpoint) =
-            build_endpoint(&lookups, Some(params.secret.clone()), Some(port)).await
+        if let Ok(endpoint) = build_endpoint(
+            &lookups,
+            Some(params.secret.clone()),
+            Some(port),
+            Vec::new(),
+        )
+        .await
         {
             tracing::info!(port, "beacon assumed: bound rendezvous ladder rung");
             return Some(endpoint);

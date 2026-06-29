@@ -237,7 +237,7 @@ mod tests {
         let session = Session::create(create_cfg("test1", "alice-test"))
             .await
             .expect("create");
-        assert!(session.swarm().as_str().starts_with("ahs"));
+        assert!(session.swarm().as_str().starts_with("🐝"));
         assert_eq!(session.name().as_str(), "test1");
         assert_eq!(session.nickname().as_str(), "alice-test");
         session.leave().await;

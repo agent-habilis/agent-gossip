@@ -418,7 +418,7 @@ fn create_swarm_twice_errors_cleanly() {
     let mut client = McpClient::spawn();
     let first = client.tool_call(20, "create_swarm", serde_json::json!({ "name": "twice1" }));
     let first_json = tool_result_json(&first).expect("first create_swarm should succeed");
-    assert!(first_json["swarm"].as_str().unwrap().starts_with("ahs"));
+    assert!(first_json["swarm"].as_str().unwrap().starts_with("🐝"));
     assert_eq!(first_json["name"].as_str(), Some("twice1"));
 
     let second = client.tool_call(21, "create_swarm", serde_json::json!({ "name": "twice2" }));
@@ -538,7 +538,7 @@ fn create_swarm_with_granular_relay_succeeds() {
         result["swarm"]
             .as_str()
             .unwrap_or_default()
-            .starts_with("ahs"),
+            .starts_with("🐝"),
         "expected a swarm id, got: {result}"
     );
 }
@@ -554,7 +554,7 @@ fn create_swarm_without_name_mints_random() {
         result["swarm"]
             .as_str()
             .unwrap_or_default()
-            .starts_with("ahs"),
+            .starts_with("🐝"),
         "expected a swarm id, got: {result}"
     );
     assert!(

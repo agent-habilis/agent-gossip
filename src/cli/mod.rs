@@ -25,8 +25,8 @@ mod status;
 
 pub(crate) use args::Cli;
 use args::{
-    Commands, CreateOpts, ExchangeOpts, MsgOpts, PeersOpts, PingOpts, PollOpts, ReadyOpts,
-    SharedServerOpts,
+    Commands, CreateOpts, ExchangeOpts, MsgOpts, OutputFormat, PeersOpts, PingOpts, PipeAction,
+    PollOpts, ReadyOpts, SharedServerOpts,
 };
 
 /// `join` has no `--public`/`--name`: both are encoded in the `ahs…`
@@ -83,6 +83,7 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
         Commands::Ping { opts } => ping(opts).await,
         Commands::Exchange { opts } => exchange(opts).await,
         Commands::Peers { opts } => peers(opts).await,
+        Commands::Pipe { action } => pipe(action).await,
         Commands::Ready { opts } => ready(opts).await,
         Commands::Discover { opts } => {
             crate::util::tuning::init(opts.shared.tuning());
@@ -337,6 +338,44 @@ async fn peers(opts: PeersOpts) -> Result<()> {
     let resp = ipc::send(&cmd, &nickname).await?;
     println!("{resp}");
     Ok(())
+}
+
+/// `ahsw pipe` — a standalone, off-gossip direct byte stream (no daemon).
+/// `listen` reads stdin and prints a ticket on stderr; `connect` redeems one
+/// and streams the peer's bytes to stdout.
+async fn pipe(action: PipeAction) -> Result<()> {
+    match action {
+        PipeAction::Listen {
+            swarm,
+            throttle,
+            output,
+        } => {
+            crate::pipe::listen(
+                swarm.as_ref().map(crate::protocol::SwarmId::as_str),
+                throttle,
+                matches!(output, OutputFormat::Json),
+            )
+            .await
+        }
+        PipeAction::Connect { ticket, throttle } => crate::pipe::connect(&ticket, throttle).await,
+        PipeAction::ListenTcp {
+            host,
+            swarm,
+            output,
+        } => {
+            crate::pipe::listen_tcp(
+                swarm.as_ref().map(crate::protocol::SwarmId::as_str),
+                &host,
+                matches!(output, OutputFormat::Json),
+            )
+            .await
+        }
+        PipeAction::ConnectTcp {
+            ticket,
+            addr,
+            output,
+        } => crate::pipe::connect_tcp(&ticket, &addr, matches!(output, OutputFormat::Json)).await,
+    }
 }
 
 /// Block until the daemon's `--state-file` reports it is *freshly* serving

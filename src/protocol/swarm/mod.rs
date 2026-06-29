@@ -18,9 +18,9 @@ use std::str::FromStr;
 
 use anyhow::{Context, Result, bail};
 use iroh::EndpointId;
-use sha2::{Digest, Sha256};
 
 use super::crypto;
+use super::token::{self, TokenType};
 
 mod id;
 mod lookup;
@@ -34,11 +34,6 @@ pub(crate) use lookup::{
 pub use lookup::{LookupSet, RelayLadder, RelayLadderError, RelaySelection};
 pub use name::{NameError, SwarmName};
 
-const PREFIX: &str = "ahs";
-
-/// Id format version. A single byte reserved so the encoding can evolve;
-/// an unknown version is rejected.
-const VERSION: u8 = 1;
 const SEED_LEN: usize = 32;
 /// Wire bound for the encoded name in bytes. `SwarmName::new` caps the
 /// name at `ident::MAX_CHARS` scalar values; each is at most 4 UTF-8
@@ -46,7 +41,9 @@ const SEED_LEN: usize = 32;
 /// 1-byte length field).
 const NAME_MAX_BYTES: usize = super::ident::MAX_CHARS * 4;
 
-/// A swarm identifier — Base58Check payload with an `ahs` prefix.
+/// A swarm identifier — a `🐝` [`token`](super::token) of type
+/// [`Swarm`](super::token::TokenType::Swarm); the `version`/`type` framing
+/// lives in the token codec, this payload is just the body below.
 ///
 /// The token carries the random `seed` plus the swarm's [`SwarmConfig`]
 /// (rate limit + lookups); **no peer address is ever stored**. The
@@ -59,7 +56,6 @@ const NAME_MAX_BYTES: usize = super::ident::MAX_CHARS * 4;
 /// Wire format (little-endian):
 ///
 /// ```text
-/// [1 byte version]
 /// [32 bytes seed]
 /// [1 byte name length in bytes, 1..=128]
 /// [N bytes name (UTF-8, <=32 scalars, charset enforced by SwarmName)]
@@ -123,8 +119,7 @@ impl Swarm {
     fn encode_bytes(&self) -> Vec<u8> {
         let config = self.config.to_bytes();
         let mut buf =
-            Vec::with_capacity(1 + SEED_LEN + 1 + self.name.as_bytes().len() + 2 + config.len());
-        buf.push(VERSION);
+            Vec::with_capacity(SEED_LEN + 1 + self.name.as_bytes().len() + 2 + config.len());
         buf.extend_from_slice(&self.seed);
         // SwarmName guarantees 1..=128 UTF-8 bytes, so a 1-byte length is safe.
         buf.push(self.name.len_u8());
@@ -138,12 +133,6 @@ impl Swarm {
 
     fn decode_bytes(bytes: &[u8]) -> Result<Self> {
         let mut pos = 0usize;
-        let version = *bytes.get(pos).context("Swarm identifier too short")?;
-        pos += 1;
-        if version != VERSION {
-            bail!("Unsupported swarm id version: {version}");
-        }
-
         let seed_slice = bytes
             .get(pos..pos + SEED_LEN)
             .context("Swarm identifier too short")?;
@@ -180,50 +169,19 @@ impl Swarm {
 
 impl fmt::Display for Swarm {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let bytes = self.encode_bytes();
-        let encoded = base58check_encode(&bytes);
-        write!(f, "{PREFIX}{encoded}")
+        f.write_str(&token::encode(TokenType::Swarm, &self.encode_bytes()))
     }
-}
-
-fn checksum(bytes: &[u8]) -> [u8; 4] {
-    let first = Sha256::digest(bytes);
-    let second = Sha256::digest(first);
-    let mut out = [0u8; 4];
-    out.copy_from_slice(&second[..4]);
-    out
-}
-
-fn base58check_encode(payload: &[u8]) -> String {
-    let mut with_checksum = payload.to_vec();
-    with_checksum.extend_from_slice(&checksum(payload));
-    bs58::encode(with_checksum).into_string()
-}
-
-fn base58check_decode(encoded: &str) -> Result<Vec<u8>> {
-    let decoded = bs58::decode(encoded)
-        .into_vec()
-        .context("Invalid Base58 swarm encoding")?;
-    if decoded.len() < 4 {
-        bail!("Swarm identifier too short");
-    }
-    let (payload, received_checksum) = decoded.split_at(decoded.len() - 4);
-    let expected_checksum = checksum(payload);
-    if received_checksum != expected_checksum {
-        bail!("Invalid swarm checksum");
-    }
-    Ok(payload.to_vec())
 }
 
 impl FromStr for Swarm {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self> {
-        let payload = s
-            .strip_prefix(PREFIX)
-            .context("Invalid swarm prefix: expected 'ahs'")?;
-        let bytes = base58check_decode(payload)?;
-        Self::decode_bytes(&bytes)
+        let (kind, payload) = token::decode(s)?;
+        if kind != TokenType::Swarm {
+            bail!("not a swarm id: wrong token type");
+        }
+        Self::decode_bytes(&payload)
     }
 }
 
@@ -257,7 +215,7 @@ mod swarm_tests {
     fn round_trip_loopback() {
         let swarm = Swarm::new(dummy_seed(), dummy_name(), SwarmConfig::loopback());
         let encoded = swarm.to_string();
-        assert!(encoded.starts_with("ahs"));
+        assert!(encoded.starts_with("🐝"));
         let decoded: Swarm = encoded.parse().unwrap();
         assert_eq!(decoded.seed(), swarm.seed());
         assert_eq!(decoded.name, swarm.name);
@@ -312,7 +270,7 @@ mod swarm_tests {
     #[test]
     fn invalid_prefix_rejected() {
         let encoded = Swarm::new(dummy_seed(), dummy_name(), SwarmConfig::loopback()).to_string();
-        let bad = format!("xxx{}", &encoded[3..]);
+        let bad = format!("xxx{}", &encoded["🐝".len()..]);
         assert!(bad.parse::<Swarm>().is_err());
     }
 
@@ -320,7 +278,7 @@ mod swarm_tests {
     fn non_ahs_prefix_rejected() {
         let encoded = Swarm::new(dummy_seed(), dummy_name(), SwarmConfig::loopback()).to_string();
         for bad_prefix in ["sw1", "xyz", "AHS"] {
-            let bad = format!("{}{}", bad_prefix, &encoded[3..]);
+            let bad = format!("{}{}", bad_prefix, &encoded["🐝".len()..]);
             assert!(
                 bad.parse::<Swarm>().is_err(),
                 "expected reject for prefix {bad_prefix}",
@@ -341,14 +299,6 @@ mod swarm_tests {
     #[test]
     fn truncated_bytes_rejected() {
         assert!(Swarm::decode_bytes(&[0u8; 10]).is_err());
-    }
-
-    #[test]
-    fn unknown_version_rejected() {
-        let swarm = Swarm::new(dummy_seed(), dummy_name(), SwarmConfig::loopback());
-        let mut bytes = swarm.encode_bytes();
-        bytes[0] = 2; // an unknown version byte
-        assert!(Swarm::decode_bytes(&bytes).is_err());
     }
 
     #[test]
@@ -414,7 +364,7 @@ mod swarm_tests {
             #[test]
             fn prop_prefix(seed in arb_seed(), name in arb_name()) {
                 let swarm = Swarm::new(seed, name, SwarmConfig::loopback());
-                prop_assert!(swarm.to_string().starts_with("ahs"));
+                prop_assert!(swarm.to_string().starts_with("🐝"));
             }
 
             #[test]

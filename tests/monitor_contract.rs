@@ -228,7 +228,7 @@ async fn test_ready_event_shape() {
     let mut creator = InProcNode::create("readyshape").await;
     let swarm = creator.swarm.clone();
     let nick = creator.nickname.clone();
-    assert!(swarm.starts_with("ahs"));
+    assert!(swarm.starts_with("🐝"));
     assert!(!nick.is_empty());
 
     let events = creator.json_events();

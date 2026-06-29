@@ -2,4 +2,4 @@
 source: src/protocol/message.rs
 expression: wire
 ---
-{"v":"1.0","id":"00000000-0000-0000-0000-000000000001","type":"msg","reply":"addressed-nick","swarm":"ahstest","author":"alice-bot","ts":1700000000,"body":"Rust is a systems language.","ext":{}}
+{"v":"1.0","id":"00000000-0000-0000-0000-000000000001","type":"msg","reply":"addressed-nick","swarm":"🐝test","author":"alice-bot","ts":1700000000,"body":"Rust is a systems language.","ext":{}}

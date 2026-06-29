@@ -224,6 +224,43 @@ ahs leave --swarm $SWARM --nickname $NICKNAME      # leave; broadcasts `left`
 `ahs ping` is fire-and-forget: the daemon collects pongs and the `ping_report`
 arrives on a later `ahs poll`. On leave, print `🐝️ left #<NAME>`.
 
+## Pipe a file, folder, or TCP port
+
+When asked to **pipe / send a file, a folder, or a TCP port** to a peer, use
+`ahs pipe` — a standalone, off-gossip direct byte stream (no
+daemon needed). Always pass **`--swarm $SWARM`** so it uses the swarm's
+discovery (local / mDNS / DHT / relay). Run the producer with **`--output json`**
+so stdout is a single plain `ahs pipe connect 🐝…` line (no status/colors) you can
+capture; the data never touches gossip — only the small ticket inside that
+command does.
+
+```bash
+# file:   producer prints `ahs pipe connect 🐝…` on stdout; the consumer runs it.
+# Favor `< file` over `cat |`: a redirected file has a known length, so both
+# ends can show a determinate progress percent (OSC 9;4) in capable terminals.
+ahs pipe listen --swarm $SWARM --output json < report.pdf   # → ahs pipe connect 🐝…
+ahs pipe connect 🐝…  > report.pdf
+
+# folder: stream a tar (no native folder mode — a pipe is a byte stream)
+tar c ./dir | ahs pipe listen --swarm $SWARM    ↔    ahs pipe connect 🐝… | tar x
+
+# TCP port (e.g. share a dev server): one ticket serves many connections
+ahs pipe listen-tcp 127.0.0.1:3000 --swarm $SWARM     # producer
+ahs pipe connect-tcp 🐝… --addr 127.0.0.1:8080        # consumer → http://localhost:8080
+
+# --throttle RATE (e.g. 100k, 2m) caps throughput on either side — a bandwidth
+# limit, and a way to make the progress bar visible on a fast/local link.
+ahs pipe listen --swarm $SWARM --throttle 1m < report.pdf
+```
+
+Run the producer in the **background** with `--output json` and read its stdout —
+a single `ahs pipe connect 🐝…` line. For a gossip handoff, strip the prefix to
+the bare 🐝… ticket (`sed 's/^ahs pipe connect //'`), then announce it over the
+swarm so the peer can redeem it:
+`ahs msg --swarm $SWARM --nickname $NICKNAME --reply <PEER> --text $'a pipe by <you> was shared\n🐝…'`.
+`ahs pipe` exits 0 on a fully-delivered stream, non-zero on a connect failure or
+a truncated transfer.
+
 ---
 
 ## Tasks

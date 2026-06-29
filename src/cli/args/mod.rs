@@ -17,6 +17,7 @@ mod msg;
 mod output;
 mod peers;
 mod ping;
+mod pipe;
 mod poll;
 mod ready;
 mod shared;
@@ -29,6 +30,7 @@ pub(crate) use msg::MsgOpts;
 pub(crate) use output::OutputFormat;
 pub(crate) use peers::PeersOpts;
 pub(crate) use ping::PingOpts;
+pub(crate) use pipe::PipeAction;
 pub(crate) use poll::PollOpts;
 pub(crate) use ready::ReadyOpts;
 pub(crate) use shared::SharedServerOpts;
@@ -130,6 +132,16 @@ pub(crate) enum Commands {
     Peers {
         #[command(flatten)]
         opts: PeersOpts,
+    },
+
+    /// Stream stdin to a peer, or a peer's stream to stdout (off-gossip, direct P2P).
+    ///
+    /// A standalone byte pipe: `pipe listen` reads stdin and prints
+    /// a `🐝…` ticket on stderr; `pipe connect <ticket>` streams the bytes to
+    /// stdout. No running daemon required.
+    Pipe {
+        #[command(subcommand)]
+        action: PipeAction,
     },
 
     /// Wait until a swarm daemon is serving, then exit.

@@ -45,6 +45,7 @@ mod tests {
                 | Commands::Msg { .. }
                 | Commands::Poll { .. }
                 | Commands::Ping { .. }
+                | Commands::Pipe { .. }
                 | Commands::Mcp { .. }
                 | Commands::Man
                 | Commands::Exchange { .. }
