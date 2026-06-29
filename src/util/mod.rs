@@ -16,13 +16,21 @@ pub(crate) mod resident_memory;
 pub(crate) mod tuning;
 pub(crate) mod version;
 
-/// The `<swarm_prefix>-<nick>` filename stem — the first 16 characters
-/// of the swarm identifier. Shared by both the socket name
-/// ([`consts::SOCKET_DIR`]) and the log file name
-/// ([`logs::log_file_path`]), so it lives here rather than in either module.
+/// The per-swarm folder name — the first 16 characters of the swarm
+/// identifier. The stem of every per-swarm file (socket / log / state), so it
+/// lives here rather than in any one module. See [`swarm_runtime_dir`].
 #[must_use]
 pub fn swarm_prefix(swarm_id: &str) -> String {
     swarm_id.chars().take(16).collect()
+}
+
+/// A swarm's runtime folder — `<RUNTIME_DIR>/<swarm-prefix>/`. All of one
+/// swarm's per-member files (`<nick>.tracing.log`, `<nick>.ipc.sock`,
+/// `<nick>.state.json`) live here, so the socket, log, and state-file path
+/// builders all derive from it.
+#[must_use]
+pub(crate) fn swarm_runtime_dir(swarm_id: &str) -> std::path::PathBuf {
+    std::path::Path::new(consts::RUNTIME_DIR).join(swarm_prefix(swarm_id))
 }
 
 #[cfg(test)]

@@ -12,7 +12,7 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use common::{
-    CONNECT_TIMEOUT, InProcNode, MSG_TIMEOUT, Msg, Node, POLL, RECOVERY_TIMEOUT, SOCKET_DIR, bin,
+    CONNECT_TIMEOUT, InProcNode, MSG_TIMEOUT, Msg, Node, POLL, RECOVERY_TIMEOUT, RUNTIME_DIR, bin,
     cli_message, cli_message_raw, cli_peers, cli_ping, cli_poll, cli_poll_wait, serial_guard,
     socket_path, tmp_log, trace_log, wait_total, wait_until,
 };
@@ -29,6 +29,46 @@ use serde_json::json;
 const RENDEZVOUS_HANDOFF: Duration = Duration::from_secs(36);
 
 // ── tests ─────────────────────────────────────────────────────────────────────
+
+/// Wire contract for the `info` IPC + `doctor` active-swarms scan: a live
+/// daemon answers `info` over its socket with its own identity, so
+/// `doctor --output json` lists it under "Active swarms" with the full swarm
+/// id and name. `--no-probe` keeps this to the fast local-socket scan (no
+/// net-report), so the test stays offline-safe.
+#[test]
+fn doctor_lists_active_swarm_as_json() {
+    let _serial = serial_guard();
+
+    let (node, swarm) = Node::create_named("itest-doctor");
+    assert!(node.wait_ready(&swarm), "daemon never ready");
+
+    let out = common::test_cmd()
+        .args(["doctor", "--no-probe", "--output", "json"])
+        .output()
+        .expect("doctor command failed to spawn");
+    assert!(
+        out.status.success(),
+        "doctor failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("\"sections\""),
+        "doctor json shape:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("Active swarms"),
+        "no Active swarms section:\n{stdout}"
+    );
+    assert!(
+        stdout.contains(swarm.as_str()),
+        "active swarm {swarm} not listed:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("itest-doctor"),
+        "swarm name not listed:\n{stdout}"
+    );
+}
 
 /// Basic sanity: a broadcast message is received by the non-sending node.
 /// The node whose IPC socket is used will NOT receive its own broadcast;
@@ -211,14 +251,10 @@ fn test_ipc_socket_isolation() {
     assert!(joiner.wait_ready(&swarm), "joiner socket never appeared");
 
     let prefix = agent_habilis_swarm::swarm_prefix(&swarm);
-    let sockets: Vec<_> = fs::read_dir(SOCKET_DIR)
-        .expect("socket dir missing")
+    let sockets: Vec<_> = fs::read_dir(format!("{RUNTIME_DIR}/{prefix}"))
+        .expect("swarm runtime dir missing")
         .flatten()
-        .filter(|entry| {
-            let file_name = entry.file_name();
-            let file_name = file_name.to_string_lossy();
-            file_name.starts_with(prefix.as_str()) && file_name.ends_with(".sock")
-        })
+        .filter(|entry| entry.file_name().to_string_lossy().ends_with(".sock"))
         .collect();
 
     assert!(

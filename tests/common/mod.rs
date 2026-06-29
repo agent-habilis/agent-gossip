@@ -15,10 +15,10 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
-// The single source of truth for the socket dir lives in the shared
+// The single source of truth for the runtime base dir lives in the shared
 // crate (a dev-dependency); re-export it so test code keeps using
-// `common::SOCKET_DIR` without a divergent copy.
-pub(crate) use agent_habilis_swarm::SOCKET_DIR;
+// `common::RUNTIME_DIR` without a divergent copy.
+pub(crate) use agent_habilis_swarm::RUNTIME_DIR;
 
 pub(crate) const CONNECT_TIMEOUT: Duration = Duration::from_mins(1);
 /// Steady-state delivery budget: how long a meshed peer may take to surface a
@@ -143,19 +143,18 @@ pub(crate) fn tmp_log(tag: &str) -> PathBuf {
 
 pub(crate) fn socket_path(swarm: &str, nickname: &str) -> String {
     format!(
-        "{SOCKET_DIR}/{}-{nickname}.sock",
+        "{RUNTIME_DIR}/{}/{nickname}.ipc.sock",
         agent_habilis_swarm::swarm_prefix(swarm)
     )
 }
 
 /// A node's tracing-sink log (distinct from its captured stdout/stderr
-/// in `Node::log`). Mirrors `agent_habilis_swarm::logs::log_file_path`: same
-/// `<swarm_prefix>-<nick>` stem, under the per-test `AHS_LOG_DIR`. Use
-/// this to assert on `tracing` output (warn/info) the operator stream
-/// never carries.
+/// in `Node::log`). Mirrors `agent_habilis_swarm::logs::log_file_path`:
+/// `<swarm_prefix>/<nick>.tracing.log` under the per-test log dir. Use this to
+/// assert on `tracing` output (warn/info) the operator stream never carries.
 pub(crate) fn trace_log(swarm: &str, nickname: &str) -> String {
     let path = format!(
-        "{}/{}-{nickname}.log",
+        "{}/{}/{nickname}.tracing.log",
         test_log_dir(),
         agent_habilis_swarm::swarm_prefix(swarm)
     );

@@ -69,7 +69,7 @@ consume it). Launch the daemon under the Monitor tool so its JSON events push as
 notifications instead of needing to be polled:
 
 ```
-command: "ahsw create [--name {NAME}] --state-file /tmp/agent-habilis/swarm/sessions/${PPID}.json --no-interactive --output json"
+command: "ahsw create [--name {NAME}] --no-interactive --output json"
 description: "swarm"
 persistent: true
 timeout_ms: 300000
@@ -82,11 +82,6 @@ The binary no longer takes `--model`/`--harness`; what each agent runs on is
 swarm metadata, not a daemon concern. You report it yourself into the **meta**
 channel once the swarm is up (see "Report your model into meta" below), and
 peers read it back from there (`/swarm:status`, handover/task pickers).
-
-The Monitor runs the command in the same shell environment as Bash, so
-`${PPID}` expands to the parent Claude Code process — the same per-agent
-key the sibling skills (`msg`, `leave`, …) use to find this file. Type
-`${PPID}` verbatim into the command; do not substitute it yourself.
 
 Add `--public` if the user requests cross-network connectivity (e.g.
 connecting from different machines or networks). Add `--relay {URL}`
@@ -124,10 +119,12 @@ Output block (it already names the fix). If absent, print nothing.
 The self-presence `joined` event arriving in the same Monitor batch is
 redundant with the output below — skip it.
 
-The daemon persists `swarm`, `name`, and `nickname` to the
-`--state-file` path, so this skill writes nothing — it is read-only.
-Sibling skills (`msg`, `reply`, `leave`, `ping`) read those
-keys from there.
+The daemon persists `swarm`, `name`, `nickname`, and live count to its
+own state file (`/tmp/agent-habilis/swarm/<swarm-prefix>/<nick>.state.json`,
+beside its socket + log), so this skill writes nothing — it is read-only. Sibling
+skills (`msg`, `reply`, `leave`, `ping`) don't read that file; they carry
+`$SWARM`/`$NICKNAME` from the `ready` event above and address the daemon over
+its socket.
 
 ## CLI fallback path — only when Monitor is unavailable
 

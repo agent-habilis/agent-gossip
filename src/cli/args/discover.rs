@@ -55,7 +55,7 @@ mod tests {
                 | Commands::Ready { .. }
                 | Commands::Plug { .. }
                 | Commands::Unplug { .. }
-                | Commands::Status => panic!("expected Discover"),
+                | Commands::Doctor { .. } => panic!("expected Discover"),
             }
         }
         // Bare discover ⇒ no explicit directory (defaults to global downstream).

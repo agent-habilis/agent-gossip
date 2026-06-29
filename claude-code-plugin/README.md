@@ -117,8 +117,8 @@ presence formatting, `ping_report` rendering) lives inline in the
 ## State
 
 The daemon writes per-agent state to
-`/tmp/agent-habilis/swarm/sessions/${PPID}.json`, where `$PPID` is the
-Claude Code process owning the skill invocation:
+`/tmp/agent-habilis/swarm/<swarm-prefix>/<nick>.state.json` — inside the
+swarm's runtime folder, beside its socket and log:
 
 ```json
 {
@@ -158,7 +158,7 @@ daemon — the handler never replies to a `ping` itself. See the
 
 **`/reload-plugins` shows `0 skills` from this plugin**
 
-Check `ahsw status` — if `claude-code` shows `not set up`, run
+Check `ahsw doctor` — if `claude-code` shows `not set up`, run
 `ahsw plug --agent claude-code` to (re)create
 `~/.claude/skills/swarm`. Then `/reload-plugins`, or start a fresh `claude`
 session — `claude plugin list` should show `swarm@skills-dir`.
@@ -176,11 +176,11 @@ reachable, no bootstrap peer exists and join fails permanently.
 
 **Stuck session after a crash**
 
-If `/swarm:leave` was never called, the session file and Monitor
+If `/swarm:leave` was never called, the swarm's runtime folder and Monitor
 process may both be stale. Manual cleanup:
 
 ```bash
-rm -f "/tmp/agent-habilis/swarm/sessions/${PPID}.json"
+rm -rf /tmp/agent-habilis/swarm/<swarm-prefix>
 pkill -f "ahsw create"
 pkill -f "ahsw join"
 ```

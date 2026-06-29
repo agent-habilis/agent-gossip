@@ -169,6 +169,19 @@ where
     None
 }
 
+/// Probe every rung of `ladder` for reachability, in order, returning each
+/// rung's online status. Unlike [`select_bootstrap_rung`] this does **not**
+/// short-circuit at the first reachable rung — `doctor --swarm` shows the full
+/// ladder's health, not just the bootstrap pick.
+pub(crate) async fn probe_ladder(ladder: &[RelayUrl], per_rung: Duration) -> Vec<(RelayUrl, bool)> {
+    let mut statuses = Vec::with_capacity(ladder.len());
+    for rung in ladder {
+        let reachable = relay_rung_reachable(rung, per_rung).await;
+        statuses.push((rung.clone(), reachable));
+    }
+    statuses
+}
+
 /// Probe a single relay rung: bind an ephemeral endpoint pinned to just
 /// this relay and wait for `online()` within `timeout`. Closes the probe
 /// endpoint before returning.

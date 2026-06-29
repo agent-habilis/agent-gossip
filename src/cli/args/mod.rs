@@ -10,6 +10,7 @@ use clap::{Parser, Subcommand};
 
 mod create;
 mod discover;
+mod doctor;
 mod exchange;
 mod join;
 mod lookup;
@@ -26,6 +27,7 @@ mod state;
 
 pub(crate) use create::CreateOpts;
 pub(crate) use discover::DiscoverOpts;
+pub(crate) use doctor::DoctorOpts;
 pub(crate) use exchange::ExchangeOpts;
 pub(crate) use join::JoinOpts;
 pub(crate) use meta::{MetaAction, MetaOpts};
@@ -47,9 +49,9 @@ pub(crate) use state::{StateAction, StateOpts};
     after_help = "a tool by agent-habilis █🫈"
 )]
 pub(crate) struct Cli {
-    /// Per-member log directory (default: the OS temp dir). Hidden — a
-    /// test/ops knob; production reads `crate::util::consts::LOG_SUBPATH`
-    /// under the temp dir. Global so it applies to any subcommand.
+    /// Per-member log directory (default: `crate::util::consts::RUNTIME_DIR`,
+    /// with a per-swarm `<prefix>/` subfolder). Hidden — a test/ops knob.
+    /// Global so it applies to any subcommand.
     #[arg(long, global = true, hide = true)]
     pub log_dir: Option<std::path::PathBuf>,
 
@@ -232,9 +234,17 @@ pub(crate) enum Commands {
         agents: Vec<super::agent::Agent>,
     },
 
-    /// Report which agents have the swarm integrations installed.
+    /// Diagnose the swarm environment and network.
     ///
-    /// Read-only: for each agent (Claude Code, pi, generic) prints whether the
-    /// integration is set up, not set up, or the agent is absent, plus its path.
-    Status,
+    /// With no `--swarm`: a machine-health report — binary/OS, which agents
+    /// have the integration installed (and where), the local network
+    /// capability (UDP, NAT/hole-punch behavior, public address, relay
+    /// latency), and the swarms running on this machine. With `--swarm <🐝…>`:
+    /// decode that swarm's declared connection methods and live-probe which
+    /// reach it (down to direct-vs-relay path per peer). `--output json` for
+    /// the machine form.
+    Doctor {
+        #[command(flatten)]
+        opts: DoctorOpts,
+    },
 }

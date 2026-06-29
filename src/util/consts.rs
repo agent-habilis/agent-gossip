@@ -3,15 +3,13 @@
 //! external test/bench crates assert against are re-exported from the crate
 //! root (see `lib.rs`); the rest stay crate-internal.
 
-/// Unix socket runtime dir. Hardcoded `/tmp` base — short (avoids the
-/// macOS `AF_UNIX` `sun_path` ~104-byte limit). Sibling agent-habilis
-/// projects share the `/tmp/agent-habilis/` namespace.
-pub const SOCKET_DIR: &str = "/tmp/agent-habilis/swarm/sockets";
-
-/// Default per-member log dir, relative to the OS temp dir
-/// (`std::env::temp_dir()`); the `--log-dir` flag overrides. Resolved by
-/// [`crate::util::logs::log_dir`].
-pub(crate) const LOG_SUBPATH: &str = "agent-habilis/swarm/logs";
+/// Runtime base for all per-swarm files. Each swarm gets a folder
+/// `<RUNTIME_DIR>/<swarm-prefix>/` holding its members' `<nick>.tracing.log`,
+/// `<nick>.ipc.sock`, and `<nick>.state.json`. Hardcoded `/tmp` base — short
+/// (avoids the macOS `AF_UNIX` `sun_path` ~104-byte limit) and shared with
+/// sibling agent-habilis projects in the `/tmp/agent-habilis/` namespace.
+/// Per-swarm paths are built via [`crate::util::swarm_runtime_dir`].
+pub const RUNTIME_DIR: &str = "/tmp/agent-habilis/swarm";
 
 /// Max bytes a per-member log file grows before rotating to `<file>.1`
 /// (active + one backup ⇒ bounded at `2 ×` this). The `--log-max-bytes` flag

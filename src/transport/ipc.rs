@@ -13,19 +13,19 @@ use crate::protocol::{
     ExchangeId, ExchangeKind, ExchangePhase, MessageBody, MessageId, Nickname, SwarmId,
 };
 use crate::util::bounded_read::{LineRead, read_bounded_line};
-use crate::util::consts::{MAX_IPC_COMMAND_BYTES, MAX_IPC_RESPONSE_BYTES, SOCKET_DIR};
-use crate::util::swarm_prefix;
+use crate::util::consts::{MAX_IPC_COMMAND_BYTES, MAX_IPC_RESPONSE_BYTES, RUNTIME_DIR};
+use crate::util::swarm_runtime_dir;
 use crate::util::tuning::{
     IPC_ACCEPT_BACKOFF_MAX_SECS, IPC_ACCEPT_BACKOFF_MIN_MS, IPC_IO_TIMEOUT_SECS,
 };
 
 /// Returns the IPC endpoint identifier for a specific agent on a swarm —
-/// a filesystem socket path (the project targets Unix only).
+/// a filesystem socket path (the project targets Unix only). Lives in the
+/// swarm's runtime folder beside its `<nick>.tracing.log` / `<nick>.state.json`.
 pub(crate) fn socket_path(swarm: &SwarmId, nickname: &Nickname) -> String {
     format!(
-        "{SOCKET_DIR}/{}-{}.sock",
-        swarm_prefix(swarm.as_str()),
-        nickname
+        "{}/{nickname}.ipc.sock",
+        swarm_runtime_dir(swarm.as_str()).display()
     )
 }
 
@@ -112,10 +112,19 @@ pub(crate) enum IpcCommand {
     /// `meta`-channel counterpart of [`StateGet`](IpcCommand::StateGet).
     #[serde(rename = "meta_get")]
     MetaGet { swarm: SwarmId },
+    /// Identity probe for `doctor`: the daemon answers with its own swarm id,
+    /// human name, nickname, and participant count. Carries no swarm — a
+    /// socket serves exactly one swarm and `doctor` is asking *which*, so it
+    /// addresses the daemon by socket path, not by id.
+    #[serde(rename = "info")]
+    Info,
 }
 
 impl IpcCommand {
-    pub(crate) fn swarm_id(&self) -> &SwarmId {
+    /// The swarm a command is addressed to, used to derive the socket path in
+    /// [`send`]. `None` for [`IpcCommand::Info`], which is sent by socket path
+    /// directly (the daemon answers with its own id).
+    pub(crate) fn swarm_id(&self) -> Option<&SwarmId> {
         match self {
             IpcCommand::Msg { swarm, .. }
             | IpcCommand::Poll { swarm, .. }
@@ -125,7 +134,8 @@ impl IpcCommand {
             | IpcCommand::StatePatch { swarm, .. }
             | IpcCommand::StateGet { swarm }
             | IpcCommand::MetaPatch { swarm, .. }
-            | IpcCommand::MetaGet { swarm } => swarm,
+            | IpcCommand::MetaGet { swarm } => Some(swarm),
+            IpcCommand::Info => None,
         }
     }
 }
@@ -181,9 +191,12 @@ pub(crate) fn json_stale(error: &str) -> String {
 pub(crate) fn bind(swarm: &SwarmId, nickname: &Nickname) -> Result<Listener> {
     let path = socket_path(swarm, nickname);
 
-    // Best-effort cleanup of a stale socket file and (re)create the parent dir.
+    // Best-effort cleanup of a stale socket file and (re)create the swarm's
+    // runtime folder (the socket's parent).
     let _ = std::fs::remove_file(&path);
-    let _ = std::fs::create_dir_all(SOCKET_DIR);
+    if let Some(parent) = std::path::Path::new(&path).parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
 
     let name = to_name(&path)?;
     let listener = ListenerOptions::new()
@@ -298,11 +311,38 @@ async fn handle_connection(stream: Stream, tx: mpsc::Sender<IpcMessage>) {
 
 /// Client-side: send an IPC command to the running server and return the raw JSON response.
 pub(crate) async fn send(cmd: &IpcCommand, nickname: &Nickname) -> Result<String> {
-    let path = socket_path(cmd.swarm_id(), nickname);
+    let swarm = cmd
+        .swarm_id()
+        .expect("send() is only used for swarm-addressed commands; Info uses send_to_path");
+    let path = socket_path(swarm, nickname);
     let name = to_name(&path).map_err(|error| anyhow::anyhow!("invalid socket name: {error}"))?;
     let stream = Stream::connect(name).await.map_err(|_| anyhow::anyhow!(
         "No active swarm server running for nickname '{nickname}'. Start one with `ahsw create` or `ahsw join {{🐝...}} --nickname {nickname}`."
     ))?;
+    exchange(stream, cmd).await
+}
+
+/// Client-side: send an IPC command to a specific socket path. `doctor` uses
+/// this to query each live daemon discovered under [`RUNTIME_DIR`] — a
+/// missing/dead socket is a plain `Err` the caller can skip.
+///
+/// # Errors
+/// The path is not valid UTF-8, the socket can't be connected (no live
+/// daemon), or the I/O exchange fails.
+pub(crate) async fn send_to_path(path: &std::path::Path, cmd: &IpcCommand) -> Result<String> {
+    use anyhow::Context;
+    let path_str = path.to_str().context("socket path is not valid UTF-8")?;
+    let name =
+        to_name(path_str).map_err(|error| anyhow::anyhow!("invalid socket name: {error}"))?;
+    let stream = Stream::connect(name)
+        .await
+        .map_err(|error| anyhow::anyhow!("connect {path_str}: {error}"))?;
+    exchange(stream, cmd).await
+}
+
+/// Write `cmd`, half-close, and read back the single-line JSON response.
+/// The shared body of [`send`] and [`send_to_path`].
+async fn exchange(stream: Stream, cmd: &IpcCommand) -> Result<String> {
     let (read_half, mut write_half) = tokio::io::split(stream);
 
     let json = serde_json::to_string(cmd)?;
@@ -315,6 +355,24 @@ pub(crate) async fn send(cmd: &IpcCommand, nickname: &Nickname) -> Result<String
         LineRead::Eof => Ok(String::new()),
         LineRead::TooLong => anyhow::bail!("IPC response too large"),
     }
+}
+
+/// Every live daemon's IPC socket on this machine — one `<nick>.ipc.sock`
+/// inside each swarm's folder (`<RUNTIME_DIR>/<swarm-prefix>/`). Best-effort:
+/// a missing [`RUNTIME_DIR`] yields an empty list. Drives `doctor`'s
+/// active-swarm discovery, so it walks the per-swarm subfolders.
+pub(crate) fn active_socket_paths() -> Vec<std::path::PathBuf> {
+    let Ok(swarm_dirs) = std::fs::read_dir(RUNTIME_DIR) else {
+        return Vec::new();
+    };
+    swarm_dirs
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.is_dir())
+        .flat_map(|dir| std::fs::read_dir(dir).into_iter().flatten().flatten())
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "sock"))
+        .collect()
 }
 
 #[cfg(test)]
@@ -362,9 +420,9 @@ mod tests {
             &SwarmId::from("🐝abcdefghijkmnpqr"),
             &Nickname::from("my-nick"),
         );
-        assert!(path.starts_with("/tmp/agent-habilis/swarm/sockets/"));
-        assert!(path.ends_with("-my-nick.sock"));
-        assert!(path.contains("🐝abcdefghijkmnpq")); // 16 chars
+        assert!(path.starts_with("/tmp/agent-habilis/swarm/"));
+        assert!(path.ends_with("/my-nick.ipc.sock"));
+        assert!(path.contains("🐝abcdefghijkmnpq")); // 16-char swarm folder
     }
 
     // ── IpcCommand serialization ───────────────────────────────────
@@ -378,7 +436,18 @@ mod tests {
         };
         let json = serde_json::to_string(&cmd).unwrap();
         let parsed: IpcCommand = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed.swarm_id().as_str(), "🐝test");
+        assert_eq!(
+            parsed.swarm_id().expect("Msg is swarm-addressed").as_str(),
+            "🐝test"
+        );
+    }
+
+    #[test]
+    fn ipc_command_info_round_trip() {
+        let json = serde_json::to_string(&IpcCommand::Info).unwrap();
+        assert_eq!(json, r#"{"command":"info"}"#);
+        let parsed: IpcCommand = serde_json::from_str(&json).unwrap();
+        assert!(parsed.swarm_id().is_none(), "Info carries no swarm");
     }
 
     #[test]
@@ -401,7 +470,8 @@ mod tests {
             | IpcCommand::StatePatch { .. }
             | IpcCommand::MetaPatch { .. }
             | IpcCommand::MetaGet { .. }
-            | IpcCommand::StateGet { .. } => panic!("expected Msg"),
+            | IpcCommand::StateGet { .. }
+            | IpcCommand::Info => panic!("expected Msg"),
         }
     }
 
@@ -426,7 +496,8 @@ mod tests {
             | IpcCommand::StatePatch { .. }
             | IpcCommand::MetaPatch { .. }
             | IpcCommand::MetaGet { .. }
-            | IpcCommand::StateGet { .. } => panic!("expected Poll"),
+            | IpcCommand::StateGet { .. }
+            | IpcCommand::Info => panic!("expected Poll"),
         }
     }
 
@@ -447,7 +518,8 @@ mod tests {
             | IpcCommand::StatePatch { .. }
             | IpcCommand::MetaPatch { .. }
             | IpcCommand::MetaGet { .. }
-            | IpcCommand::StateGet { .. } => panic!("expected Ping"),
+            | IpcCommand::StateGet { .. }
+            | IpcCommand::Info => panic!("expected Ping"),
         }
     }
 
@@ -481,7 +553,8 @@ mod tests {
             | IpcCommand::StatePatch { .. }
             | IpcCommand::MetaPatch { .. }
             | IpcCommand::MetaGet { .. }
-            | IpcCommand::StateGet { .. } => panic!("expected Exchange"),
+            | IpcCommand::StateGet { .. }
+            | IpcCommand::Info => panic!("expected Exchange"),
         }
     }
 
@@ -502,7 +575,8 @@ mod tests {
             | IpcCommand::StatePatch { .. }
             | IpcCommand::MetaPatch { .. }
             | IpcCommand::MetaGet { .. }
-            | IpcCommand::StateGet { .. } => panic!("expected Peers"),
+            | IpcCommand::StateGet { .. }
+            | IpcCommand::Info => panic!("expected Peers"),
         }
     }
 
@@ -683,7 +757,8 @@ mod tests {
                     | IpcCommand::StatePatch { .. }
                     | IpcCommand::MetaPatch { .. }
                     | IpcCommand::MetaGet { .. }
-                    | IpcCommand::StateGet { .. } => {
+                    | IpcCommand::StateGet { .. }
+                    | IpcCommand::Info => {
                         let _ = resp_tx.send(json_error("unexpected command"));
                     }
                 }

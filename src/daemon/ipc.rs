@@ -12,6 +12,7 @@ use std::time::Duration;
 
 use crate::daemon::state::{EventLoopState, PingRound, PollResponder};
 use crate::output;
+use crate::protocol::swarm::SwarmName;
 use crate::protocol::{Message, Nickname, SwarmId};
 use crate::transport::ipc::{IpcCommand, json_ack, json_error, json_ok_msg, json_stale};
 use crate::util::tuning::ping_window_secs;
@@ -25,13 +26,16 @@ use crate::gossip::{
 /// can refresh `last_sent_at` for heartbeat suppression.
 #[expect(
     clippy::too_many_lines,
-    reason = "a dispatch match with one arm per IpcCommand; the state/meta channel pair doubles \
-              the patch/get arms but each is a thin delegate"
+    clippy::too_many_arguments,
+    reason = "a dispatch match with one arm per IpcCommand (the state/meta channel pair \
+              doubles the patch/get arms), plus the daemon's own identity (swarm/name/author), \
+              the live state, gossip sender, and output sink"
 )]
 pub(crate) async fn handle_ipc_command(
     cmd: IpcCommand,
     resp_tx: oneshot::Sender<String>,
     swarm: &SwarmId,
+    name: &SwarmName,
     author: &Nickname,
     state: &mut EventLoopState,
     sender: &GossipSender,
@@ -178,7 +182,31 @@ pub(crate) async fn handle_ipc_command(
             let _ = resp_tx.send(state_get_response(state, crate::protocol::Channel::Meta));
             false
         }
+        IpcCommand::Info => {
+            let _ = resp_tx.send(info_response(swarm, name, author, state));
+            false
+        }
     }
+}
+
+/// The `doctor` identity probe response: this daemon's own swarm id, human
+/// name, nickname, and swarm size. `participant_count` matches the field name
+/// `peers` / the state file / MCP `swarm_info` already use for swarm size
+/// (roster peers + 1 for self).
+fn info_response(
+    swarm: &SwarmId,
+    name: &SwarmName,
+    author: &Nickname,
+    state: &EventLoopState,
+) -> String {
+    serde_json::json!({
+        "ok": true,
+        "swarm": swarm.as_str(),
+        "name": name.as_str(),
+        "nickname": author.as_str(),
+        "participant_count": state.roster_snapshot().count,
+    })
+    .to_string()
 }
 
 /// Map a state-patch outcome to its IPC response JSON and whether anything was
