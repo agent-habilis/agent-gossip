@@ -1,4 +1,4 @@
-//! The agent/integration model shared by `plug`, `unplug`, and `status`:
+//! The agent/integration model shared by `plug`, `unplug`, and `doctor`:
 //! the artifacts embedded in this binary, which agents exist, where each one's
 //! integration lives, and whether it's set up / up to date. Mirrors
 //! `../browse`'s `util::skill` (embed + agent + state co-located).
@@ -43,7 +43,7 @@ pub(crate) enum Agent {
     Generic,
 }
 
-/// Whether the swarm integration is set up for an agent, as `status` reports.
+/// Whether the swarm integration is set up for an agent, as `doctor` reports.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum AgentState {
     /// Set up, and the installed copy matches the one embedded in this binary.
@@ -182,7 +182,7 @@ pub(crate) fn home_dir() -> Result<PathBuf> {
 }
 
 /// Each agent, its install path, and its state — in display order. Drives
-/// `ahsw status`.
+/// `ahsw doctor`'s Integrations section.
 pub(crate) fn states(home: &Path) -> Vec<(Agent, PathBuf, AgentState)> {
     Agent::ALL
         .into_iter()
@@ -198,7 +198,7 @@ pub(crate) const SKILL_DRIFT_MSG: &str = "⚠️ swarm skill out of date. Run `a
 
 /// A one-line drift warning if any installed integration has fallen behind the
 /// binary (`OutOfDate`), else `None`. The daemon folds this into its `ready`
-/// event so a stale skill nags the agent at swarm start; `ahsw status` is the
+/// event so a stale skill nags the agent at swarm start; `ahsw doctor` is the
 /// on-demand counterpart.
 pub(crate) fn drift_warning(home: &Path) -> Option<String> {
     let any_stale = states(home)

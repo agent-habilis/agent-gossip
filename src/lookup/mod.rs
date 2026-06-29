@@ -3,6 +3,7 @@
 //! its own submodule — [`mdns`] (LAN multicast), [`dht`] (mainline DHT),
 //! and [`relay`] (the relay ladder + bootstrap-rung selection/failover).
 
+mod capability;
 mod dht;
 mod mdns;
 mod relay;
@@ -22,8 +23,10 @@ use iroh_gossip::proto::HyparviewConfig;
 
 use crate::protocol::swarm::{LookupOpts, RelayChoice};
 
+pub(crate) use capability::{NetworkCapability, probe as capability_probe};
 pub(crate) use relay::{
-    RungRefresh, plan_rung_refresh, relay_ladder, select_bootstrap_rung, spawn_relay_monitor,
+    RungRefresh, plan_rung_refresh, probe_ladder, relay_ladder, select_bootstrap_rung,
+    spawn_relay_monitor,
 };
 
 /// Build an iroh endpoint for a swarm's lookups.

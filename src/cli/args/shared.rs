@@ -33,13 +33,13 @@ pub(crate) struct SharedServerOpts {
     #[arg(long, default_value_t = DEFAULT_MAX_DIRECT_PEERS)]
     pub max_peers: usize,
 
-    /// Session state file. When set, the daemon merges
-    /// `{swarm, nickname, participant_count, last_updated}` into this
-    /// JSON file — preserving any other keys, e.g. those written by
-    /// the `/swarm:*` skills — on every peer set change and on a
-    /// ~10s heartbeat, and deletes the file on clean shutdown. Used
-    /// by external tools (e.g. a shell statusline) to render live
-    /// participant count and liveness without IPC.
+    /// Override the session state-file path. The daemon writes
+    /// `{swarm, name, nickname, participant_count, ready, last_updated}` to a
+    /// JSON file on every peer-set change and a ~10s heartbeat, and deletes it
+    /// on clean shutdown — for external tools (e.g. a shell statusline) to
+    /// render live count + liveness without IPC. Defaults to
+    /// `<RUNTIME_DIR>/<swarm-prefix>/<nick>.state.json` (beside the socket +
+    /// log); pass this to write elsewhere instead.
     #[arg(long)]
     pub state_file: Option<std::path::PathBuf>,
 

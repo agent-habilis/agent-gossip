@@ -53,7 +53,7 @@ SYNOPSIS
 
        ahsw plug   [--agent claude-code|pi|generic]
        ahsw unplug [--agent claude-code|pi|generic]
-       ahsw status
+       ahsw doctor [--swarm 🐝...] [--no-probe] [--output human|json]
 
        ahsw --help | --version
 
@@ -554,11 +554,21 @@ COMMANDS
               Remove what plug installed (symmetric). With no --agent, the
               agents that have it installed are used.
 
-       status
-              Report, per agent, whether the swarm integration is up to date
-              (installed copy matches this binary), out of date, not set up, or
-              the agent is absent, with its path. Read-only — the quick "what's
-              installed?" check for plug/unplug.
+       doctor [--swarm 🐝...] [--no-probe] [--output human|json]
+              Diagnose the environment and network, flutter-doctor style — each
+              line a check with a [OK]/[!]/[x] verdict; a hard failure exits
+              non-zero. With no --swarm, a machine-health report in four
+              sections: Environment (version, OS/arch, log + socket dirs);
+              Integrations (per agent — claude-code, pi, generic — whether the
+              installed skill is up to date, out of date, not set up, or absent,
+              with its path); Network (local bind, UDP, NAT/hole-punch behavior,
+              public address, relay latency); and Active swarms (each daemon
+              running on this machine, with its id, name, nickname, and size).
+              With --swarm 🐝..., decode that swarm's declared connection methods
+              (relay ladder, mDNS, DHT, or loopback ports) and live-probe which
+              reach it, down to the direct-vs-relay path to its rendezvous.
+              --no-probe skips the live network probes; --output json emits the
+              structured report.
 
 GLOBAL OPTIONS
        --help     Print usage. Works on any subcommand: ahsw CMD --help.
@@ -627,7 +637,7 @@ JSON EVENTS
        ready  First event. Carries the build version, swarm id, name, and
               your nickname. Carries an optional "drift" field (a warning
               string, omitted when absent) when the installed skill has
-              fallen behind this binary; run `ahsw status` to inspect, then
+              fallen behind this binary; run `ahsw doctor` to inspect, then
               `ahsw plug` to refresh.
 
                  {"event":"ready","version":"0.4.4 (1c362892 dirty:false)",
@@ -1004,13 +1014,15 @@ ENVIRONMENT
               If set, disables ANSI color in human output.
 
 FILES
-       Developer logs and IPC sockets live under the OS temp directory:
+       Each swarm's runtime files live together in a per-swarm folder, keyed by
+       the first 16 chars of the swarm id:
 
-              <tmp>/agent-habilis/swarm/logs/<swarm-prefix>-<nick>.log
-              <tmp>/agent-habilis/swarm/sockets/
+              /tmp/agent-habilis/swarm/<swarm-prefix>/<nick>.tracing.log
+              /tmp/agent-habilis/swarm/<swarm-prefix>/<nick>.ipc.sock
+              /tmp/agent-habilis/swarm/<swarm-prefix>/<nick>.state.json
 
-       On Linux <tmp> is /tmp; on macOS it is a per-user temp directory. Log
-       message bodies are redacted by default so the files are safe to share.
+       The --log-dir flag overrides the log base. Log message bodies are
+       redacted by default so the files are safe to share.
 
        A swarm advertised over the web publishes its identifier at:
 

@@ -79,7 +79,7 @@ mod tests {
             | Commands::Ready { .. }
             | Commands::Plug { .. }
             | Commands::Unplug { .. }
-            | Commands::Status => panic!("expected Create"),
+            | Commands::Doctor { .. } => panic!("expected Create"),
         }
     }
 
@@ -153,7 +153,7 @@ mod tests {
             | Commands::Ready { .. }
             | Commands::Plug { .. }
             | Commands::Unplug { .. }
-            | Commands::Status => panic!("expected Create"),
+            | Commands::Doctor { .. } => panic!("expected Create"),
         };
         let lookups = resolve_lookups(opts.public, opts.lookups.to_set());
         assert!(lookups.mdns && !lookups.dht);

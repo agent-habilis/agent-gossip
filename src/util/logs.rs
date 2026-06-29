@@ -2,10 +2,10 @@
 //! (which writes the file) and the rest of the binary agree on one source of
 //! truth here.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::OnceLock;
 
-use crate::util::consts::{LOG_FILE_MAX_BYTES, LOG_SUBPATH};
+use crate::util::consts::{LOG_FILE_MAX_BYTES, RUNTIME_DIR};
 use crate::util::swarm_prefix;
 
 /// Log config, installed **once** at startup from the `--log-dir` /
@@ -15,7 +15,7 @@ use crate::util::swarm_prefix;
 /// `AHS_LOG_MAX_BYTES` env reads.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct LogConfig {
-    /// `--log-dir` override; `None` ⇒ [`LOG_SUBPATH`] under the OS temp dir.
+    /// `--log-dir` override; `None` ⇒ the per-swarm folder under [`RUNTIME_DIR`].
     pub(crate) dir: Option<PathBuf>,
     /// `--log-max-bytes` override; `None` ⇒ [`LOG_FILE_MAX_BYTES`].
     pub(crate) max_bytes: Option<u64>,
@@ -36,26 +36,29 @@ fn config() -> LogConfig {
     LOG_CONFIG.get().cloned().unwrap_or_default()
 }
 
-/// Per-member log dir. The `--log-dir` flag overrides; default is
-/// [`LOG_SUBPATH`] under the OS temp dir (`std::env::temp_dir()` — `/tmp/...`
-/// on Linux, a per-user dir on macOS). Sockets use
-/// [`crate::util::consts::SOCKET_DIR`].
+/// Log base dir. The `--log-dir` flag overrides; default is [`RUNTIME_DIR`]
+/// (`/tmp/agent-habilis/swarm`), the same base sockets + state files use. The
+/// per-swarm subfolder is added by [`log_file_path`].
 #[must_use]
 pub(crate) fn log_dir() -> PathBuf {
-    resolve_log_dir(config().dir, &std::env::temp_dir())
+    resolve_log_dir(config().dir)
 }
 
 /// Pure resolver split out of [`log_dir`] so the policy is testable: the
-/// override wins verbatim, else the log subpath is joined onto the temp base.
-fn resolve_log_dir(override_dir: Option<PathBuf>, temp_base: &Path) -> PathBuf {
-    override_dir.unwrap_or_else(|| temp_base.join(LOG_SUBPATH))
+/// override wins verbatim, else the [`RUNTIME_DIR`] default.
+fn resolve_log_dir(override_dir: Option<PathBuf>) -> PathBuf {
+    override_dir.unwrap_or_else(|| PathBuf::from(RUNTIME_DIR))
 }
 
-/// Per-member log file — `<swarm_prefix>-<nick>.log` (same stem as the
-/// socket) under [`log_dir`].
+/// Per-member log file — `<swarm_prefix>/<nick>.tracing.log`, inside the
+/// swarm's runtime folder beside its `<nick>.ipc.sock` / `<nick>.state.json`.
+/// The sink's `open()` creates the parent dir, so the nesting needs no
+/// pre-creation here.
 #[must_use]
 pub(crate) fn log_file_path(swarm_id: &str, nickname: &str) -> PathBuf {
-    log_dir().join(format!("{}-{}.log", swarm_prefix(swarm_id), nickname))
+    log_dir()
+        .join(swarm_prefix(swarm_id))
+        .join(format!("{nickname}.tracing.log"))
 }
 
 /// Max bytes a log file grows before rotating to `<file>.1`. The
@@ -77,24 +80,19 @@ pub(crate) fn log_raw() -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::path::{Path, PathBuf};
+    use std::path::PathBuf;
 
     use super::resolve_log_dir;
 
     #[test]
-    fn default_is_log_subpath_under_temp_base() {
-        let dir = resolve_log_dir(None, Path::new("/tmp"));
-        assert!(
-            dir.ends_with("agent-habilis/swarm/logs"),
-            "default must nest under the log subpath: {}",
-            dir.display()
-        );
-        assert!(dir.starts_with("/tmp"));
+    fn default_is_runtime_dir() {
+        let dir = resolve_log_dir(None);
+        assert_eq!(dir, PathBuf::from("/tmp/agent-habilis/swarm"));
     }
 
     #[test]
     fn override_wins_verbatim() {
-        let dir = resolve_log_dir(Some(PathBuf::from("/custom/x")), Path::new("/tmp"));
+        let dir = resolve_log_dir(Some(PathBuf::from("/custom/x")));
         assert_eq!(dir, PathBuf::from("/custom/x"));
     }
 }

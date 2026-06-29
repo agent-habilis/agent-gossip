@@ -20,8 +20,8 @@ use crate::transport::ipc::{self, IpcCommand};
 pub(crate) mod agent;
 mod args;
 mod discover;
+mod doctor;
 mod plug;
-mod status;
 
 pub(crate) use args::Cli;
 use args::{
@@ -115,7 +115,7 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
         // self-contained, no repo checkout needed (like `Man`).
         Commands::Plug { agents } => plug::plug(&agents),
         Commands::Unplug { agents } => plug::unplug(&agents),
-        Commands::Status => status::run(),
+        Commands::Doctor { opts } => doctor::run(opts).await,
     }
 }
 

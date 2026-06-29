@@ -67,7 +67,7 @@ pub(crate) fn install() -> LogSink {
     sink
 }
 
-/// Identity resolved: open `<swarm_prefix>-<nick>.log` (truncate),
+/// Identity resolved: open `<swarm-prefix>/<nick>.tracing.log` (truncate),
 /// flush the buffer, pass through after. First-attach-wins — already
 /// `Attached`/`Stderr` is a no-op. The `discover` → `join` handoff
 /// calls [`detach`] in between so this opens a *fresh* file for the

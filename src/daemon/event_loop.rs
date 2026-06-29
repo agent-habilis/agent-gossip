@@ -73,7 +73,18 @@ pub(crate) async fn run(cfg: EventLoopConfig) -> Result<()> {
         };
 
     let started = Instant::now();
-    let state_file = state_file.map(|path| StateFile::new(path, &swarm_str, &author, &swarm_name));
+    // CLI `create`/`join` daemons default their state file into the swarm's
+    // runtime folder (`<prefix>/<nick>.state.json`, beside the socket + log)
+    // when no `--state-file` override is given. In-process embed/MCP sessions
+    // (`!exit_on_quit`) keep writing nothing.
+    let state_file = state_file
+        .or_else(|| {
+            exit_on_quit.then(|| {
+                crate::util::swarm_runtime_dir(swarm_str.as_str())
+                    .join(format!("{author}.state.json"))
+            })
+        })
+        .map(|path| StateFile::new(path, &swarm_str, &author, &swarm_name));
     let mut state = EventLoopState::new(state_file, started, identity);
     // Advertise path only: the directory re-broadcast task reads the
     // live count from here. Set before the first write below so the
@@ -303,7 +314,7 @@ async fn event_loop(loop_state: EventLoop) -> Result<()> {
             }
             () = sleep_until_opt(state.earliest_poll_deadline()) => poll_deadline_arm(&mut state),
             ipc_msg = recv_opt(&mut ipc_rx) => {
-                if !handle_ipc_arm(ipc_msg, &swarm_str, &author, &mut state, &sender, &output).await {
+                if !handle_ipc_arm(ipc_msg, &swarm_str, &swarm_name, &author, &mut state, &sender, &output).await {
                     ipc_rx = None;
                 }
             }
@@ -1062,6 +1073,7 @@ async fn handle_stdin_arm(
 async fn handle_ipc_arm(
     ipc_msg: Option<IpcMessage>,
     swarm: &SwarmId,
+    name: &SwarmName,
     author: &Nickname,
     state: &mut EventLoopState,
     sender: &GossipSender,
@@ -1070,7 +1082,9 @@ async fn handle_ipc_arm(
     match ipc_msg {
         None => false,
         Some((cmd, resp_tx)) => {
-            if ipc::handle_ipc_command(cmd, resp_tx, swarm, author, state, sender, output).await {
+            if ipc::handle_ipc_command(cmd, resp_tx, swarm, name, author, state, sender, output)
+                .await
+            {
                 state.last_sent_at = Instant::now();
             }
             true

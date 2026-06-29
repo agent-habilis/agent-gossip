@@ -3,9 +3,9 @@
 //! numbers, symbols, emoji) except:
 //!
 //! - control characters, whitespace, and the path separators `/` `\` —
-//!   unsafe to embed raw in socket/log filenames (`transport::ipc`
-//!   builds `<prefix>-<nick>.sock`/`.log`) or in line-oriented output
-//!   (logs, `--output json`);
+//!   unsafe to embed raw in the per-member filenames (`transport::ipc`
+//!   builds `<prefix>/<nick>.ipc.sock`, and the log/state files mirror it)
+//!   or in line-oriented output (logs, `--output json`);
 //! - the Unicode `Bidi_Control` set (text-reordering Trojan-Source
 //!   class, e.g. U+202E), which can disguise how a name renders;
 //! - `<` `>` `#`, reserved for the prose display conventions `<nick>`

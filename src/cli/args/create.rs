@@ -104,7 +104,7 @@ mod tests {
             | Commands::Ready { .. }
             | Commands::Plug { .. }
             | Commands::Unplug { .. }
-            | Commands::Status => {
+            | Commands::Doctor { .. } => {
                 panic!("expected Create command")
             }
         }
@@ -133,7 +133,7 @@ mod tests {
             | Commands::Ready { .. }
             | Commands::Plug { .. }
             | Commands::Unplug { .. }
-            | Commands::Status => {
+            | Commands::Doctor { .. } => {
                 panic!("expected Create command")
             }
         }
@@ -159,7 +159,7 @@ mod tests {
             | Commands::Ready { .. }
             | Commands::Plug { .. }
             | Commands::Unplug { .. }
-            | Commands::Status => {
+            | Commands::Doctor { .. } => {
                 panic!("expected Create command")
             }
         }
@@ -202,7 +202,7 @@ mod tests {
                 | Commands::Ready { .. }
                 | Commands::Plug { .. }
                 | Commands::Unplug { .. }
-                | Commands::Status => panic!("expected Create"),
+                | Commands::Doctor { .. } => panic!("expected Create"),
             }
         }
         assert_eq!(
@@ -259,7 +259,7 @@ mod tests {
             | Commands::Ready { .. }
             | Commands::Plug { .. }
             | Commands::Unplug { .. }
-            | Commands::Status => {
+            | Commands::Doctor { .. } => {
                 panic!("expected Create command")
             }
         }
