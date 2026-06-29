@@ -5,12 +5,12 @@
 //! - **External inputs**: stdin (interactive mode), IPC commands
 //!   (`msg` / `poll`), and incoming gossip events.
 //! - **Time-driven maintenance**: heartbeat keepalives, silence
-//!   sweeps, gossip healer, rate-limit pruning.
+//!   sweeps, gossip healer.
 //! - **Shutdown**: ctrl-c / SIGTERM.
 //!
 //! `daemon` is orchestration + plumbing: the `select!` loop, IPC
 //! command application (`ipc`), shared handler context (`ctx`),
-//! in-memory accounting (`state`, `message_log`, `rate_limit`),
+//! in-memory accounting (`state`, `message_log`),
 //! `config`, `setup`, housekeeping `timers`. The behavioral
 //! subsystems are crate-root siblings, each its own `RUST_LOG`
 //! target: `crate::gossip`, `crate::lifecycle`, `crate::beacon`,
@@ -25,17 +25,10 @@ pub(crate) mod ipc;
 // `DigestWindow`; still crate-internal.
 pub(crate) mod message_log;
 pub(crate) mod params;
-pub(crate) mod state_doc;
-pub(crate) mod state_log;
-// Normally private to the daemon; widened to `pub(crate)` only under the
-// `bench` feature so `harness::bench` can reach `SwarmRateLimiter`. Non-bench
-// builds keep the original surface.
-#[cfg(feature = "bench")]
-pub(crate) mod rate_limit;
-#[cfg(not(feature = "bench"))]
-mod rate_limit;
 pub(crate) mod setup;
 pub(crate) mod state;
+pub(crate) mod state_doc;
+pub(crate) mod state_log;
 // Local, seq-ordered record of surfaced events — the `poll` / `fetch_messages`
 // history. Distinct from `message_log` (the cross-node anti-entropy buffer).
 pub(crate) mod surfaced;

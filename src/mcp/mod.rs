@@ -132,11 +132,6 @@ struct CreateSwarmArgs {
     /// ordered ladder.
     #[serde(default)]
     relay: Option<String>,
-    /// Per-author messages-per-minute cap baked into the swarm id and
-    /// enforced swarm-wide (every joiner inherits it). `0` disables rate
-    /// limiting. Default 60.
-    #[serde(default = "default_rate_limit")]
-    rate_limit_per_min: u16,
     /// List this swarm in a directory so others can find it with
     /// `ahsw discover` (no id to share). Requires `network: "public"`. Note:
     /// advertising broadcasts the join token — the swarm becomes open to
@@ -155,10 +150,6 @@ struct CreateSwarmArgs {
     /// don't copy the example. Self-reported, announced alongside `model`.
     #[serde(default)]
     harness: Option<String>,
-}
-
-fn default_rate_limit() -> u16 {
-    crate::util::consts::RATE_LIMIT_PER_MIN
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -430,7 +421,6 @@ impl AgentSwarmServer {
             },
             advertise: args.advertise,
             directory,
-            rate_limit_per_min: args.rate_limit_per_min,
             max_peers: DEFAULT_MAX_DIRECT_PEERS,
             model: args.model,
             harness: args.harness,
@@ -573,17 +563,11 @@ impl AgentSwarmServer {
         };
         let body = MessageBody::new(args.text)
             .map_err(|error| McpError::invalid_params(format!("{error}"), None))?;
-        match session
+        let (id, message) = session
             .send_message(body, reply)
             .await
-            .map_err(to_mcp_error)?
-        {
-            Some((id, message)) => ok_json(SendMessageResult { id, message }),
-            // Sender-side rate limiter dropped it (same per-author quota
-            // the receiver enforces). A deliberate drop, not an error, so
-            // the agent can back off rather than retry as a failure.
-            None => ok_json(serde_json::json!({ "rate_limited": true })),
-        }
+            .map_err(to_mcp_error)?;
+        ok_json(SendMessageResult { id, message })
     }
 
     #[tool(
@@ -679,7 +663,7 @@ impl AgentSwarmServer {
     }
 
     #[tool(
-        description = "Send one leg of an exchange to a specific peer. An exchange is a directed, phased conversation correlated by `exchange_id` (mint a UUID for the opening \"offer\", echo it on every later leg). `kind` is the behavior (\"handover\" delegates a task/plan; \"task\" runs+verifies). Phases: \"offer\" (brief), \"accept\"/\"decline\" (entry), \"context\" (Q&A), \"progress\" (a done/total beat, e.g. text \"35/100\"), \"done\" (request close + verification instructions), \"confirm\"/\"change\" (verify), \"cancel\". For \"offer\" the `to` nickname must be a current participant (check `swarm_info`). Returns the new message id and authoritative echo, or `{rate_limited:true}` if the sender-side limiter dropped it."
+        description = "Send one leg of an exchange to a specific peer. An exchange is a directed, phased conversation correlated by `exchange_id` (mint a UUID for the opening \"offer\", echo it on every later leg). `kind` is the behavior (\"handover\" delegates a task/plan; \"task\" runs+verifies). Phases: \"offer\" (brief), \"accept\"/\"decline\" (entry), \"context\" (Q&A), \"progress\" (a done/total beat, e.g. text \"35/100\"), \"done\" (request close + verification instructions), \"confirm\"/\"change\" (verify), \"cancel\". For \"offer\" the `to` nickname must be a current participant (check `swarm_info`). Returns the new message id and authoritative echo."
     )]
     async fn send_exchange(
         &self,
@@ -703,8 +687,7 @@ impl AgentSwarmServer {
             .send_exchange(to, exchange_id, kind, phase, body)
             .await
         {
-            Ok(Some((id, message))) => ok_json(SendMessageResult { id, message }),
-            Ok(None) => ok_json(serde_json::json!({ "rate_limited": true })),
+            Ok((id, message)) => ok_json(SendMessageResult { id, message }),
             Err(error) => {
                 let message = error.to_string();
                 if message.contains("unknown participant") {
@@ -725,7 +708,10 @@ impl AgentSwarmServer {
     ) -> Result<CallToolResult, McpError> {
         let guard = self.session.lock().await;
         let session = guard.as_ref().ok_or_else(not_in_swarm_error)?;
-        match session.apply_state_patch(args.patch, args.if_doc_hash).await {
+        match session
+            .apply_state_patch(args.patch, args.if_doc_hash)
+            .await
+        {
             Ok(()) => ok_json(serde_json::json!({ "ok": true })),
             Err(error) => Err(McpError::invalid_params(error.to_string(), None)),
         }
@@ -811,9 +797,6 @@ offer → accept/decline → [context] → done → confirm/change. A handover c
 the handoff (initiator auto-confirms; you then do the work on your own); a task \
 returns its result on the `done` leg for the initiator to confirm. Don't display \
 exchange legs as chat lines — drive the flow.
-
-RATE LIMIT: a send over the per-identity quota returns `{rate_limited:true}` (a \
-deliberate drop, not an error) — back off rather than retry.
 
 SHARED STATE is one JSON document the whole swarm shares, separate from chat. \
 Read it with `get_state`; change it with `apply_state_patch` (an RFC 6902 patch). \

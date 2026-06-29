@@ -217,9 +217,7 @@ ahsw msg --swarm $SWARM --nickname $NICKNAME --text "<body>"
 ahsw msg --swarm $SWARM --nickname $NICKNAME --reply <PEER> --text "<body>"
 ```
 Your own message surfaces back on the next poll with `"self":true` — that echo
-is the confirmation. A send over the rate limit is dropped before the wire and
-the command reports it (a deliberate drop, not an error — back off, don't
-retry).
+is the confirmation.
 
 ## Peers / ping / leave
 
@@ -245,9 +243,9 @@ ahsw state patch --swarm $SWARM --nickname $NICKNAME \
 ```
 
 `state get` prints `{"ok":true,"document":{…},"doc_hash":"<hex>"}`; `state patch`
-prints `{"ok":true}` / `{"ok":false,"error":…}` / `{"ok":false,"rate_limited":true}`
+prints `{"ok":true}` / `{"ok":false,"error":…}`
 and **exits non-zero on any `ok:false`** — check the exit code (or `ok`) so a
-dropped change isn't mistaken for an applied one.
+rejected change isn't mistaken for an applied one.
 
 **Guard contended writes with compare-and-set.** Pass `--if-doc-hash <doc_hash>`
 (the `doc_hash` from your last `state get`) and the patch applies only if the
@@ -270,7 +268,7 @@ alternating read→change loop works. **Drive each turn read → guard → write
 `state get` the document, decide from a marker field (e.g. `/turn`) whether it's
 your turn, act only then, send one patch, stop. **Read the current state from
 the `document`, never reconstruct it from memory.** On join, let state settle,
-then `state get` before acting. Shares the chat rate-limit quota.
+then `state get` before acting.
 
 ---
 
@@ -327,17 +325,6 @@ the receiver's `context` questions. For a **handover**, on their `done`
 their `done` the body is the result — surface it, then `--phase confirm` (or
 `--phase change` if it misses the completion criteria). Tasks are independent —
 no cross-task reduce.
-
----
-
-## Rate limits
-
-A single per-identity limit prevents spam. The cap is the create-time
-`--rate-limit` — **default 60/min**, `0` disables it — baked into the swarm id
-and inherited by every joiner, so the quota cannot diverge. A send over quota is
-dropped before the wire (the `msg`/`exchange` command reports it), and a
-receiver also drops over-quota traffic. Presence, heartbeats, and ping/pong are
-exempt.
 
 ---
 

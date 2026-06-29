@@ -14,7 +14,6 @@ identically: no extra flags, no out-of-band config.
   stored, so the swarm is creator-independent and survives the creator's death.
 - **name** — human label (1..=32 scalars).
 - **config**:
-  - **rate limit** — messages/minute per author; `0` = unlimited.
   - **lookups** — the `mdns` / `dht` / `relay` allowlist. Relay is
     `disabled` | `pinned` (the n0 default ladder) | `custom` (an ordered URL
     ladder carried verbatim). No lookups ⇒ loopback-only; any lookup ⇒
@@ -31,7 +30,7 @@ Per-member / per-environment settings stay local and never travel in the hash:
 
 Everything in the hash is also mixed into the gossip **topic** derivation. Two
 members agree on a topic only if their entire config matches byte-for-byte — so
-a swarm cannot contain members running different rate limits or lookup sets,
+a swarm cannot contain members running different lookup sets,
 and a forged hash with a tampered field lands on a different topic and finds no
 peers. `join` is therefore *just the hash*.
 
@@ -40,7 +39,7 @@ peers. `join` is therefore *just the hash*.
 ```
 [1] version=1 [32] seed [1] name_len [name]
 [2] config_len
-  [2] rate_limit_per_min (u16, 0=unlimited)  [1] lookup-flags
+  [1] lookup-flags
   [if custom relay] [1] url_count ( [2] len [url] )*
 ```
 
@@ -59,7 +58,7 @@ rendezvous keypair, port ladder — are in `docs/discovery.md`.)
 ## Examples
 
 ```
-ahsw create --public --rate-limit 0             # unlimited, default lookups
+ahsw create --public                            # default lookups
 ahsw create --public --relay https://r.example  # custom relay ladder, baked in
 ahsw join 🐝…                                    # inherits ALL of the above
 ```

@@ -24,13 +24,12 @@ use crate::beacon;
 /// A typed in-process request from an embed/MCP session to the event
 /// loop — the shared alternative to the CLI's `IpcCommand`-over-socket
 /// (which must serialize). `Send` broadcasts a message and echoes back the
-/// canonical [`Message`] (`None` ⇒ dropped by the sender-side rate
-/// limiter); `Poll` reads the buffered history after a cursor.
+/// canonical [`Message`]; `Poll` reads the buffered history after a cursor.
 pub(crate) enum SessionRequest {
     Send {
         body: MessageBody,
         reply: Option<Nickname>,
-        resp: oneshot::Sender<Result<Option<Message>>>,
+        resp: oneshot::Sender<Result<Message>>,
     },
     Poll {
         after: Option<u64>,
@@ -40,16 +39,16 @@ pub(crate) enum SessionRequest {
         resp: oneshot::Sender<Vec<crate::daemon::surfaced::SurfacedEvent>>,
     },
     /// Send one leg of an exchange to `to`, correlated by `exchange_id`.
-    /// Echoes back the canonical [`Message`] (`None` ⇒ dropped by the
-    /// sender-side rate limiter), like [`Send`](SessionRequest::Send).
-    /// Addressee validation for `Offer` lives in `broadcast_exchange`.
+    /// Echoes back the canonical [`Message`], like
+    /// [`Send`](SessionRequest::Send). Addressee validation for `Offer`
+    /// lives in `broadcast_exchange`.
     Exchange {
         to: Nickname,
         exchange_id: ExchangeId,
         kind: ExchangeKind,
         phase: ExchangePhase,
         body: MessageBody,
-        resp: oneshot::Sender<Result<Option<Message>>>,
+        resp: oneshot::Sender<Result<Message>>,
     },
     /// Snapshot the live participant roster (active + quiet, recency-sorted).
     Peers {
@@ -72,8 +71,8 @@ pub(crate) enum SessionRequest {
     /// order. The substrate's generic read until typed projections land.
     StateSnapshot { resp: oneshot::Sender<Vec<String>> },
     /// Apply a JSON-Patch change to the shared state: validate against the
-    /// current document + rate-limit, compose the body, then sign + gossip.
-    /// `Err` carries an invalid-patch or rate-limited reason.
+    /// current document, compose the body, then sign + gossip.
+    /// `Err` carries an invalid-patch reason.
     StatePatch {
         patch: serde_json::Value,
         /// Optional compare-and-set guard: the document hash from the caller's
@@ -194,10 +193,6 @@ pub(crate) struct EventLoopConfig {
     /// unreachable to new peers.
     pub router: Router,
     pub max_peers: usize,
-    /// Per-author messages-per-minute cap decoded from the swarm id
-    /// (`0` ⇒ no rate limit). Uniform across the swarm because it travels
-    /// in the hash; the event loop builds the `SwarmRateLimiter` from it.
-    pub rate_limit_per_min: u16,
     /// Inputs for (re)building the co-hosted rendezvous endpoint.
     /// `rendezvous_params.id` doubles as the bootstrap-cache heal
     /// anchor and the participant-side neighbor-filter id;

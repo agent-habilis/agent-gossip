@@ -15,7 +15,7 @@ use iroh_gossip::api::GossipSender;
 use crate::daemon::SessionRequest;
 use crate::daemon::state::EventLoopState;
 use crate::output;
-use crate::protocol::identity::{self, Identity};
+use crate::protocol::identity::Identity;
 use crate::protocol::{
     ExchangeId, ExchangeKind, ExchangePhase, Message, MessageBody, MessageId, MessageKind,
     Nickname, SwarmId,
@@ -41,11 +41,9 @@ pub(crate) async fn broadcast_msg(sender: &GossipSender, msg: &Message) {
 
 /// Author + broadcast a durable `State` event, retaining it locally first.
 /// Gossip never echoes to self, so the author must hold what it authored or the
-/// state anti-entropy path could never serve it. The low-level primitive: it
-/// does not itself rate-limit (the patch path [`broadcast_state_patch`] charges
-/// the per-identity quota before calling in; the substrate membership path is
-/// exempt) and skips the per-author `Msg` hash chain — state lives in its own
-/// un-pruned log. When unmeshed the bytes are buffered for flush-on-connect;
+/// state anti-entropy path could never serve it. The low-level primitive skips
+/// the per-author `Msg` hash chain — state lives in its own un-pruned log.
+/// When unmeshed the bytes are buffered for flush-on-connect;
 /// even if that buffer is full the event is safe in the local state log, so
 /// anti-entropy backfills peers once meshed.
 ///
@@ -58,6 +56,10 @@ pub(crate) async fn broadcast_state(
     state: &mut EventLoopState,
     sender: &GossipSender,
     output: &output::Output,
+    // The pre-insert document, when the caller already derived it (the patch
+    // path computes it for the compare-and-set / validation). `None` ⇒ derive
+    // it here. Avoids a second full fold of the un-pruned state log per patch.
+    before: Option<serde_json::Value>,
 ) -> anyhow::Result<()> {
     let signed = Message::new_state(swarm, author, body).signed(&state.identity);
     // Serialize **before** the local insert: an oversize body fails here and the
@@ -67,7 +69,8 @@ pub(crate) async fn broadcast_state(
     // recoverable via anti-entropy; only a failed *serialize* is blocked.
     let bytes = signed.serialize()?;
     crate::logging::messages::log_out(&signed);
-    let before = crate::daemon::state_doc::derive_document(&state.state_log);
+    let before =
+        before.unwrap_or_else(|| crate::daemon::state_doc::derive_document(&state.state_log));
     state.state_log.insert(signed.clone());
     let after = crate::daemon::state_doc::derive_document(&state.state_log);
     // Surface our own change (is_self) when the document actually changed — a
@@ -89,7 +92,6 @@ pub(crate) async fn broadcast_state(
 /// The outcome of an attempted shared-state write.
 pub(crate) enum StatePatchOutcome {
     Applied,
-    RateLimited,
     /// The patch is structurally bad (malformed / out of subset / doesn't apply)
     /// — a permanent failure; retrying the same patch won't help.
     Invalid(String),
@@ -100,24 +102,22 @@ pub(crate) enum StatePatchOutcome {
 
 /// Collapse a [`broadcast_state_patch`] outcome into the `Result<()>` the embed
 /// `StatePatch` request returns: applied is `Ok`, every other case an error
-/// (the invalid/stale reason verbatim, or `rate limited`).
+/// (the invalid/stale reason verbatim).
 fn state_patch_reply(outcome: anyhow::Result<StatePatchOutcome>) -> anyhow::Result<()> {
     match outcome {
         Ok(StatePatchOutcome::Applied) => Ok(()),
         Ok(StatePatchOutcome::Invalid(why) | StatePatchOutcome::Stale(why)) => {
             Err(anyhow::anyhow!(why))
         }
-        Ok(StatePatchOutcome::RateLimited) => Err(anyhow::anyhow!("rate limited")),
         Err(error) => Err(error),
     }
 }
 
 /// The single shared-state write helper, shared by the IPC `state_patch`
 /// command and the embed `StatePatch` request. Validates the patch against the
-/// current document (frozen subset + applies cleanly), charges the per-identity
-/// message rate limit (F2), then composes the body and gossips via
-/// [`broadcast_state`]. No size check here — `Message::serialize` is the single
-/// size gate, inside `broadcast_state`.
+/// current document (frozen subset + applies cleanly), then composes the body
+/// and gossips via [`broadcast_state`]. No size check here —
+/// `Message::serialize` is the single size gate, inside `broadcast_state`.
 ///
 /// # Errors
 /// Propagates a `broadcast_state` failure (oversize body / broadcast refusal).
@@ -147,12 +147,11 @@ pub(crate) async fn broadcast_state_patch(
     if let Err(why) = crate::daemon::state_doc::validate_patch(&patch, &current) {
         return Ok(StatePatchOutcome::Invalid(why));
     }
-    let pubkey = identity::encode_pubkey(&state.identity.public());
-    if !state.rate_limiter.check(&pubkey) {
-        return Ok(StatePatchOutcome::RateLimited);
-    }
     let body = crate::daemon::state_doc::patch_body(patch)?;
-    broadcast_state(swarm, author, body, state, sender, output).await?;
+    // Reuse `current` as the pre-insert document — it is the same fold
+    // `broadcast_state` would otherwise recompute (no peer patch can interleave
+    // on the single-threaded loop between here and the insert).
+    broadcast_state(swarm, author, body, state, sender, output, Some(current)).await?;
     Ok(StatePatchOutcome::Applied)
 }
 
@@ -242,8 +241,7 @@ pub(crate) async fn handle_stdin_line(
         (body, None)
     };
     match broadcast_message(swarm, author, body, reply, state, sender, out).await {
-        Ok(SendOutcome::Sent(..)) => state.last_sent_at = Instant::now(),
-        Ok(SendOutcome::RateLimited) => {}
+        Ok(_) => state.last_sent_at = Instant::now(),
         Err(error) => out.report_error(&error),
     }
 }
@@ -297,27 +295,15 @@ fn commit_outbound(state: &mut EventLoopState, msg: &Message, out: &output::Outp
     retain_outbound(state, msg);
 }
 
-/// Outcome of a send through [`broadcast_message`]. `RateLimited` is a
-/// *drop*, not an error (mirrors the receiver-side drop) — returned to
-/// the caller so a programmatic sender (`ahsw msg`, MCP `send_message`)
-/// can tell the message was not emitted, distinct from a real failure.
-#[expect(
-    clippy::large_enum_variant,
-    reason = "transient return value, never stored in bulk; boxing the common Sent payload to shrink the rare RateLimited unit variant would just add an allocation to every send"
-)]
-pub(crate) enum SendOutcome {
-    Sent(MessageId, Message),
-    RateLimited,
-}
-
 /// Build, sign, log and gossip-broadcast one outbound message. The
 /// single source of truth for the send path: the CLI socket's IPC `Msg`
 /// command and the typed in-process `SessionRequest::Send` both funnel
-/// through here so they cannot drift. Rate-limited sends return
-/// [`SendOutcome::RateLimited`]; otherwise the new id and the canonical
+/// through here so they cannot drift. Returns the new id and the canonical
 /// `Message` so callers can echo it without re-parsing.
 ///
-/// The caller refreshes `state.last_sent_at` only on `Sent`.
+/// # Errors
+/// Propagates a [`Message::serialize`] failure (oversize body) and a gossip
+/// broadcast error, and errors if the unmeshed pending-outbound buffer is full.
 pub(crate) async fn broadcast_message(
     swarm: &SwarmId,
     author: &Nickname,
@@ -326,26 +312,11 @@ pub(crate) async fn broadcast_message(
     state: &mut EventLoopState,
     sender: &GossipSender,
     out: &output::Output,
-) -> anyhow::Result<SendOutcome> {
-    // Sender-side rate limit, symmetric with the receiver check in
-    // `recv::handle_gossip_received`: same limiter, same per-author
-    // quota — applied to our own author so we never broadcast traffic
-    // peers would only drop. Checked before build/print/log so a dropped
-    // send leaves no trace, just as the receiver drops before
-    // processing. The self bucket is never double-counted: self-authored
-    // inbound is filtered out earlier.
-    // Our own signing identity + its pubkey: the rate limiter keys on the
-    // verified pubkey (symmetric with the receiver, which keys on the
-    // sender's signed pubkey), and `build_msg_bytes` signs with it. Clone
-    // the Arc first so the immutable read is done before the `&mut state`
-    // rate-limiter / log mutations below.
+) -> anyhow::Result<(MessageId, Message)> {
+    // Our own signing identity: `build_msg_bytes` signs with it. Clone the
+    // Arc first so the immutable read is done before the `&mut state` log
+    // mutations below.
     let signer = state.identity.clone();
-    let our_pubkey = identity::encode_pubkey(&signer.public());
-    if !state.rate_limiter.check(&our_pubkey) {
-        out.info(&format!("rate limit exceeded for [{author}], dropping"));
-        tracing::debug!(%author, "send rate limit exceeded; not broadcasting");
-        return Ok(SendOutcome::RateLimited);
-    }
     // Stamp this Msg into our hash chain (Phase 2: seq + prev) and the
     // cross-author DAG (Phase 3: parents = the tips we've seen). After
     // building, advance the chain cursor and fold our own message into the
@@ -376,11 +347,12 @@ pub(crate) async fn broadcast_message(
         // seq, so the per-author chain stays contiguous. Dropping a queued
         // middle message would orphan its seq and leave peers a dangling
         // prev/parent that anti-entropy could never fill.
-        out.info("pending outbound buffer full; outbound message dropped");
         tracing::warn!("pending outbound buffer full; outbound message dropped");
-        return Ok(SendOutcome::RateLimited);
+        return Err(anyhow::anyhow!(
+            "pending outbound buffer full; message dropped"
+        ));
     }
-    Ok(SendOutcome::Sent(id, msg))
+    Ok((id, msg))
 }
 
 /// One outbound exchange leg's payload (addressee + correlation id + behavior +
@@ -396,10 +368,9 @@ pub(crate) struct ExchangeLeg {
 }
 
 /// Build, sign, log and gossip-broadcast one exchange leg. Sibling of
-/// [`broadcast_message`] for the typed `Exchange` kind: **content** legs share the
-/// per-author rate quota and the meshed/unmeshed retain paths, but the
-/// `Progress` phase is liveness plumbing — rate-limit-exempt and never
-/// retained. No hash-chain or DAG stamping (exchange legs are presence-like —
+/// [`broadcast_message`] for the typed `Exchange` kind: **content** legs take the
+/// meshed/unmeshed retain paths, but the `Progress` phase is liveness plumbing —
+/// never retained. No hash-chain or DAG stamping (exchange legs are presence-like —
 /// see [`MessageKind::Exchange`]). Always echoes the sender's own leg through
 /// `print_exchange` (an `exchange`/`exchange_progress` event with `self:true`), the same
 /// way an outbound `msg` echoes. Showing the leg to its *addressee* is the
@@ -421,7 +392,7 @@ pub(crate) async fn broadcast_exchange(
     state: &mut EventLoopState,
     sender: &GossipSender,
     out: &output::Output,
-) -> anyhow::Result<SendOutcome> {
+) -> anyhow::Result<(MessageId, Message)> {
     let ExchangeLeg {
         to,
         exchange_id,
@@ -433,13 +404,6 @@ pub(crate) async fn broadcast_exchange(
         return Err(anyhow::anyhow!("unknown participant '{to}'"));
     }
     let signer = state.identity.clone();
-    let our_pubkey = identity::encode_pubkey(&signer.public());
-    // Content legs share the Msg quota; Progress (plumbing) is exempt.
-    if crate::protocol::message::is_content_phase(phase) && !state.rate_limiter.check(&our_pubkey) {
-        out.info(&format!("rate limit exceeded for [{author}], dropping"));
-        tracing::debug!(%author, "send rate limit exceeded; not broadcasting exchange");
-        return Ok(SendOutcome::RateLimited);
-    }
     let msg =
         Message::new_exchange(swarm, author, to, exchange_id, kind, phase, body).signed(&signer);
     let bytes = Bytes::from(msg.serialize()?);
@@ -457,9 +421,10 @@ pub(crate) async fn broadcast_exchange(
         // Unmeshed: buffered for flush-on-connect; it *will* be sent in order.
         echo_and_retain_task(state, &msg, out);
     } else {
-        out.info("pending outbound buffer full; outbound message dropped");
         tracing::warn!("pending outbound buffer full; outbound message dropped");
-        return Ok(SendOutcome::RateLimited);
+        return Err(anyhow::anyhow!(
+            "pending outbound buffer full; message dropped"
+        ));
     }
     // Advance our own coarse state machine for the leg we just sent (resets
     // our debounce, advances the phase, counts content). Warn once if a
@@ -471,7 +436,7 @@ pub(crate) async fn broadcast_exchange(
         ));
         tracing::warn!("exchange content cap exceeded");
     }
-    Ok(SendOutcome::Sent(id, msg))
+    Ok((id, msg))
 }
 
 /// Handle one typed in-process [`SessionRequest`] (embed / MCP). `Send`
@@ -489,13 +454,11 @@ pub(crate) async fn handle_session_request(
 ) -> bool {
     match req {
         SessionRequest::Send { body, reply, resp } => {
-            let outcome =
-                broadcast_message(swarm, author, body, reply, state, sender, output).await;
-            let sent_ok = matches!(outcome, Ok(SendOutcome::Sent(..)));
-            let _ = resp.send(outcome.map(|sent| match sent {
-                SendOutcome::Sent(_id, msg) => Some(msg),
-                SendOutcome::RateLimited => None,
-            }));
+            let outcome = broadcast_message(swarm, author, body, reply, state, sender, output)
+                .await
+                .map(|(_id, msg)| msg);
+            let sent_ok = outcome.is_ok();
+            let _ = resp.send(outcome);
             sent_ok
         }
         SessionRequest::Poll {
@@ -531,11 +494,8 @@ pub(crate) async fn handle_session_request(
             };
             let outcome = broadcast_exchange(swarm, author, leg, state, sender, output)
                 .await
-                .map(|sent| match sent {
-                    SendOutcome::Sent(_id, msg) => Some(msg),
-                    SendOutcome::RateLimited => None,
-                });
-            let sent_ok = matches!(outcome, Ok(Some(_)));
+                .map(|(_id, msg)| msg);
+            let sent_ok = outcome.is_ok();
             let _ = resp.send(outcome);
             sent_ok
         }
@@ -544,7 +504,7 @@ pub(crate) async fn handle_session_request(
             false
         }
         SessionRequest::AppendState { body, resp } => {
-            let outcome = broadcast_state(swarm, author, body, state, sender, output).await;
+            let outcome = broadcast_state(swarm, author, body, state, sender, output, None).await;
             let sent_ok = outcome.is_ok();
             let _ = resp.send(outcome);
             sent_ok

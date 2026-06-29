@@ -62,7 +62,7 @@ async fn task_round_trips_result_to_initiator() {
     initiator
         .exchange("ex-worker", &tid, kind, ExchangePhase::Offer, brief)
         .await
-        .expect("offer within rate limit");
+        .expect("offer sent");
     assert!(worker.wait_exchange(ExchangePhase::Offer, TASK_WAIT).await);
 
     worker

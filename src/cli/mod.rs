@@ -178,7 +178,6 @@ async fn create(opts: CreateOpts) -> Result<()> {
     // borrow `opts`) before moving `opts.name`/`opts.nickname` out.
     let advertise = opts.advertise_selection();
     let config = SwarmConfig {
-        rate_limit_per_min: opts.rate_limit,
         lookups: resolve_lookups(opts.public, opts.lookups.to_set()),
     };
     // `resolve` validates `--advertise` against the config (never a silent
@@ -194,8 +193,8 @@ async fn create(opts: CreateOpts) -> Result<()> {
 }
 
 /// Join an existing swarm by its identifier (🐝...), a domain, or a
-/// supported git repo URL. The swarm's config (lookups + rate limit) is
-/// decoded from the id — `join` takes no lookup/rate flags.
+/// supported git repo URL. The swarm's config (lookups) is decoded from
+/// the id — `join` takes no lookup flags.
 async fn join(
     target: JoinTarget,
     nickname: Option<Nickname>,
@@ -211,21 +210,13 @@ struct MsgResponse {
     ok: bool,
     id: Option<MessageId>,
     error: Option<String>,
-    #[serde(default)]
-    rate_limited: bool,
 }
 
-/// Reduce an IPC send response (`msg` / `handover`, same
-/// `{ok,id,error,rate_limited}` shape) to the new message id, or a
-/// descriptive error. `what` names the operation for the rate-limit and
-/// missing-id messages. A rate-limited send is a deliberate drop, not a
-/// failure — surfaced as a (still non-zero) error so scripts see it wasn't
-/// sent.
+/// Reduce an IPC send response (`msg` / `handover`, same `{ok,id,error}`
+/// shape) to the new message id, or a descriptive error. `what` names the
+/// operation for the missing-id message.
 fn finish_send(resp: &str, what: &str) -> Result<MessageId> {
     let parsed: MsgResponse = serde_json::from_str(resp)?;
-    if parsed.rate_limited {
-        anyhow::bail!("rate limit exceeded — {what} not sent");
-    }
     if !parsed.ok {
         anyhow::bail!(
             "{}",
@@ -307,7 +298,7 @@ async fn ping(opts: PingOpts) -> Result<()> {
 
 /// Send one leg of an exchange via the running daemon's IPC socket.
 /// The receiving daemon surfaces an `exchange` (or `exchange_progress`) event; this
-/// command itself only confirms the send (or reports a rate-limit /
+/// command itself only confirms the send (or reports an
 /// unknown-participant / oversize error).
 async fn exchange(opts: ExchangeOpts) -> Result<()> {
     let ExchangeOpts {
@@ -374,8 +365,8 @@ async fn state(opts: StateOpts) -> Result<()> {
     };
     let resp = ipc::send(&cmd, &nickname).await?;
     println!("{resp}");
-    // A rejected or rate-limited patch must not exit 0: a shell-driven agent
-    // reads the exit code to tell an applied change from a dropped one, and an
+    // A rejected patch must not exit 0: a shell-driven agent
+    // reads the exit code to tell an applied change from a rejected one, and an
     // `{"ok":false}` that exits 0 reads as success → silent desync. The raw JSON
     // is already printed above for `--output json` consumers; the exit code is
     // the scriptable signal. (`get` returns `ok:true`, so it stays exit 0.)

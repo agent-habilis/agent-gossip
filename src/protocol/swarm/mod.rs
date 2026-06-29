@@ -49,7 +49,7 @@ const NAME_MAX_BYTES: usize = super::ident::MAX_CHARS * 4;
 /// A swarm identifier — Base58Check payload with a `🐝` prefix.
 ///
 /// The token carries the random `seed` plus the swarm's [`SwarmConfig`]
-/// (rate limit + lookups); **no peer address is ever stored**. The
+/// (lookups); **no peer address is ever stored**. The
 /// gossip topic, the well-known rendezvous identity (every joiner's
 /// bootstrap target), and the loopback port ladder are all derived from
 /// `seed` in memory, so the swarm is creator-independent and survives
@@ -93,11 +93,6 @@ impl Swarm {
     /// `"private"`/`"public"` label for output, derived from the lookups.
     pub(crate) fn network_label(&self) -> &'static str {
         self.config.lookups.network_label()
-    }
-
-    /// Per-author messages-per-minute cap; `0` means no rate limit.
-    pub(crate) fn rate_limit_per_min(&self) -> u16 {
-        self.config.rate_limit_per_min
     }
 
     /// The canonical config bytes mixed into the topic derivation (so a
@@ -241,7 +236,6 @@ mod swarm_tests {
 
     fn custom_config() -> SwarmConfig {
         SwarmConfig {
-            rate_limit_per_min: 0,
             lookups: LookupOpts {
                 mdns: true,
                 dht: false,
@@ -280,11 +274,10 @@ mod swarm_tests {
     }
 
     #[test]
-    fn round_trip_custom_relay_ladder_and_zero_rate() {
+    fn round_trip_custom_relay_ladder() {
         let swarm = Swarm::new(dummy_seed(), dummy_name(), custom_config());
         let decoded: Swarm = swarm.to_string().parse().unwrap();
         assert_eq!(decoded.config, custom_config());
-        assert_eq!(decoded.rate_limit_per_min(), 0);
     }
 
     #[test]

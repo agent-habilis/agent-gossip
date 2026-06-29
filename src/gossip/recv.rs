@@ -266,7 +266,7 @@ async fn handle_gossip_received(content: Bytes, state: &mut EventLoopState, ctx:
     if state.note_inbound(Instant::now()) {
         flush_pending(state, ctx, "inbound traffic resumed").await;
     }
-    // Duplicate suppression: a true repeat delivery must not re-rate-count,
+    // Duplicate suppression: a true repeat delivery must not
     // re-heartbeat, re-run membership, re-embed-forward, re-log, or re-print.
     // Re-broadcasts of `joined`/`Alive` mint fresh ids so they are never
     // falsely suppressed here. Only authenticated messages reach this gate.
@@ -280,42 +280,7 @@ async fn handle_gossip_received(content: Bytes, state: &mut EventLoopState, ctx:
     // Identities are distinguished by their key fingerprint, not the name.
     // Fork (equivocation) detection and DAG folding happen at the log-push
     // site below, coupled to retention so their indexes stay bounded by the
-    // log window — a rate-dropped or relay-to-other Msg is never indexed.
-    // One quota for every Msg (open or reply); plumbing kinds (presence,
-    // Alive, digest, PeerInfo) are exempt — rate-limiting them would
-    // break membership/anti-entropy. Keyed on the verified pubkey.
-    let rate_ok = match &message.kind {
-        // Author-driven content shares one per-identity quota: chat messages and
-        // shared-state patches alike — symmetric with the send-side checks
-        // (`broadcast_message` / `broadcast_state_patch`). A rate-dropped state
-        // patch isn't lost forever: it never enters this node's state log, so
-        // anti-entropy re-offers it on a later round once it scrolls out of the
-        // seen-set, pacing backfill instead of dropping it.
-        MessageKind::Msg { .. } | MessageKind::State => state.rate_limiter.check(&message.pubkey),
-        // Content exchange legs share the `Msg` quota; the `Progress` phase is
-        // liveness plumbing (the receiver's percent+keepalive heartbeat) and
-        // is exempt with the other plumbing kinds — rate-limiting it would let
-        // a busy exchange wrongly trip the silence timeout.
-        MessageKind::Exchange { phase, .. }
-            if crate::protocol::message::is_content_phase(*phase) =>
-        {
-            state.rate_limiter.check(&message.pubkey)
-        }
-        // `StateDigest` stays exempt with the other anti-entropy plumbing —
-        // rate-limiting it would break backfill.
-        MessageKind::Presence { .. }
-        | MessageKind::PeerInfo
-        | MessageKind::Digest | MessageKind::StateDigest
-        | MessageKind::Ping
-        | MessageKind::Pong { .. }
-        | MessageKind::Exchange { .. } => true,
-    };
-    if !rate_ok {
-        let notice = format!("rate limit exceeded for [{}], dropping", message.author);
-        ctx.output.info(&notice);
-        tracing::debug!(author = %message.author, "rate limit exceeded; dropping");
-        return;
-    }
+    // log window.
 
     // Heartbeat + membership + surfacing + join horizon. The lifecycle
     // layer owns every roster/presentation side effect; the gossip

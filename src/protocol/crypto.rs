@@ -108,7 +108,7 @@ pub(crate) fn rendezvous_ports(seed: &[u8; 32]) -> [u16; RENDEZVOUS_LADDER] {
 /// The seed is first run through the domain-separated [`derive_secret`]
 /// so a `seed` can never produce the same 32 bytes for the topic and for
 /// the rendezvous key. Binding the name *and* the config means a forged
-/// token (same seed, swapped name or tampered rate limit / lookups)
+/// token (same seed, swapped name or tampered lookups)
 /// hashes to a different topic and the joiner finds no peers — so every
 /// member of a swarm provably shares the same config.
 pub(crate) fn derive_topic_id(seed: &[u8; 32], name: &SwarmName, config_bytes: &[u8]) -> TopicId {

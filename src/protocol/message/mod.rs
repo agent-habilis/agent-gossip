@@ -194,9 +194,9 @@ impl std::str::FromStr for ExchangePhase {
 }
 
 /// Is this phase a **content** leg (counts toward the per-exchange message
-/// cap, rate-limited and logged like `Msg`)? `Progress` is the only
-/// non-content exchange phase — it is liveness plumbing (exempt from the cap
-/// and the rate limit, never logged), the rest carry real conversation.
+/// cap, logged like `Msg`)? `Progress` is the only non-content exchange
+/// phase — it is liveness plumbing (exempt from the cap, never logged), the
+/// rest carry real conversation.
 #[must_use]
 pub(crate) fn is_content_phase(phase: ExchangePhase) -> bool {
     !matches!(phase, ExchangePhase::Progress)
@@ -221,14 +221,12 @@ pub enum MessageKind {
     /// the sender holds; a receiver re-broadcasts any of *its* logged
     /// messages absent from that list, so a peer that missed them
     /// (partition / sleep / late join) recovers. Plumbing like
-    /// `PeerInfo`: never rate-limited, logged, or surfaced via
-    /// `poll`/`fetch`.
+    /// `PeerInfo`: never logged or surfaced via `poll`/`fetch`.
     Digest,
     /// Liveness probe broadcast by a node running an RTT round. Every
     /// receiver auto-responds with a `Pong` addressed back to the
-    /// pinger. Plumbing like `PeerInfo`/`Digest`: never rate-limited,
-    /// logged, or surfaced via `poll`/`fetch` — only the originator's
-    /// `ping_report` event surfaces.
+    /// pinger. Plumbing like `PeerInfo`/`Digest`: never logged or surfaced
+    /// via `poll`/`fetch` — only the originator's `ping_report` event surfaces.
     Ping,
     /// Response to a `Ping`, addressed to the original pinger (`to`).
     /// The pinger records its local arrival time to compute RTT. Same
@@ -242,9 +240,9 @@ pub enum MessageKind {
     /// position. Delivered to every peer (gossip floods) but surfaced and
     /// logged only by the addressee and the sender — third parties relay
     /// without retaining, exactly like a directed `Msg`. **Content** phases
-    /// are rate-limited and logged with `Msg`; the `Progress` phase is
-    /// liveness plumbing (rate-limit-exempt, never logged). Not part of the
-    /// per-author hash chain or DAG (presence-like).
+    /// are logged with `Msg`; the `Progress` phase is liveness plumbing
+    /// (never logged). Not part of the per-author hash chain or DAG
+    /// (presence-like).
     Exchange {
         to: Nickname,
         exchange_id: ExchangeId,
@@ -256,8 +254,8 @@ pub enum MessageKind {
     /// un-pruned** log (`daemon::state_log`); swarm state is the deterministic
     /// fold over that log. The payload lives opaquely in `body` — the log layer
     /// never interprets it; projections (a future allowlist, …) do. Signed like
-    /// any message; never rate-limited, never entered into the chat
-    /// message-log, never surfaced via poll/fetch.
+    /// any message; never entered into the chat message-log, never surfaced
+    /// via poll/fetch.
     State,
     /// Anti-entropy digest for the **state** log — the dedicated counterpart to
     /// [`Digest`](MessageKind::Digest). Body is the Base58-packed ids of the
@@ -478,11 +476,7 @@ impl Message {
     /// A state anti-entropy digest whose `body` is the windowed digest the
     /// sender advertises (a `DigestBody` of `WireWindow`s over the `State`
     /// events it holds — the unbounded analogue of the chat digest).
-    pub(crate) fn new_state_digest(
-        swarm: &SwarmId,
-        author: &Nickname,
-        body: MessageBody,
-    ) -> Self {
+    pub(crate) fn new_state_digest(swarm: &SwarmId, author: &Nickname, body: MessageBody) -> Self {
         Self::new(swarm, author, MessageKind::StateDigest, body)
     }
 

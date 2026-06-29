@@ -2,8 +2,6 @@
 
 use clap::Parser;
 
-use crate::util::consts::RATE_LIMIT_PER_MIN;
-
 use crate::protocol::Nickname;
 use crate::protocol::swarm::{DirectorySelection, SwarmName};
 
@@ -36,12 +34,6 @@ pub(crate) struct CreateOpts {
     /// `--relay` flags; all of it is baked into the swarm id.
     #[arg(long, default_value_t = false)]
     pub public: bool,
-
-    /// Per-author messages-per-minute cap, baked into the swarm id and
-    /// enforced swarm-wide (every joiner inherits it). `0` disables rate
-    /// limiting entirely. Default 60.
-    #[arg(long = "rate-limit", default_value_t = RATE_LIMIT_PER_MIN)]
-    pub rate_limit: u16,
 
     /// Optional nickname (random word-word if not provided). A custom
     /// nickname is 1..=32 UTF-8 characters, excluding control chars,

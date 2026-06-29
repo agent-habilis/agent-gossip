@@ -443,12 +443,17 @@ pub(super) fn print_exchange_json(msg: &Message, is_self: bool) {
 /// Make a peer-controlled patch path safe to splice into the `state` display.
 /// The path is attacker-influenced (the frozen subset only requires a non-empty
 /// path with a `/`), and the display feeds both a markdown renderer and a raw
-/// terminal `eprintln`, so strip control characters (a `\n` would forge a second
-/// line; `MessageBody` permits newlines) and backticks (which would unbalance
-/// the code span around the nick), and cap the length so one op can't flood it.
+/// terminal `eprintln`, so strip:
+/// - control characters (a `\n` would forge a second line; `MessageBody` permits
+///   newlines),
+/// - backticks (which would unbalance the code span around the nick), and
+/// - the markdown link/image metacharacters `[` `]` `(` `)` (so a path like
+///   `[click](https://evil)` can't render as a clickable link),
+///
+/// and cap the length so one op can't flood the line.
 fn sanitize_path(path: &str) -> String {
     path.chars()
-        .filter(|ch| !ch.is_control() && *ch != '`')
+        .filter(|ch| !ch.is_control() && !matches!(ch, '`' | '[' | ']' | '(' | ')'))
         .take(80)
         .collect()
 }

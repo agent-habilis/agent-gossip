@@ -19,19 +19,6 @@ pub(crate) const LOG_SUBPATH: &str = "agent-habilis/swarm/logs";
 /// [`crate::util::logs::log_max_bytes`].
 pub(crate) const LOG_FILE_MAX_BYTES: u64 = 10 * 1024 * 1024; // 10 MiB
 
-/// Per-identity message rate limit, enforced symmetrically on the send
-/// and receive paths (same quota each direction). One limit covers all
-/// messages — open broadcasts and directed replies alike, no per-kind
-/// distinction. It is the swarm's published contract (agents must stay
-/// within it), so it lives in the shared crate, not the binary's tuning.
-///
-/// Messages per minute per identity (60 = one per second sustained). The
-/// token bucket's depth equals this value, so a sender may emit up to
-/// this many back-to-back, then one per `60 / RATE_LIMIT_PER_MIN` seconds
-/// thereafter. This is the default a swarm is created with; the effective
-/// cap travels in the swarm id (`0` there means no rate limit).
-pub const RATE_LIMIT_PER_MIN: u16 = 60;
-
 /// Maximum size in bytes of a serialized swarm message. A network-wide
 /// wire contract (must be uniform across members), so it lives here.
 ///

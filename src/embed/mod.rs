@@ -99,9 +99,6 @@ pub struct CreateConfig {
     /// The directory to advertise into when `advertise` is set.
     /// `None` ⇒ the well-known `global` directory.
     pub directory: Option<SwarmName>,
-    /// Per-author messages-per-minute cap baked into the swarm id and
-    /// enforced swarm-wide. `0` disables rate limiting. Default 60.
-    pub rate_limit_per_min: u16,
     /// Max direct peer connections before gossip relays the rest.
     pub max_peers: usize,
     /// Self-reported model (e.g. `"Opus 4.8"`), announced to peers so the
@@ -125,7 +122,6 @@ impl CreateConfig {
             lookups: LookupSet::default(),
             advertise: false,
             directory: None,
-            rate_limit_per_min: crate::util::consts::RATE_LIMIT_PER_MIN,
             max_peers: DEFAULT_MAX_DIRECT_PEERS,
             model: None,
             harness: None,
@@ -219,7 +215,6 @@ async fn create_setup(
     output: Output,
 ) -> Result<(EventLoopConfig, Option<JoinHandle<()>>), CreateError> {
     let config = SwarmConfig {
-        rate_limit_per_min: cfg.rate_limit_per_min,
         lookups: resolve_lookups(cfg.public, cfg.lookups),
     };
     // The advertiser reaches the directory over this swarm's own lookups.
@@ -377,7 +372,7 @@ impl InProcessSession {
         &self,
         body: MessageBody,
         reply: Option<Nickname>,
-    ) -> anyhow::Result<Option<Message>> {
+    ) -> anyhow::Result<Message> {
         let (resp_tx, resp_rx) = oneshot::channel();
         self.req_tx
             .send(SessionRequest::Send {
@@ -419,8 +414,7 @@ impl InProcessSession {
             .map_err(|_| anyhow::anyhow!("swarm event loop dropped the response"))
     }
 
-    /// Send one leg of an exchange; returns the canonical
-    /// [`Message`] or `None` when the sender-side rate limiter dropped it.
+    /// Send one leg of an exchange; returns the canonical [`Message`].
     ///
     /// # Errors
     /// Fails if the event loop has stopped or dropped the response.
@@ -431,7 +425,7 @@ impl InProcessSession {
         kind: ExchangeKind,
         phase: ExchangePhase,
         body: MessageBody,
-    ) -> anyhow::Result<Option<Message>> {
+    ) -> anyhow::Result<Message> {
         let (resp_tx, resp_rx) = oneshot::channel();
         self.req_tx
             .send(SessionRequest::Exchange {
@@ -508,8 +502,8 @@ impl InProcessSession {
     }
 
     /// Apply a JSON-Patch change to the shared state. The op array (frozen
-    /// subset) is validated against the current document and rate-limited; a
-    /// rejected patch returns an error.
+    /// subset) is validated against the current document; a rejected patch
+    /// returns an error.
     pub(crate) async fn apply_patch(
         &self,
         patch: serde_json::Value,
@@ -745,8 +739,7 @@ impl SwarmSession {
     }
 
     /// Build, sign and gossip-broadcast a message. Returns the canonical
-    /// [`Message`] the loop built (read `.id` for the new id), or `None` when
-    /// the sender-side rate limiter dropped it.
+    /// [`Message`] the loop built (read `.id` for the new id).
     ///
     /// # Errors
     /// Fails if the event loop has stopped or dropped the response.
@@ -754,7 +747,7 @@ impl SwarmSession {
         &self,
         body: MessageBody,
         reply: Option<Nickname>,
-    ) -> anyhow::Result<Option<Message>> {
+    ) -> anyhow::Result<Message> {
         self.core.send(body, reply).await
     }
 
@@ -779,11 +772,11 @@ impl SwarmSession {
 
     /// Apply a JSON-Patch change to the shared state (frozen subset:
     /// add/replace/remove on object paths + add `/arr/-`). Validated against the
-    /// current document and rate-limited.
+    /// current document.
     ///
     /// # Errors
-    /// Fails if the patch is out of subset / does not apply, the rate limit is
-    /// exceeded, or the event loop has stopped.
+    /// Fails if the patch is out of subset / does not apply, or the event loop
+    /// has stopped.
     pub async fn apply_patch(
         &self,
         patch: serde_json::Value,
@@ -823,9 +816,9 @@ impl SwarmSession {
     }
 
     /// Send one leg of an exchange to `to`, correlated by `exchange_id`.
-    /// Returns the canonical [`Message`] the loop built, or `None` when the
-    /// sender-side rate limiter dropped it. Addressee validation (for
-    /// `Offer`) happens in `broadcast_exchange` — see the MCP `send_exchange` tool.
+    /// Returns the canonical [`Message`] the loop built. Addressee
+    /// validation (for `Offer`) happens in `broadcast_exchange` — see the
+    /// MCP `send_exchange` tool.
     ///
     /// # Errors
     /// Fails if the event loop has stopped or dropped the response.
@@ -836,7 +829,7 @@ impl SwarmSession {
         kind: ExchangeKind,
         phase: ExchangePhase,
         body: MessageBody,
-    ) -> anyhow::Result<Option<Message>> {
+    ) -> anyhow::Result<Message> {
         self.core.exchange(to, exchange_id, kind, phase, body).await
     }
 

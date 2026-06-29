@@ -11,7 +11,6 @@ use serde::Serialize;
 
 use super::bounded_id_set::BoundedIdSet;
 use super::message_log::MessageLog;
-use super::rate_limit::SwarmRateLimiter;
 use crate::daemon::state_file::StateFile;
 use crate::output;
 use crate::protocol::identity::Identity;
@@ -265,7 +264,6 @@ pub(crate) struct EventLoopState {
     /// sweep their (independently sized, unbounded for state) logs on their own
     /// cursors.
     pub state_digest_cursor: usize,
-    pub rate_limiter: SwarmRateLimiter,
     /// This member's signing identity (Ed25519). Shared with the
     /// send path so messages we author are signed before broadcast.
     /// The public key is the durable identity; the nickname is a
@@ -406,12 +404,10 @@ pub(crate) struct PingRound {
 
 impl EventLoopState {
     /// Build a fresh event-loop state. `now` is passed explicitly so
-    /// tests can pin a deterministic instant; `rate_limit_per_min` is the
-    /// swarm-wide cap decoded from the id (`0` ⇒ no limit).
+    /// tests can pin a deterministic instant.
     pub(crate) fn new(
         state_file: Option<StateFile>,
         now: Instant,
-        rate_limit_per_min: u16,
         identity: Arc<Identity>,
     ) -> Self {
         Self {
@@ -447,7 +443,6 @@ impl EventLoopState {
             ),
             digest_cursor: 0,
             state_digest_cursor: 0,
-            rate_limiter: SwarmRateLimiter::from_per_min(rate_limit_per_min),
             identity,
             self_seq: 0,
             self_prev: None,
@@ -894,7 +889,6 @@ mod tests {
         EventLoopState::new(
             None,
             Instant::now(),
-            crate::util::consts::RATE_LIMIT_PER_MIN,
             std::sync::Arc::new(crate::protocol::identity::Identity::generate()),
         )
     }

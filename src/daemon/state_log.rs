@@ -7,8 +7,7 @@
 //! swarm's life, so nothing is ever evicted. The store is dedup-keyed by message
 //! id; a (re)joining member starts empty and reconstructs the full set from peers
 //! via the state anti-entropy path, then replays it. (Bounding total growth for a
-//! long-lived swarm is log compaction/snapshots — deferred future work; today the
-//! per-author rate limit bounds the growth *rate*.)
+//! long-lived swarm is log compaction/snapshots — deferred future work.)
 //!
 //! Because the log is unbounded, its id set can outgrow a single gossip message,
 //! so anti-entropy advertises it in **windows** ([`recent_window`](StateLog::recent_window)
@@ -49,9 +48,7 @@ impl StateLog {
     }
 
     /// Record a state event. Returns `true` when it was newly stored, `false`
-    /// for a duplicate id. No capacity bound — the fold needs the complete set,
-    /// and the per-author rate limit (applied before this on the receive path)
-    /// is what bounds growth.
+    /// for a duplicate id. No capacity bound — the fold needs the complete set.
     pub(crate) fn insert(&mut self, event: Message) -> bool {
         if self.events.contains_key(&event.id) {
             return false;

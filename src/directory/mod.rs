@@ -52,16 +52,12 @@ pub(crate) fn directory_swarm(directory: &SwarmName, lookups: LookupOpts) -> Swa
     )
 }
 
-/// The config a directory swarm uses for `lookups`: the standard rate limit
-/// (fixed, so the topic varies only with the lookups) plus the caller's chosen
+/// The config a directory swarm uses for `lookups`: the caller's chosen
 /// lookups. The lookups become the directory session's lookups, so a member
 /// reaches the directory over exactly those mechanisms — a disabled leg issues
 /// no network requests for the directory at all.
 pub(crate) fn directory_config(lookups: LookupOpts) -> SwarmConfig {
-    SwarmConfig {
-        rate_limit_per_min: crate::util::consts::RATE_LIMIT_PER_MIN,
-        lookups,
-    }
+    SwarmConfig { lookups }
 }
 
 /// A directory advertisement: the advertised swarm's `🐝…` id plus its

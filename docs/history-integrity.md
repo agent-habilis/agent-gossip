@@ -255,7 +255,7 @@ merge is a union of **verified messages only**.
 - **Membership is still nickname-keyed.** The participant roster, presence
   (`joined`/`left`), and heartbeat (`peer_timeout`/`peer_return`) key on the
   nickname, so two identities sharing a display name **collapse** in the
-  roster. Message *authenticity, fork detection, and rate limiting* are all
+  roster. Message *authenticity and fork detection* are
   keyed on the **pubkey** and unaffected (and a same-named peer's messages are
   delivered — self-echo is keyed on our key, not name). Re-keying the
   membership/lifecycle layer on the pubkey is a follow-up.
@@ -286,7 +286,7 @@ equivocation is detected, on the `--output json` stream:
 ## Rollout phases
 
 1. **Signatures (key = identity)** — keypair, `pubkey` + `sig`,
-   verify-on-receive, pubkey-keyed rate limit; nicknames are non-unique
+   verify-on-receive; nicknames are non-unique
    display labels (no pinning, never burned). Kills key impersonation, body
    tampering, on-path tampering. **(Implemented.)**
 2. **Per-author log** — `seq` + `prev` on `Msg`, locally-computed content

@@ -61,7 +61,7 @@ async fn task_offer_surfaces_to_addressee() {
             brief,
         )
         .await
-        .expect("task offer within rate limit");
+        .expect("task offer sent");
 
     assert!(
         joiner
@@ -113,7 +113,7 @@ async fn task_self_echoes_to_sender() {
             "brief",
         )
         .await
-        .expect("within rate limit");
+        .expect("leg sent");
 
     assert!(
         creator
@@ -156,7 +156,7 @@ async fn task_not_surfaced_to_third_party() {
             "secret brief",
         )
         .await
-        .expect("within rate limit");
+        .expect("leg sent");
 
     // Addressee surfaces it…
     assert!(

@@ -291,7 +291,7 @@ pub(crate) fn cli_poll_wait(
 }
 
 /// Spawn `ahsw task …` and return the raw `Output` (no success
-/// assertion — callers that test the unknown-participant / rate-limit
+/// assertion — callers that test the unknown-participant
 /// failure paths inspect it).
 pub(crate) fn cli_exchange_raw(
     swarm: &str,
@@ -419,32 +419,6 @@ impl InProcNode {
         )
     }
 
-    /// Create a private swarm with rate limiting **disabled**
-    /// (`rate_limit_per_min = 0`, baked into the swarm id and inherited by
-    /// joiners), so a single author can drive a high volume of patches without
-    /// the send-side limiter throttling — the volume/backfill convergence tests.
-    pub(crate) async fn create_unlimited(name: &str) -> Self {
-        let mut cfg = CreateConfig::new(test_swarm_name(name));
-        cfg.rate_limit_per_min = 0;
-        Self::from_session(
-            SwarmSession::create(cfg)
-                .await
-                .expect("in-process create failed"),
-        )
-    }
-
-    /// Create a private swarm with a specific per-author rate limit, so a test
-    /// can trip the limiter deterministically with a small flood.
-    pub(crate) async fn create_rate_limited(name: &str, per_min: u16) -> Self {
-        let mut cfg = CreateConfig::new(test_swarm_name(name));
-        cfg.rate_limit_per_min = per_min;
-        Self::from_session(
-            SwarmSession::create(cfg)
-                .await
-                .expect("in-process create failed"),
-        )
-    }
-
     fn from_session(mut session: SwarmSession) -> Self {
         let rx = session.events().expect("events() receiver");
         let swarm = session.swarm_id().to_string();
@@ -470,20 +444,11 @@ impl InProcNode {
         )
     }
 
-    /// Broadcast a plain message; returns the new message id. Panics if
-    /// the sender-side rate limiter dropped it — callers stay within the
-    /// quota; use [`Self::try_send`] to exercise the limit deliberately.
+    /// Broadcast a plain message; returns the new message id.
     pub(crate) async fn send(&self, text: &str) -> MessageId {
-        self.try_send(text)
+        self.send_to(None, text)
             .await
             .expect("in-process send failed")
-            .expect("send within rate limit")
-    }
-
-    /// Like [`Self::send`] but returns the raw outcome: `Ok(None)` when
-    /// the sender-side rate limiter dropped the message.
-    pub(crate) async fn try_send(&self, text: &str) -> anyhow::Result<Option<MessageId>> {
-        self.send_to(None, text).await
     }
 
     /// Append a durable state event with `text` as its payload.
@@ -508,7 +473,7 @@ impl InProcNode {
     }
 
     /// Apply a JSON-Patch change to the shared state. Panics if the patch is
-    /// rejected (invalid / out-of-subset / rate-limited / loop stopped) — use
+    /// rejected (invalid / out-of-subset / loop stopped) — use
     /// [`Self::try_apply_patch`] to exercise rejection deliberately.
     pub(crate) async fn apply_patch(&self, patch: serde_json::Value) {
         self.try_apply_patch(patch)
@@ -517,7 +482,7 @@ impl InProcNode {
     }
 
     /// Like [`Self::apply_patch`] but returns the raw result, so a test can
-    /// assert an invalid/out-of-subset patch or a rate-limited flood is rejected.
+    /// assert an invalid/out-of-subset patch is rejected.
     pub(crate) async fn try_apply_patch(&self, patch: serde_json::Value) -> anyhow::Result<()> {
         self.session.apply_patch(patch, None).await
     }
@@ -580,24 +545,24 @@ impl InProcNode {
         self.send_to(Some(target), text)
             .await
             .expect("in-process reply failed")
-            .expect("reply within rate limit")
     }
 
-    /// Shared send path for [`Self::try_send`] and [`Self::reply`]:
+    /// Shared send path for [`Self::send`] and [`Self::reply`]:
     /// `target` `None` is an open broadcast, `Some` a directed reply.
-    async fn send_to(&self, target: Option<&str>, text: &str) -> anyhow::Result<Option<MessageId>> {
+    async fn send_to(&self, target: Option<&str>, text: &str) -> anyhow::Result<MessageId> {
         let reply = target.map(|nick| Nickname::new(nick).expect("valid target nickname"));
         // `send` returns the canonical `Message`; the harness only needs its id.
         let sent = self
             .session
             .send(MessageBody::new(text).expect("valid body"), reply)
             .await?;
-        Ok(sent.map(|msg| msg.id))
+        Ok(sent.id)
     }
 
     /// Send one task leg to `target`, correlated by `exchange_id`; returns the
-    /// new id (or `None` if the sender-side rate limiter dropped it). Panics
-    /// on transport error — addressee validation is `broadcast_exchange`'s job.
+    /// new id. Panics on transport error — addressee validation is
+    /// `broadcast_exchange`'s job. (Returns `Option` purely for caller
+    /// ergonomics; a successful leg is always `Some`.)
     pub(crate) async fn exchange(
         &self,
         target: &str,
@@ -618,7 +583,7 @@ impl InProcNode {
             )
             .await
             .expect("in-process task failed");
-        sent.map(|msg| msg.id)
+        Some(sent.id)
     }
 
     /// Captured task legs (any phase; includes self echoes — filter on
@@ -916,8 +881,7 @@ impl Node {
     }
 
     /// Like [`create_flags`](Self::create_flags) but also passes extra raw
-    /// `create` CLI args (e.g. `["--rate-limit", "0"]` to lift the send-side
-    /// cap for a burst).
+    /// `create` CLI args (e.g. `["--public"]`).
     pub(crate) fn create_args(
         name: &str,
         extra: &[&str],

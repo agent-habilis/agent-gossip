@@ -13,14 +13,12 @@ use std::time::Duration;
 use crate::daemon::state::{EventLoopState, PingRound, PollResponder};
 use crate::output;
 use crate::protocol::{Message, Nickname, SwarmId};
-use crate::transport::ipc::{
-    IpcCommand, json_ack, json_error, json_ok_msg, json_rate_limited, json_stale,
-};
+use crate::transport::ipc::{IpcCommand, json_ack, json_error, json_ok_msg, json_stale};
 use crate::util::tuning::ping_window_secs;
 
 use crate::gossip::{
-    ExchangeLeg, SendOutcome, StatePatchOutcome, broadcast_exchange, broadcast_message,
-    broadcast_msg, broadcast_state_patch,
+    ExchangeLeg, StatePatchOutcome, broadcast_exchange, broadcast_message, broadcast_msg,
+    broadcast_state_patch,
 };
 
 /// Returns `true` if the handler broadcast anything, so the caller
@@ -42,13 +40,9 @@ pub(crate) async fn handle_ipc_command(
         } => {
             tracing::debug!(addressed = reply.is_some(), "IPC msg command received");
             match broadcast_message(swarm, author, body, reply, state, sender, output).await {
-                Ok(SendOutcome::Sent(msg_id, msg)) => {
+                Ok((msg_id, msg)) => {
                     let _ = resp_tx.send(json_ok_msg(&msg_id, &msg));
                     true
-                }
-                Ok(SendOutcome::RateLimited) => {
-                    let _ = resp_tx.send(json_rate_limited());
-                    false
                 }
                 Err(error) => {
                     let _ = resp_tx.send(json_error(&error.to_string()));
@@ -117,13 +111,9 @@ pub(crate) async fn handle_ipc_command(
                 body,
             };
             match broadcast_exchange(swarm, author, leg, state, sender, output).await {
-                Ok(SendOutcome::Sent(msg_id, msg)) => {
+                Ok((msg_id, msg)) => {
                     let _ = resp_tx.send(json_ok_msg(&msg_id, &msg));
                     true
-                }
-                Ok(SendOutcome::RateLimited) => {
-                    let _ = resp_tx.send(json_rate_limited());
-                    false
                 }
                 Err(error) => {
                     let _ = resp_tx.send(json_error(&error.to_string()));
@@ -160,7 +150,6 @@ pub(crate) async fn handle_ipc_command(
 fn state_patch_response(outcome: anyhow::Result<StatePatchOutcome>) -> (String, bool) {
     match outcome {
         Ok(StatePatchOutcome::Applied) => (json_ack(), true),
-        Ok(StatePatchOutcome::RateLimited) => (json_rate_limited(), false),
         Ok(StatePatchOutcome::Invalid(why)) => (json_error(&why), false),
         Ok(StatePatchOutcome::Stale(why)) => (json_stale(&why), false),
         Err(error) => (json_error(&error.to_string()), false),
@@ -171,8 +160,13 @@ fn state_patch_response(outcome: anyhow::Result<StatePatchOutcome>) -> (String, 
 /// (the compare-and-set token a later `state patch --if-doc-hash` passes back).
 fn state_get_response(state: &EventLoopState) -> String {
     let document = crate::daemon::state_doc::derive_document(&state.state_log);
-    let doc_hash = crate::daemon::state_doc::document_hash(&document);
-    serde_json::json!({ "ok": true, "document": document, "doc_hash": doc_hash }).to_string()
+    // Serialize the document once and reuse those exact bytes for both the
+    // content hash (the CAS token) and the response body. `document_hash` hashes
+    // the same `serde_json` encoding, so the hash is unchanged; splicing the
+    // serialized JSON and the hex hash verbatim is safe (both are inert text).
+    let doc_json = serde_json::to_string(&document).unwrap_or_else(|_| "null".to_owned());
+    let doc_hash = crate::protocol::identity::content_hash_hex(doc_json.as_bytes());
+    format!(r#"{{"ok":true,"document":{doc_json},"doc_hash":"{doc_hash}"}}"#)
 }
 
 /// Serialize the live roster snapshot as the `ahsw peers` response.

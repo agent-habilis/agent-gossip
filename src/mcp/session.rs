@@ -64,11 +64,11 @@ impl Session {
         self.inner.nickname()
     }
 
-    /// Broadcast a message. Returns `Some((id, echo))` — the new id and the
-    /// canonical [`Message`] — or `None` when the sender-side rate limiter
-    /// dropped it. The full echo is returned here, so a caller need not
-    /// re-fetch to see its own send; the self-echo also surfaces once in a
-    /// later `fetch_messages` (with `self:true`), matching the live stream.
+    /// Broadcast a message. Returns `(id, echo)` — the new id and the
+    /// canonical [`Message`]. The full echo is returned here, so a caller
+    /// need not re-fetch to see its own send; the self-echo also surfaces
+    /// once in a later `fetch_messages` (with `self:true`), matching the
+    /// live stream.
     ///
     /// # Errors
     /// Fails if the event loop has stopped.
@@ -76,15 +76,12 @@ impl Session {
         &self,
         body: MessageBody,
         reply: Option<Nickname>,
-    ) -> Result<Option<(MessageId, Message)>> {
-        match self.inner.send(body, reply).await? {
-            Some(msg) => Ok(Some((msg.id.clone(), msg))),
-            None => Ok(None),
-        }
+    ) -> Result<(MessageId, Message)> {
+        let msg = self.inner.send(body, reply).await?;
+        Ok((msg.id.clone(), msg))
     }
 
-    /// Send one leg of an exchange. Returns `Some((id, echo))` or
-    /// `None` when the sender-side rate limiter dropped it.
+    /// Send one leg of an exchange. Returns `(id, echo)`.
     ///
     /// # Errors
     /// Fails if the event loop has stopped.
@@ -95,15 +92,12 @@ impl Session {
         kind: ExchangeKind,
         phase: ExchangePhase,
         body: MessageBody,
-    ) -> Result<Option<(MessageId, Message)>> {
-        match self
+    ) -> Result<(MessageId, Message)> {
+        let msg = self
             .inner
             .exchange(to, exchange_id, kind, phase, body)
-            .await?
-        {
-            Some(msg) => Ok(Some((msg.id.clone(), msg))),
-            None => Ok(None),
-        }
+            .await?;
+        Ok((msg.id.clone(), msg))
     }
 
     /// Snapshot the live participant roster (active + quiet, recency-sorted).
@@ -124,12 +118,11 @@ impl Session {
     }
 
     /// Apply a JSON-Patch change to the shared state. The op array is
-    /// validated against the current document (frozen RFC 6902 subset) and
-    /// rate-limited; a rejected patch surfaces its reason as an error.
+    /// validated against the current document (frozen RFC 6902 subset);
+    /// a rejected patch surfaces its reason as an error.
     ///
     /// # Errors
-    /// Fails if the patch is invalid/inapplicable, rate-limited, or the event
-    /// loop has stopped.
+    /// Fails if the patch is invalid/inapplicable, or the event loop has stopped.
     pub(super) async fn apply_state_patch(
         &self,
         patch: serde_json::Value,
@@ -290,8 +283,7 @@ mod tests {
         let (sent_id, _) = creator
             .send_message(MessageBody::from("hi bob"), None)
             .await
-            .expect("send_message")
-            .expect("within rate limit");
+            .expect("send_message");
 
         let observed = wait_for_gossip(&joiner, "alice-two", "hi bob").await;
         assert_eq!(
@@ -304,8 +296,7 @@ mod tests {
         let (reply_id, _) = joiner
             .send_message(MessageBody::from("hi alice"), None)
             .await
-            .expect("send_message reply")
-            .expect("within rate limit");
+            .expect("send_message reply");
         let observed2 = wait_for_gossip(&creator, "bob-two", "hi alice").await;
         assert_eq!(observed2, Some(reply_id));
 
@@ -328,8 +319,7 @@ mod tests {
         creator
             .send_message(MessageBody::from("warmup"), None)
             .await
-            .expect("send warmup")
-            .expect("within rate limit");
+            .expect("send warmup");
         assert!(
             wait_for_gossip(&joiner, "alice-lp", "warmup")
                 .await
@@ -354,8 +344,7 @@ mod tests {
             creator
                 .send_message(MessageBody::from("after warmup"), None)
                 .await
-                .expect("send")
-                .expect("within rate limit");
+                .expect("send");
         };
         // The blocking fetch should resolve as soon as the gossiped "after
         // warmup" lands — well under its wait — not spin to the timeout. A
@@ -434,8 +423,7 @@ mod tests {
         let (sent, echo) = alice
             .send_message(MessageBody::from("self-echo"), None)
             .await
-            .expect("send_message")
-            .expect("within rate limit");
+            .expect("send_message");
         assert_eq!(echo.id, sent);
         assert_eq!(echo.author.as_str(), "alice-replay");
         assert_eq!(echo.body.as_str(), "self-echo");

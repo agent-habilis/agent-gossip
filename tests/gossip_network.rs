@@ -11,7 +11,6 @@ use std::fs::{self, File};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-use agent_habilis_swarm::RATE_LIMIT_PER_MIN;
 use common::{
     CONNECT_TIMEOUT, InProcNode, MSG_TIMEOUT, Msg, Node, POLL, RECOVERY_TIMEOUT, SOCKET_DIR, bin,
     cli_message, cli_message_raw, cli_peers, cli_ping, cli_poll, cli_poll_wait, serial_guard,
@@ -116,32 +115,6 @@ async fn test_state_log_backfills_a_late_joiner() {
     assert_eq!(
         late_got, want,
         "late joiner never backfilled state via anti-entropy"
-    );
-}
-
-/// Sender-side rate limiting, symmetric with the receiver: a node may
-/// emit up to its per-author quota, then its own sends are dropped
-/// (`Ok(None)`) rather than broadcast. Mirrors the receiver-side
-/// `rate_limiter_drops_excess_messages_from_flooding_peer`. One node is
-/// enough — the limiter is checked before any mesh interaction.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn sender_rate_limits_own_excess_messages() {
-    let node = InProcNode::create("net-send-rl").await;
-
-    // The token bucket's depth equals the per-minute quota, so exactly
-    // that many back-to-back sends are admitted.
-    for index in 0..RATE_LIMIT_PER_MIN {
-        let outcome = node.try_send(&format!("msg {index}")).await;
-        assert!(
-            matches!(outcome, Ok(Some(_))),
-            "send {index} within quota should be admitted, got {outcome:?}"
-        );
-    }
-    // The next own send is rate-limited: a deliberate drop, not an error.
-    let dropped = node.try_send("one too many").await;
-    assert!(
-        matches!(dropped, Ok(None)),
-        "send past the quota should be dropped as Ok(None), got {dropped:?}"
     );
 }
 
@@ -1666,8 +1639,7 @@ fn test_large_gap_reconnect_replication() {
     // inside the window.
     let envs = [("--antientropy-max-resend", "128")];
 
-    // `--rate-limit 0`: the burst must not be throttled on the send path.
-    let (creator, swarm) = Node::create_args("itest", &["--rate-limit", "0"], &envs);
+    let (creator, swarm) = Node::create_args("itest", &[], &envs);
     let alpha = Node::join_flags(&swarm, "lg-alpha", &envs);
     let bravo = Node::join_flags(&swarm, "lg-bravo", &envs);
     assert!(creator.wait_ready(&swarm), "creator never ready");
@@ -1723,43 +1695,6 @@ fn test_large_gap_reconnect_replication() {
     );
 }
 
-/// Rate-limited messages never enter the receiver's message log — which is
-/// the anti-entropy recovery source — so anti-entropy can never "launder"
-/// dropped spam to a peer. Drops happen on the send side (before the log
-/// push, `broadcast.rs`) and the receive side (before the log push,
-/// `recv.rs`); either way the excess is absent from what backfills peers.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn rate_dropped_messages_are_not_retained_for_backfill() {
-    let sender = InProcNode::create("net-rl-backfill").await;
-    let mut receiver = InProcNode::join(&sender.swarm, "rl-backfill-recv").await;
-
-    let flood = RATE_LIMIT_PER_MIN as usize * 2; // twice the per-identity quota
-    for index in 0..flood {
-        let _ = sender.try_send(&format!("flood {index}")).await;
-    }
-    assert!(
-        receiver.wait_inbound(1, MSG_TIMEOUT).await,
-        "no flood message arrived at all"
-    );
-    tokio::time::sleep(Duration::from_secs(2)).await; // let gossip settle
-
-    let retained = receiver
-        .inbound()
-        .iter()
-        .filter(|msg| msg.body.as_str().starts_with("flood "))
-        .map(|msg| msg.body.as_str().to_string())
-        .collect::<std::collections::HashSet<_>>()
-        .len();
-    assert!(
-        retained >= 1,
-        "the receiver should retain at least the burst allowance"
-    );
-    assert!(
-        retained < flood,
-        "rate limiter must keep excess out of the log (the anti-entropy source); retained all {retained}"
-    );
-}
-
 /// Deep **interior** gap: a peer holds older *and* newer messages but is
 /// missing a middle slice, so its open newest window cannot cover the gap —
 /// it is recovered only by the rolling **closed older** window. Exercises
@@ -1775,7 +1710,7 @@ fn test_interior_gap_recovered_via_rolling_window() {
     let _serial = serial_guard();
     let envs = [("--antientropy-max-resend", "128")];
 
-    let (creator, swarm) = Node::create_args("itest", &["--rate-limit", "0"], &envs);
+    let (creator, swarm) = Node::create_args("itest", &[], &envs);
     let alpha = Node::join_flags(&swarm, "ig-alpha", &envs);
     let bravo = Node::join_flags(&swarm, "ig-bravo", &envs);
     assert!(
@@ -1854,7 +1789,7 @@ fn test_steady_state_no_resend_churn() {
         ("--log-max-bytes", "0"), // no rotation, so the full log is one file
     ];
 
-    let (creator, swarm) = Node::create_args("itest", &["--rate-limit", "0"], &envs);
+    let (creator, swarm) = Node::create_args("itest", &[], &envs);
     let alpha = Node::join_flags(&swarm, "cf-alpha", &envs);
     let bravo = Node::join_flags(&swarm, "cf-bravo", &envs);
     assert!(
@@ -1915,7 +1850,7 @@ fn test_multi_round_throttled_backfill() {
     let _serial = serial_guard();
     let envs = [("--antientropy-max-resend", "5")]; // tiny budget ⇒ many rounds
 
-    let (creator, swarm) = Node::create_args("itest", &["--rate-limit", "0"], &envs);
+    let (creator, swarm) = Node::create_args("itest", &[], &envs);
     let alpha = Node::join_flags(&swarm, "mr-alpha", &envs);
     let bravo = Node::join_flags(&swarm, "mr-bravo", &envs);
     assert!(

@@ -54,9 +54,9 @@ reach for **participant** instead.
 *Layer: identity · keyed by seed.*
 
 The `🐝…` id: a self-describing token carrying the `seed`, the name, and the
-swarm's **config** (rate limit plus lookups). The config is mixed into the
-gossip topic, so every member necessarily shares it, and `join` needs nothing
-beyond the hash itself.
+swarm's **config** (lookups). The config is mixed into the gossip topic, so
+every member necessarily shares it, and `join` needs nothing beyond the hash
+itself.
 
 Code: `protocol::swarm` (`Swarm` / `SwarmConfig`). Byte layout:
 [swarm-hash.md](./swarm-hash.md).
@@ -185,9 +185,8 @@ the ball-owner keepalive, the 100-content-message cap) is owned by the daemon
 state machine (`daemon::exchange`), while the *content* is owned by the skill. Like
 a directed `Msg --reply`, a leg is delivered to all members for relay but
 **surfaced and logged only by its addressee and the sender's own echo** — a
-third party never sees it. Content legs are rate-limited with `Msg`; the
-`progress` phase is liveness plumbing (rate-limit-exempt, never logged). Not
-part of the per-author hash chain or DAG (presence-like).
+third party never sees it. The `progress` phase is liveness plumbing (never
+logged). Not part of the per-author hash chain or DAG (presence-like).
 
 Code: `MessageKind::Exchange`, `lifecycle::handle_exchange`, `broadcast_exchange`,
 `daemon::exchange`.
@@ -241,8 +240,7 @@ from the chat **message log** in three ways: it is **un-pruned and unbounded**
 reconciled by its **own** anti-entropy digest (windowed like the chat digest,
 but advertised open at both ends so a late joiner backfills the *whole* log, not
 just a recent tail). Bounding its total growth (compaction/snapshots) is
-deferred; the per-author **rate limit** — which state shares with chat — bounds
-the growth *rate*.
+deferred.
 
 Code: `daemon::state_log::StateLog`, `gossip::antientropy::{broadcast,handle}_state_digest`.
 
