@@ -29,7 +29,7 @@ SYNOPSIS
 
        ahsw peers --swarm 🐝… --nickname NAME [--output json]
 
-       ahsw pipe listen      [--swarm 🐝…] [--throttle RATE] [--output human|json]
+       ahsw pipe listen      [--swarm 🐝…] [--throttle RATE] [--follow] [--output human|json]
        ahsw pipe connect     🐝… [--throttle RATE]
        ahsw pipe listen-tcp  HOST:PORT [--swarm 🐝…] [--output human|json]
        ahsw pipe connect-tcp 🐝… --addr HOST:PORT [--output human|json]
@@ -351,7 +351,7 @@ COMMANDS
               metadata each agent self-reports into the meta channel; read
               them with meta get under /peers/<nickname> (see "SHARED STATE").
 
-       pipe listen [--swarm 🐝…] [--throttle RATE] [--output human|json]
+       pipe listen [--swarm 🐝…] [--throttle RATE] [--follow] [--output human|json]
        pipe connect 🐝… [--throttle RATE]
        pipe listen-tcp HOST:PORT [--swarm 🐝…] [--output human|json]
        pipe connect-tcp 🐝… --addr HOST:PORT [--output human|json]
@@ -400,10 +400,30 @@ COMMANDS
               progress bar visible on a fast/local link. The -tcp forwarders do not
               take --throttle.
 
+              --follow turns `pipe listen` into a live tail for an endless source
+              like `tail -f`: the producer stays up and forwards stdin to whichever
+              single consumer is attached. It reads the source ONLY while a
+              consumer is attached (so a fast source never burns CPU while idle,
+              and `tail -f` simply backpressures); a connecting consumer joins at
+              roughly the live tail, after first draining whatever small backlog
+              the OS pipe buffer holds. One consumer at a time; a newer `pipe
+              connect` with the same ticket PREEMPTS the current one, so a
+              reconnect takes over instantly. It quits only when the source ends
+              (not when a consumer drops), cleanly ending the stream. The consumer
+              just exits on a dropped link — to reconnect, re-run the SAME `pipe
+              connect 🐝…` (the ticket stays valid for the producer's whole life);
+              a consumer that was preempted says so. The producer prints the
+              lifecycle — disconnected / connected / transferring / finished — as
+              the consumer comes and goes. This is a live follow, NOT a file
+              transfer: without --follow, `pipe listen` delivers the whole source
+              to one consumer once and exits (and exits non-zero if that consumer
+              drops mid-transfer).
+
               Examples:
                 ahsw pipe listen --swarm 🐝… < report.pdf   # hint → ahsw pipe connect 🐝…
                 ahsw pipe connect 🐝Ydy8… > report.pdf
                 tar c ./dir | ahsw pipe listen --swarm 🐝…   ↔   ahsw pipe connect 🐝… | tar x
+                tail -f app.log | ahsw pipe listen --follow --swarm 🐝…   # live tail
                 ahsw pipe listen-tcp 127.0.0.1:3000 --swarm 🐝…    # share a dev server
                 ahsw pipe connect-tcp 🐝… --addr 127.0.0.1:8080    # → http://localhost:8080
 

@@ -6,13 +6,14 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use iroh::Endpoint;
+use iroh::endpoint::{Connection, Incoming, RecvStream, SendStream};
 use rand::RngCore;
-use tokio::io::AsyncRead;
+use tokio::io::{AsyncRead, AsyncReadExt};
 
 use crate::lookup::build_endpoint;
 use crate::protocol::swarm::LookupOpts;
 
-use super::progress::{Progress, copy_throttled};
+use super::progress::{Progress, copy_throttled, pace, throttle_chunk};
 use super::ticket::PipeTicket;
 use super::{PIPE_ALPN, SECRET_LEN, wait_online};
 
@@ -23,24 +24,34 @@ use super::{PIPE_ALPN, SECRET_LEN, wait_online};
 ///
 /// # Errors
 /// Endpoint bind / discovery-config parse failures, or a stream I/O error.
-pub(crate) async fn listen(swarm: Option<&str>, throttle: Option<u64>, json: bool) -> Result<()> {
+pub(crate) async fn listen(
+    swarm: Option<&str>,
+    throttle: Option<u64>,
+    json: bool,
+    follow: bool,
+) -> Result<()> {
     let lookups = super::swarm_lookups(swarm)?;
-    let (endpoint, ticket, secret) = bind(lookups).await?;
+    let (endpoint, mut ticket, secret) = bind(lookups).await?;
+    ticket.follow = follow;
     super::announce(
         json,
         "waiting for a peer to connect…",
         &format!("ahsw pipe connect {}", ticket.encode()),
     );
-    match serve(
-        &endpoint,
-        &secret,
-        &mut tokio::io::stdin(),
-        stdin_len(),
-        throttle,
-        !json,
-    )
-    .await
-    {
+    let result = if follow {
+        serve_follow(&endpoint, &secret, &mut tokio::io::stdin(), throttle, !json).await
+    } else {
+        serve(
+            &endpoint,
+            &secret,
+            &mut tokio::io::stdin(),
+            stdin_len(),
+            throttle,
+            !json,
+        )
+        .await
+    };
+    match result {
         // The peer confirmed receipt (`conn.closed`); exit now rather than await
         // the multi-second `endpoint.close()` teardown (relay/DHT/mDNS).
         // `process::exit` also skips the endpoint's abort-logging `Drop`.
@@ -65,8 +76,167 @@ pub(crate) async fn bind(lookups: LookupOpts) -> Result<(Endpoint, PipeTicket, [
         addr: endpoint.addr(),
         secret,
         lookups,
+        follow: false,
     };
     Ok((endpoint, ticket, secret))
+}
+
+/// Accept one incoming connection, take its bi-stream, and verify the bearer
+/// secret. The consumer opens the bi-stream and writes the secret first.
+///
+/// # Errors
+/// A failed handshake or a bad secret (the caller drops the connection and
+/// waits for another); a bad secret is closed with code 1.
+async fn authenticate(
+    incoming: Incoming,
+    secret: &[u8; SECRET_LEN],
+) -> Result<(Connection, SendStream, RecvStream)> {
+    let conn = incoming.await.context("incoming connection failed")?;
+    let (send, mut recv) = conn.accept_bi().await.context("accept_bi failed")?;
+    let mut got = [0u8; SECRET_LEN];
+    if recv.read_exact(&mut got).await.is_err() || &got != secret {
+        conn.close(1u32.into(), b"bad secret");
+        bail!("peer presented a bad secret");
+    }
+    Ok((conn, send, recv))
+}
+
+/// Live-follow producer (`pipe listen --follow`): forward `reader` to the one
+/// attached consumer, reading the source ONLY while a consumer is attached — so a
+/// fast non-blocking source (e.g. `/dev/random`) never busy-spins while idle, and
+/// a blocking source like `tail -f` just backpressures. One consumer at a time; a
+/// newer `connect` preempts the current one, so a reconnect is instant even when
+/// the old consumer died abruptly. On a drop the slot frees and the producer
+/// waits for a fresh `connect` with the same ticket — it never quits on a drop,
+/// only on source EOF (after cleanly FIN-ing any attached consumer). A
+/// (re)connecting consumer joins at roughly the live tip — it may first drain a
+/// small buffered backlog (the OS pipe buffer), then follows live. The OSC
+/// indicator (shown only while transferring) and the lifecycle stage lines —
+/// `disconnected` / `connected` / `transferring` / `finished` — mark the state.
+///
+/// # Errors
+/// A stdin read error, or the endpoint closing before the source ends.
+pub(crate) async fn serve_follow<R: AsyncRead + Unpin>(
+    endpoint: &Endpoint,
+    secret: &[u8; SECRET_LEN],
+    reader: &mut R,
+    throttle: Option<u64>,
+    narrate: bool,
+) -> Result<()> {
+    // Authenticated peers arrive here off the accept hot path (like tcp.rs).
+    let (auth_tx, mut auth_rx) =
+        tokio::sync::mpsc::channel::<(Connection, SendStream, RecvStream)>(1);
+    // The single live-consumer slot (holds `recv` only to suppress STOP_SENDING).
+    let mut current: Option<(Connection, SendStream, RecvStream)> = None;
+    let mut transferring = false;
+    // Indicator hidden until bytes actually flow, cleared the moment they stop.
+    let mut progress = Progress::hidden();
+    let mut buf = vec![0u8; throttle_chunk(throttle)];
+    // Re-emit the indeterminate OSC indicator periodically while transferring, so
+    // it doesn't fade during a steady stream (mirrors the non-follow path).
+    let mut keepalive = tokio::time::interval(Duration::from_millis(250));
+
+    super::stage(narrate, "disconnected");
+    loop {
+        // A cheap per-iteration Arc clone, so the `closed()` future borrows a
+        // local and never the mutable `current` slot.
+        let watch = current.as_ref().map(|(conn, _, _)| conn.clone());
+        let closed = async {
+            match &watch {
+                Some(conn) => {
+                    conn.closed().await;
+                }
+                None => std::future::pending::<()>().await,
+            }
+        };
+        tokio::select! {
+            // A peer is dialing — authenticate off the hot path.
+            incoming = endpoint.accept() => {
+                // None = the endpoint was closed out from under us; unlike source
+                // EOF that is a failure, so surface it (non-follow serve bails too).
+                let Some(incoming) = incoming else {
+                    bail!("endpoint closed before the source ended");
+                };
+                let secret = *secret;
+                let auth_tx = auth_tx.clone();
+                tokio::spawn(async move {
+                    if let Ok(triple) = authenticate(incoming, &secret).await {
+                        let _ = auth_tx.send(triple).await;
+                    }
+                });
+            }
+            // An authenticated consumer is ready — it takes the single slot,
+            // preempting whatever was there. A reconnect is then instant even
+            // when the previous consumer died abruptly and its connection is
+            // still a zombie (iroh would only idle-time it out much later).
+            Some((conn, mut send, recv)) = auth_rx.recv() => {
+                // Header first: a half-dead newcomer that can't take the header
+                // must not evict a live consumer. Live = indeterminate length.
+                if send.write_all(&u64::MAX.to_le_bytes()).await.is_ok() {
+                    if let Some((old, _, _)) = current.take() {
+                        old.close(2u32.into(), b"replaced by a newer consumer");
+                        progress.finish();
+                        super::stage(narrate, "disconnected");
+                    }
+                    super::stage(narrate, "connected");
+                    transferring = false;
+                    current = Some((conn, send, recv));
+                }
+            }
+            // The attached consumer dropped while idle — free the slot.
+            () = closed => {
+                if current.take().is_some() {
+                    progress.finish();
+                    super::stage(narrate, "disconnected");
+                    transferring = false;
+                }
+            }
+            // Keep the OSC indicator alive during a steady transfer (it fades on
+            // its own after an idle stretch). Only fires while transferring.
+            _ = keepalive.tick(), if transferring => progress.tick(),
+            // Next source chunk, or EOF — read ONLY while a consumer is attached,
+            // so a fast non-blocking source never busy-spins while idle and we
+            // never drain the source to nowhere.
+            read = reader.read(&mut buf), if current.is_some() => match read {
+                Ok(0) => {
+                    // Source closed — FIN the consumer and wait (briefly) for it
+                    // to ACK delivery, but never hang on one that already left.
+                    if let Some((conn, mut send, _)) = current.take() {
+                        let _ = send.finish();
+                        let _ = tokio::time::timeout(Duration::from_secs(2), send.stopped()).await;
+                        conn.close(0u32.into(), b"done");
+                    }
+                    progress.finish();
+                    super::stage(narrate, "finished");
+                    break;
+                }
+                Ok(read) => {
+                    if !transferring {
+                        transferring = true;
+                        super::stage(narrate, "transferring…");
+                        progress.show();
+                    }
+                    let mut dropped = false;
+                    if let Some((_, send, _)) = current.as_mut() {
+                        match send.write_all(&buf[..read]).await {
+                            Ok(()) => pace(throttle, read).await,
+                            Err(_) => dropped = true,
+                        }
+                    }
+                    if dropped {
+                        current = None;
+                        progress.finish();
+                        super::stage(narrate, "disconnected");
+                        transferring = false;
+                    }
+                }
+                Err(error) => {
+                    return Err(anyhow::Error::new(error).context("reading stdin failed"));
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Stream `reader` to the first peer that opens a bi-stream and presents
@@ -86,28 +256,10 @@ pub(crate) async fn serve<R: AsyncRead + Unpin>(
         let Some(incoming) = endpoint.accept().await else {
             bail!("endpoint closed before a peer connected");
         };
-        let conn = match incoming.await {
-            Ok(conn) => conn,
-            Err(error) => {
-                tracing::debug!(%error, "incoming connection failed");
-                continue;
-            }
-        };
-        // The consumer opens the bi-stream and writes the secret first.
-        let (send, mut recv) = match conn.accept_bi().await {
-            Ok(streams) => streams,
-            Err(error) => {
-                tracing::debug!(%error, "accept_bi failed");
-                continue;
-            }
-        };
-        let mut got = [0u8; SECRET_LEN];
-        if recv.read_exact(&mut got).await.is_err() || &got != secret {
-            tracing::debug!("peer presented a bad secret; rejecting");
-            conn.close(1u32.into(), b"bad secret");
-            continue;
+        match authenticate(incoming, secret).await {
+            Ok(triple) => break triple,
+            Err(error) => tracing::debug!(%error, "consumer handshake failed; awaiting another"),
         }
-        break (conn, send, recv);
     };
     super::stage(narrate, "connected");
 

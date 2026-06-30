@@ -345,11 +345,13 @@ async fn pipe(action: PipeAction) -> Result<()> {
             swarm,
             throttle,
             output,
+            follow,
         } => {
             crate::pipe::listen(
                 swarm.as_ref().map(crate::protocol::SwarmId::as_str),
                 throttle,
                 matches!(output, OutputFormat::Json),
+                follow,
             )
             .await
         }

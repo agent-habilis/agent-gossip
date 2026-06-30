@@ -4,12 +4,13 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use iroh::Endpoint;
-use tokio::io::{AsyncWrite, AsyncWriteExt};
+use iroh::endpoint::{Connection, ConnectionError, RecvStream, SendStream};
+use tokio::io::{AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::lookup::{add_peer_addr, build_participant_endpoint};
 
 use super::PIPE_ALPN;
-use super::progress::{Progress, recv_with_reports};
+use super::progress::{Progress, pace, recv_with_reports, throttle_chunk};
 use super::ticket::PipeTicket;
 
 /// How long to keep retrying the dial while the producer's address propagates
@@ -26,7 +27,12 @@ pub(crate) async fn connect(ticket: &str, throttle: Option<u64>) -> Result<()> {
     let ticket = PipeTicket::decode(ticket)?;
     let endpoint = build_participant_endpoint(&ticket.lookups).await?;
     let mut stdout = tokio::io::stdout();
-    match transfer(&endpoint, &ticket, &mut stdout, throttle).await {
+    let result = if ticket.follow {
+        transfer_follow(&endpoint, &ticket, &mut stdout, throttle).await
+    } else {
+        transfer(&endpoint, &ticket, &mut stdout, throttle).await
+    };
+    match result {
         Ok(()) => {
             stdout.flush().await.context("flushing stdout failed")?;
             // The data is delivered and `conn.close` already told the producer
@@ -43,13 +49,15 @@ pub(crate) async fn connect(ticket: &str, throttle: Option<u64>) -> Result<()> {
     }
 }
 
-/// Dial the producer over `endpoint`, authenticate, and stream to `writer`.
-pub(crate) async fn transfer<W: AsyncWrite + Unpin>(
+/// Dial the producer (retrying while its address propagates), open the bi-stream,
+/// present the bearer secret, and read the 8-byte length header. Shared by the
+/// single-shot and live-follow consumers so their dial + handshake stay in
+/// lock-step. Returns the connection, both streams, and the advertised length
+/// (`None` = unknown / live).
+async fn dial_and_handshake(
     endpoint: &Endpoint,
     ticket: &PipeTicket,
-    writer: &mut W,
-    throttle: Option<u64>,
-) -> Result<()> {
+) -> Result<(Connection, SendStream, RecvStream, Option<u64>)> {
     add_peer_addr(endpoint, ticket.addr.clone())?;
 
     let start = Instant::now();
@@ -61,27 +69,43 @@ pub(crate) async fn transfer<W: AsyncWrite + Unpin>(
                 tokio::time::sleep(RETRY_DELAY).await;
             }
             Err(error) => {
-                return Err(anyhow::anyhow!(
-                    "could not reach the pipe producer: {error}"
-                ));
+                return Err(anyhow::anyhow!("could not reach the pipe producer: {error}"));
             }
         }
     };
 
+    // Authenticate with the bearer secret first; the producer then sends an 8-byte
+    // length header (u64::MAX = unknown/live).
     let (mut send, mut recv) = conn.open_bi().await.context("opening the stream failed")?;
-    // Authenticate with the bearer secret; keep `send` open to report progress
-    // back so the producer's bar reflects what we've actually received.
     send.write_all(&ticket.secret)
         .await
         .context("sending the ticket secret failed")?;
-
-    // The producer sends an 8-byte length header (u64::MAX = unknown) first.
     let mut header = [0u8; 8];
     recv.read_exact(&mut header)
         .await
         .context("reading the length header failed")?;
     let len = u64::from_le_bytes(header);
-    let total = (len != u64::MAX).then_some(len);
+    Ok((conn, send, recv, (len != u64::MAX).then_some(len)))
+}
+
+/// True if the producer closed this connection because a newer consumer preempted
+/// it (close code 2 — see `serve_follow`), as opposed to a network drop.
+fn replaced_by_newer(conn: &Connection) -> bool {
+    matches!(
+        conn.close_reason(),
+        Some(ConnectionError::ApplicationClosed(close)) if u64::from(close.error_code) == 2
+    )
+}
+
+/// Single-shot consumer: dial, authenticate, and stream the whole source to
+/// `writer`, reporting received bytes back so the producer's bar tracks delivery.
+pub(crate) async fn transfer<W: AsyncWrite + Unpin>(
+    endpoint: &Endpoint,
+    ticket: &PipeTicket,
+    writer: &mut W,
+    throttle: Option<u64>,
+) -> Result<()> {
+    let (conn, mut send, mut recv, total) = dial_and_handshake(endpoint, ticket).await?;
 
     let mut progress = Progress::new(total);
     recv_with_reports(&mut recv, writer, &mut send, &mut progress, throttle, total)
@@ -94,5 +118,67 @@ pub(crate) async fn transfer<W: AsyncWrite + Unpin>(
     // drop the FIN in flight and hang the producer's read loop.
     let _ = send.stopped().await;
     conn.close(0u32.into(), b"done");
+    Ok(())
+}
+
+/// Live-follow consumer (selected by the ticket's follow flag): dial once, then
+/// stream the producer's live bytes to `writer`, flushing each chunk so a
+/// `tail -f` appears as it arrives. Report-free — the producer does not read a
+/// reverse channel in live mode.
+///
+/// # Errors
+/// An unreachable producer (after the dial deadline), a pre-data drop, or a
+/// dropped/preempted connection — the caller exits non-zero. A reconnect is just
+/// re-running `ahsw pipe connect` with the same ticket; a preemption (a newer
+/// `connect` took over) is reported with its own message.
+pub(crate) async fn transfer_follow<W: AsyncWrite + Unpin>(
+    endpoint: &Endpoint,
+    ticket: &PipeTicket,
+    writer: &mut W,
+    throttle: Option<u64>,
+) -> Result<()> {
+    // Report-free in live mode; keep `_send` alive so the producer's paired recv
+    // stays open, but we never write to it after the secret.
+    let (conn, _send, mut recv, _total) = dial_and_handshake(endpoint, ticket).await?;
+
+    // Show the OSC indicator only while bytes are actually arriving; tick it so a
+    // long steady stream doesn't let the terminal fade it.
+    let mut progress = Progress::hidden();
+    let mut buf = vec![0u8; throttle_chunk(throttle)];
+    let mut shown = false;
+    let mut keepalive = tokio::time::interval(Duration::from_millis(250));
+    loop {
+        tokio::select! {
+            result = AsyncReadExt::read(&mut recv, &mut buf) => match result {
+                Ok(0) => break, // producer FIN — clean end of stream
+                Ok(read) => {
+                    if !shown {
+                        shown = true;
+                        progress.show();
+                    }
+                    writer
+                        .write_all(&buf[..read])
+                        .await
+                        .context("writing to the sink failed")?;
+                    writer.flush().await.context("flushing the sink failed")?;
+                    pace(throttle, read).await;
+                }
+                Err(error) => {
+                    progress.fail();
+                    // An intended preemption (a newer `connect` took over, close
+                    // code 2) is distinct from a network drop — report it as such,
+                    // but still exit non-zero (the takeover ended this consumer).
+                    if replaced_by_newer(&conn) {
+                        return Err(anyhow::anyhow!(
+                            "this pipe was taken over by a newer `ahsw pipe connect`"
+                        ));
+                    }
+                    return Err(anyhow::Error::new(error).context("the pipe connection dropped"));
+                }
+            },
+            _ = keepalive.tick(), if shown => progress.tick(),
+        }
+    }
+    progress.finish();
     Ok(())
 }

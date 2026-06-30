@@ -30,14 +30,37 @@ impl Progress {
     /// indicator immediately — callers build this the moment the peer connects,
     /// so feedback appears at connection time rather than after the first chunk.
     pub(crate) fn new(total: Option<u64>) -> Self {
-        let mut progress = Self {
+        let mut progress = Self::build(total);
+        progress.start();
+        progress
+    }
+
+    /// Build the indicator without emitting anything (the shared core of `new`
+    /// and `hidden`): open the controlling terminal (`None` when there isn't one)
+    /// and zero the state.
+    fn build(total: Option<u64>) -> Self {
+        Self {
             tty: OpenOptions::new().write(true).open("/dev/tty").ok(),
             total,
             last_pct: None,
             indeterminate_started: false,
-        };
-        progress.start();
-        progress
+        }
+    }
+
+    /// Like `new` but starts hidden — nothing is shown until `show`. For
+    /// live-follow mode (`pipe listen --follow`), where the indicator must appear
+    /// only while a transfer is actually active and clear the moment it stops,
+    /// rather than pulsing through the long idle waits between consumers.
+    pub(crate) fn hidden() -> Self {
+        Self::build(None)
+    }
+
+    /// Show the indeterminate "active" indicator — a live transfer just began.
+    /// Pairs with `finish` (clear) when the transfer stops or the consumer
+    /// drops, so the indicator is visible only while bytes are flowing.
+    pub(crate) fn show(&mut self) {
+        self.indeterminate_started = true;
+        self.emit(3, 0);
     }
 
     /// Show the indicator at 0% (determinate) or "loading" (indeterminate) right
