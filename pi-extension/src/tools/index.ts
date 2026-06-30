@@ -3,7 +3,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { Type } from "typebox";
 import {
   type CreateOptions,
-  applyStatePatch,
+  applyStateMerge,
   createSwarm,
   discoverSwarms,
   getPeers,
@@ -404,7 +404,7 @@ export function registerTools(pi: ExtensionAPI): void {
       "Read the swarm's current shared-state document (the JSON every member converges on)",
     promptSnippet: "Read the swarm's shared-state document",
     promptGuidelines: [
-      "Use swarm_get_state to read the shared state before deciding your next swarm_apply_patch",
+      "Use swarm_get_state to read the shared state before deciding your next swarm_apply_merge",
       "Read the current state from the returned document — never reconstruct it from memory or earlier turns",
       "On joining a swarm, let the state settle a moment (anti-entropy backfill), then read it once",
     ],
@@ -429,22 +429,25 @@ export function registerTools(pi: ExtensionAPI): void {
   });
 
   pi.registerTool({
-    name: "swarm_apply_patch",
-    label: "Swarm Apply Patch",
-    description: "Apply a JSON-Patch (RFC 6902) change to the swarm's shared state",
-    promptSnippet: "Change the swarm's shared state with a JSON-Patch",
+    name: "swarm_apply_merge",
+    label: "Swarm Apply Merge",
+    description: "Apply an RFC 7386 JSON Merge Patch to the swarm's shared state",
+    promptSnippet: "Change the swarm's shared state with a JSON Merge Patch",
     promptGuidelines: [
-      "Use swarm_apply_patch to change the shared state — pass the RFC 6902 op array",
-      'Frozen subset: add/replace/remove on object paths, plus add "/arr/-" to append. No test/move/copy, numeric array indices, or root path ""',
-      'Arrays are append-only — you cannot patch /arr/0. To change one element, either replace the whole array at /arr, or model the collection as an object keyed by index ({"0":…,"1":…}) so each element is an object path like /coll/0',
-      "When you replace a whole array, build it from a fresh swarm_get_state — a stale base silently overwrites a peer's change",
-      "React to a peer's change (the state event), never your own. Drive each turn read → guard → write: read the document, check a turn marker before patching, act only on your turn, then send one patch",
-      "Put dependent ops in one patch (it is applied atomically); a rejected patch returns ok:false with an error",
+      "Use swarm_apply_merge to change the shared state — pass a JSON object merged into the document",
+      "Each key is set; a null value deletes that key; nested objects merge recursively; the document root is an object and is never replaced",
+      'Arrays are replaced wholesale (RFC 7386 has no element append). Model a mutable collection as an object keyed by index ({"0":…,"1":…}) so each element merges/deletes independently',
+      "React to a peer's change (the state event), never your own. Drive each turn read → guard → write: read the document, check a turn marker before merging, act only on your turn, then send one merge",
+      "A merge is applied atomically; a rejected merge (not a JSON object) returns ok:false with an error",
     ],
     parameters: Type.Object({
-      patch: Type.Array(Type.Object({}, { additionalProperties: true }), {
-        description: 'RFC 6902 op array, e.g. [{"op":"replace","path":"/turn","value":"b"}]',
-      }),
+      merge: Type.Object(
+        {},
+        {
+          additionalProperties: true,
+          description: 'JSON Merge Patch object, e.g. {"turn":"b"}',
+        },
+      ),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx: ExtensionContext) {
       if (!requireAgentSwarm(ctx)) {
@@ -454,17 +457,17 @@ export function registerTools(pi: ExtensionAPI): void {
         return toolError("Not in a swarm. Use swarm_create or swarm_join first.");
       }
       try {
-        const result = applyStatePatch({ patch: JSON.stringify(params.patch) });
+        const result = applyStateMerge({ merge: JSON.stringify(params.merge) });
         if (result.ok) {
           return {
-            content: [{ type: "text", text: JSON.stringify(params.patch, null, 2) }],
-            details: { patch: params.patch },
+            content: [{ type: "text", text: JSON.stringify(params.merge, null, 2) }],
+            details: { merge: params.merge },
           };
         }
-        return toolError(result.error ?? "patch rejected");
+        return toolError(result.error ?? "merge rejected");
       } catch (error) {
         return toolError(
-          `Apply patch failed: ${error instanceof Error ? error.message : "unknown"}`,
+          `Apply merge failed: ${error instanceof Error ? error.message : "unknown"}`,
         );
       }
     },

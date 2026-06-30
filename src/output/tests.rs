@@ -464,10 +464,10 @@ mod snapshots {
     }
 
     /// The `{"event":"state",…}` line a shared-state change emits on the
-    /// `--output json` stream: header + the applied `patch` op array + the
+    /// `--output json` stream: header + the applied `merge` document + the
     /// newly-derived `document` + `display` + `self`. Field order is wire-pinned.
-    fn snap_state(ops: &str, document: &serde_json::Value, is_self: bool) -> String {
-        let body = format!(r#"{{"k":"patch","ops":{ops}}}"#);
+    fn snap_state(merge: &str, document: &serde_json::Value, is_self: bool) -> String {
+        let body = format!(r#"{{"k":"merge","merge":{merge}}}"#);
         super::super::json::format_state_json(
             crate::protocol::Channel::State,
             &Message::fixture(MessageKind::State, &body),
@@ -479,7 +479,7 @@ mod snapshots {
     #[test]
     fn snap_state_change() {
         insta::assert_snapshot!(snap_state(
-            r#"[{"op":"replace","path":"/turn","value":"b"}]"#,
+            r#"{"turn": "b"}"#,
             &serde_json::json!({"turn": "b", "n": 1}),
             false,
         ));
@@ -487,14 +487,10 @@ mod snapshots {
 
     #[test]
     fn state_display_sanitizes_peer_controlled_paths() {
-        // A peer-crafted op path with a backtick (would break the markdown code
+        // A peer-crafted merge key with a backtick (would break the markdown code
         // span around the nick) and a newline (would forge a second line in the
         // human eprintln feed) must not reach the `display` verbatim.
-        let line = snap_state(
-            "[{\"op\":\"add\",\"path\":\"/x`\\n<evil>\",\"value\":1}]",
-            &serde_json::json!({}),
-            false,
-        );
+        let line = snap_state("{\"x`\\n<evil>\": 1}", &serde_json::json!({}), false);
         let parsed: serde_json::Value = serde_json::from_str(&line).unwrap();
         let display = parsed["display"].as_str().unwrap();
         assert!(!display.contains('\n'), "no newline injection: {display:?}");
@@ -509,7 +505,7 @@ mod snapshots {
     #[test]
     fn snap_state_self() {
         insta::assert_snapshot!(snap_state(
-            r#"[{"op":"add","path":"/n","value":1}]"#,
+            r#"{"n": 1}"#,
             &serde_json::json!({"n": 1}),
             true,
         ));

@@ -1,6 +1,6 @@
 ---
 name: meta
-description: Print the swarm's meta-channel document (full JSON) in a code block, with its doc hash. The meta channel is a second shared state, by convention holding swarm metadata (peer info, capabilities). Use to inspect current swarm metadata.
+description: Print the swarm's meta-channel document (full JSON) in a code block. The meta channel is a second shared state, by convention holding swarm metadata (peer info, capabilities). Use to inspect current swarm metadata.
 ---
 
 ## Quiet mode
@@ -24,7 +24,7 @@ and STOP.
 ## Read the meta channel
 
 The `meta` channel is a second shared-state document, byte-for-byte the same
-machinery as `state` (the task channel) — independent log, document, and hash.
+machinery as `state` (the task channel) — independent log and document.
 By convention it holds swarm metadata (each peer's model/harness/host, capabilities),
 while `state` holds the task. The daemon does not differentiate them.
 
@@ -38,14 +38,11 @@ This returns a single JSON line synchronously — wait for it and parse it:
 
 ```json
 { "ok": true,
-  "document": { "peers": { "lava-phase": { "model": "Opus 4.8" } } },
-  "doc_hash": "9f2c1ab3…" }
+  "document": { "peers": { "lava-phase": { "model": "Opus 4.8" } } } }
 ```
 
 - `document`: the full derived meta-channel document. Print it verbatim — do not
   filter or reorder keys.
-- `doc_hash`: SHA256 of the document, used for compare-and-set patches
-  (independent of the `state` channel's hash).
 - If `ok` is `false` (or the call errors), print:
   ```
   🐝 Could not read the meta channel.
@@ -58,7 +55,7 @@ Emit exactly one block: a header line, a blank line, then the pretty-printed
 `document` in a ```json code block. Nothing else.
 
 ````
-🐝 `#<$NAME>` · meta · hash `<doc_hash first 12 chars>`
+🐝 `#<$NAME>` · meta
 
 ```json
 {
@@ -74,7 +71,6 @@ Emit exactly one block: a header line, a blank line, then the pretty-printed
 Rendering rules:
 - The swarm name is prefixed with `#` and wrapped in backticks so it renders as
   inline code, e.g. `` `#dealer-lilac` `` — no angle brackets.
-- `hash` shows the first 12 characters of `doc_hash`, wrapped in backticks.
 - `document` is pretty-printed with 2-space indentation, keys verbatim.
 - An empty document still gets the code block, containing `{}`.
 
@@ -82,5 +78,5 @@ Rendering rules:
 
 - Read-only. Requires an active `/swarm:create` or `/swarm:join` session (a
   live daemon): `ahsw meta get` talks to it over IPC.
-- To change the meta channel, peers patch it with `ahsw meta patch` — this skill
+- To change the meta channel, peers merge it with `ahsw meta merge` — this skill
   only reads. The `state` channel (the task) is read with `/swarm:state`.

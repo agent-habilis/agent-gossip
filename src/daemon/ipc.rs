@@ -14,12 +14,11 @@ use crate::daemon::state::{EventLoopState, PingRound, PollResponder};
 use crate::output;
 use crate::protocol::swarm::SwarmName;
 use crate::protocol::{Message, Nickname, SwarmId};
-use crate::transport::ipc::{IpcCommand, json_ack, json_error, json_ok_msg, json_stale};
+use crate::transport::ipc::{IpcCommand, json_ack, json_error, json_ok_msg};
 use crate::util::tuning::ping_window_secs;
 
 use crate::gossip::{
-    ExchangeLeg, StatePatchOutcome, broadcast_exchange, broadcast_message, broadcast_msg,
-    broadcast_state_patch,
+    ExchangeLeg, broadcast_exchange, broadcast_message, broadcast_msg, broadcast_state_merge,
 };
 
 /// Returns `true` if the handler broadcast anything, so the caller
@@ -134,23 +133,18 @@ pub(crate) async fn handle_ipc_command(
             let _ = resp_tx.send(peers_response(state));
             false
         }
-        IpcCommand::StatePatch {
-            swarm: _,
-            patch,
-            if_doc_hash,
-        } => {
-            let outcome = broadcast_state_patch(
+        IpcCommand::StateMerge { swarm: _, merge } => {
+            let outcome = broadcast_state_merge(
                 swarm,
                 author,
-                patch,
-                if_doc_hash,
+                merge,
                 state,
                 sender,
                 output,
                 crate::protocol::Channel::State,
             )
             .await;
-            let (response, broadcast) = state_patch_response(outcome);
+            let (response, broadcast) = state_merge_response(outcome);
             let _ = resp_tx.send(response);
             broadcast
         }
@@ -158,23 +152,18 @@ pub(crate) async fn handle_ipc_command(
             let _ = resp_tx.send(state_get_response(state, crate::protocol::Channel::State));
             false
         }
-        IpcCommand::MetaPatch {
-            swarm: _,
-            patch,
-            if_doc_hash,
-        } => {
-            let outcome = broadcast_state_patch(
+        IpcCommand::MetaMerge { swarm: _, merge } => {
+            let outcome = broadcast_state_merge(
                 swarm,
                 author,
-                patch,
-                if_doc_hash,
+                merge,
                 state,
                 sender,
                 output,
                 crate::protocol::Channel::Meta,
             )
             .await;
-            let (response, broadcast) = state_patch_response(outcome);
+            let (response, broadcast) = state_merge_response(outcome);
             let _ = resp_tx.send(response);
             broadcast
         }
@@ -209,33 +198,25 @@ fn info_response(
     .to_string()
 }
 
-/// Map a state-patch outcome to its IPC response JSON and whether anything was
-/// broadcast (so the caller can refresh the heartbeat clock). A `Stale` conflict
-/// gets the structured `stale` marker; only `Applied` counts as a broadcast.
-fn state_patch_response(outcome: anyhow::Result<StatePatchOutcome>) -> (String, bool) {
+/// Map a state-merge outcome to its IPC response JSON and whether anything was
+/// broadcast (so the caller can refresh the heartbeat clock). A merge always
+/// applies, so `Ok` is the broadcast/ack and `Err` is a transport failure.
+fn state_merge_response(outcome: anyhow::Result<()>) -> (String, bool) {
     match outcome {
-        Ok(StatePatchOutcome::Applied) => (json_ack(), true),
-        Ok(StatePatchOutcome::Invalid(why)) => (json_error(&why), false),
-        Ok(StatePatchOutcome::Stale(why)) => (json_stale(&why), false),
+        Ok(()) => (json_ack(), true),
         Err(error) => (json_error(&error.to_string()), false),
     }
 }
 
-/// The `ahsw state get` response: the derived document plus its `doc_hash`
-/// (the compare-and-set token a later `state patch --if-doc-hash` passes back).
+/// The `ahsw state get` response: the derived document.
 fn state_get_response(state: &EventLoopState, channel: crate::protocol::Channel) -> String {
     let log = match channel {
         crate::protocol::Channel::State => &state.state_log,
         crate::protocol::Channel::Meta => &state.meta_log,
     };
     let document = crate::daemon::state_doc::derive_document(log);
-    // Serialize the document once and reuse those exact bytes for both the
-    // content hash (the CAS token) and the response body. `document_hash` hashes
-    // the same `serde_json` encoding, so the hash is unchanged; splicing the
-    // serialized JSON and the hex hash verbatim is safe (both are inert text).
     let doc_json = serde_json::to_string(&document).unwrap_or_else(|_| "null".to_owned());
-    let doc_hash = crate::protocol::identity::content_hash_hex(doc_json.as_bytes());
-    format!(r#"{{"ok":true,"document":{doc_json},"doc_hash":"{doc_hash}"}}"#)
+    format!(r#"{{"ok":true,"document":{doc_json}}}"#)
 }
 
 /// Serialize the live roster snapshot as the `ahsw peers` response.

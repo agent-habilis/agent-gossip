@@ -62,42 +62,38 @@ export function formatPeerIdent(peer: { model?: string; harness?: string; host?:
 // A `meta` event: surface a peer self-reporting/updating what it runs on, the
 // way a join line surfaces arrival. Model/harness/host land in the `meta`
 // channel under `/peers/<nick>` *after* a peer joins, so this is where they
-// become visible. Binary-opaque: the daemon never formats these values (it only
-// names the changed path in `display`); the `/peers` convention lives here.
+// become visible. Binary-opaque: the daemon never formats these values; the
+// `/peers` convention lives here. The applied RFC 7386 merge is `event.merge`,
+// so each key under `merge.peers` is a touched nick; the post-merge identity is
+// read from `event.document.peers[nick]`. A `null` merge value (or a nick gone
+// from the document) is a clear; otherwise the peer "runs" the identity. (We
+// don't distinguish a first report from an update: the merge carries no
+// before-state, and a partial merge — e.g. a model-only switch — is
+// indistinguishable from an incomplete first report, so a single verb avoids
+// mislabeling either.)
 export function formatMeta(event: SwarmEvent): string | null {
   const peersDoc = (event.document?.peers ?? {}) as Record<
     string,
     { model?: string; harness?: string; host?: string }
   >;
-  const touched: Array<{ nick: string; op: string }> = [];
-  for (const patchOp of event.patch ?? []) {
-    const path = typeof patchOp.path === "string" ? patchOp.path : "";
-    const opName = typeof patchOp.op === "string" ? patchOp.op : "";
-    if (path === "/peers") {
-      // Seed/fallback form: `value` is an object keyed by nickname.
-      const value = (patchOp.value ?? {}) as Record<string, unknown>;
-      for (const nick of Object.keys(value)) touched.push({ nick, op: opName });
-    } else if (path.startsWith("/peers/")) {
-      const nick = path.slice("/peers/".length).split("/")[0];
-      if (nick) touched.push({ nick, op: opName });
-    }
-  }
+  const mergePeers = (event.merge?.peers ?? {}) as Record<string, unknown>;
+  const touched = Object.keys(mergePeers);
   // A meta change that doesn't touch `/peers` (some other convention) — fall
   // back to the daemon's value-blind path summary so it still surfaces.
   if (touched.length === 0) {
     return event.display ?? `\`<${event.author}>\` changed swarm metadata`;
   }
   const isSelf = Boolean(event.self);
-  const lines = touched.map(({ nick, op }) => {
+  const lines = touched.map((nick) => {
+    const mergeVal = mergePeers[nick];
     const peer = peersDoc[nick];
-    if (!peer) {
+    if (mergeVal === null || !peer) {
       return isSelf ? "you cleared your identity" : `\`<${nick}>\` cleared its identity`;
     }
     // Render the identity as an inline code span (backticks), like the `<nick>`.
     const ident = formatPeerIdent(peer);
     if (isSelf) return ident ? `you reported \`${ident}\`` : "you reported your identity";
-    const verb = op === "replace" ? "now runs" : "runs";
-    return ident ? `\`<${nick}>\` ${verb} \`${ident}\`` : `\`<${nick}>\` reported its identity`;
+    return ident ? `\`<${nick}>\` runs \`${ident}\`` : `\`<${nick}>\` reported its identity`;
   });
   return [...new Set(lines)].join("\n");
 }

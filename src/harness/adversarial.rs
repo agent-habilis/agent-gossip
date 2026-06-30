@@ -53,17 +53,16 @@ impl CraftedMsg {
         }
     }
 
-    /// A crafted shared-state patch (`MessageKind::State`) from `author`, whose
-    /// body is the `{"k":"patch","ops":<ops>}` envelope the reducer parses.
-    /// `ops` is taken verbatim, so a test can inject an out-of-subset /
-    /// non-applying / malformed op array that a correct client's boundary
-    /// validation would have rejected — and assert the receiver folds it as a
-    /// deterministic no-op (never a panic, never a partial apply). Unsigned
-    /// until [`sign`](CraftedMsg::sign).
-    pub fn state_patch(swarm: &SwarmId, author: &str, ops: serde_json::Value) -> Self {
+    /// A crafted shared-state merge (`MessageKind::State`) from `author`, whose
+    /// body is the `{"k":"merge","merge":<merge>}` envelope the reducer parses.
+    /// `merge` is taken verbatim, so a test can inject a non-object merge that a
+    /// correct client's boundary validation would have rejected — and assert the
+    /// receiver folds it as a deterministic no-op (never a panic, never a root
+    /// replace). Unsigned until [`sign`](CraftedMsg::sign).
+    pub fn state_merge(swarm: &SwarmId, author: &str, merge: serde_json::Value) -> Self {
         let author = Nickname::new(author.to_owned()).expect("test author is a valid nickname");
-        let body = crate::daemon::state_doc::patch_body(ops)
-            .expect("state patch envelope composes from any ops value");
+        let body = crate::daemon::state_doc::merge_body(merge)
+            .expect("state merge envelope composes from any merge value");
         Self {
             msg: Message::new_state(swarm, &author, body),
         }

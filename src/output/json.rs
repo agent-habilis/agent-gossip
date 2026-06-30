@@ -165,7 +165,7 @@ struct ExchangeProgressLine<'a> {
 
 /// A `{"event":"state",...}` line for a shared-state change. Its own top-level
 /// event (not the `message` family) so skills branch on `event`. Carries the
-/// patch delta and the freshly-derived document; field order is part of the
+/// merge delta and the freshly-derived document; field order is part of the
 /// wire format.
 #[derive(Serialize)]
 struct StateLine<'a> {
@@ -178,7 +178,7 @@ struct StateLine<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pubkey: Option<&'a str>,
     ts: i64,
-    patch: serde_json::Value,
+    merge: serde_json::Value,
     document: &'a serde_json::Value,
     display: String,
     #[serde(rename = "self")]
@@ -421,17 +421,16 @@ pub(super) fn print_exchange_json(msg: &Message, is_self: bool) {
     emit(&format_exchange_json(msg, is_self));
 }
 
-/// Make a peer-controlled patch path safe to splice into the `state` display.
-/// The path is attacker-influenced (the frozen subset only requires a non-empty
-/// path with a `/`), and the display feeds both a markdown renderer and a raw
-/// terminal `eprintln`, so strip:
+/// Make a peer-controlled merge path safe to splice into the `state` display.
+/// The path is built from attacker-influenced merge keys, and the display feeds
+/// both a markdown renderer and a raw terminal `eprintln`, so strip:
 /// - control characters (a `\n` would forge a second line; `MessageBody` permits
 ///   newlines),
 /// - backticks (which would unbalance the code span around the nick), and
 /// - the markdown link/image metacharacters `[` `]` `(` `)` (so a path like
 ///   `[click](https://evil)` can't render as a clickable link),
 ///
-/// and cap the length so one op can't flood the line.
+/// and cap the length so one key can't flood the line.
 fn sanitize_path(path: &str) -> String {
     path.chars()
         .filter(|ch| !ch.is_control() && !matches!(ch, '`' | '[' | ']' | '(' | ')'))
@@ -440,20 +439,34 @@ fn sanitize_path(path: &str) -> String {
 }
 
 /// The `changed …` clause for a `state` display, built from a `State` body's
-/// already-parsed op array: the touched paths (sanitized, deduped, capped so the
-/// line stays bounded), or `shared state` when no paths are present. Lets the
-/// display name *what* changed so a reader needn't shadow it with a chat line.
-fn state_change_summary(ops: Option<&serde_json::Value>) -> String {
+/// already-parsed merge document: the touched paths (sanitized, deduped, capped
+/// so the line stays bounded), or `shared state` when none are present. A
+/// top-level key with a non-empty object value is descended one level (so
+/// `{"peers":{"alice":{…}}}` reads `/peers/alice`, naming the changed entry
+/// rather than its every field); anything else names the top-level key. A `null`
+/// value (a delete) still counts as touched.
+fn state_change_summary(merge: Option<&serde_json::Value>) -> String {
     const MAX: usize = 6;
     let mut paths: Vec<String> = Vec::new();
-    if let Some(arr) = ops.and_then(serde_json::Value::as_array) {
-        for op in arr {
-            if let Some(path) = op.get("path").and_then(serde_json::Value::as_str) {
-                let clean = sanitize_path(path);
-                if !clean.is_empty() && !paths.iter().any(|seen| seen == &clean) {
-                    paths.push(clean);
+    let mut push = |raw: String| {
+        let clean = sanitize_path(&raw);
+        if !clean.is_empty() && !paths.iter().any(|seen| seen == &clean) {
+            paths.push(clean);
+        }
+    };
+    if let Some(map) = merge.and_then(serde_json::Value::as_object) {
+        for (key, value) in map {
+            // A non-empty object value names its changed members one level deep
+            // (`/peers/alice`); anything else names the top-level key.
+            if let serde_json::Value::Object(sub) = value
+                && !sub.is_empty()
+            {
+                for subkey in sub.keys() {
+                    push(format!("/{key}/{subkey}"));
                 }
+                continue;
             }
+            push(format!("/{key}"));
         }
     }
     if paths.is_empty() {
@@ -467,12 +480,12 @@ fn state_change_summary(ops: Option<&serde_json::Value>) -> String {
 
 /// The `changed …` clause from a raw `State` body (parses once, then defers to
 /// [`state_change_summary`]). For the human render path, which holds the body
-/// string rather than the parsed ops.
+/// string rather than the parsed merge.
 pub(super) fn state_change_summary_from_body(body: &str) -> String {
-    let ops = serde_json::from_str::<serde_json::Value>(body)
+    let merge = serde_json::from_str::<serde_json::Value>(body)
         .ok()
-        .and_then(|parsed| parsed.get("ops").cloned());
-    state_change_summary(ops.as_ref())
+        .and_then(|parsed| parsed.get("merge").cloned());
+    state_change_summary(merge.as_ref())
 }
 
 /// `display` line for a `state` event: `` 🐝️ `<author>` changed /board, /turn ``,
@@ -488,21 +501,21 @@ fn state_display(author: &str, is_self: bool, what: &str) -> String {
 }
 
 /// Render a `StateChanged` event as its `{"event":"state",...}` JSON line: the
-/// header, the patch op-array (the delta, pulled out of the `State` body), the
-/// freshly-derived `document`, the `display` line, and `self`.
+/// header, the merge delta (pulled out of the `State` body), the freshly-derived
+/// `document`, the `display` line, and `self`.
 pub(super) fn format_state_json(
     channel: crate::protocol::Channel,
     event: &Message,
     document: &serde_json::Value,
     is_self: bool,
 ) -> String {
-    // The op array lives inside the State body `{"k":"patch","ops":[...]}`.
-    // Parse the State body once: the `ops` array feeds both the `patch` field
+    // The merge document lives inside the State body `{"k":"merge","merge":{...}}`.
+    // Parse the State body once: the `merge` object feeds both the `merge` field
     // (the delta) and the touched-paths summary in the `display`.
-    let ops = serde_json::from_str::<serde_json::Value>(event.body.as_str())
+    let merge = serde_json::from_str::<serde_json::Value>(event.body.as_str())
         .ok()
-        .and_then(|body| body.get("ops").cloned());
-    let what = state_change_summary(ops.as_ref());
+        .and_then(|body| body.get("merge").cloned());
+    let what = state_change_summary(merge.as_ref());
     serde_json::to_string(&StateLine {
         event: channel.label(),
         id: event.id.as_str(),
@@ -511,7 +524,7 @@ pub(super) fn format_state_json(
         author: event.author.as_str(),
         pubkey: (!event.pubkey.is_empty()).then_some(event.pubkey.as_str()),
         ts: event.timestamp,
-        patch: ops.unwrap_or(serde_json::Value::Null),
+        merge: merge.unwrap_or(serde_json::Value::Null),
         document,
         display: state_display(event.author.as_str(), is_self, &what),
         is_self,

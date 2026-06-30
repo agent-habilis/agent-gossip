@@ -31,8 +31,8 @@ test measures. Prescribing the method (which tool to call, push vs. poll,
 Most scenarios are driven entirely by messages and need no shared state. When a
 scenario *does* use shared state (e.g. a game board the players mutate), it
 persists per swarm and accumulates stale keys across runs, so the coordinator
-wipes it first: read the document and `remove` every top-level key in one atomic
-patch so it starts from `{}`. This is **harness setup**, not agent behavior.
+wipes it first: read the document and set every top-level key to `null` in one
+merge so it starts from `{}`. This is **harness setup**, not agent behavior.
 Always reset before briefing a new stateful scenario.
 
 ## 2. Brief the *what* — by message

@@ -101,7 +101,7 @@ event-handler rules                  /swarm:msg, /swarm:ping
   every daemon event (message, presence, peer_timeout, peer_return,
   `state`) arrives as a notification. A peer's `state` change carries
   the new shared-state document for the agent to react to; read or
-  change it with `ahsw state get` / `ahsw state patch`.
+  change it with `ahsw state get` / `ahsw state merge`.
 - `/swarm:msg` writes to the same daemon over IPC (`ahsw msg`). The
   send doesn't need to poll for confirmation; the Monitor
   surfaces the self-echo automatically.

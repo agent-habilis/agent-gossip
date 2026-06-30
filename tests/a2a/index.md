@@ -101,6 +101,6 @@ skills. This table is only to help you read what happened.
 | status / roster | `/swarm-status` | `swarm_status` | `/swarm:status` |
 | ping | `/swarm-ping` | `swarm_ping` | `/swarm:ping` |
 | read state | `/swarm-state` | `swarm_get_state` | `ahsw state get` |
-| patch state | `/swarm-state-patch` | `swarm_apply_patch` | `ahsw state patch` |
+| merge state | `/swarm-state-merge` | `swarm_apply_merge` | `ahsw state merge` |
 | leave | `/swarm-leave` | `swarm_leave` | `/swarm:leave` |
 | version / drift | `/swarm-version` | — | `/swarm:version` |

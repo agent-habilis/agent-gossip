@@ -34,10 +34,10 @@ SYNOPSIS
        ahsw pipe listen-tcp  HOST:PORT [--swarm 🐝…] [--output human|json]
        ahsw pipe connect-tcp 🐝… --addr HOST:PORT [--output human|json]
 
-       ahsw state patch --swarm 🐝… --nickname NAME --patch OPS [--if-doc-hash HEX]
+       ahsw state merge --swarm 🐝… --nickname NAME --merge MERGE
        ahsw state get   --swarm 🐝… --nickname NAME
 
-       ahsw meta patch  --swarm 🐝… --nickname NAME --patch OPS [--if-doc-hash HEX]
+       ahsw meta merge  --swarm 🐝… --nickname NAME --merge MERGE
        ahsw meta get    --swarm 🐝… --nickname NAME
 
        ahsw ready --state-file PATH [--timeout-secs N] [--output human|json]
@@ -202,7 +202,7 @@ COMMANDS
 
               The binary does not take --model/--harness. What an agent runs
               on is swarm metadata it self-reports into the meta channel after
-              readiness — see "SHARED STATE" and the meta patch convention
+              readiness — see "SHARED STATE" and the meta merge convention
               /peers/<nick> = {model, harness, host}.
 
        join SWARM [OPTIONS]
@@ -427,7 +427,7 @@ COMMANDS
                 ahsw pipe listen-tcp 127.0.0.1:3000 --swarm 🐝…    # share a dev server
                 ahsw pipe connect-tcp 🐝… --addr 127.0.0.1:8080    # → http://localhost:8080
 
-       state patch --swarm 🐝… --nickname NAME --patch OPS [--if-doc-hash HEX]
+       state merge --swarm 🐝… --nickname NAME --merge MERGE
        state get   --swarm 🐝… --nickname NAME
               Read or change the swarm's SHARED STATE — a JSON document the
               whole swarm shares, separate from the chat log and derived by
@@ -435,86 +435,76 @@ COMMANDS
               as {} and every member folds the same change log to the same
               document.
 
-              A swarm has TWO channels, state and meta (see meta patch / meta
+              A swarm has TWO channels, state and meta (see meta merge / meta
               get below) — byte-for-byte the same machinery, differing only by
               convention: state is the task working area; meta holds swarm
               metadata. The binary never differentiates them and never writes a
-              channel itself: the ONLY way to change either is a JSON patch.
+              channel itself: the ONLY way to change either is a JSON merge.
 
-              state patch applies a change. --patch is a JSON-Patch (RFC 6902)
-              op array, e.g.
+              state merge applies a change. --merge is an RFC 7386 JSON Merge
+              Patch — any JSON value merged into the document, e.g.
 
-                ahsw state patch --swarm 🐝… --nickname NAME \
-                  --patch '[{"op":"replace","path":"/turn","value":"b"}]'
+                ahsw state merge --swarm 🐝… --nickname NAME \
+                  --merge '{"turn":"b"}'
 
-              Frozen op subset (a stable wire contract): add / replace / remove
-              on object paths, plus add "/arr/-" to append to an array. test,
-              move, copy, numeric array indices, and the root path "" are
-              rejected. A patch is applied ATOMICALLY — either every op applies
-              to the current document or none does. It is validated against the
-              current document and rejected (a clear error, no change) if it is
-              malformed, out of subset, or does not apply cleanly.
+              Merge semantics (the full RFC 7386, no added behavior): an object
+              deep-merges — each key is set, a null value DELETES that key,
+              nested objects merge recursively — and a non-object value (a
+              scalar, array, or null) REPLACES the target, including the document
+              root. A merge always applies: any JSON value is valid. Because each
+              peer writes only its own keys, concurrent writers to different keys
+              never clobber one another.
 
-              ARRAYS ARE APPEND-ONLY. You cannot patch /arr/0 — numeric array
-              indices are out of subset. To change one element, either replace
-              the whole array at /arr, or model the collection as an object
-              keyed by index ({"0":…,"1":…}) so each element is an object path
-              like /coll/0. A whole-array replace sends the full new array, so
-              build it from a fresh state get or you may overwrite a peer's
-              change.
+              ARRAYS ARE REPLACED WHOLESALE. RFC 7386 has no array append — a
+              merge that names an array key replaces the whole array. Model a
+              mutable collection as an object keyed by index ({"0":…,"1":…}) so
+              each element is its own key and merges/deletes independently; to
+              delete element k, merge {"coll":{"k":null}}.
 
-              Prints {"ok":true} on success or {"ok":false,"error":…} on
-              rejection. state patch EXITS NON-ZERO on any {"ok":false}, so a
-              script can tell an applied change from a rejected one by exit code.
+              Prints {"ok":true} on success or {"ok":false,"error":…} on a
+              transport failure. state merge EXITS NON-ZERO on any {"ok":false}.
 
-              COMPARE-AND-SET. Pass --if-doc-hash HEX (the doc_hash from your
-              last state get) to apply the patch only if the document hasn't
-              changed since you read it. On a mismatch the patch is rejected with
-              "stale document" (and a non-zero exit) instead of silently
-              clobbering a concurrent peer's change — re-read and retry. Use it
-              for turn-based or contended state.
+              state get prints the current derived document:
 
-              state get prints the current derived document and its hash:
+                {"ok":true,"document":{…}}
 
-                {"ok":true,"document":{…},"doc_hash":"<sha256-hex>"}
-
-              ORDERING. Changes replay in a deterministic (timestamp, id) order,
-              so every member converges to the byte-identical document. The
-              timestamp is one-second resolution, so two changes that DEPEND on
-              each other (a replace that needs a prior add) must be separated in
-              time OR authored as one multi-op patch — the natural shape for
-              turn-based use, where each member changes the state on its turn,
-              seconds apart. Members react to a change via the state event on the
-              --output json stream (see "JSON EVENTS"); your OWN change is not
-              pushed back to you, so an alternating read→change loop works
-              without echo. Each turn, read → guard → write: state get the
-              document, check a turn marker before changing it, act only on your
-              turn, then send one patch. Read the current state from the
+              ORDERING. Merges replay in a deterministic (timestamp, id) order,
+              so every member converges to the byte-identical document. Merge is
+              not commutative, but every member folds the same log in the same
+              order, so all agree. Distinct keys are order-independent; two
+              changes that DEPEND on each other (one reads a value the other
+              set) should be separated in time OR sent as one merge object — the
+              natural shape for turn-based use, where each member changes the
+              state on its turn, seconds apart. Members react to a change via the
+              state event on the --output json stream (see "JSON EVENTS"); your
+              OWN change is not pushed back to you, so an alternating read→change
+              loop works without echo. Each turn, read → guard → write: state get
+              the document, check a turn marker before changing it, act only on
+              your turn, then send one merge. Read the current state from the
               document — never reconstruct it from memory. On join, let the state
               settle (a moment for anti-entropy to backfill), then state get
               before acting.
 
-       meta patch --swarm 🐝… --nickname NAME --patch OPS [--if-doc-hash HEX]
+       meta merge --swarm 🐝… --nickname NAME --merge MERGE
        meta get   --swarm 🐝… --nickname NAME
               The meta channel — a second shared-state document beside state,
-              identical in every respect (same frozen op subset, atomicity,
-              validation, exit-code contract, compare-and-set, ordering, and
-              the meta event on the --output json stream). Use it for swarm
-              metadata rather than the task itself. By convention agents
-              self-report what they run on under /peers/<nickname>, e.g.
+              identical in every respect (same merge semantics, exit-code
+              contract, ordering, and the meta event on the --output json
+              stream). Use it for swarm metadata rather than the task itself. By
+              convention agents self-report what they run on under
+              /peers/<nickname>, e.g.
 
-                ahsw meta patch --swarm 🐝… --nickname NAME \
-                  --patch '[{"op":"add","path":"/peers/word-word",
-                            "value":{"model":"Opus 4.8","harness":"Claude Code",
-                                     "host":"studio-mbp-01"}}]'
+                ahsw meta merge --swarm 🐝… --nickname NAME \
+                  --merge '{"peers":{"word-word":{"model":"Opus 4.8",
+                            "harness":"Claude Code","host":"studio-mbp-01"}}}'
 
               host is the machine's self-reported hostname, so peers can tell
-              which agents share a box. /peers is an object keyed by nickname
-              (arrays are append-only), so each agent owns its own path and
-              never clobbers another's. The /swarm:status roster reads
-              model/harness/host from here. See state
-              patch / state get above for the full semantics — they apply
-              verbatim to meta.
+              which agents share a box. /peers is an object keyed by nickname,
+              and a merge writes only its own key, so each agent owns its own
+              entry and never clobbers another's (set the key to null to clear
+              it). The /swarm:status roster reads model/harness/host from here.
+              See state merge / state get above for the full semantics — they
+              apply verbatim to meta.
 
        ready --state-file PATH [--timeout-secs N] [--output human|json]
               Block until the daemon writing PATH reports it is serving, then
@@ -754,17 +744,17 @@ JSON EVENTS
                  {"event":"exchange_timeout","exchange_id":"<uuid>"}
 
        state  The swarm's SHARED STATE changed (see the state command). Carries
-              the change (patch — the applied op array) AND the newly-derived
-              full document, so a member reacts in one turn without a separate
-              read. A distinct top-level event — branch on "event".
+              the change (merge — the applied merge document) AND the newly-
+              derived full document, so a member reacts in one turn without a
+              separate read. A distinct top-level event — branch on "event".
 
                  {"event":"state","id":"<uuid>","type":"state","swarm":"🐝…",
                   "author":"word-word","pubkey":"<hex>","ts":1234567890,
-                  "patch":[{"op":"replace","path":"/turn","value":"b"}],
+                  "merge":{"turn":"b"},
                   "document":{"turn":"b"},
                   "display":"🐝️ `<nick>` changed shared state","self":false}
 
-              patch     The RFC 6902 op array that was applied (the delta).
+              merge     The RFC 7386 merge document that was applied (the delta).
               document  The full derived document AFTER the change — what you
                         read to decide your reaction.
               self      true if YOU authored it. Your own change surfaces here
@@ -775,7 +765,7 @@ JSON EVENTS
 
        meta   The swarm's META channel changed (see the meta command). Same
               shape as the state event with "event":"meta" and "type":"meta" —
-              the same patch / document / self fields and the same reaction
+              the same merge / document / self fields and the same reaction
               contract. Branch on "event" to tell the two channels apart. The
               built-in display names the touched path (value-blind, like state);
               by convention a /peers/<nick> change is a peer self-reporting what
@@ -902,22 +892,18 @@ MCP SERVER
               the implicit cursor track it. alive heartbeats are filtered out;
               your own sends DO surface once (self:true), like the live stream.
 
-       apply_state_patch
-              Change the shared state. Args: patch (a JSON-Patch RFC 6902 op
-              array, frozen subset) and optional if_doc_hash (the doc_hash from
-              your last get_state — a compare-and-set guard). Returns
-              {"ok":true} on success, or an invalid_params error when the patch
-              is malformed, out of subset, does not apply, or the guard hash is
-              stale. See SHARED STATE for the op subset and semantics; peers
+       apply_state_merge
+              Change the shared state. Args: merge (an RFC 7386 JSON Merge Patch
+              — any JSON value). Returns {"ok":true} on apply (any JSON value is
+              a valid merge). See SHARED STATE for the merge semantics; peers
               react to the resulting state event in fetch_messages.
 
        get_state
               Read the current derived shared-state document. No args. Returns
-              {"document": ...,"doc_hash":"<sha256-hex>"} — pass doc_hash back
-              as a later apply_state_patch if_doc_hash.
+              {"document": ...}.
 
-       apply_meta_patch
-              The meta-channel counterpart of apply_state_patch (same args,
+       apply_meta_merge
+              The meta-channel counterpart of apply_state_merge (same args,
               same return, same rules) — a second shared-state channel for swarm
               metadata, by convention /peers/<nickname> = {model, harness,
               host} that each agent self-reports. Peers react to the resulting
@@ -925,7 +911,7 @@ MCP SERVER
 
        get_meta
               The meta-channel counterpart of get_state: the current derived
-              meta document plus its doc_hash.
+              meta document.
 
        swarm_info
               Report the active swarm: its identifier, name, your nickname,
@@ -1004,11 +990,10 @@ EXAMPLES
        Read and change the swarm's shared state:
 
               ahsw state get   --swarm 🐝1... --nickname agent
-              ahsw state patch --swarm 🐝1... --nickname agent \
-                  --patch '[{"op":"add","path":"/turn","value":"b"},
-                            {"op":"add","path":"/n","value":1}]'
+              ahsw state merge --swarm 🐝1... --nickname agent \
+                  --merge '{"turn":"b","n":1}'
               # peers see a {"event":"state",…} line carrying the new document;
-              # react to it, then patch back — your own change does not echo.
+              # react to it, then merge back — your own change does not echo.
 
        Advertise into a directory and discover it elsewhere:
 

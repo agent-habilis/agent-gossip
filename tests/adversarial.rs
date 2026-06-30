@@ -341,12 +341,11 @@ async fn severed_gossip_stream_resubscribes_and_backfills() {
 
 // ── Shared-state (Phase 1) adversarial cases ───────────────────────────
 //
-// State patches ride the same crypto gates as chat. A receiver
-// must drop unsigned ones, and fold a *signed* but malformed / out-of-subset /
-// non-applying patch as a deterministic whole-patch no-op — never a panic,
-// never a partial apply. The "barrier" here is a real, valid patch from the
-// attacker's own identity: once the victim derives it, the crafted one (injected
-// first) has had its turn.
+// State merges ride the same crypto gates as chat. A receiver must drop unsigned
+// ones, and fold a *signed* but non-object merge as a deterministic no-op — never
+// a panic, never a root replacement. The "barrier" here is a real, valid merge
+// from the attacker's own identity: once the victim derives it, the crafted one
+// (injected first) has had its turn.
 
 /// Poll the victim's derived document until `pred` holds or `timeout` elapses.
 async fn wait_doc(
@@ -367,98 +366,22 @@ async fn wait_doc(
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn unsigned_state_patch_is_dropped() {
+async fn unsigned_state_merge_is_dropped() {
     let (victim, attacker) = meshed_pair("state-unsigned").await;
-    // A well-formed state patch, but UNSIGNED — must be dropped before it can
+    // A well-formed state merge, but UNSIGNED — must be dropped before it can
     // touch the state log (same authenticity gate as chat).
-    let evil = CraftedMsg::state_patch(
-        attacker.session.swarm_id(),
-        "ghost",
-        json!([{"op": "add", "path": "/evil", "value": true}]),
-    )
-    .bytes();
+    let evil = CraftedMsg::state_merge(attacker.session.swarm_id(), "ghost", json!({"evil": true}))
+        .bytes();
     attacker.session.inject_raw(evil).await.expect("inject");
-    // Barrier: a real signed patch from the attacker's own identity.
-    attacker
-        .state_patch(json!([{"op": "add", "path": "/ok", "value": 1}]))
-        .await;
+    // Barrier: a real signed merge from the attacker's own identity.
+    attacker.state_merge(json!({"ok": 1})).await;
     assert!(
         wait_doc(&victim, T, |doc| doc["ok"] == 1).await,
-        "barrier state patch never derived"
+        "barrier state merge never derived"
     );
     assert!(
         victim.state_get().await.get("evil").is_none(),
-        "an unsigned state patch must never be folded into the document"
-    );
-    victim.leave().await;
-    attacker.leave().await;
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn out_of_subset_state_patch_is_a_deterministic_no_op() {
-    let (victim, attacker) = meshed_pair("state-subset").await;
-    let key = adversarial::new_key();
-    let swarm = attacker.session.swarm_id();
-
-    // A baseline the victim converges to.
-    attacker
-        .state_patch(json!([{"op": "add", "path": "/n", "value": 1}]))
-        .await;
-    assert!(wait_doc(&victim, T, |doc| doc["n"] == 1).await, "baseline");
-
-    // A SIGNED but out-of-subset patch (`move`): authentic, so it is ingested
-    // into the state log, but the reducer must fold it as a whole-patch no-op.
-    let evil = CraftedMsg::state_patch(
-        swarm,
-        "ghost",
-        json!([{"op": "move", "from": "/n", "path": "/m"}]),
-    )
-    .sign(&key)
-    .bytes();
-    attacker.session.inject_raw(evil).await.expect("inject");
-    // Barrier.
-    attacker
-        .state_patch(json!([{"op": "add", "path": "/done", "value": true}]))
-        .await;
-    assert!(
-        wait_doc(&victim, T, |doc| doc["done"] == true).await,
-        "barrier"
-    );
-
-    let doc = victim.state_get().await;
-    assert_eq!(
-        doc["n"], 1,
-        "out-of-subset op must not mutate existing state"
-    );
-    assert!(
-        doc.get("m").is_none(),
-        "out-of-subset `move` must not apply (not even partially)"
-    );
-    victim.leave().await;
-    attacker.leave().await;
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn malformed_state_patch_body_is_ignored() {
-    let (victim, attacker) = meshed_pair("state-malformed").await;
-    let key = adversarial::new_key();
-    let swarm = attacker.session.swarm_id();
-
-    // `ops` is not an array — the reducer can parse no patch out of it and must
-    // ignore the whole event (no panic, no mutation).
-    let evil = CraftedMsg::state_patch(swarm, "ghost", json!({"not": "an-array"}))
-        .sign(&key)
-        .bytes();
-    attacker.session.inject_raw(evil).await.expect("inject");
-    // Barrier.
-    attacker
-        .state_patch(json!([{"op": "add", "path": "/ok", "value": 1}]))
-        .await;
-    assert!(wait_doc(&victim, T, |doc| doc["ok"] == 1).await, "barrier");
-    assert_eq!(
-        victim.state_get().await,
-        json!({"ok": 1}),
-        "a malformed patch must leave only the valid barrier patch"
+        "an unsigned state merge must never be folded into the document"
     );
     victim.leave().await;
     attacker.leave().await;

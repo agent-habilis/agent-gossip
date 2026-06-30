@@ -1,7 +1,7 @@
 //! Shared-state behavioral tests, in-process over the real event loop and a real
-//! iroh mesh (`common::InProcNode`). They exercise the whole primitive — apply a
-//! JSON-Patch → fold the log → derive the document → surface the change → react →
-//! patch back — with no app logic in the daemon.
+//! iroh mesh (`common::InProcNode`). They exercise the whole primitive — apply an
+//! RFC 7386 merge → fold the log → derive the document → surface the change →
+//! react → merge back — with no app logic in the daemon.
 //!
 //! Every behavior runs against **both channels** (`state` and `meta`): each test
 //! body is `*_for(channel)`, with thin per-channel `#[tokio::test]` wrappers
@@ -10,15 +10,15 @@
 //! channel turns exactly one named test red.
 //!
 //! What each behavior pins:
-//! - convergence: the fold is a deterministic function of the event *set*;
-//! - boundary validation + atomicity (F7): a bad/partial patch never mutates;
+//! - convergence: the fold is a deterministic function of the event *set* (for
+//!   disjoint keys merge is order-independent);
+//! - RFC 7386 semantics: a non-object merge replaces the whole document;
 //! - the reaction hook (F8) and the self-wake guard (F5): a peer's change wakes
 //!   an agent with the derived document, its own change does not;
 //! - the unbounded log + windowed anti-entropy: a late joiner reconciles a log
 //!   far larger than one digest window;
 //! - reaction + convergence end-to-end: two agents ping-pong a counter via the
-//!   shared document and both converge, strictly alternating (no double-move);
-//! - compare-and-set (`--if-doc-hash`): a stale-guarded patch is rejected.
+//!   shared document and both converge, strictly alternating (no double-move).
 //!
 //! `meta_and_state_channels_are_independent` is the one inherently cross-channel
 //! test and stays standalone.
@@ -44,6 +44,14 @@ fn label(channel: Channel) -> &'static str {
 /// never share a name when they run concurrently.
 fn swarm_name(channel: Channel, base: &str) -> String {
     format!("{base}-{}", label(channel))
+}
+
+/// A single-key merge object `{key: value}` — for keys computed at runtime, which
+/// the `json!` macro can't take as a literal key.
+fn one(key: String, value: Value) -> Value {
+    let mut map = serde_json::Map::new();
+    map.insert(key, value);
+    Value::Object(map)
 }
 
 /// Poll a node's derived document for `channel` until `pred` holds or `timeout`
@@ -77,7 +85,7 @@ async fn meta_and_state_channels_are_independent() {
 
     // A meta write propagates to bob's meta doc; both state docs stay empty.
     alice
-        .meta_patch(json!([{"op":"add","path":"/peers","value":{"alice":{"model":"Opus 4.8"}}}]))
+        .meta_merge(json!({"peers": {"alice": {"model": "Opus 4.8"}}}))
         .await;
     assert!(
         wait_doc(&bob, Channel::Meta, RECOVERY_TIMEOUT, |doc| {
@@ -99,9 +107,7 @@ async fn meta_and_state_channels_are_independent() {
     );
 
     // A state write propagates to bob's state doc; meta is unchanged by it.
-    alice
-        .state_patch(json!([{"op":"add","path":"/turn","value":"a"}]))
-        .await;
+    alice.state_merge(json!({"turn": "a"})).await;
     assert!(
         wait_doc(&bob, Channel::State, RECOVERY_TIMEOUT, |doc| doc
             .pointer("/turn")
@@ -121,9 +127,9 @@ async fn meta_and_state_channels_are_independent() {
     bob.leave().await;
 }
 
-/// Three peers each apply an independent patch; whatever order the patches
-/// arrive in, every peer folds the same event *set* into the byte-identical
-/// document. Proves the reducer is set-deterministic (the convergence property).
+/// Three peers each apply an independent merge; whatever order they arrive in,
+/// every peer folds the same event *set* into the byte-identical document. Proves
+/// the reducer is set-deterministic for disjoint keys (the convergence property).
 async fn patches_converge_for(channel: Channel) {
     let alice = InProcNode::create(&swarm_name(channel, "ss-conv")).await;
     let mut bob = InProcNode::join(&alice.swarm, "conv-bob").await;
@@ -136,14 +142,9 @@ async fn patches_converge_for(channel: Channel) {
 
     // Each peer seeds a distinct key concurrently — intermediate states differ
     // by arrival order, the final set does not.
-    alice
-        .patch(channel, json!([{"op": "add", "path": "/a", "value": 1}]))
-        .await;
-    bob.patch(channel, json!([{"op": "add", "path": "/b", "value": 2}]))
-        .await;
-    carol
-        .patch(channel, json!([{"op": "add", "path": "/c", "value": 3}]))
-        .await;
+    alice.merge(channel, json!({"a": 1})).await;
+    bob.merge(channel, json!({"b": 2})).await;
+    carol.merge(channel, json!({"c": 3})).await;
 
     let want = json!({"a": 1, "b": 2, "c": 3});
     for (node, who) in [(&alice, "alice"), (&bob, "bob"), (&carol, "carol")] {
@@ -170,72 +171,9 @@ async fn meta_patches_converge_to_identical_documents() {
     patches_converge_for(Channel::Meta).await;
 }
 
-/// A malformed, out-of-subset, non-applying, or partially-applying patch is
-/// rejected at the apply boundary and never mutates the document (F7: the apply
-/// is atomic — a clone is committed only if every op succeeds).
-async fn invalid_patches_rejected_for(channel: Channel) {
-    let alice = InProcNode::create(&swarm_name(channel, "ss-reject")).await;
-    alice
-        .patch(channel, json!([{"op": "add", "path": "/n", "value": 1}]))
-        .await;
-
-    // Out-of-subset op (`move`): rejected.
-    assert!(
-        alice
-            .try_patch(channel, json!([{"op": "move", "from": "/n", "path": "/m"}]))
-            .await
-            .is_err(),
-        "move is outside the frozen subset and must be rejected"
-    );
-    // Non-applying op (`replace` a missing path): rejected.
-    assert!(
-        alice
-            .try_patch(
-                channel,
-                json!([{"op": "replace", "path": "/missing", "value": 9}])
-            )
-            .await
-            .is_err(),
-        "replace on a missing path does not apply and must be rejected"
-    );
-    // Atomicity: a two-op patch whose second op fails must leave NO trace of the
-    // first (no partial `/ok`).
-    assert!(
-        alice
-            .try_patch(
-                channel,
-                json!([
-                    {"op": "add", "path": "/ok", "value": 1},
-                    {"op": "replace", "path": "/missing", "value": 9}
-                ])
-            )
-            .await
-            .is_err(),
-        "a partially-applying patch must be rejected whole"
-    );
-
-    assert_eq!(
-        alice.get(channel).await,
-        json!({"n": 1}),
-        "no rejected patch may mutate the {} document",
-        label(channel)
-    );
-    alice.leave().await;
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn state_invalid_patches_are_rejected_and_leave_the_document_untouched() {
-    invalid_patches_rejected_for(Channel::State).await;
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn meta_invalid_patches_are_rejected_and_leave_the_document_untouched() {
-    invalid_patches_rejected_for(Channel::Meta).await;
-}
-
-/// The reaction hook (F8) and the self-wake guard (F5): a peer's patch wakes an
+/// The reaction hook (F8) and the self-wake guard (F5): a peer's merge wakes an
 /// agent on its `events()` channel carrying the freshly-derived document, while
-/// the author is **not** woken on its own channel for its own patch.
+/// the author is **not** woken on its own channel for its own merge.
 async fn peer_change_wakes_for(channel: Channel) {
     let mut alice = InProcNode::create(&swarm_name(channel, "ss-wake")).await;
     let mut bob = InProcNode::join(&alice.swarm, "wake-bob").await;
@@ -243,12 +181,7 @@ async fn peer_change_wakes_for(channel: Channel) {
     alice.send("link").await;
     assert!(bob.wait_body("link", MSG_TIMEOUT).await, "bob meshed");
 
-    alice
-        .patch(
-            channel,
-            json!([{"op": "add", "path": "/turn", "value": "bob"}]),
-        )
-        .await;
+    alice.merge(channel, json!({"turn": "bob"})).await;
 
     // F8: bob is woken with the document.
     assert!(
@@ -260,7 +193,7 @@ async fn peer_change_wakes_for(channel: Channel) {
     // F5: alice saw no change on her own wake channel.
     assert!(
         alice.changes(channel).is_empty(),
-        "an agent must not be woken on its own {} patch (F5), got {:?}",
+        "an agent must not be woken on its own {} merge (F5), got {:?}",
         label(channel),
         alice.changes(channel)
     );
@@ -279,12 +212,12 @@ async fn meta_peer_change_wakes_the_agent_self_change_does_not() {
     peer_change_wakes_for(Channel::Meta).await;
 }
 
-/// Unbounded log + windowed anti-entropy: drive far more patches than one digest
+/// Unbounded log + windowed anti-entropy: drive far more merges than one digest
 /// window holds, then a late joiner — arriving after all traffic, so only
 /// anti-entropy can reach it — reconciles the *whole* log across several windows
 /// and derives the identical document.
 ///
-/// Each patch sets an independent key (`/k0`, `/k1`, …), so the *set* of events
+/// Each merge sets an independent key (`/k0`, `/k1`, …), so the *set* of events
 /// fully determines the document regardless of replay order — the property under
 /// test is completeness of backfill, not causal ordering.
 async fn late_joiner_backfills_for(channel: Channel) {
@@ -300,10 +233,7 @@ async fn late_joiner_backfills_for(channel: Channel) {
 
     for index in 0..PATCHES {
         alice
-            .patch(
-                channel,
-                json!([{"op": "add", "path": format!("/k{index}"), "value": index}]),
-            )
+            .merge(channel, one(format!("k{index}"), json!(index)))
             .await;
     }
 
@@ -358,10 +288,10 @@ fn move_count(doc: &Value) -> usize {
 /// Reaction + convergence end-to-end (the chess narrative, no engine): two
 /// agents ping-pong, each reacting to the other's change before making its own.
 /// Every move records itself under its OWN key (`/m1`, `/m2`, …) — an
-/// independent `add`, with no dependency on any prior event, so it is causally
+/// independent set, with no dependency on any prior event, so it is causally
 /// faithful regardless of sub-second timestamp ties. Exercises the whole
-/// primitive: patch → derive → surface → wake the *peer* (F8, never the author —
-/// F5) → react → patch back. Asserts every move was driven by a real wake (the
+/// primitive: merge → derive → surface → wake the *peer* (F8, never the author —
+/// F5) → react → merge back. Asserts every move was driven by a real wake (the
 /// loop completes) and both agents converge to the byte-identical document.
 async fn ping_pong_for(channel: Channel) {
     // Total moves across both agents (each wake must fire for the loop to finish).
@@ -374,19 +304,14 @@ async fn ping_pong_for(channel: Channel) {
     assert!(bob.wait_body("link", MSG_TIMEOUT).await, "bob meshed");
 
     // alice opens with move 1 under its own key — no container to seed first.
-    alice
-        .patch(
-            channel,
-            json!([{"op": "add", "path": "/m1", "value": "alice"}]),
-        )
-        .await;
+    alice.merge(channel, json!({"m1": "alice"})).await;
 
     // Alternate: the mover for move `target` is bob when even, alice when odd.
     // Each waits until it sees the peer's previous move land (the document then
     // holds `target - 1` moves) — a real wake — then records its own.
     for target in 2..=MOVES {
         let author = if target % 2 == 0 { "bob" } else { "alice" };
-        let patch = json!([{"op": "add", "path": format!("/m{target}"), "value": author}]);
+        let merge = one(format!("m{target}"), json!(author));
         if target % 2 == 0 {
             assert!(
                 bob.wait_change(channel, MSG_TIMEOUT, |doc| move_count(doc) == target - 1)
@@ -394,7 +319,7 @@ async fn ping_pong_for(channel: Channel) {
                 "bob not woken to make move {target} on {}",
                 label(channel)
             );
-            bob.patch(channel, patch).await;
+            bob.merge(channel, merge).await;
         } else {
             assert!(
                 alice
@@ -403,7 +328,7 @@ async fn ping_pong_for(channel: Channel) {
                 "alice not woken to make move {target} on {}",
                 label(channel)
             );
-            alice.patch(channel, patch).await;
+            alice.merge(channel, merge).await;
         }
     }
 
@@ -439,85 +364,4 @@ async fn state_two_agents_ping_pong_via_shared_state() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn meta_two_agents_ping_pong_via_shared_state() {
     ping_pong_for(Channel::Meta).await;
-}
-
-/// Compare-and-set (`--if-doc-hash`): a patch guarded by a stale document hash
-/// is rejected without mutating; the same patch with the current hash applies.
-/// This is the optimistic-concurrency guard that stops a concurrent peer's
-/// change from being silently clobbered. The guard is local to the author, so a
-/// single node exercises it fully.
-async fn cas_for(channel: Channel) {
-    let node = InProcNode::create(&swarm_name(channel, "ss-cas")).await;
-    // Each patch adds a *distinct* key, so the fold is order-independent — the
-    // test exercises the CAS guard, not the `(timestamp, id)` tie-break that a
-    // same-key replace within one second would expose.
-    node.patch(
-        channel,
-        json!([{"op": "add", "path": "/seed", "value": "x"}]),
-    )
-    .await;
-
-    let before = node.get(channel).await;
-    let hash = agent_habilis_swarm::document_hash(&before);
-
-    // A guard hash that doesn't match the current document is rejected, and the
-    // document is left unchanged.
-    let stale = node
-        .try_patch_if(
-            channel,
-            json!([{"op": "add", "path": "/a", "value": 1}]),
-            Some("deadbeef".to_owned()),
-        )
-        .await;
-    assert!(
-        stale.is_err(),
-        "stale-hash {} patch must be rejected",
-        label(channel)
-    );
-    assert!(
-        stale.unwrap_err().to_string().contains("stale document"),
-        "rejection names the cause"
-    );
-    assert_eq!(
-        node.get(channel).await,
-        before,
-        "a rejected CAS patch must not mutate the {} document",
-        label(channel)
-    );
-
-    // The same patch with the *current* hash applies.
-    node.try_patch_if(
-        channel,
-        json!([{"op": "add", "path": "/a", "value": 1}]),
-        Some(hash.clone()),
-    )
-    .await
-    .expect("current-hash patch applies");
-    assert_eq!(node.get(channel).await["a"], json!(1));
-
-    // The now-superseded hash is stale and re-rejected.
-    let after = node
-        .try_patch_if(
-            channel,
-            json!([{"op": "add", "path": "/b", "value": 2}]),
-            Some(hash),
-        )
-        .await;
-    assert!(
-        after.is_err(),
-        "a superseded {} hash must be rejected",
-        label(channel)
-    );
-
-    node.leave().await;
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn state_cas_rejects_stale_hash_and_accepts_current() {
-    cas_for(Channel::State).await;
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn meta_cas_rejects_stale_hash_and_accepts_current() {
-    cas_for(Channel::Meta).await;
 }

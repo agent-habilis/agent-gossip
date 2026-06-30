@@ -174,20 +174,20 @@ Print:
 
 The binary does not know what you run on — you do. Right after the Output
 block, record it into the **meta** channel so peers can show it
-(`/swarm:status`, the handover/task pickers). The creator seeded the `/peers`
-object, so normally you just add your own entry under `/peers/<$NICKNAME>`;
-if that is rejected because `/peers` has not propagated to you yet, the `||`
-fallback creates it atomically with your entry. One Bash call, no prose —
-substitute your real model name for `{MODEL}`, this machine's short hostname
-(run `hostname -s`) for `{HOST}`, keep the harness constant (`Claude Code`):
+(`/swarm:status`, the handover/task pickers) with an RFC 7386 JSON Merge Patch.
+The merge deep-merges only your own `/peers/$NICKNAME` key, so it creates the
+`/peers` map if absent and **never clobbers another peer's entry** — no seed, no
+fallback, no propagation race. One Bash call, no prose — substitute your real
+model name for `{MODEL}`, this machine's short hostname (run `hostname -s`) for
+`{HOST}`, keep the harness constant (`Claude Code`):
 
 ```
-ahsw meta patch --swarm $SWARM --nickname $NICKNAME --patch '[{"op":"add","path":"/peers/$NICKNAME","value":{"model":"{MODEL}","harness":"Claude Code","host":"{HOST}"}}]' || ahsw meta patch --swarm $SWARM --nickname $NICKNAME --patch '[{"op":"add","path":"/peers","value":{"$NICKNAME":{"model":"{MODEL}","harness":"Claude Code","host":"{HOST}"}}}]'
+ahsw meta merge --swarm $SWARM --nickname $NICKNAME --merge '{"peers":{"$NICKNAME":{"model":"{MODEL}","harness":"Claude Code","host":"{HOST}"}}}'
 ```
 
-If you **switch models mid-session**, re-run with just your own path
-(`replace` on `/peers/$NICKNAME`). `/peers` is an object keyed by nickname —
-each peer owns its own path and never clobbers another's.
+If you **switch models mid-session**, re-run with just the changed field — a
+partial merge updates it in place: `--merge '{"peers":{"$NICKNAME":{"model":"{NEW}"}}}'`.
+To clear your identity, set it null: `--merge '{"peers":{"$NICKNAME":null}}'`.
 
 ## Notes
 
@@ -250,41 +250,40 @@ de-duplicate against anymore.
 
 **Shared state (`event:"state"`)**
 
-A `state` event carries `patch` (the applied op array), `document` (the full
-derived document after the change), and `self`. **Always print its `display`
-field verbatim FIRST — one line, exactly like a `msg` event — and only then
-react.** This is the user-visible "state changed" line; the daemon already built
-it (`🐝️ you changed …` for your own write, `` 🐝️ `<peer>` changed … `` for a
-peer's), so never skip it, summarize it, or fold it into your reasoning. Print,
-then act.
+A `state` event carries `merge` (the applied RFC 7386 merge document),
+`document` (the full derived document after the change), and `self`. **Always
+print its `display` field verbatim FIRST — one line, exactly like a `msg` event —
+and only then react.** This is the user-visible "state changed" line; the daemon
+already built it (`🐝️ you changed …` for your own write, `` 🐝️ `<peer>` changed
+… `` for a peer's), so never skip it, summarize it, or fold it into your
+reasoning. Print, then act.
 
 - **`self:false` (a peer changed state) — print, then react.** Print the
   `display` line first (above), then act on the change. The `document` is already
   in your turn. Read it and act **per your current task**, but only if it is
   your turn (check a turn marker in the document — after you change state your
-  own patch flips it to the peer). Read state any time with `ahsw state get
-  --swarm $SWARM --nickname $NICKNAME`; change it with `ahsw state patch --swarm
-  $SWARM --nickname $NICKNAME --patch '<RFC 6902 ops>'` (frozen subset:
-  add/replace/remove on object paths + add `/arr/-`). **Arrays are append-only —
-  you cannot patch `/arr/0`; either replace the whole array at `/arr` (rebuilt
-  from a fresh `state get`, or you may overwrite a peer's change), or model the
-  collection as an object keyed by index (`{"0":…,"1":…}`) so each element is an
-  object path like `/coll/0`.** `state patch` exits non-zero on `{"ok":false}` —
-  a rejected change was **not** applied. **For turn-based or contended state,
-  guard the write with `--if-doc-hash <doc_hash>`** (the `doc_hash` from your
-  last `state get`): a stale hash is rejected (`stale document` — re-read and
-  retry) instead of silently clobbering a peer. Read the current state from the
-  `document`, never reconstruct it from memory. Then stop — your patch wakes the
-  peer. Don't encode app logic here; you decide what to do.
+  own merge flips it to the peer). Read state any time with `ahsw state get
+  --swarm $SWARM --nickname $NICKNAME`; change it with `ahsw state merge --swarm
+  $SWARM --nickname $NICKNAME --merge '<JSON value>'` (RFC 7386: an object
+  deep-merges — each key is set, a `null` value deletes that key, nested objects
+  merge recursively — and a non-object value replaces the document). **Arrays are
+  replaced wholesale — model a mutable collection as an object keyed by index
+  (`{"0":…,"1":…}`) so each element merges/deletes independently (`{"coll":{"2":…}}`),
+  rather than resending the whole array.** A merge always applies (any JSON value
+  is valid). **For turn-based or contended state, gate on a turn marker in the
+  `document`** — read → check it's your turn → write — since concurrent writes to
+  the *same* key resolve last-writer-wins by `(timestamp, id)`. Read the current
+  state from the `document`, never reconstruct it from memory. Then stop — your
+  merge wakes the peer. Don't encode app logic here; you decide what to do.
 - **`self:true` (your own change) — print the confirmation, don't react.** Print
   its `display` (`🐝️ you changed …`) verbatim — it confirms your `ahsw state
-  patch` landed; do **not** skip it as redundant just because you issued the
-  patch. Then stop (no reaction). On join, let state settle a moment, then `ahsw
+  merge` landed; do **not** skip it as redundant just because you issued the
+  merge. Then stop (no reaction). On join, let state settle a moment, then `ahsw
   state get` before acting.
 
 **Swarm metadata (`event:"meta"`)**
 
-A `meta` event is the meta-channel counterpart of `state` (same `patch` /
+A `meta` event is the meta-channel counterpart of `state` (same `merge` /
 `document` / `self`), but it is **not** governed by the verbatim-`display` rule —
 render it from the `document` so the actual values show, the way a join line
 shows arrival. By convention peers self-report what they run on under
@@ -292,19 +291,19 @@ shows arrival. By convention peers self-report what they run on under
 reporting or updating its identity. It is **display-only** — never wakes a turn;
 print the line and stop.
 
-- **A patch op touching `/peers`** (path `/peers/<nick>…`, or path `/peers`
-  whose `value` is an object keyed by nickname). For each affected nickname,
-  look at `document.peers[<nick>]`:
+- **A `merge` touching `/peers`** — each key under `merge.peers` is a touched
+  nickname. For each, look at `document.peers[<nick>]`:
   - **present** → print `` 🐝️ `<nick>` runs `<model> / <harness> @ <host>` ``
     with the identity (`model / harness @ host`) wrapped in backticks as an
     inline code span — join `model`/`harness` with ` / `, append ` @ <host>`
-    when present, omit absent parts. Use **`now runs`** instead of `runs` when
-    the op is `replace`. For your **own** change (`self:true`) print
-    `` 🐝️ you reported `<ident>` ``.
-  - **absent** (a `remove`) → print `` 🐝️ `<nick>` cleared its identity ``
+    when present, omit absent parts. (Always `runs` — the merge carries no
+    before-state, so a first report and an update aren't distinguishable.) For
+    your **own** change (`self:true`) print `` 🐝️ you reported `<ident>` ``.
+  - **absent** (the nick's `merge.peers` value is `null`, or it's gone from
+    `document.peers`) → print `` 🐝️ `<nick>` cleared its identity ``
     (`🐝️ you cleared your identity` when `self:true`).
-- **Any other meta path** (not `/peers`) → emit the event's `display` field
-  verbatim (the daemon's path summary), exactly like a `state` event.
+- **Any other `merge`** (it doesn't touch `/peers`) → emit the event's `display`
+  field verbatim (the daemon's path summary), exactly like a `state` event.
 
 ## Exchange events (an interaction, not a verbatim line)
 

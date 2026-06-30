@@ -380,8 +380,8 @@ pub(crate) fn channel_subcommand(channel: Channel) -> &'static str {
 }
 
 /// Spawn `ahsw <channel> get … `, assert success, return trimmed stdout (the
-/// raw `{ok, document, doc_hash}` JSON line). Drives the real CLI → IPC socket
-/// → daemon read path the embed harness bypasses.
+/// raw `{ok, document}` JSON line). Drives the real CLI → IPC socket → daemon
+/// read path the embed harness bypasses.
 pub(crate) fn cli_channel_get(channel: Channel, swarm: &str, nickname: &str) -> String {
     let out = test_cmd()
         .args([channel_subcommand(channel), "get"])
@@ -397,30 +397,21 @@ pub(crate) fn cli_channel_get(channel: Channel, swarm: &str, nickname: &str) -> 
     String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
 
-/// Spawn `ahsw <channel> patch …` (optionally `--if-doc-hash`), returning the
-/// raw [`Output`](std::process::Output). The CLI **exits non-zero** on a
-/// rejected `{ok:false}` patch (the scriptable exit-code contract), so this
-/// returns the status + stdout unjudged for the caller to assert on.
-pub(crate) fn cli_channel_patch(
+/// Spawn `ahsw <channel> merge …`, returning the raw
+/// [`Output`](std::process::Output). The CLI **exits non-zero** on a rejected
+/// `{ok:false}` merge (the scriptable exit-code contract), so this returns the
+/// status + stdout unjudged for the caller to assert on.
+pub(crate) fn cli_channel_merge(
     channel: Channel,
     swarm: &str,
     nickname: &str,
-    ops: &str,
-    if_doc_hash: Option<&str>,
+    merge: &str,
 ) -> Output {
-    let mut cmd = test_cmd();
-    cmd.args([channel_subcommand(channel), "patch"]).args([
-        "--swarm",
-        swarm,
-        "--nickname",
-        nickname,
-        "--patch",
-        ops,
-    ]);
-    if let Some(hash) = if_doc_hash {
-        cmd.args(["--if-doc-hash", hash]);
-    }
-    cmd.output().expect("channel patch failed to spawn")
+    test_cmd()
+        .args([channel_subcommand(channel), "merge"])
+        .args(["--swarm", swarm, "--nickname", nickname, "--merge", merge])
+        .output()
+        .expect("channel merge failed to spawn")
 }
 
 // ── In-process harness (embed::SwarmSession) ──────────────────────
@@ -503,33 +494,21 @@ impl InProcNode {
             .expect("in-process send failed")
     }
 
-    /// Apply a JSON-Patch change to the shared state. Panics if the patch is
-    /// rejected (invalid / out-of-subset / loop stopped) — use
-    /// [`Self::try_state_patch`] to exercise rejection deliberately.
-    pub(crate) async fn state_patch(&self, patch: serde_json::Value) {
-        self.try_state_patch(patch)
+    /// Apply an RFC 7386 merge to the shared state. Panics if the merge is
+    /// rejected (not a JSON object / loop stopped) — use
+    /// [`Self::try_state_merge`] to exercise rejection deliberately.
+    pub(crate) async fn state_merge(&self, merge: serde_json::Value) {
+        self.try_state_merge(merge)
             .await
-            .expect("in-process state_patch failed");
+            .expect("in-process state_merge failed");
     }
 
-    /// Like [`Self::state_patch`] but returns the raw result, so a test can
-    /// assert an invalid/out-of-subset patch is rejected.
-    pub(crate) async fn try_state_patch(&self, patch: serde_json::Value) -> anyhow::Result<()> {
-        self.session.state_patch(patch, None).await
+    /// Like [`Self::state_merge`] but returns the raw result.
+    pub(crate) async fn try_state_merge(&self, merge: serde_json::Value) -> anyhow::Result<()> {
+        self.session.state_merge(merge).await
     }
 
-    /// Apply a state patch behind a compare-and-set guard (the `doc_hash` from a
-    /// prior read). Returns the raw result so a test can assert a stale hash is
-    /// rejected and a current one applies.
-    pub(crate) async fn try_state_patch_if(
-        &self,
-        patch: serde_json::Value,
-        if_doc_hash: Option<String>,
-    ) -> anyhow::Result<()> {
-        self.session.state_patch(patch, if_doc_hash).await
-    }
-
-    /// The current derived shared-state document (the JSON-Patch fold over the
+    /// The current derived shared-state document (the merge fold over the
     /// state log).
     pub(crate) async fn state_get(&self) -> serde_json::Value {
         self.session
@@ -538,27 +517,17 @@ impl InProcNode {
             .expect("in-process state_get failed")
     }
 
-    /// Apply a JSON-Patch change to the `meta` channel. Panics on rejection —
-    /// use [`Self::try_meta_patch`] to exercise rejection deliberately.
-    pub(crate) async fn meta_patch(&self, patch: serde_json::Value) {
-        self.try_meta_patch(patch)
+    /// Apply an RFC 7386 merge to the `meta` channel. Panics on rejection —
+    /// use [`Self::try_meta_merge`] to exercise rejection deliberately.
+    pub(crate) async fn meta_merge(&self, merge: serde_json::Value) {
+        self.try_meta_merge(merge)
             .await
-            .expect("in-process meta_patch failed");
+            .expect("in-process meta_merge failed");
     }
 
-    /// Like [`Self::meta_patch`] but returns the raw result.
-    pub(crate) async fn try_meta_patch(&self, patch: serde_json::Value) -> anyhow::Result<()> {
-        self.session.meta_patch(patch, None).await
-    }
-
-    /// Apply a `meta` patch behind a compare-and-set guard (the `doc_hash` from a
-    /// prior read).
-    pub(crate) async fn try_meta_patch_if(
-        &self,
-        patch: serde_json::Value,
-        if_doc_hash: Option<String>,
-    ) -> anyhow::Result<()> {
-        self.session.meta_patch(patch, if_doc_hash).await
+    /// Like [`Self::meta_merge`] but returns the raw result.
+    pub(crate) async fn try_meta_merge(&self, merge: serde_json::Value) -> anyhow::Result<()> {
+        self.session.meta_merge(merge).await
     }
 
     /// The current derived `meta`-channel document.
@@ -574,36 +543,23 @@ impl InProcNode {
     // call site; these forward to the `state_*` / `meta_*` twins above so a
     // single test body covers `Channel::State` and `Channel::Meta`.
 
-    /// Apply a patch to `channel`. Panics on rejection.
-    pub(crate) async fn patch(&self, channel: Channel, patch: serde_json::Value) {
+    /// Apply a merge to `channel`. Panics on rejection.
+    pub(crate) async fn merge(&self, channel: Channel, merge: serde_json::Value) {
         match channel {
-            Channel::State => self.state_patch(patch).await,
-            Channel::Meta => self.meta_patch(patch).await,
+            Channel::State => self.state_merge(merge).await,
+            Channel::Meta => self.meta_merge(merge).await,
         }
     }
 
-    /// Apply a patch to `channel`, returning the raw result.
-    pub(crate) async fn try_patch(
+    /// Apply a merge to `channel`, returning the raw result.
+    pub(crate) async fn try_merge(
         &self,
         channel: Channel,
-        patch: serde_json::Value,
+        merge: serde_json::Value,
     ) -> anyhow::Result<()> {
         match channel {
-            Channel::State => self.try_state_patch(patch).await,
-            Channel::Meta => self.try_meta_patch(patch).await,
-        }
-    }
-
-    /// Apply a CAS-guarded patch to `channel`, returning the raw result.
-    pub(crate) async fn try_patch_if(
-        &self,
-        channel: Channel,
-        patch: serde_json::Value,
-        if_doc_hash: Option<String>,
-    ) -> anyhow::Result<()> {
-        match channel {
-            Channel::State => self.try_state_patch_if(patch, if_doc_hash).await,
-            Channel::Meta => self.try_meta_patch_if(patch, if_doc_hash).await,
+            Channel::State => self.try_state_merge(merge).await,
+            Channel::Meta => self.try_meta_merge(merge).await,
         }
     }
 

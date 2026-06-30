@@ -48,8 +48,13 @@ const _: () = assert!(
     "MAX_MESSAGE_SIZE leaves too little room under iroh-gossip's DEFAULT_MAX_MESSAGE_SIZE"
 );
 
-/// Protocol version embedded in every message.
-pub(crate) const VERSION: &str = "1.0";
+/// Protocol version embedded in every message. Bumped to `2.0` for the
+/// RFC 6902 → RFC 7386 shared-state wire-contract change: the `State`/`Meta`
+/// body shape changed incompatibly (`{"k":"patch","ops":[…]}` → `{"k":"merge",
+/// "merge":{…}}`), so a `1.0` peer and a `2.0` peer must NOT interoperate. The
+/// exact-match gate in `parse` drops cross-version messages loudly rather than
+/// letting them silently fold to no-ops and diverge the shared document.
+pub(crate) const VERSION: &str = "2.0";
 
 /// Presence subtype.
 /// `Joined`/`Left` are user-visible; `Alive` is a silent keepalive used
@@ -340,7 +345,7 @@ fn empty_body() -> MessageBody {
 ///
 /// Wire format (compact JSON, one line):
 /// ```json
-/// {"v":"1.0","id":"<uuid>","type":"msg","swarm":"🐝...","author":"word-word","ts":1234567890,"body":"text","ext":{}}
+/// {"v":"2.0","id":"<uuid>","type":"msg","swarm":"🐝...","author":"word-word","ts":1234567890,"body":"text","ext":{}}
 /// ```
 ///
 /// `reply` (the addressee nickname) is inlined into the JSON for directed `msg` kinds.
@@ -773,7 +778,7 @@ pub(crate) fn build_msg_bytes(
 impl Message {
     pub(crate) fn fixture(kind: MessageKind, body: &str) -> Self {
         Message {
-            version: "1.0".into(),
+            version: VERSION.to_string(),
             id: "00000000-0000-0000-0000-000000000001".into(),
             kind,
             swarm: SwarmId::from("🐝test"),
@@ -952,7 +957,7 @@ mod tests {
     #[test]
     fn test_unknown_ext_fields_ignored() {
         let json = format!(
-            r#"{{"v":"1.0","id":"{FIXTURE_ID}","type":"msg","swarm":"🐝test","author":"a-b","ts":0,"body":"hi","ext":{{"future_field":"value","another":42}}}}"#
+            r#"{{"v":"2.0","id":"{FIXTURE_ID}","type":"msg","swarm":"🐝test","author":"a-b","ts":0,"body":"hi","ext":{{"future_field":"value","another":42}}}}"#
         );
         let parsed = Message::parse(json.as_bytes()).unwrap();
         assert_eq!(parsed.body.as_str(), "hi");
@@ -962,7 +967,7 @@ mod tests {
     #[test]
     fn test_missing_ext_defaults_to_empty_object() {
         let json = format!(
-            r#"{{"v":"1.0","id":"{FIXTURE_ID}","type":"msg","swarm":"🐝test","author":"a-b","ts":0,"body":"hi"}}"#
+            r#"{{"v":"2.0","id":"{FIXTURE_ID}","type":"msg","swarm":"🐝test","author":"a-b","ts":0,"body":"hi"}}"#
         );
         let parsed = Message::parse(json.as_bytes()).unwrap();
         assert_eq!(parsed.ext, serde_json::json!({}));
@@ -970,8 +975,10 @@ mod tests {
 
     #[test]
     fn test_version_mismatch_rejected() {
+        // A `1.0` (pre-merge) message must be rejected by this `2.0` binary — the
+        // rolling-upgrade guard: cross-version state never silently folds.
         let json = format!(
-            r#"{{"v":"2.0","id":"{FIXTURE_ID}","type":"msg","swarm":"🐝test","author":"a-b","ts":0,"body":"hi","ext":{{}}}}"#
+            r#"{{"v":"1.0","id":"{FIXTURE_ID}","type":"msg","swarm":"🐝test","author":"a-b","ts":0,"body":"hi","ext":{{}}}}"#
         );
         assert!(Message::parse(json.as_bytes()).is_err());
     }
@@ -982,14 +989,14 @@ mod tests {
     // escapes / spoof the `<nick>`/`#swarm` conventions (bad body/author).
     #[test]
     fn parse_rejects_non_uuid_id() {
-        let json = r#"{"v":"1.0","id":"not-a-uuid","type":"msg","swarm":"🐝test","author":"a-b","ts":0,"body":"hi","ext":{}}"#;
+        let json = r#"{"v":"2.0","id":"not-a-uuid","type":"msg","swarm":"🐝test","author":"a-b","ts":0,"body":"hi","ext":{}}"#;
         assert!(Message::parse(json.as_bytes()).is_err());
     }
 
     #[test]
     fn parse_rejects_control_char_body() {
         let json = format!(
-            r#"{{"v":"1.0","id":"{FIXTURE_ID}","type":"msg","swarm":"🐝test","author":"a-b","ts":0,"body":"evil\u0000body","ext":{{}}}}"#
+            r#"{{"v":"2.0","id":"{FIXTURE_ID}","type":"msg","swarm":"🐝test","author":"a-b","ts":0,"body":"evil\u0000body","ext":{{}}}}"#
         );
         assert!(Message::parse(json.as_bytes()).is_err());
     }
@@ -997,7 +1004,7 @@ mod tests {
     #[test]
     fn parse_rejects_unsafe_author_nickname() {
         let json = format!(
-            r#"{{"v":"1.0","id":"{FIXTURE_ID}","type":"msg","swarm":"🐝test","author":"a#b","ts":0,"body":"hi","ext":{{}}}}"#
+            r#"{{"v":"2.0","id":"{FIXTURE_ID}","type":"msg","swarm":"🐝test","author":"a#b","ts":0,"body":"hi","ext":{{}}}}"#
         );
         assert!(Message::parse(json.as_bytes()).is_err());
     }
@@ -1310,14 +1317,11 @@ mod tests {
         }
 
         #[test]
-        fn snap_wire_state_patch() {
+        fn snap_wire_state_merge() {
             // A shared-state change rides `MessageKind::State`; its body is the
-            // tagged patch envelope (`k:"patch"`) the reducer parses. Pinning
-            // the wire bytes guards the discriminator + frozen-subset op shape.
-            let msg = Message::fixture(
-                MessageKind::State,
-                r#"{"k":"patch","ops":[{"op":"replace","path":"/turn","value":"b"}]}"#,
-            );
+            // tagged merge envelope (`k:"merge"`) the reducer parses. Pinning the
+            // wire bytes guards the discriminator + RFC 7386 merge shape.
+            let msg = Message::fixture(MessageKind::State, r#"{"k":"merge","merge":{"turn":"b"}}"#);
             let bytes = msg.serialize().unwrap();
             let wire = String::from_utf8(bytes).unwrap();
             insta::assert_snapshot!(wire);

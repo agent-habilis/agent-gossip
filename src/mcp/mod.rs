@@ -11,9 +11,9 @@
 //! - `send_message`
 //! - `send_exchange`
 //! - `fetch_messages`
-//! - `apply_state_patch`
+//! - `apply_state_merge`
 //! - `get_state`
-//! - `apply_meta_patch`
+//! - `apply_meta_merge`
 //! - `get_meta`
 //! - `swarm_info`
 //! - `ping`
@@ -55,7 +55,6 @@ use tokio::sync::Mutex;
 
 use crate::daemon::state::RosterEntry;
 use crate::embed::{CreateConfig, CreateError, Directory, JoinConfig};
-use crate::gossip::StatePatchError;
 use crate::protocol::swarm::{LookupSet, RelayLadder, RelaySelection, SwarmName};
 use crate::protocol::{
     ExchangeId, ExchangeKind, ExchangeKindError, ExchangePhase, ExchangePhaseError, Message,
@@ -240,37 +239,24 @@ fn parse_exchange_id(raw: &str) -> Result<ExchangeId, McpError> {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-struct ApplyStatePatchArgs {
-    /// The JSON-Patch (RFC 6902) op array, e.g.
-    /// `[{"op":"replace","path":"/turn","value":"b"}]`. Frozen subset:
-    /// `add`/`replace`/`remove` on object paths + `add "/arr/-"` (append); no
-    /// `test`/`move`/`copy`, numeric array indices, or root path "". Validated
-    /// against the current document and rejected if it does not apply cleanly.
-    patch: serde_json::Value,
-    /// Optional compare-and-set guard: the `doc_hash` from your last
-    /// `get_state`. If the document changed since, the patch returns
-    /// `{ok:false,stale:true}` (retryable) instead of applying — re-`get_state`
-    /// and retry. Use it for turn-based or contended state so a change you have
-    /// already seen isn't clobbered.
-    #[serde(default)]
-    if_doc_hash: Option<String>,
+struct ApplyStateMergeArgs {
+    /// The RFC 7386 JSON Merge Patch — a JSON value merged into the document,
+    /// e.g. `{"turn":"b"}`. An object deep-merges (each key is set; a `null`
+    /// value deletes that key; nested objects merge recursively; arrays are
+    /// replaced wholesale — model a mutable collection as an object keyed by
+    /// index), and a non-object value (scalar/array/null) replaces the target.
+    merge: serde_json::Value,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-struct ApplyMetaPatchArgs {
-    /// The JSON-Patch (RFC 6902) op array for the **meta** channel — swarm
-    /// metadata, by convention `/peers/<nickname> = {"model":…,"harness":…,"host":…}`
+struct ApplyMetaMergeArgs {
+    /// The RFC 7386 JSON Merge Patch for the **meta** channel — swarm metadata,
+    /// by convention `/peers/<nickname> = {"model":…,"harness":…,"host":…}`
     /// self-reported by each agent (`host` is the machine's hostname), e.g.
-    /// `[{"op":"add","path":"/peers/swift-cedar","value":{"model":"Opus 4.8","harness":"Claude Code","host":"studio-mbp-01"}}]`.
-    /// Same frozen subset as `apply_state_patch`: `add`/`replace`/`remove` on
-    /// object paths + `add "/arr/-"`; no `test`/`move`/`copy`, numeric array
-    /// indices, or root path "". Rejected if it does not apply cleanly.
-    patch: serde_json::Value,
-    /// Optional compare-and-set guard: the `doc_hash` from your last `get_meta`.
-    /// The patch is rejected with a "stale document" error if the document
-    /// changed since — re-`get_meta` and retry.
-    #[serde(default)]
-    if_doc_hash: Option<String>,
+    /// `{"peers":{"swift-cedar":{"model":"Opus 4.8","harness":"Claude Code","host":"studio-mbp-01"}}}`.
+    /// Same merge semantics as `apply_state_merge`: each key merges in, `null`
+    /// deletes — so reporting your own entry never clobbers another peer's.
+    merge: serde_json::Value,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -572,7 +558,7 @@ impl AgentSwarmServer {
     }
 
     #[tool(
-        description = "Return buffered events from the current swarm — chat, presence, exchange legs, shared-state changes (event \"state\", carrying the patch and the newly-derived `document`), and transient events (ping_report, peer_timeout, …), each the same JSON object the live event stream emits. The server auto-tracks a per-session `seq` cursor, so repeat calls with no args return only new traffic (first call sees full history, up to ~200 events). Pass `after` (a seq) only to explicitly replay from a point. Pass `wait_ms` (~15000) to long-poll — block up to that many ms (server-capped at 60s) for new traffic before returning — only while actively watching a live conversation in a loop; on timeout `messages` is empty. Omit `wait_ms` for a one-shot read (e.g. the user asks to check for new messages), which returns whatever is buffered right away. Never returns `alive` heartbeats — those are internal plumbing."
+        description = "Return buffered events from the current swarm — chat, presence, exchange legs, shared-state changes (event \"state\", carrying the merge and the newly-derived `document`), and transient events (ping_report, peer_timeout, …), each the same JSON object the live event stream emits. The server auto-tracks a per-session `seq` cursor, so repeat calls with no args return only new traffic (first call sees full history, up to ~200 events). Pass `after` (a seq) only to explicitly replay from a point. Pass `wait_ms` (~15000) to long-poll — block up to that many ms (server-capped at 60s) for new traffic before returning — only while actively watching a live conversation in a loop; on timeout `messages` is empty. Omit `wait_ms` for a one-shot read (e.g. the user asks to check for new messages), which returns whatever is buffered right away. Never returns `alive` heartbeats — those are internal plumbing."
     )]
     async fn fetch_messages(
         &self,
@@ -701,33 +687,23 @@ impl AgentSwarmServer {
     }
 
     #[tool(
-        description = "Apply a JSON-Patch (RFC 6902) change to the swarm's shared state — a single JSON document every member derives from a gossiped log of patches. `patch` is the op array, e.g. [{\"op\":\"replace\",\"path\":\"/turn\",\"value\":\"b\"}]. Frozen subset: add/replace/remove on object paths + add \"/arr/-\" (append); no test/move/copy, numeric array indices, or root path. Pass `if_doc_hash` (the `doc_hash` from your last get_state) for a compare-and-set guard. Returns `{ok:true}` on apply. A malformed/out-of-subset/non-applying patch is rejected as invalid_params (permanent — don't retry). A compare-and-set conflict returns `{ok:false,stale:true}` instead (retryable — re-run get_state and retry). Peers react to the resulting `state` event; read the new document with `get_state` (or from the `state` event's `document` field in `fetch_messages`)."
+        description = "Apply an RFC 7386 JSON Merge Patch to the swarm's shared state — a single JSON document every member derives from a gossiped log of merges. `merge` is a JSON value merged into the document, e.g. {\"turn\":\"b\"}: an object deep-merges (each key is set; a null value deletes that key; nested objects merge recursively; arrays are replaced wholesale — model a mutable collection as an object keyed by index), and a non-object value replaces the target. Returns `{ok:true}` on apply (any JSON value is a valid merge). Peers react to the resulting `state` event; read the new document with `get_state` (or from the `state` event's `document` field in `fetch_messages`)."
     )]
-    async fn apply_state_patch(
+    async fn apply_state_merge(
         &self,
-        Parameters(args): Parameters<ApplyStatePatchArgs>,
+        Parameters(args): Parameters<ApplyStateMergeArgs>,
     ) -> Result<CallToolResult, McpError> {
         let guard = self.session.lock().await;
         let session = guard.as_ref().ok_or_else(not_in_swarm_error)?;
-        match session
-            .apply_state_patch(args.patch, args.if_doc_hash)
+        session
+            .apply_state_merge(args.merge)
             .await
-        {
-            Ok(()) => ok_json(serde_json::json!({ "ok": true })),
-            // A compare-and-set conflict is retryable, not a bad request, so it
-            // returns a structured `stale:true` result the agent can branch on
-            // (mirroring the CLI's `json_stale`) — not an `invalid_params` error.
-            Err(error) => match error.downcast_ref::<StatePatchError>() {
-                Some(StatePatchError::Stale(why)) => {
-                    ok_json(serde_json::json!({ "ok": false, "stale": true, "error": why }))
-                }
-                _ => Err(McpError::invalid_params(error.to_string(), None)),
-            },
-        }
+            .map_err(to_mcp_error)?;
+        ok_json(serde_json::json!({ "ok": true }))
     }
 
     #[tool(
-        description = "Return the swarm's current shared-state document — the JSON value derived by folding every gossiped JSON-Patch change in deterministic order. Starts as {} before any patch. Requires an active swarm. Read it to decide your next `apply_state_patch`."
+        description = "Return the swarm's current shared-state document — the JSON value derived by folding every gossiped merge in deterministic order. Starts as {} before any merge. Requires an active swarm. Read it to decide your next `apply_state_merge`."
     )]
     async fn get_state(
         &self,
@@ -736,27 +712,27 @@ impl AgentSwarmServer {
         let guard = self.session.lock().await;
         let session = guard.as_ref().ok_or_else(not_in_swarm_error)?;
         let document = session.state_get().await.map_err(to_mcp_error)?;
-        let doc_hash = crate::daemon::state_doc::document_hash(&document);
-        ok_json(serde_json::json!({ "document": document, "doc_hash": doc_hash }))
+        ok_json(serde_json::json!({ "document": document }))
     }
 
     #[tool(
-        description = "Apply a JSON-Patch (RFC 6902) change to the swarm's `meta` channel — a second shared-state document beside `state`, byte-for-byte the same machinery, used for swarm metadata rather than the task. By convention agents self-report what they run on under `/peers/<nickname>`, e.g. [{\"op\":\"add\",\"path\":\"/peers/swift-cedar\",\"value\":{\"model\":\"Opus 4.8\",\"harness\":\"Claude Code\",\"host\":\"studio-mbp-01\"}}] (`host` is the machine's hostname). Same frozen subset and rejection rules as `apply_state_patch`. Peers react to the resulting `meta` event; read the new document with `get_meta`."
+        description = "Apply an RFC 7386 JSON Merge Patch to the swarm's `meta` channel — a second shared-state document beside `state`, byte-for-byte the same machinery, used for swarm metadata rather than the task. By convention agents self-report what they run on under `/peers/<nickname>`, e.g. {\"peers\":{\"swift-cedar\":{\"model\":\"Opus 4.8\",\"harness\":\"Claude Code\",\"host\":\"studio-mbp-01\"}}} (`host` is the machine's hostname). Same merge semantics as `apply_state_merge` — your own entry merges in without clobbering other peers; set a peer key to null to clear it. Peers react to the resulting `meta` event; read the new document with `get_meta`."
     )]
-    async fn apply_meta_patch(
+    async fn apply_meta_merge(
         &self,
-        Parameters(args): Parameters<ApplyMetaPatchArgs>,
+        Parameters(args): Parameters<ApplyMetaMergeArgs>,
     ) -> Result<CallToolResult, McpError> {
         let guard = self.session.lock().await;
         let session = guard.as_ref().ok_or_else(not_in_swarm_error)?;
-        match session.apply_meta_patch(args.patch, args.if_doc_hash).await {
-            Ok(()) => ok_json(serde_json::json!({ "ok": true })),
-            Err(error) => Err(McpError::invalid_params(error.to_string(), None)),
-        }
+        session
+            .apply_meta_merge(args.merge)
+            .await
+            .map_err(to_mcp_error)?;
+        ok_json(serde_json::json!({ "ok": true }))
     }
 
     #[tool(
-        description = "Return the swarm's current `meta`-channel document (the swarm-metadata counterpart of `get_state`) — the JSON value derived by folding every gossiped `meta` patch. Starts as {} before any patch. By convention holds `/peers/<nickname> = {model, harness, host}`. Requires an active swarm. Read it to decide your next `apply_meta_patch` or to see what peers run on."
+        description = "Return the swarm's current `meta`-channel document (the swarm-metadata counterpart of `get_state`) — the JSON value derived by folding every gossiped `meta` merge. Starts as {} before any merge. By convention holds `/peers/<nickname> = {model, harness, host}`. Requires an active swarm. Read it to decide your next `apply_meta_merge` or to see what peers run on."
     )]
     async fn get_meta(
         &self,
@@ -765,8 +741,7 @@ impl AgentSwarmServer {
         let guard = self.session.lock().await;
         let session = guard.as_ref().ok_or_else(not_in_swarm_error)?;
         let document = session.meta_get().await.map_err(to_mcp_error)?;
-        let doc_hash = crate::daemon::state_doc::document_hash(&document);
-        ok_json(serde_json::json!({ "document": document, "doc_hash": doc_hash }))
+        ok_json(serde_json::json!({ "document": document }))
     }
 }
 
@@ -832,21 +807,23 @@ returns its result on the `done` leg for the initiator to confirm. Don't display
 exchange legs as chat lines — drive the flow.
 
 SHARED STATE is one JSON document the whole swarm shares, separate from chat. \
-Read it with `get_state`; change it with `apply_state_patch` (an RFC 6902 patch). \
-Every member folds the same gossiped patch log to the same document. A peer's \
-change arrives as an `event:\"state\"` entry in `fetch_messages` carrying the \
-`patch` and the newly-derived `document` — react to that (read `document`, decide, \
-`apply_state_patch` back); your own changes come back with `self:true` (don't act \
-on them). To build a turn-based interaction, put a turn marker in the document and \
-act only when it is yours.
+Read it with `get_state`; change it with `apply_state_merge` (an RFC 7386 JSON \
+Merge Patch: a JSON object merged in — keys are set, a null deletes, nested \
+objects merge, the root is never replaced). Every member folds the same gossiped \
+merge log to the same document. A peer's change arrives as an `event:\"state\"` \
+entry in `fetch_messages` carrying the `merge` and the newly-derived `document` — \
+react to that (read `document`, decide, `apply_state_merge` back); your own changes \
+come back with `self:true` (don't act on them). To build a turn-based interaction, \
+put a turn marker in the document and act only when it is yours.
 
 META is a SECOND shared-state channel beside `state` — byte-for-byte the same \
-(read with `get_meta`, change with `apply_meta_patch`, peer changes arrive as \
+(read with `get_meta`, change with `apply_meta_merge`, peer changes arrive as \
 `event:\"meta\"`), reserved by convention for swarm metadata rather than the task. \
-Report what YOU run on once you are in the swarm: `apply_meta_patch` your own entry \
-under `/peers/<your-nickname> = {\"model\":…,\"harness\":…,\"host\":…}` (`host` is your \
-machine's hostname; the binary does not self-report this). Re-patch it if you switch \
-models. Read `/peers` to see what peers run on.
+Report what YOU run on once you are in the swarm: `apply_meta_merge` \
+{\"peers\":{\"<your-nickname>\":{\"model\":…,\"harness\":…,\"host\":…}}} (`host` is your \
+machine's hostname; the binary does not self-report this) — merge means your entry \
+never clobbers another peer's. Re-merge it if you switch models; set your peer key \
+to null to clear it. Read `/peers` to see what peers run on.
 
 Call `swarm_manual` for the full command/event reference.";
 

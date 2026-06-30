@@ -1084,32 +1084,32 @@ fn poll_doc(
 fn state_and_meta_round_trip_over_mcp() {
     let (mut creator, mut joiner, _swarm, _nick) = create_pair(900);
 
-    // state: creator patches, the joiner's get_state reflects it.
-    let patched = tool_result_json(&creator.tool_call(
+    // state: creator merges, the joiner's get_state reflects it.
+    let merged = tool_result_json(&creator.tool_call(
         910,
-        "apply_state_patch",
-        serde_json::json!({ "patch": [{"op":"add","path":"/turn","value":"a"}] }),
+        "apply_state_merge",
+        serde_json::json!({ "merge": {"turn": "a"} }),
     ))
-    .expect("apply_state_patch must succeed");
-    assert_eq!(patched["ok"], true, "apply_state_patch reports ok");
+    .expect("apply_state_merge must succeed");
+    assert_eq!(merged["ok"], true, "apply_state_merge reports ok");
     assert!(
         poll_doc(&mut joiner, 911, "get_state", |doc| doc["turn"] == "a"),
-        "joiner's get_state never reflected the creator's state patch"
+        "joiner's get_state never reflected the creator's state merge"
     );
 
-    // meta: creator patches, the joiner's get_meta reflects it.
-    let meta_patched = tool_result_json(&creator.tool_call(
+    // meta: creator merges, the joiner's get_meta reflects it.
+    let meta_merged = tool_result_json(&creator.tool_call(
         920,
-        "apply_meta_patch",
-        serde_json::json!({ "patch": [{"op":"add","path":"/peers","value":{"creator":{"model":"Opus 4.8"}}}] }),
+        "apply_meta_merge",
+        serde_json::json!({ "merge": {"peers": {"creator": {"model": "Opus 4.8"}}} }),
     ))
-    .expect("apply_meta_patch must succeed");
-    assert_eq!(meta_patched["ok"], true, "apply_meta_patch reports ok");
+    .expect("apply_meta_merge must succeed");
+    assert_eq!(meta_merged["ok"], true, "apply_meta_merge reports ok");
     assert!(
         poll_doc(&mut joiner, 921, "get_meta", |doc| doc
             .pointer("/peers/creator/model")
             == Some(&serde_json::json!("Opus 4.8"))),
-        "joiner's get_meta never reflected the creator's meta patch"
+        "joiner's get_meta never reflected the creator's meta merge"
     );
 
     // Channel isolation: the state key isn't in meta, and the meta key isn't in

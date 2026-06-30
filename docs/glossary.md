@@ -241,15 +241,15 @@ is never sent whole on the wire: every member **derives** it by folding the
 state converges deterministically* invariant).
 
 Each swarm carries **two channels**, `state` and `meta` — byte-for-byte the
-same machinery (same reducer, log, anti-entropy, CAS, frozen-subset patch
-rules), differing only by **convention**: `state` is the task working area;
+same machinery (same reducer, log, anti-entropy, RFC 7386 merge rules),
+differing only by **convention**: `state` is the task working area;
 `meta` holds swarm metadata, by convention `/peers/<nick> = { model, harness,
 host }` that each agent self-reports (`host` is the machine's self-reported
 hostname). The binary does **not** differentiate them and
 never writes a channel itself — the **only** way to change either is a JSON
-patch (`ahsw state patch` / `ahsw meta patch`). Read with `ahsw state get` /
+merge (`ahsw state merge` / `ahsw meta merge`). Read with `ahsw state get` /
 `ahsw meta get`. A change surfaces as the `state` / `meta` event, carrying both
-the change and the newly-derived document.
+the merge and the newly-derived document.
 
 Code: `daemon::state_doc` (the reducer `JsonDoc` + `derive_document`),
 `protocol::Channel`, `OutputEvent::StateChanged`.
@@ -269,38 +269,21 @@ just a recent tail). Bounding total growth (compaction/snapshots) is deferred.
 
 Code: `daemon::state_log::StateLog`, `gossip::antientropy::{broadcast,handle}_state_digest`.
 
-### change (state patch)
+### change (state merge)
 
-*Layer: state · a JSON-Patch op array in a `State` event body.*
+*Layer: state · an RFC 7386 JSON Merge Patch document in a `State` event body.*
 
-One modification to the **shared state**: a JSON-Patch (RFC 6902) op array,
-restricted to a **frozen subset** — `add`/`replace`/`remove` on object paths,
-plus `add "/arr/-"` (append) — so patch semantics stay a stable wire contract
-across versions (`test`/`move`/`copy`, numeric array indices, and the root path
-`""` are rejected). Applied **atomically** (all ops or none) and validated at
-the author boundary; on replay a change that is malformed, out of subset, or
-does not apply against the document-at-that-point is a **deterministic
-whole-patch no-op** (never partial), so a crafted change can never diverge
-members.
+One modification to the **shared state**: an RFC 7386 JSON Merge Patch — any
+JSON value applied to the document. An object deep-merges (each key set; a
+`null` value deletes that key; nested objects merge recursively; arrays are
+replaced wholesale), and a non-object value (scalar/array/`null`) replaces the
+target, including the document root. There is no validation and no rejection: any
+JSON value is a valid merge. Merge is not commutative, but every member folds the
+same log in the same `(timestamp, id)` order, so all converge; because each
+writer touches only its own keys, concurrent writers to different keys never
+clobber.
 
-Code: `daemon::state_doc::{validate_patch, patch_body, apply_patch_body}`.
-
-### compare-and-set (CAS) by document hash
-
-*Layer: state · an optional precondition on a **change**.*
-
-The optimistic-concurrency guard for contended **shared state**. `state get`
-returns a `doc_hash` — `daemon::state_doc::document_hash`, the SHA-256 of the
-canonically-serialized derived **document**. A **change** may carry that hash as
-`--if-doc-hash`; the author's daemon rejects it (`stale document`, no broadcast)
-if the current document's hash differs, i.e. a peer changed it since the read.
-Because the per-swarm event loop is single-threaded, the check and the insert
-are atomic, and a rejected change never reaches the wire — so this needs no
-fold-contract change. It turns a blind `replace` (last-writer-wins) into a safe
-read-then-write for turn-based or multi-writer state.
-
-Code: `daemon::state_doc::document_hash`, the `if_doc_hash` guard in
-`gossip::broadcast::broadcast_state_patch`.
+Code: `daemon::state_doc::{merge_body, apply_merge_body, merge_into}`.
 
 ## Layering
 
@@ -345,13 +328,13 @@ unconditional.
 
 *Causal faithfulness* is the weaker, conditional property: that a change lands
 *after* the change it depends on. The timestamp is one-second resolution, so two
-*dependent* changes authored in the same second can sort by the `id` tiebreak in
-either order — convergent, but the `replace` might fold before its `add` and
-no-op. Phase 1 resolves this by **timing, not a clock**: changes are turn-based
-(seconds apart) and a member changes the state on its turn, so dependent changes
-are naturally separated; multi-step updates that must be atomic go in **one**
-multi-op patch. Sub-second concurrent multi-writer causality is out of scope
-(a future causal DAG via per-author `seq`/`parents`).
+changes to the **same key** authored in the same second can sort by the `id`
+tiebreak in either order — convergent, but the one that "wins" (folds last) may
+not be the one a reader intended. Phase 1 resolves this by **timing, not a
+clock**: changes are turn-based (seconds apart) and a member changes the state on
+its turn, so dependent changes are naturally separated; multi-key updates that
+must land together go in **one** merge object. Sub-second concurrent multi-writer
+causality is out of scope (a future causal DAG via per-author `seq`/`parents`).
 
 ### Lookups are independently sufficient
 

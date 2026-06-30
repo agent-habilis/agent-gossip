@@ -58,8 +58,7 @@ self-reports what it runs on under `/peers/<nickname>` (the convention
 { "ok": true,
   "document": { "peers": {
     "swift-cedar": { "model": "Opus 4.8", "harness": "Claude Code", "host": "studio-mbp-01" }
-  } },
-  "doc_hash": "…" }
+  } } }
 ```
 
 Look up each roster peer's model/harness/host by nickname in `document.peers`

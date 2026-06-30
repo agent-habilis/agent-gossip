@@ -86,28 +86,23 @@ pub(crate) enum IpcCommand {
     /// exchange sender's target picker and nickname validation.
     #[serde(rename = "peers")]
     Peers { swarm: SwarmId },
-    /// Apply a JSON-Patch change to the swarm's shared state. `patch` is the
-    /// RFC 6902 op array (frozen subset); the daemon validates it against the
-    /// current document, then signs + gossips it.
-    #[serde(rename = "state_patch")]
-    StatePatch {
+    /// Apply an RFC 7386 JSON Merge Patch to the swarm's shared state. `merge` is
+    /// any JSON value merged into the document (an object deep-merges, `null`
+    /// deletes a key, a non-object replaces the target); the daemon signs +
+    /// gossips it.
+    #[serde(rename = "state_merge")]
+    StateMerge {
         swarm: SwarmId,
-        patch: serde_json::Value,
-        /// Optional compare-and-set guard — the `doc_hash` from the caller's
-        /// last `state_get`. Rejected if the document changed since.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        if_doc_hash: Option<String>,
+        merge: serde_json::Value,
     },
     /// Read the current derived shared-state document.
     #[serde(rename = "state_get")]
     StateGet { swarm: SwarmId },
-    /// `meta`-channel counterpart of [`StatePatch`](IpcCommand::StatePatch).
-    #[serde(rename = "meta_patch")]
-    MetaPatch {
+    /// `meta`-channel counterpart of [`StateMerge`](IpcCommand::StateMerge).
+    #[serde(rename = "meta_merge")]
+    MetaMerge {
         swarm: SwarmId,
-        patch: serde_json::Value,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        if_doc_hash: Option<String>,
+        merge: serde_json::Value,
     },
     /// `meta`-channel counterpart of [`StateGet`](IpcCommand::StateGet).
     #[serde(rename = "meta_get")]
@@ -131,9 +126,9 @@ impl IpcCommand {
             | IpcCommand::Ping { swarm }
             | IpcCommand::Exchange { swarm, .. }
             | IpcCommand::Peers { swarm }
-            | IpcCommand::StatePatch { swarm, .. }
+            | IpcCommand::StateMerge { swarm, .. }
             | IpcCommand::StateGet { swarm }
-            | IpcCommand::MetaPatch { swarm, .. }
+            | IpcCommand::MetaMerge { swarm, .. }
             | IpcCommand::MetaGet { swarm } => Some(swarm),
             IpcCommand::Info => None,
         }
@@ -171,14 +166,6 @@ pub(crate) fn json_ack() -> String {
 
 pub(crate) fn json_error(error: &str) -> String {
     serde_json::json!({"ok": false, "error": error}).to_string()
-}
-
-/// Response for a state patch rejected by the `--if-doc-hash` compare-and-set
-/// guard. The `stale` flag lets a client tell a **retryable** conflict (re-read
-/// and retry) apart from a structurally-bad patch, without scraping the error
-/// text; `error` still carries the human-readable reason.
-pub(crate) fn json_stale(error: &str) -> String {
-    serde_json::json!({"ok": false, "stale": true, "error": error}).to_string()
 }
 
 /// Bind the local IPC socket synchronously, returning the listening
@@ -451,6 +438,33 @@ mod tests {
     }
 
     #[test]
+    fn ipc_command_state_merge_round_trip() {
+        let cmd = IpcCommand::StateMerge {
+            swarm: SwarmId::from("🐝test"),
+            merge: serde_json::json!({"turn": "b"}),
+        };
+        let json = serde_json::to_string(&cmd).unwrap();
+        assert!(json.contains(r#""command":"state_merge""#), "tag: {json}");
+        assert!(json.contains(r#""merge""#), "{json}");
+        let parsed: IpcCommand = serde_json::from_str(&json).unwrap();
+        match parsed {
+            IpcCommand::StateMerge { swarm, merge } => {
+                assert_eq!(swarm.as_str(), "🐝test");
+                assert_eq!(merge, serde_json::json!({"turn": "b"}));
+            }
+            IpcCommand::Msg { .. }
+            | IpcCommand::Poll { .. }
+            | IpcCommand::Ping { .. }
+            | IpcCommand::Exchange { .. }
+            | IpcCommand::Peers { .. }
+            | IpcCommand::MetaMerge { .. }
+            | IpcCommand::MetaGet { .. }
+            | IpcCommand::StateGet { .. }
+            | IpcCommand::Info => panic!("expected StateMerge"),
+        }
+    }
+
+    #[test]
     fn ipc_command_msg_with_reply_target() {
         let target = Nickname::from("alice");
         let cmd = IpcCommand::Msg {
@@ -467,8 +481,8 @@ mod tests {
             | IpcCommand::Ping { .. }
             | IpcCommand::Exchange { .. }
             | IpcCommand::Peers { .. }
-            | IpcCommand::StatePatch { .. }
-            | IpcCommand::MetaPatch { .. }
+            | IpcCommand::StateMerge { .. }
+            | IpcCommand::MetaMerge { .. }
             | IpcCommand::MetaGet { .. }
             | IpcCommand::StateGet { .. }
             | IpcCommand::Info => panic!("expected Msg"),
@@ -493,8 +507,8 @@ mod tests {
             | IpcCommand::Ping { .. }
             | IpcCommand::Exchange { .. }
             | IpcCommand::Peers { .. }
-            | IpcCommand::StatePatch { .. }
-            | IpcCommand::MetaPatch { .. }
+            | IpcCommand::StateMerge { .. }
+            | IpcCommand::MetaMerge { .. }
             | IpcCommand::MetaGet { .. }
             | IpcCommand::StateGet { .. }
             | IpcCommand::Info => panic!("expected Poll"),
@@ -515,8 +529,8 @@ mod tests {
             | IpcCommand::Poll { .. }
             | IpcCommand::Exchange { .. }
             | IpcCommand::Peers { .. }
-            | IpcCommand::StatePatch { .. }
-            | IpcCommand::MetaPatch { .. }
+            | IpcCommand::StateMerge { .. }
+            | IpcCommand::MetaMerge { .. }
             | IpcCommand::MetaGet { .. }
             | IpcCommand::StateGet { .. }
             | IpcCommand::Info => panic!("expected Ping"),
@@ -550,8 +564,8 @@ mod tests {
             | IpcCommand::Poll { .. }
             | IpcCommand::Ping { .. }
             | IpcCommand::Peers { .. }
-            | IpcCommand::StatePatch { .. }
-            | IpcCommand::MetaPatch { .. }
+            | IpcCommand::StateMerge { .. }
+            | IpcCommand::MetaMerge { .. }
             | IpcCommand::MetaGet { .. }
             | IpcCommand::StateGet { .. }
             | IpcCommand::Info => panic!("expected Exchange"),
@@ -572,8 +586,8 @@ mod tests {
             | IpcCommand::Poll { .. }
             | IpcCommand::Ping { .. }
             | IpcCommand::Exchange { .. }
-            | IpcCommand::StatePatch { .. }
-            | IpcCommand::MetaPatch { .. }
+            | IpcCommand::StateMerge { .. }
+            | IpcCommand::MetaMerge { .. }
             | IpcCommand::MetaGet { .. }
             | IpcCommand::StateGet { .. }
             | IpcCommand::Info => panic!("expected Peers"),
@@ -754,8 +768,8 @@ mod tests {
                     | IpcCommand::Ping { .. }
                     | IpcCommand::Exchange { .. }
                     | IpcCommand::Peers { .. }
-                    | IpcCommand::StatePatch { .. }
-                    | IpcCommand::MetaPatch { .. }
+                    | IpcCommand::StateMerge { .. }
+                    | IpcCommand::MetaMerge { .. }
                     | IpcCommand::MetaGet { .. }
                     | IpcCommand::StateGet { .. }
                     | IpcCommand::Info => {

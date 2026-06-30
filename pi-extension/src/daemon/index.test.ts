@@ -84,7 +84,7 @@ test("a peer's state change wakes the agent with the document", () => {
     type: "state",
     author: "ada",
     self: false,
-    patch: [{ op: "replace", path: "/turn", value: "me" }],
+    merge: { turn: "me" },
     document: { turn: "me", n: 1 },
   });
   flushMessageBatch();

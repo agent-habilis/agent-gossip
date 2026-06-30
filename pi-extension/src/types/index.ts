@@ -25,9 +25,10 @@ export type SwarmEvent = {
   phase?: string;
   to?: string;
   display?: string;
-  // On a `state` event: the applied RFC 6902 op array (the delta) and the full
-  // derived document AFTER the change — what you read to decide your reaction.
-  patch?: Array<Record<string, unknown>>;
+  // On a `state`/`meta` event: the applied RFC 7386 merge document (the delta)
+  // and the full derived document AFTER the change — what you read to decide your
+  // reaction.
+  merge?: Record<string, unknown>;
   document?: Record<string, unknown>;
 };
 

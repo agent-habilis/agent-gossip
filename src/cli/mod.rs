@@ -377,23 +377,21 @@ async fn pipe(action: PipeAction) -> Result<()> {
 }
 
 /// Read or change the swarm's shared state via the running daemon. Emits the
-/// raw IPC JSON response — `{ok,...}` for `patch`, `{ok,document}` for `get`.
+/// raw IPC JSON response — `{ok,...}` for `merge`, `{ok,document}` for `get`.
 async fn state(opts: StateOpts) -> Result<()> {
     let (cmd, nickname) = match opts.action {
-        StateAction::Patch {
+        StateAction::Merge {
             swarm,
             nickname,
-            patch,
-            if_doc_hash,
+            merge,
         } => {
-            let op_array: serde_json::Value = serde_json::from_str(&patch).map_err(|error| {
-                anyhow::anyhow!("--patch must be a JSON array of RFC 6902 ops: {error}")
+            let merge_doc: serde_json::Value = serde_json::from_str(&merge).map_err(|error| {
+                anyhow::anyhow!("--merge must be valid JSON (an RFC 7386 merge patch): {error}")
             })?;
             (
-                IpcCommand::StatePatch {
+                IpcCommand::StateMerge {
                     swarm,
-                    patch: op_array,
-                    if_doc_hash,
+                    merge: merge_doc,
                 },
                 nickname,
             )
@@ -402,7 +400,7 @@ async fn state(opts: StateOpts) -> Result<()> {
     };
     let resp = ipc::send(&cmd, &nickname).await?;
     println!("{resp}");
-    // A rejected patch must not exit 0: a shell-driven agent
+    // A rejected merge must not exit 0: a shell-driven agent
     // reads the exit code to tell an applied change from a rejected one, and an
     // `{"ok":false}` that exits 0 reads as success → silent desync. The raw JSON
     // is already printed above for `--output json` consumers; the exit code is
@@ -418,20 +416,18 @@ async fn state(opts: StateOpts) -> Result<()> {
 /// independent counterpart of [`state`]. Same raw-JSON + exit-code contract.
 async fn meta(opts: MetaOpts) -> Result<()> {
     let (cmd, nickname) = match opts.action {
-        MetaAction::Patch {
+        MetaAction::Merge {
             swarm,
             nickname,
-            patch,
-            if_doc_hash,
+            merge,
         } => {
-            let op_array: serde_json::Value = serde_json::from_str(&patch).map_err(|error| {
-                anyhow::anyhow!("--patch must be a JSON array of RFC 6902 ops: {error}")
+            let merge_doc: serde_json::Value = serde_json::from_str(&merge).map_err(|error| {
+                anyhow::anyhow!("--merge must be valid JSON (an RFC 7386 merge patch): {error}")
             })?;
             (
-                IpcCommand::MetaPatch {
+                IpcCommand::MetaMerge {
                     swarm,
-                    patch: op_array,
-                    if_doc_hash,
+                    merge: merge_doc,
                 },
                 nickname,
             )

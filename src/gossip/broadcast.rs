@@ -62,9 +62,8 @@ pub(crate) async fn broadcast_state(
     sender: &GossipSender,
     output: &output::Output,
     channel: Channel,
-    // The pre-insert document, when the caller already derived it (the patch
-    // path computes it for the compare-and-set / validation). `None` ⇒ derive
-    // it here. Avoids a second full fold of the un-pruned state log per patch.
+    // The pre-insert document, when the caller already derived it. `None` ⇒
+    // derive it here. Avoids a second full fold of the un-pruned state log.
     before: Option<serde_json::Value>,
 ) -> anyhow::Result<()> {
     let signed = Message::new_channel_event(swarm, author, body, channel).signed(&state.identity);
@@ -98,111 +97,25 @@ pub(crate) async fn broadcast_state(
     Ok(())
 }
 
-/// The outcome of an attempted shared-state write.
-pub(crate) enum StatePatchOutcome {
-    Applied,
-    /// The patch is structurally bad (malformed / out of subset / doesn't apply)
-    /// — a permanent failure; retrying the same patch won't help.
-    Invalid(String),
-    /// `--if-doc-hash` didn't match the current document — a **retryable**
-    /// compare-and-set conflict (re-read and retry), distinct from `Invalid`.
-    Stale(String),
-}
-
-/// A rejected shared-state patch, as a typed error carried inside the
-/// `anyhow::Error` the embed/MCP path returns. Lets a programmatic caller
-/// (`downcast_ref`) tell a retryable compare-and-set conflict (`Stale`) from a
-/// permanent bad patch (`Invalid`) without scraping the message text — the
-/// structured counterpart to the CLI/IPC `json_stale` vs `json_error` split.
-#[derive(Debug)]
-pub(crate) enum StatePatchError {
-    /// `--if-doc-hash` didn't match: re-read with `state get` and retry.
-    Stale(String),
-    /// Structurally bad patch (malformed / out of subset / doesn't apply);
-    /// retrying the same patch won't help.
-    Invalid(String),
-}
-
-impl std::fmt::Display for StatePatchError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let (StatePatchError::Stale(why) | StatePatchError::Invalid(why)) = self;
-        formatter.write_str(why)
-    }
-}
-
-impl std::error::Error for StatePatchError {}
-
-/// Collapse a [`broadcast_state_patch`] outcome into the `Result<()>` the embed
-/// `StatePatch` request returns: applied is `Ok`; a rejection becomes a
-/// [`StatePatchError`] (wrapped in `anyhow`) so callers keep the stale-vs-invalid
-/// distinction; a transport/serialize failure propagates verbatim.
-fn state_patch_reply(outcome: anyhow::Result<StatePatchOutcome>) -> anyhow::Result<()> {
-    match outcome {
-        Ok(StatePatchOutcome::Applied) => Ok(()),
-        Ok(StatePatchOutcome::Invalid(why)) => Err(StatePatchError::Invalid(why).into()),
-        Ok(StatePatchOutcome::Stale(why)) => Err(StatePatchError::Stale(why).into()),
-        Err(error) => Err(error),
-    }
-}
-
-/// The single shared-state write helper, shared by the IPC `state_patch`
-/// command and the embed `StatePatch` request. Validates the patch against the
-/// current document (frozen subset + applies cleanly), then composes the body
-/// and gossips via [`broadcast_state`]. No size check here —
-/// `Message::serialize` is the single size gate, inside `broadcast_state`.
+/// The single shared-state write helper, shared by the IPC `state_merge` command
+/// and the embed `StateMerge` request. An RFC 7386 merge always applies (any JSON
+/// value is valid), so this just composes the body and gossips via
+/// [`broadcast_state`]. No size check here — `Message::serialize` is the single
+/// size gate, inside `broadcast_state`.
 ///
 /// # Errors
 /// Propagates a `broadcast_state` failure (oversize body / broadcast refusal).
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the channel-parameterized state write; every argument is load-bearing"
-)]
-pub(crate) async fn broadcast_state_patch(
+pub(crate) async fn broadcast_state_merge(
     swarm: &SwarmId,
     author: &Nickname,
-    patch: serde_json::Value,
-    if_doc_hash: Option<String>,
+    merge: serde_json::Value,
     state: &mut EventLoopState,
     sender: &GossipSender,
     output: &output::Output,
     channel: Channel,
-) -> anyhow::Result<StatePatchOutcome> {
-    let current = crate::daemon::state_doc::derive_document(match channel {
-        Channel::State => &state.state_log,
-        Channel::Meta => &state.meta_log,
-    });
-    // Optimistic-concurrency guard: reject if the document moved since the
-    // caller's last read. The per-swarm event loop is single-threaded, so this
-    // check and the insert below are atomic — no peer patch can interleave. A
-    // stale write never reaches the wire, so this needs no fold-contract change.
-    if let Some(expected) = &if_doc_hash {
-        let actual = crate::daemon::state_doc::document_hash(&current);
-        if *expected != actual {
-            return Ok(StatePatchOutcome::Stale(format!(
-                "stale document: --if-doc-hash {expected} no longer matches the current \
-                 document ({actual}); re-read with `state get` and retry"
-            )));
-        }
-    }
-    if let Err(why) = crate::daemon::state_doc::validate_patch(&patch, &current) {
-        return Ok(StatePatchOutcome::Invalid(why));
-    }
-    let body = crate::daemon::state_doc::patch_body(patch)?;
-    // Reuse `current` as the pre-insert document — it is the same fold
-    // `broadcast_state` would otherwise recompute (no peer patch can interleave
-    // on the single-threaded loop between here and the insert).
-    broadcast_state(
-        swarm,
-        author,
-        body,
-        state,
-        sender,
-        output,
-        channel,
-        Some(current),
-    )
-    .await?;
-    Ok(StatePatchOutcome::Applied)
+) -> anyhow::Result<()> {
+    let body = crate::daemon::state_doc::merge_body(merge)?;
+    broadcast_state(swarm, author, body, state, sender, output, channel, None).await
 }
 
 /// Broadcast a `PeerInfo` carrying our endpoint address so peers can
@@ -812,11 +725,6 @@ fn ingest_own_leg(state: &mut EventLoopState, msg: &Message, out: &output::Outpu
 /// back on the oneshot; `Poll` returns the join-horizon-filtered buffer.
 /// Returns `true` if anything was broadcast so the caller can refresh
 /// `last_sent_at` (mirrors `handle_ipc_command`).
-#[expect(
-    clippy::too_many_lines,
-    reason = "a dispatch match with one arm per SessionRequest; the state/meta channel pair \
-              doubles the patch/document arms but each is a thin delegate"
-)]
 pub(crate) async fn handle_session_request(
     req: SessionRequest,
     swarm: &SwarmId,
@@ -876,48 +784,24 @@ pub(crate) async fn handle_session_request(
             let _ = resp.send(state.roster_snapshot());
             false
         }
-        SessionRequest::StatePatch {
-            patch,
-            if_doc_hash,
-            resp,
-        } => {
-            let outcome = broadcast_state_patch(
-                swarm,
-                author,
-                patch,
-                if_doc_hash,
-                state,
-                sender,
-                output,
-                Channel::State,
-            )
-            .await;
-            let sent = matches!(&outcome, Ok(StatePatchOutcome::Applied));
-            let _ = resp.send(state_patch_reply(outcome));
+        SessionRequest::StateMerge { merge, resp } => {
+            let outcome =
+                broadcast_state_merge(swarm, author, merge, state, sender, output, Channel::State)
+                    .await;
+            let sent = outcome.is_ok();
+            let _ = resp.send(outcome);
             sent
         }
         SessionRequest::StateGet { resp } => {
             let _ = resp.send(crate::daemon::state_doc::derive_document(&state.state_log));
             false
         }
-        SessionRequest::MetaPatch {
-            patch,
-            if_doc_hash,
-            resp,
-        } => {
-            let outcome = broadcast_state_patch(
-                swarm,
-                author,
-                patch,
-                if_doc_hash,
-                state,
-                sender,
-                output,
-                Channel::Meta,
-            )
-            .await;
-            let sent = matches!(&outcome, Ok(StatePatchOutcome::Applied));
-            let _ = resp.send(state_patch_reply(outcome));
+        SessionRequest::MetaMerge { merge, resp } => {
+            let outcome =
+                broadcast_state_merge(swarm, author, merge, state, sender, output, Channel::Meta)
+                    .await;
+            let sent = outcome.is_ok();
+            let _ = resp.send(outcome);
             sent
         }
         SessionRequest::MetaGet { resp } => {

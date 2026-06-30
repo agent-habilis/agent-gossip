@@ -450,19 +450,13 @@ impl InProcessSession {
             .map_err(|_| anyhow::anyhow!("swarm event loop dropped the response"))
     }
 
-    /// Apply a JSON-Patch change to the shared state. The op array (frozen
-    /// subset) is validated against the current document; a rejected patch
-    /// returns an error.
-    pub(crate) async fn state_patch(
-        &self,
-        patch: serde_json::Value,
-        if_doc_hash: Option<String>,
-    ) -> anyhow::Result<()> {
+    /// Apply an RFC 7386 JSON Merge Patch to the shared state. Any JSON value is a
+    /// valid merge; `Err` is a transport/serialize failure only.
+    pub(crate) async fn state_merge(&self, merge: serde_json::Value) -> anyhow::Result<()> {
         let (resp_tx, resp_rx) = oneshot::channel();
         self.req_tx
-            .send(SessionRequest::StatePatch {
-                patch,
-                if_doc_hash,
+            .send(SessionRequest::StateMerge {
+                merge,
                 resp: resp_tx,
             })
             .await
@@ -472,7 +466,7 @@ impl InProcessSession {
             .map_err(|_| anyhow::anyhow!("swarm event loop dropped the response"))?
     }
 
-    /// The current derived shared-state document (the JSON-Patch fold).
+    /// The current derived shared-state document (the merge fold).
     pub(crate) async fn state_get(&self) -> anyhow::Result<serde_json::Value> {
         let (resp_tx, resp_rx) = oneshot::channel();
         self.req_tx
@@ -484,17 +478,12 @@ impl InProcessSession {
             .map_err(|_| anyhow::anyhow!("swarm event loop dropped the response"))
     }
 
-    /// `meta`-channel counterpart of [`state_patch`](Self::state_patch).
-    pub(crate) async fn meta_patch(
-        &self,
-        patch: serde_json::Value,
-        if_doc_hash: Option<String>,
-    ) -> anyhow::Result<()> {
+    /// `meta`-channel counterpart of [`state_merge`](Self::state_merge).
+    pub(crate) async fn meta_merge(&self, merge: serde_json::Value) -> anyhow::Result<()> {
         let (resp_tx, resp_rx) = oneshot::channel();
         self.req_tx
-            .send(SessionRequest::MetaPatch {
-                patch,
-                if_doc_hash,
+            .send(SessionRequest::MetaMerge {
+                merge,
                 resp: resp_tx,
             })
             .await
@@ -732,23 +721,18 @@ impl SwarmSession {
         self.core.send(body, reply).await
     }
 
-    /// Apply a JSON-Patch change to the shared state (frozen subset:
-    /// add/replace/remove on object paths + add `/arr/-`). Validated against the
-    /// current document.
+    /// Apply an RFC 7386 JSON Merge Patch to the shared state: an object merges
+    /// into the document (a `null` member deletes its key; nested objects merge
+    /// recursively), and a non-object value replaces the target.
     ///
     /// # Errors
-    /// Fails if the patch is out of subset / does not apply, or the event loop
-    /// has stopped.
-    pub async fn state_patch(
-        &self,
-        patch: serde_json::Value,
-        if_doc_hash: Option<String>,
-    ) -> anyhow::Result<()> {
-        self.core.state_patch(patch, if_doc_hash).await
+    /// Fails if the event loop has stopped (a merge always applies).
+    pub async fn state_merge(&self, merge: serde_json::Value) -> anyhow::Result<()> {
+        self.core.state_merge(merge).await
     }
 
-    /// The current derived shared-state document (the JSON-Patch fold over the
-    /// state log).
+    /// The current derived shared-state document (the merge fold over the state
+    /// log).
     ///
     /// # Errors
     /// Fails if the event loop has stopped or dropped the response.
@@ -756,17 +740,13 @@ impl SwarmSession {
         self.core.state_get().await
     }
 
-    /// Apply a JSON-Patch change to the **meta** channel (the swarm-metadata
-    /// counterpart of [`state_patch`](Self::state_patch)).
+    /// Apply an RFC 7386 JSON Merge Patch to the **meta** channel (the
+    /// swarm-metadata counterpart of [`state_merge`](Self::state_merge)).
     ///
     /// # Errors
-    /// As [`state_patch`](Self::state_patch).
-    pub async fn meta_patch(
-        &self,
-        patch: serde_json::Value,
-        if_doc_hash: Option<String>,
-    ) -> anyhow::Result<()> {
-        self.core.meta_patch(patch, if_doc_hash).await
+    /// As [`state_merge`](Self::state_merge).
+    pub async fn meta_merge(&self, merge: serde_json::Value) -> anyhow::Result<()> {
+        self.core.meta_merge(merge).await
     }
 
     /// The current derived **meta**-channel document.

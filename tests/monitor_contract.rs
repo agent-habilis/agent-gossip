@@ -1417,34 +1417,34 @@ fn test_ping_report_is_pollable() {
 }
 
 /// Shared-state wire contract over the REAL path the in-process harness bypasses:
-/// `ahsw <channel> patch` on one daemon → the change gossips → the peer's
+/// `ahsw <channel> merge` on one daemon → the change gossips → the peer's
 /// `--output json` stream carries a `{"event":"<chan>","type":"<chan>",...}`
-/// record with the patch + derived document, and `ahsw <channel> get` on the peer
-/// reflects it. Also pins the CLI exit-code contract for `--if-doc-hash`. Run for
-/// both channels (`state`, `meta`) to prove parity end to end.
+/// record with the merge + derived document, and `ahsw <channel> get` on the peer
+/// reflects it. Run for both channels (`state`, `meta`) to prove parity end to
+/// end.
 fn channel_wire_contract(channel: Channel) {
     let label = common::channel_subcommand(channel);
     let (creator, swarm) = JsonNode::create();
     let joiner = JsonNode::join(&swarm, &format!("wc-{label}-joiner"));
     assert!(creator.wait_ready(&swarm), "creator never served");
     assert!(joiner.wait_ready(&swarm), "joiner never served");
-    // Let the two daemons mesh so the patch gossips live to the joiner.
+    // Let the two daemons mesh so the merge gossips live to the joiner.
     std::thread::sleep(Duration::from_secs(3));
 
-    // Patch on the creator via the real CLI → Unix socket → daemon path.
-    let ops = r#"[{"op":"add","path":"/k","value":"v"}]"#;
-    let out = common::cli_channel_patch(channel, &swarm, &creator.nickname, ops, None);
+    // Merge on the creator via the real CLI → Unix socket → daemon path.
+    let merge = r#"{"k":"v"}"#;
+    let out = common::cli_channel_merge(channel, &swarm, &creator.nickname, merge);
     assert!(
         out.status.success(),
-        "{label} patch should exit 0: {}",
+        "{label} merge should exit 0: {}",
         String::from_utf8_lossy(&out.stderr)
     );
     let resp: serde_json::Value =
-        serde_json::from_slice(&out.stdout).expect("patch stdout is JSON");
-    assert_eq!(resp["ok"], true, "{label} patch should report ok:true");
+        serde_json::from_slice(&out.stdout).expect("merge stdout is JSON");
+    assert_eq!(resp["ok"], true, "{label} merge should report ok:true");
 
     // The joiner surfaces it on its --output json stream as an `event:"<chan>"`
-    // record carrying the patch op array + the freshly-derived document.
+    // record carrying the merge document + the freshly-derived document.
     let want_doc = serde_json::json!({"k": "v"});
     let deadline = Instant::now() + MSG_TIMEOUT;
     let mut event = None;
@@ -1460,9 +1460,9 @@ fn channel_wire_contract(channel: Channel) {
     }
     let event = event.unwrap_or_else(|| panic!("joiner never surfaced a {label} event"));
     assert_eq!(event["type"], label, "{label} event carries type:{label}");
-    assert!(
-        event["patch"].is_array(),
-        "{label} event carries the patch op array: {event}"
+    assert_eq!(
+        event["merge"], want_doc,
+        "{label} event carries the applied merge document: {event}"
     );
     assert_eq!(
         event["document"], want_doc,
@@ -1475,42 +1475,7 @@ fn channel_wire_contract(channel: Channel) {
     assert_eq!(got["ok"], true);
     assert_eq!(
         got["document"], want_doc,
-        "{label} get on the peer reflects the creator's patch"
-    );
-
-    // CAS exit-code contract: a stale --if-doc-hash is rejected (non-zero exit +
-    // {ok:false}); the current hash applies (exit 0).
-    let current = common::cli_channel_get(channel, &swarm, &creator.nickname);
-    let current: serde_json::Value = serde_json::from_str(&current).unwrap();
-    let hash = current["doc_hash"]
-        .as_str()
-        .expect("doc_hash present")
-        .to_owned();
-
-    let cas_ops = r#"[{"op":"add","path":"/x","value":1}]"#;
-    let stale = common::cli_channel_patch(
-        channel,
-        &swarm,
-        &creator.nickname,
-        cas_ops,
-        Some("deadbeef"),
-    );
-    assert!(
-        !stale.status.success(),
-        "{label} stale-hash patch must exit non-zero"
-    );
-    let stale_resp: serde_json::Value =
-        serde_json::from_slice(&stale.stdout).expect("stale patch stdout is JSON");
-    assert_eq!(
-        stale_resp["ok"], false,
-        "{label} stale patch reports ok:false"
-    );
-
-    let fresh = common::cli_channel_patch(channel, &swarm, &creator.nickname, cas_ops, Some(&hash));
-    assert!(
-        fresh.status.success(),
-        "{label} current-hash patch must exit 0: {}",
-        String::from_utf8_lossy(&fresh.stderr)
+        "{label} get on the peer reflects the creator's merge"
     );
 }
 

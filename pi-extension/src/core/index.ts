@@ -324,7 +324,7 @@ export function getPeers(): { count: number; participants: Peer[] } {
 
 // Read the current derived shared-state document via `ahsw state get`. Throws
 // when not in a swarm. Uses execFileSync (no shell), consistent with
-// applyStatePatch — its JSON `--patch` arg must never touch the shell.
+// applyStateMerge — its JSON `--merge` arg must never touch the shell.
 export function getStateDocument(): Record<string, unknown> {
   if (!state.session?.swarm) throw new Error("Not in a swarm");
   const raw = execFileSync(
@@ -336,33 +336,36 @@ export function getStateDocument(): Record<string, unknown> {
   return parsed.document ?? {};
 }
 
-// Apply an RFC 6902 patch to the shared state via `ahsw state patch`. The
-// outcome is read from the `{ok,…}` JSON on stdout. The JSON `--patch` arg goes
-// through execFileSync (no shell) — `runSwarmCommand`'s quoting would mangle it.
-export function applyStatePatch({ patch }: { patch: string }): {
+// Apply an RFC 7386 JSON Merge Patch to the shared state via `ahsw state merge`.
+// The outcome is read from the `{ok,…}` JSON on stdout. The JSON `--merge` arg
+// goes through execFileSync (no shell) — `runSwarmCommand`'s quoting would mangle
+// it.
+export function applyStateMerge({ merge }: { merge: string }): {
   ok: boolean;
   error?: string;
 } {
   if (!state.session?.swarm) throw new Error("Not in a swarm");
   let parsed: unknown;
   try {
-    parsed = JSON.parse(patch);
+    parsed = JSON.parse(merge);
   } catch {
-    throw new Error("patch must be a JSON array of RFC 6902 ops");
+    throw new Error("merge must be a JSON object (RFC 7386 merge patch)");
   }
-  if (!Array.isArray(parsed)) throw new Error("patch must be a JSON array of RFC 6902 ops");
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new Error("merge must be a JSON object (RFC 7386 merge patch)");
+  }
 
   const raw = execFileSync(
     "ahsw",
     [
       "state",
-      "patch",
+      "merge",
       "--swarm",
       state.session.swarm,
       "--nickname",
       state.session.nickname,
-      "--patch",
-      patch,
+      "--merge",
+      merge,
     ],
     { encoding: "utf-8", timeout: 15_000 },
   ).trim();
@@ -384,22 +387,22 @@ export function getMetaDocument(): Record<string, unknown> {
   return parsed.document ?? {};
 }
 
-// Apply an RFC 6902 patch to the `meta` channel. Like `state patch`, the CLI
-// exits non-zero on a rejected `{ok:false}` patch, so execFileSync throws —
-// callers that tolerate rejection (e.g. reportSelfMeta's seed fallback) wrap it.
-function runMetaPatch(patch: string): void {
+// Apply an RFC 7386 JSON Merge Patch to the `meta` channel. Like `state merge`,
+// the CLI exits non-zero on a rejected `{ok:false}` merge, so execFileSync
+// throws — callers that tolerate rejection wrap it.
+function runMetaMerge(merge: string): void {
   if (!state.session?.swarm) throw new Error("Not in a swarm");
   execFileSync(
     "ahsw",
     [
       "meta",
-      "patch",
+      "merge",
       "--swarm",
       state.session.swarm,
       "--nickname",
       state.session.nickname,
-      "--patch",
-      patch,
+      "--merge",
+      merge,
     ],
     { encoding: "utf-8", timeout: 15_000 },
   );
@@ -408,8 +411,9 @@ function runMetaPatch(patch: string): void {
 // Record what this agent runs on into `meta` under `/peers/<nickname>`. The
 // binary no longer self-reports model/harness/host — it is swarm metadata the
 // agent owns. Best-effort: a failed report must not break create/join, so errors
-// are swallowed (the roster simply shows no model for us). `/peers` is an object
-// keyed by nickname so each peer owns its own path and never clobbers another's.
+// are swallowed (the roster simply shows no model for us). A merge deep-merges
+// only our own `/peers/<nickname>` key, so it creates `/peers` if absent and
+// never clobbers another peer's entry — no seed, no fallback needed.
 function reportSelfMeta(model?: string): void {
   const session = state.session;
   if (!session?.swarm) return;
@@ -419,18 +423,11 @@ function reportSelfMeta(model?: string): void {
   // share a box. os.hostname() may include a domain — keep only the first label.
   const host = hostname().split(".")[0];
   if (host) value.host = host;
-  const entry = JSON.stringify(value);
-  const nick = JSON.stringify(session.nickname);
+  const merge = JSON.stringify({ peers: { [session.nickname]: value } });
   try {
-    // The common case: /peers already exists (the creator seeded it).
-    runMetaPatch(`[{"op":"add","path":"/peers/${session.nickname}","value":${entry}}]`);
+    runMetaMerge(merge);
   } catch {
-    // /peers not present yet (sole or early member) — create it with our entry.
-    try {
-      runMetaPatch(`[{"op":"add","path":"/peers","value":{${nick}:${entry}}}]`);
-    } catch {
-      // Give up silently; self-report is non-essential.
-    }
+    // Give up silently; self-report is non-essential.
   }
 }
 

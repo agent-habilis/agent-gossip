@@ -77,7 +77,6 @@ pub use protocol::swarm::{
 pub use resolver::{JoinTarget, JoinTargetError};
 // Wire/runtime constants the external test + bench crates assert against; the
 // rest of `util::consts` stays crate-internal.
-pub use daemon::state_doc::document_hash;
 pub use util::consts::{MAX_LOGICAL_BODY_BYTES, MAX_MESSAGE_PARTS, MAX_MESSAGE_SIZE, RUNTIME_DIR};
 pub use util::swarm_prefix;
 pub use util::version::VERSION;

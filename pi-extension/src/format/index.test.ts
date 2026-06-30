@@ -93,44 +93,50 @@ test("formatPeerIdent joins model / harness @ host, omitting absent parts", () =
   expect(formatPeerIdent({})).toBe("");
 });
 
-test("formatMeta: a peer adding /peers/<nick> reads 'runs <ident>'", () => {
+test("formatMeta: a full identity report reads 'runs <ident>'", () => {
   expect(
     formatMeta(
       metaEv({
-        patch: [{ op: "add", path: "/peers/bark-vivid", value: ident }],
+        merge: { peers: { "bark-vivid": ident } },
         document: { peers: { "bark-vivid": ident } },
       }),
     ),
   ).toBe("`<bark-vivid>` runs `Opus 4.8 / Claude Code @ studio-mbp-01`");
 });
 
-test("formatMeta: the /peers seed form (keyed value) names each peer", () => {
+test("formatMeta: a multi-peer merge names each touched peer", () => {
+  const other = { model: "GLM 5.2", harness: "pi", host: "box-2" };
   expect(
     formatMeta(
       metaEv({
-        patch: [{ op: "add", path: "/peers", value: { "bark-vivid": ident } }],
-        document: { peers: { "bark-vivid": ident } },
+        merge: { peers: { "bark-vivid": ident, "otter-embark": other } },
+        document: { peers: { "bark-vivid": ident, "otter-embark": other } },
       }),
     ),
-  ).toBe("`<bark-vivid>` runs `Opus 4.8 / Claude Code @ studio-mbp-01`");
+  ).toBe(
+    "`<bark-vivid>` runs `Opus 4.8 / Claude Code @ studio-mbp-01`\n" +
+      "`<otter-embark>` runs `GLM 5.2 / pi @ box-2`",
+  );
 });
 
-test("formatMeta: a replace reads 'now runs'", () => {
+test("formatMeta: a partial update (model switch) still reads 'runs' the full identity", () => {
   const next = { ...ident, model: "Opus 4.7" };
   expect(
     formatMeta(
       metaEv({
-        patch: [{ op: "replace", path: "/peers/bark-vivid", value: next }],
+        // A model switch sends only the changed field — a partial merge — but the
+        // rendered identity comes from the post-merge document, so it's complete.
+        merge: { peers: { "bark-vivid": { model: "Opus 4.7" } } },
         document: { peers: { "bark-vivid": next } },
       }),
     ),
-  ).toBe("`<bark-vivid>` now runs `Opus 4.7 / Claude Code @ studio-mbp-01`");
+  ).toBe("`<bark-vivid>` runs `Opus 4.7 / Claude Code @ studio-mbp-01`");
 });
 
 test("formatMeta: your own report reads 'you reported <ident>' (shown, not dropped)", () => {
   const event = metaEv({
     self: true,
-    patch: [{ op: "add", path: "/peers/bark-vivid", value: ident }],
+    merge: { peers: { "bark-vivid": ident } },
     document: { peers: { "bark-vivid": ident } },
   });
   expect(formatMeta(event)).toBe("you reported `Opus 4.8 / Claude Code @ studio-mbp-01`");
@@ -138,11 +144,11 @@ test("formatMeta: your own report reads 'you reported <ident>' (shown, not dropp
   expect(formatDisplay(event)).toBe("you reported `Opus 4.8 / Claude Code @ studio-mbp-01`");
 });
 
-test("formatMeta: removing a peer entry reads 'cleared its identity'", () => {
+test("formatMeta: a null merge value reads 'cleared its identity'", () => {
   expect(
     formatMeta(
       metaEv({
-        patch: [{ op: "remove", path: "/peers/bark-vivid" }],
+        merge: { peers: { "bark-vivid": null } },
         document: { peers: {} },
       }),
     ),
@@ -154,7 +160,7 @@ test("formatMeta: a non-/peers meta change falls back to the daemon display", ()
     formatMeta(
       metaEv({
         author: "otter-embark",
-        patch: [{ op: "add", path: "/caps/review", value: true }],
+        merge: { caps: { review: true } },
         document: { caps: { review: true } },
         display: "🐝️ `<otter-embark>` changed /caps/review",
       }),

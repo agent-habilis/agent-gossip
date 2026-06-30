@@ -60,24 +60,20 @@ pub(crate) enum SessionRequest {
     Ping {
         resp: oneshot::Sender<Vec<output::PingPeer>>,
     },
-    /// Apply a JSON-Patch change to the shared state: validate against the
-    /// current document, compose the body, then sign + gossip.
-    /// `Err` carries an invalid-patch reason.
-    StatePatch {
-        patch: serde_json::Value,
-        /// Optional compare-and-set guard: the document hash from the caller's
-        /// last `state get`. The patch is rejected if the document has changed.
-        if_doc_hash: Option<String>,
+    /// Apply an RFC 7386 JSON Merge Patch to the shared state: compose the body,
+    /// then sign + gossip. `Err` carries a transport/serialize failure only — a
+    /// merge always applies.
+    StateMerge {
+        merge: serde_json::Value,
         resp: oneshot::Sender<Result<()>>,
     },
-    /// Read the current derived shared-state document (the JSON-Patch fold).
+    /// Read the current derived shared-state document (the merge fold).
     StateGet {
         resp: oneshot::Sender<serde_json::Value>,
     },
-    /// `meta`-channel counterpart of [`StatePatch`](SessionRequest::StatePatch).
-    MetaPatch {
-        patch: serde_json::Value,
-        if_doc_hash: Option<String>,
+    /// `meta`-channel counterpart of [`StateMerge`](SessionRequest::StateMerge).
+    MetaMerge {
+        merge: serde_json::Value,
         resp: oneshot::Sender<Result<()>>,
     },
     /// `meta`-channel counterpart of [`StateGet`](SessionRequest::StateGet).

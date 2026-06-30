@@ -153,8 +153,8 @@ pub(crate) enum Commands {
     /// Read or change the swarm's shared state.
     ///
     /// Shared state is a JSON document every member derives from a dedicated,
-    /// gossiped log of JSON-Patch changes. `state patch` applies an RFC 6902
-    /// patch; `state get` prints the current document. Members react to a
+    /// gossiped log of RFC 7386 JSON Merge Patch changes. `state merge` applies a
+    /// merge; `state get` prints the current document. Members react to a
     /// change via the `state` event on the daemon's `--output json` stream.
     State {
         #[command(flatten)]
@@ -165,8 +165,8 @@ pub(crate) enum Commands {
     ///
     /// A second shared-state document beside `state`, identical machinery but
     /// conventionally holding swarm metadata (peer info, …) rather than the task.
-    /// `meta patch` applies an RFC 6902 patch; `meta get` prints the current
-    /// document. The two channels are fully independent.
+    /// `meta merge` applies an RFC 7386 JSON Merge Patch; `meta get` prints the
+    /// current document. The two channels are fully independent.
     Meta {
         #[command(flatten)]
         opts: MetaOpts,

@@ -94,7 +94,7 @@ export function flushMessageBatch(): void {
 \`\`\`json
 ${document}
 \`\`\`
-React per your current task — act only on your turn (check a turn marker in the document), then apply your change with swarm_apply_patch.`;
+React per your current task — act only on your turn (check a turn marker in the document), then apply your change with swarm_apply_merge.`;
     }
     return kind === "directed"
       ? `${BEE} \`<${message.author}>\` → you: ${message.body}`

@@ -101,12 +101,8 @@ async fn test_state_log_propagates_to_a_peer() {
     // broadcast onto a live overlay rather than the unmeshed buffer.
     creator.send("link").await;
 
-    creator
-        .state_patch(json!([{"op": "add", "path": "/alpha", "value": 1}]))
-        .await;
-    creator
-        .state_patch(json!([{"op": "add", "path": "/beta", "value": 2}]))
-        .await;
+    creator.state_merge(json!({"alpha": 1})).await;
+    creator.state_merge(json!({"beta": 2})).await;
 
     let want = json!({"alpha": 1, "beta": 2});
     let deadline = Instant::now() + MSG_TIMEOUT;
@@ -135,12 +131,8 @@ async fn test_state_log_backfills_a_late_joiner() {
     // Mesh so appends go out live, leaving the creator's outbound buffer empty.
     creator.send("link").await;
 
-    creator
-        .state_patch(json!([{"op": "add", "path": "/alpha", "value": 1}]))
-        .await;
-    creator
-        .state_patch(json!([{"op": "add", "path": "/beta", "value": 2}]))
-        .await;
+    creator.state_merge(json!({"alpha": 1})).await;
+    creator.state_merge(json!({"beta": 2})).await;
 
     let want = json!({"alpha": 1, "beta": 2});
     // Confirm the live path first.

@@ -18,7 +18,7 @@
 //! The log never interprets an event's payload (`body`): it only guarantees a
 //! complete, stable event set and a deterministic replay order. Turning that
 //! into meaningful state is a [`StateProjection`]'s job (e.g.
-//! [`state_doc`](super::state_doc) folds JSON-Patch changes into a document).
+//! [`state_doc`](super::state_doc) folds JSON Merge Patch changes into a document).
 
 use std::collections::{HashMap, HashSet};
 

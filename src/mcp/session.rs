@@ -117,21 +117,16 @@ impl Session {
         self.inner.ping().await
     }
 
-    /// Apply a JSON-Patch change to the shared state. The op array is
-    /// validated against the current document (frozen RFC 6902 subset);
-    /// a rejected patch surfaces its reason as an error.
+    /// Apply an RFC 7386 JSON Merge Patch to the shared state. Any JSON value is a
+    /// valid merge.
     ///
     /// # Errors
-    /// Fails if the patch is invalid/inapplicable, or the event loop has stopped.
-    pub(super) async fn apply_state_patch(
-        &self,
-        patch: serde_json::Value,
-        if_doc_hash: Option<String>,
-    ) -> Result<()> {
-        self.inner.state_patch(patch, if_doc_hash).await
+    /// Fails if the event loop has stopped.
+    pub(super) async fn apply_state_merge(&self, merge: serde_json::Value) -> Result<()> {
+        self.inner.state_merge(merge).await
     }
 
-    /// The current derived shared-state document (the JSON-Patch fold).
+    /// The current derived shared-state document (the merge fold).
     ///
     /// # Errors
     /// Fails if the event loop has stopped.
@@ -139,16 +134,12 @@ impl Session {
         self.inner.state_get().await
     }
 
-    /// `meta`-channel counterpart of [`apply_state_patch`](Self::apply_state_patch).
+    /// `meta`-channel counterpart of [`apply_state_merge`](Self::apply_state_merge).
     ///
     /// # Errors
-    /// Fails if the patch is invalid/inapplicable, or the event loop has stopped.
-    pub(super) async fn apply_meta_patch(
-        &self,
-        patch: serde_json::Value,
-        if_doc_hash: Option<String>,
-    ) -> Result<()> {
-        self.inner.meta_patch(patch, if_doc_hash).await
+    /// Fails if the event loop has stopped.
+    pub(super) async fn apply_meta_merge(&self, merge: serde_json::Value) -> Result<()> {
+        self.inner.meta_merge(merge).await
     }
 
     /// `meta`-channel counterpart of [`state_get`](Self::state_get).
@@ -210,7 +201,6 @@ mod tests {
 
     use super::{Message, MessageBody, MessageId, Nickname, Session, SwarmId, SwarmName};
     use crate::embed::{CreateConfig, JoinConfig};
-    use crate::gossip::StatePatchError;
     use crate::protocol::{MessageKind, PresenceSubtype};
     use crate::resolver::JoinTarget;
 
@@ -600,47 +590,31 @@ mod tests {
         second.leave().await;
     }
 
-    /// A compare-and-set conflict and a structurally bad patch must be
-    /// distinguishable without scraping the error text: the stale case carries a
-    /// typed `StatePatchError::Stale` (which the MCP tool surfaces as a retryable
-    /// `stale:true` result), the bad patch carries `StatePatchError::Invalid`.
+    /// A merge applies and is reflected by `state_get` (any JSON value is valid —
+    /// there is no rejection path beyond a stopped event loop).
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn apply_state_patch_distinguishes_stale_from_invalid() {
-        let session = Session::create(create_cfg("cas", "alice"))
+    async fn apply_state_merge_applies_and_reads_back() {
+        let session = Session::create(create_cfg("merge", "alice"))
             .await
             .expect("create");
 
-        // A guard hash that can't match the current document is a retryable
-        // Stale conflict (a wrong hash mirrors a document that moved underfoot).
-        let stale = session
-            .apply_state_patch(
-                json!([{"op": "add", "path": "/turn", "value": "a"}]),
-                Some("deadbeef".to_owned()),
-            )
+        session
+            .apply_state_merge(json!({"turn": "a"}))
             .await
-            .expect_err("a stale compare-and-set must be rejected");
-        assert!(
-            matches!(
-                stale.downcast_ref::<StatePatchError>(),
-                Some(StatePatchError::Stale(_))
-            ),
-            "a CAS conflict must surface as StatePatchError::Stale, got: {stale:?}"
+            .expect("an object merge applies");
+        assert_eq!(
+            session.state_get().await.expect("state_get")["turn"],
+            json!("a")
         );
 
-        // A non-applying patch (replace a missing path) — permanent, not Stale.
-        let invalid = session
-            .apply_state_patch(
-                json!([{"op": "replace", "path": "/missing", "value": 1}]),
-                None,
-            )
+        // A non-object merge replaces the document (RFC 7386), no rejection.
+        session
+            .apply_state_merge(json!([1, 2, 3]))
             .await
-            .expect_err("a non-applying patch must be rejected");
-        assert!(
-            matches!(
-                invalid.downcast_ref::<StatePatchError>(),
-                Some(StatePatchError::Invalid(_))
-            ),
-            "a non-applying patch must be StatePatchError::Invalid, got: {invalid:?}"
+            .expect("a non-object merge applies");
+        assert_eq!(
+            session.state_get().await.expect("state_get"),
+            json!([1, 2, 3])
         );
 
         session.leave().await;

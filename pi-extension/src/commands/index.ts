@@ -1,7 +1,7 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import {
   type CreateOptions,
-  applyStatePatch,
+  applyStateMerge,
   createSwarm,
   discoverSwarms,
   getPeers,
@@ -59,9 +59,10 @@ export function registerCommands(pi: ExtensionAPI): void {
     description: "Print the swarm's current shared-state document",
     handler: cmdState,
   });
-  pi.registerCommand("swarm-state-patch", {
-    description: "Apply an RFC 6902 patch to shared state (/swarm-state-patch {ops-json})",
-    handler: cmdStatePatch,
+  pi.registerCommand("swarm-state-merge", {
+    description:
+      "Apply an RFC 7386 JSON Merge Patch to shared state (/swarm-state-merge {merge-json})",
+    handler: cmdStateMerge,
   });
   pi.registerCommand("swarm-ping", {
     description: "Ping all peers in the swarm and measure round-trip time",
@@ -392,31 +393,29 @@ async function cmdState(_args: string, ctx: ExtensionCommandContext): Promise<vo
   }
 }
 
-async function cmdStatePatch(args: string, ctx: ExtensionCommandContext): Promise<void> {
+async function cmdStateMerge(args: string, ctx: ExtensionCommandContext): Promise<void> {
   state.ctx = ctx;
   if (!requireAgentSwarm(ctx)) return;
   if (!state.session) {
     notifyError("not in a swarm");
     return;
   }
-  const ops = args.trim();
-  if (!ops) {
-    notifyError(
-      'usage: /swarm-state-patch {ops-json}  e.g. [{"op":"replace","path":"/turn","value":"b"}]',
-    );
+  const merge = args.trim();
+  if (!merge) {
+    notifyError('usage: /swarm-state-merge {merge-json}  e.g. {"turn":"b"}');
     return;
   }
   try {
     // The incoming self `state` event isn't displayed, so confirm here at send
     // time (mirrors how /swarm-msg confirms an outbound message).
-    const result = applyStatePatch({ patch: ops });
+    const result = applyStateMerge({ merge });
     if (result.ok) {
       notify("you changed shared state");
     } else {
-      notifyError(result.error ?? "patch rejected");
+      notifyError(result.error ?? "merge rejected");
     }
   } catch (error) {
-    notifyError(`state patch failed: ${error instanceof Error ? error.message : "unknown"}`);
+    notifyError(`state merge failed: ${error instanceof Error ? error.message : "unknown"}`);
   }
 }
 
