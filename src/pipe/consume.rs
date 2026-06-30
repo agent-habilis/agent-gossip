@@ -69,7 +69,9 @@ async fn dial_and_handshake(
                 tokio::time::sleep(RETRY_DELAY).await;
             }
             Err(error) => {
-                return Err(anyhow::anyhow!("could not reach the pipe producer: {error}"));
+                return Err(anyhow::anyhow!(
+                    "could not reach the pipe producer: {error}"
+                ));
             }
         }
     };

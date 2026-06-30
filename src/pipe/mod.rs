@@ -205,7 +205,8 @@ mod tests {
         ticket.follow = true;
         let handle = tokio::spawn(async move {
             let mut reader = reader;
-            let _ = super::produce::serve_follow(&endpoint, &secret, &mut reader, None, false).await;
+            let _ =
+                super::produce::serve_follow(&endpoint, &secret, &mut reader, None, false).await;
             endpoint.close().await;
         });
         (ticket, handle)

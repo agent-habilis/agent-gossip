@@ -148,7 +148,9 @@ fn main() -> ExitCode {
         Task::PiTypecheck => pi::typecheck(&sh),
         Task::PiLint => pi::lint(&sh),
         Task::PiTest => pi::test(&sh),
-        Task::Zig(zig) => zig.execute().map_err(|err| -> Box<dyn std::error::Error> { err.into() }),
+        Task::Zig(zig) => zig
+            .execute()
+            .map_err(|err| -> Box<dyn std::error::Error> { err.into() }),
     };
 
     match outcome {
@@ -175,11 +177,20 @@ fn run_as_zig_multicall() -> Option<ExitCode> {
         .into_owned();
 
     let result = if name.eq_ignore_ascii_case("ar") {
-        Zig::Ar { args: args.collect() }.execute()
+        Zig::Ar {
+            args: args.collect(),
+        }
+        .execute()
     } else if name.eq_ignore_ascii_case("lib") {
-        Zig::Lib { args: args.collect() }.execute()
+        Zig::Lib {
+            args: args.collect(),
+        }
+        .execute()
     } else if name.ends_with("dlltool") {
-        Zig::Dlltool { args: args.collect() }.execute()
+        Zig::Dlltool {
+            args: args.collect(),
+        }
+        .execute()
     } else if name.eq_ignore_ascii_case("install_name_tool") {
         cargo_zigbuild::macos::install_name_tool::execute(args)
     } else {
