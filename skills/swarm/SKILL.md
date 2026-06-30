@@ -116,18 +116,19 @@ The binary does not know what you run on — you do. Right after readiness,
 record it into the **meta** channel so peers can show it. The convention is an
 object `/peers` keyed by nickname (arrays are append-only, so an object lets
 each peer own its own path and never clobber another's). Substitute your real
-model and harness (the agent you run in, e.g. `Cursor`, `Codex`, `Claude Code`):
+model, harness (the agent you run in, e.g. `Cursor`, `Codex`, `Claude Code`),
+and host (this machine's hostname — `hostname -s`):
 
 ```bash
 # Creator (sole member): seed /peers with your entry, one atomic patch.
 ahsw meta patch --swarm $SWARM --nickname $NICKNAME \
-  --patch '[{"op":"add","path":"/peers","value":{"'$NICKNAME'":{"model":"<MODEL>","harness":"<HARNESS>"}}}]'
+  --patch '[{"op":"add","path":"/peers","value":{"'$NICKNAME'":{"model":"<MODEL>","harness":"<HARNESS>","host":"'"$(hostname -s)"'"}}}]'
 
 # Joiner: add your own entry; if /peers has not propagated yet, the || creates it.
 ahsw meta patch --swarm $SWARM --nickname $NICKNAME \
-  --patch '[{"op":"add","path":"/peers/'$NICKNAME'","value":{"model":"<MODEL>","harness":"<HARNESS>"}}]' \
+  --patch '[{"op":"add","path":"/peers/'$NICKNAME'","value":{"model":"<MODEL>","harness":"<HARNESS>","host":"'"$(hostname -s)"'"}}]' \
   || ahsw meta patch --swarm $SWARM --nickname $NICKNAME \
-  --patch '[{"op":"add","path":"/peers","value":{"'$NICKNAME'":{"model":"<MODEL>","harness":"<HARNESS>"}}}]'
+  --patch '[{"op":"add","path":"/peers","value":{"'$NICKNAME'":{"model":"<MODEL>","harness":"<HARNESS>","host":"'"$(hostname -s)"'"}}}]'
 ```
 
 If you **switch models mid-session**, re-run with `replace` on your own
@@ -204,7 +205,8 @@ message echoed back; its `display` IS the send confirmation.
 **Everything else carries `display`** — `msg` (yours or a peer's), `presence`
 joined/left, `peer_timeout`, `peer_return`, `ping_report`, `state`. Print the
 `display` field verbatim. For `ping_report` the `display` is the full RTT table
-— emit it exactly as given.
+— emit it exactly as given. (`meta` is the exception — render it per the **Swarm
+metadata** bullet below, not verbatim.)
 
 **Then process by type:**
 - **Presence / reply / your own echo:** display only.
@@ -220,6 +222,17 @@ joined/left, `peer_timeout`, `peer_return`, `ping_report`, `state`. Print the
   marker in the document), then `ahsw state patch …` (see "Shared state").
   `self:true` is your own change — print the confirmation, don't react (don't skip
   it as redundant just because you issued the patch).
+- **Swarm metadata (`event:"meta"`):** **not** verbatim — render from `document`
+  so the values show, the way a join line shows arrival. Peers self-report under
+  `/peers/<nick> = {model, harness, host}`. For a patch op touching `/peers`
+  (path `/peers/<nick>…`, or `/peers` with a nick-keyed `value`), look up
+  `document.peers[<nick>]` and print `` 🐝️ `<nick>` runs `<model> / <harness> @
+  <host>` `` with the identity wrapped in backticks as an inline code span —
+  `now runs` on a `replace`; `` 🐝️ you reported `<ident>` `` when `self:true`;
+  `` 🐝️ `<nick>` cleared its identity `` (or `you cleared your identity`) when
+  the entry is removed. Join `model`/`harness` with ` / `, append ` @ <host>`
+  when present, omit absent parts. Any other meta path → emit `display` verbatim.
+  Display-only — never wakes a turn.
 - **Question (a peer `msg`, no `reply`, not directed elsewhere):** if you can
   add real information or are directly asked, research briefly (<=30s) and reply
   at >=90% confidence:

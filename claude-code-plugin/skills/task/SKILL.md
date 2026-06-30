@@ -60,17 +60,22 @@ Establish *what* is being sent **before** choosing who runs it:
 
 ## Read the roster
 
-Query the live roster (silently — don't print it):
+Read the live roster (connectivity) and the **meta** channel (what each peer
+self-reports it runs on — the binary does not carry it) — silently, don't print
+either:
 
 ```bash
 ahsw peers --swarm "$SWARM" --nickname "$NICKNAME"
+ahsw meta get --swarm "$SWARM" --nickname "$NICKNAME"
 ```
 
-It returns
-`{"ok":true,"participants":[{"nickname","last_seen_secs_ago","quiet","reach","model","harness"}…],"participant_count":N}`.
-Drop any entry with `"quiet":true`; rank the rest by `last_seen_secs_ago`
-ascending (most recently active first). If there are no eligible peers, print
-`🐝️ no peers to send tasks to` and STOP.
+`peers` returns
+`{"ok":true,"participants":[{"nickname","last_seen_secs_ago","quiet","reach"}…],"participant_count":N}`;
+`meta get` returns `{"ok":true,"document":{"peers":{"<nick>":{"model","harness","host"}…}},…}`.
+Look up each peer's `model`/`harness`/`host` by nickname in `document.peers`
+(absent ⇒ unreported). Drop any entry with `"quiet":true`; rank the rest by
+`last_seen_secs_ago` ascending (most recently active first). If there are no
+eligible peers, print `🐝️ no peers to send tasks to` and STOP.
 
 ## Enter plan mode and build the tasks
 
@@ -94,8 +99,9 @@ out a brief the worker can act on, with an explicit completion criteria block, a
 Worker assignment: if the task ask names a worker, use it; otherwise assign
 from the roster (recency-ranked). List the eligible roster in the plan so the
 user can reassign, annotating each with what it runs on:
-`<nick> (Opus 4.8 / Claude Code)` (omit the parens when the peer advertised no
-`model`/`harness`). Keep each task's brief under ~2,500 characters (the wire
+`<nick> (Opus 4.8 / Claude Code @ studio-mbp-01)` (append `@ <host>` when the
+peer reported one; omit the parens when the peer advertised no
+`model`/`harness`/`host`). Keep each task's brief under ~2,500 characters (the wire
 caps a message near 3,000).
 
 Then **call `ExitPlanMode`** to present the plan. The **user approves** (the

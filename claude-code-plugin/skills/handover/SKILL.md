@@ -93,26 +93,32 @@ continue below.
 
 ## Pick the worker
 
-Now that the task is set, choose who runs it. Query the live roster:
+Now that the task is set, choose who runs it. The roster (`ahsw peers`) carries
+connectivity; what each peer **runs on** lives in the **meta** channel (peers
+self-report it there, the binary does not). Read both, silently — don't print
+either:
 
 ```bash
 ahsw peers --swarm "$SWARM" --nickname "$NICKNAME"
+ahsw meta get --swarm "$SWARM" --nickname "$NICKNAME"
 ```
 
-It returns
-`{"ok":true,"participants":[{"nickname","last_seen_secs_ago","quiet","reach","model","harness"}…],"participant_count":N}`
-(read it silently — don't print the roster). Drop any entry with
-`"quiet":true`; rank the rest by `last_seen_secs_ago` ascending (most
-recently active first). Show an `AskUserQuestion` — question "Hand
-`<one-line task>` to which peer?", header `swarm:handover`, options = the
-**top 3** by recency. For each option:
+`peers` returns
+`{"ok":true,"participants":[{"nickname","last_seen_secs_ago","quiet","reach"}…],"participant_count":N}`.
+`meta get` returns `{"ok":true,"document":{"peers":{"<nick>":{"model","harness","host"}…}},…}` —
+look up each peer's `model`/`harness`/`host` by nickname in `document.peers`
+(absent ⇒ that peer has not reported yet). Drop any entry with `"quiet":true`;
+rank the rest by `last_seen_secs_ago` ascending (most recently active first).
+Show an `AskUserQuestion` — question "Hand `<one-line task>` to which peer?",
+header `swarm:handover`, options = the **top 3** by recency. For each option:
 - **label** = the nickname wrapped in angle brackets, e.g. `<cable-spark>`
   (not `cable-spark`).
-- **description** = the peer's `model` / `harness` then recency, e.g.
-  `Opus 4.8 / Claude Code · active 3s ago`. The widget renders the
-  description as dimmed secondary text. Omit the metadata part when the peer
-  advertised none (just `active Ns ago`); join `model`/`harness` with ` / `,
-  or show just the one present.
+- **description** = the peer's `model` / `harness`, the `host` after `@`, then
+  recency, e.g. `Opus 4.8 / Claude Code @ studio-mbp-01 · active 3s ago`. The
+  widget renders the description as dimmed secondary text. Omit the metadata
+  part when the peer advertised none (just `active Ns ago`); join
+  `model`/`harness` with ` / `, append `@ <host>` when present, and show just
+  whichever parts the peer advertised.
 
 The free-text "Other" entry lets the user type a nickname; re-validate it
 against the roster. The chosen nickname (without the brackets) is `$TARGET`.

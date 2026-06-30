@@ -259,9 +259,9 @@ struct ApplyStatePatchArgs {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct ApplyMetaPatchArgs {
     /// The JSON-Patch (RFC 6902) op array for the **meta** channel — swarm
-    /// metadata, by convention `/peers/<nickname> = {"model":…,"harness":…}`
-    /// self-reported by each agent, e.g.
-    /// `[{"op":"add","path":"/peers/swift-cedar","value":{"model":"Opus 4.8","harness":"Claude Code"}}]`.
+    /// metadata, by convention `/peers/<nickname> = {"model":…,"harness":…,"host":…}`
+    /// self-reported by each agent (`host` is the machine's hostname), e.g.
+    /// `[{"op":"add","path":"/peers/swift-cedar","value":{"model":"Opus 4.8","harness":"Claude Code","host":"studio-mbp-01"}}]`.
     /// Same frozen subset as `apply_state_patch`: `add`/`replace`/`remove` on
     /// object paths + `add "/arr/-"`; no `test`/`move`/`copy`, numeric array
     /// indices, or root path "". Rejected if it does not apply cleanly.
@@ -741,7 +741,7 @@ impl AgentSwarmServer {
     }
 
     #[tool(
-        description = "Apply a JSON-Patch (RFC 6902) change to the swarm's `meta` channel — a second shared-state document beside `state`, byte-for-byte the same machinery, used for swarm metadata rather than the task. By convention agents self-report what they run on under `/peers/<nickname>`, e.g. [{\"op\":\"add\",\"path\":\"/peers/swift-cedar\",\"value\":{\"model\":\"Opus 4.8\",\"harness\":\"Claude Code\"}}]. Same frozen subset and rejection rules as `apply_state_patch`. Peers react to the resulting `meta` event; read the new document with `get_meta`."
+        description = "Apply a JSON-Patch (RFC 6902) change to the swarm's `meta` channel — a second shared-state document beside `state`, byte-for-byte the same machinery, used for swarm metadata rather than the task. By convention agents self-report what they run on under `/peers/<nickname>`, e.g. [{\"op\":\"add\",\"path\":\"/peers/swift-cedar\",\"value\":{\"model\":\"Opus 4.8\",\"harness\":\"Claude Code\",\"host\":\"studio-mbp-01\"}}] (`host` is the machine's hostname). Same frozen subset and rejection rules as `apply_state_patch`. Peers react to the resulting `meta` event; read the new document with `get_meta`."
     )]
     async fn apply_meta_patch(
         &self,
@@ -756,7 +756,7 @@ impl AgentSwarmServer {
     }
 
     #[tool(
-        description = "Return the swarm's current `meta`-channel document (the swarm-metadata counterpart of `get_state`) — the JSON value derived by folding every gossiped `meta` patch. Starts as {} before any patch. By convention holds `/peers/<nickname> = {model, harness}`. Requires an active swarm. Read it to decide your next `apply_meta_patch` or to see what peers run on."
+        description = "Return the swarm's current `meta`-channel document (the swarm-metadata counterpart of `get_state`) — the JSON value derived by folding every gossiped `meta` patch. Starts as {} before any patch. By convention holds `/peers/<nickname> = {model, harness, host}`. Requires an active swarm. Read it to decide your next `apply_meta_patch` or to see what peers run on."
     )]
     async fn get_meta(
         &self,
@@ -844,9 +844,9 @@ META is a SECOND shared-state channel beside `state` — byte-for-byte the same 
 (read with `get_meta`, change with `apply_meta_patch`, peer changes arrive as \
 `event:\"meta\"`), reserved by convention for swarm metadata rather than the task. \
 Report what YOU run on once you are in the swarm: `apply_meta_patch` your own entry \
-under `/peers/<your-nickname> = {\"model\":…,\"harness\":…}` (the binary does not \
-self-report this). Re-patch it if you switch models. Read `/peers` to see what \
-peers run on.
+under `/peers/<your-nickname> = {\"model\":…,\"harness\":…,\"host\":…}` (`host` is your \
+machine's hostname; the binary does not self-report this). Re-patch it if you switch \
+models. Read `/peers` to see what peers run on.
 
 Call `swarm_manual` for the full command/event reference.";
 

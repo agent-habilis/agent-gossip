@@ -12,7 +12,7 @@ import {
   sendSwarmMessage,
   validateCreateOptions,
 } from "../core";
-import { formatOutbound, formatPingReport, formatRoster } from "../format";
+import { formatOutbound, formatPeerIdent, formatPingReport, formatRoster } from "../format";
 import { isValidBody, requireAgentSwarm, runSwarmCommand } from "../helpers";
 import { state } from "../state";
 import type { DiscoveredSwarm, Peer } from "../types";
@@ -299,11 +299,11 @@ async function selectWorker(ctx: ExtensionCommandContext, title: string): Promis
     notify("no peers available");
     return null;
   }
-  // Label carries the model/harness so the choice is informed; map back to the
-  // peer for the nickname.
+  // Label carries the model/harness/host so the choice is informed; map back to
+  // the peer for the nickname.
   const byLabel = new Map(
     eligible.map((peer): [string, Peer] => {
-      const meta = [peer.model, peer.harness].filter(Boolean).join(" / ");
+      const meta = formatPeerIdent(peer);
       return [`<${peer.nickname}>${meta ? ` (${meta})` : ""}`, peer];
     }),
   );

@@ -25,7 +25,7 @@ and STOP.
 
 The `meta` channel is a second shared-state document, byte-for-byte the same
 machinery as `state` (the task channel) — independent log, document, and hash.
-By convention it holds swarm metadata (each peer's model/harness, capabilities),
+By convention it holds swarm metadata (each peer's model/harness/host, capabilities),
 while `state` holds the task. The daemon does not differentiate them.
 
 `$SWARM`/`$NICKNAME` are from the `ready` event (copy the `🐝…` id verbatim):

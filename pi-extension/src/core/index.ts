@@ -1,4 +1,5 @@
 import { execFileSync, spawn } from "node:child_process";
+import { hostname } from "node:os";
 import * as readline from "node:readline";
 import { clearBatch, startWatcher, stopWatcher } from "../daemon";
 import { isValidBody, isValidSwarmName, runSwarmCommand } from "../helpers";
@@ -295,14 +296,14 @@ export function getPeers(): { count: number; participants: Peer[] } {
       reach?: string;
     }>;
   };
-  // Model/harness live in the `meta` channel now (`/peers/<nick>`), not the
+  // Model/harness/host live in the `meta` channel now (`/peers/<nick>`), not the
   // roster — each agent self-reports them. Best-effort: a meta read failure
   // just leaves those columns blank, never breaks the roster.
-  let peerMeta: Record<string, { model?: string; harness?: string }> = {};
+  let peerMeta: Record<string, { model?: string; harness?: string; host?: string }> = {};
   try {
     const doc = getMetaDocument();
     if (doc.peers && typeof doc.peers === "object") {
-      peerMeta = doc.peers as Record<string, { model?: string; harness?: string }>;
+      peerMeta = doc.peers as Record<string, { model?: string; harness?: string; host?: string }>;
     }
   } catch {
     // leave peerMeta empty
@@ -314,6 +315,7 @@ export function getPeers(): { count: number; participants: Peer[] } {
       reach: entry.reach === "direct" ? "direct" : "gossip",
       model: peerMeta[entry.nickname]?.model,
       harness: peerMeta[entry.nickname]?.harness,
+      host: peerMeta[entry.nickname]?.host,
       lastSeenSecsAgo: entry.last_seen_secs_ago ?? null,
       quiet: Boolean(entry.quiet),
     })),
@@ -370,7 +372,7 @@ export function applyStatePatch({ patch }: { patch: string }): {
 
 // Read the derived `meta`-channel document via `ahsw meta get`. The meta
 // channel is byte-for-byte the same machinery as `state`; by convention it
-// holds swarm metadata, e.g. `/peers/<nick> = { model, harness }`.
+// holds swarm metadata, e.g. `/peers/<nick> = { model, harness, host }`.
 export function getMetaDocument(): Record<string, unknown> {
   if (!state.session?.swarm) throw new Error("Not in a swarm");
   const raw = execFileSync(
@@ -404,15 +406,19 @@ function runMetaPatch(patch: string): void {
 }
 
 // Record what this agent runs on into `meta` under `/peers/<nickname>`. The
-// binary no longer self-reports model/harness — it is swarm metadata the agent
-// owns. Best-effort: a failed report must not break create/join, so errors are
-// swallowed (the roster simply shows no model for us). `/peers` is an object
+// binary no longer self-reports model/harness/host — it is swarm metadata the
+// agent owns. Best-effort: a failed report must not break create/join, so errors
+// are swallowed (the roster simply shows no model for us). `/peers` is an object
 // keyed by nickname so each peer owns its own path and never clobbers another's.
 function reportSelfMeta(model?: string): void {
   const session = state.session;
   if (!session?.swarm) return;
   const value: Record<string, string> = { harness: HARNESS };
   if (model) value.model = model;
+  // `host` is this machine's short hostname, so peers can see which agents
+  // share a box. os.hostname() may include a domain — keep only the first label.
+  const host = hostname().split(".")[0];
+  if (host) value.host = host;
   const entry = JSON.stringify(value);
   const nick = JSON.stringify(session.nickname);
   try {

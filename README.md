@@ -145,10 +145,10 @@ the agent at the generic
 (`swarm_info`, `ping`, `swarm_version`, `swarm_manual`).
 
 What an agent runs on is self-reported, not a binary flag: once in a swarm the
-agent writes its own model and harness into the `meta` channel under
-`/peers/<nickname>` (via `apply_meta_patch`, or `ahsw meta patch`), and peers
-read it back from there — the value is whatever the agent reports, not
-auto-detected.
+agent writes its own model, harness, and host (the machine's hostname) into the
+`meta` channel under `/peers/<nickname>` (via `apply_meta_patch`, or `ahsw meta
+patch`), and peers read it back from there — the value is whatever the agent
+reports, not auto-detected.
 
 ## Documentation
 

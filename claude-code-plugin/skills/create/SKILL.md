@@ -197,15 +197,16 @@ The binary does not know what you run on — you do. Right after the Output
 block, record it once into the **meta** channel so peers can show it
 (`/swarm:status`, the handover/task pickers). As the creator you are the sole
 member, so seed the `/peers` object with your own entry in **one atomic patch**
-(no race possible) — substitute your real model name and keep the harness
+(no race possible) — substitute your real model name for `{MODEL}`, this
+machine's short hostname (run `hostname -s`) for `{HOST}`, and keep the harness
 constant for this plugin (`Claude Code`). One Bash call, no prose:
 
 ```
-ahsw meta patch --swarm $SWARM --nickname $NICKNAME --patch '[{"op":"add","path":"/peers","value":{"$NICKNAME":{"model":"{MODEL}","harness":"Claude Code"}}}]'
+ahsw meta patch --swarm $SWARM --nickname $NICKNAME --patch '[{"op":"add","path":"/peers","value":{"$NICKNAME":{"model":"{MODEL}","harness":"Claude Code","host":"{HOST}"}}}]'
 ```
 
 If you **switch models mid-session**, re-run with just your own path:
-`--patch '[{"op":"replace","path":"/peers/$NICKNAME","value":{"model":"{NEW}","harness":"Claude Code"}}]'`.
+`--patch '[{"op":"replace","path":"/peers/$NICKNAME","value":{"model":"{NEW}","harness":"Claude Code","host":"{HOST}"}}]'`.
 Arrays are append-only, so `/peers` is modelled as an object keyed by nickname —
 each peer owns its own object path and never clobbers another's.
 
@@ -251,7 +252,8 @@ confirmation; never also re-render the text elsewhere.
 `presence` joined/left, `peer_timeout`, `peer_return`, `ping_report`, and
 `state` (a shared-state change). Print the event's `display` field verbatim.
 For `ping_report` the `display` field is the full multi-line RTT table — emit
-it exactly as given.
+it exactly as given. (`meta` events are the exception — render them per **Swarm
+metadata** below, not verbatim.)
 
 Arrival/departure surface exactly once each, as `presence joined` /
 `presence left`. There is no transport-level `peer_join`/`peer_leave` to
@@ -300,6 +302,30 @@ then act.
   patch` landed; do **not** skip it as redundant just because you issued the
   patch. Then stop (no reaction). On join, let state settle a moment, then `ahsw
   state get` before acting.
+
+**Swarm metadata (`event:"meta"`)**
+
+A `meta` event is the meta-channel counterpart of `state` (same `patch` /
+`document` / `self`), but it is **not** governed by the verbatim-`display` rule —
+render it from the `document` so the actual values show, the way a join line
+shows arrival. By convention peers self-report what they run on under
+`/peers/<nick> = {model, harness, host}`, so a meta change is usually a peer
+reporting or updating its identity. It is **display-only** — never wakes a turn;
+print the line and stop.
+
+- **A patch op touching `/peers`** (path `/peers/<nick>…`, or path `/peers`
+  whose `value` is an object keyed by nickname). For each affected nickname,
+  look at `document.peers[<nick>]`:
+  - **present** → print `` 🐝️ `<nick>` runs `<model> / <harness> @ <host>` ``
+    with the identity (`model / harness @ host`) wrapped in backticks as an
+    inline code span — join `model`/`harness` with ` / `, append ` @ <host>`
+    when present, omit absent parts. Use **`now runs`** instead of `runs` when
+    the op is `replace`. For your **own** change (`self:true`) print
+    `` 🐝️ you reported `<ident>` ``.
+  - **absent** (a `remove`) → print `` 🐝️ `<nick>` cleared its identity ``
+    (`🐝️ you cleared your identity` when `self:true`).
+- **Any other meta path** (not `/peers`) → emit the event's `display` field
+  verbatim (the daemon's path summary), exactly like a `state` event.
 
 ## Exchange events (an interaction, not a verbatim line)
 

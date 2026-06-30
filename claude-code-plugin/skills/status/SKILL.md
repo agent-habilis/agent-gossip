@@ -57,13 +57,14 @@ self-reports what it runs on under `/peers/<nickname>` (the convention
 ```json
 { "ok": true,
   "document": { "peers": {
-    "swift-cedar": { "model": "Opus 4.8", "harness": "Claude Code" }
+    "swift-cedar": { "model": "Opus 4.8", "harness": "Claude Code", "host": "studio-mbp-01" }
   } },
   "doc_hash": "…" }
 ```
 
-Look up each roster peer's model/harness by nickname in `document.peers`. A
-peer that has not reported yet is simply absent — render its cells empty.
+Look up each roster peer's model/harness/host by nickname in `document.peers`
+(`host` is the machine each agent runs on). A peer that has not reported yet is
+simply absent — render its cells empty.
 
 ## Output
 
@@ -73,11 +74,11 @@ Emit exactly one block: a header line, then a markdown table of the
 ```
 🐝 `#<$NAME>` · <participant_count> participants
 
-| peer        | connection | model    | harness     | last seen |
-| ----------- | ---------- | -------- | ----------- | --------- |
-| swift-cedar | connected  | Opus 4.8 | Claude Code | 3s ago    |
-| calm-otter  | gossip     | Opus 4.8 | Claude Code | 12s ago   |
-| ghost-elm   | gossip     |          |             | quiet · 90s ago |
+| peer        | connection | model    | harness     | host          | last seen |
+| ----------- | ---------- | -------- | ----------- | ------------- | --------- |
+| swift-cedar | connected  | Opus 4.8 | Claude Code | studio-mbp-01 | 3s ago    |
+| calm-otter  | gossip     | Opus 4.8 | Claude Code | dev-box-2     | 12s ago   |
+| ghost-elm   | gossip     |          |             |               | quiet · 90s ago |
 ```
 
 The swarm name is prefixed with `#` and wrapped in backticks so it renders as
@@ -88,6 +89,7 @@ Rendering rules per row:
 - **connection**: `reach == "direct"` → `connected`; else `gossip`.
 - **model**: `document.peers[nickname].model`, or empty cell when absent.
 - **harness**: `document.peers[nickname].harness`, or empty cell when absent.
+- **host**: `document.peers[nickname].host`, or empty cell when absent.
 - **last seen**: `null` → `—`; otherwise `<n>s ago`. Prefix `quiet · ` when
   `quiet` is `true`.
 

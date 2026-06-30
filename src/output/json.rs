@@ -312,7 +312,7 @@ pub(super) fn emit_json<T: Serialize>(value: &T) {
 /// pins the field order (`event`, `id`, `type`, `swarm`, `author`,
 /// `ts`, …) and `Value::to_string` would sort keys alphabetically.
 pub(super) fn format_presence_json(msg: &Message, subtype: PresenceSubtype) -> String {
-    // Presence carries no body — peer model/harness lives in the `meta` channel.
+    // Presence carries no body — peer model/harness/host lives in the `meta` channel.
     serde_json::to_string(&PresenceLine {
         header: message_header(msg, "presence"),
         subtype,

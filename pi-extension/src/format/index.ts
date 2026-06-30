@@ -3,11 +3,11 @@ import type { Peer, PingResult, SwarmEvent } from "../types";
 export function formatPresence(event: SwarmEvent): string | null {
   if (event.subtype === "alive") return null;
   if (event.subtype === "joined") {
-    // The daemon ships the joiner's model/harness as structured fields; show
-    // them in parens right after the nick, matching the Claude Code plugin's
-    // join line verbatim.
-    const meta = [event.model, event.harness].filter(Boolean).join(" / ");
-    return meta ? `\`<${event.author}>\` (${meta}) has joined` : `\`<${event.author}>\` has joined`;
+    // Presence carries no metadata: the daemon never ships model/harness/host on
+    // the join event — they live in the `meta` channel and only after the joiner
+    // self-reports (which happens just *after* it joins). The roster
+    // (`/swarm-status`, the handover/task pickers) is where that surfaces.
+    return `\`<${event.author}>\` has joined`;
   }
   if (event.subtype === "left") return `\`<${event.author}>\` has left`;
   return null;
@@ -51,9 +51,64 @@ export function formatPeerLifecycle(event: SwarmEvent): string | null {
   return null;
 }
 
+// What a peer runs on, as one line: `model / harness @ host`, omitting absent
+// parts. Shared by the `/swarm` roster picker and `formatMeta` so every surface
+// renders identity identically.
+export function formatPeerIdent(peer: { model?: string; harness?: string; host?: string }): string {
+  const stack = [peer.model, peer.harness].filter(Boolean).join(" / ");
+  return peer.host ? (stack ? `${stack} @ ${peer.host}` : `@ ${peer.host}`) : stack;
+}
+
+// A `meta` event: surface a peer self-reporting/updating what it runs on, the
+// way a join line surfaces arrival. Model/harness/host land in the `meta`
+// channel under `/peers/<nick>` *after* a peer joins, so this is where they
+// become visible. Binary-opaque: the daemon never formats these values (it only
+// names the changed path in `display`); the `/peers` convention lives here.
+export function formatMeta(event: SwarmEvent): string | null {
+  const peersDoc = (event.document?.peers ?? {}) as Record<
+    string,
+    { model?: string; harness?: string; host?: string }
+  >;
+  const touched: Array<{ nick: string; op: string }> = [];
+  for (const patchOp of event.patch ?? []) {
+    const path = typeof patchOp.path === "string" ? patchOp.path : "";
+    const opName = typeof patchOp.op === "string" ? patchOp.op : "";
+    if (path === "/peers") {
+      // Seed/fallback form: `value` is an object keyed by nickname.
+      const value = (patchOp.value ?? {}) as Record<string, unknown>;
+      for (const nick of Object.keys(value)) touched.push({ nick, op: opName });
+    } else if (path.startsWith("/peers/")) {
+      const nick = path.slice("/peers/".length).split("/")[0];
+      if (nick) touched.push({ nick, op: opName });
+    }
+  }
+  // A meta change that doesn't touch `/peers` (some other convention) — fall
+  // back to the daemon's value-blind path summary so it still surfaces.
+  if (touched.length === 0) {
+    return event.display ?? `\`<${event.author}>\` changed swarm metadata`;
+  }
+  const isSelf = Boolean(event.self);
+  const lines = touched.map(({ nick, op }) => {
+    const peer = peersDoc[nick];
+    if (!peer) {
+      return isSelf ? "you cleared your identity" : `\`<${nick}>\` cleared its identity`;
+    }
+    // Render the identity as an inline code span (backticks), like the `<nick>`.
+    const ident = formatPeerIdent(peer);
+    if (isSelf) return ident ? `you reported \`${ident}\`` : "you reported your identity";
+    const verb = op === "replace" ? "now runs" : "runs";
+    return ident ? `\`<${nick}>\` ${verb} \`${ident}\`` : `\`<${nick}>\` reported its identity`;
+  });
+  return [...new Set(lines)].join("\n");
+}
+
 export function formatDisplay(event: SwarmEvent): string | null {
-  if (event.self) return null;
   if (event.event === "info" || event.event === "error") return null;
+  // Meta is handled before the self-drop below: unlike other events, a peer's
+  // *own* identity report is worth showing (`you reported …`), mirroring how the
+  // state channel shows your own `you changed …`.
+  if (event.type === "meta") return formatMeta(event);
+  if (event.self) return null;
 
   if (event.type === "presence") return formatPresence(event);
   if (event.type === "msg") return formatMessage(event);
@@ -76,12 +131,13 @@ export function formatRoster({
   // Rendered via `notifyBlock` (plain text, no markdown), so align columns by
   // padding rather than emitting a markdown table; nicks stay plain here (no
   // backticks) — markdown reflow would break the alignment.
-  const headings = ["peer", "connection", "model", "harness", "last seen"];
+  const headings = ["peer", "connection", "model", "harness", "host", "last seen"];
   const rows = participants.map((peer) => [
     peer.nickname,
     peer.reach === "direct" ? "connected" : "gossip",
     peer.model ?? "",
     peer.harness ?? "",
+    peer.host ?? "",
     peer.lastSeenSecsAgo == null
       ? "—"
       : `${peer.quiet ? "quiet · " : ""}${peer.lastSeenSecsAgo}s ago`,

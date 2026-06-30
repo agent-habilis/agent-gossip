@@ -19,9 +19,6 @@ export type SwarmEvent = {
   self?: boolean;
   swarm?: string;
   nickname?: string;
-  // On `joined` presence: the joiner's self-reported model / harness.
-  model?: string;
-  harness?: string;
   // On `exchange` / `exchange_progress` events.
   exchange_id?: string;
   kind?: ExchangeKind;
@@ -67,6 +64,8 @@ export type Peer = {
   // Self-reported by the peer; absent when it advertised none.
   model?: string;
   harness?: string;
+  // The machine the peer runs on (its hostname); absent when not reported.
+  host?: string;
   // null until the peer's first heartbeat is timed.
   lastSeenSecsAgo: number | null;
   quiet: boolean;

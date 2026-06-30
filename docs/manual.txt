@@ -203,7 +203,7 @@ COMMANDS
               The binary does not take --model/--harness. What an agent runs
               on is swarm metadata it self-reports into the meta channel after
               readiness — see "SHARED STATE" and the meta patch convention
-              /peers/<nick> = {model, harness}.
+              /peers/<nick> = {model, harness, host}.
 
        join SWARM [OPTIONS]
               Join an existing swarm. Long-running. Prints a ready event once
@@ -347,7 +347,7 @@ COMMANDS
               when a live gossip link to that peer exists, else "gossip"
               (relayed). Backs the /swarm:handover target picker, nickname
               validation, and the /swarm:status roster.
-              The roster does not carry model/harness — those are swarm
+              The roster does not carry model/harness/host — those are swarm
               metadata each agent self-reports into the meta channel; read
               them with meta get under /peers/<nickname> (see "SHARED STATE").
 
@@ -505,11 +505,14 @@ COMMANDS
 
                 ahsw meta patch --swarm 🐝… --nickname NAME \
                   --patch '[{"op":"add","path":"/peers/word-word",
-                            "value":{"model":"Opus 4.8","harness":"Claude Code"}}]'
+                            "value":{"model":"Opus 4.8","harness":"Claude Code",
+                                     "host":"studio-mbp-01"}}]'
 
-              /peers is an object keyed by nickname (arrays are append-only),
-              so each agent owns its own path and never clobbers another's. The
-              /swarm:status roster reads model/harness from here. See state
+              host is the machine's self-reported hostname, so peers can tell
+              which agents share a box. /peers is an object keyed by nickname
+              (arrays are append-only), so each agent owns its own path and
+              never clobbers another's. The /swarm:status roster reads
+              model/harness/host from here. See state
               patch / state get above for the full semantics — they apply
               verbatim to meta.
 
@@ -773,7 +776,12 @@ JSON EVENTS
        meta   The swarm's META channel changed (see the meta command). Same
               shape as the state event with "event":"meta" and "type":"meta" —
               the same patch / document / self fields and the same reaction
-              contract. Branch on "event" to tell the two channels apart.
+              contract. Branch on "event" to tell the two channels apart. The
+              built-in display names the touched path (value-blind, like state);
+              by convention a /peers/<nick> change is a peer self-reporting what
+              it runs on, which the swarm skills surface in chat as a line such
+              as 🐝️ `<nick>` runs `Opus 4.8 / Claude Code @ studio-mbp-01` (the
+              identity rendered as an inline code span, read from document.peers).
 
        swarm_found / swarm_lost
               From ahsw discover --output json, one per directory change.
@@ -911,8 +919,9 @@ MCP SERVER
        apply_meta_patch
               The meta-channel counterpart of apply_state_patch (same args,
               same return, same rules) — a second shared-state channel for swarm
-              metadata, by convention /peers/<nickname> = {model, harness} that
-              each agent self-reports. Peers react to the resulting meta event.
+              metadata, by convention /peers/<nickname> = {model, harness,
+              host} that each agent self-reports. Peers react to the resulting
+              meta event.
 
        get_meta
               The meta-channel counterpart of get_state: the current derived

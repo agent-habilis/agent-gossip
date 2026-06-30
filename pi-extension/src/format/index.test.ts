@@ -1,6 +1,14 @@
 import { expect, test } from "bun:test";
 import type { SwarmEvent } from "../types";
-import { engagementKind, formatDisplay, formatMessage, formatOutbound, formatState } from "./index";
+import {
+  engagementKind,
+  formatDisplay,
+  formatMessage,
+  formatMeta,
+  formatOutbound,
+  formatPeerIdent,
+  formatState,
+} from "./index";
 
 const ev = (over: Partial<SwarmEvent>): SwarmEvent => ({ event: "message", type: "msg", ...over });
 
@@ -71,4 +79,85 @@ test("formatState renders a peer state change; formatDisplay drops our own", () 
     "`<ada>` changed shared state",
   );
   expect(formatDisplay(ev({ event: "state", type: "state", author: "me", self: true }))).toBeNull();
+});
+
+const ident = { model: "Opus 4.8", harness: "Claude Code", host: "studio-mbp-01" };
+
+const metaEv = (over: Partial<SwarmEvent>): SwarmEvent =>
+  ev({ event: "meta", type: "meta", author: "bark-vivid", ...over });
+
+test("formatPeerIdent joins model / harness @ host, omitting absent parts", () => {
+  expect(formatPeerIdent(ident)).toBe("Opus 4.8 / Claude Code @ studio-mbp-01");
+  expect(formatPeerIdent({ model: "Opus 4.8" })).toBe("Opus 4.8");
+  expect(formatPeerIdent({ host: "box-1" })).toBe("@ box-1");
+  expect(formatPeerIdent({})).toBe("");
+});
+
+test("formatMeta: a peer adding /peers/<nick> reads 'runs <ident>'", () => {
+  expect(
+    formatMeta(
+      metaEv({
+        patch: [{ op: "add", path: "/peers/bark-vivid", value: ident }],
+        document: { peers: { "bark-vivid": ident } },
+      }),
+    ),
+  ).toBe("`<bark-vivid>` runs `Opus 4.8 / Claude Code @ studio-mbp-01`");
+});
+
+test("formatMeta: the /peers seed form (keyed value) names each peer", () => {
+  expect(
+    formatMeta(
+      metaEv({
+        patch: [{ op: "add", path: "/peers", value: { "bark-vivid": ident } }],
+        document: { peers: { "bark-vivid": ident } },
+      }),
+    ),
+  ).toBe("`<bark-vivid>` runs `Opus 4.8 / Claude Code @ studio-mbp-01`");
+});
+
+test("formatMeta: a replace reads 'now runs'", () => {
+  const next = { ...ident, model: "Opus 4.7" };
+  expect(
+    formatMeta(
+      metaEv({
+        patch: [{ op: "replace", path: "/peers/bark-vivid", value: next }],
+        document: { peers: { "bark-vivid": next } },
+      }),
+    ),
+  ).toBe("`<bark-vivid>` now runs `Opus 4.7 / Claude Code @ studio-mbp-01`");
+});
+
+test("formatMeta: your own report reads 'you reported <ident>' (shown, not dropped)", () => {
+  const event = metaEv({
+    self: true,
+    patch: [{ op: "add", path: "/peers/bark-vivid", value: ident }],
+    document: { peers: { "bark-vivid": ident } },
+  });
+  expect(formatMeta(event)).toBe("you reported `Opus 4.8 / Claude Code @ studio-mbp-01`");
+  // formatDisplay must surface meta self-reports (the generic self-drop is bypassed).
+  expect(formatDisplay(event)).toBe("you reported `Opus 4.8 / Claude Code @ studio-mbp-01`");
+});
+
+test("formatMeta: removing a peer entry reads 'cleared its identity'", () => {
+  expect(
+    formatMeta(
+      metaEv({
+        patch: [{ op: "remove", path: "/peers/bark-vivid" }],
+        document: { peers: {} },
+      }),
+    ),
+  ).toBe("`<bark-vivid>` cleared its identity");
+});
+
+test("formatMeta: a non-/peers meta change falls back to the daemon display", () => {
+  expect(
+    formatMeta(
+      metaEv({
+        author: "otter-embark",
+        patch: [{ op: "add", path: "/caps/review", value: true }],
+        document: { caps: { review: true } },
+        display: "🐝️ `<otter-embark>` changed /caps/review",
+      }),
+    ),
+  ).toBe("🐝️ `<otter-embark>` changed /caps/review");
 });

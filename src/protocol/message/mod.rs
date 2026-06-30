@@ -420,7 +420,7 @@ impl Message {
     }
 
     pub(crate) fn new_joined(swarm: &SwarmId, author: &Nickname) -> Self {
-        // Presence carries no body; peer metadata (model/harness) is application
+        // Presence carries no body; peer metadata (model/harness/host) is application
         // data an agent writes into the `meta` channel, not a presence payload.
         Self::new(
             swarm,
