@@ -357,29 +357,22 @@ async fn pipe(action: PipeAction) -> Result<()> {
         }
         PipeAction::Connect { ticket, throttle } => crate::pipe::connect(&ticket, throttle).await,
         PipeAction::ListenTcp {
-            port,
+            ports,
             swarm,
             output,
         } => {
             crate::pipe::listen_tcp(
                 swarm.as_ref().map(crate::protocol::SwarmId::as_str),
-                &format!("127.0.0.1:{port}"),
+                &ports,
                 matches!(output, OutputFormat::Json),
             )
             .await
         }
         PipeAction::ConnectTcp {
             ticket,
-            port,
+            ports,
             output,
-        } => {
-            crate::pipe::connect_tcp(
-                &ticket,
-                &format!("127.0.0.1:{port}"),
-                matches!(output, OutputFormat::Json),
-            )
-            .await
-        }
+        } => crate::pipe::connect_tcp(&ticket, &ports, matches!(output, OutputFormat::Json)).await,
     }
 }
 

@@ -22,7 +22,7 @@ mod ticket;
 
 pub(crate) use consume::connect;
 pub(crate) use produce::listen;
-pub(crate) use tcp::{connect_tcp, listen_tcp};
+pub(crate) use tcp::{PortMapping, connect_tcp, listen_tcp};
 
 /// ALPN for the pipe protocol — a raw bidirectional QUIC stream, distinct from
 /// the gossip overlay's `GOSSIP_ALPN`.
