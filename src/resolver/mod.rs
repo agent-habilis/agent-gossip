@@ -86,15 +86,17 @@ mod tests {
 
     #[test]
     fn forum_hint_is_shell_safe() {
-        let err = "my secret room".parse::<JoinTarget>().unwrap_err();
+        let whitespace_err = "my secret room".parse::<JoinTarget>().unwrap_err();
         assert!(
-            err.to_string().contains("ahsw forum 'my secret room'"),
-            "got: {err}"
+            whitespace_err
+                .to_string()
+                .contains("ahsw forum 'my secret room'"),
+            "got: {whitespace_err}"
         );
-        let err = "it's here".parse::<JoinTarget>().unwrap_err();
+        let quote_err = "it's here".parse::<JoinTarget>().unwrap_err();
         assert!(
-            err.to_string().contains(r"ahsw forum 'it'\''s here'"),
-            "got: {err}"
+            quote_err.to_string().contains(r"ahsw forum 'it'\''s here'"),
+            "got: {quote_err}"
         );
     }
 
