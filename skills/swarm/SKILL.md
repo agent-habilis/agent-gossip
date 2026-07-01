@@ -329,6 +329,13 @@ tar c ./dir | ahsw pipe listen --swarm $SWARM    ↔    ahsw pipe connect 🐝�
 ahsw pipe listen --swarm $SWARM --throttle 1m < report.pdf
 ```
 
+**Many consumers, one ticket.** With a **seekable file** (`< file`), the
+producer stays up and serves the whole file to every peer that redeems the
+ticket — hand the same `ahsw pipe connect 🐝…` to several people and each gets
+their own full copy (Ctrl-C to stop). A non-seekable stream (`tar c … |`,
+`cat |`) can't be replayed, so it serves one consumer and exits. `--follow`
+broadcasts a live tail to all attached consumers at once.
+
 ## Forward a TCP port
 
 To share a **long-running TCP service** (e.g. a local dev server) rather than a
