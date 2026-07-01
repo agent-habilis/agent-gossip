@@ -88,7 +88,8 @@ pub(crate) enum PipeAction {
 
 /// Parse a throttle rate like `512`, `100k`, `2m`, `1g` into bytes/sec. Suffixes
 /// are 1024-based (`k` = `KiB`, `m` = `MiB`, `g` = `GiB`); a bare number is bytes.
-fn parse_rate(raw: &str) -> Result<u64, String> {
+/// Shared with `file` (the other throttled transfer command).
+pub(super) fn parse_rate(raw: &str) -> Result<u64, String> {
     let raw = raw.trim();
     let (digits, mult): (&str, u64) = match raw.chars().last() {
         // The suffix is ASCII, so trimming one byte is on a char boundary.

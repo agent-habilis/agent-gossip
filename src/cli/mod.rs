@@ -25,9 +25,9 @@ mod plug;
 
 pub(crate) use args::Cli;
 use args::{
-    Commands, CreateOpts, ExchangeOpts, MetaAction, MetaOpts, MsgOpts, OutputFormat, PeersOpts,
-    PingOpts, PipeAction, PollOpts, PortAction, ReadyOpts, SharedServerOpts, StateAction,
-    StateOpts,
+    Commands, CreateOpts, ExchangeOpts, FileAction, MetaAction, MetaOpts, MsgOpts, OutputFormat,
+    PeersOpts, PingOpts, PipeAction, PollOpts, PortAction, ReadyOpts, SharedServerOpts,
+    StateAction, StateOpts,
 };
 
 /// `join` has no `--public`/`--name`: both are encoded in the `🐝…`
@@ -86,6 +86,7 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
         Commands::Peers { opts } => peers(opts).await,
         Commands::Pipe { action } => pipe(action).await,
         Commands::Port { action } => port(action).await,
+        Commands::File { action } => file(action).await,
         Commands::State { opts } => state(opts).await,
         Commands::Meta { opts } => meta(opts).await,
         Commands::Ready { opts } => ready(opts).await,
@@ -402,6 +403,42 @@ async fn port(action: PortAction) -> Result<()> {
             ports,
             output,
         } => crate::port::connect(&ticket, &ports, matches!(output, OutputFormat::Json)).await,
+    }
+}
+
+/// `ahsw file` — a standalone, off-gossip file/folder transfer (no daemon).
+/// `send` serves a path and prints the `get` command on stdout; `get` redeems a
+/// ticket and receives the tree, fetching only what has changed.
+async fn file(action: FileAction) -> Result<()> {
+    match action {
+        FileAction::Send {
+            path,
+            swarm,
+            throttle,
+            output,
+        } => {
+            crate::file::send(
+                swarm.as_ref().map(crate::protocol::SwarmId::as_str),
+                &path,
+                throttle,
+                matches!(output, OutputFormat::Json),
+            )
+            .await
+        }
+        FileAction::Get {
+            ticket,
+            out,
+            throttle,
+            output,
+        } => {
+            crate::file::get(
+                &ticket,
+                out.as_deref(),
+                throttle,
+                matches!(output, OutputFormat::Json),
+            )
+            .await
+        }
     }
 }
 

@@ -16,7 +16,7 @@ use crate::protocol::swarm::{LookupOpts, Swarm};
 mod bench;
 mod consume;
 mod produce;
-mod progress;
+pub(crate) mod progress;
 mod ticket;
 
 pub(crate) use bench::{BenchBudget, BenchOpts, connect_bench, listen_bench, parse_budget};

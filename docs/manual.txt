@@ -37,6 +37,9 @@ SYNOPSIS
        ahsw port listen  PORT... [--swarm 🐝…] [--output human|json]
        ahsw port connect 🐝… [LOCAL:]REMOTE... [--output human|json]
 
+       ahsw file send PATH [--swarm 🐝…] [--throttle RATE] [--output human|json]
+       ahsw file get  🐝… [--out DIR] [--throttle RATE] [--output human|json]
+
        ahsw state merge --swarm 🐝… --nickname NAME --merge MERGE
        ahsw state get   --swarm 🐝… --nickname NAME
 
@@ -503,6 +506,50 @@ COMMANDS
               Examples:
                 ahsw port listen 3000 5432 --swarm 🐝…   # share a dev server + DB
                 ahsw port connect 🐝… 8080:3000 5432     # 8080→3000, 5432→5432
+
+       file send PATH [--swarm 🐝…] [--throttle RATE] [--output human|json]
+       file get  🐝… [--out DIR] [--throttle RATE] [--output human|json]
+              Send a file or folder over the same off-gossip direct link the pipe
+              uses — no running daemon required, and it lands as a real tree on
+              disk (not a byte stream). `file send PATH` serves a file or
+              directory and prints on stdout a status line plus the receiver's
+              ready-to-run `ahsw file get 🐝…` command (bold-green in a
+              terminal); `file get <ticket>` receives it into the current
+              directory — a folder is recreated under a directory named after the
+              source, a single file keeps its name — OVERWRITING existing files.
+              --out DIR writes somewhere other than the current directory.
+
+              It is a SNAPSHOT + DELTA RE-SYNC, not a live watch: on `get` the
+              receiver sends the sender a manifest (path + size + hash) of what
+              it already has, and the sender streams back ONLY the files that
+              are missing or changed; unchanged files are skipped. `file send`
+              STAYS UP and re-reads the source per connection, so re-running
+              `file get` with the same ticket brings the destination back in
+              sync cheaply. It only ever adds or overwrites — it NEVER deletes, so
+              it is a receive, not a mirror. Symlinks are skipped (not followed,
+              not recreated); unix permission bits are preserved best-effort.
+
+              The ticket is the same kind of bearer capability the pipe uses (a
+              random secret carrying the sender's address + the swarm's
+              discovery config); it shares the 🐝… glyph but is a DISTINCT token,
+              not accepted by --swarm, join, pipe connect, or port connect.
+              --swarm selects the discovery mechanisms (local / mDNS / DHT /
+              relay); omit it for a public default, and a loopback-only swarm
+              confines the transfer to one machine. --throttle caps throughput
+              (e.g. 100k, 2m; bytes/sec, 1024-based), doubling as a way to watch
+              the progress bar on a fast/local link. On the sender side,
+              --output json swaps the decorated human hint for one plain
+              `ahsw file get 🐝…` line a script can capture; on the receiver
+              side it suppresses the `Received …` summary.
+
+              Contrast the pipe, which streams raw bytes (a folder there is a tar
+              STREAM via `tar c ./dir | ahsw pipe listen`): `file` walks the tree,
+              transfers only the delta, and writes it back out as files.
+
+              Examples:
+                ahsw file send ./report.pdf --swarm 🐝…   # hint → ahsw file get 🐝…
+                ahsw file get 🐝Ydy8… --out ~/Downloads
+                ahsw file send ./project --swarm 🐝…   ↔   ahsw file get 🐝…  # re-run to re-sync
 
        state merge --swarm 🐝… --nickname NAME --merge MERGE
        state get   --swarm 🐝… --nickname NAME

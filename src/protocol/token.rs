@@ -26,6 +26,7 @@ pub(crate) enum TokenType {
     Swarm,
     Pipe,
     Port,
+    File,
 }
 
 impl TokenType {
@@ -34,6 +35,7 @@ impl TokenType {
             TokenType::Swarm => 1,
             TokenType::Pipe => 2,
             TokenType::Port => 3,
+            TokenType::File => 4,
         }
     }
 
@@ -42,6 +44,7 @@ impl TokenType {
             1 => Ok(TokenType::Swarm),
             2 => Ok(TokenType::Pipe),
             3 => Ok(TokenType::Port),
+            4 => Ok(TokenType::File),
             other => bail!("unknown token type: {other}"),
         }
     }
@@ -109,7 +112,12 @@ mod tests {
 
     #[test]
     fn round_trips_each_kind() {
-        for kind in [TokenType::Swarm, TokenType::Pipe, TokenType::Port] {
+        for kind in [
+            TokenType::Swarm,
+            TokenType::Pipe,
+            TokenType::Port,
+            TokenType::File,
+        ] {
             let token = encode(kind, b"payload-bytes");
             assert!(token.starts_with("🐝"));
             let (decoded_kind, payload) = decode(&token).expect("decode");
