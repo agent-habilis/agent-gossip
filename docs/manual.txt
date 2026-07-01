@@ -29,10 +29,11 @@ SYNOPSIS
 
        ahsw peers --swarm 🐝… --nickname NAME [--output json]
 
-       ahsw pipe listen      [--swarm 🐝…] [--throttle RATE] [--follow] [--output human|json]
-       ahsw pipe connect     🐝… [--throttle RATE]
-       ahsw pipe listen-tcp  PORT [--swarm 🐝…] [--output human|json]
-       ahsw pipe connect-tcp 🐝… PORT [--output human|json]
+       ahsw pipe listen  [--swarm 🐝…] [--throttle RATE] [--follow] [--output human|json]
+       ahsw pipe connect 🐝… [--throttle RATE]
+
+       ahsw port listen  PORT [--swarm 🐝…] [--output human|json]
+       ahsw port connect 🐝… PORT [--output human|json]
 
        ahsw state merge --swarm 🐝… --nickname NAME --merge MERGE
        ahsw state get   --swarm 🐝… --nickname NAME
@@ -353,8 +354,6 @@ COMMANDS
 
        pipe listen [--swarm 🐝…] [--throttle RATE] [--follow] [--output human|json]
        pipe connect 🐝… [--throttle RATE]
-       pipe listen-tcp PORT [--swarm 🐝…] [--output human|json]
-       pipe connect-tcp 🐝… PORT [--output human|json]
               A standalone, off-gossip direct byte pipe between machines — no running
               daemon required. `pipe listen` reads stdin and prints, on stdout, a
               status line plus the consumer's ready-to-run `ahsw pipe connect 🐝…`
@@ -370,43 +369,22 @@ COMMANDS
               --public) confines the pipe to one machine — pass a --public swarm id
               to reach another host. The data never touches gossip.
 
-              A file is `ahsw pipe listen < file`, a folder is a tar stream, and
-              a TCP service is the -tcp pair: `pipe listen-tcp PORT` forwards
-              inbound peers to a local TCP service on `127.0.0.1:PORT`, and `pipe
-              connect-tcp <ticket> PORT` binds `127.0.0.1:PORT` and forwards each
-              connection over the pipe (one ticket serves many connections). The
-              -tcp forwarders are long-running services — they run until interrupted,
-              not single-shot transfers.
+              A file is `ahsw pipe listen < file`; a folder is a tar stream (see the
+              examples). To forward a long-running TCP service rather than a
+              single-shot byte stream, use `ahsw port` instead.
 
               On the producer side, --output json swaps the decorated human hint for
               one plain line a script can capture — a literal command, not a JSON
               object. `pipe listen` prints `ahsw pipe connect 🐝…` (strip the
-              `ahsw pipe connect ` prefix for the bare ticket); `pipe listen-tcp`
-              prints `ahsw pipe connect-tcp 🐝… PORT`, a template whose PORT the
-              consumer replaces with the local port to bind. On the consumer side,
-              `pipe connect-tcp --output json` emits no machine product at all — it
-              only suppresses the status line. (`pipe connect` has no --output: its
-              stdout IS the transferred bytes.)
+              `ahsw pipe connect ` prefix for the bare ticket). (`pipe connect` has
+              no --output: its stdout IS the transferred bytes.)
 
-              In human mode, both `-tcp` commands print a best-effort access-log
-              line per HTTP request they recognize on the forwarded traffic
-              (method, path, status, response size, latency). The sniffing only
-              ever observes bytes already being forwarded; it never alters,
-              delays, or buffers them, and silently stops trying the moment a
-              connection doesn't look like HTTP/1.x (TLS, a raw protocol, binary
-              data). --output json suppresses this, same as the startup line.
-
-              Exit codes are meaningful only for the single-shot stdio pair
-              (`pipe listen` / `pipe connect`): 0 on a fully-delivered stream,
-              non-zero on a connect failure or a truncated transfer. The
-              long-running -tcp forwarders exit 0 on a clean shutdown regardless of
-              how many connections they served (or whether any did), so do not read
-              their exit code as "a transfer happened."
+              Exit codes are meaningful for the stdio pair: 0 on a fully-delivered
+              stream, non-zero on a connect failure or a truncated transfer.
 
               --throttle RATE caps throughput (e.g. 100k, 2m; 1024-based) on either
-              side of the stdio pair — a bandwidth limit, and a way to make the
-              progress bar visible on a fast/local link. The -tcp forwarders do not
-              take --throttle.
+              side of the pipe — a bandwidth limit, and a way to make the progress
+              bar visible on a fast/local link.
 
               --follow turns `pipe listen` into a live tail for an endless source
               like `tail -f`: the producer stays up and forwards stdin to whichever
@@ -432,8 +410,48 @@ COMMANDS
                 ahsw pipe connect 🐝Ydy8… > report.pdf
                 tar c ./dir | ahsw pipe listen --swarm 🐝…   ↔   ahsw pipe connect 🐝… | tar x
                 tail -f app.log | ahsw pipe listen --follow --swarm 🐝…   # live tail
-                ahsw pipe listen-tcp 3000 --swarm 🐝…    # share a dev server
-                ahsw pipe connect-tcp 🐝… 8080           # → http://localhost:8080
+
+       port listen  PORT [--swarm 🐝…] [--output human|json]
+       port connect 🐝… PORT [--output human|json]
+              Forward a long-running TCP service over the same off-gossip direct
+              link the pipe uses — no running daemon required. `port listen PORT`
+              serves inbound peers by proxying each to a local TCP service on
+              `127.0.0.1:PORT`, and prints on stdout a status line plus the
+              consumer's `ahsw port connect 🐝… PORT` command (bold-blue in a
+              terminal); `port connect <ticket> PORT` binds `127.0.0.1:PORT` and
+              forwards each connection to the producer. Unlike the single-shot
+              stdio pipe, ONE ticket serves MANY connections and both are
+              long-running proxies — they run until interrupted, not single-shot
+              transfers. The ticket is the same kind of bearer capability the pipe
+              uses (a random secret carrying the producer's address + the swarm's
+              discovery config); it shares the 🐝… glyph but is a DISTINCT token,
+              not accepted by --swarm, join, or pipe connect. --swarm selects the
+              discovery mechanisms (local / mDNS / DHT / relay); omit it for a
+              public default, and a loopback-only swarm confines the forward to one
+              machine.
+
+              On the producer side, --output json swaps the decorated human hint
+              for one plain line a script can capture: `port listen` prints
+              `ahsw port connect 🐝… PORT`, a template whose PORT the consumer
+              replaces with the local port to bind. On the consumer side,
+              `port connect --output json` emits no machine product at all — it
+              only suppresses the status line.
+
+              In human mode, both commands print a best-effort access-log line per
+              HTTP request they recognize on the forwarded traffic (method, path,
+              status, response size, latency). The sniffing only ever observes
+              bytes already being forwarded; it never alters, delays, or buffers
+              them, and silently stops trying the moment a connection doesn't look
+              like HTTP/1.x (TLS, a raw protocol, binary data). --output json
+              suppresses this, same as the startup line.
+
+              Exit codes are NOT meaningful here: both proxies exit 0 on a clean
+              shutdown regardless of how many connections they served (or whether
+              any did), so do not read the exit code as "a transfer happened."
+
+              Examples:
+                ahsw port listen 3000 --swarm 🐝…    # share a dev server
+                ahsw port connect 🐝… 8080           # → http://localhost:8080
 
        state merge --swarm 🐝… --nickname NAME --merge MERGE
        state get   --swarm 🐝… --nickname NAME

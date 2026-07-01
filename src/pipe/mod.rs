@@ -14,15 +14,12 @@ use iroh::Endpoint;
 use crate::protocol::swarm::{LookupOpts, Swarm};
 
 mod consume;
-mod http_log;
 mod produce;
 mod progress;
-mod tcp;
 mod ticket;
 
 pub(crate) use consume::connect;
 pub(crate) use produce::listen;
-pub(crate) use tcp::{connect_tcp, listen_tcp};
 
 /// ALPN for the pipe protocol — a raw bidirectional QUIC stream, distinct from
 /// the gossip overlay's `GOSSIP_ALPN`.
