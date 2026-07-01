@@ -165,10 +165,10 @@ The asymmetry matters:
   first dial is relay-direct with **zero lookup**.
 - The **participant** endpoint (Bob's own data endpoint) instead uses
   iroh's resilient **multi-relay default** (nearest of several, with
-  fallback). Pinning *it* to one relay made `bind()` block on that
-  single relay's handshake and removed iroh's relay fallback; a
-  default participant still reaches the beacon at its pinned relay,
-  and skips relays entirely on a LAN via mDNS.
+  fallback). Pinning it to one relay made `bind()` block on that relay's
+  handshake and dropped iroh's fallback. A default participant still
+  reaches the beacon at its pinned relay, and skips relays on a LAN via
+  mDNS.
 - Two **address-lookups** are wired (publish + resolve
   `rendezvous_id`): **mDNS** (LAN multicast — instant, infra-free,
   the same-machine/same-LAN fast path) and the **mainline BitTorrent

@@ -52,6 +52,8 @@ mod tests {
             | Commands::Task { .. }
             | Commands::Peers { .. }
             | Commands::Pipe { .. }
+            | Commands::Port { .. }
+            | Commands::File { .. }
             | Commands::State { .. }
             | Commands::Meta { .. }
             | Commands::Ready { .. }

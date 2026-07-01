@@ -46,68 +46,42 @@ pub(crate) enum PipeAction {
         #[arg(long, value_parser = parse_rate)]
         throttle: Option<u64>,
     },
-    /// Forward a local TCP service to peers; prints a `🐝…` ticket on stdout.
+    /// Benchmark a direct pipe link's throughput + round-trip latency.
     ///
-    /// Each peer that connects with the ticket is proxied to `127.0.0.1:PORT`;
-    /// one ticket serves many connections (e.g. share a local dev server).
-    ListenTcp {
-        /// The local port to expose, on `127.0.0.1` (e.g. `3000`).
-        port: u16,
-        /// Swarm id whose discovery config the pipe should use (omit ⇒ public).
-        #[arg(long)]
+    /// With no ticket, act as the producer: bind, print the `ahsw pipe bench 🐝…`
+    /// command on stdout, serve one run against the first peer that connects,
+    /// then exit — re-run for another, or pass `--serve` to stay up and serve
+    /// repeated runs. With a ticket, act as the consumer: redeem it and drive the
+    /// run, printing a report when done. Data flows consumer → producer (the
+    /// opposite direction from `connect`): the consumer drives and times the run,
+    /// the producer reports what it actually received.
+    Bench {
+        /// The `🐝…` ticket printed by a producer-side `ahsw pipe bench`. Omit
+        /// this argument to be the producer instead.
+        ticket: Option<String>,
+        /// [producer] Stay up and serve one benchmark per connecting peer,
+        /// sequentially, until killed (instead of exiting after the first run).
+        /// The ticket stays valid for the producer's whole lifetime, so reconnect
+        /// any time by re-running `ahsw pipe bench 🐝…`.
+        #[arg(long, conflicts_with = "ticket")]
+        serve: bool,
+        /// [producer] Swarm id whose discovery config (local / mDNS / DHT /
+        /// relay) the pipe should use, so it traverses the network like swarm
+        /// members do. Omit for a public default.
+        #[arg(long, conflicts_with = "ticket")]
         swarm: Option<SwarmId>,
-        /// Output format: human (default) or json (a direct connect-tcp line).
-        #[arg(long, default_value = "human")]
-        output: OutputFormat,
-    },
-    /// Bind a local TCP port and forward each connection over the pipe.
-    ///
-    /// Each connection to `127.0.0.1:PORT` is forwarded to the producer's TCP
-    /// target.
-    ConnectTcp {
-        /// The `🐝…` ticket printed by `ahsw pipe listen-tcp`.
-        ticket: String,
-        /// Local port to listen on, on `127.0.0.1` (e.g. `8080`).
-        port: u16,
-        /// Output format: human (default) or json (suppresses the status line).
-        #[arg(long, default_value = "human")]
-        output: OutputFormat,
-    },
-    /// Serve one throughput + latency benchmark run; prints the consumer's
-    /// `ahsw pipe connect-bench 🐝…` command on stdout.
-    ///
-    /// Runs a single benchmark against the first peer that connects, then
-    /// exits — re-run for another.
-    ListenBench {
-        /// Swarm id whose discovery config (local / mDNS / DHT / relay) the pipe
-        /// should use, so it traverses the network like swarm members do. Omit
-        /// for a public default.
-        #[arg(long)]
-        swarm: Option<SwarmId>,
-        /// Output format: human (default) — a bee status + colored hint — or json,
-        /// a single direct `ahsw pipe connect-bench 🐝…` line for machines.
-        #[arg(long, default_value = "human")]
-        output: OutputFormat,
-    },
-    /// Redeem a bench ticket and run a throughput + round-trip-latency
-    /// benchmark against the producer, printing a report when done.
-    ///
-    /// Data flows consumer → producer (the opposite direction from
-    /// `connect`): the consumer drives and times the run, the producer
-    /// reports back what it actually received.
-    ConnectBench {
-        /// The `🐝…` ticket printed by `ahsw pipe listen-bench`.
-        ticket: String,
-        /// How much of the throughput phase to run: a duration (`10s`, `2m`,
-        /// `1h`) or a byte count (`500b`, `100kb`, `50mb`, `2gb`). Defaults to
-        /// `10s`.
-        #[arg(long, value_parser = crate::pipe::parse_budget)]
+        /// [consumer] How much of the throughput phase to run: a duration
+        /// (`10s`, `2m`, `1h`) or a byte count (`500b`, `100kb`, `50mb`, `2gb`).
+        /// Defaults to `10s`.
+        #[arg(long, requires = "ticket", value_parser = crate::pipe::parse_budget)]
         budget: Option<BenchBudget>,
-        /// Number of sequential ping/pong round-trips in the latency phase.
-        #[arg(long, default_value_t = 20)]
-        pings: u32,
-        /// Output format: human (default) — a report box — or json, a single
-        /// machine-readable object.
+        /// [consumer] Number of sequential ping/pong round-trips in the latency
+        /// phase. Defaults to `20`.
+        #[arg(long, requires = "ticket")]
+        pings: Option<u32>,
+        /// Output format: human (default) — a bee status + colored hint on the
+        /// producer, a report box on the consumer — or json, a single
+        /// machine-readable line/object.
         #[arg(long, default_value = "human")]
         output: OutputFormat,
     },
@@ -115,7 +89,8 @@ pub(crate) enum PipeAction {
 
 /// Parse a throttle rate like `512`, `100k`, `2m`, `1g` into bytes/sec. Suffixes
 /// are 1024-based (`k` = `KiB`, `m` = `MiB`, `g` = `GiB`); a bare number is bytes.
-fn parse_rate(raw: &str) -> Result<u64, String> {
+/// Shared with `file` (the other throttled transfer command).
+pub(super) fn parse_rate(raw: &str) -> Result<u64, String> {
     let raw = raw.trim();
     let (digits, mult): (&str, u64) = match raw.chars().last() {
         // The suffix is ASCII, so trimming one byte is on a char boundary.

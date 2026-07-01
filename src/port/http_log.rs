@@ -356,8 +356,8 @@ pub(crate) struct Tee<R> {
     inner: R,
     log: Arc<StdMutex<AccessLog>>,
     direction: Direction,
-    /// How this connection is identified in printed lines — `connect-tcp`
-    /// shows the local client's real `SocketAddr`; `listen-tcp` has no
+    /// How this connection is identified in printed lines — `port connect`
+    /// shows the local client's real `SocketAddr`; `port listen` has no
     /// local IP:port for its inbound QUIC peers to show, so its lines carry
     /// no label at all.
     label: Option<String>,

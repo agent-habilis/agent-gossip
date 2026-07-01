@@ -18,6 +18,17 @@ pub(crate) fn status(verb: &str, msg: &str) {
     line(AnsiColor::Green, verb, msg);
 }
 
+/// Like [`status`] but on **stdout** (for commands whose status IS the product a
+/// script may read). An empty `msg` prints the verb alone, no trailing space.
+pub(crate) fn status_out(verb: &str, msg: &str) {
+    let style = Style::new().fg_color(Some(AnsiColor::Green.into())).bold();
+    if msg.is_empty() {
+        anstream::println!("{style}{verb:>12}{style:#}");
+    } else {
+        anstream::println!("{style}{verb:>12}{style:#} {msg}");
+    }
+}
+
 /// Like [`status`] but bold-**yellow** — for "not set up" / "out of date" rows.
 pub(crate) fn status_warn(verb: &str, msg: &str) {
     line(AnsiColor::Yellow, verb, msg);

@@ -312,9 +312,9 @@ your turn, act only then, send one patch, stop. **Read the current state from
 the `document`, never reconstruct it from memory.** On join, let state settle,
 then `state get` before acting.
 
-## Pipe a file, folder, or TCP port
+## Pipe a file or folder
 
-When asked to **pipe / send a file, a folder, or a TCP port** to a peer, use
+When asked to **pipe / send a file or a folder** to a peer, use
 `ahsw pipe` — a standalone, off-gossip direct byte stream (no
 daemon needed). Always pass **`--swarm $SWARM`** so it uses the swarm's
 discovery (local / mDNS / DHT / relay). Run the producer with **`--output json`**
@@ -332,13 +332,32 @@ ahsw pipe connect 🐝…  > report.pdf
 # folder: stream a tar (no native folder mode — a pipe is a byte stream)
 tar c ./dir | ahsw pipe listen --swarm $SWARM    ↔    ahsw pipe connect 🐝… | tar x
 
-# TCP port (e.g. share a dev server): one ticket serves many connections
-ahsw pipe listen-tcp 127.0.0.1:3000 --swarm $SWARM     # producer
-ahsw pipe connect-tcp 🐝… --addr 127.0.0.1:8080        # consumer → http://localhost:8080
-
 # --throttle RATE (e.g. 100k, 2m) caps throughput on either side — a bandwidth
 # limit, and a way to make the progress bar visible on a fast/local link.
 ahsw pipe listen --swarm $SWARM --throttle 1m < report.pdf
+```
+
+**Many consumers, one ticket.** With a **seekable file** (`< file`), the
+producer stays up and serves the whole file to every peer that redeems the
+ticket — hand the same `ahsw pipe connect 🐝…` to several people and each gets
+their own full copy (Ctrl-C to stop). A non-seekable stream (`tar c … |`,
+`cat |`) can't be replayed, so it serves one consumer and exits. `--follow`
+broadcasts a live tail to all attached consumers at once.
+
+## Forward a TCP port
+
+To share a **long-running TCP service** (e.g. a local dev server) rather than a
+one-shot byte stream, use `ahsw port` — the same off-gossip direct link, but one
+ticket serves many connections and both ends run until interrupted. The port is
+a bare `PORT` bound on `127.0.0.1`; the producer prints an
+`ahsw port connect 🐝… PORT` template whose `PORT` the consumer replaces with
+the local port it wants to bind.
+
+```bash
+# producer: expose local 127.0.0.1:3000 to peers (one ticket, many connections)
+ahsw port listen 3000 --swarm $SWARM     # → ahsw port connect 🐝… PORT
+# consumer: bind local 127.0.0.1:8080 and forward each connection to the producer
+ahsw port connect 🐝… 8080               # → http://localhost:8080
 ```
 
 Run the producer in the **background** with `--output json` and read its stdout —
