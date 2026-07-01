@@ -3,7 +3,8 @@
 //! swarm's discovery config, and the producer's address. Payload layout:
 //! `secret(32) ‖ flags(1) ‖ lookups ‖ address-json` (lookups is
 //! self-delimiting, so the address occupies the remainder). `flags` bit 0 is
-//! the live-follow mode; the rest are reserved.
+//! the live-follow mode, bit 1 is the benchmark protocol (`pipe listen-bench` /
+//! `pipe connect-bench`); the rest are reserved.
 
 use anyhow::{Context, Result, bail};
 use iroh::EndpointAddr;
@@ -22,6 +23,10 @@ pub(crate) struct PipeTicket {
     /// Live-follow mode: the producer stays up serving one consumer at a time,
     /// and the consumer streams-and-dies (a reconnect re-runs `pipe connect`).
     pub follow: bool,
+    /// A `listen-bench` ticket — the benchmark protocol, not the plain
+    /// byte-stream one. Lets `connect` and `connect-bench` each refuse the
+    /// other's ticket instead of hanging deep in the wrong protocol.
+    pub bench: bool,
 }
 
 impl PipeTicket {
@@ -29,7 +34,7 @@ impl PipeTicket {
     pub(crate) fn encode(&self) -> String {
         let mut payload = Vec::with_capacity(SECRET_LEN + 1 + 8 + 64);
         payload.extend_from_slice(&self.secret);
-        payload.push(u8::from(self.follow));
+        payload.push(u8::from(self.follow) | (u8::from(self.bench) << 1));
         self.lookups.encode_into(&mut payload);
         let addr_json = serde_json::to_vec(&endpoint_addr_to_json(&self.addr))
             .expect("EndpointAddr JSON always serializes");
@@ -51,6 +56,7 @@ impl PipeTicket {
         secret.copy_from_slice(secret_slice);
         let flags = *payload.get(SECRET_LEN).context("ticket missing flags")?;
         let follow = flags & 1 != 0;
+        let bench = flags & 0b10 != 0;
         let mut pos = SECRET_LEN + 1;
         let lookups = LookupOpts::decode_from(&payload, &mut pos)?;
         let addr_json = payload.get(pos..).context("ticket missing address")?;
@@ -62,6 +68,7 @@ impl PipeTicket {
             secret,
             lookups,
             follow,
+            bench,
         })
     }
 }
@@ -81,6 +88,7 @@ mod tests {
             secret: [9u8; SECRET_LEN],
             lookups: LookupOpts::public_preset(),
             follow: false,
+            bench: false,
         };
         let encoded = ticket.encode();
         assert!(encoded.starts_with("🐝"));
@@ -89,6 +97,7 @@ mod tests {
         assert_eq!(decoded.secret, [9u8; SECRET_LEN]);
         assert_eq!(decoded.lookups, LookupOpts::public_preset());
         assert!(!decoded.follow);
+        assert!(!decoded.bench);
     }
 
     #[test]
@@ -100,9 +109,26 @@ mod tests {
             secret: [9u8; SECRET_LEN],
             lookups: LookupOpts::loopback(),
             follow: true,
+            bench: false,
         };
         let decoded = PipeTicket::decode(&ticket.encode()).expect("decode");
         assert!(decoded.follow);
+    }
+
+    #[test]
+    fn bench_flag_round_trips_independently_of_follow() {
+        let id = SecretKey::from_bytes(&[11u8; 32]).public();
+        let addr = EndpointAddr::new(id).with_ip_addr("127.0.0.1:4242".parse().unwrap());
+        let ticket = PipeTicket {
+            addr,
+            secret: [9u8; SECRET_LEN],
+            lookups: LookupOpts::loopback(),
+            follow: false,
+            bench: true,
+        };
+        let decoded = PipeTicket::decode(&ticket.encode()).expect("decode");
+        assert!(decoded.bench);
+        assert!(!decoded.follow);
     }
 
     #[test]

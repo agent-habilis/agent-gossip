@@ -1,6 +1,7 @@
 use clap::Subcommand;
 
 use super::output::OutputFormat;
+use crate::pipe::BenchBudget;
 use crate::protocol::SwarmId;
 
 /// The `ahsw pipe` actions — a direct, off-gossip byte stream.
@@ -44,6 +45,44 @@ pub(crate) enum PipeAction {
         /// Doubles as a way to watch the progress bar on a fast/local link.
         #[arg(long, value_parser = parse_rate)]
         throttle: Option<u64>,
+    },
+    /// Serve one throughput + latency benchmark run; prints the consumer's
+    /// `ahsw pipe connect-bench 🐝…` command on stdout.
+    ///
+    /// Runs a single benchmark against the first peer that connects, then
+    /// exits — re-run for another.
+    ListenBench {
+        /// Swarm id whose discovery config (local / mDNS / DHT / relay) the pipe
+        /// should use, so it traverses the network like swarm members do. Omit
+        /// for a public default.
+        #[arg(long)]
+        swarm: Option<SwarmId>,
+        /// Output format: human (default) — a bee status + colored hint — or json,
+        /// a single direct `ahsw pipe connect-bench 🐝…` line for machines.
+        #[arg(long, default_value = "human")]
+        output: OutputFormat,
+    },
+    /// Redeem a bench ticket and run a throughput + round-trip-latency
+    /// benchmark against the producer, printing a report when done.
+    ///
+    /// Data flows consumer → producer (the opposite direction from
+    /// `connect`): the consumer drives and times the run, the producer
+    /// reports back what it actually received.
+    ConnectBench {
+        /// The `🐝…` ticket printed by `ahsw pipe listen-bench`.
+        ticket: String,
+        /// How much of the throughput phase to run: a duration (`10s`, `2m`,
+        /// `1h`) or a byte count (`500b`, `100kb`, `50mb`, `2gb`). Defaults to
+        /// `10s`.
+        #[arg(long, value_parser = crate::pipe::parse_budget)]
+        budget: Option<BenchBudget>,
+        /// Number of sequential ping/pong round-trips in the latency phase.
+        #[arg(long, default_value_t = 20)]
+        pings: u32,
+        /// Output format: human (default) — a report box — or json, a single
+        /// machine-readable object.
+        #[arg(long, default_value = "human")]
+        output: OutputFormat,
     },
 }
 

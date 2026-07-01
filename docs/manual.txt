@@ -29,8 +29,10 @@ SYNOPSIS
 
        ahsw peers --swarm 🐝… --nickname NAME [--output json]
 
-       ahsw pipe listen  [--swarm 🐝…] [--throttle RATE] [--follow] [--output human|json]
-       ahsw pipe connect 🐝… [--throttle RATE]
+       ahsw pipe listen        [--swarm 🐝…] [--throttle RATE] [--follow] [--output human|json]
+       ahsw pipe connect       🐝… [--throttle RATE]
+       ahsw pipe listen-bench  [--swarm 🐝…] [--output human|json]
+       ahsw pipe connect-bench 🐝… [--budget BUDGET] [--pings N] [--output human|json]
 
        ahsw port listen  PORT [--swarm 🐝…] [--output human|json]
        ahsw port connect 🐝… PORT [--output human|json]
@@ -354,6 +356,8 @@ COMMANDS
 
        pipe listen [--swarm 🐝…] [--throttle RATE] [--follow] [--output human|json]
        pipe connect 🐝… [--throttle RATE]
+       pipe listen-bench [--swarm 🐝…] [--output human|json]
+       pipe connect-bench 🐝… [--budget BUDGET] [--pings N] [--output human|json]
               A standalone, off-gossip direct byte pipe between machines — no running
               daemon required. `pipe listen` reads stdin and prints, on stdout, a
               status line plus the consumer's ready-to-run `ahsw pipe connect 🐝…`
@@ -379,8 +383,35 @@ COMMANDS
               `ahsw pipe connect ` prefix for the bare ticket). (`pipe connect` has
               no --output: its stdout IS the transferred bytes.)
 
-              Exit codes are meaningful for the stdio pair: 0 on a fully-delivered
-              stream, non-zero on a connect failure or a truncated transfer.
+              Exit codes are meaningful for every single-shot pair (`pipe listen` /
+              `pipe connect`, and `pipe listen-bench` / `pipe connect-bench`): 0 on
+              success (a fully-delivered stream, or a completed benchmark),
+              non-zero on a connect failure, a truncated transfer, or a benchmark
+              that never got a peer.
+
+              The -bench pair measures a link instead of moving real data: `pipe
+              listen-bench` prints a ticket, waits for the first peer to connect,
+              runs one benchmark, then exits — re-run for another (a fresh process
+              per run keeps concurrent benchmarks from skewing each other's
+              numbers). `pipe connect-bench <ticket>` redeems it and drives the
+              whole run, printing a report when done. Data flows
+              CONSUMER → PRODUCER — the opposite direction from `listen`/`connect` —
+              since the consumer is the one driving and timing the run. A bench
+              ticket is a distinct kind from a plain pipe ticket: `pipe connect`
+              refuses a bench ticket and `pipe connect-bench` refuses a plain one,
+              rather than hanging in the wrong protocol. The run has two phases: a
+              latency phase of --pings sequential ping/pong round-trips (default 20),
+              then a throughput phase that streams synthetic payload for --budget
+              (default 10s) before the consumer prints min/avg/max round-trip latency
+              and throughput — the byte count and elapsed time as measured by the
+              PRODUCER, the ground truth for what was actually delivered, not just
+              what the consumer queued. --budget takes an explicit-suffix duration
+              (10s, 2m, 1h) or byte count (500b, 100kb, 50mb, 2gb; 1024-based) — no
+              bare numbers, so a duration's `m` (minutes) can never be confused with
+              a byte count's `mb` (mebibytes). The human report prints cargo-style
+              status lines (Latency / Received / Throughput) to stderr; --output json
+              on `pipe connect-bench` prints the same figures as a single JSON object
+              on stdout instead.
 
               --throttle RATE caps throughput (e.g. 100k, 2m; 1024-based) on either
               side of the pipe — a bandwidth limit, and a way to make the progress
@@ -410,6 +441,8 @@ COMMANDS
                 ahsw pipe connect 🐝Ydy8… > report.pdf
                 tar c ./dir | ahsw pipe listen --swarm 🐝…   ↔   ahsw pipe connect 🐝… | tar x
                 tail -f app.log | ahsw pipe listen --follow --swarm 🐝…   # live tail
+                ahsw pipe listen-bench --swarm 🐝…                 # hint → ahsw pipe connect-bench 🐝…
+                ahsw pipe connect-bench 🐝… --budget 30s --pings 50
 
        port listen  PORT [--swarm 🐝…] [--output human|json]
        port connect 🐝… PORT [--output human|json]
