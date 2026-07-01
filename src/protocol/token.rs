@@ -1,7 +1,8 @@
-//! The branded `🐝` token codec shared by the swarm id ([`super::swarm`])
-//! and the pipe ticket ([`crate::pipe`]). One wire shape for every
-//! agent-habilis token, so a `🐝…` string self-describes its kind via a
-//! 1-byte type tag and the two namespaces never collide.
+//! The branded `🐝` token codec shared by the swarm id ([`super::swarm`]),
+//! the pipe ticket ([`crate::pipe`]), and the port ticket ([`crate::port`]).
+//! One wire shape for every agent-habilis token, so a `🐝…` string
+//! self-describes its kind via a 1-byte type tag and the namespaces never
+//! collide.
 //!
 //! Wire: `🐝` + Base58Check(`version ‖ type ‖ payload`) with a `SHA256d`
 //! checksum. The emoji is the brand; everything after it is ASCII Base58
@@ -24,6 +25,7 @@ const VERSION: u8 = 1;
 pub(crate) enum TokenType {
     Swarm,
     Pipe,
+    Port,
 }
 
 impl TokenType {
@@ -31,6 +33,7 @@ impl TokenType {
         match self {
             TokenType::Swarm => 1,
             TokenType::Pipe => 2,
+            TokenType::Port => 3,
         }
     }
 
@@ -38,6 +41,7 @@ impl TokenType {
         match byte {
             1 => Ok(TokenType::Swarm),
             2 => Ok(TokenType::Pipe),
+            3 => Ok(TokenType::Port),
             other => bail!("unknown token type: {other}"),
         }
     }
@@ -105,7 +109,7 @@ mod tests {
 
     #[test]
     fn round_trips_each_kind() {
-        for kind in [TokenType::Swarm, TokenType::Pipe] {
+        for kind in [TokenType::Swarm, TokenType::Pipe, TokenType::Port] {
             let token = encode(kind, b"payload-bytes");
             assert!(token.starts_with("🐝"));
             let (decoded_kind, payload) = decode(&token).expect("decode");

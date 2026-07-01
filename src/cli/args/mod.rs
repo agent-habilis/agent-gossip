@@ -21,6 +21,7 @@ mod peers;
 mod ping;
 mod pipe;
 mod poll;
+mod port;
 mod ready;
 mod shared;
 mod state;
@@ -37,6 +38,7 @@ pub(crate) use peers::PeersOpts;
 pub(crate) use ping::PingOpts;
 pub(crate) use pipe::PipeAction;
 pub(crate) use poll::PollOpts;
+pub(crate) use port::PortAction;
 pub(crate) use ready::ReadyOpts;
 pub(crate) use shared::SharedServerOpts;
 pub(crate) use state::{StateAction, StateOpts};
@@ -148,6 +150,18 @@ pub(crate) enum Commands {
     Pipe {
         #[command(subcommand)]
         action: PipeAction,
+    },
+
+    /// Forward a local TCP port to a peer, or a peer's TCP port to a local one.
+    ///
+    /// A standalone TCP proxy over a direct P2P link (off-gossip, no daemon):
+    /// `port listen PORT` exposes a local service and prints the
+    /// `ahsw port connect 🐝…` command on stdout; `port connect <ticket> PORT`
+    /// binds a local port and forwards each connection to the producer. One
+    /// ticket serves many connections.
+    Port {
+        #[command(subcommand)]
+        action: PortAction,
     },
 
     /// Read or change the swarm's shared state.

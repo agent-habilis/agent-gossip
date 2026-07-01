@@ -44,6 +44,7 @@ pub(crate) mod lookup;
 pub(crate) mod mcp;
 pub(crate) mod output;
 pub(crate) mod pipe;
+pub(crate) mod port;
 pub(crate) mod protocol;
 pub(crate) mod resolver;
 pub(crate) mod transport;

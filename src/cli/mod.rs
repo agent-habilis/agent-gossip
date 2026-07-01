@@ -26,7 +26,7 @@ mod plug;
 pub(crate) use args::Cli;
 use args::{
     Commands, CreateOpts, ExchangeOpts, MetaAction, MetaOpts, MsgOpts, OutputFormat, PeersOpts,
-    PingOpts, PipeAction, PollOpts, ReadyOpts, SharedServerOpts, StateAction, StateOpts,
+    PingOpts, PipeAction, PollOpts, PortAction, ReadyOpts, SharedServerOpts, StateAction, StateOpts,
 };
 
 /// `join` has no `--public`/`--name`: both are encoded in the `🐝…`
@@ -84,6 +84,7 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
         Commands::Exchange { opts } => exchange(opts).await,
         Commands::Peers { opts } => peers(opts).await,
         Commands::Pipe { action } => pipe(action).await,
+        Commands::Port { action } => port(action).await,
         Commands::State { opts } => state(opts).await,
         Commands::Meta { opts } => meta(opts).await,
         Commands::Ready { opts } => ready(opts).await,
@@ -356,23 +357,57 @@ async fn pipe(action: PipeAction) -> Result<()> {
             .await
         }
         PipeAction::Connect { ticket, throttle } => crate::pipe::connect(&ticket, throttle).await,
-        PipeAction::ListenTcp {
-            ports,
-            swarm,
-            output,
-        } => {
-            crate::pipe::listen_tcp(
+        PipeAction::ListenBench { swarm, output } => {
+            crate::pipe::listen_bench(
                 swarm.as_ref().map(crate::protocol::SwarmId::as_str),
-                &ports,
                 matches!(output, OutputFormat::Json),
             )
             .await
         }
-        PipeAction::ConnectTcp {
+        PipeAction::ConnectBench {
             ticket,
-            ports,
+            budget,
+            pings,
             output,
-        } => crate::pipe::connect_tcp(&ticket, &ports, matches!(output, OutputFormat::Json)).await,
+        } => {
+            let opts = crate::pipe::BenchOpts {
+                budget: budget.unwrap_or_default(),
+                pings,
+            };
+            crate::pipe::connect_bench(&ticket, opts, matches!(output, OutputFormat::Json)).await
+        }
+    }
+}
+
+/// `ahsw port` — a standalone, off-gossip TCP forward (no daemon). `listen`
+/// exposes a local port and prints the connect command on stdout; `connect`
+/// redeems a ticket and forwards each local connection to the producer.
+async fn port(action: PortAction) -> Result<()> {
+    match action {
+        PortAction::Listen {
+            port,
+            swarm,
+            output,
+        } => {
+            crate::port::listen(
+                swarm.as_ref().map(crate::protocol::SwarmId::as_str),
+                &format!("127.0.0.1:{port}"),
+                matches!(output, OutputFormat::Json),
+            )
+            .await
+        }
+        PortAction::Connect {
+            ticket,
+            port,
+            output,
+        } => {
+            crate::port::connect(
+                &ticket,
+                &format!("127.0.0.1:{port}"),
+                matches!(output, OutputFormat::Json),
+            )
+            .await
+        }
     }
 }
 

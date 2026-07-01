@@ -13,16 +13,15 @@ use iroh::Endpoint;
 
 use crate::protocol::swarm::{LookupOpts, Swarm};
 
+mod bench;
 mod consume;
-mod http_log;
 mod produce;
 mod progress;
-mod tcp;
 mod ticket;
 
+pub(crate) use bench::{BenchBudget, BenchOpts, connect_bench, listen_bench, parse_budget};
 pub(crate) use consume::connect;
 pub(crate) use produce::listen;
-pub(crate) use tcp::{PortMapping, connect_tcp, listen_tcp};
 
 /// ALPN for the pipe protocol — a raw bidirectional QUIC stream, distinct from
 /// the gossip overlay's `GOSSIP_ALPN`.
@@ -50,26 +49,23 @@ async fn wait_online(endpoint: &Endpoint) {
     let _ = tokio::time::timeout(Duration::from_secs(5), endpoint.online()).await;
 }
 
-/// Present the producer's status and the consumer's ready-to-run command on
-/// **stdout** — the producer's product (its stdout carries no data; that flows
-/// over the network), and stderr stays errors-only.
+/// Present the producer's status and the consumer's ready-to-run command.
 ///
-/// Human (default) mirrors `create`'s `others can join with: …` hint: a bee
-/// status line + the command bold-blue on a terminal (plain when piped). `json`
-/// is direct for machines — just the bare command, no status/colors.
-fn announce(json: bool, status: &str, command: &str) {
-    tracing::info!("{status}");
+/// Human (default): two cargo-style status lines on **stderr** — a
+/// `verb`/`detail` line (e.g. `Waiting` / `for a peer to connect`) then a
+/// `Connect` line carrying the command — matching the rest of the pipe
+/// producers' cargo-style output. `json` is the machine path: just the bare
+/// command on **stdout** (a script captures it; its stdout carries no data,
+/// that flows over the network), so scripts stay unaffected by the human
+/// styling.
+fn announce(json: bool, verb: &str, detail: &str, command: &str) {
+    tracing::info!("{verb} {detail}");
     if json {
         println!("{command}");
         return;
     }
-    let (open, close) = if crate::output::stdout_color() {
-        (crate::output::style::BLUE, crate::output::style::RESET)
-    } else {
-        ("", "")
-    };
-    println!("🐝 {status}");
-    println!("other peer can connect with: {open}{command}{close}");
+    crate::util::output::status(verb, detail);
+    crate::util::output::status("Connect", command);
 }
 
 /// Emit a producer lifecycle line (`connected` / `transferring…` / `finished`) to

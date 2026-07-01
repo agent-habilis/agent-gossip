@@ -1,7 +1,7 @@
 use clap::Subcommand;
 
 use super::output::OutputFormat;
-use crate::pipe::PortMapping;
+use crate::pipe::BenchBudget;
 use crate::protocol::SwarmId;
 
 /// The `ahsw pipe` actions — a direct, off-gossip byte stream.
@@ -46,66 +46,44 @@ pub(crate) enum PipeAction {
         #[arg(long, value_parser = parse_rate)]
         throttle: Option<u64>,
     },
-    /// Forward one or more local TCP services to peers; prints a `🐝…` ticket
-    /// on stdout.
+    /// Serve one throughput + latency benchmark run; prints the consumer's
+    /// `ahsw pipe connect-bench 🐝…` command on stdout.
     ///
-    /// Each peer that connects with the ticket is proxied to `127.0.0.1:PORT`
-    /// for every listed port, all multiplexed over one shared connection; one
-    /// ticket serves many connections (e.g. share a local dev server + DB).
-    ListenTcp {
-        /// The local ports to expose, on `127.0.0.1` (e.g. `3000 5432`).
-        #[arg(required = true)]
-        ports: Vec<u16>,
-        /// Swarm id whose discovery config the pipe should use (omit ⇒ public).
+    /// Runs a single benchmark against the first peer that connects, then
+    /// exits — re-run for another.
+    ListenBench {
+        /// Swarm id whose discovery config (local / mDNS / DHT / relay) the pipe
+        /// should use, so it traverses the network like swarm members do. Omit
+        /// for a public default.
         #[arg(long)]
         swarm: Option<SwarmId>,
-        /// Output format: human (default) or json (a direct connect-tcp line).
+        /// Output format: human (default) — a bee status + colored hint — or json,
+        /// a single direct `ahsw pipe connect-bench 🐝…` line for machines.
         #[arg(long, default_value = "human")]
         output: OutputFormat,
     },
-    /// Bind one or more local TCP ports and forward each connection over the
-    /// pipe.
+    /// Redeem a bench ticket and run a throughput + round-trip-latency
+    /// benchmark against the producer, printing a report when done.
     ///
-    /// Each connection to `127.0.0.1:PORT` is forwarded to the producer's TCP
-    /// target on the same port; all ports share one connection. Pass the same
-    /// ports the `listen-tcp` ticket advertises.
-    ConnectTcp {
-        /// The `🐝…` ticket printed by `ahsw pipe listen-tcp`.
+    /// Data flows consumer → producer (the opposite direction from
+    /// `connect`): the consumer drives and times the run, the producer
+    /// reports back what it actually received.
+    ConnectBench {
+        /// The `🐝…` ticket printed by `ahsw pipe listen-bench`.
         ticket: String,
-        /// Ports to forward, as `LOCAL:REMOTE` (e.g. `8080:3000` binds local
-        /// 8080 → the producer's 3000). A bare `PORT` maps a port to itself
-        /// (`3000` == `3000:3000`). Each REMOTE must be one the ticket exposes.
-        #[arg(required = true, value_parser = parse_port_mapping)]
-        ports: Vec<PortMapping>,
-        /// Output format: human (default) or json (suppresses the status line).
+        /// How much of the throughput phase to run: a duration (`10s`, `2m`,
+        /// `1h`) or a byte count (`500b`, `100kb`, `50mb`, `2gb`). Defaults to
+        /// `10s`.
+        #[arg(long, value_parser = crate::pipe::parse_budget)]
+        budget: Option<BenchBudget>,
+        /// Number of sequential ping/pong round-trips in the latency phase.
+        #[arg(long, default_value_t = 20)]
+        pings: u32,
+        /// Output format: human (default) — a report box — or json, a single
+        /// machine-readable object.
         #[arg(long, default_value = "human")]
         output: OutputFormat,
     },
-}
-
-/// Parse a `connect-tcp` port argument: `LOCAL:REMOTE` (map across) or a bare
-/// `PORT` (map to itself). Both ports must be non-zero `u16`s.
-fn parse_port_mapping(raw: &str) -> Result<PortMapping, String> {
-    let parse_port = |value: &str| -> Result<u16, String> {
-        match value.trim().parse::<u16>() {
-            Ok(0) | Err(_) => Err(format!(
-                "invalid port `{value}` (use a number 1-65535, e.g. 8080 or 8080:3000)"
-            )),
-            Ok(port) => Ok(port),
-        }
-    };
-    if let Some((local, remote)) = raw.split_once(':') {
-        Ok(PortMapping {
-            local: parse_port(local)?,
-            remote: parse_port(remote)?,
-        })
-    } else {
-        let port = parse_port(raw)?;
-        Ok(PortMapping {
-            local: port,
-            remote: port,
-        })
-    }
 }
 
 /// Parse a throttle rate like `512`, `100k`, `2m`, `1g` into bytes/sec. Suffixes
@@ -133,29 +111,7 @@ fn parse_rate(raw: &str) -> Result<u64, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_port_mapping, parse_rate};
-
-    #[test]
-    fn parses_bare_port_as_self_mapping() {
-        let mapping = parse_port_mapping("3000").expect("bare port");
-        assert_eq!((mapping.local, mapping.remote), (3000, 3000));
-    }
-
-    #[test]
-    fn parses_local_remote_mapping() {
-        let mapping = parse_port_mapping("8080:3000").expect("mapping");
-        assert_eq!((mapping.local, mapping.remote), (8080, 3000));
-    }
-
-    #[test]
-    fn rejects_zero_garbage_and_malformed_mappings() {
-        assert!(parse_port_mapping("0").is_err());
-        assert!(parse_port_mapping("8080:0").is_err());
-        assert!(parse_port_mapping("abc").is_err());
-        assert!(parse_port_mapping("8080:").is_err());
-        assert!(parse_port_mapping(":3000").is_err());
-        assert!(parse_port_mapping("99999").is_err());
-    }
+    use super::parse_rate;
 
     #[test]
     fn parses_plain_and_suffixed_rates() {
