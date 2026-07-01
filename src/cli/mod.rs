@@ -26,7 +26,7 @@ mod plug;
 pub(crate) use args::Cli;
 use args::{
     Commands, CreateOpts, ExchangeOpts, FileAction, MetaAction, MetaOpts, MsgOpts, OutputFormat,
-    PeersOpts, PingOpts, PipeAction, PollOpts, PortAction, ReadyOpts, SharedServerOpts,
+    PeersOpts, PingOpts, PipeAction, PollOpts, PortAction, ReadyOpts, ShAction, SharedServerOpts,
     StateAction, StateOpts,
 };
 
@@ -87,6 +87,7 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
         Commands::Pipe { action } => pipe(action).await,
         Commands::Port { action } => port(action).await,
         Commands::File { action } => file(action).await,
+        Commands::Sh { action } => sh(action).await,
         Commands::State { opts } => state(opts).await,
         Commands::Meta { opts } => meta(opts).await,
         Commands::Ready { opts } => ready(opts).await,
@@ -450,6 +451,28 @@ async fn file(action: FileAction) -> Result<()> {
             )
             .await
         }
+    }
+}
+
+async fn sh(action: ShAction) -> Result<()> {
+    match action {
+        ShAction::Listen {
+            swarm,
+            output,
+            command,
+            cols,
+            rows,
+        } => {
+            crate::sh::listen(
+                swarm.as_ref().map(crate::protocol::SwarmId::as_str),
+                matches!(output, OutputFormat::Json),
+                command.as_deref(),
+                cols,
+                rows,
+            )
+            .await
+        }
+        ShAction::Connect { ticket } => crate::sh::connect(&ticket).await,
     }
 }
 

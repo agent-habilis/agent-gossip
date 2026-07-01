@@ -40,6 +40,9 @@ SYNOPSIS
        ahsw file send PATH [--swarm 🐝…] [--throttle RATE] [--output human|json]
        ahsw file get  🐝… [--out DIR] [--throttle RATE] [--output human|json]
 
+       ahsw sh listen  [--swarm 🐝…] [--output human|json]
+       ahsw sh connect 🐝…
+
        ahsw state merge --swarm 🐝… --nickname NAME --merge MERGE
        ahsw state get   --swarm 🐝… --nickname NAME
 
@@ -515,6 +518,48 @@ COMMANDS
                 ahsw file send ./report.pdf --swarm 🐝…   # hint → ahsw file get 🐝…
                 ahsw file get 🐝Ydy8… --out ~/Downloads
                 ahsw file send ./project --swarm 🐝…   ↔   ahsw file get 🐝…  # re-run to re-sync
+
+       sh listen  [--swarm 🐝…] [--output human|json]
+       sh connect 🐝…
+              Share a live terminal over the same off-gossip direct link the pipe
+              uses — no running daemon required. `sh listen` spawns your $SHELL
+              (falling back to /bin/sh) in a pseudo-terminal and prints on stdout
+              a status line plus the viewer's ready-to-run `ahsw sh connect 🐝…`
+              command; you then use that shell NORMALLY while its output is
+              mirrored to every viewer. `sh connect <ticket>` renders the shared
+              terminal READ-ONLY — a viewer's keyboard NEVER reaches your shell
+              (press Ctrl-C or q to detach). The shell IS the session: when you
+              end it (`exit`, Ctrl-D), the broadcast ends and every viewer
+              detaches. One ticket serves ANY NUMBER of viewers at once; a viewer
+              that joins mid-session is primed from a bounded replay of recent
+              output.
+
+              It is a RAW PASSTHROUGH: the source's bytes (ANSI and all) are
+              written verbatim to the viewer, streamed at the SOURCE's terminal
+              size. If the source is LARGER than a viewer's terminal, the overflow
+              is not clipped cleanly — it wraps or scrolls (width especially).
+              When a viewer's terminal is LARGER than the source, the empty margin
+              around the shared screen is filled with a faint dotted backdrop so
+              it reads as a framed box.
+              Fullscreen/TUI apps (neovim, htop, tmux, …) DO stream, and look
+              exact when the viewer's terminal is at least as large as the source;
+              a smaller viewer will see a misaligned screen, and a viewer joining
+              while such an app sits idle may see a partial screen until it
+              repaints.
+
+              The ticket is the same kind of bearer capability the pipe uses (a
+              random secret carrying the sharer's address + the swarm's discovery
+              config); it shares the 🐝… glyph but is a DISTINCT token, not
+              accepted by --swarm, join, pipe connect, port connect, or file get.
+              --swarm selects the discovery mechanisms (local / mDNS / DHT /
+              relay); omit it for a public default, and a loopback-only swarm
+              confines the session to one machine. --output json swaps the
+              decorated human hint for one plain `ahsw sh connect 🐝…` line a
+              script can capture.
+
+              Examples:
+                ahsw sh listen --swarm 🐝…   # hint → ahsw sh connect 🐝…
+                ahsw sh connect 🐝Ydy8…      # watch, read-only; q to detach
 
        state merge --swarm 🐝… --nickname NAME --merge MERGE
        state get   --swarm 🐝… --nickname NAME
