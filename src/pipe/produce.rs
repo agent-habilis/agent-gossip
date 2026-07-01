@@ -44,7 +44,8 @@ pub(crate) async fn listen(
     );
     if follow {
         // Live tail: broadcast to every attached consumer until the source ends.
-        return match serve_follow(&endpoint, &secret, &mut tokio::io::stdin(), throttle, !json).await
+        return match serve_follow(&endpoint, &secret, &mut tokio::io::stdin(), throttle, !json)
+            .await
         {
             Ok(()) => std::process::exit(0),
             Err(error) => {

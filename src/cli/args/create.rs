@@ -203,7 +203,7 @@ mod tests {
                 | Commands::Pipe { .. }
                 | Commands::Port { .. }
                 | Commands::File { .. }
-            | Commands::Sh { .. }
+                | Commands::Sh { .. }
                 | Commands::Discover { .. }
                 | Commands::Mcp { .. }
                 | Commands::Man

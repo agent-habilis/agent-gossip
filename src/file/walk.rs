@@ -110,7 +110,9 @@ fn empty_dirs(entries: &[Entry], dirs: Vec<String>) -> Vec<String> {
         .into_iter()
         .filter(|dir| {
             let prefix = format!("{dir}/");
-            !entries.iter().any(|entry| entry.rel_path.starts_with(&prefix))
+            !entries
+                .iter()
+                .any(|entry| entry.rel_path.starts_with(&prefix))
         })
         .collect();
     empties.sort();
