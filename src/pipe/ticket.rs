@@ -20,8 +20,9 @@ pub(crate) struct PipeTicket {
     pub addr: EndpointAddr,
     pub secret: [u8; SECRET_LEN],
     pub lookups: LookupOpts,
-    /// Live-follow mode: the producer stays up serving one consumer at a time,
-    /// and the consumer streams-and-dies (a reconnect re-runs `pipe connect`).
+    /// Live-follow mode: the producer stays up and broadcasts the live source to
+    /// every attached consumer at once; a new `pipe connect` joins the fan-out
+    /// rather than preempting, and each consumer streams until the source ends.
     pub follow: bool,
     /// A `listen-bench` ticket — the benchmark protocol, not the plain
     /// byte-stream one. Lets `connect` and `connect-bench` each refuse the
