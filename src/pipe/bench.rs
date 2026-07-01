@@ -1,5 +1,5 @@
-//! `pipe listen-bench` / `pipe connect-bench` — a throughput + latency
-//! benchmark over a direct pipe connection. Data flows **consumer →
+//! `pipe bench` (producer) / `pipe bench 🐝…` (consumer) — a throughput +
+//! latency benchmark over a direct pipe connection. Data flows **consumer →
 //! producer**, the opposite direction from `listen`/`connect`: the consumer
 //! drives and times the whole run, the producer just counts what it actually
 //! received (the receiver is the ground truth for real delivered
@@ -34,7 +34,7 @@ use super::ticket::PipeTicket;
 /// cost skewing the measured rate).
 const CHUNK: usize = 64 * 1024;
 
-/// The test-sizing knob for `pipe connect-bench --budget`: either run for a
+/// The test-sizing knob for `pipe bench --budget`: either run for a
 /// wall-clock duration or until a byte count is sent, whichever the value's
 /// suffix picked (`10s`/`2m`/`1h` vs `500b`/`100kb`/`50mb`/`2gb`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -106,12 +106,12 @@ fn parse_budget_number(digits: &str, raw: &str) -> Result<u64, String> {
     Ok(value)
 }
 
-/// Serve one `pipe connect-bench` run: bind, announce the ticket, wait for
-/// the first peer to authenticate (retrying past a bad handshake — that's a
-/// rejected impostor, not a real run), then run the benchmark and quit. A
-/// single-shot lifetime, same as `listen`: a fresh `listen-bench` per
-/// benchmark keeps runs from skewing each other's throughput numbers, and
-/// gives a clean exit code to script against.
+/// Serve one `pipe bench` run: bind, announce the ticket, wait for the first
+/// peer to authenticate (retrying past a bad handshake — that's a rejected
+/// impostor, not a real run), then run the benchmark and quit. A single-shot
+/// lifetime, same as `listen`: a fresh `pipe bench` producer per benchmark
+/// keeps runs from skewing each other's throughput numbers, and gives a clean
+/// exit code to script against.
 ///
 /// # Errors
 /// Endpoint bind / discovery-config parse failures, or the benchmark itself
@@ -125,7 +125,7 @@ pub(crate) async fn listen_bench(swarm: Option<&str>, json: bool) -> Result<()> 
         json,
         "Waiting",
         "for a peer to benchmark",
-        &format!("ahsw pipe connect-bench {}", ticket.encode()),
+        &format!("ahsw pipe bench {}", ticket.encode()),
     );
     let narrate = !json;
     let (conn, send, recv) = loop {
@@ -254,7 +254,7 @@ fn describe_budget(kind: u8, value: u64) -> String {
     }
 }
 
-/// Options for `pipe connect-bench`.
+/// Options for the consumer side of `pipe bench`.
 pub(crate) struct BenchOpts {
     pub budget: BenchBudget,
     pub pings: u32,
@@ -307,8 +307,8 @@ pub(crate) async fn connect_bench(ticket: &str, opts: BenchOpts, json: bool) -> 
     let ticket = PipeTicket::decode(ticket)?;
     if !ticket.bench {
         bail!(
-            "this ticket is for `pipe connect`, not `pipe connect-bench` — \
-             run `pipe listen-bench` on the producer to get a bench ticket"
+            "this ticket is for `pipe connect`, not `pipe bench` — \
+             run `pipe bench` on the producer to mint a bench ticket"
         );
     }
     let endpoint = build_participant_endpoint(&ticket.lookups).await?;
@@ -586,8 +586,8 @@ mod tests {
             false,
         )
         .await
-        .expect_err("a plain ticket must be refused by connect-bench");
-        assert!(error.to_string().contains("pipe connect-bench"));
+        .expect_err("a plain ticket must be refused by `pipe bench`");
+        assert!(error.to_string().contains("pipe bench"));
         endpoint.close().await;
     }
 

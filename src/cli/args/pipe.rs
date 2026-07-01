@@ -73,41 +73,35 @@ pub(crate) enum PipeAction {
         #[arg(long, default_value = "human")]
         output: OutputFormat,
     },
-    /// Serve one throughput + latency benchmark run; prints the consumer's
-    /// `ahsw pipe connect-bench 🐝…` command on stdout.
+    /// Benchmark a direct pipe link's throughput + round-trip latency.
     ///
-    /// Runs a single benchmark against the first peer that connects, then
-    /// exits — re-run for another.
-    ListenBench {
-        /// Swarm id whose discovery config (local / mDNS / DHT / relay) the pipe
-        /// should use, so it traverses the network like swarm members do. Omit
-        /// for a public default.
+    /// With no ticket, act as the producer: bind, print the `ahsw pipe bench 🐝…`
+    /// command on stdout, serve one run against the first peer that connects,
+    /// then exit — re-run for another. With a ticket, act as the consumer:
+    /// redeem it and drive the run, printing a report when done. Data flows
+    /// consumer → producer (the opposite direction from `connect`): the consumer
+    /// drives and times the run, the producer reports what it actually received.
+    Bench {
+        /// The `🐝…` ticket printed by a producer-side `ahsw pipe bench`. Omit
+        /// this argument to be the producer instead.
+        ticket: Option<String>,
+        /// [producer] Swarm id whose discovery config (local / mDNS / DHT /
+        /// relay) the pipe should use, so it traverses the network like swarm
+        /// members do. Omit for a public default.
         #[arg(long)]
         swarm: Option<SwarmId>,
-        /// Output format: human (default) — a bee status + colored hint — or json,
-        /// a single direct `ahsw pipe connect-bench 🐝…` line for machines.
-        #[arg(long, default_value = "human")]
-        output: OutputFormat,
-    },
-    /// Redeem a bench ticket and run a throughput + round-trip-latency
-    /// benchmark against the producer, printing a report when done.
-    ///
-    /// Data flows consumer → producer (the opposite direction from
-    /// `connect`): the consumer drives and times the run, the producer
-    /// reports back what it actually received.
-    ConnectBench {
-        /// The `🐝…` ticket printed by `ahsw pipe listen-bench`.
-        ticket: String,
-        /// How much of the throughput phase to run: a duration (`10s`, `2m`,
-        /// `1h`) or a byte count (`500b`, `100kb`, `50mb`, `2gb`). Defaults to
-        /// `10s`.
+        /// [consumer] How much of the throughput phase to run: a duration
+        /// (`10s`, `2m`, `1h`) or a byte count (`500b`, `100kb`, `50mb`, `2gb`).
+        /// Defaults to `10s`.
         #[arg(long, value_parser = crate::pipe::parse_budget)]
         budget: Option<BenchBudget>,
-        /// Number of sequential ping/pong round-trips in the latency phase.
+        /// [consumer] Number of sequential ping/pong round-trips in the latency
+        /// phase.
         #[arg(long, default_value_t = 20)]
         pings: u32,
-        /// Output format: human (default) — a report box — or json, a single
-        /// machine-readable object.
+        /// Output format: human (default) — a bee status + colored hint on the
+        /// producer, a report box on the consumer — or json, a single
+        /// machine-readable line/object.
         #[arg(long, default_value = "human")]
         output: OutputFormat,
     },

@@ -4,7 +4,7 @@
 //! Payload layout: `secret(32) ‖ flags(1) ‖ target_port(2) ‖ lookups ‖
 //! address-json` (lookups is self-delimiting, so the address occupies the
 //! remainder). `flags` bit 0 is the live-follow mode, bit 1 is the benchmark
-//! protocol (`pipe listen-bench` / `pipe connect-bench`); the rest are reserved.
+//! protocol (`pipe bench`); the rest are reserved.
 //! `target_port` is a big-endian `u16`, `0` meaning "none" (the single-shot
 //! stdio pipe has no target port; only `listen-tcp` sets it).
 
@@ -28,8 +28,8 @@ pub(crate) struct PipeTicket {
     /// The producer's local target port (`listen-tcp` only — `None` for the
     /// single-shot stdio pipe), so the consumer can display it.
     pub target_port: Option<u16>,
-    /// A `listen-bench` ticket — the benchmark protocol, not the plain
-    /// byte-stream one. Lets `connect` and `connect-bench` each refuse the
+    /// A `pipe bench` ticket — the benchmark protocol, not the plain
+    /// byte-stream one. Lets `pipe connect` and `pipe bench` each refuse the
     /// other's ticket instead of hanging deep in the wrong protocol.
     pub bench: bool,
 }

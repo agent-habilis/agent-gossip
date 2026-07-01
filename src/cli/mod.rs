@@ -380,24 +380,40 @@ async fn pipe(action: PipeAction) -> Result<()> {
             )
             .await
         }
-        PipeAction::ListenBench { swarm, output } => {
-            crate::pipe::listen_bench(
-                swarm.as_ref().map(crate::protocol::SwarmId::as_str),
-                matches!(output, OutputFormat::Json),
-            )
-            .await
-        }
-        PipeAction::ConnectBench {
+        PipeAction::Bench {
             ticket,
+            swarm,
             budget,
             pings,
             output,
         } => {
-            let opts = crate::pipe::BenchOpts {
-                budget: budget.unwrap_or_default(),
-                pings,
-            };
-            crate::pipe::connect_bench(&ticket, opts, matches!(output, OutputFormat::Json)).await
+            let json = matches!(output, OutputFormat::Json);
+            match ticket {
+                None => {
+                    if budget.is_some() {
+                        anyhow::bail!(
+                            "`--budget` only applies when connecting to a ticket (`pipe bench 🐝…`)"
+                        );
+                    }
+                    crate::pipe::listen_bench(
+                        swarm.as_ref().map(crate::protocol::SwarmId::as_str),
+                        json,
+                    )
+                    .await
+                }
+                Some(ticket) => {
+                    if swarm.is_some() {
+                        anyhow::bail!(
+                            "`--swarm` only applies to the producer (`pipe bench` with no ticket) — a ticket carries its own discovery config"
+                        );
+                    }
+                    let opts = crate::pipe::BenchOpts {
+                        budget: budget.unwrap_or_default(),
+                        pings,
+                    };
+                    crate::pipe::connect_bench(&ticket, opts, json).await
+                }
+            }
         }
     }
 }
