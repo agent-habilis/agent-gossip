@@ -79,7 +79,8 @@ mod tests {
     fn non_id_string_points_at_forum() {
         let err = "github.com/alice/proj".parse::<JoinTarget>().unwrap_err();
         assert!(
-            err.to_string().contains("ahsw forum 'github.com/alice/proj'"),
+            err.to_string()
+                .contains("ahsw forum 'github.com/alice/proj'"),
             "got: {err}"
         );
     }

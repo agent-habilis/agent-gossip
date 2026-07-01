@@ -97,6 +97,7 @@ mod tests {
             | Commands::Pipe { .. }
             | Commands::Port { .. }
             | Commands::File { .. }
+            | Commands::Mount { .. }
             | Commands::Discover { .. }
             | Commands::Mcp { .. }
             | Commands::Man
@@ -129,6 +130,7 @@ mod tests {
             | Commands::Pipe { .. }
             | Commands::Port { .. }
             | Commands::File { .. }
+            | Commands::Mount { .. }
             | Commands::Discover { .. }
             | Commands::Mcp { .. }
             | Commands::Man
@@ -158,6 +160,7 @@ mod tests {
             | Commands::Pipe { .. }
             | Commands::Port { .. }
             | Commands::File { .. }
+            | Commands::Mount { .. }
             | Commands::Discover { .. }
             | Commands::Mcp { .. }
             | Commands::Man
@@ -208,6 +211,7 @@ mod tests {
                 | Commands::Pipe { .. }
                 | Commands::Port { .. }
                 | Commands::File { .. }
+                | Commands::Mount { .. }
                 | Commands::Discover { .. }
                 | Commands::Mcp { .. }
                 | Commands::Man
@@ -268,6 +272,7 @@ mod tests {
             | Commands::Pipe { .. }
             | Commands::Port { .. }
             | Commands::File { .. }
+            | Commands::Mount { .. }
             | Commands::Discover { .. }
             | Commands::Mcp { .. }
             | Commands::Man

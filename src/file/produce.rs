@@ -49,7 +49,8 @@ pub(crate) async fn send(
     while let Some(incoming) = endpoint.accept().await {
         let root = root.clone();
         tokio::spawn(async move {
-            if let Err(error) = serve_connection(incoming, &secret, &root, throttle, narrate).await {
+            if let Err(error) = serve_connection(incoming, &secret, &root, throttle, narrate).await
+            {
                 tracing::debug!(%error, "file transfer connection ended");
             }
         });
@@ -59,9 +60,7 @@ pub(crate) async fn send(
 }
 
 /// Bind the producer endpoint and mint its ticket + secret — no I/O, no print.
-pub(super) async fn bind(
-    lookups: LookupOpts,
-) -> Result<(Endpoint, FileTicket, [u8; SECRET_LEN])> {
+pub(super) async fn bind(lookups: LookupOpts) -> Result<(Endpoint, FileTicket, [u8; SECRET_LEN])> {
     let endpoint = build_endpoint(&lookups, None, None, vec![FILE_ALPN.to_vec()]).await?;
     // Loopback needs no online wait (the bound addr is immediately usable).
     if !lookups.is_loopback() {
@@ -152,7 +151,10 @@ where
     super::report(
         narrate,
         "Sending",
-        &format!("{}, {unchanged} unchanged", super::count_files(to_send.len())),
+        &format!(
+            "{}, {unchanged} unchanged",
+            super::count_files(to_send.len())
+        ),
     );
     let send_count = u32::try_from(to_send.len()).unwrap_or(u32::MAX);
     let dir_count = u32::try_from(scan.empty_dirs.len()).unwrap_or(u32::MAX);
@@ -193,12 +195,7 @@ where
 /// <size bytes> ‖ hash(32)`. Streams the body in bounded chunks and sends
 /// exactly the `size` that was hashed (a file that grew is truncated to it; a
 /// file that shrank is a hard error).
-async fn send_body<W>(
-    send: &mut W,
-    path: &Path,
-    entry: &Entry,
-    throttle: Option<u64>,
-) -> Result<()>
+async fn send_body<W>(send: &mut W, path: &Path, entry: &Entry, throttle: Option<u64>) -> Result<()>
 where
     W: AsyncWrite + Unpin,
 {

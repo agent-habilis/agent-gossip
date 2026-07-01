@@ -16,6 +16,7 @@ mod forum;
 mod join;
 mod lookup;
 mod meta;
+mod mount;
 mod msg;
 mod output;
 mod peers;
@@ -35,6 +36,7 @@ pub(crate) use file::FileAction;
 pub(crate) use forum::ForumOpts;
 pub(crate) use join::JoinOpts;
 pub(crate) use meta::{MetaAction, MetaOpts};
+pub(crate) use mount::MountAction;
 pub(crate) use msg::MsgOpts;
 pub(crate) use output::OutputFormat;
 pub(crate) use peers::PeersOpts;
@@ -183,6 +185,36 @@ pub(crate) enum Commands {
     File {
         #[command(subcommand)]
         action: FileAction,
+    },
+
+    /// Share a folder with peers, or mount a peer's folder locally
+    /// (read-only, lazy, off-gossip, no daemon).
+    ///
+    /// `mount serve <dir>` shares a folder and prints the `ahsw mount 🐝…`
+    /// command; `mount <🐝…> <mountpoint>` mounts it through a loopback `NFSv3`
+    /// bridge (the OS's built-in NFS client — no FUSE, no kernel extension).
+    /// The directory tree is a snapshot from when `serve` started; file bytes
+    /// are fetched on demand as they are read. Writes fail (read-only).
+    #[command(args_conflicts_with_subcommands = true)]
+    Mount {
+        #[command(subcommand)]
+        action: Option<MountAction>,
+
+        /// The `🐝…` ticket printed by `ahsw mount serve`.
+        ticket: Option<String>,
+
+        /// Where to mount the shared folder (created if missing; an existing
+        /// directory must be empty). Unmounted on Ctrl-C.
+        mountpoint: Option<std::path::PathBuf>,
+
+        /// Start the loopback NFS bridge but skip the OS mount step; prints
+        /// the mount command to run manually. Hidden — a test/ops knob.
+        #[arg(long, hide = true)]
+        no_mount: bool,
+
+        /// Output format: human (default) or json (the bare mount command).
+        #[arg(long, default_value = "human")]
+        output: OutputFormat,
     },
 
     /// Read or change the swarm's shared state.

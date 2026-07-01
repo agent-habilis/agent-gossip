@@ -192,7 +192,9 @@ mod tests {
         // three consumers gets its own full copy from byte 0.
         let data: Vec<u8> = (0u8..=255).cycle().take(50_000).collect();
         let path = std::env::temp_dir().join("ahsw-pipe-fanout-test.bin");
-        tokio::fs::write(&path, &data).await.expect("write temp file");
+        tokio::fs::write(&path, &data)
+            .await
+            .expect("write temp file");
 
         let (endpoint, ticket, secret) = super::produce::bind(LookupOpts::loopback())
             .await

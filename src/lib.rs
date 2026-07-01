@@ -43,6 +43,7 @@ pub(crate) mod lifecycle;
 pub(crate) mod logging;
 pub(crate) mod lookup;
 pub(crate) mod mcp;
+pub(crate) mod mount;
 pub(crate) mod output;
 pub(crate) mod pipe;
 pub(crate) mod port;

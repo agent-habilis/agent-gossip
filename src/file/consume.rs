@@ -76,7 +76,11 @@ async fn dial_and_handshake(
                 tracing::warn!(%error, "connect failed; retrying");
                 tokio::time::sleep(RETRY_DELAY).await;
             }
-            Err(error) => return Err(anyhow::anyhow!("could not reach the file producer: {error}")),
+            Err(error) => {
+                return Err(anyhow::anyhow!(
+                    "could not reach the file producer: {error}"
+                ));
+            }
         }
     };
     let (mut send, recv) = conn.open_bi().await.context("opening the stream failed")?;
@@ -142,8 +146,12 @@ where
 
     // 2. Send our manifest so the producer only sends what we're missing.
     let encoded = ours.encode();
-    send.write_all(&u32::try_from(encoded.len()).unwrap_or(u32::MAX).to_le_bytes())
-        .await?;
+    send.write_all(
+        &u32::try_from(encoded.len())
+            .unwrap_or(u32::MAX)
+            .to_le_bytes(),
+    )
+    .await?;
     send.write_all(&encoded).await?;
 
     // 3. Read the plan.
@@ -213,7 +221,9 @@ where
     let mut expected = [0u8; HASH_LEN];
     if let Err(error) = recv.read_exact(&mut expected).await {
         let _ = std::fs::remove_file(&tmp);
-        return Err(anyhow::Error::new(error).context(format!("reading the hash trailer for {rel}")));
+        return Err(
+            anyhow::Error::new(error).context(format!("reading the hash trailer for {rel}"))
+        );
     }
     if got != expected {
         let _ = std::fs::remove_file(&tmp);

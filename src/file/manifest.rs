@@ -72,7 +72,8 @@ impl Manifest {
             let path = bytes
                 .get(pos..pos + path_len)
                 .context("manifest truncated in path")?;
-            let rel_path = String::from_utf8(path.to_vec()).context("manifest path is not UTF-8")?;
+            let rel_path =
+                String::from_utf8(path.to_vec()).context("manifest path is not UTF-8")?;
             pos += path_len;
             let size = u64::from_le_bytes(
                 bytes
@@ -168,8 +169,8 @@ mod tests {
         };
         let theirs = Manifest {
             entries: vec![
-                entry("keep", 10, 1),         // identical → skip
-                entry("changed", 10, 9),      // same size, different hash → send
+                entry("keep", 10, 1),           // identical → skip
+                entry("changed", 10, 9),        // same size, different hash → send
                 entry("extra-on-theirs", 1, 4), // not ours → ignored
             ],
         };
