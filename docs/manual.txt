@@ -40,7 +40,7 @@ SYNOPSIS
        ahsw file send PATH [--swarm 🐝…] [--throttle RATE] [--output human|json]
        ahsw file get  🐝… [--out DIR] [--throttle RATE] [--output human|json]
 
-       ahsw sh listen  [--swarm 🐝…] [--output human|json]
+       ahsw sh listen  [--swarm 🐝…] [--write] [--output human|json]
        ahsw sh connect 🐝…
 
        ahsw state merge --swarm 🐝… --nickname NAME --merge MERGE
@@ -519,7 +519,7 @@ COMMANDS
                 ahsw file get 🐝Ydy8… --out ~/Downloads
                 ahsw file send ./project --swarm 🐝…   ↔   ahsw file get 🐝…  # re-run to re-sync
 
-       sh listen  [--swarm 🐝…] [--output human|json]
+       sh listen  [--swarm 🐝…] [--write] [--output human|json]
        sh connect 🐝…
               Share a live terminal over the same off-gossip direct link the pipe
               uses — no running daemon required. `sh listen` spawns your $SHELL
@@ -527,12 +527,22 @@ COMMANDS
               a status line plus the viewer's ready-to-run `ahsw sh connect 🐝…`
               command; you then use that shell NORMALLY while its output is
               mirrored to every viewer. `sh connect <ticket>` renders the shared
-              terminal READ-ONLY — a viewer's keyboard NEVER reaches your shell
-              (press Ctrl-C or q to detach). The shell IS the session: when you
-              end it (`exit`, Ctrl-D), the broadcast ends and every viewer
+              terminal READ-ONLY — a read ticket's keyboard NEVER reaches your
+              shell (press Ctrl-C or q to detach). The shell IS the session: when
+              you end it (`exit`, Ctrl-D), the broadcast ends and every viewer
               detaches. One ticket serves ANY NUMBER of viewers at once; a viewer
               that joins mid-session is primed from a bounded replay of recent
               output.
+
+              --write mints a SECOND, distinct ticket that grants FULL SHELL
+              CONTROL: anyone holding it types straight into your shell — share
+              it with care. `sh connect` with a write ticket forwards the
+              keyboard immediately (q and Ctrl-C reach the shell); detach with
+              the ssh-style escape: press Enter, then `~`, then `.` (`~~` at a
+              line start sends a literal `~`). Every write-holder types at once
+              and their keystrokes simply interleave, like a shared tmux
+              session; read-ticket viewers stay view-only, enforced by the
+              sharer (which secret was presented decides, not the ticket text).
 
               It is a RAW PASSTHROUGH: the source's bytes (ANSI and all) are
               written verbatim to the viewer, streamed at the SOURCE's terminal
@@ -554,12 +564,15 @@ COMMANDS
               --swarm selects the discovery mechanisms (local / mDNS / DHT /
               relay); omit it for a public default, and a loopback-only swarm
               confines the session to one machine. --output json swaps the
-              decorated human hint for one plain `ahsw sh connect 🐝…` line a
-              script can capture.
+              decorated human hint for plain `ahsw sh connect 🐝…` lines a
+              script can capture: the read command first and, with --write, the
+              write command on a second line.
 
               Examples:
                 ahsw sh listen --swarm 🐝…   # hint → ahsw sh connect 🐝…
                 ahsw sh connect 🐝Ydy8…      # watch, read-only; q to detach
+                ahsw sh listen --write       # + a write ticket; share with care
+                ahsw sh connect 🐝Kt3n…      # type into the shell; Enter ~ . detaches
 
        state merge --swarm 🐝… --nickname NAME --merge MERGE
        state get   --swarm 🐝… --nickname NAME

@@ -1,15 +1,3 @@
-//! `ahsw sh` — broadcast a live terminal to peers over a direct, off-gossip
-//! QUIC connection. `sh listen` spawns `$SHELL` in a pseudo-terminal, prints the
-//! viewers' `ahsw sh connect 🐝…` command on stdout, and streams the shell's
-//! output to every attached viewer; `sh connect <ticket>` redeems the ticket and
-//! renders the shell read-only (the viewer's keyboard never reaches the shell).
-//! The ticket is a bearer capability (a random secret) carrying the producer's
-//! address + the swarm's discovery config, so the viewer needs nothing but it.
-//!
-//! The spawned shell *is* the session: when the sharer ends it (`exit`, Ctrl-D,
-//! or the child dies), the producer FIN-closes every viewer and exits — nothing
-//! outlives the shell.
-
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
@@ -37,10 +25,16 @@ pub(crate) const SECRET_LEN: usize = 32;
 /// allocate unboundedly. A PTY chunk is at most a few KB; `16 MiB` is slack.
 const MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;
 
-/// Frame tags on the wire (`tag(1) ‖ len(u32 LE) ‖ payload`). Producer → viewer
-/// only; the viewer never writes frames back.
+/// Cap an input frame's payload well below [`MAX_FRAME_BYTES`]: keystrokes are
+/// bytes and pastes are KBs, so anything larger is a protocol violation.
+const MAX_INPUT_FRAME_BYTES: usize = 8 * 1024;
+
+/// Frame tags on the wire (`tag(1) ‖ len(u32 LE) ‖ payload`). `DATA`/`RESIZE`
+/// flow producer → viewer; `INPUT` flows viewer → producer, and only from a
+/// write-capable viewer.
 const TAG_DATA: u8 = 0;
 const TAG_RESIZE: u8 = 1;
+const TAG_INPUT: u8 = 2;
 
 /// One decoded frame from the producer.
 enum Frame {
@@ -56,6 +50,17 @@ fn encode_data(data: &[u8]) -> Vec<u8> {
     let len = u32::try_from(data.len()).unwrap_or(u32::MAX);
     let mut out = Vec::with_capacity(5 + data.len());
     out.push(TAG_DATA);
+    out.extend_from_slice(&len.to_le_bytes());
+    out.extend_from_slice(data);
+    out
+}
+
+/// Encode an input frame (`tag ‖ len ‖ bytes`) carrying viewer keystrokes to
+/// the producer.
+fn encode_input(data: &[u8]) -> Vec<u8> {
+    let len = u32::try_from(data.len()).unwrap_or(u32::MAX);
+    let mut out = Vec::with_capacity(5 + data.len());
+    out.push(TAG_INPUT);
     out.extend_from_slice(&len.to_le_bytes());
     out.extend_from_slice(data);
     out
@@ -105,6 +110,34 @@ async fn read_frame<R: AsyncRead + Unpin>(recv: &mut R) -> Result<Option<Frame>>
     }
 }
 
+/// Read one input frame from a write-capable viewer, or `Ok(None)` when the
+/// stream ends cleanly (the viewer FIN'd its send half, e.g. piped-stdin EOF).
+/// Deliberately separate from [`read_frame`]: the producer accepts *only*
+/// `INPUT`, so a viewer replaying producer frames is a protocol fault.
+///
+/// # Errors
+/// Any tag other than [`TAG_INPUT`], or a payload longer than
+/// [`MAX_INPUT_FRAME_BYTES`].
+async fn read_input_frame<R: AsyncRead + Unpin>(recv: &mut R) -> Result<Option<Vec<u8>>> {
+    let mut tag = [0u8; 1];
+    // First byte: EOF/any error here means the stream ended, not a protocol fault.
+    if recv.read_exact(&mut tag).await.is_err() {
+        return Ok(None);
+    }
+    if tag[0] != TAG_INPUT {
+        bail!("unexpected frame tag from viewer: {}", tag[0]);
+    }
+    let mut len_buf = [0u8; 4];
+    recv.read_exact(&mut len_buf).await?;
+    let len = u32::from_le_bytes(len_buf) as usize;
+    if len > MAX_INPUT_FRAME_BYTES {
+        bail!("input frame too large: {len} bytes");
+    }
+    let mut payload = vec![0u8; len];
+    recv.read_exact(&mut payload).await?;
+    Ok(Some(payload))
+}
+
 /// Resolve a `--swarm` id to its discovery config (`None` ⇒ a public default),
 /// so a shell session traverses the network the way that swarm's members do.
 fn swarm_lookups(swarm: Option<&str>) -> Result<LookupOpts> {
@@ -136,4 +169,172 @@ fn announce(json: bool, serving: &str, command: &str) {
     }
     crate::util::output::status_out("Sharing", serving);
     crate::util::output::status_out("Connect", command);
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use iroh::endpoint::{Connection, ConnectionError, RecvStream, SendStream};
+
+    use crate::protocol::swarm::LookupOpts;
+
+    use super::ticket::ShTicket;
+    use super::{Frame, MAX_INPUT_FRAME_BYTES, SH_ALPN, TAG_INPUT, encode_input, read_frame};
+
+    const TEST_TIMEOUT: Duration = Duration::from_secs(30);
+
+    /// Spawn a loopback producer serving `command`; returns its tickets and the
+    /// server task (aborting it drops the endpoint and kills the PTY child).
+    async fn spawn_producer(
+        command: &str,
+    ) -> (
+        ShTicket,
+        ShTicket,
+        tokio::task::JoinHandle<anyhow::Result<()>>,
+    ) {
+        let (endpoint, ticket, write_ticket, secrets) =
+            super::produce::bind(LookupOpts::loopback(), true)
+                .await
+                .expect("bind producer");
+        let write_ticket = write_ticket.expect("write ticket");
+        let command = command.to_owned();
+        let server = tokio::spawn(async move {
+            let result = super::produce::serve(
+                &endpoint,
+                secrets,
+                Some(&command),
+                Some(80),
+                Some(24),
+                false,
+            )
+            .await;
+            endpoint.close().await;
+            result
+        });
+        (ticket, write_ticket, server)
+    }
+
+    /// Dial the producer as a viewer would: connect, open the bi-stream, present
+    /// the ticket's secret. The endpoint is returned to keep it alive.
+    async fn dial(ticket: &ShTicket) -> (iroh::Endpoint, Connection, SendStream, RecvStream) {
+        let endpoint = crate::lookup::build_participant_endpoint(&ticket.lookups)
+            .await
+            .expect("build viewer endpoint");
+        crate::lookup::add_peer_addr(&endpoint, ticket.addr.clone()).expect("register addr");
+        let conn = endpoint
+            .connect(ticket.addr.clone(), SH_ALPN)
+            .await
+            .expect("dial producer");
+        let (mut send, recv) = conn.open_bi().await.expect("open bi-stream");
+        send.write_all(&ticket.secret).await.expect("send secret");
+        (endpoint, conn, send, recv)
+    }
+
+    /// Accumulate `Data` payloads until `needle` appears (panicking on a stream
+    /// error or FIN before it does).
+    async fn read_until(recv: &mut RecvStream, needle: &[u8]) -> Vec<u8> {
+        let mut out = Vec::new();
+        loop {
+            match tokio::time::timeout(TEST_TIMEOUT, read_frame(recv))
+                .await
+                .expect("frame before timeout")
+                .expect("read frame")
+            {
+                Some(Frame::Data(bytes)) => {
+                    out.extend_from_slice(&bytes);
+                    if out.windows(needle.len()).any(|window| window == needle) {
+                        return out;
+                    }
+                }
+                Some(Frame::Resize { .. }) => {}
+                None => panic!(
+                    "stream ended before {:?} arrived",
+                    String::from_utf8_lossy(needle)
+                ),
+            }
+        }
+    }
+
+    /// Await the producer-initiated close and return its application error code.
+    async fn closed_with_code(conn: &Connection) -> u64 {
+        let reason = tokio::time::timeout(TEST_TIMEOUT, conn.closed())
+            .await
+            .expect("close before timeout");
+        let ConnectionError::ApplicationClosed(app) = reason else {
+            panic!("unexpected close reason: {reason:?}");
+        };
+        app.error_code.into_inner()
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn write_viewer_input_reaches_the_shell_and_broadcasts() {
+        // `read` consumes one line and the echo proves it traversed the PTY.
+        let (read_ticket, write_ticket, server) =
+            spawn_producer("read line; echo \"GOT-$line\"").await;
+
+        let (_watch_ep, watch_conn, _watch_send, mut watch_recv) = dial(&read_ticket).await;
+        let (_write_ep, write_conn, mut write_send, mut write_recv) = dial(&write_ticket).await;
+
+        write_send
+            .write_all(&encode_input(b"hello\n"))
+            .await
+            .expect("send input frame");
+
+        // The shell's output reaches the writer and the read-only watcher alike.
+        read_until(&mut write_recv, b"GOT-hello").await;
+        read_until(&mut watch_recv, b"GOT-hello").await;
+
+        watch_conn.close(0u32.into(), b"bye");
+        write_conn.close(0u32.into(), b"bye");
+        // `echo` exits after the line, so the producer winds down on PTY EOF.
+        tokio::time::timeout(TEST_TIMEOUT, server)
+            .await
+            .expect("server exit before timeout")
+            .expect("join server")
+            .expect("serve");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn read_only_viewer_sending_input_is_disconnected() {
+        let (read_ticket, _write_ticket, server) = spawn_producer("cat").await;
+        let (_endpoint, conn, mut send, _recv) = dial(&read_ticket).await;
+
+        send.write_all(&encode_input(b"rm -rf /\n"))
+            .await
+            .expect("send crafted input");
+
+        assert_eq!(closed_with_code(&conn).await, 2);
+        server.abort();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn oversized_input_frame_is_disconnected() {
+        let (_read_ticket, write_ticket, server) = spawn_producer("cat").await;
+        let (_endpoint, conn, mut send, _recv) = dial(&write_ticket).await;
+
+        // A header alone claiming an over-limit payload must trip the guard.
+        let len = u32::try_from(MAX_INPUT_FRAME_BYTES + 1).unwrap();
+        let mut frame = vec![TAG_INPUT];
+        frame.extend_from_slice(&len.to_le_bytes());
+        send.write_all(&frame).await.expect("send oversized header");
+
+        assert_eq!(closed_with_code(&conn).await, 2);
+        server.abort();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn wrong_secret_is_rejected() {
+        let (read_ticket, _write_ticket, server) = spawn_producer("cat").await;
+        let imposter = ShTicket {
+            addr: read_ticket.addr.clone(),
+            secret: [0xAA; super::SECRET_LEN],
+            lookups: read_ticket.lookups.clone(),
+            write: false,
+        };
+        let (_endpoint, conn, _send, _recv) = dial(&imposter).await;
+
+        assert_eq!(closed_with_code(&conn).await, 1);
+        server.abort();
+    }
 }

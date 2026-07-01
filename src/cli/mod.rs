@@ -459,6 +459,7 @@ async fn sh(action: ShAction) -> Result<()> {
         ShAction::Listen {
             swarm,
             output,
+            write,
             command,
             cols,
             rows,
@@ -466,6 +467,7 @@ async fn sh(action: ShAction) -> Result<()> {
             crate::sh::listen(
                 swarm.as_ref().map(crate::protocol::SwarmId::as_str),
                 matches!(output, OutputFormat::Json),
+                write,
                 command.as_deref(),
                 cols,
                 rows,

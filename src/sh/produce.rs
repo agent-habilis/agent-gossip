@@ -1,11 +1,5 @@
-//! The shell producer: spawn `$SHELL` in a PTY, mirror it to the local terminal,
-//! and broadcast its output to every attached viewer. The sharer uses the shell
-//! transparently (stdin is put in raw mode and copied into the PTY; the PTY's
-//! output is copied to the local terminal *and* framed out to viewers). A bounded
-//! replay buffer lets a viewer that joins mid-session start from the recent
-//! output rather than a blank screen.
-
 use std::io::{IsTerminal, Read, Write};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
@@ -27,6 +21,11 @@ use super::{SECRET_LEN, SH_ALPN, wait_online};
 /// Raw bytes (not a screen model) — bounded so it never grows without limit.
 const REPLAY_CAP: usize = 256 * 1024;
 
+/// Evict a viewer whose stream can't accept a frame within this window, so a
+/// viewer that stopped reading can't stall the fan-out (and with it the
+/// sharer's shell) indefinitely.
+const VIEWER_WRITE_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// Broadcast the local shell to viewers; prints the `ahsw sh connect <ticket>`
 /// command on stdout, then runs the shell until it exits.
 ///
@@ -36,18 +35,39 @@ const REPLAY_CAP: usize = 256 * 1024;
 pub(crate) async fn listen(
     swarm: Option<&str>,
     json: bool,
+    write: bool,
     command: Option<&str>,
     cols: Option<u16>,
     rows: Option<u16>,
 ) -> Result<()> {
     let lookups = super::swarm_lookups(swarm)?;
-    let (endpoint, ticket, secret) = bind(lookups).await?;
-    super::announce(
-        json,
-        "this shell — viewers watch read-only",
-        &format!("ahsw sh connect {}", ticket.encode()),
-    );
-    let result = serve(&endpoint, &secret, command, cols, rows, !json).await;
+    let (endpoint, ticket, write_ticket, secrets) = bind(lookups, write).await?;
+    let read_cmd = format!("ahsw sh connect {}", ticket.encode());
+    if let Some(write_ticket) = write_ticket {
+        // Two tickets: label each with its capability so they can't be mixed up.
+        let write_cmd = format!("ahsw sh connect {}", write_ticket.encode());
+        tracing::info!("sharing this shell with read and write tickets");
+        if json {
+            println!("{read_cmd}");
+            println!("{write_cmd}");
+        } else {
+            crate::util::output::status_out(
+                "Sharing",
+                "this shell — the read ticket watches, the write ticket types",
+            );
+            crate::util::output::status_out(
+                "Read",
+                &format!("{read_cmd}   — watch only, safe to share"),
+            );
+            crate::util::output::status_out(
+                "Write",
+                &format!("{write_cmd}   — full shell control, share with care"),
+            );
+        }
+    } else {
+        super::announce(json, "this shell — viewers watch read-only", &read_cmd);
+    }
+    let result = serve(&endpoint, secrets, command, cols, rows, !json).await;
     // Restore the tty before exiting on either path (raw mode was entered while
     // sharing) — `process::exit` skips `Drop`, so this is explicit.
     term::restore();
@@ -62,36 +82,65 @@ pub(crate) async fn listen(
     }
 }
 
-/// Bind the producer endpoint and mint its ticket + secret — no I/O, no print.
-pub(crate) async fn bind(lookups: LookupOpts) -> Result<(Endpoint, ShTicket, [u8; SECRET_LEN])> {
+/// The producer's bearer secrets: matching `read` grants viewing; matching
+/// `write` (minted only with `--write`) additionally grants typing. Which secret
+/// a viewer presents *is* the capability check — the ticket flag is UX only.
+#[derive(Clone, Copy)]
+pub(crate) struct Secrets {
+    read: [u8; SECRET_LEN],
+    write: Option<[u8; SECRET_LEN]>,
+}
+
+/// Bind the producer endpoint and mint its ticket(s) + secrets — no I/O, no
+/// print. The write ticket exists only when `write` is set.
+pub(crate) async fn bind(
+    lookups: LookupOpts,
+    write: bool,
+) -> Result<(Endpoint, ShTicket, Option<ShTicket>, Secrets)> {
     let endpoint = build_endpoint(&lookups, None, None, vec![SH_ALPN.to_vec()]).await?;
     if !lookups.is_loopback() {
         wait_online(&endpoint).await;
     }
-    let mut secret = [0u8; SECRET_LEN];
-    rand::rng().fill_bytes(&mut secret);
+    let mut read_secret = [0u8; SECRET_LEN];
+    rand::rng().fill_bytes(&mut read_secret);
+    let write_secret = write.then(|| {
+        let mut secret = [0u8; SECRET_LEN];
+        rand::rng().fill_bytes(&mut secret);
+        secret
+    });
     let ticket = ShTicket {
+        addr: endpoint.addr(),
+        secret: read_secret,
+        lookups: lookups.clone(),
+        write: false,
+    };
+    let write_ticket = write_secret.map(|secret| ShTicket {
         addr: endpoint.addr(),
         secret,
         lookups,
+        write: true,
+    });
+    let secrets = Secrets {
+        read: read_secret,
+        write: write_secret,
     };
-    Ok((endpoint, ticket, secret))
+    Ok((endpoint, ticket, write_ticket, secrets))
 }
 
-/// One attached viewer. `_recv` is held (never read) to keep the reverse stream
-/// open — dropping it would send the viewer a `STOP_SENDING`.
+/// One attached viewer on the broadcast path. The reverse stream lives in the
+/// viewer's own reader task (see `spawn_viewer_reader`), which closes the
+/// connection on a protocol fault; the next broadcast write then evicts it here.
 struct Viewer {
     conn: Connection,
     send: SendStream,
-    _recv: RecvStream,
 }
 
 /// Spawn the shell in a PTY and run the fan-out loop until the shell exits (PTY
 /// EOF) or the endpoint closes. `narrate` is currently unused by the producer's
 /// hot path but kept for signature parity with the other producers.
-async fn serve(
+pub(super) async fn serve(
     endpoint: &Endpoint,
-    secret: &[u8; SECRET_LEN],
+    secrets: Secrets,
     command: Option<&str>,
     cols_override: Option<u16>,
     rows_override: Option<u16>,
@@ -106,11 +155,13 @@ async fn serve(
     // Interactive only with a real tty and no size override (the test path drives
     // a non-tty and must not touch the terminal).
     let interactive = cols_override.is_none() && std::io::stdin().is_terminal();
+    let write_enabled = secrets.write.is_some();
 
-    let (mut out_rx, master) = spawn_pty_session(command, cols, rows, interactive)?;
+    let (mut out_rx, input_tx, master) =
+        spawn_pty_session(command, cols, rows, interactive, write_enabled)?;
 
     let (auth_tx, mut auth_rx) =
-        tokio::sync::mpsc::channel::<(Connection, SendStream, RecvStream)>(1);
+        tokio::sync::mpsc::channel::<(Connection, SendStream, RecvStream, bool)>(1);
     let mut viewers: Vec<Viewer> = Vec::new();
     let mut replay: Vec<u8> = Vec::new();
     let mut stdout = tokio::io::stdout();
@@ -125,15 +176,14 @@ async fn serve(
         tokio::select! {
             incoming = endpoint.accept() => {
                 let Some(incoming) = incoming else { break };
-                let secret = *secret;
                 let auth_tx = auth_tx.clone();
                 tokio::spawn(async move {
-                    if let Ok(triple) = authenticate(incoming, &secret).await {
-                        let _ = auth_tx.send(triple).await;
+                    if let Ok(authed) = authenticate(incoming, secrets).await {
+                        let _ = auth_tx.send(authed).await;
                     }
                 });
             }
-            Some((conn, mut send, recv)) = auth_rx.recv() => {
+            Some((conn, mut send, recv, can_write)) = auth_rx.recv() => {
                 // Prime the newcomer: current size, then the recent output (or a
                 // clear if there's nothing buffered yet) so it starts on a coherent
                 // screen — it joins live and can't reconstruct true scrollback.
@@ -144,7 +194,9 @@ async fn serve(
                         send.write_all(&super::encode_data(&replay)).await.is_ok()
                     };
                 if primed {
-                    viewers.push(Viewer { conn, send, _recv: recv });
+                    let viewer_input = if can_write { input_tx.clone() } else { None };
+                    spawn_viewer_reader(conn.clone(), recv, viewer_input);
+                    viewers.push(Viewer { conn, send });
                 }
             }
             Some(()) = maybe_winch(&mut winch) => {
@@ -161,14 +213,16 @@ async fn serve(
             }
             chunk = out_rx.recv() => match chunk {
                 None => {
-                    // The shell exited: FIN each viewer so its `connect` ends
-                    // cleanly, briefly awaiting delivery, then stop.
-                    for viewer in std::mem::take(&mut viewers) {
-                        let Viewer { conn, mut send, .. } = viewer;
+                    // The shell exited: FIN every viewer concurrently so its
+                    // `connect` ends cleanly, briefly awaiting delivery, then stop
+                    // — concurrent so stalled viewers cost 2s total, not 2s each.
+                    let closers = std::mem::take(&mut viewers).into_iter().map(|viewer| async move {
+                        let Viewer { conn, mut send } = viewer;
                         let _ = send.finish();
                         let _ = tokio::time::timeout(Duration::from_secs(2), send.stopped()).await;
                         conn.close(0u32.into(), b"shell exited");
-                    }
+                    });
+                    futures_util::future::join_all(closers).await;
                     break;
                 }
                 Some(bytes) => {
@@ -188,18 +242,27 @@ async fn serve(
     Ok(())
 }
 
-/// The output stream of a spawned PTY session plus its master handle (kept for
-/// resize). The blocking PTY reader is bridged to async over the mpsc.
-type PtySession = (tokio::sync::mpsc::Receiver<Vec<u8>>, Box<dyn MasterPty + Send>);
+/// The output stream of a spawned PTY session, the channel carrying remote
+/// write-viewer input to its writer (present only when write-enabled), and its
+/// master handle (kept for resize). The blocking PTY reader/writer are bridged
+/// to async over the mpscs.
+type PtySession = (
+    tokio::sync::mpsc::Receiver<Vec<u8>>,
+    Option<tokio::sync::mpsc::Sender<Vec<u8>>>,
+    Box<dyn MasterPty + Send>,
+);
 
-/// Open a PTY, spawn the shell, and wire up the I/O threads: stdin → PTY (when
-/// interactive), PTY output → an mpsc of chunks, and a child reaper. Returns the
-/// output receiver and the master handle (kept by the caller for resize).
+/// Open a PTY, spawn the shell, and wire up the I/O threads: local stdin and
+/// remote input → PTY writer (mutex-arbitrated so remote floods can't starve
+/// the local keyboard), PTY output → an mpsc of chunks, and a child reaper.
+/// Returns the output receiver, the remote-input sender, and the master handle
+/// (kept by the caller for resize).
 fn spawn_pty_session(
     command: Option<&str>,
     cols: u16,
     rows: u16,
     interactive: bool,
+    write_enabled: bool,
 ) -> Result<PtySession> {
     let pty = native_pty_system();
     let pair = pty
@@ -223,20 +286,56 @@ fn spawn_pty_session(
         .context("cloning the pty reader failed")?;
     let master = pair.master;
 
-    if interactive {
-        term::enter_raw();
-        let mut writer = master.take_writer().context("taking the pty writer failed")?;
-        std::thread::spawn(move || {
-            let mut stdin = std::io::stdin();
-            let mut buf = [0u8; 4096];
-            while let Ok(read) = stdin.read(&mut buf) {
-                if read == 0 || writer.write_all(&buf[..read]).is_err() {
-                    break;
+    // `take_writer` is once-only, so a mutex arbitrates it between typists.
+    // Local stdin writes under the lock directly while remote write viewers go
+    // through a bounded channel drained by its own thread — a viewer flooding
+    // input can therefore queue at most one in-flight chunk ahead of the
+    // sharer's own keys, never the whole channel.
+    let input_tx = if interactive || write_enabled {
+        let writer = Arc::new(Mutex::new(
+            master
+                .take_writer()
+                .context("taking the pty writer failed")?,
+        ));
+
+        let remote_tx = if write_enabled {
+            let (input_tx, mut input_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(64);
+            let writer = Arc::clone(&writer);
+            std::thread::spawn(move || {
+                while let Some(bytes) = input_rx.blocking_recv() {
+                    let Ok(mut writer) = writer.lock() else { break };
+                    if writer.write_all(&bytes).is_err() {
+                        break;
+                    }
+                    let _ = writer.flush();
                 }
-                let _ = writer.flush();
-            }
-        });
-    }
+            });
+            Some(input_tx)
+        } else {
+            None
+        };
+
+        if interactive {
+            term::enter_raw();
+            std::thread::spawn(move || {
+                let mut stdin = std::io::stdin();
+                let mut buf = [0u8; 4096];
+                while let Ok(read) = stdin.read(&mut buf) {
+                    if read == 0 {
+                        break;
+                    }
+                    let Ok(mut writer) = writer.lock() else { break };
+                    if writer.write_all(&buf[..read]).is_err() {
+                        break;
+                    }
+                    let _ = writer.flush();
+                }
+            });
+        }
+        remote_tx
+    } else {
+        None
+    };
 
     // Bridge the blocking PTY reader into async: a thread reads the master and
     // hands each chunk to the hub over an mpsc.
@@ -259,7 +358,43 @@ fn spawn_pty_session(
         let _ = child.wait();
     });
 
-    Ok((out_rx, master))
+    Ok((out_rx, input_tx, master))
+}
+
+/// Own a viewer's reverse stream. A write viewer's input frames are forwarded
+/// into the PTY writer channel; its clean FIN (e.g. piped-stdin EOF) just ends
+/// the task — the viewer keeps watching. Any protocol fault — a bad frame from
+/// a write viewer, or *any* byte from a read-only viewer (a correct client
+/// writes nothing after the secret) — closes the connection, which the hub's
+/// next broadcast write turns into an eviction.
+fn spawn_viewer_reader(
+    conn: Connection,
+    mut recv: RecvStream,
+    input_tx: Option<tokio::sync::mpsc::Sender<Vec<u8>>>,
+) {
+    tokio::spawn(async move {
+        let Some(input_tx) = input_tx else {
+            let mut buf = [0u8; 64];
+            if matches!(recv.read(&mut buf).await, Ok(Some(_))) {
+                conn.close(2u32.into(), b"read-only viewer sent data");
+            }
+            return;
+        };
+        loop {
+            match super::read_input_frame(&mut recv).await {
+                Ok(Some(bytes)) => {
+                    if input_tx.send(bytes).await.is_err() {
+                        break;
+                    }
+                }
+                Ok(None) => break,
+                Err(_) => {
+                    conn.close(2u32.into(), b"protocol violation");
+                    break;
+                }
+            }
+        }
+    });
 }
 
 /// Await the next `SIGWINCH` if a handler is installed, else never resolve — so
@@ -283,37 +418,58 @@ fn push_replay(replay: &mut Vec<u8>, bytes: &[u8]) {
 }
 
 /// Write `frame` to every viewer concurrently, dropping any whose write failed
-/// (it went away). Faithful to the single-consumer backpressure this generalizes:
-/// a slow viewer paces the broadcast (head-of-line).
+/// (it went away) or timed out (it stopped reading). The timeout bounds how long
+/// one stalled viewer can hold up the hub — and with it the sharer's own shell.
 async fn broadcast(viewers: &mut Vec<Viewer>, frame: &[u8]) {
     if viewers.is_empty() {
         return;
     }
-    let results = futures_util::future::join_all(
-        viewers.iter_mut().map(|viewer| viewer.send.write_all(frame)),
-    )
-    .await;
-    let mut keep = results.into_iter().map(|write| write.is_ok());
-    viewers.retain(|_| keep.next().unwrap_or(true));
+    let results =
+        futures_util::future::join_all(viewers.iter_mut().map(|viewer| {
+            tokio::time::timeout(VIEWER_WRITE_TIMEOUT, viewer.send.write_all(frame))
+        }))
+        .await;
+    let mut keep = results.into_iter().map(|write| matches!(write, Ok(Ok(()))));
+    viewers.retain(|viewer| {
+        if keep.next().unwrap_or(true) {
+            return true;
+        }
+        // A timed-out write was cancelled mid-frame, so the stream is desynced;
+        // the viewer cannot be kept.
+        viewer.conn.close(0u32.into(), b"viewer too slow");
+        false
+    });
 }
 
 /// Accept one incoming connection, take its bi-stream, and verify the bearer
-/// secret (the viewer opens the bi-stream and writes the secret first).
+/// secret (the viewer opens the bi-stream and writes the secret first). Which
+/// secret matched decides the capability: the returned bool is "may write".
 ///
 /// # Errors
-/// A failed handshake or a bad secret (closed with code 1).
+/// A failed handshake or a secret matching neither ticket (closed with code 1).
 async fn authenticate(
     incoming: Incoming,
-    secret: &[u8; SECRET_LEN],
-) -> Result<(Connection, SendStream, RecvStream)> {
+    secrets: Secrets,
+) -> Result<(Connection, SendStream, RecvStream, bool)> {
     let conn = incoming.await.context("incoming connection failed")?;
     let (send, mut recv) = conn.accept_bi().await.context("accept_bi failed")?;
     let mut got = [0u8; SECRET_LEN];
-    if recv.read_exact(&mut got).await.is_err() || &got != secret {
+    if recv.read_exact(&mut got).await.is_err() {
         conn.close(1u32.into(), b"bad secret");
         bail!("peer presented a bad secret");
     }
-    Ok((conn, send, recv))
+    let can_write = if got == secrets.read {
+        false
+    } else if secrets
+        .write
+        .is_some_and(|write_secret| got == write_secret)
+    {
+        true
+    } else {
+        conn.close(1u32.into(), b"bad secret");
+        bail!("peer presented a bad secret");
+    };
+    Ok((conn, send, recv, can_write))
 }
 
 /// Build the command run inside the PTY: `--command` (a test/ops knob) runs via

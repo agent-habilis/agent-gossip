@@ -1,11 +1,3 @@
-//! Controlling-terminal helpers for `ahsw sh`: query the window size, switch the
-//! tty to raw mode (so keystrokes reach the shared shell char-at-a-time instead
-//! of being cooked by the outer terminal), and drive the alternate screen on the
-//! viewer. Raw-mode state is saved once and restored via libc `atexit`, because
-//! both the producer and viewer exit through `std::process::exit` (which runs C
-//! `atexit` handlers but skips `Drop`) — otherwise a shared session would leave
-//! the terminal in raw mode after it ends.
-
 use std::io::Write;
 use std::sync::OnceLock;
 
@@ -43,7 +35,10 @@ fn query_size() -> Option<(u16, u16)> {
 }
 
 /// Switch stdin to raw mode, saving the original state on first call and
-/// registering an `atexit` restore. No-op if stdin isn't a tty.
+/// registering an `atexit` restore. No-op if stdin isn't a tty. `atexit`, not
+/// `Drop`: both the producer and viewer exit through `std::process::exit`,
+/// which runs C `atexit` handlers but skips destructors — otherwise a shared
+/// session would leave the terminal in raw mode after it ends.
 #[cfg(unix)]
 #[expect(
     unsafe_code,

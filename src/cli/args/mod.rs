@@ -24,8 +24,8 @@ mod pipe;
 mod poll;
 mod port;
 mod ready;
-mod shared;
 mod sh;
+mod shared;
 mod state;
 
 pub(crate) use create::CreateOpts;
@@ -43,8 +43,8 @@ pub(crate) use pipe::PipeAction;
 pub(crate) use poll::PollOpts;
 pub(crate) use port::PortAction;
 pub(crate) use ready::ReadyOpts;
-pub(crate) use shared::SharedServerOpts;
 pub(crate) use sh::ShAction;
+pub(crate) use shared::SharedServerOpts;
 pub(crate) use state::{StateAction, StateOpts};
 
 #[derive(Parser, Debug)]
@@ -180,13 +180,14 @@ pub(crate) enum Commands {
         action: FileAction,
     },
 
-    /// Broadcast a live terminal to peers, or watch one (off-gossip, direct P2P).
+    /// Broadcast a live terminal to peers, or attach to one (off-gossip, direct P2P).
     ///
     /// A standalone terminal share over a direct P2P link (no daemon):
     /// `sh listen` spawns `$SHELL` in a pseudo-terminal and prints the
     /// `ahsw sh connect 🐝…` command on stdout; `sh connect <ticket>` renders
-    /// the shell read-only (a viewer's keyboard never reaches it). Ending the
-    /// shell ends the broadcast.
+    /// the shell. A read ticket is view-only (its keyboard never reaches the
+    /// shell); `--write` also mints a write-capable ticket whose holders type
+    /// into the shell. Ending the shell ends the broadcast.
     Sh {
         #[command(subcommand)]
         action: ShAction,

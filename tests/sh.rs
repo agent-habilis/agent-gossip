@@ -7,7 +7,7 @@
 //! The `--command`/`--rows`/`--cols` knobs are hidden test/ops flags: they make
 //! the producer deterministic without a real tty (the CI runner has none).
 
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::thread;
@@ -107,5 +107,60 @@ fn viewer_receives_the_shared_shell_output() {
     assert!(
         recv_line_containing(&viewer_rx, "AHSW-SH-OK").is_some(),
         "viewer never received the shared shell's output"
+    );
+}
+
+#[test]
+fn write_viewer_input_reaches_the_shell() {
+    let (_creator, swarm) = Node::create_named("sh-write");
+
+    // Producer: `--write` mints a second ticket; in json mode the read connect
+    // command prints first and the write command second. The scripted shell
+    // consumes one line and echoes it back — proof the input traversed the PTY —
+    // then lingers so delivery to the viewer completes.
+    let mut producer_cmd = test_cmd();
+    producer_cmd.args([
+        "sh",
+        "listen",
+        "--swarm",
+        swarm.as_str(),
+        "--write",
+        "--command",
+        "read line; echo \"GOT-$line\"; sleep 10",
+        "--cols",
+        "80",
+        "--rows",
+        "24",
+        "--output",
+        "json",
+    ]);
+    let (_producer, producer_rx) = spawn_piped(producer_cmd);
+    let _read_line = recv_line_containing(&producer_rx, "sh connect")
+        .expect("producer never printed the read connect command");
+    let write_line = recv_line_containing(&producer_rx, "sh connect")
+        .expect("producer never printed the write connect command");
+    let write_ticket = write_line
+        .split_whitespace()
+        .nth(3)
+        .expect("write connect line missing ticket token")
+        .to_string();
+
+    // Viewer: redeem the write ticket with piped stdin — the non-tty path
+    // forwards stdin verbatim as input frames (no escape scanning).
+    let mut viewer_cmd = test_cmd();
+    viewer_cmd.args(["sh", "connect", write_ticket.as_str()]);
+    viewer_cmd.stdin(Stdio::piped());
+    let (mut viewer, viewer_rx) = spawn_piped(viewer_cmd);
+    let mut viewer_stdin = viewer.0.stdin.take().expect("viewer stdin handle");
+    viewer_stdin
+        .write_all(b"hello\n")
+        .expect("writing to the viewer's stdin failed");
+    // EOF FINs the viewer's send half; the producer treats that as benign and
+    // the viewer keeps watching.
+    drop(viewer_stdin);
+
+    assert!(
+        recv_line_containing(&viewer_rx, "GOT-hello").is_some(),
+        "the shell never echoed the viewer's input back"
     );
 }

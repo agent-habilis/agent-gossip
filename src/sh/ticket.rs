@@ -1,10 +1,3 @@
-//! The shell ticket — a `🐝` token of [`TokenType::Sh`] carrying everything a
-//! viewer needs to dial the producer: the bearer secret, a reserved flags byte,
-//! the swarm's discovery config, and the producer's address. Payload layout:
-//! `secret(32) ‖ flags(1) ‖ lookups ‖ address-json` (lookups is self-delimiting,
-//! so the address occupies the remainder). `flags` is reserved for forward-compat
-//! and always 0 today.
-
 use anyhow::{Context, Result, bail};
 use iroh::EndpointAddr;
 
@@ -14,11 +7,18 @@ use crate::protocol::token::{self, TokenType};
 
 use super::SECRET_LEN;
 
-/// A decoded shell ticket.
+/// A decoded shell ticket — a `🐝` token of [`TokenType::Sh`] carrying
+/// everything a viewer needs to dial the producer. Payload layout:
+/// `secret(32) ‖ flags(1) ‖ lookups ‖ address-json` (lookups is
+/// self-delimiting, so the address occupies the remainder). `flags` bit 0
+/// marks a write-capable ticket — UX only, so the viewer knows to forward its
+/// keyboard; the producer grants write by which secret was presented, never by
+/// this flag. The other bits stay reserved for forward-compat.
 pub(crate) struct ShTicket {
     pub addr: EndpointAddr,
     pub secret: [u8; SECRET_LEN],
     pub lookups: LookupOpts,
+    pub write: bool,
 }
 
 impl ShTicket {
@@ -26,7 +26,7 @@ impl ShTicket {
     pub(crate) fn encode(&self) -> String {
         let mut payload = Vec::with_capacity(SECRET_LEN + 1 + 64);
         payload.extend_from_slice(&self.secret);
-        payload.push(0); // reserved flags byte
+        payload.push(u8::from(self.write));
         self.lookups.encode_into(&mut payload);
         let addr_json = serde_json::to_vec(&endpoint_addr_to_json(&self.addr))
             .expect("EndpointAddr JSON always serializes");
@@ -46,11 +46,10 @@ impl ShTicket {
         let secret_slice = payload.get(..SECRET_LEN).context("ticket too short")?;
         let mut secret = [0u8; SECRET_LEN];
         secret.copy_from_slice(secret_slice);
-        // Skip the reserved flags byte.
+        // Bit 0 of the flags byte marks a write ticket; the rest stay reserved.
+        let flags = *payload.get(SECRET_LEN).context("ticket missing flags")?;
+        let write = flags & 0x01 != 0;
         let mut pos = SECRET_LEN + 1;
-        if payload.len() < pos {
-            bail!("ticket missing flags");
-        }
         let lookups = LookupOpts::decode_from(&payload, &mut pos)?;
         let addr_json = payload.get(pos..).context("ticket missing address")?;
         let value: serde_json::Value =
@@ -60,6 +59,7 @@ impl ShTicket {
             addr,
             secret,
             lookups,
+            write,
         })
     }
 }
@@ -78,6 +78,7 @@ mod tests {
             addr: addr.clone(),
             secret: [9u8; SECRET_LEN],
             lookups: LookupOpts::public_preset(),
+            write: false,
         };
         let encoded = ticket.encode();
         assert!(encoded.starts_with("🐝"));
@@ -85,6 +86,21 @@ mod tests {
         assert_eq!(decoded.addr.id, addr.id);
         assert_eq!(decoded.secret, [9u8; SECRET_LEN]);
         assert_eq!(decoded.lookups, LookupOpts::public_preset());
+        assert!(!decoded.write);
+    }
+
+    #[test]
+    fn write_flag_round_trips() {
+        let id = SecretKey::from_bytes(&[4u8; 32]).public();
+        let addr = EndpointAddr::new(id).with_ip_addr("127.0.0.1:4243".parse().unwrap());
+        let ticket = ShTicket {
+            addr,
+            secret: [7u8; SECRET_LEN],
+            lookups: LookupOpts::public_preset(),
+            write: true,
+        };
+        let decoded = ShTicket::decode(&ticket.encode()).expect("decode");
+        assert!(decoded.write);
     }
 
     #[test]
