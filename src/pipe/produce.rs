@@ -1,7 +1,10 @@
 //! The pipe producer: read a source, print the consumer's `ahsw pipe connect`
-//! command on stdout, then stream the source, once, to the first peer that
-//! presents the ticket's secret.
+//! command on stdout, then serve it. A seekable file fans out — every consumer
+//! gets its own full copy, re-opened per connection; `--follow` broadcasts the
+//! live source to all attached consumers; a non-seekable stream (a pipe, which
+//! can't be replayed) is served once to the first consumer, then exits.
 
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
@@ -39,20 +42,37 @@ pub(crate) async fn listen(
         "for a peer to connect",
         &format!("ahsw pipe connect {}", ticket.encode()),
     );
-    let result = if follow {
-        serve_follow(&endpoint, &secret, &mut tokio::io::stdin(), throttle, !json).await
-    } else {
-        serve(
-            &endpoint,
-            &secret,
-            &mut tokio::io::stdin(),
-            stdin_len(),
-            throttle,
-            !json,
-        )
-        .await
-    };
-    match result {
+    if follow {
+        // Live tail: broadcast to every attached consumer until the source ends.
+        return match serve_follow(&endpoint, &secret, &mut tokio::io::stdin(), throttle, !json).await
+        {
+            Ok(()) => std::process::exit(0),
+            Err(error) => {
+                endpoint.close().await;
+                Err(error)
+            }
+        };
+    }
+    // A seekable file can be re-opened per consumer, so fan out: stay up and
+    // serve the whole file to each peer independently (like `port`). Runs until
+    // interrupted, so — unlike the single-shot path — it does not `process::exit`.
+    if let Some(path) = source_path() {
+        let result = serve_fanout(&endpoint, &secret, &path, throttle).await;
+        endpoint.close().await;
+        return result;
+    }
+    // A non-seekable stream (a pipe, e.g. `tar c … |`) can't be replayed, so
+    // there is no fan-out: serve the first consumer once, then exit.
+    match serve(
+        &endpoint,
+        &secret,
+        &mut tokio::io::stdin(),
+        stdin_len(),
+        throttle,
+        !json,
+    )
+    .await
+    {
         // The peer confirmed receipt (`conn.closed`); exit now rather than await
         // the multi-second `endpoint.close()` teardown (relay/DHT/mDNS).
         // `process::exit` also skips the endpoint's abort-logging `Drop`.
@@ -78,7 +98,6 @@ pub(crate) async fn bind(lookups: LookupOpts) -> Result<(Endpoint, PipeTicket, [
         secret,
         lookups,
         follow: false,
-        target_port: None,
         bench: false,
     };
     Ok((endpoint, ticket, secret))
@@ -106,18 +125,25 @@ pub(super) async fn authenticate(
     Ok((conn, send, recv))
 }
 
-/// Live-follow producer (`pipe listen --follow`): forward `reader` to the one
-/// attached consumer, reading the source ONLY while a consumer is attached — so a
-/// fast non-blocking source (e.g. `/dev/random`) never busy-spins while idle, and
-/// a blocking source like `tail -f` just backpressures. One consumer at a time; a
-/// newer `connect` preempts the current one, so a reconnect is instant even when
-/// the old consumer died abruptly. On a drop the slot frees and the producer
-/// waits for a fresh `connect` with the same ticket — it never quits on a drop,
-/// only on source EOF (after cleanly FIN-ing any attached consumer). A
-/// (re)connecting consumer joins at roughly the live tip — it may first drain a
-/// small buffered backlog (the OS pipe buffer), then follows live. The OSC
-/// indicator (shown only while transferring) and the lifecycle stage lines —
-/// `disconnected` / `connected` / `transferring` / `finished` — mark the state.
+/// One attached live-follow consumer. `_recv` is held (never read) only to keep
+/// the reverse stream open — dropping it would send the consumer a `STOP_SENDING`.
+struct FollowConsumer {
+    conn: Connection,
+    send: SendStream,
+    _recv: RecvStream,
+}
+
+/// Live-follow producer (`pipe listen --follow`): broadcast `reader` to every
+/// attached consumer, reading the source ONLY while at least one is attached — so
+/// a fast non-blocking source (e.g. `/dev/random`) never busy-spins while idle,
+/// and a blocking source like `tail -f` just backpressures. Any number of
+/// consumers attach at once (a new `connect` joins the fan-out; it does not
+/// preempt); each joins at roughly the live tip. A dropped consumer is dropped
+/// from the set (on its next failed write, or reaped when idle), and the producer
+/// quits only on source EOF — never on a consumer leaving — after cleanly FIN-ing
+/// whoever remains. The OSC indicator (shown only while transferring) and the
+/// lifecycle stage lines — `disconnected` / `connected` / `transferring` /
+/// `finished` — mark the state.
 ///
 /// # Errors
 /// A stdin read error, or the endpoint closing before the source ends.
@@ -128,32 +154,20 @@ pub(crate) async fn serve_follow<R: AsyncRead + Unpin>(
     throttle: Option<u64>,
     narrate: bool,
 ) -> Result<()> {
-    // Authenticated peers arrive here off the accept hot path (like tcp.rs).
+    // Authenticated peers arrive here off the accept hot path (like port).
     let (auth_tx, mut auth_rx) =
         tokio::sync::mpsc::channel::<(Connection, SendStream, RecvStream)>(1);
-    // The single live-consumer slot (holds `recv` only to suppress STOP_SENDING).
-    let mut current: Option<(Connection, SendStream, RecvStream)> = None;
+    let mut consumers: Vec<FollowConsumer> = Vec::new();
     let mut transferring = false;
     // Indicator hidden until bytes actually flow, cleared the moment they stop.
     let mut progress = Progress::hidden();
     let mut buf = vec![0u8; throttle_chunk(throttle)];
     // Re-emit the indeterminate OSC indicator periodically while transferring, so
-    // it doesn't fade during a steady stream (mirrors the non-follow path).
+    // it doesn't fade during a steady stream; the same tick reaps idle drops.
     let mut keepalive = tokio::time::interval(Duration::from_millis(250));
 
     super::stage(narrate, "disconnected");
     loop {
-        // A cheap per-iteration Arc clone, so the `closed()` future borrows a
-        // local and never the mutable `current` slot.
-        let watch = current.as_ref().map(|(conn, _, _)| conn.clone());
-        let closed = async {
-            match &watch {
-                Some(conn) => {
-                    conn.closed().await;
-                }
-                None => std::future::pending::<()>().await,
-            }
-        };
         tokio::select! {
             // A peer is dialing — authenticate off the hot path.
             incoming = endpoint.accept() => {
@@ -170,43 +184,39 @@ pub(crate) async fn serve_follow<R: AsyncRead + Unpin>(
                     }
                 });
             }
-            // An authenticated consumer is ready — it takes the single slot,
-            // preempting whatever was there. A reconnect is then instant even
-            // when the previous consumer died abruptly and its connection is
-            // still a zombie (iroh would only idle-time it out much later).
+            // An authenticated consumer is ready — it joins the fan-out set.
             Some((conn, mut send, recv)) = auth_rx.recv() => {
-                // Header first: a half-dead newcomer that can't take the header
-                // must not evict a live consumer. Live = indeterminate length.
+                // Header first: a half-dead newcomer that can't take the header is
+                // not added. Live = indeterminate length.
                 if send.write_all(&u64::MAX.to_le_bytes()).await.is_ok() {
-                    if let Some((old, _, _)) = current.take() {
-                        old.close(2u32.into(), b"replaced by a newer consumer");
-                        progress.finish();
-                        super::stage(narrate, "disconnected");
+                    let was_empty = consumers.is_empty();
+                    consumers.push(FollowConsumer { conn, send, _recv: recv });
+                    if was_empty {
+                        super::stage(narrate, "connected");
                     }
-                    super::stage(narrate, "connected");
-                    transferring = false;
-                    current = Some((conn, send, recv));
                 }
             }
-            // The attached consumer dropped while idle — free the slot.
-            () = closed => {
-                if current.take().is_some() {
+            // Keep the OSC indicator alive during a steady transfer, and reap any
+            // consumer that left while idle (no write was in flight to notice).
+            _ = keepalive.tick() => {
+                consumers.retain(|consumer| consumer.conn.close_reason().is_none());
+                if consumers.is_empty() && transferring {
                     progress.finish();
                     super::stage(narrate, "disconnected");
                     transferring = false;
+                } else if transferring {
+                    progress.tick();
                 }
             }
-            // Keep the OSC indicator alive during a steady transfer (it fades on
-            // its own after an idle stretch). Only fires while transferring.
-            _ = keepalive.tick(), if transferring => progress.tick(),
             // Next source chunk, or EOF — read ONLY while a consumer is attached,
             // so a fast non-blocking source never busy-spins while idle and we
             // never drain the source to nowhere.
-            read = reader.read(&mut buf), if current.is_some() => match read {
+            read = reader.read(&mut buf), if !consumers.is_empty() => match read {
                 Ok(0) => {
-                    // Source closed — FIN the consumer and wait (briefly) for it
+                    // Source closed — FIN each consumer and wait (briefly) for it
                     // to ACK delivery, but never hang on one that already left.
-                    if let Some((conn, mut send, _)) = current.take() {
+                    for consumer in std::mem::take(&mut consumers) {
+                        let FollowConsumer { conn, mut send, .. } = consumer;
                         let _ = send.finish();
                         let _ = tokio::time::timeout(Duration::from_secs(2), send.stopped()).await;
                         conn.close(0u32.into(), b"done");
@@ -221,15 +231,21 @@ pub(crate) async fn serve_follow<R: AsyncRead + Unpin>(
                         super::stage(narrate, "transferring…");
                         progress.show();
                     }
-                    let mut dropped = false;
-                    if let Some((_, send, _)) = current.as_mut() {
-                        match send.write_all(&buf[..read]).await {
-                            Ok(()) => pace(throttle, read).await,
-                            Err(_) => dropped = true,
-                        }
-                    }
-                    if dropped {
-                        current = None;
+                    // Broadcast the chunk to every consumer concurrently; a write
+                    // paces the source to the slowest (head-of-line), faithful to
+                    // the single-consumer backpressure this generalizes.
+                    let chunk = &buf[..read];
+                    let results =
+                        futures_util::future::join_all(
+                            consumers.iter_mut().map(|consumer| consumer.send.write_all(chunk)),
+                        )
+                        .await;
+                    // Drop consumers whose write failed (they went away). The
+                    // results are in consumer order, so zip them back by iteration.
+                    let mut keep = results.into_iter().map(|write| write.is_ok());
+                    consumers.retain(|_| keep.next().unwrap_or(true));
+                    pace(throttle, read).await;
+                    if consumers.is_empty() {
                         progress.finish();
                         super::stage(narrate, "disconnected");
                         transferring = false;
@@ -257,7 +273,7 @@ pub(crate) async fn serve<R: AsyncRead + Unpin>(
     throttle: Option<u64>,
     narrate: bool,
 ) -> Result<()> {
-    let (_conn, mut send, mut recv) = loop {
+    let (_conn, send, recv) = loop {
         let Some(incoming) = endpoint.accept().await else {
             bail!("endpoint closed before a peer connected");
         };
@@ -267,18 +283,80 @@ pub(crate) async fn serve<R: AsyncRead + Unpin>(
         }
     };
     super::stage(narrate, "connected");
+    super::stage(narrate, "transferring…");
+    let outcome = serve_one_stream(send, recv, reader, total, throttle, narrate).await;
+    if outcome.is_ok() {
+        super::stage(narrate, "finished");
+    }
+    outcome
+}
 
+/// Fan-out producer for a seekable file: serve the whole file to every consumer
+/// independently, re-opening `path` per connection so each gets its own byte-0
+/// offset. Stays up serving many (like `port`) until the endpoint closes; a bad
+/// handshake or a dropped consumer only ends that one connection.
+///
+/// # Errors
+/// Never returns `Err` in normal operation — the accept loop ends only when the
+/// endpoint is closed, and per-consumer failures are logged, not propagated.
+pub(super) async fn serve_fanout(
+    endpoint: &Endpoint,
+    secret: &[u8; SECRET_LEN],
+    path: &Path,
+    throttle: Option<u64>,
+) -> Result<()> {
+    while let Some(incoming) = endpoint.accept().await {
+        let secret = *secret;
+        let path = path.to_owned();
+        tokio::spawn(async move {
+            if let Err(error) = serve_file_to(incoming, &secret, &path, throttle).await {
+                tracing::debug!(%error, "fan-out consumer ended");
+            }
+        });
+    }
+    Ok(())
+}
+
+/// One fan-out connection: authenticate, re-open the file, and stream its whole
+/// contents. Progress is suppressed (many concurrent consumers can't share one
+/// stdout bar); lifecycle is logged instead.
+async fn serve_file_to(
+    incoming: Incoming,
+    secret: &[u8; SECRET_LEN],
+    path: &Path,
+    throttle: Option<u64>,
+) -> Result<()> {
+    let (_conn, send, recv) = authenticate(incoming, secret).await?;
+    let mut file = tokio::fs::File::open(path)
+        .await
+        .with_context(|| format!("re-opening {} failed", path.display()))?;
+    let total = file.metadata().await.ok().map(|meta| meta.len());
+    tracing::info!("consumer connected");
+    let result = serve_one_stream(send, recv, &mut file, total, throttle, false).await;
+    tracing::info!("consumer disconnected");
+    result
+}
+
+/// Send the length header, stream `reader` to `send`, and concurrently drain the
+/// consumer's received-byte reports off `recv` — so the bar reflects real
+/// delivery (not bytes merely queued to QUIC), and the consumer's report writes
+/// never flow-control-stall on an unread stream. The report stream's FIN is the
+/// delivery confirmation. `narrate` gates the visible progress bar (off for
+/// fan-out, where many consumers would clash on one stdout).
+async fn serve_one_stream<R: AsyncRead + Unpin>(
+    mut send: SendStream,
+    mut recv: RecvStream,
+    reader: &mut R,
+    total: Option<u64>,
+    throttle: Option<u64>,
+    narrate: bool,
+) -> Result<()> {
     // Length header (u64::MAX = unknown) before the data — lets the consumer
     // size its determinate bar.
     send.write_all(&total.unwrap_or(u64::MAX).to_le_bytes())
         .await
         .context("sending the length header failed")?;
-    super::stage(narrate, "transferring…");
 
-    // Send the data while concurrently reading the consumer's received-byte
-    // reports, so our bar reflects real delivery (not bytes merely queued to
-    // QUIC). The report stream's FIN is the delivery confirmation. Disjoint
-    // borrows: send/reader vs recv/progress.
     let mut progress = Progress::new(total);
     let send_task = async {
         copy_throttled(reader, &mut send, throttle)
@@ -296,7 +374,9 @@ pub(crate) async fn serve<R: AsyncRead + Unpin>(
             // Determinate: each report advances the percent, which keeps the bar
             // alive on its own.
             while recv.read_exact(&mut buf).await.is_ok() {
-                progress.update(u64::from_le_bytes(buf));
+                if narrate {
+                    progress.update(u64::from_le_bytes(buf));
+                }
             }
         } else {
             // Indeterminate: no per-% updates arrive, so re-emit the "loading"
@@ -308,16 +388,17 @@ pub(crate) async fn serve<R: AsyncRead + Unpin>(
                     result = recv.read_exact(&mut buf) => {
                         if result.is_err() { break; }
                     }
-                    _ = keepalive.tick() => progress.tick(),
+                    _ = keepalive.tick() => {
+                        if narrate { progress.tick(); }
+                    }
                 }
             }
         }
-        progress.finish();
+        if narrate {
+            progress.finish();
+        }
     };
     let (outcome, ()) = tokio::join!(send_task, report_task);
-    if outcome.is_ok() {
-        super::stage(narrate, "finished");
-    }
     outcome
 }
 
@@ -343,4 +424,50 @@ fn stdin_len() -> Option<u64> {
         let consumed = u64::try_from(libc::lseek(0, 0, libc::SEEK_CUR)).unwrap_or(0);
         Some(size.saturating_sub(consumed))
     }
+}
+
+/// The filesystem path behind stdin (fd 0) when it is a **re-openable regular
+/// file** (`ahsw pipe listen < file`), else `None`. `Some` selects the fan-out
+/// path — each consumer re-opens this to get its own full copy; `None` (a pipe /
+/// FIFO like `cat file |`, which can't be replayed) selects the single-shot path.
+#[cfg(target_os = "linux")]
+fn source_path() -> Option<PathBuf> {
+    // `/proc/self/fd/0` resolves to the underlying file; require it be regular so
+    // a pipe/socket/tty (whose link is not a real re-openable path) falls back.
+    let path = std::fs::read_link("/proc/self/fd/0").ok()?;
+    std::fs::metadata(&path)
+        .ok()
+        .filter(std::fs::Metadata::is_file)
+        .map(|_| path)
+}
+
+#[cfg(target_os = "macos")]
+#[expect(
+    unsafe_code,
+    reason = "fstat(2) to gate on a regular file + fcntl(F_GETPATH) to resolve fd 0's path"
+)]
+fn source_path() -> Option<PathBuf> {
+    use std::os::unix::ffi::OsStrExt;
+
+    // SAFETY: fstat reads only POD scalar fields of a zeroed `libc::stat` for fd 0.
+    unsafe {
+        let mut st: libc::stat = std::mem::zeroed();
+        if libc::fstat(0, &raw mut st) != 0 || (st.st_mode & libc::S_IFMT) != libc::S_IFREG {
+            return None;
+        }
+    }
+    let mut buf = [0u8; libc::PATH_MAX as usize];
+    // SAFETY: F_GETPATH writes a NUL-terminated path (≤ PATH_MAX bytes) into the
+    // buffer, whose capacity is exactly PATH_MAX.
+    let ret = unsafe { libc::fcntl(0, libc::F_GETPATH, buf.as_mut_ptr().cast::<libc::c_char>()) };
+    if ret != 0 {
+        return None;
+    }
+    let len = buf.iter().position(|&byte| byte == 0)?;
+    Some(PathBuf::from(std::ffi::OsStr::from_bytes(&buf[..len])))
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn source_path() -> Option<PathBuf> {
+    None
 }

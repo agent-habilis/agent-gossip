@@ -12,6 +12,7 @@ mod create;
 mod discover;
 mod doctor;
 mod exchange;
+mod file;
 mod join;
 mod lookup;
 mod meta;
@@ -21,6 +22,7 @@ mod peers;
 mod ping;
 mod pipe;
 mod poll;
+mod port;
 mod ready;
 mod shared;
 mod state;
@@ -29,6 +31,7 @@ pub(crate) use create::CreateOpts;
 pub(crate) use discover::DiscoverOpts;
 pub(crate) use doctor::DoctorOpts;
 pub(crate) use exchange::ExchangeOpts;
+pub(crate) use file::FileAction;
 pub(crate) use join::JoinOpts;
 pub(crate) use meta::{MetaAction, MetaOpts};
 pub(crate) use msg::MsgOpts;
@@ -37,6 +40,7 @@ pub(crate) use peers::PeersOpts;
 pub(crate) use ping::PingOpts;
 pub(crate) use pipe::PipeAction;
 pub(crate) use poll::PollOpts;
+pub(crate) use port::PortAction;
 pub(crate) use ready::ReadyOpts;
 pub(crate) use shared::SharedServerOpts;
 pub(crate) use state::{StateAction, StateOpts};
@@ -148,6 +152,30 @@ pub(crate) enum Commands {
     Pipe {
         #[command(subcommand)]
         action: PipeAction,
+    },
+
+    /// Forward a local TCP port to a peer, or a peer's TCP port to a local one.
+    ///
+    /// A standalone TCP proxy over a direct P2P link (off-gossip, no daemon):
+    /// `port listen PORT` exposes a local service and prints the
+    /// `ahsw port connect 🐝…` command on stdout; `port connect <ticket> PORT`
+    /// binds a local port and forwards each connection to the producer. One
+    /// ticket serves many connections.
+    Port {
+        #[command(subcommand)]
+        action: PortAction,
+    },
+
+    /// Send a file or folder to a peer, or receive one (off-gossip, direct P2P).
+    ///
+    /// A standalone file transfer over a direct P2P link (no daemon):
+    /// `file send <path>` serves a file or folder and prints the
+    /// `ahsw file get 🐝…` command on stdout; `file get <ticket>`
+    /// receives the tree into the current directory. Only files the receiver is
+    /// missing or has an outdated copy of are sent (a snapshot + delta re-sync).
+    File {
+        #[command(subcommand)]
+        action: FileAction,
     },
 
     /// Read or change the swarm's shared state.

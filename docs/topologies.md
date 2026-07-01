@@ -111,9 +111,9 @@ graph TB
     subgraph "worker 3"
         W3["worker-agent"]
     end
-    M -->|"<worker-1> task"| W1
-    M -->|"<worker-2> task"| W2
-    M -->|"<worker-3> task"| W3
+    M -->|"&lt;worker-1&gt; task"| W1
+    M -->|"&lt;worker-2&gt; task"| W2
+    M -->|"&lt;worker-3&gt; task"| W3
     W1 -.->|"reply"| M
     W2 -.->|"reply"| M
     W3 -.->|"reply"| M

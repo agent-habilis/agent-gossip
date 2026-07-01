@@ -31,10 +31,14 @@ SYNOPSIS
 
        ahsw pipe listen        [--swarm 🐝…] [--throttle RATE] [--follow] [--output human|json]
        ahsw pipe connect       🐝… [--throttle RATE]
-       ahsw pipe listen-tcp    PORT [--swarm 🐝…] [--output human|json]
-       ahsw pipe connect-tcp   🐝… PORT [--output human|json]
        ahsw pipe bench         [--serve] [--swarm 🐝…] [--output human|json]
        ahsw pipe bench         🐝… [--budget BUDGET] [--pings N] [--output human|json]
+
+       ahsw port listen  PORT... [--swarm 🐝…] [--output human|json]
+       ahsw port connect 🐝… [LOCAL:]REMOTE... [--output human|json]
+
+       ahsw file send PATH [--swarm 🐝…] [--throttle RATE] [--output human|json]
+       ahsw file get  🐝… [--out DIR] [--throttle RATE] [--output human|json]
 
        ahsw state merge --swarm 🐝… --nickname NAME --merge MERGE
        ahsw state get   --swarm 🐝… --nickname NAME
@@ -55,7 +59,7 @@ SYNOPSIS
 
        ahsw plug   [--agent claude-code|pi|generic]
        ahsw unplug [--agent claude-code|pi|generic]
-       ahsw doctor [--swarm 🐝...] [--no-probe] [--output human|json]
+       ahsw doctor [--swarm 🐝…] [--no-probe] [--output human|json]
 
        ahsw --help | --version
 
@@ -221,7 +225,7 @@ COMMANDS
 
               The well-known file is JSON with one field:
 
-                     {"as.swarm": "🐝..."}
+                     {"as.swarm": "🐝…"}
 
               --nickname NAME
                      Your display label in the swarm. Optional; a random
@@ -355,138 +359,175 @@ COMMANDS
 
        pipe listen [--swarm 🐝…] [--throttle RATE] [--follow] [--output human|json]
        pipe connect 🐝… [--throttle RATE]
-       pipe listen-tcp PORT [--swarm 🐝…] [--output human|json]
-       pipe connect-tcp 🐝… PORT [--output human|json]
        pipe bench [--serve] [--swarm 🐝…] [--output human|json]
        pipe bench 🐝… [--budget BUDGET] [--pings N] [--output human|json]
-              A standalone, off-gossip direct byte pipe between machines — no running
-              daemon required. `pipe listen` reads stdin and prints, on stdout, a
-              status line plus the consumer's ready-to-run `ahsw pipe connect 🐝…`
-              command (bold-blue in a terminal); running it redeems the ticket and
-              streams the bytes back. The ticket is a bearer capability (a random
-              secret) carrying the producer's address + the swarm's discovery config,
-              so the consumer needs nothing but the ticket. It shares the 🐝… glyph
-              with a swarm id but is a DIFFERENT token — a ticket holds an address +
-              secret, not a swarm config — so a ticket is not accepted by --swarm or
-              join, nor a swarm id by pipe connect. --swarm selects the discovery
-              mechanisms (local / mDNS / DHT / relay) from that swarm id; omit it for
-              a public default. A loopback-only swarm (a plain create with no
-              --public) confines the pipe to one machine — pass a --public swarm id
-              to reach another host. The data never touches gossip.
+              A direct, off-gossip byte pipe between machines; no daemon needed.
+              `pipe listen` reads stdin and prints the consumer's `ahsw pipe
+              connect 🐝…` command on stdout; running it streams the bytes back.
+              The 🐝… ticket is a bearer capability — a random secret plus the
+              producer's address and the swarm's discovery config — so the
+              consumer needs only the ticket. It shares the 🐝… glyph with a swarm
+              id but is a different token: `pipe connect` will not take a swarm id,
+              and --swarm / join will not take a ticket. --swarm picks the
+              discovery to use (local / mDNS / DHT / relay); omit it for a public
+              default. A loopback-only swarm keeps the pipe on one machine; a
+              --public swarm reaches other hosts. The data never touches gossip.
 
-              A file is `ahsw pipe listen < file`, a folder is a tar stream, and
-              a TCP service is the -tcp pair: `pipe listen-tcp PORT` forwards
-              inbound peers to a local TCP service on `127.0.0.1:PORT`, and `pipe
-              connect-tcp <ticket> PORT` binds `127.0.0.1:PORT` and forwards each
-              connection over the pipe (one ticket serves many connections). The
-              -tcp forwarders are long-running services — they run until interrupted,
-              not single-shot transfers.
+              A file is `pipe listen < file`; a folder is a tar stream (see the
+              examples). For a long-running TCP service, use `ahsw port` instead.
 
-              On the producer side, --output json swaps the decorated human hint for
-              one plain line a script can capture — a literal command, not a JSON
-              object. `pipe listen` prints `ahsw pipe connect 🐝…` (strip the
-              `ahsw pipe connect ` prefix for the bare ticket); `pipe listen-tcp`
-              prints `ahsw pipe connect-tcp 🐝… PORT`, a template whose PORT the
-              consumer replaces with the local port to bind. On the consumer side,
-              `pipe connect-tcp --output json` emits no machine product at all — it
-              only suppresses the status line. (`pipe connect` has no --output: its
-              stdout IS the transferred bytes.)
+              One ticket serves many consumers. If the source is a seekable file,
+              the producer stays up and gives each consumer its own full copy
+              (re-opening the file per connection), so run the printed `pipe
+              connect` from as many peers as you like; it runs until interrupted.
+              A non-seekable stream (`tar c … |`, `cat file |`) can't be replayed,
+              so it serves the first consumer and exits. `--follow` also fans out
+              (below).
 
-              In human mode, both `-tcp` commands print a best-effort access-log
-              line per HTTP request they recognize on the forwarded traffic
-              (method, path, status, response size, latency). The sniffing only
-              ever observes bytes already being forwarded; it never alters,
-              delays, or buffers them, and silently stops trying the moment a
-              connection doesn't look like HTTP/1.x (TLS, a raw protocol, binary
-              data). --output json suppresses this, same as the startup line.
+              --output json makes `pipe listen` print just the bare `ahsw pipe
+              connect 🐝…` line for a script to capture (strip the `ahsw pipe
+              connect ` prefix for the ticket alone). `pipe connect` has no
+              --output — its stdout is the transferred bytes.
 
-              Exit codes are meaningful for every single-shot pair (`pipe listen` /
-              `pipe connect`, and the two sides of `pipe bench`): 0 on
-              success (a fully-delivered stream, or a completed benchmark),
-              non-zero on a connect failure, a truncated transfer, or a benchmark
-              that never got a peer. The long-running -tcp forwarders exit 0 on a
-              clean shutdown regardless of how many connections they served (or
-              whether any did), so do not read their exit code as "a transfer
-              happened."
+              Exit codes are meaningful for the single-shot transfers (a
+              non-seekable `pipe listen` and its `pipe connect`, and the bench
+              pair): 0 on success, non-zero on a connect failure, a truncated
+              transfer, or a benchmark that got no peer. A seekable-file `pipe
+              listen` stays up until interrupted, so its exit code just means it
+              shut down cleanly.
 
-              `pipe bench` measures a link instead of moving real data: with no
-              ticket it is the producer — it prints a ticket, waits for the first
-              peer to connect, runs one benchmark, then exits — re-run for another
-              (a fresh process per run keeps concurrent benchmarks from skewing
-              each other's numbers). Pass --serve to keep the producer up instead:
-              it serves one benchmark per peer sequentially (never concurrently, for
-              the same reason) until killed, and its ticket stays valid for the
-              whole run, so a consumer reconnects any time by re-running `pipe bench
-              <ticket>` — an always-on bench server. `pipe bench <ticket>` is the
-              consumer — it redeems the ticket and drives the whole run, printing a
-              report when done. Data flows CONSUMER → PRODUCER — the opposite
-              direction from `listen`/`connect` — since the consumer is the one
-              driving and timing the run. A bench ticket is a distinct kind from a
-              plain pipe ticket:
-              `pipe connect` refuses a bench ticket and `pipe bench <ticket>`
-              refuses a plain one, rather than hanging in the wrong protocol. The
-              run has two phases: a
-              latency phase of --pings sequential ping/pong round-trips (default 20),
-              then a throughput phase that streams synthetic payload for --budget
-              (default 10s) before the consumer prints min/avg/max round-trip latency
-              and throughput — the byte count and elapsed time as measured by the
-              PRODUCER, the ground truth for what was actually delivered, not just
-              what the consumer queued. --budget takes an explicit-suffix duration
-              (10s, 2m, 1h) or byte count (500b, 100kb, 50mb, 2gb; 1024-based) — no
-              bare numbers, so a duration's `m` (minutes) can never be confused with
-              a byte count's `mb` (mebibytes). The human report prints cargo-style
-              status lines (Latency / Received / Throughput) to stderr; --output json
-              on the consumer `pipe bench <ticket>` prints the same figures as a
-              single JSON object on stdout instead.
-
-              --throttle RATE caps throughput (e.g. 100k, 2m; 1024-based) on either
-              side of the stdio pair — a bandwidth limit, and a way to make the
-              progress bar visible on a fast/local link. The -tcp forwarders do not
-              take --throttle.
+              --throttle RATE caps throughput on either side (e.g. 100k, 2m;
+              1024-based) — a bandwidth limit, and a way to make the progress bar
+              visible on a fast link.
 
               --follow turns `pipe listen` into a live tail for an endless source
-              like `tail -f`: the producer stays up and forwards stdin to whichever
-              single consumer is attached. It reads the source ONLY while a
-              consumer is attached (so a fast source never burns CPU while idle,
-              and `tail -f` simply backpressures); a connecting consumer joins at
-              roughly the live tail, after first draining whatever small backlog
-              the OS pipe buffer holds. One consumer at a time; a newer `pipe
-              connect` with the same ticket PREEMPTS the current one, so a
-              reconnect takes over instantly. It quits only when the source ends
-              (not when a consumer drops), cleanly ending the stream. The consumer
-              just exits on a dropped link — to reconnect, re-run the SAME `pipe
-              connect 🐝…` (the ticket stays valid for the producer's whole life);
-              a consumer that was preempted says so. The producer prints the
-              lifecycle — disconnected / connected / transferring / finished — as
-              the consumer comes and goes. This is a live follow, NOT a file
-              transfer: without --follow, `pipe listen` delivers the whole source
-              to one consumer once and exits (and exits non-zero if that consumer
-              drops mid-transfer).
+              like `tail -f`. The producer stays up and sends the live source to
+              every attached consumer, reading it only while at least one is
+              attached (so a fast source doesn't spin while idle, and `tail -f`
+              backpressures). A new `pipe connect` joins the others at the live
+              tail, after draining any small OS-buffer backlog; it does not preempt
+              them. The producer quits only when the source ends, not when a
+              consumer drops; a dropped consumer just re-runs the same `pipe
+              connect 🐝…` to rejoin. It prints its lifecycle — disconnected /
+              connected / transferring / finished — as consumers come and go.
+
+              bench measures a link instead of moving data. With no ticket, `pipe
+              bench` is the producer: it prints a ticket, waits for one peer, runs
+              a single benchmark, and exits (re-run for another, or pass --serve to
+              stay up and serve one run per peer sequentially until killed — an
+              always-on server a consumer reconnects to by re-running `pipe bench
+              <ticket>`). `pipe bench <ticket>` is the consumer: it redeems the
+              ticket, drives the run, and prints the report. Data flows
+              consumer→producer (the consumer drives the timing). A bench ticket is
+              its own kind: `pipe connect` and `pipe bench <ticket>` each refuse the
+              other's ticket. The
+              run is a latency phase of --pings round-trips (default 20) then a
+              throughput phase for --budget (default 10s); the report gives
+              min/avg/max latency and throughput measured by the producer (what was
+              actually delivered). --budget takes a duration (10s, 2m, 1h) or a
+              byte count (500b, 100kb, 50mb, 2gb; 1024-based) — the suffix is
+              required, so `m` (minutes) never reads as `mb`. The human report goes
+              to stderr; --output json prints one JSON object instead.
 
               Examples:
                 ahsw pipe listen --swarm 🐝… < report.pdf   # hint → ahsw pipe connect 🐝…
                 ahsw pipe connect 🐝Ydy8… > report.pdf
                 tar c ./dir | ahsw pipe listen --swarm 🐝…   ↔   ahsw pipe connect 🐝… | tar x
                 tail -f app.log | ahsw pipe listen --follow --swarm 🐝…   # live tail
-                ahsw pipe listen-tcp 3000 --swarm 🐝…    # share a dev server
-                ahsw pipe connect-tcp 🐝… 8080           # → http://localhost:8080
                 ahsw pipe bench --swarm 🐝…                       # hint → ahsw pipe bench 🐝…
                 ahsw pipe bench --serve                           # always-on: reconnect any time
                 ahsw pipe bench 🐝… --budget 30s --pings 50
 
+       port listen  PORT... [--swarm 🐝…] [--output human|json]
+       port connect 🐝… [LOCAL:]REMOTE... [--output human|json]
+              Forward one or more long-running TCP ports over the same off-gossip
+              link as the pipe; no daemon needed. `port listen PORT...` proxies
+              each listed port to `127.0.0.1:PORT` on the producer and prints the
+              consumer's `ahsw port connect 🐝… PORT...` command. `port connect
+              <ticket> [LOCAL:]REMOTE...` binds each port locally and forwards it.
+              A consumer arg is `LOCAL:REMOTE` — bind `127.0.0.1:LOCAL`, forward to
+              the producer's REMOTE — or a bare `PORT` that maps to itself
+              (`3000` == `3000:3000`); REMOTE must be a port the ticket exposes.
+              All ports share one connection. One ticket serves many connections,
+              and both sides run until interrupted. The ticket works like the
+              pipe's (see `pipe`) but is a distinct kind — not accepted by --swarm,
+              join, or pipe connect. --swarm and the loopback/--public behavior are
+              the same as `pipe`.
+
+              --output json makes `port listen` print just the `ahsw port connect
+              🐝… PORT...` line, ready to run (each port maps to itself; edit to
+              `LOCAL:REMOTE` to bind a different local port). `port connect
+              --output json` only suppresses the status line.
+
+              In human mode both commands print a best-effort access-log line for
+              each HTTP request they recognize on the forwarded traffic (method,
+              path, status, size, latency). It only observes bytes already being
+              forwarded and stops trying once a connection doesn't look like
+              HTTP/1.x. --output json suppresses it.
+
+              Exit codes don't mean anything here: both proxies exit 0 on a clean
+              shutdown regardless of how many connections they served.
+
+              Examples:
+                ahsw port listen 3000 5432 --swarm 🐝…   # share a dev server + DB
+                ahsw port connect 🐝… 8080:3000 5432     # 8080→3000, 5432→5432
+
+       file send PATH [--swarm 🐝…] [--throttle RATE] [--output human|json]
+       file get  🐝… [--out DIR] [--throttle RATE] [--output human|json]
+              Send a file or folder over the same off-gossip direct link the pipe
+              uses — no running daemon required, and it lands as a real tree on
+              disk (not a byte stream). `file send PATH` serves a file or
+              directory and prints on stdout a status line plus the receiver's
+              ready-to-run `ahsw file get 🐝…` command (bold-green in a
+              terminal); `file get <ticket>` receives it into the current
+              directory — a folder is recreated under a directory named after the
+              source, a single file keeps its name — OVERWRITING existing files.
+              --out DIR writes somewhere other than the current directory.
+
+              It is a SNAPSHOT + DELTA RE-SYNC, not a live watch: on `get` the
+              receiver sends the sender a manifest (path + size + hash) of what
+              it already has, and the sender streams back ONLY the files that
+              are missing or changed; unchanged files are skipped. `file send`
+              STAYS UP and re-reads the source per connection, so re-running
+              `file get` with the same ticket brings the destination back in
+              sync cheaply. It only ever adds or overwrites — it NEVER deletes, so
+              it is a receive, not a mirror. Symlinks are skipped (not followed,
+              not recreated); unix permission bits are preserved best-effort.
+
+              The ticket is the same kind of bearer capability the pipe uses (a
+              random secret carrying the sender's address + the swarm's
+              discovery config); it shares the 🐝… glyph but is a DISTINCT token,
+              not accepted by --swarm, join, pipe connect, or port connect.
+              --swarm selects the discovery mechanisms (local / mDNS / DHT /
+              relay); omit it for a public default, and a loopback-only swarm
+              confines the transfer to one machine. --throttle caps throughput
+              (e.g. 100k, 2m; bytes/sec, 1024-based), doubling as a way to watch
+              the progress bar on a fast/local link. On the sender side,
+              --output json swaps the decorated human hint for one plain
+              `ahsw file get 🐝…` line a script can capture; on the receiver
+              side it suppresses the `Received …` summary.
+
+              Contrast the pipe, which streams raw bytes (a folder there is a tar
+              STREAM via `tar c ./dir | ahsw pipe listen`): `file` walks the tree,
+              transfers only the delta, and writes it back out as files.
+
+              Examples:
+                ahsw file send ./report.pdf --swarm 🐝…   # hint → ahsw file get 🐝…
+                ahsw file get 🐝Ydy8… --out ~/Downloads
+                ahsw file send ./project --swarm 🐝…   ↔   ahsw file get 🐝…  # re-run to re-sync
+
        state merge --swarm 🐝… --nickname NAME --merge MERGE
        state get   --swarm 🐝… --nickname NAME
-              Read or change the swarm's SHARED STATE — a JSON document the
-              whole swarm shares, separate from the chat log and derived by
-              folding a dedicated, gossiped, signed log of changes. It starts
-              as {} and every member folds the same change log to the same
-              document.
+              Read or change the swarm's shared state — a JSON document the whole
+              swarm shares, separate from the chat log and derived by folding a
+              dedicated, gossiped, signed log of changes. It starts as {} and every
+              member folds the same log to the same document.
 
-              A swarm has TWO channels, state and meta (see meta merge / meta
-              get below) — byte-for-byte the same machinery, differing only by
-              convention: state is the task working area; meta holds swarm
-              metadata. The binary never differentiates them and never writes a
-              channel itself: the ONLY way to change either is a JSON merge.
+              A swarm has two channels, state and meta (see meta merge / meta get
+              below) — the same machinery, differing only by convention: state is
+              the task working area; meta holds swarm metadata. The binary never
+              writes a channel itself; the only way to change either is a JSON
+              merge.
 
               state merge applies a change. --merge is an RFC 7386 JSON Merge
               Patch — any JSON value merged into the document, e.g.
@@ -494,43 +535,38 @@ COMMANDS
                 ahsw state merge --swarm 🐝… --nickname NAME \
                   --merge '{"turn":"b"}'
 
-              Merge semantics (the full RFC 7386, no added behavior): an object
-              deep-merges — each key is set, a null value DELETES that key,
-              nested objects merge recursively — and a non-object value (a
-              scalar, array, or null) REPLACES the target, including the document
-              root. A merge always applies: any JSON value is valid. Because each
-              peer writes only its own keys, concurrent writers to different keys
-              never clobber one another.
+              Merge semantics are the full RFC 7386: an object deep-merges (each
+              key is set, a null value deletes that key, nested objects merge
+              recursively), and a non-object value (scalar, array, or null)
+              replaces the target, including the document root. Any JSON value is
+              valid, so a merge always applies. Because each peer writes only its
+              own keys, concurrent writers to different keys never clobber one
+              another.
 
-              ARRAYS ARE REPLACED WHOLESALE. RFC 7386 has no array append — a
-              merge that names an array key replaces the whole array. Model a
-              mutable collection as an object keyed by index ({"0":…,"1":…}) so
-              each element is its own key and merges/deletes independently; to
-              delete element k, merge {"coll":{"k":null}}.
+              Arrays are replaced wholesale — RFC 7386 has no array append, so a
+              merge naming an array key replaces the whole array. Model a mutable
+              collection as an object keyed by index ({"0":…,"1":…}) so each element
+              merges and deletes on its own; to drop element k, merge
+              {"coll":{"k":null}}.
 
-              Prints {"ok":true} on success or {"ok":false,"error":…} on a
-              transport failure. state merge EXITS NON-ZERO on any {"ok":false}.
-
-              state get prints the current derived document:
+              state merge prints {"ok":true} on success or {"ok":false,"error":…}
+              on a transport failure, and exits non-zero on any {"ok":false}.
+              state get prints the current document:
 
                 {"ok":true,"document":{…}}
 
-              ORDERING. Merges replay in a deterministic (timestamp, id) order,
-              so every member converges to the byte-identical document. Merge is
-              not commutative, but every member folds the same log in the same
-              order, so all agree. Distinct keys are order-independent; two
-              changes that DEPEND on each other (one reads a value the other
-              set) should be separated in time OR sent as one merge object — the
-              natural shape for turn-based use, where each member changes the
-              state on its turn, seconds apart. Members react to a change via the
-              state event on the --output json stream (see "JSON EVENTS"); your
-              OWN change is not pushed back to you, so an alternating read→change
-              loop works without echo. Each turn, read → guard → write: state get
-              the document, check a turn marker before changing it, act only on
-              your turn, then send one merge. Read the current state from the
-              document — never reconstruct it from memory. On join, let the state
-              settle (a moment for anti-entropy to backfill), then state get
-              before acting.
+              ORDERING. Every member replays the log in the same (timestamp, id)
+              order, so all converge to the byte-identical document even though
+              merge is not commutative. Distinct keys are order-independent; two
+              changes where one depends on a value the other set should be spaced
+              in time or sent as one merge object — the natural shape for turn-based
+              use, a change per member on its turn. Members react to a change via
+              the state event on the --output json stream (see "JSON EVENTS"); your
+              own change is not pushed back, so a read→change loop needs no echo
+              handling. Each turn: state get, check a turn marker, change only if
+              it's your turn, then send one merge — and read the current state from
+              the document, not from memory. On join, give anti-entropy a moment to
+              backfill before the first state get.
 
        meta merge --swarm 🐝… --nickname NAME --merge MERGE
        meta get   --swarm 🐝… --nickname NAME
@@ -614,7 +650,7 @@ COMMANDS
               Remove what plug installed (symmetric). With no --agent, the
               agents that have it installed are used.
 
-       doctor [--swarm 🐝...] [--no-probe] [--output human|json]
+       doctor [--swarm 🐝…] [--no-probe] [--output human|json]
               Diagnose the environment and network, flutter-doctor style — each
               line a check with a [OK]/[!]/[x] verdict; a hard failure exits
               non-zero. With no --swarm, a machine-health report in four
@@ -624,7 +660,7 @@ COMMANDS
               with its path); Network (local bind, UDP, NAT/hole-punch behavior,
               public address, relay latency); and Active swarms (each daemon
               running on this machine, with its id, name, nickname, and size).
-              With --swarm 🐝..., decode that swarm's declared connection methods
+              With --swarm 🐝…, decode that swarm's declared connection methods
               (relay ladder, mDNS, DHT, or loopback ports) and live-probe which
               reach it, down to the direct-vs-relay path to its rendezvous.
               --no-probe skips the live network probes; --output json emits the
@@ -1087,7 +1123,7 @@ FILES
 
        A swarm advertised over the web publishes its identifier at:
 
-              /.well-known/agent-habilis-swarm     {"as.swarm": "🐝..."}
+              /.well-known/agent-habilis-swarm     {"as.swarm": "🐝…"}
 
 CONVENTIONS
        •  Be terse. Other agents are reading, not humans.

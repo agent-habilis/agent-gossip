@@ -15,16 +15,13 @@ use crate::protocol::swarm::{LookupOpts, Swarm};
 
 mod bench;
 mod consume;
-mod http_log;
 mod produce;
-mod progress;
-mod tcp;
+pub(crate) mod progress;
 mod ticket;
 
 pub(crate) use bench::{BenchBudget, BenchOpts, connect_bench, listen_bench, parse_budget};
 pub(crate) use consume::connect;
 pub(crate) use produce::listen;
-pub(crate) use tcp::{connect_tcp, listen_tcp};
 
 /// ALPN for the pipe protocol — a raw bidirectional QUIC stream, distinct from
 /// the gossip overlay's `GOSSIP_ALPN`.
@@ -187,6 +184,44 @@ mod tests {
         assert_eq!(good_sink, b"top secret");
     }
 
+    // ── single-shot fan-out (`pipe listen < file`) ────────────────────────
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn single_shot_fans_out_full_file_to_each_consumer() {
+        // A seekable file: `serve_fanout` re-opens it per consumer, so each of the
+        // three consumers gets its own full copy from byte 0.
+        let data: Vec<u8> = (0u8..=255).cycle().take(50_000).collect();
+        let path = std::env::temp_dir().join("ahsw-pipe-fanout-test.bin");
+        tokio::fs::write(&path, &data).await.expect("write temp file");
+
+        let (endpoint, ticket, secret) = super::produce::bind(LookupOpts::loopback())
+            .await
+            .expect("bind producer");
+        let producer = {
+            let endpoint = endpoint.clone();
+            let path = path.clone();
+            tokio::spawn(async move {
+                let _ = super::produce::serve_fanout(&endpoint, &secret, &path, None).await;
+            })
+        };
+
+        // Three consumers redeem the same ticket concurrently; each gets the whole
+        // file. `join!` runs them on one task — enough to exercise the fan-out.
+        let fetch = || async {
+            let mut sink = Vec::new();
+            fetch_once(&ticket, &mut sink, None).await.expect("fetch");
+            sink
+        };
+        let (got_a, got_b, got_c) = tokio::join!(fetch(), fetch(), fetch());
+        assert_eq!(got_a, data, "consumer A gets the full file");
+        assert_eq!(got_b, data, "consumer B gets the full file");
+        assert_eq!(got_c, data, "consumer C gets the full file");
+
+        endpoint.close().await; // ends serve_fanout's accept loop
+        producer.await.expect("producer task");
+        let _ = tokio::fs::remove_file(&path).await;
+    }
+
     // ── live-follow (`pipe listen --follow`) ──────────────────────────────
 
     use super::ticket::PipeTicket;
@@ -262,37 +297,22 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn follow_second_consumer_preempts_the_first() {
+    async fn follow_broadcasts_to_all_attached_consumers() {
         let (mut source, reader) = tokio::io::duplex(64 * 1024);
         let (ticket, producer) = follow_producer(reader).await;
 
-        // A attaches and is receiving.
+        // Two consumers attach with the same ticket. A newer `connect` JOINS the
+        // fan-out — it does not preempt — so both receive the same live bytes.
         let (_endpoint_a, _conn_a, _send_a, mut recv_a) = attach_follow(&ticket).await.expect("A");
-        source.write_all(b"aaaa").await.expect("write a");
+        let (_endpoint_b, _conn_b, _send_b, mut recv_b) = attach_follow(&ticket).await.expect("B");
+
+        source.write_all(b"live").await.expect("write");
         let mut got_a = [0u8; 4];
-        recv_a.read_exact(&mut got_a).await.expect("A receives");
-        assert_eq!(&got_a, b"aaaa");
-
-        // B attaches with the same ticket — it preempts A and takes the slot
-        // (instant reconnect; the single live slot is "latest connect wins").
-        let (_endpoint_b, _conn_b, _send_b, mut recv_b) =
-            attach_follow(&ticket).await.expect("B preempts A");
-
-        // A is cut off — its next read resolves to an error, not live data.
-        let a_cut = tokio::time::timeout(
-            std::time::Duration::from_secs(5),
-            recv_a.read_exact(&mut [0u8; 1]),
-        )
-        .await
-        .expect("A's read must resolve, not hang")
-        .is_err();
-        assert!(a_cut, "A must be cut off once B preempts it");
-
-        // B now receives the live stream.
-        source.write_all(b"bbbb").await.expect("write b");
         let mut got_b = [0u8; 4];
+        recv_a.read_exact(&mut got_a).await.expect("A receives");
         recv_b.read_exact(&mut got_b).await.expect("B receives");
-        assert_eq!(&got_b, b"bbbb");
+        assert_eq!(&got_a, b"live", "A gets the broadcast");
+        assert_eq!(&got_b, b"live", "B gets the same broadcast");
 
         drop(source);
         producer.await.expect("producer task");
@@ -313,8 +333,9 @@ mod tests {
         // A's process dies — drop everything it holds.
         drop((recv_a, send_a, conn_a, endpoint_a));
 
-        // B reconnects (re-running `connect`); "latest connect wins" preempts the
-        // zombie A still in the slot, so B attaches on the first try.
+        // B reconnects (re-running `connect`) and joins the fan-out; A's zombie is
+        // reaped later (a failed broadcast write or the idle sweep) without
+        // affecting B, which attaches on the first try.
         let (_eb, _cb, _sb, mut recv_b) = attach_follow(&ticket).await.expect("B reconnects");
 
         // B gets the live tail from here on — chunk3, never the earlier chunk1.
@@ -348,23 +369,24 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn follow_idle_drop_frees_slot_via_closed() {
+    async fn follow_idle_drop_is_reaped_so_source_pauses() {
         let (mut source, reader) = tokio::io::duplex(64 * 1024);
         let (ticket, producer) = follow_producer(reader).await;
 
         // A attaches, then leaves CLEANLY while the source is idle (no data flows),
-        // so the only thing that can free the slot is the producer's `closed()`
-        // arm — not a write error. `endpoint.close()` AWAITS the CONNECTION_CLOSE
-        // flush, so the producer reliably sees it (a bare `conn.close()` + drop
-        // can race the driver teardown and lose the frame).
+        // so the only thing that can drop it from the set is the producer's idle
+        // reap (`close_reason()` on the keepalive tick) — not a failed write.
+        // `endpoint.close()` AWAITS the CONNECTION_CLOSE flush, so the producer
+        // reliably sees it (a bare `conn.close()` + drop can race the driver
+        // teardown and lose the frame). The 300ms wait exceeds the 250ms tick.
         let (endpoint_a, _conn_a, _send_a, _recv_a) = attach_follow(&ticket).await.expect("A");
         endpoint_a.close().await;
         tokio::time::sleep(std::time::Duration::from_millis(300)).await;
 
-        // With the slot freed by `closed()`, data written now is buffered for the
-        // next consumer rather than consumed by the zombie. If `closed()` failed
-        // to free the slot, this byte is lost to the dead A and B's read hangs —
-        // the timeout turns that regression into a clean failure.
+        // With A reaped and the set empty, the source is no longer read, so data
+        // written now is buffered for the next consumer rather than consumed by the
+        // zombie. If the reap failed, this byte is lost to the dead A and B's read
+        // hangs — the timeout turns that regression into a clean failure.
         source.write_all(b"after-idle-drop").await.expect("write");
         let (_e, _c, _s, mut recv_b) = attach_follow(&ticket).await.expect("B");
         let got = tokio::time::timeout(std::time::Duration::from_secs(5), async {

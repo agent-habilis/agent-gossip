@@ -25,8 +25,9 @@ mod plug;
 
 pub(crate) use args::Cli;
 use args::{
-    Commands, CreateOpts, ExchangeOpts, MetaAction, MetaOpts, MsgOpts, OutputFormat, PeersOpts,
-    PingOpts, PipeAction, PollOpts, ReadyOpts, SharedServerOpts, StateAction, StateOpts,
+    Commands, CreateOpts, ExchangeOpts, FileAction, MetaAction, MetaOpts, MsgOpts, OutputFormat,
+    PeersOpts, PingOpts, PipeAction, PollOpts, PortAction, ReadyOpts, SharedServerOpts,
+    StateAction, StateOpts,
 };
 
 /// `join` has no `--public`/`--name`: both are encoded in the `🐝…`
@@ -84,6 +85,8 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
         Commands::Exchange { opts } => exchange(opts).await,
         Commands::Peers { opts } => peers(opts).await,
         Commands::Pipe { action } => pipe(action).await,
+        Commands::Port { action } => port(action).await,
+        Commands::File { action } => file(action).await,
         Commands::State { opts } => state(opts).await,
         Commands::Meta { opts } => meta(opts).await,
         Commands::Ready { opts } => ready(opts).await,
@@ -356,30 +359,6 @@ async fn pipe(action: PipeAction) -> Result<()> {
             .await
         }
         PipeAction::Connect { ticket, throttle } => crate::pipe::connect(&ticket, throttle).await,
-        PipeAction::ListenTcp {
-            port,
-            swarm,
-            output,
-        } => {
-            crate::pipe::listen_tcp(
-                swarm.as_ref().map(crate::protocol::SwarmId::as_str),
-                &format!("127.0.0.1:{port}"),
-                matches!(output, OutputFormat::Json),
-            )
-            .await
-        }
-        PipeAction::ConnectTcp {
-            ticket,
-            port,
-            output,
-        } => {
-            crate::pipe::connect_tcp(
-                &ticket,
-                &format!("127.0.0.1:{port}"),
-                matches!(output, OutputFormat::Json),
-            )
-            .await
-        }
         PipeAction::Bench {
             ticket,
             serve,
@@ -409,6 +388,67 @@ async fn pipe(action: PipeAction) -> Result<()> {
                     crate::pipe::connect_bench(&ticket, opts, json).await
                 }
             }
+        }
+    }
+}
+
+/// `ahsw port` — a standalone, off-gossip TCP forward (no daemon). `listen`
+/// exposes a local port and prints the connect command on stdout; `connect`
+/// redeems a ticket and forwards each local connection to the producer.
+async fn port(action: PortAction) -> Result<()> {
+    match action {
+        PortAction::Listen {
+            ports,
+            swarm,
+            output,
+        } => {
+            crate::port::listen(
+                swarm.as_ref().map(crate::protocol::SwarmId::as_str),
+                &ports,
+                matches!(output, OutputFormat::Json),
+            )
+            .await
+        }
+        PortAction::Connect {
+            ticket,
+            ports,
+            output,
+        } => crate::port::connect(&ticket, &ports, matches!(output, OutputFormat::Json)).await,
+    }
+}
+
+/// `ahsw file` — a standalone, off-gossip file/folder transfer (no daemon).
+/// `send` serves a path and prints the `get` command on stdout; `get` redeems a
+/// ticket and receives the tree, fetching only what has changed.
+async fn file(action: FileAction) -> Result<()> {
+    match action {
+        FileAction::Send {
+            path,
+            swarm,
+            throttle,
+            output,
+        } => {
+            crate::file::send(
+                swarm.as_ref().map(crate::protocol::SwarmId::as_str),
+                &path,
+                throttle,
+                matches!(output, OutputFormat::Json),
+            )
+            .await
+        }
+        FileAction::Get {
+            ticket,
+            out,
+            throttle,
+            output,
+        } => {
+            crate::file::get(
+                &ticket,
+                out.as_deref(),
+                throttle,
+                matches!(output, OutputFormat::Json),
+            )
+            .await
         }
     }
 }

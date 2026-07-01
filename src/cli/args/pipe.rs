@@ -46,33 +46,6 @@ pub(crate) enum PipeAction {
         #[arg(long, value_parser = parse_rate)]
         throttle: Option<u64>,
     },
-    /// Forward a local TCP service to peers; prints a `🐝…` ticket on stdout.
-    ///
-    /// Each peer that connects with the ticket is proxied to `127.0.0.1:PORT`;
-    /// one ticket serves many connections (e.g. share a local dev server).
-    ListenTcp {
-        /// The local port to expose, on `127.0.0.1` (e.g. `3000`).
-        port: u16,
-        /// Swarm id whose discovery config the pipe should use (omit ⇒ public).
-        #[arg(long)]
-        swarm: Option<SwarmId>,
-        /// Output format: human (default) or json (a direct connect-tcp line).
-        #[arg(long, default_value = "human")]
-        output: OutputFormat,
-    },
-    /// Bind a local TCP port and forward each connection over the pipe.
-    ///
-    /// Each connection to `127.0.0.1:PORT` is forwarded to the producer's TCP
-    /// target.
-    ConnectTcp {
-        /// The `🐝…` ticket printed by `ahsw pipe listen-tcp`.
-        ticket: String,
-        /// Local port to listen on, on `127.0.0.1` (e.g. `8080`).
-        port: u16,
-        /// Output format: human (default) or json (suppresses the status line).
-        #[arg(long, default_value = "human")]
-        output: OutputFormat,
-    },
     /// Benchmark a direct pipe link's throughput + round-trip latency.
     ///
     /// With no ticket, act as the producer: bind, print the `ahsw pipe bench 🐝…`
@@ -116,7 +89,8 @@ pub(crate) enum PipeAction {
 
 /// Parse a throttle rate like `512`, `100k`, `2m`, `1g` into bytes/sec. Suffixes
 /// are 1024-based (`k` = `KiB`, `m` = `MiB`, `g` = `GiB`); a bare number is bytes.
-fn parse_rate(raw: &str) -> Result<u64, String> {
+/// Shared with `file` (the other throttled transfer command).
+pub(super) fn parse_rate(raw: &str) -> Result<u64, String> {
     let raw = raw.trim();
     let (digits, mult): (&str, u64) = match raw.chars().last() {
         // The suffix is ASCII, so trimming one byte is on a char boundary.
