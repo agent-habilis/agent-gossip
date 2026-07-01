@@ -380,6 +380,25 @@ async fn pipe(action: PipeAction) -> Result<()> {
             )
             .await
         }
+        PipeAction::ListenBench { swarm, output } => {
+            crate::pipe::listen_bench(
+                swarm.as_ref().map(crate::protocol::SwarmId::as_str),
+                matches!(output, OutputFormat::Json),
+            )
+            .await
+        }
+        PipeAction::ConnectBench {
+            ticket,
+            budget,
+            pings,
+            output,
+        } => {
+            let opts = crate::pipe::BenchOpts {
+                budget: budget.unwrap_or_default(),
+                pings,
+            };
+            crate::pipe::connect_bench(&ticket, opts, matches!(output, OutputFormat::Json)).await
+        }
     }
 }
 

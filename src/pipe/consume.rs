@@ -2,7 +2,7 @@
 
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use iroh::Endpoint;
 use iroh::endpoint::{Connection, ConnectionError, RecvStream, SendStream};
 use tokio::io::{AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -21,10 +21,20 @@ const RETRY_DELAY: Duration = Duration::from_secs(3);
 /// Redeem `ticket` and stream the producer's bytes to stdout.
 ///
 /// # Errors
-/// A malformed ticket, an unreachable producer, or a truncated transfer (the
-/// producer vanished mid-stream) — the caller then exits non-zero.
+/// A malformed or bench ticket, an unreachable producer, or a truncated
+/// transfer (the producer vanished mid-stream) — the caller then exits
+/// non-zero. A bench ticket is rejected up front: past the handshake, its
+/// producer speaks the bench plan-header protocol instead of sending the
+/// length header this path expects next, which would otherwise hang both
+/// sides waiting on each other.
 pub(crate) async fn connect(ticket: &str, throttle: Option<u64>) -> Result<()> {
     let ticket = PipeTicket::decode(ticket)?;
+    if ticket.bench {
+        bail!(
+            "this ticket is for `pipe connect-bench`, not `pipe connect` — \
+             run `pipe listen` on the producer to get a plain pipe ticket"
+        );
+    }
     let endpoint = build_participant_endpoint(&ticket.lookups).await?;
     let mut stdout = tokio::io::stdout();
     let result = if ticket.follow {
@@ -49,15 +59,14 @@ pub(crate) async fn connect(ticket: &str, throttle: Option<u64>) -> Result<()> {
     }
 }
 
-/// Dial the producer (retrying while its address propagates), open the bi-stream,
-/// present the bearer secret, and read the 8-byte length header. Shared by the
-/// single-shot and live-follow consumers so their dial + handshake stay in
-/// lock-step. Returns the connection, both streams, and the advertised length
-/// (`None` = unknown / live).
-async fn dial_and_handshake(
+/// Dial the producer (retrying while its address propagates), open the
+/// bi-stream, and present the bearer secret. Shared by every consumer
+/// protocol — single-shot and live-follow read the length header next
+/// (below); bench (`pipe connect-bench`) sends its own plan header instead.
+pub(super) async fn dial_and_authenticate(
     endpoint: &Endpoint,
     ticket: &PipeTicket,
-) -> Result<(Connection, SendStream, RecvStream, Option<u64>)> {
+) -> Result<(Connection, SendStream, RecvStream)> {
     add_peer_addr(endpoint, ticket.addr.clone())?;
 
     let start = Instant::now();
@@ -76,12 +85,23 @@ async fn dial_and_handshake(
         }
     };
 
-    // Authenticate with the bearer secret first; the producer then sends an 8-byte
-    // length header (u64::MAX = unknown/live).
-    let (mut send, mut recv) = conn.open_bi().await.context("opening the stream failed")?;
+    let (mut send, recv) = conn.open_bi().await.context("opening the stream failed")?;
     send.write_all(&ticket.secret)
         .await
         .context("sending the ticket secret failed")?;
+    Ok((conn, send, recv))
+}
+
+/// [`dial_and_authenticate`] plus the 8-byte length header the producer sends
+/// next (`u64::MAX` = unknown/live) — shared by the single-shot and
+/// live-follow consumers so their dial + handshake stay in lock-step. Returns
+/// the connection, both streams, and the advertised length (`None` = unknown
+/// / live).
+async fn dial_and_handshake(
+    endpoint: &Endpoint,
+    ticket: &PipeTicket,
+) -> Result<(Connection, SendStream, RecvStream, Option<u64>)> {
+    let (conn, send, mut recv) = dial_and_authenticate(endpoint, ticket).await?;
     let mut header = [0u8; 8];
     recv.read_exact(&mut header)
         .await

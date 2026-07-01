@@ -3,7 +3,8 @@
 //! target port, the swarm's discovery config, and the producer's address.
 //! Payload layout: `secret(32) ‖ flags(1) ‖ target_port(2) ‖ lookups ‖
 //! address-json` (lookups is self-delimiting, so the address occupies the
-//! remainder). `flags` bit 0 is the live-follow mode; the rest are reserved.
+//! remainder). `flags` bit 0 is the live-follow mode, bit 1 is the benchmark
+//! protocol (`pipe listen-bench` / `pipe connect-bench`); the rest are reserved.
 //! `target_port` is a big-endian `u16`, `0` meaning "none" (the single-shot
 //! stdio pipe has no target port; only `listen-tcp` sets it).
 
@@ -27,6 +28,10 @@ pub(crate) struct PipeTicket {
     /// The producer's local target port (`listen-tcp` only — `None` for the
     /// single-shot stdio pipe), so the consumer can display it.
     pub target_port: Option<u16>,
+    /// A `listen-bench` ticket — the benchmark protocol, not the plain
+    /// byte-stream one. Lets `connect` and `connect-bench` each refuse the
+    /// other's ticket instead of hanging deep in the wrong protocol.
+    pub bench: bool,
 }
 
 impl PipeTicket {
@@ -34,7 +39,7 @@ impl PipeTicket {
     pub(crate) fn encode(&self) -> String {
         let mut payload = Vec::with_capacity(SECRET_LEN + 1 + 2 + 8 + 64);
         payload.extend_from_slice(&self.secret);
-        payload.push(u8::from(self.follow));
+        payload.push(u8::from(self.follow) | (u8::from(self.bench) << 1));
         payload.extend_from_slice(&self.target_port.unwrap_or(0).to_be_bytes());
         self.lookups.encode_into(&mut payload);
         let addr_json = serde_json::to_vec(&endpoint_addr_to_json(&self.addr))
@@ -57,6 +62,7 @@ impl PipeTicket {
         secret.copy_from_slice(secret_slice);
         let flags = *payload.get(SECRET_LEN).context("ticket missing flags")?;
         let follow = flags & 1 != 0;
+        let bench = flags & 0b10 != 0;
         let port_slice = payload
             .get(SECRET_LEN + 1..SECRET_LEN + 3)
             .context("ticket missing target port")?;
@@ -76,6 +82,7 @@ impl PipeTicket {
             lookups,
             follow,
             target_port,
+            bench,
         })
     }
 }
@@ -96,6 +103,7 @@ mod tests {
             lookups: LookupOpts::public_preset(),
             follow: false,
             target_port: None,
+            bench: false,
         };
         let encoded = ticket.encode();
         assert!(encoded.starts_with("🐝"));
@@ -105,6 +113,7 @@ mod tests {
         assert_eq!(decoded.lookups, LookupOpts::public_preset());
         assert!(!decoded.follow);
         assert_eq!(decoded.target_port, None);
+        assert!(!decoded.bench);
     }
 
     #[test]
@@ -117,6 +126,7 @@ mod tests {
             lookups: LookupOpts::loopback(),
             follow: true,
             target_port: None,
+            bench: false,
         };
         let decoded = PipeTicket::decode(&ticket.encode()).expect("decode");
         assert!(decoded.follow);
@@ -132,9 +142,27 @@ mod tests {
             lookups: LookupOpts::loopback(),
             follow: false,
             target_port: Some(8080),
+            bench: false,
         };
         let decoded = PipeTicket::decode(&ticket.encode()).expect("decode");
         assert_eq!(decoded.target_port, Some(8080));
+    }
+
+    #[test]
+    fn bench_flag_round_trips_independently_of_follow() {
+        let id = SecretKey::from_bytes(&[11u8; 32]).public();
+        let addr = EndpointAddr::new(id).with_ip_addr("127.0.0.1:4242".parse().unwrap());
+        let ticket = PipeTicket {
+            addr,
+            secret: [9u8; SECRET_LEN],
+            lookups: LookupOpts::loopback(),
+            follow: false,
+            target_port: None,
+            bench: true,
+        };
+        let decoded = PipeTicket::decode(&ticket.encode()).expect("decode");
+        assert!(decoded.bench);
+        assert!(!decoded.follow);
     }
 
     #[test]

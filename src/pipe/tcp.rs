@@ -36,6 +36,7 @@ pub(crate) async fn listen_tcp(swarm: Option<&str>, target: &str, json: bool) ->
     ticket.target_port = port;
     super::announce(
         json,
+        "Forwarding",
         &format!(
             "{target} → swarm{}",
             port.map(|port| format!(":{port}")).unwrap_or_default()

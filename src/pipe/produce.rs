@@ -35,7 +35,8 @@ pub(crate) async fn listen(
     ticket.follow = follow;
     super::announce(
         json,
-        "waiting for a peer to connect…",
+        "Waiting",
+        "for a peer to connect",
         &format!("ahsw pipe connect {}", ticket.encode()),
     );
     let result = if follow {
@@ -78,17 +79,20 @@ pub(crate) async fn bind(lookups: LookupOpts) -> Result<(Endpoint, PipeTicket, [
         lookups,
         follow: false,
         target_port: None,
+        bench: false,
     };
     Ok((endpoint, ticket, secret))
 }
 
 /// Accept one incoming connection, take its bi-stream, and verify the bearer
 /// secret. The consumer opens the bi-stream and writes the secret first.
+/// `pub(super)`: shared with `bench.rs`, which runs its own protocol after
+/// authenticating rather than `serve`'s length-header + byte-stream one.
 ///
 /// # Errors
 /// A failed handshake or a bad secret (the caller drops the connection and
 /// waits for another); a bad secret is closed with code 1.
-async fn authenticate(
+pub(super) async fn authenticate(
     incoming: Incoming,
     secret: &[u8; SECRET_LEN],
 ) -> Result<(Connection, SendStream, RecvStream)> {
