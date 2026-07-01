@@ -62,11 +62,7 @@ impl CreateOpts {
     /// Resolve the `--advertise` flag's absent/bare/valued shape into a
     /// [`DirectorySelection`] (mirrors `LookupArgs::to_set` for `--relay`).
     pub(crate) fn advertise_selection(&self) -> DirectorySelection {
-        match &self.advertise {
-            None => DirectorySelection::Unset,
-            Some(None) => DirectorySelection::Default,
-            Some(Some(directory)) => DirectorySelection::Named(directory.clone()),
-        }
+        DirectorySelection::from_flag(self.advertise.clone())
     }
 }
 

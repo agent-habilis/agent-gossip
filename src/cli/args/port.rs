@@ -1,8 +1,11 @@
 use clap::Subcommand;
 
+use super::lookup::LookupArgs;
 use super::output::OutputFormat;
+use super::shared::DirectoryTuningArgs;
 use crate::port::PortMapping;
 use crate::protocol::SwarmId;
+use crate::protocol::swarm::SwarmName;
 
 /// The `ahsw port` actions — TCP forwarding over a direct, off-gossip link.
 #[derive(Subcommand, Debug)]
@@ -17,9 +20,30 @@ pub(crate) enum PortAction {
         /// The local ports to expose, on `127.0.0.1` (e.g. `3000 5432`).
         #[arg(required = true)]
         ports: Vec<u16>,
-        /// Swarm id whose discovery config the forward should use (omit ⇒ public).
+        /// Swarm id whose discovery config the forward should use (omit ⇒
+        /// public). Alternative to the `--mdns`/`--dht`/`--relay` flags —
+        /// pass one or the other.
         #[arg(long)]
         swarm: Option<SwarmId>,
+        /// Which lookup mechanisms the forward uses (same flags as `create`):
+        /// naming any uses only those; naming none is the all-on public preset.
+        #[command(flatten)]
+        lookups: LookupArgs,
+        /// Advertise this forward's ticket in a directory so a peer can find
+        /// it with `ahsw port discover` — no `🐝…` to copy. Bare `--advertise`
+        /// ⇒ the default `global` directory; `--advertise <name>` ⇒ that named
+        /// directory (share the name with the peer, like a code word). The ad
+        /// carries the full bearer ticket, so anyone browsing that directory
+        /// can forward to these ports.
+        #[arg(long, num_args(0..=1))]
+        #[expect(
+            clippy::option_option,
+            reason = "clap optional-value flag: absent/bare/valued are three distinct directory states (see DirectorySelection)"
+        )]
+        advertise: Option<Option<SwarmName>>,
+        /// Hidden directory-tuning knobs (test suite only).
+        #[command(flatten)]
+        tuning: DirectoryTuningArgs,
         /// Output format: human (default) or json (a direct connect line).
         #[arg(long, default_value = "human")]
         output: OutputFormat,
@@ -38,6 +62,35 @@ pub(crate) enum PortAction {
         #[arg(required = true, value_parser = parse_port_mapping)]
         ports: Vec<PortMapping>,
         /// Output format: human (default) or json (suppresses the status line).
+        #[arg(long, default_value = "human")]
+        output: OutputFormat,
+    },
+    /// Browse a directory for advertised port forwards and connect to one —
+    /// the receiver side of `port listen --advertise`, no `🐝…` to copy.
+    ///
+    /// Human mode runs a live picker and forwards on selection; `--output
+    /// json` streams `ticket_found`/`ticket_lost` lines instead (the agent
+    /// captures a ticket and runs `port connect` itself).
+    Discover {
+        /// The directory to browse — the name the producer passed to
+        /// `--advertise` (omit for the default `global` directory).
+        #[arg(default_value = crate::protocol::swarm::DEFAULT_DIRECTORY)]
+        name: SwarmName,
+        /// Ports to forward on pick, as `LOCAL:REMOTE` or a bare `PORT`
+        /// (maps to itself). Omit to forward **every** advertised port to
+        /// the same local port.
+        #[arg(value_parser = parse_port_mapping)]
+        ports: Vec<PortMapping>,
+        /// Which lookup mechanisms reach the directory (same flags as
+        /// `discover`): must match the advertiser's. Naming none is the
+        /// all-on public preset.
+        #[command(flatten)]
+        lookups: LookupArgs,
+        /// Hidden directory-tuning knobs (test suite only).
+        #[command(flatten)]
+        tuning: DirectoryTuningArgs,
+        /// Output format: human (default) — the live picker — or json, one
+        /// `ticket_found`/`ticket_lost` line per directory change.
         #[arg(long, default_value = "human")]
         output: OutputFormat,
     },

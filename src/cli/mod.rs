@@ -21,7 +21,9 @@ pub(crate) mod agent;
 mod args;
 mod discover;
 mod doctor;
+mod picker;
 mod plug;
+mod ticket_discover;
 
 pub(crate) use args::Cli;
 use args::{
@@ -84,9 +86,12 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
         Commands::Ping { opts } => ping(opts).await,
         Commands::Exchange { opts } => exchange(opts).await,
         Commands::Peers { opts } => peers(opts).await,
-        Commands::Pipe { action } => pipe(action).await,
-        Commands::Port { action } => port(action).await,
-        Commands::File { action } => file(action).await,
+        // Boxed like the event-loop futures above: the discover arms hold a
+        // picker + connect chain that puts these over clippy's 16 KiB
+        // `large_futures` budget.
+        Commands::Pipe { action } => Box::pin(pipe(action)).await,
+        Commands::Port { action } => Box::pin(port(action)).await,
+        Commands::File { action } => Box::pin(file(action)).await,
         Commands::State { opts } => state(opts).await,
         Commands::Meta { opts } => meta(opts).await,
         Commands::Ready { opts } => ready(opts).await,
@@ -346,12 +351,18 @@ async fn pipe(action: PipeAction) -> Result<()> {
     match action {
         PipeAction::Listen {
             swarm,
+            lookups,
+            advertise,
+            tuning,
             throttle,
             output,
             follow,
         } => {
+            crate::util::tuning::init(tuning.tuning());
             crate::pipe::listen(
                 swarm.as_ref().map(crate::protocol::SwarmId::as_str),
+                lookups.to_set(),
+                crate::protocol::swarm::DirectorySelection::from_flag(advertise),
                 throttle,
                 matches!(output, OutputFormat::Json),
                 follow,
@@ -359,6 +370,29 @@ async fn pipe(action: PipeAction) -> Result<()> {
             .await
         }
         PipeAction::Connect { ticket, throttle } => crate::pipe::connect(&ticket, throttle).await,
+        PipeAction::Discover {
+            name,
+            lookups,
+            tuning,
+            throttle,
+            output,
+        } => {
+            crate::util::tuning::init(tuning.tuning());
+            let json = matches!(output, OutputFormat::Json);
+            match ticket_discover::discover_ticket(
+                name,
+                lookups.to_set(),
+                crate::protocol::token::TokenType::Pipe,
+                json,
+            )
+            .await?
+            {
+                Some(ticket) => {
+                    ticket_discover::interruptible(crate::pipe::connect(&ticket, throttle)).await
+                }
+                None => Ok(()),
+            }
+        }
         PipeAction::ListenBench { swarm, output } => {
             crate::pipe::listen_bench(
                 swarm.as_ref().map(crate::protocol::SwarmId::as_str),
@@ -389,10 +423,16 @@ async fn port(action: PortAction) -> Result<()> {
         PortAction::Listen {
             ports,
             swarm,
+            lookups,
+            advertise,
+            tuning,
             output,
         } => {
+            crate::util::tuning::init(tuning.tuning());
             crate::port::listen(
                 swarm.as_ref().map(crate::protocol::SwarmId::as_str),
+                lookups.to_set(),
+                crate::protocol::swarm::DirectorySelection::from_flag(advertise),
                 &ports,
                 matches!(output, OutputFormat::Json),
             )
@@ -403,6 +443,37 @@ async fn port(action: PortAction) -> Result<()> {
             ports,
             output,
         } => crate::port::connect(&ticket, &ports, matches!(output, OutputFormat::Json)).await,
+        PortAction::Discover {
+            name,
+            ports,
+            lookups,
+            tuning,
+            output,
+        } => {
+            crate::util::tuning::init(tuning.tuning());
+            let json = matches!(output, OutputFormat::Json);
+            match ticket_discover::discover_ticket(
+                name,
+                lookups.to_set(),
+                crate::protocol::token::TokenType::Port,
+                json,
+            )
+            .await?
+            {
+                Some(ticket) => {
+                    // No explicit mappings ⇒ forward every advertised port to
+                    // the same local port.
+                    let mappings = if ports.is_empty() {
+                        crate::port::identity_mappings(&ticket)?
+                    } else {
+                        ports
+                    };
+                    ticket_discover::interruptible(crate::port::connect(&ticket, &mappings, json))
+                        .await
+                }
+                None => Ok(()),
+            }
+        }
     }
 }
 
@@ -414,11 +485,17 @@ async fn file(action: FileAction) -> Result<()> {
         FileAction::Send {
             path,
             swarm,
+            lookups,
+            advertise,
+            tuning,
             throttle,
             output,
         } => {
+            crate::util::tuning::init(tuning.tuning());
             crate::file::send(
                 swarm.as_ref().map(crate::protocol::SwarmId::as_str),
+                lookups.to_set(),
+                crate::protocol::swarm::DirectorySelection::from_flag(advertise),
                 &path,
                 throttle,
                 matches!(output, OutputFormat::Json),
@@ -438,6 +515,36 @@ async fn file(action: FileAction) -> Result<()> {
                 matches!(output, OutputFormat::Json),
             )
             .await
+        }
+        FileAction::Discover {
+            name,
+            lookups,
+            tuning,
+            out,
+            throttle,
+            output,
+        } => {
+            crate::util::tuning::init(tuning.tuning());
+            let json = matches!(output, OutputFormat::Json);
+            match ticket_discover::discover_ticket(
+                name,
+                lookups.to_set(),
+                crate::protocol::token::TokenType::File,
+                json,
+            )
+            .await?
+            {
+                Some(ticket) => {
+                    ticket_discover::interruptible(crate::file::get(
+                        &ticket,
+                        out.as_deref(),
+                        throttle,
+                        json,
+                    ))
+                    .await
+                }
+                None => Ok(()),
+            }
         }
     }
 }

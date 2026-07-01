@@ -11,8 +11,11 @@ use iroh::endpoint::{Connection, Incoming, RecvStream, SendStream};
 use rand::RngCore;
 use tokio::net::TcpStream;
 
+use crate::directory::ticket::TicketAd;
 use crate::lookup::build_endpoint;
-use crate::protocol::swarm::LookupOpts;
+use crate::protocol::swarm::{
+    DirectorySelection, LookupOpts, LookupSet, resolve_transfer_lookups, validate_advertise,
+};
 
 use super::http_log::{human_bytes, human_duration};
 use super::ticket::PortTicket;
@@ -20,12 +23,21 @@ use super::{PORT_ALPN, SECRET_LEN, STREAM_HEADER_LEN, wait_online};
 
 /// Producer: expose `ports` (each on `127.0.0.1`) to peers, multiplexed over one
 /// shared connection per consumer. Prints the consumer's `ahsw port connect`
-/// command on stdout; serves many connections and many streams.
+/// command on stdout; serves many connections and many streams. The discovery
+/// config comes from `swarm` or the create-style `flags`; `advertise`
+/// re-broadcasts the ticket into a directory so a peer can find it with
+/// `ahsw port discover`.
 ///
 /// # Errors
-/// Endpoint bind / discovery-config parse failures, or too many ports for the
-/// ticket's one-byte count field.
-pub(crate) async fn listen(swarm: Option<&str>, ports: &[u16], json: bool) -> Result<()> {
+/// Endpoint bind / discovery-config resolution failures, `--advertise` on an
+/// unreachable config, or too many ports for the ticket's one-byte count field.
+pub(crate) async fn listen(
+    swarm: Option<&str>,
+    flags: LookupSet,
+    advertise: DirectorySelection,
+    ports: &[u16],
+    json: bool,
+) -> Result<()> {
     let mut deduped: Vec<u16> = Vec::with_capacity(ports.len());
     for &port in ports {
         if !deduped.contains(&port) {
@@ -37,13 +49,27 @@ pub(crate) async fn listen(swarm: Option<&str>, ports: &[u16], json: bool) -> Re
     if deduped.len() > usize::from(u8::MAX) {
         bail!("too many ports (max {})", u8::MAX);
     }
-    let lookups = super::swarm_lookups(swarm)?;
-    let (endpoint, ticket, secret) = bind(lookups, deduped.clone()).await?;
+    let lookups = resolve_transfer_lookups(swarm, flags)?;
+    validate_advertise(&advertise, &lookups)?;
+    let (endpoint, ticket, secret) = bind(lookups.clone(), deduped.clone()).await?;
     let ports_hint = deduped
         .iter()
         .map(u16::to_string)
         .collect::<Vec<_>>()
         .join(" ");
+    let _advertiser = match advertise.directory() {
+        Some(directory) => {
+            let ad = TicketAd {
+                ticket: ticket.encode(),
+                label: Some(format!("ports {ports_hint}")),
+            };
+            if !json {
+                crate::util::output::status("Advertising", &format!("in #{directory} directory"));
+            }
+            Some(crate::embed::spawn_ticket_advertiser(directory, lookups, &ad)?)
+        }
+        None => None,
+    };
     super::announce(
         json,
         &format!("127.0.0.1 ports [{ports_hint}] → swarm"),

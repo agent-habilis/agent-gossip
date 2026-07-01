@@ -62,15 +62,22 @@ pub(crate) async fn run(cfg: EventLoopConfig) -> Result<()> {
     // Every driver-derived fact in one place. Only the CLI exits the
     // process on quit and binds the unix socket; in-process drivers
     // (embed / MCP) take typed requests on `req_rx` instead.
-    let (external_quit_rx, external_msg_tx, external_req_rx, ipc_listener_disabled, exit_on_quit) =
-        match driver {
-            DriverMode::Cli => (None, None, None, false, true),
-            DriverMode::InProcess {
-                msg_tx,
-                req_rx,
-                quit_rx,
-            } => (Some(quit_rx), msg_tx, Some(req_rx), true, false),
-        };
+    let (
+        external_quit_rx,
+        external_msg_tx,
+        external_req_rx,
+        ipc_listener_disabled,
+        exit_on_quit,
+        handle_signals,
+    ) = match driver {
+        DriverMode::Cli => (None, None, None, false, true, true),
+        DriverMode::InProcess {
+            msg_tx,
+            req_rx,
+            quit_rx,
+            handle_signals,
+        } => (Some(quit_rx), msg_tx, Some(req_rx), true, false, handle_signals),
+    };
 
     let started = Instant::now();
     // CLI `create`/`join` daemons default their state file into the swarm's
@@ -118,7 +125,19 @@ pub(crate) async fn run(cfg: EventLoopConfig) -> Result<()> {
     // `gossip::handle_gossip_event`.
 
     let intervals = build_maintenance_intervals().await;
-    let quit_rx = spawn_quit_signal_tasks(exit_on_quit);
+    let quit_rx = if handle_signals {
+        spawn_quit_signal_tasks(exit_on_quit)
+    } else {
+        // A session inside a foreground command that owns its own lifetime
+        // (a `--advertise` transfer, a directory browse) must not register
+        // process-wide signal handlers — doing so suppresses the OS
+        // default-terminate forever and the host command stops dying on
+        // ctrl-c. Give the loop a quit channel that never fires instead;
+        // shutdown comes from `external_quit_rx` / drop.
+        let (quit_tx, quit_rx) = mpsc::channel::<()>(1);
+        std::mem::forget(quit_tx);
+        quit_rx
+    };
 
     // Flip `ready` to `true` only once the daemon can actually serve, then
     // re-write the state file (the earlier write reported `ready: false`).

@@ -122,6 +122,15 @@ pub(crate) enum DriverMode {
         msg_tx: Option<broadcast::Sender<Message>>,
         req_rx: mpsc::Receiver<SessionRequest>,
         quit_rx: mpsc::Receiver<()>,
+        /// Whether this session registers the process-wide
+        /// ctrl-c/SIGTERM/SIGHUP/SIGQUIT listeners for a graceful leave.
+        /// Registering any tokio signal handler suppresses the OS
+        /// default-terminate for the *whole process, permanently* — so a
+        /// session living inside a foreground command that owns its own
+        /// lifetime (a `--advertise` transfer's directory session, a
+        /// directory browse) must pass `false`, or ctrl-c stops killing
+        /// the host command.
+        handle_signals: bool,
     },
 }
 
