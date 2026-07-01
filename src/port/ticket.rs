@@ -1,10 +1,10 @@
 //! The port ticket — a `🐝` token of [`TokenType::Port`] carrying everything a
 //! consumer needs to dial the producer: the bearer secret, the producer's
-//! target port, the swarm's discovery config, and the producer's address.
-//! Payload layout: `secret(32) ‖ target_port(2) ‖ lookups ‖ address-json`
-//! (lookups is self-delimiting, so the address occupies the remainder).
-//! `target_port` is a big-endian `u16` — a port ticket always forwards to a
-//! concrete port, so unlike the pipe ticket there is no "none" sentinel.
+//! target ports, the swarm's discovery config, and the producer's address.
+//! Payload layout: `secret(32) ‖ port_count(1) ‖ ports(2×count, BE) ‖ lookups ‖
+//! address-json` (lookups is self-delimiting, so the address occupies the
+//! remainder). A port ticket always exposes at least one port; each is
+//! multiplexed over the shared connection.
 
 use anyhow::{Context, Result, bail};
 use iroh::EndpointAddr;
@@ -20,16 +20,23 @@ pub(crate) struct PortTicket {
     pub addr: EndpointAddr,
     pub secret: [u8; SECRET_LEN],
     pub lookups: LookupOpts,
-    /// The producer's local target port, so the consumer can display it.
-    pub target_port: u16,
+    /// The producer's local target ports. Each is multiplexed over the shared
+    /// connection; the consumer displays them and picks which to forward.
+    pub target_ports: Vec<u16>,
 }
 
 impl PortTicket {
     /// Encode as a `🐝` token (`type = port`).
     pub(crate) fn encode(&self) -> String {
-        let mut payload = Vec::with_capacity(SECRET_LEN + 2 + 8 + 64);
+        let mut payload = Vec::with_capacity(SECRET_LEN + 1 + 2 * self.target_ports.len() + 64);
         payload.extend_from_slice(&self.secret);
-        payload.extend_from_slice(&self.target_port.to_be_bytes());
+        // `listen` caps the list well under 255; clamp defensively so the count
+        // byte can never disagree with the ports that follow it.
+        let count = u8::try_from(self.target_ports.len()).unwrap_or(u8::MAX);
+        payload.push(count);
+        for port in self.target_ports.iter().take(usize::from(count)) {
+            payload.extend_from_slice(&port.to_be_bytes());
+        }
         self.lookups.encode_into(&mut payload);
         let addr_json = serde_json::to_vec(&endpoint_addr_to_json(&self.addr))
             .expect("EndpointAddr JSON always serializes");
@@ -49,11 +56,20 @@ impl PortTicket {
         let secret_slice = payload.get(..SECRET_LEN).context("ticket too short")?;
         let mut secret = [0u8; SECRET_LEN];
         secret.copy_from_slice(secret_slice);
-        let port_slice = payload
-            .get(SECRET_LEN..SECRET_LEN + 2)
-            .context("ticket missing target port")?;
-        let target_port = u16::from_be_bytes([port_slice[0], port_slice[1]]);
-        let mut pos = SECRET_LEN + 2;
+        let count = usize::from(
+            *payload
+                .get(SECRET_LEN)
+                .context("ticket missing port count")?,
+        );
+        let mut pos = SECRET_LEN + 1;
+        let mut target_ports = Vec::with_capacity(count);
+        for _ in 0..count {
+            let port_slice = payload
+                .get(pos..pos + 2)
+                .context("ticket truncated in port list")?;
+            target_ports.push(u16::from_be_bytes([port_slice[0], port_slice[1]]));
+            pos += 2;
+        }
         let lookups = LookupOpts::decode_from(&payload, &mut pos)?;
         let addr_json = payload.get(pos..).context("ticket missing address")?;
         let value: serde_json::Value =
@@ -63,7 +79,7 @@ impl PortTicket {
             addr,
             secret,
             lookups,
-            target_port,
+            target_ports,
         })
     }
 }
@@ -82,7 +98,7 @@ mod tests {
             addr: addr.clone(),
             secret: [9u8; SECRET_LEN],
             lookups: LookupOpts::public_preset(),
-            target_port: 3000,
+            target_ports: vec![3000],
         };
         let encoded = ticket.encode();
         assert!(encoded.starts_with("🐝"));
@@ -90,21 +106,21 @@ mod tests {
         assert_eq!(decoded.addr.id, addr.id);
         assert_eq!(decoded.secret, [9u8; SECRET_LEN]);
         assert_eq!(decoded.lookups, LookupOpts::public_preset());
-        assert_eq!(decoded.target_port, 3000);
+        assert_eq!(decoded.target_ports, vec![3000]);
     }
 
     #[test]
-    fn target_port_round_trips() {
+    fn target_ports_round_trip() {
         let id = SecretKey::from_bytes(&[7u8; 32]).public();
         let addr = EndpointAddr::new(id).with_ip_addr("127.0.0.1:4242".parse().unwrap());
         let ticket = PortTicket {
             addr,
             secret: [9u8; SECRET_LEN],
             lookups: LookupOpts::loopback(),
-            target_port: 8080,
+            target_ports: vec![8080, 9090, 5432],
         };
         let decoded = PortTicket::decode(&ticket.encode()).expect("decode");
-        assert_eq!(decoded.target_port, 8080);
+        assert_eq!(decoded.target_ports, vec![8080, 9090, 5432]);
     }
 
     #[test]

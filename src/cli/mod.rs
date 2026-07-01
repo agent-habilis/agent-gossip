@@ -26,7 +26,8 @@ mod plug;
 pub(crate) use args::Cli;
 use args::{
     Commands, CreateOpts, ExchangeOpts, MetaAction, MetaOpts, MsgOpts, OutputFormat, PeersOpts,
-    PingOpts, PipeAction, PollOpts, PortAction, ReadyOpts, SharedServerOpts, StateAction, StateOpts,
+    PingOpts, PipeAction, PollOpts, PortAction, ReadyOpts, SharedServerOpts, StateAction,
+    StateOpts,
 };
 
 /// `join` has no `--public`/`--name`: both are encoded in the `🐝…`
@@ -385,29 +386,22 @@ async fn pipe(action: PipeAction) -> Result<()> {
 async fn port(action: PortAction) -> Result<()> {
     match action {
         PortAction::Listen {
-            port,
+            ports,
             swarm,
             output,
         } => {
             crate::port::listen(
                 swarm.as_ref().map(crate::protocol::SwarmId::as_str),
-                &format!("127.0.0.1:{port}"),
+                &ports,
                 matches!(output, OutputFormat::Json),
             )
             .await
         }
         PortAction::Connect {
             ticket,
-            port,
+            ports,
             output,
-        } => {
-            crate::port::connect(
-                &ticket,
-                &format!("127.0.0.1:{port}"),
-                matches!(output, OutputFormat::Json),
-            )
-            .await
-        }
+        } => crate::port::connect(&ticket, &ports, matches!(output, OutputFormat::Json)).await,
     }
 }
 

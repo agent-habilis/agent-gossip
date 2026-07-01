@@ -34,8 +34,8 @@ SYNOPSIS
        ahsw pipe listen-bench  [--swarm 🐝…] [--output human|json]
        ahsw pipe connect-bench 🐝… [--budget BUDGET] [--pings N] [--output human|json]
 
-       ahsw port listen  PORT [--swarm 🐝…] [--output human|json]
-       ahsw port connect 🐝… PORT [--output human|json]
+       ahsw port listen  PORT... [--swarm 🐝…] [--output human|json]
+       ahsw port connect 🐝… [LOCAL:]REMOTE... [--output human|json]
 
        ahsw state merge --swarm 🐝… --nickname NAME --merge MERGE
        ahsw state get   --swarm 🐝… --nickname NAME
@@ -444,29 +444,38 @@ COMMANDS
                 ahsw pipe listen-bench --swarm 🐝…                 # hint → ahsw pipe connect-bench 🐝…
                 ahsw pipe connect-bench 🐝… --budget 30s --pings 50
 
-       port listen  PORT [--swarm 🐝…] [--output human|json]
-       port connect 🐝… PORT [--output human|json]
-              Forward a long-running TCP service over the same off-gossip direct
-              link the pipe uses — no running daemon required. `port listen PORT`
-              serves inbound peers by proxying each to a local TCP service on
-              `127.0.0.1:PORT`, and prints on stdout a status line plus the
-              consumer's `ahsw port connect 🐝… PORT` command (bold-blue in a
-              terminal); `port connect <ticket> PORT` binds `127.0.0.1:PORT` and
-              forwards each connection to the producer. Unlike the single-shot
-              stdio pipe, ONE ticket serves MANY connections and both are
-              long-running proxies — they run until interrupted, not single-shot
-              transfers. The ticket is the same kind of bearer capability the pipe
-              uses (a random secret carrying the producer's address + the swarm's
-              discovery config); it shares the 🐝… glyph but is a DISTINCT token,
-              not accepted by --swarm, join, or pipe connect. --swarm selects the
+       port listen  PORT... [--swarm 🐝…] [--output human|json]
+       port connect 🐝… [LOCAL:]REMOTE... [--output human|json]
+              Forward one or more long-running TCP services over the same
+              off-gossip direct link the pipe uses — no running daemon required.
+              `port listen PORT...` serves inbound peers by proxying each to a
+              local TCP service on `127.0.0.1:PORT` for every listed port, and
+              prints on stdout a status line plus the consumer's ready-to-run
+              `ahsw port connect 🐝… PORT...` command (bold-blue in a terminal);
+              `port connect <ticket> [LOCAL:]REMOTE...` binds a local port for
+              each and forwards to the producer. Each consumer arg is
+              `LOCAL:REMOTE` — bind `127.0.0.1:LOCAL` and forward to the
+              producer's REMOTE port — or a bare `PORT` that maps to itself
+              (`3000` == `3000:3000`); REMOTE must be a port the ticket
+              advertises. The mapping lets the two sides differ (handy when both
+              run on one host), like `ssh -L`. All ports and flows multiplex over
+              a SINGLE shared connection — every accepted local flow is one stream
+              on that connection, not a fresh dial. Unlike the single-shot stdio
+              pipe, ONE ticket serves MANY connections and both are long-running
+              proxies — they run until interrupted, not single-shot transfers. The
+              ticket is the same kind of bearer capability the pipe uses (a random
+              secret carrying the producer's address + the swarm's discovery
+              config); it shares the 🐝… glyph but is a DISTINCT token, not
+              accepted by --swarm, join, or pipe connect. --swarm selects the
               discovery mechanisms (local / mDNS / DHT / relay); omit it for a
               public default, and a loopback-only swarm confines the forward to one
               machine.
 
               On the producer side, --output json swaps the decorated human hint
               for one plain line a script can capture: `port listen` prints
-              `ahsw port connect 🐝… PORT`, a template whose PORT the consumer
-              replaces with the local port to bind. On the consumer side,
+              `ahsw port connect 🐝… PORT...` with the exposed ports filled in,
+              ready to run as-is (each maps to itself; edit to `LOCAL:REMOTE` to
+              bind a different local port). On the consumer side,
               `port connect --output json` emits no machine product at all — it
               only suppresses the status line.
 
@@ -483,8 +492,8 @@ COMMANDS
               any did), so do not read the exit code as "a transfer happened."
 
               Examples:
-                ahsw port listen 3000 --swarm 🐝…    # share a dev server
-                ahsw port connect 🐝… 8080           # → http://localhost:8080
+                ahsw port listen 3000 5432 --swarm 🐝…   # share a dev server + DB
+                ahsw port connect 🐝… 8080:3000 5432     # 8080→3000, 5432→5432
 
        state merge --swarm 🐝… --nickname NAME --merge MERGE
        state get   --swarm 🐝… --nickname NAME

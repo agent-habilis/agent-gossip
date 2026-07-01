@@ -1,87 +1,177 @@
-//! The port consumer: bind a local TCP listener and forward each accepted
-//! connection over a fresh connection to the producer.
+//! The port consumer: bind a local TCP listener per port and forward each
+//! accepted connection over the shared connection to the producer.
 
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::Instant;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
+use iroh::endpoint::Connection;
 use iroh::{Endpoint, EndpointAddr};
 use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::Mutex;
+use tokio::task::JoinSet;
 
 use crate::lookup::{add_peer_addr, build_participant_endpoint};
 
 use super::http_log::{human_bytes, human_duration};
 use super::ticket::PortTicket;
-use super::{PORT_ALPN, SECRET_LEN};
+use super::{PORT_ALPN, SECRET_LEN, STREAM_HEADER_LEN};
 
-/// Consumer: bind a local TCP listener; forward each accepted connection over a
-/// fresh connection to the producer.
+/// One `port connect` port mapping: bind `local` on the consumer and forward to
+/// the producer's `remote` target port. A bare `PORT` arg maps a port to
+/// itself; `LOCAL:REMOTE` maps across (so both sides can share a host).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PortMapping {
+    pub local: u16,
+    pub remote: u16,
+}
+
+/// A lazily-dialed, self-healing QUIC connection shared across every port and
+/// flow of one `port connect` invocation. `get()` reuses the live connection
+/// and redials once it has closed, so all local TCP flows multiplex over a
+/// single connection instead of each dialing its own.
+#[derive(Clone)]
+pub(super) struct SharedConnection {
+    endpoint: Endpoint,
+    addr: EndpointAddr,
+    conn: Arc<Mutex<Option<Connection>>>,
+}
+
+impl SharedConnection {
+    pub(super) fn new(endpoint: Endpoint, addr: EndpointAddr) -> Self {
+        Self {
+            endpoint,
+            addr,
+            conn: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    /// The shared connection, dialing (or redialing after a close) as needed.
+    pub(super) async fn get(&self) -> Result<Connection> {
+        let mut guard = self.conn.lock().await;
+        if let Some(conn) = guard.as_ref() {
+            // `close_reason()` is the sync liveness check — `None` while live.
+            if conn.close_reason().is_none() {
+                return Ok(conn.clone());
+            }
+        }
+        let conn = self
+            .endpoint
+            .connect(self.addr.clone(), PORT_ALPN)
+            .await
+            .map_err(|error| anyhow::anyhow!("connecting to the port producer failed: {error}"))?;
+        *guard = Some(conn.clone());
+        Ok(conn)
+    }
+}
+
+/// Consumer: bind a local TCP listener per port and forward each accepted
+/// connection over the shared connection to the producer.
 ///
 /// # Errors
-/// A malformed ticket, or failure to bind the local listener / accept.
-pub(crate) async fn connect(ticket: &str, local_addr: &str, json: bool) -> Result<()> {
+/// A malformed ticket, a requested port the ticket never advertised, or failure
+/// to bind a local listener / accept.
+pub(crate) async fn connect(ticket: &str, mappings: &[PortMapping], json: bool) -> Result<()> {
     let ticket = PortTicket::decode(ticket)?;
+    for mapping in mappings {
+        if !ticket.target_ports.contains(&mapping.remote) {
+            bail!(
+                "port {} is not advertised by this ticket (offered: {:?})",
+                mapping.remote,
+                ticket.target_ports
+            );
+        }
+    }
     let endpoint = build_participant_endpoint(&ticket.lookups).await?;
     add_peer_addr(&endpoint, ticket.addr.clone())?;
-    let listener = TcpListener::bind(local_addr)
-        .await
-        .with_context(|| format!("binding local TCP {local_addr} failed"))?;
-    // Status → stdout (stderr is errors-only); this side carries no stdout data.
-    // `json` has no machine product here, so it just suppresses the status line.
-    let target_port = ticket.target_port;
-    tracing::info!("swarm:{target_port} → {local_addr}");
-    if !json {
-        println!("🐝 swarm:{target_port} → {local_addr}");
-    }
-    // The loop only ends on an accept error; close the endpoint before returning
-    // it so iroh shuts down gracefully instead of logging a dropped-endpoint abort.
-    let result: Result<()> = async {
-        loop {
-            let (tcp, peer_addr) = listener
-                .accept()
-                .await
-                .context("accepting a local TCP connection failed")?;
-            let endpoint = endpoint.clone();
-            let addr = ticket.addr.clone();
-            let secret = ticket.secret;
-            tokio::spawn(async move {
-                if let Err(error) =
-                    forward_one(&endpoint, addr, &secret, tcp, peer_addr, json).await
-                {
-                    tracing::debug!(%error, "tcp forward connection ended");
-                }
-            });
+    // Bind every listener up front so a taken port fails fast, before serving.
+    let mut listeners = Vec::with_capacity(mappings.len());
+    for &mapping in mappings {
+        let local = format!("127.0.0.1:{}", mapping.local);
+        let listener = TcpListener::bind(&local)
+            .await
+            .with_context(|| format!("binding local TCP {local} failed"))?;
+        // Status → stdout (stderr is errors-only); this side carries no stdout
+        // data. `json` has no machine product here, so it just suppresses the line.
+        tracing::info!("swarm:{} → {local}", mapping.remote);
+        if !json {
+            println!("🐝 swarm:{} → {local}", mapping.remote);
         }
+        listeners.push((mapping.remote, listener));
+    }
+    let shared = SharedConnection::new(endpoint.clone(), ticket.addr.clone());
+    let secret = ticket.secret;
+    // One accept loop per port; each ends only on its listener's accept error.
+    // The endpoint is closed before returning so iroh tears down gracefully
+    // instead of logging a dropped-endpoint abort. Each loop forwards to the
+    // producer's `remote` port (what travels in the stream header).
+    let mut tasks: JoinSet<Result<()>> = JoinSet::new();
+    for (remote, listener) in listeners {
+        let shared = shared.clone();
+        tasks.spawn(async move { accept_loop(shared, remote, secret, listener, json).await });
+    }
+    let result: Result<()> = async {
+        while let Some(joined) = tasks.join_next().await {
+            joined.context("a forward task panicked")??;
+        }
+        Ok(())
     }
     .await;
     endpoint.close().await;
     result
 }
 
-/// Dial the producer, authenticate, and proxy one local TCP connection.
+/// Accept local TCP connections on one port and forward each over the shared
+/// connection. Ends only on an accept error.
+async fn accept_loop(
+    shared: SharedConnection,
+    port: u16,
+    secret: [u8; SECRET_LEN],
+    listener: TcpListener,
+    json: bool,
+) -> Result<()> {
+    loop {
+        let (tcp, peer_addr) = listener
+            .accept()
+            .await
+            .with_context(|| format!("accepting a local TCP connection on port {port} failed"))?;
+        let shared = shared.clone();
+        tokio::spawn(async move {
+            if let Err(error) = forward_one(&shared, port, &secret, tcp, peer_addr, json).await {
+                tracing::debug!(%error, port, "tcp forward connection ended");
+            }
+        });
+    }
+}
+
+/// Open one bi-stream on the shared connection, send the 34-byte header, and
+/// proxy one local TCP connection over it.
 pub(super) async fn forward_one(
-    endpoint: &Endpoint,
-    addr: EndpointAddr,
+    shared: &SharedConnection,
+    port: u16,
     secret: &[u8; SECRET_LEN],
     tcp: TcpStream,
     peer_addr: SocketAddr,
     json: bool,
 ) -> Result<()> {
-    let conn = endpoint
-        .connect(addr, PORT_ALPN)
-        .await
-        .map_err(|error| anyhow::anyhow!("connecting to the port producer failed: {error}"))?;
+    let conn = shared.get().await?;
     let (mut send, recv) = conn.open_bi().await?;
-    send.write_all(secret)
+    let mut header = [0u8; STREAM_HEADER_LEN];
+    header[..SECRET_LEN].copy_from_slice(secret);
+    header[SECRET_LEN..].copy_from_slice(&port.to_be_bytes());
+    send.write_all(&header)
         .await
-        .context("sending the ticket secret failed")?;
+        .context("sending the stream header failed")?;
     let narrate = !json;
-    tracing::info!(%peer_addr, "connected");
+    tracing::info!(%peer_addr, port, "connected");
     let started = Instant::now();
-    let (bytes_up, bytes_down) = super::proxy(tcp, send, recv, None, narrate, true).await;
+    let (bytes_up, bytes_down) =
+        super::proxy(tcp, send, recv, Some(port.to_string()), narrate, true).await;
     let elapsed = started.elapsed();
     tracing::info!(
         %peer_addr,
+        port,
         "disconnected ({}↑ {}↓, {})",
         human_bytes(bytes_up),
         human_bytes(bytes_down),
