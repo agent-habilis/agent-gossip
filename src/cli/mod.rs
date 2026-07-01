@@ -382,34 +382,29 @@ async fn pipe(action: PipeAction) -> Result<()> {
         }
         PipeAction::Bench {
             ticket,
+            serve,
             swarm,
             budget,
             pings,
             output,
         } => {
             let json = matches!(output, OutputFormat::Json);
+            // clap enforces the producer/consumer split: `--serve`/`--swarm`
+            // conflict with a ticket, `--budget`/`--pings` require one. So a
+            // ticket means consumer, its absence means producer.
             match ticket {
                 None => {
-                    if budget.is_some() {
-                        anyhow::bail!(
-                            "`--budget` only applies when connecting to a ticket (`pipe bench 🐝…`)"
-                        );
-                    }
                     crate::pipe::listen_bench(
                         swarm.as_ref().map(crate::protocol::SwarmId::as_str),
+                        serve,
                         json,
                     )
                     .await
                 }
                 Some(ticket) => {
-                    if swarm.is_some() {
-                        anyhow::bail!(
-                            "`--swarm` only applies to the producer (`pipe bench` with no ticket) — a ticket carries its own discovery config"
-                        );
-                    }
                     let opts = crate::pipe::BenchOpts {
                         budget: budget.unwrap_or_default(),
-                        pings,
+                        pings: pings.unwrap_or(20),
                     };
                     crate::pipe::connect_bench(&ticket, opts, json).await
                 }

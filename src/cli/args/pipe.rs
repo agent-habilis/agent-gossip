@@ -77,28 +77,35 @@ pub(crate) enum PipeAction {
     ///
     /// With no ticket, act as the producer: bind, print the `ahsw pipe bench 🐝…`
     /// command on stdout, serve one run against the first peer that connects,
-    /// then exit — re-run for another. With a ticket, act as the consumer:
-    /// redeem it and drive the run, printing a report when done. Data flows
-    /// consumer → producer (the opposite direction from `connect`): the consumer
-    /// drives and times the run, the producer reports what it actually received.
+    /// then exit — re-run for another, or pass `--serve` to stay up and serve
+    /// repeated runs. With a ticket, act as the consumer: redeem it and drive the
+    /// run, printing a report when done. Data flows consumer → producer (the
+    /// opposite direction from `connect`): the consumer drives and times the run,
+    /// the producer reports what it actually received.
     Bench {
         /// The `🐝…` ticket printed by a producer-side `ahsw pipe bench`. Omit
         /// this argument to be the producer instead.
         ticket: Option<String>,
+        /// [producer] Stay up and serve one benchmark per connecting peer,
+        /// sequentially, until killed (instead of exiting after the first run).
+        /// The ticket stays valid for the producer's whole lifetime, so reconnect
+        /// any time by re-running `ahsw pipe bench 🐝…`.
+        #[arg(long, conflicts_with = "ticket")]
+        serve: bool,
         /// [producer] Swarm id whose discovery config (local / mDNS / DHT /
         /// relay) the pipe should use, so it traverses the network like swarm
         /// members do. Omit for a public default.
-        #[arg(long)]
+        #[arg(long, conflicts_with = "ticket")]
         swarm: Option<SwarmId>,
         /// [consumer] How much of the throughput phase to run: a duration
         /// (`10s`, `2m`, `1h`) or a byte count (`500b`, `100kb`, `50mb`, `2gb`).
         /// Defaults to `10s`.
-        #[arg(long, value_parser = crate::pipe::parse_budget)]
+        #[arg(long, requires = "ticket", value_parser = crate::pipe::parse_budget)]
         budget: Option<BenchBudget>,
         /// [consumer] Number of sequential ping/pong round-trips in the latency
-        /// phase.
-        #[arg(long, default_value_t = 20)]
-        pings: u32,
+        /// phase. Defaults to `20`.
+        #[arg(long, requires = "ticket")]
+        pings: Option<u32>,
         /// Output format: human (default) — a bee status + colored hint on the
         /// producer, a report box on the consumer — or json, a single
         /// machine-readable line/object.
