@@ -77,6 +77,7 @@ pub(crate) async fn bind(lookups: LookupOpts) -> Result<(Endpoint, PipeTicket, [
         secret,
         lookups,
         follow: false,
+        target_port: None,
     };
     Ok((endpoint, ticket, secret))
 }

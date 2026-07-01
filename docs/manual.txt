@@ -31,8 +31,8 @@ SYNOPSIS
 
        ahsw pipe listen      [--swarm 🐝…] [--throttle RATE] [--follow] [--output human|json]
        ahsw pipe connect     🐝… [--throttle RATE]
-       ahsw pipe listen-tcp  HOST:PORT [--swarm 🐝…] [--output human|json]
-       ahsw pipe connect-tcp 🐝… --addr HOST:PORT [--output human|json]
+       ahsw pipe listen-tcp  PORT [--swarm 🐝…] [--output human|json]
+       ahsw pipe connect-tcp 🐝… PORT [--output human|json]
 
        ahsw state merge --swarm 🐝… --nickname NAME --merge MERGE
        ahsw state get   --swarm 🐝… --nickname NAME
@@ -353,8 +353,8 @@ COMMANDS
 
        pipe listen [--swarm 🐝…] [--throttle RATE] [--follow] [--output human|json]
        pipe connect 🐝… [--throttle RATE]
-       pipe listen-tcp HOST:PORT [--swarm 🐝…] [--output human|json]
-       pipe connect-tcp 🐝… --addr HOST:PORT [--output human|json]
+       pipe listen-tcp PORT [--swarm 🐝…] [--output human|json]
+       pipe connect-tcp 🐝… PORT [--output human|json]
               A standalone, off-gossip direct byte pipe between machines — no running
               daemon required. `pipe listen` reads stdin and prints, on stdout, a
               status line plus the consumer's ready-to-run `ahsw pipe connect 🐝…`
@@ -371,9 +371,9 @@ COMMANDS
               to reach another host. The data never touches gossip.
 
               A file is `ahsw pipe listen < file`, a folder is a tar stream, and
-              a TCP service is the -tcp pair: `pipe listen-tcp HOST:PORT` forwards
-              inbound peers to a local TCP service, and `pipe connect-tcp
-              <ticket> --addr HOST:PORT` binds a local port that forwards each
+              a TCP service is the -tcp pair: `pipe listen-tcp PORT` forwards
+              inbound peers to a local TCP service on `127.0.0.1:PORT`, and `pipe
+              connect-tcp <ticket> PORT` binds `127.0.0.1:PORT` and forwards each
               connection over the pipe (one ticket serves many connections). The
               -tcp forwarders are long-running services — they run until interrupted,
               not single-shot transfers.
@@ -382,11 +382,19 @@ COMMANDS
               one plain line a script can capture — a literal command, not a JSON
               object. `pipe listen` prints `ahsw pipe connect 🐝…` (strip the
               `ahsw pipe connect ` prefix for the bare ticket); `pipe listen-tcp`
-              prints `ahsw pipe connect-tcp 🐝… --addr HOST:PORT`, a template whose
-              HOST:PORT the consumer replaces with the local port to bind. On the
-              consumer side, `pipe connect-tcp --output json` emits no machine
-              product at all — it only suppresses the status line. (`pipe connect`
-              has no --output: its stdout IS the transferred bytes.)
+              prints `ahsw pipe connect-tcp 🐝… PORT`, a template whose PORT the
+              consumer replaces with the local port to bind. On the consumer side,
+              `pipe connect-tcp --output json` emits no machine product at all — it
+              only suppresses the status line. (`pipe connect` has no --output: its
+              stdout IS the transferred bytes.)
+
+              In human mode, both `-tcp` commands print a best-effort access-log
+              line per HTTP request they recognize on the forwarded traffic
+              (method, path, status, response size, latency). The sniffing only
+              ever observes bytes already being forwarded; it never alters,
+              delays, or buffers them, and silently stops trying the moment a
+              connection doesn't look like HTTP/1.x (TLS, a raw protocol, binary
+              data). --output json suppresses this, same as the startup line.
 
               Exit codes are meaningful only for the single-shot stdio pair
               (`pipe listen` / `pipe connect`): 0 on a fully-delivered stream,
@@ -424,8 +432,8 @@ COMMANDS
                 ahsw pipe connect 🐝Ydy8… > report.pdf
                 tar c ./dir | ahsw pipe listen --swarm 🐝…   ↔   ahsw pipe connect 🐝… | tar x
                 tail -f app.log | ahsw pipe listen --follow --swarm 🐝…   # live tail
-                ahsw pipe listen-tcp 127.0.0.1:3000 --swarm 🐝…    # share a dev server
-                ahsw pipe connect-tcp 🐝… --addr 127.0.0.1:8080    # → http://localhost:8080
+                ahsw pipe listen-tcp 3000 --swarm 🐝…    # share a dev server
+                ahsw pipe connect-tcp 🐝… 8080           # → http://localhost:8080
 
        state merge --swarm 🐝… --nickname NAME --merge MERGE
        state get   --swarm 🐝… --nickname NAME

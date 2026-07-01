@@ -45,13 +45,13 @@ pub(crate) enum PipeAction {
         #[arg(long, value_parser = parse_rate)]
         throttle: Option<u64>,
     },
-    /// Forward a local TCP service to peers; prints a `🐝…` ticket on stderr.
+    /// Forward a local TCP service to peers; prints a `🐝…` ticket on stdout.
     ///
-    /// Each peer that connects with the ticket is proxied to `<host>`; one ticket
-    /// serves many connections (e.g. share a local dev server).
+    /// Each peer that connects with the ticket is proxied to `127.0.0.1:PORT`;
+    /// one ticket serves many connections (e.g. share a local dev server).
     ListenTcp {
-        /// The local `host:port` TCP service to expose (e.g. `127.0.0.1:3000`).
-        host: String,
+        /// The local port to expose, on `127.0.0.1` (e.g. `3000`).
+        port: u16,
         /// Swarm id whose discovery config the pipe should use (omit ⇒ public).
         #[arg(long)]
         swarm: Option<SwarmId>,
@@ -61,13 +61,13 @@ pub(crate) enum PipeAction {
     },
     /// Bind a local TCP port and forward each connection over the pipe.
     ///
-    /// Each connection to `--addr` is forwarded to the producer's TCP target.
+    /// Each connection to `127.0.0.1:PORT` is forwarded to the producer's TCP
+    /// target.
     ConnectTcp {
         /// The `🐝…` ticket printed by `ahsw pipe listen-tcp`.
         ticket: String,
-        /// Local `host:port` to listen on (e.g. `127.0.0.1:8080`).
-        #[arg(long)]
-        addr: String,
+        /// Local port to listen on, on `127.0.0.1` (e.g. `8080`).
+        port: u16,
         /// Output format: human (default) or json (suppresses the status line).
         #[arg(long, default_value = "human")]
         output: OutputFormat,

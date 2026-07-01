@@ -14,6 +14,7 @@ use iroh::Endpoint;
 use crate::protocol::swarm::{LookupOpts, Swarm};
 
 mod consume;
+mod http_log;
 mod produce;
 mod progress;
 mod tcp;
