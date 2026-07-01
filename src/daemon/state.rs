@@ -14,7 +14,7 @@ use super::message_log::MessageLog;
 use crate::daemon::state_file::StateFile;
 use crate::output;
 use crate::protocol::identity::Identity;
-use crate::protocol::{ExchangeId, Message, MessageBody, MessageId, Nickname, PartGroup};
+use crate::protocol::{Message, MessageBody, MessageId, Nickname, PartGroup, TaskId};
 use crate::util::bounded_fifo_set::BoundedFifoSet;
 use crate::util::bounded_queue::BoundedQueue;
 use crate::util::cooldown::Cooldown;
@@ -153,11 +153,11 @@ pub(crate) struct EventLoopState {
     /// it stays bounded by `QUIET_CAP`; `roster_snapshot` only reads it for
     /// peers currently in `quiet`, so a stale entry never surfaces.
     pub quiet_since: HashMap<Nickname, Instant>,
-    /// In-flight exchanges this node is a party to, keyed by `exchange_id`
-    /// (see [`crate::daemon::exchange`]). The coarse state machine + the two
-    /// exchange timers (debounce sweep, ball-owner keepalive) read/write this;
+    /// In-flight tasks this node is a party to, keyed by `task_id`
+    /// (see [`crate::daemon::task`]). The coarse state machine + the two
+    /// task timers (debounce sweep, ball-owner keepalive) read/write this;
     /// the skill owns the content. Third-party relays never insert here.
-    pub exchanges: HashMap<ExchangeId, crate::daemon::exchange::ExchangeRecord>,
+    pub tasks: HashMap<TaskId, crate::daemon::task::TaskRecord>,
     /// Presentation layer: participants for whom we have *surfaced* an
     /// arrival (synthetic `joined`, real `Presence::Joined`, or
     /// `peer_return`). Gates departure surfacing so a participant whose
@@ -416,7 +416,7 @@ impl EventLoopState {
             relink: Cooldown::new(RELINK_COOLDOWN),
             peerinfo: Cooldown::new(RELINK_COOLDOWN),
             participants: HashSet::new(),
-            exchanges: HashMap::new(),
+            tasks: HashMap::new(),
             last_seen: HashMap::new(),
             participant_endpoints: HashMap::new(),
             rendezvous_id: None,
@@ -467,7 +467,7 @@ impl EventLoopState {
     /// in-process `Poll` (embed `fetch` / MCP `fetch_messages`). Reads the
     /// local [`surfaced_events`](Self::surfaced_events) ring, NOT the
     /// cross-node message log, so one `seq` cursor walks chat, presence,
-    /// exchange legs, and the transient events alike. Join-horizon needs no
+    /// task legs, and the transient events alike. Join-horizon needs no
     /// re-filtering here: a pre-join message is never *surfaced*, so it never
     /// entered this ring.
     ///
@@ -639,7 +639,7 @@ impl EventLoopState {
 
     /// Snapshot the live roster (active participants + quiet evictees),
     /// sorted most-recently-seen first. Backs `ahsw peers`, the MCP
-    /// `swarm_info` roster, and the handover sender's target picker /
+    /// `swarm_info` roster, and the task sender's target picker /
     /// nickname validation.
     pub(crate) fn roster_snapshot(&self) -> RosterSnapshot {
         let now = Instant::now();

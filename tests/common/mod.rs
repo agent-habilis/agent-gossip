@@ -22,7 +22,7 @@ pub(crate) use agent_habilis_swarm::RUNTIME_DIR;
 
 pub(crate) const CONNECT_TIMEOUT: Duration = Duration::from_mins(1);
 /// Steady-state delivery budget: how long a meshed peer may take to surface a
-/// message/presence/handover leg. The suite-wide standard for every positive
+/// message/presence/task leg. The suite-wide standard for every positive
 /// (adaptive, break-on-success) delivery wait. A meshed in-process round trip
 /// is normally sub-second; the headroom is for a loaded CI host running the
 /// suite in a **debug** build, where crypto is ~10x slower than release and two
@@ -292,28 +292,25 @@ pub(crate) fn cli_poll_wait(
 /// Spawn `ahsw task …` and return the raw `Output` (no success
 /// assertion — callers that test the unknown-participant
 /// failure paths inspect it).
-pub(crate) fn cli_exchange_raw(
+pub(crate) fn cli_task_raw(
     swarm: &str,
     nickname: &str,
     to: &str,
-    exchange_id: &str,
-    kind: &str,
+    task_id: &str,
     phase: &str,
     text: &str,
 ) -> Output {
     test_cmd()
         .args([
-            "exchange",
+            "task",
             "--swarm",
             swarm,
             "--nickname",
             nickname,
             "--to",
             to,
-            "--exchange-id",
-            exchange_id,
-            "--kind",
-            kind,
+            "--task-id",
+            task_id,
             "--phase",
             phase,
             "--text",
@@ -323,17 +320,16 @@ pub(crate) fn cli_exchange_raw(
         .expect("task command failed to spawn")
 }
 
-/// `cli_exchange_raw` + assert success.
-pub(crate) fn cli_exchange_checked(
+/// `cli_task_raw` + assert success.
+pub(crate) fn cli_task_checked(
     swarm: &str,
     nickname: &str,
     to: &str,
-    exchange_id: &str,
-    kind: &str,
+    task_id: &str,
     phase: &str,
     text: &str,
 ) {
-    let out = cli_exchange_raw(swarm, nickname, to, exchange_id, kind, phase, text);
+    let out = cli_task_raw(swarm, nickname, to, task_id, phase, text);
     assert!(
         out.status.success(),
         "task failed: {}",
@@ -418,8 +414,8 @@ pub(crate) fn cli_channel_merge(
 
 use agent_habilis_swarm::embed::{CreateConfig, JoinConfig, SwarmSession};
 use agent_habilis_swarm::{
-    Channel, ExchangeId, ExchangeKind, ExchangePhase, Message, MessageBody, MessageId, MessageKind,
-    Nickname, OutputEvent, PresenceSubtype, SwarmName,
+    Channel, Message, MessageBody, MessageId, MessageKind, Nickname, OutputEvent, PresenceSubtype,
+    SwarmName, TaskId, TaskPhase,
 };
 use tokio::sync::mpsc::UnboundedReceiver;
 
@@ -629,25 +625,23 @@ impl InProcNode {
         Ok(sent.id)
     }
 
-    /// Send one task leg to `target`, correlated by `exchange_id`; returns the
+    /// Send one task leg to `target`, correlated by `task_id`; returns the
     /// new id. Panics on transport error — addressee validation is
-    /// `broadcast_exchange`'s job. (Returns `Option` purely for caller
+    /// `broadcast_task`'s job. (Returns `Option` purely for caller
     /// ergonomics; a successful leg is always `Some`.)
-    pub(crate) async fn exchange(
+    pub(crate) async fn task(
         &self,
         target: &str,
-        exchange_id: &ExchangeId,
-        kind: ExchangeKind,
-        phase: ExchangePhase,
+        task_id: &TaskId,
+        phase: TaskPhase,
         text: &str,
     ) -> Option<MessageId> {
         let to = Nickname::new(target).expect("valid target nickname");
         let sent = self
             .session
-            .exchange(
+            .task(
                 to,
-                exchange_id.clone(),
-                kind,
+                task_id.clone(),
                 phase,
                 MessageBody::new(text).expect("valid body"),
             )
@@ -658,25 +652,25 @@ impl InProcNode {
 
     /// Captured task legs (any phase; includes self echoes — filter on
     /// `is_self`/author as needed).
-    pub(crate) fn exchanges(&mut self) -> Vec<(&Message, bool)> {
+    pub(crate) fn tasks(&mut self) -> Vec<(&Message, bool)> {
         self.pump();
         self.drained
             .iter()
             .filter_map(|event| match event {
-                OutputEvent::Exchange { msg, is_self } => Some((&**msg, *is_self)),
+                OutputEvent::Task { msg, is_self } => Some((&**msg, *is_self)),
                 _ => None,
             })
             .collect()
     }
 
     /// Wait until a task leg of `phase` (from any author) is surfaced.
-    pub(crate) async fn wait_exchange(&mut self, phase: ExchangePhase, timeout: Duration) -> bool {
+    pub(crate) async fn wait_task(&mut self, phase: TaskPhase, timeout: Duration) -> bool {
         self.wait_for(timeout, |events| {
             events.iter().any(|event| {
                 matches!(
                     event,
-                    OutputEvent::Exchange { msg, .. }
-                        if matches!(&msg.kind, MessageKind::Exchange { phase: got, .. } if *got == phase)
+                    OutputEvent::Task { msg, .. }
+                        if matches!(&msg.kind, MessageKind::Task { phase: got, .. } if *got == phase)
                 )
             })
         })

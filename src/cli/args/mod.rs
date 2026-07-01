@@ -11,7 +11,7 @@ use clap::{Parser, Subcommand};
 mod create;
 mod discover;
 mod doctor;
-mod exchange;
+mod forum;
 mod join;
 mod lookup;
 mod meta;
@@ -24,11 +24,12 @@ mod poll;
 mod ready;
 mod shared;
 mod state;
+mod task;
 
 pub(crate) use create::CreateOpts;
 pub(crate) use discover::DiscoverOpts;
 pub(crate) use doctor::DoctorOpts;
-pub(crate) use exchange::ExchangeOpts;
+pub(crate) use forum::ForumOpts;
 pub(crate) use join::JoinOpts;
 pub(crate) use meta::{MetaAction, MetaOpts};
 pub(crate) use msg::MsgOpts;
@@ -40,6 +41,7 @@ pub(crate) use poll::PollOpts;
 pub(crate) use ready::ReadyOpts;
 pub(crate) use shared::SharedServerOpts;
 pub(crate) use state::{StateAction, StateOpts};
+pub(crate) use task::TaskOpts;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -85,6 +87,12 @@ pub(crate) enum Commands {
         opts: JoinOpts,
     },
 
+    /// Join a public swarm derived from a shared string
+    Forum {
+        #[command(flatten)]
+        opts: ForumOpts,
+    },
+
     /// Post a message to a swarm
     Msg {
         #[command(flatten)]
@@ -116,24 +124,23 @@ pub(crate) enum Commands {
         opts: DiscoverOpts,
     },
 
-    /// Send one leg of an exchange to a specific peer.
+    /// Send one leg of a task to a specific peer.
     ///
-    /// An exchange is a directed, phased conversation correlated by `--exchange-id`
-    /// (offer → accept → context → done → confirm/change). `handover` is
-    /// one behavior built on it. The receiving daemon surfaces an `exchange` (or
-    /// `exchange_progress`) event on its `--output json` stream. `--phase offer`
-    /// validates `--to` against the live roster and errors on an unknown
-    /// nickname.
-    Exchange {
+    /// A task is a directed, phased conversation correlated by `--task-id`
+    /// (offer → accept → context → done → confirm/change). The receiving
+    /// daemon surfaces a `task` (or `task_progress`) event on its
+    /// `--output json` stream. `--phase offer` validates `--to` against the
+    /// live roster and errors on an unknown nickname.
+    Task {
         #[command(flatten)]
-        opts: ExchangeOpts,
+        opts: TaskOpts,
     },
 
     /// List the live participant roster of a swarm.
     ///
     /// Queries the running daemon for current participants (nicknames +
     /// how long ago each was last seen), recency-sorted. Backs the
-    /// handover target picker; prints a JSON object with `participants`
+    /// task target picker; prints a JSON object with `participants`
     /// and `participant_count`.
     Peers {
         #[command(flatten)]

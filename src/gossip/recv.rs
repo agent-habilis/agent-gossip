@@ -16,7 +16,7 @@ use crate::daemon::state::EventLoopState;
 use crate::lifecycle;
 use crate::lookup::add_peer_addr;
 use crate::protocol::identity;
-use crate::protocol::{Channel, ExchangePhase, Message, MessageKind, Nickname};
+use crate::protocol::{Channel, Message, MessageKind, Nickname, TaskPhase};
 use crate::util::tuning::RECLAIM_WINDOW_SECS;
 
 use super::broadcast::{announce_arrival, broadcast_msg, broadcast_peer_info};
@@ -213,26 +213,26 @@ async fn flush_pending(state: &mut EventLoopState, ctx: &HandlerCtx<'_>, edge: &
 /// rate-check, run the lifecycle observer (heartbeat / membership /
 /// surfacing / horizon), dispatch by kind, and finally push to the
 /// message log if loggable.
-/// Process an inbound exchange leg for its addressee: advance the coarse
+/// Process an inbound task leg for its addressee: advance the coarse
 /// state machine (addressee only — a third-party relay tracks nothing), then
 /// surface it via the lifecycle layer. Returns `false` when the caller should
 /// stop processing this message (it is not loggable past this point).
-fn handle_exchange_leg(
+fn handle_task_leg(
     message: &Message,
     to: &Nickname,
-    phase: ExchangePhase,
+    phase: TaskPhase,
     surfaceable: bool,
     state: &mut EventLoopState,
     ctx: &HandlerCtx<'_>,
 ) -> bool {
     // Only the addressee is a party: a third-party relay tracks nothing.
     if to == ctx.author {
-        crate::daemon::exchange::ingest(&mut state.exchanges, message, false, Instant::now());
+        crate::daemon::task::ingest(&mut state.tasks, message, false, Instant::now());
     }
-    lifecycle::handle_exchange(ctx.output, message, to, phase, surfaceable, ctx.author)
+    lifecycle::handle_task(ctx.output, message, to, phase, surfaceable, ctx.author)
 }
 
-/// Surface a reassembled multipart body (a `Msg` or an `Exchange` content leg)
+/// Surface a reassembled multipart body (a `Msg` or a `Task` content leg)
 /// through the same lifecycle path an unsplit message of that kind takes. The
 /// raw parts were already retained; this only surfaces the logical view, so it
 /// does **not** re-retain or re-index.
@@ -246,10 +246,10 @@ fn surface_logical(
         MessageKind::Msg { .. } => {
             lifecycle::handle_msg(ctx.output, logical, surfaceable, ctx.author);
         }
-        MessageKind::Exchange { to, phase, .. } => {
-            handle_exchange_leg(logical, to, *phase, surfaceable, state, ctx);
+        MessageKind::Task { to, phase, .. } => {
+            handle_task_leg(logical, to, *phase, surfaceable, state, ctx);
         }
-        // Only `Msg` and content `Exchange` legs are ever split (the sender
+        // Only `Msg` and content `Task` legs are ever split (the sender
         // refuses to split anything else), so other kinds never reach here.
         MessageKind::Presence { .. }
         | MessageKind::PeerInfo
@@ -416,8 +416,8 @@ async fn handle_gossip_received(content: Bytes, state: &mut EventLoopState, ctx:
                 return;
             }
         }
-        MessageKind::Exchange { to, phase, .. } => {
-            if !handle_exchange_leg(&message, to, *phase, surfaceable, state, ctx) {
+        MessageKind::Task { to, phase, .. } => {
+            if !handle_task_leg(&message, to, *phase, surfaceable, state, ctx) {
                 return;
             }
         }
@@ -470,7 +470,7 @@ fn retain_and_index(
 
 /// Hand a surviving inbound message to the embed facade before kind
 /// routing, so the consumer sees `msg` / `presence` / `peer_info` /
-/// `handover` alike. Non-blocking by construction (bounded broadcast); a send error
+/// `task` alike. Non-blocking by construction (bounded broadcast); a send error
 /// or full ring is intentionally dropped so a slow embedder never stalls
 /// the gossip loop. The `receiver_count` gate skips the per-message clone
 /// while no consumer is subscribed (always, until the embedder calls
@@ -511,8 +511,8 @@ fn maybe_push_embed(ctx: &HandlerCtx<'_>, message: &Message, surfaceable: bool) 
                 | MessageKind::Meta
                 | MessageKind::Ping
                 | MessageKind::Pong { .. }
-                | MessageKind::Exchange {
-                    phase: ExchangePhase::Progress,
+                | MessageKind::Task {
+                    phase: TaskPhase::Progress,
                     ..
                 }
         )
@@ -608,11 +608,11 @@ fn is_loggable(kind: &MessageKind) -> bool {
             // here; this keeps the predicate honest if that changes).
             | MessageKind::State
             | MessageKind::Meta
-            // The `Progress` exchange phase is liveness plumbing — never retained
-            // or surfaced via poll/fetch, only emitted as a `exchange_progress`
-            // widget event. Content exchange legs stay loggable like `Msg`.
-            | MessageKind::Exchange {
-                phase: ExchangePhase::Progress,
+            // The `Progress` task phase is liveness plumbing — never retained
+            // or surfaced via poll/fetch, only emitted as a `task_progress`
+            // widget event. Content task legs stay loggable like `Msg`.
+            | MessageKind::Task {
+                phase: TaskPhase::Progress,
                 ..
             }
     )

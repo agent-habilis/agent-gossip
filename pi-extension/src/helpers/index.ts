@@ -17,14 +17,15 @@ export function isValidBody(text: string): boolean {
   return true;
 }
 
-// Mirrors the Rust SwarmName invariant (src/protocol/swarm.rs::SwarmName::new):
+// Mirrors the Rust SwarmName invariant (src/protocol/ident.rs::is_forbidden_swarm_name):
 // 1-32 Unicode scalar values, excluding control characters, whitespace, and
-// any of / \ < > #. (The daemon additionally rejects bidi-control scalars; it
-// is the authoritative backstop, so this client check stays simple.)
+// any of < > #. The path separators / \ are allowed — a swarm name may be a
+// URL. (The daemon additionally rejects bidi-control scalars; it is the
+// authoritative backstop, so this client check stays simple.)
 export function isValidSwarmName(name: string): boolean {
   const chars = [...name];
   if (chars.length < 1 || chars.length > 32) return false;
-  return !chars.some((ch) => isControlChar(ch) || /\s/u.test(ch) || "/\\<>#".includes(ch));
+  return !chars.some((ch) => isControlChar(ch) || /\s/u.test(ch) || "<>#".includes(ch));
 }
 
 export function agentSwarmAvailable(): boolean {

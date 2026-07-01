@@ -65,6 +65,7 @@ mod tests {
         match Cli::parse_from(args).command {
             Commands::Create { opts } => opts.lookups.to_set().relay,
             Commands::Join { .. }
+            | Commands::Forum { .. }
             | Commands::Msg { .. }
             | Commands::Poll { .. }
             | Commands::Ping { .. }
@@ -72,7 +73,7 @@ mod tests {
             | Commands::Discover { .. }
             | Commands::Mcp { .. }
             | Commands::Man
-            | Commands::Exchange { .. }
+            | Commands::Task { .. }
             | Commands::Peers { .. }
             | Commands::State { .. }
             | Commands::Meta { .. }
@@ -139,6 +140,7 @@ mod tests {
         let opts = match Cli::parse_from(["ahsw", "create", "--mdns"]).command {
             Commands::Create { opts } => opts,
             Commands::Join { .. }
+            | Commands::Forum { .. }
             | Commands::Msg { .. }
             | Commands::Poll { .. }
             | Commands::Ping { .. }
@@ -146,7 +148,7 @@ mod tests {
             | Commands::Discover { .. }
             | Commands::Mcp { .. }
             | Commands::Man
-            | Commands::Exchange { .. }
+            | Commands::Task { .. }
             | Commands::Peers { .. }
             | Commands::State { .. }
             | Commands::Meta { .. }

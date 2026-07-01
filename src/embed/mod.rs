@@ -4,8 +4,8 @@
 //! task **inside the caller's process** — no subprocess, no Unix-socket
 //! IPC. Inbound traffic is pushed over a bounded broadcast channel;
 //! outbound sends go through a dedicated channel into the same shared
-//! broadcast path the CLI/IPC uses. No `iroh` type is exposed: targets
-//! are resolved internally from a string (`🐝…` / domain / git URL).
+//! broadcast path the CLI/IPC uses. No `iroh` type is exposed: a join
+//! target is a `🐝…` id parsed from a string at the boundary.
 
 use std::fmt;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -18,7 +18,8 @@ use tokio::task::JoinHandle;
 use crate::daemon::setup::{SetupKind, setup_swarm};
 use crate::daemon::state::RosterSnapshot;
 use crate::daemon::{
-    CoHostPolicy, CreateParams, DriverMode, EventLoopConfig, JoinParams, Resolved, SessionRequest,
+    CoHostPolicy, CreateParams, DriverMode, EventLoopConfig, ForumParams, JoinParams, Resolved,
+    SessionRequest,
 };
 use crate::directory::{self, Listing, ListingChange, Listings, directory_swarm};
 use crate::output::{Output, OutputEvent};
@@ -26,9 +27,7 @@ use crate::protocol::swarm::{
     DEFAULT_DIRECTORY, DirectorySelection, LookupOpts, LookupSet, Swarm, SwarmConfig, SwarmName,
     resolve_lookups,
 };
-use crate::protocol::{
-    ExchangeId, ExchangeKind, ExchangePhase, Message, MessageBody, Nickname, SwarmId,
-};
+use crate::protocol::{Message, MessageBody, Nickname, SwarmId, TaskId, TaskPhase};
 use crate::resolver::JoinTarget;
 use crate::util::tuning::{
     DEFAULT_MAX_DIRECT_PEERS, EMBED_INBOUND_CAP, advertise_interval_secs, directory_expiry_secs,
@@ -37,11 +36,10 @@ use crate::util::tuning::{
 /// How to join a swarm.
 #[derive(Debug, Clone)]
 pub struct JoinConfig {
-    /// What to join: an `🐝…` id, a domain serving
-    /// `/.well-known/agent-habilis-swarm`, or a supported git repo URL —
-    /// classified into a [`JoinTarget`] at the boundary (parse a string
-    /// with [`str::parse`]). Resolved internally; the network mode and
-    /// name are decoded from the resolved swarm.
+    /// What to join: an `🐝…` id, classified into a [`JoinTarget`] at the
+    /// boundary (parse a string with [`str::parse`]). The network mode and
+    /// name are decoded from the id. (A shared *string* derives its own
+    /// swarm — see the `forum` command — and is not a join target.)
     pub target: JoinTarget,
     /// Local nickname. `None` mints a random `word-word` one.
     pub nickname: Option<Nickname>,
@@ -58,6 +56,33 @@ impl JoinConfig {
     pub fn new(target: JoinTarget) -> Self {
         Self {
             target,
+            nickname: None,
+            max_peers: DEFAULT_MAX_DIRECT_PEERS,
+        }
+    }
+}
+
+/// How to join a **forum**: a public swarm derived deterministically from a
+/// shared string. The name and (always-public) config are derived from the
+/// string, so it is the only input — anyone passing the same string converges
+/// on the same swarm.
+#[derive(Debug, Clone)]
+pub struct ForumConfig {
+    /// The shared string. Hashed into the swarm seed after trimming
+    /// surrounding whitespace (never case-folded).
+    pub string: String,
+    /// Local nickname. `None` mints a random `word-word` one.
+    pub nickname: Option<Nickname>,
+    /// Max direct peer connections before gossip relays the rest.
+    pub max_peers: usize,
+}
+
+impl ForumConfig {
+    /// A config for `string` with a random nickname and the default peer cap.
+    #[must_use]
+    pub fn new(string: String) -> Self {
+        Self {
+            string,
             nickname: None,
             max_peers: DEFAULT_MAX_DIRECT_PEERS,
         }
@@ -154,9 +179,8 @@ impl std::error::Error for CreateError {
 }
 
 /// Why [`SwarmSession::join`] failed — the symmetric counterpart to
-/// [`CreateError`]. `Resolve` is a bad target (an `🐝…` id, a domain, or a
-/// git-repo URL and its well-known file); `Setup` is an endpoint/gossip
-/// failure. The MCP server maps both to an internal error.
+/// [`CreateError`]. `Resolve` is a malformed `🐝…` id; `Setup` is an
+/// endpoint/gossip failure. The MCP server maps both to an internal error.
 #[derive(Debug)]
 pub enum JoinError {
     /// The target could not be resolved into a swarm.
@@ -243,20 +267,43 @@ async fn create_setup(
 /// # Errors
 /// [`JoinError::Resolve`] / [`JoinError::Setup`].
 async fn join_setup(cfg: JoinConfig, output: Output) -> Result<EventLoopConfig, JoinError> {
-    let max_peers = cfg.max_peers;
-    let Resolved { kind, author, .. } = JoinParams {
+    let resolved = JoinParams {
         target: cfg.target,
         nickname: cfg.nickname,
     }
     .resolve()
-    .await
     .map_err(JoinError::Resolve)?;
-    let elc = setup_swarm(
+    resolved_setup(resolved, cfg.max_peers, output).await
+}
+
+/// Resolve + set up a forum (a string-derived public swarm).
+///
+/// # Errors
+/// [`JoinError::Resolve`] if the string is empty/whitespace;
+/// [`JoinError::Setup`] on endpoint/gossip failure.
+async fn forum_setup(cfg: ForumConfig, output: Output) -> Result<EventLoopConfig, JoinError> {
+    let resolved = ForumParams {
+        string: cfg.string,
+        nickname: cfg.nickname,
+    }
+    .resolve()
+    .map_err(JoinError::Resolve)?;
+    resolved_setup(resolved, cfg.max_peers, output).await
+}
+
+/// The shared tail of [`join_setup`] / [`forum_setup`]: run `setup_swarm` for
+/// an already-resolved join-flavored setup.
+async fn resolved_setup(
+    resolved: Resolved,
+    max_peers: usize,
+    output: Output,
+) -> Result<EventLoopConfig, JoinError> {
+    let Resolved { kind, author, .. } = resolved;
+    setup_swarm(
         kind, author, /* interactive */ false, max_peers, None, output, /* drift */ None,
     )
     .await
-    .map_err(|error| JoinError::Setup(error.context("setup_swarm failed")))?;
-    Ok(elc)
+    .map_err(|error| JoinError::Setup(error.context("setup_swarm failed")))
 }
 
 /// The in-process session core shared by the public [`SwarmSession`] (embed
@@ -327,6 +374,17 @@ impl InProcessSession {
         Ok(Self::spawn(elc, None, None))
     }
 
+    /// Join a forum (string-derived public swarm) as a poll-only, silent core
+    /// (the MCP server).
+    ///
+    /// # Errors
+    /// [`JoinError::Resolve`] on an empty string; [`JoinError::Setup`] on
+    /// endpoint/gossip failure.
+    pub(crate) async fn forum_poll(cfg: ForumConfig) -> Result<Self, JoinError> {
+        let elc = forum_setup(cfg, Output::silent()).await?;
+        Ok(Self::spawn(elc, None, None))
+    }
+
     pub(crate) fn swarm_id(&self) -> &SwarmId {
         &self.swarm_id
     }
@@ -391,24 +449,22 @@ impl InProcessSession {
             .map_err(|_| anyhow::anyhow!("swarm event loop dropped the response"))
     }
 
-    /// Send one leg of an exchange; returns the canonical [`Message`].
+    /// Send one leg of a task; returns the canonical [`Message`].
     ///
     /// # Errors
     /// Fails if the event loop has stopped or dropped the response.
-    pub(crate) async fn exchange(
+    pub(crate) async fn task(
         &self,
         to: Nickname,
-        exchange_id: ExchangeId,
-        kind: ExchangeKind,
-        phase: ExchangePhase,
+        task_id: TaskId,
+        phase: TaskPhase,
         body: MessageBody,
     ) -> anyhow::Result<Message> {
         let (resp_tx, resp_rx) = oneshot::channel();
         self.req_tx
-            .send(SessionRequest::Exchange {
+            .send(SessionRequest::Task {
                 to,
-                exchange_id,
-                kind,
+                task_id,
                 phase,
                 body,
                 resp: resp_tx,
@@ -614,6 +670,19 @@ impl SwarmSession {
         Ok(Self::with_events(elc, None, events_rx))
     }
 
+    /// Join a forum — a public swarm derived deterministically from
+    /// `cfg.string` — and spawn its event loop in the background. Output is
+    /// captured per-session into [`SwarmSession::events`].
+    ///
+    /// # Errors
+    /// [`JoinError::Resolve`] if `cfg.string` is empty/whitespace;
+    /// [`JoinError::Setup`] on endpoint/gossip failure.
+    pub async fn forum(cfg: ForumConfig) -> Result<Self, JoinError> {
+        let (output, events_rx) = capture();
+        let elc = forum_setup(cfg, output).await?;
+        Ok(Self::with_events(elc, None, events_rx))
+    }
+
     /// Create a new swarm and spawn its event loop in the background.
     /// `cfg.lookups` is resolved the same granular way the CLI uses.
     ///
@@ -760,7 +829,7 @@ impl SwarmSession {
     /// Poll the surfaced-event history after the `after` seq cursor (`None`
     /// for the full buffered window). Join-horizon filtered. A pull
     /// alternative to the [`SwarmSession::messages`] live subscription that
-    /// surfaces *every* event kind (chat, presence, exchange legs, and the
+    /// surfaces *every* event kind (chat, presence, task legs, and the
     /// transient `ping_report` / `peer_timeout` / … events), each tagged with
     /// its surfacing `seq` — pass the last returned `seq` as the next `after`.
     ///
@@ -778,22 +847,21 @@ impl SwarmSession {
         self.core.fetch(after, wait_ms).await
     }
 
-    /// Send one leg of an exchange to `to`, correlated by `exchange_id`.
+    /// Send one leg of a task to `to`, correlated by `task_id`.
     /// Returns the canonical [`Message`] the loop built. Addressee
-    /// validation (for `Offer`) happens in `broadcast_exchange` — see the
-    /// MCP `send_exchange` tool.
+    /// validation (for `Offer`) happens in `broadcast_task` — see the
+    /// MCP `send_task` tool.
     ///
     /// # Errors
     /// Fails if the event loop has stopped or dropped the response.
-    pub async fn exchange(
+    pub async fn task(
         &self,
         to: Nickname,
-        exchange_id: ExchangeId,
-        kind: ExchangeKind,
-        phase: ExchangePhase,
+        task_id: TaskId,
+        phase: TaskPhase,
         body: MessageBody,
     ) -> anyhow::Result<Message> {
-        self.core.exchange(to, exchange_id, kind, phase, body).await
+        self.core.task(to, task_id, phase, body).await
     }
 
     /// Broadcast pre-built wire bytes **verbatim** into the swarm — no
@@ -1111,5 +1179,97 @@ impl Drop for Directory {
         }
         // The directory `SwarmSession` (if not already taken by `close`)
         // drops here, winding down its own loop.
+    }
+}
+
+#[cfg(test)]
+mod forum_tests {
+    use std::time::Duration;
+
+    use crate::daemon::CoHostPolicy;
+    use crate::protocol::swarm::{Swarm, SwarmConfig};
+    use crate::protocol::{MessageBody, Nickname};
+
+    use super::{ForumConfig, JoinError, SwarmSession};
+
+    /// The empty/whitespace-string guard is centralized in `ForumParams::resolve`,
+    /// so it holds for the public embed API too (not just the CLI/MCP edges) —
+    /// an empty string would otherwise join one globally-fixed swarm.
+    #[tokio::test]
+    async fn forum_rejects_empty_string() {
+        for raw in ["", "   "] {
+            let result = SwarmSession::forum(ForumConfig::new(raw.to_owned())).await;
+            assert!(
+                matches!(result, Err(JoinError::Resolve(_))),
+                "empty forum string must be rejected, got {:?}",
+                result.map(|_| "Ok")
+            );
+        }
+    }
+
+    /// End-to-end convergence: two peers deriving from the *same string* land
+    /// in the same swarm and mesh. Loopback keeps the test hermetic; the seed +
+    /// name derivation and the `EagerProbed` first-peer beaconing are identical
+    /// to a real (public) `forum` — only the transport differs.
+    #[tokio::test]
+    async fn forum_peers_from_same_string_converge_and_exchange() {
+        let topic = "agent-habilis";
+        let first = Swarm::from_topic(topic, SwarmConfig::loopback());
+        let second = Swarm::from_topic(topic, SwarmConfig::loopback());
+        assert_eq!(
+            first.to_string(),
+            second.to_string(),
+            "same string ⇒ same swarm id"
+        );
+
+        let alice = SwarmSession::join_decoded(
+            first,
+            Some(Nickname::new("alice-forum").unwrap()),
+            CoHostPolicy::EagerProbed,
+        )
+        .await
+        .expect("alice forum session");
+        let bob = SwarmSession::join_decoded(
+            second,
+            Some(Nickname::new("bob-forum").unwrap()),
+            CoHostPolicy::EagerProbed,
+        )
+        .await
+        .expect("bob forum session");
+        assert_eq!(alice.swarm_id(), bob.swarm_id(), "both derived the same id");
+
+        let mut bob_rx = bob.messages();
+        // Re-send until the loopback mesh forms; break the instant bob sees it.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+        let mut received = false;
+        while !received && tokio::time::Instant::now() < deadline {
+            alice
+                .send(MessageBody::from("hello forum"), None)
+                .await
+                .expect("alice send");
+            let seen = tokio::time::timeout(Duration::from_millis(500), async {
+                loop {
+                    match bob_rx.recv().await {
+                        Ok(msg) => {
+                            if msg.author.as_str() == "alice-forum"
+                                && msg.body.as_str() == "hello forum"
+                            {
+                                break true;
+                            }
+                        }
+                        Err(_) => break false,
+                    }
+                }
+            })
+            .await;
+            received = matches!(seen, Ok(true));
+        }
+        assert!(
+            received,
+            "bob should receive alice's message over the forum swarm"
+        );
+
+        bob.leave().await.ok();
+        alice.leave().await.ok();
     }
 }

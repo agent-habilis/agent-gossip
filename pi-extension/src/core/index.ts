@@ -4,7 +4,7 @@ import * as readline from "node:readline";
 import { clearBatch, startWatcher, stopWatcher } from "../daemon";
 import { isValidBody, isValidSwarmName, runSwarmCommand } from "../helpers";
 import { state, stateFilePath } from "../state";
-import type { DiscoveredSwarm, ExchangeKind, Peer, PingResult, Session } from "../types";
+import type { DiscoveredSwarm, Peer, PingResult, Session } from "../types";
 
 export function cleanup(): void {
   stopWatcher();
@@ -34,8 +34,19 @@ export type CreateOptions = {
 };
 
 export type JoinOptions = {
-  // What to join: a `🐝…` id, a domain, or a supported git repo URL.
+  // What to join: a `🐝…` id. (A shared string derives its own public swarm —
+  // that is `forumSwarm` — and is not a join target.)
   target: string;
+  // Local nickname; omit for the daemon's random `word-word`.
+  nickname?: string;
+  // Model this agent runs on, self-reported to peers.
+  model?: string;
+};
+
+export type ForumOptions = {
+  // The shared string. Hashed into a deterministic public swarm — anyone
+  // passing the same string joins the same swarm.
+  string: string;
   // Local nickname; omit for the daemon's random `word-word`.
   nickname?: string;
   // Model this agent runs on, self-reported to peers.
@@ -51,7 +62,7 @@ const HARNESS = "pi";
 // authoritative backstop; this is the single client-side source of truth.
 export function validateCreateOptions(options: CreateOptions): string | undefined {
   if (options.name !== undefined && !isValidSwarmName(options.name)) {
-    return "invalid name — must be 1-32 chars, no whitespace or / \\ < > #";
+    return "invalid name — must be 1-32 chars, no whitespace or < > #";
   }
   if (options.advertise && options.network !== "public") {
     return "advertise requires public network";
@@ -59,11 +70,54 @@ export function validateCreateOptions(options: CreateOptions): string | undefine
   return undefined;
 }
 
+// The shared tail of createSwarm/joinSwarm/forumSwarm: spawn the daemon,
+// wait for its ready event, and build the session. `timeoutMs` differs per
+// caller: create is localhost-only setup, join/forum may cross the relay.
+async function spawnSession({
+  args,
+  timeoutMs,
+  model,
+}: {
+  args: string[];
+  timeoutMs: number;
+  model?: string;
+}): Promise<Session> {
+  cleanup();
+
+  const filePath = stateFilePath();
+  // Insert right after the subcommand, not at the end — forum's argv ends in
+  // `-- <string>`, and anything appended after `--` would parse as positional.
+  if (filePath) args.splice(1, 0, "--state-file", filePath);
+
+  const child = spawn("ahsw", args, { stdio: ["ignore", "pipe", "pipe"] });
+  // `startWatcher` attaches the single readline and resolves with the `ready`
+  // line; ongoing events (incl. peers already present) flow on from the same
+  // reader — no second one to drop the bundled `joined` lines.
+  const readyLine = await startWatcher({ child, timeoutMs });
+  const ready = JSON.parse(readyLine);
+
+  if (!ready.swarm || !ready.name || !ready.nickname) {
+    throw new Error("invalid ready event: missing swarm, name, or nickname");
+  }
+
+  if (typeof child.pid !== "number") {
+    throw new Error("ahsw spawned without a pid");
+  }
+  const session: Session = {
+    swarm: ready.swarm,
+    name: ready.name,
+    nickname: ready.nickname,
+    pid: child.pid,
+    drift: typeof ready.drift === "string" ? ready.drift : undefined,
+  };
+  state.session = session;
+  reportSelfMeta(model);
+  return session;
+}
+
 export async function createSwarm(options: CreateOptions = {}): Promise<Session> {
   const invalid = validateCreateOptions(options);
   if (invalid) throw new Error(invalid);
-
-  cleanup();
 
   const { name, network = "private", relay, mdns, dht, advertise, directory, model } = options;
 
@@ -76,64 +130,23 @@ export async function createSwarm(options: CreateOptions = {}): Promise<Session>
   // Optional-value flag: `--relay=urls` for a custom ladder, bare `--relay` for the default.
   if (relay !== undefined) args.push(relay ? `--relay=${relay}` : "--relay");
   if (advertise) args.push(directory ? `--advertise=${directory}` : "--advertise");
-  const filePath = stateFilePath();
-  if (filePath) args.push("--state-file", filePath);
 
-  const child = spawn("ahsw", args, { stdio: ["ignore", "pipe", "pipe"] });
-  // `startWatcher` attaches the single readline and resolves with the `ready`
-  // line; ongoing events (incl. peers already present) flow on from the same
-  // reader — no second one to drop the bundled `joined` lines.
-  const readyLine = await startWatcher({ child, timeoutMs: 30_000 });
-  const ready = JSON.parse(readyLine);
-
-  if (!ready.swarm || !ready.name || !ready.nickname) {
-    throw new Error("invalid ready event: missing swarm, name, or nickname");
-  }
-
-  if (typeof child.pid !== "number") {
-    throw new Error("ahsw spawned without a pid");
-  }
-  const session: Session = {
-    swarm: ready.swarm,
-    name: ready.name,
-    nickname: ready.nickname,
-    pid: child.pid,
-    drift: typeof ready.drift === "string" ? ready.drift : undefined,
-  };
-  state.session = session;
-  reportSelfMeta(model);
-  return session;
+  return spawnSession({ args, timeoutMs: 30_000, model });
 }
 
 export async function joinSwarm({ target, nickname, model }: JoinOptions): Promise<Session> {
-  cleanup();
-
   const args = ["join", target, "--no-interactive", "--output", "json", "--filter-self"];
   if (nickname) args.push("--nickname", nickname);
-  const filePath = stateFilePath();
-  if (filePath) args.push("--state-file", filePath);
+  return spawnSession({ args, timeoutMs: 60_000, model });
+}
 
-  const child = spawn("ahsw", args, { stdio: ["ignore", "pipe", "pipe"] });
-  const readyLine = await startWatcher({ child, timeoutMs: 60_000 });
-  const ready = JSON.parse(readyLine);
-
-  if (!ready.swarm || !ready.name || !ready.nickname) {
-    throw new Error("invalid ready event: missing swarm, name, or nickname");
-  }
-
-  if (typeof child.pid !== "number") {
-    throw new Error("ahsw spawned without a pid");
-  }
-  const session: Session = {
-    swarm: ready.swarm,
-    name: ready.name,
-    nickname: ready.nickname,
-    pid: child.pid,
-    drift: typeof ready.drift === "string" ? ready.drift : undefined,
-  };
-  state.session = session;
-  reportSelfMeta(model);
-  return session;
+export async function forumSwarm({ string, nickname, model }: ForumOptions): Promise<Session> {
+  const args = ["forum", "--no-interactive", "--output", "json", "--filter-self"];
+  if (nickname) args.push("--nickname", nickname);
+  // The string is any byte-for-byte value the peers agreed on — it may start
+  // with `-`, so it goes last, after the `--` end-of-flags separator.
+  args.push("--", string);
+  return spawnSession({ args, timeoutMs: 60_000, model });
 }
 
 export function sendSwarmMessage({ text, reply }: { text: string; reply?: string }): void {
@@ -156,34 +169,30 @@ export function sendSwarmMessage({ text, reply }: { text: string; reply?: string
   runSwarmCommand(args);
 }
 
-// Send one leg of an exchange (`ahsw exchange`). `text` is required by the CLI
-// but may be empty for legs without a body (accept/confirm/cancel).
-export function sendExchange({
+// Send one leg of a task (`ahsw task`). `text` is required by the CLI but may
+// be empty for legs without a body (accept/confirm/cancel).
+export function sendTaskLeg({
   to,
-  exchangeId,
-  kind,
+  taskId,
   phase,
   text = "",
 }: {
   to: string;
-  exchangeId: string;
-  kind: ExchangeKind;
+  taskId: string;
   phase: string;
   text?: string;
 }): void {
   if (!state.session?.swarm) throw new Error("Not in a swarm");
   runSwarmCommand([
-    "exchange",
+    "task",
     "--swarm",
     state.session.swarm,
     "--nickname",
     state.session.nickname,
     "--to",
     to,
-    "--exchange-id",
-    exchangeId,
-    "--kind",
-    kind,
+    "--task-id",
+    taskId,
     "--phase",
     phase,
     "--text",

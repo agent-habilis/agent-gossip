@@ -30,8 +30,8 @@ beforeEach(() => {
 
 test("no todo plugin: prints a simple line on start and on each state change", () => {
   withTools(["swarm_send", "swarm_task"]); // swarm_* must never count as a todo tool
-  trackStart({ kind: "handover", peer: "bob", role: "initiator" });
-  trackStatus({ kind: "handover", peer: "bob", role: "initiator", status: "accepted" });
+  trackStart({ mode: "handover", peer: "bob", role: "initiator" });
+  trackStatus({ mode: "handover", peer: "bob", role: "initiator", status: "accepted" });
 
   expect(sends).toHaveLength(2);
   expect(sends[0]?.customType).toBe("swarm-info");
@@ -41,14 +41,14 @@ test("no todo plugin: prints a simple line on start and on each state change", (
 
 test("receiver side reads 'from <peer>', not '→'", () => {
   withTools([]);
-  trackStart({ kind: "task", peer: "alice", role: "receiver", status: "accepted" });
+  trackStart({ mode: "task", peer: "alice", role: "receiver", status: "accepted" });
   expect(sends[0]?.content).toBe("🐝️ task from `<alice>`: accepted");
 });
 
 test("todo plugin present: nudges the agent silently on start AND each change", () => {
   withTools(["todo"]);
-  trackStart({ kind: "task", peer: "ada", role: "initiator", task: "review src/net" });
-  trackStatus({ kind: "task", peer: "ada", role: "initiator", status: "accepted" });
+  trackStart({ mode: "task", peer: "ada", role: "initiator", task: "review src/net" });
+  trackStatus({ mode: "task", peer: "ada", role: "initiator", status: "accepted" });
 
   // Both legs go to the agent as silent context (no transcript line), so the
   // todo stays in sync — never a no-op.
@@ -61,7 +61,7 @@ test("todo plugin present: nudges the agent silently on start AND each change", 
 
 test("unrelated 'todo'-substring tools do not flip into todo mode", () => {
   withTools(["todoist_search"]); // contains 'todo' but isn't a todo list
-  trackStatus({ kind: "task", peer: "ada", role: "initiator", status: "done" });
+  trackStatus({ mode: "task", peer: "ada", role: "initiator", status: "done" });
   // Falls back to a printed line rather than silently delegating.
   expect(sends).toHaveLength(1);
   expect(sends[0]?.customType).toBe("swarm-info");

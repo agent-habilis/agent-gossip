@@ -234,31 +234,40 @@ nicknames, retention: [security.md](./security.md).)
 
 ---
 
-## 7. Joining without an `🐝…` string: domains & repos
+## 7. Joining without an `🐝…` id: `forum <string>`
 
-To avoid typing an 80-character id, `join` also accepts a domain or a
-git repo and resolves it to an id over HTTPS:
+To avoid sharing an 80-character id, `ahsw forum <string>` derives a
+swarm deterministically from an arbitrary string — anyone who runs it
+with the same string lands in the same swarm, with no id, no server, and
+no hosting.
 
 ```mermaid
 flowchart TB
-    I["join input"]
-    I --> P{"looks like an<br/>🐝… id?"}
-    P -->|yes| T["use it directly"]
-    P -->|no| Q{"github.com/u/r ?<br/>gitlab.com/... ?<br/>bitbucket.org/... ?"}
-    Q -->|git host| Gf["fetch raw .well-known<br/>file from the repo"]
-    Q -->|plain domain| H["GET https://domain/<br/>.well-known/agent-habilis-swarm"]
-    Gf --> J["parse { \"as.swarm\": \"🐝…\" }"]
-    H --> J
-    J --> T
+    S["forum string"]
+    S --> H["seed = SHA256(TOPIC_DOMAIN ‖ trim(string))"]
+    S --> N["name = sanitize(string): drop scheme (+ http query/fragment), invalid runs→'-', keep '/', cap 32 with '…'"]
+    H --> Sw["Swarm { seed, name, config }"]
+    N --> Sw
+    C["config = public preset (mDNS + DHT + relay)"] --> Sw
+    Sw --> T["derive topic + rendezvous (§4–§6) and mesh (§8)"]
 ```
 
-A plain domain is fetched at
-`https://domain/.well-known/agent-habilis-swarm`; `github.com/u/r`
-(and gitlab / bitbucket) map to that host's raw-file URL on the
-default branch. The file is one JSON object `{"as.swarm": "🐝…"}`,
-fetched with a 5-second timeout and 64 KB cap, then it proceeds as a
-normal id join from §4. (`src/resolver.rs`.) Per §6, publishing that
-file makes the swarm joinable by anyone who reads it.
+The seed is `SHA256(TOPIC_DOMAIN ‖ string)` after trimming surrounding
+whitespace only — no lowercasing or URL-normalization, so the string is
+matched byte-for-byte. The name is the string itself sanitized into a
+`SwarmName` (`SwarmName::from_topic_string`: a leading URL scheme like
+`https://` is dropped — plus the `?query`/`#fragment` for an http(s) URL —
+then each run of invalid chars — whitespace, `< > #`, control, bidi — collapses
+to one `-` while `/` and the rest of the URL charset survive, capped at 32
+scalar values with a trailing `…`, or `forum` if nothing valid survives; this
+affects the name only, not the seed).
+Because the seed, the name, and the fixed public config are all functions of
+the string, every peer converges with zero coordination; there is no
+`--name`/`--public`/lookup flag. There is no distinguished creator, so the
+first peer to run `forum` beacons (`CoHostPolicy::EagerProbed`, §8) and later
+peers bootstrap off it. (`src/protocol/crypto.rs::topic_seed`,
+`Swarm::from_topic`.) Per §6, the string is a bearer capability: anyone who
+knows or guesses it joins.
 
 ---
 

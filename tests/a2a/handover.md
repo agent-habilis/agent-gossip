@@ -2,7 +2,7 @@
 type: a2a-runbook
 title: Handover
 description: An initiator hands a task to a receiver that runs it on its own; the handoff auto-confirms.
-tags: [handover, exchange, todo-widget]
+tags: [handover, task, todo-widget]
 timestamp: 2026-06-28T00:00:00Z
 roles: [initiator, receiver]
 coordinator: dedicated

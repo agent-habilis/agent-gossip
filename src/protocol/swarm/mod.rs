@@ -77,6 +77,18 @@ impl Swarm {
         Swarm { name, seed, config }
     }
 
+    /// Build a swarm deterministically from an arbitrary string (the `forum`
+    /// command). The seed is [`crypto::topic_seed`] of the string; the name is
+    /// the string itself sanitized into a [`SwarmName`]
+    /// ([`SwarmName::from_topic_string`]). Both are deterministic functions of
+    /// the string, so callers passing the same string + config converge on the
+    /// same id with zero coordination.
+    pub(crate) fn from_topic(topic: &str, config: SwarmConfig) -> Self {
+        let seed = crypto::topic_seed(topic);
+        let name = SwarmName::from_topic_string(topic);
+        Swarm { name, seed, config }
+    }
+
     pub(crate) fn seed(&self) -> &[u8; SEED_LEN] {
         &self.seed
     }
@@ -300,6 +312,39 @@ mod swarm_tests {
         let one = Swarm::new(dummy_seed(), dummy_name(), SwarmConfig::loopback()).to_string();
         let two = Swarm::new(dummy_seed(), dummy_name(), SwarmConfig::public_preset()).to_string();
         assert_ne!(one, two, "config is part of the id");
+    }
+
+    #[test]
+    fn from_topic_is_deterministic() {
+        let one = Swarm::from_topic("agent-habilis", SwarmConfig::public_preset());
+        let two = Swarm::from_topic("agent-habilis", SwarmConfig::public_preset());
+        assert_eq!(one.to_string(), two.to_string());
+    }
+
+    #[test]
+    fn from_topic_name_is_the_sanitized_string() {
+        let swarm = Swarm::from_topic(
+            "https://github.com/agent-habilis/swarm",
+            SwarmConfig::public_preset(),
+        );
+        // Scheme stripped, `/`s kept, 30 chars ≤ 32 so no truncation.
+        assert_eq!(swarm.name.as_str(), "github.com/agent-habilis/swarm");
+    }
+
+    #[test]
+    fn from_topic_differs_by_string() {
+        let one = Swarm::from_topic("alpha", SwarmConfig::public_preset());
+        let two = Swarm::from_topic("beta", SwarmConfig::public_preset());
+        assert_ne!(one.to_string(), two.to_string());
+    }
+
+    #[test]
+    fn from_topic_round_trips_through_from_str() {
+        let swarm = Swarm::from_topic("agent-habilis", SwarmConfig::public_preset());
+        let decoded: Swarm = swarm.to_string().parse().expect("decode failed");
+        assert_eq!(decoded.seed(), swarm.seed());
+        assert_eq!(decoded.name, swarm.name);
+        assert_eq!(decoded.config, swarm.config);
     }
 
     #[test]

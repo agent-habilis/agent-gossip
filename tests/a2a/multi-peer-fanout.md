@@ -2,7 +2,7 @@
 type: a2a-runbook
 title: Multi-peer fan-out
 description: An initiator delegates a distinct task to each of two workers; results return independently.
-tags: [task, multi-peer, fan-out, exchange]
+tags: [task, multi-peer, fan-out]
 timestamp: 2026-06-28T00:00:00Z
 roles: [initiator, worker-1, worker-2]
 coordinator: dedicated
@@ -37,6 +37,6 @@ A todo plugin should be installed for the initiator and both workers.
 
 - [ ] each worker receives only its own task, not the other's
 - [ ] both results come back, each attributed to its worker; order is not assumed
-- [ ] the initiator confirms each; both exchanges close cleanly
-- [ ] the initiator tracks both exchanges at once (two todo items when a plugin
+- [ ] the initiator confirms each; both tasks close cleanly
+- [ ] the initiator tracks both tasks at once (two todo items when a plugin
       is present), each progressing independently

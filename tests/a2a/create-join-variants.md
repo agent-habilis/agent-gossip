@@ -33,8 +33,9 @@ directly**.
 - **Network variants** to create: private (default); public; mDNS-only;
   DHT-only; relay (default ladder, and a custom relay); advertised into a
   directory (public + advertise).
-- **Join forms:** by swarm id (every round); optionally by domain or git repo
-  URL (these need a host serving the `.well-known` descriptor — optional).
+- **Join forms:** by swarm id (every round); and `ahsw forum <string>` — a
+  public swarm derived from a shared string, where two peers running the same
+  string must converge on the same id and mesh.
 - **Version/drift:** the creator runs the version check.
 
 ## Expected behavior & UX
@@ -44,6 +45,7 @@ directly**.
 - [ ] an advertised swarm shows that it is advertised, into the expected directory
 - [ ] public/relay rounds may connect a bit slower than localhost but still join
 - [ ] the swarm id differs per network mode (the mode is encoded in the id)
-- [ ] optional: a domain / repo-url join resolves to a swarm and joins
+- [ ] two peers running `ahsw forum <same string>` converge on the same 🐝… id
+      and exchange messages
 - [ ] the version check reports the binary version and whether the integration is
       current; if it is behind, a drift warning is surfaced with its fix intact

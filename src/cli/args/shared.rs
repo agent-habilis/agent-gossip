@@ -57,12 +57,12 @@ pub(crate) struct SharedServerOpts {
     pub sweep_interval_secs: u64,
 
     /// Task idle-debounce timeout (seconds).
-    #[arg(long, hide = true, default_value_t = consts::EXCHANGE_TIMEOUT_SECS)]
-    pub exchange_timeout_secs: u64,
+    #[arg(long, hide = true, default_value_t = consts::TASK_TIMEOUT_SECS)]
+    pub task_timeout_secs: u64,
 
     /// Task keepalive cadence for the ball-owner (seconds).
-    #[arg(long, hide = true, default_value_t = consts::EXCHANGE_KEEPALIVE_SECS)]
-    pub exchange_keepalive_secs: u64,
+    #[arg(long, hide = true, default_value_t = consts::TASK_KEEPALIVE_SECS)]
+    pub task_keepalive_secs: u64,
 
     /// Grace before an unmeshed joiner co-hosts the rendezvous (seconds).
     #[arg(long, hide = true, default_value_t = consts::BEACON_COHOST_GRACE_SECS)]
@@ -116,8 +116,8 @@ impl SharedServerOpts {
         crate::util::tuning::Tuning {
             alive_timeout_secs: self.alive_timeout_secs,
             sweep_interval_secs: self.sweep_interval_secs,
-            exchange_timeout_secs: self.exchange_timeout_secs,
-            exchange_keepalive_secs: self.exchange_keepalive_secs,
+            task_timeout_secs: self.task_timeout_secs,
+            task_keepalive_secs: self.task_keepalive_secs,
             cohost_grace_secs: self.beacon_cohost_grace_secs,
             ping_window_secs: self.ping_window_secs,
             ppid_watch_interval_ms: self.ppid_watch_interval_ms,

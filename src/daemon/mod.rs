@@ -34,12 +34,12 @@ pub(crate) mod state_log;
 pub(crate) mod surfaced;
 // The session state file the daemon writes for external readers (its
 // sole writer). Daemon-session state, not a generic `util` helper.
-pub(crate) mod exchange;
 pub(crate) mod state_file;
+pub(crate) mod task;
 pub(crate) mod timers;
 
 mod event_loop;
 
 pub(crate) use config::{CoHostPolicy, DriverMode, EventLoopConfig, SessionRequest};
 pub(crate) use event_loop::run;
-pub(crate) use params::{CreateParams, JoinParams, Resolved};
+pub(crate) use params::{CreateParams, ForumParams, JoinParams, Resolved, derive_forum_swarm};

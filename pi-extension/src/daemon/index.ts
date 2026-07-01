@@ -1,12 +1,12 @@
 import type { ChildProcess } from "node:child_process";
 import * as readline from "node:readline";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { sendExchange } from "../core";
+import { sendTaskLeg } from "../core";
 import { engagementKind, formatDisplay } from "../format";
 import { runSwarmCommand } from "../helpers";
 import { state } from "../state";
 import { trackStart, trackStatus } from "../todo";
-import type { ExchangeKind, SwarmEvent } from "../types";
+import type { DelegationMode, SwarmEvent } from "../types";
 import {
   BEE,
   inject,
@@ -85,8 +85,8 @@ export function flushMessageBatch(): void {
 
   const myNick = state.session?.nickname;
   const lines = batch.map((message) => {
-    const kind = engagementKind(message, myNick);
-    if (kind === "state") {
+    const engagement = engagementKind(message, myNick);
+    if (engagement === "state") {
       // Carry the freshly-derived document into the turn so the agent reacts in
       // one go (no separate read). Guidance is task-agnostic — the agent decides.
       const document = JSON.stringify(message.document ?? {}, null, 2);
@@ -96,7 +96,7 @@ ${document}
 \`\`\`
 React per your current task — act only on your turn (check a turn marker in the document), then apply your change with swarm_apply_merge.`;
     }
-    return kind === "directed"
+    return engagement === "directed"
       ? `${BEE} \`<${message.author}>\` → you: ${message.body}`
       : `${BEE} \`<${message.author}>\`: ${message.body}`;
   });
@@ -116,10 +116,10 @@ export function processDaemonLine(line: string): void {
   handleAutoPingReply(event);
   if (handlePongTracking(event)) return;
 
-  // Exchanges (handover/task) are an interactive flow, not a verbatim line.
-  if (event.event === "exchange_progress") return; // keepalive beat — no UI
-  if (event.event === "exchange") {
-    handleExchangeEvent(event);
+  // Tasks (handover/task delegations) are an interactive flow, not a verbatim line.
+  if (event.event === "task_progress") return; // keepalive beat — no UI
+  if (event.event === "task") {
+    handleTaskEvent(event);
     return;
   }
 
@@ -157,19 +157,31 @@ function oneLineSummary(body: string | undefined): string {
   );
 }
 
-// An `offer` addressed to us with no exchange we already track: we are the
+// The delegation flavor rides in-band on the offer body as a leading
+// `[[handover]]`/`[[task]]` marker line (the wire no longer carries a
+// discriminator). Split it off so the mode drives the flow and the marker never
+// reaches the agent's brief. Tolerant of leading blank lines/whitespace (LLM
+// briefs routinely add one) — the marker only has to be the first non-blank
+// content. Unmarked offers default to a plain task.
+export function parseOfferMarker(body: string | undefined): { mode: DelegationMode; body: string } {
+  const text = body ?? "";
+  const match = text.match(/^\s*\[\[(handover|task)\]\][ \t]*\r?\n?/i);
+  if (match) {
+    return { mode: match[1].toLowerCase() as DelegationMode, body: text.slice(match[0].length) };
+  }
+  return { mode: "task", body: text };
+}
+
+// An `offer` addressed to us with no task we already track: we are the
 // receiver. Gate entry through the user (Accept/Decline), then hand the brief
 // to the agent.
-async function handleIncomingOffer(
-  event: SwarmEvent,
-  exchangeId: string,
-  kind: ExchangeKind,
-): Promise<void> {
+async function handleIncomingOffer(event: SwarmEvent, taskId: string): Promise<void> {
   const author = event.author ?? "?";
-  const summary = oneLineSummary(event.body);
-  state.exchanges.set(exchangeId, {
-    exchangeId,
-    kind,
+  const { mode, body } = parseOfferMarker(event.body);
+  const summary = oneLineSummary(body);
+  state.tasks.set(taskId, {
+    taskId,
+    mode,
     peer: author,
     role: "receiver",
     task: summary,
@@ -179,142 +191,142 @@ async function handleIncomingOffer(
   if (!ctx) {
     // No UI to decide — decline rather than silently hold the offer open.
     try {
-      sendExchange({
+      sendTaskLeg({
         to: author,
-        exchangeId,
-        kind,
+        taskId,
         phase: "decline",
         text: "recipient unavailable",
       });
     } catch {
       /* best effort */
     }
-    state.exchanges.delete(exchangeId);
+    state.tasks.delete(taskId);
     return;
   }
 
-  const choice = await ctx.ui.select(`Incoming ${kind} from <${author}>: ${summary}. Take it?`, [
+  const choice = await ctx.ui.select(`Incoming ${mode} from <${author}>: ${summary}. Take it?`, [
     "Accept",
     "Decline",
   ]);
   if (choice !== "Accept") {
     try {
-      sendExchange({ to: author, exchangeId, kind, phase: "decline" });
+      sendTaskLeg({ to: author, taskId, phase: "decline" });
     } catch {
       /* best effort */
     }
-    state.exchanges.delete(exchangeId);
-    trackStatus({ kind, peer: author, role: "receiver", status: "declined" });
+    state.tasks.delete(taskId);
+    trackStatus({ mode, peer: author, role: "receiver", status: "declined" });
     return;
   }
 
   try {
-    sendExchange({ to: author, exchangeId, kind, phase: "accept" });
+    sendTaskLeg({ to: author, taskId, phase: "accept" });
   } catch (error) {
     notifyError(`accept failed: ${error instanceof Error ? error.message : "unknown"}`);
-    state.exchanges.delete(exchangeId);
+    state.tasks.delete(taskId);
     return;
   }
 
-  trackStart({ kind, peer: author, role: "receiver", task: summary, status: "accepted" });
-  const tool = `the swarm_exchange tool (exchange_id "${exchangeId}", to "${author}", kind "${kind}")`;
-  if (kind === "handover") {
+  trackStart({ mode, peer: author, role: "receiver", task: summary, status: "accepted" });
+  const tool = `the swarm_advance tool (task_id "${taskId}", to "${author}")`;
+  if (mode === "handover") {
     inject(
-      `You accepted a handover from \`<${author}>\`. Brief:\n\n${event.body ?? ""}\n\n` +
+      `You accepted a handover from \`<${author}>\`. Brief:\n\n${body}\n\n` +
         `Ask anything unclear with ${tool} phase "context". When you have what you need, send phase "done"; ` +
         `\`<${author}>\` will confirm, then you do the work yourself (confirm with the user first if it makes changes).`,
     );
   } else {
     inject(
-      `You accepted a task from \`<${author}>\`. Brief:\n\n${event.body ?? ""}\n\n` +
+      `You accepted a task from \`<${author}>\`. Brief:\n\n${body}\n\n` +
         `Do the work (confirm with the user first if it makes changes), asking anything unclear with ${tool} phase "context". ` +
         `When finished, send ${tool} phase "done" with your result in the text.`,
     );
   }
 }
 
-// Route an `exchange` event for a leg addressed to us, given what we already
-// track for its exchange_id.
-function handleExchangeEvent(event: SwarmEvent): void {
-  const exchangeId = event.exchange_id;
-  if (!exchangeId) return;
+// Route a `task` event for a leg addressed to us, given what we already track
+// for its task_id.
+function handleTaskEvent(event: SwarmEvent): void {
+  const taskId = event.task_id;
+  if (!taskId) return;
   // Our own echo is informational only — records are created at send time.
   if (event.self) return;
   if (!state.session?.nickname || event.to !== state.session.nickname) return;
 
-  const kind: ExchangeKind = event.kind === "task" ? "task" : "handover";
   const author = event.author ?? "?";
-  const existing = state.exchanges.get(exchangeId);
+  const existing = state.tasks.get(taskId);
 
   if (event.phase === "offer") {
-    if (!existing) void handleIncomingOffer(event, exchangeId, kind);
+    if (!existing) void handleIncomingOffer(event, taskId);
     return;
   }
-  if (!existing) return; // a leg for an exchange we don't track
+  if (!existing) return; // a leg for a task we don't track
 
-  const ctx = state.ctx;
+  // Non-offer legs carry no marker; the mode was fixed when the offer landed.
+  const mode = existing.mode;
+
   switch (event.phase) {
     case "context":
       inject(
-        `Question from \`<${author}>\` on the ${kind} (exchange ${exchangeId}): ${event.body ?? ""}\n` +
-          `Answer with the swarm_exchange tool phase "context" (exchange_id "${exchangeId}", to "${author}", kind "${kind}").`,
+        `Question from \`<${author}>\` on the ${mode} (task ${taskId}): ${event.body ?? ""}\n` +
+          `Answer with the swarm_advance tool phase "context" (task_id "${taskId}", to "${author}").`,
       );
       break;
     case "accept":
-      trackStatus({ kind, peer: author, role: existing.role, status: "accepted" });
+      trackStatus({ mode, peer: author, role: existing.role, status: "accepted" });
       break;
     case "decline":
       trackStatus({
-        kind,
+        mode,
         peer: author,
         role: existing.role,
         status: event.body ? `declined: ${event.body}` : "declined",
       });
-      state.exchanges.delete(exchangeId);
+      state.tasks.delete(taskId);
       break;
     case "done":
       // Initiator side of a handover: nothing to verify, so auto-confirm.
-      if (existing.role === "initiator" && kind === "handover") {
+      if (existing.role === "initiator" && mode === "handover") {
         try {
-          sendExchange({ to: author, exchangeId, kind, phase: "confirm" });
+          sendTaskLeg({ to: author, taskId, phase: "confirm" });
         } catch {
           /* best effort */
         }
-        trackStatus({ kind, peer: author, role: existing.role, status: "done" });
-        state.exchanges.delete(exchangeId);
-      } else if (existing.role === "initiator" && kind === "task") {
+        trackStatus({ mode, peer: author, role: existing.role, status: "done" });
+        state.tasks.delete(taskId);
+      } else if (existing.role === "initiator" && mode === "task") {
         // Task result returns here (Phase F drives the confirm/change loop).
         inject(
-          `\`<${author}>\` returned the task result (exchange ${exchangeId}):\n\n${event.body ?? ""}\n\n` +
-            `If it meets the criteria, send the swarm_exchange tool phase "confirm" (exchange_id "${exchangeId}", to "${author}", kind "task"); otherwise phase "change" with feedback.`,
+          `\`<${author}>\` returned the task result (task ${taskId}):\n\n${event.body ?? ""}\n\n` +
+            `If it meets the criteria, send the swarm_advance tool phase "confirm" (task_id "${taskId}", to "${author}"); otherwise phase "change" with feedback.`,
         );
       }
       break;
     case "change":
       // Task receiver: the initiator wants a revision of the returned result.
-      if (existing.role === "receiver" && kind === "task") {
+      if (existing.role === "receiver" && mode === "task") {
         inject(
-          `\`<${author}>\` asked for a revision on the task (exchange ${exchangeId}): ${event.body ?? ""}\n` +
-            `Revise and re-send the swarm_exchange tool phase "done" (exchange_id "${exchangeId}", to "${author}", kind "task") with the updated result.`,
+          `\`<${author}>\` asked for a revision on the task (task ${taskId}): ${event.body ?? ""}\n` +
+            `Revise and re-send the swarm_advance tool phase "done" (task_id "${taskId}", to "${author}") with the updated result.`,
         );
       }
       break;
     case "confirm":
-      if (existing.role === "receiver" && kind === "handover") {
+      if (existing.role === "receiver" && mode === "handover") {
         // Receiver side of a handover: the handoff is closed — now do the work.
         inject(
-          `Handover ${exchangeId} confirmed by \`<${author}>\`. Do the work now (confirm with the user first if it makes changes). It is yours and is not reported back.`,
+          `Handover ${taskId} confirmed by \`<${author}>\`. Do the work now (confirm with the user first if it makes changes). It is yours and is not reported back.`,
         );
-        trackStatus({ kind, peer: author, role: existing.role, status: "confirmed" });
-      } else if (existing.role === "receiver" && kind === "task") {
+        trackStatus({ mode, peer: author, role: existing.role, status: "confirmed" });
+      } else if (existing.role === "receiver" && mode === "task") {
         // Receiver side of a task: the result was accepted — nothing more to do.
-        trackStatus({ kind, peer: author, role: existing.role, status: "confirmed" });
+        trackStatus({ mode, peer: author, role: existing.role, status: "confirmed" });
       }
-      state.exchanges.delete(exchangeId);
+      state.tasks.delete(taskId);
       break;
     case "cancel":
-      trackStatus({ kind, peer: author, role: existing.role, status: "cancelled" });
-      state.exchanges.delete(exchangeId);
+      trackStatus({ mode, peer: author, role: existing.role, status: "cancelled" });
+      state.tasks.delete(taskId);
       break;
     default:
       break;

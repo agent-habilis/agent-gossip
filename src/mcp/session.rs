@@ -8,11 +8,11 @@ use std::sync::Mutex;
 use anyhow::Result;
 
 use crate::daemon::state::RosterSnapshot;
-use crate::embed::{CreateConfig, CreateError, InProcessSession, JoinConfig, JoinError};
-use crate::protocol::swarm::SwarmName;
-use crate::protocol::{
-    ExchangeId, ExchangeKind, ExchangePhase, Message, MessageBody, MessageId, Nickname, SwarmId,
+use crate::embed::{
+    CreateConfig, CreateError, ForumConfig, InProcessSession, JoinConfig, JoinError,
 };
+use crate::protocol::swarm::SwarmName;
+use crate::protocol::{Message, MessageBody, MessageId, Nickname, SwarmId, TaskId, TaskPhase};
 
 /// One active swarm for the MCP server: the shared [`InProcessSession`]
 /// core (poll-only, silent) plus the per-session implicit `after` cursor.
@@ -34,12 +34,21 @@ impl Session {
     }
 
     /// Join an existing swarm — poll-only, silent — from a [`JoinConfig`]
-    /// (resolves the `🐝…`/domain/git-URL target internally).
+    /// (decodes the `🐝…` id target internally).
     ///
     /// # Errors
     /// [`JoinError`] if the target can't be resolved or setup fails.
     pub(super) async fn join(cfg: JoinConfig) -> Result<Self, JoinError> {
         Ok(Self::wrap(InProcessSession::join_poll(cfg).await?))
+    }
+
+    /// Join a forum — poll-only, silent — from a [`ForumConfig`]: a public
+    /// swarm derived deterministically from a shared string.
+    ///
+    /// # Errors
+    /// [`JoinError`] on setup failure.
+    pub(super) async fn forum(cfg: ForumConfig) -> Result<Self, JoinError> {
+        Ok(Self::wrap(InProcessSession::forum_poll(cfg).await?))
     }
 
     fn wrap(inner: InProcessSession) -> Self {
@@ -81,22 +90,18 @@ impl Session {
         Ok((msg.id.clone(), msg))
     }
 
-    /// Send one leg of an exchange. Returns `(id, echo)`.
+    /// Send one leg of a task. Returns `(id, echo)`.
     ///
     /// # Errors
     /// Fails if the event loop has stopped.
-    pub(super) async fn send_exchange(
+    pub(super) async fn send_task(
         &self,
         to: Nickname,
-        exchange_id: ExchangeId,
-        kind: ExchangeKind,
-        phase: ExchangePhase,
+        task_id: TaskId,
+        phase: TaskPhase,
         body: MessageBody,
     ) -> Result<(MessageId, Message)> {
-        let msg = self
-            .inner
-            .exchange(to, exchange_id, kind, phase, body)
-            .await?;
+        let msg = self.inner.task(to, task_id, phase, body).await?;
         Ok((msg.id.clone(), msg))
     }
 
@@ -221,14 +226,14 @@ mod tests {
         cfg
     }
 
-    /// The `Message` inside a surfaced `msg`/`presence`/`exchange` event, if
+    /// The `Message` inside a surfaced `msg`/`presence`/`task` event, if
     /// any — the test view into the now-structured `fetch_messages` result.
     fn as_message(event: &crate::output::OutputEvent) -> Option<&Message> {
         use crate::output::OutputEvent;
         match event {
             OutputEvent::Message { msg, .. }
             | OutputEvent::Presence { msg }
-            | OutputEvent::Exchange { msg, .. } => Some(msg),
+            | OutputEvent::Task { msg, .. } => Some(msg),
             OutputEvent::Ready { .. }
             | OutputEvent::SwarmId { .. }
             | OutputEvent::PeerTimeout { .. }
@@ -239,7 +244,7 @@ mod tests {
             | OutputEvent::Error { .. }
             | OutputEvent::PingReport { .. }
             | OutputEvent::StateChanged { .. }
-            | OutputEvent::ExchangeTimeout { .. } => None,
+            | OutputEvent::TaskTimeout { .. } => None,
         }
     }
 
