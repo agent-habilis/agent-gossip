@@ -36,7 +36,7 @@ fn man_prints_manual_to_stdout() {
         "join",
         "poll",
         "discover",
-        "exchange",
+        "task",
         "peers",
     ] {
         assert!(

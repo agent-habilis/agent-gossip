@@ -42,6 +42,7 @@ mod tests {
                 Commands::Discover { opts } => opts.directory,
                 Commands::Create { .. }
                 | Commands::Join { .. }
+                | Commands::Forum { .. }
                 | Commands::Msg { .. }
                 | Commands::Poll { .. }
                 | Commands::Ping { .. }
@@ -50,7 +51,7 @@ mod tests {
                 | Commands::File { .. }
                 | Commands::Mcp { .. }
                 | Commands::Man
-                | Commands::Exchange { .. }
+                | Commands::Task { .. }
                 | Commands::Peers { .. }
                 | Commands::State { .. }
                 | Commands::Meta { .. }

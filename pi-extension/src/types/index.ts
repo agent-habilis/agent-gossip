@@ -19,9 +19,8 @@ export type SwarmEvent = {
   self?: boolean;
   swarm?: string;
   nickname?: string;
-  // On `exchange` / `exchange_progress` events.
-  exchange_id?: string;
-  kind?: ExchangeKind;
+  // On `task` / `task_progress` events.
+  task_id?: string;
   phase?: string;
   to?: string;
   display?: string;
@@ -32,13 +31,16 @@ export type SwarmEvent = {
   document?: Record<string, unknown>;
 };
 
-export type ExchangeKind = "handover" | "task";
+// The delegation flavor. No longer on the wire (the binary's task primitive
+// carries no discriminator); it travels in-band as a `[[handover]]`/`[[task]]`
+// marker on the offer body and is tracked here so both legs drive the right flow.
+export type DelegationMode = "handover" | "task";
 
-// One in-flight exchange this node is a party to, tracked so the receiver and
+// One in-flight task this node is a party to, tracked so the receiver and
 // initiator legs can be told apart and the agent can be driven through it.
-export type ExchangeRecord = {
-  exchangeId: string;
-  kind: ExchangeKind;
+export type TaskRecord = {
+  taskId: string;
+  mode: DelegationMode;
   // The other party's nickname.
   peer: string;
   role: "initiator" | "receiver";

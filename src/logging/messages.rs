@@ -84,22 +84,16 @@ fn log(direction: &'static str, msg: &Message) {
             presence = %subtype,
             "presence"
         ),
-        MessageKind::Exchange {
-            to,
-            exchange_id,
-            kind,
-            phase,
-        } => tracing::info!(
+        MessageKind::Task { to, task_id, phase } => tracing::info!(
             target: "agent_habilis_swarm::messages",
             dir = direction,
             author = %msg.author,
             ts = msg.timestamp,
             to = %to,
-            exchange_id = %exchange_id,
-            kind = %kind,
+            task_id = %task_id,
             phase = %phase,
             body = %if log_raw() { msg.body.as_str().to_owned() } else { redacted_body(msg) },
-            "exchange"
+            "task"
         ),
         // Durable state event: worth an info line (membership/settings change),
         // body redacted by default like a `Msg`.

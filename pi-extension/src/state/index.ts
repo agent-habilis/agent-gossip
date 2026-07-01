@@ -1,6 +1,6 @@
 import type { ChildProcess } from "node:child_process";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { ExchangeRecord, Session, SwarmEvent } from "../types";
+import type { Session, SwarmEvent, TaskRecord } from "../types";
 
 export type AppState = {
   daemon: ChildProcess | null;
@@ -16,8 +16,8 @@ export type AppState = {
   pingPending: boolean;
   pingStartTime: number;
   pongMap: Map<string, number>;
-  // In-flight exchanges this node is a party to, keyed by exchange_id.
-  exchanges: Map<string, ExchangeRecord>;
+  // In-flight tasks this node is a party to, keyed by task_id.
+  tasks: Map<string, TaskRecord>;
   stateFileId: string | undefined;
   // The standing reply policy is injected (silently) once per swarm session.
   policySent: boolean;
@@ -35,7 +35,7 @@ export const state: AppState = {
   pingPending: false,
   pingStartTime: 0,
   pongMap: new Map(),
-  exchanges: new Map(),
+  tasks: new Map(),
   stateFileId: undefined,
   policySent: false,
 };

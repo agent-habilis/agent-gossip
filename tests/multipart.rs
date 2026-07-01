@@ -2,12 +2,12 @@
 //! (`common::InProcNode`). A body larger than the single-message wire cap
 //! (`MAX_MESSAGE_SIZE`) is split by the sender into `part`-tagged messages and
 //! reassembled by the receiver; the split is invisible to agents on both ends.
-//! These pin that round-trip for a plain `msg` and for an exchange content leg —
+//! These pin that round-trip for a plain `msg` and for a task content leg —
 //! the body surfaces **once**, as the whole logical message, never as raw parts.
 
 mod common;
 
-use agent_habilis_swarm::{ExchangeId, ExchangeKind, ExchangePhase, MAX_MESSAGE_SIZE};
+use agent_habilis_swarm::{MAX_MESSAGE_SIZE, TaskId, TaskPhase};
 use common::{InProcNode, MSG_TIMEOUT};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -43,7 +43,7 @@ async fn multipart_message_reassembles_into_one() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn multipart_exchange_leg_reassembles_into_one() {
+async fn multipart_task_leg_reassembles_into_one() {
     let alice = InProcNode::create("mp-ex").await;
     let mut bob = InProcNode::join(&alice.swarm, "mp-ex-bob").await;
     // Mesh first so the leg is actually delivered.
@@ -53,33 +53,27 @@ async fn multipart_exchange_leg_reassembles_into_one() {
         "mesh never formed"
     );
 
-    let exchange_id: ExchangeId = "550e8400-e29b-41d4-a716-446655440000"
+    let task_id: TaskId = "550e8400-e29b-41d4-a716-446655440000"
         .parse()
-        .expect("valid exchange id");
+        .expect("valid task id");
     let big = "step ".repeat(MAX_MESSAGE_SIZE); // ~19 KB
     alice
-        .exchange(
-            "mp-ex-bob",
-            &exchange_id,
-            ExchangeKind::Task,
-            ExchangePhase::Context,
-            &big,
-        )
+        .task("mp-ex-bob", &task_id, TaskPhase::Context, &big)
         .await
         .expect("the multipart leg is sent");
 
     assert!(
-        bob.wait_exchange(ExchangePhase::Context, MSG_TIMEOUT).await,
-        "the reassembled exchange leg never arrived"
+        bob.wait_task(TaskPhase::Context, MSG_TIMEOUT).await,
+        "the reassembled task leg never arrived"
     );
     let matching = bob
-        .exchanges()
+        .tasks()
         .iter()
         .filter(|(message, _)| message.body.as_str() == big)
         .count();
     assert_eq!(
         matching, 1,
-        "the exchange body must surface once, not once per part"
+        "the task body must surface once, not once per part"
     );
 
     alice.leave().await;

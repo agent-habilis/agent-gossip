@@ -1042,7 +1042,7 @@ async fn create_without_nickname_uses_random_name() {
 
 // ── task + peers wire contract ───────────────────────────────────────────────
 
-const WIRE_EXCHANGE_ID: &str = "550e8400-e29b-41d4-a716-446655440000";
+const WIRE_TASK_ID: &str = "550e8400-e29b-41d4-a716-446655440000";
 
 /// The `task` event wire shape: a leg sent from the creator to a specific
 /// joiner is surfaced on **that joiner's** `--output json` stream with the
@@ -1053,12 +1053,11 @@ async fn test_task_event_wire_contract() {
     let (creator, joiner_a, joiner_b, swarm) = three_peers("ho");
     let addressee = joiner_a.nickname.clone();
 
-    common::cli_exchange_checked(
+    common::cli_task_checked(
         &swarm,
         &creator.nickname,
         &addressee,
-        WIRE_EXCHANGE_ID,
-        "handover",
+        WIRE_TASK_ID,
         "offer",
         "## Task\nport it",
     );
@@ -1070,7 +1069,7 @@ async fn test_task_event_wire_contract() {
         if let Some(event) = joiner_a
             .json_events()
             .into_iter()
-            .find(|value| value["event"] == "exchange")
+            .find(|value| value["event"] == "task")
         {
             task = Some(event);
             break;
@@ -1078,9 +1077,8 @@ async fn test_task_event_wire_contract() {
         std::thread::sleep(POLL);
     }
     let task = task.expect("addressee never surfaced a task event");
-    assert_eq!(task["event"], "exchange");
-    assert_eq!(task["exchange_id"], WIRE_EXCHANGE_ID);
-    assert_eq!(task["kind"], "handover");
+    assert_eq!(task["event"], "task");
+    assert_eq!(task["task_id"], WIRE_TASK_ID);
     assert_eq!(task["phase"], "offer");
     assert_eq!(task["to"], addressee);
     assert_eq!(task["author"], creator.nickname);
@@ -1092,7 +1090,7 @@ async fn test_task_event_wire_contract() {
         task["display"]
             .as_str()
             .unwrap()
-            .starts_with("🐝️ exchange handover offer"),
+            .starts_with("🐝️ task offer"),
         "display: {}",
         task["display"]
     );
@@ -1104,7 +1102,7 @@ async fn test_task_event_wire_contract() {
         joiner_b
             .json_events()
             .iter()
-            .all(|value| value["event"] != "exchange"),
+            .all(|value| value["event"] != "task"),
         "a third peer must not surface a task addressed to someone else"
     );
 }
@@ -1115,12 +1113,11 @@ async fn test_task_event_wire_contract() {
 async fn test_task_unknown_participant_errors() {
     let (creator, _joiner_a, _joiner_b, swarm) = three_peers("ho-unknown");
 
-    let out = common::cli_exchange_raw(
+    let out = common::cli_task_raw(
         &swarm,
         &creator.nickname,
         "ghost-peer",
-        WIRE_EXCHANGE_ID,
-        "handover",
+        WIRE_TASK_ID,
         "offer",
         "brief",
     );
@@ -1137,13 +1134,13 @@ async fn test_task_unknown_participant_errors() {
 
 /// Task timers: while both peers are alive the ball-owner's daemon
 /// keepalive prevents a spurious idle-timeout; once the ball-owner dies,
-/// the other party's debounce fires a `exchange_timeout`. Run with shortened
-/// timers (`--exchange-timeout-secs 3`, keepalive 1s, sweep 1s).
+/// the other party's debounce fires a `task_timeout`. Run with shortened
+/// timers (`--task-timeout-secs 3`, keepalive 1s, sweep 1s).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn test_exchange_idle_timeout_after_owner_dies() {
+async fn test_task_idle_timeout_after_owner_dies() {
     let timers: &[(&str, &str)] = &[
-        ("--exchange-timeout-secs", "3"),
-        ("--exchange-keepalive-secs", "1"),
+        ("--task-timeout-secs", "3"),
+        ("--task-keepalive-secs", "1"),
         ("--sweep-interval-secs", "1"),
     ];
     let (creator, swarm) = JsonNode::create_with_flags(timers);
@@ -1165,48 +1162,32 @@ async fn test_exchange_idle_timeout_after_owner_dies() {
     );
     assert!(saw_join >= 1, "creator never saw the joiner join");
 
-    let tid = WIRE_EXCHANGE_ID;
+    let tid = WIRE_TASK_ID;
     // Creator offers; joiner accepts → the joiner (receiver) holds the ball.
-    common::cli_exchange_checked(
-        &swarm,
-        &creator.nickname,
-        "tk-bob",
-        tid,
-        "handover",
-        "offer",
-        "port it",
-    );
+    common::cli_task_checked(&swarm, &creator.nickname, "tk-bob", tid, "offer", "port it");
     let saw_offer = wait_until(
         || {
             joiner
                 .json_events()
                 .iter()
-                .filter(|value| value["event"] == "exchange" && value["phase"] == "offer")
+                .filter(|value| value["event"] == "task" && value["phase"] == "offer")
                 .count()
         },
         1,
         MSG_TIMEOUT,
     );
     assert!(saw_offer >= 1, "joiner never surfaced the offer");
-    common::cli_exchange_checked(
-        &swarm,
-        "tk-bob",
-        &creator.nickname,
-        tid,
-        "handover",
-        "accept",
-        "ok",
-    );
+    common::cli_task_checked(&swarm, "tk-bob", &creator.nickname, tid, "accept", "ok");
 
     // Both alive well past the 3s timeout: the joiner's keepalive must keep
-    // the task alive — no spurious `exchange_timeout` on the creator.
+    // the task alive — no spurious `task_timeout` on the creator.
     std::thread::sleep(Duration::from_secs(5));
     assert!(
         creator
             .json_events()
             .iter()
-            .all(|value| value["event"] != "exchange_timeout"),
-        "keepalive should prevent a spurious exchange_timeout while the owner is alive"
+            .all(|value| value["event"] != "task_timeout"),
+        "keepalive should prevent a spurious task_timeout while the owner is alive"
     );
 
     // Kill the ball-owner. Its keepalive stops; the creator's debounce fires.
@@ -1216,7 +1197,7 @@ async fn test_exchange_idle_timeout_after_owner_dies() {
             creator
                 .json_events()
                 .iter()
-                .filter(|value| value["event"] == "exchange_timeout" && value["exchange_id"] == tid)
+                .filter(|value| value["event"] == "task_timeout" && value["task_id"] == tid)
                 .count()
         },
         1,
@@ -1224,7 +1205,7 @@ async fn test_exchange_idle_timeout_after_owner_dies() {
     );
     assert!(
         timed_out >= 1,
-        "creator should emit exchange_timeout after the ball-owner died"
+        "creator should emit task_timeout after the ball-owner died"
     );
 }
 

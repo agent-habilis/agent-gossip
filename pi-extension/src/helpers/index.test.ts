@@ -27,15 +27,18 @@ test("isValidSwarmName accepts 1-32 scalar values without forbidden symbols", ()
   expect(isValidSwarmName("café")).toBe(true);
   // Counted by code point, not UTF-16 units: 32 emoji is still length 32.
   expect(isValidSwarmName("🐝".repeat(32))).toBe(true);
+  // Path separators are allowed — a swarm name may be a URL.
+  expect(isValidSwarmName("github.com/acme/repo")).toBe(true);
+  expect(isValidSwarmName("a\\b")).toBe(true);
 });
 
-test("isValidSwarmName rejects bad length, whitespace, control, and / \\ < > #", () => {
+test("isValidSwarmName rejects bad length, whitespace, control, and < > #", () => {
   expect(isValidSwarmName("")).toBe(false);
   expect(isValidSwarmName("a".repeat(33))).toBe(false);
   expect(isValidSwarmName("has space")).toBe(false);
   expect(isValidSwarmName("tab\tname")).toBe(false);
   expect(isValidSwarmName("ctrl\x01")).toBe(false);
-  for (const bad of ["a/b", "a\\b", "a<b", "a>b", "a#b"]) {
+  for (const bad of ["a<b", "a>b", "a#b"]) {
     expect(isValidSwarmName(bad)).toBe(false);
   }
 });

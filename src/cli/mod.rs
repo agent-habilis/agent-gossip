@@ -9,7 +9,7 @@ use serde::Deserialize;
 
 use crate::daemon::run as run_event_loop;
 use crate::daemon::setup::{SetupKind, setup_swarm};
-use crate::daemon::{CreateParams, JoinParams, Resolved};
+use crate::daemon::{CreateParams, ForumParams, JoinParams, Resolved};
 use crate::embed::spawn_advertiser;
 use crate::output::{Output, OutputMode};
 use crate::protocol::swarm::{SwarmConfig, SwarmName, resolve_lookups};
@@ -27,9 +27,9 @@ mod ticket_discover;
 
 pub(crate) use args::Cli;
 use args::{
-    Commands, CreateOpts, ExchangeOpts, FileAction, MetaAction, MetaOpts, MsgOpts, OutputFormat,
+    Commands, CreateOpts, FileAction, ForumOpts, MetaAction, MetaOpts, MsgOpts, OutputFormat,
     PeersOpts, PingOpts, PipeAction, PollOpts, PortAction, ReadyOpts, SharedServerOpts,
-    StateAction, StateOpts,
+    StateAction, StateOpts, TaskOpts,
 };
 
 /// `join` has no `--public`/`--name`: both are encoded in the `🐝…`
@@ -81,10 +81,14 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
             crate::util::tuning::init(opts.shared.tuning());
             Box::pin(join(opts.swarm, opts.nickname, opts.shared)).await
         }
+        Commands::Forum { opts } => {
+            crate::util::tuning::init(opts.shared.tuning());
+            Box::pin(forum(opts)).await
+        }
         Commands::Msg { opts } => msg(opts).await,
         Commands::Poll { opts } => poll(opts).await,
         Commands::Ping { opts } => ping(opts).await,
-        Commands::Exchange { opts } => exchange(opts).await,
+        Commands::Task { opts } => task(opts).await,
         Commands::Peers { opts } => peers(opts).await,
         // Boxed like the event-loop futures above: the discover arms hold a
         // picker + connect chain that puts these over clippy's 16 KiB
@@ -141,7 +145,7 @@ async fn run_session(resolved: Resolved, shared: SharedServerOpts) -> Result<()>
     // (only `create` advertises, so only `Create` carries them).
     let directory_lookups = match &kind {
         SetupKind::Create { config, .. } => Some(config.lookups.clone()),
-        SetupKind::Join { .. } => None,
+        SetupKind::Join { .. } | SetupKind::Forum { .. } => None,
     };
     let out = Output::new(
         shared.output.into(),
@@ -206,8 +210,20 @@ async fn join(
     shared: SharedServerOpts,
 ) -> Result<()> {
     // `join` never advertises — that is a create-time decision.
-    let resolved = JoinParams { target, nickname }.resolve().await?;
+    let resolved = JoinParams { target, nickname }.resolve()?;
     run_session(resolved, shared).await
+}
+
+/// Join a public swarm derived deterministically from a shared string. The
+/// seed, name, and (always-public) config are all derived from the string, so
+/// the same string joins the same forum on any machine — no id to share.
+async fn forum(opts: ForumOpts) -> Result<()> {
+    let resolved = ForumParams {
+        string: opts.string,
+        nickname: opts.nickname,
+    }
+    .resolve()?;
+    run_session(resolved, opts.shared).await
 }
 
 #[derive(Deserialize)]
@@ -217,7 +233,7 @@ struct MsgResponse {
     error: Option<String>,
 }
 
-/// Reduce an IPC send response (`msg` / `handover`, same `{ok,id,error}`
+/// Reduce an IPC send response (`msg` / `task`, same `{ok,id,error}`
 /// shape) to the new message id, or a descriptive error. `what` names the
 /// operation for the missing-id message.
 fn finish_send(resp: &str, what: &str) -> Result<MessageId> {
@@ -301,30 +317,28 @@ async fn ping(opts: PingOpts) -> Result<()> {
     Ok(())
 }
 
-/// Send one leg of an exchange via the running daemon's IPC socket.
-/// The receiving daemon surfaces an `exchange` (or `exchange_progress`) event; this
+/// Send one leg of a task via the running daemon's IPC socket.
+/// The receiving daemon surfaces a `task` (or `task_progress`) event; this
 /// command itself only confirms the send (or reports an
 /// unknown-participant / oversize error).
-async fn exchange(opts: ExchangeOpts) -> Result<()> {
-    let ExchangeOpts {
+async fn task(opts: TaskOpts) -> Result<()> {
+    let TaskOpts {
         swarm,
         nickname,
         to,
-        exchange_id,
-        kind,
+        task_id,
         phase,
         text,
     } = opts;
-    let cmd = IpcCommand::Exchange {
+    let cmd = IpcCommand::Task {
         swarm,
         to,
-        exchange_id,
-        kind,
+        task_id,
         phase,
         body: text,
     };
     let resp = ipc::send(&cmd, &nickname).await?;
-    let id = finish_send(&resp, "exchange")?;
+    let id = finish_send(&resp, "task")?;
     let out = Output::new(OutputMode::Human, false, None);
     out.msg_posted(&id);
     Ok(())

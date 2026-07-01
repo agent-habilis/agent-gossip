@@ -14,9 +14,9 @@ export const BEE = "🐝️";
 //     inline in the transcript. When idle it renders immediately with no LLM
 //     turn — a peer joining or a status table shouldn't make the model respond;
 //     while streaming it rides in on `nextTurn`, shown without interrupting.
-//   - inject: a brief the agent must act on (handover/task, exchange prompts,
-//     auto-replies). It always triggers a turn — `triggerTurn` when idle, a
-//     `steer` to break into a running stream. The harness converts the custom
+//   - inject: a brief the agent must act on (handover/task offers and their
+//     leg prompts, auto-replies). It always triggers a turn — `triggerTurn` when
+//     idle, a `steer` to break into a running stream. The harness converts the custom
 //     message into a `user` message for the model, so this drives the agent
 //     exactly as a typed message would.
 //

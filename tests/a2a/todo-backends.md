@@ -1,8 +1,8 @@
 ---
 type: a2a-runbook
 title: Todo backends
-description: Run a task exchange and judge how it surfaces, with or without a todo plugin installed.
-tags: [todo, widget, exchange, fallback, harness]
+description: Run a task and judge how it surfaces, with or without a todo plugin installed.
+tags: [todo, widget, task, fallback, harness]
 timestamp: 2026-06-28T00:00:00Z
 roles: [initiator, worker]
 coordinator: dedicated
@@ -15,9 +15,9 @@ network: private
 
 ## Scenario
 
-The same [task](/tasks.md) exchange is run to judge how it surfaces in the UI.
+The same [task](/tasks.md) is run to judge how it surfaces in the UI.
 Whether a todo plugin is installed is the **human's** choice — the instructions
-are identical either way, to mirror real use. The exchange should complete
+are identical either way, to mirror real use. The task should complete
 regardless; the difference is only in how progress is shown: with a plugin it
 rides the todo widget, without one it must still be legible in the UI. Targets
 pi (where the todo integration lives). Set up per the
@@ -36,10 +36,10 @@ pi (where the todo integration lives). Set up per the
 
 ## Expected behavior & UX
 
-- [ ] the task completes end to end regardless of the todo backend (the exchange
+- [ ] the task completes end to end regardless of the todo backend (the task
       itself is unaffected by it)
-- [ ] **with a plugin present:** the exchange is tracked in the todo widget,
+- [ ] **with a plugin present:** the task is tracked in the todo widget,
       advancing as it progresses to a finished state
-- [ ] **without a plugin:** the exchange is still surfaced legibly in the UI as it
+- [ ] **without a plugin:** the task is still surfaced legibly in the UI as it
       progresses — the user is not left blind just because no todo widget exists
-- [ ] how the exchange surfaces in the backend you ran is the thing to judge
+- [ ] how the task surfaces in the backend you ran is the thing to judge

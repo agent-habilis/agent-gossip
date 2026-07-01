@@ -4,6 +4,7 @@ import {
   applyStateMerge,
   createSwarm,
   discoverSwarms,
+  forumSwarm,
   getPeers,
   getStateDocument,
   joinSwarm,
@@ -24,8 +25,12 @@ export function registerCommands(pi: ExtensionAPI): void {
     handler: cmdCreate,
   });
   pi.registerCommand("swarm-join", {
-    description: "Join an existing swarm by ID, domain, or git repo URL",
+    description: "Join an existing swarm by its 🐝… ID",
     handler: cmdJoin,
+  });
+  pi.registerCommand("swarm-forum", {
+    description: "Join a public swarm derived from a shared string (/swarm-forum {string})",
+    handler: cmdForum,
   });
   pi.registerCommand("swarm-discover", {
     description: "Browse a directory for advertised swarms and join one",
@@ -161,11 +166,26 @@ async function cmdJoin(args: string, ctx: ExtensionCommandContext): Promise<void
 
   const target = args.trim();
   if (!target) {
-    notifyError("usage: /swarm-join {🐝... | domain | repo-url}");
+    notifyError("usage: /swarm-join {🐝...}");
     return;
   }
 
   await joinAndReport(target, ctx);
+}
+
+async function cmdForum(args: string, ctx: ExtensionCommandContext): Promise<void> {
+  state.ctx = ctx;
+  if (!requireAgentSwarm(ctx)) return;
+
+  const string = args.trim();
+  if (!string) {
+    notifyError("usage: /swarm-forum {string}");
+    return;
+  }
+
+  const result = await forumSwarm({ string, model: ctx.model?.name });
+  notify(`joined forum \`#${result.name}\` as \`<${result.nickname}>\``);
+  if (result.drift) notify(result.drift);
 }
 
 async function cmdDiscover(args: string, ctx: ExtensionCommandContext): Promise<void> {

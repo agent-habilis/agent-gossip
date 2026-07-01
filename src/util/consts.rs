@@ -37,7 +37,7 @@ pub const MAX_MESSAGE_SIZE: usize = 3840;
 pub const MAX_MESSAGE_PARTS: usize = 16;
 
 /// Upper bound on a logical (possibly multipart) body the daemon will accept
-/// from a caller — the input ceiling for `msg`/`exchange`. The send path is the
+/// from a caller — the input ceiling for `msg`/`task`. The send path is the
 /// real gate (it refuses a body that needs more than [`MAX_MESSAGE_PARTS`]
 /// parts); this is the generous limit the stdin/IPC readers enforce so an
 /// oversize body still reaches the daemon and gets a clear "too large" error
@@ -64,8 +64,8 @@ pub(crate) const POLL_RESPONSE_MAX_MSGS: usize = 1000;
 /// history `poll` / `fetch_messages` drain. Distinct from the message log:
 /// that is the cross-node anti-entropy buffer (evicted by a deterministic
 /// `eviction_key`); this is a *local* record of what was surfaced to the
-/// operator/agent (msg + presence + exchange legs **and** the transient
-/// events — `ping_report`, `peer_timeout`/`return`, `exchange_timeout`,
+/// operator/agent (msg + presence + task legs **and** the transient
+/// events — `ping_report`, `peer_timeout`/`return`, `task_timeout`,
 /// `fork` — that never entered the message log). Oldest-drop on overflow.
 ///
 /// Sized **equal to** the poll response window so the ring never holds more
@@ -118,22 +118,22 @@ pub(crate) const ALIVE_TIMEOUT_SECS: u64 = 90;
 /// Flag: `--sweep-interval-secs`.
 pub(crate) const SWEEP_INTERVAL_SECS: u64 = 10;
 
-/// Idle-debounce timeout for an exchange: an exchange with no leg (content
-/// or keepalive) for this long is evicted (`exchange_timeout` + a `Cancel`
+/// Idle-debounce timeout for a task: a task with no leg (content
+/// or keepalive) for this long is evicted (`task_timeout` + a `Cancel`
 /// broadcast). 5 minutes — comfortably above the keepalive cadence so a
-/// genuinely-active exchange is never falsely evicted. Flag:
-/// `--exchange-timeout-secs` (tests shorten it to seconds).
-pub(crate) const EXCHANGE_TIMEOUT_SECS: u64 = 300;
+/// genuinely-active task is never falsely evicted. Flag:
+/// `--task-timeout-secs` (tests shorten it to seconds).
+pub(crate) const TASK_TIMEOUT_SECS: u64 = 300;
 
 /// How often the current ball-owner's daemon emits a `Progress` keepalive
-/// for a live exchange. 1 minute, ≈5× under the debounce, so ~4 missed beats
-/// of slack absorb gossip drops. Flag: `--exchange-keepalive-secs`.
-pub(crate) const EXCHANGE_KEEPALIVE_SECS: u64 = 60;
+/// for a live task. 1 minute, ≈5× under the debounce, so ~4 missed beats
+/// of slack absorb gossip drops. Flag: `--task-keepalive-secs`.
+pub(crate) const TASK_KEEPALIVE_SECS: u64 = 60;
 
-/// Whole-exchange budget of **content** legs (offer/accept/decline/context/
+/// Whole-task budget of **content** legs (offer/accept/decline/context/
 /// done/confirm/change/cancel — `progress` is exempt). Hitting it forces
 /// the skill to a terminal decision; the daemon warns once on crossing.
-pub(crate) const EXCHANGE_CONTENT_CAP: u32 = 100;
+pub(crate) const TASK_CONTENT_CAP: u32 = 100;
 
 /// Grace before an unmeshed joiner co-hosts the rendezvous anyway (empty
 /// swarm ⇒ become the beacon for the next joiner). Flag:

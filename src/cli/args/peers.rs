@@ -1,5 +1,5 @@
 //! `peers` command args: query the running daemon's live participant
-//! roster (nicknames + recency). Backs the handover sender's target
+//! roster (nicknames + recency). Backs the task sender's target
 //! picker and nickname validation; also useful standalone.
 
 use clap::Parser;

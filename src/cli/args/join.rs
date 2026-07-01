@@ -9,10 +9,8 @@ use super::shared::SharedServerOpts;
 
 #[derive(Parser, Debug)]
 pub(crate) struct JoinOpts {
-    /// Swarm identifier (🐝...), a domain (example.com), or a git repo
-    /// URL (github.com/user/repo, gitlab.com/user/repo, bitbucket.org/user/repo).
-    /// Non-id values are resolved via /.well-known/agent-habilis-swarm.
-    /// Classified + syntactically validated at parse (clap `FromStr`).
+    /// Swarm identifier (🐝...). Validated at parse (clap `FromStr`). For a
+    /// public swarm derived from a shared string, use `ahsw forum <string>`.
     pub swarm: JoinTarget,
 
     /// Optional nickname (random word-word if not provided). A custom

@@ -1,7 +1,41 @@
 import { beforeEach, expect, test } from "bun:test";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { state } from "../state";
-import { flushMessageBatch, processDaemonLine } from "./index";
+import { flushMessageBatch, parseOfferMarker, processDaemonLine } from "./index";
+
+// The delegation flavor rides in-band as a leading [[handover]]/[[task]] marker
+// on the offer body (the wire dropped its `kind` discriminator). parseOfferMarker
+// is the only place that decision is recovered, so its tolerance is load-bearing:
+// a miss silently downgrades a handover to a report-back task and leaks the raw
+// marker into the agent's brief.
+test("parseOfferMarker reads the marker and strips it from the brief", () => {
+  expect(parseOfferMarker("[[handover]]\nreview src/net")).toEqual({
+    mode: "handover",
+    body: "review src/net",
+  });
+  expect(parseOfferMarker("[[task]]\nreview src/net")).toEqual({
+    mode: "task",
+    body: "review src/net",
+  });
+});
+
+test("parseOfferMarker tolerates leading blank lines and whitespace", () => {
+  // LLM-authored briefs routinely prepend a blank line; the marker must still
+  // be recognized rather than leaking through as literal text.
+  expect(parseOfferMarker("\n\n[[handover]]\nbrief")).toEqual({
+    mode: "handover",
+    body: "brief",
+  });
+  expect(parseOfferMarker("  \t[[task]]  \nbrief")).toEqual({ mode: "task", body: "brief" });
+});
+
+test("parseOfferMarker defaults an unmarked body to task and leaves it intact", () => {
+  expect(parseOfferMarker("just a plain brief")).toEqual({
+    mode: "task",
+    body: "just a plain brief",
+  });
+  expect(parseOfferMarker(undefined)).toEqual({ mode: "task", body: "" });
+});
 
 // The contract this locks: a message directed at us and a broadcast both wake
 // the agent (an inject, which triggers a turn); a reply aimed at another peer
