@@ -31,7 +31,7 @@ pub(crate) async fn connect(ticket: &str, throttle: Option<u64>) -> Result<()> {
     let ticket = PipeTicket::decode(ticket)?;
     if ticket.bench {
         bail!(
-            "this ticket is for `pipe connect-bench`, not `pipe connect` — \
+            "this ticket is for `pipe bench`, not `pipe connect` — \
              run `pipe listen` on the producer to get a plain pipe ticket"
         );
     }
@@ -62,7 +62,7 @@ pub(crate) async fn connect(ticket: &str, throttle: Option<u64>) -> Result<()> {
 /// Dial the producer (retrying while its address propagates), open the
 /// bi-stream, and present the bearer secret. Shared by every consumer
 /// protocol — single-shot and live-follow read the length header next
-/// (below); bench (`pipe connect-bench`) sends its own plan header instead.
+/// (below); bench (`pipe bench 🐝…`) sends its own plan header instead.
 pub(super) async fn dial_and_authenticate(
     endpoint: &Endpoint,
     ticket: &PipeTicket,

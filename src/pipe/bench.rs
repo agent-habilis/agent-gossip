@@ -1,5 +1,5 @@
-//! `pipe listen-bench` / `pipe connect-bench` — a throughput + latency
-//! benchmark over a direct pipe connection. Data flows **consumer →
+//! `pipe bench` (producer) / `pipe bench 🐝…` (consumer) — a throughput +
+//! latency benchmark over a direct pipe connection. Data flows **consumer →
 //! producer**, the opposite direction from `listen`/`connect`: the consumer
 //! drives and times the whole run, the producer just counts what it actually
 //! received (the receiver is the ground truth for real delivered
@@ -27,6 +27,7 @@ use tokio::io::AsyncReadExt;
 use crate::lookup::build_participant_endpoint;
 use crate::util::output::status;
 
+use super::SECRET_LEN;
 use super::ticket::PipeTicket;
 
 /// Bulk-payload chunk size for the throughput phase (content is never
@@ -34,7 +35,13 @@ use super::ticket::PipeTicket;
 /// cost skewing the measured rate).
 const CHUNK: usize = 64 * 1024;
 
-/// The test-sizing knob for `pipe connect-bench --budget`: either run for a
+/// How long the producer waits for the consumer's plan header before giving up
+/// on a run. The consumer sends it immediately after the secret handshake, so
+/// this only ever trips on a peer that connects and then goes silent — which in
+/// `--serve` mode would otherwise wedge the sequential accept loop forever.
+const PLAN_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// The test-sizing knob for `pipe bench --budget`: either run for a
 /// wall-clock duration or until a byte count is sent, whichever the value's
 /// suffix picked (`10s`/`2m`/`1h` vs `500b`/`100kb`/`50mb`/`2gb`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -106,45 +113,71 @@ fn parse_budget_number(digits: &str, raw: &str) -> Result<u64, String> {
     Ok(value)
 }
 
-/// Serve one `pipe connect-bench` run: bind, announce the ticket, wait for
-/// the first peer to authenticate (retrying past a bad handshake — that's a
-/// rejected impostor, not a real run), then run the benchmark and quit. A
-/// single-shot lifetime, same as `listen`: a fresh `listen-bench` per
-/// benchmark keeps runs from skewing each other's throughput numbers, and
-/// gives a clean exit code to script against.
+/// Accept and authenticate one peer, retrying past a bad handshake (a rejected
+/// impostor, not a real run). Shared by both the single-shot and `--serve`
+/// paths of [`listen_bench`].
+async fn accept_authenticated(
+    endpoint: &Endpoint,
+    secret: &[u8; SECRET_LEN],
+) -> Result<(Connection, SendStream, RecvStream)> {
+    loop {
+        let Some(incoming) = endpoint.accept().await else {
+            bail!("endpoint closed before a peer connected");
+        };
+        match super::produce::authenticate(incoming, secret).await {
+            Ok(triple) => return Ok(triple),
+            Err(error) => tracing::debug!(%error, "bench handshake failed; awaiting another"),
+        }
+    }
+}
+
+/// Serve `pipe bench` runs: bind, announce the ticket, then serve one benchmark
+/// against the first peer that authenticates. Single-shot by default (a fresh
+/// producer per run keeps concurrent benchmarks from skewing each other's
+/// numbers, and gives a clean exit code to script against); with `serve`, stay
+/// up and serve one run per peer sequentially until the process is killed — the
+/// ticket stays valid for the producer's whole lifetime, so a consumer
+/// reconnects by re-running `pipe bench <ticket>`.
 ///
 /// # Errors
-/// Endpoint bind / discovery-config parse failures, or the benchmark itself
-/// failing (a dropped connection, a malformed plan) — the caller then exits
-/// non-zero.
-pub(crate) async fn listen_bench(swarm: Option<&str>, json: bool) -> Result<()> {
+/// Endpoint bind / discovery-config parse failures, or (single-shot only) the
+/// benchmark itself failing — the caller then exits non-zero. In `serve` mode a
+/// failed run is one bad consumer, not fatal; only the endpoint closing ends it.
+pub(crate) async fn listen_bench(swarm: Option<&str>, serve: bool, json: bool) -> Result<()> {
     let lookups = super::swarm_lookups(swarm)?;
     let (endpoint, mut ticket, secret) = super::produce::bind(lookups).await?;
     ticket.bench = true;
     super::announce(
         json,
         "Waiting",
-        "for a peer to benchmark",
-        &format!("ahsw pipe connect-bench {}", ticket.encode()),
+        if serve {
+            "for peers to benchmark (staying up)"
+        } else {
+            "for a peer to benchmark"
+        },
+        &format!("ahsw pipe bench {}", ticket.encode()),
     );
     let narrate = !json;
-    let (conn, send, recv) = loop {
-        let Some(incoming) = endpoint.accept().await else {
-            bail!("endpoint closed before a peer connected");
-        };
-        match super::produce::authenticate(incoming, &secret).await {
-            Ok(triple) => break triple,
-            Err(error) => tracing::debug!(%error, "bench handshake failed; awaiting another"),
+    loop {
+        let (conn, send, recv) = accept_authenticated(&endpoint, &secret).await?;
+        let result = serve_one(conn, send, recv, narrate).await;
+        if !serve {
+            return match result {
+                // The consumer has its report; skip the multi-second
+                // `endpoint.close()` teardown (relay/DHT/mDNS), same as
+                // `listen`'s and `connect`'s exit.
+                Ok(()) => std::process::exit(0),
+                Err(error) => {
+                    endpoint.close().await;
+                    Err(error)
+                }
+            };
         }
-    };
-    let result = serve_one(conn, send, recv, narrate).await;
-    match result {
-        // The consumer has its report; skip the multi-second `endpoint.close()`
-        // teardown (relay/DHT/mDNS), same as `listen`'s and `connect`'s exit.
-        Ok(()) => std::process::exit(0),
-        Err(error) => {
-            endpoint.close().await;
-            Err(error)
+        if let Err(error) = result {
+            tracing::warn!(%error, "bench run ended early; awaiting another peer");
+        }
+        if narrate {
+            status("Waiting", "for the next peer to benchmark");
         }
     }
 }
@@ -158,8 +191,9 @@ async fn serve_one(
     narrate: bool,
 ) -> Result<()> {
     let mut header = [0u8; 13];
-    recv.read_exact(&mut header)
+    tokio::time::timeout(PLAN_TIMEOUT, recv.read_exact(&mut header))
         .await
+        .context("timed out waiting for the bench plan (peer connected but sent nothing)")?
         .context("reading the bench plan failed")?;
     let pings = u32::from_le_bytes(header[0..4].try_into().expect("4 bytes"));
     let budget_kind = header[4];
@@ -248,13 +282,31 @@ fn mb_per_sec(bytes: u64, elapsed: Duration) -> f64 {
 
 fn describe_budget(kind: u8, value: u64) -> String {
     if kind == BenchBudget::KIND_BYTES {
-        format!("{value} bytes")
+        describe_bytes(value)
     } else {
         format!("{value}s")
     }
 }
 
-/// Options for `pipe connect-bench`.
+/// A byte count as a human-readable size in the largest 1024-based unit that
+/// keeps the number ≥ 1 (`1.00 GB`, `20.00 MB`, `512.00 KB`, `500 B`) — the
+/// same units `--budget` accepts, so a `1gb` budget reads back as `1.00 GB`.
+fn describe_bytes(bytes: u64) -> String {
+    const KB: u64 = 1 << 10;
+    const MB: u64 = 1 << 20;
+    const GB: u64 = 1 << 30;
+    if bytes >= GB {
+        format!("{:.2} GB", bytes as f64 / GB as f64)
+    } else if bytes >= MB {
+        format!("{:.2} MB", bytes as f64 / MB as f64)
+    } else if bytes >= KB {
+        format!("{:.2} KB", bytes as f64 / KB as f64)
+    } else {
+        format!("{bytes} B")
+    }
+}
+
+/// Options for the consumer side of `pipe bench`.
 pub(crate) struct BenchOpts {
     pub budget: BenchBudget,
     pub pings: u32,
@@ -307,8 +359,8 @@ pub(crate) async fn connect_bench(ticket: &str, opts: BenchOpts, json: bool) -> 
     let ticket = PipeTicket::decode(ticket)?;
     if !ticket.bench {
         bail!(
-            "this ticket is for `pipe connect`, not `pipe connect-bench` — \
-             run `pipe listen-bench` on the producer to get a bench ticket"
+            "this ticket is for `pipe connect`, not `pipe bench` — \
+             run `pipe bench` on the producer to mint a bench ticket"
         );
     }
     let endpoint = build_participant_endpoint(&ticket.lookups).await?;
@@ -497,6 +549,14 @@ mod tests {
         assert!(parse_budget("abc").is_err());
     }
 
+    #[test]
+    fn describes_bytes_in_the_largest_1024_unit() {
+        assert_eq!(super::describe_bytes(1 << 30), "1.00 GB");
+        assert_eq!(super::describe_bytes(20 * (1 << 20)), "20.00 MB");
+        assert_eq!(super::describe_bytes(512 * (1 << 10)), "512.00 KB");
+        assert_eq!(super::describe_bytes(500), "500 B");
+    }
+
     /// Run one full bench protocol exchange over loopback endpoints: a
     /// producer task driving `serve_one` directly (the test stand-in for
     /// `listen_bench`'s accept loop, same reasoning as `pipe::tests`'
@@ -527,6 +587,47 @@ mod tests {
         consumer_endpoint.close().await;
         server.await.expect("server task");
         report
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn serve_mode_serves_sequential_runs_on_one_endpoint() {
+        // A `--serve` producer binds once and re-accepts: two consecutive
+        // consumers over the SAME endpoint (the same ticket) must both get a
+        // valid report, proving the re-accept loop after `serve_one` works.
+        let (endpoint, ticket, secret) = super::super::produce::bind(LookupOpts::loopback())
+            .await
+            .expect("bind producer");
+        let server = tokio::spawn(async move {
+            loop {
+                let (conn, send, recv) = super::accept_authenticated(&endpoint, &secret)
+                    .await
+                    .expect("accept authenticated");
+                super::serve_one(conn, send, recv, false)
+                    .await
+                    .expect("serve_one");
+            }
+        });
+
+        for _ in 0..2 {
+            let consumer_endpoint = build_participant_endpoint(&ticket.lookups)
+                .await
+                .expect("consumer endpoint");
+            let report = super::run(
+                &consumer_endpoint,
+                &ticket,
+                BenchOpts {
+                    budget: BenchBudget::Bytes(200_003),
+                    pings: 3,
+                },
+            )
+            .await
+            .expect("run bench");
+            assert_eq!(report.bytes_received, 200_003);
+            assert_eq!(report.rtts.len(), 3);
+            consumer_endpoint.close().await;
+        }
+
+        server.abort();
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -586,8 +687,8 @@ mod tests {
             false,
         )
         .await
-        .expect_err("a plain ticket must be refused by connect-bench");
-        assert!(error.to_string().contains("pipe connect-bench"));
+        .expect_err("a plain ticket must be refused by `pipe bench`");
+        assert!(error.to_string().contains("pipe bench"));
         endpoint.close().await;
     }
 

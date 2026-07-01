@@ -34,8 +34,8 @@ SYNOPSIS
        ahsw pipe connect       🐝… [--throttle RATE]
        ahsw pipe discover      [NAME] [--mdns] [--dht] [--relay[=URLS]]
                   [--throttle RATE] [--output human|json]
-       ahsw pipe listen-bench  [--swarm 🐝…] [--output human|json]
-       ahsw pipe connect-bench 🐝… [--budget BUDGET] [--pings N] [--output human|json]
+       ahsw pipe bench         [--serve] [--swarm 🐝…] [--output human|json]
+       ahsw pipe bench         🐝… [--budget BUDGET] [--pings N] [--output human|json]
 
        ahsw port listen  PORT... [--swarm 🐝… | --mdns --dht --relay[=URLS]]
                   [--advertise[=NAME]] [--output human|json]
@@ -371,8 +371,8 @@ COMMANDS
        pipe connect 🐝… [--throttle RATE]
        pipe discover [NAME] [--mdns] [--dht] [--relay[=URLS]] [--throttle RATE]
                    [--output human|json]
-       pipe listen-bench [--swarm 🐝…] [--output human|json]
-       pipe connect-bench 🐝… [--budget BUDGET] [--pings N] [--output human|json]
+       pipe bench [--serve] [--swarm 🐝…] [--output human|json]
+       pipe bench 🐝… [--budget BUDGET] [--pings N] [--output human|json]
               A direct, off-gossip byte pipe between machines; no daemon needed.
               `pipe listen` reads stdin and prints the consumer's `ahsw pipe
               connect 🐝…` command on stdout; running it streams the bytes back.
@@ -418,7 +418,7 @@ COMMANDS
               --output — its stdout is the transferred bytes.
 
               Exit codes are meaningful for the single-shot transfers (a
-              non-seekable `pipe listen` and its `pipe connect`, and the -bench
+              non-seekable `pipe listen` and its `pipe connect`, and the bench
               pair): 0 on success, non-zero on a connect failure, a truncated
               transfer, or a benchmark that got no peer. A seekable-file `pipe
               listen` stays up until interrupted, so its exit code just means it
@@ -439,12 +439,16 @@ COMMANDS
               connect 🐝…` to rejoin. It prints its lifecycle — disconnected /
               connected / transferring / finished — as consumers come and go.
 
-              -bench measures a link instead of moving data. `pipe listen-bench`
-              prints a ticket, waits for one peer, runs a single benchmark, and
-              exits (re-run for another). `pipe connect-bench` redeems it, drives
-              the run, and prints the report. Data flows consumer→producer (the
-              consumer drives the timing). A bench ticket is its own kind: `pipe
-              connect` and `pipe connect-bench` each refuse the other's ticket. The
+              bench measures a link instead of moving data. With no ticket, `pipe
+              bench` is the producer: it prints a ticket, waits for one peer, runs
+              a single benchmark, and exits (re-run for another, or pass --serve to
+              stay up and serve one run per peer sequentially until killed — an
+              always-on server a consumer reconnects to by re-running `pipe bench
+              <ticket>`). `pipe bench <ticket>` is the consumer: it redeems the
+              ticket, drives the run, and prints the report. Data flows
+              consumer→producer (the consumer drives the timing). A bench ticket is
+              its own kind: `pipe connect` and `pipe bench <ticket>` each refuse the
+              other's ticket. The
               run is a latency phase of --pings round-trips (default 20) then a
               throughput phase for --budget (default 10s); the report gives
               min/avg/max latency and throughput measured by the producer (what was
@@ -459,8 +463,9 @@ COMMANDS
                 tar c ./dir | ahsw pipe listen --swarm 🐝…   ↔   ahsw pipe connect 🐝… | tar x
                 tail -f app.log | ahsw pipe listen --follow --swarm 🐝…   # live tail
                 ahsw pipe listen --advertise drop < notes.md   ↔   ahsw pipe discover drop
-                ahsw pipe listen-bench --swarm 🐝…                 # hint → ahsw pipe connect-bench 🐝…
-                ahsw pipe connect-bench 🐝… --budget 30s --pings 50
+                ahsw pipe bench --swarm 🐝…                       # hint → ahsw pipe bench 🐝…
+                ahsw pipe bench --serve                           # always-on: reconnect any time
+                ahsw pipe bench 🐝… --budget 30s --pings 50
 
        port listen  PORT... [--swarm 🐝… | --mdns --dht --relay[=URLS]]
                     [--advertise[=NAME]] [--output human|json]

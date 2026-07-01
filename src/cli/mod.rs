@@ -393,24 +393,35 @@ async fn pipe(action: PipeAction) -> Result<()> {
                 None => Ok(()),
             }
         }
-        PipeAction::ListenBench { swarm, output } => {
-            crate::pipe::listen_bench(
-                swarm.as_ref().map(crate::protocol::SwarmId::as_str),
-                matches!(output, OutputFormat::Json),
-            )
-            .await
-        }
-        PipeAction::ConnectBench {
+        PipeAction::Bench {
             ticket,
+            serve,
+            swarm,
             budget,
             pings,
             output,
         } => {
-            let opts = crate::pipe::BenchOpts {
-                budget: budget.unwrap_or_default(),
-                pings,
-            };
-            crate::pipe::connect_bench(&ticket, opts, matches!(output, OutputFormat::Json)).await
+            let json = matches!(output, OutputFormat::Json);
+            // clap enforces the producer/consumer split: `--serve`/`--swarm`
+            // conflict with a ticket, `--budget`/`--pings` require one. So a
+            // ticket means consumer, its absence means producer.
+            match ticket {
+                None => {
+                    crate::pipe::listen_bench(
+                        swarm.as_ref().map(crate::protocol::SwarmId::as_str),
+                        serve,
+                        json,
+                    )
+                    .await
+                }
+                Some(ticket) => {
+                    let opts = crate::pipe::BenchOpts {
+                        budget: budget.unwrap_or_default(),
+                        pings: pings.unwrap_or(20),
+                    };
+                    crate::pipe::connect_bench(&ticket, opts, json).await
+                }
+            }
         }
     }
 }

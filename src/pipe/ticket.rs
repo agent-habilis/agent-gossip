@@ -3,8 +3,8 @@
 //! swarm's discovery config, and the producer's address. Payload layout:
 //! `secret(32) ‖ flags(1) ‖ lookups ‖ address-json` (lookups is
 //! self-delimiting, so the address occupies the remainder). `flags` bit 0 is
-//! the live-follow mode, bit 1 is the benchmark protocol (`pipe listen-bench` /
-//! `pipe connect-bench`); the rest are reserved.
+//! the live-follow mode, bit 1 is the benchmark protocol (`pipe bench`); the
+//! rest are reserved.
 
 use anyhow::{Context, Result, bail};
 use iroh::EndpointAddr;
@@ -24,8 +24,8 @@ pub(crate) struct PipeTicket {
     /// every attached consumer at once; a new `pipe connect` joins the fan-out
     /// rather than preempting, and each consumer streams until the source ends.
     pub follow: bool,
-    /// A `listen-bench` ticket — the benchmark protocol, not the plain
-    /// byte-stream one. Lets `connect` and `connect-bench` each refuse the
+    /// A `pipe bench` ticket — the benchmark protocol, not the plain
+    /// byte-stream one. Lets `pipe connect` and `pipe bench` each refuse the
     /// other's ticket instead of hanging deep in the wrong protocol.
     pub bench: bool,
 }
