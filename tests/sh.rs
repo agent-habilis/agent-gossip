@@ -111,6 +111,81 @@ fn viewer_receives_the_shared_shell_output() {
 }
 
 #[test]
+fn session_env_var_and_state_file_track_the_viewer_count() {
+    let (_creator, swarm) = Node::create_named("sh-state");
+
+    // The scripted shell IS the assertion vehicle: it derives the state file
+    // path from $AHSW_SH exactly the way an external prompt segment would,
+    // proves the pre-spawn write (viewer_count 0 before anyone attached), then
+    // waits for the attach write (viewer_count 1). Its output reaches the
+    // viewer via the replay buffer, so the markers land on the viewer's stdout.
+    let mut producer_cmd = test_cmd();
+    producer_cmd.args([
+        "sh",
+        "listen",
+        "--swarm",
+        swarm.as_str(),
+        "--command",
+        concat!(
+            "state=/tmp/agent-habilis/swarm/sh/${AHSW_SH}.state.json; ",
+            "printf 'ENV-%s\\n' \"$AHSW_SH\"; ",
+            "grep -q '\"viewer_count\":0' \"$state\" && printf 'ZERO-OK\\n'; ",
+            "while ! grep -q '\"viewer_count\":1' \"$state\"; do sleep 0.2; done; ",
+            "printf 'COUNT-OK\\n'",
+        ),
+        "--cols",
+        "80",
+        "--rows",
+        "24",
+        "--output",
+        "json",
+    ]);
+    let (mut producer, producer_rx) = spawn_piped(producer_cmd);
+    let ticket_line = recv_line_containing(&producer_rx, "sh connect")
+        .expect("producer never printed an sh connect command");
+    let ticket = ticket_line
+        .split_whitespace()
+        .nth(3)
+        .expect("sh connect line missing ticket token")
+        .to_string();
+
+    let mut viewer_cmd = test_cmd();
+    viewer_cmd.args(["sh", "connect", ticket.as_str()]);
+    let (_viewer, viewer_rx) = spawn_piped(viewer_cmd);
+
+    let env_line = recv_line_containing(&viewer_rx, "ENV-")
+        .expect("the shell never saw AHSW_SH in its environment");
+    let sh_prefix = env_line
+        .split("ENV-")
+        .nth(1)
+        .map(|rest| rest.trim_end().chars().take(16).collect::<String>())
+        .expect("ENV- line missing the sh prefix");
+    assert_eq!(
+        sh_prefix.chars().count(),
+        16,
+        "AHSW_SH carries the 16-char prefix"
+    );
+    assert!(
+        recv_line_containing(&viewer_rx, "ZERO-OK").is_some(),
+        "the state file was not readable with viewer_count 0 before the viewer attached"
+    );
+    assert!(
+        recv_line_containing(&viewer_rx, "COUNT-OK").is_some(),
+        "the attach never surfaced as viewer_count 1 in the state file"
+    );
+
+    // COUNT-OK ends the scripted shell, so the producer exits cleanly — and
+    // must have removed the state file on its way out.
+    let status = producer.0.wait().expect("waiting on the producer failed");
+    assert!(status.success(), "producer exited with {status}");
+    let state_path = format!("/tmp/agent-habilis/swarm/sh/{sh_prefix}.state.json");
+    assert!(
+        !std::path::Path::new(&state_path).exists(),
+        "state file survived the session's clean exit"
+    );
+}
+
+#[test]
 fn write_viewer_input_reaches_the_shell() {
     let (_creator, swarm) = Node::create_named("sh-write");
 

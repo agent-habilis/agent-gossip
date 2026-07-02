@@ -640,6 +640,21 @@ COMMANDS
               while such an app sits idle may see a partial screen until it
               repaints.
 
+              The spawned shell carries AHSW_SH=<sh-prefix> in its environment
+              (the first 16 characters of the sharer's endpoint id — public,
+              not the ticket), so anything inside — a prompt segment, a script —
+              can detect it is running inside a shared shell. The same prefix
+              keys a small status file the sharer maintains at
+              /tmp/agent-habilis/swarm/sh/<sh-prefix>.state.json: one line of
+              JSON, e.g. {"last_updated":…,"swarm":"🐝…","viewer_count":2},
+              atomically replaced whenever a viewer attaches or detaches and
+              removed when the broadcast ends (`swarm` appears only when the
+              session was started with --swarm). The sharer is the sole writer;
+              read it, don't touch it. Note ahsw never READS AHSW_* from the
+              environment — the variable is informational, outbound only. A
+              detached viewer is noticed lazily: the count drops on the next
+              output or resize, so an idle shell can show a stale count briefly.
+
               The ticket is the same kind of bearer capability the pipe uses (a
               random secret carrying the sharer's address + the swarm's discovery
               config); it shares the 🐝… glyph but is a DISTINCT token, not

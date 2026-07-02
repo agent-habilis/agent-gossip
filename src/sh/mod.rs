@@ -8,6 +8,7 @@ use crate::protocol::swarm::{LookupOpts, Swarm};
 
 mod consume;
 mod produce;
+mod state_file;
 mod term;
 mod ticket;
 
@@ -17,6 +18,14 @@ pub(crate) use produce::listen;
 /// ALPN for the shell protocol — its own protocol identity, distinct from the
 /// pipe/port/file ALPNs, so a mismatched dial is rejected at the QUIC handshake.
 pub(crate) const SH_ALPN: &[u8] = b"agent-habilis-swarm/sh/1";
+
+/// Env var injected into the broadcast shell (never read back by ahsw — the
+/// no-env-config rule is about inbound config; this is informational, outbound
+/// only). Its value is the session's sh-prefix — the first 16 chars of the
+/// producer's endpoint id — which both marks "inside a swarm sh" for prompt
+/// segments and keys the state file at [`state_file::path_for`], so a reader
+/// derives the path from the env var alone.
+pub(crate) const ENV_SH: &str = "AHSW_SH";
 
 /// Length of the bearer-capability secret carried in a shell ticket.
 pub(crate) const SECRET_LEN: usize = 32;
@@ -200,6 +209,12 @@ mod tests {
         let write_ticket = write_ticket.expect("write ticket");
         let command = command.to_owned();
         let server = tokio::spawn(async move {
+            let sh_prefix: String = endpoint.id().to_string().chars().take(16).collect();
+            let mut state_file = super::state_file::ShStateFile::new(
+                std::env::temp_dir().join(format!("ahsw-sh-mod-test-{sh_prefix}.state.json")),
+                &sh_prefix,
+                None,
+            );
             let result = super::produce::serve(
                 &endpoint,
                 secrets,
@@ -207,6 +222,7 @@ mod tests {
                 Some(80),
                 Some(24),
                 false,
+                &mut state_file,
             )
             .await;
             endpoint.close().await;

@@ -12,6 +12,7 @@ use tokio::io::AsyncWriteExt;
 use crate::lookup::build_endpoint;
 use crate::protocol::swarm::LookupOpts;
 
+use super::state_file::ShStateFile;
 use super::term;
 use super::ticket::ShTicket;
 use super::{SECRET_LEN, SH_ALPN, wait_online};
@@ -42,6 +43,11 @@ pub(crate) async fn listen(
 ) -> Result<()> {
     let lookups = super::swarm_lookups(swarm)?;
     let (endpoint, ticket, write_ticket, secrets) = bind(lookups, write).await?;
+    // The endpoint id (public) keys the state file the way `swarm_prefix` keys
+    // a swarm's runtime dir; the same prefix rides into the shell as `AHSW_SH`.
+    let sh_prefix: String = endpoint.id().to_string().chars().take(16).collect();
+    let mut state_file =
+        ShStateFile::new(super::state_file::path_for(&sh_prefix), &sh_prefix, swarm);
     let read_cmd = format!("ahsw sh connect {}", ticket.encode());
     if let Some(write_ticket) = write_ticket {
         // Two tickets: label each with its capability so they can't be mixed up.
@@ -67,10 +73,21 @@ pub(crate) async fn listen(
     } else {
         super::announce(json, "this shell — viewers watch read-only", &read_cmd);
     }
-    let result = serve(&endpoint, secrets, command, cols, rows, !json).await;
+    let result = serve(
+        &endpoint,
+        secrets,
+        command,
+        cols,
+        rows,
+        !json,
+        &mut state_file,
+    )
+    .await;
     // Restore the tty before exiting on either path (raw mode was entered while
-    // sharing) — `process::exit` skips `Drop`, so this is explicit.
+    // sharing) — `process::exit` skips `Drop`, so this is explicit; the state
+    // file's removal is explicit for the same reason.
     term::restore();
+    state_file.remove();
     match result {
         // The shell exited: the session is over. Exit now rather than await the
         // multi-second `endpoint.close()` teardown (relay/DHT/mDNS).
@@ -145,6 +162,7 @@ pub(super) async fn serve(
     cols_override: Option<u16>,
     rows_override: Option<u16>,
     _narrate: bool,
+    state_file: &mut ShStateFile,
 ) -> Result<()> {
     // Size: the explicit test knobs win; otherwise the controlling tty's size.
     let (cols, rows) = if let (Some(cols), Some(rows)) = (cols_override, rows_override) {
@@ -157,8 +175,12 @@ pub(super) async fn serve(
     let interactive = cols_override.is_none() && std::io::stdin().is_terminal();
     let write_enabled = secrets.write.is_some();
 
+    // Written before the spawn so the file exists by the time the child's
+    // first prompt renders.
+    state_file.update(0);
+    let sh_prefix = state_file.sh_prefix().to_owned();
     let (mut out_rx, input_tx, master) =
-        spawn_pty_session(command, cols, rows, interactive, write_enabled)?;
+        spawn_pty_session(command, cols, rows, interactive, write_enabled, &sh_prefix)?;
 
     let (auth_tx, mut auth_rx) =
         tokio::sync::mpsc::channel::<(Connection, SendStream, RecvStream, bool)>(1);
@@ -198,6 +220,7 @@ pub(super) async fn serve(
                     spawn_viewer_reader(conn.clone(), recv, viewer_input);
                     viewers.push(Viewer { conn, send });
                 }
+                state_file.update(viewers.len());
             }
             Some(()) = maybe_winch(&mut winch) => {
                 let (new_cols, new_rows) = term::size();
@@ -210,6 +233,7 @@ pub(super) async fn serve(
                 cur_cols = new_cols;
                 cur_rows = new_rows;
                 broadcast(&mut viewers, &super::encode_resize(new_cols, new_rows)).await;
+                state_file.update(viewers.len());
             }
             chunk = out_rx.recv() => match chunk {
                 None => {
@@ -235,6 +259,7 @@ pub(super) async fn serve(
                         let _ = stdout.flush().await;
                     }
                     broadcast(&mut viewers, &super::encode_data(&bytes)).await;
+                    state_file.update(viewers.len());
                 }
             }
         }
@@ -263,6 +288,7 @@ fn spawn_pty_session(
     rows: u16,
     interactive: bool,
     write_enabled: bool,
+    sh_prefix: &str,
 ) -> Result<PtySession> {
     let pty = native_pty_system();
     let pair = pty
@@ -275,7 +301,7 @@ fn spawn_pty_session(
         .context("opening a pty failed")?;
     let mut child = pair
         .slave
-        .spawn_command(build_command(command))
+        .spawn_command(build_command(command, sh_prefix))
         .context("spawning the shell failed")?;
     // Close the slave in the parent so the master read returns EOF once the child
     // exits — that EOF is our end-of-session signal.
@@ -475,7 +501,7 @@ async fn authenticate(
 /// Build the command run inside the PTY: `--command` (a test/ops knob) runs via
 /// `sh -c`; otherwise the sharer's `$SHELL` (falling back to `/bin/sh`). Inherits
 /// the current working directory and ensures `TERM` is set.
-fn build_command(command: Option<&str>) -> CommandBuilder {
+fn build_command(command: Option<&str>, sh_prefix: &str) -> CommandBuilder {
     let mut cmd = if let Some(line) = command {
         let mut builder = CommandBuilder::new("/bin/sh");
         builder.arg("-c");
@@ -491,5 +517,7 @@ fn build_command(command: Option<&str>) -> CommandBuilder {
     if std::env::var_os("TERM").is_none() {
         cmd.env("TERM", "xterm-256color");
     }
+    // A nested `ahsw sh` overrides this — the innermost session wins.
+    cmd.env(super::ENV_SH, sh_prefix);
     cmd
 }
