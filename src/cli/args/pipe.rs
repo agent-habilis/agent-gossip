@@ -1,6 +1,6 @@
 use clap::Subcommand;
 
-use super::lookup::LookupArgs;
+use super::lookup::PublicLookupArgs;
 use super::output::OutputFormat;
 use super::shared::DirectoryTuningArgs;
 use crate::pipe::BenchBudget;
@@ -20,12 +20,13 @@ pub(crate) enum PipeAction {
         /// should use, so it traverses the network like swarm members do. Omit
         /// for a public default. Alternative to the `--mdns`/`--dht`/`--relay`
         /// flags — pass one or the other.
-        #[arg(long)]
+        #[arg(long, conflicts_with_all = ["public", "mdns", "dht", "relay"])]
         swarm: Option<SwarmId>,
         /// Which lookup mechanisms the pipe uses (same flags as `create`):
-        /// naming any uses only those; naming none is the all-on public preset.
+        /// naming any uses only those; naming none (or `--public`) is the
+        /// all-on public preset.
         #[command(flatten)]
-        lookups: LookupArgs,
+        lookups: PublicLookupArgs,
         /// Advertise this pipe's ticket in a directory so a peer can find it
         /// with `ahsw pipe discover` — no `🐝…` to copy. Bare `--advertise` ⇒
         /// the default `global` directory; `--advertise <name>` ⇒ that named
@@ -82,9 +83,10 @@ pub(crate) enum PipeAction {
         name: SwarmName,
         /// Which lookup mechanisms reach the directory (same flags as
         /// `discover`): must match the advertiser's, so an mDNS-only pipe is
-        /// found only over `--mdns`. Naming none is the all-on public preset.
+        /// found only over `--mdns`. Naming none (or `--public`) is the
+        /// all-on public preset.
         #[command(flatten)]
-        lookups: LookupArgs,
+        lookups: PublicLookupArgs,
         /// Hidden directory-tuning knobs (test suite only).
         #[command(flatten)]
         tuning: DirectoryTuningArgs,
@@ -108,6 +110,7 @@ pub(crate) enum PipeAction {
     Bench {
         /// The `🐝…` ticket printed by a producer-side `ahsw pipe bench`. Omit
         /// this argument to be the producer instead.
+        #[arg(conflicts_with_all = ["public", "mdns", "dht", "relay"])]
         ticket: Option<String>,
         /// [producer] Stay up and serve one benchmark per connecting peer,
         /// sequentially, until killed (instead of exiting after the first run).
@@ -117,9 +120,15 @@ pub(crate) enum PipeAction {
         serve: bool,
         /// [producer] Swarm id whose discovery config (local / mDNS / DHT /
         /// relay) the pipe should use, so it traverses the network like swarm
-        /// members do. Omit for a public default.
-        #[arg(long, conflicts_with = "ticket")]
+        /// members do. Omit for a public default. Alternative to the
+        /// `--mdns`/`--dht`/`--relay` flags — pass one or the other.
+        #[arg(long, conflicts_with_all = ["ticket", "public", "mdns", "dht", "relay"])]
         swarm: Option<SwarmId>,
+        /// [producer] Which lookup mechanisms the pipe uses (same flags as
+        /// `create`): naming any uses only those; naming none (or `--public`)
+        /// is the all-on public preset.
+        #[command(flatten)]
+        lookups: PublicLookupArgs,
         /// [consumer] How much of the throughput phase to run: a duration
         /// (`10s`, `2m`, `1h`) or a byte count (`500b`, `100kb`, `50mb`, `2gb`).
         /// Defaults to `10s`.
@@ -163,7 +172,34 @@ pub(super) fn parse_rate(raw: &str) -> Result<u64, String> {
 
 #[cfg(test)]
 mod tests {
+    use clap::Parser;
+
     use super::parse_rate;
+    use crate::cli::args::{Cli, Commands};
+
+    #[test]
+    fn bench_producer_parses_lookup_flags() {
+        let cli = Cli::parse_from(["ahsw", "pipe", "bench", "--public"]);
+        let Commands::Pipe { action } = cli.command else {
+            panic!("expected Pipe");
+        };
+        let super::PipeAction::Bench {
+            ticket, lookups, ..
+        } = action
+        else {
+            panic!("expected Bench");
+        };
+        assert!(ticket.is_none());
+        assert!(lookups.public);
+    }
+
+    #[test]
+    fn bench_consumer_rejects_lookup_flags() {
+        // A ticket already carries the discovery config, so the consumer
+        // form conflicts with every lookup flag.
+        assert!(Cli::try_parse_from(["ahsw", "pipe", "bench", "🐝x", "--public"]).is_err());
+        assert!(Cli::try_parse_from(["ahsw", "pipe", "bench", "🐝x", "--mdns"]).is_err());
+    }
 
     #[test]
     fn parses_plain_and_suffixed_rates() {

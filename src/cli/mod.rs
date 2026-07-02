@@ -419,18 +419,21 @@ async fn pipe(action: PipeAction) -> Result<()> {
             ticket,
             serve,
             swarm,
+            lookups,
             budget,
             pings,
             output,
         } => {
             let json = matches!(output, OutputFormat::Json);
             // clap enforces the producer/consumer split: `--serve`/`--swarm`
-            // conflict with a ticket, `--budget`/`--pings` require one. So a
-            // ticket means consumer, its absence means producer.
+            // and the lookup flags conflict with a ticket, `--budget`/`--pings`
+            // require one. So a ticket means consumer, its absence means
+            // producer.
             match ticket {
                 None => {
                     crate::pipe::listen_bench(
                         swarm.as_ref().map(crate::protocol::SwarmId::as_str),
+                        lookups.to_set(),
                         serve,
                         json,
                     )
@@ -586,6 +589,7 @@ async fn sh(action: ShAction) -> Result<()> {
     match action {
         ShAction::Listen {
             swarm,
+            lookups,
             output,
             write,
             command,
@@ -594,6 +598,7 @@ async fn sh(action: ShAction) -> Result<()> {
         } => {
             crate::sh::listen(
                 swarm.as_ref().map(crate::protocol::SwarmId::as_str),
+                lookups.to_set(),
                 matches!(output, OutputFormat::Json),
                 write,
                 command.as_deref(),
@@ -617,11 +622,13 @@ async fn mount(
     if let Some(MountAction::Serve {
         dir,
         swarm,
+        lookups,
         output: serve_output,
     }) = action
     {
         return crate::mount::serve(
             swarm.as_ref().map(crate::protocol::SwarmId::as_str),
+            lookups.to_set(),
             &dir,
             matches!(serve_output, OutputFormat::Json),
         )

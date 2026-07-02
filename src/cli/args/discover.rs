@@ -5,7 +5,7 @@ use clap::Parser;
 
 use crate::protocol::swarm::SwarmName;
 
-use super::lookup::LookupArgs;
+use super::lookup::PublicLookupArgs;
 use super::shared::SharedServerOpts;
 
 #[derive(Parser, Debug)]
@@ -17,12 +17,12 @@ pub(crate) struct DiscoverOpts {
     pub directory: Option<SwarmName>,
 
     /// Lookups used to reach the directory (`--mdns`/`--dht`/`--relay`).
-    /// Naming none uses all three; naming any restricts to those (a
-    /// disabled leg makes no network requests). Must match the lookups the
-    /// advertiser used — an mDNS-only advertiser is found only by an
-    /// mDNS-only `discover`.
+    /// Naming none (or `--public`) uses all three; naming any restricts to
+    /// those (a disabled leg makes no network requests). Must match the
+    /// lookups the advertiser used — an mDNS-only advertiser is found only
+    /// by an mDNS-only `discover`.
     #[command(flatten)]
-    pub lookups: LookupArgs,
+    pub lookups: PublicLookupArgs,
 
     #[command(flatten)]
     pub shared: SharedServerOpts,

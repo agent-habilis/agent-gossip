@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use clap::Subcommand;
 
+use super::lookup::PublicLookupArgs;
 use super::output::OutputFormat;
 use crate::protocol::SwarmId;
 
@@ -21,9 +22,15 @@ pub(crate) enum MountAction {
         dir: PathBuf,
         /// Swarm id whose discovery config (local / mDNS / DHT / relay) the
         /// share should use, so it traverses the network like swarm members
-        /// do. Omit for a public default.
-        #[arg(long)]
+        /// do. Omit for a public default. Alternative to the
+        /// `--mdns`/`--dht`/`--relay` flags — pass one or the other.
+        #[arg(long, conflicts_with_all = ["public", "mdns", "dht", "relay"])]
         swarm: Option<SwarmId>,
+        /// Which lookup mechanisms the share uses (same flags as `create`):
+        /// naming any uses only those; naming none (or `--public`) is the
+        /// all-on public preset.
+        #[command(flatten)]
+        lookups: PublicLookupArgs,
         /// Output format: human (default) — a cargo-style status + hint — or
         /// json, a single direct `ahsw mount 🐝…` line for machines.
         #[arg(long, default_value = "human")]
@@ -68,6 +75,44 @@ mod tests {
         assert_eq!(mountpoint, Some(std::path::PathBuf::from("./mnt")));
         assert!(!no_mount);
         assert!(matches!(output, super::OutputFormat::Json));
+    }
+
+    #[test]
+    fn mount_serve_parses_lookup_flags() {
+        let cli = Cli::parse_from(["ahsw", "mount", "serve", "./dir", "--dht"]);
+        let Commands::Mount { action, .. } = cli.command else {
+            panic!("expected Mount");
+        };
+        let Some(super::MountAction::Serve { lookups, .. }) = action else {
+            panic!("expected Serve");
+        };
+        assert!(!lookups.public);
+        assert!(lookups.lookups.dht && !lookups.lookups.mdns);
+    }
+
+    #[test]
+    fn mount_serve_public_conflicts_with_granular_and_swarm() {
+        assert!(
+            Cli::try_parse_from(["ahsw", "mount", "serve", "./dir", "--public", "--dht"]).is_err()
+        );
+        let id = crate::protocol::swarm::Swarm::new(
+            [7u8; 32],
+            crate::protocol::swarm::SwarmName::new("test").unwrap(),
+            crate::protocol::swarm::SwarmConfig::loopback(),
+        )
+        .to_string();
+        assert!(
+            Cli::try_parse_from([
+                "ahsw",
+                "mount",
+                "serve",
+                "./dir",
+                "--swarm",
+                id.as_str(),
+                "--public"
+            ])
+            .is_err()
+        );
     }
 
     #[test]

@@ -10,7 +10,7 @@ use rand::RngCore;
 use tokio::io::AsyncWriteExt;
 
 use crate::lookup::build_endpoint;
-use crate::protocol::swarm::LookupOpts;
+use crate::protocol::swarm::{LookupOpts, LookupSet, resolve_transfer_lookups};
 
 use super::term;
 use super::ticket::ShTicket;
@@ -34,13 +34,14 @@ const VIEWER_WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 /// stream I/O error while serving.
 pub(crate) async fn listen(
     swarm: Option<&str>,
+    flags: LookupSet,
     json: bool,
     write: bool,
     command: Option<&str>,
     cols: Option<u16>,
     rows: Option<u16>,
 ) -> Result<()> {
-    let lookups = super::swarm_lookups(swarm)?;
+    let lookups = resolve_transfer_lookups(swarm, flags)?;
     let (endpoint, ticket, write_ticket, secrets) = bind(lookups, write).await?;
     let read_cmd = format!("ahsw sh connect {}", ticket.encode());
     if let Some(write_ticket) = write_ticket {

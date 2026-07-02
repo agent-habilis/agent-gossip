@@ -1,15 +1,12 @@
-//! The `--mdns`/`--dht`/`--relay` lookup allowlist flag group, flattened
-//! into every server command, and its resolution into a [`LookupSet`].
-
 use clap::Parser;
 
 use crate::protocol::swarm::{LookupSet, RelayLadder, RelaySelection};
 
-/// The lookup allowlist flags: with `--public`, naming none enables
-/// all three (mdns + dht + pinned relay); naming any uses *only* those
-/// passed (so `--mdns` alone disables both dht and the relay). All
-/// require `--public`. Grouped and flattened so each options struct
-/// stays within the readable bool budget.
+/// The lookup allowlist flags: naming any uses *only* those passed (so
+/// `--mdns` alone disables both dht and the relay); naming none falls
+/// back to the command's default (`create`: loopback unless `--public`;
+/// transfers/discover: the all-on public preset). Grouped and flattened
+/// so each options struct stays within the readable bool budget.
 #[derive(Parser, Debug)]
 pub(crate) struct LookupArgs {
     /// Enable the LAN mDNS address-lookup.
@@ -24,9 +21,8 @@ pub(crate) struct LookupArgs {
     /// `--relay` ⇒ the default n0 prod relay *ladder*; `--relay
     /// <URL>[,<URL>…]` ⇒ a custom ordered ladder (the beacon homes on
     /// the first reachable rung). Omitting it while naming another flag
-    /// disables the relay; naming no flag at all enables the default
-    /// ladder. An allowlist member like `--mdns`/`--dht` — per-process,
-    /// requires `--public`. Absent ⇒ `None`; bare ⇒ `Some(None)`;
+    /// disables the relay; naming no flag at all falls back to the
+    /// command's default. Absent ⇒ `None`; bare ⇒ `Some(None)`;
     /// valued ⇒ `Some(Some(ladder))`.
     #[arg(long, num_args(0..=1))]
     #[expect(
@@ -47,6 +43,37 @@ impl LookupArgs {
             mdns: self.mdns,
             dht: self.dht,
             relay,
+        }
+    }
+}
+
+/// [`LookupArgs`] plus `--public`, for the commands whose no-flag default
+/// is already the all-on public preset (transfers + directory browsing).
+/// `create` keeps its own `--public` (there it opts *in* from a loopback
+/// default and is baked into the swarm id).
+#[derive(Parser, Debug)]
+pub(crate) struct PublicLookupArgs {
+    /// Explicitly select the all-on public preset (mDNS + DHT + the
+    /// default relay ladder) — already the default when no lookup flag
+    /// is named. Conflicts with the granular `--mdns`/`--dht`/`--relay`
+    /// flags (they replace the preset) and, on the commands that take
+    /// one, with a `--swarm`/ticket that already carries a discovery
+    /// config.
+    #[arg(long, default_value_t = false, conflicts_with_all = ["mdns", "dht", "relay"])]
+    pub public: bool,
+
+    #[command(flatten)]
+    pub lookups: LookupArgs,
+}
+
+impl PublicLookupArgs {
+    pub(crate) fn to_set(&self) -> LookupSet {
+        if self.public {
+            // The explicit alias for the no-flag default; the conflict
+            // rule guarantees no granular flag accompanies it.
+            LookupSet::default()
+        } else {
+            self.lookups.to_set()
         }
     }
 }

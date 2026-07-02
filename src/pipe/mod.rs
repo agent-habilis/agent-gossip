@@ -8,10 +8,7 @@
 
 use std::time::Duration;
 
-use anyhow::{Context, Result};
 use iroh::Endpoint;
-
-use crate::protocol::swarm::{LookupOpts, Swarm};
 
 mod bench;
 mod consume;
@@ -29,19 +26,6 @@ pub(crate) const PIPE_ALPN: &[u8] = b"agent-habilis-swarm/pipe/1";
 
 /// Length of the bearer-capability secret carried in a pipe ticket.
 pub(crate) const SECRET_LEN: usize = 32;
-
-/// Resolve a `--swarm` id to its discovery config (`None` ⇒ a public default),
-/// so a pipe traverses the network the way that swarm's members do.
-fn swarm_lookups(swarm: Option<&str>) -> Result<LookupOpts> {
-    match swarm {
-        Some(id) => Ok(id
-            .parse::<Swarm>()
-            .context("invalid --swarm id")?
-            .lookups()
-            .clone()),
-        None => Ok(LookupOpts::public_preset()),
-    }
-}
 
 /// Best-effort wait (≤5s) for the endpoint to publish reachable addresses, so a
 /// freshly-printed ticket resolves immediately. Never blocks forever.

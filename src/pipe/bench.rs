@@ -25,6 +25,7 @@ use iroh::endpoint::{Connection, RecvStream, SendStream};
 use tokio::io::AsyncReadExt;
 
 use crate::lookup::build_participant_endpoint;
+use crate::protocol::swarm::{LookupSet, resolve_transfer_lookups};
 use crate::util::output::status;
 
 use super::SECRET_LEN;
@@ -143,8 +144,13 @@ async fn accept_authenticated(
 /// Endpoint bind / discovery-config parse failures, or (single-shot only) the
 /// benchmark itself failing — the caller then exits non-zero. In `serve` mode a
 /// failed run is one bad consumer, not fatal; only the endpoint closing ends it.
-pub(crate) async fn listen_bench(swarm: Option<&str>, serve: bool, json: bool) -> Result<()> {
-    let lookups = super::swarm_lookups(swarm)?;
+pub(crate) async fn listen_bench(
+    swarm: Option<&str>,
+    flags: LookupSet,
+    serve: bool,
+    json: bool,
+) -> Result<()> {
+    let lookups = resolve_transfer_lookups(swarm, flags)?;
     let (endpoint, mut ticket, secret) = super::produce::bind(lookups).await?;
     ticket.bench = true;
     super::announce(

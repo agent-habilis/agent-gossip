@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use clap::Subcommand;
 
-use super::lookup::LookupArgs;
+use super::lookup::PublicLookupArgs;
 use super::output::OutputFormat;
 use super::pipe::parse_rate;
 use super::shared::DirectoryTuningArgs;
@@ -25,12 +25,13 @@ pub(crate) enum FileAction {
         /// transfer should use, so it traverses the network like swarm members
         /// do. Omit for a public default. Alternative to the
         /// `--mdns`/`--dht`/`--relay` flags — pass one or the other.
-        #[arg(long)]
+        #[arg(long, conflicts_with_all = ["public", "mdns", "dht", "relay"])]
         swarm: Option<SwarmId>,
         /// Which lookup mechanisms the transfer uses (same flags as `create`):
-        /// naming any uses only those; naming none is the all-on public preset.
+        /// naming any uses only those; naming none (or `--public`) is the
+        /// all-on public preset.
         #[command(flatten)]
-        lookups: LookupArgs,
+        lookups: PublicLookupArgs,
         /// Advertise this transfer's ticket in a directory so a peer can find
         /// it with `ahsw file discover` — no `🐝…` to copy. Bare `--advertise`
         /// ⇒ the default `global` directory; `--advertise <name>` ⇒ that named
@@ -86,10 +87,10 @@ pub(crate) enum FileAction {
         #[arg(default_value = crate::protocol::swarm::DEFAULT_DIRECTORY)]
         name: SwarmName,
         /// Which lookup mechanisms reach the directory (same flags as
-        /// `discover`): must match the sender's. Naming none is the all-on
-        /// public preset.
+        /// `discover`): must match the sender's. Naming none (or `--public`)
+        /// is the all-on public preset.
         #[command(flatten)]
-        lookups: LookupArgs,
+        lookups: PublicLookupArgs,
         /// Hidden directory-tuning knobs (test suite only).
         #[command(flatten)]
         tuning: DirectoryTuningArgs,

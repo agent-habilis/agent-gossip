@@ -32,30 +32,33 @@ SYNOPSIS
 
        ahsw peers --swarm 🐝… --nickname NAME [--output json]
 
-       ahsw pipe listen        [--swarm 🐝… | --mdns --dht --relay[=URLS]]
+       ahsw pipe listen        [--swarm 🐝… | --public | --mdns --dht --relay[=URLS]]
                   [--advertise[=NAME]] [--throttle RATE] [--follow] [--output human|json]
        ahsw pipe connect       🐝… [--throttle RATE]
-       ahsw pipe discover      [NAME] [--mdns] [--dht] [--relay[=URLS]]
+       ahsw pipe discover      [NAME] [--public] [--mdns] [--dht] [--relay[=URLS]]
                   [--throttle RATE] [--output human|json]
-       ahsw pipe bench         [--serve] [--swarm 🐝…] [--output human|json]
+       ahsw pipe bench         [--serve] [--swarm 🐝… | --public | --mdns --dht --relay[=URLS]]
+                  [--output human|json]
        ahsw pipe bench         🐝… [--budget BUDGET] [--pings N] [--output human|json]
 
-       ahsw port listen  PORT... [--swarm 🐝… | --mdns --dht --relay[=URLS]]
+       ahsw port listen  PORT... [--swarm 🐝… | --public | --mdns --dht --relay[=URLS]]
                   [--advertise[=NAME]] [--output human|json]
        ahsw port connect 🐝… [LOCAL:]REMOTE... [--output human|json]
-       ahsw port discover [NAME] [[LOCAL:]REMOTE...] [--mdns] [--dht] [--relay[=URLS]]
+       ahsw port discover [NAME] [[LOCAL:]REMOTE...] [--public] [--mdns] [--dht] [--relay[=URLS]]
                   [--output human|json]
 
-       ahsw file send PATH [--swarm 🐝… | --mdns --dht --relay[=URLS]]
+       ahsw file send PATH [--swarm 🐝… | --public | --mdns --dht --relay[=URLS]]
                   [--advertise[=NAME]] [--throttle RATE] [--output human|json]
        ahsw file get  🐝… [--out DIR] [--throttle RATE] [--output human|json]
-       ahsw file discover [NAME] [--mdns] [--dht] [--relay[=URLS]]
+       ahsw file discover [NAME] [--public] [--mdns] [--dht] [--relay[=URLS]]
                   [--out DIR] [--throttle RATE] [--output human|json]
 
-       ahsw sh listen  [--swarm 🐝…] [--write] [--output human|json]
+       ahsw sh listen  [--swarm 🐝… | --public | --mdns --dht --relay[=URLS]]
+                  [--write] [--output human|json]
        ahsw sh connect 🐝…
 
-       ahsw mount serve DIR [--swarm 🐝…] [--output human|json]
+       ahsw mount serve DIR [--swarm 🐝… | --public | --mdns --dht --relay[=URLS]]
+                  [--output human|json]
        ahsw mount 🐝… MOUNTPOINT [--output human|json]
 
        ahsw state merge --swarm 🐝… --nickname NAME --merge MERGE
@@ -67,7 +70,7 @@ SYNOPSIS
        ahsw ready --state-file PATH [--timeout-secs N] [--output human|json]
 
        ahsw discover [--directory DIRECTORY]
-                  [--mdns] [--dht] [--relay[=URLS]]
+                  [--public] [--mdns] [--dht] [--relay[=URLS]]
                   [--no-interactive] [--state-file PATH] [--output human|json]
                   [--max-peers N] [--filter-self]
 
@@ -406,12 +409,14 @@ COMMANDS
               metadata each agent self-reports into the meta channel; read
               them with meta get under /peers/<nickname> (see "SHARED STATE").
 
-       pipe listen [--swarm 🐝… | --mdns --dht --relay[=URLS]] [--advertise[=NAME]]
-                   [--throttle RATE] [--follow] [--output human|json]
-       pipe connect 🐝… [--throttle RATE]
-       pipe discover [NAME] [--mdns] [--dht] [--relay[=URLS]] [--throttle RATE]
+       pipe listen [--swarm 🐝… | --public | --mdns --dht --relay[=URLS]]
+                   [--advertise[=NAME]] [--throttle RATE] [--follow]
                    [--output human|json]
-       pipe bench [--serve] [--swarm 🐝…] [--output human|json]
+       pipe connect 🐝… [--throttle RATE]
+       pipe discover [NAME] [--public] [--mdns] [--dht] [--relay[=URLS]]
+                   [--throttle RATE] [--output human|json]
+       pipe bench [--serve] [--swarm 🐝… | --public | --mdns --dht --relay[=URLS]]
+                   [--output human|json]
        pipe bench 🐝… [--budget BUDGET] [--pings N] [--output human|json]
               A direct, off-gossip byte pipe between machines; no daemon needed.
               `pipe listen` reads stdin and prints the consumer's `ahsw pipe
@@ -424,8 +429,9 @@ COMMANDS
               (local / mDNS / DHT / relay) comes from --swarm (a swarm id's
               embedded lookups) or the same --mdns/--dht/--relay flags `create`
               takes (naming any uses only those) — pass one or the other; neither
-              is a public default. A loopback-only config keeps the pipe on one
-              machine. The data never touches gossip.
+              is a public default, and --public is that default's explicit
+              alias. A loopback-only config keeps the pipe on one machine. The
+              data never touches gossip.
 
               --advertise[=NAME] lists the ticket in a DIRECTORY (the same
               mechanism as `create --advertise`, bare ⇒ `global`) so the other
@@ -507,11 +513,11 @@ COMMANDS
                 ahsw pipe bench --serve                           # always-on: reconnect any time
                 ahsw pipe bench 🐝… --budget 30s --pings 50
 
-       port listen  PORT... [--swarm 🐝… | --mdns --dht --relay[=URLS]]
+       port listen  PORT... [--swarm 🐝… | --public | --mdns --dht --relay[=URLS]]
                     [--advertise[=NAME]] [--output human|json]
        port connect 🐝… [LOCAL:]REMOTE... [--output human|json]
-       port discover [NAME] [[LOCAL:]REMOTE...] [--mdns] [--dht] [--relay[=URLS]]
-                    [--output human|json]
+       port discover [NAME] [[LOCAL:]REMOTE...] [--public] [--mdns] [--dht]
+                    [--relay[=URLS]] [--output human|json]
               Forward one or more long-running TCP ports over the same off-gossip
               link as the pipe; no daemon needed. `port listen PORT...` proxies
               each listed port to `127.0.0.1:PORT` on the producer and prints the
@@ -524,7 +530,8 @@ COMMANDS
               and both sides run until interrupted. The ticket works like the
               pipe's (see `pipe`) but is a distinct kind — not accepted by --swarm,
               join, or pipe connect. The discovery config comes from --swarm or
-              the create-style --mdns/--dht/--relay flags, exactly as `pipe`.
+              the create-style --public/--mdns/--dht/--relay flags, exactly as
+              `pipe`.
 
               --advertise[=NAME] + `port discover` work like the pipe's (see
               `pipe`): the ticket is listed in directory NAME (bare ⇒ `global`),
@@ -552,11 +559,11 @@ COMMANDS
                 ahsw port connect 🐝… 8080:3000 5432     # 8080→3000, 5432→5432
                 ahsw port listen 3000 --advertise devbox   ↔   ahsw port discover devbox
 
-       file send PATH [--swarm 🐝… | --mdns --dht --relay[=URLS]]
+       file send PATH [--swarm 🐝… | --public | --mdns --dht --relay[=URLS]]
                  [--advertise[=NAME]] [--throttle RATE] [--output human|json]
        file get  🐝… [--out DIR] [--throttle RATE] [--output human|json]
-       file discover [NAME] [--mdns] [--dht] [--relay[=URLS]] [--out DIR]
-                 [--throttle RATE] [--output human|json]
+       file discover [NAME] [--public] [--mdns] [--dht] [--relay[=URLS]]
+                 [--out DIR] [--throttle RATE] [--output human|json]
               Send a file or folder over the same off-gossip direct link the pipe
               uses — no running daemon required, and it lands as a real tree on
               disk (not a byte stream). `file send PATH` serves a file or
@@ -583,10 +590,10 @@ COMMANDS
               not accepted by --swarm, join, pipe connect, or port connect.
               The discovery config comes from --swarm or the create-style
               --mdns/--dht/--relay flags, exactly as `pipe`; neither is a public
-              default, and a loopback-only config confines the transfer to one
-              machine. --throttle caps throughput (e.g. 100k, 2m; bytes/sec,
-              1024-based), doubling as a way to watch the progress bar on a
-              fast/local link. On the sender side, --output json swaps the
+              default (--public is its explicit alias), and a loopback-only
+              config confines the transfer to one machine. --throttle caps
+              throughput (e.g. 100k, 2m; bytes/sec, 1024-based), doubling as
+              a way to watch the progress bar on a fast/local link. On the sender side, --output json swaps the
               decorated human hint for one plain `ahsw file get 🐝…` line a
               script can capture; on the receiver side it suppresses the
               `Received …` summary.
@@ -606,7 +613,8 @@ COMMANDS
                 ahsw file send ./project --swarm 🐝…   ↔   ahsw file get 🐝…  # re-run to re-sync
                 ahsw file send ./photos --advertise trip   ↔   ahsw file discover trip
 
-       sh listen  [--swarm 🐝…] [--write] [--output human|json]
+       sh listen  [--swarm 🐝… | --public | --mdns --dht --relay[=URLS]]
+                  [--write] [--output human|json]
        sh connect 🐝…
               Share a live terminal over the same off-gossip direct link the pipe
               uses — no running daemon required. `sh listen` spawns your $SHELL
@@ -648,9 +656,10 @@ COMMANDS
               random secret carrying the sharer's address + the swarm's discovery
               config); it shares the 🐝… glyph but is a DISTINCT token, not
               accepted by --swarm, join, pipe connect, port connect, or file get.
-              --swarm selects the discovery mechanisms (local / mDNS / DHT /
-              relay); omit it for a public default, and a loopback-only swarm
-              confines the session to one machine. --output json swaps the
+              The discovery config comes from --swarm or the create-style
+              --mdns/--dht/--relay flags, exactly as `pipe`; neither is a public
+              default (--public is its explicit alias), and a loopback-only
+              config confines the session to one machine. --output json swaps the
               decorated human hint for plain `ahsw sh connect 🐝…` lines a
               script can capture: the read command first and, with --write, the
               write command on a second line.
@@ -661,7 +670,8 @@ COMMANDS
                 ahsw sh listen --write       # + a write ticket; share with care
                 ahsw sh connect 🐝Kt3n…      # type into the shell; Enter ~ . detaches
 
-       mount serve DIR [--swarm 🐝…] [--output human|json]
+       mount serve DIR [--swarm 🐝… | --public | --mdns --dht --relay[=URLS]]
+                  [--output human|json]
        mount 🐝… MOUNTPOINT [--output human|json]
               Share a folder, or mount a peer's shared folder locally as a
               READ-ONLY filesystem — browse a big tree without transferring
@@ -692,9 +702,10 @@ COMMANDS
               file commands use (a random secret carrying the server's
               address + the swarm's discovery config); it shares the 🐝…
               glyph but is a DISTINCT token, not accepted anywhere else.
-              --swarm selects the discovery mechanisms (local / mDNS / DHT /
-              relay); omit it for a public default, and a loopback-only swarm
-              confines the mount to one machine. On the serving side,
+              The discovery config comes from --swarm or the create-style
+              --mdns/--dht/--relay flags, exactly as `pipe`; neither is a public
+              default (--public is its explicit alias), and a loopback-only
+              config confines the mount to one machine. On the serving side,
               --output json swaps the decorated human hint for one plain
               `ahsw mount 🐝…` line a script can capture; on the mounting
               side it prints the bare OS mount command when the mount is not
@@ -813,11 +824,11 @@ COMMANDS
                      Directory to browse. Omit for global. Must match the
                      directory the advertiser passed to --advertise.
 
-              --mdns | --dht | --relay[=URLS]
+              --public | --mdns | --dht | --relay[=URLS]
                      Lookup allowlist for reaching the directory. Naming none
-                     uses all; naming any restricts to those. These MUST
-                     match the lookups the advertiser used (see
-                     "DIRECTORIES").
+                     (or --public, its explicit alias) uses all; naming any
+                     restricts to those. These MUST match the lookups the
+                     advertiser used (see "DIRECTORIES").
 
               --no-interactive / --output json
                      Stream directory changes as JSON; required for agent
@@ -902,6 +913,14 @@ NETWORKING
        Each lookup is sufficient on its own; combining them only adds
        reliability. Use --public unless you must restrict reach. For
        discover, the flags must match whatever the advertiser used.
+
+       The transfer and discover commands (pipe, port, file, sh, mount,
+       discover) take the same flags, with one difference: there the all-on
+       preset is already the no-flag default (a transfer is inherently
+       networked), so --public is its explicit alias. The alternatives are
+       exclusive: --public conflicts with the granular --mdns/--dht/--relay
+       flags, and --swarm (which already carries a discovery config)
+       conflicts with all four.
 
 DIRECTORIES
        A directory is a named, well-known public swarm that swarms advertise

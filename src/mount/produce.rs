@@ -31,8 +31,14 @@ pub(super) struct ServedFile {
 /// and ranged-read requests until interrupted.
 ///
 /// # Errors
-/// `dir` is not a readable directory, or the endpoint fails to bind.
-pub(crate) async fn serve(swarm: Option<&str>, dir: &Path, json: bool) -> Result<()> {
+/// `dir` is not a readable directory, discovery-config resolution fails, or
+/// the endpoint fails to bind.
+pub(crate) async fn serve(
+    swarm: Option<&str>,
+    flags: LookupSet,
+    dir: &Path,
+    json: bool,
+) -> Result<()> {
     let root = dir
         .canonicalize()
         .with_context(|| format!("resolving {}", dir.display()))?;
@@ -65,10 +71,7 @@ pub(crate) async fn serve(swarm: Option<&str>, dir: &Path, json: bool) -> Result
     }
     let manifest_bytes = Arc::new(encoded);
 
-    // No lookup flags on `mount serve` (yet): empty flags + optional --swarm
-    // is exactly the old per-module resolution — the swarm id wins, omitted
-    // means the public preset.
-    let lookups = resolve_transfer_lookups(swarm, LookupSet::default())?;
+    let lookups = resolve_transfer_lookups(swarm, flags)?;
     let (endpoint, ticket, secret) = bind(lookups).await?;
     // Shell-quoted: the hint is printed for copy-paste (and captured verbatim
     // by scripts in json mode), so a dir name with a space must stay one word.

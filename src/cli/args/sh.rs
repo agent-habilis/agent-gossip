@@ -1,5 +1,6 @@
 use clap::Subcommand;
 
+use super::lookup::PublicLookupArgs;
 use super::output::OutputFormat;
 use crate::protocol::SwarmId;
 
@@ -17,9 +18,15 @@ pub(crate) enum ShAction {
     Listen {
         /// Swarm id whose discovery config (local / mDNS / DHT / relay) the
         /// session should use, so it traverses the network like swarm members
-        /// do. Omit for a public default.
-        #[arg(long)]
+        /// do. Omit for a public default. Alternative to the
+        /// `--mdns`/`--dht`/`--relay` flags — pass one or the other.
+        #[arg(long, conflicts_with_all = ["public", "mdns", "dht", "relay"])]
         swarm: Option<SwarmId>,
+        /// Which lookup mechanisms the session uses (same flags as `create`):
+        /// naming any uses only those; naming none (or `--public`) is the
+        /// all-on public preset.
+        #[command(flatten)]
+        lookups: PublicLookupArgs,
         /// Output format: human (default) — a cargo-style status + hint — or json,
         /// the direct `ahsw sh connect 🐝…` line(s) for machines (read ticket
         /// first; the write ticket, if any, on a second line).
@@ -52,4 +59,37 @@ pub(crate) enum ShAction {
         /// The `🐝…` ticket printed by `ahsw sh listen`.
         ticket: String,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::Parser;
+
+    use crate::cli::args::{Cli, Commands};
+
+    #[test]
+    fn sh_listen_parses_lookup_flags() {
+        let cli = Cli::parse_from(["ahsw", "sh", "listen", "--mdns"]);
+        let Commands::Sh { action } = cli.command else {
+            panic!("expected Sh");
+        };
+        let super::ShAction::Listen { swarm, lookups, .. } = action else {
+            panic!("expected Listen");
+        };
+        assert!(swarm.is_none());
+        assert!(!lookups.public);
+        assert!(lookups.lookups.mdns && !lookups.lookups.dht);
+    }
+
+    #[test]
+    fn sh_listen_parses_public() {
+        let cli = Cli::parse_from(["ahsw", "sh", "listen", "--public"]);
+        let Commands::Sh { action } = cli.command else {
+            panic!("expected Sh");
+        };
+        let super::ShAction::Listen { lookups, .. } = action else {
+            panic!("expected Listen");
+        };
+        assert!(lookups.public);
+    }
 }

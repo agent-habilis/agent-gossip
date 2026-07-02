@@ -1,10 +1,8 @@
 use std::time::Duration;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 use iroh::Endpoint;
 use tokio::io::{AsyncRead, AsyncReadExt};
-
-use crate::protocol::swarm::{LookupOpts, Swarm};
 
 mod consume;
 mod produce;
@@ -136,19 +134,6 @@ async fn read_input_frame<R: AsyncRead + Unpin>(recv: &mut R) -> Result<Option<V
     let mut payload = vec![0u8; len];
     recv.read_exact(&mut payload).await?;
     Ok(Some(payload))
-}
-
-/// Resolve a `--swarm` id to its discovery config (`None` ⇒ a public default),
-/// so a shell session traverses the network the way that swarm's members do.
-fn swarm_lookups(swarm: Option<&str>) -> Result<LookupOpts> {
-    match swarm {
-        Some(id) => Ok(id
-            .parse::<Swarm>()
-            .context("invalid --swarm id")?
-            .lookups()
-            .clone()),
-        None => Ok(LookupOpts::public_preset()),
-    }
 }
 
 /// Best-effort wait (≤5s) for the endpoint to publish reachable addresses, so a
