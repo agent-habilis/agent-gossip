@@ -1,10 +1,11 @@
 //! The daemon-side **task** state machine + its two timers.
 //!
 //! A task is a directed, multi-leg conversation (see [`crate::protocol::MessageKind::Task`]).
-//! The daemon owns only the *coarse*
-//! lifecycle — phase advance, the per-task idle debounce, the ball-owner
-//! keepalive, and the content-message cap — while the skill owns the
-//! *content* (what to ask, whether to confirm, the brief, the plan).
+//! The daemon owns only the *coarse* lifecycle — phase advance, the per-task
+//! idle debounce, the ball-owner keepalive, and the content-message cap —
+//! while the skill owns the *content* (what to ask, whether to confirm, the
+//! brief, the plan) and how the task is used (delegate a plan, run work and
+//! return a result, …).
 //!
 //! The machine is **distributed** with no consensus: each party derives
 //! state from the legs it has seen, so the rules are deliberately
@@ -23,7 +24,7 @@ use crate::daemon::state::EventLoopState;
 use crate::output;
 use crate::protocol::{Message, MessageBody, MessageKind, Nickname, SwarmId, TaskId, TaskPhase};
 use crate::util::consts::TASK_CONTENT_CAP;
-use crate::util::tuning::{task_keepalive_secs, task_timeout_secs};
+use crate::util::tuning::{task_keepalive_max_secs, task_keepalive_secs, task_timeout_secs};
 
 /// My part in a task: did I open it, or receive the offer?
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -58,9 +59,17 @@ pub(crate) struct TaskRecord {
     pub peer: Nickname,
     pub role: TaskRole,
     pub state: TaskState,
-    /// Local-clock instant of the last leg (inbound or our own) — the
-    /// debounce reads this, never the wire `ts` (which can skew).
+    /// Local-clock instant of the last leg (inbound or our own, **including**
+    /// the daemon's own keepalive) — the idle-debounce reads this, never the
+    /// wire `ts` (which can skew).
     pub last_activity: Instant,
+    /// Local-clock instant of the last leg driven by a **skill** on either
+    /// side — every real leg through [`apply`], but **not** the daemon's own
+    /// keepalive (which never routes through `apply`). The keepalive gates on
+    /// this, not `last_activity`: reading the same clock the keepalive refreshes
+    /// would let it feed the timeout it is subject to, so a crashed skill would
+    /// keepalive the peer forever. See [`should_keepalive`].
+    pub last_skill_activity: Instant,
     /// Count of **content** legs seen (progress excluded) — the cap.
     pub content_count: u32,
     /// Last progress fraction the receiver reported, replayed on keepalives.
@@ -74,6 +83,20 @@ impl TaskRecord {
     /// Am I the ball-owner (so my daemon keepalives this task)?
     fn i_own_ball(&self) -> bool {
         self.ball == self.role
+    }
+
+    /// Should my daemon emit a keepalive for this task right now? True only
+    /// when I own the ball on a live task, I have been quiet past the
+    /// keepalive `cadence`, **and** a skill has driven a real leg within
+    /// `max_silence` — the last gate is what stops a crashed skill's daemon
+    /// from keepaliving the peer forever (the keepalive itself never refreshes
+    /// `last_skill_activity`, so once the skill stops, this goes false and the
+    /// peer's debounce reaps the task).
+    fn should_keepalive(&self, now: Instant, cadence: Duration, max_silence: Duration) -> bool {
+        self.state != TaskState::Terminal
+            && self.i_own_ball()
+            && now.duration_since(self.last_activity) >= cadence
+            && now.duration_since(self.last_skill_activity) < max_silence
     }
 }
 
@@ -156,6 +179,7 @@ pub(crate) fn apply(
                 },
                 state: TaskState::Proposed,
                 last_activity: now,
+                last_skill_activity: now,
                 content_count: 0,
                 last_fraction: None,
                 ball: TaskRole::Receiver,
@@ -173,6 +197,10 @@ pub(crate) fn apply(
         rec.last_fraction = Some(fraction);
     }
     rec.last_activity = now;
+    // A real leg (skill-sent or peer-received) proves a skill is driving this
+    // task; the daemon's own keepalive never routes through `apply`, so it
+    // cannot refresh this clock and thus cannot cover for a dead skill forever.
+    rec.last_skill_activity = now;
 
     // Content legs (everything but the plumbing `Progress`) burn the budget.
     let mut over_cap = false;
@@ -285,10 +313,12 @@ pub(crate) async fn tick_task_sweep(
     });
 }
 
-/// Emit a `Progress` keepalive for every live task whose ball we hold and
-/// that we've gone quiet on past the keepalive cadence — so a silent owner
-/// (deciding, executing, or reviewing) does not wrongly time out. The task
-/// analogue of [`crate::lifecycle::heartbeat::tick_alive`].
+/// Emit a `Progress` keepalive for every live task whose ball we hold, that
+/// we've gone quiet on past the keepalive cadence, and whose **skill** has
+/// driven a leg recently — so a silent owner (deciding, executing, reviewing)
+/// does not wrongly time out, while a *crashed* skill's task is no longer
+/// covered and the peer's debounce reaps it. The task analogue of
+/// [`crate::lifecycle::heartbeat::tick_alive`]. See [`TaskRecord::should_keepalive`].
 pub(crate) async fn tick_task_keepalive(
     state: &mut EventLoopState,
     sender: &GossipSender,
@@ -299,15 +329,12 @@ pub(crate) async fn tick_task_keepalive(
     type KeepaliveDue = (TaskId, Nickname, Option<(u64, u64)>);
 
     let now = Instant::now();
-    let interval = Duration::from_secs(task_keepalive_secs());
+    let cadence = Duration::from_secs(task_keepalive_secs());
+    let max_silence = Duration::from_secs(task_keepalive_max_secs());
     let due: Vec<KeepaliveDue> = state
         .tasks
         .iter()
-        .filter(|(_, rec)| {
-            rec.state != TaskState::Terminal
-                && rec.i_own_ball()
-                && now.duration_since(rec.last_activity) >= interval
-        })
+        .filter(|(_, rec)| rec.should_keepalive(now, cadence, max_silence))
         .map(|(task_id, rec)| (task_id.clone(), rec.peer.clone(), rec.last_fraction))
         .collect();
 
@@ -337,7 +364,10 @@ pub(crate) async fn tick_task_keepalive(
 /// keepalive `Progress` and the timeout `Cancel`). Unsigned-body validation
 /// can't fail for our short literals, so a serialize error is swallowed like
 /// any other plumbing broadcast.
-#[expect(clippy::too_many_arguments, reason = "a signed task leg's fields")]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "a signed task leg carries swarm/author/peer/task_id/phase/body plus the state and sender it broadcasts through"
+)]
 async fn broadcast_leg(
     state: &EventLoopState,
     sender: &GossipSender,
@@ -363,10 +393,47 @@ mod tests {
     use super::{LegInfo, TaskRole, TaskState, apply};
     use crate::protocol::{Nickname, TaskId, TaskPhase};
     use std::collections::HashMap;
-    use std::time::Instant;
+    use std::time::{Duration, Instant};
 
     fn tid() -> TaskId {
         TaskId::from("550e8400-e29b-41d4-a716-446655440000")
+    }
+
+    /// The keepalive gate: I keepalive a task I own the ball on once I've been
+    /// quiet past the cadence — but ONLY while a skill has driven a leg within
+    /// `max_silence`. Once the skill goes silent past it (a crash), the gate
+    /// closes so the daemon stops covering and the peer's debounce reaps it.
+    #[test]
+    fn keepalive_gated_on_skill_liveness() {
+        let cadence = Duration::from_mins(1);
+        let max_silence = Duration::from_mins(15);
+        let now = Instant::now();
+
+        // A task I own the ball on (offer received ⇒ I'm the Receiver, ball mine).
+        let mut tasks = HashMap::new();
+        apply(&mut tasks, &leg(TaskPhase::Offer, false), now);
+        let rec = tasks.get_mut(tid().as_str()).unwrap();
+        assert!(rec.i_own_ball());
+
+        // Quiet past the cadence and the skill is fresh ⇒ keepalive.
+        rec.last_activity = now.checked_sub(2 * cadence).unwrap();
+        rec.last_skill_activity = now.checked_sub(cadence).unwrap();
+        assert!(rec.should_keepalive(now, cadence, max_silence));
+
+        // Still within the cadence ⇒ not due yet.
+        rec.last_activity = now;
+        assert!(!rec.should_keepalive(now, cadence, max_silence));
+
+        // Due, but the skill has been silent past `max_silence` (a crash) ⇒
+        // the gate closes: the daemon must NOT keep covering the dead task.
+        rec.last_activity = now.checked_sub(2 * cadence).unwrap();
+        rec.last_skill_activity = now.checked_sub(2 * max_silence).unwrap();
+        assert!(!rec.should_keepalive(now, cadence, max_silence));
+
+        // A terminal task is never keepalived.
+        rec.last_skill_activity = now;
+        rec.state = TaskState::Terminal;
+        assert!(!rec.should_keepalive(now, cadence, max_silence));
     }
 
     fn leg(phase: TaskPhase, mine: bool) -> LegInfo<'static> {

@@ -9,9 +9,12 @@
 //! advertise validation, and the target resolution live — instead of three
 //! near-identical copies in `cli`, `embed`, and `mcp`.
 
+use std::fmt;
+
 use anyhow::Result;
 
 use crate::protocol::Nickname;
+use crate::protocol::crypto::Password;
 use crate::protocol::swarm::{
     AdvertiseRequiresReachable, DirectorySelection, LookupOpts, Swarm, SwarmConfig, SwarmName,
     validate_advertise,
@@ -28,13 +31,33 @@ pub(crate) struct CreateParams {
     pub nickname: Option<Nickname>,
     pub config: SwarmConfig,
     pub advertise: DirectorySelection,
+    /// Password to protect the swarm with; the verifier is baked into the
+    /// id at setup (the salt is the seed, minted there).
+    pub password: Option<Password>,
 }
 
 /// The join intent, before resolution.
 pub(crate) struct JoinParams {
     pub target: JoinTarget,
     pub nickname: Option<Nickname>,
+    /// Password for a passworded id; verified against the id's verifier in
+    /// `resolve` (before any network).
+    pub password: Option<Password>,
 }
+
+/// A passworded id was joined without a password. Typed so callers can
+/// classify it — the MCP server maps it to `invalid_params` (it never
+/// prompts), the CLI prompts on a TTY before resolving.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PasswordRequired;
+
+impl fmt::Display for PasswordRequired {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("this swarm is password-protected — pass --password")
+    }
+}
+
+impl std::error::Error for PasswordRequired {}
 
 /// The forum intent: a swarm derived deterministically from a shared string,
 /// always public. Name + config are derived, not supplied — the string alone
@@ -69,6 +92,7 @@ impl CreateParams {
                 name: self.name,
                 config: self.config,
                 advertise: advertise_directory.clone(),
+                password: self.password,
             },
             author: self.nickname.unwrap_or_else(Nickname::random),
             advertise_directory,
@@ -77,15 +101,26 @@ impl CreateParams {
 }
 
 impl JoinParams {
-    /// Resolve the `🐝…` id target into a [`Swarm`] and default the nickname.
-    /// `join` never advertises.
+    /// Resolve the `🐝…` id target into a [`Swarm`], verify the password
+    /// against the id's verifier (locally — a wrong password fails here,
+    /// before any network), and default the nickname. `join` never
+    /// advertises.
     ///
     /// # Errors
-    /// Fails if the id cannot be decoded into a [`Swarm`].
+    /// The id cannot be decoded into a [`Swarm`]; the id requires a password
+    /// and none was given ([`PasswordRequired`], typed for the frontends);
+    /// the password is wrong; or a password was given for a passwordless id.
     ///
     /// [`Swarm`]: crate::protocol::swarm::Swarm
     pub(crate) fn resolve(self) -> Result<Resolved> {
-        let swarm = resolver::resolve(&self.target)?;
+        let mut swarm = resolver::resolve(&self.target)?;
+        match (&self.password, swarm.requires_password()) {
+            (None, true) => return Err(PasswordRequired.into()),
+            (None, false) => {}
+            // ~100ms of Argon2id, accepted synchronously: this runs once
+            // per join, before the daemon exists.
+            (Some(password), _) => swarm.apply_password(password)?,
+        }
         Ok(Resolved {
             kind: SetupKind::Join { swarm },
             author: self.nickname.unwrap_or_else(Nickname::random),
@@ -109,6 +144,7 @@ pub(crate) fn derive_forum_swarm(string: &str) -> Result<Swarm> {
         string,
         SwarmConfig {
             lookups: LookupOpts::public_preset(),
+            password: None,
         },
     ))
 }

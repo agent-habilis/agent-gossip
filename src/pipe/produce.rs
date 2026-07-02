@@ -15,6 +15,7 @@ use tokio::io::{AsyncRead, AsyncReadExt};
 
 use crate::directory::ticket::TicketAd;
 use crate::lookup::build_endpoint;
+use crate::protocol::crypto::{Password, TicketAuth, ct_eq};
 use crate::protocol::swarm::{
     DirectorySelection, LookupOpts, LookupSet, resolve_transfer_lookups, validate_advertise,
 };
@@ -42,6 +43,7 @@ pub(crate) async fn listen(
     throttle: Option<u64>,
     json: bool,
     follow: bool,
+    password: Option<Password>,
 ) -> Result<()> {
     let lookups = resolve_transfer_lookups(swarm, flags)?;
     validate_advertise(&advertise, &lookups)?;
@@ -53,7 +55,7 @@ pub(crate) async fn listen(
              redirect a seekable file (`< file`) or pass --follow"
         );
     }
-    let (endpoint, mut ticket, secret) = bind(lookups.clone()).await?;
+    let (endpoint, mut ticket, auth) = bind(lookups.clone(), password.as_ref()).await?;
     ticket.follow = follow;
     let _advertiser = match advertise.directory() {
         Some(directory) => {
@@ -83,8 +85,7 @@ pub(crate) async fn listen(
     );
     if follow {
         // Live tail: broadcast to every attached consumer until the source ends.
-        return match serve_follow(&endpoint, &secret, &mut tokio::io::stdin(), throttle, !json)
-            .await
+        return match serve_follow(&endpoint, &auth, &mut tokio::io::stdin(), throttle, !json).await
         {
             Ok(()) => std::process::exit(0),
             Err(error) => {
@@ -97,7 +98,7 @@ pub(crate) async fn listen(
     // serve the whole file to each peer independently (like `port`). Runs until
     // interrupted, so — unlike the single-shot path — it does not `process::exit`.
     if let Some(path) = source_path() {
-        let result = serve_fanout(&endpoint, &secret, &path, throttle).await;
+        let result = serve_fanout(&endpoint, &auth, &path, throttle).await;
         endpoint.close().await;
         return result;
     }
@@ -105,7 +106,7 @@ pub(crate) async fn listen(
     // there is no fan-out: serve the first consumer once, then exit.
     match serve(
         &endpoint,
-        &secret,
+        &auth,
         &mut tokio::io::stdin(),
         stdin_len(),
         throttle,
@@ -124,8 +125,13 @@ pub(crate) async fn listen(
     }
 }
 
-/// Bind the producer endpoint and mint its ticket + secret — no I/O, no print.
-pub(crate) async fn bind(lookups: LookupOpts) -> Result<(Endpoint, PipeTicket, [u8; SECRET_LEN])> {
+/// Bind the producer endpoint and mint its ticket + the auth token the
+/// handshake expects (the raw secret, or its Argon2id stretch when
+/// passworded) — no I/O, no print.
+pub(crate) async fn bind(
+    lookups: LookupOpts,
+    password: Option<&Password>,
+) -> Result<(Endpoint, PipeTicket, TicketAuth)> {
     let endpoint = build_endpoint(&lookups, None, None, vec![PIPE_ALPN.to_vec()]).await?;
     // Loopback needs no online wait (the bound addr is immediately usable).
     if !lookups.is_loopback() {
@@ -133,32 +139,42 @@ pub(crate) async fn bind(lookups: LookupOpts) -> Result<(Endpoint, PipeTicket, [
     }
     let mut secret = [0u8; SECRET_LEN];
     rand::rng().fill_bytes(&mut secret);
+    let auth = TicketAuth::derive(&secret, password);
     let ticket = PipeTicket {
         addr: endpoint.addr(),
         secret,
         lookups,
         follow: false,
         bench: false,
+        password: auth.password_protected,
     };
-    Ok((endpoint, ticket, secret))
+    Ok((endpoint, ticket, auth))
 }
 
-/// Accept one incoming connection, take its bi-stream, and verify the bearer
-/// secret. The consumer opens the bi-stream and writes the secret first.
-/// `pub(super)`: shared with `bench.rs`, which runs its own protocol after
-/// authenticating rather than `serve`'s length-header + byte-stream one.
+/// Accept one incoming connection, take its bi-stream, and verify the auth
+/// token. The consumer opens the bi-stream and writes its token first — the
+/// raw ticket secret, or the Argon2id password stretch when the ticket is
+/// passworded (same 32 wire bytes). `pub(super)`: shared with `bench.rs`,
+/// which runs its own protocol after authenticating rather than `serve`'s
+/// length-header + byte-stream one.
 ///
 /// # Errors
-/// A failed handshake or a bad secret (the caller drops the connection and
-/// waits for another); a bad secret is closed with code 1.
+/// A failed handshake or a bad token (the caller drops the connection and
+/// waits for another). A bad token is closed with code 1 ("bad secret") —
+/// or code 3 ("wrong password") on a passworded ticket, so the consumer can
+/// tell a typo from a corrupt ticket.
 pub(super) async fn authenticate(
     incoming: Incoming,
-    secret: &[u8; SECRET_LEN],
+    auth: &TicketAuth,
 ) -> Result<(Connection, SendStream, RecvStream)> {
     let conn = incoming.await.context("incoming connection failed")?;
     let (send, mut recv) = conn.accept_bi().await.context("accept_bi failed")?;
     let mut got = [0u8; SECRET_LEN];
-    if recv.read_exact(&mut got).await.is_err() || &got != secret {
+    if recv.read_exact(&mut got).await.is_err() || !ct_eq(&got, &auth.token) {
+        if auth.password_protected {
+            conn.close(3u32.into(), b"wrong password");
+            bail!("peer presented a wrong password");
+        }
         conn.close(1u32.into(), b"bad secret");
         bail!("peer presented a bad secret");
     }
@@ -189,7 +205,7 @@ struct FollowConsumer {
 /// A stdin read error, or the endpoint closing before the source ends.
 pub(crate) async fn serve_follow<R: AsyncRead + Unpin>(
     endpoint: &Endpoint,
-    secret: &[u8; SECRET_LEN],
+    auth: &TicketAuth,
     reader: &mut R,
     throttle: Option<u64>,
     narrate: bool,
@@ -216,10 +232,10 @@ pub(crate) async fn serve_follow<R: AsyncRead + Unpin>(
                 let Some(incoming) = incoming else {
                     bail!("endpoint closed before the source ended");
                 };
-                let secret = *secret;
+                let auth = auth.clone();
                 let auth_tx = auth_tx.clone();
                 tokio::spawn(async move {
-                    if let Ok(triple) = authenticate(incoming, &secret).await {
+                    if let Ok(triple) = authenticate(incoming, &auth).await {
                         let _ = auth_tx.send(triple).await;
                     }
                 });
@@ -307,7 +323,7 @@ pub(crate) async fn serve_follow<R: AsyncRead + Unpin>(
 /// The endpoint closing before a peer connects, or a stream I/O error.
 pub(crate) async fn serve<R: AsyncRead + Unpin>(
     endpoint: &Endpoint,
-    secret: &[u8; SECRET_LEN],
+    auth: &TicketAuth,
     reader: &mut R,
     total: Option<u64>,
     throttle: Option<u64>,
@@ -317,7 +333,7 @@ pub(crate) async fn serve<R: AsyncRead + Unpin>(
         let Some(incoming) = endpoint.accept().await else {
             bail!("endpoint closed before a peer connected");
         };
-        match authenticate(incoming, secret).await {
+        match authenticate(incoming, auth).await {
             Ok(triple) => break triple,
             Err(error) => tracing::debug!(%error, "consumer handshake failed; awaiting another"),
         }
@@ -341,15 +357,15 @@ pub(crate) async fn serve<R: AsyncRead + Unpin>(
 /// endpoint is closed, and per-consumer failures are logged, not propagated.
 pub(super) async fn serve_fanout(
     endpoint: &Endpoint,
-    secret: &[u8; SECRET_LEN],
+    auth: &TicketAuth,
     path: &Path,
     throttle: Option<u64>,
 ) -> Result<()> {
     while let Some(incoming) = endpoint.accept().await {
-        let secret = *secret;
+        let auth = auth.clone();
         let path = path.to_owned();
         tokio::spawn(async move {
-            if let Err(error) = serve_file_to(incoming, &secret, &path, throttle).await {
+            if let Err(error) = serve_file_to(incoming, &auth, &path, throttle).await {
                 tracing::debug!(%error, "fan-out consumer ended");
             }
         });
@@ -362,11 +378,11 @@ pub(super) async fn serve_fanout(
 /// stdout bar); lifecycle is logged instead.
 async fn serve_file_to(
     incoming: Incoming,
-    secret: &[u8; SECRET_LEN],
+    auth: &TicketAuth,
     path: &Path,
     throttle: Option<u64>,
 ) -> Result<()> {
-    let (_conn, send, recv) = authenticate(incoming, secret).await?;
+    let (_conn, send, recv) = authenticate(incoming, auth).await?;
     let mut file = tokio::fs::File::open(path)
         .await
         .with_context(|| format!("re-opening {} failed", path.display()))?;

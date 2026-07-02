@@ -100,6 +100,24 @@ pub(crate) const MAX_IPC_COMMAND_BYTES: usize = MAX_LOGICAL_BODY_BYTES + 2 * MAX
 /// overruns this bound and the `poll` client errors ("IPC response too large").
 pub(crate) const MAX_IPC_RESPONSE_BYTES: usize = 3 * POLL_RESPONSE_MAX_MSGS * MAX_MESSAGE_SIZE;
 
+// ── Password KDF (wire contract) ──────────────────────────────────
+//
+// Argon2id cost parameters for `--password` stretching. A NETWORK-WIDE WIRE
+// CONTRACT: every member derives the stretched key with these exact params
+// (the derivation feeds the swarm topic/rendezvous and the ticket handshake
+// token), so changing any value strands every existing passworded swarm and
+// ticket. 19 MiB / t=2 / p=1 is the OWASP Argon2id recommendation — ~50-100ms
+// per stretch, paid once at create/join/handshake, never per message.
+
+/// Argon2id memory cost in `KiB` (19 `MiB`).
+pub(crate) const PASSWORD_KDF_M_COST_KIB: u32 = 19_456;
+
+/// Argon2id iteration count.
+pub(crate) const PASSWORD_KDF_T_COST: u32 = 2;
+
+/// Argon2id lane count.
+pub(crate) const PASSWORD_KDF_P_COST: u32 = 1;
+
 // ── Daemon tuning defaults ────────────────────────────────────────
 //
 // Behavioural knobs that used to be environment-overridable. They now live
@@ -129,6 +147,18 @@ pub(crate) const TASK_TIMEOUT_SECS: u64 = 300;
 /// for a live task. 1 minute, ≈5× under the debounce, so ~4 missed beats
 /// of slack absorb gossip drops. Flag: `--task-keepalive-secs`.
 pub(crate) const TASK_KEEPALIVE_SECS: u64 = 60;
+
+/// The longest the ball-owner's daemon keeps auto-covering a **silent** task
+/// since its last real leg. The keepalive must not read the same clock the
+/// idle-timeout reads, or it feeds the timeout it is subject to and a crashed
+/// skill holds the peer forever. So the daemon auto-covers a quiet ball-owner
+/// for at most this long; past it, the *skill* must send its own `progress`
+/// beat to prove liveness (which refreshes the window), else the keepalive
+/// stops and the peer's debounce reaps the task. 15 minutes — comfortably
+/// above any human/agent think gap, so a live task doing long work only needs
+/// an occasional beat, while a dead one is bounded. Flag:
+/// `--task-keepalive-max-secs`.
+pub(crate) const TASK_KEEPALIVE_MAX_SECS: u64 = 900;
 
 /// Whole-task budget of **content** legs (offer/accept/decline/context/
 /// done/confirm/change/cancel — `progress` is exempt). Hitting it forces

@@ -13,6 +13,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::lookup::{add_peer_addr, build_participant_endpoint};
 use crate::pipe::progress::{Progress, pace, throttle_chunk};
+use crate::protocol::crypto::{Password, TicketAuth};
 
 use super::manifest::HASH_LEN;
 use super::ticket::FileTicket;
@@ -29,21 +30,25 @@ const RETRY_DELAY: Duration = Duration::from_secs(3);
 /// overwriting changed/new files and skipping unchanged ones.
 ///
 /// # Errors
-/// A malformed ticket, an unreachable producer, a corrupt transfer (a body's
-/// hash didn't match), or a filesystem error.
+/// A malformed ticket, a password mismatch with the ticket (missing on a
+/// passworded ticket, or given for a passwordless one), an unreachable
+/// producer, a corrupt transfer (a body's hash didn't match), or a
+/// filesystem error.
 pub(crate) async fn get(
     ticket: &str,
     out: Option<&Path>,
     throttle: Option<u64>,
     json: bool,
+    password: Option<Password>,
 ) -> Result<()> {
     let ticket = FileTicket::decode(ticket)?;
+    let auth = ticket_auth(&ticket, password.as_ref())?;
     let endpoint = build_participant_endpoint(&ticket.lookups).await?;
     let base = match out {
         Some(dir) => dir.to_path_buf(),
         None => std::env::current_dir().context("resolving the current directory failed")?,
     };
-    let result = receive(&endpoint, &ticket, &base, throttle, !json).await;
+    let result = receive(&endpoint, &ticket, &auth, &base, throttle, !json).await;
     match result {
         Ok(summary) => {
             if !json {
@@ -61,11 +66,23 @@ pub(crate) async fn get(
     }
 }
 
+/// The token this consumer must present for `ticket`: the raw secret, or
+/// the Argon2id password stretch when the ticket is passworded. Rejects a
+/// missing password and a password offered to a passwordless ticket.
+pub(super) fn ticket_auth(ticket: &FileTicket, password: Option<&Password>) -> Result<TicketAuth> {
+    match (password, ticket.password) {
+        (None, true) => bail!("this ticket is password-protected — pass --password"),
+        (Some(_), false) => bail!("this ticket has no password — drop --password"),
+        _ => Ok(TicketAuth::derive(&ticket.secret, password)),
+    }
+}
+
 /// Dial the producer (retrying while its address propagates), open the bi-stream,
-/// and present the bearer secret.
+/// and present the auth token (the raw bearer secret, or its password stretch).
 async fn dial_and_handshake(
     endpoint: &Endpoint,
     ticket: &FileTicket,
+    auth: &TicketAuth,
 ) -> Result<(Connection, SendStream, RecvStream)> {
     add_peer_addr(endpoint, ticket.addr.clone())?;
     let start = Instant::now();
@@ -84,9 +101,9 @@ async fn dial_and_handshake(
         }
     };
     let (mut send, recv) = conn.open_bi().await.context("opening the stream failed")?;
-    send.write_all(&ticket.secret)
+    send.write_all(&auth.token)
         .await
-        .context("sending the ticket secret failed")?;
+        .context("sending the ticket auth token failed")?;
     Ok((conn, send, recv))
 }
 
@@ -96,12 +113,35 @@ async fn dial_and_handshake(
 pub(super) async fn receive(
     endpoint: &Endpoint,
     ticket: &FileTicket,
+    auth: &TicketAuth,
     base: &Path,
     throttle: Option<u64>,
     narrate: bool,
 ) -> Result<String> {
-    let (conn, mut send, mut recv) = dial_and_handshake(endpoint, ticket).await?;
-    let summary = exchange(&mut send, &mut recv, base, throttle, narrate).await?;
+    let (conn, mut send, mut recv) = dial_and_handshake(endpoint, ticket, auth).await?;
+    let summary = match exchange(&mut send, &mut recv, base, throttle, narrate).await {
+        Ok(summary) => summary,
+        Err(error) => {
+            // The producer rejects a bad token by closing the connection,
+            // which the first framed read observes — surface the coded
+            // reason over the generic read failure.
+            return Err(match conn.close_reason() {
+                Some(iroh::endpoint::ConnectionError::ApplicationClosed(close))
+                    if u64::from(close.error_code) == 3 =>
+                {
+                    anyhow::anyhow!("the producer rejected the password (wrong password)")
+                }
+                Some(iroh::endpoint::ConnectionError::ApplicationClosed(close))
+                    if u64::from(close.error_code) == 1 =>
+                {
+                    anyhow::anyhow!(
+                        "the producer rejected the ticket secret (corrupt or stale ticket)"
+                    )
+                }
+                _ => error,
+            });
+        }
+    };
     let _ = send.finish();
     let _ = send.stopped().await;
     conn.close(0u32.into(), b"done");

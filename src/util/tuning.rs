@@ -139,6 +139,13 @@ pub(crate) fn task_keepalive_secs() -> u64 {
     current().task_keepalive_secs
 }
 
+/// Longest the daemon auto-covers a silent task without a skill-driven leg
+/// (seconds); past it the keepalive stops so a crashed skill can't hold the
+/// peer forever. Hidden flag `--task-keepalive-max-secs`.
+pub(crate) fn task_keepalive_max_secs() -> u64 {
+    current().task_keepalive_max_secs
+}
+
 /// Grace before an **unmeshed joiner** co-hosts the rendezvous anyway
 /// (empty swarm ⇒ become the beacon for the next joiner). Rationale:
 /// `EventLoopConfig::cohost`. Non-blocking — only consulted
@@ -176,6 +183,7 @@ pub(crate) struct Tuning {
     pub sweep_interval_secs: u64,
     pub task_timeout_secs: u64,
     pub task_keepalive_secs: u64,
+    pub task_keepalive_max_secs: u64,
     pub cohost_grace_secs: u64,
     pub ping_window_secs: u64,
     pub ppid_watch_interval_ms: u64,
@@ -196,6 +204,7 @@ impl Tuning {
         sweep_interval_secs: crate::util::consts::SWEEP_INTERVAL_SECS,
         task_timeout_secs: crate::util::consts::TASK_TIMEOUT_SECS,
         task_keepalive_secs: crate::util::consts::TASK_KEEPALIVE_SECS,
+        task_keepalive_max_secs: crate::util::consts::TASK_KEEPALIVE_MAX_SECS,
         cohost_grace_secs: crate::util::consts::BEACON_COHOST_GRACE_SECS,
         ping_window_secs: crate::util::consts::PING_WINDOW_SECS,
         ppid_watch_interval_ms: crate::util::consts::PPID_WATCH_INTERVAL_MS,

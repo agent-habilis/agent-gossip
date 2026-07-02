@@ -89,6 +89,96 @@ async fn test_two_node_message_delivery() {
     assert_eq!(received[0].body.as_str(), "hello from the network");
 }
 
+/// A passworded swarm: the right password joins and messages flow; a wrong
+/// password fails locally against the id's verifier ("wrong password"), and
+/// no password at all is a typed "password-protected" error — both before
+/// any network traffic.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_passworded_swarm_verifies_locally_and_meshes() {
+    let creator = InProcNode::create_with_password("netpw", "hunter2").await;
+
+    // Wrong password: rejected by the verifier carried in the id.
+    let Err(wrong) =
+        InProcNode::try_join_with_password(&creator.swarm, "joiner-bad", "hunter3").await
+    else {
+        panic!("a wrong password must be rejected");
+    };
+    assert!(wrong.to_string().contains("wrong password"), "got: {wrong}");
+
+    // No password: a crisp requirement error, not a silent empty swarm.
+    let target = creator.swarm.parse().expect("join target");
+    let missing = agent_habilis_swarm::embed::SwarmSession::join(
+        agent_habilis_swarm::embed::JoinConfig::new(target),
+    )
+    .await
+    .expect_err("a missing password must be rejected");
+    assert!(
+        missing.to_string().contains("password-protected"),
+        "got: {missing}"
+    );
+
+    // The right password lands on the same topic and messages flow.
+    let mut joiner = InProcNode::try_join_with_password(&creator.swarm, "joiner-good", "hunter2")
+        .await
+        .expect("the right password joins");
+    creator.send("hello behind the password").await;
+    assert!(
+        joiner.wait_inbound(1, MSG_TIMEOUT).await,
+        "passworded joiner never received the creator's message"
+    );
+    assert_eq!(
+        joiner.inbound()[0].body.as_str(),
+        "hello behind the password"
+    );
+}
+
+/// The subprocess wire contract for `--password`: `create --password=pw`
+/// mints a passworded id; `join` without the password exits non-zero with
+/// "password-protected" under `--no-interactive`, a wrong password exits
+/// non-zero with "wrong password", and `join --password=pw` meshes.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_password_flag_wire_contract() {
+    let (creator, swarm_id) = Node::create_args("pwwire", &["--password=hunter2"], &[]);
+    assert!(creator.wait_ready(&swarm_id), "creator never became ready");
+
+    // Missing password, non-interactive: crisp requirement error.
+    let missing = common::test_cmd()
+        .args(["join", &swarm_id, "--no-interactive"])
+        .output()
+        .expect("spawn join without password");
+    assert!(
+        !missing.status.success(),
+        "missing password must exit non-zero"
+    );
+    let stderr = String::from_utf8_lossy(&missing.stderr);
+    assert!(
+        stderr.contains("password-protected"),
+        "stderr must name the requirement, got: {stderr}"
+    );
+
+    // Wrong password: rejected locally against the id's verifier.
+    let wrong = common::test_cmd()
+        .args(["join", &swarm_id, "--no-interactive", "--password=hunter3"])
+        .output()
+        .expect("spawn join with wrong password");
+    assert!(!wrong.status.success(), "wrong password must exit non-zero");
+    let wrong_stderr = String::from_utf8_lossy(&wrong.stderr);
+    assert!(
+        wrong_stderr.contains("wrong password"),
+        "stderr must say wrong password, got: {wrong_stderr}"
+    );
+
+    // The right password joins and meshes (the join's ready socket appears).
+    let joiner = Node::join_args(&swarm_id, "pw-joiner", &["--password=hunter2"], &[]);
+    assert!(
+        joiner.wait_ready(&swarm_id),
+        "passworded joiner never became ready: {}",
+        joiner.log_tail(20)
+    );
+    joiner.kill();
+    creator.kill();
+}
+
 /// Durable state log, live propagation: a creator patches the shared state; a
 /// meshed joiner converges to the same derived document via gossip. State rides
 /// the same topic but its own un-pruned log, surfaced through `state get`.
@@ -1257,7 +1347,7 @@ fn test_first_message_after_post_departure_join_is_delivered() {
     );
 }
 
-/// Join horizon: a peer that joins after history was exchanged must
+/// Join horizon: a peer that joins after history was taskd must
 /// **not surface** that pre-join history (anti-entropy still relays it
 /// at the wire for swarm-wide resilience — that is intentionally not
 /// observable here; only the view is filtered). A message sent *after*
@@ -1268,7 +1358,7 @@ async fn test_join_horizon_hides_pre_join_history() {
     let creator = InProcNode::create("nethorizon").await;
     let mut early = InProcNode::join(&creator.swarm, "jh-early").await;
 
-    // History exchanged *before* the late peer exists.
+    // History taskd *before* the late peer exists.
     for tag in ["hist-1", "hist-2", "hist-3"] {
         creator.send(tag).await;
     }
@@ -1637,7 +1727,7 @@ fn test_resume_triggers_hard_rebootstrap() {
 /// Anti-entropy backfill: a peer that briefly freezes — but stays a
 /// member (`gap` << alive-timeout) — misses a post-join message. The
 /// join-horizon does not hide it (it post-dates the join), so
-/// anti-entropy digest exchange must reconcile the gap.
+/// anti-entropy digest task must reconcile the gap.
 ///
 /// Not `SHORT_EVICT`: the peer must stay a member, so the production
 /// alive-timeout is required. The irreducible cost is the fixed 10s

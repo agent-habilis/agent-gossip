@@ -17,6 +17,23 @@ use crate::protocol::token::{self, TokenType};
 
 use super::MAX_LISTINGS;
 
+/// Whether a decoded ticket payload carries the password flag, per kind.
+/// Reads the byte after the 32-byte secret — the pipe/file flags byte
+/// (bits 2 / 0) or the port count byte (bit 7). Unit-tested against the
+/// real ticket encoders so these offsets can never silently drift.
+pub(crate) fn password_bit(kind: TokenType, payload: &[u8]) -> bool {
+    let Some(&flags) = payload.get(32) else {
+        return false;
+    };
+    match kind {
+        TokenType::Pipe => flags & 0b100 != 0,
+        TokenType::File => flags & 0b1 != 0,
+        TokenType::Port => flags & 0b1000_0000 != 0,
+        // No password support (yet) for swarm-ad, mount, and sh tickets.
+        TokenType::Swarm | TokenType::Mount | TokenType::Sh => false,
+    }
+}
+
 /// Longest label an ad may carry into a listing. The directory is an open
 /// public mesh, so a hostile ad must not become an unbounded picker row.
 const MAX_LABEL_CHARS: usize = 64;
@@ -56,6 +73,9 @@ impl TicketAd {
 pub(crate) struct TicketListing {
     pub ticket: String,
     pub label: Option<String>,
+    /// `true` if the ticket carries the password flag — redeeming it needs
+    /// the password, so the ad alone does not admit.
+    pub password: bool,
     /// Local instant of the most recent ad; drives expiry.
     pub last_seen: Instant,
     /// Unix seconds when this ticket was *first* seen (preserved across
@@ -99,10 +119,11 @@ impl TicketListings {
         let ad = TicketAd::parse(body)?;
         // The structural token decode is the validity gate (checksum + type
         // byte), exactly as `Listings` fully decodes the advertised swarm id.
-        let (kind, _payload) = token::decode(&ad.ticket).ok()?;
+        let (kind, payload) = token::decode(&ad.ticket).ok()?;
         if kind != self.kind {
             return None;
         }
+        let password = password_bit(kind, &payload);
         let label = ad
             .label
             .map(|label| label.chars().take(MAX_LABEL_CHARS).collect::<String>());
@@ -131,6 +152,7 @@ impl TicketListings {
             TicketListing {
                 ticket: ad.ticket.clone(),
                 label,
+                password,
                 last_seen: now,
                 first_seen_unix: crate::util::clock::unix_secs(),
             },
@@ -267,6 +289,48 @@ mod tests {
         let mut dir = TicketListings::new(TokenType::Pipe);
         dir.note(&ad(&ticket, Some(&long)), Instant::now());
         assert_eq!(dir.snapshot()[0].label.as_ref().map(String::len), Some(64));
+    }
+
+    #[test]
+    fn password_bit_matches_the_real_ticket_encoders() {
+        use iroh::{EndpointAddr, SecretKey};
+        let addr = EndpointAddr::new(SecretKey::from_bytes(&[3u8; 32]).public())
+            .with_ip_addr("127.0.0.1:4242".parse().unwrap());
+        for password in [false, true] {
+            for (kind, ticket) in [
+                (
+                    TokenType::Pipe,
+                    crate::pipe::test_ticket(addr.clone(), password),
+                ),
+                (
+                    TokenType::File,
+                    crate::file::test_ticket(addr.clone(), password),
+                ),
+                (
+                    TokenType::Port,
+                    crate::port::test_ticket(addr.clone(), password),
+                ),
+            ] {
+                let (decoded_kind, payload) = token::decode(&ticket).expect("decode");
+                assert_eq!(decoded_kind, kind);
+                assert_eq!(
+                    super::password_bit(kind, &payload),
+                    password,
+                    "{kind:?} password-bit offset drifted from its codec"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn passworded_ticket_listing_carries_the_flag() {
+        use iroh::{EndpointAddr, SecretKey};
+        let addr = EndpointAddr::new(SecretKey::from_bytes(&[5u8; 32]).public())
+            .with_ip_addr("127.0.0.1:4242".parse().unwrap());
+        let ticket = crate::pipe::test_ticket(addr, true);
+        let mut dir = TicketListings::new(TokenType::Pipe);
+        dir.note(&ad(&ticket, Some("drop")), Instant::now());
+        assert!(dir.snapshot()[0].password);
     }
 
     #[test]

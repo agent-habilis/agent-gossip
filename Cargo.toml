@@ -138,12 +138,27 @@ iroh-mainline-address-lookup = "0.2"
 anyhow = "1"
 uuid = { version = "1", features = ["v4"] }
 sha2 = "0.10"
+# Argon2id password stretching for `--password` (swarm hash verifier + ticket
+# handshake tokens). default-features off: no `password-hash` string format —
+# we only need the raw `hash_password_into` KDF.
+argon2 = { version = "0.5", default-features = false, features = ["alloc"] }
+# Hidden `--password` prompt. Reads from the controlling TTY (/dev/tty), not
+# stdin — `pipe listen`'s stdin is the data source — and avoids a new
+# unsafe termios block. Pinned =7.4.0: it clears ECHO but leaves ICANON on,
+# which is exactly the heuristic Ghostty/WezTerm/iTerm2 use to detect a
+# password prompt (lock cursor + macOS secure input); 7.5+ switched to raw
+# char-by-char reads (ICANON off) and silently defeats that detection.
+rpassword = "=7.4.0"
 governor = "0.10"
 bytes = "1"
 futures-util = "0.3"
 bs58 = "0.5"
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+# `raw_value` lets the MCP `fetch_messages` result embed each event's
+# already-rendered, field-order-pinned JSON verbatim (a `RawValue`) instead of
+# re-parsing to a key-sorted `Value` — keeping MCP byte-identical to the
+# `--output json` stream.
+serde_json = { version = "1", features = ["raw_value"] }
 rand = "0.9"
 libc = "0.2"
 # PTY spawn + resize for `ahsw sh` (broadcast a live shell). Blocking I/O,

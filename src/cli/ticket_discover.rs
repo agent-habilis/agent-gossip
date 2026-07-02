@@ -112,6 +112,7 @@ fn ticket_event_json(event: &TicketDirectoryEvent) -> String {
                 "event": "ticket_found",
                 "ticket": listing.ticket,
                 "label": listing.label,
+                "password": listing.password,
             })
         }
         TicketDirectoryEvent::Lost(ticket) => serde_json::json!({
@@ -163,8 +164,9 @@ async fn run_ticket_picker(
         };
         let preview: String = listing.ticket.chars().take(TICKET_PREVIEW_CHARS).collect();
         let label = listing.label.as_deref().unwrap_or("(unlabeled)");
+        let lock = if listing.password { "🔒 " } else { "" };
         format!(
-            "{bold}{yellow}{label}{reset}  {preview}…  {}",
+            "{bold}{yellow}{label}{reset}  {lock}{preview}…  {}",
             crate::util::clock::local_datetime(listing.first_seen_unix),
         )
     };

@@ -4,8 +4,10 @@
 //! Unlike the chat [`MessageLog`](super::message_log::MessageLog), this store is
 //! **un-pruned and unbounded** — state must outlive the chat retention window,
 //! and a shared document may accumulate an arbitrary number of changes over a
-//! swarm's life, so nothing is ever evicted. The store is dedup-keyed by message
-//! id; a (re)joining member starts empty and reconstructs the full set from peers
+//! swarm's life, so nothing is ever evicted. The store is dedup-keyed by the
+//! author-bound [`Message::dedup_key`] (`SHA-256(pubkey ‖ id)`), so a forged
+//! event reusing a victim's id is stored alongside it, not over it; a
+//! (re)joining member starts empty and reconstructs the full set from peers
 //! via the state anti-entropy path, then replays it. (Bounding total growth for a
 //! long-lived swarm is log compaction/snapshots — deferred future work.)
 //!
@@ -23,7 +25,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::daemon::message_log::DigestWindow;
-use crate::protocol::{Message, MessageId};
+use crate::protocol::Message;
 
 /// A fold of the state log into some derived state. [`StateLog::derive`] replays
 /// every event in a deterministic order and applies each through this trait; the
@@ -32,14 +34,15 @@ pub(crate) trait StateProjection {
     fn apply(&mut self, event: &Message);
 }
 
-/// The un-pruned, unbounded store of signed `State` events, keyed by id for
-/// dedup. Events never age out: a derived document is the fold over the complete
+/// The un-pruned, unbounded store of signed `State` events, keyed by the
+/// author-bound [`Message::dedup_key`] for dedup. Events never age out: a
+/// derived document is the fold over the complete
 /// set, so dropping any event would diverge peers. Memory grows with total state
 /// history (bounded in *rate* by the per-author limiter; bounding the *total* is
 /// future compaction work).
 #[derive(Debug, Default)]
 pub(crate) struct StateLog {
-    events: HashMap<MessageId, Message>,
+    events: HashMap<[u8; 16], Message>,
 }
 
 impl StateLog {
@@ -48,12 +51,17 @@ impl StateLog {
     }
 
     /// Record a state event. Returns `true` when it was newly stored, `false`
-    /// for a duplicate id. No capacity bound — the fold needs the complete set.
+    /// for a duplicate. Keyed on the author-bound [`Message::dedup_key`], not
+    /// the bare id, so a peer signing an event under a **victim's** id is
+    /// stored alongside (not over) the victim's — two members can no longer
+    /// fold different documents for one id. No capacity bound — the fold needs
+    /// the complete set.
     pub(crate) fn insert(&mut self, event: Message) -> bool {
-        if self.events.contains_key(&event.id) {
+        let key = event.dedup_key();
+        if self.events.contains_key(&key) {
             return false;
         }
-        self.events.insert(event.id.clone(), event);
+        self.events.insert(key, event);
         true
     }
 
@@ -61,14 +69,19 @@ impl StateLog {
         self.events.len()
     }
 
-    /// Held events in the deterministic `(timestamp, id)` order every honest
-    /// member shares — so replay and resend order are stable across nodes.
+    /// Held events in the deterministic replay order every honest member
+    /// shares — so replay and resend order are stable across nodes. The
+    /// primary order is `(timestamp, id)`; the `dedup_key` tiebreak keeps the
+    /// order **total** even if two authors sign events under the same id (an
+    /// honest id is unique, so this only arises under a crafted collision),
+    /// which is what keeps the fold convergent under that attack.
     fn ordered(&self) -> Vec<&Message> {
         let mut ordered: Vec<&Message> = self.events.values().collect();
         ordered.sort_by(|left, right| {
             left.timestamp
                 .cmp(&right.timestamp)
                 .then_with(|| left.id.as_str().cmp(right.id.as_str()))
+                .then_with(|| left.dedup_key().cmp(&right.dedup_key()))
         });
         ordered
     }
@@ -83,7 +96,7 @@ impl StateLog {
         let ids = self
             .ordered()
             .iter()
-            .map(|event| event.id.as_uuid_bytes())
+            .map(|event| event.dedup_key())
             .collect();
         DigestWindow {
             lo: i64::MIN,
@@ -149,9 +162,7 @@ impl StateLog {
         self.ordered()
             .into_iter()
             .filter(|event| {
-                event.timestamp >= lo
-                    && event.timestamp <= hi
-                    && !have.contains(&event.id.as_uuid_bytes())
+                event.timestamp >= lo && event.timestamp <= hi && !have.contains(&event.dedup_key())
             })
             .take(max)
             .collect()
@@ -191,7 +202,7 @@ impl StateLog {
 fn window_of(slice: &[&Message]) -> Option<DigestWindow> {
     let lo = slice.first()?.timestamp;
     let hi = slice.last()?.timestamp;
-    let ids = slice.iter().map(|event| event.id.as_uuid_bytes()).collect();
+    let ids = slice.iter().map(|event| event.dedup_key()).collect();
     Some(DigestWindow { lo, hi, ids })
 }
 
@@ -290,7 +301,7 @@ mod tests {
         let have: HashSet<[u8; 16]> = log
             .missing_in_window(4, 7, &HashSet::new(), usize::MAX)
             .iter()
-            .map(|event| event.id.as_uuid_bytes())
+            .map(|event| event.dedup_key())
             .collect();
         // Open-ended recent [lo=newest.lo, MAX]: everything from newest.lo up.
         let above = log.missing_in_window(newest.lo, i64::MAX, &have, usize::MAX);

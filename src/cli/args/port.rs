@@ -44,6 +44,17 @@ pub(crate) enum PortAction {
         /// Hidden directory-tuning knobs (test suite only).
         #[command(flatten)]
         tuning: DirectoryTuningArgs,
+        /// Protect the forward with a password: the ticket alone no longer
+        /// redeems — consumers must present the password (so a passworded
+        /// ticket is safe to --advertise). Bare `--password` prompts hidden
+        /// on the terminal; `--password=<pw>` passes it inline (visible in
+        /// `ps` — prefer the prompt when a human types it).
+        #[arg(long, num_args(0..=1), require_equals = true)]
+        #[expect(
+            clippy::option_option,
+            reason = "clap optional-value flag: absent/bare/valued are three distinct password states"
+        )]
+        password: Option<Option<String>>,
         /// Output format: human (default) or json (a direct connect line).
         #[arg(long, default_value = "human")]
         output: OutputFormat,
@@ -61,6 +72,15 @@ pub(crate) enum PortAction {
         /// (`3000` == `3000:3000`). Each REMOTE must be one the ticket exposes.
         #[arg(required = true, value_parser = parse_port_mapping)]
         ports: Vec<PortMapping>,
+        /// Password for a password-protected ticket — required exactly when
+        /// the ticket carries the password flag (as a prompt on a terminal,
+        /// or inline via `--password=<pw>`).
+        #[arg(long, num_args(0..=1), require_equals = true)]
+        #[expect(
+            clippy::option_option,
+            reason = "clap optional-value flag: absent/bare/valued are three distinct password states"
+        )]
+        password: Option<Option<String>>,
         /// Output format: human (default) or json (suppresses the status line).
         #[arg(long, default_value = "human")]
         output: OutputFormat,
@@ -89,6 +109,14 @@ pub(crate) enum PortAction {
         /// Hidden directory-tuning knobs (test suite only).
         #[command(flatten)]
         tuning: DirectoryTuningArgs,
+        /// Password for a password-protected pick (🔒 in the picker) —
+        /// prompts on pick when omitted.
+        #[arg(long, num_args(0..=1), require_equals = true)]
+        #[expect(
+            clippy::option_option,
+            reason = "clap optional-value flag: absent/bare/valued are three distinct password states"
+        )]
+        password: Option<Option<String>>,
         /// Output format: human (default) — the live picker — or json, one
         /// `ticket_found`/`ticket_lost` line per directory change.
         #[arg(long, default_value = "human")]

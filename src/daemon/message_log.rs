@@ -95,7 +95,7 @@ impl MessageLog {
         let slice: Vec<&Message> = self.messages.iter().skip(start).take(max).collect();
         let lo = slice.first()?.timestamp;
         let hi = slice.last()?.timestamp;
-        let ids = slice.iter().map(|msg| msg.id.as_uuid_bytes()).collect();
+        let ids = slice.iter().map(|msg| msg.dedup_key()).collect();
         Some(DigestWindow { lo, hi, ids })
     }
 
@@ -153,9 +153,7 @@ impl MessageLog {
             .iter()
             .rev()
             .filter(|msg| {
-                msg.timestamp >= lo
-                    && msg.timestamp <= hi
-                    && !have.contains(&msg.id.as_uuid_bytes())
+                msg.timestamp >= lo && msg.timestamp <= hi && !have.contains(&msg.dedup_key())
             })
             .take(max)
             .cloned()

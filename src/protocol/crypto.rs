@@ -27,6 +27,7 @@ use iroh_gossip::proto::TopicId;
 use sha2::{Digest, Sha256};
 
 use super::swarm::SwarmName;
+use crate::util::consts::{PASSWORD_KDF_M_COST_KIB, PASSWORD_KDF_P_COST, PASSWORD_KDF_T_COST};
 
 /// Domain-separation prefix mixed into every seed derivation. Bumping
 /// this is a wire-incompatible change (peers derive a different
@@ -121,6 +122,130 @@ pub(crate) fn rendezvous_ports(seed: &[u8; 32]) -> [u16; RENDEZVOUS_LADDER] {
         ]));
         u16::try_from(LOW + (raw % SPAN)).expect("LOW + (_ % SPAN) <= 65535")
     })
+}
+
+/// An operator-supplied password. A newtype so a stray `{:?}` in a
+/// `tracing` call can never leak the value into a log file that is
+/// otherwise safe to share.
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) struct Password(String);
+
+impl Password {
+    pub(crate) fn new(value: String) -> Self {
+        Self(value)
+    }
+
+    pub(crate) fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for Password {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("***")
+    }
+}
+
+impl std::fmt::Display for Password {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("***")
+    }
+}
+
+/// Argon2id-stretch a password into 32 bytes of keying material. The salt is
+/// `derive_secret(salt_seed, label)` — unique per artifact (random seed /
+/// ticket secret) and domain-separated per use, so the swarm and ticket
+/// stretches can never coincide and no cross-artifact rainbow table exists.
+/// Cost params are a wire contract (`util::consts`); ~50-100ms by design,
+/// paid once at create/join/handshake.
+fn stretch_password(password: &Password, salt_seed: &[u8; 32], label: &[u8]) -> [u8; 32] {
+    let params = argon2::Params::new(
+        PASSWORD_KDF_M_COST_KIB,
+        PASSWORD_KDF_T_COST,
+        PASSWORD_KDF_P_COST,
+        Some(32),
+    )
+    .expect("compile-time KDF params are valid");
+    let argon = argon2::Argon2::new(argon2::Algorithm::Argon2id, argon2::Version::V0x13, params);
+    let salt = derive_secret(salt_seed, label);
+    let mut out = [0u8; 32];
+    argon
+        .hash_password_into(password.as_str().as_bytes(), &salt, &mut out)
+        .expect("32-byte salt and output are valid argon2 lengths");
+    out
+}
+
+/// The stretched key for a passworded swarm: every derivation (topic,
+/// rendezvous, port ladder) switches from the wire seed onto this value, so
+/// holding the `🐝…` id without the password computes nothing reachable.
+#[must_use]
+pub(crate) fn stretch_swarm_password(password: &Password, seed: &[u8; 32]) -> [u8; 32] {
+    stretch_password(password, seed, b"password")
+}
+
+/// Length of the password verifier carried in a passworded swarm hash.
+/// 16 bytes: only guess-checking matters (collisions are irrelevant), and
+/// every extra byte grows the shared `🐝…` string.
+pub(crate) const PASSWORD_VERIFIER_LEN: usize = 16;
+
+/// The one-way check value a passworded swarm hash carries so `join` can
+/// verify a candidate password locally. Derived from the *stretched* key
+/// through a second one-way step, so the verifier reveals neither the
+/// password nor the effective seed.
+#[must_use]
+pub(crate) fn password_verifier(key: &[u8; 32]) -> [u8; PASSWORD_VERIFIER_LEN] {
+    let digest = derive_secret(key, b"password-verify");
+    let mut out = [0u8; PASSWORD_VERIFIER_LEN];
+    out.copy_from_slice(&digest[..PASSWORD_VERIFIER_LEN]);
+    out
+}
+
+/// The 32 bytes a transfer consumer presents on connect and a producer
+/// expects: the raw ticket secret (no password), or its Argon2id stretch
+/// salted by the secret (passworded) — same wire size either way, and a
+/// directory ad (which carries the secret) is not enough to redeem a
+/// passworded ticket.
+#[derive(Clone)]
+pub(crate) struct TicketAuth {
+    pub(crate) token: [u8; 32],
+    pub(crate) password_protected: bool,
+}
+
+impl TicketAuth {
+    pub(crate) fn derive(secret: &[u8; 32], password: Option<&Password>) -> Self {
+        match password {
+            Some(password) => Self {
+                token: stretch_password(password, secret, b"ticket-password"),
+                password_protected: true,
+            },
+            None => Self {
+                token: *secret,
+                password_protected: false,
+            },
+        }
+    }
+}
+
+impl std::fmt::Debug for TicketAuth {
+    // The token is the live credential — redact it, keep the flag.
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("TicketAuth")
+            .field("token", &"***")
+            .field("password_protected", &self.password_protected)
+            .finish()
+    }
+}
+
+/// Constant-time equality for 32-byte auth tokens: XOR-fold the full pair so
+/// the cost never depends on where the first mismatch lies (a short-circuit
+/// `==` is a timing oracle on the secret).
+#[must_use]
+pub(crate) fn ct_eq(left: &[u8; 32], right: &[u8; 32]) -> bool {
+    left.iter()
+        .zip(right)
+        .fold(0u8, |acc, (lhs, rhs)| acc | (lhs ^ rhs))
+        == 0
 }
 
 /// Derive the gossip TopicId from the swarm `seed` + name + config. The
@@ -256,6 +381,78 @@ mod derive_secret_tests {
         // A rare in-ladder dup is harmless, but the fixed test seed
         // must not regress into a degenerate all-same ladder.
         assert!(unique.len() >= RENDEZVOUS_LADDER - 1);
+    }
+}
+
+#[cfg(test)]
+mod password_tests {
+    use super::{
+        Password, TicketAuth, ct_eq, derive_secret, password_verifier, stretch_swarm_password,
+    };
+
+    const SEED_A: [u8; 32] = [7u8; 32];
+    const SEED_B: [u8; 32] = [9u8; 32];
+
+    fn pw(text: &str) -> Password {
+        Password::new(text.to_owned())
+    }
+
+    #[test]
+    fn stretch_is_deterministic_and_separates_by_password_and_seed() {
+        let key = stretch_swarm_password(&pw("hunter2"), &SEED_A);
+        assert_eq!(key, stretch_swarm_password(&pw("hunter2"), &SEED_A));
+        assert_ne!(key, stretch_swarm_password(&pw("hunter3"), &SEED_A));
+        assert_ne!(key, stretch_swarm_password(&pw("hunter2"), &SEED_B));
+    }
+
+    #[test]
+    fn swarm_and_ticket_stretches_are_domain_separated() {
+        // Same password, same 32 salt-seed bytes — the label must keep the
+        // swarm key and the ticket token disjoint.
+        let swarm_key = stretch_swarm_password(&pw("hunter2"), &SEED_A);
+        let ticket = TicketAuth::derive(&SEED_A, Some(&pw("hunter2")));
+        assert_ne!(swarm_key, ticket.token);
+    }
+
+    #[test]
+    fn verifier_is_not_the_key_and_not_a_topic_or_rendezvous_input() {
+        let key = stretch_swarm_password(&pw("hunter2"), &SEED_A);
+        let verifier = password_verifier(&key);
+        assert_ne!(&key[..16], &verifier[..], "verifier must be one-way");
+        assert_ne!(
+            &derive_secret(&key, b"topic")[..16],
+            &verifier[..],
+            "verifier must not collide with a derivation label"
+        );
+    }
+
+    #[test]
+    fn ticket_auth_passthrough_without_password() {
+        let raw = TicketAuth::derive(&SEED_A, None);
+        assert_eq!(raw.token, SEED_A);
+        assert!(!raw.password_protected);
+        let stretched = TicketAuth::derive(&SEED_A, Some(&pw("hunter2")));
+        assert_ne!(stretched.token, SEED_A);
+        assert!(stretched.password_protected);
+    }
+
+    #[test]
+    fn ct_eq_matches_plain_equality() {
+        assert!(ct_eq(&SEED_A, &SEED_A));
+        assert!(!ct_eq(&SEED_A, &SEED_B));
+        let mut last_byte_differs = SEED_A;
+        last_byte_differs[31] ^= 1;
+        assert!(!ct_eq(&SEED_A, &last_byte_differs));
+    }
+
+    #[test]
+    fn password_never_leaks_through_debug_or_display() {
+        let secret = pw("hunter2");
+        assert_eq!(format!("{secret:?}"), "***");
+        assert_eq!(format!("{secret}"), "***");
+        let auth = TicketAuth::derive(&SEED_A, Some(&secret));
+        assert!(!format!("{auth:?}").contains("hunter2"));
+        assert!(format!("{auth:?}").contains("***"));
     }
 }
 

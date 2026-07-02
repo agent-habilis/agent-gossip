@@ -78,6 +78,27 @@ converges. Joined via the `forum` command, not `join`.
 Code: `protocol::crypto::topic_seed`, `Swarm::from_topic`,
 `SwarmName::from_topic_string`. See [discovery.md](./discovery.md) §7.
 
+### password
+
+*Layer: identity · optional, per swarm or per transfer ticket.*
+
+An optional knowledge factor on top of the bearer capability: with one set,
+holding the `🐝…` hash or ticket alone no longer admits. The password's value
+never travels. For a **swarm**, `create --password` stretches it with Argon2id
+(salt = the seed) into a key that replaces the seed in *every* derivation
+(topic, rendezvous, port ladder), and the hash carries a one-way **verifier**
+of that key so `join` can check a candidate locally — a wrong password fails
+immediately, before any network. For a **ticket** (pipe/port/file), the
+consumer presents the Argon2id stretch of the password (salt = the ticket
+secret) instead of the raw secret; the producer verifies online and rejects
+with a distinct "wrong password" close. Tickets carry no verifier —
+advertised ads are public, and a verifier there would be an offline grinding
+target; the swarm hash accepts that trade for local verifiability. A
+passworded swarm or ticket is therefore safe to **advertise**.
+
+Code: `protocol::crypto` (`stretch_swarm_password`, `password_verifier`,
+`TicketAuth`), `Swarm::{set_password, apply_password}`.
+
 ### rendezvous
 
 *Layer: identity · keyed by seed.*
@@ -95,8 +116,8 @@ Code: `protocol::crypto`.
 A per-participant Ed25519 keypair minted in-process at `create` / `join`
 (ephemeral). The **public key is the author's identity**; the nickname is only
 a non-unique display label and is never claimed cryptographically. Every
-message is signed with this key and verified on receipt, and both the rate
-limit and fork detection key on it. It is distinct from the shared
+message is signed with this key and verified on receipt, and fork detection
+keys on it. It is distinct from the shared
 **rendezvous** key and from the transport **endpoint** key.
 
 Code: `protocol::identity`. Design: [history-integrity.md](./history-integrity.md).
@@ -214,8 +235,17 @@ confirms (or `change`s for a revision); it sends one or more independent tasks
 result as it returns, with no group-level outcome. `/swarm:handover` is the
 **walk-away** flow (see below).
 
+**Keepalive vs. liveness.** While the ball-owner is silent, its daemon emits a
+`progress` keepalive so a genuinely-working owner is not falsely timed out. But
+the keepalive is bounded by **skill** liveness, not process liveness: it only
+fires while a real leg has been driven within `TASK_KEEPALIVE_MAX_SECS` (a leg
+the daemon's own keepalive never counts as). Past that, the keepalive stops and
+the peer's debounce reaps the task — so a crashed or abandoned skill cannot hold
+the peer forever. A skill doing very long silent work refreshes the window by
+sending its own `progress` beat.
+
 Code: `MessageKind::Task`, `lifecycle::handle_task`, `broadcast_task`,
-`daemon::task`.
+`daemon::task` (`TaskRecord::should_keepalive`).
 
 ### handover
 

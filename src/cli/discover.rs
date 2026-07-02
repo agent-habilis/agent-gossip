@@ -57,7 +57,9 @@ pub(super) async fn discover(opts: DiscoverOpts) -> Result<()> {
                 let target = id
                     .parse::<JoinTarget>()
                     .expect("a discovered swarm id is a valid join target");
-                return join(target, None, opts.shared).await;
+                // No flag on `discover` itself: a passworded pick prompts
+                // in `join` (the picker only ran because a TTY exists).
+                return join(target, None, None, opts.shared).await;
             }
             PickerOutcome::Quit => {
                 let _ = discoverer.close().await;
@@ -94,6 +96,7 @@ fn discover_event_json(event: &DirectoryEvent) -> String {
             "swarm": listing.swarm.as_str(),
             "name": listing.name,
             "mode": if listing.public { "public" } else { "private" },
+            "password": listing.password,
             "peers": listing.peers,
         }),
         DirectoryEvent::Lost(swarm) => serde_json::json!({
@@ -132,8 +135,9 @@ async fn run_swarm_picker(
         } else {
             ""
         };
+        let lock = if listing.password { "🔒 " } else { "" };
         format!(
-            "{bold}{yellow}#{}{reset}  {}  {}  {}",
+            "{bold}{yellow}#{}{reset}  {lock}{}  {}  {}",
             listing.name,
             listing.swarm.as_str(),
             listing.peers,

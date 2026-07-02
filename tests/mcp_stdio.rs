@@ -285,6 +285,54 @@ fn create_pair_with(base_id: u64, creator_args: &[&str]) -> (McpClient, McpClien
     (creator, joiner, swarm, creator_nick)
 }
 
+// ─── password ────────────────────────────────────────────────────
+
+/// A passworded swarm over MCP: `create_swarm` takes `password`;
+/// `join_swarm` without it (or with the wrong one) is an `invalid_params`
+/// error naming the requirement — the server never prompts — and the right
+/// password joins.
+#[test]
+fn join_swarm_requires_the_password() {
+    let mut creator = McpClient::spawn();
+    let created = tool_result_json(&creator.tool_call(
+        7000,
+        "create_swarm",
+        serde_json::json!({ "name": "mcp-pw", "password": "hunter2" }),
+    ))
+    .expect("passworded create_swarm must succeed");
+    let swarm = created["swarm"].as_str().expect("swarm id").to_string();
+
+    let mut joiner = McpClient::spawn();
+    let missing = tool_error(&joiner.tool_call(
+        7001,
+        "join_swarm",
+        serde_json::json!({ "swarm": swarm.clone() }),
+    ))
+    .expect("join without password must error");
+    assert!(
+        missing.contains("password-protected"),
+        "error must name the requirement: {missing}"
+    );
+
+    let wrong = tool_error(&joiner.tool_call(
+        7002,
+        "join_swarm",
+        serde_json::json!({ "swarm": swarm.clone(), "password": "hunter3" }),
+    ))
+    .expect("join with a wrong password must error");
+    assert!(
+        wrong.contains("wrong password"),
+        "error must say wrong password: {wrong}"
+    );
+
+    tool_result_json(&joiner.tool_call(
+        7003,
+        "join_swarm",
+        serde_json::json!({ "swarm": swarm, "password": "hunter2" }),
+    ))
+    .expect("join with the right password must succeed");
+}
+
 // ─── stdout cleanliness ──────────────────────────────────────────
 
 #[test]

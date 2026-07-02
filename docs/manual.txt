@@ -8,11 +8,11 @@ NAME
 SYNOPSIS
        ahsw create [--name NAME] [--public]
                   [--mdns] [--dht] [--relay[=URLS]]
-                  [--advertise[=DIRECTORY]]
+                  [--advertise[=DIRECTORY]] [--password[=PW]]
                   [--no-interactive] [--state-file PATH] [--output human|json]
                   [--max-peers N] [--filter-self]
 
-       ahsw join SWARM [--nickname NAME]
+       ahsw join SWARM [--nickname NAME] [--password[=PW]]
                   [--no-interactive] [--state-file PATH] [--output human|json]
                   [--max-peers N] [--filter-self]
 
@@ -33,24 +33,28 @@ SYNOPSIS
        ahsw peers --swarm 🐝… --nickname NAME [--output json]
 
        ahsw pipe listen        [--swarm 🐝… | --mdns --dht --relay[=URLS]]
-                  [--advertise[=NAME]] [--throttle RATE] [--follow] [--output human|json]
-       ahsw pipe connect       🐝… [--throttle RATE]
+                  [--advertise[=NAME]] [--password[=PW]]
+                  [--throttle RATE] [--follow] [--output human|json]
+       ahsw pipe connect       🐝… [--throttle RATE] [--password[=PW]]
        ahsw pipe discover      [NAME] [--mdns] [--dht] [--relay[=URLS]]
-                  [--throttle RATE] [--output human|json]
-       ahsw pipe bench         [--serve] [--swarm 🐝…] [--output human|json]
-       ahsw pipe bench         🐝… [--budget BUDGET] [--pings N] [--output human|json]
-
-       ahsw port listen  PORT... [--swarm 🐝… | --mdns --dht --relay[=URLS]]
-                  [--advertise[=NAME]] [--output human|json]
-       ahsw port connect 🐝… [LOCAL:]REMOTE... [--output human|json]
-       ahsw port discover [NAME] [[LOCAL:]REMOTE...] [--mdns] [--dht] [--relay[=URLS]]
+                  [--throttle RATE] [--password[=PW]] [--output human|json]
+       ahsw pipe bench         [--serve] [--swarm 🐝…] [--password[=PW]] [--output human|json]
+       ahsw pipe bench         🐝… [--budget BUDGET] [--pings N] [--password[=PW]]
                   [--output human|json]
 
+       ahsw port listen  PORT... [--swarm 🐝… | --mdns --dht --relay[=URLS]]
+                  [--advertise[=NAME]] [--password[=PW]] [--output human|json]
+       ahsw port connect 🐝… [LOCAL:]REMOTE... [--password[=PW]] [--output human|json]
+       ahsw port discover [NAME] [[LOCAL:]REMOTE...] [--mdns] [--dht] [--relay[=URLS]]
+                  [--password[=PW]] [--output human|json]
+
        ahsw file send PATH [--swarm 🐝… | --mdns --dht --relay[=URLS]]
-                  [--advertise[=NAME]] [--throttle RATE] [--output human|json]
-       ahsw file get  🐝… [--out DIR] [--throttle RATE] [--output human|json]
+                  [--advertise[=NAME]] [--password[=PW]] [--throttle RATE]
+                  [--output human|json]
+       ahsw file get  🐝… [--out DIR] [--throttle RATE] [--password[=PW]]
+                  [--output human|json]
        ahsw file discover [NAME] [--mdns] [--dht] [--relay[=URLS]]
-                  [--out DIR] [--throttle RATE] [--output human|json]
+                  [--out DIR] [--throttle RATE] [--password[=PW]] [--output human|json]
 
        ahsw sh listen  [--swarm 🐝…] [--write] [--output human|json]
        ahsw sh connect 🐝…
@@ -190,8 +194,27 @@ COMMANDS
                      discover. Bare --advertise uses the global directory; a
                      value names a specific directory. Requires --public.
                      Broadcasting the identifier makes the swarm OPEN:
-                     anyone browsing that directory can join it (see
-                     "DIRECTORIES").
+                     anyone browsing that directory can join it — unless it is
+                     also --password protected, in which case the listing alone
+                     does not admit (see "DIRECTORIES").
+
+              --password[=PW]
+                     Protect the swarm with a password: the id alone no longer
+                     admits — joiners must present the password. The id carries
+                     only a one-way VERIFIER (never the password), so a joiner
+                     checks a candidate locally and a wrong password fails
+                     immediately; the actual gate is key derivation — every
+                     network identity (gossip topic, rendezvous, port ladder)
+                     derives from the Argon2id-stretched password, so without
+                     it nothing reachable can even be computed. Bare
+                     --password prompts hidden on the terminal (twice, to
+                     confirm); --password=<pw> passes it inline — visible in
+                     `ps` and shell history, so prefer the prompt when a human
+                     types it. Anyone holding a passworded id can test
+                     password guesses offline against the verifier (~100ms per
+                     guess by design) — a weak password is weak protection.
+                     There is no rotation: changing the password mints a new
+                     swarm. See "SECURITY".
 
               --no-interactive
                      Drop the interactive prompt; drive the session over IPC
@@ -240,6 +263,16 @@ COMMANDS
                      word-word nickname is minted if omitted. Same character
                      rules as --name, but a nickname additionally forbids the
                      path separators / \ (it is used as a filename component).
+
+              --password[=PW]
+                     Password for a password-protected id — required exactly
+                     when the id carries a password verifier, rejected
+                     otherwise. Checked locally against the verifier before
+                     any network: a wrong password fails immediately with
+                     "wrong password". On a terminal, omitting the flag (or
+                     passing it bare) prompts hidden; --password=<pw> passes
+                     it inline for agents (visible in `ps`). Non-interactive
+                     runs must pass the value inline.
 
               --no-interactive
                      Drop the prompt; drive over IPC. Required for agent use.
@@ -377,7 +410,11 @@ COMMANDS
               mid-task does not wedge the conversation. Content legs are
               counted against a whole-task 100-message cap; progress is
               exempt. The daemon runs a 5-minute idle-debounce timeout and a
-              keepalive for the party that holds the ball.
+              keepalive for the party that holds the ball — but the keepalive
+              only covers a silent owner while its skill has driven a leg
+              recently, so a crashed skill's task is reaped rather than held
+              forever. During very long silent work, send a `--phase progress`
+              beat occasionally to keep the task alive.
 
        peers --swarm 🐝… --nickname NAME [--output json]
               List the live participant roster of a swarm. Queries the
@@ -427,10 +464,14 @@ COMMANDS
               mechanism as `create --advertise`, bare ⇒ `global`) so the other
               side needs no 🐝… at all: it runs `ahsw pipe discover NAME`, which
               browses the directory and connects on pick — human mode is a live
-              picker, --output json streams one `ticket_found`/`ticket_lost`
-              line per change for an agent to act on (the ad carries the full
-              ticket). Share the directory name like a code word; the ad is the
-              full bearer ticket, so anyone browsing that directory can connect.
+              picker (a 🔒 marks password-protected entries), --output json
+              streams one `ticket_found`/`ticket_lost` line per change for an
+              agent to act on (the ad carries the full ticket plus a
+              `password` flag). Share the directory name like a code word; the
+              ad is the full bearer ticket, so anyone browsing that directory
+              can connect — unless the ticket is --password protected, which
+              makes a public listing safe: the ad still carries the ticket,
+              but redeeming it needs the password.
               Both sides must reach the directory over the SAME lookups (an
               mDNS-only advertiser is found only by an mDNS-only discover).
               Advertising needs a re-servable source — a seekable file or
@@ -463,6 +504,22 @@ COMMANDS
               --throttle RATE caps throughput on either side (e.g. 100k, 2m;
               1024-based) — a bandwidth limit, and a way to make the progress bar
               visible on a fast link.
+
+              --password[=PW] on `pipe listen` (and the bench producer) protects
+              the ticket: the ticket alone no longer redeems — the consumer must
+              present the password (`pipe connect 🐝… --password=<pw>`, or a
+              hidden prompt on a terminal when the flag is bare or omitted for a
+              protected ticket). On the wire the consumer presents the Argon2id
+              stretch of the password instead of the raw ticket secret — same
+              bytes count, and the producer rejects a wrong password with a
+              distinct "wrong password" error (vs "bad ticket secret" for a
+              corrupt ticket). The password never travels in the ticket, so a
+              passworded ticket is safe to --advertise. `port` and `file` take
+              the same flag with the same semantics. A caution for discover
+              flows: anything you type as a password for a discovered ticket is
+              revealed (in offline-crackable, stretched form) to whoever
+              advertised it — treat per-ticket passwords as throwaway secrets,
+              never reuse a valuable one.
 
               --follow turns `pipe listen` into a live tail for an endless source
               like `tail -f`. The producer stays up and sends the live source to
@@ -499,15 +556,16 @@ COMMANDS
                 tar c ./dir | ahsw pipe listen --swarm 🐝…   ↔   ahsw pipe connect 🐝… | tar x
                 tail -f app.log | ahsw pipe listen --follow --swarm 🐝…   # live tail
                 ahsw pipe listen --advertise drop < notes.md   ↔   ahsw pipe discover drop
+                ahsw pipe listen --advertise drop --password=pw < s.txt   # ad is safe: pw required
                 ahsw pipe bench --swarm 🐝…                       # hint → ahsw pipe bench 🐝…
                 ahsw pipe bench --serve                           # always-on: reconnect any time
                 ahsw pipe bench 🐝… --budget 30s --pings 50
 
        port listen  PORT... [--swarm 🐝… | --mdns --dht --relay[=URLS]]
-                    [--advertise[=NAME]] [--output human|json]
-       port connect 🐝… [LOCAL:]REMOTE... [--output human|json]
+                    [--advertise[=NAME]] [--password[=PW]] [--output human|json]
+       port connect 🐝… [LOCAL:]REMOTE... [--password[=PW]] [--output human|json]
        port discover [NAME] [[LOCAL:]REMOTE...] [--mdns] [--dht] [--relay[=URLS]]
-                    [--output human|json]
+                    [--password[=PW]] [--output human|json]
               Forward one or more long-running TCP ports over the same off-gossip
               link as the pipe; no daemon needed. `port listen PORT...` proxies
               each listed port to `127.0.0.1:PORT` on the producer and prints the
@@ -516,11 +574,14 @@ COMMANDS
               A consumer arg is `LOCAL:REMOTE` — bind `127.0.0.1:LOCAL`, forward to
               the producer's REMOTE — or a bare `PORT` that maps to itself
               (`3000` == `3000:3000`); REMOTE must be a port the ticket exposes.
-              All ports share one connection. One ticket serves many connections,
-              and both sides run until interrupted. The ticket works like the
-              pipe's (see `pipe`) but is a distinct kind — not accepted by --swarm,
-              join, or pipe connect. The discovery config comes from --swarm or
-              the create-style --mdns/--dht/--relay flags, exactly as `pipe`.
+              All ports share one connection (max 127 ports per ticket). One
+              ticket serves many connections, and both sides run until
+              interrupted. The ticket works like the pipe's (see `pipe`) but is
+              a distinct kind — not accepted by --swarm, join, or pipe connect.
+              The discovery config comes from --swarm or the create-style
+              --mdns/--dht/--relay flags, exactly as `pipe`. --password[=PW]
+              works exactly as the pipe's (see `pipe`): the ticket alone no
+              longer forwards, and `port connect` must present the password.
 
               --advertise[=NAME] + `port discover` work like the pipe's (see
               `pipe`): the ticket is listed in directory NAME (bare ⇒ `global`),
@@ -549,10 +610,12 @@ COMMANDS
                 ahsw port listen 3000 --advertise devbox   ↔   ahsw port discover devbox
 
        file send PATH [--swarm 🐝… | --mdns --dht --relay[=URLS]]
-                 [--advertise[=NAME]] [--throttle RATE] [--output human|json]
-       file get  🐝… [--out DIR] [--throttle RATE] [--output human|json]
+                 [--advertise[=NAME]] [--password[=PW]] [--throttle RATE]
+                 [--output human|json]
+       file get  🐝… [--out DIR] [--throttle RATE] [--password[=PW]]
+                 [--output human|json]
        file discover [NAME] [--mdns] [--dht] [--relay[=URLS]] [--out DIR]
-                 [--throttle RATE] [--output human|json]
+                 [--throttle RATE] [--password[=PW]] [--output human|json]
               Send a file or folder over the same off-gossip direct link the pipe
               uses — no running daemon required, and it lands as a real tree on
               disk (not a byte stream). `file send PATH` serves a file or
@@ -591,6 +654,9 @@ COMMANDS
               `pipe`): the ticket is listed in directory NAME (bare ⇒ `global`),
               labeled with the source's name, and `file discover NAME` browses
               the directory and fetches on pick (`--out` as in `file get`).
+              --password[=PW] works exactly as the pipe's (see `pipe`): the
+              ticket alone no longer redeems, and `file get` must present the
+              password — which makes a passworded ticket safe to advertise.
 
               Contrast the pipe, which streams raw bytes (a folder there is a tar
               STREAM via `tar c ./dir | ahsw pipe listen`): `file` walks the tree,
@@ -920,10 +986,13 @@ DIRECTORIES
        is global.
 
        advertise (create-time, requires --public) re-broadcasts a swarm's own
-       identifier into a directory periodically; an advertised swarm is OPEN.
-       discover joins a directory, collects the live set, and emits
-       swarm_found on each advertisement and swarm_lost when a swarm's
-       advertisements stop and age out (~60s). A directory's topic is keyed
+       identifier into a directory periodically; an advertised swarm is OPEN —
+       unless it is --password protected, in which case the listing carries
+       the id but joining still needs the password (the safe way to list a
+       private-audience swarm). discover joins a directory, collects the live
+       set, and emits swarm_found on each advertisement (carrying a
+       `password` flag; the human picker shows a 🔒) and swarm_lost when a
+       swarm's advertisements stop and age out (~60s). A directory's topic is keyed
        by its name AND the lookups in use, so an --mdns-only advertiser is
        found only by an --mdns-only discover; the all-on default on both
        sides meets. The eventual join inherits the chosen swarm's own lookups

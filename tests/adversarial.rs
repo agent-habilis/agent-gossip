@@ -179,6 +179,51 @@ async fn forged_message_does_not_suppress_genuine_with_replayed_id() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn signed_forgery_with_replayed_id_does_not_suppress_victim() {
+    // The signature gate stops an *unsigned* id-replay, but a peer can sign its
+    // OWN message reusing a victim's id — a valid signature over its own bytes.
+    // Dedup must key on `(pubkey, id)` (not the bare id), so this forgery lands
+    // under a different key and cannot suppress the victim's genuine message
+    // that shares the id.
+    let (mut receiver, injector) = meshed_pair("dedup-key").await;
+    let victim_key = adversarial::new_key();
+    let attacker_key = adversarial::new_key();
+    let swarm = injector.session.swarm_id();
+    let shared_id = "550e8400-e29b-41d4-a716-446655440000";
+
+    // 1) A validly SIGNED forgery under the attacker's key, reusing the id.
+    let forged = CraftedMsg::new(swarm, "attacker", "forged")
+        .id(shared_id)
+        .sign(&attacker_key)
+        .bytes();
+    injector
+        .session
+        .inject_raw(forged)
+        .await
+        .expect("inject signed forgery");
+    injector.send("after-forged").await;
+    assert!(receiver.wait_body("after-forged", T).await, "barrier lost");
+
+    // 2) The victim's genuine message reusing that id must still be delivered —
+    //    the forgery's dedup key differs, so it never marked the id "seen".
+    let genuine = CraftedMsg::new(swarm, "victim", "genuine")
+        .id(shared_id)
+        .sign(&victim_key)
+        .bytes();
+    injector
+        .session
+        .inject_raw(genuine)
+        .await
+        .expect("inject genuine");
+    assert!(
+        receiver.wait_body("genuine", T).await,
+        "a signed forgery reusing an id must not suppress the victim's genuine message"
+    );
+    receiver.leave().await;
+    injector.leave().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn directed_replies_to_third_party_do_not_leak_into_indexes() {
     // A reply addressed to someone else is relayed but never logged. It must
     // therefore never be folded into the fork/DAG indexes — otherwise those

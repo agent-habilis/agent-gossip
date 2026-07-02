@@ -286,7 +286,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn two_sessions_same_swarm_exchange_messages() {
+    async fn two_sessions_same_swarm_task_messages() {
         let creator = Session::create(create_cfg("two", "alice-two"))
             .await
             .expect("create");
@@ -611,6 +611,16 @@ mod tests {
             session.state_get().await.expect("state_get")["turn"],
             json!("a")
         );
+
+        // The fold order is `(timestamp, id)` at one-second resolution, so two
+        // changes authored in the same second sort by the random id tiebreak —
+        // the documented turn-based contract (the glossary's *Shared state
+        // converges deterministically* invariant). Cross the second boundary
+        // so the second merge deterministically folds last.
+        let stamped = crate::util::clock::unix_secs();
+        while crate::util::clock::unix_secs() == stamped {
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
 
         // A non-object merge replaces the document (RFC 7386), no rejection.
         session
