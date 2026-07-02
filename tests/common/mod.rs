@@ -458,6 +458,17 @@ impl InProcNode {
         )
     }
 
+    /// Create a new private, password-protected swarm.
+    pub(crate) async fn create_with_password(name: &str, password: &str) -> Self {
+        let mut cfg = CreateConfig::new(test_swarm_name(name));
+        cfg.password = Some(password.to_owned());
+        Self::from_session(
+            SwarmSession::create(cfg)
+                .await
+                .expect("in-process passworded create failed"),
+        )
+    }
+
     fn from_session(mut session: SwarmSession) -> Self {
         let rx = session.events().expect("events() receiver");
         let swarm = session.swarm_id().to_string();
@@ -481,6 +492,20 @@ impl InProcNode {
                 .await
                 .expect("in-process join failed"),
         )
+    }
+
+    /// Join a password-protected `swarm`, surfacing the join error (so a
+    /// wrong-password test can assert on it).
+    pub(crate) async fn try_join_with_password(
+        swarm: &str,
+        nickname: &str,
+        password: &str,
+    ) -> Result<Self, agent_habilis_swarm::embed::JoinError> {
+        let target = swarm.parse().expect("valid test join target");
+        let mut cfg = JoinConfig::new(target);
+        cfg.nickname = Some(Nickname::new(nickname).expect("valid test nickname"));
+        cfg.password = Some(password.to_owned());
+        Ok(Self::from_session(SwarmSession::join(cfg).await?))
     }
 
     /// Broadcast a plain message; returns the new message id.
@@ -1017,10 +1042,22 @@ impl Node {
     /// Like [`join`](Self::join) but passes extra hidden tuning flags to the
     /// spawned daemon as `(flag, value)` pairs.
     pub(crate) fn join_flags(swarm: &str, nickname: &str, flags: &[(&str, &str)]) -> Self {
+        Self::join_args(swarm, nickname, &[], flags)
+    }
+
+    /// Like [`join_flags`](Self::join_flags) but also passes extra raw
+    /// `join` CLI args (e.g. `["--password=pw"]`).
+    pub(crate) fn join_args(
+        swarm: &str,
+        nickname: &str,
+        extra: &[&str],
+        flags: &[(&str, &str)],
+    ) -> Self {
         let log = tmp_log(nickname);
         let file = File::create(&log).unwrap();
         let mut cmd = test_cmd();
         cmd.args(["join", swarm, "--nickname", nickname]);
+        cmd.args(extra);
         apply_flags(&mut cmd, flags);
         let child = cmd
             .stdout(Stdio::from(file.try_clone().unwrap()))

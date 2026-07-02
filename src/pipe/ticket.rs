@@ -3,7 +3,9 @@
 //! swarm's discovery config, and the producer's address. Payload layout:
 //! `secret(32) ‖ flags(1) ‖ lookups ‖ address-json` (lookups is
 //! self-delimiting, so the address occupies the remainder). `flags` bit 0 is
-//! the live-follow mode, bit 1 is the benchmark protocol (`pipe bench`); the
+//! the live-follow mode, bit 1 is the benchmark protocol (`pipe bench`),
+//! bit 2 marks a password-protected ticket (the consumer must present the
+//! Argon2id-stretched token, so the ticket alone no longer redeems); the
 //! rest are reserved.
 
 use anyhow::{Context, Result, bail};
@@ -28,6 +30,10 @@ pub(crate) struct PipeTicket {
     /// byte-stream one. Lets `pipe connect` and `pipe bench` each refuse the
     /// other's ticket instead of hanging deep in the wrong protocol.
     pub bench: bool,
+    /// Password-protected: the consumer must present the Argon2id stretch of
+    /// the password (salted by `secret`) instead of the raw secret, so the
+    /// ticket — and any directory ad carrying it — no longer redeems alone.
+    pub password: bool,
 }
 
 impl PipeTicket {
@@ -35,7 +41,9 @@ impl PipeTicket {
     pub(crate) fn encode(&self) -> String {
         let mut payload = Vec::with_capacity(SECRET_LEN + 1 + 8 + 64);
         payload.extend_from_slice(&self.secret);
-        payload.push(u8::from(self.follow) | (u8::from(self.bench) << 1));
+        payload.push(
+            u8::from(self.follow) | (u8::from(self.bench) << 1) | (u8::from(self.password) << 2),
+        );
         self.lookups.encode_into(&mut payload);
         let addr_json = serde_json::to_vec(&endpoint_addr_to_json(&self.addr))
             .expect("EndpointAddr JSON always serializes");
@@ -58,6 +66,7 @@ impl PipeTicket {
         let flags = *payload.get(SECRET_LEN).context("ticket missing flags")?;
         let follow = flags & 1 != 0;
         let bench = flags & 0b10 != 0;
+        let password = flags & 0b100 != 0;
         let mut pos = SECRET_LEN + 1;
         let lookups = LookupOpts::decode_from(&payload, &mut pos)?;
         let addr_json = payload.get(pos..).context("ticket missing address")?;
@@ -70,6 +79,7 @@ impl PipeTicket {
             lookups,
             follow,
             bench,
+            password,
         })
     }
 }
@@ -90,6 +100,7 @@ mod tests {
             lookups: LookupOpts::public_preset(),
             follow: false,
             bench: false,
+            password: false,
         };
         let encoded = ticket.encode();
         assert!(encoded.starts_with("🐝"));
@@ -111,9 +122,11 @@ mod tests {
             lookups: LookupOpts::loopback(),
             follow: true,
             bench: false,
+            password: false,
         };
         let decoded = PipeTicket::decode(&ticket.encode()).expect("decode");
         assert!(decoded.follow);
+        assert!(!decoded.password);
     }
 
     #[test]
@@ -126,8 +139,27 @@ mod tests {
             lookups: LookupOpts::loopback(),
             follow: false,
             bench: true,
+            password: false,
         };
         let decoded = PipeTicket::decode(&ticket.encode()).expect("decode");
+        assert!(decoded.bench);
+        assert!(!decoded.follow);
+    }
+
+    #[test]
+    fn password_flag_round_trips_independently() {
+        let id = SecretKey::from_bytes(&[13u8; 32]).public();
+        let addr = EndpointAddr::new(id).with_ip_addr("127.0.0.1:4242".parse().unwrap());
+        let ticket = PipeTicket {
+            addr,
+            secret: [9u8; SECRET_LEN],
+            lookups: LookupOpts::loopback(),
+            follow: false,
+            bench: true,
+            password: true,
+        };
+        let decoded = PipeTicket::decode(&ticket.encode()).expect("decode");
+        assert!(decoded.password);
         assert!(decoded.bench);
         assert!(!decoded.follow);
     }

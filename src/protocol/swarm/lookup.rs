@@ -11,6 +11,7 @@ use anyhow::{Context, Result, bail};
 use iroh::RelayUrl;
 
 use super::SwarmName;
+use crate::protocol::crypto::PASSWORD_VERIFIER_LEN;
 
 /// The connectivity relay. `Disabled` ⇒ no relay at all
 /// (`RelayMode::Disabled`); `Pinned` ⇒ the lookup-layer pinned default
@@ -159,12 +160,23 @@ pub(super) fn read_u16(bytes: &[u8], pos: &mut usize) -> Result<u16> {
     Ok(u16::from_le_bytes([slice[0], slice[1]]))
 }
 
+/// Feature byte appended after the lookups when a swarm has a password.
+/// Appended — not a spare lookup-flags bit — because old binaries ignore
+/// unknown flag bits (they would silently decode a passworded id and sit
+/// in an empty topic) but hard-error on trailing config bytes.
+const FEATURE_PASSWORD: u8 = 0b0001;
+
 /// The swarm-wide configuration carried in the id and mixed into the
 /// gossip topic, so every member that joins behaves identically. A
 /// different config is a different swarm (different topic).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SwarmConfig {
     pub lookups: LookupOpts,
+    /// The password verifier — a one-way check value derived from the
+    /// Argon2id-stretched password (`crypto::password_verifier`), never the
+    /// password itself. `None` ⇒ passwordless. Carried in the id so `join`
+    /// can verify a candidate password locally before any network.
+    pub password: Option<[u8; PASSWORD_VERIFIER_LEN]>,
 }
 
 impl SwarmConfig {
@@ -175,6 +187,7 @@ impl SwarmConfig {
     pub(crate) fn loopback() -> Self {
         SwarmConfig {
             lookups: LookupOpts::loopback(),
+            password: None,
         }
     }
 
@@ -184,15 +197,22 @@ impl SwarmConfig {
     pub(crate) fn public_preset() -> Self {
         SwarmConfig {
             lookups: LookupOpts::public_preset(),
+            password: None,
         }
     }
 
-    /// Canonical wire bytes: `[lookups…]`. This exact byte string is what
-    /// the id carries and what the topic derivation mixes in, so it must be
-    /// deterministic.
+    /// Canonical wire bytes: `[lookups…][if password: feature-flags u8 ‖
+    /// verifier]`. This exact byte string is what the id carries and what
+    /// the topic derivation mixes in, so it must be deterministic — the
+    /// feature byte is emitted only when nonzero (a passwordless config
+    /// stays byte-for-byte what it was before features existed).
     pub(crate) fn to_bytes(&self) -> Vec<u8> {
         let mut buf = Vec::with_capacity(2);
         self.lookups.encode_into(&mut buf);
+        if let Some(verifier) = &self.password {
+            buf.push(FEATURE_PASSWORD);
+            buf.extend_from_slice(verifier);
+        }
         buf
     }
 
@@ -201,10 +221,33 @@ impl SwarmConfig {
     pub(crate) fn from_bytes(bytes: &[u8]) -> Result<Self> {
         let mut pos = 0;
         let lookups = LookupOpts::decode_from(bytes, &mut pos)?;
+        let password = if pos == bytes.len() {
+            None
+        } else {
+            let features = bytes[pos];
+            pos += 1;
+            if features & !FEATURE_PASSWORD != 0 {
+                bail!("unsupported swarm feature flags {features:#04x} — upgrade ahsw");
+            }
+            if features == 0 {
+                // A zero feature byte re-encodes without itself, silently
+                // changing the topic-derivation bytes — reject the
+                // non-canonical form outright.
+                bail!("non-canonical swarm config: zero feature flags");
+            }
+            let end = pos
+                .checked_add(PASSWORD_VERIFIER_LEN)
+                .context("password verifier length overflow")?;
+            let raw = bytes.get(pos..end).context("truncated password verifier")?;
+            pos = end;
+            let mut verifier = [0u8; PASSWORD_VERIFIER_LEN];
+            verifier.copy_from_slice(raw);
+            Some(verifier)
+        };
         if pos != bytes.len() {
             bail!("trailing bytes in swarm config");
         }
-        Ok(SwarmConfig { lookups })
+        Ok(SwarmConfig { lookups, password })
     }
 }
 
@@ -589,6 +632,7 @@ mod lookup_tests {
                     "https://b.example".parse().unwrap(),
                 ]),
             },
+            password: None,
         };
         let decoded = SwarmConfig::from_bytes(&config.to_bytes()).unwrap();
         assert_eq!(decoded, config);
@@ -596,6 +640,8 @@ mod lookup_tests {
 
     #[test]
     fn config_rejects_trailing_bytes() {
+        // A lone trailing 0x00 is now the non-canonical zero feature byte;
+        // either way it must be rejected, never silently absorbed.
         let mut bytes = SwarmConfig::loopback().to_bytes();
         bytes.push(0);
         assert!(SwarmConfig::from_bytes(&bytes).is_err());
@@ -605,6 +651,49 @@ mod lookup_tests {
     fn config_rejects_custom_flag_without_enabled() {
         // flags with custom(0b1000) but not enabled(0b0100).
         let bytes = [0b1000];
+        assert!(SwarmConfig::from_bytes(&bytes).is_err());
+    }
+
+    #[test]
+    fn config_round_trips_password_verifier() {
+        let config = SwarmConfig {
+            lookups: LookupOpts::public_preset(),
+            password: Some([0xA5u8; 16]),
+        };
+        let decoded = SwarmConfig::from_bytes(&config.to_bytes()).unwrap();
+        assert_eq!(decoded, config);
+    }
+
+    #[test]
+    fn passwordless_encoding_is_byte_identical_to_pre_feature_format() {
+        // Live swarms depend on this: a config without a password must not
+        // grow a feature byte (it feeds the topic derivation).
+        assert_eq!(SwarmConfig::loopback().to_bytes(), vec![0b0000]);
+        assert_eq!(SwarmConfig::public_preset().to_bytes(), vec![0b0111]);
+    }
+
+    #[test]
+    fn config_rejects_unknown_feature_flags() {
+        let mut bytes = SwarmConfig::public_preset().to_bytes();
+        bytes.push(0b0010); // an undefined feature bit
+        bytes.extend_from_slice(&[0u8; 16]);
+        let error = SwarmConfig::from_bytes(&bytes).unwrap_err();
+        assert!(error.to_string().contains("upgrade ahsw"), "got: {error}");
+    }
+
+    #[test]
+    fn config_rejects_truncated_verifier() {
+        let mut bytes = SwarmConfig::public_preset().to_bytes();
+        bytes.push(0b0001);
+        bytes.extend_from_slice(&[0u8; 8]); // half a verifier
+        assert!(SwarmConfig::from_bytes(&bytes).is_err());
+    }
+
+    #[test]
+    fn config_rejects_verifier_with_trailing_slack() {
+        let mut bytes = SwarmConfig::public_preset().to_bytes();
+        bytes.push(0b0001);
+        bytes.extend_from_slice(&[0u8; 17]); // verifier + one extra byte
         assert!(SwarmConfig::from_bytes(&bytes).is_err());
     }
 }

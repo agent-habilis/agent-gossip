@@ -13,12 +13,13 @@ use tokio::net::TcpStream;
 
 use crate::directory::ticket::TicketAd;
 use crate::lookup::build_endpoint;
+use crate::protocol::crypto::{Password, TicketAuth, ct_eq};
 use crate::protocol::swarm::{
     DirectorySelection, LookupOpts, LookupSet, resolve_transfer_lookups, validate_advertise,
 };
 
 use super::http_log::{human_bytes, human_duration};
-use super::ticket::PortTicket;
+use super::ticket::{MAX_TICKET_PORTS, PortTicket};
 use super::{PORT_ALPN, SECRET_LEN, STREAM_HEADER_LEN, wait_online};
 
 /// Producer: expose `ports` (each on `127.0.0.1`) to peers, multiplexed over one
@@ -37,6 +38,7 @@ pub(crate) async fn listen(
     advertise: DirectorySelection,
     ports: &[u16],
     json: bool,
+    password: Option<Password>,
 ) -> Result<()> {
     let mut deduped: Vec<u16> = Vec::with_capacity(ports.len());
     for &port in ports {
@@ -44,14 +46,16 @@ pub(crate) async fn listen(
             deduped.push(port);
         }
     }
-    // clap's `required = true` guarantees at least one; the ticket counts ports
-    // in a single byte, so the list can't exceed 255.
-    if deduped.len() > usize::from(u8::MAX) {
-        bail!("too many ports (max {})", u8::MAX);
+    // clap's `required = true` guarantees at least one; the ticket counts
+    // ports in the low 7 bits of one byte (bit 7 is the password flag), so
+    // the list can't exceed 127.
+    if deduped.len() > MAX_TICKET_PORTS {
+        bail!("too many ports (max {MAX_TICKET_PORTS})");
     }
     let lookups = resolve_transfer_lookups(swarm, flags)?;
     validate_advertise(&advertise, &lookups)?;
-    let (endpoint, ticket, secret) = bind(lookups.clone(), deduped.clone()).await?;
+    let (endpoint, ticket, auth) =
+        bind(lookups.clone(), deduped.clone(), password.as_ref()).await?;
     let ports_hint = deduped
         .iter()
         .map(u16::to_string)
@@ -66,7 +70,9 @@ pub(crate) async fn listen(
             if !json {
                 crate::util::output::status("Advertising", &format!("in #{directory} directory"));
             }
-            Some(crate::embed::spawn_ticket_advertiser(directory, lookups, &ad)?)
+            Some(crate::embed::spawn_ticket_advertiser(
+                directory, lookups, &ad,
+            )?)
         }
         None => None,
     };
@@ -78,9 +84,10 @@ pub(crate) async fn listen(
     let allowed: Arc<HashSet<u16>> = Arc::new(deduped.into_iter().collect());
     while let Some(incoming) = endpoint.accept().await {
         let allowed = Arc::clone(&allowed);
+        let auth = auth.clone();
         let narrate = !json;
         tokio::spawn(async move {
-            if let Err(error) = serve_connection(incoming, secret, &allowed, narrate).await {
+            if let Err(error) = serve_connection(incoming, auth, &allowed, narrate).await {
                 tracing::debug!(%error, "tcp forward connection ended");
             }
         });
@@ -90,11 +97,14 @@ pub(crate) async fn listen(
     Ok(())
 }
 
-/// Bind the producer endpoint and mint its ticket + secret — no I/O, no print.
+/// Bind the producer endpoint and mint its ticket + the auth token each
+/// stream header must carry (the raw secret, or its Argon2id stretch when
+/// passworded) — no I/O, no print.
 pub(super) async fn bind(
     lookups: LookupOpts,
     target_ports: Vec<u16>,
-) -> Result<(Endpoint, PortTicket, [u8; SECRET_LEN])> {
+    password: Option<&Password>,
+) -> Result<(Endpoint, PortTicket, TicketAuth)> {
     let endpoint = build_endpoint(&lookups, None, None, vec![PORT_ALPN.to_vec()]).await?;
     // Loopback needs no online wait (the bound addr is immediately usable).
     if !lookups.is_loopback() {
@@ -102,13 +112,15 @@ pub(super) async fn bind(
     }
     let mut secret = [0u8; SECRET_LEN];
     rand::rng().fill_bytes(&mut secret);
+    let auth = TicketAuth::derive(&secret, password);
     let ticket = PortTicket {
         addr: endpoint.addr(),
         secret,
         lookups,
         target_ports,
+        password: auth.password_protected,
     };
-    Ok((endpoint, ticket, secret))
+    Ok((endpoint, ticket, auth))
 }
 
 /// Accept one inbound connection and serve each of its bi-streams as an
@@ -116,18 +128,19 @@ pub(super) async fn bind(
 /// connection (or a bad secret forces it closed from `serve_stream`).
 pub(super) async fn serve_connection(
     incoming: Incoming,
-    secret: [u8; SECRET_LEN],
+    auth: TicketAuth,
     allowed: &Arc<HashSet<u16>>,
     narrate: bool,
 ) -> Result<()> {
     let conn = incoming.await?;
     // `accept_bi` errors once the connection is gone (peer closed, or a bad
-    // secret closed it from within a stream task) — that ends the loop.
+    // token closed it from within a stream task) — that ends the loop.
     while let Ok((send, recv)) = conn.accept_bi().await {
         let conn = conn.clone();
         let allowed = Arc::clone(allowed);
+        let auth = auth.clone();
         tokio::spawn(async move {
-            if let Err(error) = serve_stream(&conn, send, recv, &secret, &allowed, narrate).await {
+            if let Err(error) = serve_stream(&conn, send, recv, &auth, &allowed, narrate).await {
                 tracing::debug!(%error, "tcp forward stream ended");
             }
         });
@@ -136,13 +149,15 @@ pub(super) async fn serve_connection(
 }
 
 /// Authenticate one bi-stream by its 34-byte header, dial the named local port,
-/// and proxy. A bad secret closes the whole connection (the bearer is
-/// poisoned); a good secret naming an unadvertised port resets only this stream.
+/// and proxy. A bad token closes the whole connection (the bearer is
+/// poisoned) — code 3 ("wrong password") on a passworded ticket, code 1
+/// ("bad secret") otherwise; a good token naming an unadvertised port resets
+/// only this stream.
 async fn serve_stream(
     conn: &Connection,
     send: SendStream,
     mut recv: RecvStream,
-    secret: &[u8; SECRET_LEN],
+    auth: &TicketAuth,
     allowed: &HashSet<u16>,
     narrate: bool,
 ) -> Result<()> {
@@ -151,8 +166,14 @@ async fn serve_stream(
         // The stream died before delivering a full header — nothing to serve.
         return Ok(());
     }
-    if &header[..SECRET_LEN] != secret {
-        conn.close(1u32.into(), b"bad secret");
+    let mut token = [0u8; SECRET_LEN];
+    token.copy_from_slice(&header[..SECRET_LEN]);
+    if !ct_eq(&token, &auth.token) {
+        if auth.password_protected {
+            conn.close(3u32.into(), b"wrong password");
+        } else {
+            conn.close(1u32.into(), b"bad secret");
+        }
         return Ok(());
     }
     let port = u16::from_be_bytes([header[SECRET_LEN], header[SECRET_LEN + 1]]);
@@ -217,19 +238,20 @@ mod tests {
 
     /// Stand up a loopback producer serving `ports` and a consumer connected to
     /// it, returning both endpoints, the consumer's `SharedConnection`, the
-    /// bearer secret, and the producer's serve task.
+    /// auth token, and the producer's serve task.
     async fn producer_and_consumer(
         ports: Vec<u16>,
     ) -> (
         iroh::Endpoint,
         iroh::Endpoint,
         SharedConnection,
-        [u8; SECRET_LEN],
+        crate::protocol::crypto::TicketAuth,
         tokio::task::JoinHandle<()>,
     ) {
-        let (producer_endpoint, ticket, secret) = bind(LookupOpts::loopback(), ports.clone())
+        let (producer_endpoint, ticket, auth) = bind(LookupOpts::loopback(), ports.clone(), None)
             .await
             .expect("bind producer");
+        let consumer_auth = auth.clone();
         let allowed: Arc<HashSet<u16>> = Arc::new(ports.into_iter().collect());
         let producer_endpoint_for_task = producer_endpoint.clone();
         let producer_task = tokio::spawn(async move {
@@ -237,7 +259,7 @@ mod tests {
                 .accept()
                 .await
                 .expect("inbound connection");
-            serve_connection(incoming, secret, &allowed, true)
+            serve_connection(incoming, auth, &allowed, true)
                 .await
                 .expect("serve_connection");
         });
@@ -251,7 +273,7 @@ mod tests {
             producer_endpoint,
             consumer_endpoint,
             shared,
-            secret,
+            consumer_auth,
             producer_task,
         )
     }
@@ -261,7 +283,7 @@ mod tests {
     /// per-port listener; `port` is the producer-side target the header names.
     async fn drive_client(
         shared: &SharedConnection,
-        secret: &[u8; SECRET_LEN],
+        auth: &crate::protocol::crypto::TicketAuth,
         port: u16,
         request: Vec<u8>,
     ) -> Vec<u8> {
@@ -280,7 +302,7 @@ mod tests {
             got
         });
         let (accepted_tcp, peer_addr) = local_listener.accept().await.expect("accept local client");
-        forward_one(shared, port, secret, accepted_tcp, peer_addr, true)
+        forward_one(shared, port, auth, accepted_tcp, peer_addr, true)
             .await
             .expect("forward_one");
         client_task.await.expect("client task")
@@ -295,11 +317,11 @@ mod tests {
     async fn round_trip_forwards_an_http_exchange_byte_for_byte() {
         let response = b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok".to_vec();
         let (port, target_task) = spawn_target(response.clone()).await;
-        let (producer_endpoint, consumer_endpoint, shared, secret, producer_task) =
+        let (producer_endpoint, consumer_endpoint, shared, auth, producer_task) =
             producer_and_consumer(vec![port]).await;
 
         let request = b"GET / HTTP/1.1\r\nHost: x\r\n\r\n".to_vec();
-        let received_response = drive_client(&shared, &secret, port, request.clone()).await;
+        let received_response = drive_client(&shared, &auth, port, request.clone()).await;
         let received_request = target_task.await.expect("target task");
 
         // Close the consumer first so the producer's `accept_bi` loop ends and
@@ -326,14 +348,14 @@ mod tests {
     async fn two_ports_share_one_quic_connection() {
         let (port_a, target_a) = spawn_target(b"AAA".to_vec()).await;
         let (port_b, target_b) = spawn_target(b"BBB".to_vec()).await;
-        let (producer_endpoint, consumer_endpoint, shared, secret, producer_task) =
+        let (producer_endpoint, consumer_endpoint, shared, auth, producer_task) =
             producer_and_consumer(vec![port_a, port_b]).await;
 
         // Dial once up front and record which connection both flows must reuse.
         let dialed_id = shared.get().await.expect("initial dial").stable_id();
 
-        let response_a = drive_client(&shared, &secret, port_a, b"req-a".to_vec()).await;
-        let response_b = drive_client(&shared, &secret, port_b, b"req-b".to_vec()).await;
+        let response_a = drive_client(&shared, &auth, port_a, b"req-a".to_vec()).await;
+        let response_b = drive_client(&shared, &auth, port_b, b"req-b".to_vec()).await;
 
         assert_eq!(response_a, b"AAA", "port A response");
         assert_eq!(response_b, b"BBB", "port B response");
@@ -358,6 +380,70 @@ mod tests {
         producer_endpoint.close().await;
     }
 
+    /// A passworded forward: a stream header carrying the raw ticket secret
+    /// (what a directory ad leaks) kills the connection with the
+    /// wrong-password close code; the derived token forwards normally.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn password_gates_the_stream_header() {
+        use crate::protocol::crypto::{Password, TicketAuth};
+        let response = b"HTTP/1.1 200 OK\r\n\r\nok".to_vec();
+        let (port, target_task) = spawn_target(response.clone()).await;
+        let password = Password::new("hunter2".to_owned());
+        let (producer_endpoint, ticket, auth) =
+            bind(LookupOpts::loopback(), vec![port], Some(&password))
+                .await
+                .expect("bind producer");
+        assert!(ticket.password, "the ticket must carry the password flag");
+        let allowed: Arc<HashSet<u16>> = Arc::new([port].into_iter().collect());
+        let producer_endpoint_for_task = producer_endpoint.clone();
+        let producer_task = tokio::spawn(async move {
+            // Two connections: the raw-secret impostor, then the real consumer.
+            for _ in 0..2u8 {
+                let Some(incoming) = producer_endpoint_for_task.accept().await else {
+                    return;
+                };
+                let _ = serve_connection(incoming, auth.clone(), &allowed, true).await;
+            }
+        });
+
+        let consumer_endpoint = build_participant_endpoint(&ticket.lookups)
+            .await
+            .expect("consumer endpoint");
+        add_peer_addr(&consumer_endpoint, ticket.addr.clone()).expect("add peer addr");
+
+        // Impostor: presents the raw ticket secret in the stream header.
+        let impostor = SharedConnection::new(consumer_endpoint.clone(), ticket.addr.clone());
+        let conn = impostor.get().await.expect("impostor conn");
+        let (mut send, mut recv) = conn.open_bi().await.expect("open stream");
+        let mut header = [0u8; super::STREAM_HEADER_LEN];
+        header[..SECRET_LEN].copy_from_slice(&ticket.secret);
+        header[SECRET_LEN..].copy_from_slice(&port.to_be_bytes());
+        send.write_all(&header).await.expect("write header");
+        // The producer closes the whole connection with code 3.
+        let _ = recv.read_to_end(64).await;
+        let closed = conn.close_reason();
+        assert!(
+            matches!(
+                closed,
+                Some(iroh::endpoint::ConnectionError::ApplicationClosed(ref close))
+                    if u64::from(close.error_code) == 3
+            ),
+            "raw secret must be closed with the wrong-password code, got {closed:?}"
+        );
+        drop(conn);
+
+        // The real consumer's derived token forwards normally.
+        let shared = SharedConnection::new(consumer_endpoint.clone(), ticket.addr.clone());
+        let real_auth = TicketAuth::derive(&ticket.secret, Some(&password));
+        let received = drive_client(&shared, &real_auth, port, b"req".to_vec()).await;
+        assert_eq!(received, response);
+        assert_eq!(target_task.await.expect("target"), b"req");
+
+        consumer_endpoint.close().await;
+        producer_task.await.expect("producer task");
+        producer_endpoint.close().await;
+    }
+
     /// A stream whose header names a port the ticket never advertised is reset,
     /// while the shared connection (and an advertised port) keeps working.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -366,15 +452,15 @@ mod tests {
         let (good_port, target_task) = spawn_target(response.clone()).await;
         // Advertise only `good_port`; `bad_port` is a plausible-but-unoffered one.
         let bad_port = good_port.wrapping_add(1).max(1);
-        let (producer_endpoint, consumer_endpoint, shared, secret, producer_task) =
+        let (producer_endpoint, consumer_endpoint, shared, auth, producer_task) =
             producer_and_consumer(vec![good_port]).await;
 
         let conn: Connection = shared.get().await.expect("shared conn");
 
-        // Bad-port stream: valid secret, unadvertised port → producer resets it.
+        // Bad-port stream: valid token, unadvertised port → producer resets it.
         let (mut bad_send, mut bad_recv) = conn.open_bi().await.expect("open bad stream");
         let mut bad_header = [0u8; super::STREAM_HEADER_LEN];
-        bad_header[..SECRET_LEN].copy_from_slice(&secret);
+        bad_header[..SECRET_LEN].copy_from_slice(&auth.token);
         bad_header[SECRET_LEN..].copy_from_slice(&bad_port.to_be_bytes());
         bad_send
             .write_all(&bad_header)
@@ -395,7 +481,7 @@ mod tests {
             "connection survives a rejected stream"
         );
         let request = b"GET / HTTP/1.1\r\nHost: x\r\n\r\n".to_vec();
-        let received = drive_client(&shared, &secret, good_port, request).await;
+        let received = drive_client(&shared, &auth, good_port, request).await;
         assert_eq!(received, response, "the advertised port still forwards");
         assert_eq!(
             target_task.await.expect("target task"),

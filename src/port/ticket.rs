@@ -1,10 +1,12 @@
 //! The port ticket — a `🐝` token of [`TokenType::Port`] carrying everything a
 //! consumer needs to dial the producer: the bearer secret, the producer's
 //! target ports, the swarm's discovery config, and the producer's address.
-//! Payload layout: `secret(32) ‖ port_count(1) ‖ ports(2×count, BE) ‖ lookups ‖
+//! Payload layout: `secret(32) ‖ count-byte(1) ‖ ports(2×count, BE) ‖ lookups ‖
 //! address-json` (lookups is self-delimiting, so the address occupies the
-//! remainder). A port ticket always exposes at least one port; each is
-//! multiplexed over the shared connection.
+//! remainder). The count byte's **bit 7** marks a password-protected ticket
+//! (there is no separate flags byte in this layout), leaving bits 0-6 for the
+//! port count — max 127 ports. A port ticket always exposes at least one
+//! port; each is multiplexed over the shared connection.
 
 use anyhow::{Context, Result, bail};
 use iroh::EndpointAddr;
@@ -23,17 +25,30 @@ pub(crate) struct PortTicket {
     /// The producer's local target ports. Each is multiplexed over the shared
     /// connection; the consumer displays them and picks which to forward.
     pub target_ports: Vec<u16>,
+    /// Password-protected: the consumer must present the Argon2id stretch of
+    /// the password (salted by `secret`) in each stream header instead of the
+    /// raw secret, so the ticket — and any directory ad carrying it — no
+    /// longer redeems alone.
+    pub password: bool,
 }
+
+/// Bit 7 of the count byte: the password flag. Bits 0-6 carry the count.
+const PASSWORD_BIT: u8 = 0b1000_0000;
+
+/// Max ports one ticket can expose (the count byte's low 7 bits).
+pub(crate) const MAX_TICKET_PORTS: usize = 127;
 
 impl PortTicket {
     /// Encode as a `🐝` token (`type = port`).
     pub(crate) fn encode(&self) -> String {
         let mut payload = Vec::with_capacity(SECRET_LEN + 1 + 2 * self.target_ports.len() + 64);
         payload.extend_from_slice(&self.secret);
-        // `listen` caps the list well under 255; clamp defensively so the count
-        // byte can never disagree with the ports that follow it.
-        let count = u8::try_from(self.target_ports.len()).unwrap_or(u8::MAX);
-        payload.push(count);
+        // `listen` caps the list at MAX_TICKET_PORTS; clamp defensively so the
+        // count bits can never disagree with the ports that follow, and bit 7
+        // stays free for the password flag.
+        let count = u8::try_from(self.target_ports.len().min(MAX_TICKET_PORTS))
+            .expect("count clamped to fit 7 bits");
+        payload.push(count | if self.password { PASSWORD_BIT } else { 0 });
         for port in self.target_ports.iter().take(usize::from(count)) {
             payload.extend_from_slice(&port.to_be_bytes());
         }
@@ -56,11 +71,11 @@ impl PortTicket {
         let secret_slice = payload.get(..SECRET_LEN).context("ticket too short")?;
         let mut secret = [0u8; SECRET_LEN];
         secret.copy_from_slice(secret_slice);
-        let count = usize::from(
-            *payload
-                .get(SECRET_LEN)
-                .context("ticket missing port count")?,
-        );
+        let count_byte = *payload
+            .get(SECRET_LEN)
+            .context("ticket missing port count")?;
+        let password = count_byte & PASSWORD_BIT != 0;
+        let count = usize::from(count_byte & !PASSWORD_BIT);
         let mut pos = SECRET_LEN + 1;
         let mut target_ports = Vec::with_capacity(count);
         for _ in 0..count {
@@ -80,6 +95,7 @@ impl PortTicket {
             secret,
             lookups,
             target_ports,
+            password,
         })
     }
 }
@@ -99,6 +115,7 @@ mod tests {
             secret: [9u8; SECRET_LEN],
             lookups: LookupOpts::public_preset(),
             target_ports: vec![3000],
+            password: false,
         };
         let encoded = ticket.encode();
         assert!(encoded.starts_with("🐝"));
@@ -107,6 +124,40 @@ mod tests {
         assert_eq!(decoded.secret, [9u8; SECRET_LEN]);
         assert_eq!(decoded.lookups, LookupOpts::public_preset());
         assert_eq!(decoded.target_ports, vec![3000]);
+        assert!(!decoded.password);
+    }
+
+    #[test]
+    fn password_flag_round_trips_beside_the_count() {
+        let id = SecretKey::from_bytes(&[11u8; 32]).public();
+        let addr = EndpointAddr::new(id).with_ip_addr("127.0.0.1:4242".parse().unwrap());
+        let ticket = PortTicket {
+            addr,
+            secret: [9u8; SECRET_LEN],
+            lookups: LookupOpts::loopback(),
+            target_ports: vec![8080, 5432],
+            password: true,
+        };
+        let decoded = PortTicket::decode(&ticket.encode()).expect("decode");
+        assert!(decoded.password);
+        assert_eq!(decoded.target_ports, vec![8080, 5432]);
+    }
+
+    #[test]
+    fn a_max_port_list_still_leaves_the_password_bit_free() {
+        let id = SecretKey::from_bytes(&[13u8; 32]).public();
+        let addr = EndpointAddr::new(id).with_ip_addr("127.0.0.1:4242".parse().unwrap());
+        let ports: Vec<u16> = (1000..1000 + 127).collect();
+        let ticket = PortTicket {
+            addr,
+            secret: [9u8; SECRET_LEN],
+            lookups: LookupOpts::loopback(),
+            target_ports: ports.clone(),
+            password: true,
+        };
+        let decoded = PortTicket::decode(&ticket.encode()).expect("decode");
+        assert!(decoded.password);
+        assert_eq!(decoded.target_ports, ports);
     }
 
     #[test]
@@ -118,6 +169,7 @@ mod tests {
             secret: [9u8; SECRET_LEN],
             lookups: LookupOpts::loopback(),
             target_ports: vec![8080, 9090, 5432],
+            password: false,
         };
         let decoded = PortTicket::decode(&ticket.encode()).expect("decode");
         assert_eq!(decoded.target_ports, vec![8080, 9090, 5432]);

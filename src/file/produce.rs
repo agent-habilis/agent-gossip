@@ -15,6 +15,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use crate::directory::ticket::TicketAd;
 use crate::lookup::build_endpoint;
 use crate::pipe::progress::{pace, throttle_chunk};
+use crate::protocol::crypto::{Password, TicketAuth, ct_eq};
 use crate::protocol::swarm::{
     DirectorySelection, LookupOpts, LookupSet, resolve_transfer_lookups, validate_advertise,
 };
@@ -42,13 +43,14 @@ pub(crate) async fn send(
     path: &Path,
     throttle: Option<u64>,
     json: bool,
+    password: Option<Password>,
 ) -> Result<()> {
     // Fail fast if the path can't be served, before binding anything — a cheap
     // metadata check, NOT the full hashing scan (that runs per connection).
     ensure_readable(path).with_context(|| format!("cannot serve {}", path.display()))?;
     let lookups = resolve_transfer_lookups(swarm, flags)?;
     validate_advertise(&advertise, &lookups)?;
-    let (endpoint, ticket, secret) = bind(lookups.clone()).await?;
+    let (endpoint, ticket, auth) = bind(lookups.clone(), password.as_ref()).await?;
     let _advertiser = match advertise.directory() {
         Some(directory) => {
             let label = path
@@ -65,7 +67,9 @@ pub(crate) async fn send(
                     &format!("in #{directory} directory"),
                 );
             }
-            Some(crate::embed::spawn_ticket_advertiser(directory, lookups, &ad)?)
+            Some(crate::embed::spawn_ticket_advertiser(
+                directory, lookups, &ad,
+            )?)
         }
         None => None,
     };
@@ -78,8 +82,9 @@ pub(crate) async fn send(
     let narrate = !json;
     while let Some(incoming) = endpoint.accept().await {
         let root = root.clone();
+        let auth = auth.clone();
         tokio::spawn(async move {
-            if let Err(error) = serve_connection(incoming, &secret, &root, throttle, narrate).await {
+            if let Err(error) = serve_connection(incoming, &auth, &root, throttle, narrate).await {
                 tracing::debug!(%error, "file transfer connection ended");
             }
         });
@@ -88,10 +93,13 @@ pub(crate) async fn send(
     Ok(())
 }
 
-/// Bind the producer endpoint and mint its ticket + secret — no I/O, no print.
+/// Bind the producer endpoint and mint its ticket + the auth token the
+/// handshake expects (the raw secret, or its Argon2id stretch when
+/// passworded) — no I/O, no print.
 pub(super) async fn bind(
     lookups: LookupOpts,
-) -> Result<(Endpoint, FileTicket, [u8; SECRET_LEN])> {
+    password: Option<&Password>,
+) -> Result<(Endpoint, FileTicket, TicketAuth)> {
     let endpoint = build_endpoint(&lookups, None, None, vec![FILE_ALPN.to_vec()]).await?;
     // Loopback needs no online wait (the bound addr is immediately usable).
     if !lookups.is_loopback() {
@@ -99,27 +107,36 @@ pub(super) async fn bind(
     }
     let mut secret = [0u8; SECRET_LEN];
     rand::rng().fill_bytes(&mut secret);
+    let auth = TicketAuth::derive(&secret, password);
     let ticket = FileTicket {
         addr: endpoint.addr(),
         secret,
         lookups,
+        password: auth.password_protected,
     };
-    Ok((endpoint, ticket, secret))
+    Ok((endpoint, ticket, auth))
 }
 
-/// Accept one connection, verify the bearer secret, run the transfer, and close.
+/// Accept one connection, verify the auth token (the raw bearer secret, or
+/// its password stretch), run the transfer, and close. A bad token is closed
+/// with code 1 ("bad secret") — or code 3 ("wrong password") on a passworded
+/// ticket, so the consumer can tell a typo from a corrupt ticket.
 pub(super) async fn serve_connection(
     incoming: Incoming,
-    secret: &[u8; SECRET_LEN],
+    auth: &TicketAuth,
     root: &Path,
     throttle: Option<u64>,
     narrate: bool,
 ) -> Result<()> {
     let conn = incoming.await.context("incoming connection failed")?;
     let (mut send, mut recv) = conn.accept_bi().await.context("accept_bi failed")?;
-    // The consumer opens the bi-stream and writes the bearer secret first.
+    // The consumer opens the bi-stream and writes its auth token first.
     let mut got = [0u8; SECRET_LEN];
-    if recv.read_exact(&mut got).await.is_err() || &got != secret {
+    if recv.read_exact(&mut got).await.is_err() || !ct_eq(&got, &auth.token) {
+        if auth.password_protected {
+            conn.close(3u32.into(), b"wrong password");
+            bail!("peer presented a wrong password");
+        }
         conn.close(1u32.into(), b"bad secret");
         bail!("peer presented a bad secret");
     }
@@ -182,7 +199,10 @@ where
     super::report(
         narrate,
         "Sending",
-        &format!("{}, {unchanged} unchanged", super::count_files(to_send.len())),
+        &format!(
+            "{}, {unchanged} unchanged",
+            super::count_files(to_send.len())
+        ),
     );
     let send_count = u32::try_from(to_send.len()).unwrap_or(u32::MAX);
     let dir_count = u32::try_from(scan.empty_dirs.len()).unwrap_or(u32::MAX);
@@ -223,12 +243,7 @@ where
 /// <size bytes> ‖ hash(32)`. Streams the body in bounded chunks and sends
 /// exactly the `size` that was hashed (a file that grew is truncated to it; a
 /// file that shrank is a hard error).
-async fn send_body<W>(
-    send: &mut W,
-    path: &Path,
-    entry: &Entry,
-    throttle: Option<u64>,
-) -> Result<()>
+async fn send_body<W>(send: &mut W, path: &Path, entry: &Entry, throttle: Option<u64>) -> Result<()>
 where
     W: AsyncWrite + Unpin,
 {

@@ -23,6 +23,28 @@ pub(crate) use bench::{BenchBudget, BenchOpts, connect_bench, listen_bench, pars
 pub(crate) use consume::connect;
 pub(crate) use produce::listen;
 
+/// Whether `ticket` decodes as a password-protected pipe ticket — the CLI's
+/// prompt-before-connect check. `false` on any decode failure: the connect
+/// path re-decodes and surfaces the real error.
+pub(crate) fn ticket_requires_password(ticket: &str) -> bool {
+    ticket::PipeTicket::decode(ticket).is_ok_and(|decoded| decoded.password)
+}
+
+/// A structurally complete encoded pipe ticket for cross-module tests (the
+/// directory pins its password-bit offsets against the real codecs).
+#[cfg(test)]
+pub(crate) fn test_ticket(addr: iroh::EndpointAddr, password: bool) -> String {
+    ticket::PipeTicket {
+        addr,
+        secret: [9u8; SECRET_LEN],
+        lookups: LookupOpts::loopback(),
+        follow: false,
+        bench: false,
+        password,
+    }
+    .encode()
+}
+
 /// ALPN for the pipe protocol — a raw bidirectional QUIC stream, distinct from
 /// the gossip overlay's `GOSSIP_ALPN`.
 pub(crate) const PIPE_ALPN: &[u8] = b"agent-habilis-swarm/pipe/1";
@@ -91,7 +113,8 @@ mod tests {
         throttle: Option<u64>,
     ) -> anyhow::Result<()> {
         let endpoint = crate::lookup::build_participant_endpoint(&ticket.lookups).await?;
-        let result = super::consume::transfer(&endpoint, ticket, sink, throttle).await;
+        let auth = TicketAuth::derive(&ticket.secret, None);
+        let result = super::consume::transfer(&endpoint, ticket, &auth, sink, throttle).await;
         endpoint.close().await;
         result
     }
@@ -101,7 +124,7 @@ mod tests {
     /// `total` length header; `throttle` caps both sides' throughput (bytes/sec)
     /// when set. The bytes flow over a real direct QUIC connection (no gossip).
     async fn round_trip(data: &[u8], total: Option<u64>, throttle: Option<u64>) -> Vec<u8> {
-        let (endpoint, ticket, secret) = super::produce::bind(LookupOpts::loopback())
+        let (endpoint, ticket, auth) = super::produce::bind(LookupOpts::loopback(), None)
             .await
             .expect("bind producer");
         let payload = data.to_vec();
@@ -109,8 +132,7 @@ mod tests {
             // `&[u8]` is a `tokio::io::AsyncRead`.
             let mut reader: &[u8] = &payload;
             let result =
-                super::produce::serve(&endpoint, &secret, &mut reader, total, throttle, false)
-                    .await;
+                super::produce::serve(&endpoint, &auth, &mut reader, total, throttle, false).await;
             // The CLI `listen` `process::exit`s here, which closes the socket and
             // lets the consumer's `send.stopped()` resolve; the test must close
             // the endpoint explicitly so that wait doesn't hit the idle timeout.
@@ -156,12 +178,12 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn wrong_secret_is_rejected_then_right_one_succeeds() {
-        let (endpoint, ticket, secret) = super::produce::bind(LookupOpts::loopback())
+        let (endpoint, ticket, auth) = super::produce::bind(LookupOpts::loopback(), None)
             .await
             .expect("bind producer");
         let server = tokio::spawn(async move {
             let mut reader: &[u8] = b"top secret";
-            super::produce::serve(&endpoint, &secret, &mut reader, Some(10), None, false).await
+            super::produce::serve(&endpoint, &auth, &mut reader, Some(10), None, false).await
         });
 
         // An impostor with the right address but the wrong secret is refused.
@@ -184,6 +206,52 @@ mod tests {
         assert_eq!(good_sink, b"top secret");
     }
 
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn wrong_password_rejected_then_right_one_succeeds() {
+        use crate::protocol::crypto::Password;
+        let password = Password::new("hunter2".to_owned());
+        let (endpoint, ticket, auth) =
+            super::produce::bind(LookupOpts::loopback(), Some(&password))
+                .await
+                .expect("bind producer");
+        assert!(ticket.password, "the ticket must carry the password flag");
+        let server = tokio::spawn(async move {
+            let mut reader: &[u8] = b"top secret";
+            super::produce::serve(&endpoint, &auth, &mut reader, Some(10), None, false).await
+        });
+
+        let fetch_with = |candidate: Option<Password>| {
+            let encoded = ticket.encode();
+            async move {
+                let decoded = PipeTicket::decode(&encoded).expect("decode");
+                let consumer_auth = super::consume::ticket_auth(&decoded, candidate.as_ref())?;
+                let consumer = crate::lookup::build_participant_endpoint(&decoded.lookups).await?;
+                let mut sink = Vec::new();
+                let result =
+                    super::consume::transfer(&consumer, &decoded, &consumer_auth, &mut sink, None)
+                        .await;
+                consumer.close().await;
+                result.map(|()| sink)
+            }
+        };
+
+        // The raw ticket alone (what a directory ad leaks) is refused up front.
+        let missing = fetch_with(None).await.expect_err("no password refused");
+        assert!(
+            missing.to_string().contains("password-protected"),
+            "got: {missing}"
+        );
+        // A wrong password is refused with the coded close reason.
+        let wrong = fetch_with(Some(Password::new("hunter3".to_owned())))
+            .await
+            .expect_err("wrong password refused");
+        assert!(wrong.to_string().contains("wrong password"), "got: {wrong}");
+        // The right password streams the data.
+        let sink = fetch_with(Some(password)).await.expect("right password");
+        assert_eq!(sink, b"top secret");
+        server.await.expect("join").expect("serve");
+    }
+
     // ── single-shot fan-out (`pipe listen < file`) ────────────────────────
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -192,16 +260,18 @@ mod tests {
         // three consumers gets its own full copy from byte 0.
         let data: Vec<u8> = (0u8..=255).cycle().take(50_000).collect();
         let path = std::env::temp_dir().join("ahsw-pipe-fanout-test.bin");
-        tokio::fs::write(&path, &data).await.expect("write temp file");
+        tokio::fs::write(&path, &data)
+            .await
+            .expect("write temp file");
 
-        let (endpoint, ticket, secret) = super::produce::bind(LookupOpts::loopback())
+        let (endpoint, ticket, auth) = super::produce::bind(LookupOpts::loopback(), None)
             .await
             .expect("bind producer");
         let producer = {
             let endpoint = endpoint.clone();
             let path = path.clone();
             tokio::spawn(async move {
-                let _ = super::produce::serve_fanout(&endpoint, &secret, &path, None).await;
+                let _ = super::produce::serve_fanout(&endpoint, &auth, &path, None).await;
             })
         };
 
@@ -225,6 +295,7 @@ mod tests {
     // ── live-follow (`pipe listen --follow`) ──────────────────────────────
 
     use super::ticket::PipeTicket;
+    use crate::protocol::crypto::TicketAuth;
     use iroh::endpoint::{Connection, RecvStream, SendStream};
     use tokio::io::AsyncWriteExt;
 
@@ -234,14 +305,13 @@ mod tests {
     async fn follow_producer(
         reader: tokio::io::DuplexStream,
     ) -> (PipeTicket, tokio::task::JoinHandle<()>) {
-        let (endpoint, mut ticket, secret) = super::produce::bind(LookupOpts::loopback())
+        let (endpoint, mut ticket, auth) = super::produce::bind(LookupOpts::loopback(), None)
             .await
             .expect("bind producer");
         ticket.follow = true;
         let handle = tokio::spawn(async move {
             let mut reader = reader;
-            let _ =
-                super::produce::serve_follow(&endpoint, &secret, &mut reader, None, false).await;
+            let _ = super::produce::serve_follow(&endpoint, &auth, &mut reader, None, false).await;
             endpoint.close().await;
         });
         (ticket, handle)
@@ -278,7 +348,8 @@ mod tests {
                 .await
                 .expect("consumer endpoint");
             let mut sink: Vec<u8> = Vec::new();
-            super::consume::transfer_follow(&endpoint, &ticket, &mut sink, None)
+            let auth = TicketAuth::derive(&ticket.secret, None);
+            super::consume::transfer_follow(&endpoint, &ticket, &auth, &mut sink, None)
                 .await
                 .expect("transfer_follow");
             endpoint.close().await;

@@ -144,6 +144,10 @@ struct CreateSwarmArgs {
     /// Omit for the well-known `global` directory.
     #[serde(default)]
     directory: Option<String>,
+    /// Protect the swarm with a password: joiners must present it, and the
+    /// id alone no longer admits (safe to advertise). Never prompts.
+    #[serde(default)]
+    password: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -154,6 +158,10 @@ struct JoinSwarmArgs {
     /// Optional nickname in `word-word` form. Random if omitted.
     #[serde(default)]
     nickname: Option<String>,
+    /// Password for a password-protected swarm id. Never prompts — required
+    /// exactly when the id is password-protected, rejected otherwise.
+    #[serde(default)]
+    password: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -303,6 +311,8 @@ struct DiscoveredSwarm {
     peers: usize,
     /// `true` if advertised on the public network.
     public: bool,
+    /// `true` if password-protected — `join_swarm` needs the password.
+    password: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -414,6 +424,7 @@ impl AgentSwarmServer {
             advertise: args.advertise,
             directory,
             max_peers: DEFAULT_MAX_DIRECT_PEERS,
+            password: args.password,
         };
         let session = Session::create(cfg).await.map_err(|error| match error {
             CreateError::AdvertiseRequiresReachable => {
@@ -451,6 +462,7 @@ impl AgentSwarmServer {
             target,
             nickname,
             max_peers: DEFAULT_MAX_DIRECT_PEERS,
+            password: args.password,
         })
         .await
         .map_err(join_error_to_mcp)?;
@@ -547,6 +559,7 @@ impl AgentSwarmServer {
                 name: listing.name.as_str().to_owned(),
                 peers: listing.peers,
                 public: listing.public,
+                password: listing.password,
             })
             .collect();
         swarms.sort_by_key(|listing| std::cmp::Reverse(listing.peers));

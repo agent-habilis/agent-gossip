@@ -59,7 +59,10 @@ pub(crate) fn directory_swarm(directory: &SwarmName, lookups: LookupOpts) -> Swa
 /// reaches the directory over exactly those mechanisms — a disabled leg issues
 /// no network requests for the directory at all.
 pub(crate) fn directory_config(lookups: LookupOpts) -> SwarmConfig {
-    SwarmConfig { lookups }
+    SwarmConfig {
+        lookups,
+        password: None,
+    }
 }
 
 /// A directory advertisement: the advertised swarm's `🐝…` id plus its
@@ -99,6 +102,9 @@ pub(crate) struct Listing {
     /// `true` if the advertised swarm's id decodes to the public
     /// network (the norm — `--advertise` requires `--public`).
     pub public: bool,
+    /// `true` if the advertised id carries a password verifier — joining
+    /// needs the password, so the ad alone does not admit.
+    pub password: bool,
     pub peers: usize,
     /// Local instant of the most recent ad; drives expiry.
     pub last_seen: Instant,
@@ -183,6 +189,7 @@ impl Listings {
             Listing {
                 swarm: swarm_id.clone(),
                 public: !swarm.is_loopback(),
+                password: swarm.requires_password(),
                 name: swarm.name,
                 peers: ad.peers,
                 last_seen: now,

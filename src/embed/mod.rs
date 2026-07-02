@@ -23,12 +23,12 @@ use crate::daemon::{
 };
 use crate::directory::ticket::{TicketAd, TicketChange, TicketListing, TicketListings};
 use crate::directory::{self, Listing, ListingChange, Listings, directory_swarm};
-use crate::protocol::token::TokenType;
 use crate::output::{Output, OutputEvent};
 use crate::protocol::swarm::{
     DEFAULT_DIRECTORY, DirectorySelection, LookupOpts, LookupSet, Swarm, SwarmConfig, SwarmName,
     resolve_lookups,
 };
+use crate::protocol::token::TokenType;
 use crate::protocol::{Message, MessageBody, Nickname, SwarmId, TaskId, TaskPhase};
 use crate::resolver::JoinTarget;
 use crate::util::tuning::{
@@ -47,6 +47,9 @@ pub struct JoinConfig {
     pub nickname: Option<Nickname>,
     /// Max direct peer connections before gossip relays the rest.
     pub max_peers: usize,
+    /// Password for a password-protected id. Verified locally against the
+    /// id's verifier before any network; required iff the id carries one.
+    pub password: Option<String>,
 }
 
 impl JoinConfig {
@@ -60,6 +63,7 @@ impl JoinConfig {
             target,
             nickname: None,
             max_peers: DEFAULT_MAX_DIRECT_PEERS,
+            password: None,
         }
     }
 }
@@ -120,6 +124,10 @@ pub struct CreateConfig {
     pub directory: Option<SwarmName>,
     /// Max direct peer connections before gossip relays the rest.
     pub max_peers: usize,
+    /// Protect the swarm with a password: its verifier is baked into the
+    /// minted id (joiners must present the password), and every derivation
+    /// switches onto the Argon2id-stretched key.
+    pub password: Option<String>,
 }
 
 impl CreateConfig {
@@ -136,6 +144,7 @@ impl CreateConfig {
             advertise: false,
             directory: None,
             max_peers: DEFAULT_MAX_DIRECT_PEERS,
+            password: None,
         }
     }
 }
@@ -226,6 +235,7 @@ async fn create_setup(
 ) -> Result<(EventLoopConfig, Option<JoinHandle<()>>), CreateError> {
     let config = SwarmConfig {
         lookups: resolve_lookups(cfg.public, cfg.lookups),
+        password: None,
     };
     // The advertiser reaches the directory over this swarm's own lookups.
     let directory_lookups = config.lookups.clone();
@@ -247,6 +257,7 @@ async fn create_setup(
         nickname: cfg.nickname,
         config,
         advertise,
+        password: cfg.password.map(crate::protocol::crypto::Password::new),
     }
     .resolve()
     .map_err(|_| CreateError::AdvertiseRequiresReachable)?;
@@ -272,6 +283,7 @@ async fn join_setup(cfg: JoinConfig, output: Output) -> Result<EventLoopConfig, 
     let resolved = JoinParams {
         target: cfg.target,
         nickname: cfg.nickname,
+        password: cfg.password.map(crate::protocol::crypto::Password::new),
     }
     .resolve()
     .map_err(JoinError::Resolve)?;
@@ -1000,6 +1012,9 @@ pub struct SwarmListing {
     pub name: SwarmName,
     /// `true` if the swarm is on the public network.
     pub public: bool,
+    /// `true` if the swarm id carries a password verifier — joining needs
+    /// the password, so the listing alone does not admit.
+    pub password: bool,
     /// Live participant count from the most recent ad.
     pub peers: usize,
     /// Unix seconds when this swarm was first seen in the directory
@@ -1023,6 +1038,7 @@ fn public_listing(listing: &Listing) -> SwarmListing {
         swarm: listing.swarm.clone(),
         name: listing.name.clone(),
         public: listing.public,
+        password: listing.password,
         peers: listing.peers,
         first_seen_unix: listing.first_seen_unix,
     }

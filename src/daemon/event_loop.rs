@@ -76,7 +76,14 @@ pub(crate) async fn run(cfg: EventLoopConfig) -> Result<()> {
             req_rx,
             quit_rx,
             handle_signals,
-        } => (Some(quit_rx), msg_tx, Some(req_rx), true, false, handle_signals),
+        } => (
+            Some(quit_rx),
+            msg_tx,
+            Some(req_rx),
+            true,
+            false,
+            handle_signals,
+        ),
     };
 
     let started = Instant::now();

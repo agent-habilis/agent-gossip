@@ -22,6 +22,26 @@ mod wire;
 pub(crate) use consume::get;
 pub(crate) use produce::send;
 
+/// Whether `ticket` decodes as a password-protected file ticket — the CLI's
+/// prompt-before-get check. `false` on any decode failure: the get path
+/// re-decodes and surfaces the real error.
+pub(crate) fn ticket_requires_password(ticket: &str) -> bool {
+    ticket::FileTicket::decode(ticket).is_ok_and(|decoded| decoded.password)
+}
+
+/// A structurally complete encoded file ticket for cross-module tests (the
+/// directory pins its password-bit offsets against the real codecs).
+#[cfg(test)]
+pub(crate) fn test_ticket(addr: iroh::EndpointAddr, password: bool) -> String {
+    ticket::FileTicket {
+        addr,
+        secret: [9u8; SECRET_LEN],
+        lookups: crate::protocol::swarm::LookupOpts::loopback(),
+        password,
+    }
+    .encode()
+}
+
 /// ALPN for the file protocol — its own protocol identity, distinct from the
 /// stdio pipe's `PIPE_ALPN` and the port forwarder's `PORT_ALPN`, so a mismatched
 /// dial is rejected at the QUIC handshake instead of desyncing on the wire.
@@ -118,7 +138,8 @@ mod tests {
 
     impl TempDir {
         fn new() -> Self {
-            let path = std::env::temp_dir().join(format!("ahsw-file-test-{}", rand::rng().next_u64()));
+            let path =
+                std::env::temp_dir().join(format!("ahsw-file-test-{}", rand::rng().next_u64()));
             fs::create_dir_all(&path).expect("create temp dir");
             Self { path }
         }
@@ -140,14 +161,14 @@ mod tests {
     /// Run one full producer→consumer transfer over two loopback endpoints,
     /// serving `root` into `dest_base`. Returns the consumer's summary string.
     async fn transfer(root: &Path, dest_base: &Path) -> String {
-        let (endpoint, ticket, secret) = produce::bind(LookupOpts::loopback())
+        let (endpoint, ticket, auth) = produce::bind(LookupOpts::loopback(), None)
             .await
             .expect("bind producer");
+        let consumer_auth = auth.clone();
         let root_owned = root.to_path_buf();
         let producer = tokio::spawn(async move {
             if let Some(incoming) = endpoint.accept().await {
-                let _ =
-                    produce::serve_connection(incoming, &secret, &root_owned, None, false).await;
+                let _ = produce::serve_connection(incoming, &auth, &root_owned, None, false).await;
             }
             endpoint.close().await;
         });
@@ -155,9 +176,16 @@ mod tests {
         let consumer_endpoint = build_participant_endpoint(&ticket.lookups)
             .await
             .expect("consumer endpoint");
-        let summary = super::consume::receive(&consumer_endpoint, &ticket, dest_base, None, false)
-            .await
-            .expect("receive");
+        let summary = super::consume::receive(
+            &consumer_endpoint,
+            &ticket,
+            &consumer_auth,
+            dest_base,
+            None,
+            false,
+        )
+        .await
+        .expect("receive");
         consumer_endpoint.close().await;
         producer.await.expect("producer task");
         summary
@@ -176,7 +204,10 @@ mod tests {
 
         let landed = dst.path.join("project");
         assert_eq!(fs::read(landed.join("readme.md")).unwrap(), b"# hello");
-        assert_eq!(fs::read(landed.join("src/main.rs")).unwrap(), b"fn main() {}");
+        assert_eq!(
+            fs::read(landed.join("src/main.rs")).unwrap(),
+            b"fn main() {}"
+        );
         assert_eq!(
             fs::read(landed.join("src/nested/deep.txt")).unwrap(),
             vec![7u8; 100_000]
@@ -192,7 +223,10 @@ mod tests {
         let dst = TempDir::new();
         let summary = transfer(&file, &dst.path).await;
 
-        assert_eq!(fs::read(dst.path.join("report.pdf")).unwrap(), b"PDF-CONTENT");
+        assert_eq!(
+            fs::read(dst.path.join("report.pdf")).unwrap(),
+            b"PDF-CONTENT"
+        );
         // Correctly singular — "1 file", never "1 files".
         assert!(summary.contains("1 file,"), "summary: {summary}");
         assert!(!summary.contains("1 files"), "summary: {summary}");
@@ -214,7 +248,10 @@ mod tests {
 
         let summary = transfer(&root, &dst.path).await;
 
-        assert_eq!(fs::read(landed.join("changed.txt")).unwrap(), b"new-version");
+        assert_eq!(
+            fs::read(landed.join("changed.txt")).unwrap(),
+            b"new-version"
+        );
         assert_eq!(fs::read(landed.join("keep.txt")).unwrap(), b"unchanged");
         // One file sent (changed.txt), one unchanged (keep.txt).
         assert!(summary.contains("1 file"), "summary: {summary}");
@@ -264,7 +301,10 @@ mod tests {
 
         let landed = dst.path.join("tree");
         assert_eq!(fs::read(landed.join("a.txt")).unwrap(), b"x");
-        assert!(landed.join("logs").is_dir(), "empty subdir must be recreated");
+        assert!(
+            landed.join("logs").is_dir(),
+            "empty subdir must be recreated"
+        );
         assert!(
             landed.join("nested/deep/empty").is_dir(),
             "nested empty subdir must be recreated"
@@ -276,27 +316,92 @@ mod tests {
         let src = TempDir::new();
         write_file(&src.path.join("pkg/f.txt"), b"x");
 
-        let (endpoint, mut ticket, secret) = produce::bind(LookupOpts::loopback())
+        let (endpoint, mut ticket, auth) = produce::bind(LookupOpts::loopback(), None)
             .await
             .expect("bind producer");
         let root = src.path.join("pkg");
         let producer = tokio::spawn(async move {
             if let Some(incoming) = endpoint.accept().await {
-                let _ = produce::serve_connection(incoming, &secret, &root, None, false).await;
+                let _ = produce::serve_connection(incoming, &auth, &root, None, false).await;
             }
             endpoint.close().await;
         });
 
         // Forge a ticket with the right address but the wrong secret.
         ticket.secret = [0u8; super::SECRET_LEN];
+        let forged_auth = crate::protocol::crypto::TicketAuth::derive(&ticket.secret, None);
         let dst = TempDir::new();
         let consumer_endpoint = build_participant_endpoint(&ticket.lookups)
             .await
             .expect("consumer endpoint");
-        let result =
-            super::consume::receive(&consumer_endpoint, &ticket, &dst.path, None, false).await;
+        let result = super::consume::receive(
+            &consumer_endpoint,
+            &ticket,
+            &forged_auth,
+            &dst.path,
+            None,
+            false,
+        )
+        .await;
         assert!(result.is_err(), "a bad secret must be rejected");
         consumer_endpoint.close().await;
+        producer.await.expect("producer task");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn wrong_password_rejected_then_right_one_succeeds() {
+        use crate::protocol::crypto::Password;
+        let src = TempDir::new();
+        write_file(&src.path.join("pkg/f.txt"), b"secret payload");
+
+        let password = Password::new("hunter2".to_owned());
+        let (endpoint, ticket, auth) = produce::bind(LookupOpts::loopback(), Some(&password))
+            .await
+            .expect("bind producer");
+        assert!(ticket.password, "the ticket must carry the password flag");
+        let root = src.path.join("pkg");
+        let producer = tokio::spawn(async move {
+            // Two connection attempts: the wrong-password one, then the good one.
+            for _ in 0..2 {
+                if let Some(incoming) = endpoint.accept().await {
+                    let _ = produce::serve_connection(incoming, &auth, &root, None, false).await;
+                }
+            }
+            endpoint.close().await;
+        });
+
+        let fetch_with = |candidate: Option<Password>| {
+            let encoded = ticket.encode();
+            async move {
+                let decoded = super::ticket::FileTicket::decode(&encoded).expect("decode");
+                let consumer_auth = super::consume::ticket_auth(&decoded, candidate.as_ref())?;
+                let dst = TempDir::new();
+                let consumer = build_participant_endpoint(&decoded.lookups).await?;
+                let result = super::consume::receive(
+                    &consumer,
+                    &decoded,
+                    &consumer_auth,
+                    &dst.path,
+                    None,
+                    false,
+                )
+                .await;
+                consumer.close().await;
+                result.map(|summary| (summary, fs::read(dst.path.join("pkg/f.txt")).unwrap()))
+            }
+        };
+
+        let missing = fetch_with(None).await.expect_err("no password refused");
+        assert!(
+            missing.to_string().contains("password-protected"),
+            "got: {missing}"
+        );
+        let wrong = fetch_with(Some(Password::new("hunter3".to_owned())))
+            .await
+            .expect_err("wrong password refused");
+        assert!(wrong.to_string().contains("wrong password"), "got: {wrong}");
+        let (_, contents) = fetch_with(Some(password)).await.expect("right password");
+        assert_eq!(contents, b"secret payload");
         producer.await.expect("producer task");
     }
 

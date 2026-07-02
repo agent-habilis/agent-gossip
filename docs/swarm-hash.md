@@ -21,12 +21,23 @@ identically: no extra flags, no out-of-band config.
     ladder carried verbatim). No lookups ⇒ loopback-only; any lookup ⇒
     reachable across machines. (There is no separate "mode" — the lookups
     *are* the network reach.)
+  - **password verifier** (optional) — 16 bytes of one-way check value for a
+    password-protected swarm: `derive_secret(K, "password-verify")[..16]`
+    where `K = Argon2id(password, salt = derive_secret(seed, "password"))`.
+    `join` verifies a candidate password against it locally, and every
+    derivation (topic, rendezvous, port ladder) uses `K` instead of the
+    seed — so the hash alone computes nothing reachable. The password's
+    value never travels.
 
 ## What it deliberately does NOT encode
 
 Per-member / per-environment settings stay local and never travel in the hash:
 **nickname**, **max-peers**, **output / interactivity / state-file**, and
-**advertise / directory** (a create-time listing choice).
+**advertise / directory** (a create-time listing choice). Nor does the
+**password value** — a passworded hash carries only the one-way verifier
+above; the price of local verifiability is that a holder of the hash can
+grind password guesses offline against it at Argon2id cost (~100ms/guess),
+so a weak password is weak protection (see `security.md`).
 
 ## Why config is in the hash
 
@@ -43,10 +54,18 @@ peers. `join` is therefore *just the hash*.
 [2] config_len
   [1] lookup-flags
   [if custom relay] [1] url_count ( [2] len [url] )*
+  [if password] [1] feature-flags [16] password verifier
 ```
 
 The `lookup-flags` byte: bit0 `mdns`, bit1 `dht`, bit2 `relay-enabled`, bit3
-`relay-custom` (a custom ladder follows). Base58Check-encoded with a `🐝`
+`relay-custom` (a custom ladder follows). The `feature-flags` byte (bit0
+`password`) is **appended**, never a spare lookup-flags bit: decoders ignore
+unknown lookup-flag bits but hard-error on trailing config bytes, so an old
+binary handed a passworded id fails its decode with a crisp error instead of
+silently deriving a different topic and sitting in an empty swarm. A
+passwordless config encodes byte-for-byte as before the feature byte existed
+(the config bytes feed the topic derivation, so the encoding is canonical: a
+zero feature byte is rejected). Base58Check-encoded with a `🐝`
 prefix and a 4-byte SHA256d checksum. The version byte is reserved for future
 format evolution; an unknown version is rejected. (Derivations — topic,
 rendezvous keypair, port ladder — are in `docs/discovery.md`.)
@@ -62,5 +81,7 @@ rendezvous keypair, port ladder — are in `docs/discovery.md`.)
 ```
 ahsw create --public                            # default lookups
 ahsw create --public --relay https://r.example  # custom relay ladder, baked in
+ahsw create --public --password=pw              # verifier baked in; joiners need pw
 ahsw join 🐝…                                    # inherits ALL of the above
+ahsw join 🐝… --password=pw                      # verified locally before any network
 ```

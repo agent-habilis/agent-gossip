@@ -31,6 +31,27 @@ mod ticket;
 pub(crate) use consume::{PortMapping, connect};
 pub(crate) use produce::listen;
 
+/// Whether `ticket` decodes as a password-protected port ticket — the CLI's
+/// prompt-before-connect check. `false` on any decode failure: the connect
+/// path re-decodes and surfaces the real error.
+pub(crate) fn ticket_requires_password(ticket: &str) -> bool {
+    ticket::PortTicket::decode(ticket).is_ok_and(|decoded| decoded.password)
+}
+
+/// A structurally complete encoded port ticket for cross-module tests (the
+/// directory pins its password-bit offsets against the real codecs).
+#[cfg(test)]
+pub(crate) fn test_ticket(addr: iroh::EndpointAddr, password: bool) -> String {
+    ticket::PortTicket {
+        addr,
+        secret: [9u8; SECRET_LEN],
+        lookups: crate::protocol::swarm::LookupOpts::loopback(),
+        target_ports: vec![3000],
+        password,
+    }
+    .encode()
+}
+
 /// The identity mapping (`p → p`) for every port a ticket advertises — what
 /// `port discover` forwards when the user names no explicit mappings.
 ///
@@ -168,6 +189,7 @@ mod tests {
             secret: [9u8; super::SECRET_LEN],
             lookups: LookupOpts::loopback(),
             target_ports: vec![3000, 5432],
+            password: false,
         };
         let mappings = identity_mappings(&ticket.encode()).expect("decode");
         let pairs: Vec<(u16, u16)> = mappings

@@ -49,6 +49,17 @@ pub(crate) enum PipeAction {
         /// a single direct `ahsw pipe connect 🐝…` line for machines (no decoration).
         #[arg(long, default_value = "human")]
         output: OutputFormat,
+        /// Protect the pipe with a password: the ticket alone no longer
+        /// redeems — consumers must present the password (so a passworded
+        /// ticket is safe to --advertise). Bare `--password` prompts hidden
+        /// on the terminal; `--password=<pw>` passes it inline (visible in
+        /// `ps` — prefer the prompt when a human types it).
+        #[arg(long, num_args(0..=1), require_equals = true)]
+        #[expect(
+            clippy::option_option,
+            reason = "clap optional-value flag: absent/bare/valued are three distinct password states"
+        )]
+        password: Option<Option<String>>,
         /// Live-follow mode: stay up and serve the latest stdin to whichever
         /// single consumer is attached (discarding while none is), re-accepting
         /// on drop. The producer only quits when the source ends; the consumer
@@ -68,6 +79,15 @@ pub(crate) enum PipeAction {
         /// Doubles as a way to watch the progress bar on a fast/local link.
         #[arg(long, value_parser = parse_rate)]
         throttle: Option<u64>,
+        /// Password for a password-protected ticket — required exactly when
+        /// the ticket carries the password flag (as a prompt on a terminal,
+        /// or inline via `--password=<pw>`).
+        #[arg(long, num_args(0..=1), require_equals = true)]
+        #[expect(
+            clippy::option_option,
+            reason = "clap optional-value flag: absent/bare/valued are three distinct password states"
+        )]
+        password: Option<Option<String>>,
     },
     /// Browse a directory for advertised pipes and connect to one — the
     /// receiver side of `pipe listen --advertise`, no `🐝…` to copy.
@@ -91,6 +111,14 @@ pub(crate) enum PipeAction {
         /// Cap throughput of the connection made on pick.
         #[arg(long, value_parser = parse_rate)]
         throttle: Option<u64>,
+        /// Password for a password-protected pick (🔒 in the picker) —
+        /// prompts on pick when omitted.
+        #[arg(long, num_args(0..=1), require_equals = true)]
+        #[expect(
+            clippy::option_option,
+            reason = "clap optional-value flag: absent/bare/valued are three distinct password states"
+        )]
+        password: Option<Option<String>>,
         /// Output format: human (default) — the live picker — or json, one
         /// `ticket_found`/`ticket_lost` line per directory change.
         #[arg(long, default_value = "human")]
@@ -129,6 +157,15 @@ pub(crate) enum PipeAction {
         /// phase. Defaults to `20`.
         #[arg(long, requires = "ticket")]
         pings: Option<u32>,
+        /// Password: on the producer, protect the minted ticket (consumers
+        /// must present it); on the consumer, present it for a protected
+        /// ticket. Bare `--password` prompts hidden; `--password=<pw>` inline.
+        #[arg(long, num_args(0..=1), require_equals = true)]
+        #[expect(
+            clippy::option_option,
+            reason = "clap optional-value flag: absent/bare/valued are three distinct password states"
+        )]
+        password: Option<Option<String>>,
         /// Output format: human (default) — a bee status + colored hint on the
         /// producer, a report box on the consumer — or json, a single
         /// machine-readable line/object.

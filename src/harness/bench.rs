@@ -49,7 +49,10 @@ impl BenchConfig {
 }
 
 fn cfg(lookups: LookupOpts) -> SwarmConfig {
-    SwarmConfig { lookups }
+    SwarmConfig {
+        lookups,
+        password: None,
+    }
 }
 
 // ── crypto / identity ───────────────────────────────────────────────

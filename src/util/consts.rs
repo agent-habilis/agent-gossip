@@ -100,6 +100,24 @@ pub(crate) const MAX_IPC_COMMAND_BYTES: usize = MAX_LOGICAL_BODY_BYTES + 2 * MAX
 /// overruns this bound and the `poll` client errors ("IPC response too large").
 pub(crate) const MAX_IPC_RESPONSE_BYTES: usize = 3 * POLL_RESPONSE_MAX_MSGS * MAX_MESSAGE_SIZE;
 
+// ── Password KDF (wire contract) ──────────────────────────────────
+//
+// Argon2id cost parameters for `--password` stretching. A NETWORK-WIDE WIRE
+// CONTRACT: every member derives the stretched key with these exact params
+// (the derivation feeds the swarm topic/rendezvous and the ticket handshake
+// token), so changing any value strands every existing passworded swarm and
+// ticket. 19 MiB / t=2 / p=1 is the OWASP Argon2id recommendation — ~50-100ms
+// per stretch, paid once at create/join/handshake, never per message.
+
+/// Argon2id memory cost in `KiB` (19 `MiB`).
+pub(crate) const PASSWORD_KDF_M_COST_KIB: u32 = 19_456;
+
+/// Argon2id iteration count.
+pub(crate) const PASSWORD_KDF_T_COST: u32 = 2;
+
+/// Argon2id lane count.
+pub(crate) const PASSWORD_KDF_P_COST: u32 = 1;
+
 // ── Daemon tuning defaults ────────────────────────────────────────
 //
 // Behavioural knobs that used to be environment-overridable. They now live

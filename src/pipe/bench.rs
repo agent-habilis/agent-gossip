@@ -27,7 +27,6 @@ use tokio::io::AsyncReadExt;
 use crate::lookup::build_participant_endpoint;
 use crate::util::output::status;
 
-use super::SECRET_LEN;
 use super::ticket::PipeTicket;
 
 /// Bulk-payload chunk size for the throughput phase (content is never
@@ -118,13 +117,13 @@ fn parse_budget_number(digits: &str, raw: &str) -> Result<u64, String> {
 /// paths of [`listen_bench`].
 async fn accept_authenticated(
     endpoint: &Endpoint,
-    secret: &[u8; SECRET_LEN],
+    auth: &crate::protocol::crypto::TicketAuth,
 ) -> Result<(Connection, SendStream, RecvStream)> {
     loop {
         let Some(incoming) = endpoint.accept().await else {
             bail!("endpoint closed before a peer connected");
         };
-        match super::produce::authenticate(incoming, secret).await {
+        match super::produce::authenticate(incoming, auth).await {
             Ok(triple) => return Ok(triple),
             Err(error) => tracing::debug!(%error, "bench handshake failed; awaiting another"),
         }
@@ -143,9 +142,14 @@ async fn accept_authenticated(
 /// Endpoint bind / discovery-config parse failures, or (single-shot only) the
 /// benchmark itself failing — the caller then exits non-zero. In `serve` mode a
 /// failed run is one bad consumer, not fatal; only the endpoint closing ends it.
-pub(crate) async fn listen_bench(swarm: Option<&str>, serve: bool, json: bool) -> Result<()> {
+pub(crate) async fn listen_bench(
+    swarm: Option<&str>,
+    serve: bool,
+    json: bool,
+    password: Option<crate::protocol::crypto::Password>,
+) -> Result<()> {
     let lookups = super::swarm_lookups(swarm)?;
-    let (endpoint, mut ticket, secret) = super::produce::bind(lookups).await?;
+    let (endpoint, mut ticket, auth) = super::produce::bind(lookups, password.as_ref()).await?;
     ticket.bench = true;
     super::announce(
         json,
@@ -159,7 +163,7 @@ pub(crate) async fn listen_bench(swarm: Option<&str>, serve: bool, json: bool) -
     );
     let narrate = !json;
     loop {
-        let (conn, send, recv) = accept_authenticated(&endpoint, &secret).await?;
+        let (conn, send, recv) = accept_authenticated(&endpoint, &auth).await?;
         let result = serve_one(conn, send, recv, narrate).await;
         if !serve {
             return match result {
@@ -355,7 +359,12 @@ impl BenchReport {
 /// # Errors
 /// A malformed or non-bench ticket, an unreachable producer, a nonce
 /// mismatch (the producer is misbehaving), or a dropped connection.
-pub(crate) async fn connect_bench(ticket: &str, opts: BenchOpts, json: bool) -> Result<()> {
+pub(crate) async fn connect_bench(
+    ticket: &str,
+    opts: BenchOpts,
+    json: bool,
+    password: Option<crate::protocol::crypto::Password>,
+) -> Result<()> {
     let ticket = PipeTicket::decode(ticket)?;
     if !ticket.bench {
         bail!(
@@ -363,8 +372,9 @@ pub(crate) async fn connect_bench(ticket: &str, opts: BenchOpts, json: bool) -> 
              run `pipe bench` on the producer to mint a bench ticket"
         );
     }
+    let auth = super::consume::ticket_auth(&ticket, password.as_ref())?;
     let endpoint = build_participant_endpoint(&ticket.lookups).await?;
-    let result = run(&endpoint, &ticket, opts).await;
+    let result = run(&endpoint, &ticket, &auth, opts).await;
     match result {
         Ok(report) => {
             print_report(&report, json);
@@ -380,9 +390,14 @@ pub(crate) async fn connect_bench(ticket: &str, opts: BenchOpts, json: bool) -> 
     }
 }
 
-async fn run(endpoint: &Endpoint, ticket: &PipeTicket, opts: BenchOpts) -> Result<BenchReport> {
+async fn run(
+    endpoint: &Endpoint,
+    ticket: &PipeTicket,
+    auth: &crate::protocol::crypto::TicketAuth,
+    opts: BenchOpts,
+) -> Result<BenchReport> {
     let (conn, mut send, mut recv) =
-        super::consume::dial_and_authenticate(endpoint, ticket).await?;
+        super::consume::dial_and_authenticate(endpoint, ticket, auth).await?;
 
     let (budget_kind, budget_value) = opts.budget.to_header();
     let mut header = Vec::with_capacity(13);
@@ -564,12 +579,13 @@ mod tests {
     /// `listen`/`connect`) against the real `run()` the CLI `connect_bench`
     /// calls.
     async fn bench_round_trip(pings: u32, budget: BenchBudget) -> BenchReport {
-        let (endpoint, ticket, secret) = super::super::produce::bind(LookupOpts::loopback())
+        let (endpoint, ticket, auth) = super::super::produce::bind(LookupOpts::loopback(), None)
             .await
             .expect("bind producer");
+        let consumer_auth = auth.clone();
         let server = tokio::spawn(async move {
             let incoming = endpoint.accept().await.expect("incoming connection");
-            let (conn, send, recv) = super::super::produce::authenticate(incoming, &secret)
+            let (conn, send, recv) = super::super::produce::authenticate(incoming, &auth)
                 .await
                 .expect("authenticate");
             super::serve_one(conn, send, recv, false)
@@ -581,9 +597,14 @@ mod tests {
         let consumer_endpoint = build_participant_endpoint(&ticket.lookups)
             .await
             .expect("consumer endpoint");
-        let report = super::run(&consumer_endpoint, &ticket, BenchOpts { budget, pings })
-            .await
-            .expect("run bench");
+        let report = super::run(
+            &consumer_endpoint,
+            &ticket,
+            &consumer_auth,
+            BenchOpts { budget, pings },
+        )
+        .await
+        .expect("run bench");
         consumer_endpoint.close().await;
         server.await.expect("server task");
         report
@@ -594,12 +615,13 @@ mod tests {
         // A `--serve` producer binds once and re-accepts: two consecutive
         // consumers over the SAME endpoint (the same ticket) must both get a
         // valid report, proving the re-accept loop after `serve_one` works.
-        let (endpoint, ticket, secret) = super::super::produce::bind(LookupOpts::loopback())
+        let (endpoint, ticket, auth) = super::super::produce::bind(LookupOpts::loopback(), None)
             .await
             .expect("bind producer");
+        let consumer_auth = auth.clone();
         let server = tokio::spawn(async move {
             loop {
-                let (conn, send, recv) = super::accept_authenticated(&endpoint, &secret)
+                let (conn, send, recv) = super::accept_authenticated(&endpoint, &auth)
                     .await
                     .expect("accept authenticated");
                 super::serve_one(conn, send, recv, false)
@@ -615,6 +637,7 @@ mod tests {
             let report = super::run(
                 &consumer_endpoint,
                 &ticket,
+                &consumer_auth,
                 BenchOpts {
                     budget: BenchBudget::Bytes(200_003),
                     pings: 3,
@@ -674,9 +697,10 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn connect_rejects_a_plain_ticket() {
-        let (endpoint, mut ticket, _secret) = super::super::produce::bind(LookupOpts::loopback())
-            .await
-            .expect("bind producer");
+        let (endpoint, mut ticket, _auth) =
+            super::super::produce::bind(LookupOpts::loopback(), None)
+                .await
+                .expect("bind producer");
         ticket.bench = false;
         let error = super::connect_bench(
             &ticket.encode(),
@@ -685,6 +709,7 @@ mod tests {
                 pings: 1,
             },
             false,
+            None,
         )
         .await
         .expect_err("a plain ticket must be refused by `pipe bench`");
@@ -694,11 +719,12 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn plain_connect_rejects_a_bench_ticket() {
-        let (endpoint, mut ticket, _secret) = super::super::produce::bind(LookupOpts::loopback())
-            .await
-            .expect("bind producer");
+        let (endpoint, mut ticket, _auth) =
+            super::super::produce::bind(LookupOpts::loopback(), None)
+                .await
+                .expect("bind producer");
         ticket.bench = true;
-        let error = super::super::consume::connect(&ticket.encode(), None)
+        let error = super::super::consume::connect(&ticket.encode(), None, None)
             .await
             .expect_err("a bench ticket must be refused by plain connect");
         assert!(error.to_string().contains("pipe connect"));

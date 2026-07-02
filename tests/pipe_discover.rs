@@ -121,6 +121,10 @@ fn pipe_advertise_then_discover_then_connect() {
         found_line.contains("pipe-dir-payload"),
         "the ad should label the ticket with the source file name: {found_line}"
     );
+    assert!(
+        found_line.contains("\"password\":false"),
+        "a passwordless ticket must surface password:false: {found_line}"
+    );
 
     // The surfaced ticket is redeemable: connect and pull the payload.
     let fetched = test_cmd()
@@ -158,6 +162,103 @@ fn pipe_advertise_then_discover_then_connect() {
         lost_ok,
         "discoverer never reported ticket_lost after the producer exited\ndisc:\n{disc}"
     );
+}
+
+/// A passworded advertised pipe: the ad surfaces `password:true`, the
+/// bare discovered ticket is NOT redeemable (the whole point of
+/// advertising a passworded ticket), and `--password` redeems it.
+#[test]
+fn passworded_advertised_pipe_needs_the_password() {
+    let (_creator, swarm) = Node::create_named("pipe-dir-pw");
+    let payload = tmp_log("pipe-dir-pw-payload");
+    fs::write(&payload, b"guarded-payload").expect("write payload");
+
+    let prod_log = tmp_log("pipe-dir-pw-prod");
+    let prod_file = File::create(&prod_log).unwrap();
+    let mut producer = test_cmd()
+        .args([
+            "pipe",
+            "listen",
+            "--swarm",
+            swarm.as_str(),
+            "--advertise",
+            "pwtest",
+            "--password=hunter2",
+            "--output",
+            "json",
+        ])
+        .args(common::flag_args(&DIR_FLAGS))
+        .stdin(Stdio::from(File::open(&payload).expect("open payload")))
+        .stdout(Stdio::from(prod_file.try_clone().unwrap()))
+        .stderr(Stdio::from(prod_file))
+        .spawn()
+        .expect("spawn producer");
+
+    let Some(connect_line) = wait_for_line(&prod_log, "pipe connect", CONNECT_TIMEOUT) else {
+        reap(&mut producer);
+        panic!(
+            "producer never printed its connect command\nlog:\n{}",
+            fs::read_to_string(&prod_log).unwrap_or_default()
+        );
+    };
+    let ticket = connect_line
+        .split_whitespace()
+        .nth(3)
+        .expect("connect line carries the ticket")
+        .to_string();
+
+    // The discoverer labels the ad as password-protected.
+    let disc_log = tmp_log("pipe-dir-pw-disc");
+    let disc_file = File::create(&disc_log).unwrap();
+    let mut discoverer = test_cmd()
+        .args(["pipe", "discover", "pwtest", "--output", "json"])
+        .args(common::flag_args(&DIR_FLAGS))
+        .stdout(Stdio::from(disc_file.try_clone().unwrap()))
+        .stderr(Stdio::from(disc_file))
+        .spawn()
+        .expect("spawn discoverer");
+    let found = wait_for_line(&disc_log, "\"event\":\"ticket_found\"", CONNECT_TIMEOUT);
+    reap(&mut discoverer);
+    let found_line = found.unwrap_or_else(|| {
+        reap(&mut producer);
+        panic!(
+            "discoverer never surfaced the passworded ticket\ndisc:\n{}",
+            fs::read_to_string(&disc_log).unwrap_or_default()
+        )
+    });
+    assert!(
+        found_line.contains("\"password\":true"),
+        "a passworded ticket must surface password:true: {found_line}"
+    );
+
+    // The bare ticket does not redeem — that is what makes advertising safe.
+    let bare = test_cmd()
+        .args(["pipe", "connect", ticket.as_str()])
+        .output()
+        .expect("run bare pipe connect");
+    assert!(!bare.status.success(), "the bare ticket must not redeem");
+    assert!(
+        String::from_utf8_lossy(&bare.stderr).contains("password-protected"),
+        "stderr must name the requirement: {}",
+        String::from_utf8_lossy(&bare.stderr)
+    );
+
+    // The password redeems it.
+    let fetched = test_cmd()
+        .args(["pipe", "connect", ticket.as_str(), "--password=hunter2"])
+        .output()
+        .expect("run passworded pipe connect");
+    assert!(
+        fetched.status.success(),
+        "passworded connect failed: {}",
+        String::from_utf8_lossy(&fetched.stderr)
+    );
+    assert_eq!(fetched.stdout, b"guarded-payload");
+
+    reap(&mut producer);
+    let _ = fs::remove_file(&prod_log);
+    let _ = fs::remove_file(&disc_log);
+    let _ = fs::remove_file(&payload);
 }
 
 /// An advertising producer must die on plain **SIGTERM** (`kill <pid>`).

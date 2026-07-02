@@ -12,7 +12,7 @@ use crate::daemon::setup::{SetupKind, setup_swarm};
 use crate::daemon::{CreateParams, ForumParams, JoinParams, Resolved};
 use crate::embed::spawn_advertiser;
 use crate::output::{Output, OutputMode};
-use crate::protocol::swarm::{SwarmConfig, SwarmName, resolve_lookups};
+use crate::protocol::swarm::{Swarm, SwarmConfig, SwarmName, resolve_lookups};
 use crate::protocol::{MessageId, Nickname};
 use crate::resolver::JoinTarget;
 use crate::transport::ipc::{self, IpcCommand};
@@ -21,6 +21,7 @@ pub(crate) mod agent;
 mod args;
 mod discover;
 mod doctor;
+mod password;
 mod picker;
 mod plug;
 mod ticket_discover;
@@ -79,7 +80,7 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
             reject_id_encoded_flag("--public", opts.public)?;
             reject_id_encoded_flag("--name", opts.name.is_some())?;
             crate::util::tuning::init(opts.shared.tuning());
-            Box::pin(join(opts.swarm, opts.nickname, opts.shared)).await
+            Box::pin(join(opts.swarm, opts.nickname, opts.password, opts.shared)).await
         }
         Commands::Forum { opts } => {
             crate::util::tuning::init(opts.shared.tuning());
@@ -186,8 +187,16 @@ async fn create(opts: CreateOpts) -> Result<()> {
     // Borrow-then-move: resolve the lookups and advertise selection (which
     // borrow `opts`) before moving `opts.name`/`opts.nickname` out.
     let advertise = opts.advertise_selection();
+    let password = password::resolve_password(
+        opts.password.clone(),
+        /* confirm */ true,
+        opts.shared.no_prompt(),
+    )?;
     let config = SwarmConfig {
         lookups: resolve_lookups(opts.public, opts.lookups.to_set()),
+        // The verifier is baked in at setup: its salt is the seed, which is
+        // minted there. The flag's presence is all `resolve` needs.
+        password: None,
     };
     // `resolve` validates `--advertise` against the config (never a silent
     // no-op) before any setup work.
@@ -196,6 +205,7 @@ async fn create(opts: CreateOpts) -> Result<()> {
         nickname: opts.nickname,
         config,
         advertise,
+        password,
     }
     .resolve()?;
     run_session(resolved, opts.shared).await
@@ -204,13 +214,37 @@ async fn create(opts: CreateOpts) -> Result<()> {
 /// Join an existing swarm by its identifier (🐝...), a domain, or a
 /// supported git repo URL. The swarm's config (lookups) is decoded from
 /// the id — `join` takes no lookup flags.
+#[expect(
+    clippy::option_option,
+    reason = "clap optional-value flag: absent/bare/valued are three distinct password states"
+)]
 async fn join(
     target: JoinTarget,
     nickname: Option<Nickname>,
+    password_flag: Option<Option<String>>,
     shared: SharedServerOpts,
 ) -> Result<()> {
+    let no_prompt = shared.no_prompt();
+    let mut password =
+        password::resolve_password(password_flag, /* confirm */ false, no_prompt)?;
+    // A protected id with the flag absent still prompts on a TTY — the
+    // operator pasted an id and shouldn't need to know about the flag.
+    if password.is_none()
+        && let JoinTarget::Swarm(id) = &target
+        && id
+            .as_str()
+            .parse::<Swarm>()
+            .is_ok_and(|swarm| swarm.requires_password())
+    {
+        password = Some(password::require_password(no_prompt, "swarm")?);
+    }
     // `join` never advertises — that is a create-time decision.
-    let resolved = JoinParams { target, nickname }.resolve()?;
+    let resolved = JoinParams {
+        target,
+        nickname,
+        password,
+    }
+    .resolve()?;
     run_session(resolved, shared).await
 }
 
@@ -370,29 +404,43 @@ async fn pipe(action: PipeAction) -> Result<()> {
             tuning,
             throttle,
             output,
+            password,
             follow,
         } => {
             crate::util::tuning::init(tuning.tuning());
+            let json = matches!(output, OutputFormat::Json);
+            let password = password::resolve_password(password, /* confirm */ true, json)?;
             crate::pipe::listen(
                 swarm.as_ref().map(crate::protocol::SwarmId::as_str),
                 lookups.to_set(),
                 crate::protocol::swarm::DirectorySelection::from_flag(advertise),
                 throttle,
-                matches!(output, OutputFormat::Json),
+                json,
                 follow,
+                password,
             )
             .await
         }
-        PipeAction::Connect { ticket, throttle } => crate::pipe::connect(&ticket, throttle).await,
+        PipeAction::Connect {
+            ticket,
+            throttle,
+            password,
+        } => {
+            let password =
+                consumer_password(password, &ticket, crate::pipe::ticket_requires_password)?;
+            crate::pipe::connect(&ticket, throttle, password).await
+        }
         PipeAction::Discover {
             name,
             lookups,
             tuning,
             throttle,
+            password,
             output,
         } => {
             crate::util::tuning::init(tuning.tuning());
             let json = matches!(output, OutputFormat::Json);
+            let password = password::resolve_password(password, /* confirm */ false, json)?;
             match ticket_discover::discover_ticket(
                 name,
                 lookups.to_set(),
@@ -402,7 +450,16 @@ async fn pipe(action: PipeAction) -> Result<()> {
             .await?
             {
                 Some(ticket) => {
-                    ticket_discover::interruptible(crate::pipe::connect(&ticket, throttle)).await
+                    let password = match password {
+                        None if crate::pipe::ticket_requires_password(&ticket) => {
+                            Some(password::require_password(false, "ticket")?)
+                        }
+                        other => other,
+                    };
+                    ticket_discover::interruptible(crate::pipe::connect(
+                        &ticket, throttle, password,
+                    ))
+                    .await
                 }
                 None => Ok(()),
             }
@@ -413,6 +470,7 @@ async fn pipe(action: PipeAction) -> Result<()> {
             swarm,
             budget,
             pings,
+            password,
             output,
         } => {
             let json = matches!(output, OutputFormat::Json);
@@ -421,22 +479,50 @@ async fn pipe(action: PipeAction) -> Result<()> {
             // ticket means consumer, its absence means producer.
             match ticket {
                 None => {
+                    let password =
+                        password::resolve_password(password, /* confirm */ true, json)?;
                     crate::pipe::listen_bench(
                         swarm.as_ref().map(crate::protocol::SwarmId::as_str),
                         serve,
                         json,
+                        password,
                     )
                     .await
                 }
                 Some(ticket) => {
+                    let password = consumer_password(
+                        password,
+                        &ticket,
+                        crate::pipe::ticket_requires_password,
+                    )?;
                     let opts = crate::pipe::BenchOpts {
                         budget: budget.unwrap_or_default(),
                         pings: pings.unwrap_or(20),
                     };
-                    crate::pipe::connect_bench(&ticket, opts, json).await
+                    crate::pipe::connect_bench(&ticket, opts, json, password).await
                 }
             }
         }
+    }
+}
+
+/// Resolve a consumer-side `--password` flag, prompting when the flag is
+/// absent but `ticket` decodes as password-protected (per `requires` — each
+/// transfer kind checks its own ticket codec). The prompt itself fails
+/// cleanly without a TTY, telling the caller to pass `--password=<pw>`.
+#[expect(
+    clippy::option_option,
+    reason = "clap optional-value flag: absent/bare/valued are three distinct password states"
+)]
+fn consumer_password(
+    flag: Option<Option<String>>,
+    ticket: &str,
+    requires: impl Fn(&str) -> bool,
+) -> Result<Option<crate::protocol::crypto::Password>> {
+    let password = password::resolve_password(flag, /* confirm */ false, false)?;
+    match password {
+        None if requires(ticket) => Ok(Some(password::require_password(false, "ticket")?)),
+        other => Ok(other),
     }
 }
 
@@ -451,32 +537,49 @@ async fn port(action: PortAction) -> Result<()> {
             lookups,
             advertise,
             tuning,
+            password,
             output,
         } => {
             crate::util::tuning::init(tuning.tuning());
+            let json = matches!(output, OutputFormat::Json);
+            let password = password::resolve_password(password, /* confirm */ true, json)?;
             crate::port::listen(
                 swarm.as_ref().map(crate::protocol::SwarmId::as_str),
                 lookups.to_set(),
                 crate::protocol::swarm::DirectorySelection::from_flag(advertise),
                 &ports,
-                matches!(output, OutputFormat::Json),
+                json,
+                password,
             )
             .await
         }
         PortAction::Connect {
             ticket,
             ports,
+            password,
             output,
-        } => crate::port::connect(&ticket, &ports, matches!(output, OutputFormat::Json)).await,
+        } => {
+            let password =
+                consumer_password(password, &ticket, crate::port::ticket_requires_password)?;
+            crate::port::connect(
+                &ticket,
+                &ports,
+                matches!(output, OutputFormat::Json),
+                password,
+            )
+            .await
+        }
         PortAction::Discover {
             name,
             ports,
             lookups,
             tuning,
+            password,
             output,
         } => {
             crate::util::tuning::init(tuning.tuning());
             let json = matches!(output, OutputFormat::Json);
+            let password = password::resolve_password(password, /* confirm */ false, json)?;
             match ticket_discover::discover_ticket(
                 name,
                 lookups.to_set(),
@@ -493,8 +596,16 @@ async fn port(action: PortAction) -> Result<()> {
                     } else {
                         ports
                     };
-                    ticket_discover::interruptible(crate::port::connect(&ticket, &mappings, json))
-                        .await
+                    let password = match password {
+                        None if crate::port::ticket_requires_password(&ticket) => {
+                            Some(password::require_password(false, "ticket")?)
+                        }
+                        other => other,
+                    };
+                    ticket_discover::interruptible(crate::port::connect(
+                        &ticket, &mappings, json, password,
+                    ))
+                    .await
                 }
                 None => Ok(()),
             }
@@ -514,16 +625,20 @@ async fn file(action: FileAction) -> Result<()> {
             advertise,
             tuning,
             throttle,
+            password,
             output,
         } => {
             crate::util::tuning::init(tuning.tuning());
+            let json = matches!(output, OutputFormat::Json);
+            let password = password::resolve_password(password, /* confirm */ true, json)?;
             crate::file::send(
                 swarm.as_ref().map(crate::protocol::SwarmId::as_str),
                 lookups.to_set(),
                 crate::protocol::swarm::DirectorySelection::from_flag(advertise),
                 &path,
                 throttle,
-                matches!(output, OutputFormat::Json),
+                json,
+                password,
             )
             .await
         }
@@ -531,13 +646,17 @@ async fn file(action: FileAction) -> Result<()> {
             ticket,
             out,
             throttle,
+            password,
             output,
         } => {
+            let password =
+                consumer_password(password, &ticket, crate::file::ticket_requires_password)?;
             crate::file::get(
                 &ticket,
                 out.as_deref(),
                 throttle,
                 matches!(output, OutputFormat::Json),
+                password,
             )
             .await
         }
@@ -547,10 +666,12 @@ async fn file(action: FileAction) -> Result<()> {
             tuning,
             out,
             throttle,
+            password,
             output,
         } => {
             crate::util::tuning::init(tuning.tuning());
             let json = matches!(output, OutputFormat::Json);
+            let password = password::resolve_password(password, /* confirm */ false, json)?;
             match ticket_discover::discover_ticket(
                 name,
                 lookups.to_set(),
@@ -560,11 +681,18 @@ async fn file(action: FileAction) -> Result<()> {
             .await?
             {
                 Some(ticket) => {
+                    let password = match password {
+                        None if crate::file::ticket_requires_password(&ticket) => {
+                            Some(password::require_password(false, "ticket")?)
+                        }
+                        other => other,
+                    };
                     ticket_discover::interruptible(crate::file::get(
                         &ticket,
                         out.as_deref(),
                         throttle,
                         json,
+                        password,
                     ))
                     .await
                 }
