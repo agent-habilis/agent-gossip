@@ -35,10 +35,9 @@ const MAX_MANIFEST_BYTES: u32 = 64 * 1024 * 1024;
 /// connection.
 pub(crate) const MAX_READ_LEN: u32 = 256 * 1024;
 
-// The `--swarm` resolution and the pre-ticket online wait are identical for
-// every direct off-gossip command — reuse `file`'s rather than keeping a
-// fourth copy.
-use crate::file::{swarm_lookups, wait_online};
+// The pre-ticket online wait is identical for every direct off-gossip
+// command — reuse `file`'s rather than keeping a fourth copy.
+use crate::file::wait_online;
 
 /// Quote one word of a printed, copy-pastable command: plain when every
 /// character is clearly shell-safe, single-quoted (embedded `'` escaped

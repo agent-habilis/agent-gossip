@@ -2,9 +2,12 @@ use std::path::PathBuf;
 
 use clap::Subcommand;
 
+use super::lookup::LookupArgs;
 use super::output::OutputFormat;
 use super::pipe::parse_rate;
+use super::shared::DirectoryTuningArgs;
 use crate::protocol::SwarmId;
+use crate::protocol::swarm::SwarmName;
 
 /// The `ahsw file` actions — a direct, off-gossip file/folder transfer.
 #[derive(Subcommand, Debug)]
@@ -20,9 +23,29 @@ pub(crate) enum FileAction {
         path: PathBuf,
         /// Swarm id whose discovery config (local / mDNS / DHT / relay) the
         /// transfer should use, so it traverses the network like swarm members
-        /// do. Omit for a public default.
+        /// do. Omit for a public default. Alternative to the
+        /// `--mdns`/`--dht`/`--relay` flags — pass one or the other.
         #[arg(long)]
         swarm: Option<SwarmId>,
+        /// Which lookup mechanisms the transfer uses (same flags as `create`):
+        /// naming any uses only those; naming none is the all-on public preset.
+        #[command(flatten)]
+        lookups: LookupArgs,
+        /// Advertise this transfer's ticket in a directory so a peer can find
+        /// it with `ahsw file discover` — no `🐝…` to copy. Bare `--advertise`
+        /// ⇒ the default `global` directory; `--advertise <name>` ⇒ that named
+        /// directory (share the name with the peer, like a code word). The ad
+        /// carries the full bearer ticket, so anyone browsing that directory
+        /// can fetch the files.
+        #[arg(long, num_args(0..=1))]
+        #[expect(
+            clippy::option_option,
+            reason = "clap optional-value flag: absent/bare/valued are three distinct directory states (see DirectorySelection)"
+        )]
+        advertise: Option<Option<SwarmName>>,
+        /// Hidden directory-tuning knobs (test suite only).
+        #[command(flatten)]
+        tuning: DirectoryTuningArgs,
         /// Cap throughput, e.g. `100k`, `2m` (bytes/sec; `k`/`m`/`g` = 1024-based).
         #[arg(long, value_parser = parse_rate)]
         throttle: Option<u64>,
@@ -48,6 +71,36 @@ pub(crate) enum FileAction {
         #[arg(long, value_parser = parse_rate)]
         throttle: Option<u64>,
         /// Output format: human (default) or json (suppresses the summary line).
+        #[arg(long, default_value = "human")]
+        output: OutputFormat,
+    },
+    /// Browse a directory for advertised file transfers and receive one —
+    /// the receiver side of `file send --advertise`, no `🐝…` to copy.
+    ///
+    /// Human mode runs a live picker and fetches on selection; `--output
+    /// json` streams `ticket_found`/`ticket_lost` lines instead (the agent
+    /// captures a ticket and runs `file get` itself).
+    Discover {
+        /// The directory to browse — the name the sender passed to
+        /// `--advertise` (omit for the default `global` directory).
+        #[arg(default_value = crate::protocol::swarm::DEFAULT_DIRECTORY)]
+        name: SwarmName,
+        /// Which lookup mechanisms reach the directory (same flags as
+        /// `discover`): must match the sender's. Naming none is the all-on
+        /// public preset.
+        #[command(flatten)]
+        lookups: LookupArgs,
+        /// Hidden directory-tuning knobs (test suite only).
+        #[command(flatten)]
+        tuning: DirectoryTuningArgs,
+        /// Write into this directory instead of the current one.
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// Cap throughput of the transfer made on pick.
+        #[arg(long, value_parser = parse_rate)]
+        throttle: Option<u64>,
+        /// Output format: human (default) — the live picker — or json, one
+        /// `ticket_found`/`ticket_lost` line per directory change.
         #[arg(long, default_value = "human")]
         output: OutputFormat,
     },

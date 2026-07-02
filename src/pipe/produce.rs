@@ -13,8 +13,11 @@ use iroh::endpoint::{Connection, Incoming, RecvStream, SendStream};
 use rand::RngCore;
 use tokio::io::{AsyncRead, AsyncReadExt};
 
+use crate::directory::ticket::TicketAd;
 use crate::lookup::build_endpoint;
-use crate::protocol::swarm::LookupOpts;
+use crate::protocol::swarm::{
+    DirectorySelection, LookupOpts, LookupSet, resolve_transfer_lookups, validate_advertise,
+};
 
 use super::progress::{Progress, copy_throttled, pace, throttle_chunk};
 use super::ticket::PipeTicket;
@@ -23,19 +26,55 @@ use super::{PIPE_ALPN, SECRET_LEN, wait_online};
 /// Serve stdin to the first peer presenting the ticket's secret. The consumer's
 /// **`ahsw pipe connect <ticket>` command is printed to stdout** (the producer's
 /// stdout carries no data — that flows over the network); stderr is reserved for
-/// errors. `swarm` selects the discovery config (`None` ⇒ a public default).
+/// errors. The discovery config comes from `swarm` (a `🐝…` id's embedded
+/// lookups) or `flags` (create-style `--mdns`/`--dht`/`--relay`); neither ⇒ a
+/// public default. `advertise` additionally re-broadcasts the ticket into a
+/// directory so a peer can find it with `ahsw pipe discover`.
 ///
 /// # Errors
-/// Endpoint bind / discovery-config parse failures, or a stream I/O error.
+/// Endpoint bind / discovery-config resolution failures, `--advertise` on an
+/// unreachable config or a source that can't be re-served, or a stream I/O
+/// error.
 pub(crate) async fn listen(
     swarm: Option<&str>,
+    flags: LookupSet,
+    advertise: DirectorySelection,
     throttle: Option<u64>,
     json: bool,
     follow: bool,
 ) -> Result<()> {
-    let lookups = super::swarm_lookups(swarm)?;
-    let (endpoint, mut ticket, secret) = bind(lookups).await?;
+    let lookups = resolve_transfer_lookups(swarm, flags)?;
+    validate_advertise(&advertise, &lookups)?;
+    // An advertised ticket must stay redeemable: a non-seekable stdin stream
+    // is served once and gone, so only a re-openable file or --follow qualifies.
+    if advertise.is_set() && !follow && source_path().is_none() {
+        bail!(
+            "--advertise needs a re-servable source: \
+             redirect a seekable file (`< file`) or pass --follow"
+        );
+    }
+    let (endpoint, mut ticket, secret) = bind(lookups.clone()).await?;
     ticket.follow = follow;
+    let _advertiser = match advertise.directory() {
+        Some(directory) => {
+            let label = source_path()
+                .as_deref()
+                .and_then(Path::file_name)
+                .and_then(|name| name.to_str())
+                .map(str::to_owned);
+            let ad = TicketAd {
+                ticket: ticket.encode(),
+                label,
+            };
+            if !json {
+                crate::util::output::status("Advertising", &format!("in #{directory} directory"));
+            }
+            Some(crate::embed::spawn_ticket_advertiser(
+                directory, lookups, &ad,
+            )?)
+        }
+        None => None,
+    };
     super::announce(
         json,
         "Waiting",

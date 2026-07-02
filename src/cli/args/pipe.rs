@@ -1,8 +1,11 @@
 use clap::Subcommand;
 
+use super::lookup::LookupArgs;
 use super::output::OutputFormat;
+use super::shared::DirectoryTuningArgs;
 use crate::pipe::BenchBudget;
 use crate::protocol::SwarmId;
+use crate::protocol::swarm::SwarmName;
 
 /// The `ahsw pipe` actions — a direct, off-gossip byte stream.
 #[derive(Subcommand, Debug)]
@@ -15,9 +18,29 @@ pub(crate) enum PipeAction {
     Listen {
         /// Swarm id whose discovery config (local / mDNS / DHT / relay) the pipe
         /// should use, so it traverses the network like swarm members do. Omit
-        /// for a public default.
+        /// for a public default. Alternative to the `--mdns`/`--dht`/`--relay`
+        /// flags — pass one or the other.
         #[arg(long)]
         swarm: Option<SwarmId>,
+        /// Which lookup mechanisms the pipe uses (same flags as `create`):
+        /// naming any uses only those; naming none is the all-on public preset.
+        #[command(flatten)]
+        lookups: LookupArgs,
+        /// Advertise this pipe's ticket in a directory so a peer can find it
+        /// with `ahsw pipe discover` — no `🐝…` to copy. Bare `--advertise` ⇒
+        /// the default `global` directory; `--advertise <name>` ⇒ that named
+        /// directory (share the name with the peer, like a code word). The ad
+        /// carries the full bearer ticket, so anyone browsing that directory
+        /// can connect. Needs a re-servable source: a seekable file or --follow.
+        #[arg(long, num_args(0..=1))]
+        #[expect(
+            clippy::option_option,
+            reason = "clap optional-value flag: absent/bare/valued are three distinct directory states (see DirectorySelection)"
+        )]
+        advertise: Option<Option<SwarmName>>,
+        /// Hidden directory-tuning knobs (test suite only).
+        #[command(flatten)]
+        tuning: DirectoryTuningArgs,
         /// Cap throughput, e.g. `100k`, `2m` (bytes/sec; `k`/`m`/`g` = 1024-based).
         /// Doubles as a way to watch the progress bar on a fast/local link.
         #[arg(long, value_parser = parse_rate)]
@@ -45,6 +68,33 @@ pub(crate) enum PipeAction {
         /// Doubles as a way to watch the progress bar on a fast/local link.
         #[arg(long, value_parser = parse_rate)]
         throttle: Option<u64>,
+    },
+    /// Browse a directory for advertised pipes and connect to one — the
+    /// receiver side of `pipe listen --advertise`, no `🐝…` to copy.
+    ///
+    /// Human mode runs a live picker and connects on selection; `--output
+    /// json` streams `ticket_found`/`ticket_lost` lines instead (the agent
+    /// captures a ticket and runs `pipe connect` itself).
+    Discover {
+        /// The directory to browse — the name the producer passed to
+        /// `--advertise` (omit for the default `global` directory).
+        #[arg(default_value = crate::protocol::swarm::DEFAULT_DIRECTORY)]
+        name: SwarmName,
+        /// Which lookup mechanisms reach the directory (same flags as
+        /// `discover`): must match the advertiser's, so an mDNS-only pipe is
+        /// found only over `--mdns`. Naming none is the all-on public preset.
+        #[command(flatten)]
+        lookups: LookupArgs,
+        /// Hidden directory-tuning knobs (test suite only).
+        #[command(flatten)]
+        tuning: DirectoryTuningArgs,
+        /// Cap throughput of the connection made on pick.
+        #[arg(long, value_parser = parse_rate)]
+        throttle: Option<u64>,
+        /// Output format: human (default) — the live picker — or json, one
+        /// `ticket_found`/`ticket_lost` line per directory change.
+        #[arg(long, default_value = "human")]
+        output: OutputFormat,
     },
     /// Benchmark a direct pipe link's throughput + round-trip latency.
     ///

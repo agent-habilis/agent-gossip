@@ -10,7 +10,7 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt};
 
 use crate::file::human_bytes;
 use crate::lookup::build_endpoint;
-use crate::protocol::swarm::LookupOpts;
+use crate::protocol::swarm::{LookupOpts, LookupSet, resolve_transfer_lookups};
 
 use super::ticket::MountTicket;
 use super::wire::ReadStatus;
@@ -65,7 +65,10 @@ pub(crate) async fn serve(swarm: Option<&str>, dir: &Path, json: bool) -> Result
     }
     let manifest_bytes = Arc::new(encoded);
 
-    let lookups = super::swarm_lookups(swarm)?;
+    // No lookup flags on `mount serve` (yet): empty flags + optional --swarm
+    // is exactly the old per-module resolution — the swarm id wins, omitted
+    // means the public preset.
+    let lookups = resolve_transfer_lookups(swarm, LookupSet::default())?;
     let (endpoint, ticket, secret) = bind(lookups).await?;
     // Shell-quoted: the hint is printed for copy-paste (and captured verbatim
     // by scripts in json mode), so a dir name with a space must stay one word.

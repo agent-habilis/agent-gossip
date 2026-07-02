@@ -15,13 +15,11 @@
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use iroh::Endpoint;
 use iroh::endpoint::{RecvStream, SendStream};
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
-
-use crate::protocol::swarm::{LookupOpts, Swarm};
 
 use http_log::{AccessLog, Direction, Tee, print_log_line};
 
@@ -32,6 +30,22 @@ mod ticket;
 
 pub(crate) use consume::{PortMapping, connect};
 pub(crate) use produce::listen;
+
+/// The identity mapping (`p → p`) for every port a ticket advertises — what
+/// `port discover` forwards when the user names no explicit mappings.
+///
+/// # Errors
+/// Not a `🐝` port ticket, or a malformed payload.
+pub(crate) fn identity_mappings(ticket: &str) -> Result<Vec<PortMapping>> {
+    Ok(ticket::PortTicket::decode(ticket)?
+        .target_ports
+        .iter()
+        .map(|&port| PortMapping {
+            local: port,
+            remote: port,
+        })
+        .collect())
+}
 
 /// ALPN for the port protocol — a raw bidirectional QUIC stream with its own
 /// protocol identity, distinct from the stdio pipe's `PIPE_ALPN`.
@@ -45,19 +59,6 @@ pub(crate) const SECRET_LEN: usize = 32;
 /// to know which local service to dial — and to reject a stream whose port the
 /// ticket never advertised without tearing down the shared connection.
 pub(super) const STREAM_HEADER_LEN: usize = SECRET_LEN + 2;
-
-/// Resolve a `--swarm` id to its discovery config (`None` ⇒ a public default),
-/// so a port forward traverses the network the way that swarm's members do.
-fn swarm_lookups(swarm: Option<&str>) -> Result<LookupOpts> {
-    match swarm {
-        Some(id) => Ok(id
-            .parse::<Swarm>()
-            .context("invalid --swarm id")?
-            .lookups()
-            .clone()),
-        None => Ok(LookupOpts::public_preset()),
-    }
-}
 
 /// Best-effort wait (≤5s) for the endpoint to publish reachable addresses, so a
 /// freshly-printed ticket resolves immediately. Never blocks forever.
@@ -150,4 +151,40 @@ async fn proxy(
         print_log_line(label.as_deref(), &line, narrate);
     }
     (bytes_up, bytes_down)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{identity_mappings, ticket::PortTicket};
+    use crate::protocol::swarm::LookupOpts;
+    use iroh::{EndpointAddr, SecretKey};
+
+    #[test]
+    fn identity_mappings_cover_every_advertised_port() {
+        let id = SecretKey::from_bytes(&[4u8; 32]).public();
+        let addr = EndpointAddr::new(id).with_ip_addr("127.0.0.1:4242".parse().unwrap());
+        let ticket = PortTicket {
+            addr,
+            secret: [9u8; super::SECRET_LEN],
+            lookups: LookupOpts::loopback(),
+            target_ports: vec![3000, 5432],
+        };
+        let mappings = identity_mappings(&ticket.encode()).expect("decode");
+        let pairs: Vec<(u16, u16)> = mappings
+            .iter()
+            .map(|mapping| (mapping.local, mapping.remote))
+            .collect();
+        assert_eq!(pairs, vec![(3000, 3000), (5432, 5432)]);
+    }
+
+    #[test]
+    fn identity_mappings_reject_a_non_port_ticket() {
+        let swarm = crate::protocol::swarm::Swarm::new(
+            [1u8; 32],
+            crate::protocol::swarm::SwarmName::new("t").unwrap(),
+            crate::protocol::swarm::SwarmConfig::loopback(),
+        )
+        .to_string();
+        assert!(identity_mappings(&swarm).is_err());
+    }
 }

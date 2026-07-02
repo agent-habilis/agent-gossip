@@ -21,12 +21,14 @@ use crate::daemon::{
     CoHostPolicy, CreateParams, DriverMode, EventLoopConfig, ForumParams, JoinParams, Resolved,
     SessionRequest,
 };
+use crate::directory::ticket::{TicketAd, TicketChange, TicketListing, TicketListings};
 use crate::directory::{self, Listing, ListingChange, Listings, directory_swarm};
 use crate::output::{Output, OutputEvent};
 use crate::protocol::swarm::{
     DEFAULT_DIRECTORY, DirectorySelection, LookupOpts, LookupSet, Swarm, SwarmConfig, SwarmName,
     resolve_lookups,
 };
+use crate::protocol::token::TokenType;
 use crate::protocol::{Message, MessageBody, Nickname, SwarmId, TaskId, TaskPhase};
 use crate::resolver::JoinTarget;
 use crate::util::tuning::{
@@ -329,10 +331,13 @@ impl InProcessSession {
     /// Wire the typed channels into `elc`, spawn the event loop, and build
     /// the core. `push` is `Some` to fan inbound traffic out to a broadcast
     /// ([`SwarmSession::messages`]), `None` for a poll-only consumer (MCP).
+    /// `handle_signals`: see [`DriverMode::InProcess`] — `false` for sessions
+    /// living inside a foreground command that owns its own lifetime.
     fn spawn(
         mut elc: EventLoopConfig,
         advertiser: Option<JoinHandle<()>>,
         push: Option<broadcast::Sender<Message>>,
+        handle_signals: bool,
     ) -> Self {
         let (req_tx, req_rx) = mpsc::channel::<SessionRequest>(32);
         let (quit_tx, quit_rx) = mpsc::channel::<()>(1);
@@ -340,6 +345,7 @@ impl InProcessSession {
             msg_tx: push,
             req_rx,
             quit_rx,
+            handle_signals,
         };
         let swarm_id = elc.swarm.clone();
         let name = elc.name.clone();
@@ -362,7 +368,7 @@ impl InProcessSession {
     /// [`CreateError::AdvertiseRequiresReachable`] / [`CreateError::Setup`].
     pub(crate) async fn create_poll(cfg: CreateConfig) -> Result<Self, CreateError> {
         let (elc, advertiser) = create_setup(cfg, Output::silent()).await?;
-        Ok(Self::spawn(elc, advertiser, None))
+        Ok(Self::spawn(elc, advertiser, None, true))
     }
 
     /// Join an existing swarm as a poll-only, silent core (the MCP server).
@@ -371,7 +377,7 @@ impl InProcessSession {
     /// [`JoinError::Resolve`] / [`JoinError::Setup`].
     pub(crate) async fn join_poll(cfg: JoinConfig) -> Result<Self, JoinError> {
         let elc = join_setup(cfg, Output::silent()).await?;
-        Ok(Self::spawn(elc, None, None))
+        Ok(Self::spawn(elc, None, None, true))
     }
 
     /// Join a forum (string-derived public swarm) as a poll-only, silent core
@@ -382,7 +388,7 @@ impl InProcessSession {
     /// endpoint/gossip failure.
     pub(crate) async fn forum_poll(cfg: ForumConfig) -> Result<Self, JoinError> {
         let elc = forum_setup(cfg, Output::silent()).await?;
-        Ok(Self::spawn(elc, None, None))
+        Ok(Self::spawn(elc, None, None, true))
     }
 
     pub(crate) fn swarm_id(&self) -> &SwarmId {
@@ -698,7 +704,9 @@ impl SwarmSession {
     /// Join an already-decoded [`Swarm`] with an explicit co-host policy —
     /// the internal directory-session path (the advertiser eager-cohosts; the
     /// discover consumer never cohosts). `pub(crate)`: keeps `Swarm` off the
-    /// iroh-free surface.
+    /// iroh-free surface. Directory sessions never register process signal
+    /// handlers (see [`DriverMode::InProcess`]) — the hosting command owns
+    /// its own lifetime, and hijacking ctrl-c would keep it alive.
     ///
     /// # Errors
     /// Fails if endpoint/gossip setup fails.
@@ -720,19 +728,31 @@ impl SwarmSession {
         )
         .await?;
         elc.cohost = cohost;
-        Ok(Self::with_events(elc, None, events_rx))
+        Ok(Self::with_events_and_signals(elc, None, events_rx, false))
     }
 
     /// The events presentation: a broadcast for inbound traffic plus the
     /// captured-event stream, over a freshly-spawned [`InProcessSession`]
-    /// (which pushes inbound to the broadcast).
+    /// (which pushes inbound to the broadcast). Registers the process
+    /// signal handlers (the public embed default).
     fn with_events(
         elc: EventLoopConfig,
         advertiser: Option<JoinHandle<()>>,
         events_rx: mpsc::UnboundedReceiver<OutputEvent>,
     ) -> Self {
+        Self::with_events_and_signals(elc, advertiser, events_rx, true)
+    }
+
+    /// [`Self::with_events`] with the signal registration explicit — the
+    /// directory sessions pass `false`.
+    fn with_events_and_signals(
+        elc: EventLoopConfig,
+        advertiser: Option<JoinHandle<()>>,
+        events_rx: mpsc::UnboundedReceiver<OutputEvent>,
+        handle_signals: bool,
+    ) -> Self {
         let (msg_tx, _initial_rx) = broadcast::channel::<Message>(EMBED_INBOUND_CAP);
-        let core = InProcessSession::spawn(elc, advertiser, Some(msg_tx.clone()));
+        let core = InProcessSession::spawn(elc, advertiser, Some(msg_tx.clone()), handle_signals);
         Self {
             core,
             msg_tx,
@@ -1179,6 +1199,204 @@ impl Drop for Directory {
         }
         // The directory `SwarmSession` (if not already taken by `close`)
         // drops here, winding down its own loop.
+    }
+}
+
+// ── Ticket advertise / discover (pipe · file · port) ────────────────────
+
+/// Spawn the ticket re-broadcast task: join `directory` over `lookups` and
+/// re-send `ad` (a full bearer ticket) every `ADVERTISE_INTERVAL_SECS`. The
+/// daemon-less serve commands (`pipe listen` / `file send` / `port listen`)
+/// run this beside their serve loop — unlike [`spawn_advertiser`] there is no
+/// event loop to couple to, so the ad is fixed for the session. Returns the
+/// task handle; dropping/aborting it closes the directory membership. A
+/// directory-join failure logs and ends the task — the transfer keeps
+/// serving, just unlisted.
+///
+/// # Errors
+/// The ad fails to serialize into a message body (a label with control
+/// characters or over the body cap).
+pub(crate) fn spawn_ticket_advertiser(
+    directory: SwarmName,
+    lookups: LookupOpts,
+    ad: &TicketAd,
+) -> anyhow::Result<JoinHandle<()>> {
+    // Validate/render once, eagerly — a bad label errors at spawn time
+    // rather than silently every tick.
+    let body = ad.to_body()?;
+    Ok(tokio::spawn(async move {
+        let swarm = directory_swarm(&directory, lookups);
+        // Co-host from t=0 like the swarm advertiser, so a beacon exists
+        // before any discoverer subscribes.
+        let session =
+            match SwarmSession::join_decoded(swarm, None, DIRECTORY_ADVERTISER_COHOST).await {
+                Ok(session) => session,
+                Err(error) => {
+                    tracing::warn!(
+                        target: "agent_habilis_swarm::directory",
+                        %error,
+                        directory = %directory,
+                        "directory advertise: could not join the directory; ticket stays unlisted"
+                    );
+                    return;
+                }
+            };
+        let mut ticker = tokio::time::interval(Duration::from_secs(advertise_interval_secs()));
+        loop {
+            ticker.tick().await;
+            if let Err(error) = session.send(body.clone(), None).await {
+                tracing::debug!(
+                    target: "agent_habilis_swarm::directory",
+                    %error,
+                    "directory advertise: re-broadcast failed (will retry next tick)"
+                );
+            }
+        }
+    }))
+}
+
+/// A ticket-directory change observed by a [`TicketDirectory`] — the ticket
+/// counterpart of [`DirectoryEvent`], keyed by the ticket string.
+#[derive(Debug, Clone)]
+pub(crate) enum TicketDirectoryEvent {
+    /// A ticket appeared in the directory.
+    Found(TicketListing),
+    /// An already-listed ticket re-advertised with changed data (the label).
+    Updated(TicketListing),
+    /// A ticket's ads stopped and its listing aged out.
+    Lost(String),
+}
+
+/// A live view of a directory's **ticket** ads of one [`TokenType`] — the
+/// consumer side of [`spawn_ticket_advertiser`], mirroring [`Directory`]
+/// (join as a pure consumer, collect in the background, age out silent
+/// publishers). CLI-only for now, so `pub(crate)` — not part of the public
+/// embed surface.
+#[derive(Debug)]
+pub(crate) struct TicketDirectory {
+    session: Option<SwarmSession>,
+    listings: Arc<Mutex<TicketListings>>,
+    events_rx: Option<mpsc::UnboundedReceiver<TicketDirectoryEvent>>,
+    task: Option<JoinHandle<()>>,
+}
+
+impl TicketDirectory {
+    /// Open a directory by name and collect ticket ads of `kind`, reaching it
+    /// over `lookups` — the same topic-coupling rule as [`Directory::open`]:
+    /// advertiser and discoverer meet only over the **same** lookups; bare
+    /// flags resolve to the all-on preset, matching a `--public` advertiser.
+    ///
+    /// # Errors
+    /// The directory session cannot be established (endpoint/gossip setup,
+    /// bootstrap unreachable).
+    pub(crate) async fn open(
+        name: SwarmName,
+        lookups: LookupSet,
+        kind: TokenType,
+    ) -> anyhow::Result<Self> {
+        let resolved = resolve_lookups(!crate::util::tuning::directory_private_for_test(), lookups);
+        let swarm = directory_swarm(&name, resolved);
+        let session = SwarmSession::join_decoded(swarm, None, CoHostPolicy::Never).await?;
+        let mut inbound = session.messages();
+        let listings = Arc::new(Mutex::new(TicketListings::new(kind)));
+        let (events_tx, events_rx) = mpsc::unbounded_channel();
+
+        let collector = listings.clone();
+        let task = tokio::spawn(async move {
+            let ttl = Duration::from_secs(directory_expiry_secs());
+            let mut expiry = tokio::time::interval(ttl);
+            expiry.tick().await; // eat the immediate first tick
+            loop {
+                tokio::select! {
+                    received = inbound.recv() => match received {
+                        Ok(message) => {
+                            let now = Instant::now();
+                            let event = {
+                                let mut dir = collector.lock().expect("ticket directory mutex not poisoned");
+                                match dir.note(message.body.as_str(), now) {
+                                    Some(TicketChange::Found(ticket)) => dir
+                                        .get(&ticket)
+                                        .map(|listing| TicketDirectoryEvent::Found(listing.clone())),
+                                    Some(TicketChange::Updated(ticket)) => dir
+                                        .get(&ticket)
+                                        .map(|listing| TicketDirectoryEvent::Updated(listing.clone())),
+                                    None => None,
+                                }
+                            };
+                            if let Some(event) = event {
+                                let _ = events_tx.send(event);
+                            }
+                        }
+                        // Slow consumer dropped some inbound — listings
+                        // self-heal on the next re-ad, so skip and continue.
+                        Err(broadcast::error::RecvError::Lagged(_)) => {}
+                        Err(broadcast::error::RecvError::Closed) => break,
+                    },
+                    _ = expiry.tick() => {
+                        let now = Instant::now();
+                        let lost = {
+                            let mut dir = collector.lock().expect("ticket directory mutex not poisoned");
+                            dir.expire(ttl, now)
+                        };
+                        for ticket in lost {
+                            let _ = events_tx.send(TicketDirectoryEvent::Lost(ticket));
+                        }
+                    }
+                }
+            }
+        });
+
+        Ok(Self {
+            session: Some(session),
+            listings,
+            events_rx: Some(events_rx),
+            task: Some(task),
+        })
+    }
+
+    /// The current live ticket listings, sorted by label then ticket.
+    pub(crate) fn snapshot(&self) -> Vec<TicketListing> {
+        self.listings
+            .lock()
+            .expect("ticket directory mutex not poisoned")
+            .snapshot()
+    }
+
+    /// Take the event stream (`Found` / `Updated` / `Lost`). Single-consumer:
+    /// returns the receiver **once**, then `None`.
+    pub(crate) fn events(&mut self) -> Option<mpsc::UnboundedReceiver<TicketDirectoryEvent>> {
+        self.events_rx.take()
+    }
+
+    /// The directory session's `(swarm id, nickname)` while open — for
+    /// `logging::attach`, like [`Directory::session_identity`].
+    pub(crate) fn session_identity(&self) -> Option<(&SwarmId, &Nickname)> {
+        self.session
+            .as_ref()
+            .map(|session| (session.swarm_id(), session.nickname()))
+    }
+
+    /// Leave the directory and stop collecting.
+    ///
+    /// # Errors
+    /// Propagates a clean-shutdown error from the underlying directory
+    /// [`SwarmSession::leave`].
+    pub(crate) async fn close(mut self) -> anyhow::Result<()> {
+        if let Some(task) = self.task.take() {
+            task.abort();
+        }
+        if let Some(session) = self.session.take() {
+            session.leave().await?;
+        }
+        Ok(())
+    }
+}
+
+impl Drop for TicketDirectory {
+    fn drop(&mut self) {
+        if let Some(task) = self.task.take() {
+            task.abort();
+        }
     }
 }
 

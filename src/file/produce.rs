@@ -12,9 +12,12 @@ use iroh::endpoint::Incoming;
 use rand::RngCore;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
+use crate::directory::ticket::TicketAd;
 use crate::lookup::build_endpoint;
 use crate::pipe::progress::{pace, throttle_chunk};
-use crate::protocol::swarm::LookupOpts;
+use crate::protocol::swarm::{
+    DirectorySelection, LookupOpts, LookupSet, resolve_transfer_lookups, validate_advertise,
+};
 
 use super::manifest::{Entry, Manifest};
 use super::ticket::FileTicket;
@@ -24,12 +27,18 @@ use super::{FILE_ALPN, MAX_MANIFEST_BYTES, RootKind, SECRET_LEN, wait_online};
 
 /// Send `path` (a file or directory) to peers. Prints the receiver's
 /// `ahsw file get 🐝…` command on stdout; keeps serving until interrupted,
-/// re-reading the source per connection so a repeat `get` re-syncs.
+/// re-reading the source per connection so a repeat `get` re-syncs. The
+/// discovery config comes from `swarm` or the create-style `flags`;
+/// `advertise` re-broadcasts the ticket into a directory so a peer can find
+/// it with `ahsw file discover`.
 ///
 /// # Errors
-/// The path is unreadable, or endpoint bind / discovery-config parse fails.
+/// The path is unreadable, discovery-config resolution / endpoint bind
+/// fails, or `--advertise` names an unreachable config.
 pub(crate) async fn send(
     swarm: Option<&str>,
+    flags: LookupSet,
+    advertise: DirectorySelection,
     path: &Path,
     throttle: Option<u64>,
     json: bool,
@@ -37,8 +46,31 @@ pub(crate) async fn send(
     // Fail fast if the path can't be served, before binding anything — a cheap
     // metadata check, NOT the full hashing scan (that runs per connection).
     ensure_readable(path).with_context(|| format!("cannot serve {}", path.display()))?;
-    let lookups = super::swarm_lookups(swarm)?;
-    let (endpoint, ticket, secret) = bind(lookups).await?;
+    let lookups = resolve_transfer_lookups(swarm, flags)?;
+    validate_advertise(&advertise, &lookups)?;
+    let (endpoint, ticket, secret) = bind(lookups.clone()).await?;
+    let _advertiser = match advertise.directory() {
+        Some(directory) => {
+            let label = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .map(str::to_owned);
+            let ad = TicketAd {
+                ticket: ticket.encode(),
+                label,
+            };
+            if !json {
+                crate::util::output::status_out(
+                    "Advertising",
+                    &format!("in #{directory} directory"),
+                );
+            }
+            Some(crate::embed::spawn_ticket_advertiser(
+                directory, lookups, &ad,
+            )?)
+        }
+        None => None,
+    };
     super::announce(
         json,
         &path.display().to_string(),
