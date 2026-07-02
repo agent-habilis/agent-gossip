@@ -10,6 +10,7 @@ use rand::RngCore;
 use tokio::io::AsyncWriteExt;
 
 use crate::lookup::build_endpoint;
+use crate::protocol::crypto::{Password, TicketAuth, ct_eq};
 use crate::protocol::swarm::LookupOpts;
 
 use super::state_file::ShStateFile;
@@ -40,9 +41,11 @@ pub(crate) async fn listen(
     command: Option<&str>,
     cols: Option<u16>,
     rows: Option<u16>,
+    password: Option<Password>,
 ) -> Result<()> {
     let lookups = super::swarm_lookups(swarm)?;
-    let (endpoint, ticket, write_ticket, secrets) = bind(lookups, write).await?;
+    let (endpoint, ticket, write_ticket, secrets) =
+        bind(lookups, write, password.as_ref()).await?;
     // The endpoint id (public) keys the state file the way `swarm_prefix` keys
     // a swarm's runtime dir; the same prefix rides into the shell as `AHSW_SH`.
     let sh_prefix: String = endpoint.id().to_string().chars().take(16).collect();
@@ -99,20 +102,25 @@ pub(crate) async fn listen(
     }
 }
 
-/// The producer's bearer secrets: matching `read` grants viewing; matching
-/// `write` (minted only with `--write`) additionally grants typing. Which secret
-/// a viewer presents *is* the capability check — the ticket flag is UX only.
+/// The producer's expected bearer tokens: matching `read` grants viewing;
+/// matching `write` (minted only with `--write`) additionally grants typing.
+/// Which token a viewer presents *is* the capability check — the ticket flag is
+/// UX only. Without a password a token is the raw ticket secret; with one it is
+/// the Argon2id stretch of the password salted by that secret, so a passworded
+/// ticket admits no one who lacks the password.
 #[derive(Clone, Copy)]
 pub(crate) struct Secrets {
     read: [u8; SECRET_LEN],
     write: Option<[u8; SECRET_LEN]>,
 }
 
-/// Bind the producer endpoint and mint its ticket(s) + secrets — no I/O, no
-/// print. The write ticket exists only when `write` is set.
+/// Bind the producer endpoint and mint its ticket(s) + expected tokens — no
+/// I/O, no print. The write ticket exists only when `write` is set. A single
+/// `password` protects both tickets (each secret is stretched independently).
 pub(crate) async fn bind(
     lookups: LookupOpts,
     write: bool,
+    password: Option<&Password>,
 ) -> Result<(Endpoint, ShTicket, Option<ShTicket>, Secrets)> {
     let endpoint = build_endpoint(&lookups, None, None, vec![SH_ALPN.to_vec()]).await?;
     if !lookups.is_loopback() {
@@ -125,21 +133,26 @@ pub(crate) async fn bind(
         rand::rng().fill_bytes(&mut secret);
         secret
     });
+    let read_auth = TicketAuth::derive(&read_secret, password);
+    let write_auth = write_secret.map(|secret| TicketAuth::derive(&secret, password));
+    let protected = read_auth.password_protected;
     let ticket = ShTicket {
         addr: endpoint.addr(),
         secret: read_secret,
         lookups: lookups.clone(),
         write: false,
+        password: protected,
     };
     let write_ticket = write_secret.map(|secret| ShTicket {
         addr: endpoint.addr(),
         secret,
         lookups,
         write: true,
+        password: protected,
     });
     let secrets = Secrets {
-        read: read_secret,
-        write: write_secret,
+        read: read_auth.token,
+        write: write_auth.map(|auth| auth.token),
     };
     Ok((endpoint, ticket, write_ticket, secrets))
 }
@@ -468,11 +481,14 @@ async fn broadcast(viewers: &mut Vec<Viewer>, frame: &[u8]) {
 }
 
 /// Accept one incoming connection, take its bi-stream, and verify the bearer
-/// secret (the viewer opens the bi-stream and writes the secret first). Which
-/// secret matched decides the capability: the returned bool is "may write".
+/// token (the viewer opens the bi-stream and writes the token first). Which
+/// token matched decides the capability: the returned bool is "may write". The
+/// comparison is constant-time so a passworded token can't be recovered by
+/// timing. On a passworded session a mismatch is a wrong password; the raw
+/// secret without the password computes no matching token.
 ///
 /// # Errors
-/// A failed handshake or a secret matching neither ticket (closed with code 1).
+/// A failed handshake or a token matching neither ticket (closed with code 1).
 async fn authenticate(
     incoming: Incoming,
     secrets: Secrets,
@@ -484,11 +500,11 @@ async fn authenticate(
         conn.close(1u32.into(), b"bad secret");
         bail!("peer presented a bad secret");
     }
-    let can_write = if got == secrets.read {
+    let can_write = if ct_eq(&got, &secrets.read) {
         false
     } else if secrets
         .write
-        .is_some_and(|write_secret| got == write_secret)
+        .is_some_and(|write_token| ct_eq(&got, &write_token))
     {
         true
     } else {

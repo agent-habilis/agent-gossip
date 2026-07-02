@@ -56,8 +56,8 @@ SYNOPSIS
        ahsw file discover [NAME] [--mdns] [--dht] [--relay[=URLS]]
                   [--out DIR] [--throttle RATE] [--password[=PW]] [--output human|json]
 
-       ahsw sh listen  [--swarm 🐝…] [--write] [--output human|json]
-       ahsw sh connect 🐝…
+       ahsw sh listen  [--swarm 🐝…] [--write] [--password[=PW]] [--output human|json]
+       ahsw sh connect 🐝… [--password[=PW]]
 
        ahsw mount serve DIR [--swarm 🐝…] [--output human|json]
        ahsw mount 🐝… MOUNTPOINT [--output human|json]
@@ -668,8 +668,8 @@ COMMANDS
                 ahsw file send ./project --swarm 🐝…   ↔   ahsw file get 🐝…  # re-run to re-sync
                 ahsw file send ./photos --advertise trip   ↔   ahsw file discover trip
 
-       sh listen  [--swarm 🐝…] [--write] [--output human|json]
-       sh connect 🐝…
+       sh listen  [--swarm 🐝…] [--write] [--password[=PW]] [--output human|json]
+       sh connect 🐝… [--password[=PW]]
               Share a live terminal over the same off-gossip direct link the pipe
               uses — no running daemon required. `sh listen` spawns your $SHELL
               (falling back to /bin/sh) in a pseudo-terminal and prints on stdout
@@ -732,11 +732,22 @@ COMMANDS
               script can capture: the read command first and, with --write, the
               write command on a second line.
 
+              --password protects the shell with a password: the ticket alone no
+              longer admits — every viewer must present the password too (so a
+              passworded ticket is safe to share). A SINGLE password guards both
+              the read and the write ticket. Bare --password prompts hidden on
+              the terminal; --password=<pw> passes it inline (visible in ps, so
+              prefer the prompt for a human). `sh connect` on a passworded ticket
+              needs the matching --password (prompts when omitted); a wrong or
+              missing one is refused before any terminal is rendered.
+
               Examples:
                 ahsw sh listen --swarm 🐝…   # hint → ahsw sh connect 🐝…
                 ahsw sh connect 🐝Ydy8…      # watch, read-only; q to detach
                 ahsw sh listen --write       # + a write ticket; share with care
                 ahsw sh connect 🐝Kt3n…      # type into the shell; Enter ~ . detaches
+                ahsw sh listen --write --password   # both tickets need the password
+                ahsw sh connect 🐝Kt3n… --password=hunter2   # redeem a passworded ticket
 
        mount serve DIR [--swarm 🐝…] [--output human|json]
        mount 🐝… MOUNTPOINT [--output human|json]

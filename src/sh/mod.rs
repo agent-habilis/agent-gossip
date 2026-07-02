@@ -15,6 +15,13 @@ mod ticket;
 pub(crate) use consume::connect;
 pub(crate) use produce::listen;
 
+/// Whether `ticket` decodes as a password-protected shell ticket — the CLI's
+/// cue to prompt for a password before dialing. A malformed ticket ⇒ false; the
+/// dial's own decode surfaces the real error.
+pub(crate) fn ticket_requires_password(ticket: &str) -> bool {
+    ticket::ShTicket::decode(ticket).is_ok_and(|decoded| decoded.password)
+}
+
 /// ALPN for the shell protocol — its own protocol identity, distinct from the
 /// pipe/port/file ALPNs, so a mismatched dial is rejected at the QUIC handshake.
 pub(crate) const SH_ALPN: &[u8] = b"agent-habilis-swarm/sh/1";
@@ -186,6 +193,7 @@ mod tests {
 
     use iroh::endpoint::{Connection, ConnectionError, RecvStream, SendStream};
 
+    use crate::protocol::crypto::Password;
     use crate::protocol::swarm::LookupOpts;
 
     use super::ticket::ShTicket;
@@ -202,8 +210,21 @@ mod tests {
         ShTicket,
         tokio::task::JoinHandle<anyhow::Result<()>>,
     ) {
+        spawn_producer_pw(command, None).await
+    }
+
+    /// Like [`spawn_producer`] but protects the session with `password`, so its
+    /// tickets carry the password flag and its tokens are the password stretch.
+    async fn spawn_producer_pw(
+        command: &str,
+        password: Option<&Password>,
+    ) -> (
+        ShTicket,
+        ShTicket,
+        tokio::task::JoinHandle<anyhow::Result<()>>,
+    ) {
         let (endpoint, ticket, write_ticket, secrets) =
-            super::produce::bind(LookupOpts::loopback(), true)
+            super::produce::bind(LookupOpts::loopback(), true, password)
                 .await
                 .expect("bind producer");
         let write_ticket = write_ticket.expect("write ticket");
@@ -347,8 +368,27 @@ mod tests {
             secret: [0xAA; super::SECRET_LEN],
             lookups: read_ticket.lookups.clone(),
             write: false,
+            password: false,
         };
         let (_endpoint, conn, _send, _recv) = dial(&imposter).await;
+
+        assert_eq!(closed_with_code(&conn).await, 1);
+        server.abort();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn raw_secret_is_rejected_on_a_passworded_session() {
+        // On a passworded session the expected token is the Argon2id stretch, so
+        // a viewer that presents the ticket's raw secret (as a passwordless
+        // client would) matches nothing and is closed.
+        let password = Password::new("hunter2".to_owned());
+        let (read_ticket, _write_ticket, server) =
+            spawn_producer_pw("cat", Some(&password)).await;
+        assert!(read_ticket.password, "the ticket must carry the password flag");
+
+        // `dial` presents `read_ticket.secret` verbatim — the raw secret, not
+        // the stretched token — which is exactly the attack we defend against.
+        let (_endpoint, conn, _send, _recv) = dial(&read_ticket).await;
 
         assert_eq!(closed_with_code(&conn).await, 1);
         server.abort();

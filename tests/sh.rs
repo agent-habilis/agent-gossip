@@ -186,6 +186,62 @@ fn session_env_var_and_state_file_track_the_viewer_count() {
 }
 
 #[test]
+fn passworded_shell_admits_only_the_matching_password() {
+    let (_creator, swarm) = Node::create_named("sh-pw");
+
+    // Producer: protect the shell with a password. The ticket carries the
+    // password flag but the raw secret alone no longer redeems.
+    let mut producer_cmd = test_cmd();
+    producer_cmd.args([
+        "sh",
+        "listen",
+        "--swarm",
+        swarm.as_str(),
+        "--password=hunter2",
+        "--command",
+        "printf 'AHSW-SH-PW-OK\\n'; sleep 10",
+        "--cols",
+        "80",
+        "--rows",
+        "24",
+        "--output",
+        "json",
+    ]);
+    let (_producer, producer_rx) = spawn_piped(producer_cmd);
+    let ticket_line = recv_line_containing(&producer_rx, "sh connect")
+        .expect("producer never printed an sh connect command");
+    let ticket = ticket_line
+        .split_whitespace()
+        .nth(3)
+        .expect("sh connect line missing ticket token")
+        .to_string();
+
+    // A viewer with no password is refused before any terminal is rendered —
+    // the decode sees the password flag and bails, so the child exits non-zero
+    // without ever emitting the marker.
+    let mut bare_cmd = test_cmd();
+    bare_cmd.args(["sh", "connect", ticket.as_str()]);
+    bare_cmd.stdout(Stdio::null());
+    bare_cmd.stderr(Stdio::null());
+    let status = bare_cmd
+        .status()
+        .expect("waiting on the passwordless viewer failed");
+    assert!(
+        !status.success(),
+        "a passwordless viewer must be refused a passworded ticket"
+    );
+
+    // The matching password redeems and receives the shared output.
+    let mut viewer_cmd = test_cmd();
+    viewer_cmd.args(["sh", "connect", ticket.as_str(), "--password=hunter2"]);
+    let (_viewer, viewer_rx) = spawn_piped(viewer_cmd);
+    assert!(
+        recv_line_containing(&viewer_rx, "AHSW-SH-PW-OK").is_some(),
+        "a viewer with the right password never received the shared output"
+    );
+}
+
+#[test]
 fn write_viewer_input_reaches_the_shell() {
     let (_creator, swarm) = Node::create_named("sh-write");
 

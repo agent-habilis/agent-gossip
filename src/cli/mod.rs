@@ -719,18 +719,26 @@ async fn sh(action: ShAction) -> Result<()> {
             command,
             cols,
             rows,
+            password,
         } => {
+            let json = matches!(output, OutputFormat::Json);
+            let password = password::resolve_password(password, /* confirm */ true, json)?;
             crate::sh::listen(
                 swarm.as_ref().map(crate::protocol::SwarmId::as_str),
-                matches!(output, OutputFormat::Json),
+                json,
                 write,
                 command.as_deref(),
                 cols,
                 rows,
+                password,
             )
             .await
         }
-        ShAction::Connect { ticket } => crate::sh::connect(&ticket).await,
+        ShAction::Connect { ticket, password } => {
+            let password =
+                consumer_password(password, &ticket, crate::sh::ticket_requires_password)?;
+            crate::sh::connect(&ticket, password).await
+        }
     }
 }
 

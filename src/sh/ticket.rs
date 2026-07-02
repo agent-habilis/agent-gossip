@@ -13,12 +13,14 @@ use super::SECRET_LEN;
 /// self-delimiting, so the address occupies the remainder). `flags` bit 0
 /// marks a write-capable ticket — UX only, so the viewer knows to forward its
 /// keyboard; the producer grants write by which secret was presented, never by
-/// this flag. The other bits stay reserved for forward-compat.
+/// this flag. Bit 1 marks a password-protected ticket, so the viewer knows to
+/// present the password. The other bits stay reserved for forward-compat.
 pub(crate) struct ShTicket {
     pub addr: EndpointAddr,
     pub secret: [u8; SECRET_LEN],
     pub lookups: LookupOpts,
     pub write: bool,
+    pub password: bool,
 }
 
 impl ShTicket {
@@ -26,7 +28,7 @@ impl ShTicket {
     pub(crate) fn encode(&self) -> String {
         let mut payload = Vec::with_capacity(SECRET_LEN + 1 + 64);
         payload.extend_from_slice(&self.secret);
-        payload.push(u8::from(self.write));
+        payload.push(u8::from(self.write) | (u8::from(self.password) << 1));
         self.lookups.encode_into(&mut payload);
         let addr_json = serde_json::to_vec(&endpoint_addr_to_json(&self.addr))
             .expect("EndpointAddr JSON always serializes");
@@ -46,9 +48,11 @@ impl ShTicket {
         let secret_slice = payload.get(..SECRET_LEN).context("ticket too short")?;
         let mut secret = [0u8; SECRET_LEN];
         secret.copy_from_slice(secret_slice);
-        // Bit 0 of the flags byte marks a write ticket; the rest stay reserved.
+        // Bit 0 marks a write ticket, bit 1 a password-protected one; the rest
+        // stay reserved.
         let flags = *payload.get(SECRET_LEN).context("ticket missing flags")?;
         let write = flags & 0x01 != 0;
+        let password = flags & 0x02 != 0;
         let mut pos = SECRET_LEN + 1;
         let lookups = LookupOpts::decode_from(&payload, &mut pos)?;
         let addr_json = payload.get(pos..).context("ticket missing address")?;
@@ -60,6 +64,7 @@ impl ShTicket {
             secret,
             lookups,
             write,
+            password,
         })
     }
 }
@@ -79,6 +84,7 @@ mod tests {
             secret: [9u8; SECRET_LEN],
             lookups: LookupOpts::public_preset(),
             write: false,
+            password: false,
         };
         let encoded = ticket.encode();
         assert!(encoded.starts_with("🐝"));
@@ -87,6 +93,7 @@ mod tests {
         assert_eq!(decoded.secret, [9u8; SECRET_LEN]);
         assert_eq!(decoded.lookups, LookupOpts::public_preset());
         assert!(!decoded.write);
+        assert!(!decoded.password);
     }
 
     #[test]
@@ -98,9 +105,29 @@ mod tests {
             secret: [7u8; SECRET_LEN],
             lookups: LookupOpts::public_preset(),
             write: true,
+            password: false,
         };
         let decoded = ShTicket::decode(&ticket.encode()).expect("decode");
         assert!(decoded.write);
+        assert!(!decoded.password);
+    }
+
+    #[test]
+    fn password_flag_round_trips() {
+        let id = SecretKey::from_bytes(&[5u8; 32]).public();
+        let addr = EndpointAddr::new(id).with_ip_addr("127.0.0.1:4244".parse().unwrap());
+        // A write + passworded ticket: both flag bits ride the same byte
+        // independently.
+        let ticket = ShTicket {
+            addr,
+            secret: [6u8; SECRET_LEN],
+            lookups: LookupOpts::public_preset(),
+            write: true,
+            password: true,
+        };
+        let decoded = ShTicket::decode(&ticket.encode()).expect("decode");
+        assert!(decoded.write);
+        assert!(decoded.password);
     }
 
     #[test]

@@ -9,6 +9,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::Notify;
 
 use crate::lookup::{add_peer_addr, build_participant_endpoint};
+use crate::protocol::crypto::{Password, TicketAuth};
 
 use super::ticket::ShTicket;
 use super::{Frame, SH_ALPN, encode_input, read_frame, term};
@@ -29,11 +30,18 @@ const BACKDROP_MIN_INTERVAL: Duration = Duration::from_millis(80);
 /// `Enter ~ .` on a write ticket).
 ///
 /// # Errors
-/// A malformed ticket, an unreachable producer, or a fatal stream I/O error.
-pub(crate) async fn connect(ticket: &str) -> Result<()> {
+/// A malformed ticket, a password mismatch with the ticket (missing on a
+/// passworded ticket, or given for a passwordless one), an unreachable
+/// producer, or a fatal stream I/O error.
+pub(crate) async fn connect(ticket: &str, password: Option<Password>) -> Result<()> {
     let ticket = ShTicket::decode(ticket)?;
+    let auth = match (&password, ticket.password) {
+        (None, true) => bail!("this ticket is password-protected — pass --password"),
+        (Some(_), false) => bail!("this ticket has no password — drop --password"),
+        _ => TicketAuth::derive(&ticket.secret, password.as_ref()),
+    };
     let endpoint = build_participant_endpoint(&ticket.lookups).await?;
-    let result = view(&endpoint, &ticket).await;
+    let result = view(&endpoint, &ticket, &auth).await;
     match result {
         // The session ended and the connection is closed; exit now rather than
         // await the slow `endpoint.close()` teardown.
@@ -50,10 +58,11 @@ pub(crate) async fn connect(ticket: &str) -> Result<()> {
 }
 
 /// Dial the producer (retrying while its address propagates), open the bi-stream,
-/// and present the bearer secret.
+/// and present the bearer token.
 async fn dial_and_handshake(
     endpoint: &Endpoint,
     ticket: &ShTicket,
+    auth: &TicketAuth,
 ) -> Result<(Connection, SendStream, RecvStream)> {
     add_peer_addr(endpoint, ticket.addr.clone())?;
     let start = Instant::now();
@@ -72,14 +81,14 @@ async fn dial_and_handshake(
         }
     };
     let (mut send, recv) = conn.open_bi().await.context("opening the stream failed")?;
-    send.write_all(&ticket.secret)
+    send.write_all(&auth.token)
         .await
-        .context("sending the ticket secret failed")?;
+        .context("sending the ticket token failed")?;
     Ok((conn, send, recv))
 }
 
-async fn view(endpoint: &Endpoint, ticket: &ShTicket) -> Result<()> {
-    let (conn, send, recv) = dial_and_handshake(endpoint, ticket).await?;
+async fn view(endpoint: &Endpoint, ticket: &ShTicket, auth: &TicketAuth) -> Result<()> {
+    let (conn, send, recv) = dial_and_handshake(endpoint, ticket, auth).await?;
     let tty = std::io::stdout().is_terminal();
     // Keyboard forwarding follows *stdin*: even with stdout redirected, a write
     // viewer typing on a tty needs raw mode (chords intact, no local SIGINT) and
