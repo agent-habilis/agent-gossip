@@ -55,6 +55,9 @@ SYNOPSIS
        ahsw sh listen  [--swarm 🐝…] [--write] [--output human|json]
        ahsw sh connect 🐝…
 
+       ahsw mount serve DIR [--swarm 🐝…] [--output human|json]
+       ahsw mount 🐝… MOUNTPOINT [--output human|json]
+
        ahsw state merge --swarm 🐝… --nickname NAME --merge MERGE
        ahsw state get   --swarm 🐝… --nickname NAME
 
@@ -653,6 +656,54 @@ COMMANDS
                 ahsw sh connect 🐝Ydy8…      # watch, read-only; q to detach
                 ahsw sh listen --write       # + a write ticket; share with care
                 ahsw sh connect 🐝Kt3n…      # type into the shell; Enter ~ . detaches
+
+       mount serve DIR [--swarm 🐝…] [--output human|json]
+       mount 🐝… MOUNTPOINT [--output human|json]
+              Share a folder, or mount a peer's shared folder locally as a
+              READ-ONLY filesystem — browse a big tree without transferring
+              it. `mount serve DIR` shares a directory and prints on stdout a
+              status line plus the peer's ready-to-run `ahsw mount 🐝…`
+              command; `mount <ticket> MOUNTPOINT` mounts it (the mountpoint
+              is created if missing; an existing one must be an empty
+              directory). Ctrl-C unmounts and exits. Writes into the mount
+              fail with a read-only error.
+
+              It is LAZY: `serve` scans the tree once at startup — a
+              metadata-only snapshot (paths, sizes, permissions, mtimes);
+              nothing is hashed or transferred up front — and peers fetch
+              file bytes on demand, per read, as they open files. Changes on
+              the serving side after startup are NOT visible: restart `serve`
+              and remount to pick them up. Symlinks are skipped (not
+              followed, not listed).
+
+              The mount is backed by a loopback NFSv3 bridge: the consumer
+              runs a tiny in-process NFS server on 127.0.0.1 and mounts it
+              with the OS's built-in NFS client — no FUSE, no kernel
+              extension, works on macOS and Linux out of the box. If the OS
+              mount step needs privileges (common on Linux), the exact mount
+              command is printed instead and the bridge keeps serving; run it
+              in another terminal (with sudo if needed).
+
+              The ticket is the same kind of bearer capability the pipe/port/
+              file commands use (a random secret carrying the server's
+              address + the swarm's discovery config); it shares the 🐝…
+              glyph but is a DISTINCT token, not accepted anywhere else.
+              --swarm selects the discovery mechanisms (local / mDNS / DHT /
+              relay); omit it for a public default, and a loopback-only swarm
+              confines the mount to one machine. On the serving side,
+              --output json swaps the decorated human hint for one plain
+              `ahsw mount 🐝…` line a script can capture; on the mounting
+              side it prints the bare OS mount command when the mount is not
+              performed directly.
+
+              Contrast `file get`, which copies the tree to disk: `mount`
+              copies nothing up front — reads stream just the bytes a peer
+              actually looks at, so it fits huge trees read a little at a
+              time.
+
+              Examples:
+                ahsw mount serve ./dataset --swarm 🐝…   # hint → ahsw mount 🐝…
+                ahsw mount 🐝Ydy8… ~/mnt/dataset          # browse lazily; Ctrl-C unmounts
 
        state merge --swarm 🐝… --nickname NAME --merge MERGE
        state get   --swarm 🐝… --nickname NAME
