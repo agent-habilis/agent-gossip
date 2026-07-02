@@ -10,8 +10,10 @@ use rand::RngCore;
 use tokio::io::AsyncWriteExt;
 
 use crate::lookup::build_endpoint;
+use crate::protocol::crypto::{Password, TicketAuth, ct_eq};
 use crate::protocol::swarm::{LookupOpts, LookupSet, resolve_transfer_lookups};
 
+use super::state_file::ShStateFile;
 use super::term;
 use super::ticket::ShTicket;
 use super::{SECRET_LEN, SH_ALPN, wait_online};
@@ -32,6 +34,11 @@ const VIEWER_WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 /// # Errors
 /// Endpoint bind / discovery-config failures, PTY setup failure, or a fatal
 /// stream I/O error while serving.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the CLI surface: the discovery pair (swarm/flags) and the password \
+              plus the session knobs (json/write/command/cols/rows)"
+)]
 pub(crate) async fn listen(
     swarm: Option<&str>,
     flags: LookupSet,
@@ -40,9 +47,16 @@ pub(crate) async fn listen(
     command: Option<&str>,
     cols: Option<u16>,
     rows: Option<u16>,
+    password: Option<Password>,
 ) -> Result<()> {
     let lookups = resolve_transfer_lookups(swarm, flags)?;
-    let (endpoint, ticket, write_ticket, secrets) = bind(lookups, write).await?;
+    let (endpoint, ticket, write_ticket, secrets) =
+        bind(lookups, write, password.as_ref()).await?;
+    // The endpoint id (public) keys the state file the way `swarm_prefix` keys
+    // a swarm's runtime dir; the same prefix rides into the shell as `AHSW_SH`.
+    let sh_prefix: String = endpoint.id().to_string().chars().take(16).collect();
+    let mut state_file =
+        ShStateFile::new(super::state_file::path_for(&sh_prefix), &sh_prefix, swarm);
     let read_cmd = format!("ahsw sh connect {}", ticket.encode());
     if let Some(write_ticket) = write_ticket {
         // Two tickets: label each with its capability so they can't be mixed up.
@@ -68,10 +82,21 @@ pub(crate) async fn listen(
     } else {
         super::announce(json, "this shell — viewers watch read-only", &read_cmd);
     }
-    let result = serve(&endpoint, secrets, command, cols, rows, !json).await;
+    let result = serve(
+        &endpoint,
+        secrets,
+        command,
+        cols,
+        rows,
+        !json,
+        &mut state_file,
+    )
+    .await;
     // Restore the tty before exiting on either path (raw mode was entered while
-    // sharing) — `process::exit` skips `Drop`, so this is explicit.
+    // sharing) — `process::exit` skips `Drop`, so this is explicit; the state
+    // file's removal is explicit for the same reason.
     term::restore();
+    state_file.remove();
     match result {
         // The shell exited: the session is over. Exit now rather than await the
         // multi-second `endpoint.close()` teardown (relay/DHT/mDNS).
@@ -83,20 +108,25 @@ pub(crate) async fn listen(
     }
 }
 
-/// The producer's bearer secrets: matching `read` grants viewing; matching
-/// `write` (minted only with `--write`) additionally grants typing. Which secret
-/// a viewer presents *is* the capability check — the ticket flag is UX only.
+/// The producer's expected bearer tokens: matching `read` grants viewing;
+/// matching `write` (minted only with `--write`) additionally grants typing.
+/// Which token a viewer presents *is* the capability check — the ticket flag is
+/// UX only. Without a password a token is the raw ticket secret; with one it is
+/// the Argon2id stretch of the password salted by that secret, so a passworded
+/// ticket admits no one who lacks the password.
 #[derive(Clone, Copy)]
 pub(crate) struct Secrets {
     read: [u8; SECRET_LEN],
     write: Option<[u8; SECRET_LEN]>,
 }
 
-/// Bind the producer endpoint and mint its ticket(s) + secrets — no I/O, no
-/// print. The write ticket exists only when `write` is set.
+/// Bind the producer endpoint and mint its ticket(s) + expected tokens — no
+/// I/O, no print. The write ticket exists only when `write` is set. A single
+/// `password` protects both tickets (each secret is stretched independently).
 pub(crate) async fn bind(
     lookups: LookupOpts,
     write: bool,
+    password: Option<&Password>,
 ) -> Result<(Endpoint, ShTicket, Option<ShTicket>, Secrets)> {
     let endpoint = build_endpoint(&lookups, None, None, vec![SH_ALPN.to_vec()]).await?;
     if !lookups.is_loopback() {
@@ -109,21 +139,26 @@ pub(crate) async fn bind(
         rand::rng().fill_bytes(&mut secret);
         secret
     });
+    let read_auth = TicketAuth::derive(&read_secret, password);
+    let write_auth = write_secret.map(|secret| TicketAuth::derive(&secret, password));
+    let protected = read_auth.password_protected;
     let ticket = ShTicket {
         addr: endpoint.addr(),
         secret: read_secret,
         lookups: lookups.clone(),
         write: false,
+        password: protected,
     };
     let write_ticket = write_secret.map(|secret| ShTicket {
         addr: endpoint.addr(),
         secret,
         lookups,
         write: true,
+        password: protected,
     });
     let secrets = Secrets {
-        read: read_secret,
-        write: write_secret,
+        read: read_auth.token,
+        write: write_auth.map(|auth| auth.token),
     };
     Ok((endpoint, ticket, write_ticket, secrets))
 }
@@ -146,6 +181,7 @@ pub(super) async fn serve(
     cols_override: Option<u16>,
     rows_override: Option<u16>,
     _narrate: bool,
+    state_file: &mut ShStateFile,
 ) -> Result<()> {
     // Size: the explicit test knobs win; otherwise the controlling tty's size.
     let (cols, rows) = if let (Some(cols), Some(rows)) = (cols_override, rows_override) {
@@ -158,8 +194,12 @@ pub(super) async fn serve(
     let interactive = cols_override.is_none() && std::io::stdin().is_terminal();
     let write_enabled = secrets.write.is_some();
 
+    // Written before the spawn so the file exists by the time the child's
+    // first prompt renders.
+    state_file.update(0);
+    let sh_prefix = state_file.sh_prefix().to_owned();
     let (mut out_rx, input_tx, master) =
-        spawn_pty_session(command, cols, rows, interactive, write_enabled)?;
+        spawn_pty_session(command, cols, rows, interactive, write_enabled, &sh_prefix)?;
 
     let (auth_tx, mut auth_rx) =
         tokio::sync::mpsc::channel::<(Connection, SendStream, RecvStream, bool)>(1);
@@ -199,6 +239,7 @@ pub(super) async fn serve(
                     spawn_viewer_reader(conn.clone(), recv, viewer_input);
                     viewers.push(Viewer { conn, send });
                 }
+                state_file.update(viewers.len());
             }
             Some(()) = maybe_winch(&mut winch) => {
                 let (new_cols, new_rows) = term::size();
@@ -211,6 +252,7 @@ pub(super) async fn serve(
                 cur_cols = new_cols;
                 cur_rows = new_rows;
                 broadcast(&mut viewers, &super::encode_resize(new_cols, new_rows)).await;
+                state_file.update(viewers.len());
             }
             chunk = out_rx.recv() => match chunk {
                 None => {
@@ -236,6 +278,7 @@ pub(super) async fn serve(
                         let _ = stdout.flush().await;
                     }
                     broadcast(&mut viewers, &super::encode_data(&bytes)).await;
+                    state_file.update(viewers.len());
                 }
             }
         }
@@ -264,6 +307,7 @@ fn spawn_pty_session(
     rows: u16,
     interactive: bool,
     write_enabled: bool,
+    sh_prefix: &str,
 ) -> Result<PtySession> {
     let pty = native_pty_system();
     let pair = pty
@@ -276,7 +320,7 @@ fn spawn_pty_session(
         .context("opening a pty failed")?;
     let mut child = pair
         .slave
-        .spawn_command(build_command(command))
+        .spawn_command(build_command(command, sh_prefix))
         .context("spawning the shell failed")?;
     // Close the slave in the parent so the master read returns EOF once the child
     // exits — that EOF is our end-of-session signal.
@@ -443,11 +487,14 @@ async fn broadcast(viewers: &mut Vec<Viewer>, frame: &[u8]) {
 }
 
 /// Accept one incoming connection, take its bi-stream, and verify the bearer
-/// secret (the viewer opens the bi-stream and writes the secret first). Which
-/// secret matched decides the capability: the returned bool is "may write".
+/// token (the viewer opens the bi-stream and writes the token first). Which
+/// token matched decides the capability: the returned bool is "may write". The
+/// comparison is constant-time so a passworded token can't be recovered by
+/// timing. On a passworded session a mismatch is a wrong password; the raw
+/// secret without the password computes no matching token.
 ///
 /// # Errors
-/// A failed handshake or a secret matching neither ticket (closed with code 1).
+/// A failed handshake or a token matching neither ticket (closed with code 1).
 async fn authenticate(
     incoming: Incoming,
     secrets: Secrets,
@@ -459,11 +506,11 @@ async fn authenticate(
         conn.close(1u32.into(), b"bad secret");
         bail!("peer presented a bad secret");
     }
-    let can_write = if got == secrets.read {
+    let can_write = if ct_eq(&got, &secrets.read) {
         false
     } else if secrets
         .write
-        .is_some_and(|write_secret| got == write_secret)
+        .is_some_and(|write_token| ct_eq(&got, &write_token))
     {
         true
     } else {
@@ -476,7 +523,7 @@ async fn authenticate(
 /// Build the command run inside the PTY: `--command` (a test/ops knob) runs via
 /// `sh -c`; otherwise the sharer's `$SHELL` (falling back to `/bin/sh`). Inherits
 /// the current working directory and ensures `TERM` is set.
-fn build_command(command: Option<&str>) -> CommandBuilder {
+fn build_command(command: Option<&str>, sh_prefix: &str) -> CommandBuilder {
     let mut cmd = if let Some(line) = command {
         let mut builder = CommandBuilder::new("/bin/sh");
         builder.arg("-c");
@@ -492,5 +539,7 @@ fn build_command(command: Option<&str>) -> CommandBuilder {
     if std::env::var_os("TERM").is_none() {
         cmd.env("TERM", "xterm-256color");
     }
+    // A nested `ahsw sh` overrides this — the innermost session wins.
+    cmd.env(super::ENV_SH, sh_prefix);
     cmd
 }

@@ -367,17 +367,27 @@ async fn swarm_report(swarm_id: &SwarmId, no_probe: bool) -> Report {
         swarm_identity_section(&swarm),
         declared_methods_section(&swarm),
     ];
-    if !no_probe {
+    // The rendezvous identity and port ladder of a passworded swarm derive
+    // from the stretched key, which doctor doesn't hold — probing the
+    // password-less derivations would analyze a swarm that doesn't exist.
+    if !no_probe && !swarm.requires_password() {
         sections.push(live_reachability_section(&swarm).await);
     }
     Report::new("swarm", sections)
 }
 
 fn swarm_identity_section(swarm: &Swarm) -> Section {
-    let checks = vec![
+    let mut checks = vec![
         Check::new("name", Verdict::Ok, format!("#{}", swarm.name.as_str())),
         Check::new("network", Verdict::Ok, swarm.network_label()),
     ];
+    if swarm.requires_password() {
+        checks.push(Check::new(
+            "password",
+            Verdict::Ok,
+            "protected — joining and the rendezvous derivations need --password",
+        ));
+    }
     Section {
         title: "Swarm".to_owned(),
         checks,
@@ -430,17 +440,27 @@ fn declared_methods_section(swarm: &Swarm) -> Section {
     ));
 
     if swarm.is_loopback() {
-        let ports = swarm
-            .rendezvous_ports()
-            .iter()
-            .map(ToString::to_string)
-            .collect::<Vec<_>>()
-            .join(", ");
-        checks.push(Check::new(
-            "loopback ports",
-            Verdict::Ok,
-            format!("127.0.0.1 ladder: {ports}"),
-        ));
+        // The ladder of a passworded swarm derives from the stretched key,
+        // which doctor doesn't hold.
+        if swarm.requires_password() {
+            checks.push(Check::new(
+                "loopback ports",
+                Verdict::Ok,
+                "password-derived — need --password to compute",
+            ));
+        } else {
+            let ports = swarm
+                .rendezvous_ports()
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(", ");
+            checks.push(Check::new(
+                "loopback ports",
+                Verdict::Ok,
+                format!("127.0.0.1 ladder: {ports}"),
+            ));
+        }
     }
 
     Section {

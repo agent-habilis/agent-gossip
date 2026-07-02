@@ -29,6 +29,19 @@ pub(crate) struct JoinOpts {
     #[arg(long, hide = true)]
     pub name: Option<String>,
 
+    /// Password for a password-protected swarm id — required exactly when
+    /// the id carries a password verifier (checked locally before any
+    /// network; a wrong password fails immediately). Bare `--password`
+    /// prompts hidden on the terminal (as does omitting the flag entirely
+    /// for a protected id); `--password=<pw>` passes it inline (visible in
+    /// `ps` and shell history — prefer the prompt when a human types it).
+    #[arg(long, num_args(0..=1), require_equals = true)]
+    #[expect(
+        clippy::option_option,
+        reason = "clap optional-value flag: absent/bare/valued are three distinct password states"
+    )]
+    pub password: Option<Option<String>>,
+
     #[command(flatten)]
     pub shared: SharedServerOpts,
 }

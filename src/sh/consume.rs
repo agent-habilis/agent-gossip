@@ -9,6 +9,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::Notify;
 
 use crate::lookup::{add_peer_addr, build_participant_endpoint};
+use crate::protocol::crypto::{Password, TicketAuth};
 
 use super::ticket::ShTicket;
 use super::{Frame, SH_ALPN, encode_input, read_frame, term};
@@ -29,11 +30,18 @@ const BACKDROP_MIN_INTERVAL: Duration = Duration::from_millis(80);
 /// `Enter ~ .` on a write ticket).
 ///
 /// # Errors
-/// A malformed ticket, an unreachable producer, or a fatal stream I/O error.
-pub(crate) async fn connect(ticket: &str) -> Result<()> {
+/// A malformed ticket, a password mismatch with the ticket (missing on a
+/// passworded ticket, or given for a passwordless one), an unreachable
+/// producer, or a fatal stream I/O error.
+pub(crate) async fn connect(ticket: &str, password: Option<Password>) -> Result<()> {
     let ticket = ShTicket::decode(ticket)?;
+    let auth = match (&password, ticket.password) {
+        (None, true) => bail!("this ticket is password-protected — pass --password"),
+        (Some(_), false) => bail!("this ticket has no password — drop --password"),
+        _ => TicketAuth::derive(&ticket.secret, password.as_ref()),
+    };
     let endpoint = build_participant_endpoint(&ticket.lookups).await?;
-    let result = view(&endpoint, &ticket).await;
+    let result = view(&endpoint, &ticket, &auth).await;
     match result {
         // The session ended and the connection is closed; exit now rather than
         // await the slow `endpoint.close()` teardown.
@@ -50,10 +58,11 @@ pub(crate) async fn connect(ticket: &str) -> Result<()> {
 }
 
 /// Dial the producer (retrying while its address propagates), open the bi-stream,
-/// and present the bearer secret.
+/// and present the bearer token.
 async fn dial_and_handshake(
     endpoint: &Endpoint,
     ticket: &ShTicket,
+    auth: &TicketAuth,
 ) -> Result<(Connection, SendStream, RecvStream)> {
     add_peer_addr(endpoint, ticket.addr.clone())?;
     let start = Instant::now();
@@ -72,14 +81,14 @@ async fn dial_and_handshake(
         }
     };
     let (mut send, recv) = conn.open_bi().await.context("opening the stream failed")?;
-    send.write_all(&ticket.secret)
+    send.write_all(&auth.token)
         .await
-        .context("sending the ticket secret failed")?;
+        .context("sending the ticket token failed")?;
     Ok((conn, send, recv))
 }
 
-async fn view(endpoint: &Endpoint, ticket: &ShTicket) -> Result<()> {
-    let (conn, send, recv) = dial_and_handshake(endpoint, ticket).await?;
+async fn view(endpoint: &Endpoint, ticket: &ShTicket, auth: &TicketAuth) -> Result<()> {
+    let (conn, send, recv) = dial_and_handshake(endpoint, ticket, auth).await?;
     let tty = std::io::stdout().is_terminal();
     // Keyboard forwarding follows *stdin*: even with stdout redirected, a write
     // viewer typing on a tty needs raw mode (chords intact, no local SIGINT) and
@@ -347,7 +356,10 @@ async fn paint_backdrop(
 /// `view_cols × view_rows` screen — the right gap for each shared row and the
 /// full-width bottom gap below. Empty when the source is at least as large as the
 /// viewer in both dimensions. Wrapped in DECSC/DECRC (`\x1b7`/`\x1b8`) so the
-/// live cursor and pen are preserved.
+/// live cursor and pen are preserved. The pen is reset before painting: DECSC
+/// only snapshots the pen, so without the reset the source's leftover SGR
+/// state (fg/bg colors, reverse video) would leak into the fill and the dots
+/// would change color between repaints.
 fn backdrop_sequence(src_cols: u16, src_rows: u16, view_cols: u16, view_rows: u16) -> String {
     use std::fmt::Write;
 
@@ -356,7 +368,7 @@ fn backdrop_sequence(src_cols: u16, src_rows: u16, view_cols: u16, view_rows: u1
     if right == 0 && bottom == 0 {
         return String::new();
     }
-    let mut out = String::from("\x1b7\x1b[2m"); // save cursor+attrs, faint
+    let mut out = String::from("\x1b7\x1b[0m\x1b[2m"); // save cursor+attrs, reset pen, faint
     if right > 0 {
         let fill = FILL_CHAR.to_string().repeat(usize::from(right));
         let start_col = u32::from(src_cols) + 1;
@@ -450,8 +462,11 @@ mod tests {
             seq.contains("\x1b7") && seq.ends_with("\x1b8"),
             "saves+restores cursor"
         );
-        assert!(seq.contains("\x1b[2m"), "faint");
-        assert!(seq.contains("\x1b[0m"), "reset");
+        assert!(
+            seq.starts_with("\x1b7\x1b[0m\x1b[2m"),
+            "resets pen before faint"
+        );
+        assert!(seq.ends_with("\x1b[0m\x1b8"), "resets SGR before restore");
         // Right gap: (100-80) cols over 24 rows; bottom gap: (30-24) rows × 100 cols.
         let dots = seq.matches(FILL_CHAR).count();
         assert_eq!(dots, 20 * 24 + 6 * 100);

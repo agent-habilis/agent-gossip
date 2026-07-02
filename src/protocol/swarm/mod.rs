@@ -69,12 +69,22 @@ const NAME_MAX_BYTES: usize = super::ident::MAX_CHARS * 4;
 pub(crate) struct Swarm {
     pub name: SwarmName,
     seed: [u8; SEED_LEN],
+    /// The Argon2id-stretched password key, once a password is applied.
+    /// Every derivation (topic, rendezvous, port ladder) switches onto it,
+    /// so holding the id without the password computes nothing reachable.
+    /// Never serialized — `encode_bytes` writes `seed`.
+    stretched_key: Option<[u8; SEED_LEN]>,
     pub config: SwarmConfig,
 }
 
 impl Swarm {
     pub(crate) fn new(seed: [u8; SEED_LEN], name: SwarmName, config: SwarmConfig) -> Self {
-        Swarm { name, seed, config }
+        Swarm {
+            name,
+            seed,
+            stretched_key: None,
+            config,
+        }
     }
 
     /// Build a swarm deterministically from an arbitrary string (the `forum`
@@ -86,11 +96,82 @@ impl Swarm {
     pub(crate) fn from_topic(topic: &str, config: SwarmConfig) -> Self {
         let seed = crypto::topic_seed(topic);
         let name = SwarmName::from_topic_string(topic);
-        Swarm { name, seed, config }
+        Swarm {
+            name,
+            seed,
+            stretched_key: None,
+            config,
+        }
     }
 
+    /// The wire seed (what the encoded id carries). Test-only: production
+    /// derivations go through [`Swarm::effective_seed`] so the password mix
+    /// can never be bypassed.
+    #[cfg(test)]
     pub(crate) fn seed(&self) -> &[u8; SEED_LEN] {
         &self.seed
+    }
+
+    /// The seed every derivation uses: the stretched password key when one
+    /// is applied, else the wire seed. Asserts a passworded swarm never
+    /// derives before `apply_password`/`set_password` — deriving from the
+    /// raw seed would silently land in an unreachable topic, which is
+    /// strictly worse than failing loudly.
+    fn effective_seed(&self) -> &[u8; SEED_LEN] {
+        if let Some(key) = &self.stretched_key {
+            key
+        } else {
+            assert!(
+                self.config.password.is_none(),
+                "passworded swarm derived before the password was applied"
+            );
+            &self.seed
+        }
+    }
+
+    /// Whether the id carries a password verifier (joiners must present
+    /// the password).
+    pub(crate) fn requires_password(&self) -> bool {
+        self.config.password.is_some()
+    }
+
+    /// Join-side: stretch `password` (salt = the wire seed), check it
+    /// against the verifier the id carries, and switch every derivation
+    /// onto the stretched key. ~100ms of Argon2id by design.
+    ///
+    /// # Errors
+    /// The id carries no verifier (passwordless swarm), or the password is
+    /// wrong.
+    pub(crate) fn apply_password(&mut self, password: &crypto::Password) -> Result<()> {
+        let Some(expected) = &self.config.password else {
+            bail!("this swarm has no password — drop --password");
+        };
+        let key = crypto::stretch_swarm_password(password, &self.seed);
+        if crypto::password_verifier(&key) != *expected {
+            bail!("wrong password");
+        }
+        self.stretched_key = Some(key);
+        Ok(())
+    }
+
+    /// Create-side: stretch `password`, bake its verifier into the config
+    /// (the encoded id must carry it), and switch every derivation onto
+    /// the stretched key. ~100ms of Argon2id by design.
+    pub(crate) fn set_password(&mut self, password: &crypto::Password) {
+        let key = crypto::stretch_swarm_password(password, &self.seed);
+        self.config.password = Some(crypto::password_verifier(&key));
+        self.stretched_key = Some(key);
+    }
+
+    /// The gossip `TopicId` — the one derivation entry point, so no caller
+    /// can forget the password mix.
+    pub(crate) fn topic_id(&self) -> iroh_gossip::proto::TopicId {
+        crypto::derive_topic_id(self.effective_seed(), &self.name, &self.config_bytes())
+    }
+
+    /// The shared rendezvous endpoint secret every co-host binds.
+    pub(crate) fn rendezvous_secret(&self) -> iroh::SecretKey {
+        crypto::rendezvous_secret(self.effective_seed())
     }
 
     pub(crate) fn lookups(&self) -> &LookupOpts {
@@ -113,18 +194,18 @@ impl Swarm {
         self.config.to_bytes()
     }
 
-    /// Well-known rendezvous `EndpointId`, derived from `seed`. Every
-    /// joiner computes this locally and bootstraps gossip from it; it
+    /// Well-known rendezvous `EndpointId`, derived from the effective seed.
+    /// Every joiner computes this locally and bootstraps gossip from it; it
     /// is co-hosted by members rather than pinned to the creator.
     pub(crate) fn rendezvous_id(&self) -> EndpointId {
-        crypto::rendezvous_id(&self.seed)
+        crypto::rendezvous_id(self.effective_seed())
     }
 
     /// Deterministic loopback port *ladder* for loopback-only swarms (no
     /// pkarr/DNS to resolve `rendezvous_id`). Preference order; a beacon
     /// binds the first free rung, joiners try all rungs.
     pub(crate) fn rendezvous_ports(&self) -> [u16; crypto::RENDEZVOUS_LADDER] {
-        crypto::rendezvous_ports(&self.seed)
+        crypto::rendezvous_ports(self.effective_seed())
     }
 
     fn encode_bytes(&self) -> Vec<u8> {
@@ -181,7 +262,12 @@ impl Swarm {
         }
         let config = SwarmConfig::from_bytes(config_raw)?;
 
-        Ok(Swarm { name, seed, config })
+        Ok(Swarm {
+            name,
+            seed,
+            stretched_key: None,
+            config,
+        })
     }
 }
 
@@ -256,6 +342,7 @@ mod swarm_tests {
                     "https://b.example".parse().unwrap(),
                 ]),
             },
+            password: None,
         }
     }
 
@@ -312,6 +399,87 @@ mod swarm_tests {
         let one = Swarm::new(dummy_seed(), dummy_name(), SwarmConfig::loopback()).to_string();
         let two = Swarm::new(dummy_seed(), dummy_name(), SwarmConfig::public_preset()).to_string();
         assert_ne!(one, two, "config is part of the id");
+    }
+
+    #[test]
+    fn password_verifier_yields_different_id_and_round_trips() {
+        let passworded = SwarmConfig {
+            lookups: LookupOpts::public_preset(),
+            password: Some([0x5Au8; 16]),
+        };
+        let one = Swarm::new(dummy_seed(), dummy_name(), SwarmConfig::public_preset());
+        let two = Swarm::new(dummy_seed(), dummy_name(), passworded.clone());
+        assert_ne!(one.to_string(), two.to_string());
+        let decoded: Swarm = two.to_string().parse().unwrap();
+        assert_eq!(decoded.config, passworded);
+    }
+
+    #[test]
+    fn set_password_bakes_verifier_and_apply_verifies_it() {
+        use crate::protocol::crypto::Password;
+        let password = Password::new("hunter2".to_owned());
+
+        let mut creator = Swarm::new(dummy_seed(), dummy_name(), SwarmConfig::public_preset());
+        let passwordless_topic = creator.topic_id();
+        let passwordless_rendezvous = creator.rendezvous_id();
+        creator.set_password(&password);
+        assert!(creator.requires_password());
+
+        // Every derivation switched onto the stretched key.
+        assert_ne!(creator.topic_id(), passwordless_topic);
+        assert_ne!(creator.rendezvous_id(), passwordless_rendezvous);
+
+        // A joiner decoding the id verifies and lands on identical derivations.
+        let mut joiner: Swarm = creator.to_string().parse().unwrap();
+        assert!(joiner.requires_password());
+        joiner.apply_password(&password).unwrap();
+        assert_eq!(joiner.topic_id(), creator.topic_id());
+        assert_eq!(joiner.rendezvous_id(), creator.rendezvous_id());
+        assert_eq!(joiner.rendezvous_ports(), creator.rendezvous_ports());
+
+        // Wrong password fails locally, against the verifier.
+        let mut wrong: Swarm = creator.to_string().parse().unwrap();
+        let error = wrong
+            .apply_password(&Password::new("hunter3".to_owned()))
+            .unwrap_err();
+        assert!(error.to_string().contains("wrong password"), "got: {error}");
+    }
+
+    #[test]
+    fn apply_password_on_passwordless_id_is_rejected() {
+        use crate::protocol::crypto::Password;
+        let mut swarm = Swarm::new(dummy_seed(), dummy_name(), SwarmConfig::public_preset());
+        let error = swarm
+            .apply_password(&Password::new("hunter2".to_owned()))
+            .unwrap_err();
+        assert!(error.to_string().contains("no password"), "got: {error}");
+    }
+
+    #[test]
+    #[should_panic(expected = "passworded swarm derived before the password was applied")]
+    fn passworded_swarm_refuses_to_derive_without_the_password() {
+        let mut swarm = Swarm::new(dummy_seed(), dummy_name(), SwarmConfig::public_preset());
+        swarm.config.password = Some([1u8; 16]);
+        let _ = swarm.topic_id();
+    }
+
+    #[test]
+    fn golden_passwordless_id_and_topic_are_pinned() {
+        // Byte-for-byte back-compat pin: a passwordless id and its topic
+        // must never change encoding (live swarms depend on it). If this
+        // fails, the wire format regressed — do not update the constants
+        // without a deliberate, versioned format change.
+        let swarm = Swarm::new(dummy_seed(), dummy_name(), SwarmConfig::public_preset());
+        assert_eq!(
+            swarm.to_string(),
+            "🐝2UXAThUkdBAbiJNXvCt4YeMGQ9myFg7gJJZSr3pG3MAGzUwWmmV7D2NgrWBn1"
+        );
+        let topic =
+            super::crypto::derive_topic_id(swarm.seed(), &swarm.name, &swarm.config_bytes());
+        assert_eq!(
+            format!("{topic:?}"),
+            "TopicId(3d20258943e8604421caaabcc59fca2a0d86ef87f5c6976cf33a3a32005a14b3)"
+        );
     }
 
     #[test]
@@ -410,8 +578,10 @@ mod swarm_tests {
 
     mod prop {
         use proptest::{
-            array::uniform32, prelude::any, prop_assert, prop_assert_eq, prop_assert_ne,
-            prop_assume, proptest, strategy::Strategy,
+            array::{uniform16, uniform32},
+            prelude::any,
+            prop_assert, prop_assert_eq, prop_assert_ne, prop_assume, proptest,
+            strategy::Strategy,
         };
 
         use super::{SEED_LEN, Swarm, SwarmConfig, SwarmName};
@@ -425,13 +595,17 @@ mod swarm_tests {
         }
 
         fn arb_config() -> impl Strategy<Value = SwarmConfig> {
-            any::<bool>().prop_map(|public| {
-                if public {
-                    SwarmConfig::public_preset()
-                } else {
-                    SwarmConfig::loopback()
-                }
-            })
+            (any::<bool>(), proptest::option::of(uniform16(0u8..))).prop_map(
+                |(public, verifier)| {
+                    let mut config = if public {
+                        SwarmConfig::public_preset()
+                    } else {
+                        SwarmConfig::loopback()
+                    };
+                    config.password = verifier;
+                    config
+                },
+            )
         }
 
         proptest! {

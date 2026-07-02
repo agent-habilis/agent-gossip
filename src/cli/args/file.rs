@@ -50,6 +50,17 @@ pub(crate) enum FileAction {
         /// Cap throughput, e.g. `100k`, `2m` (bytes/sec; `k`/`m`/`g` = 1024-based).
         #[arg(long, value_parser = parse_rate)]
         throttle: Option<u64>,
+        /// Protect the transfer with a password: the ticket alone no longer
+        /// redeems — receivers must present the password (so a passworded
+        /// ticket is safe to --advertise). Bare `--password` prompts hidden
+        /// on the terminal; `--password=<pw>` passes it inline (visible in
+        /// `ps` — prefer the prompt when a human types it).
+        #[arg(long, num_args(0..=1), require_equals = true)]
+        #[expect(
+            clippy::option_option,
+            reason = "clap optional-value flag: absent/bare/valued are three distinct password states"
+        )]
+        password: Option<Option<String>>,
         /// Output format: human (default) — a cargo-style status + hint — or json,
         /// a single direct `ahsw file get 🐝…` line for machines.
         #[arg(long, default_value = "human")]
@@ -71,6 +82,15 @@ pub(crate) enum FileAction {
         /// Cap throughput, e.g. `100k`, `2m` (bytes/sec; `k`/`m`/`g` = 1024-based).
         #[arg(long, value_parser = parse_rate)]
         throttle: Option<u64>,
+        /// Password for a password-protected ticket — required exactly when
+        /// the ticket carries the password flag (as a prompt on a terminal,
+        /// or inline via `--password=<pw>`).
+        #[arg(long, num_args(0..=1), require_equals = true)]
+        #[expect(
+            clippy::option_option,
+            reason = "clap optional-value flag: absent/bare/valued are three distinct password states"
+        )]
+        password: Option<Option<String>>,
         /// Output format: human (default) or json (suppresses the summary line).
         #[arg(long, default_value = "human")]
         output: OutputFormat,
@@ -100,6 +120,14 @@ pub(crate) enum FileAction {
         /// Cap throughput of the transfer made on pick.
         #[arg(long, value_parser = parse_rate)]
         throttle: Option<u64>,
+        /// Password for a password-protected pick (🔒 in the picker) —
+        /// prompts on pick when omitted.
+        #[arg(long, num_args(0..=1), require_equals = true)]
+        #[expect(
+            clippy::option_option,
+            reason = "clap optional-value flag: absent/bare/valued are three distinct password states"
+        )]
+        password: Option<Option<String>>,
         /// Output format: human (default) — the live picker — or json, one
         /// `ticket_found`/`ticket_lost` line per directory change.
         #[arg(long, default_value = "human")]

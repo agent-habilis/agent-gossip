@@ -2,8 +2,9 @@
 //! consumer needs to dial the producer: the bearer secret, a reserved flags
 //! byte, the swarm's discovery config, and the producer's address. Payload
 //! layout: `secret(32) ‖ flags(1) ‖ lookups ‖ address-json` (lookups is
-//! self-delimiting, so the address occupies the remainder). `flags` is reserved
-//! for forward-compat and always 0 today.
+//! self-delimiting, so the address occupies the remainder). `flags` bit 0
+//! marks a password-protected ticket (the consumer must present the Argon2id
+//! stretch of the password instead of the raw secret); the rest are reserved.
 
 use anyhow::{Context, Result, bail};
 use iroh::EndpointAddr;
@@ -19,6 +20,10 @@ pub(crate) struct FileTicket {
     pub addr: EndpointAddr,
     pub secret: [u8; SECRET_LEN],
     pub lookups: LookupOpts,
+    /// Password-protected: the consumer must present the Argon2id stretch of
+    /// the password (salted by `secret`) instead of the raw secret, so the
+    /// ticket — and any directory ad carrying it — no longer redeems alone.
+    pub password: bool,
 }
 
 impl FileTicket {
@@ -26,7 +31,7 @@ impl FileTicket {
     pub(crate) fn encode(&self) -> String {
         let mut payload = Vec::with_capacity(SECRET_LEN + 1 + 64);
         payload.extend_from_slice(&self.secret);
-        payload.push(0); // reserved flags byte
+        payload.push(u8::from(self.password));
         self.lookups.encode_into(&mut payload);
         let addr_json = serde_json::to_vec(&endpoint_addr_to_json(&self.addr))
             .expect("EndpointAddr JSON always serializes");
@@ -46,11 +51,9 @@ impl FileTicket {
         let secret_slice = payload.get(..SECRET_LEN).context("ticket too short")?;
         let mut secret = [0u8; SECRET_LEN];
         secret.copy_from_slice(secret_slice);
-        // Skip the reserved flags byte.
+        let flags = *payload.get(SECRET_LEN).context("ticket missing flags")?;
+        let password = flags & 1 != 0;
         let mut pos = SECRET_LEN + 1;
-        if payload.len() < pos {
-            bail!("ticket missing flags");
-        }
         let lookups = LookupOpts::decode_from(&payload, &mut pos)?;
         let addr_json = payload.get(pos..).context("ticket missing address")?;
         let value: serde_json::Value =
@@ -60,6 +63,7 @@ impl FileTicket {
             addr,
             secret,
             lookups,
+            password,
         })
     }
 }
@@ -78,6 +82,7 @@ mod tests {
             addr: addr.clone(),
             secret: [9u8; SECRET_LEN],
             lookups: LookupOpts::public_preset(),
+            password: false,
         };
         let encoded = ticket.encode();
         assert!(encoded.starts_with("🐝"));
@@ -85,6 +90,21 @@ mod tests {
         assert_eq!(decoded.addr.id, addr.id);
         assert_eq!(decoded.secret, [9u8; SECRET_LEN]);
         assert_eq!(decoded.lookups, LookupOpts::public_preset());
+        assert!(!decoded.password);
+    }
+
+    #[test]
+    fn password_flag_round_trips() {
+        let id = SecretKey::from_bytes(&[7u8; 32]).public();
+        let addr = EndpointAddr::new(id).with_ip_addr("127.0.0.1:4242".parse().unwrap());
+        let ticket = FileTicket {
+            addr,
+            secret: [9u8; SECRET_LEN],
+            lookups: LookupOpts::loopback(),
+            password: true,
+        };
+        let decoded = FileTicket::decode(&ticket.encode()).expect("decode");
+        assert!(decoded.password);
     }
 
     #[test]

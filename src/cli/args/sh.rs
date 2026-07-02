@@ -36,6 +36,18 @@ pub(crate) enum ShAction {
         /// into your shell (all writers' keys interleave) — share with care.
         #[arg(long)]
         write: bool,
+        /// Protect the shell with a password: the ticket alone no longer
+        /// admits — viewers must present the password (so a passworded ticket
+        /// is safe to share). One password guards both the read and write
+        /// tickets. Bare `--password` prompts hidden on the terminal;
+        /// `--password=<pw>` passes it inline (visible in `ps` — prefer the
+        /// prompt when a human types it).
+        #[arg(long, num_args(0..=1), require_equals = true)]
+        #[expect(
+            clippy::option_option,
+            reason = "clap optional-value flag: absent/bare/valued are three distinct password states"
+        )]
+        password: Option<Option<String>>,
         /// Run this command via `sh -c` instead of `$SHELL`. Hidden test/ops knob.
         #[arg(long, hide = true)]
         command: Option<String>,
@@ -58,6 +70,15 @@ pub(crate) enum ShAction {
     Connect {
         /// The `🐝…` ticket printed by `ahsw sh listen`.
         ticket: String,
+        /// Password for a password-protected ticket — required exactly when
+        /// the ticket carries the password flag (as a prompt on a terminal,
+        /// or inline via `--password=<pw>`).
+        #[arg(long, num_args(0..=1), require_equals = true)]
+        #[expect(
+            clippy::option_option,
+            reason = "clap optional-value flag: absent/bare/valued are three distinct password states"
+        )]
+        password: Option<Option<String>>,
     },
 }
 

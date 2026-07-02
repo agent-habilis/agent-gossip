@@ -229,7 +229,16 @@ anyone who has the string can join. The hash binds the name to the
 seed so the id cannot be tampered into a *different* swarm; it is not
 access control and not message encryption. Treat the id as a secret
 if the swarm is meant to be private to a group. The practical risk is
-id leakage, not breaking SHA-256. (Confidentiality, spoofable
+id leakage, not breaking SHA-256.
+
+The exception is a **password-protected** swarm (`create --password`): the
+Argon2id-stretched password replaces the seed in every derivation above —
+topic, rendezvous keypair, port ladder — so the id alone computes nothing
+reachable, and the id carries a one-way verifier so `join` rejects a wrong
+password locally. That makes the id safe to hold (and even to advertise
+into a directory) without granting membership; the password becomes the
+credential. Grinding trade-offs and the full model:
+[security.md](./security.md). (Confidentiality, spoofable
 nicknames, retention: [security.md](./security.md).)
 
 ---

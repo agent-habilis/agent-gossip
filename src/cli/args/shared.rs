@@ -158,6 +158,13 @@ impl DirectoryTuningArgs {
 }
 
 impl SharedServerOpts {
+    /// Whether a hidden `--password` prompt must NOT block this session:
+    /// non-interactive or JSON-output runs are agent-driven, with no human
+    /// at a TTY to answer.
+    pub(crate) fn no_prompt(&self) -> bool {
+        self.no_interactive || matches!(self.output, OutputFormat::Json)
+    }
+
     /// The process tuning carried by these flags, for [`crate::util::tuning::init`].
     pub(crate) fn tuning(&self) -> crate::util::tuning::Tuning {
         crate::util::tuning::Tuning {

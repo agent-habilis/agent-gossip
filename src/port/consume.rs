@@ -13,6 +13,7 @@ use tokio::sync::Mutex;
 use tokio::task::JoinSet;
 
 use crate::lookup::{add_peer_addr, build_participant_endpoint};
+use crate::protocol::crypto::{Password, TicketAuth};
 
 use super::http_log::{human_bytes, human_duration};
 use super::ticket::PortTicket;
@@ -89,10 +90,21 @@ impl SharedConnection {
 /// connection over the shared connection to the producer.
 ///
 /// # Errors
-/// A malformed ticket, a requested port the ticket never advertised, or failure
-/// to bind a local listener / accept.
-pub(crate) async fn connect(ticket: &str, mappings: &[PortMapping], json: bool) -> Result<()> {
+/// A malformed ticket, a password mismatch with the ticket (missing on a
+/// passworded ticket, or given for a passwordless one), a requested port the
+/// ticket never advertised, or failure to bind a local listener / accept.
+pub(crate) async fn connect(
+    ticket: &str,
+    mappings: &[PortMapping],
+    json: bool,
+    password: Option<Password>,
+) -> Result<()> {
     let ticket = PortTicket::decode(ticket)?;
+    let auth = match (&password, ticket.password) {
+        (None, true) => bail!("this ticket is password-protected — pass --password"),
+        (Some(_), false) => bail!("this ticket has no password — drop --password"),
+        _ => TicketAuth::derive(&ticket.secret, password.as_ref()),
+    };
     for mapping in mappings {
         if !ticket.target_ports.contains(&mapping.remote) {
             bail!(
@@ -120,7 +132,6 @@ pub(crate) async fn connect(ticket: &str, mappings: &[PortMapping], json: bool) 
         listeners.push((mapping.remote, listener));
     }
     let shared = SharedConnection::new(endpoint.clone(), ticket.addr.clone());
-    let secret = ticket.secret;
     // One accept loop per port; each ends only on its listener's accept error.
     // The endpoint is closed before returning so iroh tears down gracefully
     // instead of logging a dropped-endpoint abort. Each loop forwards to the
@@ -128,7 +139,8 @@ pub(crate) async fn connect(ticket: &str, mappings: &[PortMapping], json: bool) 
     let mut tasks: JoinSet<Result<()>> = JoinSet::new();
     for (remote, listener) in listeners {
         let shared = shared.clone();
-        tasks.spawn(async move { accept_loop(shared, remote, secret, listener, json).await });
+        let auth = auth.clone();
+        tasks.spawn(async move { accept_loop(shared, remote, auth, listener, json).await });
     }
     let result: Result<()> = async {
         while let Some(joined) = tasks.join_next().await {
@@ -146,7 +158,7 @@ pub(crate) async fn connect(ticket: &str, mappings: &[PortMapping], json: bool) 
 async fn accept_loop(
     shared: SharedConnection,
     port: u16,
-    secret: [u8; SECRET_LEN],
+    auth: TicketAuth,
     listener: TcpListener,
     json: bool,
 ) -> Result<()> {
@@ -156,8 +168,9 @@ async fn accept_loop(
             .await
             .with_context(|| format!("accepting a local TCP connection on port {port} failed"))?;
         let shared = shared.clone();
+        let auth = auth.clone();
         tokio::spawn(async move {
-            if let Err(error) = forward_one(&shared, port, &secret, tcp, peer_addr, json).await {
+            if let Err(error) = forward_one(&shared, port, &auth, tcp, peer_addr, json).await {
                 tracing::debug!(%error, port, "tcp forward connection ended");
             }
         });
@@ -169,7 +182,7 @@ async fn accept_loop(
 pub(super) async fn forward_one(
     shared: &SharedConnection,
     port: u16,
-    secret: &[u8; SECRET_LEN],
+    auth: &TicketAuth,
     tcp: TcpStream,
     peer_addr: SocketAddr,
     json: bool,
@@ -177,7 +190,7 @@ pub(super) async fn forward_one(
     let conn = shared.get().await?;
     let (mut send, recv) = conn.open_bi().await?;
     let mut header = [0u8; STREAM_HEADER_LEN];
-    header[..SECRET_LEN].copy_from_slice(secret);
+    header[..SECRET_LEN].copy_from_slice(&auth.token);
     header[SECRET_LEN..].copy_from_slice(&port.to_be_bytes());
     send.write_all(&header)
         .await

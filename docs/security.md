@@ -19,7 +19,8 @@ This is the threat-model companion to
   There are no DMs.
 - **The `🐝…` id is a shared credential.** Anyone who has it can join
   and then receives all traffic. There is no allow-list and no
-  revocation.
+  revocation. An optional **password** (`create --password`) adds a
+  knowledge factor: the id alone no longer admits.
 - **Messages are signed; identity is the key.** Every message is
   signed by a per-author Ed25519 key and hash-linked into a tamper-evident
   history. The **public key (its fingerprint) is the identity**; the nickname
@@ -268,6 +269,62 @@ There is:
   re-creating the swarm under a new id,
 - no membership audit.
 
+### Passwords: a knowledge factor on the bearer token
+
+`create --password` (and `pipe listen` / `port listen` / `file send`
+`--password`) adds a second factor: the bearer token alone no longer admits.
+
+**Mechanism, swarm.** The password is stretched with **Argon2id**
+(m=19 MiB, t=2, p=1 — a wire contract: every member derives with these exact
+params; salt = `derive_secret(seed, "password")`, unique per swarm) into a
+32-byte key `K`. Every network identity — the gossip topic, the rendezvous
+keypair, the loopback port ladder — derives from `K` instead of the raw
+seed, so without the password nothing reachable can even be computed; that
+derivation switch is the actual gate. The id additionally carries a one-way
+**verifier** (`derive_secret(K, "password-verify")[..16]`) so `join` checks
+a candidate locally and a wrong password fails fast, before any network.
+
+**Mechanism, tickets.** A transfer consumer presents
+`Argon2id(password, salt = derive_secret(secret, "ticket-password"))` on the
+wire instead of the raw ticket secret (same 32 bytes); the producer
+precomputes the expectation once at bind and compares in constant time,
+closing a mismatch with a distinct "wrong password" code. Tickets carry
+**no** verifier: their ads are published into open directories, and a
+verifier there would hand every browser an offline grinding target — the
+producer is necessarily online to redeem against, so verification is online
+and naturally rate-limited.
+
+**What the password costs and does not buy:**
+
+- **The swarm verifier is an offline grinding target.** Anyone holding a
+  passworded id can test guesses locally at Argon2id cost (~100 ms/guess,
+  memory-hard against GPUs). A weak password ≈ no password; the id + a
+  strong password is the intended pairing. This is the deliberate price of
+  local verification.
+- **Admission only, not confidentiality.** Messages are still not
+  application-layer encrypted; whoever has id + password sees everything
+  from join onward, and QUIC protects transit only.
+- **No rotation or revocation.** The password is baked into every
+  derivation, so changing it mints a new swarm — the same lifecycle as a
+  leaked id.
+- **Discovered tickets are a phishing surface.** Anyone can advertise a
+  forged "passworded" ticket; a consumer who picks it and types a password
+  sends the attacker an offline-crackable, stretched sample of that
+  password. Passwords are per-artifact secrets — never reuse a valuable
+  one on a discovered ticket.
+- **No DoS amplification.** The producer stretches once at bind, never per
+  connection; a wrong-password flood costs it a 32-byte read + constant-time
+  compare each.
+- **Memory hygiene.** Passwords and stretched keys are held un-zeroized in
+  process memory for the session's lifetime (accepted); they are wrapped in
+  a redacting type so `{:?}` logging can never print one, and developer log
+  files never carry them.
+
+Advertising changes character with a password: an advertised passwordless
+swarm or ticket is open to anyone browsing the directory, while a passworded
+one is safe to list — the ad carries the bearer token, but redeeming it
+needs the password.
+
 A **forum** swarm (`ahsw forum <string>`) is world-joinable by design:
 its seed is derived from the shared string, so anyone who knows or guesses
 the string joins (see `discovery.md` §7). Treat the string like a room
@@ -296,4 +353,7 @@ different swarm. That is forgery resistance, **not** access control and
   join is not retroactively verified. See
   [`history-integrity.md`](./history-integrity.md).
 - Credential rotation means re-creating the swarm under a new id;
-  individual members cannot be revoked.
+  individual members cannot be revoked. The same holds for a password:
+  changing it mints a new swarm.
+- Prefer the hidden `--password` prompt over `--password=<pw>` when a human
+  types it — an inline value is visible in `ps` output and shell history.

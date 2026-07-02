@@ -11,7 +11,7 @@ use crate::lookup::{
     add_peer_addr, build_participant_endpoint, build_swarm, relay_ladder, select_bootstrap_rung,
 };
 use crate::output;
-use crate::protocol::crypto::{derive_topic_id, rendezvous_secret};
+use crate::protocol::crypto::Password;
 use crate::protocol::swarm::{LookupOpts, Swarm, SwarmConfig, SwarmName};
 use crate::protocol::{Nickname, SwarmId};
 use crate::util::tuning::RELAY_RUNG_PROBE_SECS;
@@ -33,6 +33,10 @@ pub(crate) enum SetupKind {
         /// `advertising on #<directory>` startup line; the re-broadcast
         /// task itself is spawned by the caller post-setup.
         advertise: Option<SwarmName>,
+        /// Password to protect the swarm with. Stretched *here* rather than
+        /// by the frontend: the verifier's salt is the seed, which is
+        /// minted below.
+        password: Option<Password>,
     },
     Join {
         swarm: Swarm,
@@ -70,7 +74,7 @@ fn rendezvous_params(
     let bootstrap_relay = relay_ladder(&lookups.relay).first().cloned();
     RendezvousParams {
         topic_id,
-        secret: rendezvous_secret(swarm.seed()),
+        secret: swarm.rendezvous_secret(),
         bind_ports,
         id: swarm.rendezvous_id(),
         lookups: lookups.clone(),
@@ -191,6 +195,7 @@ pub(crate) async fn setup_swarm(
             name,
             config,
             advertise,
+            password,
         } => {
             let mut seed = [0u8; 32];
             rand::rng().fill_bytes(&mut seed);
@@ -198,11 +203,28 @@ pub(crate) async fn setup_swarm(
             let endpoint = build_participant_endpoint(&lookups).await?;
 
             let swarm = Swarm::new(seed, name.clone(), config);
+            // Bake the verifier into the config BEFORE the id is rendered
+            // (the id must carry it) and before any derivation. The
+            // ~100ms Argon2id stretch runs off the async worker.
+            let swarm = match password {
+                Some(password) => {
+                    tokio::task::spawn_blocking(move || {
+                        let mut swarm = swarm;
+                        swarm.set_password(&password);
+                        swarm
+                    })
+                    .await?
+                }
+                None => swarm,
+            };
             let id_str = swarm.to_string();
             let swarm_id = SwarmId::new(id_str.clone())
                 .expect("Swarm::to_string always produces a valid SwarmId");
 
             output.info(&format!("created #{name} and joined as <{author}>"));
+            if swarm.requires_password() {
+                output.info("password-protected — joiners must present the password");
+            }
             if let Some(directory) = &advertise {
                 output.info(&format!("advertising on #{directory}"));
             }
@@ -215,7 +237,7 @@ pub(crate) async fn setup_swarm(
                 swarm.network_label(),
             );
 
-            let topic_id = derive_topic_id(swarm.seed(), &swarm.name, &swarm.config_bytes());
+            let topic_id = swarm.topic_id();
             let (gossip, router) = build_swarm(endpoint.clone());
             // Creator has no peers yet — bootstrap is empty.
             let topic = gossip.subscribe(topic_id, vec![]).await?;
@@ -249,7 +271,7 @@ pub(crate) async fn setup_swarm(
             let id_str = swarm.to_string();
             let swarm_id = SwarmId::new(id_str.clone())
                 .expect("Swarm::to_string always produces a valid SwarmId");
-            let topic_id = derive_topic_id(swarm.seed(), &swarm.name, &swarm.config_bytes());
+            let topic_id = swarm.topic_id();
 
             let endpoint = build_participant_endpoint(&lookups).await?;
 

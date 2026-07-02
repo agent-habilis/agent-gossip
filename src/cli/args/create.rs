@@ -56,6 +56,19 @@ pub(crate) struct CreateOpts {
         reason = "clap optional-value flag: absent/bare/valued are three distinct directory states (see DirectorySelection)"
     )]
     pub advertise: Option<Option<SwarmName>>,
+
+    /// Protect the swarm with a password: the id alone no longer admits —
+    /// joiners must present the password (so a passworded swarm is safe to
+    /// `--advertise`). The id carries only a one-way verifier, never the
+    /// password. Bare `--password` prompts hidden on the terminal;
+    /// `--password=<pw>` passes it inline (visible in `ps` and shell
+    /// history — prefer the prompt when a human types it).
+    #[arg(long, num_args(0..=1), require_equals = true)]
+    #[expect(
+        clippy::option_option,
+        reason = "clap optional-value flag: absent/bare/valued are three distinct password states"
+    )]
+    pub password: Option<Option<String>>,
 }
 
 impl CreateOpts {
@@ -240,6 +253,55 @@ mod tests {
             DirectorySelection::Named(SwarmName::new("gamedev").unwrap()),
             "valued ⇒ Named directory"
         );
+    }
+
+    #[test]
+    fn password_flag_absent_bare_and_valued() {
+        #[expect(
+            clippy::option_option,
+            reason = "mirrors the clap optional-value flag under test"
+        )]
+        fn password_of(args: &[&str]) -> Option<Option<String>> {
+            match Cli::parse_from(args).command {
+                Commands::Create { opts } => opts.password,
+                Commands::Join { .. }
+                | Commands::Forum { .. }
+                | Commands::Msg { .. }
+                | Commands::Poll { .. }
+                | Commands::Ping { .. }
+                | Commands::Pipe { .. }
+                | Commands::Port { .. }
+                | Commands::File { .. }
+                | Commands::Discover { .. }
+                | Commands::Mcp { .. }
+                | Commands::Man
+                | Commands::Task { .. }
+                | Commands::Peers { .. }
+                | Commands::State { .. }
+                | Commands::Meta { .. }
+                | Commands::Ready { .. }
+                | Commands::Plug { .. }
+                | Commands::Unplug { .. }
+                | Commands::Sh { .. }
+                | Commands::Mount { .. }
+                | Commands::Doctor { .. } => panic!("expected Create"),
+            }
+        }
+        assert_eq!(password_of(&["ahsw", "create"]), None, "absent ⇒ None");
+        assert_eq!(
+            password_of(&["ahsw", "create", "--password"]),
+            Some(None),
+            "bare ⇒ prompt"
+        );
+        assert_eq!(
+            password_of(&["ahsw", "create", "--password=hunter2"]),
+            Some(Some("hunter2".to_owned())),
+            "valued ⇒ inline"
+        );
+        // require_equals is load-bearing: a space-separated value must NOT
+        // be swallowed as the password (it would eat positionals on the
+        // connect-style commands).
+        assert!(Cli::try_parse_from(["ahsw", "create", "--password", "hunter2"]).is_err());
     }
 
     #[test]
