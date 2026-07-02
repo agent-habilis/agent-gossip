@@ -84,18 +84,23 @@ pub(super) fn enter_raw() {}
 #[cfg(not(unix))]
 pub(super) fn restore() {}
 
-/// Enter the alternate screen buffer and clear it, so the viewer's mirror does
-/// not scroll the sharer's terminal into the viewer's own scrollback.
+/// Enter the alternate screen buffer, clear it, and disable auto-wrap
+/// (DECAWM, `\x1b[?7l`). Alt screen keeps the mirror out of the viewer's
+/// scrollback; disabling auto-wrap means a source line wider than a **narrower**
+/// viewer is clipped at the right edge instead of wrapping onto the next row and
+/// corrupting the mirror. It is a no-op when the viewer is at least as wide as
+/// the source (its content never reaches the viewer's right margin).
 pub(super) fn enter_alt_screen() {
     let mut out = std::io::stdout();
-    let _ = out.write_all(b"\x1b[?1049h\x1b[2J\x1b[H");
+    let _ = out.write_all(b"\x1b[?1049h\x1b[?7l\x1b[2J\x1b[H");
     let _ = out.flush();
 }
 
-/// Reset the scroll region and leave the alternate screen, returning the viewer's
-/// terminal to how it was before `sh connect`.
+/// Re-enable auto-wrap (`\x1b[?7h`), reset the scroll region, and leave the
+/// alternate screen — returning the viewer's terminal to how it was before
+/// `sh connect`.
 pub(super) fn leave_alt_screen() {
     let mut out = std::io::stdout();
-    let _ = out.write_all(b"\x1b[r\x1b[?1049l");
+    let _ = out.write_all(b"\x1b[?7h\x1b[r\x1b[?1049l");
     let _ = out.flush();
 }
