@@ -347,7 +347,10 @@ async fn paint_backdrop(
 /// `view_cols × view_rows` screen — the right gap for each shared row and the
 /// full-width bottom gap below. Empty when the source is at least as large as the
 /// viewer in both dimensions. Wrapped in DECSC/DECRC (`\x1b7`/`\x1b8`) so the
-/// live cursor and pen are preserved.
+/// live cursor and pen are preserved. The pen is reset before painting: DECSC
+/// only snapshots the pen, so without the reset the source's leftover SGR
+/// state (fg/bg colors, reverse video) would leak into the fill and the dots
+/// would change color between repaints.
 fn backdrop_sequence(src_cols: u16, src_rows: u16, view_cols: u16, view_rows: u16) -> String {
     use std::fmt::Write;
 
@@ -356,7 +359,7 @@ fn backdrop_sequence(src_cols: u16, src_rows: u16, view_cols: u16, view_rows: u1
     if right == 0 && bottom == 0 {
         return String::new();
     }
-    let mut out = String::from("\x1b7\x1b[2m"); // save cursor+attrs, faint
+    let mut out = String::from("\x1b7\x1b[0m\x1b[2m"); // save cursor+attrs, reset pen, faint
     if right > 0 {
         let fill = FILL_CHAR.to_string().repeat(usize::from(right));
         let start_col = u32::from(src_cols) + 1;
@@ -450,8 +453,11 @@ mod tests {
             seq.contains("\x1b7") && seq.ends_with("\x1b8"),
             "saves+restores cursor"
         );
-        assert!(seq.contains("\x1b[2m"), "faint");
-        assert!(seq.contains("\x1b[0m"), "reset");
+        assert!(
+            seq.starts_with("\x1b7\x1b[0m\x1b[2m"),
+            "resets pen before faint"
+        );
+        assert!(seq.ends_with("\x1b[0m\x1b8"), "resets SGR before restore");
         // Right gap: (100-80) cols over 24 rows; bottom gap: (30-24) rows × 100 cols.
         let dots = seq.matches(FILL_CHAR).count();
         assert_eq!(dots, 20 * 24 + 6 * 100);
