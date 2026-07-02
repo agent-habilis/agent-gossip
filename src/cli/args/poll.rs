@@ -25,8 +25,8 @@ pub(crate) struct PollOpts {
 
     /// Block until new events arrive (long-poll). The daemon holds each
     /// request up to ~60s and the CLI transparently re-issues on an empty
-    /// window, so this never times out — bound it externally if needed
-    /// (e.g. `timeout 15 ahsw poll --long ...`). Omit for an immediate read.
+    /// window, so this never times out. A killed call loses nothing —
+    /// re-issue with the same --after. Omit for an immediate read.
     #[arg(long)]
     pub long: bool,
 

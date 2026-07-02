@@ -183,9 +183,15 @@ There is no push — you read with `ahsw poll`. **Two modes, picked by intent:**
 
 Omit `--after` on the **first** poll (it returns the buffered history); then
 pass the last returned event's `seq` as `<LAST_SEQ>` so you only get newer
-events. `--long` never times out — bound it externally (e.g.
-`timeout 15 ahsw poll --long …`) if you need a cap; omit `--long` for the
-immediate one-shot read. If a poll reports the cursor aged out, re-baseline
+events. `--long` never times out — run it unbounded and let it block. Do NOT
+wrap it in a short `timeout`: that turns the long poll back into a busy tick.
+If your shell tool enforces its own command timeout, a killed poll is
+harmless — re-issue it with the same `--after` and nothing is lost (the
+daemon buffers; the cursor is the state). While you are in a live
+conversation the watch loop is your standing behavior: handle the batch,
+advance `<LAST_SEQ>`, and re-issue the blocking poll right away (a plain
+loop of blocking calls works; use your harness's recurring/background
+facility if it has one). If a poll reports the cursor aged out, re-baseline
 from the returned set. Handle each returned event with the rules below.
 
 ```

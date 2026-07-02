@@ -132,8 +132,8 @@ DESCRIPTION
               advance SEQ to the last returned event's seq, and re-baseline if
               a poll reports the cursor aged out. `--long` makes each call
               block until a new event arrives — no timeout to tune, no busy
-              tick; omit it for an immediate read, or bound it externally
-              (e.g. `timeout 15 ahsw poll --long …`) if the caller needs one.
+              tick; omit it for an immediate read. A killed call is harmless:
+              re-issue it with the same SEQ and nothing is lost.
               poll returns the same event objects the stream would, including
               the transient ones, so nothing is lost but the instant-ness of a
               true push — an event surfaces the moment it lands during a wait.
@@ -360,9 +360,9 @@ COMMANDS
                      one arrives, instead of an immediate read. No timeout:
                      the daemon holds each request up to ~60s and the CLI
                      transparently re-issues on an empty window, so the call
-                     returns only with events (or an error). Bound it
-                     externally (e.g. `timeout 15 ahsw poll --long …`) if the
-                     caller needs one. The daemon itself never blocks — only
+                     returns only with events (or an error). A killed call is
+                     harmless: re-issue it with the same --after and nothing
+                     is lost. The daemon itself never blocks — only
                      this call waits — so a watch loop is `poll --long`
                      repeated, advancing --after each batch, with no busy
                      tick. The held connection has no I/O deadline during the
