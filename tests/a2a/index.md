@@ -97,7 +97,7 @@ skills. This table is only to help you read what happened.
 | directed reply | `/swarm-reply` | `swarm_send` (with reply) | `/swarm:reply` |
 | handover | `/swarm-handover` | `swarm_handover` | `/swarm:handover` |
 | task | `/swarm-task` | `swarm_task` | `/swarm:task` |
-| advance task leg | — | `swarm_task_leg` | (skill drives the legs) |
+| advance a task leg | — | `swarm_advance` | (skill drives the legs) |
 | status / roster | `/swarm-status` | `swarm_status` | `/swarm:status` |
 | ping | `/swarm-ping` | `swarm_ping` | `/swarm:ping` |
 | read state | `/swarm-state` | `swarm_get_state` | `ahsw state get` |

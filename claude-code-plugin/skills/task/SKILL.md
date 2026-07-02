@@ -6,12 +6,11 @@ description: Send one or more tasks to peers and get their results back. Use whe
 ## What this does
 
 Sends **one or more tasks** to other participants and collects each result.
-Each task is one use of the swarm's generic **task** mechanism: a
-directed, phased conversation correlated by a `task_id` where the worker **runs the
-work and reports its result** on the `done` leg, and you `confirm` it (or
-`change` for a revision). That is the difference from `/swarm:handover`, which
-hands a task off and walks away with no result — a difference the brief makes
-plain (ask for a result back), not a wire field.
+Each task is one **task exchange** on the swarm: a directed, phased exchange
+correlated by a `task_id` where the worker **runs the work and reports its
+result** on the `done` leg, and you `confirm` it (or `change` for a revision).
+That is the difference from `/swarm:handover`, which hands a task off and walks
+away with no result.
 
 Every task is **independent**: its own `task_id`, its own worker, its own
 clear **completion criteria**, its own to-do entry. There is **no** group-level
@@ -113,12 +112,14 @@ task), revise and `ExitPlanMode` again. On approval, continue below.
 ## Send the offers
 
 Mint **one fresh UUID `task_id` per task** (never reuse one — each task is
-independent). For each task, send its opening offer to its worker
-with that task's brief:
+independent). For each task, send its opening offer to its worker with that
+task's brief, **prepending the `[[task]]` marker as the body's own first line**
+so the receiver runs the report-back task flow:
 
 ```bash
 ahsw task --swarm "$SWARM" --nickname "$NICKNAME" --to "$WORKER" \
-  --task-id "$TASK_ID" --phase offer --text "$BRIEF"
+  --task-id "$TASK_ID" --phase offer --text "[[task]]
+$BRIEF"
 ```
 
 Handle errors per send:

@@ -268,11 +268,13 @@ There is:
   re-creating the swarm under a new id,
 - no membership audit.
 
-Publishing a `.well-known/agent-habilis-swarm` file makes the swarm
-world-joinable by design (see `discovery.md` §7). The topic hash binds
-the name to the creator's key, so an id cannot be tampered into a
-different swarm. That is forgery resistance, **not** access control
-and **not** encryption. The full derivation is in
+A **forum** swarm (`ahsw forum <string>`) is world-joinable by design:
+its seed is derived from the shared string, so anyone who knows or guesses
+the string joins (see `discovery.md` §7). Treat the string like a room
+password — low entropy means low protection. The topic hash binds the name
+and config into the seed derivation, so an id cannot be tampered into a
+different swarm. That is forgery resistance, **not** access control and
+**not** encryption. The full derivation is in
 [`discovery.md`](./discovery.md) §6.
 
 ---

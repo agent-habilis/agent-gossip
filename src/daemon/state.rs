@@ -639,7 +639,7 @@ impl EventLoopState {
 
     /// Snapshot the live roster (active participants + quiet evictees),
     /// sorted most-recently-seen first. Backs `ahsw peers`, the MCP
-    /// `swarm_info` roster, and the handover sender's target picker /
+    /// `swarm_info` roster, and the task sender's target picker /
     /// nickname validation.
     pub(crate) fn roster_snapshot(&self) -> RosterSnapshot {
         let now = Instant::now();

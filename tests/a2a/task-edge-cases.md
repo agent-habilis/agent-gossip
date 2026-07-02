@@ -35,8 +35,8 @@ A todo plugin should be installed for both.
 
 ## Briefing
 
-- swarm: `a2a-edge-cases`
-- the four tasks (any small ones; the point is the outcome):
+- swarm: `a2a-task-edges`
+- the four tasks (any small tasks; the point is the outcome):
   - **decline:** an offer the receiver is expected to turn down.
   - **cancel:** an offer the initiator withdraws before it completes.
   - **clarify:** a deliberately under-specified brief (e.g. *"summarize the

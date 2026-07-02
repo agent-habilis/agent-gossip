@@ -503,10 +503,10 @@ pub(crate) async fn broadcast_message(
     Ok((logical.id.clone(), logical))
 }
 
-/// One outbound task leg's payload (addressee + correlation id + phase +
-/// body), bundled so [`broadcast_task`] stays within the argument budget. The
-/// IPC `task` command and the typed `SessionRequest::Task` both build it from
-/// their carried fields.
+/// One outbound task leg's payload (addressee + correlation id +
+/// phase + body), bundled so [`broadcast_task`] stays within the argument
+/// budget. The IPC `task` command and the typed `SessionRequest::Task` both
+/// build it from their carried fields.
 pub(crate) struct TaskLeg {
     pub to: Nickname,
     pub task_id: TaskId,
@@ -519,7 +519,7 @@ pub(crate) struct TaskLeg {
 /// meshed/unmeshed retain paths, but the `Progress` phase is liveness plumbing —
 /// never retained. No hash-chain or DAG stamping (task legs are presence-like —
 /// see [`MessageKind::Task`]). Always echoes the sender's own leg through
-/// `print_task` (an `task`/`task_progress` event with `self:true`), the same
+/// `print_task` (a `task`/`task_progress` event with `self:true`), the same
 /// way an outbound `msg` echoes. Showing the leg to its *addressee* is the
 /// receiver-side job of [`lifecycle::handle_task`](crate::lifecycle::handle_task).
 ///

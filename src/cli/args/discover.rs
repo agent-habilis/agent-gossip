@@ -42,12 +42,14 @@ mod tests {
                 Commands::Discover { opts } => opts.directory,
                 Commands::Create { .. }
                 | Commands::Join { .. }
+                | Commands::Forum { .. }
                 | Commands::Msg { .. }
                 | Commands::Poll { .. }
                 | Commands::Ping { .. }
                 | Commands::Pipe { .. }
                 | Commands::Port { .. }
                 | Commands::File { .. }
+                | Commands::Mount { .. }
                 | Commands::Mcp { .. }
                 | Commands::Man
                 | Commands::Task { .. }

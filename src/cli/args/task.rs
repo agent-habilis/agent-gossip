@@ -1,9 +1,3 @@
-//! `task` command args: send one leg of a task to a specific
-//! peer via the running daemon's IPC socket. A task is a directed, phased
-//! conversation correlated by `task_id`. How the two parties use it (delegate
-//! a plan, run work and return a result, …) is a skill-land convention
-//! carried in the offer body — see the manual's task workflow.
-
 use clap::Parser;
 
 use crate::protocol::{MessageBody, Nickname, SwarmId, TaskId, TaskPhase, TaskPhaseError};
@@ -39,8 +33,11 @@ pub(crate) struct TaskOpts {
     /// The leg body: the brief for `offer`; a question/answer for
     /// `context`; a `done/total` fraction (e.g. `35/100`) for `progress`;
     /// the summary + verification instructions for `done`; an optional
-    /// reason for the rest. UTF-8; newlines/tabs allowed, other control
-    /// characters rejected.
+    /// reason for the rest. An `offer` body must begin with a marker line
+    /// on its own — `[[handover]]` (delegate and walk away) or `[[task]]`
+    /// (run + report back) — declaring the delegation flow; a missing or
+    /// unrecognized marker defaults to task. UTF-8; newlines/tabs allowed,
+    /// other control characters rejected.
     #[arg(long)]
     pub text: MessageBody,
 }

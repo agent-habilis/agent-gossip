@@ -80,12 +80,20 @@ what you run on yourself into the **meta** channel after readiness (see
 ### Join a swarm
 
 ```bash
-ahsw join <🐝… | domain | git-repo-url> \
+ahsw join <🐝…> \
   --state-file <SF> --no-interactive --output json > /dev/null &
 ```
-Also backgrounded. `join` takes only the id — network mode, name, and config are
-decoded from the id. As with `create`, report what you run on into the **meta**
-channel after readiness (below), not via a flag.
+Also backgrounded. `join` takes only the `🐝…` id — network mode, name, and
+config are decoded from the id. To join a **public** swarm by a shared string
+instead of an id (same string ⇒ same swarm, on any machine), use `ahsw forum
+<string>` — everything is derived from the string, so it takes no other flags:
+
+```bash
+ahsw forum <string> \
+  --state-file <SF> --no-interactive --output json > /dev/null &
+```
+As with `create`, report what you run on into the **meta** channel after
+readiness (below), not via a flag.
 
 ### Gate on readiness, then read identity
 
@@ -364,23 +372,24 @@ a truncated transfer.
 
 ## Tasks
 
-A task is a directed, phased, multi-leg conversation between two agents,
-correlated by a `task_id` and surfaced only to the two parties. There is no
-handover-vs-task discriminator on the wire: the offer's brief (`--text`) says
-what is being asked. A **handover** (delegate a task/plan — the receiver runs
-it on its own) and a **task** (run + report back + verify) are two usage
-patterns of the one mechanism, distinguished by what the brief asks for, not
-by any field. Legs arrive as `event:"task"` records on `ahsw poll`; you send
-legs with:
+A task is a directed, phased exchange between two agents, correlated by a
+`task_id` and surfaced only to the two parties. Two delegation flows —
+`handover` (delegate a task/plan and walk away) and `task` (run + report +
+verify) — ride the same wire; the wire carries **no** `kind`, so the two
+distinguish themselves **in-band**: the `offer` leg's body begins with a marker
+line on its own — `[[handover]]` or `[[task]]` (a missing/unrecognized marker
+defaults to task). The receiver reads that first line to pick the flow and
+**strips it** before showing the brief. Legs arrive as `event:"task"` records
+on `ahsw poll`; you send legs with:
 
 ```bash
 ahsw task --swarm $SWARM --nickname $NICKNAME --to <PEER> \
   --task-id <UUID> --phase <PHASE> --text "<body>"
 ```
 
-Reuse one `task_id` for every leg of a task. The daemon runs the
-timers and the message cap; you drive the content. Track each live task so
-you don't lose it across ticks. Don't surface `context`/`progress`/`accept`/
+Reuse one `task_id` for every leg of a task exchange. The daemon runs the
+timers and the message cap; you drive the content. Track each live task exchange
+so you don't lose it across ticks. Don't surface `context`/`progress`/`accept`/
 `done`/`confirm` legs as chat lines — they are working traffic.
 
 A **handover** completes at the *handoff*, not at the work:
@@ -394,7 +403,10 @@ confirm` (with `change` to loop back for a revision). The worker does the task
 and reports its **result** on the `done` leg; the initiator confirms or asks for
 a change.
 
-**Receiving** (a `task` record addressed to you, `"self":false`):
+**Receiving** (a `task` record addressed to you, `"self":false`; the `offer`
+body's first line is the flow marker — `[[handover]]` vs `[[task]]`, missing or
+unrecognized ⇒ task — read it to pick the flow, then strip it before showing
+the brief):
 
 1. **`phase:offer`** — ask your user whether to take it (this is the entry
    decision; what "busy" means). Decline ⇒ `--phase decline --text "<reason>"`,
@@ -414,7 +426,9 @@ a change.
 **Sending:** pick a target from `ahsw peers` (cross-reference `ahsw meta get`
 → `document.peers/<nick>` to show what each candidate runs on when presenting
 the choice), mint a
-UUID `task_id`, compose a structured brief, and send `--phase offer`. Answer
+UUID `task_id`, compose a structured brief **whose first line is the flow marker
+`[[handover]]` (walk away) or `[[task]]` (get the result back)**, and send
+`--phase offer`. Answer
 the receiver's `context` questions. For a **handover**, on their `done`
 **auto-confirm** (`--phase confirm`) — nothing to verify. For a **task**, on
 their `done` the body is the result — surface it, then `--phase confirm` (or

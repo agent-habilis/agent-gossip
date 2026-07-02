@@ -19,12 +19,12 @@ pub(crate) struct CreateOpts {
     pub lookups: LookupArgs,
 
     /// Human-readable swarm name. Optional — a random word-word name is
-    /// minted if omitted. Same rules as a nickname: 1..=32 UTF-8
-    /// characters (any script/emoji), excluding control characters,
-    /// whitespace, and any of / \ < > # (the last three are reserved for
-    /// the `<nick>`/#swarm display conventions). Bound cryptographically
-    /// into the swarm identity so joiners who decode the ID see the same
-    /// name and a forged ID with a fake name fails to find peers.
+    /// minted if omitted. 1..=32 UTF-8 characters (any script/emoji),
+    /// excluding control characters, whitespace, and any of < > # (reserved
+    /// for the `<nick>`/#swarm display conventions). Unlike a nickname, a swarm
+    /// name may contain `/` (it is never a filename), so it can be a URL. Bound
+    /// cryptographically into the swarm identity so joiners who decode the ID
+    /// see the same name and a forged ID with a fake name fails to find peers.
     #[arg(long)]
     pub name: Option<SwarmName>,
 
@@ -62,11 +62,7 @@ impl CreateOpts {
     /// Resolve the `--advertise` flag's absent/bare/valued shape into a
     /// [`DirectorySelection`] (mirrors `LookupArgs::to_set` for `--relay`).
     pub(crate) fn advertise_selection(&self) -> DirectorySelection {
-        match &self.advertise {
-            None => DirectorySelection::Unset,
-            Some(None) => DirectorySelection::Default,
-            Some(Some(directory)) => DirectorySelection::Named(directory.clone()),
-        }
+        DirectorySelection::from_flag(self.advertise.clone())
     }
 }
 
@@ -90,12 +86,14 @@ mod tests {
                 );
             }
             Commands::Join { .. }
+            | Commands::Forum { .. }
             | Commands::Msg { .. }
             | Commands::Poll { .. }
             | Commands::Ping { .. }
             | Commands::Pipe { .. }
             | Commands::Port { .. }
             | Commands::File { .. }
+            | Commands::Mount { .. }
             | Commands::Discover { .. }
             | Commands::Mcp { .. }
             | Commands::Man
@@ -121,12 +119,14 @@ mod tests {
                 assert_eq!(opts.nickname, None);
             }
             Commands::Join { .. }
+            | Commands::Forum { .. }
             | Commands::Msg { .. }
             | Commands::Poll { .. }
             | Commands::Ping { .. }
             | Commands::Pipe { .. }
             | Commands::Port { .. }
             | Commands::File { .. }
+            | Commands::Mount { .. }
             | Commands::Discover { .. }
             | Commands::Mcp { .. }
             | Commands::Man
@@ -149,12 +149,14 @@ mod tests {
         match cli.command {
             Commands::Create { opts } => assert_eq!(opts.name, None),
             Commands::Join { .. }
+            | Commands::Forum { .. }
             | Commands::Msg { .. }
             | Commands::Poll { .. }
             | Commands::Ping { .. }
             | Commands::Pipe { .. }
             | Commands::Port { .. }
             | Commands::File { .. }
+            | Commands::Mount { .. }
             | Commands::Discover { .. }
             | Commands::Mcp { .. }
             | Commands::Man
@@ -179,8 +181,12 @@ mod tests {
             "whitespace must reject"
         );
         assert!(
-            Cli::try_parse_from(["ahsw", "create", "--name", "a/b"]).is_err(),
-            "path separator must reject"
+            Cli::try_parse_from(["ahsw", "create", "--name", "a#b"]).is_err(),
+            "the #swarm marker must reject"
+        );
+        assert!(
+            Cli::try_parse_from(["ahsw", "create", "--name", "a/b"]).is_ok(),
+            "a swarm name may contain a path separator (it is never a filename)"
         );
         assert!(
             Cli::try_parse_from(["ahsw", "create", "--name", &"a".repeat(33)]).is_err(),
@@ -194,12 +200,14 @@ mod tests {
             match Cli::parse_from(args).command {
                 Commands::Create { opts } => opts.advertise_selection(),
                 Commands::Join { .. }
+                | Commands::Forum { .. }
                 | Commands::Msg { .. }
                 | Commands::Poll { .. }
                 | Commands::Ping { .. }
                 | Commands::Pipe { .. }
                 | Commands::Port { .. }
                 | Commands::File { .. }
+                | Commands::Mount { .. }
                 | Commands::Discover { .. }
                 | Commands::Mcp { .. }
                 | Commands::Man
@@ -253,12 +261,14 @@ mod tests {
                 assert!(opts.shared.no_interactive);
             }
             Commands::Join { .. }
+            | Commands::Forum { .. }
             | Commands::Msg { .. }
             | Commands::Poll { .. }
             | Commands::Ping { .. }
             | Commands::Pipe { .. }
             | Commands::Port { .. }
             | Commands::File { .. }
+            | Commands::Mount { .. }
             | Commands::Discover { .. }
             | Commands::Mcp { .. }
             | Commands::Man

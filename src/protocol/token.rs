@@ -27,6 +27,7 @@ pub(crate) enum TokenType {
     Pipe,
     Port,
     File,
+    Mount,
 }
 
 impl TokenType {
@@ -36,6 +37,7 @@ impl TokenType {
             TokenType::Pipe => 2,
             TokenType::Port => 3,
             TokenType::File => 4,
+            TokenType::Mount => 5,
         }
     }
 
@@ -45,6 +47,7 @@ impl TokenType {
             2 => Ok(TokenType::Pipe),
             3 => Ok(TokenType::Port),
             4 => Ok(TokenType::File),
+            5 => Ok(TokenType::Mount),
             other => bail!("unknown token type: {other}"),
         }
     }
@@ -117,6 +120,7 @@ mod tests {
             TokenType::Pipe,
             TokenType::Port,
             TokenType::File,
+            TokenType::Mount,
         ] {
             let token = encode(kind, b"payload-bytes");
             assert!(token.starts_with("🐝"));

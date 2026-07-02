@@ -1,15 +1,15 @@
 ---
 name: handover
-description: Hand a task to another peer in the swarm. Use when the user wants to delegate work to another agent. Task-first - $ARGUMENTS is the task to delegate (else the current plan); composes a brief, then picks a worker, then drives the task until the receiver accepts.
+description: Hand a task to another peer in the swarm. Use when the user wants to delegate work to another agent. Task-first - $ARGUMENTS is the task to delegate (else the current plan); composes a brief, then picks a worker, then drives the task exchange until the receiver accepts.
 ---
 
 ## What this does
 
-Hands a task to another participant. A handover is one **behavior** built
-on the swarm's generic **task** mechanism: a directed, phased conversation
-correlated by a `task_id`. The flow is **task-first**: establish the task,
+Hands a task to another participant. A handover is one delegation **flow** of
+the swarm's **task exchange**: a directed, phased exchange correlated by a
+`task_id`. The flow is **task-first**: establish the task,
 build a **plan in plan mode** (that plan *is* the brief you send), *then*
-pick the worker, then drive the task. The handover completes at the
+pick the worker, then drive the task exchange. The handover completes at the
 **handoff** — `offer → accept → [context] → done → confirm` — not at the
 receiver's execution: the receiver requests close (`done`), you confirm,
 and you are finished; the receiver then runs the work on its own. Every leg
@@ -129,11 +129,13 @@ and STOP.
 ## Send the offer
 
 The plan (`$BRIEF`) was already approved in plan mode and the worker picked,
-so send straight away:
+so send straight away — **prepend the `[[handover]]` marker as the body's own
+first line** so the receiver runs the walk-away handover flow:
 
 ```bash
 ahsw task --swarm "$SWARM" --nickname "$NICKNAME" --to "$TARGET" \
-  --task-id "$TASK_ID" --phase offer --text "$BRIEF"
+  --task-id "$TASK_ID" --phase offer --text "[[handover]]
+$BRIEF"
 ```
 
 Handle errors from the command:
@@ -145,7 +147,7 @@ Handle errors from the command:
 Your own send echoes back as a `task` `"self":true` event. Open the tasks
 widget (see below) with this task `offered`.
 
-## Drive the task
+## Drive the task exchange
 
 The receiver drives the lifecycle; you answer and close. The full sender
 state machine lives in the create/join event handler (loaded for the session) —
@@ -158,7 +160,7 @@ handling, slightly later.) In short, for this `task_id`:
 - **`done` from the receiver** ("I have what I need, close the handoff") —
   **auto-confirm**: send `--phase confirm`. A handover has nothing for you to
   verify (the receiver runs it on its own), so there is **no review widget
-  and no `change`** — that belongs to the task flow. This closes the
+  and no `change`** — that is a report-back task concern. This closes the
   task.
 - **`decline`** — the receiver passed; record the reason and stop.
 

@@ -10,17 +10,14 @@
 
 use std::time::Duration;
 
-use anyhow::{Context, Result};
 use iroh::Endpoint;
-
-use crate::protocol::swarm::{LookupOpts, Swarm};
 
 mod consume;
 mod manifest;
 mod produce;
 mod ticket;
-mod walk;
-mod wire;
+pub(crate) mod walk;
+pub(crate) mod wire;
 
 pub(crate) use consume::get;
 pub(crate) use produce::send;
@@ -46,22 +43,9 @@ enum RootKind {
     Dir,
 }
 
-/// Resolve a `--swarm` id to its discovery config (`None` ⇒ a public default),
-/// so a transfer traverses the network the way that swarm's members do.
-fn swarm_lookups(swarm: Option<&str>) -> Result<LookupOpts> {
-    match swarm {
-        Some(id) => Ok(id
-            .parse::<Swarm>()
-            .context("invalid --swarm id")?
-            .lookups()
-            .clone()),
-        None => Ok(LookupOpts::public_preset()),
-    }
-}
-
 /// Best-effort wait (≤5s) for the endpoint to publish reachable addresses, so a
 /// freshly-printed ticket resolves immediately. Never blocks forever.
-async fn wait_online(endpoint: &Endpoint) {
+pub(crate) async fn wait_online(endpoint: &Endpoint) {
     let _ = tokio::time::timeout(Duration::from_secs(5), endpoint.online()).await;
 }
 
@@ -99,7 +83,7 @@ fn count_files(count: usize) -> String {
 }
 
 /// Format a byte count for humans (`512B`, `1.5KB`, `3.4MB`).
-fn human_bytes(bytes: u64) -> String {
+pub(crate) fn human_bytes(bytes: u64) -> String {
     const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
     if bytes < 1024 {
         return format!("{bytes}B");

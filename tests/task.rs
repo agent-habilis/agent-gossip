@@ -1,22 +1,23 @@
-//! `task` behavioral tests (kind=task on the task mechanism) (in-process, via the `InProcNode` harness).
+//! `task` behavioral tests (in-process, via the `InProcNode` harness).
 //!
-//! `/swarm:task` sends one or more `task`-kind tasks: the worker runs the work
-//! and reports its **result** on the `done` leg, and the initiator `confirm`s.
-//! These pin the two properties the skill relies on through the real event
-//! loop (real iroh mesh, no subprocess): a full task round trip carries the
-//! result back to the initiator, and several tasks run as **independent**
-//! `task_id`s with no cross-task coupling (there is no group barrier in the
-//! daemon — each task is its own task).
+//! A task is a directed, phased conversation (`MessageKind::Task`) correlated
+//! by `task_id`. Two families of tests live here: the generic wire contract
+//! (a leg is surfaced only by its addressee and the sender's own echo — the
+//! directed-`Msg` privacy precedent — plus the self-echo and `progress`
+//! plumbing), and the task-specific `done(result) → confirm` path and
+//! task-id isolation. All run through the real event loop (real iroh mesh,
+//! no subprocess), so the captured `OutputEvent::Task` form is byte-identical
+//! to the `--output json` wire the skills consume.
 //!
-//! The generic task wire contract (directed-privacy, self-echo, `progress`
-//! plumbing) is covered kind-agnostically in `handover.rs`; here we exercise
-//! the task-specific `done(result) → confirm` path and task-id isolation.
+//! The CLI/stdout/Unix-socket wire contract (the exact `{"event":"task"}`
+//! line, the unknown-participant error, and `ahsw peers`) lives in
+//! `monitor_contract.rs`; the MCP surface in `mcp_stdio.rs`.
 
 mod common;
 
 use std::time::Duration;
 
-use agent_habilis_swarm::{MessageKind, TaskId, TaskPhase};
+use agent_habilis_swarm::{MessageKind, OutputEvent, TaskId, TaskPhase};
 use common::{InProcNode, MSG_TIMEOUT, three_peers};
 
 const TASK_WAIT: Duration = MSG_TIMEOUT;
@@ -167,7 +168,7 @@ async fn two_tasks_are_independent() {
                 let dones: Vec<(&str, &str)> = events
                     .iter()
                     .filter_map(|event| {
-                        let agent_habilis_swarm::OutputEvent::Task { msg, .. } = event else {
+                        let OutputEvent::Task { msg, .. } = event else {
                             return None;
                         };
                         if let MessageKind::Task {
@@ -192,4 +193,234 @@ async fn two_tasks_are_independent() {
     worker_b.leave().await;
     worker_a.leave().await;
     initiator.leave().await;
+}
+
+/// A task leg addressed to a peer is surfaced by that peer (and only that
+/// peer), carrying the brief in the body and the `to`/`task_id`/`phase`
+/// fields.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn task_offer_surfaces_to_addressee() {
+    let mut creator = InProcNode::create("ho-direct").await;
+    let swarm = creator.swarm.clone();
+    let mut joiner = InProcNode::join(&swarm, "ho-bob").await;
+    let tid = task_id_a();
+
+    // Mesh first: the addressee must be a known participant before offer.
+    assert!(
+        creator.wait_presence("ho-bob", true, TASK_WAIT).await,
+        "creator should see ho-bob join before offering"
+    );
+
+    let brief = "## Task\nport the JSON parser to serde";
+    creator
+        .task("ho-bob", &tid, TaskPhase::Offer, brief)
+        .await
+        .expect("task offer sent");
+
+    assert!(
+        joiner.wait_task(TaskPhase::Offer, TASK_WAIT).await,
+        "addressee should surface the task offer"
+    );
+    let legs = joiner.tasks();
+    let (msg, is_self) = legs
+        .iter()
+        .find(|(msg, _)| matches!(&msg.kind, MessageKind::Task { phase, .. } if *phase == TaskPhase::Offer))
+        .expect("offer leg captured");
+    assert!(!is_self, "the addressee's copy is not a self-echo");
+    assert_eq!(msg.author.as_str(), creator.nickname.as_str());
+    assert_eq!(msg.body.as_str(), brief);
+    let MessageKind::Task {
+        to,
+        task_id: got_id,
+        phase,
+    } = &msg.kind
+    else {
+        panic!("expected Task kind, got {:?}", msg.kind);
+    };
+    assert_eq!(to.as_str(), "ho-bob");
+    assert_eq!(got_id.as_str(), tid.as_str());
+    assert_eq!(*phase, TaskPhase::Offer);
+
+    joiner.leave().await;
+    creator.leave().await;
+}
+
+/// The sender surfaces its own task leg as a self-echo (`is_self`), so the
+/// `/swarm:task` skill can confirm the send.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn task_self_echoes_to_sender() {
+    let mut creator = InProcNode::create("ho-echo").await;
+    let swarm = creator.swarm.clone();
+    let joiner = InProcNode::join(&swarm, "ho-bob").await;
+    assert!(creator.wait_presence("ho-bob", true, TASK_WAIT).await);
+
+    creator
+        .task("ho-bob", &task_id_a(), TaskPhase::Offer, "brief")
+        .await
+        .expect("leg sent");
+
+    assert!(
+        creator.wait_task(TaskPhase::Offer, TASK_WAIT).await,
+        "sender should see its own task echo"
+    );
+    let legs = creator.tasks();
+    assert!(
+        legs.iter().any(|(msg, is_self)| *is_self
+            && matches!(&msg.kind, MessageKind::Task { phase, .. } if *phase == TaskPhase::Offer)),
+        "the sender's copy is flagged is_self"
+    );
+
+    joiner.leave().await;
+    creator.leave().await;
+}
+
+/// A third party in the swarm relays the task (gossip floods) but never
+/// surfaces it and never logs it — `poll`/`fetch` for the bystander must
+/// not contain the leg. This is the directed-`Msg` privacy contract.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn task_not_surfaced_to_third_party() {
+    let (mut creator, mut addressee, mut bystander) = three_peers("ho-third").await;
+    let addressee_nick = addressee.nickname.clone();
+
+    // Everyone meshed: the creator must know the addressee to send `offer`.
+    assert!(
+        creator
+            .wait_presence(&addressee_nick, true, TASK_WAIT)
+            .await
+    );
+
+    creator
+        .task(
+            &addressee_nick,
+            &task_id_a(),
+            TaskPhase::Offer,
+            "secret brief",
+        )
+        .await
+        .expect("leg sent");
+
+    // Addressee surfaces it…
+    assert!(
+        addressee.wait_task(TaskPhase::Offer, TASK_WAIT).await,
+        "addressee should surface the task"
+    );
+
+    // …the bystander, given equal time, never does, and never logs it.
+    let bystander_saw = bystander.wait_task(TaskPhase::Offer, TASK_WAIT).await;
+    assert!(
+        !bystander_saw,
+        "a third party must never surface a task addressed to someone else"
+    );
+    let logged = bystander
+        .session
+        .fetch(None, None)
+        .await
+        .expect("fetch")
+        .into_iter()
+        .any(|item| matches!(item.event, OutputEvent::Task { .. }));
+    assert!(
+        !logged,
+        "a third party must not log/retain a task addressed to someone else"
+    );
+
+    bystander.leave().await;
+    addressee.leave().await;
+    creator.leave().await;
+}
+
+/// A `progress` leg is plumbing: it surfaces to the addressee as a task
+/// event (rendered `task_progress`) but is **never logged** — it must not
+/// appear in the addressee's poll/fetch buffer (unlike content legs).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn task_progress_is_plumbing_not_logged() {
+    let mut alice = InProcNode::create("ho-prog").await;
+    let swarm = alice.swarm.clone();
+    let mut bob = InProcNode::join(&swarm, "ho-bob").await;
+    let alice_nick = alice.nickname.clone();
+    assert!(
+        bob.wait_presence(alice_nick.as_str(), true, TASK_WAIT)
+            .await
+    );
+
+    bob.task(&alice_nick, &task_id_a(), TaskPhase::Progress, "35/100")
+        .await
+        .expect("progress beat");
+
+    // The addressee surfaces the progress leg as a task event…
+    assert!(
+        alice.wait_task(TaskPhase::Progress, TASK_WAIT).await,
+        "addressee should surface the progress beat"
+    );
+    // …but it is plumbing — never retained in the poll/fetch buffer.
+    let logged = alice
+        .session
+        .fetch(None, None)
+        .await
+        .expect("fetch")
+        .into_iter()
+        .any(|item| {
+            matches!(
+                item.event,
+                OutputEvent::Task { msg, .. }
+                    if matches!(&msg.kind, MessageKind::Task { phase, .. } if *phase == TaskPhase::Progress)
+            )
+        });
+    assert!(!logged, "a progress beat must never be logged/retained");
+
+    bob.leave().await;
+    alice.leave().await;
+}
+
+/// A full offer → accept → context → done → confirm task surfaces every
+/// leg to the two parties, in both directions, all under one `task_id`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn task_full_lifecycle_round_trips() {
+    let mut alice = InProcNode::create("ho-full").await;
+    let swarm = alice.swarm.clone();
+    let mut bob = InProcNode::join(&swarm, "ho-bob").await;
+    assert!(alice.wait_presence("ho-bob", true, TASK_WAIT).await);
+    assert!(
+        bob.wait_presence(alice.nickname.as_str(), true, TASK_WAIT)
+            .await
+    );
+
+    let alice_nick = alice.nickname.clone();
+    let tid = task_id_a();
+
+    // A → B offer, B → A accept (entry), A → B context, B → A done, A → B confirm.
+    alice
+        .task("ho-bob", &tid, TaskPhase::Offer, "brief")
+        .await
+        .expect("offer");
+    assert!(bob.wait_task(TaskPhase::Offer, TASK_WAIT).await);
+
+    bob.task(&alice_nick, &tid, TaskPhase::Accept, "taking it on")
+        .await
+        .expect("accept");
+    assert!(alice.wait_task(TaskPhase::Accept, TASK_WAIT).await);
+
+    alice
+        .task("ho-bob", &tid, TaskPhase::Context, "all parser tests green")
+        .await
+        .expect("context");
+    assert!(bob.wait_task(TaskPhase::Context, TASK_WAIT).await);
+
+    bob.task(
+        &alice_nick,
+        &tid,
+        TaskPhase::Done,
+        "ported; verify with `cargo test parser`",
+    )
+    .await
+    .expect("done");
+    assert!(alice.wait_task(TaskPhase::Done, TASK_WAIT).await);
+
+    alice
+        .task("ho-bob", &tid, TaskPhase::Confirm, "verified, thanks")
+        .await
+        .expect("confirm");
+    assert!(bob.wait_task(TaskPhase::Confirm, TASK_WAIT).await);
+
+    bob.leave().await;
+    alice.leave().await;
 }

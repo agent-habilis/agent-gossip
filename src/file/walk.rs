@@ -226,7 +226,7 @@ pub(super) fn hash_file(path: &Path) -> Result<[u8; HASH_LEN]> {
 /// Empty, `.`/`..`, NUL, or containing a path separator. `std::path::is_separator`
 /// is platform-aware, so `\` is rejected on Windows (where it separates paths)
 /// without over-rejecting it on unix (where it is a legal filename byte).
-pub(super) fn safe_component(name: &str) -> Result<()> {
+pub(crate) fn safe_component(name: &str) -> Result<()> {
     if name.is_empty()
         || name == "."
         || name == ".."

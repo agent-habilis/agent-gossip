@@ -248,6 +248,22 @@ pub(crate) enum DirectorySelection {
 pub(crate) const DEFAULT_DIRECTORY: &str = "global";
 
 impl DirectorySelection {
+    /// Resolve a clap three-state `--advertise` optional-value flag
+    /// (absent / bare / valued) — the one converter shared by every
+    /// command that advertises (`create`, `pipe listen`, `file send`,
+    /// `port listen`).
+    #[expect(
+        clippy::option_option,
+        reason = "clap optional-value flag: absent/bare/valued are three distinct directory states"
+    )]
+    pub(crate) fn from_flag(flag: Option<Option<SwarmName>>) -> Self {
+        match flag {
+            None => DirectorySelection::Unset,
+            Some(None) => DirectorySelection::Default,
+            Some(Some(directory)) => DirectorySelection::Named(directory),
+        }
+    }
+
     /// `true` when advertising is requested at all (bare or valued).
     pub(crate) fn is_set(&self) -> bool {
         !matches!(self, DirectorySelection::Unset)
@@ -334,6 +350,38 @@ pub(crate) fn resolve_lookups(public: bool, lookups: LookupSet) -> LookupOpts {
         LookupOpts::public_preset()
     } else {
         LookupOpts::loopback()
+    }
+}
+
+/// Resolve a transfer command's (`pipe`/`file`/`port`) discovery config
+/// from its two alternative sources: a `--swarm 🐝…` id (whose embedded
+/// lookups win) or the create-style `--mdns/--dht/--relay` flags (naming
+/// any uses only those). Unlike [`resolve_lookups`], naming **nothing**
+/// is the all-on public preset — a transfer is inherently networked, so
+/// its default is public where `create`'s is loopback.
+///
+/// # Errors
+/// Both sources given (ambiguous), or an invalid `--swarm` id.
+pub(crate) fn resolve_transfer_lookups(
+    swarm: Option<&str>,
+    flags: LookupSet,
+) -> Result<LookupOpts> {
+    match swarm {
+        Some(id) => {
+            if flags.any() {
+                bail!(
+                    "--swarm already carries a discovery config; \
+                     drop the --mdns/--dht/--relay flags"
+                );
+            }
+            Ok(id
+                .parse::<super::Swarm>()
+                .context("invalid --swarm id")?
+                .lookups()
+                .clone())
+        }
+        None if flags.any() => Ok(resolve_lookups(false, flags)),
+        None => Ok(LookupOpts::public_preset()),
     }
 }
 

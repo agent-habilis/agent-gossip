@@ -22,7 +22,7 @@ pub(crate) use agent_habilis_swarm::RUNTIME_DIR;
 
 pub(crate) const CONNECT_TIMEOUT: Duration = Duration::from_mins(1);
 /// Steady-state delivery budget: how long a meshed peer may take to surface a
-/// message/presence/handover leg. The suite-wide standard for every positive
+/// message/presence/task leg. The suite-wide standard for every positive
 /// (adaptive, break-on-success) delivery wait. A meshed in-process round trip
 /// is normally sub-second; the headroom is for a loaded CI host running the
 /// suite in a **debug** build, where crypto is ~10x slower than release and two

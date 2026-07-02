@@ -37,7 +37,7 @@ pi (where the todo integration lives). Set up per the
 ## Expected behavior & UX
 
 - [ ] the task completes end to end regardless of the todo backend (the task
-      flow itself is unaffected by it)
+      itself is unaffected by it)
 - [ ] **with a plugin present:** the task is tracked in the todo widget,
       advancing as it progresses to a finished state
 - [ ] **without a plugin:** the task is still surfaced legibly in the UI as it

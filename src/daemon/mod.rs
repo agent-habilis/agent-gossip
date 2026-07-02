@@ -42,4 +42,4 @@ mod event_loop;
 
 pub(crate) use config::{CoHostPolicy, DriverMode, EventLoopConfig, SessionRequest};
 pub(crate) use event_loop::run;
-pub(crate) use params::{CreateParams, JoinParams, Resolved};
+pub(crate) use params::{CreateParams, ForumParams, JoinParams, Resolved, derive_forum_swarm};

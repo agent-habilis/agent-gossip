@@ -77,8 +77,8 @@ impl fmt::Display for PresenceSubtype {
     }
 }
 
-/// Phase of a task — the generic, behavior-agnostic lifecycle
-/// every task behavior shares. `Offer` opens with the brief; `Accept`/
+/// Phase of a task — the behavior-agnostic lifecycle
+/// every task shares. `Offer` opens with the brief; `Accept`/
 /// `Decline` are the entry decision; `Context` carries the bidirectional
 /// Q&A; `Progress` is the receiver's liveness+percent heartbeat (plumbing,
 /// like `Alive`); `Done` requests close; `Confirm`/`Change` are the

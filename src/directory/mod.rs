@@ -17,6 +17,8 @@
 //! [`crate::embed::SwarmSession`] on the directory) lives in `embed`, and
 //! the discover UI in `cli` — both drive the primitives here.
 
+pub(crate) mod ticket;
+
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 

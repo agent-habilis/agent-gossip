@@ -342,7 +342,7 @@ pub(super) fn print_message_json(msg: &Message, is_self: bool) {
 
 /// Format a task leg as its JSON line. Only `Task` kinds reach here
 /// (callers match first). The `Progress` phase renders as a
-/// `task_progress` event; every other (content) phase as an `task` event.
+/// `task_progress` event; every other (content) phase as a `task` event.
 pub(super) fn format_task_json(msg: &Message, is_self: bool) -> String {
     let MessageKind::Task { to, task_id, phase } = &msg.kind else {
         unreachable!("format_task_json only handles Task")

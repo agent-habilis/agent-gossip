@@ -12,9 +12,11 @@ mod create;
 mod discover;
 mod doctor;
 mod file;
+mod forum;
 mod join;
 mod lookup;
 mod meta;
+mod mount;
 mod msg;
 mod output;
 mod peers;
@@ -31,8 +33,10 @@ pub(crate) use create::CreateOpts;
 pub(crate) use discover::DiscoverOpts;
 pub(crate) use doctor::DoctorOpts;
 pub(crate) use file::FileAction;
+pub(crate) use forum::ForumOpts;
 pub(crate) use join::JoinOpts;
 pub(crate) use meta::{MetaAction, MetaOpts};
+pub(crate) use mount::MountAction;
 pub(crate) use msg::MsgOpts;
 pub(crate) use output::OutputFormat;
 pub(crate) use peers::PeersOpts;
@@ -89,6 +93,12 @@ pub(crate) enum Commands {
         opts: JoinOpts,
     },
 
+    /// Join a public swarm derived from a shared string
+    Forum {
+        #[command(flatten)]
+        opts: ForumOpts,
+    },
+
     /// Post a message to a swarm
     Msg {
         #[command(flatten)]
@@ -123,11 +133,10 @@ pub(crate) enum Commands {
     /// Send one leg of a task to a specific peer.
     ///
     /// A task is a directed, phased conversation correlated by `--task-id`
-    /// (offer → accept → context → done → confirm/change). `handover` is
-    /// one behavior built on it. The receiving daemon surfaces an `task` (or
-    /// `task_progress`) event on its `--output json` stream. `--phase offer`
-    /// validates `--to` against the live roster and errors on an unknown
-    /// nickname.
+    /// (offer → accept → context → done → confirm/change). The receiving
+    /// daemon surfaces a `task` (or `task_progress`) event on its
+    /// `--output json` stream. `--phase offer` validates `--to` against the
+    /// live roster and errors on an unknown nickname.
     Task {
         #[command(flatten)]
         opts: TaskOpts,
@@ -137,7 +146,7 @@ pub(crate) enum Commands {
     ///
     /// Queries the running daemon for current participants (nicknames +
     /// how long ago each was last seen), recency-sorted. Backs the
-    /// handover target picker; prints a JSON object with `participants`
+    /// task target picker; prints a JSON object with `participants`
     /// and `participant_count`.
     Peers {
         #[command(flatten)]
@@ -176,6 +185,36 @@ pub(crate) enum Commands {
     File {
         #[command(subcommand)]
         action: FileAction,
+    },
+
+    /// Share a folder with peers, or mount a peer's folder locally
+    /// (read-only, lazy, off-gossip, no daemon).
+    ///
+    /// `mount serve <dir>` shares a folder and prints the `ahsw mount 🐝…`
+    /// command; `mount <🐝…> <mountpoint>` mounts it through a loopback `NFSv3`
+    /// bridge (the OS's built-in NFS client — no FUSE, no kernel extension).
+    /// The directory tree is a snapshot from when `serve` started; file bytes
+    /// are fetched on demand as they are read. Writes fail (read-only).
+    #[command(args_conflicts_with_subcommands = true)]
+    Mount {
+        #[command(subcommand)]
+        action: Option<MountAction>,
+
+        /// The `🐝…` ticket printed by `ahsw mount serve`.
+        ticket: Option<String>,
+
+        /// Where to mount the shared folder (created if missing; an existing
+        /// directory must be empty). Unmounted on Ctrl-C.
+        mountpoint: Option<std::path::PathBuf>,
+
+        /// Start the loopback NFS bridge but skip the OS mount step; prints
+        /// the mount command to run manually. Hidden — a test/ops knob.
+        #[arg(long, hide = true)]
+        no_mount: bool,
+
+        /// Output format: human (default) or json (the bare mount command).
+        #[arg(long, default_value = "human")]
+        output: OutputFormat,
     },
 
     /// Read or change the swarm's shared state.

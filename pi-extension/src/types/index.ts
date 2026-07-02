@@ -31,23 +31,21 @@ export type SwarmEvent = {
   document?: Record<string, unknown>;
 };
 
-// A local-only label for the two usage patterns this extension's own tools
-// drive. It is never sent on the wire — the protocol has no such field — so it
-// is only known on the initiator side (set from which tool was invoked); a
-// receiver reads the offer brief to learn what is being asked.
-export type TaskKind = "handover" | "task";
+// The delegation flavor. No longer on the wire (the binary's task primitive
+// carries no discriminator); it travels in-band as a `[[handover]]`/`[[task]]`
+// marker on the offer body and is tracked here so both legs drive the right flow.
+export type DelegationMode = "handover" | "task";
 
 // One in-flight task this node is a party to, tracked so the receiver and
 // initiator legs can be told apart and the agent can be driven through it.
 export type TaskRecord = {
   taskId: string;
-  // Set only for records this node initiated; undefined for received offers.
-  kind?: TaskKind;
+  mode: DelegationMode;
   // The other party's nickname.
   peer: string;
   role: "initiator" | "receiver";
   // One-line summary of the offer, for prompts/notifications.
-  summary?: string;
+  task?: string;
 };
 
 export type PingResult = {

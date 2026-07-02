@@ -8,7 +8,9 @@ use std::sync::Mutex;
 use anyhow::Result;
 
 use crate::daemon::state::RosterSnapshot;
-use crate::embed::{CreateConfig, CreateError, InProcessSession, JoinConfig, JoinError};
+use crate::embed::{
+    CreateConfig, CreateError, ForumConfig, InProcessSession, JoinConfig, JoinError,
+};
 use crate::protocol::swarm::SwarmName;
 use crate::protocol::{Message, MessageBody, MessageId, Nickname, SwarmId, TaskId, TaskPhase};
 
@@ -32,12 +34,21 @@ impl Session {
     }
 
     /// Join an existing swarm — poll-only, silent — from a [`JoinConfig`]
-    /// (resolves the `🐝…`/domain/git-URL target internally).
+    /// (decodes the `🐝…` id target internally).
     ///
     /// # Errors
     /// [`JoinError`] if the target can't be resolved or setup fails.
     pub(super) async fn join(cfg: JoinConfig) -> Result<Self, JoinError> {
         Ok(Self::wrap(InProcessSession::join_poll(cfg).await?))
+    }
+
+    /// Join a forum — poll-only, silent — from a [`ForumConfig`]: a public
+    /// swarm derived deterministically from a shared string.
+    ///
+    /// # Errors
+    /// [`JoinError`] on setup failure.
+    pub(super) async fn forum(cfg: ForumConfig) -> Result<Self, JoinError> {
+        Ok(Self::wrap(InProcessSession::forum_poll(cfg).await?))
     }
 
     fn wrap(inner: InProcessSession) -> Self {

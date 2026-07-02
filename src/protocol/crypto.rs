@@ -33,6 +33,31 @@ use super::swarm::SwarmName;
 /// topic/identity and never meet).
 const DOMAIN: &[u8] = b"agent-habilis-swarm/v2";
 
+/// Domain-separation prefix for the topic-string → seed derivation
+/// ([`topic_seed`]). Distinct from [`DOMAIN`] so an arbitrary user string can
+/// never reproduce a [`derive_secret`] output. Versioned independently:
+/// bumping it makes every string derive a fresh swarm.
+const TOPIC_DOMAIN: &[u8] = b"agent-habilis-swarm/topic-seed/v1";
+
+/// Deterministically derive a swarm `seed` from an arbitrary string:
+/// `SHA256(TOPIC_DOMAIN ‖ topic.trim())`. Two callers passing the same string
+/// (byte-for-byte after trimming surrounding whitespace) land on the same seed
+/// — and thus, with the same name + config, the same swarm.
+///
+/// Trim-only by design: the string is *not* lowercased or URL-normalized. URL
+/// paths are case-sensitive and Unicode case-folding is platform-dependent, so
+/// either would silently break convergence across machines.
+#[must_use]
+pub(crate) fn topic_seed(topic: &str) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(TOPIC_DOMAIN);
+    hasher.update(topic.trim().as_bytes());
+    let digest = hasher.finalize();
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&digest);
+    out
+}
+
 /// Derive an independent 32-byte secret for `label` from the swarm
 /// `seed`: `SHA256(DOMAIN ‖ [label_len] ‖ label ‖ seed)`. Each label
 /// (`"rendezvous"`, `"port"`, `"topic"`, …) yields a distinct value, so
@@ -130,6 +155,7 @@ pub(crate) fn derive_topic_id(seed: &[u8; 32], name: &SwarmName, config_bytes: &
 mod derive_secret_tests {
     use super::{
         RENDEZVOUS_LADDER, derive_secret, rendezvous_id, rendezvous_ports, rendezvous_secret,
+        topic_seed,
     };
 
     const SEED_A: [u8; 32] = [7u8; 32];
@@ -190,6 +216,36 @@ mod derive_secret_tests {
             rendezvous_ports(&SEED_A),
             rendezvous_ports(&SEED_B),
             "different seeds get different ladders"
+        );
+    }
+
+    #[test]
+    fn topic_seed_is_deterministic() {
+        assert_eq!(topic_seed("agent-habilis"), topic_seed("agent-habilis"));
+    }
+
+    #[test]
+    fn topic_seed_differs_by_string() {
+        assert_ne!(topic_seed("alpha"), topic_seed("beta"));
+    }
+
+    #[test]
+    fn topic_seed_trims_surrounding_whitespace() {
+        assert_eq!(topic_seed("  x\n"), topic_seed("x"));
+    }
+
+    #[test]
+    fn topic_seed_is_case_sensitive() {
+        assert_ne!(topic_seed("Repo"), topic_seed("repo"));
+    }
+
+    #[test]
+    fn topic_seed_domain_separated_from_derive_secret() {
+        // A topic seed lives under TOPIC_DOMAIN; it must not coincide with a
+        // labelled derivation off some other seed for any plausible collision.
+        assert_ne!(
+            topic_seed("rendezvous"),
+            derive_secret(&SEED_A, b"rendezvous")
         );
     }
 

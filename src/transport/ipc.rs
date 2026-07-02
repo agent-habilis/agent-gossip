@@ -303,7 +303,7 @@ pub(crate) async fn send(cmd: &IpcCommand, nickname: &Nickname) -> Result<String
     let stream = Stream::connect(name).await.map_err(|_| anyhow::anyhow!(
         "No active swarm server running for nickname '{nickname}'. Start one with `ahsw create` or `ahsw join {{🐝...}} --nickname {nickname}`."
     ))?;
-    task(stream, cmd).await
+    round_trip(stream, cmd).await
 }
 
 /// Client-side: send an IPC command to a specific socket path. `doctor` uses
@@ -312,7 +312,7 @@ pub(crate) async fn send(cmd: &IpcCommand, nickname: &Nickname) -> Result<String
 ///
 /// # Errors
 /// The path is not valid UTF-8, the socket can't be connected (no live
-/// daemon), or the I/O task fails.
+/// daemon), or the request/response round trip fails.
 pub(crate) async fn send_to_path(path: &std::path::Path, cmd: &IpcCommand) -> Result<String> {
     use anyhow::Context;
     let path_str = path.to_str().context("socket path is not valid UTF-8")?;
@@ -321,12 +321,12 @@ pub(crate) async fn send_to_path(path: &std::path::Path, cmd: &IpcCommand) -> Re
     let stream = Stream::connect(name)
         .await
         .map_err(|error| anyhow::anyhow!("connect {path_str}: {error}"))?;
-    task(stream, cmd).await
+    round_trip(stream, cmd).await
 }
 
 /// Write `cmd`, half-close, and read back the single-line JSON response.
 /// The shared body of [`send`] and [`send_to_path`].
-async fn task(stream: Stream, cmd: &IpcCommand) -> Result<String> {
+async fn round_trip(stream: Stream, cmd: &IpcCommand) -> Result<String> {
     let (read_half, mut write_half) = tokio::io::split(stream);
 
     let json = serde_json::to_string(cmd)?;

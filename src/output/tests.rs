@@ -235,6 +235,7 @@ fn task_event_json_shape() {
         parsed["display"],
         "🐝️ task offer `<drift-oak>` → `<calm-otter>`: ## Task\nport the parser"
     );
+    assert!(parsed.get("kind").is_none());
     // Distinct top-level event — never the `message` family, no `type` key.
     assert!(parsed.get("type").is_none());
 }

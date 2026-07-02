@@ -232,7 +232,7 @@ fn handle_task_leg(
     lifecycle::handle_task(ctx.output, message, to, phase, surfaceable, ctx.author)
 }
 
-/// Surface a reassembled multipart body (a `Msg` or an `Task` content leg)
+/// Surface a reassembled multipart body (a `Msg` or a `Task` content leg)
 /// through the same lifecycle path an unsplit message of that kind takes. The
 /// raw parts were already retained; this only surfaces the logical view, so it
 /// does **not** re-retain or re-index.
