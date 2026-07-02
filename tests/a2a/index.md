@@ -39,9 +39,9 @@ Core:
 Coverage:
 - [Messaging](/messaging.md) — broadcast, the auto-reply judgement, directed reply.
 - [Liveness](/liveness.md) — ping, status/roster, presence, quiet/return, leave.
-- [Exchange edge cases](/exchange-edge-cases.md) — decline, cancel, context Q&A,
+- [Task edge cases](/task-edge-cases.md) — decline, cancel, context Q&A,
   task revision.
-- [Todo backends](/todo-backends.md) — exchange tracking with vs without a todo
+- [Todo backends](/todo-backends.md) — task tracking with vs without a todo
   plugin.
 - [Multi-peer fan-out](/multi-peer-fanout.md) — one coordinator, two workers.
 - [Cross-harness](/cross-harness.md) — pi ↔ Claude Code in one swarm.
@@ -97,7 +97,7 @@ skills. This table is only to help you read what happened.
 | directed reply | `/swarm-reply` | `swarm_send` (with reply) | `/swarm:reply` |
 | handover | `/swarm-handover` | `swarm_handover` | `/swarm:handover` |
 | task | `/swarm-task` | `swarm_task` | `/swarm:task` |
-| advance exchange | — | `swarm_exchange` | (skill drives the legs) |
+| advance task leg | — | `swarm_task_leg` | (skill drives the legs) |
 | status / roster | `/swarm-status` | `swarm_status` | `/swarm:status` |
 | ping | `/swarm-ping` | `swarm_ping` | `/swarm:ping` |
 | read state | `/swarm-state` | `swarm_get_state` | `ahsw state get` |

@@ -10,9 +10,7 @@ use anyhow::Result;
 use crate::daemon::state::RosterSnapshot;
 use crate::embed::{CreateConfig, CreateError, InProcessSession, JoinConfig, JoinError};
 use crate::protocol::swarm::SwarmName;
-use crate::protocol::{
-    ExchangeId, ExchangeKind, ExchangePhase, Message, MessageBody, MessageId, Nickname, SwarmId,
-};
+use crate::protocol::{Message, MessageBody, MessageId, Nickname, SwarmId, TaskId, TaskPhase};
 
 /// One active swarm for the MCP server: the shared [`InProcessSession`]
 /// core (poll-only, silent) plus the per-session implicit `after` cursor.
@@ -81,22 +79,18 @@ impl Session {
         Ok((msg.id.clone(), msg))
     }
 
-    /// Send one leg of an exchange. Returns `(id, echo)`.
+    /// Send one leg of a task. Returns `(id, echo)`.
     ///
     /// # Errors
     /// Fails if the event loop has stopped.
-    pub(super) async fn send_exchange(
+    pub(super) async fn send_task(
         &self,
         to: Nickname,
-        exchange_id: ExchangeId,
-        kind: ExchangeKind,
-        phase: ExchangePhase,
+        task_id: TaskId,
+        phase: TaskPhase,
         body: MessageBody,
     ) -> Result<(MessageId, Message)> {
-        let msg = self
-            .inner
-            .exchange(to, exchange_id, kind, phase, body)
-            .await?;
+        let msg = self.inner.task(to, task_id, phase, body).await?;
         Ok((msg.id.clone(), msg))
     }
 
@@ -221,14 +215,14 @@ mod tests {
         cfg
     }
 
-    /// The `Message` inside a surfaced `msg`/`presence`/`exchange` event, if
+    /// The `Message` inside a surfaced `msg`/`presence`/`task` event, if
     /// any — the test view into the now-structured `fetch_messages` result.
     fn as_message(event: &crate::output::OutputEvent) -> Option<&Message> {
         use crate::output::OutputEvent;
         match event {
             OutputEvent::Message { msg, .. }
             | OutputEvent::Presence { msg }
-            | OutputEvent::Exchange { msg, .. } => Some(msg),
+            | OutputEvent::Task { msg, .. } => Some(msg),
             OutputEvent::Ready { .. }
             | OutputEvent::SwarmId { .. }
             | OutputEvent::PeerTimeout { .. }
@@ -239,7 +233,7 @@ mod tests {
             | OutputEvent::Error { .. }
             | OutputEvent::PingReport { .. }
             | OutputEvent::StateChanged { .. }
-            | OutputEvent::ExchangeTimeout { .. } => None,
+            | OutputEvent::TaskTimeout { .. } => None,
         }
     }
 
@@ -281,7 +275,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn two_sessions_same_swarm_exchange_messages() {
+    async fn two_sessions_same_swarm_task_messages() {
         let creator = Session::create(create_cfg("two", "alice-two"))
             .await
             .expect("create");
@@ -606,6 +600,16 @@ mod tests {
             session.state_get().await.expect("state_get")["turn"],
             json!("a")
         );
+
+        // The fold order is `(timestamp, id)` at one-second resolution, so two
+        // changes authored in the same second sort by the random id tiebreak —
+        // the documented turn-based contract (the glossary's *Shared state
+        // converges deterministically* invariant). Cross the second boundary
+        // so the second merge deterministically folds last.
+        let stamped = crate::util::clock::unix_secs();
+        while crate::util::clock::unix_secs() == stamped {
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
 
         // A non-object merge replaces the document (RFC 7386), no rejection.
         session

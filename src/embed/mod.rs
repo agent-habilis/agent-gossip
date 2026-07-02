@@ -26,9 +26,7 @@ use crate::protocol::swarm::{
     DEFAULT_DIRECTORY, DirectorySelection, LookupOpts, LookupSet, Swarm, SwarmConfig, SwarmName,
     resolve_lookups,
 };
-use crate::protocol::{
-    ExchangeId, ExchangeKind, ExchangePhase, Message, MessageBody, Nickname, SwarmId,
-};
+use crate::protocol::{Message, MessageBody, Nickname, SwarmId, TaskId, TaskPhase};
 use crate::resolver::JoinTarget;
 use crate::util::tuning::{
     DEFAULT_MAX_DIRECT_PEERS, EMBED_INBOUND_CAP, advertise_interval_secs, directory_expiry_secs,
@@ -391,24 +389,22 @@ impl InProcessSession {
             .map_err(|_| anyhow::anyhow!("swarm event loop dropped the response"))
     }
 
-    /// Send one leg of an exchange; returns the canonical [`Message`].
+    /// Send one leg of a task; returns the canonical [`Message`].
     ///
     /// # Errors
     /// Fails if the event loop has stopped or dropped the response.
-    pub(crate) async fn exchange(
+    pub(crate) async fn task(
         &self,
         to: Nickname,
-        exchange_id: ExchangeId,
-        kind: ExchangeKind,
-        phase: ExchangePhase,
+        task_id: TaskId,
+        phase: TaskPhase,
         body: MessageBody,
     ) -> anyhow::Result<Message> {
         let (resp_tx, resp_rx) = oneshot::channel();
         self.req_tx
-            .send(SessionRequest::Exchange {
+            .send(SessionRequest::Task {
                 to,
-                exchange_id,
-                kind,
+                task_id,
                 phase,
                 body,
                 resp: resp_tx,
@@ -760,7 +756,7 @@ impl SwarmSession {
     /// Poll the surfaced-event history after the `after` seq cursor (`None`
     /// for the full buffered window). Join-horizon filtered. A pull
     /// alternative to the [`SwarmSession::messages`] live subscription that
-    /// surfaces *every* event kind (chat, presence, exchange legs, and the
+    /// surfaces *every* event kind (chat, presence, task legs, and the
     /// transient `ping_report` / `peer_timeout` / … events), each tagged with
     /// its surfacing `seq` — pass the last returned `seq` as the next `after`.
     ///
@@ -778,22 +774,21 @@ impl SwarmSession {
         self.core.fetch(after, wait_ms).await
     }
 
-    /// Send one leg of an exchange to `to`, correlated by `exchange_id`.
+    /// Send one leg of a task to `to`, correlated by `task_id`.
     /// Returns the canonical [`Message`] the loop built. Addressee
-    /// validation (for `Offer`) happens in `broadcast_exchange` — see the
-    /// MCP `send_exchange` tool.
+    /// validation (for `Offer`) happens in `broadcast_task` — see the
+    /// MCP `send_task` tool.
     ///
     /// # Errors
     /// Fails if the event loop has stopped or dropped the response.
-    pub async fn exchange(
+    pub async fn task(
         &self,
         to: Nickname,
-        exchange_id: ExchangeId,
-        kind: ExchangeKind,
-        phase: ExchangePhase,
+        task_id: TaskId,
+        phase: TaskPhase,
         body: MessageBody,
     ) -> anyhow::Result<Message> {
-        self.core.exchange(to, exchange_id, kind, phase, body).await
+        self.core.task(to, task_id, phase, body).await
     }
 
     /// Broadcast pre-built wire bytes **verbatim** into the swarm — no

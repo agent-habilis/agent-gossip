@@ -56,7 +56,7 @@ The two paths differ only in **how the daemon is launched** and **how events
 arrive**: Monitor *pushes* each `--output json` event live (the skill reads that
 stream); the fallback *polls* for the **same** events on a tick. Everything after
 readiness — the Output block, the shared **Event handler**, and the
-exchange/task machinery — is **identical** for both, because the event objects
+handover/task machinery — is **identical** for both, because the event objects
 are byte-for-byte the same; only delivery (push vs. tick) differs.
 
 ## Monitor path (preferred)
@@ -167,13 +167,13 @@ discard it.
    empty array on timeout) — so you react near-instantly without busy-ticking,
    and the daemon never blocks. Each returned object is **the same event
    object** the Monitor would push — same `event`/`type`/`display`/`self`/
-   exchange fields — plus a leading `seq`. So apply the shared **"Event
+   task fields — plus a leading `seq`. So apply the shared **"Event
    handler"** section below **verbatim**: emit each event's `display` as-is,
-   skip the same events, drive the same exchange/`TodoWrite` machinery. Track
+   skip the same events, drive the same task/`TodoWrite` machinery. Track
    `$LAST` = the `seq` of the last event you handled; advance it each call. If a
    poll reports the `--after seq` aged out, re-baseline from the returned set.
    Re-issue the blocking poll right after each batch (drive it with the `loop`
-   skill / a `ScheduleWakeup`); shorten `--wait` while an exchange is
+   skill / a `ScheduleWakeup`); shorten `--wait` while a task is
    mid-flight if you want tighter turnaround. `--wait` is for this **active
    watch loop** only. For a **one-shot read** — the user asks "any new
    messages?" outside the loop, or you just want what is buffered now — run a
@@ -327,23 +327,25 @@ print the line and stop.
 - **Any other `merge`** (it doesn't touch `/peers`) → emit the event's `display`
   field verbatim (the daemon's path summary), exactly like a `state` event.
 
-## Exchange events (an interaction, not a verbatim line)
+## Task events (an interaction, not a verbatim line)
 
-An `exchange` event (`"event":"exchange"`) is **not** governed by the
+A `task` event (`"event":"task"`) is **not** governed by the
 verbatim-`display` rule above — it drives an interaction. Each leg carries
-`to`, `exchange_id`, `kind` (`handover`/`task`), `phase`, `body`, and
-`self`. An `exchange_progress` event (`done`/`total`) is a widget update only.
-Send legs with (reuse one `exchange_id` across the whole exchange):
+`to`, `task_id`, `phase`, `body`, and
+`self`. A `task_progress` event (`done`/`total`) is a widget update only.
+There is no handover-vs-task field on the wire: the offer's brief (`body`)
+says what is being asked. Send legs with (reuse one `task_id` across the
+whole task):
 
 ```
-ahsw exchange --swarm $SWARM --nickname $NICKNAME --to <peer> \
-  --exchange-id <uuid> --kind <kind> --phase <phase> --text "<body>"
+ahsw task --swarm $SWARM --nickname $NICKNAME --to <peer> \
+  --task-id <uuid> --phase <phase> --text "<body>"
 ```
 
 The daemon runs the timers (a 5-min idle debounce, a keepalive while you
 hold the ball) and the 100-content-message cap — you drive only the
 content. Track each live task as **one todo** in your harness's native to-do
-list (one per `exchange_id`) — **not** a printed `🐝 tasks` block. It's
+list (one per `task_id`) — **not** a printed `🐝 tasks` block. It's
 **`TodoWrite`** in most harnesses; where that tool is absent, use
 **`TaskCreate`** (`subject` = the `content` below, `activeForm` = `activeForm`) +
 **`TaskUpdate`** (status `pending → in_progress → completed`, `deleted` to drop).
@@ -362,25 +364,25 @@ A **handover** completes at the *handoff*, not at the work:
 `offer → accept → [context] → done → confirm`. The receiver requests close
 (`done`) once it has what it needs; the initiator **auto-confirms**; then the
 receiver runs the work on its own (plan-mode-gated). There is **no** work
-verification or `change` for a handover — that is a `task`-kind concern.
+verification or `change` for a handover — that belongs to the task flow.
 
 A **task** **returns the work**: `offer → accept → [context] → done →
 confirm` (with `change` to loop back for a revision). The receiver does the
 task itself and reports its **result** on the `done` leg; the initiator
 **`confirm`s** (accepts the result) or sends **`change`** (asks for a
 revision). The `/swarm:task` skill sends one or more tasks (each its
-own `exchange_id`, worker, and completion criteria) and prints each result as it returns;
+own `task_id`, worker, and completion criteria) and prints each result as it returns;
 the tasks are independent, with no cross-task step.
 
-**Receiving a handover** (kind=`handover`, you are the addressee,
-`"self":false`):
+**Receiving a handover** (you are the addressee, `"self":false`, and the
+offer brief hands you ownership to run on your own — no result expected back):
 
 1. **`phase:offer`** — a peer wants to hand you their task. Show the entry
    widget (`AskUserQuestion`): "Incoming handover from `<author>`: *[one-line
    task]*. Take it?", header `swarm:handover`, options **"Accept"** /
    **"Decline"** — **no `preview`** (the full plan is shown in plan mode after
    Accept, step 4). This is what defines "busy" — the user decides. Add a
-   `TodoWrite` todo for this `exchange_id`.
+   `TodoWrite` todo for this `task_id`.
    - **Decline** ⇒ send `--phase decline --text "<reason>"`; mark the todo
      `completed`; STOP.
    - **Accept** ⇒ send `--phase accept`; optionally `--phase context` with
@@ -397,13 +399,13 @@ the tasks are independent, with no cross-task step.
    On approval, do the work — it is yours and is **not** tracked back to the
    initiator.
 
-**Receiving a task** (kind=`task`, you are the addressee,
-`"self":false`):
+**Receiving a task** (you are the addressee, `"self":false`, and the offer
+brief asks you to run work and report a result back):
 
 1. **`phase:offer`** — a peer wants you to run a task and report back. Show the
    entry widget (`AskUserQuestion`): "Incoming task from `<author>`:
    *[one-line task]*. Run it?", header `swarm:task`, options **"Accept"** /
-   **"Decline"**. Add a `TodoWrite` todo for this `exchange_id`.
+   **"Decline"**. Add a `TodoWrite` todo for this `task_id`.
    - **Decline** ⇒ send `--phase decline --text "<reason>"`; mark the todo
      `completed`; STOP.
    - **Accept** ⇒ send `--phase accept`, then **do the work** (plan-mode-gate
@@ -431,7 +433,7 @@ deliverable, not narration), then **`confirm`** (send `--phase confirm`); send
 `--phase change` only if the result misses the task's completion criteria. Tasks are
 independent — there is no cross-task reduce. See `/swarm:task`.
 
-**Absolute rule (both kinds):** every `TodoWrite` call emits **zero**
+**Absolute rule (both flows):** every `TodoWrite` call emits **zero**
 surrounding prose — no preamble *before* and no postamble *after*. Two
 directions: never **announce the upcoming `TodoWrite`** (no "Now I'll track
 this in the to-do list", "Let me update the to-do list") and never **report the
@@ -448,5 +450,5 @@ a task is forbidden, named example or not. On `--phase decline`, mark
 status lives in the to-do list.
 `context`/`progress`/`accept`/`done`/`confirm` legs and your own
 `"self":true` echoes update the todo **silently** — never a printed line.
-`exchange_progress` (incl. the daemon's keepalive beats) only refreshes the
-todo. A `exchange_timeout` marks the todo `completed` ("timed out").
+`task_progress` (incl. the daemon's keepalive beats) only refreshes the
+todo. A `task_timeout` marks the todo `completed` ("timed out").

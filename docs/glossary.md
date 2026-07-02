@@ -78,8 +78,8 @@ Code: `protocol::crypto`.
 A per-participant Ed25519 keypair minted in-process at `create` / `join`
 (ephemeral). The **public key is the author's identity**; the nickname is only
 a non-unique display label and is never claimed cryptographically. Every
-message is signed with this key and verified on receipt, and both the rate
-limit and fork detection key on it. It is distinct from the shared
+message is signed with this key and verified on receipt, and fork detection
+keys on it. It is distinct from the shared
 **rendezvous** key and from the transport **endpoint** key.
 
 Code: `protocol::identity`. Design: [history-integrity.md](./history-integrity.md).
@@ -172,54 +172,56 @@ and broadcasting the id makes the swarm open to anyone who finds it.
 Browse a directory's live swarms (`ahsw discover`) and join one — the consumer
 side of **advertise**.
 
-### exchange
+### task
 
-*Layer: messaging · keyed by `exchange_id` (correlation) + the two parties' nicknames.*
+*Layer: messaging · keyed by `task_id` (correlation) + the two parties' nicknames.*
 
-A typed, phased, directed conversation (`MessageKind::Exchange`, phases
+The **primitive**: a typed, phased, directed conversation (`MessageKind::Task`,
+phases
 `offer`/`accept`/`decline`/`context`/`progress`/`done`/`confirm`/`change`/`cancel`)
-correlated by an `exchange_id`, with a `kind` discriminator (`handover` |
-`task`). The generic **mechanism**: a directed, multi-leg conversation
-whose *coarse* lifecycle (phase advance, the per-exchange idle-debounce timeout,
-the ball-owner keepalive, the 100-content-message cap) is owned by the daemon
-state machine (`daemon::exchange`), while the *content* is owned by the skill. Like
-a directed `Msg --reply`, a leg is delivered to all members for relay but
-**surfaced and logged only by its addressee and the sender's own echo** — a
-third party never sees it. The `progress` phase is liveness plumbing (never
-logged). Not part of the per-author hash chain or DAG (presence-like).
+correlated by a `task_id`. Its *coarse* lifecycle (phase advance, the per-task
+idle-debounce timeout, the ball-owner keepalive, the 100-content-message cap)
+is owned by the daemon state machine (`daemon::task`), while the *content* is
+owned by the skill. Like a directed `Msg --reply`, a leg is delivered to all
+members for relay but **surfaced and logged only by its addressee and the
+sender's own echo** — a third party never sees it. The `progress` phase is
+liveness plumbing (never logged). Not part of the per-author hash chain or DAG
+(presence-like).
 
-Code: `MessageKind::Exchange`, `lifecycle::handle_exchange`, `broadcast_exchange`,
-`daemon::exchange`.
+The primitive carries **no behavior discriminator**. How the two parties use a
+task — delegate a plan and walk away (a *handover*, see below), or run work and
+return a result (`offer → accept → [context] → done → confirm`, driven by
+`/swarm:task`) — is a skill-land convention carried in the offer body, not a
+wire field.
+
+**Keepalive vs. liveness.** While the ball-owner is silent, its daemon emits a
+`progress` keepalive so a genuinely-working owner is not falsely timed out. But
+the keepalive is bounded by **skill** liveness, not process liveness: it only
+fires while a real leg has been driven within `TASK_KEEPALIVE_MAX_SECS` (a leg
+the daemon's own keepalive never counts as). Past that, the keepalive stops and
+the peer's debounce reaps the task — so a crashed or abandoned skill cannot hold
+the peer forever. A skill doing very long silent work refreshes the window by
+sending its own `progress` beat.
+
+Code: `MessageKind::Task`, `lifecycle::handle_task`, `broadcast_task`,
+`daemon::task` (`TaskRecord::should_keepalive`).
 
 ### handover
 
-*Layer: behavior on top of **exchange**.*
+*Layer: skill-land behavior on the **task** primitive.*
 
-The behavior that delegates a task/plan to another agent — `ExchangeKind::Handover`
-on the exchange mechanism, driven entirely by the skill (`/swarm:handover`). It
-runs `offer → accept → context → done → confirm`, ending at the close
-handshake. "A handover is a behavior that uses the exchange mechanism"; it adds no
-wire type of its own.
-
-### task
-
-*Layer: behavior on top of **exchange**.*
-
-The behavior that runs work and **returns the result** — `ExchangeKind::Task`
-on the exchange mechanism, driven by the skill (`/swarm:task`). It runs
-`offer → accept → [context] → done → confirm`, where the worker reports its
-result on `done` and the initiator confirms (or `change`s for a revision) —
-the difference from **handover**, which closes without a result. `/swarm:task`
-sends one or more independent tasks (each its own `exchange_id`, worker,
-and completion criteria) and surfaces each result as it returns; there is no
-group-level outcome. Like handover, it adds no wire type of its own.
+The behavior that delegates a plan to another agent and walks away without a
+result, driven entirely by the skill (`/swarm:handover`). It runs `offer →
+accept → context → done → confirm`, ending at the close handshake. A handover
+is a convention *on* the task primitive — the intent lives in the offer body;
+it adds no wire type, no code concept, and no daemon behavior of its own.
 
 ### part
 
 *Layer: protocol — a header on **message**.*
 
-One slice of a body too large for a single gossip message. When a `msg` or an
-exchange leg's body exceeds `MAX_MESSAGE_SIZE`, the sender splits it into several
+One slice of a body too large for a single gossip message. When a `msg` or a
+task leg's body exceeds `MAX_MESSAGE_SIZE`, the sender splits it into several
 ordinary signed messages, each carrying a `part` header — a `group` (a UUID
 shared by the body's parts), an `idx`, and the `total` count. Each part is a real
 message (own id/seq/signature) retained in the **message log**, so a missing part

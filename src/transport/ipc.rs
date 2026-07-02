@@ -9,9 +9,7 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncWriteExt, BufReader};
 use tokio::sync::mpsc;
 
-use crate::protocol::{
-    ExchangeId, ExchangeKind, ExchangePhase, MessageBody, MessageId, Nickname, SwarmId,
-};
+use crate::protocol::{MessageBody, MessageId, Nickname, SwarmId, TaskId, TaskPhase};
 use crate::util::bounded_read::{LineRead, read_bounded_line};
 use crate::util::consts::{MAX_IPC_COMMAND_BYTES, MAX_IPC_RESPONSE_BYTES, RUNTIME_DIR};
 use crate::util::swarm_runtime_dir;
@@ -69,21 +67,20 @@ pub(crate) enum IpcCommand {
     /// `--output json` stream. Fire-and-forget — the ack is immediate.
     #[serde(rename = "ping")]
     Ping { swarm: SwarmId },
-    /// Send one leg of an exchange to `to`, correlated by `exchange_id`.
-    /// `Offer` carries the exchange brief; later phases the Q&A / progress /
+    /// Send one leg of a task to `to`, correlated by `task_id`.
+    /// `Offer` carries the task brief; later phases the Q&A / progress /
     /// outcome. The daemon validates `to` against the live roster for
     /// `Offer` only.
-    #[serde(rename = "exchange")]
-    Exchange {
+    #[serde(rename = "task")]
+    Task {
         swarm: SwarmId,
         to: Nickname,
-        exchange_id: ExchangeId,
-        kind: ExchangeKind,
-        phase: ExchangePhase,
+        task_id: TaskId,
+        phase: TaskPhase,
         body: MessageBody,
     },
     /// Query the live participant roster (nicknames + recency) — backs the
-    /// exchange sender's target picker and nickname validation.
+    /// task sender's target picker and nickname validation.
     #[serde(rename = "peers")]
     Peers { swarm: SwarmId },
     /// Apply an RFC 7386 JSON Merge Patch to the swarm's shared state. `merge` is
@@ -124,7 +121,7 @@ impl IpcCommand {
             IpcCommand::Msg { swarm, .. }
             | IpcCommand::Poll { swarm, .. }
             | IpcCommand::Ping { swarm }
-            | IpcCommand::Exchange { swarm, .. }
+            | IpcCommand::Task { swarm, .. }
             | IpcCommand::Peers { swarm }
             | IpcCommand::StateMerge { swarm, .. }
             | IpcCommand::StateGet { swarm }
@@ -306,7 +303,7 @@ pub(crate) async fn send(cmd: &IpcCommand, nickname: &Nickname) -> Result<String
     let stream = Stream::connect(name).await.map_err(|_| anyhow::anyhow!(
         "No active swarm server running for nickname '{nickname}'. Start one with `ahsw create` or `ahsw join {{🐝...}} --nickname {nickname}`."
     ))?;
-    exchange(stream, cmd).await
+    task(stream, cmd).await
 }
 
 /// Client-side: send an IPC command to a specific socket path. `doctor` uses
@@ -315,7 +312,7 @@ pub(crate) async fn send(cmd: &IpcCommand, nickname: &Nickname) -> Result<String
 ///
 /// # Errors
 /// The path is not valid UTF-8, the socket can't be connected (no live
-/// daemon), or the I/O exchange fails.
+/// daemon), or the I/O task fails.
 pub(crate) async fn send_to_path(path: &std::path::Path, cmd: &IpcCommand) -> Result<String> {
     use anyhow::Context;
     let path_str = path.to_str().context("socket path is not valid UTF-8")?;
@@ -324,12 +321,12 @@ pub(crate) async fn send_to_path(path: &std::path::Path, cmd: &IpcCommand) -> Re
     let stream = Stream::connect(name)
         .await
         .map_err(|error| anyhow::anyhow!("connect {path_str}: {error}"))?;
-    exchange(stream, cmd).await
+    task(stream, cmd).await
 }
 
 /// Write `cmd`, half-close, and read back the single-line JSON response.
 /// The shared body of [`send`] and [`send_to_path`].
-async fn exchange(stream: Stream, cmd: &IpcCommand) -> Result<String> {
+async fn task(stream: Stream, cmd: &IpcCommand) -> Result<String> {
     let (read_half, mut write_half) = tokio::io::split(stream);
 
     let json = serde_json::to_string(cmd)?;
@@ -365,8 +362,8 @@ pub(crate) fn active_socket_paths() -> Vec<std::path::PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::{
-        ExchangeId, ExchangeKind, ExchangePhase, IpcCommand, IpcMessage, MessageBody, Nickname,
-        SwarmId, bind, json_error, json_ok, mpsc, send, serve, socket_path,
+        IpcCommand, IpcMessage, MessageBody, Nickname, SwarmId, TaskId, TaskPhase, bind,
+        json_error, json_ok, mpsc, send, serve, socket_path,
     };
 
     // ── pure functions ─────────────────────────────────────────────
@@ -455,7 +452,7 @@ mod tests {
             IpcCommand::Msg { .. }
             | IpcCommand::Poll { .. }
             | IpcCommand::Ping { .. }
-            | IpcCommand::Exchange { .. }
+            | IpcCommand::Task { .. }
             | IpcCommand::Peers { .. }
             | IpcCommand::MetaMerge { .. }
             | IpcCommand::MetaGet { .. }
@@ -479,7 +476,7 @@ mod tests {
             IpcCommand::Msg { reply, .. } => assert_eq!(reply, Some(target)),
             IpcCommand::Poll { .. }
             | IpcCommand::Ping { .. }
-            | IpcCommand::Exchange { .. }
+            | IpcCommand::Task { .. }
             | IpcCommand::Peers { .. }
             | IpcCommand::StateMerge { .. }
             | IpcCommand::MetaMerge { .. }
@@ -505,7 +502,7 @@ mod tests {
             IpcCommand::Poll { after, .. } => assert_eq!(after, Some(42)),
             IpcCommand::Msg { .. }
             | IpcCommand::Ping { .. }
-            | IpcCommand::Exchange { .. }
+            | IpcCommand::Task { .. }
             | IpcCommand::Peers { .. }
             | IpcCommand::StateMerge { .. }
             | IpcCommand::MetaMerge { .. }
@@ -527,7 +524,7 @@ mod tests {
             IpcCommand::Ping { swarm } => assert_eq!(swarm.as_str(), "🐝test"),
             IpcCommand::Msg { .. }
             | IpcCommand::Poll { .. }
-            | IpcCommand::Exchange { .. }
+            | IpcCommand::Task { .. }
             | IpcCommand::Peers { .. }
             | IpcCommand::StateMerge { .. }
             | IpcCommand::MetaMerge { .. }
@@ -538,27 +535,22 @@ mod tests {
     }
 
     #[test]
-    fn ipc_command_exchange_round_trip() {
-        let cmd = IpcCommand::Exchange {
+    fn ipc_command_task_round_trip() {
+        let cmd = IpcCommand::Task {
             swarm: SwarmId::from("🐝test"),
             to: Nickname::from("calm-otter"),
-            exchange_id: ExchangeId::from("550e8400-e29b-41d4-a716-446655440000"),
-            kind: ExchangeKind::Handover,
-            phase: ExchangePhase::Offer,
+            task_id: TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
+            phase: TaskPhase::Offer,
             body: MessageBody::from("## Task\nport the parser"),
         };
         let json = serde_json::to_string(&cmd).unwrap();
-        assert!(json.contains("\"command\":\"exchange\""));
-        assert!(json.contains("\"kind\":\"handover\""));
+        assert!(json.contains("\"command\":\"task\""));
         assert!(json.contains("\"phase\":\"offer\""));
         let parsed: IpcCommand = serde_json::from_str(&json).unwrap();
         match parsed {
-            IpcCommand::Exchange {
-                to, kind, phase, ..
-            } => {
+            IpcCommand::Task { to, phase, .. } => {
                 assert_eq!(to, Nickname::from("calm-otter"));
-                assert_eq!(kind, ExchangeKind::Handover);
-                assert_eq!(phase, ExchangePhase::Offer);
+                assert_eq!(phase, TaskPhase::Offer);
             }
             IpcCommand::Msg { .. }
             | IpcCommand::Poll { .. }
@@ -568,7 +560,7 @@ mod tests {
             | IpcCommand::MetaMerge { .. }
             | IpcCommand::MetaGet { .. }
             | IpcCommand::StateGet { .. }
-            | IpcCommand::Info => panic!("expected Exchange"),
+            | IpcCommand::Info => panic!("expected Task"),
         }
     }
 
@@ -585,7 +577,7 @@ mod tests {
             IpcCommand::Msg { .. }
             | IpcCommand::Poll { .. }
             | IpcCommand::Ping { .. }
-            | IpcCommand::Exchange { .. }
+            | IpcCommand::Task { .. }
             | IpcCommand::StateMerge { .. }
             | IpcCommand::MetaMerge { .. }
             | IpcCommand::MetaGet { .. }
@@ -766,7 +758,7 @@ mod tests {
                     }
                     IpcCommand::Poll { .. }
                     | IpcCommand::Ping { .. }
-                    | IpcCommand::Exchange { .. }
+                    | IpcCommand::Task { .. }
                     | IpcCommand::Peers { .. }
                     | IpcCommand::StateMerge { .. }
                     | IpcCommand::MetaMerge { .. }

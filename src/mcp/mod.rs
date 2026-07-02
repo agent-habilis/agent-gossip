@@ -9,7 +9,7 @@
 //! - `discover_swarms`
 //! - `leave_swarm`
 //! - `send_message`
-//! - `send_exchange`
+//! - `send_task`
 //! - `fetch_messages`
 //! - `apply_state_merge`
 //! - `get_state`
@@ -57,8 +57,7 @@ use crate::daemon::state::RosterEntry;
 use crate::embed::{CreateConfig, CreateError, Directory, JoinConfig};
 use crate::protocol::swarm::{LookupSet, RelayLadder, RelaySelection, SwarmName};
 use crate::protocol::{
-    ExchangeId, ExchangeKind, ExchangeKindError, ExchangePhase, ExchangePhaseError, Message,
-    MessageBody, MessageId, Nickname, SwarmId,
+    Message, MessageBody, MessageId, Nickname, SwarmId, TaskId, TaskPhase, TaskPhaseError,
 };
 use crate::resolver::JoinTarget;
 use crate::util::tuning::DEFAULT_MAX_DIRECT_PEERS;
@@ -197,14 +196,12 @@ struct FetchMessagesArgs {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct SendTaskArgs {
-    /// Addressee: the peer's nickname this exchange leg is directed at.
+    /// Addressee: the peer's nickname this task leg is directed at.
     /// For `phase: "offer"` it must be a current participant.
     to: String,
     /// Task correlation id (UUID): mint a fresh one for the opening
-    /// `offer`, then echo the same id on every later leg of that exchange.
-    exchange_id: String,
-    /// Task behavior: "handover" (delegate a task/plan) or "task".
-    kind: String,
+    /// `offer`, then echo the same id on every later leg of that task.
+    task_id: String,
     /// Lifecycle phase: "offer" (the brief), "accept"/"decline" (entry),
     /// "context" (Q&A), "progress" (a done/total beat), "done" (request
     /// close + verification instructions), "confirm"/"change" (the
@@ -216,26 +213,19 @@ struct SendTaskArgs {
     text: String,
 }
 
-/// Parse an exchange phase string into [`ExchangePhase`], delegating to its
+/// Parse a task phase string into [`TaskPhase`], delegating to its
 /// `FromStr` (the single phase mapping) and surfacing a bad value as MCP
 /// `invalid_params`.
-fn parse_exchange_phase(raw: &str) -> Result<ExchangePhase, McpError> {
+fn parse_task_phase(raw: &str) -> Result<TaskPhase, McpError> {
     raw.parse()
-        .map_err(|error: ExchangePhaseError| McpError::invalid_params(error.to_string(), None))
+        .map_err(|error: TaskPhaseError| McpError::invalid_params(error.to_string(), None))
 }
 
-/// Parse an exchange kind string into [`ExchangeKind`].
-fn parse_exchange_kind(raw: &str) -> Result<ExchangeKind, McpError> {
-    raw.parse()
-        .map_err(|error: ExchangeKindError| McpError::invalid_params(error.to_string(), None))
-}
-
-/// Parse an exchange id string into [`ExchangeId`].
-fn parse_exchange_id(raw: &str) -> Result<ExchangeId, McpError> {
-    raw.parse()
-        .map_err(|error: crate::protocol::ExchangeIdError| {
-            McpError::invalid_params(error.to_string(), None)
-        })
+/// Parse a task id string into [`TaskId`].
+fn parse_task_id(raw: &str) -> Result<TaskId, McpError> {
+    raw.parse().map_err(|error: crate::protocol::TaskIdError| {
+        McpError::invalid_params(error.to_string(), None)
+    })
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -330,9 +320,12 @@ struct SendMessageResult {
 struct FetchMessagesResult {
     /// Surfaced events since the cursor, each the *same* JSON object the live
     /// `--output json` stream emits (carrying `seq`, `event`/`type`,
-    /// `display`, `self`, …) — chat, presence, exchange legs, and the
-    /// transient `ping_report` / `peer_timeout` / … events alike.
-    messages: Vec<serde_json::Value>,
+    /// `display`, `self`, …) — chat, presence, task legs, and the
+    /// transient `ping_report` / `peer_timeout` / … events alike. Held as
+    /// [`RawValue`](serde_json::value::RawValue) so each event's rendered,
+    /// field-order-pinned line is embedded verbatim (re-parsing to a `Value`
+    /// would key-sort it and break parity with `--output json`).
+    messages: Vec<Box<serde_json::value::RawValue>>,
     /// The newest `seq` returned (the next `after`), or `None` when nothing
     /// new arrived.
     current_seq: Option<u64>,
@@ -558,7 +551,7 @@ impl AgentSwarmServer {
     }
 
     #[tool(
-        description = "Return buffered events from the current swarm — chat, presence, exchange legs, shared-state changes (event \"state\", carrying the merge and the newly-derived `document`), and transient events (ping_report, peer_timeout, …), each the same JSON object the live event stream emits. The server auto-tracks a per-session `seq` cursor, so repeat calls with no args return only new traffic (first call sees full history, up to ~200 events). Pass `after` (a seq) only to explicitly replay from a point. Pass `wait_ms` (~15000) to long-poll — block up to that many ms (server-capped at 60s) for new traffic before returning — only while actively watching a live conversation in a loop; on timeout `messages` is empty. Omit `wait_ms` for a one-shot read (e.g. the user asks to check for new messages), which returns whatever is buffered right away. Never returns `alive` heartbeats — those are internal plumbing."
+        description = "Return buffered events from the current swarm — chat, presence, task legs, shared-state changes (event \"state\", carrying the merge and the newly-derived `document`), and transient events (ping_report, peer_timeout, …), each the same JSON object the live event stream emits. The server auto-tracks a per-session `seq` cursor, so repeat calls with no args return only new traffic (first call sees full history, up to ~200 events). Pass `after` (a seq) only to explicitly replay from a point. Pass `wait_ms` (~15000) to long-poll — block up to that many ms (server-capped at 60s) for new traffic before returning — only while actively watching a live conversation in a loop; on timeout `messages` is empty. Omit `wait_ms` for a one-shot read (e.g. the user asks to check for new messages), which returns whatever is buffered right away. Never returns `alive` heartbeats — those are internal plumbing."
     )]
     async fn fetch_messages(
         &self,
@@ -570,17 +563,18 @@ impl AgentSwarmServer {
             .fetch_messages(args.after, args.wait_ms)
             .await
             .map_err(to_mcp_error)?;
-        // Render each surfaced event to the stream-identical JSON object, then
-        // parse back to a `Value` so it embeds in the structured result.
+        // Embed each surfaced event's rendered line verbatim as a `RawValue`,
+        // so the MCP result is byte-identical to the `--output json` stream
+        // (a `Value` round-trip would key-sort the order-pinned fields).
         // `current_seq` is the seq of the last event ACTUALLY included, not of
         // the raw batch: every pollable event is expected to render, but if one
         // ever fails to (a bug — log it), the cursor must not advance past an
         // event the client never received, or it would silently lose it.
-        let mut messages: Vec<serde_json::Value> = Vec::with_capacity(events.len());
+        let mut messages: Vec<Box<serde_json::value::RawValue>> = Vec::with_capacity(events.len());
         let mut current_seq: Option<u64> = None;
         for item in &events {
             if let Some(value) = crate::output::surfaced_event_json(item.seq, &item.event)
-                .and_then(|line| serde_json::from_str::<serde_json::Value>(&line).ok())
+                .and_then(|line| serde_json::value::RawValue::from_string(line).ok())
             {
                 messages.push(value);
                 current_seq = Some(item.seq);
@@ -650,30 +644,26 @@ impl AgentSwarmServer {
     }
 
     #[tool(
-        description = "Send one leg of an exchange to a specific peer. An exchange is a directed, phased conversation correlated by `exchange_id` (mint a UUID for the opening \"offer\", echo it on every later leg). `kind` is the behavior (\"handover\" delegates a task/plan; \"task\" runs+verifies). Phases: \"offer\" (brief), \"accept\"/\"decline\" (entry), \"context\" (Q&A), \"progress\" (a done/total beat, e.g. text \"35/100\"), \"done\" (request close + verification instructions), \"confirm\"/\"change\" (verify), \"cancel\". For \"offer\" the `to` nickname must be a current participant (check `swarm_info`). Returns the new message id and authoritative echo."
+        description = "Send one leg of a task to a specific peer. A task is a directed, phased conversation correlated by `task_id` (mint a UUID for the opening \"offer\", echo it on every later leg). How the two parties use a task (delegate a plan, run work and return a result, …) is a skill-land convention carried in the offer body — the primitive has no `kind`. Phases: \"offer\" (brief), \"accept\"/\"decline\" (entry), \"context\" (Q&A), \"progress\" (a done/total beat, e.g. text \"35/100\"), \"done\" (request close + verification instructions), \"confirm\"/\"change\" (verify), \"cancel\". For \"offer\" the `to` nickname must be a current participant (check `swarm_info`). Returns the new message id and authoritative echo."
     )]
-    async fn send_exchange(
+    async fn send_task(
         &self,
         Parameters(args): Parameters<SendTaskArgs>,
     ) -> Result<CallToolResult, McpError> {
         let guard = self.session.lock().await;
         let session = guard.as_ref().ok_or_else(not_in_swarm_error)?;
         let to = Nickname::new(args.to).map_err(|error| {
-            McpError::invalid_params(format!("invalid exchange target: {error}"), None)
+            McpError::invalid_params(format!("invalid task target: {error}"), None)
         })?;
-        let exchange_id = parse_exchange_id(&args.exchange_id)?;
-        let kind = parse_exchange_kind(&args.kind)?;
-        let phase = parse_exchange_phase(&args.phase)?;
+        let task_id = parse_task_id(&args.task_id)?;
+        let phase = parse_task_phase(&args.phase)?;
         let body = MessageBody::new(args.text)
             .map_err(|error| McpError::invalid_params(format!("{error}"), None))?;
-        // The daemon's `broadcast_exchange` validates the addressee (offer
+        // The daemon's `broadcast_task` validates the addressee (offer
         // only), so we don't repeat it here. An unknown participant comes back
         // as an error; re-classify it as `invalid_params` since it's bad input,
         // not an internal fault.
-        match session
-            .send_exchange(to, exchange_id, kind, phase, body)
-            .await
-        {
+        match session.send_task(to, task_id, phase, body).await {
             Ok((id, message)) => ok_json(SendMessageResult { id, message }),
             Err(error) => {
                 let message = error.to_string();
@@ -768,7 +758,7 @@ EVENT SHAPE. Each entry in `fetch_messages().messages` is a JSON object. Chat \
 and presence share `event:\"message\"` and are distinguished by a `type` field \
 (`type:\"msg\"` or `type:\"presence\"`, with `subtype:\"joined\"/\"left\"/\"alive\"` \
 on presence). Everything else is discriminated by `event` directly \
-(`state`, `exchange`, `exchange_progress`, `ping_report`, `peer_timeout`, \
+(`state`, `task`, `task_progress`, `ping_report`, `peer_timeout`, \
 `peer_return`, `info`, `error`, `ready`, …). Most entries also carry `self` \
 (true if you authored it) and a pre-built `display` string. You rarely branch on these \
 yourself — prefer `display` (below); the rules here say only what to skip vs. \
@@ -787,7 +777,7 @@ and any entry with `self:true` EXCEPT your own `type:\"msg\"` (a `msg` with \
 is the send confirmation). Show (emit `display` verbatim): a peer's `type:\"msg\"`, \
 a `type:\"presence\"` joined/left, `event:\"peer_timeout\"`, `event:\"peer_return\"`, \
 and `event:\"ping_report\"` (its `display` is the full RTT table). Drive, do not \
-print: an `event:\"exchange\"` (see TASKS); `event:\"exchange_progress\"` is a \
+print: an `event:\"task\"` (see TASKS); `event:\"task_progress\"` is a \
 widget beat, never a chat line.
 
 REPLY to a peer's `msg` (no `reply`, not directed elsewhere) when you can add \
@@ -799,12 +789,12 @@ PING/PONG is handled entirely by the daemon — it auto-answers a peer's ping an
 emits the `ping_report`. Do NOT send a pong yourself. To measure RTT yourself, \
 call the `ping` tool.
 
-TASKS/HANDOVERS arrive as `event:\"exchange\"` records addressed to you and are driven with \
-`send_exchange`, reusing one `exchange_id` across all legs: \
+TASKS/HANDOVERS arrive as `event:\"task\"` records addressed to you and are driven with \
+`send_task`, reusing one `task_id` across all legs: \
 offer → accept/decline → [context] → done → confirm/change. A handover closes at \
 the handoff (initiator auto-confirms; you then do the work on your own); a task \
 returns its result on the `done` leg for the initiator to confirm. Don't display \
-exchange legs as chat lines — drive the flow.
+task legs as chat lines — drive the flow.
 
 SHARED STATE is one JSON document the whole swarm shares, separate from chat. \
 Read it with `get_state`; change it with `apply_state_merge` (an RFC 7386 JSON \

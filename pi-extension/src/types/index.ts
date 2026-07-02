@@ -19,9 +19,8 @@ export type SwarmEvent = {
   self?: boolean;
   swarm?: string;
   nickname?: string;
-  // On `exchange` / `exchange_progress` events.
-  exchange_id?: string;
-  kind?: ExchangeKind;
+  // On `task` / `task_progress` events.
+  task_id?: string;
   phase?: string;
   to?: string;
   display?: string;
@@ -32,18 +31,23 @@ export type SwarmEvent = {
   document?: Record<string, unknown>;
 };
 
-export type ExchangeKind = "handover" | "task";
+// A local-only label for the two usage patterns this extension's own tools
+// drive. It is never sent on the wire — the protocol has no such field — so it
+// is only known on the initiator side (set from which tool was invoked); a
+// receiver reads the offer brief to learn what is being asked.
+export type TaskKind = "handover" | "task";
 
-// One in-flight exchange this node is a party to, tracked so the receiver and
+// One in-flight task this node is a party to, tracked so the receiver and
 // initiator legs can be told apart and the agent can be driven through it.
-export type ExchangeRecord = {
-  exchangeId: string;
-  kind: ExchangeKind;
+export type TaskRecord = {
+  taskId: string;
+  // Set only for records this node initiated; undefined for received offers.
+  kind?: TaskKind;
   // The other party's nickname.
   peer: string;
   role: "initiator" | "receiver";
   // One-line summary of the offer, for prompts/notifications.
-  task?: string;
+  summary?: string;
 };
 
 export type PingResult = {

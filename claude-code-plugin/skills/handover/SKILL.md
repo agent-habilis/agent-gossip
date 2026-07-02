@@ -1,15 +1,15 @@
 ---
 name: handover
-description: Hand a task to another peer in the swarm. Use when the user wants to delegate work to another agent. Task-first - $ARGUMENTS is the task to delegate (else the current plan); composes a brief, then picks a worker, then drives the exchange until the receiver accepts.
+description: Hand a task to another peer in the swarm. Use when the user wants to delegate work to another agent. Task-first - $ARGUMENTS is the task to delegate (else the current plan); composes a brief, then picks a worker, then drives the task until the receiver accepts.
 ---
 
 ## What this does
 
 Hands a task to another participant. A handover is one **behavior** built
-on the swarm's generic **exchange** mechanism: a directed, phased exchange
-correlated by a `exchange_id`. The flow is **task-first**: establish the task,
+on the swarm's generic **task** mechanism: a directed, phased conversation
+correlated by a `task_id`. The flow is **task-first**: establish the task,
 build a **plan in plan mode** (that plan *is* the brief you send), *then*
-pick the worker, then drive the exchange. The handover completes at the
+pick the worker, then drive the task. The handover completes at the
 **handoff** — `offer → accept → [context] → done → confirm` — not at the
 receiver's execution: the receiver requests close (`done`), you confirm,
 and you are finished; the receiver then runs the work on its own. Every leg
@@ -18,8 +18,8 @@ is surfaced only to the two parties.
 ## Silent execution
 
 Run the whole skill **silently**. Do NOT narrate steps, echo variables
-(e.g. `$EXCHANGE_ID = …`), print commands or their output, or announce what you
-are about to do. The roster read and the `exchange_id` stay in context, unprinted.
+(e.g. `$TASK_ID = …`), print commands or their output, or announce what you
+are about to do. The roster read and the `task_id` stay in context, unprinted.
 The **only** things that ever appear are: the not-in-swarm guard line (when
 it applies), **plan mode** (the drafted plan), the **worker picker**
 `AskUserQuestion`, and the native **`TodoWrite`** to-do list. There are **no**
@@ -63,9 +63,9 @@ drafting).
 Then, **inside plan mode** and silently:
 
 1. Mint one UUID for this whole handover (reused on every leg) — hold it as
-   `$EXCHANGE_ID`, don't print it:
+   `$TASK_ID`, don't print it:
    ```bash
-   EXCHANGE_ID=$(uuidgen | tr 'A-Z' 'a-z')
+   TASK_ID=$(uuidgen | tr 'A-Z' 'a-z')
    ```
 2. Draft the plan for the task. The plan you write **is** the brief you hand
    over. Keep it under ~2,500 characters (the wire caps a message near
@@ -132,8 +132,8 @@ The plan (`$BRIEF`) was already approved in plan mode and the worker picked,
 so send straight away:
 
 ```bash
-ahsw exchange --swarm "$SWARM" --nickname "$NICKNAME" --to "$TARGET" \
-  --exchange-id "$EXCHANGE_ID" --kind handover --phase offer --text "$BRIEF"
+ahsw task --swarm "$SWARM" --nickname "$NICKNAME" --to "$TARGET" \
+  --task-id "$TASK_ID" --phase offer --text "$BRIEF"
 ```
 
 Handle errors from the command:
@@ -142,23 +142,23 @@ Handle errors from the command:
   send; print the error and STOP.
 - `message too large` ⇒ shorten the brief and retry once.
 
-Your own send echoes back as an `exchange` `"self":true` event. Open the tasks
+Your own send echoes back as a `task` `"self":true` event. Open the tasks
 widget (see below) with this task `offered`.
 
-## Drive the exchange
+## Drive the task
 
 The receiver drives the lifecycle; you answer and close. The full sender
 state machine lives in the create/join event handler (loaded for the session) —
 do not duplicate it here. (If that session is on the CLI fallback rather than
 Monitor, the receiver's legs arrive on the poll tick, not instantly — same
-handling, slightly later.) In short, for this `exchange_id`:
+handling, slightly later.) In short, for this `task_id`:
 
 - **`context` from the receiver** — answer from your task context with
   `--phase context`. Silent (widget only, see below).
 - **`done` from the receiver** ("I have what I need, close the handoff") —
   **auto-confirm**: send `--phase confirm`. A handover has nothing for you to
   verify (the receiver runs it on its own), so there is **no review widget
-  and no `change`** — that is a `task`-kind concern. This closes the
+  and no `change`** — that belongs to the task flow. This closes the
   task.
 - **`decline`** — the receiver passed; record the reason and stop.
 
@@ -171,10 +171,10 @@ handover status — **not** a printed `🐝 tasks` block. It's **`TodoWrite`** i
 most harnesses; where that tool is absent, use **`TaskCreate`** (`subject` = the
 `content` line below, `activeForm` = `activeForm`) + **`TaskUpdate`** (status
 `pending → in_progress → completed`, `deleted` to drop), one task per
-`exchange_id`. The lifecycle is identical either way; wherever this skill says
+`task_id`. The lifecycle is identical either way; wherever this skill says
 `TodoWrite` or "todo", use whichever tool your harness provides. Add one
 todo for this handover and keep it updated as the daemon emits events for this
-`exchange_id`; never print a per-update status line.
+`task_id`; never print a per-update status line.
 
 - Add it on send: a todo whose `content` is **exactly** `🐝 handover to
   <$TARGET>` (e.g. `🐝 handover to <crystal-azure>`), status `in_progress`.
@@ -184,8 +184,8 @@ todo for this handover and keep it updated as the daemon emits events for this
   `<$TARGET>` with literal angle brackets and **no backticks** in **both**
   fields — the widget shows text verbatim: markdown isn't rendered (backticks
   would show literally) and `<`/`>` aren't escaped.
-- Move it through the lifecycle off the `exchange` events (`offered`/`accepted`/
-  …) by calling `TodoWrite` again. `exchange_progress` (incl. the daemon's
+- Move it through the lifecycle off the `task` events (`offered`/`accepted`/
+  …) by calling `TodoWrite` again. `task_progress` (incl. the daemon's
   keepalive beats) just refreshes the todo — **never** a printed line.
 - On your `confirm`, set it `completed` (the terminal "handed over" state).
   On a terminal `decline`/`timeout`, set it `completed` too and note the

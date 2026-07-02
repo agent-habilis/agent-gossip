@@ -14,7 +14,7 @@ use super::message_log::MessageLog;
 use crate::daemon::state_file::StateFile;
 use crate::output;
 use crate::protocol::identity::Identity;
-use crate::protocol::{ExchangeId, Message, MessageBody, MessageId, Nickname, PartGroup};
+use crate::protocol::{Message, MessageBody, MessageId, Nickname, PartGroup, TaskId};
 use crate::util::bounded_fifo_set::BoundedFifoSet;
 use crate::util::bounded_queue::BoundedQueue;
 use crate::util::cooldown::Cooldown;
@@ -153,11 +153,11 @@ pub(crate) struct EventLoopState {
     /// it stays bounded by `QUIET_CAP`; `roster_snapshot` only reads it for
     /// peers currently in `quiet`, so a stale entry never surfaces.
     pub quiet_since: HashMap<Nickname, Instant>,
-    /// In-flight exchanges this node is a party to, keyed by `exchange_id`
-    /// (see [`crate::daemon::exchange`]). The coarse state machine + the two
-    /// exchange timers (debounce sweep, ball-owner keepalive) read/write this;
+    /// In-flight tasks this node is a party to, keyed by `task_id`
+    /// (see [`crate::daemon::task`]). The coarse state machine + the two
+    /// task timers (debounce sweep, ball-owner keepalive) read/write this;
     /// the skill owns the content. Third-party relays never insert here.
-    pub exchanges: HashMap<ExchangeId, crate::daemon::exchange::ExchangeRecord>,
+    pub tasks: HashMap<TaskId, crate::daemon::task::TaskRecord>,
     /// Presentation layer: participants for whom we have *surfaced* an
     /// arrival (synthetic `joined`, real `Presence::Joined`, or
     /// `peer_return`). Gates departure surfacing so a participant whose
@@ -416,7 +416,7 @@ impl EventLoopState {
             relink: Cooldown::new(RELINK_COOLDOWN),
             peerinfo: Cooldown::new(RELINK_COOLDOWN),
             participants: HashSet::new(),
-            exchanges: HashMap::new(),
+            tasks: HashMap::new(),
             last_seen: HashMap::new(),
             participant_endpoints: HashMap::new(),
             rendezvous_id: None,
@@ -467,7 +467,7 @@ impl EventLoopState {
     /// in-process `Poll` (embed `fetch` / MCP `fetch_messages`). Reads the
     /// local [`surfaced_events`](Self::surfaced_events) ring, NOT the
     /// cross-node message log, so one `seq` cursor walks chat, presence,
-    /// exchange legs, and the transient events alike. Join-horizon needs no
+    /// task legs, and the transient events alike. Join-horizon needs no
     /// re-filtering here: a pre-join message is never *surfaced*, so it never
     /// entered this ring.
     ///
@@ -718,11 +718,13 @@ impl EventLoopState {
         self.peerinfo.note(peer, now);
     }
 
-    /// Record `id` as seen and report whether it was *already* seen.
-    /// `true` => this is a duplicate delivery the caller must drop.
-    /// Delegates to the bounded [`BoundedIdSet`].
-    pub(crate) fn mark_seen(&mut self, id: &MessageId) -> bool {
-        self.seen.mark(id)
+    /// Record `message` as seen and report whether it was *already* seen.
+    /// `true` => this is a duplicate delivery the caller must drop. Keys on
+    /// the author-bound [`Message::dedup_key`], so a forgery reusing a
+    /// victim's id hashes to a different key and cannot suppress the genuine
+    /// message. Delegates to the bounded [`BoundedIdSet`].
+    pub(crate) fn mark_seen(&mut self, message: &Message) -> bool {
+        self.seen.mark(message.dedup_key())
     }
 
     /// Try to reassemble the multipart body the just-retained `trigger` part
@@ -916,12 +918,25 @@ const MAX_DAG_PARENTS: usize = 16;
 #[cfg(test)]
 mod tests {
     use super::{
-        Duration, EndpointId, EventLoopState, Instant, KNOWN_ENDPOINTS_CAP, MessageId, Nickname,
-        QUIET_CAP, RELINK_COOLDOWN_SECS, Reach,
+        Duration, EndpointId, EventLoopState, Instant, KNOWN_ENDPOINTS_CAP, Message, MessageBody,
+        MessageId, Nickname, QUIET_CAP, RELINK_COOLDOWN_SECS, Reach,
     };
+    use crate::protocol::SwarmId;
 
     fn nick(name: &str) -> Nickname {
         Nickname::new(name.to_owned()).expect("valid test nickname")
+    }
+
+    /// An unsigned chat message carrying `id` — enough to exercise
+    /// `mark_seen`, which keys on `dedup_key()` (`SHA-256(pubkey ‖ id)`).
+    fn msg_with_id(id: &MessageId) -> Message {
+        let mut message = Message::new_message(
+            &SwarmId::from("🐝test"),
+            &nick("author-nick"),
+            MessageBody::from("body"),
+        );
+        message.id = id.clone();
+        message
     }
 
     fn fresh_state() -> EventLoopState {
@@ -1149,9 +1164,31 @@ mod tests {
         // Smoke test the `EventLoopState` → `BoundedIdSet` delegation; the
         // bounded-FIFO/eviction logic itself is covered in `bounded_id_set`.
         let mut state = fresh_state();
+        let message = msg_with_id(&MessageId::random());
+        assert!(
+            !state.mark_seen(&message),
+            "first sighting is not a duplicate"
+        );
+        assert!(state.mark_seen(&message), "second sighting is a duplicate");
+    }
+
+    #[test]
+    fn mark_seen_keys_on_pubkey_not_id() {
+        // Two messages sharing an id but signed by different keys must NOT
+        // dedup against each other — the fix for the id-collision suppression
+        // attack. Distinct pubkeys ⇒ distinct `dedup_key`s.
+        let mut state = fresh_state();
         let id = MessageId::random();
-        assert!(!state.mark_seen(&id), "first sighting is not a duplicate");
-        assert!(state.mark_seen(&id), "second sighting is a duplicate");
+        let mut victim = msg_with_id(&id);
+        victim.pubkey = "aa".repeat(32);
+        let mut attacker = msg_with_id(&id);
+        attacker.pubkey = "bb".repeat(32);
+        assert!(!state.mark_seen(&victim), "victim's message is fresh");
+        assert!(
+            !state.mark_seen(&attacker),
+            "an id-reusing message under a different key must not be deduped as the victim's"
+        );
+        assert!(state.mark_seen(&victim), "victim's own resend is deduped");
     }
 
     // Replicates the mesh-wide CPU runaway at its mechanism: a peer whose
@@ -1328,11 +1365,11 @@ mod tests {
         );
 
         let mut state = fresh_state();
-        let earliest = MessageId::random();
+        let earliest = msg_with_id(&MessageId::random());
         assert!(!state.mark_seen(&earliest));
-        // Mark a full buffer's worth of later ids.
+        // Mark a full buffer's worth of later messages.
         for _ in 1..message_log_size() {
-            state.mark_seen(&MessageId::random());
+            state.mark_seen(&msg_with_id(&MessageId::random()));
         }
         // The earliest is still within the dedup window, so an anti-entropy
         // resend of it (while it is still retained in the log) is dropped as

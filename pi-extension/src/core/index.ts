@@ -4,7 +4,7 @@ import * as readline from "node:readline";
 import { clearBatch, startWatcher, stopWatcher } from "../daemon";
 import { isValidBody, isValidSwarmName, runSwarmCommand } from "../helpers";
 import { state, stateFilePath } from "../state";
-import type { DiscoveredSwarm, ExchangeKind, Peer, PingResult, Session } from "../types";
+import type { DiscoveredSwarm, Peer, PingResult, Session } from "../types";
 
 export function cleanup(): void {
   stopWatcher();
@@ -156,34 +156,30 @@ export function sendSwarmMessage({ text, reply }: { text: string; reply?: string
   runSwarmCommand(args);
 }
 
-// Send one leg of an exchange (`ahsw exchange`). `text` is required by the CLI
+// Send one leg of a task (`ahsw task`). `text` is required by the CLI
 // but may be empty for legs without a body (accept/confirm/cancel).
-export function sendExchange({
+export function sendTaskLeg({
   to,
-  exchangeId,
-  kind,
+  taskId,
   phase,
   text = "",
 }: {
   to: string;
-  exchangeId: string;
-  kind: ExchangeKind;
+  taskId: string;
   phase: string;
   text?: string;
 }): void {
   if (!state.session?.swarm) throw new Error("Not in a swarm");
   runSwarmCommand([
-    "exchange",
+    "task",
     "--swarm",
     state.session.swarm,
     "--nickname",
     state.session.nickname,
     "--to",
     to,
-    "--exchange-id",
-    exchangeId,
-    "--kind",
-    kind,
+    "--task-id",
+    taskId,
     "--phase",
     phase,
     "--text",

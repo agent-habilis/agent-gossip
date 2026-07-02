@@ -34,7 +34,7 @@ This codebase keeps comments sparse. Follow these rules:
 Some comments are not commentary; removing them changes behavior or breaks
 the build:
 
-- **clap `///` docs** on `Commands` / `Args` / `Exchange` variants and fields
+- **clap `///` docs** on `Commands` / `Args` / `Task` variants and fields
   render as the CLI's `--help` text.
 - **`# Errors` sections on `pub` functions** are required by clippy
   `pedantic` (`missing_errors_doc`). `pub(crate)` and private functions

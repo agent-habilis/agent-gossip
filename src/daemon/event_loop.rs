@@ -35,7 +35,7 @@ use crate::util::tuning::{
 use super::config::{CoHostPolicy, DriverMode, EventLoopConfig, SessionRequest};
 use super::ctx::HandlerCtx;
 use super::state::EventLoopState;
-use super::{exchange, ipc, setup, timers};
+use super::{ipc, setup, task, timers};
 
 /// Never returns normally — exits the process on ctrl-c / SIGTERM.
 pub(crate) async fn run(cfg: EventLoopConfig) -> Result<()> {
@@ -333,8 +333,8 @@ async fn event_loop(loop_state: EventLoop) -> Result<()> {
                 // Task timers ride the sweep cadence (each gates on its own
                 // elapsed-time budget): evict idle-debounce-expired tasks, then
                 // keepalive the ones whose ball we still hold.
-                exchange::tick_exchange_sweep(&mut state, &sender, &swarm_str, &author, &output).await;
-                exchange::tick_exchange_keepalive(&mut state, &sender, &swarm_str, &author).await;
+                task::tick_task_sweep(&mut state, &sender, &swarm_str, &author, &output).await;
+                task::tick_task_keepalive(&mut state, &sender, &swarm_str, &author).await;
             }
             _ = intervals.heal.tick() => {
                 let (mono_gap, wall_gap) = timers::note_tick_gap("heal", &mut anchors.heal, &mut anchors.heal_wall, Duration::from_secs(HEAL_INTERVAL_SECS));
@@ -408,13 +408,13 @@ fn drain_surfaced(
 
 /// Whether a surfaced event belongs in the `poll`/`fetch` history — an explicit
 /// allow-list of the documented pollable contract (chat, presence joined/left,
-/// content exchange legs, and the transient `ping_report`/`peer_timeout`/
-/// `peer_return`/`exchange_timeout`/`fork`). Deliberately an allow-list, not
+/// content task legs, and the transient `ping_report`/`peer_timeout`/
+/// `peer_return`/`task_timeout`/`fork`). Deliberately an allow-list, not
 /// "everything except X": operational notices (`info`/`error`/`msg_posted`) and
 /// startup events (`ready`/`swarm_id`) also flow through the same `Output` tap,
 /// and must NOT enter the ring — they are developer/stream plumbing the poll
 /// contract never promised, and `poll_since`'s own eviction notices would
-/// otherwise feed back into the ring being polled. The `exchange` `Progress`
+/// otherwise feed back into the ring being polled. The `task` `Progress`
 /// beat is excluded too (a liveness widget update, never a retained record).
 fn is_pollable(event: &output::OutputEvent) -> bool {
     use output::OutputEvent;
@@ -424,13 +424,13 @@ fn is_pollable(event: &output::OutputEvent) -> bool {
         | OutputEvent::PingReport { .. }
         | OutputEvent::PeerTimeout { .. }
         | OutputEvent::PeerReturn { .. }
-        | OutputEvent::ExchangeTimeout { .. }
+        | OutputEvent::TaskTimeout { .. }
         | OutputEvent::StateChanged { .. }
         | OutputEvent::Fork { .. } => true,
-        OutputEvent::Exchange { msg, .. } => !matches!(
+        OutputEvent::Task { msg, .. } => !matches!(
             msg.kind,
-            crate::protocol::MessageKind::Exchange {
-                phase: crate::protocol::ExchangePhase::Progress,
+            crate::protocol::MessageKind::Task {
+                phase: crate::protocol::TaskPhase::Progress,
                 ..
             }
         ),
@@ -1149,19 +1149,36 @@ struct MaintenanceIntervals {
 
 /// Build the maintenance tickers, eating the first immediate tick on
 /// the ones that must wait a full period (we just announced `Joined`).
+///
+/// Every ticker uses [`MissedTickBehavior::Skip`]: after the monotonic clock
+/// jumps (an App Nap throttle, a SIGSTOP freeze), a default `Burst` ticker
+/// fires a catch-up salvo — several anti-entropy digests back-to-back, a
+/// heal immediately after the hard re-bootstrap it just ran, a prune replaying
+/// its backlog — and poisons the tick-gap telemetry (the burst ticks report a
+/// ~0 gap). Each tick here means "do the maintenance now", so a skipped tick is
+/// free; `Skip` collapses the salvo to one tick on the next aligned boundary.
 async fn build_maintenance_intervals() -> MaintenanceIntervals {
-    let prune = tokio::time::interval(Duration::from_mins(1));
+    use tokio::time::MissedTickBehavior::Skip;
+
+    let mut prune = tokio::time::interval(Duration::from_mins(1));
+    prune.set_missed_tick_behavior(Skip);
     let mut alive = tokio::time::interval(Duration::from_secs(ALIVE_INTERVAL_SECS));
+    alive.set_missed_tick_behavior(Skip);
     alive.tick().await;
     let mut sweep = tokio::time::interval(Duration::from_secs(sweep_interval_secs()));
+    sweep.set_missed_tick_behavior(Skip);
     sweep.tick().await;
     let mut heal = tokio::time::interval(Duration::from_secs(HEAL_INTERVAL_SECS));
+    heal.set_missed_tick_behavior(Skip);
     heal.tick().await;
     let mut reclaim = tokio::time::interval(Duration::from_millis(RECLAIM_INTERVAL_MS));
+    reclaim.set_missed_tick_behavior(Skip);
     reclaim.tick().await;
     let mut antientropy = tokio::time::interval(Duration::from_secs(ANTIENTROPY_INTERVAL_SECS));
+    antientropy.set_missed_tick_behavior(Skip);
     antientropy.tick().await;
     let mut state_refresh = tokio::time::interval(Duration::from_secs(STATE_REFRESH_SECS));
+    state_refresh.set_missed_tick_behavior(Skip);
     state_refresh.tick().await;
     MaintenanceIntervals {
         prune,

@@ -12,8 +12,8 @@ import {
   joinSwarm,
   leaveSwarm,
   pingPeers,
-  sendExchange,
   sendSwarmMessage,
+  sendTaskLeg,
   validateCreateOptions,
 } from "../core";
 import { formatPingReport, formatRoster } from "../format";
@@ -208,22 +208,21 @@ export function registerTools(pi: ExtensionAPI): void {
   });
 
   pi.registerTool({
-    name: "swarm_exchange",
-    label: "Swarm Exchange",
-    description: "Send one leg of an in-flight handover/task exchange to a peer",
-    promptSnippet: "Advance a handover or task exchange leg by leg",
+    name: "swarm_task_leg",
+    label: "Swarm Task Leg",
+    description: "Send one leg of an in-flight task to a peer",
+    promptSnippet: "Advance a handover or delegated task leg by leg",
     promptGuidelines: [
-      "Use swarm_exchange to advance a handover or task you are a party to, reusing the exchange_id from the offer that started it",
+      "Use swarm_task_leg to advance a task you are a party to, reusing the task_id from the offer that started it",
       'Receiving a handover: after accepting, ask anything unclear with phase "context", then send phase "done" when you have what you need; once the initiator confirms, do the work yourself',
       'Receiving a task: after accepting, do the work, then send phase "done" with your result in text',
       'Initiator: answer the receiver\'s "context" questions with phase "context"',
     ],
     parameters: Type.Object({
-      exchange_id: Type.String({
-        description: "The exchange's UUID (reuse the one from the offer)",
+      task_id: Type.String({
+        description: "The task's UUID (reuse the one from the offer)",
       }),
       to: Type.String({ description: "The other party's nickname" }),
-      kind: Type.String({ description: '"handover" or "task" — match the exchange' }),
       phase: Type.String({
         description: "Lifecycle phase: accept, decline, context, done, confirm, change, cancel",
       }),
@@ -242,16 +241,15 @@ export function registerTools(pi: ExtensionAPI): void {
         return toolError("Not in a swarm. Use swarm_create or swarm_join first.");
       }
       try {
-        sendExchange({
+        sendTaskLeg({
           to: params.to,
-          exchangeId: params.exchange_id,
-          kind: params.kind === "task" ? "task" : "handover",
+          taskId: params.task_id,
           phase: params.phase,
           text: params.text,
         });
         return { content: [{ type: "text", text: "ok" }], details: null };
       } catch (error) {
-        return toolError(`Exchange failed: ${error instanceof Error ? error.message : "unknown"}`);
+        return toolError(`Task leg failed: ${error instanceof Error ? error.message : "unknown"}`);
       }
     },
   });
@@ -281,34 +279,33 @@ export function registerTools(pi: ExtensionAPI): void {
       if (!state.session?.swarm) {
         return toolError("Not in a swarm. Use swarm_create or swarm_join first.");
       }
-      const exchangeId = randomUUID();
-      const task = params.text
+      const taskId = randomUUID();
+      const summary = params.text
         .split("\n")
         .find((line) => line.trim())
         ?.slice(0, 120);
-      state.exchanges.set(exchangeId, {
-        exchangeId,
+      state.tasks.set(taskId, {
+        taskId,
         kind: "handover",
         peer: params.to,
         role: "initiator",
-        task,
+        summary,
       });
       try {
-        sendExchange({
+        sendTaskLeg({
           to: params.to,
-          exchangeId,
-          kind: "handover",
+          taskId,
           phase: "offer",
           text: params.text,
         });
       } catch (error) {
-        state.exchanges.delete(exchangeId);
+        state.tasks.delete(taskId);
         return toolError(`Handover failed: ${error instanceof Error ? error.message : "unknown"}`);
       }
-      trackStart({ kind: "handover", peer: params.to, role: "initiator", task });
+      trackStart({ kind: "handover", peer: params.to, role: "initiator", summary });
       return {
         content: [{ type: "text", text: `handover offered to <${params.to}>` }],
-        details: { exchange_id: exchangeId, to: params.to },
+        details: { task_id: taskId, to: params.to },
       };
     },
   });
@@ -321,7 +318,7 @@ export function registerTools(pi: ExtensionAPI): void {
     promptGuidelines: [
       "Use swarm_task when the user wants a peer to run work and return the result",
       "Include an explicit completion criterion in text so the worker knows when it is done",
-      "Pick `to` from the current roster (swarm_status). The worker returns its result; you confirm it (swarm_exchange phase confirm) or ask for a revision (phase change)",
+      "Pick `to` from the current roster (swarm_status). The worker returns its result; you confirm it (swarm_task_leg phase confirm) or ask for a revision (phase change)",
     ],
     parameters: Type.Object({
       to: Type.String({
@@ -339,34 +336,33 @@ export function registerTools(pi: ExtensionAPI): void {
       if (!state.session?.swarm) {
         return toolError("Not in a swarm. Use swarm_create or swarm_join first.");
       }
-      const exchangeId = randomUUID();
-      const task = params.text
+      const taskId = randomUUID();
+      const summary = params.text
         .split("\n")
         .find((line) => line.trim())
         ?.slice(0, 120);
-      state.exchanges.set(exchangeId, {
-        exchangeId,
+      state.tasks.set(taskId, {
+        taskId,
         kind: "task",
         peer: params.to,
         role: "initiator",
-        task,
+        summary,
       });
       try {
-        sendExchange({
+        sendTaskLeg({
           to: params.to,
-          exchangeId,
-          kind: "task",
+          taskId,
           phase: "offer",
           text: params.text,
         });
       } catch (error) {
-        state.exchanges.delete(exchangeId);
+        state.tasks.delete(taskId);
         return toolError(`Task failed: ${error instanceof Error ? error.message : "unknown"}`);
       }
-      trackStart({ kind: "task", peer: params.to, role: "initiator", task });
+      trackStart({ kind: "task", peer: params.to, role: "initiator", summary });
       return {
         content: [{ type: "text", text: `task offered to <${params.to}>` }],
-        details: { exchange_id: exchangeId, to: params.to },
+        details: { task_id: taskId, to: params.to },
       };
     },
   });

@@ -191,7 +191,7 @@ body byte-for-byte. Do not recompose it from the raw fields.
 Event shape (only if you branch on it): chat and presence share
 `"event":"message"` and are told apart by `"type":"msg"` vs `"type":"presence"`
 (presence also carries `"subtype":"joined"/"left"/"alive"`). Everything else is
-discriminated by `event` directly (`exchange`, `exchange_progress`,
+discriminated by `event` directly (`task`, `task_progress`,
 `ping_report`, `peer_timeout`, `peer_return`, `info`, `state`, …).
 
 **Skip silently** (zero output):
@@ -212,8 +212,8 @@ metadata** bullet below, not verbatim.)
 - **Presence / reply / your own echo:** display only.
 - **`ping`/`pong`:** handled entirely by the daemon — it auto-pongs and emits
   the `ping_report`. Do NOT reply to a `ping` yourself.
-- **Exchange (`event:"exchange"`):** do NOT display as a plain line — drive the
-  receiver flow (see "Tasks"). `exchange_progress` is a widget beat, never a
+- **Task (`event:"task"`):** do NOT display as a plain line — drive the
+  receiver flow (see "Tasks"). `task_progress` is a widget beat, never a
   chat line.
 - **Shared state (`event:"state"`):** **print its `display` verbatim FIRST**
   (`🐝️ you changed …` / `` 🐝️ `<peer>` changed … ``) — the user-visible "state
@@ -364,18 +364,22 @@ a truncated transfer.
 
 ## Tasks
 
-A task is a directed, phased exchange between two agents, correlated by an
-`exchange_id` and surfaced only to the two parties. `handover` (delegate a
-task/plan) and `task` (run + report + verify) are the two `kind`s. Legs arrive
-as `event:"exchange"` records on `ahsw poll`; you send legs with:
+A task is a directed, phased, multi-leg conversation between two agents,
+correlated by a `task_id` and surfaced only to the two parties. There is no
+handover-vs-task discriminator on the wire: the offer's brief (`--text`) says
+what is being asked. A **handover** (delegate a task/plan — the receiver runs
+it on its own) and a **task** (run + report back + verify) are two usage
+patterns of the one mechanism, distinguished by what the brief asks for, not
+by any field. Legs arrive as `event:"task"` records on `ahsw poll`; you send
+legs with:
 
 ```bash
-ahsw exchange --swarm $SWARM --nickname $NICKNAME --to <PEER> \
-  --exchange-id <UUID> --kind <handover|task> --phase <PHASE> --text "<body>"
+ahsw task --swarm $SWARM --nickname $NICKNAME --to <PEER> \
+  --task-id <UUID> --phase <PHASE> --text "<body>"
 ```
 
-Reuse one `exchange_id` for every leg of an exchange. The daemon runs the
-timers and the message cap; you drive the content. Track each live exchange so
+Reuse one `task_id` for every leg of a task. The daemon runs the
+timers and the message cap; you drive the content. Track each live task so
 you don't lose it across ticks. Don't surface `context`/`progress`/`accept`/
 `done`/`confirm` legs as chat lines — they are working traffic.
 
@@ -390,7 +394,7 @@ confirm` (with `change` to loop back for a revision). The worker does the task
 and reports its **result** on the `done` leg; the initiator confirms or asks for
 a change.
 
-**Receiving** (an `exchange` record addressed to you, `"self":false`):
+**Receiving** (a `task` record addressed to you, `"self":false`):
 
 1. **`phase:offer`** — ask your user whether to take it (this is the entry
    decision; what "busy" means). Decline ⇒ `--phase decline --text "<reason>"`,
@@ -410,7 +414,7 @@ a change.
 **Sending:** pick a target from `ahsw peers` (cross-reference `ahsw meta get`
 → `document.peers/<nick>` to show what each candidate runs on when presenting
 the choice), mint a
-UUID `exchange_id`, compose a structured brief, and send `--phase offer`. Answer
+UUID `task_id`, compose a structured brief, and send `--phase offer`. Answer
 the receiver's `context` questions. For a **handover**, on their `done`
 **auto-confirm** (`--phase confirm`) — nothing to verify. For a **task**, on
 their `done` the body is the result — surface it, then `--phase confirm` (or

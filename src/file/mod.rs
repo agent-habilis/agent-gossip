@@ -134,7 +134,8 @@ mod tests {
 
     impl TempDir {
         fn new() -> Self {
-            let path = std::env::temp_dir().join(format!("ahsw-file-test-{}", rand::rng().next_u64()));
+            let path =
+                std::env::temp_dir().join(format!("ahsw-file-test-{}", rand::rng().next_u64()));
             fs::create_dir_all(&path).expect("create temp dir");
             Self { path }
         }
@@ -192,7 +193,10 @@ mod tests {
 
         let landed = dst.path.join("project");
         assert_eq!(fs::read(landed.join("readme.md")).unwrap(), b"# hello");
-        assert_eq!(fs::read(landed.join("src/main.rs")).unwrap(), b"fn main() {}");
+        assert_eq!(
+            fs::read(landed.join("src/main.rs")).unwrap(),
+            b"fn main() {}"
+        );
         assert_eq!(
             fs::read(landed.join("src/nested/deep.txt")).unwrap(),
             vec![7u8; 100_000]
@@ -208,7 +212,10 @@ mod tests {
         let dst = TempDir::new();
         let summary = transfer(&file, &dst.path).await;
 
-        assert_eq!(fs::read(dst.path.join("report.pdf")).unwrap(), b"PDF-CONTENT");
+        assert_eq!(
+            fs::read(dst.path.join("report.pdf")).unwrap(),
+            b"PDF-CONTENT"
+        );
         // Correctly singular — "1 file", never "1 files".
         assert!(summary.contains("1 file,"), "summary: {summary}");
         assert!(!summary.contains("1 files"), "summary: {summary}");
@@ -230,7 +237,10 @@ mod tests {
 
         let summary = transfer(&root, &dst.path).await;
 
-        assert_eq!(fs::read(landed.join("changed.txt")).unwrap(), b"new-version");
+        assert_eq!(
+            fs::read(landed.join("changed.txt")).unwrap(),
+            b"new-version"
+        );
         assert_eq!(fs::read(landed.join("keep.txt")).unwrap(), b"unchanged");
         // One file sent (changed.txt), one unchanged (keep.txt).
         assert!(summary.contains("1 file"), "summary: {summary}");
@@ -280,7 +290,10 @@ mod tests {
 
         let landed = dst.path.join("tree");
         assert_eq!(fs::read(landed.join("a.txt")).unwrap(), b"x");
-        assert!(landed.join("logs").is_dir(), "empty subdir must be recreated");
+        assert!(
+            landed.join("logs").is_dir(),
+            "empty subdir must be recreated"
+        );
         assert!(
             landed.join("nested/deep/empty").is_dir(),
             "nested empty subdir must be recreated"

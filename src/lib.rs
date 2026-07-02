@@ -67,9 +67,8 @@ pub use daemon::surfaced::SurfacedEvent;
 pub use logging::LogSink;
 pub use output::{OutputEvent, event_json, surfaced_event_json};
 pub use protocol::message::{
-    BodyError, Channel, ExchangeId, ExchangeIdError, ExchangeKind, ExchangeKindError,
-    ExchangePhase, ExchangePhaseError, IdError, Message, MessageBody, MessageId, MessageKind, Part,
-    PartGroup, PresenceSubtype,
+    BodyError, Channel, IdError, Message, MessageBody, MessageId, MessageKind, Part, PartGroup,
+    PresenceSubtype, TaskId, TaskIdError, TaskPhase, TaskPhaseError,
 };
 pub use protocol::nickname::{Nickname, NicknameError};
 pub use protocol::swarm::{

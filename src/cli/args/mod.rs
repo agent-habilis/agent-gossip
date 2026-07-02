@@ -11,7 +11,6 @@ use clap::{Parser, Subcommand};
 mod create;
 mod discover;
 mod doctor;
-mod exchange;
 mod file;
 mod join;
 mod lookup;
@@ -26,11 +25,11 @@ mod port;
 mod ready;
 mod shared;
 mod state;
+mod task;
 
 pub(crate) use create::CreateOpts;
 pub(crate) use discover::DiscoverOpts;
 pub(crate) use doctor::DoctorOpts;
-pub(crate) use exchange::ExchangeOpts;
 pub(crate) use file::FileAction;
 pub(crate) use join::JoinOpts;
 pub(crate) use meta::{MetaAction, MetaOpts};
@@ -44,6 +43,7 @@ pub(crate) use port::PortAction;
 pub(crate) use ready::ReadyOpts;
 pub(crate) use shared::SharedServerOpts;
 pub(crate) use state::{StateAction, StateOpts};
+pub(crate) use task::TaskOpts;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -120,17 +120,17 @@ pub(crate) enum Commands {
         opts: DiscoverOpts,
     },
 
-    /// Send one leg of an exchange to a specific peer.
+    /// Send one leg of a task to a specific peer.
     ///
-    /// An exchange is a directed, phased conversation correlated by `--exchange-id`
+    /// A task is a directed, phased conversation correlated by `--task-id`
     /// (offer → accept → context → done → confirm/change). `handover` is
-    /// one behavior built on it. The receiving daemon surfaces an `exchange` (or
-    /// `exchange_progress`) event on its `--output json` stream. `--phase offer`
+    /// one behavior built on it. The receiving daemon surfaces an `task` (or
+    /// `task_progress`) event on its `--output json` stream. `--phase offer`
     /// validates `--to` against the live roster and errors on an unknown
     /// nickname.
-    Exchange {
+    Task {
         #[command(flatten)]
-        opts: ExchangeOpts,
+        opts: TaskOpts,
     },
 
     /// List the live participant roster of a swarm.

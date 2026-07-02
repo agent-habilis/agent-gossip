@@ -2,7 +2,7 @@
 type: a2a-runbook
 title: Tasks
 description: An initiator delegates a task to a worker, who does it and returns a result the initiator confirms.
-tags: [task, exchange, todo-widget, result]
+tags: [task, todo-widget, result]
 timestamp: 2026-06-28T00:00:00Z
 roles: [initiator, worker]
 coordinator: dedicated
@@ -17,7 +17,7 @@ network: private
 
 An initiator delegates a small, checkable task to a worker. The worker does the
 work and returns a result. The initiator reviews it and confirms (or asks for a
-revision — that path is in [exchange edge cases](/exchange-edge-cases.md)). Set
+revision — that path is in [task edge cases](/task-edge-cases.md)). Set
 up per the [coordinator protocol](/coordinator.md).
 
 ## Roles & goals
@@ -26,7 +26,7 @@ up per the [coordinator protocol](/coordinator.md).
   result once it meets the criterion.
 - **worker** — do the delegated task and return the result.
 
-A todo plugin should be installed for both (how the exchange surfaces with or
+A todo plugin should be installed for both (how the task surfaces with or
 without one is [todo-backends](/todo-backends.md)).
 
 ## Briefing
@@ -41,7 +41,7 @@ without one is [todo-backends](/todo-backends.md)).
 - [ ] the worker receives the delegated task and the user sees it offered
 - [ ] the worker completes it and returns a result; the initiator sees that
       result attributed to the worker
-- [ ] the initiator confirms; the exchange closes cleanly on both sides
-- [ ] the exchange's progress is visible in each agent's UI, and tracked in the
+- [ ] the initiator confirms; the task closes cleanly on both sides
+- [ ] the task's progress is visible in each agent's UI, and tracked in the
       todo list when a todo plugin is present
 - [ ] the result is correct for the task (the integer, 5050)

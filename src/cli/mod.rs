@@ -25,9 +25,9 @@ mod plug;
 
 pub(crate) use args::Cli;
 use args::{
-    Commands, CreateOpts, ExchangeOpts, FileAction, MetaAction, MetaOpts, MsgOpts, OutputFormat,
-    PeersOpts, PingOpts, PipeAction, PollOpts, PortAction, ReadyOpts, SharedServerOpts,
-    StateAction, StateOpts,
+    Commands, CreateOpts, FileAction, MetaAction, MetaOpts, MsgOpts, OutputFormat, PeersOpts,
+    PingOpts, PipeAction, PollOpts, PortAction, ReadyOpts, SharedServerOpts, StateAction,
+    StateOpts, TaskOpts,
 };
 
 /// `join` has no `--public`/`--name`: both are encoded in the `🐝…`
@@ -82,7 +82,7 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
         Commands::Msg { opts } => msg(opts).await,
         Commands::Poll { opts } => poll(opts).await,
         Commands::Ping { opts } => ping(opts).await,
-        Commands::Exchange { opts } => exchange(opts).await,
+        Commands::Task { opts } => task(opts).await,
         Commands::Peers { opts } => peers(opts).await,
         Commands::Pipe { action } => pipe(action).await,
         Commands::Port { action } => port(action).await,
@@ -212,7 +212,7 @@ struct MsgResponse {
     error: Option<String>,
 }
 
-/// Reduce an IPC send response (`msg` / `handover`, same `{ok,id,error}`
+/// Reduce an IPC send response (`msg` / `task`, same `{ok,id,error}`
 /// shape) to the new message id, or a descriptive error. `what` names the
 /// operation for the missing-id message.
 fn finish_send(resp: &str, what: &str) -> Result<MessageId> {
@@ -296,30 +296,28 @@ async fn ping(opts: PingOpts) -> Result<()> {
     Ok(())
 }
 
-/// Send one leg of an exchange via the running daemon's IPC socket.
-/// The receiving daemon surfaces an `exchange` (or `exchange_progress`) event; this
+/// Send one leg of a task via the running daemon's IPC socket.
+/// The receiving daemon surfaces an `task` (or `task_progress`) event; this
 /// command itself only confirms the send (or reports an
 /// unknown-participant / oversize error).
-async fn exchange(opts: ExchangeOpts) -> Result<()> {
-    let ExchangeOpts {
+async fn task(opts: TaskOpts) -> Result<()> {
+    let TaskOpts {
         swarm,
         nickname,
         to,
-        exchange_id,
-        kind,
+        task_id,
         phase,
         text,
     } = opts;
-    let cmd = IpcCommand::Exchange {
+    let cmd = IpcCommand::Task {
         swarm,
         to,
-        exchange_id,
-        kind,
+        task_id,
         phase,
         body: text,
     };
     let resp = ipc::send(&cmd, &nickname).await?;
-    let id = finish_send(&resp, "exchange")?;
+    let id = finish_send(&resp, "task")?;
     let out = Output::new(OutputMode::Human, false, None);
     out.msg_posted(&id);
     Ok(())

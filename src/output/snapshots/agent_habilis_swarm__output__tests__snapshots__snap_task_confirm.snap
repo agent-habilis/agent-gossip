@@ -1,0 +1,5 @@
+---
+source: src/output/tests.rs
+expression: "snap_task(TaskPhase::Confirm, \"looks good\")"
+---
+{"event":"task","id":"00000000-0000-0000-0000-000000000001","swarm":"🐝test","author":"alice-bot","ts":1700000000,"to":"calm-otter","task_id":"550e8400-e29b-41d4-a716-446655440000","phase":"confirm","body":"looks good","display":"🐝️ task confirm `<alice-bot>` → `<calm-otter>`: looks good","self":false}

@@ -22,8 +22,7 @@ SYNOPSIS
 
        ahsw ping --swarm 🐝… --nickname NAME [--output json]
 
-       ahsw exchange --swarm 🐝… --nickname NAME --to NICK --exchange-id UUID
-                  --kind handover|task
+       ahsw task --swarm 🐝… --nickname NAME --to NICK --task-id UUID
                   --phase offer|accept|decline|context|progress|done|confirm|change|cancel
                   --text TEXT
 
@@ -264,13 +263,13 @@ COMMANDS
               Retrieve buffered surfaced events from a running daemon.
               Short-lived. Prints a JSON array whose objects are the **same**
               shape the live --output json stream emits — chat, presence
-              joined/left, exchange legs, AND the transient events
-              (ping_report, peer_timeout/return, exchange_timeout, fork) — each
+              joined/left, task legs, AND the transient events
+              (ping_report, peer_timeout/return, task_timeout, fork) — each
               carrying its pre-built display string, its self flag, and a
               leading seq (the cursor). So a poller and a stream reader parse
               one shape and can echo display verbatim either way (see "JSON
-              EVENTS"). The exchange progress beat is the lone exception: it is
-              liveness plumbing, surfaced on the stream as exchange_progress but
+              EVENTS"). The task progress beat is the lone exception: it is
+              liveness plumbing, surfaced on the stream as task_progress but
               never retained here.
 
               --after SEQ
@@ -301,14 +300,19 @@ COMMANDS
               roughly 10 seconds later (NOT on this command's stdout).
               Ping/pong probes are never logged or surfaced as messages.
 
-       exchange --swarm 🐝… --nickname NAME --to NICK --exchange-id UUID
-            --kind KIND --phase PHASE --text TEXT
-              Send one leg of an exchange to a specific peer. An exchange is
-              a directed, phased exchange correlated by --exchange-id; handover
-              (delegate a task/plan) is one --kind, task the other. Mint
-              one UUID for the opening offer and reuse it on every leg.
+       task --swarm 🐝… --nickname NAME --to NICK --task-id UUID
+            --phase PHASE --text TEXT
+              Send one leg of a task to a specific peer. A task is a
+              directed, phased, multi-leg conversation correlated by
+              --task-id. The protocol has no handover-vs-task
+              discriminator: the offer's brief (--text) says what is being
+              asked. Whether the receiver runs the work and reports back
+              (a task) or takes ownership and runs it on its own (a
+              handover) is a skill-land convention carried in the brief,
+              not a wire field. Mint one UUID for the opening offer and
+              reuse it on every leg.
 
-                offer    opens the exchange, carrying the task brief
+                offer    opens the task, carrying the brief
                 accept   receiver takes it on (entry decision)
                 decline  receiver (or a busy peer) refuses
                 context  either side supplies more context (the Q&A)
@@ -325,14 +329,18 @@ COMMANDS
               surfaced and logged only by its addressee and the sender's
               own echo — a third peer relays it without ever seeing it,
               the same privacy a directed `msg --reply` has. The receiving
-              daemon emits an exchange (or exchange_progress) event on its --output
+              daemon emits a task (or task_progress) event on its --output
               json stream (see "JSON EVENTS"). --phase offer validates --to
               against the live roster and errors on an unknown nickname;
               later phases skip the check so a transient peer flap
-              mid-exchange does not wedge the conversation. Content legs are
-              counted against a whole-exchange 100-message cap; progress is
+              mid-task does not wedge the conversation. Content legs are
+              counted against a whole-task 100-message cap; progress is
               exempt. The daemon runs a 5-minute idle-debounce timeout and a
-              keepalive for the party that holds the ball.
+              keepalive for the party that holds the ball — but the keepalive
+              only covers a silent owner while its skill has driven a leg
+              recently, so a crashed skill's task is reaped rather than held
+              forever. During very long silent work, send a `--phase progress`
+              beat occasionally to keep the task alive.
 
        peers --swarm 🐝… --nickname NAME [--output json]
               List the live participant roster of a swarm. Queries the
@@ -790,41 +798,40 @@ JSON EVENTS
                   "peers":[{"nickname":"word-word","rtt_ms":42}],
                   "responded":1,"known":2}
 
-       exchange
-              One per content exchange leg addressed to this member (and the
+       task   One per content task leg addressed to this member (and the
               sender's own echo, with "self":true). A distinct top-level
               event — never the "message" family — so agents branch on
-              "event". Carries the addressee (to), the exchange_id, kind, phase,
+              "event". Carries the addressee (to), the task_id, phase,
               body, and a pre-built display line.
 
-                 {"event":"exchange","id":"<uuid>","swarm":"🐝…",
+                 {"event":"task","id":"<uuid>","swarm":"🐝…",
                   "author":"word-word","pubkey":"<hex>","ts":1234567890,
-                  "to":"word-word","exchange_id":"<uuid>","kind":"handover",
+                  "to":"word-word","task_id":"<uuid>",
                   "phase":"offer","body":"…brief…",
-                  "display":"🐝️ exchange handover offer `<from>` → `<to>`: …",
+                  "display":"🐝️ task offer `<from>` → `<to>`: …",
                   "self":false}
 
               Content legs also land in the poll / fetch_messages buffer
-              (raw records with "type":"exchange") for the two parties only.
-              See the exchange command for the phase meanings.
+              (raw records with "type":"task") for the two parties only.
+              See the task command for the phase meanings.
 
-       exchange_progress
+       task_progress
               The receiver's liveness + percent beat (the progress phase) —
               a widget update, never a chat line or a poll/fetch record.
               done/total are omitted when progress is indeterminate.
 
-                 {"event":"exchange_progress","id":"<uuid>","swarm":"🐝…",
+                 {"event":"task_progress","id":"<uuid>","swarm":"🐝…",
                   "author":"word-word","ts":1234567890,"to":"word-word",
-                  "exchange_id":"<uuid>","kind":"task","done":35,"total":100,
-                  "display":"🐝️ exchange task progress `<from>` → `<to>`: 35/100",
+                  "task_id":"<uuid>","done":35,"total":100,
+                  "display":"🐝️ task progress `<from>` → `<to>`: 35/100",
                   "self":false}
 
-       exchange_timeout
-              An exchange crossed its 5-minute idle-debounce timeout and was
+       task_timeout
+              A task crossed its 5-minute idle-debounce timeout and was
               evicted by the daemon. Marks the tasks widget entry as timed
               out.
 
-                 {"event":"exchange_timeout","exchange_id":"<uuid>"}
+                 {"event":"task_timeout","task_id":"<uuid>"}
 
        state  The swarm's SHARED STATE changed (see the state command). Carries
               the change (merge — the applied merge document) AND the newly-
@@ -894,7 +901,7 @@ MESSAGE BODIES
        A body larger than a single gossip message is split across several
        messages by the daemon and reassembled by each receiver, so a long
        body (a detailed task spec, say) sends and arrives as one logical
-       message — no manual chunking. The same applies to an exchange leg's
+       message — no manual chunking. The same applies to a task leg's
        body. A body is split into at most 16 parts — roughly 50 KB of plain
        text (less for content that expands when JSON-escaped, e.g. many
        quotes or backslashes); a larger body is rejected on send with a
@@ -949,15 +956,17 @@ MCP SERVER
 
               Use message directly instead of re-fetching.
 
-       send_exchange
-              Send one leg of an exchange (a directed, phased conversation) to
+       send_task
+              Send one leg of a task (a directed, phased conversation) to
               a peer. Args: to (a current participant — check swarm_info),
-              exchange_id (mint a UUID for the opening offer, echo it on every
-              later leg), kind ("handover" delegates a task/plan; "task"
-              runs+verifies), phase (offer | accept | decline | context |
-              progress | done | confirm | change | cancel), and text. Returns
-              the new message id and echo. See the exchange command for the
-              phase lifecycle.
+              task_id (mint a UUID for the opening offer, echo it on every
+              later leg), phase (offer | accept | decline | context |
+              progress | done | confirm | change | cancel), and text. The
+              offer's text brief says what is being asked — whether the
+              receiver runs the work and reports back or takes ownership
+              and runs it itself is a skill convention in the brief, not a
+              wire field. Returns the new message id and echo. See the task
+              command for the phase lifecycle.
 
        fetch_messages
               Retrieve new events. Args: after (optional explicit seq cursor;
@@ -969,7 +978,7 @@ MCP SERVER
                  {"messages":[ ... ],"current_seq":<int-or-null>}
 
               Each entry is the same event object the live stream emits (chat,
-              presence, exchange legs, and the transient events), carrying its
+              presence, task legs, and the transient events), carrying its
               display, self flag, and seq. current_seq is the newest seq in the
               batch (null when empty) — pass it as the next after, or just let
               the implicit cursor track it. alive heartbeats are filtered out;
@@ -1017,7 +1026,7 @@ MCP SERVER
               Return this full agent manual — every command, JSON event, and
               workflow. Needs no active swarm. Read it for the behavioral
               details the tool schemas can't carry (the poll-on-a-tick idle
-              loop, verbatim one-line display, the exchange phase lifecycle).
+              loop, verbatim one-line display, the task phase lifecycle).
 
        IMPLICIT CURSOR
               First fetch_messages() with no after: full history (up to

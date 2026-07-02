@@ -6,13 +6,14 @@ description: Send one or more tasks to peers and get their results back. Use whe
 ## What this does
 
 Sends **one or more tasks** to other participants and collects each result.
-Each task is one `task`-kind exchange on the swarm's generic **exchange** mechanism: a
-directed, phased exchange correlated by a `exchange_id` where the worker **runs the
+Each task is one use of the swarm's generic **task** mechanism: a
+directed, phased conversation correlated by a `task_id` where the worker **runs the
 work and reports its result** on the `done` leg, and you `confirm` it (or
 `change` for a revision). That is the difference from `/swarm:handover`, which
-hands a task off and walks away with no result.
+hands a task off and walks away with no result — a difference the brief makes
+plain (ask for a result back), not a wire field.
 
-Every task is **independent**: its own `exchange_id`, its own worker, its own
+Every task is **independent**: its own `task_id`, its own worker, its own
 clear **completion criteria**, its own to-do entry. There is **no** group-level
 outcome — when a worker finishes, its result prints and that task closes. If
 you later want something done across the results, ask in a normal turn; this
@@ -111,13 +112,13 @@ task), revise and `ExitPlanMode` again. On approval, continue below.
 
 ## Send the offers
 
-Mint **one fresh UUID `exchange_id` per task** (never reuse one — each task is
+Mint **one fresh UUID `task_id` per task** (never reuse one — each task is
 independent). For each task, send its opening offer to its worker
 with that task's brief:
 
 ```bash
-ahsw exchange --swarm "$SWARM" --nickname "$NICKNAME" --to "$WORKER" \
-  --exchange-id "$EXCHANGE_ID" --kind task --phase offer --text "$BRIEF"
+ahsw task --swarm "$SWARM" --nickname "$NICKNAME" --to "$WORKER" \
+  --task-id "$TASK_ID" --phase offer --text "$BRIEF"
 ```
 
 Handle errors per send:
@@ -132,7 +133,7 @@ Each send echoes back as a `task` `"self":true` event.
 The per-task mechanics live in the create/join event handler (loaded for the
 session) — do not duplicate them here. (If that session is on the CLI fallback
 rather than Monitor, the worker's legs arrive on the poll tick, not instantly —
-same handling, slightly later.) For **each** task's `exchange_id`:
+same handling, slightly later.) For **each** task's `task_id`:
 
 - **`context` from the worker** — answer from your task context with `--phase
   context`. Silent (todo only).
@@ -143,7 +144,7 @@ same handling, slightly later.) For **each** task's `exchange_id`:
   then **`confirm`**: send `--phase confirm`. Use `--phase change` only if the
   result plainly misses the completion criteria and a revision is worth a round trip.
   Confirm closes that task.
-- **`decline` / `exchange_timeout`** — that task's worker dropped out; record it
+- **`decline` / `task_timeout`** — that task's worker dropped out; record it
   (no result) and move on. Other tasks are unaffected.
 
 Tasks are independent — there is no waiting for all of them, and no step that
@@ -156,7 +157,7 @@ status — never a printed status block. It's **`TodoWrite`** in most harnesses;
 where that tool is absent, use **`TaskCreate`** (`subject` = the `content` line
 below, `activeForm` = `activeForm`) + **`TaskUpdate`** (status
 `pending → in_progress → completed`, `deleted` to drop), one task per
-`exchange_id`. The lifecycle is identical either way; wherever this skill says
+`task_id`. The lifecycle is identical either way; wherever this skill says
 `TodoWrite` or "todo", use whichever tool your harness provides. On send, add
 **one todo per task**:
 
@@ -170,7 +171,7 @@ below, `activeForm` = `activeForm`) + **`TaskUpdate`** (status
   don't invent a `task to <worker>` phrasing.
 - Move each todo through its lifecycle off that task's events
   (`accepted`/`progress`) via `TodoWrite`; on your `confirm` set it
-  `completed`. On `decline`/`exchange_timeout` set it `completed` and note "dropped
+  `completed`. On `decline`/`task_timeout` set it `completed` and note "dropped
   (declined/timed out)" **in the todo content**.
 
 Re-invoking `/swarm:task` appends new todos to this same list.

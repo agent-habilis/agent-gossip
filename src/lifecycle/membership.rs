@@ -46,7 +46,7 @@ pub(crate) fn compute(
         | MessageKind::State
         | MessageKind::Meta => false,
         MessageKind::Msg { .. }
-        | MessageKind::Exchange { .. }
+        | MessageKind::Task { .. }
         | MessageKind::Presence {
             subtype: PresenceSubtype::Joined | PresenceSubtype::Alive,
         }

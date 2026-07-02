@@ -126,25 +126,38 @@ pub(crate) async fn broadcast_digest(
 /// slice only), newest-first, up to `antientropy_max_resend()` total.
 /// Receivers that already have them drop the repeat (dedup); the sender
 /// (and anyone else who missed them) recovers. Never logged.
+///
+/// The windows' `have` sets are **unioned** before the diff (as in
+/// [`handle_state_digest`]): the open-ended newest (`[lo, MAX]`) and closed
+/// older (`[lo, hi]`) windows' ranges overlap at one-second-equal timestamps,
+/// so a per-window `have` would re-send a message the sender holds but listed
+/// under the *other* window — wasting the shared resend budget on messages the
+/// peer already has and starving the genuinely-missing tail.
 pub(crate) async fn handle_digest(message: &Message, state: &EventLoopState, ctx: &HandlerCtx<'_>) {
     let Ok(body) = serde_json::from_str::<DigestBody>(message.body.as_str()) else {
         return;
     };
+    let mut have: HashSet<[u8; 16]> = HashSet::new();
+    for window in &body.windows {
+        if let Some(ids) = window.decode_ids() {
+            have.extend(ids);
+        }
+    }
     let mut budget = antientropy_max_resend();
     let mut resent = 0usize;
     for window in &body.windows {
         if budget == 0 {
             break;
         }
-        let Some(have) = window.decode_ids() else {
-            continue;
-        };
         for msg in state
             .message_log
             .missing_in_window(window.lo, window.hi, &have, budget)
         {
             if let Ok(bytes) = msg.serialize() {
                 let _ = ctx.sender.broadcast(Bytes::from(bytes)).await;
+                // Mark it sent so the next (overlapping) window doesn't re-send
+                // it and waste budget — equal-timestamp ranges overlap heavily.
+                have.insert(msg.dedup_key());
                 resent += 1;
                 budget -= 1;
             }
@@ -275,7 +288,7 @@ pub(crate) async fn handle_state_digest(
                 let _ = ctx.sender.broadcast(Bytes::from(bytes)).await;
                 // Mark it sent so the next (overlapping) window doesn't re-send
                 // it and waste budget — equal-timestamp ranges overlap heavily.
-                have.insert(event.id.as_uuid_bytes());
+                have.insert(event.dedup_key());
                 resent += 1;
                 budget -= 1;
             }

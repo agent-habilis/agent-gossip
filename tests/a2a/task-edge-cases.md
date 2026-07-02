@@ -1,8 +1,8 @@
 ---
 type: a2a-runbook
-title: Exchange edge cases
-description: The non-happy-path exchange outcomes — decline, cancel, clarifying questions, and revision.
-tags: [exchange, decline, cancel, context, revision]
+title: Task edge cases
+description: The non-happy-path task outcomes — decline, cancel, clarifying questions, and revision.
+tags: [task, decline, cancel, context, revision]
 timestamp: 2026-06-28T00:00:00Z
 roles: [initiator, receiver]
 coordinator: dedicated
@@ -11,7 +11,7 @@ prereqs: [ahsw, todo-plugin]
 network: private
 ---
 
-# Exchange edge cases
+# Task edge cases
 
 ## Scenario
 
@@ -24,19 +24,19 @@ whose first result the initiator sends back for a **revision**. Set up per the
 
 ## Roles & goals
 
-- **initiator** — run four exchanges with the receiver: one you cancel after
+- **initiator** — run four tasks with the receiver: one you cancel after
   offering; one whose brief is vague (expect questions); one whose first result
   you reject and ask to be redone; and one the receiver will turn down. See each
   to a clean close.
-- **receiver** — handle each exchange as it comes: turn down what you shouldn't
+- **receiver** — handle each task as it comes: turn down what you shouldn't
   take, ask when the brief is unclear, deliver and then revise when asked.
 
 A todo plugin should be installed for both.
 
 ## Briefing
 
-- swarm: `a2a-exchange`
-- the four exchanges (any small tasks; the point is the outcome):
+- swarm: `a2a-edge-cases`
+- the four tasks (any small ones; the point is the outcome):
   - **decline:** an offer the receiver is expected to turn down.
   - **cancel:** an offer the initiator withdraws before it completes.
   - **clarify:** a deliberately under-specified brief (e.g. *"summarize the
@@ -50,7 +50,7 @@ A todo plugin should be installed for both.
       dangling state
 - [ ] **cancel:** the receiver sees the offer withdrawn; both sides clear it
 - [ ] **clarify:** the receiver's question reaches the initiator, the answer
-      comes back, and the exchange then completes
+      comes back, and the task then completes
 - [ ] **revision:** the initiator's request for a redo reaches the receiver, the
       receiver revises, and the initiator confirms the revised result
 - [ ] each outcome is visible in both UIs; todo items (when a plugin is present)

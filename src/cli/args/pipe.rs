@@ -26,11 +26,11 @@ pub(crate) enum PipeAction {
         /// a single direct `ahsw pipe connect 🐝…` line for machines (no decoration).
         #[arg(long, default_value = "human")]
         output: OutputFormat,
-        /// Live-follow mode: stay up and serve the latest stdin to whichever
-        /// single consumer is attached (discarding while none is), re-accepting
-        /// on drop. The producer only quits when the source ends; the consumer
-        /// reconnects by re-running `pipe connect` with the same ticket. For live
-        /// sources like `tail -f`; not a file transfer.
+        /// Live-follow mode: stay up and fan stdin out to **every** attached
+        /// consumer at once, buffering the backlog while none is attached and
+        /// delivering it on connect. The producer only quits when the source
+        /// ends; a consumer (re)connects by running `pipe connect` with the same
+        /// ticket. For live sources like `tail -f`; not a file transfer.
         #[arg(long)]
         follow: bool,
     },

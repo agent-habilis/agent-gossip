@@ -3,7 +3,7 @@
 
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use iroh::endpoint::Connection;
@@ -27,6 +27,13 @@ pub(crate) struct PortMapping {
     pub remote: u16,
 }
 
+/// How long the first dial keeps retrying while the producer's address
+/// propagates through the lookups (mirrors `pipe`/`file`'s consumer, which
+/// wait the same window — a `port connect` should not fail on the first flow
+/// where a `pipe connect` with the same lookups would have waited).
+const DISCOVERY_DEADLINE: Duration = Duration::from_secs(90);
+const RETRY_DELAY: Duration = Duration::from_secs(3);
+
 /// A lazily-dialed, self-healing QUIC connection shared across every port and
 /// flow of one `port connect` invocation. `get()` reuses the live connection
 /// and redials once it has closed, so all local TCP flows multiplex over a
@@ -48,6 +55,8 @@ impl SharedConnection {
     }
 
     /// The shared connection, dialing (or redialing after a close) as needed.
+    /// The dial retries until [`DISCOVERY_DEADLINE`] so a producer whose address
+    /// is still propagating through the lookups is waited for, not failed on.
     pub(super) async fn get(&self) -> Result<Connection> {
         let mut guard = self.conn.lock().await;
         if let Some(conn) = guard.as_ref() {
@@ -56,11 +65,21 @@ impl SharedConnection {
                 return Ok(conn.clone());
             }
         }
-        let conn = self
-            .endpoint
-            .connect(self.addr.clone(), PORT_ALPN)
-            .await
-            .map_err(|error| anyhow::anyhow!("connecting to the port producer failed: {error}"))?;
+        let start = Instant::now();
+        let conn = loop {
+            match self.endpoint.connect(self.addr.clone(), PORT_ALPN).await {
+                Ok(conn) => break conn,
+                Err(error) if start.elapsed() < DISCOVERY_DEADLINE => {
+                    tokio::time::sleep(RETRY_DELAY).await;
+                    let _ = error;
+                }
+                Err(error) => {
+                    return Err(anyhow::anyhow!(
+                        "connecting to the port producer failed: {error}"
+                    ));
+                }
+            }
+        };
         *guard = Some(conn.clone());
         Ok(conn)
     }

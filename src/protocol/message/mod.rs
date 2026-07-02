@@ -20,14 +20,14 @@ use super::nickname::Nickname;
 use super::swarm::SwarmId;
 
 mod body;
-mod exchange_id;
 mod id;
 mod part;
+mod task_id;
 
 pub use body::{BodyError, MessageBody};
-pub use exchange_id::{ExchangeId, ExchangeIdError};
 pub use id::{IdError, MessageId};
 pub use part::{Part, PartGroup};
+pub use task_id::{TaskId, TaskIdError};
 
 /// Maximum serialized message size — a network-wide wire contract kept
 /// under iroh-gossip's payload budget so a message we accept always fits
@@ -77,65 +77,16 @@ impl fmt::Display for PresenceSubtype {
     }
 }
 
-/// Behavior an exchange implements — the discriminator exchange behaviors
-/// route on. An exchange is the generic mechanism (a directed, multi-leg
-/// conversation keyed by [`ExchangeId`]); `kind` says *which* behavior is using
-/// it. `Handover` delegates a task/plan and walks away (no result); `Task`
-/// (run + report + verify) returns the worker's result on the same envelope.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ExchangeKind {
-    Handover,
-    Task,
-}
-
-impl fmt::Display for ExchangeKind {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ExchangeKind::Handover => write!(f, "handover"),
-            ExchangeKind::Task => write!(f, "task"),
-        }
-    }
-}
-
-/// Error parsing a [`ExchangeKind`] from its lowercase string form.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ExchangeKindError(String);
-
-impl fmt::Display for ExchangeKindError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "invalid exchange kind '{}' (expected handover|task)",
-            self.0
-        )
-    }
-}
-
-impl std::error::Error for ExchangeKindError {}
-
-impl std::str::FromStr for ExchangeKind {
-    type Err = ExchangeKindError;
-
-    fn from_str(raw: &str) -> Result<Self, Self::Err> {
-        match raw {
-            "handover" => Ok(ExchangeKind::Handover),
-            "task" => Ok(ExchangeKind::Task),
-            other => Err(ExchangeKindError(other.to_owned())),
-        }
-    }
-}
-
-/// Phase of an exchange — the generic, behavior-agnostic lifecycle
-/// every exchange behavior shares. `Offer` opens with the brief; `Accept`/
+/// Phase of a task — the generic, behavior-agnostic lifecycle
+/// every task behavior shares. `Offer` opens with the brief; `Accept`/
 /// `Decline` are the entry decision; `Context` carries the bidirectional
 /// Q&A; `Progress` is the receiver's liveness+percent heartbeat (plumbing,
 /// like `Alive`); `Done` requests close; `Confirm`/`Change` are the
 /// initiator's verify decision (`Change` loops back to `Context`); `Cancel`
-/// aborts. See the daemon exchange state machine for the transitions.
+/// aborts. See the daemon task state machine for the transitions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum ExchangePhase {
+pub enum TaskPhase {
     Offer,
     Accept,
     Decline,
@@ -147,27 +98,27 @@ pub enum ExchangePhase {
     Cancel,
 }
 
-impl fmt::Display for ExchangePhase {
+impl fmt::Display for TaskPhase {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ExchangePhase::Offer => write!(f, "offer"),
-            ExchangePhase::Accept => write!(f, "accept"),
-            ExchangePhase::Decline => write!(f, "decline"),
-            ExchangePhase::Context => write!(f, "context"),
-            ExchangePhase::Progress => write!(f, "progress"),
-            ExchangePhase::Done => write!(f, "done"),
-            ExchangePhase::Confirm => write!(f, "confirm"),
-            ExchangePhase::Change => write!(f, "change"),
-            ExchangePhase::Cancel => write!(f, "cancel"),
+            TaskPhase::Offer => write!(f, "offer"),
+            TaskPhase::Accept => write!(f, "accept"),
+            TaskPhase::Decline => write!(f, "decline"),
+            TaskPhase::Context => write!(f, "context"),
+            TaskPhase::Progress => write!(f, "progress"),
+            TaskPhase::Done => write!(f, "done"),
+            TaskPhase::Confirm => write!(f, "confirm"),
+            TaskPhase::Change => write!(f, "change"),
+            TaskPhase::Cancel => write!(f, "cancel"),
         }
     }
 }
 
-/// Error parsing a [`ExchangePhase`] from its lowercase string form.
+/// Error parsing a [`TaskPhase`] from its lowercase string form.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ExchangePhaseError(String);
+pub struct TaskPhaseError(String);
 
-impl fmt::Display for ExchangePhaseError {
+impl fmt::Display for TaskPhaseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
@@ -177,37 +128,37 @@ impl fmt::Display for ExchangePhaseError {
     }
 }
 
-impl std::error::Error for ExchangePhaseError {}
+impl std::error::Error for TaskPhaseError {}
 
 /// Parse a phase from its lowercase string. The CLI `--phase` parser and the
-/// MCP `send_exchange` tool both delegate here, so the accepted set is defined
-/// once (and [`ExchangePhase`]'s `Display` is its inverse).
-impl std::str::FromStr for ExchangePhase {
-    type Err = ExchangePhaseError;
+/// MCP `send_task` tool both delegate here, so the accepted set is defined
+/// once (and [`TaskPhase`]'s `Display` is its inverse).
+impl std::str::FromStr for TaskPhase {
+    type Err = TaskPhaseError;
 
     fn from_str(raw: &str) -> Result<Self, Self::Err> {
         match raw {
-            "offer" => Ok(ExchangePhase::Offer),
-            "accept" => Ok(ExchangePhase::Accept),
-            "decline" => Ok(ExchangePhase::Decline),
-            "context" => Ok(ExchangePhase::Context),
-            "progress" => Ok(ExchangePhase::Progress),
-            "done" => Ok(ExchangePhase::Done),
-            "confirm" => Ok(ExchangePhase::Confirm),
-            "change" => Ok(ExchangePhase::Change),
-            "cancel" => Ok(ExchangePhase::Cancel),
-            other => Err(ExchangePhaseError(other.to_owned())),
+            "offer" => Ok(TaskPhase::Offer),
+            "accept" => Ok(TaskPhase::Accept),
+            "decline" => Ok(TaskPhase::Decline),
+            "context" => Ok(TaskPhase::Context),
+            "progress" => Ok(TaskPhase::Progress),
+            "done" => Ok(TaskPhase::Done),
+            "confirm" => Ok(TaskPhase::Confirm),
+            "change" => Ok(TaskPhase::Change),
+            "cancel" => Ok(TaskPhase::Cancel),
+            other => Err(TaskPhaseError(other.to_owned())),
         }
     }
 }
 
-/// Is this phase a **content** leg (counts toward the per-exchange message
-/// cap, logged like `Msg`)? `Progress` is the only non-content exchange
+/// Is this phase a **content** leg (counts toward the per-task message
+/// cap, logged like `Msg`)? `Progress` is the only non-content task
 /// phase — it is liveness plumbing (exempt from the cap, never logged), the
 /// rest carry real conversation.
 #[must_use]
-pub(crate) fn is_content_phase(phase: ExchangePhase) -> bool {
-    !matches!(phase, ExchangePhase::Progress)
+pub(crate) fn is_content_phase(phase: TaskPhase) -> bool {
+    !matches!(phase, TaskPhase::Progress)
 }
 
 /// Message kind — three types cover all protocol needs:
@@ -242,20 +193,20 @@ pub enum MessageKind {
     Pong {
         to: Nickname,
     },
-    /// One leg of an exchange, addressed to `to` and correlated by
-    /// `exchange_id` (so both sides group the legs into one conversation).
-    /// `kind` is the behavior (handover/task); `phase` the lifecycle
-    /// position. Delivered to every peer (gossip floods) but surfaced and
-    /// logged only by the addressee and the sender — third parties relay
-    /// without retaining, exactly like a directed `Msg`. **Content** phases
-    /// are logged with `Msg`; the `Progress` phase is liveness plumbing
-    /// (never logged). Not part of the per-author hash chain or DAG
-    /// (presence-like).
-    Exchange {
+    /// One leg of a task, addressed to `to` and correlated by
+    /// `task_id` (so both sides group the legs into one conversation).
+    /// `phase` is the lifecycle position. Delivered to every peer (gossip
+    /// floods) but surfaced and logged only by the addressee and the sender —
+    /// third parties relay without retaining, exactly like a directed `Msg`.
+    /// **Content** phases are logged with `Msg`; the `Progress` phase is
+    /// liveness plumbing (never logged). Not part of the per-author hash chain
+    /// or DAG (presence-like). How the two parties *use* a task (delegate a
+    /// plan, run work and return a result, …) is a skill-land convention
+    /// carried in the offer body — the primitive itself has no notion of it.
+    Task {
         to: Nickname,
-        exchange_id: ExchangeId,
-        kind: ExchangeKind,
-        phase: ExchangePhase,
+        task_id: TaskId,
+        phase: TaskPhase,
     },
     /// A durable swarm-state event (membership edits, settings, …). Carried
     /// on the same gossip topic as everything else but routed to a **separate,
@@ -324,7 +275,7 @@ impl fmt::Display for MessageKind {
             MessageKind::Digest => write!(f, "digest"),
             MessageKind::Ping => write!(f, "ping"),
             MessageKind::Pong { .. } => write!(f, "pong"),
-            MessageKind::Exchange { .. } => write!(f, "exchange"),
+            MessageKind::Task { .. } => write!(f, "task"),
             MessageKind::State => write!(f, "state"),
             MessageKind::StateDigest => write!(f, "state_digest"),
             MessageKind::Meta => write!(f, "meta"),
@@ -398,6 +349,15 @@ pub struct Message {
     /// Extension escape hatch. Add experimental fields here; stable fields get promoted to top-level.
     #[serde(default = "default_ext")]
     pub ext: serde_json::Value,
+}
+
+/// Is `value` exactly `bytes * 2` lowercase-hex characters — the canonical
+/// wire form of a fixed-width binary field (pubkey / signature / hash)?
+fn is_lower_hex(value: &str, bytes: usize) -> bool {
+    value.len() == bytes * 2
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 impl Message {
@@ -479,29 +439,23 @@ impl Message {
         Self::new(swarm, author, MessageKind::Pong { to }, empty_body())
     }
 
-    /// One leg of an exchange addressed to `to`, correlated by
-    /// `exchange_id`. `Offer` carries the exchange brief in the body; `Context`
+    /// One leg of a task addressed to `to`, correlated by
+    /// `task_id`. `Offer` carries the task brief in the body; `Context`
     /// the Q&A; `Progress` a `done/total` fraction; `Done`/`Change`/
     /// `Decline`/`Cancel` an optional summary/reason; `Accept`/`Confirm`
     /// an optional note.
-    pub(crate) fn new_exchange(
+    pub(crate) fn new_task(
         swarm: &SwarmId,
         author: &Nickname,
         to: Nickname,
-        exchange_id: ExchangeId,
-        kind: ExchangeKind,
-        phase: ExchangePhase,
+        task_id: TaskId,
+        phase: TaskPhase,
         body: MessageBody,
     ) -> Self {
         Self::new(
             swarm,
             author,
-            MessageKind::Exchange {
-                to,
-                exchange_id,
-                kind,
-                phase,
-            },
+            MessageKind::Task { to, task_id, phase },
             body,
         )
     }
@@ -581,6 +535,27 @@ impl Message {
         if msg.version != VERSION {
             bail!("unsupported protocol version: {}", msg.version);
         }
+        // Shape-check the history-integrity fields at the boundary, so a crafted
+        // value never reaches signature verification or the fork/DAG indexes
+        // (which key on `prev`/`parents` as content hashes). Empty `pubkey`/`sig`
+        // is the canonical unsigned form — the receive path drops anything that
+        // then fails verification; a *present* key/sig/hash must be well-formed
+        // lowercase hex of the right length (Ed25519 pubkey 32B, signature 64B,
+        // SHA-256 hash 32B).
+        if !msg.pubkey.is_empty() && !is_lower_hex(&msg.pubkey, 32) {
+            bail!("malformed pubkey");
+        }
+        if !msg.sig.is_empty() && !is_lower_hex(&msg.sig, 64) {
+            bail!("malformed signature");
+        }
+        if let Some(prev) = &msg.prev
+            && !is_lower_hex(prev, 32)
+        {
+            bail!("malformed prev hash");
+        }
+        if msg.parents.iter().any(|hash| !is_lower_hex(hash, 32)) {
+            bail!("malformed parent hash");
+        }
         Ok(msg)
     }
 
@@ -638,6 +613,15 @@ impl Message {
     #[must_use]
     pub(crate) fn content_hash_hex(&self) -> String {
         identity::content_hash_hex(&self.canonical_bytes())
+    }
+
+    /// The 16-byte dedup / anti-entropy key (`SHA-256(pubkey ‖ id)[..16]`).
+    /// Dedup, the message/state logs, and the digest all key on this rather
+    /// than the sender-chosen id, so a forged message reusing a victim's id
+    /// cannot suppress the genuine one. See [`identity::dedup_key16`].
+    #[must_use]
+    pub(crate) fn dedup_key(&self) -> [u8; 16] {
+        identity::dedup_key16(&self.pubkey, &self.id.as_uuid_bytes())
     }
 
     /// Stamp the per-author log fields before signing (`Msg` only). `seq`
@@ -880,31 +864,28 @@ mod tests {
 
     #[test]
     fn test_task_round_trip() {
-        use super::{ExchangeId, ExchangeKind, ExchangePhase};
+        use super::{TaskId, TaskPhase};
         let target = nick("calm-otter");
-        let exchange_id = ExchangeId::random();
-        let msg = Message::new_exchange(
+        let task_id = TaskId::random();
+        let msg = Message::new_task(
             &sid(),
             &nick("word-word"),
             target.clone(),
-            exchange_id.clone(),
-            ExchangeKind::Handover,
-            ExchangePhase::Offer,
+            task_id.clone(),
+            TaskPhase::Offer,
             MessageBody::from("## Task\nport the parser"),
         );
         let bytes = msg.serialize().unwrap();
         let wire = String::from_utf8_lossy(&bytes);
-        assert!(wire.contains("\"type\":\"exchange\""));
-        assert!(wire.contains("\"kind\":\"handover\""));
+        assert!(wire.contains("\"type\":\"task\""));
         assert!(wire.contains("\"phase\":\"offer\""));
         let parsed = Message::parse(&bytes).unwrap();
         assert_eq!(
             parsed.kind,
-            MessageKind::Exchange {
+            MessageKind::Task {
                 to: target,
-                exchange_id,
-                kind: ExchangeKind::Handover,
-                phase: ExchangePhase::Offer,
+                task_id,
+                phase: TaskPhase::Offer,
             }
         );
         assert_eq!(parsed.body, msg.body);
@@ -912,31 +893,22 @@ mod tests {
 
     #[test]
     fn task_phase_from_str_round_trips_display() {
-        use super::ExchangePhase;
+        use super::TaskPhase;
         for phase in [
-            ExchangePhase::Offer,
-            ExchangePhase::Accept,
-            ExchangePhase::Decline,
-            ExchangePhase::Context,
-            ExchangePhase::Progress,
-            ExchangePhase::Done,
-            ExchangePhase::Confirm,
-            ExchangePhase::Change,
-            ExchangePhase::Cancel,
+            TaskPhase::Offer,
+            TaskPhase::Accept,
+            TaskPhase::Decline,
+            TaskPhase::Context,
+            TaskPhase::Progress,
+            TaskPhase::Done,
+            TaskPhase::Confirm,
+            TaskPhase::Change,
+            TaskPhase::Cancel,
         ] {
             let rendered = phase.to_string();
-            assert_eq!(rendered.parse::<ExchangePhase>().unwrap(), phase);
+            assert_eq!(rendered.parse::<TaskPhase>().unwrap(), phase);
         }
-        assert!("bogus".parse::<ExchangePhase>().is_err());
-    }
-
-    #[test]
-    fn task_kind_from_str_round_trips_display() {
-        use super::ExchangeKind;
-        for kind in [ExchangeKind::Handover, ExchangeKind::Task] {
-            assert_eq!(kind.to_string().parse::<ExchangeKind>().unwrap(), kind);
-        }
-        assert!("bogus".parse::<ExchangeKind>().is_err());
+        assert!("bogus".parse::<TaskPhase>().is_err());
     }
 
     #[test]
@@ -1010,6 +982,35 @@ mod tests {
     }
 
     #[test]
+    fn parse_rejects_malformed_integrity_fields() {
+        // Each history-integrity field (pubkey / sig / prev / parents) must be
+        // rejected at `parse` when present but not well-formed lowercase hex,
+        // so a crafted value never reaches the fork/DAG indexes or sig verify.
+        let base = |extra: &str| {
+            format!(
+                r#"{{"v":"2.0","id":"{FIXTURE_ID}","type":"msg","swarm":"🐝test","author":"a-b","ts":0,"body":"hi"{extra},"ext":{{}}}}"#
+            )
+        };
+        // 3KB garbage pubkey, non-hex / wrong-length variants, and a bad hash.
+        for extra in [
+            format!(r#","pubkey":"{}""#, "z".repeat(3000)),
+            r#","pubkey":"AABB""#.to_string(), // uppercase + too short
+            r#","sig":"nothex""#.to_string(),
+            r#","prev":"xyz""#.to_string(),
+            r#","parents":["00"]"#.to_string(), // too short
+        ] {
+            assert!(
+                Message::parse(base(&extra).as_bytes()).is_err(),
+                "should reject: {extra}"
+            );
+        }
+        // A well-formed (if unverifiable) 64-hex pubkey still parses — shape
+        // only; the signature gate is a separate, later check.
+        let ok = base(&format!(r#","pubkey":"{}""#, "ab".repeat(32)));
+        assert!(Message::parse(ok.as_bytes()).is_ok());
+    }
+
+    #[test]
     fn build_msg_bytes_message() {
         let alice = nick("alice");
         let identity = crate::protocol::identity::Identity::generate();
@@ -1056,7 +1057,7 @@ mod tests {
             | MessageKind::Pong { .. }
             | MessageKind::State
             | MessageKind::Meta
-            | MessageKind::Exchange { .. } => {
+            | MessageKind::Task { .. } => {
                 panic!("expected Msg kind")
             }
         }
@@ -1102,77 +1103,65 @@ mod tests {
 
         #[test]
         fn tampered_task_target_breaks_signature() {
-            use super::super::{ExchangeId, ExchangeKind, ExchangePhase};
-            let exchange_id = ExchangeId::random();
+            use super::super::{TaskId, TaskPhase};
+            let task_id = TaskId::random();
             let mut msg = Message::fixture(
-                MessageKind::Exchange {
+                MessageKind::Task {
                     to: "calm-otter".into(),
-                    exchange_id: exchange_id.clone(),
-                    kind: ExchangeKind::Handover,
-                    phase: ExchangePhase::Offer,
+                    task_id: task_id.clone(),
+                    phase: TaskPhase::Offer,
                 },
                 "brief",
             )
             .signed(&identity());
             assert!(msg.verify_signature());
-            msg.kind = MessageKind::Exchange {
+            msg.kind = MessageKind::Task {
                 to: "evil-otter".into(),
-                exchange_id,
-                kind: ExchangeKind::Handover,
-                phase: ExchangePhase::Offer,
+                task_id,
+                phase: TaskPhase::Offer,
             };
-            assert!(!msg.verify_signature(), "exchange `to` is a signed field");
+            assert!(!msg.verify_signature(), "task `to` is a signed field");
         }
 
         #[test]
         fn tampered_task_phase_breaks_signature() {
-            use super::super::{ExchangeId, ExchangeKind, ExchangePhase};
-            let exchange_id = ExchangeId::random();
+            use super::super::{TaskId, TaskPhase};
+            let task_id = TaskId::random();
             let mut msg = Message::fixture(
-                MessageKind::Exchange {
+                MessageKind::Task {
                     to: "calm-otter".into(),
-                    exchange_id: exchange_id.clone(),
-                    kind: ExchangeKind::Handover,
-                    phase: ExchangePhase::Offer,
+                    task_id: task_id.clone(),
+                    phase: TaskPhase::Offer,
                 },
                 "brief",
             )
             .signed(&identity());
-            msg.kind = MessageKind::Exchange {
+            msg.kind = MessageKind::Task {
                 to: "calm-otter".into(),
-                exchange_id,
-                kind: ExchangeKind::Handover,
-                phase: ExchangePhase::Confirm,
+                task_id,
+                phase: TaskPhase::Confirm,
             };
-            assert!(
-                !msg.verify_signature(),
-                "exchange `phase` is a signed field"
-            );
+            assert!(!msg.verify_signature(), "task `phase` is a signed field");
         }
 
         #[test]
-        fn tampered_exchange_id_breaks_signature() {
-            use super::super::{ExchangeId, ExchangeKind, ExchangePhase};
+        fn tampered_task_id_breaks_signature() {
+            use super::super::{TaskId, TaskPhase};
             let mut msg = Message::fixture(
-                MessageKind::Exchange {
+                MessageKind::Task {
                     to: "calm-otter".into(),
-                    exchange_id: ExchangeId::random(),
-                    kind: ExchangeKind::Handover,
-                    phase: ExchangePhase::Offer,
+                    task_id: TaskId::random(),
+                    phase: TaskPhase::Offer,
                 },
                 "brief",
             )
             .signed(&identity());
-            msg.kind = MessageKind::Exchange {
+            msg.kind = MessageKind::Task {
                 to: "calm-otter".into(),
-                exchange_id: ExchangeId::random(),
-                kind: ExchangeKind::Handover,
-                phase: ExchangePhase::Offer,
+                task_id: TaskId::random(),
+                phase: TaskPhase::Offer,
             };
-            assert!(
-                !msg.verify_signature(),
-                "exchange `exchange_id` is a signed field"
-            );
+            assert!(!msg.verify_signature(), "task `task_id` is a signed field");
         }
 
         #[test]
@@ -1286,15 +1275,12 @@ mod tests {
         }
 
         #[test]
-        fn snap_wire_exchange_offer() {
+        fn snap_wire_task_offer() {
             let msg = Message::fixture(
-                MessageKind::Exchange {
+                MessageKind::Task {
                     to: Nickname::from("addressed-nick"),
-                    exchange_id: super::super::ExchangeId::from(
-                        "550e8400-e29b-41d4-a716-446655440000",
-                    ),
-                    kind: super::super::ExchangeKind::Handover,
-                    phase: super::super::ExchangePhase::Offer,
+                    task_id: super::super::TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
+                    phase: super::super::TaskPhase::Offer,
                 },
                 "## Task\nport the parser",
             );

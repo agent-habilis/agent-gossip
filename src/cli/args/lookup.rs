@@ -74,7 +74,7 @@ mod tests {
             | Commands::Discover { .. }
             | Commands::Mcp { .. }
             | Commands::Man
-            | Commands::Exchange { .. }
+            | Commands::Task { .. }
             | Commands::Peers { .. }
             | Commands::State { .. }
             | Commands::Meta { .. }
@@ -150,7 +150,7 @@ mod tests {
             | Commands::Discover { .. }
             | Commands::Mcp { .. }
             | Commands::Man
-            | Commands::Exchange { .. }
+            | Commands::Task { .. }
             | Commands::Peers { .. }
             | Commands::State { .. }
             | Commands::Meta { .. }

@@ -17,8 +17,8 @@ use crate::daemon::state::EventLoopState;
 use crate::output;
 use crate::protocol::identity::Identity;
 use crate::protocol::{
-    Channel, ExchangeId, ExchangeKind, ExchangePhase, Message, MessageBody, MessageId, MessageKind,
-    Nickname, Part, PartGroup, SwarmId,
+    Channel, Message, MessageBody, MessageId, MessageKind, Nickname, Part, PartGroup, SwarmId,
+    TaskId, TaskPhase,
 };
 use crate::util::consts::{MAX_MESSAGE_PARTS, MAX_MESSAGE_SIZE};
 
@@ -207,7 +207,7 @@ pub(crate) async fn handle_stdin_line(
 /// Retain a just-built outbound message in the local log (pruning the
 /// fork/DAG indexes on any eviction) and write the dev log. The operator
 /// echo is the caller's responsibility — it differs by kind
-/// (`print_message_ex` for `Msg`, `print_handover` for `Handover`).
+/// (`print_message_ex` for `Msg`, `print_task` for `Task`).
 /// Shared by [`commit_outbound_part`] (after chain stamping) and
 /// [`echo_and_retain_task`] (no chain stamping).
 fn retain_outbound(state: &mut EventLoopState, msg: &Message) {
@@ -221,25 +221,22 @@ fn retain_outbound(state: &mut EventLoopState, msg: &Message) {
     crate::logging::messages::log_out(msg);
 }
 
-/// Echo a just-built outbound handover leg to the operator and retain it.
-/// Shared by [`broadcast_handover`]'s meshed and queued paths (no chain
-/// stamping; handover is presence-like).
-/// Echo a just-built outbound exchange leg to the operator and, for **content**
+/// Echo a just-built outbound task leg to the operator and, for **content**
 /// legs, retain it in the message log for anti-entropy. The `Progress` phase
 /// is liveness plumbing — echoed (so the sender's own widget updates) but
 /// never retained, mirroring its receive-side handling.
 fn echo_and_retain_task(state: &mut EventLoopState, msg: &Message, out: &output::Output) {
-    out.print_exchange(msg, true);
+    out.print_task(msg, true);
     retain_task(state, msg);
 }
 
-/// Retain a just-built outbound exchange leg for anti-entropy **without**
+/// Retain a just-built outbound task leg for anti-entropy **without**
 /// echoing it — the raw parts of a split leg retain silently; the reassembled
 /// logical leg is echoed once. Content legs retain; the `Progress` beat doesn't.
 fn retain_task(state: &mut EventLoopState, msg: &Message) {
     let retain = matches!(
         &msg.kind,
-        MessageKind::Exchange { phase, .. } if crate::protocol::message::is_content_phase(*phase)
+        MessageKind::Task { phase, .. } if crate::protocol::message::is_content_phase(*phase)
     );
     if retain {
         retain_outbound(state, msg);
@@ -506,62 +503,59 @@ pub(crate) async fn broadcast_message(
     Ok((logical.id.clone(), logical))
 }
 
-/// One outbound exchange leg's payload (addressee + correlation id + behavior +
-/// phase + body), bundled so [`broadcast_exchange`] stays within the argument
-/// budget. The IPC `exchange` command and the typed `SessionRequest::Exchange` both
-/// build it from their carried fields.
-pub(crate) struct ExchangeLeg {
+/// One outbound task leg's payload (addressee + correlation id + phase +
+/// body), bundled so [`broadcast_task`] stays within the argument budget. The
+/// IPC `task` command and the typed `SessionRequest::Task` both build it from
+/// their carried fields.
+pub(crate) struct TaskLeg {
     pub to: Nickname,
-    pub exchange_id: ExchangeId,
-    pub kind: ExchangeKind,
-    pub phase: ExchangePhase,
+    pub task_id: TaskId,
+    pub phase: TaskPhase,
     pub body: MessageBody,
 }
 
-/// Build, sign, log and gossip-broadcast one exchange leg. Sibling of
-/// [`broadcast_message`] for the typed `Exchange` kind: **content** legs take the
+/// Build, sign, log and gossip-broadcast one task leg. Sibling of
+/// [`broadcast_message`] for the typed `Task` kind: **content** legs take the
 /// meshed/unmeshed retain paths, but the `Progress` phase is liveness plumbing —
-/// never retained. No hash-chain or DAG stamping (exchange legs are presence-like —
-/// see [`MessageKind::Exchange`]). Always echoes the sender's own leg through
-/// `print_exchange` (an `exchange`/`exchange_progress` event with `self:true`), the same
+/// never retained. No hash-chain or DAG stamping (task legs are presence-like —
+/// see [`MessageKind::Task`]). Always echoes the sender's own leg through
+/// `print_task` (an `task`/`task_progress` event with `self:true`), the same
 /// way an outbound `msg` echoes. Showing the leg to its *addressee* is the
-/// receiver-side job of [`lifecycle::handle_exchange`](crate::lifecycle::handle_exchange).
+/// receiver-side job of [`lifecycle::handle_task`](crate::lifecycle::handle_task).
 ///
 /// This is where `Offer` addressee validation lives: an `Offer` leg must name
 /// a current participant. The CLI, MCP, and embed callers all reach this
 /// function, so validating here covers every path. Later phases skip the check
-/// so a brief peer flap mid-exchange can't wedge the conversation.
+/// so a brief peer flap mid-task can't wedge the conversation.
 ///
 /// # Errors
 /// Returns an `unknown participant` error for an `Offer` to a non-participant;
 /// propagates [`Message::serialize`] failure (oversized brief) and a gossip
 /// broadcast error.
-pub(crate) async fn broadcast_exchange(
+pub(crate) async fn broadcast_task(
     swarm: &SwarmId,
     author: &Nickname,
-    leg: ExchangeLeg,
+    leg: TaskLeg,
     state: &mut EventLoopState,
     sender: &GossipSender,
     out: &output::Output,
 ) -> anyhow::Result<(MessageId, Message)> {
-    let ExchangeLeg {
+    let TaskLeg {
         to,
-        exchange_id,
-        kind,
+        task_id,
         phase,
         body,
     } = leg;
-    if matches!(phase, ExchangePhase::Offer) && !state.participants.contains(to.as_str()) {
+    if matches!(phase, TaskPhase::Offer) && !state.participants.contains(to.as_str()) {
         return Err(anyhow::anyhow!("unknown participant '{to}'"));
     }
     let signer = state.identity.clone();
     // Fast path: the whole leg in one message.
-    let single = build_exchange(
+    let single = build_task(
         swarm,
         author,
         &to,
-        &exchange_id,
-        kind,
+        &task_id,
         phase,
         body.clone(),
         None,
@@ -570,23 +564,22 @@ pub(crate) async fn broadcast_exchange(
     if single.wire_len() <= MAX_MESSAGE_SIZE {
         let bytes = Bytes::from(single.serialize()?);
         let id = single.id.clone();
-        send_exchange_leg(state, sender, out, &single, bytes, true).await?;
+        send_task_leg(state, sender, out, &single, bytes, true).await?;
         ingest_own_leg(state, &single, out);
         return Ok((id, single));
     }
     // Only content legs are ever large enough to split; the `Progress` beat is a
     // tiny liveness widget and is never retained/reassembled.
     if !crate::protocol::message::is_content_phase(phase) {
-        return Err(anyhow::anyhow!("exchange {phase} leg too large to send"));
+        return Err(anyhow::anyhow!("task {phase} leg too large to send"));
     }
     let group = PartGroup::random();
     let max_parts = u32::try_from(MAX_MESSAGE_PARTS).unwrap_or(u32::MAX);
-    let probe = build_exchange(
+    let probe = build_task(
         swarm,
         author,
         &to,
-        &exchange_id,
-        kind,
+        &task_id,
         phase,
         MessageBody::new(String::new()).expect("empty body is valid"),
         Some(Part {
@@ -599,14 +592,14 @@ pub(crate) async fn broadcast_exchange(
     let budget = part_body_budget(&probe);
     let chunks = split_body(body.as_str(), budget).ok_or_else(|| {
         anyhow::anyhow!(
-            "exchange leg too large: a {}-byte body needs more than {MAX_MESSAGE_PARTS} parts",
+            "task leg too large: a {}-byte body needs more than {MAX_MESSAGE_PARTS} parts",
             body.as_str().len()
         )
     })?;
     let total = u32::try_from(chunks.len()).expect("chunk count is bounded by MAX_MESSAGE_PARTS");
     if !state.meshed && state.pending_outbound.remaining() < chunks.len() {
         return Err(anyhow::anyhow!(
-            "pending outbound buffer full; multipart exchange leg dropped"
+            "pending outbound buffer full; multipart task leg dropped"
         ));
     }
     for (idx, chunk) in chunks.iter().enumerate() {
@@ -616,61 +609,51 @@ pub(crate) async fn broadcast_exchange(
             total,
         };
         let chunk_body = MessageBody::new(*chunk).expect("a substring of a valid body is valid");
-        let msg = build_exchange(
+        let msg = build_task(
             swarm,
             author,
             &to,
-            &exchange_id,
-            kind,
+            &task_id,
             phase,
             chunk_body,
             Some(part),
             &signer,
         );
         let bytes = Bytes::from(msg.serialize()?);
-        send_exchange_leg(state, sender, out, &msg, bytes, false).await?;
+        send_task_leg(state, sender, out, &msg, bytes, false).await?;
     }
     // Echo + ingest the logical leg once (one content leg toward the cap).
-    let mut logical = Message::new_exchange(swarm, author, to, exchange_id, kind, phase, body);
+    let mut logical = Message::new_task(swarm, author, to, task_id, phase, body);
     logical.id = MessageId::new(group.as_str()).expect("a part group is a valid message id");
-    out.print_exchange(&logical, true);
+    out.print_task(&logical, true);
     ingest_own_leg(state, &logical, out);
     Ok((logical.id.clone(), logical))
 }
 
-/// Build, part-tag and sign one outbound exchange leg (no serialize).
+/// Build, part-tag and sign one outbound task leg (no serialize).
 #[expect(
     clippy::too_many_arguments,
-    reason = "an exchange leg carries to/exchange_id/kind/phase/body plus the part header and signer; bundling them buys nothing over the existing ExchangeLeg"
+    reason = "a task leg carries to/task_id/phase/body plus the part header and signer; bundling them buys nothing over the existing TaskLeg"
 )]
-fn build_exchange(
+fn build_task(
     swarm: &SwarmId,
     author: &Nickname,
     to: &Nickname,
-    exchange_id: &ExchangeId,
-    kind: ExchangeKind,
-    phase: ExchangePhase,
+    task_id: &TaskId,
+    phase: TaskPhase,
     body: MessageBody,
     part: Option<Part>,
     signer: &Identity,
 ) -> Message {
-    Message::new_exchange(
-        swarm,
-        author,
-        to.clone(),
-        exchange_id.clone(),
-        kind,
-        phase,
-        body,
-    )
-    .with_part(part)
-    .signed(signer)
+    Message::new_task(swarm, author, to.clone(), task_id.clone(), phase, body)
+        .with_part(part)
+        .signed(signer)
 }
 
-/// Broadcast (or buffer, while unmeshed) one fully-built exchange leg, retaining
+/// Broadcast (or buffer, while unmeshed) one fully-built task leg, retaining
 /// content legs for anti-entropy. `echo` gates the operator print so the raw
 /// parts of a split leg commit silently. Errors if the unmeshed buffer is full.
-async fn send_exchange_leg(
+async fn send_task_leg(
     state: &mut EventLoopState,
     sender: &GossipSender,
     out: &output::Output,
@@ -697,7 +680,7 @@ async fn send_exchange_leg(
     Ok(())
 }
 
-/// Retain an exchange leg locally, echoing the operator line only when `echo`
+/// Retain a task leg locally, echoing the operator line only when `echo`
 /// (false for the raw parts of a split leg). Content legs retain; `Progress`
 /// doesn't — see [`retain_task`].
 fn retain_leg(state: &mut EventLoopState, msg: &Message, out: &output::Output, echo: bool) {
@@ -708,15 +691,15 @@ fn retain_leg(state: &mut EventLoopState, msg: &Message, out: &output::Output, e
     }
 }
 
-/// Advance our own coarse exchange state machine for a leg we just sent and warn
-/// once if a content leg pushed the exchange past its whole-exchange cap.
+/// Advance our own coarse task state machine for a leg we just sent and warn
+/// once if a content leg pushed the task past its whole-task cap.
 fn ingest_own_leg(state: &mut EventLoopState, msg: &Message, out: &output::Output) {
-    if crate::daemon::exchange::ingest(&mut state.exchanges, msg, true, Instant::now()) {
+    if crate::daemon::task::ingest(&mut state.tasks, msg, true, Instant::now()) {
         out.info(&format!(
-            "exchange exceeded {} messages; wrap it up",
-            crate::util::consts::EXCHANGE_CONTENT_CAP
+            "task exceeded {} messages; wrap it up",
+            crate::util::consts::TASK_CONTENT_CAP
         ));
-        tracing::warn!("exchange content cap exceeded");
+        tracing::warn!("task content cap exceeded");
     }
 }
 
@@ -758,22 +741,20 @@ pub(crate) async fn handle_session_request(
             );
             false
         }
-        SessionRequest::Exchange {
+        SessionRequest::Task {
             to,
-            exchange_id,
-            kind,
+            task_id,
             phase,
             body,
             resp,
         } => {
-            let leg = ExchangeLeg {
+            let leg = TaskLeg {
                 to,
-                exchange_id,
-                kind,
+                task_id,
                 phase,
                 body,
             };
-            let outcome = broadcast_exchange(swarm, author, leg, state, sender, output)
+            let outcome = broadcast_task(swarm, author, leg, state, sender, output)
                 .await
                 .map(|(_id, msg)| msg);
             let sent_ok = outcome.is_ok();

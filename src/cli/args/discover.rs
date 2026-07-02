@@ -50,7 +50,7 @@ mod tests {
                 | Commands::File { .. }
                 | Commands::Mcp { .. }
                 | Commands::Man
-                | Commands::Exchange { .. }
+                | Commands::Task { .. }
                 | Commands::Peers { .. }
                 | Commands::State { .. }
                 | Commands::Meta { .. }
