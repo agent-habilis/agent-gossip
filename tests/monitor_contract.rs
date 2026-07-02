@@ -1209,6 +1209,91 @@ async fn test_task_idle_timeout_after_owner_dies() {
     );
 }
 
+/// The keepalive is bounded by skill liveness, not process liveness: a
+/// ball-owner whose daemon stays **alive** but whose *skill* goes silent past
+/// `--task-keepalive-max-secs` stops being covered, so the peer's debounce
+/// fires a `task_timeout` — a crashed/abandoned skill can't hold the peer
+/// forever. Shortened timers make the window seconds, not minutes.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_task_times_out_when_skill_goes_silent() {
+    let timers: &[(&str, &str)] = &[
+        ("--task-timeout-secs", "3"),
+        ("--task-keepalive-secs", "1"),
+        ("--task-keepalive-max-secs", "2"),
+        ("--sweep-interval-secs", "1"),
+    ];
+    let (creator, swarm) = JsonNode::create_with_flags(timers);
+    let mut joiner = JsonNode::join_with_flags(&swarm, "tk-silent", timers);
+    assert!(creator.wait_ready(&swarm));
+    assert!(joiner.wait_ready(&swarm));
+
+    let saw_join = wait_until(
+        || {
+            creator
+                .presence_events()
+                .iter()
+                .filter(|value| value["subtype"] == "joined")
+                .count()
+        },
+        1,
+        MSG_TIMEOUT,
+    );
+    assert!(saw_join >= 1, "creator never saw the joiner join");
+
+    let tid = WIRE_TASK_ID;
+    // Creator offers; joiner accepts → the joiner (receiver) holds the ball,
+    // then its skill sends nothing more (simulating a crash/abandon while the
+    // daemon process keeps running).
+    common::cli_task_checked(
+        &swarm,
+        &creator.nickname,
+        "tk-silent",
+        tid,
+        "offer",
+        "port it",
+    );
+    let saw_offer = wait_until(
+        || {
+            joiner
+                .json_events()
+                .iter()
+                .filter(|value| value["event"] == "task" && value["phase"] == "offer")
+                .count()
+        },
+        1,
+        MSG_TIMEOUT,
+    );
+    assert!(saw_offer >= 1, "joiner never surfaced the offer");
+    common::cli_task_checked(&swarm, "tk-silent", &creator.nickname, tid, "accept", "ok");
+
+    // The ball-owner's daemon is still alive, but its skill is silent past the
+    // keepalive-max window, so the keepalive stops and the task is reaped. The
+    // ball-owner's own sweep and the creator's debounce fire at ~the same time
+    // (whichever broadcasts `Cancel` first terminalizes the other), so accept a
+    // `task_timeout` on **either** node — before the fix, none would ever fire.
+    let timed_out = wait_until(
+        || {
+            let count = |node: &JsonNode| {
+                node.json_events()
+                    .iter()
+                    .filter(|value| value["event"] == "task_timeout" && value["task_id"] == tid)
+                    .count()
+            };
+            count(&creator) + count(&joiner)
+        },
+        1,
+        RECOVERY_TIMEOUT,
+    );
+    assert!(
+        timed_out >= 1,
+        "a task whose ball-owner skill went silent must time out, even though the daemon lives"
+    );
+    assert!(
+        joiner.child.try_wait().ok().flatten().is_none(),
+        "the ball-owner daemon must still be alive — the timeout is from skill silence, not process death"
+    );
+}
+
 /// `ahsw peers` returns the live roster: `ok`, a `count` (participants + 1
 /// for self), and a `participants` array carrying nickname + recency +
 /// quiet flag + reach (direct/gossip) for each known peer.

@@ -116,8 +116,8 @@ Code: `protocol::crypto`.
 A per-participant Ed25519 keypair minted in-process at `create` / `join`
 (ephemeral). The **public key is the author's identity**; the nickname is only
 a non-unique display label and is never claimed cryptographically. Every
-message is signed with this key and verified on receipt, and both the rate
-limit and fork detection key on it. It is distinct from the shared
+message is signed with this key and verified on receipt, and fork detection
+keys on it. It is distinct from the shared
 **rendezvous** key and from the transport **endpoint** key.
 
 Code: `protocol::identity`. Design: [history-integrity.md](./history-integrity.md).
@@ -235,8 +235,17 @@ confirms (or `change`s for a revision); it sends one or more independent tasks
 result as it returns, with no group-level outcome. `/swarm:handover` is the
 **walk-away** flow (see below).
 
+**Keepalive vs. liveness.** While the ball-owner is silent, its daemon emits a
+`progress` keepalive so a genuinely-working owner is not falsely timed out. But
+the keepalive is bounded by **skill** liveness, not process liveness: it only
+fires while a real leg has been driven within `TASK_KEEPALIVE_MAX_SECS` (a leg
+the daemon's own keepalive never counts as). Past that, the keepalive stops and
+the peer's debounce reaps the task — so a crashed or abandoned skill cannot hold
+the peer forever. A skill doing very long silent work refreshes the window by
+sending its own `progress` beat.
+
 Code: `MessageKind::Task`, `lifecycle::handle_task`, `broadcast_task`,
-`daemon::task`.
+`daemon::task` (`TaskRecord::should_keepalive`).
 
 ### handover
 

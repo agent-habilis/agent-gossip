@@ -290,6 +290,14 @@ async fn handle_gossip_received(content: Bytes, state: &mut EventLoopState, ctx:
         tracing::warn!(author = %message.author, "dropping message with missing/invalid signature");
         return;
     }
+    // Swarm gate: the gossip topic already isolates honest swarms, but a peer
+    // crafted onto our topic could stamp an arbitrary (signed) `swarm` string
+    // that would otherwise flow unchecked into the `--output json` agent API.
+    // Drop anything not stamped with our own swarm id.
+    if message.swarm != *ctx.swarm {
+        tracing::warn!(author = %message.author, "dropping message stamped with a foreign swarm id");
+        return;
+    }
     // Starvation watchdog signal, *before* dedup: even a duplicate
     // delivery proves the mesh carries traffic. On the degraded→meshed
     // edge (recovery succeeded) the outbound buffer flushes here.
@@ -298,9 +306,12 @@ async fn handle_gossip_received(content: Bytes, state: &mut EventLoopState, ctx:
     }
     // Duplicate suppression: a true repeat delivery must not
     // re-heartbeat, re-run membership, re-embed-forward, re-log, or re-print.
-    // Re-broadcasts of `joined`/`Alive` mint fresh ids so they are never
-    // falsely suppressed here. Only authenticated messages reach this gate.
-    if state.mark_seen(&message.id) {
+    // Keyed on the author-bound dedup key (`SHA-256(pubkey ‖ id)`), so a peer
+    // signing its own message under a **victim's** id gets a different key and
+    // cannot suppress the victim's genuine message. Re-broadcasts of
+    // `joined`/`Alive` mint fresh ids so they are never falsely suppressed
+    // here. Only authenticated messages reach this gate.
+    if state.mark_seen(&message) {
         return;
     }
     // Identity is the signing key, not the nickname (p2panda-style): the
@@ -498,10 +509,37 @@ fn ingest_channel_event(
     }
 }
 
+/// A directed leg (a `Msg --reply` or a `Task`) is surfaced **only by its
+/// addressee** — a third party relays it without ever seeing it (glossary:
+/// "a third party never sees it"). Broadcast (`reply: None`) and non-directed
+/// kinds are for everyone. Our own echoes never reach the receive path (the
+/// pubkey self-echo gate drops them earlier), so on receive "addressee" is the
+/// whole rule. This is the same gate the print/log path applies in
+/// `lifecycle::{handle_msg, handle_task}`.
+fn addressed_to_us(message: &Message, us: &Nickname) -> bool {
+    match &message.kind {
+        MessageKind::Msg {
+            reply: Some(target),
+        } => target == us,
+        MessageKind::Task { to, .. } => to == us,
+        MessageKind::Msg { reply: None }
+        | MessageKind::Presence { .. }
+        | MessageKind::PeerInfo
+        | MessageKind::Digest
+        | MessageKind::StateDigest
+        | MessageKind::MetaDigest
+        | MessageKind::Ping
+        | MessageKind::Pong { .. }
+        | MessageKind::State
+        | MessageKind::Meta => true,
+    }
+}
+
 fn maybe_push_embed(ctx: &HandlerCtx<'_>, message: &Message, surfaceable: bool) {
     if let Some(tx) = ctx.external_msg_tx
         && tx.receiver_count() > 0
         && surfaceable
+        && addressed_to_us(message, ctx.author)
         && !matches!(
             message.kind,
             MessageKind::Digest

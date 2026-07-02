@@ -440,6 +440,7 @@ impl Output {
             MessageKind::PeerInfo
                 | MessageKind::Digest
                 | MessageKind::StateDigest
+                | MessageKind::MetaDigest
                 | MessageKind::Ping
                 | MessageKind::Pong { .. }
         ) {

@@ -40,6 +40,17 @@ pub(crate) async fn handle_ipc_command(
     sender: &GossipSender,
     output: &output::Output,
 ) -> bool {
+    // The per-swarm socket path already routes a command to the right daemon,
+    // but a command carries its own swarm id — validate it matches ours rather
+    // than binding it to `_` and trusting the path alone (a stale socket path or
+    // a symlinked runtime dir would otherwise misroute a signed broadcast). The
+    // `Info` probe carries no swarm and is addressed purely by socket path.
+    if let Some(cmd_swarm) = cmd.swarm_id()
+        && cmd_swarm != swarm
+    {
+        let _ = resp_tx.send(json_error("command swarm id does not match this daemon"));
+        return false;
+    }
     match cmd {
         IpcCommand::Msg {
             swarm: _,

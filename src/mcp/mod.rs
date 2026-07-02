@@ -342,8 +342,11 @@ struct FetchMessagesResult {
     /// Surfaced events since the cursor, each the *same* JSON object the live
     /// `--output json` stream emits (carrying `seq`, `event`/`type`,
     /// `display`, `self`, …) — chat, presence, task legs, and the
-    /// transient `ping_report` / `peer_timeout` / … events alike.
-    messages: Vec<serde_json::Value>,
+    /// transient `ping_report` / `peer_timeout` / … events alike. Held as
+    /// [`RawValue`](serde_json::value::RawValue) so each event's rendered,
+    /// field-order-pinned line is embedded verbatim (re-parsing to a `Value`
+    /// would key-sort it and break parity with `--output json`).
+    messages: Vec<Box<serde_json::value::RawValue>>,
     /// The newest `seq` returned (the next `after`), or `None` when nothing
     /// new arrived.
     current_seq: Option<u64>,
@@ -604,17 +607,18 @@ impl AgentSwarmServer {
             .fetch_messages(args.after, args.wait_ms)
             .await
             .map_err(to_mcp_error)?;
-        // Render each surfaced event to the stream-identical JSON object, then
-        // parse back to a `Value` so it embeds in the structured result.
+        // Embed each surfaced event's rendered line verbatim as a `RawValue`,
+        // so the MCP result is byte-identical to the `--output json` stream
+        // (a `Value` round-trip would key-sort the order-pinned fields).
         // `current_seq` is the seq of the last event ACTUALLY included, not of
         // the raw batch: every pollable event is expected to render, but if one
         // ever fails to (a bug — log it), the cursor must not advance past an
         // event the client never received, or it would silently lose it.
-        let mut messages: Vec<serde_json::Value> = Vec::with_capacity(events.len());
+        let mut messages: Vec<Box<serde_json::value::RawValue>> = Vec::with_capacity(events.len());
         let mut current_seq: Option<u64> = None;
         for item in &events {
             if let Some(value) = crate::output::surfaced_event_json(item.seq, &item.event)
-                .and_then(|line| serde_json::from_str::<serde_json::Value>(&line).ok())
+                .and_then(|line| serde_json::value::RawValue::from_string(line).ok())
             {
                 messages.push(value);
                 current_seq = Some(item.seq);

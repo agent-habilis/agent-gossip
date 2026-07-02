@@ -155,15 +155,6 @@ async fn dial_and_handshake(
     Ok((conn, send, recv, (len != u64::MAX).then_some(len)))
 }
 
-/// True if the producer closed this connection because a newer consumer preempted
-/// it (close code 2 — see `serve_follow`), as opposed to a network drop.
-fn replaced_by_newer(conn: &Connection) -> bool {
-    matches!(
-        conn.close_reason(),
-        Some(ConnectionError::ApplicationClosed(close)) if u64::from(close.error_code) == 2
-    )
-}
-
 /// Single-shot consumer: dial, authenticate, and stream the whole source to
 /// `writer`, reporting received bytes back so the producer's bar tracks delivery.
 pub(crate) async fn transfer<W: AsyncWrite + Unpin>(
@@ -206,9 +197,10 @@ pub(crate) async fn transfer_follow<W: AsyncWrite + Unpin>(
     writer: &mut W,
     throttle: Option<u64>,
 ) -> Result<()> {
-    // Report-free in live mode; keep `_send` alive so the producer's paired recv
-    // stays open, but we never write to it after the auth token.
-    let (conn, _send, mut recv, _total) = dial_and_handshake(endpoint, ticket, auth).await?;
+    // Report-free in live mode; keep `_send`/`_conn` alive so the producer's
+    // paired recv and the connection stay open, but we never write after the
+    // auth token.
+    let (_conn, _send, mut recv, _total) = dial_and_handshake(endpoint, ticket, auth).await?;
 
     // Show the OSC indicator only while bytes are actually arriving; tick it so a
     // long steady stream doesn't let the terminal fade it.
@@ -234,14 +226,6 @@ pub(crate) async fn transfer_follow<W: AsyncWrite + Unpin>(
                 }
                 Err(error) => {
                     progress.fail();
-                    // An intended preemption (a newer `connect` took over, close
-                    // code 2) is distinct from a network drop — report it as such,
-                    // but still exit non-zero (the takeover ended this consumer).
-                    if replaced_by_newer(&conn) {
-                        return Err(anyhow::anyhow!(
-                            "this pipe was taken over by a newer `ahsw pipe connect`"
-                        ));
-                    }
                     return Err(anyhow::Error::new(error).context("the pipe connection dropped"));
                 }
             },

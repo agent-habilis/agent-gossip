@@ -28,9 +28,9 @@ mod ticket_discover;
 
 pub(crate) use args::Cli;
 use args::{
-    Commands, CreateOpts, FileAction, ForumOpts, MetaAction, MetaOpts, MsgOpts, OutputFormat,
-    PeersOpts, PingOpts, PipeAction, PollOpts, PortAction, ReadyOpts, SharedServerOpts,
-    StateAction, StateOpts, TaskOpts,
+    Commands, CreateOpts, FileAction, ForumOpts, MetaAction, MetaOpts, MountAction, MsgOpts,
+    OutputFormat, PeersOpts, PingOpts, PipeAction, PollOpts, PortAction, ReadyOpts, ShAction,
+    SharedServerOpts, StateAction, StateOpts, TaskOpts,
 };
 
 /// `join` has no `--public`/`--name`: both are encoded in the `🐝…`
@@ -97,6 +97,14 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
         Commands::Pipe { action } => Box::pin(pipe(action)).await,
         Commands::Port { action } => Box::pin(port(action)).await,
         Commands::File { action } => Box::pin(file(action)).await,
+        Commands::Sh { action } => sh(action).await,
+        Commands::Mount {
+            action,
+            ticket,
+            mountpoint,
+            no_mount,
+            output,
+        } => mount(action, ticket, mountpoint, no_mount, output).await,
         Commands::State { opts } => state(opts).await,
         Commands::Meta { opts } => meta(opts).await,
         Commands::Ready { opts } => ready(opts).await,
@@ -700,6 +708,59 @@ async fn file(action: FileAction) -> Result<()> {
             }
         }
     }
+}
+
+async fn sh(action: ShAction) -> Result<()> {
+    match action {
+        ShAction::Listen {
+            swarm,
+            output,
+            write,
+            command,
+            cols,
+            rows,
+        } => {
+            crate::sh::listen(
+                swarm.as_ref().map(crate::protocol::SwarmId::as_str),
+                matches!(output, OutputFormat::Json),
+                write,
+                command.as_deref(),
+                cols,
+                rows,
+            )
+            .await
+        }
+        ShAction::Connect { ticket } => crate::sh::connect(&ticket).await,
+    }
+}
+
+async fn mount(
+    action: Option<MountAction>,
+    ticket: Option<String>,
+    mountpoint: Option<std::path::PathBuf>,
+    no_mount: bool,
+    output: OutputFormat,
+) -> Result<()> {
+    let json = matches!(output, OutputFormat::Json);
+    if let Some(MountAction::Serve {
+        dir,
+        swarm,
+        output: serve_output,
+    }) = action
+    {
+        return crate::mount::serve(
+            swarm.as_ref().map(crate::protocol::SwarmId::as_str),
+            &dir,
+            matches!(serve_output, OutputFormat::Json),
+        )
+        .await;
+    }
+    // The bare form: both positionals are optional at the clap layer (the
+    // `serve` subcommand shares the slot), so require them here.
+    let (Some(ticket), Some(mountpoint)) = (ticket, mountpoint) else {
+        anyhow::bail!("usage: ahsw mount <🐝…> <mountpoint>, or ahsw mount serve <dir>");
+    };
+    crate::mount::attach(&ticket, &mountpoint, no_mount, json).await
 }
 
 /// Read or change the swarm's shared state via the running daemon. Emits the

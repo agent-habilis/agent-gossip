@@ -69,6 +69,25 @@ pub(crate) fn content_hash_hex(bytes: &[u8]) -> String {
     to_hex(&Sha256::digest(bytes))
 }
 
+/// A 16-byte dedup / anti-entropy key binding an author's public key to a
+/// message id: `SHA-256(pubkey ‖ id)[..16]`. Dedup and the digest key on
+/// this, not the bare id, so a peer that signs its own message under a
+/// **victim's** id produces a different key — it can no longer suppress the
+/// victim's genuine message (they hash apart) or hide it from anti-entropy.
+/// 16 bytes keeps the digest wire format unchanged; binding the pubkey (not
+/// the content) preserves the fresh-id re-announce path (a new id ⇒ a new
+/// key ⇒ not falsely deduped).
+#[must_use]
+pub(crate) fn dedup_key16(pubkey: &str, id_bytes: &[u8; 16]) -> [u8; 16] {
+    let mut hasher = Sha256::new();
+    hasher.update(pubkey.as_bytes());
+    hasher.update(id_bytes);
+    let digest = hasher.finalize();
+    let mut key = [0u8; 16];
+    key.copy_from_slice(&digest[..16]);
+    key
+}
+
 // ── wire encoding ──────────────────────────────────────────────────────
 //
 // Public keys (32 bytes) and signatures (64 bytes) travel as lowercase

@@ -148,6 +148,18 @@ pub(crate) const TASK_TIMEOUT_SECS: u64 = 300;
 /// of slack absorb gossip drops. Flag: `--task-keepalive-secs`.
 pub(crate) const TASK_KEEPALIVE_SECS: u64 = 60;
 
+/// The longest the ball-owner's daemon keeps auto-covering a **silent** task
+/// since its last real leg. The keepalive must not read the same clock the
+/// idle-timeout reads, or it feeds the timeout it is subject to and a crashed
+/// skill holds the peer forever. So the daemon auto-covers a quiet ball-owner
+/// for at most this long; past it, the *skill* must send its own `progress`
+/// beat to prove liveness (which refreshes the window), else the keepalive
+/// stops and the peer's debounce reaps the task. 15 minutes — comfortably
+/// above any human/agent think gap, so a live task doing long work only needs
+/// an occasional beat, while a dead one is bounded. Flag:
+/// `--task-keepalive-max-secs`.
+pub(crate) const TASK_KEEPALIVE_MAX_SECS: u64 = 900;
+
 /// Whole-task budget of **content** legs (offer/accept/decline/context/
 /// done/confirm/change/cancel — `progress` is exempt). Hitting it forces
 /// the skill to a terminal decision; the daemon warns once on crossing.

@@ -1347,7 +1347,7 @@ fn test_first_message_after_post_departure_join_is_delivered() {
     );
 }
 
-/// Join horizon: a peer that joins after history was exchanged must
+/// Join horizon: a peer that joins after history was taskd must
 /// **not surface** that pre-join history (anti-entropy still relays it
 /// at the wire for swarm-wide resilience — that is intentionally not
 /// observable here; only the view is filtered). A message sent *after*
@@ -1358,7 +1358,7 @@ async fn test_join_horizon_hides_pre_join_history() {
     let creator = InProcNode::create("nethorizon").await;
     let mut early = InProcNode::join(&creator.swarm, "jh-early").await;
 
-    // History exchanged *before* the late peer exists.
+    // History taskd *before* the late peer exists.
     for tag in ["hist-1", "hist-2", "hist-3"] {
         creator.send(tag).await;
     }
@@ -1727,7 +1727,7 @@ fn test_resume_triggers_hard_rebootstrap() {
 /// Anti-entropy backfill: a peer that briefly freezes — but stays a
 /// member (`gap` << alive-timeout) — misses a post-join message. The
 /// join-horizon does not hide it (it post-dates the join), so
-/// anti-entropy digest exchange must reconcile the gap.
+/// anti-entropy digest task must reconcile the gap.
 ///
 /// Not `SHORT_EVICT`: the peer must stay a member, so the production
 /// alive-timeout is required. The irreducible cost is the fixed 10s

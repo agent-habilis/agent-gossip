@@ -1175,19 +1175,36 @@ struct MaintenanceIntervals {
 
 /// Build the maintenance tickers, eating the first immediate tick on
 /// the ones that must wait a full period (we just announced `Joined`).
+///
+/// Every ticker uses [`MissedTickBehavior::Skip`]: after the monotonic clock
+/// jumps (an App Nap throttle, a SIGSTOP freeze), a default `Burst` ticker
+/// fires a catch-up salvo — several anti-entropy digests back-to-back, a
+/// heal immediately after the hard re-bootstrap it just ran, a prune replaying
+/// its backlog — and poisons the tick-gap telemetry (the burst ticks report a
+/// ~0 gap). Each tick here means "do the maintenance now", so a skipped tick is
+/// free; `Skip` collapses the salvo to one tick on the next aligned boundary.
 async fn build_maintenance_intervals() -> MaintenanceIntervals {
-    let prune = tokio::time::interval(Duration::from_mins(1));
+    use tokio::time::MissedTickBehavior::Skip;
+
+    let mut prune = tokio::time::interval(Duration::from_mins(1));
+    prune.set_missed_tick_behavior(Skip);
     let mut alive = tokio::time::interval(Duration::from_secs(ALIVE_INTERVAL_SECS));
+    alive.set_missed_tick_behavior(Skip);
     alive.tick().await;
     let mut sweep = tokio::time::interval(Duration::from_secs(sweep_interval_secs()));
+    sweep.set_missed_tick_behavior(Skip);
     sweep.tick().await;
     let mut heal = tokio::time::interval(Duration::from_secs(HEAL_INTERVAL_SECS));
+    heal.set_missed_tick_behavior(Skip);
     heal.tick().await;
     let mut reclaim = tokio::time::interval(Duration::from_millis(RECLAIM_INTERVAL_MS));
+    reclaim.set_missed_tick_behavior(Skip);
     reclaim.tick().await;
     let mut antientropy = tokio::time::interval(Duration::from_secs(ANTIENTROPY_INTERVAL_SECS));
+    antientropy.set_missed_tick_behavior(Skip);
     antientropy.tick().await;
     let mut state_refresh = tokio::time::interval(Duration::from_secs(STATE_REFRESH_SECS));
+    state_refresh.set_missed_tick_behavior(Skip);
     state_refresh.tick().await;
     MaintenanceIntervals {
         prune,

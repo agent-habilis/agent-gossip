@@ -16,6 +16,7 @@ mod forum;
 mod join;
 mod lookup;
 mod meta;
+mod mount;
 mod msg;
 mod output;
 mod peers;
@@ -24,6 +25,7 @@ mod pipe;
 mod poll;
 mod port;
 mod ready;
+mod sh;
 mod shared;
 mod state;
 mod task;
@@ -35,6 +37,7 @@ pub(crate) use file::FileAction;
 pub(crate) use forum::ForumOpts;
 pub(crate) use join::JoinOpts;
 pub(crate) use meta::{MetaAction, MetaOpts};
+pub(crate) use mount::MountAction;
 pub(crate) use msg::MsgOpts;
 pub(crate) use output::OutputFormat;
 pub(crate) use peers::PeersOpts;
@@ -43,6 +46,7 @@ pub(crate) use pipe::PipeAction;
 pub(crate) use poll::PollOpts;
 pub(crate) use port::PortAction;
 pub(crate) use ready::ReadyOpts;
+pub(crate) use sh::ShAction;
 pub(crate) use shared::SharedServerOpts;
 pub(crate) use state::{StateAction, StateOpts};
 pub(crate) use task::TaskOpts;
@@ -183,6 +187,49 @@ pub(crate) enum Commands {
     File {
         #[command(subcommand)]
         action: FileAction,
+    },
+
+    /// Broadcast a live terminal to peers, or attach to one (off-gossip, direct P2P).
+    ///
+    /// A standalone terminal share over a direct P2P link (no daemon):
+    /// `sh listen` spawns `$SHELL` in a pseudo-terminal and prints the
+    /// `ahsw sh connect 🐝…` command on stdout; `sh connect <ticket>` renders
+    /// the shell. A read ticket is view-only (its keyboard never reaches the
+    /// shell); `--write` also mints a write-capable ticket whose holders type
+    /// into the shell. Ending the shell ends the broadcast.
+    Sh {
+        #[command(subcommand)]
+        action: ShAction,
+    },
+
+    /// Share a folder with peers, or mount a peer's folder locally
+    /// (read-only, lazy, off-gossip, no daemon).
+    ///
+    /// `mount serve <dir>` shares a folder and prints the `ahsw mount 🐝…`
+    /// command; `mount <🐝…> <mountpoint>` mounts it through a loopback `NFSv3`
+    /// bridge (the OS's built-in NFS client — no FUSE, no kernel extension).
+    /// The directory tree is a snapshot from when `serve` started; file bytes
+    /// are fetched on demand as they are read. Writes fail (read-only).
+    #[command(args_conflicts_with_subcommands = true)]
+    Mount {
+        #[command(subcommand)]
+        action: Option<MountAction>,
+
+        /// The `🐝…` ticket printed by `ahsw mount serve`.
+        ticket: Option<String>,
+
+        /// Where to mount the shared folder (created if missing; an existing
+        /// directory must be empty). Unmounted on Ctrl-C.
+        mountpoint: Option<std::path::PathBuf>,
+
+        /// Start the loopback NFS bridge but skip the OS mount step; prints
+        /// the mount command to run manually. Hidden — a test/ops knob.
+        #[arg(long, hide = true)]
+        no_mount: bool,
+
+        /// Output format: human (default) or json (the bare mount command).
+        #[arg(long, default_value = "human")]
+        output: OutputFormat,
     },
 
     /// Read or change the swarm's shared state.

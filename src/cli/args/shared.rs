@@ -64,6 +64,10 @@ pub(crate) struct SharedServerOpts {
     #[arg(long, hide = true, default_value_t = consts::TASK_KEEPALIVE_SECS)]
     pub task_keepalive_secs: u64,
 
+    /// Longest the daemon auto-covers a silent task without a skill leg (seconds).
+    #[arg(long, hide = true, default_value_t = consts::TASK_KEEPALIVE_MAX_SECS)]
+    pub task_keepalive_max_secs: u64,
+
     /// Grace before an unmeshed joiner co-hosts the rendezvous (seconds).
     #[arg(long, hide = true, default_value_t = consts::BEACON_COHOST_GRACE_SECS)]
     pub beacon_cohost_grace_secs: u64,
@@ -168,6 +172,7 @@ impl SharedServerOpts {
             sweep_interval_secs: self.sweep_interval_secs,
             task_timeout_secs: self.task_timeout_secs,
             task_keepalive_secs: self.task_keepalive_secs,
+            task_keepalive_max_secs: self.task_keepalive_max_secs,
             cohost_grace_secs: self.beacon_cohost_grace_secs,
             ping_window_secs: self.ping_window_secs,
             ppid_watch_interval_ms: self.ppid_watch_interval_ms,

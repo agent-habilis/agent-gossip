@@ -200,7 +200,9 @@ pub enum MessageKind {
     /// third parties relay without retaining, exactly like a directed `Msg`.
     /// **Content** phases are logged with `Msg`; the `Progress` phase is
     /// liveness plumbing (never logged). Not part of the per-author hash chain
-    /// or DAG (presence-like).
+    /// or DAG (presence-like). How the two parties *use* a task (delegate a
+    /// plan, run work and return a result, …) is a skill-land convention
+    /// carried in the offer body — the primitive itself has no notion of it.
     Task {
         to: Nickname,
         task_id: TaskId,
@@ -347,6 +349,15 @@ pub struct Message {
     /// Extension escape hatch. Add experimental fields here; stable fields get promoted to top-level.
     #[serde(default = "default_ext")]
     pub ext: serde_json::Value,
+}
+
+/// Is `value` exactly `bytes * 2` lowercase-hex characters — the canonical
+/// wire form of a fixed-width binary field (pubkey / signature / hash)?
+fn is_lower_hex(value: &str, bytes: usize) -> bool {
+    value.len() == bytes * 2
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 impl Message {
@@ -524,6 +535,27 @@ impl Message {
         if msg.version != VERSION {
             bail!("unsupported protocol version: {}", msg.version);
         }
+        // Shape-check the history-integrity fields at the boundary, so a crafted
+        // value never reaches signature verification or the fork/DAG indexes
+        // (which key on `prev`/`parents` as content hashes). Empty `pubkey`/`sig`
+        // is the canonical unsigned form — the receive path drops anything that
+        // then fails verification; a *present* key/sig/hash must be well-formed
+        // lowercase hex of the right length (Ed25519 pubkey 32B, signature 64B,
+        // SHA-256 hash 32B).
+        if !msg.pubkey.is_empty() && !is_lower_hex(&msg.pubkey, 32) {
+            bail!("malformed pubkey");
+        }
+        if !msg.sig.is_empty() && !is_lower_hex(&msg.sig, 64) {
+            bail!("malformed signature");
+        }
+        if let Some(prev) = &msg.prev
+            && !is_lower_hex(prev, 32)
+        {
+            bail!("malformed prev hash");
+        }
+        if msg.parents.iter().any(|hash| !is_lower_hex(hash, 32)) {
+            bail!("malformed parent hash");
+        }
         Ok(msg)
     }
 
@@ -581,6 +613,15 @@ impl Message {
     #[must_use]
     pub(crate) fn content_hash_hex(&self) -> String {
         identity::content_hash_hex(&self.canonical_bytes())
+    }
+
+    /// The 16-byte dedup / anti-entropy key (`SHA-256(pubkey ‖ id)[..16]`).
+    /// Dedup, the message/state logs, and the digest all key on this rather
+    /// than the sender-chosen id, so a forged message reusing a victim's id
+    /// cannot suppress the genuine one. See [`identity::dedup_key16`].
+    #[must_use]
+    pub(crate) fn dedup_key(&self) -> [u8; 16] {
+        identity::dedup_key16(&self.pubkey, &self.id.as_uuid_bytes())
     }
 
     /// Stamp the per-author log fields before signing (`Msg` only). `seq`
@@ -938,6 +979,35 @@ mod tests {
             r#"{{"v":"2.0","id":"{FIXTURE_ID}","type":"msg","swarm":"🐝test","author":"a#b","ts":0,"body":"hi","ext":{{}}}}"#
         );
         assert!(Message::parse(json.as_bytes()).is_err());
+    }
+
+    #[test]
+    fn parse_rejects_malformed_integrity_fields() {
+        // Each history-integrity field (pubkey / sig / prev / parents) must be
+        // rejected at `parse` when present but not well-formed lowercase hex,
+        // so a crafted value never reaches the fork/DAG indexes or sig verify.
+        let base = |extra: &str| {
+            format!(
+                r#"{{"v":"2.0","id":"{FIXTURE_ID}","type":"msg","swarm":"🐝test","author":"a-b","ts":0,"body":"hi"{extra},"ext":{{}}}}"#
+            )
+        };
+        // 3KB garbage pubkey, non-hex / wrong-length variants, and a bad hash.
+        for extra in [
+            format!(r#","pubkey":"{}""#, "z".repeat(3000)),
+            r#","pubkey":"AABB""#.to_string(), // uppercase + too short
+            r#","sig":"nothex""#.to_string(),
+            r#","prev":"xyz""#.to_string(),
+            r#","parents":["00"]"#.to_string(), // too short
+        ] {
+            assert!(
+                Message::parse(base(&extra).as_bytes()).is_err(),
+                "should reject: {extra}"
+            );
+        }
+        // A well-formed (if unverifiable) 64-hex pubkey still parses — shape
+        // only; the signature gate is a separate, later check.
+        let ok = base(&format!(r#","pubkey":"{}""#, "ab".repeat(32)));
+        assert!(Message::parse(ok.as_bytes()).is_ok());
     }
 
     #[test]
