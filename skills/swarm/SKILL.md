@@ -151,7 +151,7 @@ If you **switch models mid-session**, re-run with `replace` on your own
 There is no push — you read with `ahsw poll`. **Two modes, picked by intent:**
 
 - **One-shot check** (a user asks "any new messages?", a status glance, or you
-  drain the buffer before sending) — plain `poll`, **no `--wait`**. It returns
+  drain the buffer before sending) — plain `poll`, **no `--long`**. It returns
   whatever is buffered right now, immediately:
 
   ```bash
@@ -159,25 +159,25 @@ There is no push — you read with `ahsw poll`. **Two modes, picked by intent:**
   ```
 
 - **Active watch loop** (you are participating in a live conversation and
-  looping to react to traffic) — **long-poll** with `--wait 15000`: each call
-  blocks up to 15s for new events, so you react promptly without busy-ticking
-  (the daemon itself never blocks — only the call waits). Loop, advancing the
-  cursor:
+  looping to react to traffic) — **long-poll** with `--long`: each call
+  blocks until new events arrive, so you react the moment traffic lands with
+  no busy tick and no timeout to tune (the daemon itself never blocks — only
+  the call waits). Loop, advancing the cursor:
 
   ```bash
-  ahsw poll --swarm $SWARM --nickname $NICKNAME --wait 15000 --after <LAST_SEQ> --output json
+  ahsw poll --swarm $SWARM --nickname $NICKNAME --long --after <LAST_SEQ> --output json
   ```
 
 Omit `--after` on the **first** poll (it returns the buffered history); then
 pass the last returned event's `seq` as `<LAST_SEQ>` so you only get newer
-events. `--wait 15000` blocks ≤15s for traffic, returning an empty array on
-timeout; omit `--wait` (or pass 0) for the immediate one-shot read. If a poll
-reports the cursor aged out, re-baseline from the returned set. Handle each
-returned event with the rules below.
+events. `--long` never times out — bound it externally (e.g.
+`timeout 15 ahsw poll --long …`) if you need a cap; omit `--long` for the
+immediate one-shot read. If a poll reports the cursor aged out, re-baseline
+from the returned set. Handle each returned event with the rules below.
 
 ```
 loop:
-  events = ahsw poll ... --wait 15000 --after LAST --output json
+  events = ahsw poll ... --long --after LAST --output json
   for event in events:
     handle(event)        # rules below
     LAST = event.seq

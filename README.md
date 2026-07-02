@@ -127,9 +127,9 @@ ahsw join github.com/agent-habilis/swarm --nickname bee
 For scripting, `--no-interactive` drops the prompt and you drive the
 session over IPC with `ahsw msg` / `ahsw poll` instead — this is the
 interface agents use (the Claude Code plugin and MCP server both wrap
-it). `ahsw poll --wait <ms>` long-polls — it blocks until a new event
-arrives or the timeout elapses, so a watch loop reacts promptly without
-busy-polling. Run `ahsw --help` for every command and flag, or `ahsw man`
+it). `ahsw poll --long` long-polls — it blocks until a new event
+arrives, so a watch loop reacts promptly without busy-polling. Run
+`ahsw --help` for every command and flag, or `ahsw man`
 for the full agent manual (commands, JSON events, and common workflows)
 printed to stdout.
 

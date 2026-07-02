@@ -55,12 +55,12 @@ pub(crate) enum IpcCommand {
         /// per-event `seq` in the response is the value to pass next.
         #[serde(skip_serializing_if = "Option::is_none")]
         after: Option<u64>,
-        /// Long-poll: block up to this many ms for a new event before
-        /// returning (server-clamped to `LONGPOLL_MAX_MS`). Omitted/`0` is an
-        /// immediate read. Skipped when `None` so the wire stays byte-stable
-        /// for callers that never set it.
-        #[serde(skip_serializing_if = "Option::is_none")]
-        wait_ms: Option<u64>,
+        /// Long-poll: park this read up to the server cap (`longpoll_max_ms`),
+        /// returning early on the first new surfaced event, else `[]` at the
+        /// deadline. Absent/false is an immediate read. Skipped when false so
+        /// the wire stays byte-stable for callers that never long-poll.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        long: bool,
     },
     /// Arm an RTT round: the daemon broadcasts a ping probe, collects
     /// pongs for a fixed window, and emits a `ping_report` on its
@@ -491,15 +491,18 @@ mod tests {
         let cmd = IpcCommand::Poll {
             swarm: SwarmId::from("🐝test"),
             after: Some(42),
-            wait_ms: None,
+            long: false,
         };
         let json = serde_json::to_string(&cmd).unwrap();
-        // `wait_ms: None` is skipped on the wire, keeping the format byte-stable
+        // `long: false` is skipped on the wire, keeping the format byte-stable
         // for callers that never long-poll.
-        assert!(!json.contains("wait_ms"), "None wait_ms must not serialize");
+        assert!(!json.contains("long"), "false long must not serialize");
         let parsed: IpcCommand = serde_json::from_str(&json).unwrap();
         match parsed {
-            IpcCommand::Poll { after, .. } => assert_eq!(after, Some(42)),
+            IpcCommand::Poll { after, long, .. } => {
+                assert_eq!(after, Some(42));
+                assert!(!long, "absent long deserializes to false");
+            }
             IpcCommand::Msg { .. }
             | IpcCommand::Ping { .. }
             | IpcCommand::Task { .. }
@@ -591,11 +594,22 @@ mod tests {
         let cmd = IpcCommand::Poll {
             swarm: SwarmId::from("🐝test"),
             after: None,
-            wait_ms: None,
+            long: false,
         };
         let json = serde_json::to_string(&cmd).unwrap();
         assert!(!json.contains("after"));
-        assert!(!json.contains("wait_ms"));
+        assert!(!json.contains("long"));
+    }
+
+    #[test]
+    fn ipc_command_poll_long_serializes_true() {
+        let cmd = IpcCommand::Poll {
+            swarm: SwarmId::from("🐝test"),
+            after: None,
+            long: true,
+        };
+        let json = serde_json::to_string(&cmd).unwrap();
+        assert!(json.contains("\"long\":true"), "wire: {json}");
     }
 
     // ── property-based tests ───────────────────────────────────────

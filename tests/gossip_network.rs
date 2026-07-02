@@ -13,8 +13,8 @@ use std::time::{Duration, Instant};
 
 use common::{
     CONNECT_TIMEOUT, InProcNode, MSG_TIMEOUT, Msg, Node, POLL, RECOVERY_TIMEOUT, RUNTIME_DIR, bin,
-    cli_message, cli_message_raw, cli_peers, cli_ping, cli_poll, cli_poll_wait, serial_guard,
-    socket_path, tmp_log, trace_log, wait_total, wait_until,
+    cli_message, cli_message_raw, cli_peers, cli_ping, cli_poll, cli_poll_long, ipc_raw,
+    serial_guard, socket_path, tmp_log, trace_log, wait_total, wait_until,
 };
 use serde_json::json;
 
@@ -374,6 +374,8 @@ async fn test_bidirectional_messaging() {
 /// Verify that unit-level JSON wire format tests pass.
 /// The ext field and version checks are covered in `protocol::message::tests`.
 /// This integration test confirms the CLI sends parseable SWARM 1.0 blocks.
+/// One send surfaces twice: the sender's own stream echoes it (stream
+/// self-parity) and the peer receives it.
 #[test]
 fn test_stdout_format_parseable() {
     let (creator, swarm) = Node::create();
@@ -383,15 +385,17 @@ fn test_stdout_format_parseable() {
 
     cli_message(&swarm, &creator.nickname, "format check message");
 
-    let total = wait_total(|| creator.messages().len() + joiner.messages().len(), 1);
-    assert_eq!(total, 1, "message should be parseable and delivered");
+    let total = wait_total(|| creator.messages().len() + joiner.messages().len(), 2);
+    assert_eq!(total, 2, "one parseable self-echo + one parseable delivery");
 
     let msgs: Vec<Msg> = creator
         .messages()
         .into_iter()
         .chain(joiner.messages())
         .collect();
-    assert_eq!(msgs[0].body, "format check message");
+    for msg in &msgs {
+        assert_eq!(msg.body, "format check message");
+    }
 }
 
 /// `ask` with no running server exits non-zero with a clear error message.
@@ -421,20 +425,20 @@ fn test_oversize_body_splits_then_refuses_past_the_part_cap() {
     assert!(joiner.wait_ready(&swarm), "joiner socket never appeared");
 
     // Over the single-message cap: the daemon splits it into parts and the
-    // receiver reassembles, so it surfaces once as the whole body.
+    // receiver reassembles, so it surfaces once as the whole body on each
+    // stream — the sender's self-echo and the peer's delivery.
     let body = "a".repeat(agent_habilis_swarm::MAX_MESSAGE_SIZE * 2);
     cli_message(&swarm, &creator.nickname, &body);
-    let total = wait_total(|| creator.messages().len() + joiner.messages().len(), 1);
-    assert_eq!(total, 1, "the multipart body should surface exactly once");
+    let total = wait_total(|| creator.messages().len() + joiner.messages().len(), 2);
+    assert_eq!(total, 2, "the multipart body surfaces exactly once per node");
     let got: Vec<Msg> = creator
         .messages()
         .into_iter()
         .chain(joiner.messages())
         .collect();
-    assert_eq!(
-        got[0].body, body,
-        "the reassembled body matches the original"
-    );
+    for msg in &got {
+        assert_eq!(msg.body, body, "the reassembled body matches the original");
+    }
 
     // Too large for the part cap: refused on the sender with a clear error.
     let huge = "a".repeat(agent_habilis_swarm::MAX_LOGICAL_BODY_BYTES);
@@ -461,14 +465,17 @@ fn test_utf8_body_round_trip() {
     let body = "héllo 🐝 日本語";
     cli_message(&swarm, &creator.nickname, body);
 
-    let total = wait_total(|| creator.messages().len() + joiner.messages().len(), 1);
-    assert_eq!(total, 1, "utf-8 message should be delivered");
+    // One send surfaces twice: the sender's self-echo + the peer's delivery.
+    let total = wait_total(|| creator.messages().len() + joiner.messages().len(), 2);
+    assert_eq!(total, 2, "utf-8 message delivered verbatim on both streams");
     let msgs: Vec<Msg> = creator
         .messages()
         .into_iter()
         .chain(joiner.messages())
         .collect();
-    assert_eq!(msgs[0].body, body);
+    for msg in &msgs {
+        assert_eq!(msg.body, body);
+    }
 }
 
 /// Control characters (other than tab/newline) in a body are rejected.
@@ -1048,48 +1055,67 @@ fn test_poll_returns_messages() {
     }
 }
 
-/// `poll --wait <ms>` long-polls: with no new traffic it blocks for ~the wait
-/// then returns an empty array; when a peer sends mid-wait it returns promptly,
-/// well before the timeout. The daemon never blocks — only the held call waits.
+/// Baseline a node's poll cursor to "now": a first full poll, then advance
+/// past its newest seq — so a long-poll after it sees only new events.
+fn poll_cursor(swarm: &str, nickname: &str) -> Option<String> {
+    let baseline = cli_poll(swarm, nickname, None);
+    let baseline: Vec<serde_json::Value> = serde_json::from_str(&baseline).unwrap();
+    baseline
+        .iter()
+        .filter_map(|event| event["seq"].as_u64())
+        .max()
+        .map(|seq| seq.to_string())
+}
+
+/// The wire single-park contract: a raw `{"command":"poll",...,"long":true}`
+/// with no new traffic is held for ~the daemon's park cap, then returns
+/// exactly `[]`. Sent straight over the Unix socket — the `ahsw` client would
+/// hide the empty return behind its `--long` re-issue loop.
 #[test]
-fn test_poll_wait_blocks_then_resolves_and_times_out() {
+fn test_ipc_poll_long_park_times_out_empty() {
+    let (creator, swarm) = Node::create_flags("itest", &[("--longpoll-max-ms", "1000")]);
+    assert!(creator.wait_ready(&swarm), "creator socket never appeared");
+    std::thread::sleep(Duration::from_secs(2)); // presence settles
+
+    let after = poll_cursor(&swarm, &creator.nickname);
+    let cursor = after.map_or(String::new(), |seq| format!("\"after\":{seq},"));
+    let line = format!("{{\"command\":\"poll\",\"swarm\":\"{swarm}\",{cursor}\"long\":true}}");
+    let started = Instant::now();
+    let resp = ipc_raw(&swarm, &creator.nickname, &line);
+    let elapsed = started.elapsed();
+    assert_eq!(resp, "[]", "park elapsed quietly → empty array");
+    assert!(
+        elapsed >= Duration::from_millis(700),
+        "should have parked ~1s, took {elapsed:?}"
+    );
+    assert!(
+        elapsed < Duration::from_secs(10),
+        "park honored the shrunk cap, took {elapsed:?}"
+    );
+}
+
+/// `poll --long` blocks, then resolves promptly when a peer sends: the parked
+/// read wakes on the event landing, not on any timeout.
+#[test]
+fn test_poll_long_resolves_on_traffic() {
     let (creator, swarm) = Node::create();
-    let joiner = Node::join(&swarm, "joiner-wait");
+    let joiner = Node::join(&swarm, "joiner-long");
     assert!(creator.wait_ready(&swarm), "creator socket never appeared");
     assert!(joiner.wait_ready(&swarm), "joiner socket never appeared");
     std::thread::sleep(Duration::from_secs(2)); // presence settles
 
-    // Baseline the joiner's cursor to "now" so the waits below see only new
-    // events: a first full poll, then advance past its newest seq.
-    let baseline = cli_poll(&swarm, &joiner.nickname, None);
-    let baseline: Vec<serde_json::Value> = serde_json::from_str(&baseline).unwrap();
-    let last_seq = baseline
-        .iter()
-        .filter_map(|event| event["seq"].as_u64())
-        .max();
-    let after = last_seq.map(|seq| seq.to_string());
+    let after = poll_cursor(&swarm, &joiner.nickname);
 
-    // (1) Timeout: no traffic, a 1s wait returns `[]` after ~blocking ~1s.
-    let (empty, timeout_elapsed) =
-        cli_poll_wait(&swarm, &joiner.nickname, after.as_deref(), "1000");
-    assert_eq!(empty, "[]", "no traffic → empty array");
-    assert!(
-        timeout_elapsed >= Duration::from_millis(700),
-        "should have blocked ~1s, took {timeout_elapsed:?}"
-    );
-
-    // (2) Resolves on traffic: start a blocking 60s wait (the daemon's
-    // long-poll max), have the creator send ~400ms in; the poll must return the
-    // message well under the ceiling. The wait is generous so a loaded host
-    // can't flake a correct delivery, yet returning long before 60s still
-    // proves the poll woke on traffic rather than spinning to an empty timeout.
+    // Have the creator send ~400ms into the blocking poll; it must return the
+    // message well under the daemon's 60s park cap — proving it woke on
+    // traffic rather than spinning to an empty timeout.
     let swarm_for_send = swarm.clone();
     let creator_nick = creator.nickname.clone();
     let sender = std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(400));
         cli_message(&swarm_for_send, &creator_nick, "via long-poll");
     });
-    let (got, resolve_elapsed) = cli_poll_wait(&swarm, &joiner.nickname, after.as_deref(), "60000");
+    let (got, resolve_elapsed) = cli_poll_long(&swarm, &joiner.nickname, after.as_deref());
     sender.join().unwrap();
     let events: Vec<serde_json::Value> = serde_json::from_str(&got)
         .unwrap_or_else(|error| panic!("parse long-poll JSON: {error}\nraw: {got}"));
@@ -1101,7 +1127,47 @@ fn test_poll_wait_blocks_then_resolves_and_times_out() {
     );
     assert!(
         resolve_elapsed < Duration::from_mins(1),
-        "woke on traffic rather than spinning to the wait ceiling, took {resolve_elapsed:?}"
+        "woke on traffic rather than spinning to the park cap, took {resolve_elapsed:?}"
+    );
+}
+
+/// The CLI's `--long` re-issue loop survives empty parks: with the daemon's
+/// park cap shrunk to 1s and the message arriving at ~2.5s, a single
+/// `poll --long` invocation rides through at least two empty windows and
+/// still delivers it.
+#[test]
+fn test_poll_long_loops_past_empty_parks() {
+    let (creator, swarm) = Node::create_flags("itest", &[("--longpoll-max-ms", "1000")]);
+    let joiner = Node::join_flags(&swarm, "joiner-loop", &[("--longpoll-max-ms", "1000")]);
+    assert!(creator.wait_ready(&swarm), "creator socket never appeared");
+    assert!(joiner.wait_ready(&swarm), "joiner socket never appeared");
+    std::thread::sleep(Duration::from_secs(2)); // presence settles
+
+    let after = poll_cursor(&swarm, &joiner.nickname);
+
+    let swarm_for_send = swarm.clone();
+    let creator_nick = creator.nickname.clone();
+    let sender = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(2500));
+        cli_message(&swarm_for_send, &creator_nick, "past the parks");
+    });
+    let (got, elapsed) = cli_poll_long(&swarm, &joiner.nickname, after.as_deref());
+    sender.join().unwrap();
+    let events: Vec<serde_json::Value> = serde_json::from_str(&got)
+        .unwrap_or_else(|error| panic!("parse long-poll JSON: {error}\nraw: {got}"));
+    assert!(
+        events
+            .iter()
+            .any(|event| event["body"].as_str() == Some("past the parks")),
+        "the looped long-poll returned the message: {got}"
+    );
+    assert!(
+        elapsed >= Duration::from_secs(2),
+        "survived at least two empty 1s parks before the send, took {elapsed:?}"
+    );
+    assert!(
+        elapsed < Duration::from_mins(1),
+        "resolved promptly once the message landed, took {elapsed:?}"
     );
 }
 

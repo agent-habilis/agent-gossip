@@ -285,6 +285,11 @@ pub(crate) enum Commands {
         /// so a `ping` round-trip doesn't wait the full window.
         #[arg(long, hide = true, default_value_t = crate::util::consts::PING_WINDOW_SECS)]
         ping_window_secs: u64,
+
+        /// How long a `long: true` fetch parks before returning empty (millis).
+        /// Hidden; tests shorten it to hit the timeout path quickly.
+        #[arg(long, hide = true, default_value_t = crate::util::consts::LONGPOLL_MAX_MS)]
+        longpoll_max_ms: u64,
     },
 
     /// Print the full agent manual to stdout.

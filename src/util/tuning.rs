@@ -187,6 +187,7 @@ pub(crate) struct Tuning {
     pub cohost_grace_secs: u64,
     pub ping_window_secs: u64,
     pub ppid_watch_interval_ms: u64,
+    pub longpoll_max_ms: u64,
     pub heal_stall_threshold_secs: u64,
     pub starvation_threshold_secs: u64,
     pub advertise_interval_secs: u64,
@@ -208,6 +209,7 @@ impl Tuning {
         cohost_grace_secs: crate::util::consts::BEACON_COHOST_GRACE_SECS,
         ping_window_secs: crate::util::consts::PING_WINDOW_SECS,
         ppid_watch_interval_ms: crate::util::consts::PPID_WATCH_INTERVAL_MS,
+        longpoll_max_ms: crate::util::consts::LONGPOLL_MAX_MS,
         heal_stall_threshold_secs: crate::util::consts::HEAL_STALL_THRESHOLD_SECS,
         starvation_threshold_secs: crate::util::consts::STARVATION_THRESHOLD_SECS,
         advertise_interval_secs: crate::util::consts::ADVERTISE_INTERVAL_SECS,
@@ -292,15 +294,20 @@ pub(crate) const READY_POLL_INTERVAL_MS: u64 = 100;
 /// missed refresh without trusting a truly stale file.
 pub(crate) const READY_FRESH_SECS: u64 = 2 * STATE_REFRESH_SECS;
 
-/// Long-poll (`poll`/`fetch_messages` blocking mode): the server's hard clamp
-/// on any caller's `wait_ms` — kept under typical MCP-host per-request timeouts
-/// so a held call returns before the host gives up. The daemon never blocks on
-/// a long-poll (the waiter parks in a registry); this only bounds how long a
-/// *caller's* in-flight read is held. The recommended client/skill wait
-/// (~15000 ms) is documented in the skills and the MCP `fetch_messages` tool,
-/// not a const — callers pass an explicit value, the server only enforces this
-/// ceiling. Client/policy timing, so not part of the daemon `Tuning` struct.
-pub(crate) const LONGPOLL_MAX_MS: u64 = 60_000;
+/// Long-poll (`poll`/`fetch_messages` `long: true`): how long the daemon
+/// parks a read before returning an empty batch. See
+/// `consts::LONGPOLL_MAX_MS` for the rationale; the suite shortens it via the
+/// hidden `--longpoll-max-ms` flag to force the timeout path.
+pub(crate) fn longpoll_max_ms() -> u64 {
+    current().longpoll_max_ms
+}
+
+/// Floor on one `ahsw poll --long` re-issue cycle. Normally dormant — a parked
+/// read returns at the ~60s cap, far above it — it only engages when the
+/// daemon degrades a long read to an immediate empty (waiter registry at
+/// `POLL_WAITERS_CAP`), keeping the CLI's re-poll loop from spinning hot.
+/// Client-side, so not part of the daemon `Tuning` struct.
+pub(crate) const POLL_LONG_MIN_CYCLE_MS: u64 = 1_000;
 
 /// Upper bound on the healer's detached rendezvous connect-probe.
 /// Generous enough to absorb a public relay/lookup warmup after a

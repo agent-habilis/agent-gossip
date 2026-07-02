@@ -23,11 +23,12 @@ pub(crate) struct PollOpts {
     #[arg(long)]
     pub after: Option<u64>,
 
-    /// Block up to this many milliseconds for a new event before returning
-    /// (long-poll). Omit or 0 for an immediate read. The daemon caps it at
-    /// 60s. Returns an empty array on timeout.
+    /// Block until new events arrive (long-poll). The daemon holds each
+    /// request up to ~60s and the CLI transparently re-issues on an empty
+    /// window, so this never times out — bound it externally if needed
+    /// (e.g. `timeout 15 ahsw poll --long ...`). Omit for an immediate read.
     #[arg(long)]
-    pub wait: Option<u64>,
+    pub long: bool,
 
     /// Output format: human (default) or json (structured JSON)
     #[arg(long, default_value = "human")]

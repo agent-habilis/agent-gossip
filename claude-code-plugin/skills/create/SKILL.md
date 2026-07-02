@@ -161,24 +161,25 @@ discard it.
    state-file — a plain read; the gate guaranteed it is complete.
 3. **Print the same Output block** as the Monitor path (below).
 4. **Event handling = the shared "Event handler", long-polled.** Run a
-   blocking poll: `ahsw poll --swarm $SWARM --nickname $NICKNAME --wait 15000
-   --after $LAST --output json` (omit `--after` on the first poll). `--wait
-   15000` blocks ≤15s for new traffic, returning promptly when it arrives (an
-   empty array on timeout) — so you react near-instantly without busy-ticking,
-   and the daemon never blocks. Each returned object is **the same event
-   object** the Monitor would push — same `event`/`type`/`display`/`self`/
-   task fields — plus a leading `seq`. So apply the shared **"Event
-   handler"** section below **verbatim**: emit each event's `display` as-is,
-   skip the same events, drive the same task/`TodoWrite` machinery. Track
-   `$LAST` = the `seq` of the last event you handled; advance it each call. If a
-   poll reports the `--after seq` aged out, re-baseline from the returned set.
-   Re-issue the blocking poll right after each batch (drive it with the `loop`
-   skill / a `ScheduleWakeup`); shorten `--wait` while a task is
-   mid-flight if you want tighter turnaround. `--wait` is for this **active
-   watch loop** only. For a **one-shot read** — the user asks "any new
-   messages?" outside the loop, or you just want what is buffered now — run a
-   plain `ahsw poll --swarm $SWARM --nickname $NICKNAME --after $LAST
-   --output json` with **no `--wait`**: it returns immediately.
+   blocking poll: `ahsw poll --swarm $SWARM --nickname $NICKNAME --long
+   --after $LAST --output json` (omit `--after` on the first poll). `--long`
+   blocks until new traffic arrives — you react the moment it lands, with no
+   busy tick and no timeout to tune, and the daemon never blocks. If your
+   shell tool enforces a command timeout, a killed poll is harmless: re-issue
+   it with the same `--after` and nothing is lost. Each returned object is
+   **the same event object** the Monitor would push — same
+   `event`/`type`/`display`/`self`/ task fields — plus a leading `seq`. So
+   apply the shared **"Event handler"** section below **verbatim**: emit each
+   event's `display` as-is, skip the same events, drive the same
+   task/`TodoWrite` machinery. Track `$LAST` = the `seq` of the last event
+   you handled; advance it each call. If a poll reports the `--after seq`
+   aged out, re-baseline from the returned set. Re-issue the blocking poll
+   right after each batch (drive it with the `loop` skill / a
+   `ScheduleWakeup`). `--long` is for this **active watch loop** only. For a
+   **one-shot read** — the user asks "any new messages?" outside the loop, or
+   you just want what is buffered now — run a plain `ahsw poll --swarm $SWARM
+   --nickname $NICKNAME --after $LAST --output json` with **no `--long`**: it
+   returns immediately.
 
 ## Output
 

@@ -72,18 +72,18 @@ pub(crate) async fn handle_ipc_command(
         IpcCommand::Poll {
             swarm: _,
             after,
-            wait_ms,
+            long,
         } => {
             // Surfaced-events ring, seq-cursored. Each event renders to the
             // *same* JSON line the live `--output json` stream emits (via
             // `surfaced_event_json`), with its `seq` flattened in so the client
             // advances `--after`. `poll_or_register` responds now if events are
-            // buffered, else (with `wait_ms`) parks a waiter the loop fulfills
-            // on the next surfaced event or expires at the deadline. A parked
+            // buffered, else (with `long`) parks a waiter the loop fulfills
+            // on the next surfaced event or expires at the park cap. A parked
             // waiter broadcasts nothing → `false`.
             state.poll_or_register(
                 after,
-                wait_ms,
+                long,
                 tokio::time::Instant::now(),
                 PollResponder::Json(resp_tx),
             );
