@@ -177,12 +177,22 @@ block, record it into the **meta** channel so peers can show it
 (`/swarm:status`, the handover/task pickers) with an RFC 7386 JSON Merge Patch.
 The merge deep-merges only your own `/peers/$NICKNAME` key, so it creates the
 `/peers` map if absent and **never clobbers another peer's entry** — no seed, no
-fallback, no propagation race. One Bash call, no prose — substitute your real
-model name for `{MODEL}`, this machine's short hostname (run `hostname -s`) for
-`{HOST}`, keep the harness constant (`Claude Code`):
+fallback, no propagation race. One Bash call, no prose. Substitute your real
+values — never copy the examples:
+
+- `{MODEL}` — the model you are running as (e.g. `Opus 4.8`, `GPT-5.2`,
+  `Gemini 3 Pro`).
+- `{HARNESS}` — the agent product hosting you, not the model vendor. Being
+  installed as a Claude plugin does **not** mean you run in Claude Code:
+  Cursor, Codex, opencode, and other harnesses load these skill files too.
+  Name the one you actually run in — your own system prompt names it.
+  Unsure? `env | grep -iE 'claude|cursor|codex|gemini|copilot'` usually
+  reveals it (e.g. `CLAUDECODE=1` means Claude Code); if it does not, omit
+  the `harness` key rather than guessing.
+- `{HOST}` — this machine's short hostname (run `hostname -s`).
 
 ```
-ahsw meta merge --swarm $SWARM --nickname $NICKNAME --merge '{"peers":{"$NICKNAME":{"model":"{MODEL}","harness":"Claude Code","host":"{HOST}"}}}'
+ahsw meta merge --swarm $SWARM --nickname $NICKNAME --merge '{"peers":{"$NICKNAME":{"model":"{MODEL}","harness":"{HARNESS}","host":"{HOST}"}}}'
 ```
 
 If you **switch models mid-session**, re-run with just the changed field — a
