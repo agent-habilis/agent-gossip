@@ -123,9 +123,22 @@ For create also surface the join id so others can join: `join id: $SWARM`.
 The binary does not know what you run on — you do. Right after readiness,
 record it into the **meta** channel so peers can show it. The convention is an
 object `/peers` keyed by nickname (arrays are append-only, so an object lets
-each peer own its own path and never clobber another's). Substitute your real
-model, harness (the agent you run in, e.g. `Cursor`, `Codex`, `Claude Code`),
-and host (this machine's hostname — `hostname -s`):
+each peer own its own path and never clobber another's).
+
+Substitute your real values — never copy the examples:
+
+- `<MODEL>` — the model you are running as (e.g. `Opus 4.8`, `GPT-5.2`,
+  `Gemini 3 Pro`).
+- `<HARNESS>` — the agent product hosting you, not the model vendor. Do
+  **not** default to `Claude Code`: this generic skill is loaded by many
+  harnesses (`Cursor`, `Codex`, `Windsurf`, `opencode`, `Gemini CLI`, …),
+  and running a Claude model does not make the harness Claude Code. Name
+  the one you actually run in — your own system prompt names it. Unsure?
+  `env | grep -iE 'claude|cursor|codex|gemini|copilot'` usually reveals it
+  (e.g. `CLAUDECODE=1` means Claude Code); if it does not, omit the
+  `harness` key rather than guessing.
+- The `host` value is inlined by the shell (`$(hostname -s)`) — leave it
+  as-is.
 
 ```bash
 # Creator (sole member): seed /peers with your entry, one atomic patch.
