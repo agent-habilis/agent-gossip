@@ -61,6 +61,23 @@ itself.
 Code: `protocol::swarm` (`Swarm` / `SwarmConfig`). Byte layout:
 [swarm-hash.md](./swarm-hash.md).
 
+### forum swarm
+
+*Layer: identity · keyed by seed.*
+
+A `Swarm` whose `seed` is derived from an arbitrary string —
+`SHA256(TOPIC_DOMAIN ‖ trim(string))` — rather than minted randomly at
+`create`. The name is the string itself sanitized into a `SwarmName` (leading
+URL scheme dropped — plus the `?query`/`#fragment` for an http(s) URL — invalid
+runs → `-`, `/` and URL chars kept, capped at 32 with a trailing `…`, or `forum`
+if empty; this affects the name only, not the seed), and the config is always
+the public preset — so the
+**string alone** determines the swarm: anyone running `ahsw forum <string>`
+converges. Joined via the `forum` command, not `join`.
+
+Code: `protocol::crypto::topic_seed`, `Swarm::from_topic`,
+`SwarmName::from_topic_string`. See [discovery.md](./discovery.md) §7.
+
 ### rendezvous
 
 *Layer: identity · keyed by seed.*
@@ -172,54 +189,53 @@ and broadcasting the id makes the swarm open to anyone who finds it.
 Browse a directory's live swarms (`ahsw discover`) and join one — the consumer
 side of **advertise**.
 
-### exchange
+### task
 
-*Layer: messaging · keyed by `exchange_id` (correlation) + the two parties' nicknames.*
+*Layer: messaging · keyed by `task_id` (correlation) + the two parties' nicknames.*
 
-A typed, phased, directed conversation (`MessageKind::Exchange`, phases
+The delegation **primitive** (formerly a generic "exchange" with a `kind`
+discriminator; that layer was collapsed — the binary never branched on the
+kind). A typed, phased, directed conversation (`MessageKind::Task`, phases
 `offer`/`accept`/`decline`/`context`/`progress`/`done`/`confirm`/`change`/`cancel`)
-correlated by an `exchange_id`, with a `kind` discriminator (`handover` |
-`task`). The generic **mechanism**: a directed, multi-leg conversation
-whose *coarse* lifecycle (phase advance, the per-exchange idle-debounce timeout,
-the ball-owner keepalive, the 100-content-message cap) is owned by the daemon
-state machine (`daemon::exchange`), while the *content* is owned by the skill. Like
-a directed `Msg --reply`, a leg is delivered to all members for relay but
-**surfaced and logged only by its addressee and the sender's own echo** — a
-third party never sees it. The `progress` phase is liveness plumbing (never
-logged). Not part of the per-author hash chain or DAG (presence-like).
+correlated by a `task_id`. The daemon state machine (`daemon::task`) owns the
+*coarse* lifecycle (phase advance, the per-task idle-debounce timeout, the
+ball-owner keepalive, the 100-content-message cap); the *content* is owned by
+the skill. Like a directed `Msg --reply`, a leg is delivered to all members for
+relay but **surfaced and logged only by its addressee and the sender's own
+echo** — a third party never sees it. The `progress` phase is liveness plumbing
+(never logged). Not part of the per-author hash chain or DAG (presence-like).
+The wire carries **no** behavior discriminator: every task is identical to the
+binary, and the two delegation UX flows below distinguish themselves in-band.
 
-Code: `MessageKind::Exchange`, `lifecycle::handle_exchange`, `broadcast_exchange`,
-`daemon::exchange`.
+Two skills ride this primitive. `/swarm:task` is the **report-back** flow — the
+worker does the work and returns its result on `done`, and the initiator
+confirms (or `change`s for a revision); it sends one or more independent tasks
+(each its own `task_id`, worker, and completion criteria) and surfaces each
+result as it returns, with no group-level outcome. `/swarm:handover` is the
+**walk-away** flow (see below).
+
+Code: `MessageKind::Task`, `lifecycle::handle_task`, `broadcast_task`,
+`daemon::task`.
 
 ### handover
 
-*Layer: behavior on top of **exchange**.*
+*Layer: skill behavior on top of **task**.*
 
-The behavior that delegates a task/plan to another agent — `ExchangeKind::Handover`
-on the exchange mechanism, driven entirely by the skill (`/swarm:handover`). It
-runs `offer → accept → context → done → confirm`, ending at the close
-handshake. "A handover is a behavior that uses the exchange mechanism"; it adds no
-wire type of its own.
-
-### task
-
-*Layer: behavior on top of **exchange**.*
-
-The behavior that runs work and **returns the result** — `ExchangeKind::Task`
-on the exchange mechanism, driven by the skill (`/swarm:task`). It runs
-`offer → accept → [context] → done → confirm`, where the worker reports its
-result on `done` and the initiator confirms (or `change`s for a revision) —
-the difference from **handover**, which closes without a result. `/swarm:task`
-sends one or more independent tasks (each its own `exchange_id`, worker,
-and completion criteria) and surfaces each result as it returns; there is no
-group-level outcome. Like handover, it adds no wire type of its own.
+A UX behavior on the task primitive, driven entirely by the `/swarm:handover`
+skill: delegate a task/plan and walk away. The receiver runs the work **itself**
+after the handoff and the initiator **auto-confirms** — no result flows back
+(the difference from `/swarm:task`, which returns a result). It uses the same
+task phases (`offer → accept → context → done → confirm`), ending at the close
+handshake. Because the wire has no `kind`, the "walk-away vs report-back" intent
+travels **in-band** — a marker in the `offer` body (and the skill's todo text) —
+not as a wire field. Adds no wire type of its own.
 
 ### part
 
 *Layer: protocol — a header on **message**.*
 
-One slice of a body too large for a single gossip message. When a `msg` or an
-exchange leg's body exceeds `MAX_MESSAGE_SIZE`, the sender splits it into several
+One slice of a body too large for a single gossip message. When a `msg` or a
+task leg's body exceeds `MAX_MESSAGE_SIZE`, the sender splits it into several
 ordinary signed messages, each carrying a `part` header — a `group` (a UUID
 shared by the body's parts), an `idx`, and the `total` count. Each part is a real
 message (own id/seq/signature) retained in the **message log**, so a missing part

@@ -154,21 +154,12 @@ portable-pty = "0.9"
 # adds nothing to the build. Pinned 0.1 (the only line; 0.x is stable).
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "tracing-log"] }
-# iroh pulls reqwest transitively anyway; we keep our features a subset of
-# iroh's so this adds nothing. No `json` (resolver.rs uses
-# `serde_json::from_slice`). `rustls-no-provider` needs a provider:
-# `resolver.rs::ensure_ring_provider()` installs ring.
-reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider"] }
-# Only to name `rustls::crypto::ring` for that install; pinned to iroh's
-# locked rustls so no duplicate.
-rustls = { version = "0.23", default-features = false, features = ["ring"] }
 interprocess = { version = "2", features = ["tokio"] }
 rmcp = { version = "1.5", features = ["server", "transport-io", "macros", "schemars"] }
 
 [dev-dependencies]
 proptest = "1.6"
 insta = "1"
-wiremock = "0.6"
 # In-process integration harness (`tests/common::InProcNode`) drives
 # `embed::SwarmSession` async, so the test crates need a runtime + the
 # `#[tokio::test]` macro. Same major as the lib dep — no new dup version.

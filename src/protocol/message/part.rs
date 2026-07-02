@@ -15,7 +15,7 @@ use crate::util::consts::MAX_MESSAGE_PARTS;
 
 /// The correlation id shared by every part of one logical body — a UUID v4
 /// string form, minted once by the sender when it splits a body. Like
-/// [`ExchangeId`](super::ExchangeId), deserialization is **validating**, so a
+/// [`TaskId`](super::TaskId), deserialization is **validating**, so a
 /// non-UUID group is rejected at `Message::parse`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 #[serde(transparent)]

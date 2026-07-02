@@ -18,9 +18,9 @@ pub struct SurfacedEvent {
 /// cross-node anti-entropy buffer, whose retention is a deterministic function
 /// of the message *set* (`eviction_key`) so every node agrees on what survives.
 /// This buffer is **local**: a single monotonic `seq` records *surfacing order*
-/// on this node, so one `--after <seq>` cursor walks chat, presence, exchange
+/// on this node, so one `--after <seq>` cursor walks chat, presence, task
 /// legs, and the transient events (`ping_report`, `peer_timeout`/`return`,
-/// `exchange_timeout`, `fork`) that never enter the message log. Mixing the two
+/// `task_timeout`, `fork`) that never enter the message log. Mixing the two
 /// would couple a local cursor to the cross-node eviction order and break
 /// anti-entropy convergence — hence two buffers.
 ///

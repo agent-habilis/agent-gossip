@@ -15,9 +15,7 @@ use tokio::sync::{broadcast, mpsc, oneshot, watch};
 use crate::daemon::state::RosterSnapshot;
 use crate::output;
 use crate::protocol::swarm::SwarmName;
-use crate::protocol::{
-    ExchangeId, ExchangeKind, ExchangePhase, Message, MessageBody, Nickname, SwarmId,
-};
+use crate::protocol::{Message, MessageBody, Nickname, SwarmId, TaskId, TaskPhase};
 
 use crate::beacon;
 
@@ -38,15 +36,14 @@ pub(crate) enum SessionRequest {
         wait_ms: Option<u64>,
         resp: oneshot::Sender<Vec<crate::daemon::surfaced::SurfacedEvent>>,
     },
-    /// Send one leg of an exchange to `to`, correlated by `exchange_id`.
+    /// Send one leg of a task to `to`, correlated by `task_id`.
     /// Echoes back the canonical [`Message`], like
     /// [`Send`](SessionRequest::Send). Addressee validation for `Offer`
-    /// lives in `broadcast_exchange`.
-    Exchange {
+    /// lives in `broadcast_task`.
+    Task {
         to: Nickname,
-        exchange_id: ExchangeId,
-        kind: ExchangeKind,
-        phase: ExchangePhase,
+        task_id: TaskId,
+        phase: TaskPhase,
         body: MessageBody,
         resp: oneshot::Sender<Result<Message>>,
     },
@@ -122,6 +119,15 @@ pub(crate) enum DriverMode {
         msg_tx: Option<broadcast::Sender<Message>>,
         req_rx: mpsc::Receiver<SessionRequest>,
         quit_rx: mpsc::Receiver<()>,
+        /// Whether this session registers the process-wide
+        /// ctrl-c/SIGTERM/SIGHUP/SIGQUIT listeners for a graceful leave.
+        /// Registering any tokio signal handler suppresses the OS
+        /// default-terminate for the *whole process, permanently* — so a
+        /// session living inside a foreground command that owns its own
+        /// lifetime (a `--advertise` transfer's directory session, a
+        /// directory browse) must pass `false`, or ctrl-c stops killing
+        /// the host command.
+        handle_signals: bool,
     },
 }
 

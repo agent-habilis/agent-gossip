@@ -20,9 +20,8 @@ pub(crate) mod token;
 mod wordlist;
 
 pub(crate) use message::{
-    Channel, ExchangeId, ExchangeIdError, ExchangeKind, ExchangeKindError, ExchangePhase,
-    ExchangePhaseError, Message, MessageBody, MessageId, MessageKind, Part, PartGroup,
-    PresenceSubtype,
+    Channel, Message, MessageBody, MessageId, MessageKind, Part, PartGroup, PresenceSubtype,
+    TaskId, TaskIdError, TaskPhase, TaskPhaseError,
 };
 pub(crate) use nickname::Nickname;
 pub(crate) use swarm::SwarmId;

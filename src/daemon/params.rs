@@ -13,7 +13,8 @@ use anyhow::Result;
 
 use crate::protocol::Nickname;
 use crate::protocol::swarm::{
-    AdvertiseRequiresReachable, DirectorySelection, SwarmConfig, SwarmName, validate_advertise,
+    AdvertiseRequiresReachable, DirectorySelection, LookupOpts, Swarm, SwarmConfig, SwarmName,
+    validate_advertise,
 };
 use crate::resolver::{self, JoinTarget};
 
@@ -32,6 +33,15 @@ pub(crate) struct CreateParams {
 /// The join intent, before resolution.
 pub(crate) struct JoinParams {
     pub target: JoinTarget,
+    pub nickname: Option<Nickname>,
+}
+
+/// The forum intent: a swarm derived deterministically from a shared string,
+/// always public. Name + config are derived, not supplied — the string alone
+/// determines the swarm.
+pub(crate) struct ForumParams {
+    pub string: String,
+    /// `None` ⇒ a random `word-word` nickname is minted in `resolve`.
     pub nickname: Option<Nickname>,
 }
 
@@ -67,18 +77,54 @@ impl CreateParams {
 }
 
 impl JoinParams {
-    /// Resolve the target (`🐝…` id / domain / git URL) into a [`Swarm`]
-    /// and default the nickname. `join` never advertises.
+    /// Resolve the `🐝…` id target into a [`Swarm`] and default the nickname.
+    /// `join` never advertises.
     ///
     /// # Errors
-    /// Fails if the target cannot be resolved (bad id, unreachable
-    /// well-known, malformed JSON).
+    /// Fails if the id cannot be decoded into a [`Swarm`].
     ///
     /// [`Swarm`]: crate::protocol::swarm::Swarm
-    pub(crate) async fn resolve(self) -> Result<Resolved> {
-        let swarm = resolver::resolve(&self.target).await?;
+    pub(crate) fn resolve(self) -> Result<Resolved> {
+        let swarm = resolver::resolve(&self.target)?;
         Ok(Resolved {
             kind: SetupKind::Join { swarm },
+            author: self.nickname.unwrap_or_else(Nickname::random),
+            advertise_directory: None,
+        })
+    }
+}
+
+/// The canonical [`Swarm`] a forum string derives — always the public preset.
+/// The single source of that derivation *and* of the empty/whitespace-string
+/// guard, shared by [`ForumParams::resolve`] and the MCP idempotency check so
+/// neither can drift — an empty string would otherwise silently derive one
+/// globally-fixed swarm that every empty-string caller lands in. (The clap
+/// `value_parser` on `ahsw forum` re-checks emptiness only to surface it as a
+/// parse-time usage error.)
+pub(crate) fn derive_forum_swarm(string: &str) -> Result<Swarm> {
+    if string.trim().is_empty() {
+        anyhow::bail!("forum string must not be empty");
+    }
+    Ok(Swarm::from_topic(
+        string,
+        SwarmConfig {
+            lookups: LookupOpts::public_preset(),
+        },
+    ))
+}
+
+impl ForumParams {
+    /// Derive the swarm from the string (always the public preset) and default
+    /// the nickname. A forum never advertises. The empty/whitespace-string
+    /// guard lives in [`derive_forum_swarm`], which every frontend (CLI,
+    /// embed, MCP) funnels through.
+    ///
+    /// # Errors
+    /// Fails if the string is empty or whitespace-only.
+    pub(crate) fn resolve(self) -> Result<Resolved> {
+        let swarm = derive_forum_swarm(&self.string)?;
+        Ok(Resolved {
+            kind: SetupKind::Forum { swarm },
             author: self.nickname.unwrap_or_else(Nickname::random),
             advertise_directory: None,
         })

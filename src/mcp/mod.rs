@@ -9,7 +9,7 @@
 //! - `discover_swarms`
 //! - `leave_swarm`
 //! - `send_message`
-//! - `send_exchange`
+//! - `send_task`
 //! - `fetch_messages`
 //! - `apply_state_merge`
 //! - `get_state`
@@ -53,12 +53,12 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 
+use crate::daemon::derive_forum_swarm;
 use crate::daemon::state::RosterEntry;
-use crate::embed::{CreateConfig, CreateError, Directory, JoinConfig};
+use crate::embed::{CreateConfig, CreateError, Directory, ForumConfig, JoinConfig, JoinError};
 use crate::protocol::swarm::{LookupSet, RelayLadder, RelaySelection, SwarmName};
 use crate::protocol::{
-    ExchangeId, ExchangeKind, ExchangeKindError, ExchangePhase, ExchangePhaseError, Message,
-    MessageBody, MessageId, Nickname, SwarmId,
+    Message, MessageBody, MessageId, Nickname, SwarmId, TaskId, TaskPhase, TaskPhaseError,
 };
 use crate::resolver::JoinTarget;
 use crate::util::tuning::DEFAULT_MAX_DIRECT_PEERS;
@@ -148,11 +148,21 @@ struct CreateSwarmArgs {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct JoinSwarmArgs {
-    /// Swarm identifier (🐝…), a domain (example.com), or a git
-    /// repo URL (github.com/user/repo, gitlab.com/user/repo,
-    /// bitbucket.org/user/repo). Non-id values are resolved via
-    /// `/.well-known/agent-habilis-swarm`.
+    /// Swarm identifier (🐝…). A shared string derives its own public
+    /// swarm — use the `forum` command — and is not a valid join target.
     swarm: String,
+    /// Optional nickname in `word-word` form. Random if omitted.
+    #[serde(default)]
+    nickname: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct ForumSwarmArgs {
+    /// Any string. Hashed into a deterministic **public** swarm — anyone who
+    /// joins with the same string lands in the same swarm, on any machine.
+    /// Compared byte-for-byte after trimming surrounding whitespace (not
+    /// lowercased), so `http://x` and `https://x` are different forums.
+    string: String,
     /// Optional nickname in `word-word` form. Random if omitted.
     #[serde(default)]
     nickname: Option<String>,
@@ -197,14 +207,12 @@ struct FetchMessagesArgs {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct SendTaskArgs {
-    /// Addressee: the peer's nickname this exchange leg is directed at.
+    /// Addressee: the peer's nickname this task leg is directed at.
     /// For `phase: "offer"` it must be a current participant.
     to: String,
     /// Task correlation id (UUID): mint a fresh one for the opening
-    /// `offer`, then echo the same id on every later leg of that exchange.
-    exchange_id: String,
-    /// Task behavior: "handover" (delegate a task/plan) or "task".
-    kind: String,
+    /// `offer`, then echo the same id on every later leg of that task.
+    task_id: String,
     /// Lifecycle phase: "offer" (the brief), "accept"/"decline" (entry),
     /// "context" (Q&A), "progress" (a done/total beat), "done" (request
     /// close + verification instructions), "confirm"/"change" (the
@@ -216,26 +224,19 @@ struct SendTaskArgs {
     text: String,
 }
 
-/// Parse an exchange phase string into [`ExchangePhase`], delegating to its
+/// Parse a task phase string into [`TaskPhase`], delegating to its
 /// `FromStr` (the single phase mapping) and surfacing a bad value as MCP
 /// `invalid_params`.
-fn parse_exchange_phase(raw: &str) -> Result<ExchangePhase, McpError> {
+fn parse_task_phase(raw: &str) -> Result<TaskPhase, McpError> {
     raw.parse()
-        .map_err(|error: ExchangePhaseError| McpError::invalid_params(error.to_string(), None))
+        .map_err(|error: TaskPhaseError| McpError::invalid_params(error.to_string(), None))
 }
 
-/// Parse an exchange kind string into [`ExchangeKind`].
-fn parse_exchange_kind(raw: &str) -> Result<ExchangeKind, McpError> {
-    raw.parse()
-        .map_err(|error: ExchangeKindError| McpError::invalid_params(error.to_string(), None))
-}
-
-/// Parse an exchange id string into [`ExchangeId`].
-fn parse_exchange_id(raw: &str) -> Result<ExchangeId, McpError> {
-    raw.parse()
-        .map_err(|error: crate::protocol::ExchangeIdError| {
-            McpError::invalid_params(error.to_string(), None)
-        })
+/// Parse a task id string into [`TaskId`].
+fn parse_task_id(raw: &str) -> Result<TaskId, McpError> {
+    raw.parse().map_err(|error: crate::protocol::TaskIdError| {
+        McpError::invalid_params(error.to_string(), None)
+    })
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -285,7 +286,7 @@ impl From<&Session> for SwarmRef {
 
 /// `swarm_info` tool output: the session identity plus the live roster
 /// (`participant_count` = participants + 1 for self, and the per-peer
-/// recency list that backs a handover sender's target picker).
+/// recency list that backs a task sender's target picker).
 #[derive(Debug, Serialize)]
 struct SwarmInfoResult {
     #[serde(flatten)]
@@ -330,7 +331,7 @@ struct SendMessageResult {
 struct FetchMessagesResult {
     /// Surfaced events since the cursor, each the *same* JSON object the live
     /// `--output json` stream emits (carrying `seq`, `event`/`type`,
-    /// `display`, `self`, …) — chat, presence, exchange legs, and the
+    /// `display`, `self`, …) — chat, presence, task legs, and the
     /// transient `ping_report` / `peer_timeout` / … events alike.
     messages: Vec<serde_json::Value>,
     /// The newest `seq` returned (the next `after`), or `None` when nothing
@@ -426,7 +427,7 @@ impl AgentSwarmServer {
     }
 
     #[tool(
-        description = "Join an existing swarm. Accepts an 🐝… identifier, a domain (resolves /.well-known/agent-habilis-swarm), or a git repo URL. Idempotent when called for the same swarm id with the same nickname. Poll `fetch_messages` to observe incoming traffic; the server auto-tracks a per-session cursor so repeat cursor-less calls return only new entries."
+        description = "Join an existing swarm by its 🐝… identifier. (A shared string derives its own public swarm — that is the `forum` command — and is not a join target.) Idempotent when called for the same swarm id with the same nickname. Poll `fetch_messages` to observe incoming traffic; the server auto-tracks a per-session cursor so repeat cursor-less calls return only new entries."
     )]
     async fn join_swarm(
         &self,
@@ -437,16 +438,8 @@ impl AgentSwarmServer {
         })?;
         let mut guard = self.session.lock().await;
         if let Some(existing) = guard.as_ref() {
-            // Idempotent: re-joining the same swarm id with either the
-            // same nickname or no nickname is a no-op, not an error.
-            let same_nickname = args
-                .nickname
-                .as_deref()
-                .is_none_or(|candidate| candidate == existing.nickname().as_str());
-            if matches!(&target, JoinTarget::Swarm(id) if id == existing.swarm()) && same_nickname {
-                return ok_json(SwarmRef::from(existing));
-            }
-            return Err(already_in_swarm_error(existing));
+            let same_swarm = matches!(&target, JoinTarget::Swarm(id) if id == existing.swarm());
+            return rejoin_existing(existing, args.nickname.as_deref(), same_swarm);
         }
         let nickname = match args.nickname {
             None => None,
@@ -460,7 +453,35 @@ impl AgentSwarmServer {
             max_peers: DEFAULT_MAX_DIRECT_PEERS,
         })
         .await
-        .map_err(to_mcp_error)?;
+        .map_err(join_error_to_mcp)?;
+        let result = SwarmRef::from(&session);
+        *guard = Some(session);
+        ok_json(result)
+    }
+
+    #[tool(
+        description = "Join a public swarm derived deterministically from a shared string — no id to share. Anyone who calls forum_swarm with the same string joins the same swarm, on any machine (the string is hashed into the swarm seed; the name is derived and networking is always public). The string is matched byte-for-byte after trimming whitespace, so pick an exact, agreed value. Idempotent when called for the same string with the same nickname. Poll `fetch_messages` to observe traffic."
+    )]
+    async fn forum_swarm(
+        &self,
+        Parameters(args): Parameters<ForumSwarmArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let derived = derive_forum_swarm(&args.string)
+            .map_err(|error| McpError::invalid_params(error.to_string(), None))?;
+        let mut guard = self.session.lock().await;
+        if let Some(existing) = guard.as_ref() {
+            let same_swarm = derived.to_string() == existing.swarm().as_str();
+            return rejoin_existing(existing, args.nickname.as_deref(), same_swarm);
+        }
+        let nickname = match args.nickname {
+            None => None,
+            Some(raw) => Some(Nickname::new(raw).map_err(|error| {
+                McpError::invalid_params(format!("invalid nickname: {error}"), None)
+            })?),
+        };
+        let mut cfg = ForumConfig::new(args.string);
+        cfg.nickname = nickname;
+        let session = Session::forum(cfg).await.map_err(join_error_to_mcp)?;
         let result = SwarmRef::from(&session);
         *guard = Some(session);
         ok_json(result)
@@ -558,7 +579,7 @@ impl AgentSwarmServer {
     }
 
     #[tool(
-        description = "Return buffered events from the current swarm — chat, presence, exchange legs, shared-state changes (event \"state\", carrying the merge and the newly-derived `document`), and transient events (ping_report, peer_timeout, …), each the same JSON object the live event stream emits. The server auto-tracks a per-session `seq` cursor, so repeat calls with no args return only new traffic (first call sees full history, up to ~200 events). Pass `after` (a seq) only to explicitly replay from a point. Pass `wait_ms` (~15000) to long-poll — block up to that many ms (server-capped at 60s) for new traffic before returning — only while actively watching a live conversation in a loop; on timeout `messages` is empty. Omit `wait_ms` for a one-shot read (e.g. the user asks to check for new messages), which returns whatever is buffered right away. Never returns `alive` heartbeats — those are internal plumbing."
+        description = "Return buffered events from the current swarm — chat, presence, task legs, shared-state changes (event \"state\", carrying the merge and the newly-derived `document`), and transient events (ping_report, peer_timeout, …), each the same JSON object the live event stream emits. The server auto-tracks a per-session `seq` cursor, so repeat calls with no args return only new traffic (first call sees full history, up to ~200 events). Pass `after` (a seq) only to explicitly replay from a point. Pass `wait_ms` (~15000) to long-poll — block up to that many ms (server-capped at 60s) for new traffic before returning — only while actively watching a live conversation in a loop; on timeout `messages` is empty. Omit `wait_ms` for a one-shot read (e.g. the user asks to check for new messages), which returns whatever is buffered right away. Never returns `alive` heartbeats — those are internal plumbing."
     )]
     async fn fetch_messages(
         &self,
@@ -598,7 +619,7 @@ impl AgentSwarmServer {
     }
 
     #[tool(
-        description = "Return the current session's swarm id, nickname, participant count, and the live participant roster (each peer's nickname + how long ago it was last seen, recency-sorted). Use the roster to pick a handover target."
+        description = "Return the current session's swarm id, nickname, participant count, and the live participant roster (each peer's nickname + how long ago it was last seen, recency-sorted). Use the roster to pick a task target."
     )]
     async fn swarm_info(
         &self,
@@ -638,7 +659,7 @@ impl AgentSwarmServer {
     }
 
     #[tool(
-        description = "Return the full agent manual — every command, JSON event, and common workflow. Needs no active swarm. Read it for the behavioral details the tool schemas can't carry (the poll-on-a-tick idle loop, verbatim one-line display, task/handover phases)."
+        description = "Return the full agent manual — every command, JSON event, and common workflow. Needs no active swarm. Read it for the behavioral details the tool schemas can't carry (the poll-on-a-tick idle loop, verbatim one-line display, task phases)."
     )]
     async fn swarm_manual(
         &self,
@@ -650,30 +671,26 @@ impl AgentSwarmServer {
     }
 
     #[tool(
-        description = "Send one leg of an exchange to a specific peer. An exchange is a directed, phased conversation correlated by `exchange_id` (mint a UUID for the opening \"offer\", echo it on every later leg). `kind` is the behavior (\"handover\" delegates a task/plan; \"task\" runs+verifies). Phases: \"offer\" (brief), \"accept\"/\"decline\" (entry), \"context\" (Q&A), \"progress\" (a done/total beat, e.g. text \"35/100\"), \"done\" (request close + verification instructions), \"confirm\"/\"change\" (verify), \"cancel\". For \"offer\" the `to` nickname must be a current participant (check `swarm_info`). Returns the new message id and authoritative echo."
+        description = "Send one leg of a task to a specific peer. A task is a directed, phased conversation correlated by `task_id` (mint a UUID for the opening \"offer\", echo it on every later leg). Phases: \"offer\" (brief), \"accept\"/\"decline\" (entry), \"context\" (Q&A), \"progress\" (a done/total beat, e.g. text \"35/100\"), \"done\" (request close + verification instructions), \"confirm\"/\"change\" (verify), \"cancel\". The \"offer\" body must begin with a flow marker on its own first line — \"[[task]]\" (report-back: the worker returns a result on \"done\") or \"[[handover]]\" (walk-away: the worker runs it itself, no result); the receiver strips it. For \"offer\" the `to` nickname must be a current participant (check `swarm_info`). Returns the new message id and authoritative echo."
     )]
-    async fn send_exchange(
+    async fn send_task(
         &self,
         Parameters(args): Parameters<SendTaskArgs>,
     ) -> Result<CallToolResult, McpError> {
         let guard = self.session.lock().await;
         let session = guard.as_ref().ok_or_else(not_in_swarm_error)?;
         let to = Nickname::new(args.to).map_err(|error| {
-            McpError::invalid_params(format!("invalid exchange target: {error}"), None)
+            McpError::invalid_params(format!("invalid task target: {error}"), None)
         })?;
-        let exchange_id = parse_exchange_id(&args.exchange_id)?;
-        let kind = parse_exchange_kind(&args.kind)?;
-        let phase = parse_exchange_phase(&args.phase)?;
+        let task_id = parse_task_id(&args.task_id)?;
+        let phase = parse_task_phase(&args.phase)?;
         let body = MessageBody::new(args.text)
             .map_err(|error| McpError::invalid_params(format!("{error}"), None))?;
-        // The daemon's `broadcast_exchange` validates the addressee (offer
+        // The daemon's `broadcast_task` validates the addressee (offer
         // only), so we don't repeat it here. An unknown participant comes back
         // as an error; re-classify it as `invalid_params` since it's bad input,
         // not an internal fault.
-        match session
-            .send_exchange(to, exchange_id, kind, phase, body)
-            .await
-        {
+        match session.send_task(to, task_id, phase, body).await {
             Ok((id, message)) => ok_json(SendMessageResult { id, message }),
             Err(error) => {
                 let message = error.to_string();
@@ -768,7 +785,7 @@ EVENT SHAPE. Each entry in `fetch_messages().messages` is a JSON object. Chat \
 and presence share `event:\"message\"` and are distinguished by a `type` field \
 (`type:\"msg\"` or `type:\"presence\"`, with `subtype:\"joined\"/\"left\"/\"alive\"` \
 on presence). Everything else is discriminated by `event` directly \
-(`state`, `exchange`, `exchange_progress`, `ping_report`, `peer_timeout`, \
+(`state`, `task`, `task_progress`, `ping_report`, `peer_timeout`, \
 `peer_return`, `info`, `error`, `ready`, …). Most entries also carry `self` \
 (true if you authored it) and a pre-built `display` string. You rarely branch on these \
 yourself — prefer `display` (below); the rules here say only what to skip vs. \
@@ -787,7 +804,7 @@ and any entry with `self:true` EXCEPT your own `type:\"msg\"` (a `msg` with \
 is the send confirmation). Show (emit `display` verbatim): a peer's `type:\"msg\"`, \
 a `type:\"presence\"` joined/left, `event:\"peer_timeout\"`, `event:\"peer_return\"`, \
 and `event:\"ping_report\"` (its `display` is the full RTT table). Drive, do not \
-print: an `event:\"exchange\"` (see TASKS); `event:\"exchange_progress\"` is a \
+print: an `event:\"task\"` (see TASKS); `event:\"task_progress\"` is a \
 widget beat, never a chat line.
 
 REPLY to a peer's `msg` (no `reply`, not directed elsewhere) when you can add \
@@ -799,12 +816,16 @@ PING/PONG is handled entirely by the daemon — it auto-answers a peer's ping an
 emits the `ping_report`. Do NOT send a pong yourself. To measure RTT yourself, \
 call the `ping` tool.
 
-TASKS/HANDOVERS arrive as `event:\"exchange\"` records addressed to you and are driven with \
-`send_exchange`, reusing one `exchange_id` across all legs: \
-offer → accept/decline → [context] → done → confirm/change. A handover closes at \
-the handoff (initiator auto-confirms; you then do the work on your own); a task \
-returns its result on the `done` leg for the initiator to confirm. Don't display \
-exchange legs as chat lines — drive the flow.
+TASKS arrive as `event:\"task\"` records addressed to you and are driven with \
+`send_task`, reusing one `task_id` across all legs: \
+offer → accept/decline → [context] → done → confirm/change. The opening offer \
+body begins with a flow marker on its own first line: `[[task]]` (report-back — \
+do the work and return the result on `done`, which the initiator confirms or \
+`change`s) or `[[handover]]` (walk-away — you take the task over and run it \
+yourself; the initiator auto-confirms and expects no result on `done`). STRIP \
+that marker line before acting on the brief; a missing/unrecognized marker means \
+`[[task]]`. To initiate a task, prepend the matching marker to your own offer \
+body. Don't display task legs as chat lines — drive the flow.
 
 SHARED STATE is one JSON document the whole swarm shares, separate from chat. \
 Read it with `get_state`; change it with `apply_state_merge` (an RFC 7386 JSON \
@@ -852,6 +873,31 @@ fn already_in_swarm_error(existing: &Session) -> McpError {
         ),
         None,
     )
+}
+
+/// Idempotency shared by `join_swarm` / `forum_swarm`: re-joining the swarm
+/// the request resolves to, with the same (or no) nickname, is a no-op that
+/// returns the existing session; any other request while in a swarm errors.
+fn rejoin_existing(
+    existing: &Session,
+    requested_nickname: Option<&str>,
+    same_swarm: bool,
+) -> Result<CallToolResult, McpError> {
+    let same_nickname =
+        requested_nickname.is_none_or(|candidate| candidate == existing.nickname().as_str());
+    if same_swarm && same_nickname {
+        return ok_json(SwarmRef::from(existing));
+    }
+    Err(already_in_swarm_error(existing))
+}
+
+/// A bad target/string is the caller's fault (`invalid_params`); a setup
+/// failure is ours (`internal_error`).
+fn join_error_to_mcp(error: JoinError) -> McpError {
+    match error {
+        JoinError::Resolve(error) => McpError::invalid_params(error.to_string(), None),
+        JoinError::Setup(error) => McpError::internal_error(error.to_string(), None),
+    }
 }
 
 fn to_mcp_error<E: std::fmt::Display>(error: E) -> McpError {

@@ -35,7 +35,7 @@ use crate::util::tuning::{
 use super::config::{CoHostPolicy, DriverMode, EventLoopConfig, SessionRequest};
 use super::ctx::HandlerCtx;
 use super::state::EventLoopState;
-use super::{exchange, ipc, setup, timers};
+use super::{ipc, setup, task, timers};
 
 /// Never returns normally — exits the process on ctrl-c / SIGTERM.
 pub(crate) async fn run(cfg: EventLoopConfig) -> Result<()> {
@@ -62,15 +62,29 @@ pub(crate) async fn run(cfg: EventLoopConfig) -> Result<()> {
     // Every driver-derived fact in one place. Only the CLI exits the
     // process on quit and binds the unix socket; in-process drivers
     // (embed / MCP) take typed requests on `req_rx` instead.
-    let (external_quit_rx, external_msg_tx, external_req_rx, ipc_listener_disabled, exit_on_quit) =
-        match driver {
-            DriverMode::Cli => (None, None, None, false, true),
-            DriverMode::InProcess {
-                msg_tx,
-                req_rx,
-                quit_rx,
-            } => (Some(quit_rx), msg_tx, Some(req_rx), true, false),
-        };
+    let (
+        external_quit_rx,
+        external_msg_tx,
+        external_req_rx,
+        ipc_listener_disabled,
+        exit_on_quit,
+        handle_signals,
+    ) = match driver {
+        DriverMode::Cli => (None, None, None, false, true, true),
+        DriverMode::InProcess {
+            msg_tx,
+            req_rx,
+            quit_rx,
+            handle_signals,
+        } => (
+            Some(quit_rx),
+            msg_tx,
+            Some(req_rx),
+            true,
+            false,
+            handle_signals,
+        ),
+    };
 
     let started = Instant::now();
     // CLI `create`/`join` daemons default their state file into the swarm's
@@ -118,7 +132,19 @@ pub(crate) async fn run(cfg: EventLoopConfig) -> Result<()> {
     // `gossip::handle_gossip_event`.
 
     let intervals = build_maintenance_intervals().await;
-    let quit_rx = spawn_quit_signal_tasks(exit_on_quit);
+    let quit_rx = if handle_signals {
+        spawn_quit_signal_tasks(exit_on_quit)
+    } else {
+        // A session inside a foreground command that owns its own lifetime
+        // (a `--advertise` transfer, a directory browse) must not register
+        // process-wide signal handlers — doing so suppresses the OS
+        // default-terminate forever and the host command stops dying on
+        // ctrl-c. Give the loop a quit channel that never fires instead;
+        // shutdown comes from `external_quit_rx` / drop.
+        let (quit_tx, quit_rx) = mpsc::channel::<()>(1);
+        std::mem::forget(quit_tx);
+        quit_rx
+    };
 
     // Flip `ready` to `true` only once the daemon can actually serve, then
     // re-write the state file (the earlier write reported `ready: false`).
@@ -333,8 +359,8 @@ async fn event_loop(loop_state: EventLoop) -> Result<()> {
                 // Task timers ride the sweep cadence (each gates on its own
                 // elapsed-time budget): evict idle-debounce-expired tasks, then
                 // keepalive the ones whose ball we still hold.
-                exchange::tick_exchange_sweep(&mut state, &sender, &swarm_str, &author, &output).await;
-                exchange::tick_exchange_keepalive(&mut state, &sender, &swarm_str, &author).await;
+                task::tick_task_sweep(&mut state, &sender, &swarm_str, &author, &output).await;
+                task::tick_task_keepalive(&mut state, &sender, &swarm_str, &author).await;
             }
             _ = intervals.heal.tick() => {
                 let (mono_gap, wall_gap) = timers::note_tick_gap("heal", &mut anchors.heal, &mut anchors.heal_wall, Duration::from_secs(HEAL_INTERVAL_SECS));
@@ -408,13 +434,13 @@ fn drain_surfaced(
 
 /// Whether a surfaced event belongs in the `poll`/`fetch` history — an explicit
 /// allow-list of the documented pollable contract (chat, presence joined/left,
-/// content exchange legs, and the transient `ping_report`/`peer_timeout`/
-/// `peer_return`/`exchange_timeout`/`fork`). Deliberately an allow-list, not
+/// content task legs, and the transient `ping_report`/`peer_timeout`/
+/// `peer_return`/`task_timeout`/`fork`). Deliberately an allow-list, not
 /// "everything except X": operational notices (`info`/`error`/`msg_posted`) and
 /// startup events (`ready`/`swarm_id`) also flow through the same `Output` tap,
 /// and must NOT enter the ring — they are developer/stream plumbing the poll
 /// contract never promised, and `poll_since`'s own eviction notices would
-/// otherwise feed back into the ring being polled. The `exchange` `Progress`
+/// otherwise feed back into the ring being polled. The `task` `Progress`
 /// beat is excluded too (a liveness widget update, never a retained record).
 fn is_pollable(event: &output::OutputEvent) -> bool {
     use output::OutputEvent;
@@ -424,13 +450,13 @@ fn is_pollable(event: &output::OutputEvent) -> bool {
         | OutputEvent::PingReport { .. }
         | OutputEvent::PeerTimeout { .. }
         | OutputEvent::PeerReturn { .. }
-        | OutputEvent::ExchangeTimeout { .. }
+        | OutputEvent::TaskTimeout { .. }
         | OutputEvent::StateChanged { .. }
         | OutputEvent::Fork { .. } => true,
-        OutputEvent::Exchange { msg, .. } => !matches!(
+        OutputEvent::Task { msg, .. } => !matches!(
             msg.kind,
-            crate::protocol::MessageKind::Exchange {
-                phase: crate::protocol::ExchangePhase::Progress,
+            crate::protocol::MessageKind::Task {
+                phase: crate::protocol::TaskPhase::Progress,
                 ..
             }
         ),

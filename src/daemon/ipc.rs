@@ -18,7 +18,7 @@ use crate::transport::ipc::{IpcCommand, json_ack, json_error, json_ok_msg};
 use crate::util::tuning::ping_window_secs;
 
 use crate::gossip::{
-    ExchangeLeg, broadcast_exchange, broadcast_message, broadcast_msg, broadcast_state_merge,
+    TaskLeg, broadcast_message, broadcast_msg, broadcast_state_merge, broadcast_task,
 };
 
 /// Returns `true` if the handler broadcast anything, so the caller
@@ -99,26 +99,24 @@ pub(crate) async fn handle_ipc_command(
             let _ = resp_tx.send(json_ack());
             true
         }
-        IpcCommand::Exchange {
+        IpcCommand::Task {
             swarm: _,
             to,
-            exchange_id,
-            kind,
+            task_id,
             phase,
             body,
         } => {
-            // `broadcast_exchange` validates the addressee (Offer only); an
+            // `broadcast_task` validates the addressee (Offer only); an
             // unknown participant comes back through the `Err` arm below as
             // `{"ok":false,"error":"unknown participant '<nick>'"}`.
-            tracing::debug!(%to, %exchange_id, %kind, %phase, "IPC exchange command received");
-            let leg = ExchangeLeg {
+            tracing::debug!(%to, %task_id, %phase, "IPC task command received");
+            let leg = TaskLeg {
                 to,
-                exchange_id,
-                kind,
+                task_id,
                 phase,
                 body,
             };
-            match broadcast_exchange(swarm, author, leg, state, sender, output).await {
+            match broadcast_task(swarm, author, leg, state, sender, output).await {
                 Ok((msg_id, msg)) => {
                     let _ = resp_tx.send(json_ok_msg(&msg_id, &msg));
                     true

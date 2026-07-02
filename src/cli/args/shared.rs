@@ -57,12 +57,12 @@ pub(crate) struct SharedServerOpts {
     pub sweep_interval_secs: u64,
 
     /// Task idle-debounce timeout (seconds).
-    #[arg(long, hide = true, default_value_t = consts::EXCHANGE_TIMEOUT_SECS)]
-    pub exchange_timeout_secs: u64,
+    #[arg(long, hide = true, default_value_t = consts::TASK_TIMEOUT_SECS)]
+    pub task_timeout_secs: u64,
 
     /// Task keepalive cadence for the ball-owner (seconds).
-    #[arg(long, hide = true, default_value_t = consts::EXCHANGE_KEEPALIVE_SECS)]
-    pub exchange_keepalive_secs: u64,
+    #[arg(long, hide = true, default_value_t = consts::TASK_KEEPALIVE_SECS)]
+    pub task_keepalive_secs: u64,
 
     /// Grace before an unmeshed joiner co-hosts the rendezvous (seconds).
     #[arg(long, hide = true, default_value_t = consts::BEACON_COHOST_GRACE_SECS)]
@@ -110,14 +110,57 @@ pub(crate) struct SharedServerOpts {
     pub passive_view_capacity: usize,
 }
 
+/// The hidden directory-tuning knobs for the ticket-advertising transfer
+/// commands (`pipe`/`file`/`port` listen + discover) — the subset of
+/// [`SharedServerOpts`]'s tuning the directory path reads. Production runs
+/// on the `crate::util::consts` defaults; the subprocess suite shortens
+/// them and flips `--directory-private` for a hermetic loopback directory.
+#[derive(Parser, Debug)]
+pub(crate) struct DirectoryTuningArgs {
+    /// Peer-eviction silence timeout (seconds) for the directory session.
+    #[arg(long, hide = true, default_value_t = consts::ALIVE_TIMEOUT_SECS)]
+    pub alive_timeout_secs: u64,
+
+    /// Grace before an unmeshed joiner co-hosts the rendezvous (seconds).
+    #[arg(long, hide = true, default_value_t = consts::BEACON_COHOST_GRACE_SECS)]
+    pub beacon_cohost_grace_secs: u64,
+
+    /// Directory re-broadcast cadence for an advertiser (seconds).
+    #[arg(long, hide = true, default_value_t = consts::ADVERTISE_INTERVAL_SECS)]
+    pub advertise_interval_secs: u64,
+
+    /// How long a discoverer keeps showing a ticket after its last ad (seconds).
+    #[arg(long, hide = true, default_value_t = consts::DIRECTORY_EXPIRY_SECS)]
+    pub directory_expiry_secs: u64,
+
+    /// Use the loopback (private) directory + relax the advertise→reachable guard.
+    #[arg(long, hide = true, default_value_t = false)]
+    pub directory_private: bool,
+}
+
+impl DirectoryTuningArgs {
+    /// The process tuning carried by these flags (defaults elsewhere), for
+    /// [`crate::util::tuning::init`].
+    pub(crate) fn tuning(&self) -> crate::util::tuning::Tuning {
+        crate::util::tuning::Tuning {
+            alive_timeout_secs: self.alive_timeout_secs,
+            cohost_grace_secs: self.beacon_cohost_grace_secs,
+            advertise_interval_secs: self.advertise_interval_secs,
+            directory_expiry_secs: self.directory_expiry_secs,
+            directory_private: self.directory_private,
+            ..crate::util::tuning::Tuning::DEFAULTS
+        }
+    }
+}
+
 impl SharedServerOpts {
     /// The process tuning carried by these flags, for [`crate::util::tuning::init`].
     pub(crate) fn tuning(&self) -> crate::util::tuning::Tuning {
         crate::util::tuning::Tuning {
             alive_timeout_secs: self.alive_timeout_secs,
             sweep_interval_secs: self.sweep_interval_secs,
-            exchange_timeout_secs: self.exchange_timeout_secs,
-            exchange_keepalive_secs: self.exchange_keepalive_secs,
+            task_timeout_secs: self.task_timeout_secs,
+            task_keepalive_secs: self.task_keepalive_secs,
             cohost_grace_secs: self.beacon_cohost_grace_secs,
             ping_window_secs: self.ping_window_secs,
             ppid_watch_interval_ms: self.ppid_watch_interval_ms,

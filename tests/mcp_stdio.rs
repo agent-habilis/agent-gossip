@@ -808,30 +808,29 @@ fn fetch_messages_cursor_returns_only_new_since_last_call() {
 
 // ─── task + roster ───────────────────────────────────────────────
 
-const MCP_EXCHANGE_ID: &str = "550e8400-e29b-41d4-a716-446655440000";
+const MCP_TASK_ID: &str = "550e8400-e29b-41d4-a716-446655440000";
 
-/// A task `offer` sent (via `send_exchange`) by the joiner to the creator
+/// A task `offer` sent (via `send_task`) by the joiner to the creator
 /// surfaces on the creator's `fetch_messages` as the stream-shaped
-/// `event:"exchange"` record with the `to`/`exchange_id`/`kind`/`phase`/`body`
+/// `event:"task"` record with the `to`/`task_id`/`phase`/`body`
 /// fields (plus `display` and `self`).
 #[test]
-fn send_exchange_surfaces_to_addressee_via_fetch() {
+fn send_task_surfaces_to_addressee_via_fetch() {
     let (mut creator, mut joiner, _swarm, creator_nick) = create_pair(700);
 
     let sent = tool_result_json(&joiner.tool_call(
         710,
-        "send_exchange",
+        "send_task",
         serde_json::json!({
             "to": creator_nick,
-            "exchange_id": MCP_EXCHANGE_ID,
-            "kind": "handover",
+            "task_id": MCP_TASK_ID,
             "phase": "offer",
             "text": "## Task\nport it",
         }),
     ))
-    .expect("send_exchange should succeed");
+    .expect("send_task should succeed");
     // The echo is the authoritative task record.
-    assert_eq!(sent["message"]["type"], "exchange");
+    assert_eq!(sent["message"]["type"], "task");
     assert_eq!(sent["message"]["phase"], "offer");
     assert_eq!(sent["message"]["to"], creator_nick);
 
@@ -849,7 +848,7 @@ fn send_exchange_surfaces_to_addressee_via_fetch() {
             .as_array()
             .into_iter()
             .flatten()
-            .find(|event| event["event"] == "exchange")
+            .find(|event| event["event"] == "task")
             .cloned();
         if let Some(found) = found {
             break found;
@@ -862,26 +861,24 @@ fn send_exchange_surfaces_to_addressee_via_fetch() {
         probe += 1;
         std::thread::sleep(Duration::from_millis(100));
     };
-    assert_eq!(task["exchange_id"], MCP_EXCHANGE_ID);
-    assert_eq!(task["kind"], "handover");
+    assert_eq!(task["task_id"], MCP_TASK_ID);
     assert_eq!(task["phase"], "offer");
     assert_eq!(task["to"], creator_nick);
     assert_eq!(task["body"], "## Task\nport it");
 }
 
-/// `send_exchange --phase offer` to a nickname that is not a current
+/// `send_task --phase offer` to a nickname that is not a current
 /// participant is rejected with an `unknown participant` error.
 #[test]
-fn send_exchange_offer_to_unknown_participant_errors() {
+fn send_task_offer_to_unknown_participant_errors() {
     let mut client = McpClient::spawn();
     let _ = client.create_and_get_swarm(730);
     let resp = client.tool_call(
         731,
-        "send_exchange",
+        "send_task",
         serde_json::json!({
             "to": "ghost-peer",
-            "exchange_id": MCP_EXCHANGE_ID,
-            "kind": "handover",
+            "task_id": MCP_TASK_ID,
             "phase": "offer",
             "text": "brief",
         }),

@@ -10,10 +10,7 @@
 
 use std::time::Duration;
 
-use anyhow::{Context, Result};
 use iroh::Endpoint;
-
-use crate::protocol::swarm::{LookupOpts, Swarm};
 
 mod consume;
 mod manifest;
@@ -44,19 +41,6 @@ const MAX_MANIFEST_BYTES: usize = 64 * 1024 * 1024;
 enum RootKind {
     File,
     Dir,
-}
-
-/// Resolve a `--swarm` id to its discovery config (`None` ⇒ a public default),
-/// so a transfer traverses the network the way that swarm's members do.
-fn swarm_lookups(swarm: Option<&str>) -> Result<LookupOpts> {
-    match swarm {
-        Some(id) => Ok(id
-            .parse::<Swarm>()
-            .context("invalid --swarm id")?
-            .lookups()
-            .clone()),
-        None => Ok(LookupOpts::public_preset()),
-    }
 }
 
 /// Best-effort wait (≤5s) for the endpoint to publish reachable addresses, so a
