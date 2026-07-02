@@ -130,6 +130,7 @@ fn kind_noun(kind: TokenType) -> &'static str {
         TokenType::Port => "ports",
         TokenType::Mount => "mounts",
         TokenType::Swarm => "swarms",
+        TokenType::Sh => "shells",
     }
 }
 

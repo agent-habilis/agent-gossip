@@ -54,6 +54,7 @@ mod tests {
             | Commands::Pipe { .. }
             | Commands::Port { .. }
             | Commands::File { .. }
+            | Commands::Sh { .. }
             | Commands::Mount { .. }
             | Commands::State { .. }
             | Commands::Meta { .. }

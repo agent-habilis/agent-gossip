@@ -1,5 +1,7 @@
 //! The branded `🐝` token codec shared by the swarm id ([`super::swarm`]),
-//! the pipe ticket ([`crate::pipe`]), and the port ticket ([`crate::port`]).
+//! the pipe ticket ([`crate::pipe`]), the port ticket ([`crate::port`]), the
+//! file ticket ([`crate::file`]), the mount ticket ([`crate::mount`]), and
+//! the shell ticket ([`crate::sh`]).
 //! One wire shape for every agent-habilis token, so a `🐝…` string
 //! self-describes its kind via a 1-byte type tag and the namespaces never
 //! collide.
@@ -28,6 +30,7 @@ pub(crate) enum TokenType {
     Port,
     File,
     Mount,
+    Sh,
 }
 
 impl TokenType {
@@ -37,7 +40,10 @@ impl TokenType {
             TokenType::Pipe => 2,
             TokenType::Port => 3,
             TokenType::File => 4,
+            // 5 shipped on main as the mount ticket while sh was still local;
+            // sh takes 6 — the type byte is wire format and never reassigned.
             TokenType::Mount => 5,
+            TokenType::Sh => 6,
         }
     }
 
@@ -48,6 +54,7 @@ impl TokenType {
             3 => Ok(TokenType::Port),
             4 => Ok(TokenType::File),
             5 => Ok(TokenType::Mount),
+            6 => Ok(TokenType::Sh),
             other => bail!("unknown token type: {other}"),
         }
     }
@@ -121,6 +128,7 @@ mod tests {
             TokenType::Port,
             TokenType::File,
             TokenType::Mount,
+            TokenType::Sh,
         ] {
             let token = encode(kind, b"payload-bytes");
             assert!(token.starts_with("🐝"));

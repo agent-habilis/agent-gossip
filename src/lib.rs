@@ -49,6 +49,7 @@ pub(crate) mod pipe;
 pub(crate) mod port;
 pub(crate) mod protocol;
 pub(crate) mod resolver;
+pub(crate) mod sh;
 pub(crate) mod transport;
 pub(crate) mod util;
 

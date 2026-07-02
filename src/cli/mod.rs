@@ -28,7 +28,7 @@ mod ticket_discover;
 pub(crate) use args::Cli;
 use args::{
     Commands, CreateOpts, FileAction, ForumOpts, MetaAction, MetaOpts, MountAction, MsgOpts,
-    OutputFormat, PeersOpts, PingOpts, PipeAction, PollOpts, PortAction, ReadyOpts,
+    OutputFormat, PeersOpts, PingOpts, PipeAction, PollOpts, PortAction, ReadyOpts, ShAction,
     SharedServerOpts, StateAction, StateOpts, TaskOpts,
 };
 
@@ -96,6 +96,7 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
         Commands::Pipe { action } => Box::pin(pipe(action)).await,
         Commands::Port { action } => Box::pin(port(action)).await,
         Commands::File { action } => Box::pin(file(action)).await,
+        Commands::Sh { action } => sh(action).await,
         Commands::Mount {
             action,
             ticket,
@@ -578,6 +579,30 @@ async fn file(action: FileAction) -> Result<()> {
                 None => Ok(()),
             }
         }
+    }
+}
+
+async fn sh(action: ShAction) -> Result<()> {
+    match action {
+        ShAction::Listen {
+            swarm,
+            output,
+            write,
+            command,
+            cols,
+            rows,
+        } => {
+            crate::sh::listen(
+                swarm.as_ref().map(crate::protocol::SwarmId::as_str),
+                matches!(output, OutputFormat::Json),
+                write,
+                command.as_deref(),
+                cols,
+                rows,
+            )
+            .await
+        }
+        ShAction::Connect { ticket } => crate::sh::connect(&ticket).await,
     }
 }
 

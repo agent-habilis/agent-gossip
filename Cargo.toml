@@ -150,6 +150,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["raw_value"] }
 rand = "0.9"
 libc = "0.2"
+# PTY spawn + resize for `ahsw sh` (broadcast a live shell). Blocking I/O,
+# bridged to tokio via reader/writer threads.
+portable-pty = "0.9"
 # `tracing` is already in the lockfile transitively (iroh depends on
 # it); declaring it directly only lets us emit our own spans/events and
 # adds nothing to the build. Pinned 0.1 (the only line; 0.x is stable).

@@ -72,6 +72,7 @@ mod tests {
             | Commands::Pipe { .. }
             | Commands::Port { .. }
             | Commands::File { .. }
+            | Commands::Sh { .. }
             | Commands::Mount { .. }
             | Commands::Discover { .. }
             | Commands::Mcp { .. }
@@ -150,6 +151,7 @@ mod tests {
             | Commands::Pipe { .. }
             | Commands::Port { .. }
             | Commands::File { .. }
+            | Commands::Sh { .. }
             | Commands::Mount { .. }
             | Commands::Discover { .. }
             | Commands::Mcp { .. }
