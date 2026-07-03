@@ -80,24 +80,19 @@ Code: `protocol::crypto::topic_seed`, `Swarm::from_topic`,
 
 ### password
 
-*Layer: identity · optional, per swarm or per transfer ticket.*
+*Layer: identity · optional, per swarm.*
 
 An optional knowledge factor on top of the bearer capability: with one set,
-holding the `🐝…` hash or ticket alone no longer admits. The password's value
-never travels. For a **swarm**, `create --password` stretches it with Argon2id
-(salt = the seed) into a key that replaces the seed in *every* derivation
-(topic, rendezvous, port ladder), and the hash carries a one-way **verifier**
-of that key so `join` can check a candidate locally — a wrong password fails
-immediately, before any network. For a **ticket** (file), the
-consumer presents the Argon2id stretch of the password (salt = the ticket
-secret) instead of the raw secret; the producer verifies online and rejects
-with a distinct "wrong password" close. Tickets carry no verifier —
-advertised ads are public, and a verifier there would be an offline grinding
-target; the swarm hash accepts that trade for local verifiability. A
-passworded swarm or ticket is therefore safe to **advertise**.
+holding the `🐝…` hash alone no longer admits. The password's value never
+travels. `create --password` stretches it with Argon2id (salt = the seed)
+into a key that replaces the seed in *every* derivation (topic, rendezvous,
+port ladder), and the hash carries a one-way **verifier** of that key so
+`join` can check a candidate locally — a wrong password fails immediately,
+before any network. A passworded swarm is therefore safe to **advertise**:
+the ad carries the bearer token, but joining still needs the password.
 
-Code: `protocol::crypto` (`stretch_swarm_password`, `password_verifier`,
-`TicketAuth`), `Swarm::{set_password, apply_password}`.
+Code: `protocol::crypto` (`stretch_swarm_password`, `password_verifier`),
+`Swarm::{set_password, apply_password}`.
 
 ### rendezvous
 

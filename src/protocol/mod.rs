@@ -16,7 +16,6 @@ pub(crate) mod message;
 pub(crate) mod nickname;
 pub(crate) mod peer_addr;
 pub(crate) mod swarm;
-pub(crate) mod token;
 mod wordlist;
 
 pub(crate) use message::{

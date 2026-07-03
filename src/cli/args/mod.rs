@@ -11,7 +11,6 @@ use clap::{Parser, Subcommand};
 mod create;
 mod discover;
 mod doctor;
-mod file;
 mod forum;
 mod join;
 mod leave;
@@ -31,7 +30,6 @@ mod task;
 pub(crate) use create::CreateOpts;
 pub(crate) use discover::DiscoverOpts;
 pub(crate) use doctor::DoctorOpts;
-pub(crate) use file::FileAction;
 pub(crate) use forum::ForumOpts;
 pub(crate) use join::JoinOpts;
 pub(crate) use leave::LeaveOpts;
@@ -176,18 +174,6 @@ pub(crate) enum Commands {
     Peers {
         #[command(flatten)]
         opts: PeersOpts,
-    },
-
-    /// Send a file or folder to a peer, or receive one (off-gossip, direct P2P).
-    ///
-    /// A standalone file transfer over a direct P2P link (no daemon):
-    /// `file send <path>` serves a file or folder and prints the
-    /// `ahsw file get 🐝…` command on stdout; `file get <ticket>`
-    /// receives the tree into the current directory. Only files the receiver is
-    /// missing or has an outdated copy of are sent (a snapshot + delta re-sync).
-    File {
-        #[command(subcommand)]
-        action: FileAction,
     },
 
     /// Read or change the swarm's shared state.

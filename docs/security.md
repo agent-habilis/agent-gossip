@@ -271,8 +271,8 @@ There is:
 
 ### Passwords: a knowledge factor on the bearer token
 
-`create --password` (and `file send`
-`--password`) adds a second factor: the bearer token alone no longer admits.
+`create --password` adds a second factor: the bearer token alone no longer
+admits.
 
 **Mechanism, swarm.** The password is stretched with **Argon2id**
 (m=19 MiB, t=2, p=1 — a wire contract: every member derives with these exact
@@ -283,16 +283,6 @@ seed, so without the password nothing reachable can even be computed; that
 derivation switch is the actual gate. The id additionally carries a one-way
 **verifier** (`derive_secret(K, "password-verify")[..16]`) so `join` checks
 a candidate locally and a wrong password fails fast, before any network.
-
-**Mechanism, tickets.** A transfer consumer presents
-`Argon2id(password, salt = derive_secret(secret, "ticket-password"))` on the
-wire instead of the raw ticket secret (same 32 bytes); the producer
-precomputes the expectation once at bind and compares in constant time,
-closing a mismatch with a distinct "wrong password" code. Tickets carry
-**no** verifier: their ads are published into open directories, and a
-verifier there would hand every browser an offline grinding target — the
-producer is necessarily online to redeem against, so verification is online
-and naturally rate-limited.
 
 **What the password costs and does not buy:**
 
@@ -307,23 +297,15 @@ and naturally rate-limited.
 - **No rotation or revocation.** The password is baked into every
   derivation, so changing it mints a new swarm — the same lifecycle as a
   leaked id.
-- **Discovered tickets are a phishing surface.** Anyone can advertise a
-  forged "passworded" ticket; a consumer who picks it and types a password
-  sends the attacker an offline-crackable, stretched sample of that
-  password. Passwords are per-artifact secrets — never reuse a valuable
-  one on a discovered ticket.
-- **No DoS amplification.** The producer stretches once at bind, never per
-  connection; a wrong-password flood costs it a 32-byte read + constant-time
-  compare each.
 - **Memory hygiene.** Passwords and stretched keys are held un-zeroized in
   process memory for the session's lifetime (accepted); they are wrapped in
   a redacting type so `{:?}` logging can never print one, and developer log
   files never carry them.
 
 Advertising changes character with a password: an advertised passwordless
-swarm or ticket is open to anyone browsing the directory, while a passworded
-one is safe to list — the ad carries the bearer token, but redeeming it
-needs the password.
+swarm is open to anyone browsing the directory, while a passworded one is
+safe to list — the ad carries the bearer token, but joining still needs the
+password.
 
 A **forum** swarm (`ahsw forum <string>`) is world-joinable by design:
 its seed is derived from the shared string, so anyone who knows or guesses

@@ -37,7 +37,6 @@ pub(crate) mod beacon;
 pub(crate) mod cli;
 pub(crate) mod daemon;
 pub(crate) mod directory;
-pub(crate) mod file;
 pub(crate) mod gossip;
 pub(crate) mod lifecycle;
 pub(crate) mod logging;

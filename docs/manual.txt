@@ -37,14 +37,6 @@ SYNOPSIS
 
        ahsw session [--session-pid PID] [--output human|json]
 
-       ahsw file send PATH [--swarm 🐝… | --public | --mdns --dht --relay[=URLS]]
-                  [--advertise[=NAME]] [--password[=PW]] [--throttle RATE]
-                  [--output human|json]
-       ahsw file get  🐝… [--out DIR] [--throttle RATE] [--password[=PW]]
-                  [--output human|json]
-       ahsw file discover [NAME] [--public] [--mdns] [--dht] [--relay[=URLS]]
-                  [--out DIR] [--throttle RATE] [--password[=PW]] [--output human|json]
-
        ahsw state merge --swarm 🐝… --nickname NAME --merge MERGE
        ahsw state get   --swarm 🐝… --nickname NAME
 
@@ -475,64 +467,6 @@ COMMANDS
                               "nickname":"swift-cedar","pid":34299}],
                  "other_sessions":0,"cleaned":0}
 
-       file send PATH [--swarm 🐝… | --public | --mdns --dht --relay[=URLS]]
-                 [--advertise[=NAME]] [--password[=PW]] [--throttle RATE]
-                 [--output human|json]
-       file get  🐝… [--out DIR] [--throttle RATE] [--password[=PW]]
-                 [--output human|json]
-       file discover [NAME] [--public] [--mdns] [--dht] [--relay[=URLS]]
-                 [--out DIR] [--throttle RATE] [--password[=PW]] [--output human|json]
-              Send a file or folder over an off-gossip direct link — no running
-              daemon required, and it lands as a real tree on disk (not a byte
-              stream). `file send PATH` serves a file or
-              directory and prints on stdout a status line plus the receiver's
-              ready-to-run `ahsw file get 🐝…` command (bold-green in a
-              terminal); `file get <ticket>` receives it into the current
-              directory — a folder is recreated under a directory named after the
-              source, a single file keeps its name — OVERWRITING existing files.
-              --out DIR writes somewhere other than the current directory.
-
-              It is a SNAPSHOT + DELTA RE-SYNC, not a live watch: on `get` the
-              receiver sends the sender a manifest (path + size + hash) of what
-              it already has, and the sender streams back ONLY the files that
-              are missing or changed; unchanged files are skipped. `file send`
-              STAYS UP and re-reads the source per connection, so re-running
-              `file get` with the same ticket brings the destination back in
-              sync cheaply. It only ever adds or overwrites — it NEVER deletes, so
-              it is a receive, not a mirror. Symlinks are skipped (not followed,
-              not recreated); unix permission bits are preserved best-effort.
-
-              The ticket is a bearer capability (a random secret carrying the
-              sender's address + the swarm's discovery config); it shares the
-              🐝… glyph but is a DISTINCT token, not accepted by --swarm or
-              join.
-              The discovery config comes from --swarm or the create-style
-              --mdns/--dht/--relay flags; neither is a public
-              default (--public is its explicit alias), and a loopback-only
-              config confines the transfer to one machine. --throttle caps
-              throughput (e.g. 100k, 2m; bytes/sec, 1024-based), doubling as
-              a way to watch the progress bar on a fast/local link. On the sender side, --output json swaps the
-              decorated human hint for one plain `ahsw file get 🐝…` line a
-              script can capture; on the receiver side it suppresses the
-              `Received …` summary.
-
-              --advertise[=NAME] + `file discover` publish and browse tickets:
-              the ticket is listed in directory NAME (bare ⇒ `global`),
-              labeled with the source's name, and `file discover NAME` browses
-              the directory and fetches on pick (`--out` as in `file get`).
-              --password[=PW] protects the ticket: the
-              ticket alone no longer redeems, and `file get` must present the
-              password — which makes a passworded ticket safe to advertise.
-
-              Unlike a raw byte stream, `file` walks the tree, transfers only
-              the delta, and writes it back out as files (not a flat stream).
-
-              Examples:
-                ahsw file send ./report.pdf --swarm 🐝…   # hint → ahsw file get 🐝…
-                ahsw file get 🐝Ydy8… --out ~/Downloads
-                ahsw file send ./project --swarm 🐝…   ↔   ahsw file get 🐝…  # re-run to re-sync
-                ahsw file send ./photos --advertise trip   ↔   ahsw file discover trip
-
        state merge --swarm 🐝… --nickname NAME --merge MERGE
        state get   --swarm 🐝… --nickname NAME
               Read or change the swarm's shared state — a JSON document the whole
@@ -736,13 +670,10 @@ NETWORKING
        reliability. Use --public unless you must restrict reach. For
        discover, the flags must match whatever the advertiser used.
 
-       The transfer and discover commands (file,
-       discover) take the same flags, with one difference: there the all-on
-       preset is already the no-flag default (a transfer is inherently
-       networked), so --public is its explicit alias. The alternatives are
-       exclusive: --public conflicts with the granular --mdns/--dht/--relay
-       flags, and --swarm (which already carries a discovery config)
-       conflicts with all four.
+       The discover command takes the same flags, with one difference: there
+       the all-on preset is already the no-flag default (discovery is inherently
+       networked), so --public is its explicit alias. --public conflicts with
+       the granular --mdns/--dht/--relay flags.
 
 DIRECTORIES
        A directory is a named, well-known public swarm that swarms advertise

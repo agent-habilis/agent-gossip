@@ -51,7 +51,6 @@ mod tests {
             | Commands::Discover { .. }
             | Commands::Task { .. }
             | Commands::Peers { .. }
-            | Commands::File { .. }
             | Commands::State { .. }
             | Commands::Meta { .. }
             | Commands::Ready { .. }

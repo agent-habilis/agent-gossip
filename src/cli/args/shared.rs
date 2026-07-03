@@ -118,49 +118,6 @@ pub(crate) struct SharedServerOpts {
     pub passive_view_capacity: usize,
 }
 
-/// The hidden directory-tuning knobs for the ticket-advertising transfer
-/// commands (`file` listen + discover) — the subset of
-/// [`SharedServerOpts`]'s tuning the directory path reads. Production runs
-/// on the `crate::util::consts` defaults; the subprocess suite shortens
-/// them and flips `--directory-private` for a hermetic loopback directory.
-#[derive(Parser, Debug)]
-pub(crate) struct DirectoryTuningArgs {
-    /// Peer-eviction silence timeout (seconds) for the directory session.
-    #[arg(long, hide = true, default_value_t = consts::ALIVE_TIMEOUT_SECS)]
-    pub alive_timeout_secs: u64,
-
-    /// Grace before an unmeshed joiner co-hosts the rendezvous (seconds).
-    #[arg(long, hide = true, default_value_t = consts::BEACON_COHOST_GRACE_SECS)]
-    pub beacon_cohost_grace_secs: u64,
-
-    /// Directory re-broadcast cadence for an advertiser (seconds).
-    #[arg(long, hide = true, default_value_t = consts::ADVERTISE_INTERVAL_SECS)]
-    pub advertise_interval_secs: u64,
-
-    /// How long a discoverer keeps showing a ticket after its last ad (seconds).
-    #[arg(long, hide = true, default_value_t = consts::DIRECTORY_EXPIRY_SECS)]
-    pub directory_expiry_secs: u64,
-
-    /// Use the loopback (private) directory + relax the advertise→reachable guard.
-    #[arg(long, hide = true, default_value_t = false)]
-    pub directory_private: bool,
-}
-
-impl DirectoryTuningArgs {
-    /// The process tuning carried by these flags (defaults elsewhere), for
-    /// [`crate::util::tuning::init`].
-    pub(crate) fn tuning(&self) -> crate::util::tuning::Tuning {
-        crate::util::tuning::Tuning {
-            alive_timeout_secs: self.alive_timeout_secs,
-            cohost_grace_secs: self.beacon_cohost_grace_secs,
-            advertise_interval_secs: self.advertise_interval_secs,
-            directory_expiry_secs: self.directory_expiry_secs,
-            directory_private: self.directory_private,
-            ..crate::util::tuning::Tuning::DEFAULTS
-        }
-    }
-}
-
 impl SharedServerOpts {
     /// Whether a hidden `--password` prompt must NOT block this session:
     /// non-interactive or JSON-output runs are agent-driven, with no human
@@ -193,46 +150,3 @@ impl SharedServerOpts {
     }
 }
 
-/// Parse a throttle rate like `512`, `100k`, `2m`, `1g` into bytes/sec. Suffixes
-/// are 1024-based (`k` = `KiB`, `m` = `MiB`, `g` = `GiB`); a bare number is bytes.
-/// Used by the throttled transfer commands (`file`'s `--throttle`).
-pub(crate) fn parse_rate(raw: &str) -> Result<u64, String> {
-    let raw = raw.trim();
-    let (digits, mult): (&str, u64) = match raw.chars().last() {
-        // The suffix is ASCII, so trimming one byte is on a char boundary.
-        Some('k' | 'K') => (&raw[..raw.len() - 1], 1 << 10),
-        Some('m' | 'M') => (&raw[..raw.len() - 1], 1 << 20),
-        Some('g' | 'G') => (&raw[..raw.len() - 1], 1 << 30),
-        _ => (raw, 1),
-    };
-    let value: u64 = digits
-        .parse()
-        .map_err(|_| format!("invalid rate `{raw}` (use e.g. 512, 100k, 2m)"))?;
-    let bytes = value
-        .checked_mul(mult)
-        .ok_or_else(|| format!("rate `{raw}` is too large"))?;
-    if bytes == 0 {
-        return Err("rate must be greater than 0".to_owned());
-    }
-    Ok(bytes)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::parse_rate;
-
-    #[test]
-    fn parses_plain_and_suffixed_rates() {
-        assert_eq!(parse_rate("512"), Ok(512));
-        assert_eq!(parse_rate("100k"), Ok(100 * 1024));
-        assert_eq!(parse_rate("2M"), Ok(2 * 1024 * 1024));
-        assert_eq!(parse_rate("1g"), Ok(1 << 30));
-    }
-
-    #[test]
-    fn rejects_garbage_and_zero() {
-        assert!(parse_rate("abc").is_err());
-        assert!(parse_rate("0").is_err());
-        assert!(parse_rate("12x").is_err());
-    }
-}
