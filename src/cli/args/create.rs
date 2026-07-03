@@ -226,8 +226,8 @@ mod tests {
                 | Commands::Plug { .. }
                 | Commands::Unplug { .. }
                 | Commands::Doctor { .. }
-            | Commands::Leave { .. }
-            | Commands::Session { .. } => panic!("expected Create"),
+                | Commands::Leave { .. }
+                | Commands::Session { .. } => panic!("expected Create"),
             }
         }
         assert_eq!(

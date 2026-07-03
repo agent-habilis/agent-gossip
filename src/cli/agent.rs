@@ -72,7 +72,8 @@ impl AgentState {
 
 impl Agent {
     /// Every agent, in display order.
-    pub(crate) const ALL: [Agent; 4] = [Agent::ClaudeCode, Agent::Pi, Agent::Generic, Agent::Cursor];
+    pub(crate) const ALL: [Agent; 4] =
+        [Agent::ClaudeCode, Agent::Pi, Agent::Generic, Agent::Cursor];
 
     /// The agent's CLI label (`claude` / `pi` / `generic` / `cursor`), for display.
     pub(crate) fn label(self) -> &'static str {

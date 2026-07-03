@@ -4,23 +4,13 @@
 const MAX_ANCESTRY_DEPTH: usize = 64;
 
 #[cfg(target_os = "macos")]
-#[expect(
-    unsafe_code,
-    reason = "libc::proc_pidinfo FFI; no safe wrapper exists"
-)]
+#[expect(unsafe_code, reason = "libc::proc_pidinfo FFI; no safe wrapper exists")]
 fn bsdinfo_for(pid: u32) -> Option<libc::proc_bsdinfo> {
     let pid = libc::pid_t::try_from(pid).ok()?;
     let mut info = unsafe { std::mem::zeroed::<libc::proc_bsdinfo>() };
     let size = i32::try_from(size_of::<libc::proc_bsdinfo>()).ok()?;
-    let written = unsafe {
-        libc::proc_pidinfo(
-            pid,
-            libc::PROC_PIDTBSDINFO,
-            0,
-            (&raw mut info).cast(),
-            size,
-        )
-    };
+    let written =
+        unsafe { libc::proc_pidinfo(pid, libc::PROC_PIDTBSDINFO, 0, (&raw mut info).cast(), size) };
     // A short read means the pid vanished mid-call or the struct layout
     // disagrees — either way the data is not trustworthy.
     (written == size).then_some(info)

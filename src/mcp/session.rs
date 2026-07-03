@@ -483,7 +483,10 @@ mod tests {
         let mut replay_from: Option<u64> = None;
         let deadline = tokio::time::Instant::now() + DELIVER;
         while tokio::time::Instant::now() < deadline {
-            let events = alice.fetch_messages(None, false).await.expect("first fetch");
+            let events = alice
+                .fetch_messages(None, false)
+                .await
+                .expect("first fetch");
             let bob_join_idx = events.iter().position(|item| {
                 as_message(&item.event).is_some_and(|msg| {
                     matches!(
@@ -506,7 +509,10 @@ mod tests {
 
         // Second fetch with no new traffic: cursor advanced past everything
         // buffered, so the delta must be empty.
-        let empty_delta = alice.fetch_messages(None, false).await.expect("delta fetch");
+        let empty_delta = alice
+            .fetch_messages(None, false)
+            .await
+            .expect("delta fetch");
         assert!(
             empty_delta.is_empty(),
             "second cursor-less fetch must return delta (empty), got {empty_delta:?}"

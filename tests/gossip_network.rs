@@ -489,7 +489,10 @@ fn test_oversize_body_splits_then_refuses_past_the_part_cap() {
     let body = "a".repeat(agent_habilis_swarm::MAX_MESSAGE_SIZE * 2);
     cli_message(&swarm, &creator.nickname, &body);
     let total = wait_total(|| creator.messages().len() + joiner.messages().len(), 2);
-    assert_eq!(total, 2, "the multipart body surfaces exactly once per node");
+    assert_eq!(
+        total, 2,
+        "the multipart body surfaces exactly once per node"
+    );
     let got: Vec<Msg> = creator
         .messages()
         .into_iter()
@@ -2445,7 +2448,14 @@ fn spawn_discoverable_daemon(name: &str) -> (std::process::Child, PathBuf, Strin
     let log = tmp_log(&format!("leave-{name}"));
     let file = File::create(&log).unwrap();
     let mut child = common::test_cmd()
-        .args(["create", "--name", name, "--no-interactive", "--output", "json"])
+        .args([
+            "create",
+            "--name",
+            name,
+            "--no-interactive",
+            "--output",
+            "json",
+        ])
         .stdout(Stdio::from(file.try_clone().unwrap()))
         .stderr(Stdio::from(file))
         .spawn()
@@ -2623,7 +2633,13 @@ fn leave_nothing_owned_is_a_clean_noop() {
         .expect("failed to spawn sleep");
 
     let out = common::test_cmd()
-        .args(["leave", "--session-pid", &idle.id().to_string(), "--output", "json"])
+        .args([
+            "leave",
+            "--session-pid",
+            &idle.id().to_string(),
+            "--output",
+            "json",
+        ])
         .output()
         .expect("failed to run ahsw leave");
     assert!(out.status.success(), "leave should exit 0 on a no-op");
