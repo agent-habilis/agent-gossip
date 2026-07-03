@@ -301,10 +301,11 @@ pub(crate) enum Commands {
 
     /// Plug the swarm integrations into your agents.
     ///
-    /// Targets Claude Code (the plugin), pi (the extension), and a generic
-    /// `~/.agents/skills` agent. The artifacts are embedded in the binary, so
-    /// this needs no repo checkout. With no `--agent`, the detected agents are
-    /// used. Reversible with `unplug`.
+    /// Targets Claude Code (the plugin), pi (the extension), Cursor
+    /// (`~/.cursor/skills`), and a generic `~/.agents/skills` agent. The
+    /// artifacts are embedded in the binary, so this needs no repo checkout.
+    /// With no `--agent`, the detected agents are used; an agent that is not
+    /// on this machine is skipped, never scaffolded. Reversible with `unplug`.
     Plug {
         /// Agent(s) to install into (repeatable). Defaults to detected agents.
         #[arg(long = "agent", value_enum)]

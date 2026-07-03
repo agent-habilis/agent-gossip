@@ -82,8 +82,8 @@ SYNOPSIS
 
        ahsw man
 
-       ahsw plug   [--agent claude-code|pi|generic]
-       ahsw unplug [--agent claude-code|pi|generic]
+       ahsw plug   [--agent claude-code|pi|generic|cursor]
+       ahsw unplug [--agent claude-code|pi|generic|cursor]
        ahsw doctor [--swarm 🐝…] [--no-probe] [--output human|json]
 
        ahsw --help | --version
@@ -934,15 +934,18 @@ COMMANDS
        man
               Print this manual to stdout and exit.
 
-       plug [--agent claude-code|pi|generic]
+       plug [--agent claude-code|pi|generic|cursor]
               Install the swarm integrations into your agents — the Claude
-              Code plugin (~/.claude/skills/swarm), the pi extension, and the
-              generic ~/.agents/skills/swarm skill. The artifacts are embedded
+              Code plugin (~/.claude/skills/swarm), the pi extension, the
+              generic ~/.agents/skills/swarm skill, and the same skill for
+              Cursor (~/.cursor/skills/swarm). The artifacts are embedded
               in the binary, so no repo checkout is needed. Writes immediately
               (reversible with unplug). With no --agent, the detected agents
-              are used; repeat --agent to select several.
+              are used; repeat --agent to select several. An agent that is
+              not on this machine (its config dir is missing) is skipped,
+              never scaffolded — even when named explicitly.
 
-       unplug [--agent claude-code|pi|generic]
+       unplug [--agent claude-code|pi|generic|cursor]
               Remove what plug installed (symmetric). With no --agent, the
               agents that have it installed are used.
 
@@ -951,9 +954,9 @@ COMMANDS
               line a check with a [OK]/[!]/[x] verdict; a hard failure exits
               non-zero. With no --swarm, a machine-health report in four
               sections: Environment (version, OS/arch, log + socket dirs);
-              Integrations (per agent — claude-code, pi, generic — whether the
-              installed skill is up to date, out of date, not set up, or absent,
-              with its path); Network (local bind, UDP, NAT/hole-punch behavior,
+              Integrations (per agent — claude-code, pi, generic, cursor —
+              whether the installed skill is up to date, out of date, not set
+              up, or absent, with its path); Network (local bind, UDP, NAT/hole-punch behavior,
               public address, relay latency); and Active swarms (each daemon
               running on this machine, with its id, name, nickname, and size).
               With --swarm 🐝…, decode that swarm's declared connection methods
