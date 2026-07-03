@@ -8,13 +8,14 @@
 mod common;
 
 use std::fs::{self, File};
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use common::{
     CONNECT_TIMEOUT, InProcNode, MSG_TIMEOUT, Msg, Node, POLL, RECOVERY_TIMEOUT, RUNTIME_DIR, bin,
-    cli_message, cli_message_raw, cli_notice, cli_peers, cli_ping, cli_poll, cli_poll_wait,
-    serial_guard, socket_path, tmp_log, trace_log, wait_total, wait_until,
+    cli_message, cli_message_raw, cli_notice, cli_peers, cli_ping, cli_poll, cli_poll_long,
+    ipc_raw, serial_guard, socket_path, tmp_log, trace_log, wait_total, wait_until,
 };
 use serde_json::json;
 
@@ -432,6 +433,8 @@ async fn test_bidirectional_messaging() {
 /// Verify that unit-level JSON wire format tests pass.
 /// The ext field and version checks are covered in `protocol::message::tests`.
 /// This integration test confirms the CLI sends parseable SWARM 1.0 blocks.
+/// One send surfaces twice: the sender's own stream echoes it (stream
+/// self-parity) and the peer receives it.
 #[test]
 fn test_stdout_format_parseable() {
     let (creator, swarm) = Node::create();
@@ -441,15 +444,17 @@ fn test_stdout_format_parseable() {
 
     cli_message(&swarm, &creator.nickname, "format check message");
 
-    let total = wait_total(|| creator.messages().len() + joiner.messages().len(), 1);
-    assert_eq!(total, 1, "message should be parseable and delivered");
+    let total = wait_total(|| creator.messages().len() + joiner.messages().len(), 2);
+    assert_eq!(total, 2, "one parseable self-echo + one parseable delivery");
 
     let msgs: Vec<Msg> = creator
         .messages()
         .into_iter()
         .chain(joiner.messages())
         .collect();
-    assert_eq!(msgs[0].body, "format check message");
+    for msg in &msgs {
+        assert_eq!(msg.body, "format check message");
+    }
 }
 
 /// `ask` with no running server exits non-zero with a clear error message.
@@ -479,20 +484,20 @@ fn test_oversize_body_splits_then_refuses_past_the_part_cap() {
     assert!(joiner.wait_ready(&swarm), "joiner socket never appeared");
 
     // Over the single-message cap: the daemon splits it into parts and the
-    // receiver reassembles, so it surfaces once as the whole body.
+    // receiver reassembles, so it surfaces once as the whole body on each
+    // stream — the sender's self-echo and the peer's delivery.
     let body = "a".repeat(agent_habilis_swarm::MAX_MESSAGE_SIZE * 2);
     cli_message(&swarm, &creator.nickname, &body);
-    let total = wait_total(|| creator.messages().len() + joiner.messages().len(), 1);
-    assert_eq!(total, 1, "the multipart body should surface exactly once");
+    let total = wait_total(|| creator.messages().len() + joiner.messages().len(), 2);
+    assert_eq!(total, 2, "the multipart body surfaces exactly once per node");
     let got: Vec<Msg> = creator
         .messages()
         .into_iter()
         .chain(joiner.messages())
         .collect();
-    assert_eq!(
-        got[0].body, body,
-        "the reassembled body matches the original"
-    );
+    for msg in &got {
+        assert_eq!(msg.body, body, "the reassembled body matches the original");
+    }
 
     // Too large for the part cap: refused on the sender with a clear error.
     let huge = "a".repeat(agent_habilis_swarm::MAX_LOGICAL_BODY_BYTES);
@@ -519,14 +524,17 @@ fn test_utf8_body_round_trip() {
     let body = "héllo 🐝 日本語";
     cli_message(&swarm, &creator.nickname, body);
 
-    let total = wait_total(|| creator.messages().len() + joiner.messages().len(), 1);
-    assert_eq!(total, 1, "utf-8 message should be delivered");
+    // One send surfaces twice: the sender's self-echo + the peer's delivery.
+    let total = wait_total(|| creator.messages().len() + joiner.messages().len(), 2);
+    assert_eq!(total, 2, "utf-8 message delivered verbatim on both streams");
     let msgs: Vec<Msg> = creator
         .messages()
         .into_iter()
         .chain(joiner.messages())
         .collect();
-    assert_eq!(msgs[0].body, body);
+    for msg in &msgs {
+        assert_eq!(msg.body, body);
+    }
 }
 
 /// Control characters (other than tab/newline) in a body are rejected.
@@ -1154,48 +1162,67 @@ fn test_poll_returns_messages() {
     }
 }
 
-/// `poll --wait <ms>` long-polls: with no new traffic it blocks for ~the wait
-/// then returns an empty array; when a peer sends mid-wait it returns promptly,
-/// well before the timeout. The daemon never blocks — only the held call waits.
+/// Baseline a node's poll cursor to "now": a first full poll, then advance
+/// past its newest seq — so a long-poll after it sees only new events.
+fn poll_cursor(swarm: &str, nickname: &str) -> Option<String> {
+    let baseline = cli_poll(swarm, nickname, None);
+    let baseline: Vec<serde_json::Value> = serde_json::from_str(&baseline).unwrap();
+    baseline
+        .iter()
+        .filter_map(|event| event["seq"].as_u64())
+        .max()
+        .map(|seq| seq.to_string())
+}
+
+/// The wire single-park contract: a raw `{"command":"poll",...,"long":true}`
+/// with no new traffic is held for ~the daemon's park cap, then returns
+/// exactly `[]`. Sent straight over the Unix socket — the `ahsw` client would
+/// hide the empty return behind its `--long` re-issue loop.
 #[test]
-fn test_poll_wait_blocks_then_resolves_and_times_out() {
+fn test_ipc_poll_long_park_times_out_empty() {
+    let (creator, swarm) = Node::create_flags("itest", &[("--longpoll-max-ms", "1000")]);
+    assert!(creator.wait_ready(&swarm), "creator socket never appeared");
+    std::thread::sleep(Duration::from_secs(2)); // presence settles
+
+    let after = poll_cursor(&swarm, &creator.nickname);
+    let cursor = after.map_or(String::new(), |seq| format!("\"after\":{seq},"));
+    let line = format!("{{\"command\":\"poll\",\"swarm\":\"{swarm}\",{cursor}\"long\":true}}");
+    let started = Instant::now();
+    let resp = ipc_raw(&swarm, &creator.nickname, &line);
+    let elapsed = started.elapsed();
+    assert_eq!(resp, "[]", "park elapsed quietly → empty array");
+    assert!(
+        elapsed >= Duration::from_millis(700),
+        "should have parked ~1s, took {elapsed:?}"
+    );
+    assert!(
+        elapsed < Duration::from_secs(10),
+        "park honored the shrunk cap, took {elapsed:?}"
+    );
+}
+
+/// `poll --long` blocks, then resolves promptly when a peer sends: the parked
+/// read wakes on the event landing, not on any timeout.
+#[test]
+fn test_poll_long_resolves_on_traffic() {
     let (creator, swarm) = Node::create();
-    let joiner = Node::join(&swarm, "joiner-wait");
+    let joiner = Node::join(&swarm, "joiner-long");
     assert!(creator.wait_ready(&swarm), "creator socket never appeared");
     assert!(joiner.wait_ready(&swarm), "joiner socket never appeared");
     std::thread::sleep(Duration::from_secs(2)); // presence settles
 
-    // Baseline the joiner's cursor to "now" so the waits below see only new
-    // events: a first full poll, then advance past its newest seq.
-    let baseline = cli_poll(&swarm, &joiner.nickname, None);
-    let baseline: Vec<serde_json::Value> = serde_json::from_str(&baseline).unwrap();
-    let last_seq = baseline
-        .iter()
-        .filter_map(|event| event["seq"].as_u64())
-        .max();
-    let after = last_seq.map(|seq| seq.to_string());
+    let after = poll_cursor(&swarm, &joiner.nickname);
 
-    // (1) Timeout: no traffic, a 1s wait returns `[]` after ~blocking ~1s.
-    let (empty, timeout_elapsed) =
-        cli_poll_wait(&swarm, &joiner.nickname, after.as_deref(), "1000");
-    assert_eq!(empty, "[]", "no traffic → empty array");
-    assert!(
-        timeout_elapsed >= Duration::from_millis(700),
-        "should have blocked ~1s, took {timeout_elapsed:?}"
-    );
-
-    // (2) Resolves on traffic: start a blocking 60s wait (the daemon's
-    // long-poll max), have the creator send ~400ms in; the poll must return the
-    // message well under the ceiling. The wait is generous so a loaded host
-    // can't flake a correct delivery, yet returning long before 60s still
-    // proves the poll woke on traffic rather than spinning to an empty timeout.
+    // Have the creator send ~400ms into the blocking poll; it must return the
+    // message well under the daemon's 60s park cap — proving it woke on
+    // traffic rather than spinning to an empty timeout.
     let swarm_for_send = swarm.clone();
     let creator_nick = creator.nickname.clone();
     let sender = std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(400));
         cli_message(&swarm_for_send, &creator_nick, "via long-poll");
     });
-    let (got, resolve_elapsed) = cli_poll_wait(&swarm, &joiner.nickname, after.as_deref(), "60000");
+    let (got, resolve_elapsed) = cli_poll_long(&swarm, &joiner.nickname, after.as_deref());
     sender.join().unwrap();
     let events: Vec<serde_json::Value> = serde_json::from_str(&got)
         .unwrap_or_else(|error| panic!("parse long-poll JSON: {error}\nraw: {got}"));
@@ -1207,7 +1234,47 @@ fn test_poll_wait_blocks_then_resolves_and_times_out() {
     );
     assert!(
         resolve_elapsed < Duration::from_mins(1),
-        "woke on traffic rather than spinning to the wait ceiling, took {resolve_elapsed:?}"
+        "woke on traffic rather than spinning to the park cap, took {resolve_elapsed:?}"
+    );
+}
+
+/// The CLI's `--long` re-issue loop survives empty parks: with the daemon's
+/// park cap shrunk to 1s and the message arriving at ~2.5s, a single
+/// `poll --long` invocation rides through at least two empty windows and
+/// still delivers it.
+#[test]
+fn test_poll_long_loops_past_empty_parks() {
+    let (creator, swarm) = Node::create_flags("itest", &[("--longpoll-max-ms", "1000")]);
+    let joiner = Node::join_flags(&swarm, "joiner-loop", &[("--longpoll-max-ms", "1000")]);
+    assert!(creator.wait_ready(&swarm), "creator socket never appeared");
+    assert!(joiner.wait_ready(&swarm), "joiner socket never appeared");
+    std::thread::sleep(Duration::from_secs(2)); // presence settles
+
+    let after = poll_cursor(&swarm, &joiner.nickname);
+
+    let swarm_for_send = swarm.clone();
+    let creator_nick = creator.nickname.clone();
+    let sender = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(2500));
+        cli_message(&swarm_for_send, &creator_nick, "past the parks");
+    });
+    let (got, elapsed) = cli_poll_long(&swarm, &joiner.nickname, after.as_deref());
+    sender.join().unwrap();
+    let events: Vec<serde_json::Value> = serde_json::from_str(&got)
+        .unwrap_or_else(|error| panic!("parse long-poll JSON: {error}\nraw: {got}"));
+    assert!(
+        events
+            .iter()
+            .any(|event| event["body"].as_str() == Some("past the parks")),
+        "the looped long-poll returned the message: {got}"
+    );
+    assert!(
+        elapsed >= Duration::from_secs(2),
+        "survived at least two empty 1s parks before the send, took {elapsed:?}"
+    );
+    assert!(
+        elapsed < Duration::from_mins(1),
+        "resolved promptly once the message landed, took {elapsed:?}"
     );
 }
 
@@ -2362,4 +2429,209 @@ fn test_flap_storm_all_rosters_recover() {
     for joiner in &joiners {
         assert_received(joiner, &creator.nickname, "fs-probe", recover);
     }
+}
+
+// ── leave / session (session-scope daemon discovery) ─────────────────────────
+
+/// Spawn a create daemon with `--output json` and block until its `ready`
+/// event appears on stdout, returning the child plus its minted identity.
+/// The default state-file location (under `RUNTIME_DIR`) is what `leave` /
+/// `session` discover, so no `--state-file` override here.
+#[expect(
+    clippy::zombie_processes,
+    reason = "the child is returned; every caller kills and waits it"
+)]
+fn spawn_discoverable_daemon(name: &str) -> (std::process::Child, PathBuf, String, String) {
+    let log = tmp_log(&format!("leave-{name}"));
+    let file = File::create(&log).unwrap();
+    let mut child = common::test_cmd()
+        .args(["create", "--name", name, "--no-interactive", "--output", "json"])
+        .stdout(Stdio::from(file.try_clone().unwrap()))
+        .stderr(Stdio::from(file))
+        .spawn()
+        .expect("failed to spawn create");
+    let deadline = Instant::now() + CONNECT_TIMEOUT;
+    loop {
+        if let Some((swarm, nickname)) = ready_identity(&log) {
+            return (child, log, swarm, nickname);
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!(
+                "daemon never emitted ready\nlog:\n{}",
+                fs::read_to_string(&log).unwrap_or_default()
+            );
+        }
+        std::thread::sleep(POLL);
+    }
+}
+
+fn ready_identity(log: &std::path::Path) -> Option<(String, String)> {
+    let content = fs::read_to_string(log).ok()?;
+    let ready = content
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .find(|event| event["event"] == "ready")?;
+    Some((
+        ready["swarm"].as_str()?.to_owned(),
+        ready["nickname"].as_str()?.to_owned(),
+    ))
+}
+
+fn default_state_file(swarm: &str, nickname: &str) -> PathBuf {
+    let prefix: String = swarm.chars().take(16).collect();
+    PathBuf::from(RUNTIME_DIR)
+        .join(prefix)
+        .join(format!("{nickname}.state.json"))
+}
+
+/// The state file must carry the daemon's own pid — what lets `leave` /
+/// `session` map the file back to a live process and to the agent session
+/// that spawned it.
+#[test]
+fn state_file_carries_daemon_pid() {
+    let (mut child, log, swarm, nickname) = spawn_discoverable_daemon("leave-pid");
+    let state_file = default_state_file(&swarm, &nickname);
+    let parsed: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&state_file).unwrap()).unwrap();
+    assert_eq!(parsed["pid"], child.id());
+
+    let _ = Command::new("kill")
+        .args(["-TERM", &child.id().to_string()])
+        .status();
+    let _ = child.wait();
+    let _ = fs::remove_file(&log);
+}
+
+/// `ahsw leave <🐝id>` (explicit target) stops exactly that swarm's local
+/// daemon — the state file disappears (proof of the graceful shutdown path)
+/// — and leaves an unrelated daemon untouched.
+#[test]
+fn leave_explicit_target_stops_only_that_swarm() {
+    let (mut victim, victim_log, victim_swarm, victim_nick) =
+        spawn_discoverable_daemon("leave-victim");
+    let (mut bystander, bystander_log, bystander_swarm, bystander_nick) =
+        spawn_discoverable_daemon("leave-bystander");
+
+    let out = common::test_cmd()
+        .args(["leave", &victim_swarm, "--output", "json"])
+        .output()
+        .expect("failed to run ahsw leave");
+    assert!(out.status.success(), "leave failed: {out:?}");
+    let report: serde_json::Value =
+        serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim()).unwrap();
+    let left = report["left"].as_array().unwrap();
+    assert_eq!(left.len(), 1, "expected exactly the victim: {report}");
+    assert_eq!(left[0]["swarm"], victim_swarm.as_str());
+    assert_eq!(left[0]["confirmed"], true);
+    assert!(
+        !default_state_file(&victim_swarm, &victim_nick).exists(),
+        "victim state file survived leave"
+    );
+    assert!(
+        default_state_file(&bystander_swarm, &bystander_nick).exists(),
+        "bystander state file vanished — leave over-matched"
+    );
+
+    let _ = victim.wait();
+    let _ = Command::new("kill")
+        .args(["-TERM", &bystander.id().to_string()])
+        .status();
+    let _ = bystander.wait();
+    let _ = fs::remove_file(&victim_log);
+    let _ = fs::remove_file(&bystander_log);
+}
+
+/// Session scope end to end: a daemon spawned under a decoy "agent" shell is
+/// owned by that shell's pid. `ahsw session --session-pid <shell>` reports it
+/// without touching it; `ahsw leave --session-pid <shell>` stops it. Daemons
+/// belonging to other tests (children of this test binary, not of the decoy
+/// shell) must never match.
+#[test]
+fn leave_session_scope_via_decoy_parent() {
+    let _serial = serial_guard();
+
+    let log = tmp_log("leave-decoy");
+    // The trailing `:` defeats the shell's exec-of-last-command optimization,
+    // keeping the shell alive as the daemon's parent — the ancestry link the
+    // session scope matches on.
+    let mut decoy = Command::new("sh")
+        .arg("-c")
+        .arg(format!(
+            "{} --log-dir {} create --name leave-decoy --no-interactive --output json > {} 2>&1; :",
+            bin().display(),
+            common::test_log_dir(),
+            log.display(),
+        ))
+        .spawn()
+        .expect("failed to spawn decoy shell");
+    let decoy_pid = decoy.id().to_string();
+
+    let deadline = Instant::now() + CONNECT_TIMEOUT;
+    while ready_identity(&log).is_none() {
+        assert!(
+            Instant::now() < deadline,
+            "decoy daemon never emitted ready\nlog:\n{}",
+            fs::read_to_string(&log).unwrap_or_default()
+        );
+        std::thread::sleep(POLL);
+    }
+    let (swarm, nickname) = ready_identity(&log).unwrap();
+
+    // Read-only probe: reports the decoy's daemon, does not stop it.
+    let out = common::test_cmd()
+        .args(["session", "--session-pid", &decoy_pid, "--output", "json"])
+        .output()
+        .expect("failed to run ahsw session");
+    assert!(out.status.success(), "session failed: {out:?}");
+    let report: serde_json::Value =
+        serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim()).unwrap();
+    let sessions = report["sessions"].as_array().unwrap();
+    assert_eq!(sessions.len(), 1, "expected exactly the decoy: {report}");
+    assert_eq!(sessions[0]["swarm"], swarm.as_str());
+    assert_eq!(sessions[0]["nickname"], nickname.as_str());
+    assert!(
+        default_state_file(&swarm, &nickname).exists(),
+        "session (read-only) stopped the daemon"
+    );
+
+    let leave_out = common::test_cmd()
+        .args(["leave", "--session-pid", &decoy_pid, "--output", "json"])
+        .output()
+        .expect("failed to run ahsw leave");
+    assert!(leave_out.status.success(), "leave failed: {leave_out:?}");
+    let leave_report: serde_json::Value =
+        serde_json::from_str(String::from_utf8_lossy(&leave_out.stdout).trim()).unwrap();
+    let left = leave_report["left"].as_array().unwrap();
+    assert_eq!(left.len(), 1, "expected exactly the decoy: {leave_report}");
+    assert_eq!(left[0]["swarm"], swarm.as_str());
+    assert_eq!(left[0]["confirmed"], true);
+    assert!(!default_state_file(&swarm, &nickname).exists());
+
+    let _ = decoy.wait();
+    let _ = fs::remove_file(&log);
+}
+
+/// A session that owns no daemon gets an empty `left` and exit 0 — never an
+/// error, and never someone else's daemons.
+#[test]
+fn leave_nothing_owned_is_a_clean_noop() {
+    let mut idle = Command::new("sleep")
+        .arg("60")
+        .spawn()
+        .expect("failed to spawn sleep");
+
+    let out = common::test_cmd()
+        .args(["leave", "--session-pid", &idle.id().to_string(), "--output", "json"])
+        .output()
+        .expect("failed to run ahsw leave");
+    assert!(out.status.success(), "leave should exit 0 on a no-op");
+    let report: serde_json::Value =
+        serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim()).unwrap();
+    assert_eq!(report["ok"], true);
+    assert_eq!(report["left"].as_array().unwrap().len(), 0);
+
+    let _ = idle.kill();
+    let _ = idle.wait();
 }

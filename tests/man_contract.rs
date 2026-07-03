@@ -38,7 +38,8 @@ fn man_prints_manual_to_stdout() {
         "discover",
         "task",
         "peers",
-        "mount serve",
+        "leave",
+        "session",
     ] {
         assert!(
             stdout.contains(marker),

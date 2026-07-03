@@ -33,9 +33,9 @@ pub(crate) enum SessionRequest {
     },
     Poll {
         after: Option<u64>,
-        /// Long-poll: block up to this many ms for a new event before
-        /// returning (server-clamped). `None`/`0` is an immediate read.
-        wait_ms: Option<u64>,
+        /// Long-poll: park the read up to the server cap, returning early on
+        /// the first new event. `false` is an immediate read.
+        long: bool,
         resp: oneshot::Sender<Vec<crate::daemon::surfaced::SurfacedEvent>>,
     },
     /// Send one leg of a task to `to`, correlated by `task_id`.

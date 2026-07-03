@@ -80,6 +80,10 @@ pub(crate) struct SharedServerOpts {
     #[arg(long, hide = true, default_value_t = consts::PPID_WATCH_INTERVAL_MS)]
     pub ppid_watch_interval_ms: u64,
 
+    /// How long a `long: true` poll read parks before returning empty (millis).
+    #[arg(long, hide = true, default_value_t = consts::LONGPOLL_MAX_MS)]
+    pub longpoll_max_ms: u64,
+
     /// Heal inter-tick gap above which the process hard re-bootstraps (seconds).
     #[arg(long, hide = true, default_value_t = consts::HEAL_STALL_THRESHOLD_SECS)]
     pub heal_stall_threshold_secs: u64,
@@ -114,49 +118,6 @@ pub(crate) struct SharedServerOpts {
     pub passive_view_capacity: usize,
 }
 
-/// The hidden directory-tuning knobs for the ticket-advertising transfer
-/// commands (`pipe`/`file`/`port` listen + discover) — the subset of
-/// [`SharedServerOpts`]'s tuning the directory path reads. Production runs
-/// on the `crate::util::consts` defaults; the subprocess suite shortens
-/// them and flips `--directory-private` for a hermetic loopback directory.
-#[derive(Parser, Debug)]
-pub(crate) struct DirectoryTuningArgs {
-    /// Peer-eviction silence timeout (seconds) for the directory session.
-    #[arg(long, hide = true, default_value_t = consts::ALIVE_TIMEOUT_SECS)]
-    pub alive_timeout_secs: u64,
-
-    /// Grace before an unmeshed joiner co-hosts the rendezvous (seconds).
-    #[arg(long, hide = true, default_value_t = consts::BEACON_COHOST_GRACE_SECS)]
-    pub beacon_cohost_grace_secs: u64,
-
-    /// Directory re-broadcast cadence for an advertiser (seconds).
-    #[arg(long, hide = true, default_value_t = consts::ADVERTISE_INTERVAL_SECS)]
-    pub advertise_interval_secs: u64,
-
-    /// How long a discoverer keeps showing a ticket after its last ad (seconds).
-    #[arg(long, hide = true, default_value_t = consts::DIRECTORY_EXPIRY_SECS)]
-    pub directory_expiry_secs: u64,
-
-    /// Use the loopback (private) directory + relax the advertise→reachable guard.
-    #[arg(long, hide = true, default_value_t = false)]
-    pub directory_private: bool,
-}
-
-impl DirectoryTuningArgs {
-    /// The process tuning carried by these flags (defaults elsewhere), for
-    /// [`crate::util::tuning::init`].
-    pub(crate) fn tuning(&self) -> crate::util::tuning::Tuning {
-        crate::util::tuning::Tuning {
-            alive_timeout_secs: self.alive_timeout_secs,
-            cohost_grace_secs: self.beacon_cohost_grace_secs,
-            advertise_interval_secs: self.advertise_interval_secs,
-            directory_expiry_secs: self.directory_expiry_secs,
-            directory_private: self.directory_private,
-            ..crate::util::tuning::Tuning::DEFAULTS
-        }
-    }
-}
-
 impl SharedServerOpts {
     /// Whether a hidden `--password` prompt must NOT block this session:
     /// non-interactive or JSON-output runs are agent-driven, with no human
@@ -176,6 +137,7 @@ impl SharedServerOpts {
             cohost_grace_secs: self.beacon_cohost_grace_secs,
             ping_window_secs: self.ping_window_secs,
             ppid_watch_interval_ms: self.ppid_watch_interval_ms,
+            longpoll_max_ms: self.longpoll_max_ms,
             heal_stall_threshold_secs: self.heal_stall_threshold_secs,
             starvation_threshold_secs: self.starvation_threshold_secs,
             advertise_interval_secs: self.advertise_interval_secs,
@@ -187,3 +149,4 @@ impl SharedServerOpts {
         }
     }
 }
+

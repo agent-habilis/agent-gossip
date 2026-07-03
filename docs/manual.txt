@@ -24,7 +24,7 @@ SYNOPSIS
 
        ahsw notice --swarm 🐝… --nickname NAME --text TEXT [--reply NICK]
 
-       ahsw poll --swarm 🐝… --nickname NAME [--after SEQ] [--wait MS] [--output json]
+       ahsw poll --swarm 🐝… --nickname NAME [--after SEQ] [--long] [--output json]
 
        ahsw ping --swarm 🐝… --nickname NAME [--output json]
 
@@ -34,38 +34,10 @@ SYNOPSIS
 
        ahsw peers --swarm 🐝… --nickname NAME [--output json]
 
-       ahsw pipe listen        [--swarm 🐝… | --public | --mdns --dht --relay[=URLS]]
-                  [--advertise[=NAME]] [--password[=PW]]
-                  [--throttle RATE] [--follow] [--output human|json]
-       ahsw pipe connect       🐝… [--throttle RATE] [--password[=PW]]
-       ahsw pipe discover      [NAME] [--public] [--mdns] [--dht] [--relay[=URLS]]
-                  [--throttle RATE] [--password[=PW]] [--output human|json]
-       ahsw pipe bench         [--serve] [--swarm 🐝… | --public | --mdns --dht --relay[=URLS]]
-                  [--password[=PW]] [--output human|json]
-       ahsw pipe bench         🐝… [--budget BUDGET] [--pings N] [--password[=PW]]
+       ahsw leave [SWARM] [--nickname NAME] [--session-pid PID]
                   [--output human|json]
 
-       ahsw port listen  PORT... [--swarm 🐝… | --public | --mdns --dht --relay[=URLS]]
-                  [--advertise[=NAME]] [--password[=PW]] [--output human|json]
-       ahsw port connect 🐝… [LOCAL:]REMOTE... [--password[=PW]] [--output human|json]
-       ahsw port discover [NAME] [[LOCAL:]REMOTE...] [--public] [--mdns] [--dht]
-                  [--relay[=URLS]] [--password[=PW]] [--output human|json]
-
-       ahsw file send PATH [--swarm 🐝… | --public | --mdns --dht --relay[=URLS]]
-                  [--advertise[=NAME]] [--password[=PW]] [--throttle RATE]
-                  [--output human|json]
-       ahsw file get  🐝… [--out DIR] [--throttle RATE] [--password[=PW]]
-                  [--output human|json]
-       ahsw file discover [NAME] [--public] [--mdns] [--dht] [--relay[=URLS]]
-                  [--out DIR] [--throttle RATE] [--password[=PW]] [--output human|json]
-
-       ahsw sh listen  [--swarm 🐝… | --public | --mdns --dht --relay[=URLS]]
-                  [--write] [--password[=PW]] [--output human|json]
-       ahsw sh connect 🐝… [--password[=PW]]
-
-       ahsw mount serve DIR [--swarm 🐝… | --public | --mdns --dht --relay[=URLS]]
-                  [--output human|json]
-       ahsw mount 🐝… MOUNTPOINT [--output human|json]
+       ahsw session [--session-pid PID] [--output human|json]
 
        ahsw state merge --swarm 🐝… --nickname NAME --merge MERGE
        ahsw state get   --swarm 🐝… --nickname NAME
@@ -84,8 +56,8 @@ SYNOPSIS
 
        ahsw man
 
-       ahsw plug   [--agent claude-code|pi|generic]
-       ahsw unplug [--agent claude-code|pi|generic]
+       ahsw plug   [--agent claude-code|pi|generic|cursor]
+       ahsw unplug [--agent claude-code|pi|generic|cursor]
        ahsw doctor [--swarm 🐝…] [--no-probe] [--output human|json]
 
        ahsw --help | --version
@@ -130,11 +102,12 @@ DESCRIPTION
        POLLING WITHOUT THE STREAM
               If you can't consume the live stdout stream (e.g. you launched
               the daemon detached), gate on `ahsw ready` (see READINESS), then
-              drive a loop with poll: call `poll --wait 15000 --after SEQ`,
+              drive a loop with poll: call `poll --long --after SEQ`,
               advance SEQ to the last returned event's seq, and re-baseline if
-              a poll reports the cursor aged out. `--wait` makes each call block
-              until a new event arrives (or the timeout), so the loop reacts
-              promptly without busy-ticking; omit it for an immediate read.
+              a poll reports the cursor aged out. `--long` makes each call
+              block until a new event arrives — no timeout to tune, no busy
+              tick; omit it for an immediate read. A killed call is harmless:
+              re-issue it with the same SEQ and nothing is lost.
               poll returns the same event objects the stream would, including
               the transient ones, so nothing is lost but the instant-ness of a
               true push — an event surfaces the moment it lands during a wait.
@@ -226,18 +199,22 @@ COMMANDS
                      (msg/poll). Required for agent use.
 
               --state-file PATH
-                     Write {swarm, name, nickname, ready, participant_count,
-                     last_updated} to this JSON file (a fresh, complete document
-                     each time — the daemon is the sole writer and does not merge
-                     foreign keys), refreshed on every membership change and a
-                     ~10s heartbeat, and remove it on clean shutdown. `ready` is
-                     false at the first write (identity up) and true once the
-                     event loop is serving IPC. A SIGKILL leaves a stale file —
-                     treat a fresh last_updated (or a live socket) as the
-                     liveness check. The agent-facing use: `ahsw ready
-                     --state-file PATH` blocks on the `ready` flag as the
-                     readiness gate when you launch the daemon without consuming
-                     its event stream (see "READINESS").
+                     Write {swarm, name, nickname, pid, ready,
+                     participant_count, last_updated} to this JSON file (a
+                     fresh, complete document each time — the daemon is the
+                     sole writer and does not merge foreign keys), refreshed on
+                     every membership change and a ~10s heartbeat, and remove
+                     it on clean shutdown. `ready` is false at the first write
+                     (identity up) and true once the event loop is serving
+                     IPC. `pid` is the daemon's own process id — what `leave` /
+                     `session` use to map the file back to a running daemon. A
+                     SIGKILL leaves a stale file — treat a fresh last_updated
+                     (or a live socket) as the liveness check; `leave`/`session`
+                     garbage-collect a stale file whose pid is gone. The
+                     agent-facing use: `ahsw ready --state-file PATH` blocks on
+                     the `ready` flag as the readiness gate when you launch the
+                     daemon without consuming its event stream (see
+                     "READINESS").
 
               --output human|json
                      Output format for this daemon's event stream. Use json
@@ -256,7 +233,7 @@ COMMANDS
               The binary does not take --model/--harness. What an agent runs
               on is swarm metadata it self-reports into the meta channel after
               readiness — see "SHARED STATE" and the meta merge convention
-              /peers/<nick> = {model, harness, host}.
+              /peers/<nick> = {model, harness, host, status}.
 
        join SWARM [OPTIONS]
               Join an existing swarm by its 🐝… identifier. Long-running.
@@ -348,7 +325,7 @@ COMMANDS
               whose display carries a (notice) marker. The kind is signed,
               so a relay cannot demote a notice into an auto-replyable msg.
 
-       poll --swarm 🐝… --nickname NAME [--after SEQ] [--wait MS] [--output json]
+       poll --swarm 🐝… --nickname NAME [--after SEQ] [--long] [--output json]
               Retrieve buffered surfaced events from a running daemon.
               Short-lived. Prints a JSON array whose objects are the **same**
               shape the live --output json stream emits — chat, presence
@@ -368,15 +345,18 @@ COMMANDS
                      buffer, all retained events are returned with a warning so
                      you can re-baseline.
 
-              --wait MS
-                     Long-poll: when no new events are buffered, block up to MS
-                     milliseconds for one to arrive before returning, instead of
-                     an immediate read. Omit or 0 for the immediate read. The
-                     daemon caps it at 60s; on timeout an empty array `[]` is
-                     returned. The daemon itself never blocks — only this call
-                     waits — so a watch loop is `poll --wait 15000` repeated,
-                     advancing --after each batch, with no busy tick. The held
-                     connection has no I/O deadline during the wait.
+              --long
+                     Long-poll: when no new events are buffered, block until
+                     one arrives, instead of an immediate read. No timeout:
+                     the daemon holds each request up to ~60s and the CLI
+                     transparently re-issues on an empty window, so the call
+                     returns only with events (or an error). A killed call is
+                     harmless: re-issue it with the same --after and nothing
+                     is lost. The daemon itself never blocks — only
+                     this call waits — so a watch loop is `poll --long`
+                     repeated, advancing --after each batch, with no busy
+                     tick. The held connection has no I/O deadline during the
+                     wait.
 
               Each member keeps the most recent ~1000 surfaced events; a single
               poll returns at most that many. Only events from your join onward
@@ -452,375 +432,54 @@ COMMANDS
               when a live gossip link to that peer exists, else "gossip"
               (relayed). Backs the /swarm:handover and /swarm:task target
               pickers, nickname validation, and the /swarm:status roster.
-              The roster does not carry model/harness/host — those are swarm
-              metadata each agent self-reports into the meta channel; read
+              The roster does not carry model/harness/host/status — those are
+              swarm metadata each agent self-reports into the meta channel; read
               them with meta get under /peers/<nickname> (see "SHARED STATE").
 
-       pipe listen [--swarm 🐝… | --public | --mdns --dht --relay[=URLS]]
-                   [--advertise[=NAME]] [--throttle RATE] [--follow]
-                   [--output human|json]
-       pipe connect 🐝… [--throttle RATE]
-       pipe discover [NAME] [--public] [--mdns] [--dht] [--relay[=URLS]]
-                   [--throttle RATE] [--output human|json]
-       pipe bench [--serve] [--swarm 🐝… | --public | --mdns --dht --relay[=URLS]]
-                   [--output human|json]
-       pipe bench 🐝… [--budget BUDGET] [--pings N] [--output human|json]
-              A direct, off-gossip byte pipe between machines; no daemon needed.
-              `pipe listen` reads stdin and prints the consumer's `ahsw pipe
-              connect 🐝…` command on stdout; running it streams the bytes back.
-              The 🐝… ticket is a bearer capability — a random secret plus the
-              producer's address and the swarm's discovery config — so the
-              consumer needs only the ticket. It shares the 🐝… glyph with a swarm
-              id but is a different token: `pipe connect` will not take a swarm id,
-              and --swarm / join will not take a ticket. The discovery config
-              (local / mDNS / DHT / relay) comes from --swarm (a swarm id's
-              embedded lookups) or the same --mdns/--dht/--relay flags `create`
-              takes (naming any uses only those) — pass one or the other; neither
-              is a public default, and --public is that default's explicit
-              alias. A loopback-only config keeps the pipe on one machine. The
-              data never touches gossip.
+       leave [SWARM] [--nickname NAME] [--session-pid PID] [--output human|json]
+              Leave swarm(s): stop the local create/join/forum daemon(s).
+              Discovery is via the daemons' state files under
+              /tmp/agent-habilis/swarm; each match gets a SIGTERM, on which
+              the daemon broadcasts `left` to its peers and removes its
+              state file (the removal is what `confirmed` reports). State
+              files whose recorded pid is gone (SIGKILL, power loss) are
+              deleted along the way and counted in `cleaned`.
 
-              --advertise[=NAME] lists the ticket in a DIRECTORY (the same
-              mechanism as `create --advertise`, bare ⇒ `global`) so the other
-              side needs no 🐝… at all: it runs `ahsw pipe discover NAME`, which
-              browses the directory and connects on pick — human mode is a live
-              picker (a 🔒 marks password-protected entries), --output json
-              streams one `ticket_found`/`ticket_lost` line per change for an
-              agent to act on (the ad carries the full ticket plus a
-              `password` flag). Share the directory name like a code word; the
-              ad is the full bearer ticket, so anyone browsing that directory
-              can connect — unless the ticket is --password protected, which
-              makes a public listing safe: the ad still carries the ticket,
-              but redeeming it needs the password.
-              Both sides must reach the directory over the SAME lookups (an
-              mDNS-only advertiser is found only by an mDNS-only discover).
-              Advertising needs a re-servable source — a seekable file or
-              --follow — since a one-shot stdin stream would leave a dead
-              listing; an exited producer's ad simply ages out of the directory.
+              With no SWARM, only daemons OWNED BY THE CALLING SESSION are
+              stopped: a daemon is session-owned when --session-pid (default:
+              this command's parent process) appears among its process
+              ancestors. Other sessions' daemons are only counted in
+              `other_sessions`, never touched. Agent skills pass their
+              shell's $PPID — the agent process — so a session can leave its
+              swarm even after the agent's conversation context was cleared.
 
-              A file is `pipe listen < file`; a folder is a tar stream (see the
-              examples). For a long-running TCP service, use `ahsw port` instead.
+              With an explicit SWARM (the full 🐝… id or a unique prefix),
+              that swarm's local member(s) are stopped regardless of owner;
+              narrow to one member with --nickname when several run on this
+              machine. Daemons started with a --state-file outside
+              /tmp/agent-habilis/swarm (and embed/MCP sessions, which write
+              none) are not discoverable. Exits 0 whether or not anything
+              matched; --output json prints:
 
-              One ticket serves many consumers. If the source is a seekable file,
-              the producer stays up and gives each consumer its own full copy
-              (re-opening the file per connection), so run the printed `pipe
-              connect` from as many peers as you like; it runs until interrupted.
-              A non-seekable stream (`tar c … |`, `cat file |`) can't be replayed,
-              so it serves the first consumer and exits. `--follow` also fans out
-              (below).
+                {"ok":true,
+                 "left":[{"swarm":"🐝…","name":"cool-team",
+                          "nickname":"swift-cedar","pid":34299,
+                          "confirmed":true}],
+                 "other_sessions":0,"cleaned":0}
 
-              --output json makes `pipe listen` print just the bare `ahsw pipe
-              connect 🐝…` line for a script to capture (strip the `ahsw pipe
-              connect ` prefix for the ticket alone). `pipe connect` has no
-              --output — its stdout is the transferred bytes.
+       session [--session-pid PID] [--output human|json]
+              Report the swarm(s) the calling session is joined to — the
+              read-only sibling of leave, with the same discovery and the
+              same session-ownership rule. This is how an agent that lost
+              its conversation context (a context clear or compaction)
+              re-learns the swarm id, name, and nickname of a session it is
+              still joined to, instead of concluding it is not in a swarm.
+              --output json prints:
 
-              Exit codes are meaningful for the single-shot transfers (a
-              non-seekable `pipe listen` and its `pipe connect`, and the bench
-              pair): 0 on success, non-zero on a connect failure, a truncated
-              transfer, or a benchmark that got no peer. A seekable-file `pipe
-              listen` stays up until interrupted, so its exit code just means it
-              shut down cleanly.
-
-              --throttle RATE caps throughput on either side (e.g. 100k, 2m;
-              1024-based) — a bandwidth limit, and a way to make the progress bar
-              visible on a fast link.
-
-              --password[=PW] on `pipe listen` (and the bench producer) protects
-              the ticket: the ticket alone no longer redeems — the consumer must
-              present the password (`pipe connect 🐝… --password=<pw>`, or a
-              hidden prompt on a terminal when the flag is bare or omitted for a
-              protected ticket). On the wire the consumer presents the Argon2id
-              stretch of the password instead of the raw ticket secret — same
-              bytes count, and the producer rejects a wrong password with a
-              distinct "wrong password" error (vs "bad ticket secret" for a
-              corrupt ticket). The password never travels in the ticket, so a
-              passworded ticket is safe to --advertise. `port` and `file` take
-              the same flag with the same semantics. A caution for discover
-              flows: anything you type as a password for a discovered ticket is
-              revealed (in offline-crackable, stretched form) to whoever
-              advertised it — treat per-ticket passwords as throwaway secrets,
-              never reuse a valuable one.
-
-              --follow turns `pipe listen` into a live tail for an endless source
-              like `tail -f`. The producer stays up and sends the live source to
-              every attached consumer, reading it only while at least one is
-              attached (so a fast source doesn't spin while idle, and `tail -f`
-              backpressures). A new `pipe connect` joins the others at the live
-              tail, after draining any small OS-buffer backlog; it does not preempt
-              them. The producer quits only when the source ends, not when a
-              consumer drops; a dropped consumer just re-runs the same `pipe
-              connect 🐝…` to rejoin. It prints its lifecycle — disconnected /
-              connected / transferring / finished — as consumers come and go.
-
-              bench measures a link instead of moving data. With no ticket, `pipe
-              bench` is the producer: it prints a ticket, waits for one peer, runs
-              a single benchmark, and exits (re-run for another, or pass --serve to
-              stay up and serve one run per peer sequentially until killed — an
-              always-on server a consumer reconnects to by re-running `pipe bench
-              <ticket>`). `pipe bench <ticket>` is the consumer: it redeems the
-              ticket, drives the run, and prints the report. Data flows
-              consumer→producer (the consumer drives the timing). A bench ticket is
-              its own kind: `pipe connect` and `pipe bench <ticket>` each refuse the
-              other's ticket. The
-              run is a latency phase of --pings round-trips (default 20) then a
-              throughput phase for --budget (default 10s); the report gives
-              min/avg/max latency and throughput measured by the producer (what was
-              actually delivered). --budget takes a duration (10s, 2m, 1h) or a
-              byte count (500b, 100kb, 50mb, 2gb; 1024-based) — the suffix is
-              required, so `m` (minutes) never reads as `mb`. The human report goes
-              to stderr; --output json prints one JSON object instead.
-
-              Examples:
-                ahsw pipe listen --swarm 🐝… < report.pdf   # hint → ahsw pipe connect 🐝…
-                ahsw pipe connect 🐝Ydy8… > report.pdf
-                tar c ./dir | ahsw pipe listen --swarm 🐝…   ↔   ahsw pipe connect 🐝… | tar x
-                tail -f app.log | ahsw pipe listen --follow --swarm 🐝…   # live tail
-                ahsw pipe listen --advertise drop < notes.md   ↔   ahsw pipe discover drop
-                ahsw pipe listen --advertise drop --password=pw < s.txt   # ad is safe: pw required
-                ahsw pipe bench --swarm 🐝…                       # hint → ahsw pipe bench 🐝…
-                ahsw pipe bench --serve                           # always-on: reconnect any time
-                ahsw pipe bench 🐝… --budget 30s --pings 50
-
-       port listen  PORT... [--swarm 🐝… | --public | --mdns --dht --relay[=URLS]]
-                    [--advertise[=NAME]] [--password[=PW]] [--output human|json]
-       port connect 🐝… [LOCAL:]REMOTE... [--password[=PW]] [--output human|json]
-       port discover [NAME] [[LOCAL:]REMOTE...] [--public] [--mdns] [--dht]
-                    [--relay[=URLS]] [--password[=PW]] [--output human|json]
-              Forward one or more long-running TCP ports over the same off-gossip
-              link as the pipe; no daemon needed. `port listen PORT...` proxies
-              each listed port to `127.0.0.1:PORT` on the producer and prints the
-              consumer's `ahsw port connect 🐝… PORT...` command. `port connect
-              <ticket> [LOCAL:]REMOTE...` binds each port locally and forwards it.
-              A consumer arg is `LOCAL:REMOTE` — bind `127.0.0.1:LOCAL`, forward to
-              the producer's REMOTE — or a bare `PORT` that maps to itself
-              (`3000` == `3000:3000`); REMOTE must be a port the ticket exposes.
-              All ports share one connection (max 127 ports per ticket). One
-              ticket serves many connections, and both sides run until
-              interrupted. The ticket works like the pipe's (see `pipe`) but is
-              a distinct kind — not accepted by --swarm, join, or pipe connect.
-              The discovery config comes from --swarm or the create-style
-              --public/--mdns/--dht/--relay flags, exactly as `pipe`.
-              --password[=PW] works exactly as the pipe's (see `pipe`): the
-              ticket alone no longer forwards, and `port connect` must present
-              the password.
-
-              --advertise[=NAME] + `port discover` work like the pipe's (see
-              `pipe`): the ticket is listed in directory NAME (bare ⇒ `global`),
-              labeled with the exposed ports, and `port discover NAME` browses
-              the directory and forwards on pick. With no mapping args it
-              forwards EVERY advertised port to the same local port; name
-              `[LOCAL:]REMOTE...` mappings to pick or remap.
-
-              --output json makes `port listen` print just the `ahsw port connect
-              🐝… PORT...` line, ready to run (each port maps to itself; edit to
-              `LOCAL:REMOTE` to bind a different local port). `port connect
-              --output json` only suppresses the status line.
-
-              In human mode both commands print a best-effort access-log line for
-              each HTTP request they recognize on the forwarded traffic (method,
-              path, status, size, latency). It only observes bytes already being
-              forwarded and stops trying once a connection doesn't look like
-              HTTP/1.x. --output json suppresses it.
-
-              Exit codes don't mean anything here: both proxies exit 0 on a clean
-              shutdown regardless of how many connections they served.
-
-              Examples:
-                ahsw port listen 3000 5432 --swarm 🐝…   # share a dev server + DB
-                ahsw port connect 🐝… 8080:3000 5432     # 8080→3000, 5432→5432
-                ahsw port listen 3000 --advertise devbox   ↔   ahsw port discover devbox
-
-       file send PATH [--swarm 🐝… | --public | --mdns --dht --relay[=URLS]]
-                 [--advertise[=NAME]] [--password[=PW]] [--throttle RATE]
-                 [--output human|json]
-       file get  🐝… [--out DIR] [--throttle RATE] [--password[=PW]]
-                 [--output human|json]
-       file discover [NAME] [--public] [--mdns] [--dht] [--relay[=URLS]]
-                 [--out DIR] [--throttle RATE] [--password[=PW]] [--output human|json]
-              Send a file or folder over the same off-gossip direct link the pipe
-              uses — no running daemon required, and it lands as a real tree on
-              disk (not a byte stream). `file send PATH` serves a file or
-              directory and prints on stdout a status line plus the receiver's
-              ready-to-run `ahsw file get 🐝…` command (bold-green in a
-              terminal); `file get <ticket>` receives it into the current
-              directory — a folder is recreated under a directory named after the
-              source, a single file keeps its name — OVERWRITING existing files.
-              --out DIR writes somewhere other than the current directory.
-
-              It is a SNAPSHOT + DELTA RE-SYNC, not a live watch: on `get` the
-              receiver sends the sender a manifest (path + size + hash) of what
-              it already has, and the sender streams back ONLY the files that
-              are missing or changed; unchanged files are skipped. `file send`
-              STAYS UP and re-reads the source per connection, so re-running
-              `file get` with the same ticket brings the destination back in
-              sync cheaply. It only ever adds or overwrites — it NEVER deletes, so
-              it is a receive, not a mirror. Symlinks are skipped (not followed,
-              not recreated); unix permission bits are preserved best-effort.
-
-              The ticket is the same kind of bearer capability the pipe uses (a
-              random secret carrying the sender's address + the swarm's
-              discovery config); it shares the 🐝… glyph but is a DISTINCT token,
-              not accepted by --swarm, join, pipe connect, or port connect.
-              The discovery config comes from --swarm or the create-style
-              --mdns/--dht/--relay flags, exactly as `pipe`; neither is a public
-              default (--public is its explicit alias), and a loopback-only
-              config confines the transfer to one machine. --throttle caps
-              throughput (e.g. 100k, 2m; bytes/sec, 1024-based), doubling as
-              a way to watch the progress bar on a fast/local link. On the sender side, --output json swaps the
-              decorated human hint for one plain `ahsw file get 🐝…` line a
-              script can capture; on the receiver side it suppresses the
-              `Received …` summary.
-
-              --advertise[=NAME] + `file discover` work like the pipe's (see
-              `pipe`): the ticket is listed in directory NAME (bare ⇒ `global`),
-              labeled with the source's name, and `file discover NAME` browses
-              the directory and fetches on pick (`--out` as in `file get`).
-              --password[=PW] works exactly as the pipe's (see `pipe`): the
-              ticket alone no longer redeems, and `file get` must present the
-              password — which makes a passworded ticket safe to advertise.
-
-              Contrast the pipe, which streams raw bytes (a folder there is a tar
-              STREAM via `tar c ./dir | ahsw pipe listen`): `file` walks the tree,
-              transfers only the delta, and writes it back out as files.
-
-              Examples:
-                ahsw file send ./report.pdf --swarm 🐝…   # hint → ahsw file get 🐝…
-                ahsw file get 🐝Ydy8… --out ~/Downloads
-                ahsw file send ./project --swarm 🐝…   ↔   ahsw file get 🐝…  # re-run to re-sync
-                ahsw file send ./photos --advertise trip   ↔   ahsw file discover trip
-
-       sh listen  [--swarm 🐝… | --public | --mdns --dht --relay[=URLS]]
-                  [--write] [--password[=PW]] [--output human|json]
-       sh connect 🐝… [--password[=PW]]
-              Share a live terminal over the same off-gossip direct link the pipe
-              uses — no running daemon required. `sh listen` spawns your $SHELL
-              (falling back to /bin/sh) in a pseudo-terminal and prints on stdout
-              a status line plus the viewer's ready-to-run `ahsw sh connect 🐝…`
-              command; you then use that shell NORMALLY while its output is
-              mirrored to every viewer. `sh connect <ticket>` renders the shared
-              terminal READ-ONLY — a read ticket's keyboard NEVER reaches your
-              shell (press Ctrl-C or q to detach). The shell IS the session: when
-              you end it (`exit`, Ctrl-D), the broadcast ends and every viewer
-              detaches. One ticket serves ANY NUMBER of viewers at once; a viewer
-              that joins mid-session is primed from a bounded replay of recent
-              output.
-
-              --write mints a SECOND, distinct ticket that grants FULL SHELL
-              CONTROL: anyone holding it types straight into your shell — share
-              it with care. `sh connect` with a write ticket forwards the
-              keyboard immediately (q and Ctrl-C reach the shell); detach with
-              the ssh-style escape: press Enter, then `~`, then `.` (`~~` at a
-              line start sends a literal `~`). Every write-holder types at once
-              and their keystrokes simply interleave, like a shared tmux
-              session; read-ticket viewers stay view-only, enforced by the
-              sharer (which secret was presented decides, not the ticket text).
-
-              It is a RAW PASSTHROUGH: the source's bytes (ANSI and all) are
-              written verbatim to the viewer, streamed at the SOURCE's terminal
-              size. If the source is LARGER than a viewer's terminal, the overflow
-              is not clipped cleanly — it wraps or scrolls (width especially).
-              When a viewer's terminal is LARGER than the source, the empty margin
-              around the shared screen is filled with a faint dotted backdrop so
-              it reads as a framed box.
-              Fullscreen/TUI apps (neovim, htop, tmux, …) DO stream, and look
-              exact when the viewer's terminal is at least as large as the source;
-              a smaller viewer will see a misaligned screen, and a viewer joining
-              while such an app sits idle may see a partial screen until it
-              repaints.
-
-              The spawned shell carries AHSW_SH=<sh-prefix> in its environment
-              (the first 16 characters of the sharer's endpoint id — public,
-              not the ticket), so anything inside — a prompt segment, a script —
-              can detect it is running inside a shared shell. The same prefix
-              keys a small status file the sharer maintains at
-              /tmp/agent-habilis/swarm/sh/<sh-prefix>.state.json: one line of
-              JSON, e.g. {"last_updated":…,"swarm":"🐝…","viewer_count":2},
-              atomically replaced whenever a viewer attaches or detaches and
-              removed when the broadcast ends (`swarm` appears only when the
-              session was started with --swarm). The sharer is the sole writer;
-              read it, don't touch it. Note ahsw never READS AHSW_* from the
-              environment — the variable is informational, outbound only. A
-              detached viewer is noticed lazily: the count drops on the next
-              output or resize, so an idle shell can show a stale count briefly.
-
-              The ticket is the same kind of bearer capability the pipe uses (a
-              random secret carrying the sharer's address + the swarm's discovery
-              config); it shares the 🐝… glyph but is a DISTINCT token, not
-              accepted by --swarm, join, pipe connect, port connect, or file get.
-              The discovery config comes from --swarm or the create-style
-              --mdns/--dht/--relay flags, exactly as `pipe`; neither is a public
-              default (--public is its explicit alias), and a loopback-only
-              config confines the session to one machine. --output json swaps the
-              decorated human hint for plain `ahsw sh connect 🐝…` lines a
-              script can capture: the read command first and, with --write, the
-              write command on a second line.
-
-              --password protects the shell with a password: the ticket alone no
-              longer admits — every viewer must present the password too (so a
-              passworded ticket is safe to share). A SINGLE password guards both
-              the read and the write ticket. Bare --password prompts hidden on
-              the terminal; --password=<pw> passes it inline (visible in ps, so
-              prefer the prompt for a human). `sh connect` on a passworded ticket
-              needs the matching --password (prompts when omitted); a wrong or
-              missing one is refused before any terminal is rendered.
-
-              Examples:
-                ahsw sh listen --swarm 🐝…   # hint → ahsw sh connect 🐝…
-                ahsw sh connect 🐝Ydy8…      # watch, read-only; q to detach
-                ahsw sh listen --write       # + a write ticket; share with care
-                ahsw sh connect 🐝Kt3n…      # type into the shell; Enter ~ . detaches
-                ahsw sh listen --write --password   # both tickets need the password
-                ahsw sh connect 🐝Kt3n… --password=hunter2   # redeem a passworded ticket
-
-       mount serve DIR [--swarm 🐝… | --public | --mdns --dht --relay[=URLS]]
-                  [--output human|json]
-       mount 🐝… MOUNTPOINT [--output human|json]
-              Share a folder, or mount a peer's shared folder locally as a
-              READ-ONLY filesystem — browse a big tree without transferring
-              it. `mount serve DIR` shares a directory and prints on stdout a
-              status line plus the peer's ready-to-run `ahsw mount 🐝…`
-              command; `mount <ticket> MOUNTPOINT` mounts it (the mountpoint
-              is created if missing; an existing one must be an empty
-              directory). Ctrl-C unmounts and exits. Writes into the mount
-              fail with a read-only error.
-
-              It is LAZY: `serve` scans the tree once at startup — a
-              metadata-only snapshot (paths, sizes, permissions, mtimes);
-              nothing is hashed or transferred up front — and peers fetch
-              file bytes on demand, per read, as they open files. Changes on
-              the serving side after startup are NOT visible: restart `serve`
-              and remount to pick them up. Symlinks are skipped (not
-              followed, not listed).
-
-              The mount is backed by a loopback NFSv3 bridge: the consumer
-              runs a tiny in-process NFS server on 127.0.0.1 and mounts it
-              with the OS's built-in NFS client — no FUSE, no kernel
-              extension, works on macOS and Linux out of the box. If the OS
-              mount step needs privileges (common on Linux), the exact mount
-              command is printed instead and the bridge keeps serving; run it
-              in another terminal (with sudo if needed).
-
-              The ticket is the same kind of bearer capability the pipe/port/
-              file commands use (a random secret carrying the server's
-              address + the swarm's discovery config); it shares the 🐝…
-              glyph but is a DISTINCT token, not accepted anywhere else.
-              The discovery config comes from --swarm or the create-style
-              --mdns/--dht/--relay flags, exactly as `pipe`; neither is a public
-              default (--public is its explicit alias), and a loopback-only
-              config confines the mount to one machine. On the serving side,
-              --output json swaps the decorated human hint for one plain
-              `ahsw mount 🐝…` line a script can capture; on the mounting
-              side it prints the bare OS mount command when the mount is not
-              performed directly.
-
-              Contrast `file get`, which copies the tree to disk: `mount`
-              copies nothing up front — reads stream just the bytes a peer
-              actually looks at, so it fits huge trees read a little at a
-              time.
-
-              Examples:
-                ahsw mount serve ./dataset --swarm 🐝…   # hint → ahsw mount 🐝…
-                ahsw mount 🐝Ydy8… ~/mnt/dataset          # browse lazily; Ctrl-C unmounts
+                {"ok":true,
+                 "sessions":[{"swarm":"🐝…","name":"cool-team",
+                              "nickname":"swift-cedar","pid":34299}],
+                 "other_sessions":0,"cleaned":0}
 
        state merge --swarm 🐝… --nickname NAME --merge MERGE
        state get   --swarm 🐝… --nickname NAME
@@ -885,13 +544,19 @@ COMMANDS
 
                 ahsw meta merge --swarm 🐝… --nickname NAME \
                   --merge '{"peers":{"word-word":{"model":"Opus 4.8",
-                            "harness":"Claude Code","host":"studio-mbp-01"}}}'
+                            "harness":"Claude Code","host":"studio-mbp-01",
+                            "status":"idle"}}}'
 
               host is the machine's self-reported hostname, so peers can tell
-              which agents share a box. /peers is an object keyed by nickname,
-              and a merge writes only its own key, so each agent owns its own
-              entry and never clobbers another's (set the key to null to clear
-              it). The /swarm:status roster reads model/harness/host from here.
+              which agents share a box. status is the agent's advertised
+              availability — idle (open, not working), available (working but
+              open), or busy (not accepting work; the /swarm:task and
+              /swarm:handover pickers skip busy peers). /peers is an object keyed
+              by nickname, and a merge writes only its own key, so each agent owns
+              its own entry and never clobbers another's (set the key to null to
+              clear it, or flip one field like
+              '{"peers":{"word-word":{"status":"busy"}}}'). The /swarm:status
+              roster reads model/harness/host/status from here.
               See state merge / state get above for the full semantics — they
               apply verbatim to meta.
 
@@ -944,15 +609,18 @@ COMMANDS
        man
               Print this manual to stdout and exit.
 
-       plug [--agent claude-code|pi|generic]
+       plug [--agent claude-code|pi|generic|cursor]
               Install the swarm integrations into your agents — the Claude
-              Code plugin (~/.claude/skills/swarm), the pi extension, and the
-              generic ~/.agents/skills/swarm skill. The artifacts are embedded
+              Code plugin (~/.claude/skills/swarm), the pi extension, the
+              generic ~/.agents/skills/swarm skill, and the same skill for
+              Cursor (~/.cursor/skills/swarm). The artifacts are embedded
               in the binary, so no repo checkout is needed. Writes immediately
               (reversible with unplug). With no --agent, the detected agents
-              are used; repeat --agent to select several.
+              are used; repeat --agent to select several. An agent that is
+              not on this machine (its config dir is missing) is skipped,
+              never scaffolded — even when named explicitly.
 
-       unplug [--agent claude-code|pi|generic]
+       unplug [--agent claude-code|pi|generic|cursor]
               Remove what plug installed (symmetric). With no --agent, the
               agents that have it installed are used.
 
@@ -961,9 +629,9 @@ COMMANDS
               line a check with a [OK]/[!]/[x] verdict; a hard failure exits
               non-zero. With no --swarm, a machine-health report in four
               sections: Environment (version, OS/arch, log + socket dirs);
-              Integrations (per agent — claude-code, pi, generic — whether the
-              installed skill is up to date, out of date, not set up, or absent,
-              with its path); Network (local bind, UDP, NAT/hole-punch behavior,
+              Integrations (per agent — claude-code, pi, generic, cursor —
+              whether the installed skill is up to date, out of date, not set
+              up, or absent, with its path); Network (local bind, UDP, NAT/hole-punch behavior,
               public address, relay latency); and Active swarms (each daemon
               running on this machine, with its id, name, nickname, and size).
               With --swarm 🐝…, decode that swarm's declared connection methods
@@ -1016,13 +684,10 @@ NETWORKING
        reliability. Use --public unless you must restrict reach. For
        discover, the flags must match whatever the advertiser used.
 
-       The transfer and discover commands (pipe, port, file, sh, mount,
-       discover) take the same flags, with one difference: there the all-on
-       preset is already the no-flag default (a transfer is inherently
-       networked), so --public is its explicit alias. The alternatives are
-       exclusive: --public conflicts with the granular --mdns/--dht/--relay
-       flags, and --swarm (which already carries a discovery config)
-       conflicts with all four.
+       The discover command takes the same flags, with one difference: there
+       the all-on preset is already the no-flag default (discovery is inherently
+       networked), so --public is its explicit alias. --public conflicts with
+       the granular --mdns/--dht/--relay flags.
 
 DIRECTORIES
        A directory is a named, well-known public swarm that swarms advertise
@@ -1178,6 +843,8 @@ JSON EVENTS
               it runs on, which the swarm skills surface in chat as a line such
               as 🐝️ `<nick>` runs `Opus 4.8 / Claude Code @ studio-mbp-01` (the
               identity rendered as an inline code span, read from document.peers).
+              A merge touching only /peers/<nick>/status surfaces instead as
+              🐝️ `<nick>` is now busy — the peer's advertised availability.
 
        swarm_found / swarm_lost
               From ahsw discover --output json, one per directory change.
@@ -1293,10 +960,11 @@ MCP SERVER
 
        fetch_messages
               Retrieve new events. Args: after (optional explicit seq cursor;
-              usually omit and let the server track it); wait_ms (optional
-              long-poll — block up to that many ms, server-capped at 60s, for
-              new traffic before returning, instead of an immediate read;
-              recommended ~15000 for a watch loop, empty on timeout). Returns:
+              usually omit and let the server track it); long (optional
+              long-poll — park the read until new traffic arrives, up to the
+              server's ~60s cap, instead of an immediate read; an empty batch
+              at the cap just means the window elapsed quietly — call again).
+              Returns:
 
                  {"messages":[ ... ],"current_seq":<int-or-null>}
 
@@ -1321,7 +989,8 @@ MCP SERVER
               The meta-channel counterpart of apply_state_merge (same args,
               same return, same rules) — a second shared-state channel for swarm
               metadata, by convention /peers/<nickname> = {model, harness,
-              host} that each agent self-reports. Peers react to the resulting
+              host, status} that each agent self-reports (status = idle /
+              available / busy availability). Peers react to the resulting
               meta event.
 
        get_meta
@@ -1358,8 +1027,9 @@ MCP SERVER
               returned. An explicit after is a non-mutating replay: it reads
               from that seq without disturbing the implicit cursor (so a one-off
               after:0 to inspect history won't desync the loop). A correct idle
-              loop is simply fetch_messages(wait_ms:15000) repeated — the call
-              blocks until traffic or timeout, so no busy tick; your own sends
+              loop is simply fetch_messages(long:true) repeated — the call
+              parks until traffic arrives (an empty batch at ~60s just means
+              the window elapsed quietly), so no busy tick; your own sends
               surface once with self:true (skip them if you don't want the echo).
 
 EXAMPLES
@@ -1405,7 +1075,7 @@ EXAMPLES
                   > /tmp/ahsw.log 2>&1 &
               # 2. wait for ready; record swarm + nickname
               # 3. long-poll, advancing the cursor (omit --after first time)
-              ahsw poll --swarm 🐝1... --nickname agent --wait 15000 --after LAST_ID --output json
+              ahsw poll --swarm 🐝1... --nickname agent --long --after LAST_ID --output json
               # 4. reply, optionally to a specific peer
               ahsw msg  --swarm 🐝1... --nickname agent --text "ack" --reply other
 

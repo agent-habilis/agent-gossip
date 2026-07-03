@@ -41,6 +41,8 @@ pub(crate) enum Agent {
     Pi,
     /// A generic agent following the `~/.agents/skills` convention.
     Generic,
+    /// Cursor — the skill at `~/.cursor/skills/swarm`.
+    Cursor,
 }
 
 /// Whether the swarm integration is set up for an agent, as `doctor` reports.
@@ -70,24 +72,27 @@ impl AgentState {
 
 impl Agent {
     /// Every agent, in display order.
-    pub(crate) const ALL: [Agent; 3] = [Agent::ClaudeCode, Agent::Pi, Agent::Generic];
+    pub(crate) const ALL: [Agent; 4] = [Agent::ClaudeCode, Agent::Pi, Agent::Generic, Agent::Cursor];
 
-    /// The agent's CLI label (`claude` / `pi` / `generic`), for display.
+    /// The agent's CLI label (`claude` / `pi` / `generic` / `cursor`), for display.
     pub(crate) fn label(self) -> &'static str {
         match self {
             Agent::ClaudeCode => "claude-code",
             Agent::Pi => "pi",
             Agent::Generic => "generic",
+            Agent::Cursor => "cursor",
         }
     }
 
-    /// The agent's home dir (`~/.claude`, `~/.pi`, `~/.agents`) — its presence
-    /// is the detection signal that seeds `plug`'s default selection.
-    fn agent_dir(self, home: &Path) -> PathBuf {
+    /// The agent's home dir (`~/.claude`, `~/.pi`, `~/.agents`, `~/.cursor`) —
+    /// its presence is the detection signal that gates `plug` (default
+    /// selection AND explicit `--agent`: no install into an absent agent).
+    pub(crate) fn agent_dir(self, home: &Path) -> PathBuf {
         let part = match self {
             Agent::ClaudeCode => ".claude",
             Agent::Pi => ".pi",
             Agent::Generic => ".agents",
+            Agent::Cursor => ".cursor",
         };
         home.join(part)
     }
@@ -103,6 +108,9 @@ impl Agent {
             // pi-package source, materialized then `pi install`ed.
             Agent::Pi => home.join(".agent-habilis/swarm/pi-extension"),
             Agent::Generic => home.join(".agents/skills/swarm"),
+            // Cursor reads global Agent Skills from `~/.cursor/skills`; it
+            // gets the same portable skill the generic target ships.
+            Agent::Cursor => home.join(".cursor/skills/swarm"),
         }
     }
 
@@ -117,7 +125,7 @@ impl Agent {
         match self {
             Agent::ClaudeCode => dir_in_sync(&CC_PLUGIN, &path),
             Agent::Pi => dir_in_sync(&PI_EXTENSION, &path),
-            Agent::Generic => std::fs::read(path.join("SKILL.md"))
+            Agent::Generic | Agent::Cursor => std::fs::read(path.join("SKILL.md"))
                 .is_ok_and(|on_disk| on_disk == GENERIC_SKILL.as_bytes()),
         }
     }
@@ -239,6 +247,11 @@ mod tests {
                 .install_path(home)
                 .ends_with(".agents/skills/swarm")
         );
+        assert!(
+            Agent::Cursor
+                .install_path(home)
+                .ends_with(".cursor/skills/swarm")
+        );
     }
 
     #[test]
@@ -262,13 +275,34 @@ mod tests {
     }
 
     #[test]
+    fn cursor_in_sync_only_when_skill_matches_embedded() {
+        let home = std::env::temp_dir().join(format!("ahsw-cursor-insync-{}", std::process::id()));
+        let dir = Agent::Cursor.install_path(&home);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // No SKILL.md yet → out of sync.
+        assert!(!Agent::Cursor.in_sync(&home));
+
+        // Cursor carries the same portable skill the generic target ships.
+        let file = dir.join("SKILL.md");
+        std::fs::write(&file, GENERIC_SKILL).unwrap();
+        assert!(Agent::Cursor.in_sync(&home));
+
+        // A diverged copy → out of sync.
+        std::fs::write(&file, format!("{GENERIC_SKILL}\n")).unwrap();
+        assert!(!Agent::Cursor.in_sync(&home));
+
+        std::fs::remove_dir_all(&home).unwrap();
+    }
+
+    #[test]
     fn drift_warning_fires_only_for_a_diverged_install() {
         let home = std::env::temp_dir().join(format!("ahsw-drift-{}", std::process::id()));
         let dir = Agent::Generic.install_path(&home);
         std::fs::create_dir_all(&dir).unwrap();
         let file = dir.join("SKILL.md");
 
-        // Installed and matching → no warning (claude-code/pi are absent).
+        // Installed and matching → no warning (claude-code/pi/cursor are absent).
         std::fs::write(&file, GENERIC_SKILL).unwrap();
         assert!(super::drift_warning(&home).is_none());
 

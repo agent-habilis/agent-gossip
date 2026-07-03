@@ -4,8 +4,8 @@ use crate::protocol::crypto::Password;
 
 /// Resolve a clap optional-value `--password` flag (absent / bare / valued)
 /// into a [`Password`]. Bare ⇒ a hidden prompt on the controlling TTY —
-/// `/dev/tty`, never stdin/stdout, so it composes with `pipe listen < file`
-/// and `pipe connect > file`. `confirm` re-prompts and compares (creation
+/// `/dev/tty`, never stdin/stdout, so it never collides with a command's
+/// stdout/stdin data stream. `confirm` re-prompts and compares (creation
 /// paths: a typo would mint an unjoinable swarm or an unredeemable ticket).
 ///
 /// `no_prompt` (non-interactive / `--output json` frontends) makes a bare

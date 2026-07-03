@@ -318,11 +318,17 @@ export function getPeers(): { count: number; participants: Peer[] } {
   // Model/harness/host live in the `meta` channel now (`/peers/<nick>`), not the
   // roster — each agent self-reports them. Best-effort: a meta read failure
   // just leaves those columns blank, never breaks the roster.
-  let peerMeta: Record<string, { model?: string; harness?: string; host?: string }> = {};
+  let peerMeta: Record<
+    string,
+    { model?: string; harness?: string; host?: string; status?: string }
+  > = {};
   try {
     const doc = getMetaDocument();
     if (doc.peers && typeof doc.peers === "object") {
-      peerMeta = doc.peers as Record<string, { model?: string; harness?: string; host?: string }>;
+      peerMeta = doc.peers as Record<
+        string,
+        { model?: string; harness?: string; host?: string; status?: string }
+      >;
     }
   } catch {
     // leave peerMeta empty
@@ -335,6 +341,7 @@ export function getPeers(): { count: number; participants: Peer[] } {
       model: peerMeta[entry.nickname]?.model,
       harness: peerMeta[entry.nickname]?.harness,
       host: peerMeta[entry.nickname]?.host,
+      status: peerMeta[entry.nickname]?.status,
       lastSeenSecsAgo: entry.last_seen_secs_ago ?? null,
       quiet: Boolean(entry.quiet),
     })),
@@ -436,7 +443,10 @@ function runMetaMerge(merge: string): void {
 function reportSelfMeta(model?: string): void {
   const session = state.session;
   if (!session?.swarm) return;
-  const value: Record<string, string> = { harness: HARNESS };
+  // Seed `status: "idle"` — we advertise as accepting work until the agent flips
+  // it (via setSelfStatus) when it goes heads-down. Only "busy" makes senders
+  // skip us; "idle"/"available"/absent stay eligible.
+  const value: Record<string, string> = { harness: HARNESS, status: "idle" };
   if (model) value.model = model;
   // `host` is this machine's short hostname, so peers can see which agents
   // share a box. os.hostname() may include a domain — keep only the first label.
@@ -448,6 +458,15 @@ function reportSelfMeta(model?: string): void {
   } catch {
     // Give up silently; self-report is non-essential.
   }
+}
+
+// Advertise this agent's availability into `meta` under `/peers/<nickname>/status`.
+// A partial merge touches only `status`, leaving model/harness/host intact.
+// Throws on a rejected merge so the tool can surface the error to the agent.
+export function setSelfStatus(status: string): void {
+  const session = state.session;
+  if (!session?.swarm) throw new Error("Not in a swarm");
+  runMetaMerge(JSON.stringify({ peers: { [session.nickname]: { status } } }));
 }
 
 export async function pingPeers(): Promise<PingResult[]> {

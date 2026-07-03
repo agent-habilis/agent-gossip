@@ -126,6 +126,7 @@ swarm's runtime folder, beside its socket and log:
   "swarm": "🐝…",
   "name": "my-team",
   "nickname": "swift-cedar",
+  "pid": 34299,
   "ready": true,
   "participant_count": 3,
   "last_updated": 1779509457
@@ -134,18 +135,22 @@ swarm's runtime folder, beside its socket and log:
 
 `ready` is `false` at the first write (identity up) and `true` once the daemon
 is serving IPC — `ahsw ready --state-file <path>` blocks on it as a readiness
-gate.
+gate. `pid` is the daemon's own process id — `ahsw leave` / `ahsw session`
+use it to map the file back to a running daemon and, via its process
+ancestry, to the agent session that spawned it.
 
 Keying by `$PPID` lets multiple Claude Code agents share one machine
 without trampling each other's session; each one resolves to its own
 file. `/tmp` is deliberate: the state is ephemeral and should not
 survive reboots or move between machines. The daemon **writes it
-solely for external readers** (e.g. a shell statusline) — the skills
-neither write nor read it; they source `swarm`/`name`/`nickname` from
-the `ready` event in conversation context. It is created when
-`/swarm:create` or `/swarm:join` starts the daemon (via `--state-file`)
-and removed by the daemon on clean shutdown (so `/swarm:leave` deletes
-nothing).
+solely for external readers** (a shell statusline, `ahsw leave` /
+`ahsw session` discovery) — the skills never write it; they source
+`swarm`/`name`/`nickname` from the `ready` event in conversation
+context, falling back to `ahsw session` when a context clear wiped
+that memory. It is created when `/swarm:create` or `/swarm:join`
+starts the daemon (via `--state-file`) and removed by the daemon on
+clean shutdown (so `/swarm:leave` deletes nothing live; `ahsw leave`
+only garbage-collects files whose daemon is already gone).
 
 ## Auto-reply behavior
 

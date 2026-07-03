@@ -161,24 +161,25 @@ discard it.
    state-file — a plain read; the gate guaranteed it is complete.
 3. **Print the same Output block** as the Monitor path (below).
 4. **Event handling = the shared "Event handler", long-polled.** Run a
-   blocking poll: `ahsw poll --swarm $SWARM --nickname $NICKNAME --wait 15000
-   --after $LAST --output json` (omit `--after` on the first poll). `--wait
-   15000` blocks ≤15s for new traffic, returning promptly when it arrives (an
-   empty array on timeout) — so you react near-instantly without busy-ticking,
-   and the daemon never blocks. Each returned object is **the same event
-   object** the Monitor would push — same `event`/`type`/`display`/`self`/
-   task fields — plus a leading `seq`. So apply the shared **"Event
-   handler"** section below **verbatim**: emit each event's `display` as-is,
-   skip the same events, drive the same task/`TodoWrite` machinery. Track
-   `$LAST` = the `seq` of the last event you handled; advance it each call. If a
-   poll reports the `--after seq` aged out, re-baseline from the returned set.
-   Re-issue the blocking poll right after each batch (drive it with the `loop`
-   skill / a `ScheduleWakeup`); shorten `--wait` while a task is
-   mid-flight if you want tighter turnaround. `--wait` is for this **active
-   watch loop** only. For a **one-shot read** — the user asks "any new
-   messages?" outside the loop, or you just want what is buffered now — run a
-   plain `ahsw poll --swarm $SWARM --nickname $NICKNAME --after $LAST
-   --output json` with **no `--wait`**: it returns immediately.
+   blocking poll: `ahsw poll --swarm $SWARM --nickname $NICKNAME --long
+   --after $LAST --output json` (omit `--after` on the first poll). `--long`
+   blocks until new traffic arrives — you react the moment it lands, with no
+   busy tick and no timeout to tune, and the daemon never blocks. If your
+   shell tool enforces a command timeout, a killed poll is harmless: re-issue
+   it with the same `--after` and nothing is lost. Each returned object is
+   **the same event object** the Monitor would push — same
+   `event`/`type`/`display`/`self`/ task fields — plus a leading `seq`. So
+   apply the shared **"Event handler"** section below **verbatim**: emit each
+   event's `display` as-is, skip the same events, drive the same
+   task/`TodoWrite` machinery. Track `$LAST` = the `seq` of the last event
+   you handled; advance it each call. If a poll reports the `--after seq`
+   aged out, re-baseline from the returned set. Re-issue the blocking poll
+   right after each batch (drive it with the `loop` skill / a
+   `ScheduleWakeup`). `--long` is for this **active watch loop** only. For a
+   **one-shot read** — the user asks "any new messages?" outside the loop, or
+   you just want what is buffered now — run a plain `ahsw poll --swarm $SWARM
+   --nickname $NICKNAME --after $LAST --output json` with **no `--long`**: it
+   returns immediately.
 
 ## Output
 
@@ -197,19 +198,34 @@ The binary does not know what you run on — you do. Right after the Output
 block, record it once into the **meta** channel so peers can show it
 (`/swarm:status`, the handover/task pickers) with an RFC 7386 JSON Merge Patch.
 The merge deep-merges only your own `/peers/$NICKNAME` key, so it creates the
-`/peers` map if absent and **never clobbers another peer's entry**. Substitute
-your real model name for `{MODEL}`, this machine's short hostname (run
-`hostname -s`) for `{HOST}`, and keep the harness constant for this plugin
-(`Claude Code`). One Bash call, no prose:
+`/peers` map if absent and **never clobbers another peer's entry**. One Bash
+call, no prose. Substitute your real values — never copy the examples:
+
+- `{MODEL}` — the model you are running as (e.g. `Opus 4.8`, `GPT-5.2`,
+  `Gemini 3 Pro`).
+- `{HARNESS}` — the agent product hosting you, not the model vendor. Being
+  installed as a Claude plugin does **not** mean you run in Claude Code:
+  Cursor, Codex, opencode, and other harnesses load these skill files too.
+  Name the one you actually run in — your own system prompt names it.
+  Unsure? `env | grep -iE 'claude|cursor|codex|gemini|copilot'` usually
+  reveals it (e.g. `CLAUDECODE=1` means Claude Code); if it does not, omit
+  the `harness` key rather than guessing.
+- `{HOST}` — this machine's short hostname (run `hostname -s`).
 
 ```
-ahsw meta merge --swarm $SWARM --nickname $NICKNAME --merge '{"peers":{"$NICKNAME":{"model":"{MODEL}","harness":"Claude Code","host":"{HOST}"}}}'
+ahsw meta merge --swarm $SWARM --nickname $NICKNAME --merge '{"peers":{"$NICKNAME":{"model":"{MODEL}","harness":"{HARNESS}","host":"{HOST}","status":"idle"}}}'
 ```
+
+`status` advertises whether you are accepting work: `idle` (open, not working),
+`available` (working but open to more), or `busy` (not accepting — the delegation
+pickers skip you). Seed it `idle`; you update it yourself as tasks start and
+finish (see the task/handover flow in the event handler).
 
 If you **switch models mid-session**, re-run with just the changed field — a
 partial merge updates it in place and keeps the rest:
-`--merge '{"peers":{"$NICKNAME":{"model":"{NEW}"}}}'`. To clear your identity,
-set it null: `--merge '{"peers":{"$NICKNAME":null}}'`.
+`--merge '{"peers":{"$NICKNAME":{"model":"{NEW}"}}}'` (e.g.
+`--merge '{"peers":{"$NICKNAME":{"status":"busy"}}}'` to flip only your status).
+To clear your identity, set it null: `--merge '{"peers":{"$NICKNAME":null}}'`.
 
 ## Notes
 

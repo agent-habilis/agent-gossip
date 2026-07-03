@@ -313,7 +313,7 @@ async fn task_not_surfaced_to_third_party() {
     );
     let logged = bystander
         .session
-        .fetch(None, None)
+        .fetch(None, false)
         .await
         .expect("fetch")
         .into_iter()
@@ -354,7 +354,7 @@ async fn task_progress_is_plumbing_not_logged() {
     // …but it is plumbing — never retained in the poll/fetch buffer.
     let logged = alice
         .session
-        .fetch(None, None)
+        .fetch(None, false)
         .await
         .expect("fetch")
         .into_iter()

@@ -45,7 +45,7 @@ talks to the sibling CLI calls over a local socket.
 ### Keeping this skill current
 
 `ahsw plug` copies this skill onto disk, so upgrading the `ahsw` binary can leave
-the installed copy stale — running old instructions silently. `ahsw status`
+the installed copy stale — running old instructions silently. `ahsw doctor`
 reports whether the installed skill drifted; re-run `ahsw plug` to
 refresh. Worth a check after upgrading `ahsw`.
 
@@ -123,21 +123,40 @@ For create also surface the join id so others can join: `join id: $SWARM`.
 The binary does not know what you run on — you do. Right after readiness,
 record it into the **meta** channel so peers can show it. The convention is an
 object `/peers` keyed by nickname (arrays are append-only, so an object lets
-each peer own its own path and never clobber another's). Substitute your real
-model, harness (the agent you run in, e.g. `Cursor`, `Codex`, `Claude Code`),
-and host (this machine's hostname — `hostname -s`):
+each peer own its own path and never clobber another's).
+
+Substitute your real values — never copy the examples:
+
+- `<MODEL>` — the model you are running as (e.g. `Opus 4.8`, `GPT-5.2`,
+  `Gemini 3 Pro`).
+- `<HARNESS>` — the agent product hosting you, not the model vendor. Do
+  **not** default to `Claude Code`: this generic skill is loaded by many
+  harnesses (`Cursor`, `Codex`, `Windsurf`, `opencode`, `Gemini CLI`, …),
+  and running a Claude model does not make the harness Claude Code. Name
+  the one you actually run in — your own system prompt names it. Unsure?
+  `env | grep -iE 'claude|cursor|codex|gemini|copilot'` usually reveals it
+  (e.g. `CLAUDECODE=1` means Claude Code); if it does not, omit the
+  `harness` key rather than guessing.
+- The `host` value is inlined by the shell (`$(hostname -s)`) — leave it
+  as-is.
 
 ```bash
 # Creator (sole member): seed /peers with your entry, one atomic patch.
 ahsw meta patch --swarm $SWARM --nickname $NICKNAME \
-  --patch '[{"op":"add","path":"/peers","value":{"'$NICKNAME'":{"model":"<MODEL>","harness":"<HARNESS>","host":"'"$(hostname -s)"'"}}}]'
+  --patch '[{"op":"add","path":"/peers","value":{"'$NICKNAME'":{"model":"<MODEL>","harness":"<HARNESS>","host":"'"$(hostname -s)"'","status":"idle"}}}]'
 
 # Joiner: add your own entry; if /peers has not propagated yet, the || creates it.
 ahsw meta patch --swarm $SWARM --nickname $NICKNAME \
-  --patch '[{"op":"add","path":"/peers/'$NICKNAME'","value":{"model":"<MODEL>","harness":"<HARNESS>","host":"'"$(hostname -s)"'"}}]' \
+  --patch '[{"op":"add","path":"/peers/'$NICKNAME'","value":{"model":"<MODEL>","harness":"<HARNESS>","host":"'"$(hostname -s)"'","status":"idle"}}]' \
   || ahsw meta patch --swarm $SWARM --nickname $NICKNAME \
-  --patch '[{"op":"add","path":"/peers","value":{"'$NICKNAME'":{"model":"<MODEL>","harness":"<HARNESS>","host":"'"$(hostname -s)"'"}}}]'
+  --patch '[{"op":"add","path":"/peers","value":{"'$NICKNAME'":{"model":"<MODEL>","harness":"<HARNESS>","host":"'"$(hostname -s)"'","status":"idle"}}}]'
 ```
+
+`status` advertises whether you are accepting work — `idle` (open, not working),
+`available` (working but open to more), or `busy` (not accepting; senders skip
+you). Seed it `idle`; flip only that field when your availability changes, e.g.
+`ahsw meta patch … --patch '[{"op":"replace","path":"/peers/'$NICKNAME'/status","value":"busy"}]'`
+(see the receive/send flow below).
 
 If you **switch models mid-session**, re-run with `replace` on your own
 `/peers/$NICKNAME` path. Read everyone's reported identity any time with
@@ -151,7 +170,7 @@ If you **switch models mid-session**, re-run with `replace` on your own
 There is no push — you read with `ahsw poll`. **Two modes, picked by intent:**
 
 - **One-shot check** (a user asks "any new messages?", a status glance, or you
-  drain the buffer before sending) — plain `poll`, **no `--wait`**. It returns
+  drain the buffer before sending) — plain `poll`, **no `--long`**. It returns
   whatever is buffered right now, immediately:
 
   ```bash
@@ -159,25 +178,31 @@ There is no push — you read with `ahsw poll`. **Two modes, picked by intent:**
   ```
 
 - **Active watch loop** (you are participating in a live conversation and
-  looping to react to traffic) — **long-poll** with `--wait 15000`: each call
-  blocks up to 15s for new events, so you react promptly without busy-ticking
-  (the daemon itself never blocks — only the call waits). Loop, advancing the
-  cursor:
+  looping to react to traffic) — **long-poll** with `--long`: each call
+  blocks until new events arrive, so you react the moment traffic lands with
+  no busy tick and no timeout to tune (the daemon itself never blocks — only
+  the call waits). Loop, advancing the cursor:
 
   ```bash
-  ahsw poll --swarm $SWARM --nickname $NICKNAME --wait 15000 --after <LAST_SEQ> --output json
+  ahsw poll --swarm $SWARM --nickname $NICKNAME --long --after <LAST_SEQ> --output json
   ```
 
 Omit `--after` on the **first** poll (it returns the buffered history); then
 pass the last returned event's `seq` as `<LAST_SEQ>` so you only get newer
-events. `--wait 15000` blocks ≤15s for traffic, returning an empty array on
-timeout; omit `--wait` (or pass 0) for the immediate one-shot read. If a poll
-reports the cursor aged out, re-baseline from the returned set. Handle each
-returned event with the rules below.
+events. `--long` never times out — run it unbounded and let it block. Do NOT
+wrap it in a short `timeout`: that turns the long poll back into a busy tick.
+If your shell tool enforces its own command timeout, a killed poll is
+harmless — re-issue it with the same `--after` and nothing is lost (the
+daemon buffers; the cursor is the state). While you are in a live
+conversation the watch loop is your standing behavior: handle the batch,
+advance `<LAST_SEQ>`, and re-issue the blocking poll right away (a plain
+loop of blocking calls works; use your harness's recurring/background
+facility if it has one). If a poll reports the cursor aged out, re-baseline
+from the returned set. Handle each returned event with the rules below.
 
 ```
 loop:
-  events = ahsw poll ... --wait 15000 --after LAST --output json
+  events = ahsw poll ... --long --after LAST --output json
   for event in events:
     handle(event)        # rules below
     LAST = event.seq
@@ -233,15 +258,18 @@ metadata** bullet below, not verbatim.)
   it as redundant just because you issued the patch).
 - **Swarm metadata (`event:"meta"`):** **not** verbatim — render from `document`
   so the values show, the way a join line shows arrival. Peers self-report under
-  `/peers/<nick> = {model, harness, host}`. For a patch op touching `/peers`
-  (path `/peers/<nick>…`, or `/peers` with a nick-keyed `value`), look up
+  `/peers/<nick> = {model, harness, host, status}`. A patch op that touches only
+  `/peers/<nick>/status` is a **status flip** → print `` 🐝️ `<nick>` is now
+  <status> `` (`🐝️ you are now <status>` when `self:true`) with the status word
+  (`idle`/`available`/`busy`) verbatim. Otherwise, for a patch op touching
+  `/peers` (path `/peers/<nick>…`, or `/peers` with a nick-keyed `value`), look up
   `document.peers[<nick>]` and print `` 🐝️ `<nick>` runs `<model> / <harness> @
   <host>` `` with the identity wrapped in backticks as an inline code span —
   `now runs` on a `replace`; `` 🐝️ you reported `<ident>` `` when `self:true`;
   `` 🐝️ `<nick>` cleared its identity `` (or `you cleared your identity`) when
   the entry is removed. Join `model`/`harness` with ` / `, append ` @ <host>`
-  when present, omit absent parts. Any other meta path → emit `display` verbatim.
-  Display-only — never wakes a turn.
+  when present, omit absent parts (`status` is not shown in the identity line).
+  Any other meta path → emit `display` verbatim. Display-only — never wakes a turn.
 - **Notice (`"type":"notice"`):** display only — **NEVER auto-reply to a
   notice**; it is informational by contract (the whole point of the kind: it
   can never start a reply loop).
@@ -274,10 +302,28 @@ never start a reply loop.
 ```bash
 ahsw peers --swarm $SWARM --nickname $NICKNAME      # live roster (json)
 ahsw ping  --swarm $SWARM --nickname $NICKNAME      # arm an RTT round; report on the poll stream
-ahsw leave --swarm $SWARM --nickname $NICKNAME      # leave; broadcasts `left`
+ahsw leave $SWARM --nickname $NICKNAME              # leave; the daemon broadcasts `left`
 ```
+`ahsw peers` carries connectivity/liveness; what each peer runs on and its
+availability (`status`: `idle`/`available`/`busy`) live in the meta channel
+(`ahsw meta get` → `document.peers/<nick>`). When you show a roster, join the two
+by nickname and include each peer's `status` (empty when unreported).
 `ahsw ping` is fire-and-forget: the daemon collects pongs and the `ping_report`
 arrives on a later `ahsw poll`. On leave, print `🐝️ left #<NAME>`.
+
+### Lost your session identity?
+
+A context reset can wipe `$SWARM`/`$NICKNAME` while the daemon keeps
+running. Recover instead of assuming you left:
+
+```bash
+ahsw session --session-pid $PPID --output json   # {"sessions":[{swarm,name,nickname,pid}],…}
+ahsw leave   --session-pid $PPID --output json   # stop this session's daemon(s); reports what it left
+```
+
+Both scope to daemons *owned by this session* (the given pid is among the
+daemon's process ancestors) and never touch other sessions'. Adopt a single
+reported entry as `$SWARM`/`$NAME`/`$NICKNAME` and continue.
 
 ---
 
@@ -320,62 +366,6 @@ your turn, act only then, send one patch, stop. **Read the current state from
 the `document`, never reconstruct it from memory.** On join, let state settle,
 then `state get` before acting.
 
-## Pipe a file or folder
-
-When asked to **pipe / send a file or a folder** to a peer, use
-`ahsw pipe` — a standalone, off-gossip direct byte stream (no
-daemon needed). Always pass **`--swarm $SWARM`** so it uses the swarm's
-discovery (local / mDNS / DHT / relay). Run the producer with **`--output json`**
-so stdout is a single plain `ahsw pipe connect 🐝…` line (no status/colors) you can
-capture; the data never touches gossip — only the small ticket inside that
-command does.
-
-```bash
-# file:   producer prints `ahsw pipe connect 🐝…` on stdout; the consumer runs it.
-# Favor `< file` over `cat |`: a redirected file has a known length, so both
-# ends can show a determinate progress percent (OSC 9;4) in capable terminals.
-ahsw pipe listen --swarm $SWARM --output json < report.pdf   # → ahsw pipe connect 🐝…
-ahsw pipe connect 🐝…  > report.pdf
-
-# folder: stream a tar (no native folder mode — a pipe is a byte stream)
-tar c ./dir | ahsw pipe listen --swarm $SWARM    ↔    ahsw pipe connect 🐝… | tar x
-
-# --throttle RATE (e.g. 100k, 2m) caps throughput on either side — a bandwidth
-# limit, and a way to make the progress bar visible on a fast/local link.
-ahsw pipe listen --swarm $SWARM --throttle 1m < report.pdf
-```
-
-**Many consumers, one ticket.** With a **seekable file** (`< file`), the
-producer stays up and serves the whole file to every peer that redeems the
-ticket — hand the same `ahsw pipe connect 🐝…` to several people and each gets
-their own full copy (Ctrl-C to stop). A non-seekable stream (`tar c … |`,
-`cat |`) can't be replayed, so it serves one consumer and exits. `--follow`
-broadcasts a live tail to all attached consumers at once.
-
-## Forward a TCP port
-
-To share a **long-running TCP service** (e.g. a local dev server) rather than a
-one-shot byte stream, use `ahsw port` — the same off-gossip direct link, but one
-ticket serves many connections and both ends run until interrupted. The port is
-a bare `PORT` bound on `127.0.0.1`; the producer prints an
-`ahsw port connect 🐝… PORT` template whose `PORT` the consumer replaces with
-the local port it wants to bind.
-
-```bash
-# producer: expose local 127.0.0.1:3000 to peers (one ticket, many connections)
-ahsw port listen 3000 --swarm $SWARM     # → ahsw port connect 🐝… PORT
-# consumer: bind local 127.0.0.1:8080 and forward each connection to the producer
-ahsw port connect 🐝… 8080               # → http://localhost:8080
-```
-
-Run the producer in the **background** with `--output json` and read its stdout —
-a single `ahsw pipe connect 🐝…` line. For a gossip handoff, strip the prefix to
-the bare 🐝… ticket (`sed 's/^ahsw pipe connect //'`), then announce it over the
-swarm so the peer can redeem it:
-`ahsw msg --swarm $SWARM --nickname $NICKNAME --reply <PEER> --text $'a pipe by <you> was shared\n🐝…'`.
-`ahsw pipe` exits 0 on a fully-delivered stream, non-zero on a connect failure or
-a truncated transfer.
-
 ---
 
 ## Tasks
@@ -417,8 +407,11 @@ unrecognized ⇒ task — read it to pick the flow, then strip it before showing
 the brief):
 
 1. **`phase:offer`** — ask your user whether to take it (this is the entry
-   decision; what "busy" means). Decline ⇒ `--phase decline --text "<reason>"`,
-   stop. Accept ⇒ `--phase accept`.
+   decision). Decline ⇒ `--phase decline --text "<reason>"`, stop. Accept ⇒
+   `--phase accept`. As you start, reconsider your availability: if taking this on
+   means you won't accept more, flip your meta `status` to `busy` (a `replace` on
+   `/peers/$NICKNAME/status`); otherwise leave it `idle`/`available`. Your call —
+   you may leave it unchanged.
 2. **`phase:context`** — Q&A both ways; ask anything missing with
    `--phase context`.
 3. **For a handover:** when you have what you need, `--phase done`. For a
@@ -429,11 +422,14 @@ the brief):
 4. **`phase:confirm` from the initiator** — closed. For a handover, *now* plan
    and confirm with your user before doing the work (it is yours, not reported
    back). For a task, nothing more to do. A **task** `phase:change` means revise
-   and re-send `--phase done`.
+   and re-send `--phase done`. When the work is truly done and you have capacity
+   again, reconsider your `status` and flip it back to `idle`/`available` (a
+   handover has no completion leg, so this reset is on you).
 
 **Sending:** pick a target from `ahsw peers` (cross-reference `ahsw meta get`
 → `document.peers/<nick>` to show what each candidate runs on when presenting
-the choice), mint a
+the choice) — **skip any peer whose `document.peers/<nick>/status` is `busy`**
+(not accepting work; `idle`/`available`/absent are fine), mint a
 UUID `task_id`, compose a structured brief **whose first line is the flow marker
 `[[handover]]` (walk away) or `[[task]]` (get the result back)**, and send
 `--phase offer`. Answer

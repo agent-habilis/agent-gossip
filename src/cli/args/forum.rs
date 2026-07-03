@@ -52,11 +52,6 @@ mod tests {
             | Commands::Discover { .. }
             | Commands::Task { .. }
             | Commands::Peers { .. }
-            | Commands::Pipe { .. }
-            | Commands::Port { .. }
-            | Commands::File { .. }
-            | Commands::Sh { .. }
-            | Commands::Mount { .. }
             | Commands::State { .. }
             | Commands::Meta { .. }
             | Commands::Ready { .. }
@@ -64,7 +59,9 @@ mod tests {
             | Commands::Man
             | Commands::Plug { .. }
             | Commands::Unplug { .. }
-            | Commands::Doctor { .. } => panic!("expected Forum command"),
+            | Commands::Doctor { .. }
+            | Commands::Leave { .. }
+            | Commands::Session { .. } => panic!("expected Forum command"),
         }
     }
 

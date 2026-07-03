@@ -29,7 +29,7 @@ mod name;
 pub use id::{SwarmId, SwarmIdError};
 pub(crate) use lookup::{
     AdvertiseRequiresReachable, DEFAULT_DIRECTORY, DirectorySelection, LookupOpts, RelayChoice,
-    SwarmConfig, resolve_lookups, resolve_transfer_lookups, validate_advertise,
+    SwarmConfig, resolve_lookups, validate_advertise,
 };
 pub use lookup::{LookupSet, RelayLadder, RelayLadderError, RelaySelection};
 pub use name::{NameError, SwarmName};

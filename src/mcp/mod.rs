@@ -204,14 +204,13 @@ struct FetchMessagesArgs {
     /// explicit `seq` only to replay from a specific point.
     #[serde(default)]
     after: Option<u64>,
-    /// Long-poll: block up to this many milliseconds for new traffic before
-    /// returning, instead of an immediate read. The server caps it at 60s; on
-    /// timeout the result is an empty `messages`. Pass it (~15000) only when
-    /// actively watching a live conversation in a loop. Omit (or 0) for a
-    /// one-shot read — e.g. the user asks to check for new messages — to
-    /// return whatever is buffered right away.
+    /// Long-poll: park the read until new traffic arrives, up to ~60s. An
+    /// empty `messages` at the deadline just means the window elapsed
+    /// quietly — call again. Pass `true` only when actively watching a live
+    /// conversation in a loop. Omit for a one-shot read — e.g. the user asks
+    /// to check for new messages — to return whatever is buffered right away.
     #[serde(default)]
-    wait_ms: Option<u64>,
+    long: bool,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -620,7 +619,7 @@ impl AgentSwarmServer {
     }
 
     #[tool(
-        description = "Return buffered events from the current swarm — chat, presence, task legs, shared-state changes (event \"state\", carrying the merge and the newly-derived `document`), and transient events (ping_report, peer_timeout, …), each the same JSON object the live event stream emits. The server auto-tracks a per-session `seq` cursor, so repeat calls with no args return only new traffic (first call sees full history, up to ~200 events). Pass `after` (a seq) only to explicitly replay from a point. Pass `wait_ms` (~15000) to long-poll — block up to that many ms (server-capped at 60s) for new traffic before returning — only while actively watching a live conversation in a loop; on timeout `messages` is empty. Omit `wait_ms` for a one-shot read (e.g. the user asks to check for new messages), which returns whatever is buffered right away. Never returns `alive` heartbeats — those are internal plumbing."
+        description = "Return buffered events from the current swarm — chat, presence, task legs, shared-state changes (event \"state\", carrying the merge and the newly-derived `document`), and transient events (ping_report, peer_timeout, …), each the same JSON object the live event stream emits. The server auto-tracks a per-session `seq` cursor, so repeat calls with no args return only new traffic (first call sees full history, up to ~200 events). Pass `after` (a seq) only to explicitly replay from a point. Pass `long: true` to long-poll — park the read until new traffic arrives (server-capped at ~60s) — only while actively watching a live conversation in a loop; an empty `messages` at the deadline just means the window elapsed quietly, call again. Omit `long` for a one-shot read (e.g. the user asks to check for new messages), which returns whatever is buffered right away. Never returns `alive` heartbeats — those are internal plumbing."
     )]
     async fn fetch_messages(
         &self,
@@ -629,7 +628,7 @@ impl AgentSwarmServer {
         let guard = self.session.lock().await;
         let session = guard.as_ref().ok_or_else(not_in_swarm_error)?;
         let events = session
-            .fetch_messages(args.after, args.wait_ms)
+            .fetch_messages(args.after, args.long)
             .await
             .map_err(to_mcp_error)?;
         // Embed each surfaced event's rendered line verbatim as a `RawValue`,
@@ -817,11 +816,12 @@ NO PUSH — POLL. The server does not push incoming traffic to you; you read it 
 with `fetch_messages`, which returns only new entries since your last call (the \
 server tracks the cursor). Pick by intent. One-shot check (the user asks to \
 look for new messages, or you want a single read of what is buffered): call \
-`fetch_messages()` with no `wait_ms` — it returns right away. Active watching \
+`fetch_messages()` with no `long` — it returns right away. Active watching \
 (you are in a live conversation and looping to react): long-poll with \
-`fetch_messages(wait_ms=15000)` — it blocks until a new event arrives or that \
-timeout elapses, then returns; loop call/handle/call, no busy tick. Use \
-`wait_ms` only while actively watching, never for a one-shot check.
+`fetch_messages(long=true)` — it parks until a new event arrives, up to ~60s; \
+an empty result just means the window elapsed quietly — call again. Loop \
+call/handle/call, no busy tick. Use `long` only while actively watching, \
+never for a one-shot check.
 
 EVENT SHAPE. Each entry in `fetch_messages().messages` is a JSON object. Chat \
 and presence share `event:\"message\"` and are distinguished by a `type` field \

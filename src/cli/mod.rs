@@ -24,13 +24,12 @@ mod doctor;
 mod password;
 mod picker;
 mod plug;
-mod ticket_discover;
+mod session;
 
 pub(crate) use args::Cli;
 use args::{
-    Commands, CreateOpts, FileAction, ForumOpts, MetaAction, MetaOpts, MountAction, MsgOpts,
-    NoticeOpts, OutputFormat, PeersOpts, PingOpts, PipeAction, PollOpts, PortAction, ReadyOpts,
-    ShAction, SharedServerOpts, StateAction, StateOpts, TaskOpts,
+    Commands, CreateOpts, ForumOpts, MetaAction, MetaOpts, MsgOpts, NoticeOpts, OutputFormat,
+    PeersOpts, PingOpts, PollOpts, ReadyOpts, SharedServerOpts, StateAction, StateOpts, TaskOpts,
 };
 
 /// `join` has no `--public`/`--name`: both are encoded in the `🐝…`
@@ -86,26 +85,17 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
             crate::util::tuning::init(opts.shared.tuning());
             Box::pin(forum(opts)).await
         }
+        Commands::Leave { opts } => session::leave(opts).await,
+        Commands::Session { opts } => session::session(opts).await,
         Commands::Msg { opts } => msg(opts).await,
         Commands::Notice { opts } => notice(opts).await,
         Commands::Poll { opts } => poll(opts).await,
         Commands::Ping { opts } => ping(opts).await,
         Commands::Task { opts } => task(opts).await,
         Commands::Peers { opts } => peers(opts).await,
-        // Boxed like the event-loop futures above: the discover arms hold a
-        // picker + connect chain that puts these over clippy's 16 KiB
+        // Boxed like the event-loop futures above: the discover arm holds a
+        // picker + connect chain that puts it over clippy's 16 KiB
         // `large_futures` budget.
-        Commands::Pipe { action } => Box::pin(pipe(action)).await,
-        Commands::Port { action } => Box::pin(port(action)).await,
-        Commands::File { action } => Box::pin(file(action)).await,
-        Commands::Sh { action } => sh(action).await,
-        Commands::Mount {
-            action,
-            ticket,
-            mountpoint,
-            no_mount,
-            output,
-        } => mount(action, ticket, mountpoint, no_mount, output).await,
         Commands::State { opts } => state(opts).await,
         Commands::Meta { opts } => meta(opts).await,
         Commands::Ready { opts } => ready(opts).await,
@@ -116,12 +106,14 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
         Commands::Mcp {
             directory_private,
             ping_window_secs,
+            longpoll_max_ms,
         } => {
-            // The MCP server holds no `SharedServerOpts`; install just the two
+            // The MCP server holds no `SharedServerOpts`; install just the
             // hidden knobs the suite varies (loopback directory, short ping
-            // window) over the production defaults.
+            // window, short long-poll park) over the production defaults.
             crate::util::tuning::init(crate::util::tuning::Tuning {
                 ping_window_secs,
+                longpoll_max_ms,
                 directory_private,
                 ..crate::util::tuning::Tuning::DEFAULTS
             });
@@ -342,24 +334,47 @@ async fn notice(opts: NoticeOpts) -> Result<()> {
 /// Retrieve buffered messages from a running swarm process via IPC.
 /// `poll` always emits the raw IPC JSON; the `--output` flag is accepted
 /// for symmetry but not consulted here.
+///
+/// With `--long` the daemon parks each read up to its ~60s cap; an empty
+/// return just means the window elapsed quietly, so the identical request
+/// (same `--after` cursor) is re-issued until events arrive — from the
+/// caller's side one blocking call with no timeout. An IPC error (daemon
+/// gone) propagates instead of retrying.
 async fn poll(opts: PollOpts) -> Result<()> {
     let PollOpts {
         swarm,
         nickname,
         after,
-        wait,
+        long,
         output: _,
     } = opts;
-    let cmd = IpcCommand::Poll {
-        swarm,
-        after,
-        wait_ms: wait,
-    };
+    let cmd = IpcCommand::Poll { swarm, after, long };
 
-    let resp = ipc::send(&cmd, &nickname).await?;
-    println!("{resp}");
-
-    Ok(())
+    loop {
+        let started = tokio::time::Instant::now();
+        let resp = ipc::send(&cmd, &nickname).await?;
+        // An empty response is the daemon closing the connection without
+        // writing (shutdown mid-park) — `round_trip` maps that EOF to `""`.
+        // Surface it instead of printing a blank line / retrying forever.
+        anyhow::ensure!(
+            !resp.is_empty(),
+            "swarm daemon closed the connection without a response (shutting down?)"
+        );
+        if !(long && resp == "[]") {
+            println!("{resp}");
+            return Ok(());
+        }
+        // Both empty paths render exactly `[]`; an error response is a JSON
+        // object, so it prints and exits above. Floor the cycle so a daemon
+        // degrading long reads to immediate empties (waiter registry full)
+        // can't spin this loop hot — the unchanged cursor re-reads anything
+        // that lands during the sleep.
+        let min_cycle =
+            std::time::Duration::from_millis(crate::util::tuning::POLL_LONG_MIN_CYCLE_MS);
+        if let Some(remaining) = min_cycle.checked_sub(started.elapsed()) {
+            tokio::time::sleep(remaining).await;
+        }
+    }
 }
 
 /// Arm an RTT round on the running daemon. Fire-and-forget: the daemon
@@ -422,384 +437,6 @@ async fn peers(opts: PeersOpts) -> Result<()> {
     let resp = ipc::send(&cmd, &nickname).await?;
     println!("{resp}");
     Ok(())
-}
-
-/// `ahsw pipe` — a standalone, off-gossip direct byte stream (no daemon).
-/// `listen` reads stdin and prints the connect command on stdout; `connect`
-/// redeems one and streams the peer's bytes to stdout.
-async fn pipe(action: PipeAction) -> Result<()> {
-    match action {
-        PipeAction::Listen {
-            swarm,
-            lookups,
-            advertise,
-            tuning,
-            throttle,
-            output,
-            password,
-            follow,
-        } => {
-            crate::util::tuning::init(tuning.tuning());
-            let json = matches!(output, OutputFormat::Json);
-            let password = password::resolve_password(password, /* confirm */ true, json)?;
-            crate::pipe::listen(
-                swarm.as_ref().map(crate::protocol::SwarmId::as_str),
-                lookups.to_set(),
-                crate::protocol::swarm::DirectorySelection::from_flag(advertise),
-                throttle,
-                json,
-                follow,
-                password,
-            )
-            .await
-        }
-        PipeAction::Connect {
-            ticket,
-            throttle,
-            password,
-        } => {
-            let password =
-                consumer_password(password, &ticket, crate::pipe::ticket_requires_password)?;
-            crate::pipe::connect(&ticket, throttle, password).await
-        }
-        PipeAction::Discover {
-            name,
-            lookups,
-            tuning,
-            throttle,
-            password,
-            output,
-        } => {
-            crate::util::tuning::init(tuning.tuning());
-            let json = matches!(output, OutputFormat::Json);
-            let password = password::resolve_password(password, /* confirm */ false, json)?;
-            match ticket_discover::discover_ticket(
-                name,
-                lookups.to_set(),
-                crate::protocol::token::TokenType::Pipe,
-                json,
-            )
-            .await?
-            {
-                Some(ticket) => {
-                    let password = match password {
-                        None if crate::pipe::ticket_requires_password(&ticket) => {
-                            Some(password::require_password(false, "ticket")?)
-                        }
-                        other => other,
-                    };
-                    ticket_discover::interruptible(crate::pipe::connect(
-                        &ticket, throttle, password,
-                    ))
-                    .await
-                }
-                None => Ok(()),
-            }
-        }
-        PipeAction::Bench {
-            ticket,
-            serve,
-            swarm,
-            lookups,
-            budget,
-            pings,
-            password,
-            output,
-        } => {
-            let json = matches!(output, OutputFormat::Json);
-            // clap enforces the producer/consumer split: `--serve`/`--swarm`
-            // and the lookup flags conflict with a ticket, `--budget`/`--pings`
-            // require one. So a ticket means consumer, its absence means
-            // producer.
-            match ticket {
-                None => {
-                    let password =
-                        password::resolve_password(password, /* confirm */ true, json)?;
-                    crate::pipe::listen_bench(
-                        swarm.as_ref().map(crate::protocol::SwarmId::as_str),
-                        lookups.to_set(),
-                        serve,
-                        json,
-                        password,
-                    )
-                    .await
-                }
-                Some(ticket) => {
-                    let password = consumer_password(
-                        password,
-                        &ticket,
-                        crate::pipe::ticket_requires_password,
-                    )?;
-                    let opts = crate::pipe::BenchOpts {
-                        budget: budget.unwrap_or_default(),
-                        pings: pings.unwrap_or(20),
-                    };
-                    crate::pipe::connect_bench(&ticket, opts, json, password).await
-                }
-            }
-        }
-    }
-}
-
-/// Resolve a consumer-side `--password` flag, prompting when the flag is
-/// absent but `ticket` decodes as password-protected (per `requires` — each
-/// transfer kind checks its own ticket codec). The prompt itself fails
-/// cleanly without a TTY, telling the caller to pass `--password=<pw>`.
-#[expect(
-    clippy::option_option,
-    reason = "clap optional-value flag: absent/bare/valued are three distinct password states"
-)]
-fn consumer_password(
-    flag: Option<Option<String>>,
-    ticket: &str,
-    requires: impl Fn(&str) -> bool,
-) -> Result<Option<crate::protocol::crypto::Password>> {
-    let password = password::resolve_password(flag, /* confirm */ false, false)?;
-    match password {
-        None if requires(ticket) => Ok(Some(password::require_password(false, "ticket")?)),
-        other => Ok(other),
-    }
-}
-
-/// `ahsw port` — a standalone, off-gossip TCP forward (no daemon). `listen`
-/// exposes a local port and prints the connect command on stdout; `connect`
-/// redeems a ticket and forwards each local connection to the producer.
-async fn port(action: PortAction) -> Result<()> {
-    match action {
-        PortAction::Listen {
-            ports,
-            swarm,
-            lookups,
-            advertise,
-            tuning,
-            password,
-            output,
-        } => {
-            crate::util::tuning::init(tuning.tuning());
-            let json = matches!(output, OutputFormat::Json);
-            let password = password::resolve_password(password, /* confirm */ true, json)?;
-            crate::port::listen(
-                swarm.as_ref().map(crate::protocol::SwarmId::as_str),
-                lookups.to_set(),
-                crate::protocol::swarm::DirectorySelection::from_flag(advertise),
-                &ports,
-                json,
-                password,
-            )
-            .await
-        }
-        PortAction::Connect {
-            ticket,
-            ports,
-            password,
-            output,
-        } => {
-            let password =
-                consumer_password(password, &ticket, crate::port::ticket_requires_password)?;
-            crate::port::connect(
-                &ticket,
-                &ports,
-                matches!(output, OutputFormat::Json),
-                password,
-            )
-            .await
-        }
-        PortAction::Discover {
-            name,
-            ports,
-            lookups,
-            tuning,
-            password,
-            output,
-        } => {
-            crate::util::tuning::init(tuning.tuning());
-            let json = matches!(output, OutputFormat::Json);
-            let password = password::resolve_password(password, /* confirm */ false, json)?;
-            match ticket_discover::discover_ticket(
-                name,
-                lookups.to_set(),
-                crate::protocol::token::TokenType::Port,
-                json,
-            )
-            .await?
-            {
-                Some(ticket) => {
-                    // No explicit mappings ⇒ forward every advertised port to
-                    // the same local port.
-                    let mappings = if ports.is_empty() {
-                        crate::port::identity_mappings(&ticket)?
-                    } else {
-                        ports
-                    };
-                    let password = match password {
-                        None if crate::port::ticket_requires_password(&ticket) => {
-                            Some(password::require_password(false, "ticket")?)
-                        }
-                        other => other,
-                    };
-                    ticket_discover::interruptible(crate::port::connect(
-                        &ticket, &mappings, json, password,
-                    ))
-                    .await
-                }
-                None => Ok(()),
-            }
-        }
-    }
-}
-
-/// `ahsw file` — a standalone, off-gossip file/folder transfer (no daemon).
-/// `send` serves a path and prints the `get` command on stdout; `get` redeems a
-/// ticket and receives the tree, fetching only what has changed.
-async fn file(action: FileAction) -> Result<()> {
-    match action {
-        FileAction::Send {
-            path,
-            swarm,
-            lookups,
-            advertise,
-            tuning,
-            throttle,
-            password,
-            output,
-        } => {
-            crate::util::tuning::init(tuning.tuning());
-            let json = matches!(output, OutputFormat::Json);
-            let password = password::resolve_password(password, /* confirm */ true, json)?;
-            crate::file::send(
-                swarm.as_ref().map(crate::protocol::SwarmId::as_str),
-                lookups.to_set(),
-                crate::protocol::swarm::DirectorySelection::from_flag(advertise),
-                &path,
-                throttle,
-                json,
-                password,
-            )
-            .await
-        }
-        FileAction::Get {
-            ticket,
-            out,
-            throttle,
-            password,
-            output,
-        } => {
-            let password =
-                consumer_password(password, &ticket, crate::file::ticket_requires_password)?;
-            crate::file::get(
-                &ticket,
-                out.as_deref(),
-                throttle,
-                matches!(output, OutputFormat::Json),
-                password,
-            )
-            .await
-        }
-        FileAction::Discover {
-            name,
-            lookups,
-            tuning,
-            out,
-            throttle,
-            password,
-            output,
-        } => {
-            crate::util::tuning::init(tuning.tuning());
-            let json = matches!(output, OutputFormat::Json);
-            let password = password::resolve_password(password, /* confirm */ false, json)?;
-            match ticket_discover::discover_ticket(
-                name,
-                lookups.to_set(),
-                crate::protocol::token::TokenType::File,
-                json,
-            )
-            .await?
-            {
-                Some(ticket) => {
-                    let password = match password {
-                        None if crate::file::ticket_requires_password(&ticket) => {
-                            Some(password::require_password(false, "ticket")?)
-                        }
-                        other => other,
-                    };
-                    ticket_discover::interruptible(crate::file::get(
-                        &ticket,
-                        out.as_deref(),
-                        throttle,
-                        json,
-                        password,
-                    ))
-                    .await
-                }
-                None => Ok(()),
-            }
-        }
-    }
-}
-
-async fn sh(action: ShAction) -> Result<()> {
-    match action {
-        ShAction::Listen {
-            swarm,
-            lookups,
-            output,
-            write,
-            command,
-            cols,
-            rows,
-            password,
-        } => {
-            let json = matches!(output, OutputFormat::Json);
-            let password = password::resolve_password(password, /* confirm */ true, json)?;
-            crate::sh::listen(
-                swarm.as_ref().map(crate::protocol::SwarmId::as_str),
-                lookups.to_set(),
-                json,
-                write,
-                command.as_deref(),
-                cols,
-                rows,
-                password,
-            )
-            .await
-        }
-        ShAction::Connect { ticket, password } => {
-            let password =
-                consumer_password(password, &ticket, crate::sh::ticket_requires_password)?;
-            crate::sh::connect(&ticket, password).await
-        }
-    }
-}
-
-async fn mount(
-    action: Option<MountAction>,
-    ticket: Option<String>,
-    mountpoint: Option<std::path::PathBuf>,
-    no_mount: bool,
-    output: OutputFormat,
-) -> Result<()> {
-    let json = matches!(output, OutputFormat::Json);
-    if let Some(MountAction::Serve {
-        dir,
-        swarm,
-        lookups,
-        output: serve_output,
-    }) = action
-    {
-        return crate::mount::serve(
-            swarm.as_ref().map(crate::protocol::SwarmId::as_str),
-            lookups.to_set(),
-            &dir,
-            matches!(serve_output, OutputFormat::Json),
-        )
-        .await;
-    }
-    // The bare form: both positionals are optional at the clap layer (the
-    // `serve` subcommand shares the slot), so require them here.
-    let (Some(ticket), Some(mountpoint)) = (ticket, mountpoint) else {
-        anyhow::bail!("usage: ahsw mount <🐝…> <mountpoint>, or ahsw mount serve <dir>");
-    };
-    crate::mount::attach(&ticket, &mountpoint, no_mount, json).await
 }
 
 /// Read or change the swarm's shared state via the running daemon. Emits the

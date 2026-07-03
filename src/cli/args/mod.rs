@@ -11,22 +11,19 @@ use clap::{Parser, Subcommand};
 mod create;
 mod discover;
 mod doctor;
-mod file;
 mod forum;
 mod join;
+mod leave;
 mod lookup;
 mod meta;
-mod mount;
 mod msg;
 mod notice;
 mod output;
 mod peers;
 mod ping;
-mod pipe;
 mod poll;
-mod port;
 mod ready;
-mod sh;
+mod session;
 mod shared;
 mod state;
 mod task;
@@ -34,21 +31,18 @@ mod task;
 pub(crate) use create::CreateOpts;
 pub(crate) use discover::DiscoverOpts;
 pub(crate) use doctor::DoctorOpts;
-pub(crate) use file::FileAction;
 pub(crate) use forum::ForumOpts;
 pub(crate) use join::JoinOpts;
+pub(crate) use leave::LeaveOpts;
 pub(crate) use meta::{MetaAction, MetaOpts};
-pub(crate) use mount::MountAction;
 pub(crate) use msg::MsgOpts;
 pub(crate) use notice::NoticeOpts;
 pub(crate) use output::OutputFormat;
 pub(crate) use peers::PeersOpts;
 pub(crate) use ping::PingOpts;
-pub(crate) use pipe::PipeAction;
 pub(crate) use poll::PollOpts;
-pub(crate) use port::PortAction;
 pub(crate) use ready::ReadyOpts;
-pub(crate) use sh::ShAction;
+pub(crate) use session::SessionOpts;
 pub(crate) use shared::SharedServerOpts;
 pub(crate) use state::{StateAction, StateOpts};
 pub(crate) use task::TaskOpts;
@@ -101,6 +95,33 @@ pub(crate) enum Commands {
     Forum {
         #[command(flatten)]
         opts: ForumOpts,
+    },
+
+    /// Leave swarm(s): stop this session's local daemon(s).
+    ///
+    /// Finds running create/join/forum daemons through their state files
+    /// and sends each a SIGTERM; a daemon broadcasts `left` to its peers
+    /// and removes its state file on the way out. With no SWARM, stops
+    /// only the daemons owned by the calling session — those with
+    /// `--session-pid` among their process ancestors — and never touches
+    /// other sessions'. An explicit SWARM targets that swarm's local
+    /// member(s) regardless of owner. State files whose daemon is gone
+    /// (SIGKILL, power loss) are cleaned up along the way.
+    Leave {
+        #[command(flatten)]
+        opts: LeaveOpts,
+    },
+
+    /// Report the swarm(s) this session is joined to.
+    ///
+    /// The read-only sibling of `leave`: discovers running daemons through
+    /// their state files and prints the ones owned by the calling session
+    /// (see `--session-pid`). This is how an agent that lost its
+    /// conversation context (e.g. after a context clear) re-learns the
+    /// swarm id and nickname of a session it is still joined to.
+    Session {
+        #[command(flatten)]
+        opts: SessionOpts,
     },
 
     /// Post a message to a swarm
@@ -168,83 +189,6 @@ pub(crate) enum Commands {
         opts: PeersOpts,
     },
 
-    /// Stream stdin to a peer, or a peer's stream to stdout (off-gossip, direct P2P).
-    ///
-    /// A standalone byte pipe: `pipe listen` reads stdin and prints the
-    /// `ahsw pipe connect 🐝…` command on stdout; `pipe connect <ticket>` streams
-    /// the bytes to stdout. No running daemon required.
-    Pipe {
-        #[command(subcommand)]
-        action: PipeAction,
-    },
-
-    /// Forward a local TCP port to a peer, or a peer's TCP port to a local one.
-    ///
-    /// A standalone TCP proxy over a direct P2P link (off-gossip, no daemon):
-    /// `port listen PORT` exposes a local service and prints the
-    /// `ahsw port connect 🐝…` command on stdout; `port connect <ticket> PORT`
-    /// binds a local port and forwards each connection to the producer. One
-    /// ticket serves many connections.
-    Port {
-        #[command(subcommand)]
-        action: PortAction,
-    },
-
-    /// Send a file or folder to a peer, or receive one (off-gossip, direct P2P).
-    ///
-    /// A standalone file transfer over a direct P2P link (no daemon):
-    /// `file send <path>` serves a file or folder and prints the
-    /// `ahsw file get 🐝…` command on stdout; `file get <ticket>`
-    /// receives the tree into the current directory. Only files the receiver is
-    /// missing or has an outdated copy of are sent (a snapshot + delta re-sync).
-    File {
-        #[command(subcommand)]
-        action: FileAction,
-    },
-
-    /// Broadcast a live terminal to peers, or attach to one (off-gossip, direct P2P).
-    ///
-    /// A standalone terminal share over a direct P2P link (no daemon):
-    /// `sh listen` spawns `$SHELL` in a pseudo-terminal and prints the
-    /// `ahsw sh connect 🐝…` command on stdout; `sh connect <ticket>` renders
-    /// the shell. A read ticket is view-only (its keyboard never reaches the
-    /// shell); `--write` also mints a write-capable ticket whose holders type
-    /// into the shell. Ending the shell ends the broadcast.
-    Sh {
-        #[command(subcommand)]
-        action: ShAction,
-    },
-
-    /// Share a folder with peers, or mount a peer's folder locally
-    /// (read-only, lazy, off-gossip, no daemon).
-    ///
-    /// `mount serve <dir>` shares a folder and prints the `ahsw mount 🐝…`
-    /// command; `mount <🐝…> <mountpoint>` mounts it through a loopback `NFSv3`
-    /// bridge (the OS's built-in NFS client — no FUSE, no kernel extension).
-    /// The directory tree is a snapshot from when `serve` started; file bytes
-    /// are fetched on demand as they are read. Writes fail (read-only).
-    #[command(args_conflicts_with_subcommands = true)]
-    Mount {
-        #[command(subcommand)]
-        action: Option<MountAction>,
-
-        /// The `🐝…` ticket printed by `ahsw mount serve`.
-        ticket: Option<String>,
-
-        /// Where to mount the shared folder (created if missing; an existing
-        /// directory must be empty). Unmounted on Ctrl-C.
-        mountpoint: Option<std::path::PathBuf>,
-
-        /// Start the loopback NFS bridge but skip the OS mount step; prints
-        /// the mount command to run manually. Hidden — a test/ops knob.
-        #[arg(long, hide = true)]
-        no_mount: bool,
-
-        /// Output format: human (default) or json (the bare mount command).
-        #[arg(long, default_value = "human")]
-        output: OutputFormat,
-    },
-
     /// Read or change the swarm's shared state.
     ///
     /// Shared state is a JSON document every member derives from a dedicated,
@@ -298,6 +242,11 @@ pub(crate) enum Commands {
         /// so a `ping` round-trip doesn't wait the full window.
         #[arg(long, hide = true, default_value_t = crate::util::consts::PING_WINDOW_SECS)]
         ping_window_secs: u64,
+
+        /// How long a `long: true` fetch parks before returning empty (millis).
+        /// Hidden; tests shorten it to hit the timeout path quickly.
+        #[arg(long, hide = true, default_value_t = crate::util::consts::LONGPOLL_MAX_MS)]
+        longpoll_max_ms: u64,
     },
 
     /// Print the full agent manual to stdout.
@@ -309,10 +258,11 @@ pub(crate) enum Commands {
 
     /// Plug the swarm integrations into your agents.
     ///
-    /// Targets Claude Code (the plugin), pi (the extension), and a generic
-    /// `~/.agents/skills` agent. The artifacts are embedded in the binary, so
-    /// this needs no repo checkout. With no `--agent`, the detected agents are
-    /// used. Reversible with `unplug`.
+    /// Targets Claude Code (the plugin), pi (the extension), Cursor
+    /// (`~/.cursor/skills`), and a generic `~/.agents/skills` agent. The
+    /// artifacts are embedded in the binary, so this needs no repo checkout.
+    /// With no `--agent`, the detected agents are used; an agent that is not
+    /// on this machine is skipped, never scaffolded. Reversible with `unplug`.
     Plug {
         /// Agent(s) to install into (repeatable). Defaults to detected agents.
         #[arg(long = "agent", value_enum)]

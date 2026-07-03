@@ -42,8 +42,10 @@ narrating the `TodoWrite` is not.
 
 ## Pre-flight: guard
 
-If you are not in a swarm this session (no `$SWARM`/`$NICKNAME` from a
-`/swarm:create` or `/swarm:join` `ready` event), print:
+If you hold `$SWARM`/`$NICKNAME` from a `/swarm:create` or `/swarm:join`
+`ready` event this session, proceed. Otherwise try to reattach first:
+follow `../shared/reattach.md` (resolved relative to this SKILL.md's
+directory). Only if reattach also yields no swarm, print:
 ```
 🐝 Not in a swarm. Use /swarm:create or /swarm:join first.
 ```
@@ -71,11 +73,15 @@ ahsw meta get --swarm "$SWARM" --nickname "$NICKNAME"
 
 `peers` returns
 `{"ok":true,"participants":[{"nickname","last_seen_secs_ago","quiet","reach"}…],"participant_count":N}`;
-`meta get` returns `{"ok":true,"document":{"peers":{"<nick>":{"model","harness","host"}…}},…}`.
-Look up each peer's `model`/`harness`/`host` by nickname in `document.peers`
-(absent ⇒ unreported). Drop any entry with `"quiet":true`; rank the rest by
-`last_seen_secs_ago` ascending (most recently active first). If there are no
-eligible peers, print `🐝️ no peers to send tasks to` and STOP.
+`meta get` returns `{"ok":true,"document":{"peers":{"<nick>":{"model","harness","host","status"}…}},…}`.
+Look up each peer's `model`/`harness`/`host`/`status` by nickname in
+`document.peers` (absent ⇒ unreported). Drop any entry with `"quiet":true`,
+**and any whose `document.peers[<nick>].status` is `"busy"`** (that peer is not
+accepting work; `idle`/`available`/absent all stay eligible). Rank the rest by
+availability then recency: `idle` ahead of `available` ahead of unreported, and
+within each by `last_seen_secs_ago` ascending (most recently active first). If
+there are no eligible peers, print `🐝️ no available peers to send tasks to` and
+STOP.
 
 ## Enter plan mode and build the tasks
 

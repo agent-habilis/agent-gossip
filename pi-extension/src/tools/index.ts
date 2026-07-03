@@ -15,6 +15,7 @@ import {
   pingPeers,
   sendSwarmMessage,
   sendTaskLeg,
+  setSelfStatus,
   validateCreateOptions,
 } from "../core";
 import { formatPingReport, formatRoster } from "../format";
@@ -263,6 +264,7 @@ export function registerTools(pi: ExtensionAPI): void {
       'Receiving a handover: after accepting, ask anything unclear with phase "context", then send phase "done" when you have what you need; once the initiator confirms, do the work yourself',
       'Receiving a task: after accepting, do the work, then send phase "done" with your result in text',
       'Initiator: answer the receiver\'s "context" questions with phase "context"',
+      'When you accept work, reconsider your availability: if it means you will not take more, call swarm_set_status "busy"; when it closes and you have capacity again, set it back to "idle"/"available" (your judgment — leave it unchanged if it did not change)',
     ],
     parameters: Type.Object({
       task_id: Type.String({
@@ -308,7 +310,8 @@ export function registerTools(pi: ExtensionAPI): void {
     promptGuidelines: [
       "Use swarm_handover when the user wants to hand a task or plan to another agent to run",
       "Compose a clear brief in text: what to do, the goal, current state, and constraints",
-      "Pick `to` from the current roster (swarm_status). The handoff closes when the receiver signals done; the extension auto-confirms",
+      "Pick `to` from the current roster (swarm_status). Skip any peer whose status is `busy` (not accepting work); `idle`/`available`/unreported are eligible",
+      "The handoff closes when the receiver signals done; the extension auto-confirms",
     ],
     parameters: Type.Object({
       to: Type.String({
@@ -366,7 +369,8 @@ export function registerTools(pi: ExtensionAPI): void {
     promptGuidelines: [
       "Use swarm_task when the user wants a peer to run work and return the result",
       "Include an explicit completion criterion in text so the worker knows when it is done",
-      "Pick `to` from the current roster (swarm_status). The worker returns its result; you confirm it (swarm_advance phase confirm) or ask for a revision (phase change)",
+      "Pick `to` from the current roster (swarm_status). Skip any peer whose status is `busy` (not accepting work); `idle`/`available`/unreported are eligible",
+      "The worker returns its result; you confirm it (swarm_advance phase confirm) or ask for a revision (phase change)",
     ],
     parameters: Type.Object({
       to: Type.String({
@@ -440,6 +444,42 @@ export function registerTools(pi: ExtensionAPI): void {
       const { count, participants } = getPeers();
       const text = `${lines.join("\n")}\n\n${formatRoster({ name: status.name, count, participants })}`;
       return { content: [{ type: "text", text }], details: { ...status, count, participants } };
+    },
+  });
+
+  pi.registerTool({
+    name: "swarm_set_status",
+    label: "Swarm Set Status",
+    description: "Advertise your availability to the swarm (idle / available / busy)",
+    promptSnippet: "Set whether you are accepting swarm work",
+    promptGuidelines: [
+      'Set "busy" when you do not want to receive work — senders skip busy peers; set "idle" (open, not working) or "available" (working but open to more) when you are accepting again',
+      "Reconsider at task start and finish: this reflects your willingness to take work, not raw activity. Leave it unchanged when your availability did not change",
+      "You start as idle on join; this only flips your own status and never touches your model/harness/host",
+    ],
+    parameters: Type.Object({
+      status: Type.String({
+        description: "Your availability: idle, available, or busy",
+      }),
+    }),
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx: ExtensionContext) {
+      if (!requireAgentSwarm(ctx)) {
+        return toolError("ahsw CLI not found on PATH");
+      }
+      if (!state.session?.swarm) {
+        return toolError("Not in a swarm. Use swarm_create or swarm_join first.");
+      }
+      try {
+        setSelfStatus(params.status);
+        return {
+          content: [{ type: "text", text: `status set to ${params.status}` }],
+          details: null,
+        };
+      } catch (error) {
+        return toolError(
+          `Set status failed: ${error instanceof Error ? error.message : "unknown"}`,
+        );
+      }
     },
   });
 

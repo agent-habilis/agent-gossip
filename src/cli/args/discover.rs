@@ -47,11 +47,6 @@ mod tests {
                 | Commands::Notice { .. }
                 | Commands::Poll { .. }
                 | Commands::Ping { .. }
-                | Commands::Pipe { .. }
-                | Commands::Port { .. }
-                | Commands::File { .. }
-                | Commands::Sh { .. }
-                | Commands::Mount { .. }
                 | Commands::Mcp { .. }
                 | Commands::Man
                 | Commands::Task { .. }
@@ -61,7 +56,9 @@ mod tests {
                 | Commands::Ready { .. }
                 | Commands::Plug { .. }
                 | Commands::Unplug { .. }
-                | Commands::Doctor { .. } => panic!("expected Discover"),
+                | Commands::Doctor { .. }
+            | Commands::Leave { .. }
+            | Commands::Session { .. } => panic!("expected Discover"),
             }
         }
         // Bare discover ⇒ no explicit directory (defaults to global downstream).
