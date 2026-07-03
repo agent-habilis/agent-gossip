@@ -82,7 +82,7 @@ impl SwarmId {
         // Length is measured on the bare `🐝<payload>` form so the bounds
         // don't shift with the optional separator.
         let bare_len = PREFIX.len() + payload.len();
-        if bare_len < MIN_LEN || bare_len > MAX_LEN {
+        if !(MIN_LEN..=MAX_LEN).contains(&bare_len) {
             return Err(SwarmIdError::Length(bare_len));
         }
         if !payload.chars().all(is_base58_char) {
