@@ -105,10 +105,14 @@ ahsw meta get --swarm "$SWARM" --nickname "$NICKNAME"
 
 `peers` returns
 `{"ok":true,"participants":[{"nickname","last_seen_secs_ago","quiet","reach"}…],"participant_count":N}`.
-`meta get` returns `{"ok":true,"document":{"peers":{"<nick>":{"model","harness","host"}…}},…}` —
-look up each peer's `model`/`harness`/`host` by nickname in `document.peers`
-(absent ⇒ that peer has not reported yet). Drop any entry with `"quiet":true`;
-rank the rest by `last_seen_secs_ago` ascending (most recently active first).
+`meta get` returns `{"ok":true,"document":{"peers":{"<nick>":{"model","harness","host","status"}…}},…}` —
+look up each peer's `model`/`harness`/`host`/`status` by nickname in
+`document.peers` (absent ⇒ that peer has not reported yet). Drop any entry with
+`"quiet":true`, **and any whose `document.peers[<nick>].status` is `"busy"`**
+(that peer is not accepting work; `idle`/`available`/absent stay eligible). Rank
+the rest by availability then recency: `idle` ahead of `available` ahead of
+unreported, and within each by `last_seen_secs_ago` ascending (most recently
+active first).
 Show an `AskUserQuestion` — question "Hand `<one-line task>` to which peer?",
 header `swarm:handover`, options = the **top 3** by recency. For each option:
 - **label** = the nickname wrapped in angle brackets, e.g. `<cable-spark>`
@@ -123,7 +127,7 @@ header `swarm:handover`, options = the **top 3** by recency. For each option:
 The free-text "Other" entry lets the user type a nickname; re-validate it
 against the roster. The chosen nickname (without the brackets) is `$TARGET`.
 
-If the roster has no eligible peers, print `🐝️ no peers to hand over to`
+If the roster has no eligible peers, print `🐝️ no available peers to hand over to`
 and STOP.
 
 ## Send the offer

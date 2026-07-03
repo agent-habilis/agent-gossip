@@ -69,6 +69,10 @@ export type Peer = {
   harness?: string;
   // The machine the peer runs on (its hostname); absent when not reported.
   host?: string;
+  // Availability the peer advertises: "idle" (open, not working), "available"
+  // (working but open), "busy" (not accepting work). Absent when not reported;
+  // only "busy" means "don't send me work".
+  status?: string;
   // null until the peer's first heartbeat is timed.
   lastSeenSecsAgo: number | null;
   quiet: boolean;

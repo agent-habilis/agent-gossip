@@ -290,8 +290,10 @@ Each swarm carries **two channels**, `state` and `meta` — byte-for-byte the
 same machinery (same reducer, log, anti-entropy, RFC 7386 merge rules),
 differing only by **convention**: `state` is the task working area;
 `meta` holds swarm metadata, by convention `/peers/<nick> = { model, harness,
-host }` that each agent self-reports (`host` is the machine's self-reported
-hostname). The binary does **not** differentiate them and
+host, status }` that each agent self-reports (`host` is the machine's
+self-reported hostname; `status` is its availability — `idle`/`available`/`busy`,
+where `busy` means "not accepting work" and the delegation pickers skip it). The
+binary does **not** differentiate them and
 never writes a channel itself — the **only** way to change either is a JSON
 merge (`ahsw state merge` / `ahsw meta merge`). Read with `ahsw state get` /
 `ahsw meta get`. A change surfaces as the `state` / `meta` event, carrying both

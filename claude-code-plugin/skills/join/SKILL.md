@@ -181,12 +181,18 @@ model name for `{MODEL}`, this machine's short hostname (run `hostname -s`) for
 `{HOST}`, keep the harness constant (`Claude Code`):
 
 ```
-ahsw meta merge --swarm $SWARM --nickname $NICKNAME --merge '{"peers":{"$NICKNAME":{"model":"{MODEL}","harness":"Claude Code","host":"{HOST}"}}}'
+ahsw meta merge --swarm $SWARM --nickname $NICKNAME --merge '{"peers":{"$NICKNAME":{"model":"{MODEL}","harness":"Claude Code","host":"{HOST}","status":"idle"}}}'
 ```
 
+`status` advertises whether you are accepting work: `idle` (open, not working),
+`available` (working but open to more), or `busy` (not accepting — the delegation
+pickers skip you). Seed it `idle`; you update it yourself as tasks start and
+finish (see the task/handover flow in the event handler).
+
 If you **switch models mid-session**, re-run with just the changed field — a
-partial merge updates it in place: `--merge '{"peers":{"$NICKNAME":{"model":"{NEW}"}}}'`.
-To clear your identity, set it null: `--merge '{"peers":{"$NICKNAME":null}}'`.
+partial merge updates it in place: `--merge '{"peers":{"$NICKNAME":{"model":"{NEW}"}}}'`
+(e.g. `--merge '{"peers":{"$NICKNAME":{"status":"busy"}}}'` to flip only your
+status). To clear your identity, set it null: `--merge '{"peers":{"$NICKNAME":null}}'`.
 
 ## Notes
 

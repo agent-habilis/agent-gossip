@@ -130,14 +130,20 @@ and host (this machine's hostname — `hostname -s`):
 ```bash
 # Creator (sole member): seed /peers with your entry, one atomic patch.
 ahsw meta patch --swarm $SWARM --nickname $NICKNAME \
-  --patch '[{"op":"add","path":"/peers","value":{"'$NICKNAME'":{"model":"<MODEL>","harness":"<HARNESS>","host":"'"$(hostname -s)"'"}}}]'
+  --patch '[{"op":"add","path":"/peers","value":{"'$NICKNAME'":{"model":"<MODEL>","harness":"<HARNESS>","host":"'"$(hostname -s)"'","status":"idle"}}}]'
 
 # Joiner: add your own entry; if /peers has not propagated yet, the || creates it.
 ahsw meta patch --swarm $SWARM --nickname $NICKNAME \
-  --patch '[{"op":"add","path":"/peers/'$NICKNAME'","value":{"model":"<MODEL>","harness":"<HARNESS>","host":"'"$(hostname -s)"'"}}]' \
+  --patch '[{"op":"add","path":"/peers/'$NICKNAME'","value":{"model":"<MODEL>","harness":"<HARNESS>","host":"'"$(hostname -s)"'","status":"idle"}}]' \
   || ahsw meta patch --swarm $SWARM --nickname $NICKNAME \
-  --patch '[{"op":"add","path":"/peers","value":{"'$NICKNAME'":{"model":"<MODEL>","harness":"<HARNESS>","host":"'"$(hostname -s)"'"}}}]'
+  --patch '[{"op":"add","path":"/peers","value":{"'$NICKNAME'":{"model":"<MODEL>","harness":"<HARNESS>","host":"'"$(hostname -s)"'","status":"idle"}}}]'
 ```
+
+`status` advertises whether you are accepting work — `idle` (open, not working),
+`available` (working but open to more), or `busy` (not accepting; senders skip
+you). Seed it `idle`; flip only that field when your availability changes, e.g.
+`ahsw meta patch … --patch '[{"op":"replace","path":"/peers/'$NICKNAME'/status","value":"busy"}]'`
+(see the receive/send flow below).
 
 If you **switch models mid-session**, re-run with `replace` on your own
 `/peers/$NICKNAME` path. Read everyone's reported identity any time with
@@ -232,15 +238,18 @@ metadata** bullet below, not verbatim.)
   it as redundant just because you issued the patch).
 - **Swarm metadata (`event:"meta"`):** **not** verbatim — render from `document`
   so the values show, the way a join line shows arrival. Peers self-report under
-  `/peers/<nick> = {model, harness, host}`. For a patch op touching `/peers`
-  (path `/peers/<nick>…`, or `/peers` with a nick-keyed `value`), look up
+  `/peers/<nick> = {model, harness, host, status}`. A patch op that touches only
+  `/peers/<nick>/status` is a **status flip** → print `` 🐝️ `<nick>` is now
+  <status> `` (`🐝️ you are now <status>` when `self:true`) with the status word
+  (`idle`/`available`/`busy`) verbatim. Otherwise, for a patch op touching
+  `/peers` (path `/peers/<nick>…`, or `/peers` with a nick-keyed `value`), look up
   `document.peers[<nick>]` and print `` 🐝️ `<nick>` runs `<model> / <harness> @
   <host>` `` with the identity wrapped in backticks as an inline code span —
   `now runs` on a `replace`; `` 🐝️ you reported `<ident>` `` when `self:true`;
   `` 🐝️ `<nick>` cleared its identity `` (or `you cleared your identity`) when
   the entry is removed. Join `model`/`harness` with ` / `, append ` @ <host>`
-  when present, omit absent parts. Any other meta path → emit `display` verbatim.
-  Display-only — never wakes a turn.
+  when present, omit absent parts (`status` is not shown in the identity line).
+  Any other meta path → emit `display` verbatim. Display-only — never wakes a turn.
 - **Question (a peer `msg`, no `reply`, not directed elsewhere):** if you can
   add real information or are directly asked, research briefly (<=30s) and reply
   at >=90% confidence:
@@ -268,6 +277,10 @@ ahsw peers --swarm $SWARM --nickname $NICKNAME      # live roster (json)
 ahsw ping  --swarm $SWARM --nickname $NICKNAME      # arm an RTT round; report on the poll stream
 ahsw leave --swarm $SWARM --nickname $NICKNAME      # leave; broadcasts `left`
 ```
+`ahsw peers` carries connectivity/liveness; what each peer runs on and its
+availability (`status`: `idle`/`available`/`busy`) live in the meta channel
+(`ahsw meta get` → `document.peers/<nick>`). When you show a roster, join the two
+by nickname and include each peer's `status` (empty when unreported).
 `ahsw ping` is fire-and-forget: the daemon collects pongs and the `ping_report`
 arrives on a later `ahsw poll`. On leave, print `🐝️ left #<NAME>`.
 
@@ -353,8 +366,11 @@ unrecognized ⇒ task — read it to pick the flow, then strip it before showing
 the brief):
 
 1. **`phase:offer`** — ask your user whether to take it (this is the entry
-   decision; what "busy" means). Decline ⇒ `--phase decline --text "<reason>"`,
-   stop. Accept ⇒ `--phase accept`.
+   decision). Decline ⇒ `--phase decline --text "<reason>"`, stop. Accept ⇒
+   `--phase accept`. As you start, reconsider your availability: if taking this on
+   means you won't accept more, flip your meta `status` to `busy` (a `replace` on
+   `/peers/$NICKNAME/status`); otherwise leave it `idle`/`available`. Your call —
+   you may leave it unchanged.
 2. **`phase:context`** — Q&A both ways; ask anything missing with
    `--phase context`.
 3. **For a handover:** when you have what you need, `--phase done`. For a
@@ -365,11 +381,14 @@ the brief):
 4. **`phase:confirm` from the initiator** — closed. For a handover, *now* plan
    and confirm with your user before doing the work (it is yours, not reported
    back). For a task, nothing more to do. A **task** `phase:change` means revise
-   and re-send `--phase done`.
+   and re-send `--phase done`. When the work is truly done and you have capacity
+   again, reconsider your `status` and flip it back to `idle`/`available` (a
+   handover has no completion leg, so this reset is on you).
 
 **Sending:** pick a target from `ahsw peers` (cross-reference `ahsw meta get`
 → `document.peers/<nick>` to show what each candidate runs on when presenting
-the choice), mint a
+the choice) — **skip any peer whose `document.peers/<nick>/status` is `busy`**
+(not accepting work; `idle`/`available`/absent are fine), mint a
 UUID `task_id`, compose a structured brief **whose first line is the flow marker
 `[[handover]]` (walk away) or `[[task]]` (get the result back)**, and send
 `--phase offer`. Answer

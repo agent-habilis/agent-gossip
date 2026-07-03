@@ -74,7 +74,7 @@ export function formatPeerIdent(peer: { model?: string; harness?: string; host?:
 export function formatMeta(event: SwarmEvent): string | null {
   const peersDoc = (event.document?.peers ?? {}) as Record<
     string,
-    { model?: string; harness?: string; host?: string }
+    { model?: string; harness?: string; host?: string; status?: string }
   >;
   const mergePeers = (event.merge?.peers ?? {}) as Record<string, unknown>;
   const touched = Object.keys(mergePeers);
@@ -89,6 +89,17 @@ export function formatMeta(event: SwarmEvent): string | null {
     const peer = peersDoc[nick];
     if (mergeVal === null || !peer) {
       return isSelf ? "you cleared your identity" : `\`<${nick}>\` cleared its identity`;
+    }
+    // A pure status flip (the merge touched only `status`) surfaces availability,
+    // not identity — e.g. `<nick>` is now busy. A `status` seeded alongside
+    // identity fields falls through to the identity line below.
+    if (
+      typeof mergeVal === "object" &&
+      Object.keys(mergeVal as object).length === 1 &&
+      "status" in (mergeVal as object)
+    ) {
+      const status = peer.status ?? String((mergeVal as { status?: unknown }).status ?? "");
+      return isSelf ? `you are now ${status}` : `\`<${nick}>\` is now ${status}`;
     }
     // Render the identity as an inline code span (backticks), like the `<nick>`.
     const ident = formatPeerIdent(peer);
@@ -127,13 +138,14 @@ export function formatRoster({
   // Rendered via `notifyBlock` (plain text, no markdown), so align columns by
   // padding rather than emitting a markdown table; nicks stay plain here (no
   // backticks) — markdown reflow would break the alignment.
-  const headings = ["peer", "connection", "model", "harness", "host", "last seen"];
+  const headings = ["peer", "connection", "model", "harness", "host", "status", "last seen"];
   const rows = participants.map((peer) => [
     peer.nickname,
     peer.reach === "direct" ? "connected" : "gossip",
     peer.model ?? "",
     peer.harness ?? "",
     peer.host ?? "",
+    peer.status ?? "",
     peer.lastSeenSecsAgo == null
       ? "—"
       : `${peer.quiet ? "quiet · " : ""}${peer.lastSeenSecsAgo}s ago`,

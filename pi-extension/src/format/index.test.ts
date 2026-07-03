@@ -7,6 +7,7 @@ import {
   formatMeta,
   formatOutbound,
   formatPeerIdent,
+  formatRoster,
   formatState,
 } from "./index";
 
@@ -155,6 +156,42 @@ test("formatMeta: a null merge value reads 'cleared its identity'", () => {
   ).toBe("`<bark-vivid>` cleared its identity");
 });
 
+test("formatMeta: a pure status flip reads 'is now <status>'", () => {
+  expect(
+    formatMeta(
+      metaEv({
+        merge: { peers: { "bark-vivid": { status: "busy" } } },
+        document: { peers: { "bark-vivid": { ...ident, status: "busy" } } },
+      }),
+    ),
+  ).toBe("`<bark-vivid>` is now busy");
+});
+
+test("formatMeta: your own status flip reads 'you are now <status>'", () => {
+  expect(
+    formatMeta(
+      metaEv({
+        self: true,
+        merge: { peers: { "bark-vivid": { status: "idle" } } },
+        document: { peers: { "bark-vivid": { ...ident, status: "idle" } } },
+      }),
+    ),
+  ).toBe("you are now idle");
+});
+
+test("formatMeta: status seeded alongside identity still reads 'runs <ident>'", () => {
+  // The join seed carries model/harness/host *and* status:idle — that's an
+  // identity report, not a status flip, so it renders as 'runs', not 'is now'.
+  expect(
+    formatMeta(
+      metaEv({
+        merge: { peers: { "bark-vivid": { ...ident, status: "idle" } } },
+        document: { peers: { "bark-vivid": { ...ident, status: "idle" } } },
+      }),
+    ),
+  ).toBe("`<bark-vivid>` runs `Opus 4.8 / Claude Code @ studio-mbp-01`");
+});
+
 test("formatMeta: a non-/peers meta change falls back to the daemon display", () => {
   expect(
     formatMeta(
@@ -166,4 +203,46 @@ test("formatMeta: a non-/peers meta change falls back to the daemon display", ()
       }),
     ),
   ).toBe("🐝️ `<otter-embark>` changed /caps/review");
+});
+
+test("formatRoster includes a status column, empty when a peer has not reported", () => {
+  const out = formatRoster({
+    name: "dealer-lilac",
+    count: 3,
+    participants: [
+      {
+        nickname: "swift-cedar",
+        reach: "direct",
+        model: "Opus 4.8",
+        harness: "Claude Code",
+        host: "studio-mbp-01",
+        status: "idle",
+        lastSeenSecsAgo: 3,
+        quiet: false,
+      },
+      {
+        nickname: "calm-otter",
+        reach: "gossip",
+        model: "Opus 4.8",
+        harness: "Claude Code",
+        host: "dev-box-2",
+        status: "busy",
+        lastSeenSecsAgo: 12,
+        quiet: false,
+      },
+      {
+        nickname: "ghost-elm",
+        reach: "gossip",
+        lastSeenSecsAgo: 90,
+        quiet: true,
+      },
+    ],
+  });
+  const [headings, , cedar, otter, elm] = out.split("\n").slice(2);
+  expect(headings).toContain("status");
+  expect(cedar).toContain("idle");
+  expect(otter).toContain("busy");
+  // A peer that never reported has an empty status cell (no "idle"/"busy").
+  expect(elm).not.toContain("idle");
+  expect(elm).not.toContain("busy");
 });

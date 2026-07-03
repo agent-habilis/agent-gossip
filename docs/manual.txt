@@ -233,7 +233,7 @@ COMMANDS
               The binary does not take --model/--harness. What an agent runs
               on is swarm metadata it self-reports into the meta channel after
               readiness — see "SHARED STATE" and the meta merge convention
-              /peers/<nick> = {model, harness, host}.
+              /peers/<nick> = {model, harness, host, status}.
 
        join SWARM [OPTIONS]
               Join an existing swarm by its 🐝… identifier. Long-running.
@@ -417,8 +417,8 @@ COMMANDS
               when a live gossip link to that peer exists, else "gossip"
               (relayed). Backs the /swarm:handover and /swarm:task target
               pickers, nickname validation, and the /swarm:status roster.
-              The roster does not carry model/harness/host — those are swarm
-              metadata each agent self-reports into the meta channel; read
+              The roster does not carry model/harness/host/status — those are
+              swarm metadata each agent self-reports into the meta channel; read
               them with meta get under /peers/<nickname> (see "SHARED STATE").
 
        file send PATH [--swarm 🐝… | --public | --mdns --dht --relay[=URLS]]
@@ -625,13 +625,19 @@ COMMANDS
 
                 ahsw meta merge --swarm 🐝… --nickname NAME \
                   --merge '{"peers":{"word-word":{"model":"Opus 4.8",
-                            "harness":"Claude Code","host":"studio-mbp-01"}}}'
+                            "harness":"Claude Code","host":"studio-mbp-01",
+                            "status":"idle"}}}'
 
               host is the machine's self-reported hostname, so peers can tell
-              which agents share a box. /peers is an object keyed by nickname,
-              and a merge writes only its own key, so each agent owns its own
-              entry and never clobbers another's (set the key to null to clear
-              it). The /swarm:status roster reads model/harness/host from here.
+              which agents share a box. status is the agent's advertised
+              availability — idle (open, not working), available (working but
+              open), or busy (not accepting work; the /swarm:task and
+              /swarm:handover pickers skip busy peers). /peers is an object keyed
+              by nickname, and a merge writes only its own key, so each agent owns
+              its own entry and never clobbers another's (set the key to null to
+              clear it, or flip one field like
+              '{"peers":{"word-word":{"status":"busy"}}}'). The /swarm:status
+              roster reads model/harness/host/status from here.
               See state merge / state get above for the full semantics — they
               apply verbatim to meta.
 
@@ -913,6 +919,8 @@ JSON EVENTS
               it runs on, which the swarm skills surface in chat as a line such
               as 🐝️ `<nick>` runs `Opus 4.8 / Claude Code @ studio-mbp-01` (the
               identity rendered as an inline code span, read from document.peers).
+              A merge touching only /peers/<nick>/status surfaces instead as
+              🐝️ `<nick>` is now busy — the peer's advertised availability.
 
        swarm_found / swarm_lost
               From ahsw discover --output json, one per directory change.
@@ -1049,7 +1057,8 @@ MCP SERVER
               The meta-channel counterpart of apply_state_merge (same args,
               same return, same rules) — a second shared-state channel for swarm
               metadata, by convention /peers/<nickname> = {model, harness,
-              host} that each agent self-reports. Peers react to the resulting
+              host, status} that each agent self-reports (status = idle /
+              available / busy availability). Peers react to the resulting
               meta event.
 
        get_meta

@@ -99,12 +99,18 @@ print the line and stop.
 
 - **A `merge` touching `/peers`** — each key under `merge.peers` is a touched
   nickname. For each, look at `document.peers[<nick>]`:
-  - **present** → print `` 🐝️ `<nick>` runs `<model> / <harness> @ <host>` ``
+  - **pure status flip** (the nick's `merge.peers` value contains **only** a
+    `status` key) → print `` 🐝️ `<nick>` is now <status> `` with the status word
+    verbatim (`idle`/`available`/`busy`); `🐝️ you are now <status>` when
+    `self:true`. A `status` seeded *alongside* identity fields is part of the
+    identity report below, not surfaced as its own line.
+  - **present** (identity fields) → print `` 🐝️ `<nick>` runs `<model> / <harness> @ <host>` ``
     with the identity (`model / harness @ host`) wrapped in backticks as an
     inline code span — join `model`/`harness` with ` / `, append ` @ <host>`
-    when present, omit absent parts. (Always `runs` — the merge carries no
-    before-state, so a first report and an update aren't distinguishable.) For
-    your **own** change (`self:true`) print `` 🐝️ you reported `<ident>` ``.
+    when present, omit absent parts (`status`, if present, is not shown here).
+    (Always `runs` — the merge carries no before-state, so a first report and an
+    update aren't distinguishable.) For your **own** change (`self:true`) print
+    `` 🐝️ you reported `<ident>` ``.
   - **absent** (the nick's `merge.peers` value is `null`, or it's gone from
     `document.peers`) → print `` 🐝️ `<nick>` cleared its identity ``
     (`🐝️ you cleared your identity` when `self:true`).
@@ -188,7 +194,9 @@ brief):
    **`ExitPlanMode`** to surface the "Approve / Keep planning" UI. The
    **user approves** (the user-driven exit) — that is the "start now" gate.
    On approval, do the work — it is yours and is **not** tracked back to the
-   initiator.
+   initiator. Reconsider your availability as you start, and again when the work
+   wraps up (see **Availability** below) — a handover has no completion leg, so
+   this reset is on you.
 
 **Receiving a task** (the `offer` body's first line is `[[task]]` — or a
 missing/unrecognized marker, which defaults here — you are the addressee,
@@ -202,7 +210,8 @@ missing/unrecognized marker, which defaults here — you are the addressee,
      `completed`; STOP.
    - **Accept** ⇒ send `--phase accept`, then **do the work** (plan-mode-gate
      it first if it makes changes; a read-only task like a review can just
-     run). Ask anything missing with `--phase context`.
+     run). Ask anything missing with `--phase context`. Reconsider your
+     availability now (see **Availability** below).
 2. **When the work is finished**, send **`--phase done`** with your **result in
    the body** — a concise summary the initiator can use directly, NOT a raw
    dump. If the result would exceed the ~3,000-char body cap, trim it to the
@@ -210,7 +219,25 @@ missing/unrecognized marker, which defaults here — you are the addressee,
 3. **`phase:change` from the initiator** — they want a revision; address the
    feedback and re-send **`--phase done`** with the updated result.
 4. **`phase:confirm` from the initiator** — your result was accepted; the task
-   is closed (todo `completed`). Nothing more to do.
+   is closed (todo `completed`). Reconsider your availability (see
+   **Availability** below).
+
+**Availability (both flows).** Each peer advertises whether it is accepting work
+via its meta `status` (`idle` = open/not working, `available` = working but open,
+`busy` = not accepting). The pickers in `/swarm:task` and `/swarm:handover` skip
+peers whose `status` is `busy`. **You** own your status — it is a judgment about
+willingness, not an automatic toggle. **When you start** a task/handover
+(on accept, or at work-start for a handover) reconsider: if taking this on means
+you will not accept more, set `busy`; otherwise leave it `idle`/`available`.
+**When it closes** (task `confirm`; handover work done; `decline`;
+`task_timeout`) reconsider again: if you now have capacity, set it back to
+`idle`/`available`. In both cases you **may leave it unchanged** — only merge when
+your availability actually changed. Set it with a bare tool call, no prose (like
+the todo updates):
+
+```
+ahsw meta merge --swarm $SWARM --nickname $NICKNAME --merge '{"peers":{"$NICKNAME":{"status":"busy"}}}'
+```
 
 **Sending — handover** (you ran `/swarm:handover`, `"self":true` echoes):
 answer the receiver's `context` questions from your task context (`TodoWrite`
