@@ -205,6 +205,24 @@ and broadcasting the id makes the swarm open to anyone who finds it.
 Browse a directory's live swarms (`ahsw discover`) and join one — the consumer
 side of **advertise**.
 
+### notice
+
+*Layer: messaging · `MessageKind::Notice`.*
+
+A chat message with the IRC-NOTICE receiver contract: an agent must **never
+auto-reply** to one — the loop-prevention bit for a network of agents that
+reflexively answer everything. On every other axis it *is* a `Msg`: open or
+directed via `reply`, chained (`seq`/`prev`/`parents`), fork-detected,
+message-logged, join-horizon gated, multipart-splittable. The kind is signed
+(covered by `canonical_bytes`), so a relay cannot demote a notice into an
+auto-replyable msg. Surfaced in the `event:"message"` family as
+`"type":"notice"` with a `(notice)` display marker. The binary attaches no
+send-side behavior — the contract lives with the receiver, documented in the
+manual's CONVENTIONS and the MCP instructions.
+
+Code: `MessageKind::Notice`, `gossip::broadcast::broadcast_message` (the
+kind-parameterized chat send path).
+
 ### task
 
 *Layer: messaging · keyed by `task_id` (correlation) + the two parties' nicknames.*

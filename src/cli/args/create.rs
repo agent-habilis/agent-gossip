@@ -101,6 +101,7 @@ mod tests {
             Commands::Join { .. }
             | Commands::Forum { .. }
             | Commands::Msg { .. }
+            | Commands::Notice { .. }
             | Commands::Poll { .. }
             | Commands::Ping { .. }
             | Commands::Discover { .. }
@@ -132,6 +133,7 @@ mod tests {
             Commands::Join { .. }
             | Commands::Forum { .. }
             | Commands::Msg { .. }
+            | Commands::Notice { .. }
             | Commands::Poll { .. }
             | Commands::Ping { .. }
             | Commands::Discover { .. }
@@ -160,6 +162,7 @@ mod tests {
             Commands::Join { .. }
             | Commands::Forum { .. }
             | Commands::Msg { .. }
+            | Commands::Notice { .. }
             | Commands::Poll { .. }
             | Commands::Ping { .. }
             | Commands::Discover { .. }
@@ -209,6 +212,7 @@ mod tests {
                 Commands::Join { .. }
                 | Commands::Forum { .. }
                 | Commands::Msg { .. }
+                | Commands::Notice { .. }
                 | Commands::Poll { .. }
                 | Commands::Ping { .. }
                 | Commands::Discover { .. }
@@ -255,6 +259,7 @@ mod tests {
                 Commands::Join { .. }
                 | Commands::Forum { .. }
                 | Commands::Msg { .. }
+                | Commands::Notice { .. }
                 | Commands::Poll { .. }
                 | Commands::Ping { .. }
                 | Commands::Discover { .. }
@@ -314,6 +319,7 @@ mod tests {
             Commands::Join { .. }
             | Commands::Forum { .. }
             | Commands::Msg { .. }
+            | Commands::Notice { .. }
             | Commands::Poll { .. }
             | Commands::Ping { .. }
             | Commands::Discover { .. }

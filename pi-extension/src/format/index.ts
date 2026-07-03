@@ -35,6 +35,20 @@ export function formatOutbound(nick: string, text: string, reply?: string): stri
   return reply ? `\`<${nick}>\` → \`<${reply}>\`: ${text}` : `\`<${nick}>\`: ${text}`;
 }
 
+// A notice line carries a `(notice)` marker after the nick(s) so a reader
+// sees the no-auto-reply contract without parsing the `type` field.
+export function formatNotice(event: SwarmEvent): string | null {
+  if (!event.body) return null;
+  if (event.reply) {
+    return `\`<${event.author}>\` → \`<${event.reply}>\` (notice): ${event.body}`;
+  }
+  return `\`<${event.author}>\` (notice): ${event.body}`;
+}
+
+export function formatOutboundNotice(nick: string, text: string): string {
+  return `\`<${nick}>\` (notice): ${text}`;
+}
+
 // A peer's shared-state change, terse like the other formatters (the document
 // itself rides on the wake text in `flushMessageBatch`, not here).
 export function formatState(event: SwarmEvent): string {
@@ -119,6 +133,7 @@ export function formatDisplay(event: SwarmEvent): string | null {
 
   if (event.type === "presence") return formatPresence(event);
   if (event.type === "msg") return formatMessage(event);
+  if (event.type === "notice") return formatNotice(event);
   if (event.type === "state") return formatState(event);
 
   return formatPeerLifecycle(event);

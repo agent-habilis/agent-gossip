@@ -223,6 +223,33 @@ pub(crate) fn cli_msg_checked(
     String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
 
+/// Spawn `ahsw notice …`, assert success, trim stdout. The notice
+/// counterpart of [`cli_msg_checked`].
+pub(crate) fn cli_notice(swarm: &str, nickname: &str, body: &str, reply: Option<&str>) -> String {
+    let mut args = vec![
+        "notice",
+        "--swarm",
+        swarm,
+        "--nickname",
+        nickname,
+        "--text",
+        body,
+    ];
+    if let Some(target) = reply {
+        args.extend(["--reply", target]);
+    }
+    let out = test_cmd()
+        .args(&args)
+        .output()
+        .expect("notice command failed to spawn");
+    assert!(
+        out.status.success(),
+        "notice failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stdout).trim().to_string()
+}
+
 /// Spawn `ahsw poll … --output json`, assert success,
 /// return trimmed stdout.
 pub(crate) fn cli_poll(swarm: &str, nickname: &str, after: Option<&str>) -> String {
@@ -655,6 +682,18 @@ impl InProcNode {
         self.send_to(Some(target), text)
             .await
             .expect("in-process reply failed")
+    }
+
+    /// Broadcast a notice (the no-auto-reply kind); `target` directs it
+    /// to one peer, like [`Self::reply`].
+    pub(crate) async fn notice(&self, target: Option<&str>, text: &str) -> MessageId {
+        let reply = target.map(|nick| Nickname::new(nick).expect("valid target nickname"));
+        let sent = self
+            .session
+            .send_notice(MessageBody::new(text).expect("valid body"), reply)
+            .await
+            .expect("in-process notice failed");
+        sent.id
     }
 
     /// Shared send path for [`Self::send`] and [`Self::reply`]:

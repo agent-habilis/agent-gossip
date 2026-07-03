@@ -51,13 +51,14 @@ pub(crate) fn log_out(msg: &Message) {
 
 fn log(direction: &'static str, msg: &Message) {
     match &msg.kind {
-        MessageKind::Msg { reply } => {
+        MessageKind::Msg { reply } | MessageKind::Notice { reply } => {
             if log_raw() {
                 tracing::info!(
                     target: "agent_habilis_swarm::messages",
                     dir = direction,
                     author = %msg.author,
                     ts = msg.timestamp,
+                    kind = %msg.kind,
                     reply = ?reply,
                     body = %msg.body,
                     "msg"
@@ -68,6 +69,7 @@ fn log(direction: &'static str, msg: &Message) {
                     dir = direction,
                     author = %msg.author,
                     ts = msg.timestamp,
+                    kind = %msg.kind,
                     reply = ?reply,
                     body = %redacted_body(msg),
                     "msg"

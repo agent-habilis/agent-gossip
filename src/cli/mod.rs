@@ -28,9 +28,8 @@ mod session;
 
 pub(crate) use args::Cli;
 use args::{
-    Commands, CreateOpts, ForumOpts, MetaAction, MetaOpts, MsgOpts,
-    OutputFormat, PeersOpts, PingOpts, PollOpts, ReadyOpts,
-    SharedServerOpts, StateAction, StateOpts, TaskOpts,
+    Commands, CreateOpts, ForumOpts, MetaAction, MetaOpts, MsgOpts, NoticeOpts, OutputFormat,
+    PeersOpts, PingOpts, PollOpts, ReadyOpts, SharedServerOpts, StateAction, StateOpts, TaskOpts,
 };
 
 /// `join` has no `--public`/`--name`: both are encoded in the `🐝…`
@@ -89,6 +88,7 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
         Commands::Leave { opts } => session::leave(opts).await,
         Commands::Session { opts } => session::session(opts).await,
         Commands::Msg { opts } => msg(opts).await,
+        Commands::Notice { opts } => notice(opts).await,
         Commands::Poll { opts } => poll(opts).await,
         Commands::Ping { opts } => ping(opts).await,
         Commands::Task { opts } => task(opts).await,
@@ -302,6 +302,29 @@ async fn msg(opts: MsgOpts) -> Result<()> {
     let id = finish_send(&resp, "message")?;
     // `msg` has no `--output` flag — always the human confirmation.
     // No nickname is rendered here (only `message posted` + id).
+    let out = Output::new(OutputMode::Human, false, None);
+    out.msg_posted(&id);
+
+    Ok(())
+}
+
+/// Post a notice (the no-auto-reply message class) via the running
+/// server's IPC socket. Mirrors [`msg`] in every respect but the kind.
+async fn notice(opts: NoticeOpts) -> Result<()> {
+    let NoticeOpts {
+        swarm,
+        nickname,
+        text,
+        reply,
+    } = opts;
+    let cmd = IpcCommand::Notice {
+        swarm,
+        body: text,
+        reply,
+    };
+
+    let resp = ipc::send(&cmd, &nickname).await?;
+    let id = finish_send(&resp, "notice")?;
     let out = Output::new(OutputMode::Human, false, None);
     out.msg_posted(&id);
 

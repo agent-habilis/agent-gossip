@@ -172,6 +172,16 @@ pub enum MessageKind {
         #[serde(skip_serializing_if = "Option::is_none")]
         reply: Option<Nickname>,
     },
+    /// A no-auto-reply message (IRC NOTICE semantics): identical to `Msg` on
+    /// every path — directed via `reply`, chained, fork-detected, logged,
+    /// multipart-splittable — except for the receiver contract that an agent
+    /// must NEVER auto-respond to one. The distinct kind is what makes the
+    /// contract enforceable by construction: status broadcasts, CI results
+    /// and log lines sent as notices can never start an agent reply loop.
+    Notice {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        reply: Option<Nickname>,
+    },
     Presence {
         subtype: PresenceSubtype,
     },
@@ -270,6 +280,7 @@ impl fmt::Display for MessageKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             MessageKind::Msg { .. } => write!(f, "msg"),
+            MessageKind::Notice { .. } => write!(f, "notice"),
             MessageKind::Presence { .. } => write!(f, "presence"),
             MessageKind::PeerInfo => write!(f, "peerinfo"),
             MessageKind::Digest => write!(f, "digest"),
@@ -380,6 +391,10 @@ impl Message {
         }
     }
 
+    /// An open `Msg`. Test/harness convenience; production chat construction
+    /// goes through [`new_chat`](Self::new_chat), which the parameterized
+    /// send path uses for `Msg` and `Notice` alike.
+    #[cfg(any(test, feature = "adversarial", feature = "bench"))]
     pub(crate) fn new_message(swarm: &SwarmId, author: &Nickname, body: MessageBody) -> Self {
         Self::new(swarm, author, MessageKind::Msg { reply: None }, body)
     }
@@ -419,6 +434,8 @@ impl Message {
         )
     }
 
+    /// A directed `Msg`. Test-only sibling of [`new_message`](Self::new_message).
+    #[cfg(test)]
     pub(crate) fn new_reply(
         swarm: &SwarmId,
         author: &Nickname,
@@ -426,6 +443,23 @@ impl Message {
         body: MessageBody,
     ) -> Self {
         Self::new(swarm, author, MessageKind::Msg { reply: Some(reply) }, body)
+    }
+
+    /// A chat message of a caller-chosen kind — `Msg` or `Notice`, open or
+    /// directed. The one construction point the parameterized send path uses
+    /// so both kinds share it verbatim; the non-chat kinds have their own
+    /// constructors and never come through here.
+    pub(crate) fn new_chat(
+        swarm: &SwarmId,
+        author: &Nickname,
+        kind: MessageKind,
+        body: MessageBody,
+    ) -> Self {
+        debug_assert!(
+            matches!(kind, MessageKind::Msg { .. } | MessageKind::Notice { .. }),
+            "new_chat takes only the chat kinds"
+        );
+        Self::new(swarm, author, kind, body)
     }
 
     /// A liveness probe (broadcast). Receivers auto-respond with a
@@ -829,6 +863,54 @@ mod tests {
     }
 
     #[test]
+    fn test_notice_round_trip() {
+        let msg = Message::new_chat(
+            &sid(),
+            &nick("word-word"),
+            MessageKind::Notice { reply: None },
+            MessageBody::from("build green"),
+        );
+        let bytes = msg.serialize().unwrap();
+        assert!(String::from_utf8_lossy(&bytes).contains("\"type\":\"notice\""));
+        let parsed = Message::parse(&bytes).unwrap();
+        assert_eq!(parsed.kind, MessageKind::Notice { reply: None });
+        assert_eq!(parsed.body.as_str(), "build green");
+    }
+
+    #[test]
+    fn test_directed_notice_round_trip() {
+        let target = nick("calm-otter");
+        let msg = Message::new_chat(
+            &sid(),
+            &nick("word-word"),
+            MessageKind::Notice {
+                reply: Some(target.clone()),
+            },
+            MessageBody::from("heads up"),
+        );
+        let parsed = Message::parse(&msg.serialize().unwrap()).unwrap();
+        assert_eq!(
+            parsed.kind,
+            MessageKind::Notice {
+                reply: Some(target)
+            }
+        );
+    }
+
+    #[test]
+    fn signed_notice_verifies_and_covers_the_kind() {
+        let identity = crate::protocol::identity::Identity::generate();
+        let msg = Message::fixture(MessageKind::Notice { reply: None }, "hello").signed(&identity);
+        assert!(msg.verify_signature());
+        // Flipping the kind to `Msg` must break the signature: the kind is
+        // part of the canonical bytes, so a relay cannot demote a notice
+        // into an auto-replyable msg.
+        let mut forged = msg;
+        forged.kind = MessageKind::Msg { reply: None };
+        assert!(!forged.verify_signature());
+    }
+
+    #[test]
     fn test_alive_round_trip() {
         let msg = Message::new_alive(&sid(), &nick("word-word"));
         let bytes = msg.serialize().unwrap();
@@ -1048,7 +1130,8 @@ mod tests {
         assert_eq!(msg.body.as_str(), "reply");
         match msg.kind {
             MessageKind::Msg { reply } => assert_eq!(reply, Some(target)),
-            MessageKind::Presence { .. }
+            MessageKind::Notice { .. }
+            | MessageKind::Presence { .. }
             | MessageKind::PeerInfo
             | MessageKind::Digest
             | MessageKind::StateDigest

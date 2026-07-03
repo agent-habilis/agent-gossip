@@ -9,6 +9,7 @@
 //! - `discover_swarms`
 //! - `leave_swarm`
 //! - `send_message`
+//! - `send_notice`
 //! - `send_task`
 //! - `fetch_messages`
 //! - `apply_state_merge`
@@ -594,6 +595,30 @@ impl AgentSwarmServer {
     }
 
     #[tool(
+        description = "Broadcast a notice to the current swarm — a message agents must NEVER auto-reply to (loop prevention). Use it for status reports, CI results, log lines: anything informational that must not trigger responses. Delivered and surfaced like send_message but as type \"notice\"; same args and return shape."
+    )]
+    async fn send_notice(
+        &self,
+        Parameters(args): Parameters<SendMessageArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let guard = self.session.lock().await;
+        let session = guard.as_ref().ok_or_else(not_in_swarm_error)?;
+        let reply = match args.reply {
+            None => None,
+            Some(raw) => Some(Nickname::new(raw).map_err(|error| {
+                McpError::invalid_params(format!("invalid reply target: {error}"), None)
+            })?),
+        };
+        let body = MessageBody::new(args.text)
+            .map_err(|error| McpError::invalid_params(format!("{error}"), None))?;
+        let (id, message) = session
+            .send_notice(body, reply)
+            .await
+            .map_err(to_mcp_error)?;
+        ok_json(SendMessageResult { id, message })
+    }
+
+    #[tool(
         description = "Return buffered events from the current swarm — chat, presence, task legs, shared-state changes (event \"state\", carrying the merge and the newly-derived `document`), and transient events (ping_report, peer_timeout, …), each the same JSON object the live event stream emits. The server auto-tracks a per-session `seq` cursor, so repeat calls with no args return only new traffic (first call sees full history, up to ~200 events). Pass `after` (a seq) only to explicitly replay from a point. Pass `long: true` to long-poll — park the read until new traffic arrives (server-capped at ~60s) — only while actively watching a live conversation in a loop; an empty `messages` at the deadline just means the window elapsed quietly, call again. Omit `long` for a one-shot read (e.g. the user asks to check for new messages), which returns whatever is buffered right away. Never returns `alive` heartbeats — those are internal plumbing."
     )]
     async fn fetch_messages(
@@ -800,8 +825,8 @@ never for a one-shot check.
 
 EVENT SHAPE. Each entry in `fetch_messages().messages` is a JSON object. Chat \
 and presence share `event:\"message\"` and are distinguished by a `type` field \
-(`type:\"msg\"` or `type:\"presence\"`, with `subtype:\"joined\"/\"left\"/\"alive\"` \
-on presence). Everything else is discriminated by `event` directly \
+(`type:\"msg\"`, `type:\"notice\"`, or `type:\"presence\"`, with \
+`subtype:\"joined\"/\"left\"/\"alive\"` on presence). Everything else is discriminated by `event` directly \
 (`state`, `task`, `task_progress`, `ping_report`, `peer_timeout`, \
 `peer_return`, `info`, `error`, `ready`, …). Most entries also carry `self` \
 (true if you authored it) and a pre-built `display` string. You rarely branch on these \
@@ -818,16 +843,20 @@ WHICH EVENTS TO SHOW. Skip silently (zero output): `event` of `info`, `error`, \
 `msg_posted`, `ready`, or `fork`; a `type:\"presence\"` with `subtype:\"alive\"`; \
 and any entry with `self:true` EXCEPT your own `type:\"msg\"` (a `msg` with \
 `self:true` is your outbound message echoed back — emit its `display`; that echo \
-is the send confirmation). Show (emit `display` verbatim): a peer's `type:\"msg\"`, \
-a `type:\"presence\"` joined/left, `event:\"peer_timeout\"`, `event:\"peer_return\"`, \
-and `event:\"ping_report\"` (its `display` is the full RTT table). Drive, do not \
-print: an `event:\"task\"` (see TASKS); `event:\"task_progress\"` is a \
-widget beat, never a chat line.
+is the send confirmation). Show (emit `display` verbatim): a peer's `type:\"msg\"` \
+or `type:\"notice\"`, a `type:\"presence\"` joined/left, `event:\"peer_timeout\"`, \
+`event:\"peer_return\"`, and `event:\"ping_report\"` (its `display` is the full RTT \
+table). Drive, do not print: an `event:\"task\"` (see TASKS); \
+`event:\"task_progress\"` is a widget beat, never a chat line.
 
 REPLY to a peer's `msg` (no `reply`, not directed elsewhere) when you can add \
 real information or are asked a direct question, and only at >=90% confidence (a \
 wrong answer is worse than silence) — `send_message` with `reply` set to the \
-asker's nickname. Keep answers concise first, expand only if asked.
+asker's nickname. Keep answers concise first, expand only if asked. NEVER reply \
+to a `type:\"notice\"` — a notice is informational by contract (that is the \
+whole point of the kind: it can never start a reply loop); show its `display` \
+and move on. Conversely, send with `send_notice` (not `send_message`) anything \
+of yours that needs no response: status reports, CI results, log lines.
 
 PING/PONG is handled entirely by the daemon — it auto-answers a peer's ping and \
 emits the `ping_report`. Do NOT send a pong yourself. To measure RTT yourself, \

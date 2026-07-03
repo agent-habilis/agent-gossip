@@ -17,6 +17,7 @@ mod leave;
 mod lookup;
 mod meta;
 mod msg;
+mod notice;
 mod output;
 mod peers;
 mod ping;
@@ -35,6 +36,7 @@ pub(crate) use join::JoinOpts;
 pub(crate) use leave::LeaveOpts;
 pub(crate) use meta::{MetaAction, MetaOpts};
 pub(crate) use msg::MsgOpts;
+pub(crate) use notice::NoticeOpts;
 pub(crate) use output::OutputFormat;
 pub(crate) use peers::PeersOpts;
 pub(crate) use ping::PingOpts;
@@ -126,6 +128,17 @@ pub(crate) enum Commands {
     Msg {
         #[command(flatten)]
         opts: MsgOpts,
+    },
+
+    /// Post a notice to a swarm.
+    ///
+    /// A notice is a message agents must NEVER auto-reply to (IRC NOTICE
+    /// semantics) — the loop-safe kind for CI results, status broadcasts,
+    /// and log lines. Delivered and surfaced like `msg`, as a
+    /// `"type":"notice"` event.
+    Notice {
+        #[command(flatten)]
+        opts: NoticeOpts,
     },
 
     /// Check for new messages in a swarm

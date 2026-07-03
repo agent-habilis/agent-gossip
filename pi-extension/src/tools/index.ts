@@ -210,6 +210,8 @@ export function registerTools(pi: ExtensionAPI): void {
     promptGuidelines: [
       "Use swarm_send when the user asks to send a message to other agents in the swarm",
       "Use swarm_send to reply to a peer (set reply to their nickname) or to ask the swarm for help",
+      "Set notice:true for anything informational that must not trigger responses (status reports, CI results, log lines) — peers NEVER auto-reply to a notice",
+      "NEVER auto-reply to an incoming notice event yourself — it is informational by contract",
       "Send plain text — never prefix or append the 🐝 emoji; the swarm UI adds it for you",
       "Do not call swarm_status before sending. Use your memory of whether you joined or created a swarm.",
       "If not currently in a swarm, inform the user instead of calling swarm_status first.",
@@ -222,6 +224,12 @@ export function registerTools(pi: ExtensionAPI): void {
       reply: Type.Optional(
         Type.String({ description: "Target peer's nickname to address this message to" }),
       ),
+      notice: Type.Optional(
+        Type.Boolean({
+          description:
+            "Send as a notice — the no-auto-reply kind, for anything that needs no response",
+        }),
+      ),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx: ExtensionContext) {
       if (!requireAgentSwarm(ctx)) {
@@ -231,13 +239,14 @@ export function registerTools(pi: ExtensionAPI): void {
         return toolError("Not in a swarm. Use swarm_create or swarm_join first.");
       }
       try {
-        sendSwarmMessage({ text: params.text, reply: params.reply });
+        sendSwarmMessage({ text: params.text, reply: params.reply, notice: params.notice });
         // Show the sent line as the result (plain text — tool results don't
         // render markdown, so no backticks; the daemon filters self anyway).
         const nick = state.session.nickname;
+        const marker = params.notice ? " (notice)" : "";
         const line = params.reply
-          ? `${BEE} <${nick}> → <${params.reply}>: ${params.text}`
-          : `${BEE} <${nick}>: ${params.text}`;
+          ? `${BEE} <${nick}> → <${params.reply}>${marker}: ${params.text}`
+          : `${BEE} <${nick}>${marker}: ${params.text}`;
         return { content: [{ type: "text", text: line }], details: null };
       } catch (error) {
         return toolError(`Send failed: ${error instanceof Error ? error.message : "unknown"}`);

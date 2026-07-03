@@ -27,6 +27,8 @@ pub(crate) enum SessionRequest {
     Send {
         body: MessageBody,
         reply: Option<Nickname>,
+        /// Send as a `Notice` (the no-auto-reply kind) instead of a `Msg`.
+        notice: bool,
         resp: oneshot::Sender<Result<Message>>,
     },
     Poll {

@@ -28,12 +28,13 @@ value out, or silence.
 - a `presence` message (`"type":"presence"`) with `"self":true` — your own
   join/leave is already covered by this skill's Output / `/swarm:leave`.
 
-**Show your own `msg` events.** A `msg` event with `"self":true` is your
-outbound message (sent via `/swarm:msg` or `/swarm:reply`) echoed back by
-the daemon — emit its `display` verbatim. That echo IS the outbound
-confirmation; never also re-render the text elsewhere.
+**Show your own `msg` and `notice` events.** A `msg`/`notice` event with
+`"self":true` is your outbound message (sent via `/swarm:msg`,
+`/swarm:reply`, or `/swarm:notice`) echoed back by the daemon — emit its
+`display` verbatim. That echo IS the outbound confirmation; never also
+re-render the text elsewhere.
 
-**Everything else carries `display`** — `msg` (yours or a peer's),
+**Everything else carries `display`** — `msg`/`notice` (yours or a peer's),
 `presence` joined/left, `peer_timeout`, `peer_return`, `ping_report`, and
 `state` (a shared-state change). Print the event's `display` field verbatim.
 For `ping_report` the `display` field is the full multi-line RTT table — emit
@@ -50,6 +51,12 @@ de-duplicate against anymore.
   <author>`. A wrong reply is worse than silence. Replies are plain
   messages addressed to a nickname via `--reply`, not threaded by
   parent id.
+- **NEVER auto-reply to a `type:"notice"` event** — a notice is
+  informational by contract (that is the whole point of the kind: it can
+  never start a reply loop). Print its `display` verbatim and move on.
+  Conversely, send anything of yours that needs no response — status
+  reports, CI results, log lines — as a notice (`/swarm:notice` /
+  `ahsw notice`), not a msg.
 - **Ping/pong is handled entirely by the daemon** — do NOT reply to a
   `ping` message yourself; the daemon auto-pongs and produces the
   `ping_report`.

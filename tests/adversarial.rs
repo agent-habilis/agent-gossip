@@ -99,6 +99,32 @@ async fn tampered_message_is_dropped() {
     attacker.leave().await;
 }
 
+/// The kind-demotion attack: sign a msg, then rewrite its kind to `notice`
+/// (or the reverse) on the wire. The kind is part of the canonical bytes, so
+/// the signature no longer verifies and the victim drops it — a relay can
+/// never turn a no-auto-reply notice into an auto-replyable msg.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn kind_flipped_after_signing_is_dropped() {
+    let (mut victim, attacker) = meshed_pair("kindflip").await;
+    let key = adversarial::new_key();
+    let evil = CraftedMsg::new(attacker.session.swarm_id(), "ghost", "flip-me")
+        .sign(&key)
+        .flip_chat_kind()
+        .bytes();
+    attacker.session.inject_raw(evil).await.expect("inject");
+    attacker.send("barrier-kindflip").await;
+    assert!(
+        victim.wait_body("barrier-kindflip", T).await,
+        "barrier lost"
+    );
+    assert!(
+        !surfaced(&mut victim, "flip-me"),
+        "a kind-flipped message must be dropped (signature mismatch)"
+    );
+    victim.leave().await;
+    attacker.leave().await;
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn equivocation_surfaces_a_fork() {
     let (mut victim, attacker) = meshed_pair("fork").await;

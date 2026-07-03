@@ -243,14 +243,14 @@ fn surface_logical(
     ctx: &HandlerCtx<'_>,
 ) {
     match &logical.kind {
-        MessageKind::Msg { .. } => {
+        MessageKind::Msg { .. } | MessageKind::Notice { .. } => {
             lifecycle::handle_msg(ctx.output, logical, surfaceable, ctx.author);
         }
         MessageKind::Task { to, phase, .. } => {
             handle_task_leg(logical, to, *phase, surfaceable, state, ctx);
         }
-        // Only `Msg` and content `Task` legs are ever split (the sender
-        // refuses to split anything else), so other kinds never reach here.
+        // Only the chat kinds and content `Task` legs are ever split (the
+        // sender refuses to split anything else), so other kinds never reach here.
         MessageKind::Presence { .. }
         | MessageKind::PeerInfo
         | MessageKind::Digest
@@ -422,7 +422,7 @@ async fn handle_gossip_received(content: Bytes, state: &mut EventLoopState, ctx:
             )
             .await;
         }
-        MessageKind::Msg { .. } => {
+        MessageKind::Msg { .. } | MessageKind::Notice { .. } => {
             if !lifecycle::handle_msg(ctx.output, &message, surfaceable, ctx.author) {
                 return;
             }
@@ -442,8 +442,8 @@ async fn handle_gossip_received(content: Bytes, state: &mut EventLoopState, ctx:
 /// actually **retain** is folded into the indexes, so `by_hash`/`dag_heads`/
 /// `author_seqs` stay bounded by the log window (pruned on eviction). A
 /// rate-dropped `Msg`, a reply to another peer, or a `State` event returned
-/// earlier and never reaches here. Only `Msg` carries `seq`/parents; presence
-/// is loggable but not indexed.
+/// earlier and never reaches here. Only the chat kinds (`Msg`/`Notice`) carry
+/// `seq`/parents; presence is loggable but not indexed.
 fn retain_and_index(
     message: Message,
     canonical: &[u8],
@@ -453,7 +453,10 @@ fn retain_and_index(
     if !is_loggable(&message.kind) {
         return;
     }
-    if matches!(message.kind, MessageKind::Msg { .. }) {
+    if matches!(
+        message.kind,
+        MessageKind::Msg { .. } | MessageKind::Notice { .. }
+    ) {
         let hash = identity::content_hash_hex(canonical);
         // A second, *different* content hash at an already-seen `(pubkey, seq)`
         // is cryptographic proof of equivocation — surface a `fork` once per
@@ -520,9 +523,13 @@ fn addressed_to_us(message: &Message, us: &Nickname) -> bool {
     match &message.kind {
         MessageKind::Msg {
             reply: Some(target),
+        }
+        | MessageKind::Notice {
+            reply: Some(target),
         } => target == us,
         MessageKind::Task { to, .. } => to == us,
         MessageKind::Msg { reply: None }
+        | MessageKind::Notice { reply: None }
         | MessageKind::Presence { .. }
         | MessageKind::PeerInfo
         | MessageKind::Digest

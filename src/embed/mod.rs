@@ -424,11 +424,33 @@ impl InProcessSession {
         body: MessageBody,
         reply: Option<Nickname>,
     ) -> anyhow::Result<Message> {
+        self.send_chat(body, reply, false).await
+    }
+
+    /// [`send`](Self::send), as a notice — the no-auto-reply kind.
+    ///
+    /// # Errors
+    /// Fails if the event loop has stopped or dropped the response.
+    pub(crate) async fn send_notice(
+        &self,
+        body: MessageBody,
+        reply: Option<Nickname>,
+    ) -> anyhow::Result<Message> {
+        self.send_chat(body, reply, true).await
+    }
+
+    async fn send_chat(
+        &self,
+        body: MessageBody,
+        reply: Option<Nickname>,
+        notice: bool,
+    ) -> anyhow::Result<Message> {
         let (resp_tx, resp_rx) = oneshot::channel();
         self.req_tx
             .send(SessionRequest::Send {
                 body,
                 reply,
+                notice,
                 resp: resp_tx,
             })
             .await
@@ -818,6 +840,19 @@ impl SwarmSession {
         reply: Option<Nickname>,
     ) -> anyhow::Result<Message> {
         self.core.send(body, reply).await
+    }
+
+    /// [`send`](Self::send), as a notice — the kind agents must never
+    /// auto-reply to.
+    ///
+    /// # Errors
+    /// Fails if the event loop has stopped or dropped the response.
+    pub async fn send_notice(
+        &self,
+        body: MessageBody,
+        reply: Option<Nickname>,
+    ) -> anyhow::Result<Message> {
+        self.core.send_notice(body, reply).await
     }
 
     /// Apply an RFC 7386 JSON Merge Patch to the shared state: an object merges

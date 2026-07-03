@@ -163,13 +163,16 @@ pub(crate) fn handle_msg(
     self_author: &Nickname,
 ) -> bool {
     match &message.kind {
-        MessageKind::Msg { reply: None } => {
+        MessageKind::Msg { reply: None } | MessageKind::Notice { reply: None } => {
             if surfaceable {
                 out.print_message(message);
             }
             true
         }
         MessageKind::Msg {
+            reply: Some(target),
+        }
+        | MessageKind::Notice {
             reply: Some(target),
         } => {
             if target != self_author {
