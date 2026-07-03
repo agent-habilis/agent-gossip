@@ -1,5 +1,5 @@
-//! The branded `🐝` token codec shared by the swarm id ([`super::swarm`]),
-//! the file ticket ([`crate::file`]), and the shell ticket ([`crate::sh`]).
+//! The branded `🐝` token codec shared by the swarm id ([`super::swarm`])
+//! and the file ticket ([`crate::file`]).
 //! One wire shape for every agent-habilis token, so a `🐝…` string
 //! self-describes its kind via a 1-byte type tag and the namespaces never
 //! collide.
@@ -25,7 +25,6 @@ const VERSION: u8 = 1;
 pub(crate) enum TokenType {
     Swarm,
     File,
-    Sh,
 }
 
 impl TokenType {
@@ -36,7 +35,7 @@ impl TokenType {
             // 3 retired — was the port ticket; never reassign (wire format).
             TokenType::File => 4,
             // 5 retired — was the mount ticket; never reassign (wire format).
-            TokenType::Sh => 6,
+            // 6 retired — was the sh ticket; never reassign (wire format).
         }
     }
 
@@ -47,7 +46,7 @@ impl TokenType {
             // 3 retired — was the port ticket; never reassign (wire format).
             4 => Ok(TokenType::File),
             // 5 retired — was the mount ticket; never reassign (wire format).
-            6 => Ok(TokenType::Sh),
+            // 6 retired — was the sh ticket; never reassign (wire format).
             other => bail!("unknown token type: {other}"),
         }
     }
@@ -115,11 +114,7 @@ mod tests {
 
     #[test]
     fn round_trips_each_kind() {
-        for kind in [
-            TokenType::Swarm,
-            TokenType::File,
-            TokenType::Sh,
-        ] {
+        for kind in [TokenType::Swarm, TokenType::File] {
             let token = encode(kind, b"payload-bytes");
             assert!(token.starts_with("🐝"));
             let (decoded_kind, payload) = decode(&token).expect("decode");

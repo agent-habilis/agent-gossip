@@ -47,7 +47,6 @@ mod tests {
                 | Commands::Poll { .. }
                 | Commands::Ping { .. }
                 | Commands::File { .. }
-                | Commands::Sh { .. }
                 | Commands::Mcp { .. }
                 | Commands::Man
                 | Commands::Task { .. }

@@ -22,7 +22,6 @@ mod peers;
 mod ping;
 mod poll;
 mod ready;
-mod sh;
 mod shared;
 mod state;
 mod task;
@@ -40,7 +39,6 @@ pub(crate) use peers::PeersOpts;
 pub(crate) use ping::PingOpts;
 pub(crate) use poll::PollOpts;
 pub(crate) use ready::ReadyOpts;
-pub(crate) use sh::ShAction;
 pub(crate) use shared::SharedServerOpts;
 pub(crate) use state::{StateAction, StateOpts};
 pub(crate) use task::TaskOpts;
@@ -159,19 +157,6 @@ pub(crate) enum Commands {
     File {
         #[command(subcommand)]
         action: FileAction,
-    },
-
-    /// Broadcast a live terminal to peers, or attach to one (off-gossip, direct P2P).
-    ///
-    /// A standalone terminal share over a direct P2P link (no daemon):
-    /// `sh listen` spawns `$SHELL` in a pseudo-terminal and prints the
-    /// `ahsw sh connect 🐝…` command on stdout; `sh connect <ticket>` renders
-    /// the shell. A read ticket is view-only (its keyboard never reaches the
-    /// shell); `--write` also mints a write-capable ticket whose holders type
-    /// into the shell. Ending the shell ends the broadcast.
-    Sh {
-        #[command(subcommand)]
-        action: ShAction,
     },
 
     /// Read or change the swarm's shared state.

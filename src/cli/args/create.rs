@@ -104,7 +104,6 @@ mod tests {
             | Commands::Poll { .. }
             | Commands::Ping { .. }
             | Commands::File { .. }
-            | Commands::Sh { .. }
             | Commands::Discover { .. }
             | Commands::Mcp { .. }
             | Commands::Man
@@ -135,7 +134,6 @@ mod tests {
             | Commands::Poll { .. }
             | Commands::Ping { .. }
             | Commands::File { .. }
-            | Commands::Sh { .. }
             | Commands::Discover { .. }
             | Commands::Mcp { .. }
             | Commands::Man
@@ -163,7 +161,6 @@ mod tests {
             | Commands::Poll { .. }
             | Commands::Ping { .. }
             | Commands::File { .. }
-            | Commands::Sh { .. }
             | Commands::Discover { .. }
             | Commands::Mcp { .. }
             | Commands::Man
@@ -212,7 +209,6 @@ mod tests {
                 | Commands::Poll { .. }
                 | Commands::Ping { .. }
                 | Commands::File { .. }
-                | Commands::Sh { .. }
                 | Commands::Discover { .. }
                 | Commands::Mcp { .. }
                 | Commands::Man
@@ -268,7 +264,6 @@ mod tests {
                 | Commands::Ready { .. }
                 | Commands::Plug { .. }
                 | Commands::Unplug { .. }
-                | Commands::Sh { .. }
                 | Commands::Doctor { .. } => panic!("expected Create"),
             }
         }
@@ -317,7 +312,6 @@ mod tests {
             | Commands::Poll { .. }
             | Commands::Ping { .. }
             | Commands::File { .. }
-            | Commands::Sh { .. }
             | Commands::Discover { .. }
             | Commands::Mcp { .. }
             | Commands::Man

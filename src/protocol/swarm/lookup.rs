@@ -395,7 +395,7 @@ pub(crate) fn resolve_lookups(public: bool, lookups: LookupSet) -> LookupOpts {
     }
 }
 
-/// Resolve a transfer command's (`file`/`sh`)
+/// Resolve a transfer command's (`file`)
 /// discovery config from its two alternative sources: a `--swarm 🐝…` id
 /// (whose embedded lookups win) or the create-style
 /// `--mdns/--dht/--relay` flags (naming any uses only those). Unlike

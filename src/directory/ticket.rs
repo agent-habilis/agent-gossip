@@ -27,8 +27,8 @@ pub(crate) fn password_bit(kind: TokenType, payload: &[u8]) -> bool {
     };
     match kind {
         TokenType::File => flags & 0b1 != 0,
-        // No password support (yet) for swarm-ad and sh tickets.
-        TokenType::Swarm | TokenType::Sh => false,
+        // No password support (yet) for swarm-ad tickets.
+        TokenType::Swarm => false,
     }
 }
 
@@ -232,7 +232,7 @@ mod tests {
 
     #[test]
     fn wrong_kind_tickets_are_dropped() {
-        let mut dir = TicketListings::new(TokenType::Sh);
+        let mut dir = TicketListings::new(TokenType::Swarm);
         let file_ticket = ticket_of(TokenType::File, b"f");
         assert!(dir.note(&ad(&file_ticket, None), Instant::now()).is_none());
         assert!(dir.snapshot().is_empty());

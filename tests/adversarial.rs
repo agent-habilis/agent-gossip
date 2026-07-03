@@ -17,10 +17,6 @@
 //! warmup, and negative assertions use a *delivery barrier* — a real message
 //! sent from the same node after the injection — so absence means "dropped",
 //! never "not yet arrived".
-//!
-//! The `sh` protocol's adversarial cases live in `src/sh/mod.rs`'s test module
-//! instead: crafting sh wire bytes only needs a raw QUIC stream we own, not
-//! the gossip injector.
 
 mod common;
 

@@ -29,7 +29,7 @@ mod ticket_discover;
 pub(crate) use args::Cli;
 use args::{
     Commands, CreateOpts, FileAction, ForumOpts, MetaAction, MetaOpts, MsgOpts,
-    OutputFormat, PeersOpts, PingOpts, PollOpts, ReadyOpts, ShAction,
+    OutputFormat, PeersOpts, PingOpts, PollOpts, ReadyOpts,
     SharedServerOpts, StateAction, StateOpts, TaskOpts,
 };
 
@@ -95,7 +95,6 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
         // picker + connect chain that puts these over clippy's 16 KiB
         // `large_futures` budget.
         Commands::File { action } => Box::pin(file(action)).await,
-        Commands::Sh { action } => sh(action).await,
         Commands::State { opts } => state(opts).await,
         Commands::Meta { opts } => meta(opts).await,
         Commands::Ready { opts } => ready(opts).await,
@@ -496,40 +495,6 @@ async fn file(action: FileAction) -> Result<()> {
                 }
                 None => Ok(()),
             }
-        }
-    }
-}
-
-async fn sh(action: ShAction) -> Result<()> {
-    match action {
-        ShAction::Listen {
-            swarm,
-            lookups,
-            output,
-            write,
-            command,
-            cols,
-            rows,
-            password,
-        } => {
-            let json = matches!(output, OutputFormat::Json);
-            let password = password::resolve_password(password, /* confirm */ true, json)?;
-            crate::sh::listen(
-                swarm.as_ref().map(crate::protocol::SwarmId::as_str),
-                lookups.to_set(),
-                json,
-                write,
-                command.as_deref(),
-                cols,
-                rows,
-                password,
-            )
-            .await
-        }
-        ShAction::Connect { ticket, password } => {
-            let password =
-                consumer_password(password, &ticket, crate::sh::ticket_requires_password)?;
-            crate::sh::connect(&ticket, password).await
         }
     }
 }

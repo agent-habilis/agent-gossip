@@ -128,7 +128,6 @@ fn kind_noun(kind: TokenType) -> &'static str {
     match kind {
         TokenType::File => "files",
         TokenType::Swarm => "swarms",
-        TokenType::Sh => "shells",
     }
 }
 

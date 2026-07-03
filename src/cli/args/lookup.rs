@@ -97,7 +97,6 @@ mod tests {
             | Commands::Poll { .. }
             | Commands::Ping { .. }
             | Commands::File { .. }
-            | Commands::Sh { .. }
             | Commands::Discover { .. }
             | Commands::Mcp { .. }
             | Commands::Man
@@ -173,7 +172,6 @@ mod tests {
             | Commands::Poll { .. }
             | Commands::Ping { .. }
             | Commands::File { .. }
-            | Commands::Sh { .. }
             | Commands::Discover { .. }
             | Commands::Mcp { .. }
             | Commands::Man
