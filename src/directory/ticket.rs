@@ -29,8 +29,8 @@ pub(crate) fn password_bit(kind: TokenType, payload: &[u8]) -> bool {
         TokenType::Pipe => flags & 0b100 != 0,
         TokenType::File => flags & 0b1 != 0,
         TokenType::Port => flags & 0b1000_0000 != 0,
-        // No password support (yet) for swarm-ad, mount, and sh tickets.
-        TokenType::Swarm | TokenType::Mount | TokenType::Sh => false,
+        // No password support (yet) for swarm-ad and sh tickets.
+        TokenType::Swarm | TokenType::Sh => false,
     }
 }
 
