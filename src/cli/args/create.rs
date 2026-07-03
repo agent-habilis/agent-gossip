@@ -103,7 +103,6 @@ mod tests {
             | Commands::Msg { .. }
             | Commands::Poll { .. }
             | Commands::Ping { .. }
-            | Commands::Port { .. }
             | Commands::File { .. }
             | Commands::Sh { .. }
             | Commands::Discover { .. }
@@ -135,7 +134,6 @@ mod tests {
             | Commands::Msg { .. }
             | Commands::Poll { .. }
             | Commands::Ping { .. }
-            | Commands::Port { .. }
             | Commands::File { .. }
             | Commands::Sh { .. }
             | Commands::Discover { .. }
@@ -164,7 +162,6 @@ mod tests {
             | Commands::Msg { .. }
             | Commands::Poll { .. }
             | Commands::Ping { .. }
-            | Commands::Port { .. }
             | Commands::File { .. }
             | Commands::Sh { .. }
             | Commands::Discover { .. }
@@ -214,7 +211,6 @@ mod tests {
                 | Commands::Msg { .. }
                 | Commands::Poll { .. }
                 | Commands::Ping { .. }
-                | Commands::Port { .. }
                 | Commands::File { .. }
                 | Commands::Sh { .. }
                 | Commands::Discover { .. }
@@ -261,7 +257,6 @@ mod tests {
                 | Commands::Msg { .. }
                 | Commands::Poll { .. }
                 | Commands::Ping { .. }
-                | Commands::Port { .. }
                 | Commands::File { .. }
                 | Commands::Discover { .. }
                 | Commands::Mcp { .. }
@@ -321,7 +316,6 @@ mod tests {
             | Commands::Msg { .. }
             | Commands::Poll { .. }
             | Commands::Ping { .. }
-            | Commands::Port { .. }
             | Commands::File { .. }
             | Commands::Sh { .. }
             | Commands::Discover { .. }

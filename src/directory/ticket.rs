@@ -1,11 +1,11 @@
 //! Ticket ads — the directory's second citizen beside swarm [`super::Ad`]s.
 //!
-//! A file/port producer advertising into a directory broadcasts its full
+//! A file producer advertising into a directory broadcasts its full
 //! bearer ticket (address + secret), so a discoverer connects with nothing but
 //! the pick. The two ad kinds share one directory topic and never cross-parse:
 //! a swarm ad's JSON has an `id` key, a ticket ad's a `ticket` key, and each
 //! parser requires its own. The collector additionally pins the [`TokenType`]
-//! it expects, so `file discover` can never surface a port ticket.
+//! it expects, so `file discover` can never surface a swarm ad.
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -18,16 +18,15 @@ use crate::protocol::token::{self, TokenType};
 use super::MAX_LISTINGS;
 
 /// Whether a decoded ticket payload carries the password flag, per kind.
-/// Reads the byte after the 32-byte secret — the file flags byte (bit 0)
-/// or the port count byte (bit 7). Unit-tested against the real ticket
-/// encoders so these offsets can never silently drift.
+/// Reads the byte after the 32-byte secret — the file flags byte (bit 0).
+/// Unit-tested against the real ticket encoder so the offset can never
+/// silently drift.
 pub(crate) fn password_bit(kind: TokenType, payload: &[u8]) -> bool {
     let Some(&flags) = payload.get(32) else {
         return false;
     };
     match kind {
         TokenType::File => flags & 0b1 != 0,
-        TokenType::Port => flags & 0b1000_0000 != 0,
         // No password support (yet) for swarm-ad and sh tickets.
         TokenType::Swarm | TokenType::Sh => false,
     }
@@ -233,7 +232,7 @@ mod tests {
 
     #[test]
     fn wrong_kind_tickets_are_dropped() {
-        let mut dir = TicketListings::new(TokenType::Port);
+        let mut dir = TicketListings::new(TokenType::Sh);
         let file_ticket = ticket_of(TokenType::File, b"f");
         assert!(dir.note(&ad(&file_ticket, None), Instant::now()).is_none());
         assert!(dir.snapshot().is_empty());
@@ -269,8 +268,8 @@ mod tests {
 
     #[test]
     fn unchanged_re_ad_refreshes_liveness() {
-        let ticket = ticket_of(TokenType::Port, b"p");
-        let mut dir = TicketListings::new(TokenType::Port);
+        let ticket = ticket_of(TokenType::File, b"p");
+        let mut dir = TicketListings::new(TokenType::File);
         let start = Instant::now();
         dir.note(&ad(&ticket, None), start);
         dir.note(&ad(&ticket, None), start + Duration::from_secs(50));
@@ -296,24 +295,15 @@ mod tests {
         let addr = EndpointAddr::new(SecretKey::from_bytes(&[3u8; 32]).public())
             .with_ip_addr("127.0.0.1:4242".parse().unwrap());
         for password in [false, true] {
-            for (kind, ticket) in [
-                (
-                    TokenType::File,
-                    crate::file::test_ticket(addr.clone(), password),
-                ),
-                (
-                    TokenType::Port,
-                    crate::port::test_ticket(addr.clone(), password),
-                ),
-            ] {
-                let (decoded_kind, payload) = token::decode(&ticket).expect("decode");
-                assert_eq!(decoded_kind, kind);
-                assert_eq!(
-                    super::password_bit(kind, &payload),
-                    password,
-                    "{kind:?} password-bit offset drifted from its codec"
-                );
-            }
+            let kind = TokenType::File;
+            let ticket = crate::file::test_ticket(addr.clone(), password);
+            let (decoded_kind, payload) = token::decode(&ticket).expect("decode");
+            assert_eq!(decoded_kind, kind);
+            assert_eq!(
+                super::password_bit(kind, &payload),
+                password,
+                "{kind:?} password-bit offset drifted from its codec"
+            );
         }
     }
 

@@ -115,7 +115,7 @@ pub(crate) struct SharedServerOpts {
 }
 
 /// The hidden directory-tuning knobs for the ticket-advertising transfer
-/// commands (`file`/`port` listen + discover) — the subset of
+/// commands (`file` listen + discover) — the subset of
 /// [`SharedServerOpts`]'s tuning the directory path reads. Production runs
 /// on the `crate::util::consts` defaults; the subprocess suite shortens
 /// them and flips `--directory-private` for a hermetic loopback directory.

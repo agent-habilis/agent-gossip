@@ -1218,11 +1218,11 @@ impl Drop for Directory {
     }
 }
 
-// ── Ticket advertise / discover (file · port) ───────────────────────────
+// ── Ticket advertise / discover (file) ──────────────────────────────────
 
 /// Spawn the ticket re-broadcast task: join `directory` over `lookups` and
 /// re-send `ad` (a full bearer ticket) every `ADVERTISE_INTERVAL_SECS`. The
-/// daemon-less serve commands (`file send` / `port listen`)
+/// daemon-less serve commands (`file send`)
 /// run this beside their serve loop — unlike [`spawn_advertiser`] there is no
 /// event loop to couple to, so the ad is fixed for the session. Returns the
 /// task handle; dropping/aborting it closes the directory membership. A

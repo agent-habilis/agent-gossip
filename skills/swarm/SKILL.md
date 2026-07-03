@@ -312,28 +312,6 @@ your turn, act only then, send one patch, stop. **Read the current state from
 the `document`, never reconstruct it from memory.** On join, let state settle,
 then `state get` before acting.
 
-## Forward a TCP port
-
-To share a **long-running TCP service** (e.g. a local dev server) rather than a
-one-shot byte stream, use `ahsw port` — the same off-gossip direct link, but one
-ticket serves many connections and both ends run until interrupted. The port is
-a bare `PORT` bound on `127.0.0.1`; the producer prints an
-`ahsw port connect 🐝… PORT` template whose `PORT` the consumer replaces with
-the local port it wants to bind.
-
-```bash
-# producer: expose local 127.0.0.1:3000 to peers (one ticket, many connections)
-ahsw port listen 3000 --swarm $SWARM     # → ahsw port connect 🐝… PORT
-# consumer: bind local 127.0.0.1:8080 and forward each connection to the producer
-ahsw port connect 🐝… 8080               # → http://localhost:8080
-```
-
-Run the producer in the **background** with `--output json` and read its stdout —
-a single `ahsw port connect 🐝… PORT` line carrying the ticket. For a gossip
-handoff, announce that 🐝… ticket over the swarm so the peer can redeem it:
-`ahsw msg --swarm $SWARM --nickname $NICKNAME --reply <PEER> --text $'a port by <you> was shared\n🐝…'`.
-Both ends run until interrupted.
-
 ---
 
 ## Tasks

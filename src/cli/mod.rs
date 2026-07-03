@@ -29,7 +29,7 @@ mod ticket_discover;
 pub(crate) use args::Cli;
 use args::{
     Commands, CreateOpts, FileAction, ForumOpts, MetaAction, MetaOpts, MsgOpts,
-    OutputFormat, PeersOpts, PingOpts, PollOpts, PortAction, ReadyOpts, ShAction,
+    OutputFormat, PeersOpts, PingOpts, PollOpts, ReadyOpts, ShAction,
     SharedServerOpts, StateAction, StateOpts, TaskOpts,
 };
 
@@ -94,7 +94,6 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
         // Boxed like the event-loop futures above: the discover arms hold a
         // picker + connect chain that puts these over clippy's 16 KiB
         // `large_futures` budget.
-        Commands::Port { action } => Box::pin(port(action)).await,
         Commands::File { action } => Box::pin(file(action)).await,
         Commands::Sh { action } => sh(action).await,
         Commands::State { opts } => state(opts).await,
@@ -409,93 +408,6 @@ fn consumer_password(
     match password {
         None if requires(ticket) => Ok(Some(password::require_password(false, "ticket")?)),
         other => Ok(other),
-    }
-}
-
-/// `ahsw port` — a standalone, off-gossip TCP forward (no daemon). `listen`
-/// exposes a local port and prints the connect command on stdout; `connect`
-/// redeems a ticket and forwards each local connection to the producer.
-async fn port(action: PortAction) -> Result<()> {
-    match action {
-        PortAction::Listen {
-            ports,
-            swarm,
-            lookups,
-            advertise,
-            tuning,
-            password,
-            output,
-        } => {
-            crate::util::tuning::init(tuning.tuning());
-            let json = matches!(output, OutputFormat::Json);
-            let password = password::resolve_password(password, /* confirm */ true, json)?;
-            crate::port::listen(
-                swarm.as_ref().map(crate::protocol::SwarmId::as_str),
-                lookups.to_set(),
-                crate::protocol::swarm::DirectorySelection::from_flag(advertise),
-                &ports,
-                json,
-                password,
-            )
-            .await
-        }
-        PortAction::Connect {
-            ticket,
-            ports,
-            password,
-            output,
-        } => {
-            let password =
-                consumer_password(password, &ticket, crate::port::ticket_requires_password)?;
-            crate::port::connect(
-                &ticket,
-                &ports,
-                matches!(output, OutputFormat::Json),
-                password,
-            )
-            .await
-        }
-        PortAction::Discover {
-            name,
-            ports,
-            lookups,
-            tuning,
-            password,
-            output,
-        } => {
-            crate::util::tuning::init(tuning.tuning());
-            let json = matches!(output, OutputFormat::Json);
-            let password = password::resolve_password(password, /* confirm */ false, json)?;
-            match ticket_discover::discover_ticket(
-                name,
-                lookups.to_set(),
-                crate::protocol::token::TokenType::Port,
-                json,
-            )
-            .await?
-            {
-                Some(ticket) => {
-                    // No explicit mappings ⇒ forward every advertised port to
-                    // the same local port.
-                    let mappings = if ports.is_empty() {
-                        crate::port::identity_mappings(&ticket)?
-                    } else {
-                        ports
-                    };
-                    let password = match password {
-                        None if crate::port::ticket_requires_password(&ticket) => {
-                            Some(password::require_password(false, "ticket")?)
-                        }
-                        other => other,
-                    };
-                    ticket_discover::interruptible(crate::port::connect(
-                        &ticket, &mappings, json, password,
-                    ))
-                    .await
-                }
-                None => Ok(()),
-            }
-        }
     }
 }
 

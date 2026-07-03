@@ -88,7 +88,7 @@ never travels. For a **swarm**, `create --password` stretches it with Argon2id
 (salt = the seed) into a key that replaces the seed in *every* derivation
 (topic, rendezvous, port ladder), and the hash carries a one-way **verifier**
 of that key so `join` can check a candidate locally — a wrong password fails
-immediately, before any network. For a **ticket** (port/file), the
+immediately, before any network. For a **ticket** (file), the
 consumer presents the Argon2id stretch of the password (salt = the ticket
 secret) instead of the raw secret; the producer verifies online and rejects
 with a distinct "wrong password" close. Tickets carry no verifier —

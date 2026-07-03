@@ -127,7 +127,6 @@ fn ticket_event_json(event: &TicketDirectoryEvent) -> String {
 fn kind_noun(kind: TokenType) -> &'static str {
     match kind {
         TokenType::File => "files",
-        TokenType::Port => "ports",
         TokenType::Swarm => "swarms",
         TokenType::Sh => "shells",
     }

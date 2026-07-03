@@ -32,12 +32,6 @@ SYNOPSIS
 
        ahsw peers --swarm 🐝… --nickname NAME [--output json]
 
-       ahsw port listen  PORT... [--swarm 🐝… | --public | --mdns --dht --relay[=URLS]]
-                  [--advertise[=NAME]] [--password[=PW]] [--output human|json]
-       ahsw port connect 🐝… [LOCAL:]REMOTE... [--password[=PW]] [--output human|json]
-       ahsw port discover [NAME] [[LOCAL:]REMOTE...] [--public] [--mdns] [--dht]
-                  [--relay[=URLS]] [--password[=PW]] [--output human|json]
-
        ahsw file send PATH [--swarm 🐝… | --public | --mdns --dht --relay[=URLS]]
                   [--advertise[=NAME]] [--password[=PW]] [--throttle RATE]
                   [--output human|json]
@@ -427,56 +421,6 @@ COMMANDS
               metadata each agent self-reports into the meta channel; read
               them with meta get under /peers/<nickname> (see "SHARED STATE").
 
-       port listen  PORT... [--swarm 🐝… | --public | --mdns --dht --relay[=URLS]]
-                    [--advertise[=NAME]] [--password[=PW]] [--output human|json]
-       port connect 🐝… [LOCAL:]REMOTE... [--password[=PW]] [--output human|json]
-       port discover [NAME] [[LOCAL:]REMOTE...] [--public] [--mdns] [--dht]
-                    [--relay[=URLS]] [--password[=PW]] [--output human|json]
-              Forward one or more long-running TCP ports over an off-gossip
-              direct link; no daemon needed. `port listen PORT...` proxies
-              each listed port to `127.0.0.1:PORT` on the producer and prints the
-              consumer's `ahsw port connect 🐝… PORT...` command. `port connect
-              <ticket> [LOCAL:]REMOTE...` binds each port locally and forwards it.
-              A consumer arg is `LOCAL:REMOTE` — bind `127.0.0.1:LOCAL`, forward to
-              the producer's REMOTE — or a bare `PORT` that maps to itself
-              (`3000` == `3000:3000`); REMOTE must be a port the ticket exposes.
-              All ports share one connection (max 127 ports per ticket). One
-              ticket serves many connections, and both sides run until
-              interrupted. The ticket is a bearer capability (a random secret
-              carrying the producer's address + the swarm's discovery config)
-              of its own kind — not accepted by --swarm, join, or file get.
-              The discovery config comes from --swarm or the create-style
-              --public/--mdns/--dht/--relay flags.
-              --password[=PW] protects the ticket: the
-              ticket alone no longer forwards, and `port connect` must present
-              the password.
-
-              --advertise[=NAME] + `port discover` publish and browse tickets:
-              the ticket is listed in directory NAME (bare ⇒ `global`),
-              labeled with the exposed ports, and `port discover NAME` browses
-              the directory and forwards on pick. With no mapping args it
-              forwards EVERY advertised port to the same local port; name
-              `[LOCAL:]REMOTE...` mappings to pick or remap.
-
-              --output json makes `port listen` print just the `ahsw port connect
-              🐝… PORT...` line, ready to run (each port maps to itself; edit to
-              `LOCAL:REMOTE` to bind a different local port). `port connect
-              --output json` only suppresses the status line.
-
-              In human mode both commands print a best-effort access-log line for
-              each HTTP request they recognize on the forwarded traffic (method,
-              path, status, size, latency). It only observes bytes already being
-              forwarded and stops trying once a connection doesn't look like
-              HTTP/1.x. --output json suppresses it.
-
-              Exit codes don't mean anything here: both proxies exit 0 on a clean
-              shutdown regardless of how many connections they served.
-
-              Examples:
-                ahsw port listen 3000 5432 --swarm 🐝…   # share a dev server + DB
-                ahsw port connect 🐝… 8080:3000 5432     # 8080→3000, 5432→5432
-                ahsw port listen 3000 --advertise devbox   ↔   ahsw port discover devbox
-
        file send PATH [--swarm 🐝… | --public | --mdns --dht --relay[=URLS]]
                  [--advertise[=NAME]] [--password[=PW]] [--throttle RATE]
                  [--output human|json]
@@ -506,8 +450,8 @@ COMMANDS
 
               The ticket is a bearer capability (a random secret carrying the
               sender's address + the swarm's discovery config); it shares the
-              🐝… glyph but is a DISTINCT token, not accepted by --swarm, join,
-              or port connect.
+              🐝… glyph but is a DISTINCT token, not accepted by --swarm or
+              join.
               The discovery config comes from --swarm or the create-style
               --mdns/--dht/--relay flags; neither is a public
               default (--public is its explicit alias), and a loopback-only
@@ -592,7 +536,7 @@ COMMANDS
               The ticket is a bearer capability (a random secret carrying the
               sharer's address + the swarm's discovery config); it shares the
               🐝… glyph but is a DISTINCT token, not accepted by --swarm, join,
-              port connect, or file get.
+              or file get.
               The discovery config comes from --swarm or the create-style
               --mdns/--dht/--relay flags; neither is a public
               default (--public is its explicit alias), and a loopback-only
@@ -812,7 +756,7 @@ NETWORKING
        reliability. Use --public unless you must restrict reach. For
        discover, the flags must match whatever the advertiser used.
 
-       The transfer and discover commands (port, file, sh,
+       The transfer and discover commands (file, sh,
        discover) take the same flags, with one difference: there the all-on
        preset is already the no-flag default (a transfer is inherently
        networked), so --public is its explicit alias. The alternatives are
