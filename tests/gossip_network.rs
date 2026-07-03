@@ -2374,7 +2374,7 @@ fn ready_identity(log: &std::path::Path) -> Option<(String, String)> {
 }
 
 fn default_state_file(swarm: &str, nickname: &str) -> PathBuf {
-    let prefix: String = swarm.chars().take(16).collect();
+    let prefix = agent_habilis_swarm::swarm_prefix(swarm);
     PathBuf::from(RUNTIME_DIR)
         .join(prefix)
         .join(format!("{nickname}.state.json"))

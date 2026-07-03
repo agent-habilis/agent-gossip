@@ -20,9 +20,17 @@ pub(crate) mod version;
 /// The per-swarm folder name — the first 16 characters of the swarm
 /// identifier. The stem of every per-swarm file (socket / log / state), so it
 /// lives here rather than in any one module. See [`swarm_runtime_dir`].
+///
+/// The canonical id carries a `🐝://` separator; the `://` is stripped first so
+/// it never lands in a path (the `🐝` sigil is filesystem-safe and kept, which
+/// also keeps the stem identical to a legacy bare `🐝<base58>` id).
 #[must_use]
 pub fn swarm_prefix(swarm_id: &str) -> String {
-    swarm_id.chars().take(16).collect()
+    swarm_id
+        .replace(crate::protocol::swarm::SEPARATOR, "")
+        .chars()
+        .take(16)
+        .collect()
 }
 
 /// A swarm's runtime folder — `<RUNTIME_DIR>/<swarm-prefix>/`. All of one
@@ -52,5 +60,15 @@ mod tests {
     fn result_is_a_prefix_of_input() {
         let input = "🐝abcdefghijkmnpqrstuvwx";
         assert!(input.starts_with(&swarm_prefix(input)));
+    }
+
+    #[test]
+    fn strips_uri_separator_and_matches_legacy_stem() {
+        // The `🐝://` and legacy bare `🐝` forms of the same id must produce an
+        // identical, `/`-free filesystem stem.
+        let uri = swarm_prefix("🐝://abcdefghijkmnpqrs");
+        let bare = swarm_prefix("🐝abcdefghijkmnpqrs");
+        assert_eq!(uri, bare);
+        assert!(!uri.contains('/'));
     }
 }

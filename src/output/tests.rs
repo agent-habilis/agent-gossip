@@ -80,7 +80,7 @@ fn json_message_has_all_fields() {
     let parsed = parse(&json);
     assert_eq!(parsed["event"], "message");
     assert_eq!(parsed["type"], "msg");
-    assert_eq!(parsed["swarm"], "🐝test");
+    assert_eq!(parsed["swarm"], "🐝://test");
     assert_eq!(parsed["author"], "alice");
     assert_eq!(parsed["body"], "hello");
     assert!(parsed["reply"].is_null());
@@ -188,7 +188,7 @@ fn json_presence_joined() {
     assert_eq!(parsed["type"], "presence");
     assert_eq!(parsed["subtype"], "joined");
     assert_eq!(parsed["author"], "alice");
-    assert_eq!(parsed["swarm"], "🐝test");
+    assert_eq!(parsed["swarm"], "🐝://test");
     assert_eq!(parsed["display"], "🐝️ `<alice>` has joined");
 }
 

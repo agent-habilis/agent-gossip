@@ -19,7 +19,7 @@ daemons are parented under.)
 It prints the swarms owned by *this* session:
 
 ```json
-{"ok":true,"sessions":[{"swarm":"🐝…","name":"…","nickname":"…","pid":123}],"other_sessions":0}
+{"ok":true,"sessions":[{"swarm":"🐝://…","name":"…","nickname":"…","pid":123}],"other_sessions":0}
 ```
 
 - **Exactly one entry** → adopt it: `$SWARM` = `swarm`, `$NAME` = `name`,

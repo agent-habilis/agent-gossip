@@ -96,8 +96,8 @@ identity. Still zero packets sent:
 
 ```mermaid
 flowchart TB
-    S["🐝… string"]
-    S --> A{"prefix == '🐝'?"}
+    S["🐝://… string"]
+    S --> A{"starts with '🐝'?<br/>(strip optional '://')"}
     A -->|no| X1[reject]
     A -->|yes| B{"Base58Check<br/>checksum ok?"}
     B -->|no| X2["reject:<br/>typo / truncated"]

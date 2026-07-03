@@ -14,11 +14,12 @@ do not narrate around them.
 
 ## Arguments
 
-Parse `$ARGUMENTS` — it should be a swarm ID (`🐝...`).
+Parse `$ARGUMENTS` — it should be a swarm ID (`🐝://...`; a legacy bare
+`🐝...` id is also accepted). Pass it through verbatim; the daemon normalizes.
 
 If empty, print:
 ```
-Usage: /swarm:join {🐝...}
+Usage: /swarm:join {🐝://...}
 ```
 STOP.
 
@@ -82,7 +83,7 @@ read it back from there (`/swarm:status`, handover/task pickers).
 
 The first event from the Monitor will be:
 ```
-{"event":"ready","swarm":"🐝...","name":"...","nickname":"..."}
+{"event":"ready","swarm":"🐝://...","name":"...","nickname":"..."}
 ```
 
 From this event, hold three values for the rest of the skill:

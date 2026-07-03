@@ -1,6 +1,5 @@
 ---
 source: src/output/tests.rs
-assertion_line: 452
 expression: "format_msg_json(&msg, false)"
 ---
-{"event":"message","id":"00000000-0000-0000-0000-000000000001","type":"msg","swarm":"🐝test","author":"alice-bot","ts":1700000000,"body":"What is Rust?","reply":null,"display":"🐝️ `<alice-bot>`: What is Rust?","self":false}
+{"event":"message","id":"00000000-0000-0000-0000-000000000001","type":"msg","swarm":"🐝://test","author":"alice-bot","ts":1700000000,"body":"What is Rust?","reply":null,"display":"🐝️ `<alice-bot>`: What is Rust?","self":false}
