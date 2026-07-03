@@ -6,7 +6,7 @@
 //!
 //! The daemon is the **sole writer**: the `/swarm:*` skills are
 //! read-only and never touch this file. The daemon owns every key —
-//! `swarm`, `name`, `nickname`, `ready`, `participant_count`,
+//! `swarm`, `name`, `nickname`, `pid`, `ready`, `participant_count`,
 //! `last_updated` — and writes a fresh, complete document on each update
 //! (no read-merge: there are no foreign keys to preserve).
 //!
@@ -17,12 +17,15 @@
 //! including self. `last_updated` is a unix timestamp the daemon
 //! refreshes on a fixed heartbeat (see `tuning::STATE_REFRESH_SECS`)
 //! even when membership is unchanged, so a reader can treat a fresh
-//! value as a liveness signal.
+//! value as a liveness signal. `pid` is the daemon's own process id —
+//! what lets `ahsw leave`/`ahsw session` map a state file back to a
+//! running daemon (and, via its ancestry, to the agent session that
+//! spawned it).
 //!
 //! File shape (keys are serialized in sorted order — `serde_json::Map` is a
 //! `BTreeMap` here, no `preserve_order` feature):
 //! ```json
-//! {"last_updated":1776720604,"name":"cool-team","nickname":"treat-empire","participant_count":3,"ready":true,"swarm":"🐝..."}
+//! {"last_updated":1776720604,"name":"cool-team","nickname":"treat-empire","participant_count":3,"pid":34299,"ready":true,"swarm":"🐝..."}
 //! ```
 //!
 //! Writes are atomic (tempfile + rename on the same filesystem), so a
@@ -87,6 +90,7 @@ impl StateFile {
         obj.insert("swarm".into(), self.swarm.clone().into());
         obj.insert("name".into(), self.name.clone().into());
         obj.insert("nickname".into(), self.nickname.clone().into());
+        obj.insert("pid".into(), std::process::id().into());
         obj.insert("ready".into(), ready.into());
         obj.insert("participant_count".into(), participant_count.into());
         obj.insert("last_updated".into(), clock::unix_secs().into());
@@ -152,6 +156,44 @@ pub(crate) fn read_identity(path: &Path) -> SessionIdentity {
         name: field("name"),
         nickname: field("nickname"),
     }
+}
+
+/// One running daemon as seen through its state file — what `ahsw leave` /
+/// `ahsw session` need to map the file back to a live process and decide
+/// whether the calling session owns it. Every field is `Option`: a file
+/// written by an older binary predates `pid`, and discovery must still be
+/// able to *report* such an entry rather than error on it.
+#[derive(Debug)]
+pub(crate) struct SessionEntry {
+    pub swarm: Option<String>,
+    pub name: Option<String>,
+    pub nickname: Option<String>,
+    pub pid: Option<u32>,
+}
+
+/// Read a state file as a [`SessionEntry`]. Best-effort: `None` only when
+/// the file is unreadable or not a JSON object — a *degenerate* object still
+/// yields an entry (all-`None` fields) so callers can decide per-field.
+pub(crate) fn read_session_entry(path: &Path) -> Option<SessionEntry> {
+    let parsed: serde_json::Value = std::fs::read_to_string(path)
+        .ok()
+        .and_then(|contents| serde_json::from_str(&contents).ok())?;
+    parsed.as_object()?;
+    let text = |key: &str| {
+        parsed
+            .get(key)
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned)
+    };
+    Some(SessionEntry {
+        swarm: text("swarm"),
+        name: text("name"),
+        nickname: text("nickname"),
+        pid: parsed
+            .get("pid")
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|pid| u32::try_from(pid).ok()),
+    })
 }
 
 /// Read the readiness fields from the state file at `path`. `Ok(None)` when
@@ -230,6 +272,7 @@ mod tests {
         assert_eq!(parsed["nickname"], "treat-empire");
         assert_eq!(parsed["ready"], true);
         assert_eq!(parsed["participant_count"], 3);
+        assert_eq!(parsed["pid"], std::process::id());
         assert!(parsed["last_updated"].is_number());
         state_file.remove();
     }
@@ -372,6 +415,50 @@ mod tests {
         assert_eq!(identity.name.as_deref(), Some("cool-team"));
         assert_eq!(identity.nickname.as_deref(), Some("treat-empire"));
         state_file.remove();
+    }
+
+    #[test]
+    fn read_session_entry_round_trips_write() {
+        let path = unique_path("session-entry");
+        let state_file = StateFile::new(
+            path.clone(),
+            &SwarmId::from("🐝round"),
+            &Nickname::from("treat-empire"),
+            &name("cool-team"),
+        );
+        state_file.write(2, true);
+        let entry = super::read_session_entry(&path).expect("present");
+        assert_eq!(entry.swarm.as_deref(), Some("🐝round"));
+        assert_eq!(entry.name.as_deref(), Some("cool-team"));
+        assert_eq!(entry.nickname.as_deref(), Some("treat-empire"));
+        assert_eq!(entry.pid, Some(std::process::id()));
+        state_file.remove();
+    }
+
+    #[test]
+    fn read_session_entry_tolerates_a_pre_pid_file() {
+        let path = unique_path("session-entry-old");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            r#"{"last_updated":1,"name":"old","nickname":"n-n","participant_count":1,"ready":true,"swarm":"🐝old"}"#,
+        )
+        .unwrap();
+        let entry = super::read_session_entry(&path).expect("present");
+        assert_eq!(entry.swarm.as_deref(), Some("🐝old"));
+        assert_eq!(entry.pid, None);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn read_session_entry_is_none_on_missing_or_malformed() {
+        let missing = unique_path("session-entry-missing");
+        assert!(super::read_session_entry(&missing).is_none());
+        let malformed = unique_path("session-entry-malformed");
+        std::fs::create_dir_all(malformed.parent().unwrap()).unwrap();
+        std::fs::write(&malformed, b"not json").unwrap();
+        assert!(super::read_session_entry(&malformed).is_none());
+        let _ = std::fs::remove_file(&malformed);
     }
 
     #[test]

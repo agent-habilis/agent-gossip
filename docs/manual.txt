@@ -32,6 +32,11 @@ SYNOPSIS
 
        ahsw peers --swarm 🐝… --nickname NAME [--output json]
 
+       ahsw leave [SWARM] [--nickname NAME] [--session-pid PID]
+                  [--output human|json]
+
+       ahsw session [--session-pid PID] [--output human|json]
+
        ahsw pipe listen        [--swarm 🐝… | --public | --mdns --dht --relay[=URLS]]
                   [--advertise[=NAME]] [--password[=PW]]
                   [--throttle RATE] [--follow] [--output human|json]
@@ -225,18 +230,22 @@ COMMANDS
                      (msg/poll). Required for agent use.
 
               --state-file PATH
-                     Write {swarm, name, nickname, ready, participant_count,
-                     last_updated} to this JSON file (a fresh, complete document
-                     each time — the daemon is the sole writer and does not merge
-                     foreign keys), refreshed on every membership change and a
-                     ~10s heartbeat, and remove it on clean shutdown. `ready` is
-                     false at the first write (identity up) and true once the
-                     event loop is serving IPC. A SIGKILL leaves a stale file —
-                     treat a fresh last_updated (or a live socket) as the
-                     liveness check. The agent-facing use: `ahsw ready
-                     --state-file PATH` blocks on the `ready` flag as the
-                     readiness gate when you launch the daemon without consuming
-                     its event stream (see "READINESS").
+                     Write {swarm, name, nickname, pid, ready,
+                     participant_count, last_updated} to this JSON file (a
+                     fresh, complete document each time — the daemon is the
+                     sole writer and does not merge foreign keys), refreshed on
+                     every membership change and a ~10s heartbeat, and remove
+                     it on clean shutdown. `ready` is false at the first write
+                     (identity up) and true once the event loop is serving
+                     IPC. `pid` is the daemon's own process id — what `leave` /
+                     `session` use to map the file back to a running daemon. A
+                     SIGKILL leaves a stale file — treat a fresh last_updated
+                     (or a live socket) as the liveness check; `leave`/`session`
+                     garbage-collect a stale file whose pid is gone. The
+                     agent-facing use: `ahsw ready --state-file PATH` blocks on
+                     the `ready` flag as the readiness gate when you launch the
+                     daemon without consuming its event stream (see
+                     "READINESS").
 
               --output human|json
                      Output format for this daemon's event stream. Use json
@@ -445,6 +454,51 @@ COMMANDS
               The roster does not carry model/harness/host — those are swarm
               metadata each agent self-reports into the meta channel; read
               them with meta get under /peers/<nickname> (see "SHARED STATE").
+
+       leave [SWARM] [--nickname NAME] [--session-pid PID] [--output human|json]
+              Leave swarm(s): stop the local create/join/forum daemon(s).
+              Discovery is via the daemons' state files under
+              /tmp/agent-habilis/swarm; each match gets a SIGTERM, on which
+              the daemon broadcasts `left` to its peers and removes its
+              state file (the removal is what `confirmed` reports). State
+              files whose recorded pid is gone (SIGKILL, power loss) are
+              deleted along the way and counted in `cleaned`.
+
+              With no SWARM, only daemons OWNED BY THE CALLING SESSION are
+              stopped: a daemon is session-owned when --session-pid (default:
+              this command's parent process) appears among its process
+              ancestors. Other sessions' daemons are only counted in
+              `other_sessions`, never touched. Agent skills pass their
+              shell's $PPID — the agent process — so a session can leave its
+              swarm even after the agent's conversation context was cleared.
+
+              With an explicit SWARM (the full 🐝… id or a unique prefix),
+              that swarm's local member(s) are stopped regardless of owner;
+              narrow to one member with --nickname when several run on this
+              machine. Daemons started with a --state-file outside
+              /tmp/agent-habilis/swarm (and embed/MCP sessions, which write
+              none) are not discoverable. Exits 0 whether or not anything
+              matched; --output json prints:
+
+                {"ok":true,
+                 "left":[{"swarm":"🐝…","name":"cool-team",
+                          "nickname":"swift-cedar","pid":34299,
+                          "confirmed":true}],
+                 "other_sessions":0,"cleaned":0}
+
+       session [--session-pid PID] [--output human|json]
+              Report the swarm(s) the calling session is joined to — the
+              read-only sibling of leave, with the same discovery and the
+              same session-ownership rule. This is how an agent that lost
+              its conversation context (a context clear or compaction)
+              re-learns the swarm id, name, and nickname of a session it is
+              still joined to, instead of concluding it is not in a swarm.
+              --output json prints:
+
+                {"ok":true,
+                 "sessions":[{"swarm":"🐝…","name":"cool-team",
+                              "nickname":"swift-cedar","pid":34299}],
+                 "other_sessions":0,"cleaned":0}
 
        pipe listen [--swarm 🐝… | --public | --mdns --dht --relay[=URLS]]
                    [--advertise[=NAME]] [--throttle RATE] [--follow]

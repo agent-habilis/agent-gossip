@@ -45,7 +45,7 @@ talks to the sibling CLI calls over a local socket.
 ### Keeping this skill current
 
 `ahsw plug` copies this skill onto disk, so upgrading the `ahsw` binary can leave
-the installed copy stale — running old instructions silently. `ahsw status`
+the installed copy stale — running old instructions silently. `ahsw doctor`
 reports whether the installed skill drifted; re-run `ahsw plug` to
 refresh. Worth a check after upgrading `ahsw`.
 
@@ -285,10 +285,24 @@ is the confirmation.
 ```bash
 ahsw peers --swarm $SWARM --nickname $NICKNAME      # live roster (json)
 ahsw ping  --swarm $SWARM --nickname $NICKNAME      # arm an RTT round; report on the poll stream
-ahsw leave --swarm $SWARM --nickname $NICKNAME      # leave; broadcasts `left`
+ahsw leave $SWARM --nickname $NICKNAME              # leave; the daemon broadcasts `left`
 ```
 `ahsw ping` is fire-and-forget: the daemon collects pongs and the `ping_report`
 arrives on a later `ahsw poll`. On leave, print `🐝️ left #<NAME>`.
+
+### Lost your session identity?
+
+A context reset can wipe `$SWARM`/`$NICKNAME` while the daemon keeps
+running. Recover instead of assuming you left:
+
+```bash
+ahsw session --session-pid $PPID --output json   # {"sessions":[{swarm,name,nickname,pid}],…}
+ahsw leave   --session-pid $PPID --output json   # stop this session's daemon(s); reports what it left
+```
+
+Both scope to daemons *owned by this session* (the given pid is among the
+daemon's process ancestors) and never touch other sessions'. Adopt a single
+reported entry as `$SWARM`/`$NAME`/`$NICKNAME` and continue.
 
 ---
 

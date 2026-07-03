@@ -8,6 +8,7 @@
 mod common;
 
 use std::fs::{self, File};
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -2322,4 +2323,209 @@ fn test_flap_storm_all_rosters_recover() {
     for joiner in &joiners {
         assert_received(joiner, &creator.nickname, "fs-probe", recover);
     }
+}
+
+// ── leave / session (session-scope daemon discovery) ─────────────────────────
+
+/// Spawn a create daemon with `--output json` and block until its `ready`
+/// event appears on stdout, returning the child plus its minted identity.
+/// The default state-file location (under `RUNTIME_DIR`) is what `leave` /
+/// `session` discover, so no `--state-file` override here.
+#[expect(
+    clippy::zombie_processes,
+    reason = "the child is returned; every caller kills and waits it"
+)]
+fn spawn_discoverable_daemon(name: &str) -> (std::process::Child, PathBuf, String, String) {
+    let log = tmp_log(&format!("leave-{name}"));
+    let file = File::create(&log).unwrap();
+    let mut child = common::test_cmd()
+        .args(["create", "--name", name, "--no-interactive", "--output", "json"])
+        .stdout(Stdio::from(file.try_clone().unwrap()))
+        .stderr(Stdio::from(file))
+        .spawn()
+        .expect("failed to spawn create");
+    let deadline = Instant::now() + CONNECT_TIMEOUT;
+    loop {
+        if let Some((swarm, nickname)) = ready_identity(&log) {
+            return (child, log, swarm, nickname);
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!(
+                "daemon never emitted ready\nlog:\n{}",
+                fs::read_to_string(&log).unwrap_or_default()
+            );
+        }
+        std::thread::sleep(POLL);
+    }
+}
+
+fn ready_identity(log: &std::path::Path) -> Option<(String, String)> {
+    let content = fs::read_to_string(log).ok()?;
+    let ready = content
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .find(|event| event["event"] == "ready")?;
+    Some((
+        ready["swarm"].as_str()?.to_owned(),
+        ready["nickname"].as_str()?.to_owned(),
+    ))
+}
+
+fn default_state_file(swarm: &str, nickname: &str) -> PathBuf {
+    let prefix: String = swarm.chars().take(16).collect();
+    PathBuf::from(RUNTIME_DIR)
+        .join(prefix)
+        .join(format!("{nickname}.state.json"))
+}
+
+/// The state file must carry the daemon's own pid — what lets `leave` /
+/// `session` map the file back to a live process and to the agent session
+/// that spawned it.
+#[test]
+fn state_file_carries_daemon_pid() {
+    let (mut child, log, swarm, nickname) = spawn_discoverable_daemon("leave-pid");
+    let state_file = default_state_file(&swarm, &nickname);
+    let parsed: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&state_file).unwrap()).unwrap();
+    assert_eq!(parsed["pid"], child.id());
+
+    let _ = Command::new("kill")
+        .args(["-TERM", &child.id().to_string()])
+        .status();
+    let _ = child.wait();
+    let _ = fs::remove_file(&log);
+}
+
+/// `ahsw leave <🐝id>` (explicit target) stops exactly that swarm's local
+/// daemon — the state file disappears (proof of the graceful shutdown path)
+/// — and leaves an unrelated daemon untouched.
+#[test]
+fn leave_explicit_target_stops_only_that_swarm() {
+    let (mut victim, victim_log, victim_swarm, victim_nick) =
+        spawn_discoverable_daemon("leave-victim");
+    let (mut bystander, bystander_log, bystander_swarm, bystander_nick) =
+        spawn_discoverable_daemon("leave-bystander");
+
+    let out = common::test_cmd()
+        .args(["leave", &victim_swarm, "--output", "json"])
+        .output()
+        .expect("failed to run ahsw leave");
+    assert!(out.status.success(), "leave failed: {out:?}");
+    let report: serde_json::Value =
+        serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim()).unwrap();
+    let left = report["left"].as_array().unwrap();
+    assert_eq!(left.len(), 1, "expected exactly the victim: {report}");
+    assert_eq!(left[0]["swarm"], victim_swarm.as_str());
+    assert_eq!(left[0]["confirmed"], true);
+    assert!(
+        !default_state_file(&victim_swarm, &victim_nick).exists(),
+        "victim state file survived leave"
+    );
+    assert!(
+        default_state_file(&bystander_swarm, &bystander_nick).exists(),
+        "bystander state file vanished — leave over-matched"
+    );
+
+    let _ = victim.wait();
+    let _ = Command::new("kill")
+        .args(["-TERM", &bystander.id().to_string()])
+        .status();
+    let _ = bystander.wait();
+    let _ = fs::remove_file(&victim_log);
+    let _ = fs::remove_file(&bystander_log);
+}
+
+/// Session scope end to end: a daemon spawned under a decoy "agent" shell is
+/// owned by that shell's pid. `ahsw session --session-pid <shell>` reports it
+/// without touching it; `ahsw leave --session-pid <shell>` stops it. Daemons
+/// belonging to other tests (children of this test binary, not of the decoy
+/// shell) must never match.
+#[test]
+fn leave_session_scope_via_decoy_parent() {
+    let _serial = serial_guard();
+
+    let log = tmp_log("leave-decoy");
+    // The trailing `:` defeats the shell's exec-of-last-command optimization,
+    // keeping the shell alive as the daemon's parent — the ancestry link the
+    // session scope matches on.
+    let mut decoy = Command::new("sh")
+        .arg("-c")
+        .arg(format!(
+            "{} --log-dir {} create --name leave-decoy --no-interactive --output json > {} 2>&1; :",
+            bin().display(),
+            common::test_log_dir(),
+            log.display(),
+        ))
+        .spawn()
+        .expect("failed to spawn decoy shell");
+    let decoy_pid = decoy.id().to_string();
+
+    let deadline = Instant::now() + CONNECT_TIMEOUT;
+    while ready_identity(&log).is_none() {
+        assert!(
+            Instant::now() < deadline,
+            "decoy daemon never emitted ready\nlog:\n{}",
+            fs::read_to_string(&log).unwrap_or_default()
+        );
+        std::thread::sleep(POLL);
+    }
+    let (swarm, nickname) = ready_identity(&log).unwrap();
+
+    // Read-only probe: reports the decoy's daemon, does not stop it.
+    let out = common::test_cmd()
+        .args(["session", "--session-pid", &decoy_pid, "--output", "json"])
+        .output()
+        .expect("failed to run ahsw session");
+    assert!(out.status.success(), "session failed: {out:?}");
+    let report: serde_json::Value =
+        serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim()).unwrap();
+    let sessions = report["sessions"].as_array().unwrap();
+    assert_eq!(sessions.len(), 1, "expected exactly the decoy: {report}");
+    assert_eq!(sessions[0]["swarm"], swarm.as_str());
+    assert_eq!(sessions[0]["nickname"], nickname.as_str());
+    assert!(
+        default_state_file(&swarm, &nickname).exists(),
+        "session (read-only) stopped the daemon"
+    );
+
+    let leave_out = common::test_cmd()
+        .args(["leave", "--session-pid", &decoy_pid, "--output", "json"])
+        .output()
+        .expect("failed to run ahsw leave");
+    assert!(leave_out.status.success(), "leave failed: {leave_out:?}");
+    let leave_report: serde_json::Value =
+        serde_json::from_str(String::from_utf8_lossy(&leave_out.stdout).trim()).unwrap();
+    let left = leave_report["left"].as_array().unwrap();
+    assert_eq!(left.len(), 1, "expected exactly the decoy: {leave_report}");
+    assert_eq!(left[0]["swarm"], swarm.as_str());
+    assert_eq!(left[0]["confirmed"], true);
+    assert!(!default_state_file(&swarm, &nickname).exists());
+
+    let _ = decoy.wait();
+    let _ = fs::remove_file(&log);
+}
+
+/// A session that owns no daemon gets an empty `left` and exit 0 — never an
+/// error, and never someone else's daemons.
+#[test]
+fn leave_nothing_owned_is_a_clean_noop() {
+    let mut idle = Command::new("sleep")
+        .arg("60")
+        .spawn()
+        .expect("failed to spawn sleep");
+
+    let out = common::test_cmd()
+        .args(["leave", "--session-pid", &idle.id().to_string(), "--output", "json"])
+        .output()
+        .expect("failed to run ahsw leave");
+    assert!(out.status.success(), "leave should exit 0 on a no-op");
+    let report: serde_json::Value =
+        serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim()).unwrap();
+    assert_eq!(report["ok"], true);
+    assert_eq!(report["left"].as_array().unwrap().len(), 0);
+
+    let _ = idle.kill();
+    let _ = idle.wait();
 }

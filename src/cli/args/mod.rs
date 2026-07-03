@@ -14,6 +14,7 @@ mod doctor;
 mod file;
 mod forum;
 mod join;
+mod leave;
 mod lookup;
 mod meta;
 mod mount;
@@ -25,6 +26,7 @@ mod pipe;
 mod poll;
 mod port;
 mod ready;
+mod session;
 mod sh;
 mod shared;
 mod state;
@@ -36,6 +38,7 @@ pub(crate) use doctor::DoctorOpts;
 pub(crate) use file::FileAction;
 pub(crate) use forum::ForumOpts;
 pub(crate) use join::JoinOpts;
+pub(crate) use leave::LeaveOpts;
 pub(crate) use meta::{MetaAction, MetaOpts};
 pub(crate) use mount::MountAction;
 pub(crate) use msg::MsgOpts;
@@ -46,6 +49,7 @@ pub(crate) use pipe::PipeAction;
 pub(crate) use poll::PollOpts;
 pub(crate) use port::PortAction;
 pub(crate) use ready::ReadyOpts;
+pub(crate) use session::SessionOpts;
 pub(crate) use sh::ShAction;
 pub(crate) use shared::SharedServerOpts;
 pub(crate) use state::{StateAction, StateOpts};
@@ -99,6 +103,33 @@ pub(crate) enum Commands {
     Forum {
         #[command(flatten)]
         opts: ForumOpts,
+    },
+
+    /// Leave swarm(s): stop this session's local daemon(s).
+    ///
+    /// Finds running create/join/forum daemons through their state files
+    /// and sends each a SIGTERM; a daemon broadcasts `left` to its peers
+    /// and removes its state file on the way out. With no SWARM, stops
+    /// only the daemons owned by the calling session — those with
+    /// `--session-pid` among their process ancestors — and never touches
+    /// other sessions'. An explicit SWARM targets that swarm's local
+    /// member(s) regardless of owner. State files whose daemon is gone
+    /// (SIGKILL, power loss) are cleaned up along the way.
+    Leave {
+        #[command(flatten)]
+        opts: LeaveOpts,
+    },
+
+    /// Report the swarm(s) this session is joined to.
+    ///
+    /// The read-only sibling of `leave`: discovers running daemons through
+    /// their state files and prints the ones owned by the calling session
+    /// (see `--session-pid`). This is how an agent that lost its
+    /// conversation context (e.g. after a context clear) re-learns the
+    /// swarm id and nickname of a session it is still joined to.
+    Session {
+        #[command(flatten)]
+        opts: SessionOpts,
     },
 
     /// Post a message to a swarm

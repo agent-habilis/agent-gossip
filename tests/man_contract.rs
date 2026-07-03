@@ -38,6 +38,8 @@ fn man_prints_manual_to_stdout() {
         "discover",
         "task",
         "peers",
+        "leave",
+        "session",
         "mount serve",
     ] {
         assert!(

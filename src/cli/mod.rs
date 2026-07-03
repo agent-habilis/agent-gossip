@@ -24,6 +24,7 @@ mod doctor;
 mod password;
 mod picker;
 mod plug;
+mod session;
 mod ticket_discover;
 
 pub(crate) use args::Cli;
@@ -86,6 +87,8 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
             crate::util::tuning::init(opts.shared.tuning());
             Box::pin(forum(opts)).await
         }
+        Commands::Leave { opts } => session::leave(opts).await,
+        Commands::Session { opts } => session::session(opts).await,
         Commands::Msg { opts } => msg(opts).await,
         Commands::Poll { opts } => poll(opts).await,
         Commands::Ping { opts } => ping(opts).await,

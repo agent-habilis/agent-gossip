@@ -118,7 +118,9 @@ mod tests {
             | Commands::Ready { .. }
             | Commands::Plug { .. }
             | Commands::Unplug { .. }
-            | Commands::Doctor { .. } => {
+            | Commands::Doctor { .. }
+            | Commands::Leave { .. }
+            | Commands::Session { .. } => {
                 panic!("expected Create command")
             }
         }
@@ -152,7 +154,9 @@ mod tests {
             | Commands::Ready { .. }
             | Commands::Plug { .. }
             | Commands::Unplug { .. }
-            | Commands::Doctor { .. } => {
+            | Commands::Doctor { .. }
+            | Commands::Leave { .. }
+            | Commands::Session { .. } => {
                 panic!("expected Create command")
             }
         }
@@ -183,7 +187,9 @@ mod tests {
             | Commands::Ready { .. }
             | Commands::Plug { .. }
             | Commands::Unplug { .. }
-            | Commands::Doctor { .. } => {
+            | Commands::Doctor { .. }
+            | Commands::Leave { .. }
+            | Commands::Session { .. } => {
                 panic!("expected Create command")
             }
         }
@@ -235,7 +241,9 @@ mod tests {
                 | Commands::Ready { .. }
                 | Commands::Plug { .. }
                 | Commands::Unplug { .. }
-                | Commands::Doctor { .. } => panic!("expected Create"),
+                | Commands::Doctor { .. }
+            | Commands::Leave { .. }
+            | Commands::Session { .. } => panic!("expected Create"),
             }
         }
         assert_eq!(
@@ -284,7 +292,9 @@ mod tests {
                 | Commands::Unplug { .. }
                 | Commands::Sh { .. }
                 | Commands::Mount { .. }
-                | Commands::Doctor { .. } => panic!("expected Create"),
+                | Commands::Doctor { .. }
+            | Commands::Leave { .. }
+            | Commands::Session { .. } => panic!("expected Create"),
             }
         }
         assert_eq!(password_of(&["ahsw", "create"]), None, "absent ⇒ None");
@@ -346,7 +356,9 @@ mod tests {
             | Commands::Ready { .. }
             | Commands::Plug { .. }
             | Commands::Unplug { .. }
-            | Commands::Doctor { .. } => {
+            | Commands::Doctor { .. }
+            | Commands::Leave { .. }
+            | Commands::Session { .. } => {
                 panic!("expected Create command")
             }
         }

@@ -355,7 +355,9 @@ presence (`joined` / `left`), plus the heartbeat events `peer_timeout` /
 `peer_return`. All are join-horizon gated and symmetric — a departure is
 surfaced only if the matching arrival was. There is **no** transport-level
 `peer_join` / `peer_leave` event: a raw link to an opaque node id is not
-participant lifecycle.
+participant lifecycle. (`ahsw leave` is a CLI verb on top of this
+vocabulary, not a new event: it stops a local daemon, whose shutdown emits
+the one `left`.)
 
 ### author
 
