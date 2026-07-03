@@ -80,10 +80,7 @@ fn state_file_paths() -> Vec<PathBuf> {
 /// else's. `is_owned` is injected so the split is testable without real
 /// processes; the real caller passes an ancestry check against
 /// `session_pid`.
-fn split_owned(
-    live: Vec<Target>,
-    is_owned: impl Fn(u32) -> bool,
-) -> (Vec<Target>, usize) {
+fn split_owned(live: Vec<Target>, is_owned: impl Fn(u32) -> bool) -> (Vec<Target>, usize) {
     let (owned, others): (Vec<Target>, Vec<Target>) =
         live.into_iter().partition(|target| is_owned(target.pid));
     let other_sessions = others.len();
@@ -92,16 +89,10 @@ fn split_owned(
 
 /// Select by explicit swarm id (full or prefix) and optional nickname — no
 /// ownership check: naming the swarm is the intent.
-fn select_explicit(
-    live: Vec<Target>,
-    swarm: &str,
-    nickname: Option<&str>,
-) -> Vec<Target> {
+fn select_explicit(live: Vec<Target>, swarm: &str, nickname: Option<&str>) -> Vec<Target> {
     live.into_iter()
         .filter(|target| target.swarm.starts_with(swarm))
-        .filter(|target| {
-            nickname.is_none_or(|wanted| target.nickname.as_deref() == Some(wanted))
-        })
+        .filter(|target| nickname.is_none_or(|wanted| target.nickname.as_deref() == Some(wanted)))
         .collect()
 }
 
@@ -149,7 +140,11 @@ pub(crate) async fn leave(opts: LeaveOpts) -> Result<()> {
     let Discovery { live, cleaned } = discover();
     let (matched, other_sessions) = if let Some(swarm_id) = &swarm {
         (
-            select_explicit(live, swarm_id.as_str(), nickname.as_ref().map(Nickname::as_str)),
+            select_explicit(
+                live,
+                swarm_id.as_str(),
+                nickname.as_ref().map(Nickname::as_str),
+            ),
             0,
         )
     } else {
@@ -226,8 +221,7 @@ pub(crate) async fn session(opts: SessionOpts) -> Result<()> {
     } = opts;
     let Discovery { live, cleaned } = discover();
     let anchor = session_pid.unwrap_or_else(default_session_pid);
-    let (owned, other_sessions) =
-        split_owned(live, |pid| process::ancestry_contains(pid, anchor));
+    let (owned, other_sessions) = split_owned(live, |pid| process::ancestry_contains(pid, anchor));
 
     match output {
         OutputFormat::Json => {
@@ -273,7 +267,10 @@ mod tests {
 
     #[test]
     fn split_owned_partitions_by_pid() {
-        let live = vec![target("🐝aaaa", "one-two", 10), target("🐝bbbb", "three-four", 20)];
+        let live = vec![
+            target("🐝aaaa", "one-two", 10),
+            target("🐝bbbb", "three-four", 20),
+        ];
         let (owned, other_sessions) = split_owned(live, |pid| pid == 10);
         assert_eq!(owned.len(), 1);
         assert_eq!(owned[0].pid, 10);
