@@ -52,6 +52,16 @@ SYNOPSIS
                   [--no-interactive] [--state-file PATH] [--output human|json]
                   [--max-peers N] [--filter-self]
 
+       ahsw a2a expose --to http://HOST:PORT
+                  [--public] [--mdns] [--dht] [--relay[=URLS]]
+                  [--password[=PW]] [--output human|json]
+       ahsw a2a expose --to http://HOST:PORT --advertise[=DIRECTORY] …
+       ahsw a2a connect 📡… [--port PORT] [--password[=PW]]
+                  [--output human|json]
+       ahsw a2a discover [--directory DIRECTORY] [--port PORT]
+                  [--public] [--mdns] [--dht] [--relay[=URLS]]
+                  [--password[=PW]] [--output human|json]
+
        ahsw mcp
 
        ahsw man
@@ -600,6 +610,77 @@ COMMANDS
               --no-interactive / --output json
                      Stream directory changes as JSON; required for agent
                      use.
+
+       a2a expose --to http://HOST:PORT [OPTIONS]
+              Bridge a local A2A (agent-to-agent) HTTP server to a peer over
+              the swarm — an off-gossip direct link, no daemon. Binds an
+              endpoint next to the server at --to and prints a 📡… ticket plus
+              the ahsw a2a connect command to run on the other end. Every
+              connecting peer's requests are forwarded raw to the origin; the
+              Agent Card's absolute URLs are rewritten to the consumer's local
+              bridge address so discovery (the well-known card and the
+              authenticated extended card) resolves through the tunnel, while
+              message/stream (SSE) and everything else stream through
+              byte-for-byte. Strictly 1:1 — one consumer is served at a time;
+              a second is refused until the first disconnects. Only plain
+              http:// origins are supported (https / path-prefixed are not).
+
+              --to http://HOST:PORT
+                     The local A2A origin to bridge (e.g.
+                     http://127.0.0.1:9999). Required.
+
+              --public | --mdns | --dht | --relay[=URLS]
+                     Lookup allowlist for reaching the peer. Naming none (or
+                     --public) uses all; naming any restricts to those.
+
+              --advertise[=DIRECTORY]
+                     List this bridge's ticket in a directory so a peer finds
+                     it with a2a discover — no 📡… to copy. Bare --advertise ⇒
+                     the global directory; --advertise <name> ⇒ that named one.
+                     The ad carries the full bearer ticket, so pair it with
+                     --password.
+
+              --password[=PW]
+                     Protect the bridge: the ticket alone no longer redeems —
+                     the consumer must present the password. Bare --password
+                     prompts hidden; --password=PW passes it inline.
+
+       a2a connect 📡… [OPTIONS]
+              Redeem a 📡… ticket and bind a local A2A endpoint an unmodified
+              client points at. Binds 127.0.0.1:PORT (an ephemeral port unless
+              --port is given, whose URL is printed) and tunnels every request
+              to the exposer.
+
+              --port PORT
+                     Local port to bind (default: an ephemeral port).
+
+              --password[=PW]
+                     Required exactly when the ticket is password-protected;
+                     prompts on a TTY, or pass --password=PW.
+
+       a2a discover [OPTIONS]
+              Browse a directory for advertised a2a bridges and connect to one
+              — the receiver side of a2a expose --advertise, no 📡… to copy.
+              Human + TTY runs a live picker and binds the local endpoint on
+              the pick; --output json streams ticket_found / ticket_lost lines
+              instead (the agent captures a ticket and runs a2a connect
+              itself).
+
+              --directory DIRECTORY
+                     Directory to browse. Omit for global. Must match the one
+                     the exposer passed to --advertise.
+
+              --port PORT
+                     Local port to bind on the pick (default: an ephemeral
+                     port).
+
+              --public | --mdns | --dht | --relay[=URLS]
+                     Lookup allowlist for reaching the directory; MUST match
+                     the advertiser's.
+
+              --password[=PW]
+                     Password for a password-protected pick (🔒 in the picker);
+                     prompts on the pick when omitted.
 
        mcp
               Run as a Model Context Protocol server over stdio, exposing the

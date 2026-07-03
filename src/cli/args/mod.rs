@@ -8,6 +8,7 @@
 
 use clap::{Parser, Subcommand};
 
+mod a2a;
 mod create;
 mod discover;
 mod doctor;
@@ -28,6 +29,7 @@ mod shared;
 mod state;
 mod task;
 
+pub(crate) use a2a::{A2aAction, A2aOpts};
 pub(crate) use create::CreateOpts;
 pub(crate) use discover::DiscoverOpts;
 pub(crate) use doctor::DoctorOpts;
@@ -164,6 +166,18 @@ pub(crate) enum Commands {
     Discover {
         #[command(flatten)]
         opts: DiscoverOpts,
+    },
+
+    /// Bridge an A2A (agent-to-agent) HTTP server to a peer over the swarm.
+    ///
+    /// `a2a expose --to http://127.0.0.1:PORT` runs next to a local A2A server
+    /// and prints a `📡…` ticket; `a2a connect <ticket>` binds a local endpoint
+    /// an unmodified A2A client points at, tunnelling its requests to the
+    /// exposer. The Agent Card's URLs are rewritten so discovery resolves
+    /// through the bridge. Strictly 1:1 — one consumer per exposer at a time.
+    A2a {
+        #[command(flatten)]
+        opts: A2aOpts,
     },
 
     /// Send one leg of a task to a specific peer.

@@ -17,6 +17,7 @@ use crate::protocol::{MessageId, Nickname};
 use crate::resolver::JoinTarget;
 use crate::transport::ipc::{self, IpcCommand};
 
+mod a2a_discover;
 pub(crate) mod agent;
 mod args;
 mod discover;
@@ -28,8 +29,9 @@ mod session;
 
 pub(crate) use args::Cli;
 use args::{
-    Commands, CreateOpts, ForumOpts, MetaAction, MetaOpts, MsgOpts, NoticeOpts, OutputFormat,
-    PeersOpts, PingOpts, PollOpts, ReadyOpts, SharedServerOpts, StateAction, StateOpts, TaskOpts,
+    A2aAction, Commands, CreateOpts, ForumOpts, MetaAction, MetaOpts, MsgOpts, NoticeOpts,
+    OutputFormat, PeersOpts, PingOpts, PollOpts, ReadyOpts, SharedServerOpts, StateAction,
+    StateOpts, TaskOpts,
 };
 
 /// `join` has no `--public`/`--name`: both are encoded in the `🐝…`
@@ -92,6 +94,7 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
         Commands::Poll { opts } => poll(opts).await,
         Commands::Ping { opts } => ping(opts).await,
         Commands::Task { opts } => task(opts).await,
+        Commands::A2a { opts } => Box::pin(a2a(opts.action)).await,
         Commands::Peers { opts } => peers(opts).await,
         // Boxed like the event-loop futures above: the discover arm holds a
         // picker + connect chain that puts it over clippy's 16 KiB
@@ -423,6 +426,70 @@ async fn task(opts: TaskOpts) -> Result<()> {
     let out = Output::new(OutputMode::Human, false, None);
     out.msg_posted(&id);
     Ok(())
+}
+
+/// `ahsw a2a` — bridge a local A2A HTTP server to a peer over the swarm, an
+/// off-gossip direct link with no daemon. `expose` serves a local origin and
+/// prints the `connect` command; `connect` redeems a ticket and binds a local
+/// endpoint a client points at.
+async fn a2a(action: A2aAction) -> Result<()> {
+    match action {
+        A2aAction::Expose {
+            to,
+            lookups,
+            advertise,
+            password,
+            loopback,
+            output,
+        } => {
+            let json = matches!(output, OutputFormat::Json);
+            let password = password::resolve_password(password, /* confirm */ true, json)?;
+            let advertise = crate::protocol::swarm::DirectorySelection::from_flag(advertise);
+            Box::pin(crate::a2a::expose(
+                &to,
+                lookups.to_set(),
+                advertise,
+                loopback,
+                json,
+                password,
+            ))
+            .await
+        }
+        A2aAction::Connect {
+            ticket,
+            port,
+            password,
+            output,
+        } => {
+            let json = matches!(output, OutputFormat::Json);
+            // Prompt when the ticket needs a password and none was passed
+            // (mirrors the swarm-join UX); otherwise resolve the given flag.
+            let password = match password {
+                None if crate::a2a::ticket_requires_password(&ticket) => {
+                    Some(password::require_password(json, "ticket")?)
+                }
+                other => password::resolve_password(other, /* confirm */ false, json)?,
+            };
+            crate::a2a::connect(&ticket, port, json, password).await
+        }
+        A2aAction::Discover {
+            directory,
+            port,
+            lookups,
+            password,
+            output,
+        } => {
+            let json = matches!(output, OutputFormat::Json);
+            Box::pin(a2a_discover::discover(
+                directory,
+                port,
+                lookups.to_set(),
+                password,
+                json,
+            ))
+            .await
+        }
+    }
 }
 
 /// Query the running daemon's live participant roster. Always emits the

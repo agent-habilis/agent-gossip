@@ -61,6 +61,7 @@ mod tests {
             | Commands::Unplug { .. }
             | Commands::Doctor { .. }
             | Commands::Leave { .. }
+            | Commands::A2a { .. }
             | Commands::Session { .. } => panic!("expected Forum command"),
         }
     }

@@ -116,6 +116,7 @@ mod tests {
             | Commands::Unplug { .. }
             | Commands::Doctor { .. }
             | Commands::Leave { .. }
+            | Commands::A2a { .. }
             | Commands::Session { .. } => {
                 panic!("expected Create command")
             }
@@ -148,6 +149,7 @@ mod tests {
             | Commands::Unplug { .. }
             | Commands::Doctor { .. }
             | Commands::Leave { .. }
+            | Commands::A2a { .. }
             | Commands::Session { .. } => {
                 panic!("expected Create command")
             }
@@ -177,6 +179,7 @@ mod tests {
             | Commands::Unplug { .. }
             | Commands::Doctor { .. }
             | Commands::Leave { .. }
+            | Commands::A2a { .. }
             | Commands::Session { .. } => {
                 panic!("expected Create command")
             }
@@ -226,8 +229,9 @@ mod tests {
                 | Commands::Plug { .. }
                 | Commands::Unplug { .. }
                 | Commands::Doctor { .. }
-            | Commands::Leave { .. }
-            | Commands::Session { .. } => panic!("expected Create"),
+                | Commands::Leave { .. }
+                | Commands::A2a { .. }
+                | Commands::Session { .. } => panic!("expected Create"),
             }
         }
         assert_eq!(
@@ -274,6 +278,7 @@ mod tests {
                 | Commands::Unplug { .. }
                 | Commands::Doctor { .. }
                 | Commands::Leave { .. }
+                | Commands::A2a { .. }
                 | Commands::Session { .. } => panic!("expected Create"),
             }
         }
@@ -334,6 +339,7 @@ mod tests {
             | Commands::Unplug { .. }
             | Commands::Doctor { .. }
             | Commands::Leave { .. }
+            | Commands::A2a { .. }
             | Commands::Session { .. } => {
                 panic!("expected Create command")
             }

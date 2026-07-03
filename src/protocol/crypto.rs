@@ -200,6 +200,54 @@ pub(crate) fn password_verifier(key: &[u8; 32]) -> [u8; PASSWORD_VERIFIER_LEN] {
     out
 }
 
+/// The 32 bytes a bridge consumer presents on connect and a producer
+/// expects: the raw ticket secret (no password), or its Argon2id stretch
+/// salted by the secret (passworded) — same wire size either way, so a
+/// directory ad (which carries the secret) is not enough to redeem a
+/// passworded ticket.
+#[derive(Clone)]
+pub(crate) struct TicketAuth {
+    pub(crate) token: [u8; 32],
+    pub(crate) password_protected: bool,
+}
+
+impl TicketAuth {
+    pub(crate) fn derive(secret: &[u8; 32], password: Option<&Password>) -> Self {
+        match password {
+            Some(password) => Self {
+                token: stretch_password(password, secret, b"a2a-ticket"),
+                password_protected: true,
+            },
+            None => Self {
+                token: *secret,
+                password_protected: false,
+            },
+        }
+    }
+}
+
+impl std::fmt::Debug for TicketAuth {
+    // The token is the live credential — redact it, keep the flag.
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("TicketAuth")
+            .field("token", &"***")
+            .field("password_protected", &self.password_protected)
+            .finish()
+    }
+}
+
+/// Constant-time equality for 32-byte auth tokens: XOR-fold the full pair so
+/// the cost never depends on where the first mismatch lies (a short-circuit
+/// `==` is a timing oracle on the secret).
+#[must_use]
+pub(crate) fn ct_eq(left: &[u8; 32], right: &[u8; 32]) -> bool {
+    left.iter()
+        .zip(right)
+        .fold(0u8, |acc, (lhs, rhs)| acc | (lhs ^ rhs))
+        == 0
+}
+
 /// Derive the gossip TopicId from the swarm `seed` + name + config. The
 /// seed is the random 32 bytes carried in the `🐝…` token, so the topic
 /// is **creator-independent**: it never depends on any node's ephemeral

@@ -109,6 +109,7 @@ mod tests {
             | Commands::Unplug { .. }
             | Commands::Doctor { .. }
             | Commands::Leave { .. }
+            | Commands::A2a { .. }
             | Commands::Session { .. } => panic!("expected Create"),
         }
     }
@@ -186,6 +187,7 @@ mod tests {
             | Commands::Unplug { .. }
             | Commands::Doctor { .. }
             | Commands::Leave { .. }
+            | Commands::A2a { .. }
             | Commands::Session { .. } => panic!("expected Create"),
         };
         let lookups = resolve_lookups(opts.public, opts.lookups.to_set());

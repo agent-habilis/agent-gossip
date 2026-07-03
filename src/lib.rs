@@ -33,6 +33,7 @@
 // the `embed` facade plus the protocol re-exports below. Keeping these
 // crate-private means iroh / internal refactors are never breaking
 // public API changes.
+pub(crate) mod a2a;
 pub(crate) mod beacon;
 pub(crate) mod cli;
 pub(crate) mod daemon;
