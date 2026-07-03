@@ -12,8 +12,10 @@ are shown by the harness; do not narrate around them.
 
 ## Pre-flight: guard
 
-If you are not in a swarm this session (no `$SWARM`/`$NICKNAME` from a
-`/swarm:create` or `/swarm:join` `ready` event), print:
+If you hold `$SWARM`/`$NICKNAME` from a `/swarm:create` or `/swarm:join`
+`ready` event this session, proceed. Otherwise try to reattach first:
+follow `../shared/reattach.md` (resolved relative to this SKILL.md's
+directory). Only if reattach also yields no swarm, print:
 ```
 🐝 Not in a swarm. Use /swarm:create or /swarm:join first.
 ```

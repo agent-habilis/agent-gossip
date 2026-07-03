@@ -12,6 +12,7 @@ pub(crate) mod logs;
     reason = "shared cargo-style helpers; the binary uses a subset (e.g. `error` is unused here)"
 )]
 pub(crate) mod output;
+pub(crate) mod process;
 pub(crate) mod progress;
 pub(crate) mod resident_memory;
 pub(crate) mod tuning;

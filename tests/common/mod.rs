@@ -250,13 +250,13 @@ pub(crate) fn cli_poll(swarm: &str, nickname: &str, after: Option<&str>) -> Stri
     String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
 
-/// `ahsw poll --wait <wait_ms>` (long-poll), returning the JSON stdout and how
-/// long the call took — so a test can assert it blocked / resolved promptly.
-pub(crate) fn cli_poll_wait(
+/// `ahsw poll --long` (long-poll; blocks until events arrive), returning the
+/// JSON stdout and how long the call took — so a test can assert it blocked /
+/// resolved promptly.
+pub(crate) fn cli_poll_long(
     swarm: &str,
     nickname: &str,
     after: Option<&str>,
-    wait_ms: &str,
 ) -> (String, Duration) {
     let mut args = vec![
         "poll",
@@ -264,8 +264,7 @@ pub(crate) fn cli_poll_wait(
         swarm,
         "--nickname",
         nickname,
-        "--wait",
-        wait_ms,
+        "--long",
         "--output",
         "json",
     ];
@@ -276,17 +275,37 @@ pub(crate) fn cli_poll_wait(
     let out = test_cmd()
         .args(&args)
         .output()
-        .expect("poll --wait command failed to spawn");
+        .expect("poll --long command failed to spawn");
     let elapsed = started.elapsed();
     assert!(
         out.status.success(),
-        "poll --wait failed: {}",
+        "poll --long failed: {}",
         String::from_utf8_lossy(&out.stderr)
     );
     (
         String::from_utf8_lossy(&out.stdout).trim().to_string(),
         elapsed,
     )
+}
+
+/// Send one raw JSON command line straight to a daemon's Unix socket and
+/// return the (trimmed) response line — the wire-contract path, bypassing the
+/// `ahsw` client entirely (so a test can exercise a single daemon-side
+/// long-poll park, which `poll --long` deliberately hides behind its
+/// re-issue loop).
+pub(crate) fn ipc_raw(swarm: &str, nickname: &str, line: &str) -> String {
+    use std::io::{BufRead, BufReader, Write};
+    let mut stream = std::os::unix::net::UnixStream::connect(socket_path(swarm, nickname))
+        .expect("connect to daemon socket");
+    stream
+        .write_all(format!("{line}\n").as_bytes())
+        .expect("write IPC command");
+    stream.flush().expect("flush IPC command");
+    let mut response = String::new();
+    BufReader::new(stream)
+        .read_line(&mut response)
+        .expect("read IPC response");
+    response.trim().to_string()
 }
 
 /// Spawn `ahsw task …` and return the raw `Output` (no success

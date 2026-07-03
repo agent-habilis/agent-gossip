@@ -59,7 +59,9 @@ mod tests {
             | Commands::Man
             | Commands::Plug { .. }
             | Commands::Unplug { .. }
-            | Commands::Doctor { .. } => panic!("expected Forum command"),
+            | Commands::Doctor { .. }
+            | Commands::Leave { .. }
+            | Commands::Session { .. } => panic!("expected Forum command"),
         }
     }
 

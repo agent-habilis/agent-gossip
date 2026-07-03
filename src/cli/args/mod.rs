@@ -14,6 +14,7 @@ mod doctor;
 mod file;
 mod forum;
 mod join;
+mod leave;
 mod lookup;
 mod meta;
 mod msg;
@@ -22,6 +23,7 @@ mod peers;
 mod ping;
 mod poll;
 mod ready;
+mod session;
 mod shared;
 mod state;
 mod task;
@@ -32,6 +34,7 @@ pub(crate) use doctor::DoctorOpts;
 pub(crate) use file::FileAction;
 pub(crate) use forum::ForumOpts;
 pub(crate) use join::JoinOpts;
+pub(crate) use leave::LeaveOpts;
 pub(crate) use meta::{MetaAction, MetaOpts};
 pub(crate) use msg::MsgOpts;
 pub(crate) use output::OutputFormat;
@@ -39,6 +42,7 @@ pub(crate) use peers::PeersOpts;
 pub(crate) use ping::PingOpts;
 pub(crate) use poll::PollOpts;
 pub(crate) use ready::ReadyOpts;
+pub(crate) use session::SessionOpts;
 pub(crate) use shared::SharedServerOpts;
 pub(crate) use state::{StateAction, StateOpts};
 pub(crate) use task::TaskOpts;
@@ -91,6 +95,33 @@ pub(crate) enum Commands {
     Forum {
         #[command(flatten)]
         opts: ForumOpts,
+    },
+
+    /// Leave swarm(s): stop this session's local daemon(s).
+    ///
+    /// Finds running create/join/forum daemons through their state files
+    /// and sends each a SIGTERM; a daemon broadcasts `left` to its peers
+    /// and removes its state file on the way out. With no SWARM, stops
+    /// only the daemons owned by the calling session — those with
+    /// `--session-pid` among their process ancestors — and never touches
+    /// other sessions'. An explicit SWARM targets that swarm's local
+    /// member(s) regardless of owner. State files whose daemon is gone
+    /// (SIGKILL, power loss) are cleaned up along the way.
+    Leave {
+        #[command(flatten)]
+        opts: LeaveOpts,
+    },
+
+    /// Report the swarm(s) this session is joined to.
+    ///
+    /// The read-only sibling of `leave`: discovers running daemons through
+    /// their state files and prints the ones owned by the calling session
+    /// (see `--session-pid`). This is how an agent that lost its
+    /// conversation context (e.g. after a context clear) re-learns the
+    /// swarm id and nickname of a session it is still joined to.
+    Session {
+        #[command(flatten)]
+        opts: SessionOpts,
     },
 
     /// Post a message to a swarm
@@ -212,6 +243,11 @@ pub(crate) enum Commands {
         /// so a `ping` round-trip doesn't wait the full window.
         #[arg(long, hide = true, default_value_t = crate::util::consts::PING_WINDOW_SECS)]
         ping_window_secs: u64,
+
+        /// How long a `long: true` fetch parks before returning empty (millis).
+        /// Hidden; tests shorten it to hit the timeout path quickly.
+        #[arg(long, hide = true, default_value_t = crate::util::consts::LONGPOLL_MAX_MS)]
+        longpoll_max_ms: u64,
     },
 
     /// Print the full agent manual to stdout.
@@ -223,10 +259,11 @@ pub(crate) enum Commands {
 
     /// Plug the swarm integrations into your agents.
     ///
-    /// Targets Claude Code (the plugin), pi (the extension), and a generic
-    /// `~/.agents/skills` agent. The artifacts are embedded in the binary, so
-    /// this needs no repo checkout. With no `--agent`, the detected agents are
-    /// used. Reversible with `unplug`.
+    /// Targets Claude Code (the plugin), pi (the extension), Cursor
+    /// (`~/.cursor/skills`), and a generic `~/.agents/skills` agent. The
+    /// artifacts are embedded in the binary, so this needs no repo checkout.
+    /// With no `--agent`, the detected agents are used; an agent that is not
+    /// on this machine is skipped, never scaffolded. Reversible with `unplug`.
     Plug {
         /// Agent(s) to install into (repeatable). Defaults to detected agents.
         #[arg(long = "agent", value_enum)]

@@ -110,7 +110,7 @@ you control. (`RENDEZVOUS_RELAY` / `effective_public_relay` in
 The daemon keeps the recent-message buffer **in memory only**
 (`DEFAULT_MESSAGE_LOG_SIZE = 200`, `src/tuning.rs`) and writes **no
 message bodies to disk**. The only file the daemon creates is an atomic
-session state file (`{swarm, nickname, participant_count, last_updated}`),
+session state file (`{swarm, nickname, pid, participant_count, last_updated}`),
 removed on clean exit (`src/state_file.rs`). IPC responses go over a local socket, not a
 log file.
 

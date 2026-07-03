@@ -202,6 +202,15 @@ pub(crate) const DIRECTORY_EXPIRY_SECS: u64 = 60;
 /// `--antientropy-max-resend`.
 pub(crate) const ANTIENTROPY_MAX_RESEND: usize = 64;
 
+/// How long the daemon parks a `long: true` `poll` / `fetch_messages` read
+/// before returning an empty batch — the single long-poll park length. Kept
+/// under typical MCP-host per-request timeouts so a held call returns before
+/// the host gives up; the daemon itself never blocks (the waiter parks in a
+/// registry). Infinite waiting is a *client* concern: `ahsw poll --long`
+/// re-issues the read on each empty return. Flag: `--longpoll-max-ms`
+/// (tests shorten it to force the timeout path).
+pub(crate) const LONGPOLL_MAX_MS: u64 = 60_000;
+
 /// How often the CLI daemon checks whether its spawning agent is still alive
 /// by re-reading its parent pid. When the parent dies (hard-kill / reinstall),
 /// the daemon is orphaned and reparents away; on the next check it self-quits

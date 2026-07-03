@@ -527,15 +527,15 @@ impl EventLoopState {
     ///
     /// 1. if the buffer already has events past `after`, respond immediately
     ///    (never make a caller with pending events wait);
-    /// 2. else if `wait_ms` is `None`/`0`, respond immediately with empty;
-    /// 3. else register a waiter with deadline `now + clamp(wait_ms,
-    ///    LONGPOLL_MAX_MS)` — and if the registry is full, respond empty.
+    /// 2. else if not `long`, respond immediately with empty;
+    /// 3. else register a waiter with deadline `now + longpoll_max_ms()` —
+    ///    and if the registry is full, respond empty.
     ///
     /// `now` is the registration instant (passed in so tests can pin it).
     pub(crate) fn poll_or_register(
         &mut self,
         after: Option<u64>,
-        wait_ms: Option<u64>,
+        long: bool,
         now: TokioInstant,
         responder: PollResponder,
     ) {
@@ -544,14 +544,11 @@ impl EventLoopState {
             responder.send_batch(events);
             return;
         }
-        let wait_ms = wait_ms
-            .unwrap_or(0)
-            .min(crate::util::tuning::LONGPOLL_MAX_MS);
-        if wait_ms == 0 {
+        if !long {
             responder.send_empty();
             return;
         }
-        let deadline = now + Duration::from_millis(wait_ms);
+        let deadline = now + Duration::from_millis(crate::util::tuning::longpoll_max_ms());
         if let Some(unregistered) = self.register_poll_waiter(after, deadline, responder) {
             unregistered.send_empty(); // registry full → degrade to immediate
         }
@@ -1559,25 +1556,36 @@ mod tests {
         let mut state = fresh_state();
         state.surfaced_events.push(peer_return("a"));
         let (tx, rx) = tokio::sync::oneshot::channel::<String>();
-        // Buffer has events → respond now even though wait_ms is set; no waiter.
-        state.poll_or_register(
-            None,
-            Some(5_000),
-            TokioInstant::now(),
-            PollResponder::Json(tx),
-        );
+        // Buffer has events → respond now even though long is set; no waiter.
+        state.poll_or_register(None, true, TokioInstant::now(), PollResponder::Json(tx));
         let body = rx.await.expect("immediate response");
         assert!(body.len() > 2, "non-empty: {body}");
         assert!(state.poll_waiters.is_empty(), "never parked");
     }
 
     #[tokio::test]
-    async fn poll_or_register_immediate_empty_when_no_wait() {
+    async fn poll_or_register_immediate_empty_when_not_long() {
         let mut state = fresh_state();
         let (tx, rx) = tokio::sync::oneshot::channel::<String>();
-        // Empty buffer, wait_ms None → immediate empty, no waiter.
-        state.poll_or_register(None, None, TokioInstant::now(), PollResponder::Json(tx));
+        // Empty buffer, not long → immediate empty, no waiter.
+        state.poll_or_register(None, false, TokioInstant::now(), PollResponder::Json(tx));
         assert_eq!(rx.await.expect("immediate"), "[]");
+        assert!(state.poll_waiters.is_empty());
+    }
+
+    #[tokio::test]
+    async fn poll_or_register_long_parks_then_expires_at_cap() {
+        let mut state = fresh_state();
+        let (tx, rx) = tokio::sync::oneshot::channel::<String>();
+        let now = TokioInstant::now();
+        // Empty buffer, long → parked with deadline now + longpoll_max_ms().
+        state.poll_or_register(None, true, now, PollResponder::Json(tx));
+        assert_eq!(state.poll_waiters.len(), 1, "parked");
+        let cap = Duration::from_millis(crate::util::tuning::longpoll_max_ms());
+        state.expire_poll_waiters(now + cap - Duration::from_millis(1));
+        assert_eq!(state.poll_waiters.len(), 1, "still parked before the cap");
+        state.expire_poll_waiters(now + cap + Duration::from_millis(1));
+        assert_eq!(rx.await.expect("expired"), "[]", "cap elapsed → empty");
         assert!(state.poll_waiters.is_empty());
     }
 }

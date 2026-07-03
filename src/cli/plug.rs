@@ -83,7 +83,7 @@ fn dedup(agents: &[Agent]) -> Vec<Agent> {
 /// absent), so the summary never overstates what happened.
 fn finish(acted: usize, verb: &str) {
     if acted == 0 {
-        warn("nothing to do (try --agent claude-code|pi|generic)");
+        warn("nothing to do (try --agent claude-code|pi|generic|cursor)");
     } else {
         let noun = if acted == 1 { "agent" } else { "agents" };
         status("Finished", &format!("{verb} swarm · {acted} {noun}"));
@@ -91,10 +91,23 @@ fn finish(acted: usize, verb: &str) {
 }
 
 /// Install the integration for one agent: remove any existing install first,
-/// then write fresh. Returns whether it acted (always — every selected agent
-/// is installed); symmetric with [`remove`].
+/// then write fresh. Returns whether it acted: `false` (a logged skip) when
+/// the agent isn't on this machine — `plug` overwrites an existing agent's
+/// install but never creates config dirs for an absent agent, even when
+/// selected explicitly with `--agent`; symmetric with [`remove`].
 fn install(agent: Agent, home: &Path) -> Result<bool> {
     let path = agent.install_path(home);
+    if !agent.detected(home) {
+        status_warn(
+            "Skipping",
+            &format!(
+                "{} (not detected: {} is missing)",
+                agent.label(),
+                agent.agent_dir(home).display()
+            ),
+        );
+        return Ok(false);
+    }
     status(
         "Plugging in",
         &format!("{} ({})", agent.label(), path.display()),
@@ -104,7 +117,7 @@ fn install(agent: Agent, home: &Path) -> Result<bool> {
             remove_existing(&path)?;
             write_dir(&CC_PLUGIN, &path)?;
         }
-        Agent::Generic => {
+        Agent::Generic | Agent::Cursor => {
             remove_existing(&path)?;
             let file = path.join("SKILL.md");
             std::fs::create_dir_all(&path)

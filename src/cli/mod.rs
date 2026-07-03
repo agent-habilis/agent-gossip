@@ -24,6 +24,7 @@ mod doctor;
 mod password;
 mod picker;
 mod plug;
+mod session;
 mod ticket_discover;
 
 pub(crate) use args::Cli;
@@ -86,6 +87,8 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
             crate::util::tuning::init(opts.shared.tuning());
             Box::pin(forum(opts)).await
         }
+        Commands::Leave { opts } => session::leave(opts).await,
+        Commands::Session { opts } => session::session(opts).await,
         Commands::Msg { opts } => msg(opts).await,
         Commands::Poll { opts } => poll(opts).await,
         Commands::Ping { opts } => ping(opts).await,
@@ -105,12 +108,14 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
         Commands::Mcp {
             directory_private,
             ping_window_secs,
+            longpoll_max_ms,
         } => {
-            // The MCP server holds no `SharedServerOpts`; install just the two
+            // The MCP server holds no `SharedServerOpts`; install just the
             // hidden knobs the suite varies (loopback directory, short ping
-            // window) over the production defaults.
+            // window, short long-poll park) over the production defaults.
             crate::util::tuning::init(crate::util::tuning::Tuning {
                 ping_window_secs,
+                longpoll_max_ms,
                 directory_private,
                 ..crate::util::tuning::Tuning::DEFAULTS
             });
@@ -308,24 +313,47 @@ async fn msg(opts: MsgOpts) -> Result<()> {
 /// Retrieve buffered messages from a running swarm process via IPC.
 /// `poll` always emits the raw IPC JSON; the `--output` flag is accepted
 /// for symmetry but not consulted here.
+///
+/// With `--long` the daemon parks each read up to its ~60s cap; an empty
+/// return just means the window elapsed quietly, so the identical request
+/// (same `--after` cursor) is re-issued until events arrive — from the
+/// caller's side one blocking call with no timeout. An IPC error (daemon
+/// gone) propagates instead of retrying.
 async fn poll(opts: PollOpts) -> Result<()> {
     let PollOpts {
         swarm,
         nickname,
         after,
-        wait,
+        long,
         output: _,
     } = opts;
-    let cmd = IpcCommand::Poll {
-        swarm,
-        after,
-        wait_ms: wait,
-    };
+    let cmd = IpcCommand::Poll { swarm, after, long };
 
-    let resp = ipc::send(&cmd, &nickname).await?;
-    println!("{resp}");
-
-    Ok(())
+    loop {
+        let started = tokio::time::Instant::now();
+        let resp = ipc::send(&cmd, &nickname).await?;
+        // An empty response is the daemon closing the connection without
+        // writing (shutdown mid-park) — `round_trip` maps that EOF to `""`.
+        // Surface it instead of printing a blank line / retrying forever.
+        anyhow::ensure!(
+            !resp.is_empty(),
+            "swarm daemon closed the connection without a response (shutting down?)"
+        );
+        if !(long && resp == "[]") {
+            println!("{resp}");
+            return Ok(());
+        }
+        // Both empty paths render exactly `[]`; an error response is a JSON
+        // object, so it prints and exits above. Floor the cycle so a daemon
+        // degrading long reads to immediate empties (waiter registry full)
+        // can't spin this loop hot — the unchanged cursor re-reads anything
+        // that lands during the sleep.
+        let min_cycle =
+            std::time::Duration::from_millis(crate::util::tuning::POLL_LONG_MIN_CYCLE_MS);
+        if let Some(remaining) = min_cycle.checked_sub(started.elapsed()) {
+            tokio::time::sleep(remaining).await;
+        }
+    }
 }
 
 /// Arm an RTT round on the running daemon. Fire-and-forget: the daemon

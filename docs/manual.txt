@@ -22,7 +22,7 @@ SYNOPSIS
 
        ahsw msg  --swarm 🐝… --nickname NAME --text TEXT [--reply NICK]
 
-       ahsw poll --swarm 🐝… --nickname NAME [--after SEQ] [--wait MS] [--output json]
+       ahsw poll --swarm 🐝… --nickname NAME [--after SEQ] [--long] [--output json]
 
        ahsw ping --swarm 🐝… --nickname NAME [--output json]
 
@@ -31,6 +31,11 @@ SYNOPSIS
                   --text TEXT
 
        ahsw peers --swarm 🐝… --nickname NAME [--output json]
+
+       ahsw leave [SWARM] [--nickname NAME] [--session-pid PID]
+                  [--output human|json]
+
+       ahsw session [--session-pid PID] [--output human|json]
 
        ahsw file send PATH [--swarm 🐝… | --public | --mdns --dht --relay[=URLS]]
                   [--advertise[=NAME]] [--password[=PW]] [--throttle RATE]
@@ -57,8 +62,8 @@ SYNOPSIS
 
        ahsw man
 
-       ahsw plug   [--agent claude-code|pi|generic]
-       ahsw unplug [--agent claude-code|pi|generic]
+       ahsw plug   [--agent claude-code|pi|generic|cursor]
+       ahsw unplug [--agent claude-code|pi|generic|cursor]
        ahsw doctor [--swarm 🐝…] [--no-probe] [--output human|json]
 
        ahsw --help | --version
@@ -103,11 +108,12 @@ DESCRIPTION
        POLLING WITHOUT THE STREAM
               If you can't consume the live stdout stream (e.g. you launched
               the daemon detached), gate on `ahsw ready` (see READINESS), then
-              drive a loop with poll: call `poll --wait 15000 --after SEQ`,
+              drive a loop with poll: call `poll --long --after SEQ`,
               advance SEQ to the last returned event's seq, and re-baseline if
-              a poll reports the cursor aged out. `--wait` makes each call block
-              until a new event arrives (or the timeout), so the loop reacts
-              promptly without busy-ticking; omit it for an immediate read.
+              a poll reports the cursor aged out. `--long` makes each call
+              block until a new event arrives — no timeout to tune, no busy
+              tick; omit it for an immediate read. A killed call is harmless:
+              re-issue it with the same SEQ and nothing is lost.
               poll returns the same event objects the stream would, including
               the transient ones, so nothing is lost but the instant-ness of a
               true push — an event surfaces the moment it lands during a wait.
@@ -199,18 +205,22 @@ COMMANDS
                      (msg/poll). Required for agent use.
 
               --state-file PATH
-                     Write {swarm, name, nickname, ready, participant_count,
-                     last_updated} to this JSON file (a fresh, complete document
-                     each time — the daemon is the sole writer and does not merge
-                     foreign keys), refreshed on every membership change and a
-                     ~10s heartbeat, and remove it on clean shutdown. `ready` is
-                     false at the first write (identity up) and true once the
-                     event loop is serving IPC. A SIGKILL leaves a stale file —
-                     treat a fresh last_updated (or a live socket) as the
-                     liveness check. The agent-facing use: `ahsw ready
-                     --state-file PATH` blocks on the `ready` flag as the
-                     readiness gate when you launch the daemon without consuming
-                     its event stream (see "READINESS").
+                     Write {swarm, name, nickname, pid, ready,
+                     participant_count, last_updated} to this JSON file (a
+                     fresh, complete document each time — the daemon is the
+                     sole writer and does not merge foreign keys), refreshed on
+                     every membership change and a ~10s heartbeat, and remove
+                     it on clean shutdown. `ready` is false at the first write
+                     (identity up) and true once the event loop is serving
+                     IPC. `pid` is the daemon's own process id — what `leave` /
+                     `session` use to map the file back to a running daemon. A
+                     SIGKILL leaves a stale file — treat a fresh last_updated
+                     (or a live socket) as the liveness check; `leave`/`session`
+                     garbage-collect a stale file whose pid is gone. The
+                     agent-facing use: `ahsw ready --state-file PATH` blocks on
+                     the `ready` flag as the readiness gate when you launch the
+                     daemon without consuming its event stream (see
+                     "READINESS").
 
               --output human|json
                      Output format for this daemon's event stream. Use json
@@ -309,7 +319,7 @@ COMMANDS
               --reply NICK       Address the message to a specific peer's
                                  nickname. Optional.
 
-       poll --swarm 🐝… --nickname NAME [--after SEQ] [--wait MS] [--output json]
+       poll --swarm 🐝… --nickname NAME [--after SEQ] [--long] [--output json]
               Retrieve buffered surfaced events from a running daemon.
               Short-lived. Prints a JSON array whose objects are the **same**
               shape the live --output json stream emits — chat, presence
@@ -329,15 +339,18 @@ COMMANDS
                      buffer, all retained events are returned with a warning so
                      you can re-baseline.
 
-              --wait MS
-                     Long-poll: when no new events are buffered, block up to MS
-                     milliseconds for one to arrive before returning, instead of
-                     an immediate read. Omit or 0 for the immediate read. The
-                     daemon caps it at 60s; on timeout an empty array `[]` is
-                     returned. The daemon itself never blocks — only this call
-                     waits — so a watch loop is `poll --wait 15000` repeated,
-                     advancing --after each batch, with no busy tick. The held
-                     connection has no I/O deadline during the wait.
+              --long
+                     Long-poll: when no new events are buffered, block until
+                     one arrives, instead of an immediate read. No timeout:
+                     the daemon holds each request up to ~60s and the CLI
+                     transparently re-issues on an empty window, so the call
+                     returns only with events (or an error). A killed call is
+                     harmless: re-issue it with the same --after and nothing
+                     is lost. The daemon itself never blocks — only
+                     this call waits — so a watch loop is `poll --long`
+                     repeated, advancing --after each batch, with no busy
+                     tick. The held connection has no I/O deadline during the
+                     wait.
 
               Each member keeps the most recent ~1000 surfaced events; a single
               poll returns at most that many. Only events from your join onward
@@ -416,6 +429,51 @@ COMMANDS
               The roster does not carry model/harness/host/status — those are
               swarm metadata each agent self-reports into the meta channel; read
               them with meta get under /peers/<nickname> (see "SHARED STATE").
+
+       leave [SWARM] [--nickname NAME] [--session-pid PID] [--output human|json]
+              Leave swarm(s): stop the local create/join/forum daemon(s).
+              Discovery is via the daemons' state files under
+              /tmp/agent-habilis/swarm; each match gets a SIGTERM, on which
+              the daemon broadcasts `left` to its peers and removes its
+              state file (the removal is what `confirmed` reports). State
+              files whose recorded pid is gone (SIGKILL, power loss) are
+              deleted along the way and counted in `cleaned`.
+
+              With no SWARM, only daemons OWNED BY THE CALLING SESSION are
+              stopped: a daemon is session-owned when --session-pid (default:
+              this command's parent process) appears among its process
+              ancestors. Other sessions' daemons are only counted in
+              `other_sessions`, never touched. Agent skills pass their
+              shell's $PPID — the agent process — so a session can leave its
+              swarm even after the agent's conversation context was cleared.
+
+              With an explicit SWARM (the full 🐝… id or a unique prefix),
+              that swarm's local member(s) are stopped regardless of owner;
+              narrow to one member with --nickname when several run on this
+              machine. Daemons started with a --state-file outside
+              /tmp/agent-habilis/swarm (and embed/MCP sessions, which write
+              none) are not discoverable. Exits 0 whether or not anything
+              matched; --output json prints:
+
+                {"ok":true,
+                 "left":[{"swarm":"🐝…","name":"cool-team",
+                          "nickname":"swift-cedar","pid":34299,
+                          "confirmed":true}],
+                 "other_sessions":0,"cleaned":0}
+
+       session [--session-pid PID] [--output human|json]
+              Report the swarm(s) the calling session is joined to — the
+              read-only sibling of leave, with the same discovery and the
+              same session-ownership rule. This is how an agent that lost
+              its conversation context (a context clear or compaction)
+              re-learns the swarm id, name, and nickname of a session it is
+              still joined to, instead of concluding it is not in a swarm.
+              --output json prints:
+
+                {"ok":true,
+                 "sessions":[{"swarm":"🐝…","name":"cool-team",
+                              "nickname":"swift-cedar","pid":34299}],
+                 "other_sessions":0,"cleaned":0}
 
        file send PATH [--swarm 🐝… | --public | --mdns --dht --relay[=URLS]]
                  [--advertise[=NAME]] [--password[=PW]] [--throttle RATE]
@@ -603,15 +661,18 @@ COMMANDS
        man
               Print this manual to stdout and exit.
 
-       plug [--agent claude-code|pi|generic]
+       plug [--agent claude-code|pi|generic|cursor]
               Install the swarm integrations into your agents — the Claude
-              Code plugin (~/.claude/skills/swarm), the pi extension, and the
-              generic ~/.agents/skills/swarm skill. The artifacts are embedded
+              Code plugin (~/.claude/skills/swarm), the pi extension, the
+              generic ~/.agents/skills/swarm skill, and the same skill for
+              Cursor (~/.cursor/skills/swarm). The artifacts are embedded
               in the binary, so no repo checkout is needed. Writes immediately
               (reversible with unplug). With no --agent, the detected agents
-              are used; repeat --agent to select several.
+              are used; repeat --agent to select several. An agent that is
+              not on this machine (its config dir is missing) is skipped,
+              never scaffolded — even when named explicitly.
 
-       unplug [--agent claude-code|pi|generic]
+       unplug [--agent claude-code|pi|generic|cursor]
               Remove what plug installed (symmetric). With no --agent, the
               agents that have it installed are used.
 
@@ -620,9 +681,9 @@ COMMANDS
               line a check with a [OK]/[!]/[x] verdict; a hard failure exits
               non-zero. With no --swarm, a machine-health report in four
               sections: Environment (version, OS/arch, log + socket dirs);
-              Integrations (per agent — claude-code, pi, generic — whether the
-              installed skill is up to date, out of date, not set up, or absent,
-              with its path); Network (local bind, UDP, NAT/hole-punch behavior,
+              Integrations (per agent — claude-code, pi, generic, cursor —
+              whether the installed skill is up to date, out of date, not set
+              up, or absent, with its path); Network (local bind, UDP, NAT/hole-punch behavior,
               public address, relay latency); and Active swarms (each daemon
               running on this machine, with its id, name, nickname, and size).
               With --swarm 🐝…, decode that swarm's declared connection methods
@@ -942,10 +1003,11 @@ MCP SERVER
 
        fetch_messages
               Retrieve new events. Args: after (optional explicit seq cursor;
-              usually omit and let the server track it); wait_ms (optional
-              long-poll — block up to that many ms, server-capped at 60s, for
-              new traffic before returning, instead of an immediate read;
-              recommended ~15000 for a watch loop, empty on timeout). Returns:
+              usually omit and let the server track it); long (optional
+              long-poll — park the read until new traffic arrives, up to the
+              server's ~60s cap, instead of an immediate read; an empty batch
+              at the cap just means the window elapsed quietly — call again).
+              Returns:
 
                  {"messages":[ ... ],"current_seq":<int-or-null>}
 
@@ -1008,8 +1070,9 @@ MCP SERVER
               returned. An explicit after is a non-mutating replay: it reads
               from that seq without disturbing the implicit cursor (so a one-off
               after:0 to inspect history won't desync the loop). A correct idle
-              loop is simply fetch_messages(wait_ms:15000) repeated — the call
-              blocks until traffic or timeout, so no busy tick; your own sends
+              loop is simply fetch_messages(long:true) repeated — the call
+              parks until traffic arrives (an empty batch at ~60s just means
+              the window elapsed quietly), so no busy tick; your own sends
               surface once with self:true (skip them if you don't want the echo).
 
 EXAMPLES
@@ -1051,7 +1114,7 @@ EXAMPLES
                   > /tmp/ahsw.log 2>&1 &
               # 2. wait for ready; record swarm + nickname
               # 3. long-poll, advancing the cursor (omit --after first time)
-              ahsw poll --swarm 🐝1... --nickname agent --wait 15000 --after LAST_ID --output json
+              ahsw poll --swarm 🐝1... --nickname agent --long --after LAST_ID --output json
               # 4. reply, optionally to a specific peer
               ahsw msg  --swarm 🐝1... --nickname agent --text "ack" --reply other
 

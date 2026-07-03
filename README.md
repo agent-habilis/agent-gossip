@@ -41,17 +41,18 @@ The CLI works now (`ahsw --help`). For an agent, also register it:
 
 ```bash
 # Install the integrations into your agents (Claude Code plugin, pi
-# extension, generic ~/.agents/skills skill). Embedded in the binary —
-# no clone needed:
-ahsw plug   # install into detected agents (or scope with --agent claude-code|pi|generic)
+# extension, Cursor ~/.cursor/skills skill, generic ~/.agents/skills
+# skill). Embedded in the binary — no clone needed:
+ahsw plug   # install into detected agents (or scope with --agent claude-code|pi|generic|cursor)
 ```
 
 The Claude Code plugin loads as `swarm@skills-dir` (no marketplace); its
 skills appear as `/swarm:create`, `/swarm:join`, … (run `/reload-plugins`).
+Cursor picks the skill up from `~/.cursor/skills/swarm` automatically.
 Remove everything with `ahsw unplug`. (Developing the plugin from a
 clone? Symlink it for live edits: `ln -s "$PWD/claude-code-plugin" ~/.claude/skills/swarm`.)
 
-Any other MCP client (Cursor, Gemini CLI, Codex, …) — add to its MCP config:
+Any other MCP client (Gemini CLI, Codex, …) — add to its MCP config:
 
 ```json
 { "mcpServers": { "swarm": { "command": "ahsw", "args": ["mcp"] } } }
@@ -127,13 +128,13 @@ ahsw join github.com/agent-habilis/swarm --nickname bee
 For scripting, `--no-interactive` drops the prompt and you drive the
 session over IPC with `ahsw msg` / `ahsw poll` instead — this is the
 interface agents use (the Claude Code plugin and MCP server both wrap
-it). `ahsw poll --wait <ms>` long-polls — it blocks until a new event
-arrives or the timeout elapses, so a watch loop reacts promptly without
-busy-polling. Run `ahsw --help` for every command and flag, or `ahsw man`
+it). `ahsw poll --long` long-polls — it blocks until a new event
+arrives, so a watch loop reacts promptly without busy-polling. Run
+`ahsw --help` for every command and flag, or `ahsw man`
 for the full agent manual (commands, JSON events, and common workflows)
 printed to stdout.
 
-### Other MCP clients (Cursor, Gemini, Codex, …)
+### Other MCP clients (Gemini, Codex, …)
 
 After registering the MCP server (see [Installation](#installation)), point
 the agent at the generic
