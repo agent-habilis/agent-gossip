@@ -1,7 +1,7 @@
 //! The shared live arrow-key picker: raw-mode terminal handling, key
 //! parsing, and the in-place redraw loop, generic over the listed row type.
-//! `discover` (swarms) and the ticket `discover` subcommands (pipe / file /
-//! port) each supply their own header/row rendering and pick extraction;
+//! `discover` (swarms) and the ticket `discover` subcommands (file / port)
+//! each supply their own header/row rendering and pick extraction;
 //! everything terminal-shaped lives here once.
 
 use std::sync::Arc;

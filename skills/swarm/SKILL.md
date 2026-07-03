@@ -312,38 +312,6 @@ your turn, act only then, send one patch, stop. **Read the current state from
 the `document`, never reconstruct it from memory.** On join, let state settle,
 then `state get` before acting.
 
-## Pipe a file or folder
-
-When asked to **pipe / send a file or a folder** to a peer, use
-`ahsw pipe` — a standalone, off-gossip direct byte stream (no
-daemon needed). Always pass **`--swarm $SWARM`** so it uses the swarm's
-discovery (local / mDNS / DHT / relay). Run the producer with **`--output json`**
-so stdout is a single plain `ahsw pipe connect 🐝…` line (no status/colors) you can
-capture; the data never touches gossip — only the small ticket inside that
-command does.
-
-```bash
-# file:   producer prints `ahsw pipe connect 🐝…` on stdout; the consumer runs it.
-# Favor `< file` over `cat |`: a redirected file has a known length, so both
-# ends can show a determinate progress percent (OSC 9;4) in capable terminals.
-ahsw pipe listen --swarm $SWARM --output json < report.pdf   # → ahsw pipe connect 🐝…
-ahsw pipe connect 🐝…  > report.pdf
-
-# folder: stream a tar (no native folder mode — a pipe is a byte stream)
-tar c ./dir | ahsw pipe listen --swarm $SWARM    ↔    ahsw pipe connect 🐝… | tar x
-
-# --throttle RATE (e.g. 100k, 2m) caps throughput on either side — a bandwidth
-# limit, and a way to make the progress bar visible on a fast/local link.
-ahsw pipe listen --swarm $SWARM --throttle 1m < report.pdf
-```
-
-**Many consumers, one ticket.** With a **seekable file** (`< file`), the
-producer stays up and serves the whole file to every peer that redeems the
-ticket — hand the same `ahsw pipe connect 🐝…` to several people and each gets
-their own full copy (Ctrl-C to stop). A non-seekable stream (`tar c … |`,
-`cat |`) can't be replayed, so it serves one consumer and exits. `--follow`
-broadcasts a live tail to all attached consumers at once.
-
 ## Forward a TCP port
 
 To share a **long-running TCP service** (e.g. a local dev server) rather than a
@@ -361,12 +329,10 @@ ahsw port connect 🐝… 8080               # → http://localhost:8080
 ```
 
 Run the producer in the **background** with `--output json` and read its stdout —
-a single `ahsw pipe connect 🐝…` line. For a gossip handoff, strip the prefix to
-the bare 🐝… ticket (`sed 's/^ahsw pipe connect //'`), then announce it over the
-swarm so the peer can redeem it:
-`ahsw msg --swarm $SWARM --nickname $NICKNAME --reply <PEER> --text $'a pipe by <you> was shared\n🐝…'`.
-`ahsw pipe` exits 0 on a fully-delivered stream, non-zero on a connect failure or
-a truncated transfer.
+a single `ahsw port connect 🐝… PORT` line carrying the ticket. For a gossip
+handoff, announce that 🐝… ticket over the swarm so the peer can redeem it:
+`ahsw msg --swarm $SWARM --nickname $NICKNAME --reply <PEER> --text $'a port by <you> was shared\n🐝…'`.
+Both ends run until interrupted.
 
 ---
 

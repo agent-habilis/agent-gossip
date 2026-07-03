@@ -12,7 +12,7 @@ use sha2::{Digest, Sha256};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::lookup::{add_peer_addr, build_participant_endpoint};
-use crate::pipe::progress::{Progress, pace, throttle_chunk};
+use crate::util::progress::{Progress, pace, throttle_chunk};
 use crate::protocol::crypto::{Password, TicketAuth};
 
 use super::manifest::HASH_LEN;

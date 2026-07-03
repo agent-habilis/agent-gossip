@@ -1,11 +1,11 @@
 //! Ticket ads — the directory's second citizen beside swarm [`super::Ad`]s.
 //!
-//! A pipe/file/port producer advertising into a directory broadcasts its full
+//! A file/port producer advertising into a directory broadcasts its full
 //! bearer ticket (address + secret), so a discoverer connects with nothing but
 //! the pick. The two ad kinds share one directory topic and never cross-parse:
 //! a swarm ad's JSON has an `id` key, a ticket ad's a `ticket` key, and each
 //! parser requires its own. The collector additionally pins the [`TokenType`]
-//! it expects, so `pipe discover` can never surface a file ticket.
+//! it expects, so `file discover` can never surface a port ticket.
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -18,15 +18,14 @@ use crate::protocol::token::{self, TokenType};
 use super::MAX_LISTINGS;
 
 /// Whether a decoded ticket payload carries the password flag, per kind.
-/// Reads the byte after the 32-byte secret — the pipe/file flags byte
-/// (bits 2 / 0) or the port count byte (bit 7). Unit-tested against the
-/// real ticket encoders so these offsets can never silently drift.
+/// Reads the byte after the 32-byte secret — the file flags byte (bit 0)
+/// or the port count byte (bit 7). Unit-tested against the real ticket
+/// encoders so these offsets can never silently drift.
 pub(crate) fn password_bit(kind: TokenType, payload: &[u8]) -> bool {
     let Some(&flags) = payload.get(32) else {
         return false;
     };
     match kind {
-        TokenType::Pipe => flags & 0b100 != 0,
         TokenType::File => flags & 0b1 != 0,
         TokenType::Port => flags & 0b1000_0000 != 0,
         // No password support (yet) for swarm-ad and sh tickets.
@@ -218,7 +217,7 @@ mod tests {
 
     #[test]
     fn ad_round_trips_through_body() {
-        let ticket = ticket_of(TokenType::Pipe, b"payload");
+        let ticket = ticket_of(TokenType::File, b"payload");
         let parsed = TicketAd::parse(&ad(&ticket, Some("chat"))).expect("parses");
         assert_eq!(parsed.ticket, ticket);
         assert_eq!(parsed.label.as_deref(), Some("chat"));
@@ -228,13 +227,13 @@ mod tests {
     fn swarm_ads_and_ticket_ads_never_cross_parse() {
         // A swarm ad has `id`, a ticket ad `ticket` — each parser requires its own.
         assert!(TicketAd::parse(r#"{"id":"🐝abc","peers":2}"#).is_none());
-        let ticket_ad = ad(&ticket_of(TokenType::Pipe, b"p"), None);
+        let ticket_ad = ad(&ticket_of(TokenType::File, b"p"), None);
         assert!(super::super::Ad::parse(&ticket_ad).is_none());
     }
 
     #[test]
     fn wrong_kind_tickets_are_dropped() {
-        let mut dir = TicketListings::new(TokenType::Pipe);
+        let mut dir = TicketListings::new(TokenType::Port);
         let file_ticket = ticket_of(TokenType::File, b"f");
         assert!(dir.note(&ad(&file_ticket, None), Instant::now()).is_none());
         assert!(dir.snapshot().is_empty());
@@ -242,8 +241,8 @@ mod tests {
 
     #[test]
     fn note_found_then_updated_then_expire_lost() {
-        let ticket = ticket_of(TokenType::Pipe, b"p");
-        let mut dir = TicketListings::new(TokenType::Pipe);
+        let ticket = ticket_of(TokenType::File, b"p");
+        let mut dir = TicketListings::new(TokenType::File);
         let start = Instant::now();
 
         assert!(matches!(
@@ -284,9 +283,9 @@ mod tests {
 
     #[test]
     fn hostile_labels_are_truncated() {
-        let ticket = ticket_of(TokenType::Pipe, b"p");
+        let ticket = ticket_of(TokenType::File, b"p");
         let long = "x".repeat(10_000);
-        let mut dir = TicketListings::new(TokenType::Pipe);
+        let mut dir = TicketListings::new(TokenType::File);
         dir.note(&ad(&ticket, Some(&long)), Instant::now());
         assert_eq!(dir.snapshot()[0].label.as_ref().map(String::len), Some(64));
     }
@@ -298,10 +297,6 @@ mod tests {
             .with_ip_addr("127.0.0.1:4242".parse().unwrap());
         for password in [false, true] {
             for (kind, ticket) in [
-                (
-                    TokenType::Pipe,
-                    crate::pipe::test_ticket(addr.clone(), password),
-                ),
                 (
                     TokenType::File,
                     crate::file::test_ticket(addr.clone(), password),
@@ -327,15 +322,15 @@ mod tests {
         use iroh::{EndpointAddr, SecretKey};
         let addr = EndpointAddr::new(SecretKey::from_bytes(&[5u8; 32]).public())
             .with_ip_addr("127.0.0.1:4242".parse().unwrap());
-        let ticket = crate::pipe::test_ticket(addr, true);
-        let mut dir = TicketListings::new(TokenType::Pipe);
+        let ticket = crate::file::test_ticket(addr, true);
+        let mut dir = TicketListings::new(TokenType::File);
         dir.note(&ad(&ticket, Some("drop")), Instant::now());
         assert!(dir.snapshot()[0].password);
     }
 
     #[test]
     fn junk_and_malformed_tickets_are_ignored() {
-        let mut dir = TicketListings::new(TokenType::Pipe);
+        let mut dir = TicketListings::new(TokenType::File);
         assert!(dir.note("", Instant::now()).is_none());
         assert!(dir.note("not json", Instant::now()).is_none());
         assert!(

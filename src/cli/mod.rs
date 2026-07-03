@@ -29,7 +29,7 @@ mod ticket_discover;
 pub(crate) use args::Cli;
 use args::{
     Commands, CreateOpts, FileAction, ForumOpts, MetaAction, MetaOpts, MsgOpts,
-    OutputFormat, PeersOpts, PingOpts, PipeAction, PollOpts, PortAction, ReadyOpts, ShAction,
+    OutputFormat, PeersOpts, PingOpts, PollOpts, PortAction, ReadyOpts, ShAction,
     SharedServerOpts, StateAction, StateOpts, TaskOpts,
 };
 
@@ -94,7 +94,6 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
         // Boxed like the event-loop futures above: the discover arms hold a
         // picker + connect chain that puts these over clippy's 16 KiB
         // `large_futures` budget.
-        Commands::Pipe { action } => Box::pin(pipe(action)).await,
         Commands::Port { action } => Box::pin(port(action)).await,
         Commands::File { action } => Box::pin(file(action)).await,
         Commands::Sh { action } => sh(action).await,
@@ -391,123 +390,6 @@ async fn peers(opts: PeersOpts) -> Result<()> {
     let resp = ipc::send(&cmd, &nickname).await?;
     println!("{resp}");
     Ok(())
-}
-
-/// `ahsw pipe` — a standalone, off-gossip direct byte stream (no daemon).
-/// `listen` reads stdin and prints the connect command on stdout; `connect`
-/// redeems one and streams the peer's bytes to stdout.
-async fn pipe(action: PipeAction) -> Result<()> {
-    match action {
-        PipeAction::Listen {
-            swarm,
-            lookups,
-            advertise,
-            tuning,
-            throttle,
-            output,
-            password,
-            follow,
-        } => {
-            crate::util::tuning::init(tuning.tuning());
-            let json = matches!(output, OutputFormat::Json);
-            let password = password::resolve_password(password, /* confirm */ true, json)?;
-            crate::pipe::listen(
-                swarm.as_ref().map(crate::protocol::SwarmId::as_str),
-                lookups.to_set(),
-                crate::protocol::swarm::DirectorySelection::from_flag(advertise),
-                throttle,
-                json,
-                follow,
-                password,
-            )
-            .await
-        }
-        PipeAction::Connect {
-            ticket,
-            throttle,
-            password,
-        } => {
-            let password =
-                consumer_password(password, &ticket, crate::pipe::ticket_requires_password)?;
-            crate::pipe::connect(&ticket, throttle, password).await
-        }
-        PipeAction::Discover {
-            name,
-            lookups,
-            tuning,
-            throttle,
-            password,
-            output,
-        } => {
-            crate::util::tuning::init(tuning.tuning());
-            let json = matches!(output, OutputFormat::Json);
-            let password = password::resolve_password(password, /* confirm */ false, json)?;
-            match ticket_discover::discover_ticket(
-                name,
-                lookups.to_set(),
-                crate::protocol::token::TokenType::Pipe,
-                json,
-            )
-            .await?
-            {
-                Some(ticket) => {
-                    let password = match password {
-                        None if crate::pipe::ticket_requires_password(&ticket) => {
-                            Some(password::require_password(false, "ticket")?)
-                        }
-                        other => other,
-                    };
-                    ticket_discover::interruptible(crate::pipe::connect(
-                        &ticket, throttle, password,
-                    ))
-                    .await
-                }
-                None => Ok(()),
-            }
-        }
-        PipeAction::Bench {
-            ticket,
-            serve,
-            swarm,
-            lookups,
-            budget,
-            pings,
-            password,
-            output,
-        } => {
-            let json = matches!(output, OutputFormat::Json);
-            // clap enforces the producer/consumer split: `--serve`/`--swarm`
-            // and the lookup flags conflict with a ticket, `--budget`/`--pings`
-            // require one. So a ticket means consumer, its absence means
-            // producer.
-            match ticket {
-                None => {
-                    let password =
-                        password::resolve_password(password, /* confirm */ true, json)?;
-                    crate::pipe::listen_bench(
-                        swarm.as_ref().map(crate::protocol::SwarmId::as_str),
-                        lookups.to_set(),
-                        serve,
-                        json,
-                        password,
-                    )
-                    .await
-                }
-                Some(ticket) => {
-                    let password = consumer_password(
-                        password,
-                        &ticket,
-                        crate::pipe::ticket_requires_password,
-                    )?;
-                    let opts = crate::pipe::BenchOpts {
-                        budget: budget.unwrap_or_default(),
-                        pings: pings.unwrap_or(20),
-                    };
-                    crate::pipe::connect_bench(&ticket, opts, json, password).await
-                }
-            }
-        }
-    }
 }
 
 /// Resolve a consumer-side `--password` flag, prompting when the flag is

@@ -271,7 +271,7 @@ There is:
 
 ### Passwords: a knowledge factor on the bearer token
 
-`create --password` (and `pipe listen` / `port listen` / `file send`
+`create --password` (and `port listen` / `file send`
 `--password`) adds a second factor: the bearer token alone no longer admits.
 
 **Mechanism, swarm.** The password is stretched with **Argon2id**

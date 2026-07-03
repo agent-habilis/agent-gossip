@@ -1,6 +1,6 @@
 //! The branded `🐝` token codec shared by the swarm id ([`super::swarm`]),
-//! the pipe ticket ([`crate::pipe`]), the port ticket ([`crate::port`]), the
-//! file ticket ([`crate::file`]), and the shell ticket ([`crate::sh`]).
+//! the port ticket ([`crate::port`]), the file ticket ([`crate::file`]), and
+//! the shell ticket ([`crate::sh`]).
 //! One wire shape for every agent-habilis token, so a `🐝…` string
 //! self-describes its kind via a 1-byte type tag and the namespaces never
 //! collide.
@@ -21,11 +21,10 @@ pub(crate) const PREFIX: &str = "🐝";
 const VERSION: u8 = 1;
 
 /// Which kind of token this is — the byte that lets one `🐝…` namespace
-/// carry both swarm ids and pipe tickets without ambiguity.
+/// carry both swarm ids and transfer tickets without ambiguity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TokenType {
     Swarm,
-    Pipe,
     Port,
     File,
     Sh,
@@ -35,7 +34,7 @@ impl TokenType {
     fn to_byte(self) -> u8 {
         match self {
             TokenType::Swarm => 1,
-            TokenType::Pipe => 2,
+            // 2 retired — was the pipe ticket; never reassign (wire format).
             TokenType::Port => 3,
             TokenType::File => 4,
             // 5 retired — was the mount ticket; never reassign (wire format).
@@ -46,7 +45,7 @@ impl TokenType {
     fn from_byte(byte: u8) -> Result<Self> {
         match byte {
             1 => Ok(TokenType::Swarm),
-            2 => Ok(TokenType::Pipe),
+            // 2 retired — was the pipe ticket; never reassign (wire format).
             3 => Ok(TokenType::Port),
             4 => Ok(TokenType::File),
             // 5 retired — was the mount ticket; never reassign (wire format).
@@ -120,7 +119,6 @@ mod tests {
     fn round_trips_each_kind() {
         for kind in [
             TokenType::Swarm,
-            TokenType::Pipe,
             TokenType::Port,
             TokenType::File,
             TokenType::Sh,

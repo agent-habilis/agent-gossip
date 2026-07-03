@@ -14,7 +14,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::directory::ticket::TicketAd;
 use crate::lookup::build_endpoint;
-use crate::pipe::progress::{pace, throttle_chunk};
+use crate::util::progress::{pace, throttle_chunk};
 use crate::protocol::crypto::{Password, TicketAuth, ct_eq};
 use crate::protocol::swarm::{
     DirectorySelection, LookupOpts, LookupSet, resolve_transfer_lookups, validate_advertise,

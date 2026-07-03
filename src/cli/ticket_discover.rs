@@ -1,5 +1,5 @@
-//! The shared ticket `discover` flow behind `pipe discover` / `file
-//! discover` / `port discover`: open a named directory, collect ticket ads
+//! The shared ticket `discover` flow behind `file discover` / `port
+//! discover`: open a named directory, collect ticket ads
 //! of one kind, and either run the live picker (returning the chosen
 //! ticket for the caller to connect with) or stream
 //! `ticket_found`/`ticket_lost` JSON lines for an agent. The pure
@@ -123,10 +123,9 @@ fn ticket_event_json(event: &TicketDirectoryEvent) -> String {
     value.to_string()
 }
 
-/// The picker noun for a ticket kind (`waiting for pipes…`).
+/// The picker noun for a ticket kind (`waiting for files…`).
 fn kind_noun(kind: TokenType) -> &'static str {
     match kind {
-        TokenType::Pipe => "pipes",
         TokenType::File => "files",
         TokenType::Port => "ports",
         TokenType::Swarm => "swarms",

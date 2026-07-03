@@ -293,8 +293,7 @@ pub(crate) const DEFAULT_DIRECTORY: &str = "global";
 impl DirectorySelection {
     /// Resolve a clap three-state `--advertise` optional-value flag
     /// (absent / bare / valued) — the one converter shared by every
-    /// command that advertises (`create`, `pipe listen`, `file send`,
-    /// `port listen`).
+    /// command that advertises (`create`, `file send`, `port listen`).
     #[expect(
         clippy::option_option,
         reason = "clap optional-value flag: absent/bare/valued are three distinct directory states"
@@ -396,7 +395,7 @@ pub(crate) fn resolve_lookups(public: bool, lookups: LookupSet) -> LookupOpts {
     }
 }
 
-/// Resolve a transfer command's (`pipe`/`file`/`port`/`sh`)
+/// Resolve a transfer command's (`file`/`port`/`sh`)
 /// discovery config from its two alternative sources: a `--swarm 🐝…` id
 /// (whose embedded lookups win) or the create-style
 /// `--mdns/--dht/--relay` flags (naming any uses only those). Unlike

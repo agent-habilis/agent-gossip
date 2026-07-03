@@ -21,7 +21,7 @@ pub(crate) fn ticket_requires_password(ticket: &str) -> bool {
 }
 
 /// ALPN for the shell protocol — its own protocol identity, distinct from the
-/// pipe/port/file ALPNs, so a mismatched dial is rejected at the QUIC handshake.
+/// port/file ALPNs, so a mismatched dial is rejected at the QUIC handshake.
 pub(crate) const SH_ALPN: &[u8] = b"agent-habilis-swarm/sh/1";
 
 /// Env var injected into the broadcast shell (never read back by ahsw — the

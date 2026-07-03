@@ -51,7 +51,6 @@ mod tests {
             | Commands::Discover { .. }
             | Commands::Task { .. }
             | Commands::Peers { .. }
-            | Commands::Pipe { .. }
             | Commands::Port { .. }
             | Commands::File { .. }
             | Commands::Sh { .. }

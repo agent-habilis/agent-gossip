@@ -115,7 +115,7 @@ pub(crate) struct SharedServerOpts {
 }
 
 /// The hidden directory-tuning knobs for the ticket-advertising transfer
-/// commands (`pipe`/`file`/`port` listen + discover) — the subset of
+/// commands (`file`/`port` listen + discover) — the subset of
 /// [`SharedServerOpts`]'s tuning the directory path reads. Production runs
 /// on the `crate::util::consts` defaults; the subprocess suite shortens
 /// them and flips `--directory-private` for a hermetic loopback directory.
@@ -185,5 +185,49 @@ impl SharedServerOpts {
             gossip_active_view_capacity: self.active_view_capacity,
             gossip_passive_view_capacity: self.passive_view_capacity,
         }
+    }
+}
+
+/// Parse a throttle rate like `512`, `100k`, `2m`, `1g` into bytes/sec. Suffixes
+/// are 1024-based (`k` = `KiB`, `m` = `MiB`, `g` = `GiB`); a bare number is bytes.
+/// Used by the throttled transfer commands (`file`'s `--throttle`).
+pub(crate) fn parse_rate(raw: &str) -> Result<u64, String> {
+    let raw = raw.trim();
+    let (digits, mult): (&str, u64) = match raw.chars().last() {
+        // The suffix is ASCII, so trimming one byte is on a char boundary.
+        Some('k' | 'K') => (&raw[..raw.len() - 1], 1 << 10),
+        Some('m' | 'M') => (&raw[..raw.len() - 1], 1 << 20),
+        Some('g' | 'G') => (&raw[..raw.len() - 1], 1 << 30),
+        _ => (raw, 1),
+    };
+    let value: u64 = digits
+        .parse()
+        .map_err(|_| format!("invalid rate `{raw}` (use e.g. 512, 100k, 2m)"))?;
+    let bytes = value
+        .checked_mul(mult)
+        .ok_or_else(|| format!("rate `{raw}` is too large"))?;
+    if bytes == 0 {
+        return Err("rate must be greater than 0".to_owned());
+    }
+    Ok(bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_rate;
+
+    #[test]
+    fn parses_plain_and_suffixed_rates() {
+        assert_eq!(parse_rate("512"), Ok(512));
+        assert_eq!(parse_rate("100k"), Ok(100 * 1024));
+        assert_eq!(parse_rate("2M"), Ok(2 * 1024 * 1024));
+        assert_eq!(parse_rate("1g"), Ok(1 << 30));
+    }
+
+    #[test]
+    fn rejects_garbage_and_zero() {
+        assert!(parse_rate("abc").is_err());
+        assert!(parse_rate("0").is_err());
+        assert!(parse_rate("12x").is_err());
     }
 }

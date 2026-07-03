@@ -92,8 +92,9 @@ pub(crate) async fn build_endpoint(
     }
 
     // ALPNs the endpoint accepts inbound connections for. Empty for the gossip /
-    // rendezvous endpoints (their Router registers `GOSSIP_ALPN`); the pipe
-    // producer passes its `PIPE_ALPN` so it can `endpoint.accept()` directly.
+    // rendezvous endpoints (their Router registers `GOSSIP_ALPN`); a transfer
+    // producer passes its ALPN (e.g. `FILE_ALPN`) so it can `endpoint.accept()`
+    // directly.
     if !alpns.is_empty() {
         builder = builder.alpns(alpns);
     }

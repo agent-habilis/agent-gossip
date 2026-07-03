@@ -29,9 +29,9 @@ pub(crate) struct PortMapping {
 }
 
 /// How long the first dial keeps retrying while the producer's address
-/// propagates through the lookups (mirrors `pipe`/`file`'s consumer, which
-/// wait the same window — a `port connect` should not fail on the first flow
-/// where a `pipe connect` with the same lookups would have waited).
+/// propagates through the lookups (mirrors `file`'s consumer, which waits
+/// the same window — a `port connect` should not fail on the first flow
+/// where a `file get` with the same lookups would have waited).
 const DISCOVERY_DEADLINE: Duration = Duration::from_secs(90);
 const RETRY_DELAY: Duration = Duration::from_secs(3);
 

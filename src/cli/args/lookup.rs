@@ -96,7 +96,6 @@ mod tests {
             | Commands::Msg { .. }
             | Commands::Poll { .. }
             | Commands::Ping { .. }
-            | Commands::Pipe { .. }
             | Commands::Port { .. }
             | Commands::File { .. }
             | Commands::Sh { .. }
@@ -174,7 +173,6 @@ mod tests {
             | Commands::Msg { .. }
             | Commands::Poll { .. }
             | Commands::Ping { .. }
-            | Commands::Pipe { .. }
             | Commands::Port { .. }
             | Commands::File { .. }
             | Commands::Sh { .. }

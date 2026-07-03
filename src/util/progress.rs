@@ -1,7 +1,7 @@
-//! OSC 9;4 terminal progress for `ahsw pipe`, written straight to `/dev/tty`
-//! (the controlling terminal) so it never touches stdout (the pipe's data /
-//! ticket) or stderr (errors only). With no controlling terminal (piped,
-//! daemon, CI) the writes are skipped.
+//! OSC 9;4 terminal progress for byte transfers, written straight to
+//! `/dev/tty` (the controlling terminal) so it never touches stdout (the
+//! transfer's data / ticket) or stderr (errors only). With no controlling
+//! terminal (piped, daemon, CI) the writes are skipped.
 //!
 //! OSC 9;4 is a terminal progress escape: `ESC ] 9 ; 4 ; state ; progress ST`
 //! with state 1 = determinate (0..100), 2 = error, 3 = indeterminate, 0 = clear.
@@ -10,8 +10,6 @@
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::time::Duration;
-
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 const CHUNK: usize = 64 * 1024;
 
@@ -35,9 +33,8 @@ impl Progress {
         progress
     }
 
-    /// Build the indicator without emitting anything (the shared core of `new`
-    /// and `hidden`): open the controlling terminal (`None` when there isn't one)
-    /// and zero the state.
+    /// Build the indicator without emitting anything (the core of `new`): open
+    /// the controlling terminal (`None` when there isn't one) and zero the state.
     fn build(total: Option<u64>) -> Self {
         Self {
             tty: OpenOptions::new().write(true).open("/dev/tty").ok(),
@@ -45,22 +42,6 @@ impl Progress {
             last_pct: None,
             indeterminate_started: false,
         }
-    }
-
-    /// Like `new` but starts hidden — nothing is shown until `show`. For
-    /// live-follow mode (`pipe listen --follow`), where the indicator must appear
-    /// only while a transfer is actually active and clear the moment it stops,
-    /// rather than pulsing through the long idle waits between consumers.
-    pub(crate) fn hidden() -> Self {
-        Self::build(None)
-    }
-
-    /// Show the indeterminate "active" indicator — a live transfer just began.
-    /// Pairs with `finish` (clear) when the transfer stops or the consumer
-    /// drops, so the indicator is visible only while bytes are flowing.
-    pub(crate) fn show(&mut self) {
-        self.indeterminate_started = true;
-        self.emit(3, 0);
     }
 
     /// Show the indicator at 0% (determinate) or "loading" (indeterminate) right
@@ -100,24 +81,9 @@ impl Progress {
         }
     }
 
-    /// Keep-alive: re-emit the indeterminate "loading" state so the terminal
-    /// doesn't fade it during a long stretch without updates. No-op for a
-    /// determinate bar (its percent updates keep it alive).
-    pub(crate) fn tick(&mut self) {
-        if self.total.is_none() {
-            self.indeterminate_started = true;
-            self.emit(3, 0);
-        }
-    }
-
     /// Clear the indicator (successful completion).
     pub(crate) fn finish(&mut self) {
         self.emit(0, 0);
-    }
-
-    /// Flag the indicator as errored.
-    pub(crate) fn fail(&mut self) {
-        self.emit(2, 0);
     }
 
     fn emit(&mut self, state: u8, progress: u8) {
@@ -163,101 +129,6 @@ pub(crate) async fn pace(throttle: Option<u64>, bytes: usize) {
     }
 }
 
-/// Copy `reader` → `writer` in bounded chunks, pacing to `throttle` when set —
-/// no progress (the producer's send path; its bar is driven by the consumer's
-/// reverse progress reports). Each write is awaited, so QUIC backpressure holds.
-///
-/// # Errors
-/// Propagates the first read/write error.
-pub(crate) async fn copy_throttled<R, W>(
-    reader: &mut R,
-    writer: &mut W,
-    throttle: Option<u64>,
-) -> std::io::Result<u64>
-where
-    R: AsyncRead + Unpin,
-    W: AsyncWrite + Unpin,
-{
-    let mut buf = vec![0u8; throttle_chunk(throttle)];
-    let mut done = 0u64;
-    loop {
-        let read = match reader.read(&mut buf).await {
-            Ok(0) => break,
-            Ok(read) => read,
-            Err(error) => return Err(error),
-        };
-        writer.write_all(&buf[..read]).await?;
-        done += u64::try_from(read).unwrap_or(0);
-        pace(throttle, read).await;
-    }
-    Ok(done)
-}
-
-/// Receive `reader` → `writer`, driving `progress`, and report the running
-/// received-byte count upstream on `report` (one 8-byte LE write per integer-%
-/// change, then a final count) so the sender's bar can track real delivery.
-/// `throttle` caps throughput; `total` is the known length, for the % cadence.
-///
-/// # Errors
-/// Propagates the first read/write error, flagging the indicator first.
-pub(crate) async fn recv_with_reports<R, W, Rep>(
-    reader: &mut R,
-    writer: &mut W,
-    report: &mut Rep,
-    progress: &mut Progress,
-    throttle: Option<u64>,
-    total: Option<u64>,
-) -> std::io::Result<u64>
-where
-    R: AsyncRead + Unpin,
-    W: AsyncWrite + Unpin,
-    Rep: AsyncWrite + Unpin,
-{
-    let mut buf = vec![0u8; throttle_chunk(throttle)];
-    let mut done = 0u64;
-    let mut last_pct = 0u8;
-    // Keep the indeterminate bar alive while we wait on a slow sender (no-op once
-    // determinate). `reader.read` is cancel-safe, so racing it loses no bytes.
-    let mut keepalive = tokio::time::interval(Duration::from_millis(250));
-    loop {
-        let read = tokio::select! {
-            result = reader.read(&mut buf) => match result {
-                Ok(0) => break,
-                Ok(read) => read,
-                Err(error) => {
-                    progress.fail();
-                    return Err(error);
-                }
-            },
-            _ = keepalive.tick() => {
-                progress.tick();
-                continue;
-            }
-        };
-        if let Err(error) = writer.write_all(&buf[..read]).await {
-            progress.fail();
-            return Err(error);
-        }
-        done += u64::try_from(read).unwrap_or(0);
-        pace(throttle, read).await;
-        progress.update(done);
-        if let Some(total) = total {
-            let now = pct(done, total);
-            if now != last_pct {
-                last_pct = now;
-                if let Err(error) = report.write_all(&done.to_le_bytes()).await {
-                    progress.fail();
-                    return Err(error);
-                }
-            }
-        }
-    }
-    progress.finish();
-    // Final count — its delivery (then the report stream's FIN) tells the sender
-    // the whole stream arrived.
-    report.write_all(&done.to_le_bytes()).await?;
-    Ok(done)
-}
 
 #[cfg(test)]
 mod tests {

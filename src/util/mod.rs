@@ -8,6 +8,7 @@ pub(crate) mod consts;
 pub(crate) mod cooldown;
 pub(crate) mod logs;
 pub(crate) mod output;
+pub(crate) mod progress;
 pub(crate) mod resident_memory;
 pub(crate) mod tuning;
 pub(crate) mod version;

@@ -4,7 +4,7 @@ use clap::Subcommand;
 
 use super::lookup::PublicLookupArgs;
 use super::output::OutputFormat;
-use super::pipe::parse_rate;
+use super::shared::parse_rate;
 use super::shared::DirectoryTuningArgs;
 use crate::protocol::SwarmId;
 use crate::protocol::swarm::SwarmName;

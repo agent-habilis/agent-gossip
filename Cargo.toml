@@ -143,7 +143,7 @@ sha2 = "0.10"
 # we only need the raw `hash_password_into` KDF.
 argon2 = { version = "0.5", default-features = false, features = ["alloc"] }
 # Hidden `--password` prompt. Reads from the controlling TTY (/dev/tty), not
-# stdin — `pipe listen`'s stdin is the data source — and avoids a new
+# stdin — a transfer command's stdin may be the data source — and avoids a new
 # unsafe termios block. Pinned =7.4.0: it clears ECHO but leaves ICANON on,
 # which is exactly the heuristic Ghostty/WezTerm/iTerm2 use to detect a
 # password prompt (lock cursor + macOS secure input); 7.5+ switched to raw

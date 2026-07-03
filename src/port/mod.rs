@@ -6,8 +6,8 @@
 //! connection — each TCP flow is one bi-stream (`open_bi`/`accept_bi`),
 //! self-authenticated by a 34-byte header (`secret(32) ‖ port(2, BE)`). A bad
 //! secret kills the whole connection; a good secret naming a port the ticket
-//! never advertised kills only that one stream. Unlike the single-shot stdio
-//! [`pipe`](crate::pipe), one ticket serves many connections and the byte flow
+//! never advertised kills only that one stream. Unlike a single-shot stdio
+//! byte stream, one ticket serves many connections and the byte flow
 //! is bidirectional. The ticket is a bearer capability (a random secret)
 //! carrying the producer's address + the swarm's discovery config, so the
 //! consumer needs nothing but the ticket.
@@ -69,7 +69,7 @@ pub(crate) fn identity_mappings(ticket: &str) -> Result<Vec<PortMapping>> {
 }
 
 /// ALPN for the port protocol — a raw bidirectional QUIC stream with its own
-/// protocol identity, distinct from the stdio pipe's `PIPE_ALPN`.
+/// protocol identity, distinct from the file transfer's `FILE_ALPN`.
 pub(crate) const PORT_ALPN: &[u8] = b"agent-habilis-swarm/port/1";
 
 /// Length of the bearer-capability secret carried in a port ticket.

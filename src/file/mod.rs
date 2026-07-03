@@ -43,7 +43,7 @@ pub(crate) fn test_ticket(addr: iroh::EndpointAddr, password: bool) -> String {
 }
 
 /// ALPN for the file protocol — its own protocol identity, distinct from the
-/// stdio pipe's `PIPE_ALPN` and the port forwarder's `PORT_ALPN`, so a mismatched
+/// port forwarder's `PORT_ALPN` and the shell's `SH_ALPN`, so a mismatched
 /// dial is rejected at the QUIC handshake instead of desyncing on the wire.
 pub(crate) const FILE_ALPN: &[u8] = b"agent-habilis-swarm/file/1";
 
