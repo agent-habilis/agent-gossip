@@ -432,7 +432,7 @@ mod tests {
         let parsed: IpcCommand = serde_json::from_str(&json).unwrap();
         assert_eq!(
             parsed.swarm_id().expect("Msg is swarm-addressed").as_str(),
-            "🐝test"
+            "🐝://test"
         );
     }
 
@@ -456,7 +456,7 @@ mod tests {
         let parsed: IpcCommand = serde_json::from_str(&json).unwrap();
         match parsed {
             IpcCommand::StateMerge { swarm, merge } => {
-                assert_eq!(swarm.as_str(), "🐝test");
+                assert_eq!(swarm.as_str(), "🐝://test");
                 assert_eq!(merge, serde_json::json!({"turn": "b"}));
             }
             IpcCommand::Msg { .. }
@@ -537,7 +537,7 @@ mod tests {
         assert!(json.contains("\"command\":\"ping\""));
         let parsed: IpcCommand = serde_json::from_str(&json).unwrap();
         match parsed {
-            IpcCommand::Ping { swarm } => assert_eq!(swarm.as_str(), "🐝test"),
+            IpcCommand::Ping { swarm } => assert_eq!(swarm.as_str(), "🐝://test"),
             IpcCommand::Msg { .. }
             | IpcCommand::Poll { .. }
             | IpcCommand::Task { .. }
@@ -591,7 +591,7 @@ mod tests {
         assert!(json.contains("\"command\":\"peers\""));
         let parsed: IpcCommand = serde_json::from_str(&json).unwrap();
         match parsed {
-            IpcCommand::Peers { swarm } => assert_eq!(swarm.as_str(), "🐝test"),
+            IpcCommand::Peers { swarm } => assert_eq!(swarm.as_str(), "🐝://test"),
             IpcCommand::Msg { .. }
             | IpcCommand::Poll { .. }
             | IpcCommand::Ping { .. }
@@ -757,8 +757,11 @@ mod tests {
 
             #[test]
             fn prop_swarm_prefix_is_prefix_of_input(swarm in arb_swarm()) {
+                // The stem drops the `://` separator (it must never reach a
+                // path), so it's a prefix of the separator-stripped id, not
+                // the raw canonical string.
                 let prefix = swarm_prefix(swarm.as_str());
-                prop_assert!(swarm.as_str().starts_with(&prefix));
+                prop_assert!(swarm.as_str().replace("://", "").starts_with(&prefix));
             }
         }
     }

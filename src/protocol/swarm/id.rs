@@ -8,7 +8,7 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
-use super::PREFIX;
+use super::{PREFIX, SEPARATOR};
 
 const MIN_LEN: usize = 7;
 const MAX_LEN: usize = 512;
@@ -70,20 +70,25 @@ fn is_base58_char(ch: char) -> bool {
 impl SwarmId {
     pub(crate) fn new(value: impl Into<String>) -> Result<Self, SwarmIdError> {
         let value = value.into();
-        if !value.starts_with(PREFIX) {
+        let Some(rest) = value.strip_prefix(PREFIX) else {
             if value.starts_with(LEGACY_PREFIX) {
                 return Err(SwarmIdError::LegacyPrefix);
             }
             return Err(SwarmIdError::MissingPrefix);
+        };
+        // The `://` is optional on input; normalize both `🐝<payload>` and
+        // `🐝://<payload>` to the canonical form below.
+        let payload = rest.strip_prefix(SEPARATOR).unwrap_or(rest);
+        // Length is measured on the bare `🐝<payload>` form so the bounds
+        // don't shift with the optional separator.
+        let bare_len = PREFIX.len() + payload.len();
+        if !(MIN_LEN..=MAX_LEN).contains(&bare_len) {
+            return Err(SwarmIdError::Length(bare_len));
         }
-        if value.len() < MIN_LEN || value.len() > MAX_LEN {
-            return Err(SwarmIdError::Length(value.len()));
-        }
-        let payload = &value[PREFIX.len()..];
         if !payload.chars().all(is_base58_char) {
             return Err(SwarmIdError::Charset(value));
         }
-        Ok(Self(value))
+        Ok(Self(format!("{PREFIX}{SEPARATOR}{payload}")))
     }
 
     #[must_use]
@@ -134,6 +139,15 @@ mod swarm_id_tests {
     }
 
     #[test]
+    fn new_normalizes_to_canonical_uri_form() {
+        // Bare and `🐝://` inputs collapse to the same canonical string.
+        let bare = SwarmId::new("🐝AbCdEf1234").unwrap();
+        let uri = SwarmId::new("🐝://AbCdEf1234").unwrap();
+        assert_eq!(bare.as_str(), "🐝://AbCdEf1234");
+        assert_eq!(bare, uri);
+    }
+
+    #[test]
     fn new_rejects_missing_prefix() {
         assert!(matches!(
             SwarmId::new("noprefix12345"),
@@ -166,7 +180,7 @@ mod swarm_id_tests {
     fn serde_transparent_round_trip() {
         let id = SwarmId::from("🐝AbCdEf1234");
         let json = serde_json::to_string(&id).unwrap();
-        assert_eq!(json, "\"🐝AbCdEf1234\"");
+        assert_eq!(json, "\"🐝://AbCdEf1234\"");
         let parsed: SwarmId = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed, id);
     }

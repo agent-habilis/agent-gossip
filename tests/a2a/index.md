@@ -80,7 +80,7 @@ Each runbook has four parts:
 Expected UI strings reference the canonical `display` lines the daemon emits
 (`src/output/json.rs` `*_display`) and the front-end Output sections
 (`claude-code-plugin/skills/*/SKILL.md`). The bee is `🐝️` (U+FE0F); a swarm id
-keeps a bare `🐝` prefix.
+is canonically `🐝://<base58>`.
 
 ## Capability reference (for the human, not the agents)
 

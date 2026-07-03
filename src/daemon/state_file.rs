@@ -267,7 +267,7 @@ mod tests {
         state_file.write(3, true);
         let contents = std::fs::read_to_string(&path).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&contents).unwrap();
-        assert_eq!(parsed["swarm"], "🐝abcd");
+        assert_eq!(parsed["swarm"], "🐝://abcd");
         assert_eq!(parsed["name"], "cool-team");
         assert_eq!(parsed["nickname"], "treat-empire");
         assert_eq!(parsed["ready"], true);
@@ -365,7 +365,7 @@ mod tests {
         state_file.write(3, true);
         let parsed: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        assert_eq!(parsed["swarm"], "🐝fresh");
+        assert_eq!(parsed["swarm"], "🐝://fresh");
         assert_eq!(parsed["name"], "cool-team");
         assert_eq!(parsed["nickname"], "swift-cedar");
         assert_eq!(parsed["participant_count"], 3);
@@ -411,7 +411,7 @@ mod tests {
         );
         state_file.write(2, true);
         let identity = super::read_identity(&path);
-        assert_eq!(identity.swarm.as_deref(), Some("🐝round"));
+        assert_eq!(identity.swarm.as_deref(), Some("🐝://round"));
         assert_eq!(identity.name.as_deref(), Some("cool-team"));
         assert_eq!(identity.nickname.as_deref(), Some("treat-empire"));
         state_file.remove();
@@ -428,7 +428,7 @@ mod tests {
         );
         state_file.write(2, true);
         let entry = super::read_session_entry(&path).expect("present");
-        assert_eq!(entry.swarm.as_deref(), Some("🐝round"));
+        assert_eq!(entry.swarm.as_deref(), Some("🐝://round"));
         assert_eq!(entry.name.as_deref(), Some("cool-team"));
         assert_eq!(entry.nickname.as_deref(), Some("treat-empire"));
         assert_eq!(entry.pid, Some(std::process::id()));

@@ -65,7 +65,7 @@ mod tests {
         let Commands::Leave { opts } = cli.command else {
             panic!("expected Leave command");
         };
-        assert_eq!(opts.swarm.unwrap().as_str(), "🐝AbCdEf1234");
+        assert_eq!(opts.swarm.unwrap().as_str(), "🐝://AbCdEf1234");
         assert_eq!(opts.nickname.unwrap().as_str(), "my-nick");
         assert_eq!(opts.output, OutputFormat::Json);
     }

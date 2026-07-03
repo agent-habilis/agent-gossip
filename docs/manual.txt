@@ -131,18 +131,22 @@ DESCRIPTION
               same.
 
        IDENTIFIERS AND CONFIG
-              The 🐝… identifier (the "swarm hash") is self-describing: it
+              The 🐝://… identifier (the "swarm hash") is self-describing: it
               carries a random seed, the swarm name, and the swarm config
               (networking lookups). No peer address is stored, so a swarm
               outlives its creator as long as one member is up. Because the
               config is inside the identifier, every joiner inherits it
               automatically; join takes no --name, --public, or lookup flags.
-              Share the 🐝… string to invite others.
+              Share the 🐝://… string to invite others. The canonical form is
+              🐝://<base58>; join also accepts a legacy bare 🐝<base58> id and
+              normalizes it. (The 🐝:// styling is for recognizability; an emoji
+              scheme is not a registrable URI, so it does not auto-linkify.)
 
               Older binaries minted ids with an "ahs" text prefix instead of
               the 🐝 glyph. Those are rejected now ("swarm id uses the legacy
-              'ahs' prefix") — a swarm must be re-created to get a current 🐝…
-              id; there is no in-place upgrade.
+              'ahs' prefix") — a swarm must be re-created to get a current 🐝://…
+              id; there is no in-place upgrade. Conversely, a pre-🐝:// binary
+              cannot parse a 🐝://… id, so discovery is forward-compatible only.
 
        IDENTITY
               A nickname is a display label, not an identity, and is not

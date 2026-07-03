@@ -407,7 +407,7 @@ impl Output {
 
     /// Surface the swarm identifier at startup (stderr). Human mode
     /// prints the runnable join command (`ahsw join <id>`); JSON mode
-    /// prints the bare `🐝…` id (the integration harness greps this);
+    /// prints the canonical `🐝://…` id (the integration harness greps this);
     /// Silent suppresses it.
     pub(crate) fn swarm_id_line(&self, id: &SwarmId) {
         self.dispatch(

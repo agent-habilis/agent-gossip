@@ -36,6 +36,12 @@ pub use name::{NameError, SwarmName};
 
 const PREFIX: &str = "🐝";
 
+/// The URI separator that follows the `🐝` sigil in the canonical id
+/// (`🐝://<base58>`). Optional on input — a legacy bare `🐝<base58>` id
+/// still parses. Never appears in a filesystem path (see
+/// [`crate::util::swarm_prefix`]).
+pub(crate) const SEPARATOR: &str = "://";
+
 /// Id format version. A single byte reserved so the encoding can evolve;
 /// an unknown version is rejected.
 const VERSION: u8 = 1;
@@ -275,7 +281,7 @@ impl fmt::Display for Swarm {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let bytes = self.encode_bytes();
         let encoded = base58check_encode(&bytes);
-        write!(f, "{PREFIX}{encoded}")
+        write!(f, "{PREFIX}{SEPARATOR}{encoded}")
     }
 }
 
@@ -312,9 +318,10 @@ impl FromStr for Swarm {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self> {
-        let payload = s
+        let rest = s
             .strip_prefix(PREFIX)
             .context("Invalid swarm prefix: expected '🐝'")?;
+        let payload = rest.strip_prefix(SEPARATOR).unwrap_or(rest);
         let bytes = base58check_decode(payload)?;
         Self::decode_bytes(&bytes)
     }
@@ -472,7 +479,7 @@ mod swarm_tests {
         let swarm = Swarm::new(dummy_seed(), dummy_name(), SwarmConfig::public_preset());
         assert_eq!(
             swarm.to_string(),
-            "🐝2UXAThUkdBAbiJNXvCt4YeMGQ9myFg7gJJZSr3pG3MAGzUwWmmV7D2NgrWBn1"
+            "🐝://2UXAThUkdBAbiJNXvCt4YeMGQ9myFg7gJJZSr3pG3MAGzUwWmmV7D2NgrWBn1"
         );
         let topic =
             super::crypto::derive_topic_id(swarm.seed(), &swarm.name, &swarm.config_bytes());

@@ -43,7 +43,7 @@ session, stops each gracefully (the daemon broadcasts `left` and removes
 its session file), and reports:
 
 ```json
-{"ok":true,"left":[{"swarm":"🐝…","name":"…","nickname":"…","pid":123,"confirmed":true}],"other_sessions":0}
+{"ok":true,"left":[{"swarm":"🐝://…","name":"…","nickname":"…","pid":123,"confirmed":true}],"other_sessions":0}
 ```
 
 - `left` non-empty → print one Output line per entry, using each entry's

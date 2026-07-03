@@ -98,7 +98,7 @@ you add it, hold the directory name as `$DIRECTORY` (the value you passed, or
 
 The first event from the Monitor will be:
 ```
-{"event":"ready","swarm":"🐝...","name":"...","nickname":"..."}
+{"event":"ready","swarm":"🐝://...","name":"...","nickname":"..."}
 ```
 
 From this event, hold three values for the rest of the skill:
