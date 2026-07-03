@@ -94,6 +94,7 @@ mod tests {
             Commands::Join { .. }
             | Commands::Forum { .. }
             | Commands::Msg { .. }
+            | Commands::Notice { .. }
             | Commands::Poll { .. }
             | Commands::Ping { .. }
             | Commands::Pipe { .. }
@@ -173,6 +174,7 @@ mod tests {
             Commands::Join { .. }
             | Commands::Forum { .. }
             | Commands::Msg { .. }
+            | Commands::Notice { .. }
             | Commands::Poll { .. }
             | Commands::Ping { .. }
             | Commands::Pipe { .. }

@@ -13,8 +13,8 @@ use std::time::{Duration, Instant};
 
 use common::{
     CONNECT_TIMEOUT, InProcNode, MSG_TIMEOUT, Msg, Node, POLL, RECOVERY_TIMEOUT, RUNTIME_DIR, bin,
-    cli_message, cli_message_raw, cli_peers, cli_ping, cli_poll, cli_poll_wait, serial_guard,
-    socket_path, tmp_log, trace_log, wait_total, wait_until,
+    cli_message, cli_message_raw, cli_notice, cli_peers, cli_ping, cli_poll, cli_poll_wait,
+    serial_guard, socket_path, tmp_log, trace_log, wait_total, wait_until,
 };
 use serde_json::json;
 
@@ -321,6 +321,64 @@ async fn test_reply_only_visible_to_addressee() {
             .iter()
             .any(|msg| msg.body.as_str() == "filter-test reply"),
         "gamma (uninvolved) should NOT see the directed reply but did"
+    );
+}
+
+/// A broadcast notice is delivered like a msg but surfaces as
+/// `type:"notice"` with the `(notice)` display marker — the field agents
+/// key the never-auto-reply contract on.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_notice_delivery_surfaces_as_notice() {
+    let creator = InProcNode::create("netnotice").await;
+    let mut joiner = InProcNode::join(&creator.swarm, "joiner-notice").await;
+
+    creator.notice(None, "build green").await;
+
+    assert!(
+        joiner.wait_body("build green", MSG_TIMEOUT).await,
+        "joiner never received the notice"
+    );
+    let notices: Vec<serde_json::Value> = joiner
+        .json_events()
+        .into_iter()
+        .filter(|event| event["type"] == "notice")
+        .collect();
+    assert_eq!(notices.len(), 1, "expected exactly 1 notice");
+    assert_eq!(notices[0]["event"], "message");
+    assert_eq!(notices[0]["body"], "build green");
+    assert!(notices[0]["reply"].is_null());
+    assert_eq!(
+        notices[0]["display"],
+        format!("🐝️ `<{}>` (notice): build green", creator.nickname)
+    );
+}
+
+/// A directed notice has the same privacy as a directed msg: surfaced only
+/// by its addressee; an uninvolved peer relays without seeing it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_directed_notice_only_visible_to_addressee() {
+    let mut alpha = InProcNode::create("netnotdir").await;
+    let mut beta = InProcNode::join(&alpha.swarm, "beta-notdir").await;
+    let mut gamma = InProcNode::join(&alpha.swarm, "gamma-notdir").await;
+
+    alpha.send("warm up the mesh").await;
+    assert!(
+        beta.wait_inbound(1, MSG_TIMEOUT).await && gamma.wait_inbound(1, MSG_TIMEOUT).await,
+        "alpha's message never reached beta and gamma"
+    );
+
+    beta.notice(Some(&alpha.nickname), "directed notice").await;
+
+    assert!(
+        alpha.wait_body("directed notice", MSG_TIMEOUT).await,
+        "alpha (the addressee) should see the directed notice but didn't"
+    );
+    assert!(
+        !gamma
+            .inbound()
+            .iter()
+            .any(|msg| msg.body.as_str() == "directed notice"),
+        "gamma (uninvolved) should NOT see the directed notice but did"
     );
 }
 
@@ -965,6 +1023,54 @@ fn test_ready_gate_emits_identity_json_on_success() {
     assert_eq!(parsed["name"], "cool-team");
     assert_eq!(parsed["nickname"], "calm-otter");
     let _ = fs::remove_file(&state_file);
+}
+
+/// The subprocess wire contract for `ahsw notice`: the CLI accepts it, and
+/// the poll record carries the pinned `type:"notice"` shape with the
+/// `(notice)` display marker — what agents key the no-auto-reply contract on.
+#[test]
+fn test_notice_wire_contract_over_cli_and_poll() {
+    let (creator, swarm) = Node::create();
+    let joiner = Node::join(&swarm, "joiner-notice-cli");
+    assert!(creator.wait_ready(&swarm), "creator socket never appeared");
+    assert!(joiner.wait_ready(&swarm), "joiner socket never appeared");
+    std::thread::sleep(Duration::from_secs(2));
+
+    cli_notice(&swarm, &joiner.nickname, "ci green", None);
+
+    // The sender's own echo lands in its poll buffer with the pinned shape.
+    let polled = wait_until(
+        || {
+            let raw = cli_poll(&swarm, &joiner.nickname, None);
+            let events: Vec<serde_json::Value> = serde_json::from_str(&raw).unwrap_or_default();
+            events
+                .iter()
+                .filter(|event| event["type"] == "notice")
+                .count()
+        },
+        1,
+        MSG_TIMEOUT,
+    );
+    assert_eq!(polled, 1, "notice never surfaced in poll");
+
+    let raw = cli_poll(&swarm, &joiner.nickname, None);
+    let events: Vec<serde_json::Value> = serde_json::from_str(&raw)
+        .unwrap_or_else(|error| panic!("failed to parse poll JSON: {error}\nraw: {raw}"));
+    let notice = events
+        .iter()
+        .find(|event| event["type"] == "notice")
+        .expect("notice record present");
+    assert!(
+        notice["seq"].is_u64(),
+        "poll record carries a seq: {notice}"
+    );
+    assert_eq!(notice["event"], "message");
+    assert_eq!(notice["body"], "ci green");
+    assert_eq!(notice["self"], true, "joiner authored it → self:true");
+    assert_eq!(
+        notice["display"],
+        "🐝️ `<joiner-notice-cli>` (notice): ci green"
+    );
 }
 
 /// The poll command retrieves buffered events from a running swarm process,

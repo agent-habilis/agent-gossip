@@ -149,14 +149,24 @@ export async function forumSwarm({ string, nickname, model }: ForumOptions): Pro
   return spawnSession({ args, timeoutMs: 60_000, model });
 }
 
-export function sendSwarmMessage({ text, reply }: { text: string; reply?: string }): void {
+// `notice: true` sends the no-auto-reply kind (`ahsw notice`) — same flags,
+// different receiver contract.
+export function sendSwarmMessage({
+  text,
+  reply,
+  notice,
+}: {
+  text: string;
+  reply?: string;
+  notice?: boolean;
+}): void {
   if (!state.session?.swarm) throw new Error("Not in a swarm");
   if (!isValidBody(text)) {
     throw new Error("Message body must not contain control characters other than tab/newline");
   }
 
   const args = [
-    "msg",
+    notice ? "notice" : "msg",
     "--swarm",
     state.session.swarm,
     "--nickname",

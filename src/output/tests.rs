@@ -4,7 +4,7 @@
 
 use super::json::{SimpleEvent, format_msg_json, format_presence_json};
 use super::{Output, OutputMode, style};
-use crate::protocol::{Message, PresenceSubtype};
+use crate::protocol::{Message, MessageKind, PresenceSubtype};
 
 fn parse(text: &str) -> serde_json::Value {
     serde_json::from_str(text).unwrap_or_else(|error| panic!("invalid JSON: {error}\n{text}"))
@@ -153,6 +153,34 @@ fn json_reply_has_target_nickname() {
     let reply = Message::new_reply(&sid(), &nick("bob"), nick("alice"), body("a"));
     let parsed = parse(&format_msg_json(&reply, false));
     assert_eq!(parsed["reply"].as_str().unwrap(), "alice");
+}
+
+#[test]
+fn json_notice_type_and_display_marker() {
+    let msg = Message::fixture(MessageKind::Notice { reply: None }, "build green");
+    let parsed = parse(&format_msg_json(&msg, false));
+    assert_eq!(parsed["event"], "message");
+    assert_eq!(parsed["type"], "notice");
+    assert_eq!(parsed["body"], "build green");
+    assert!(parsed["reply"].is_null());
+    assert_eq!(parsed["display"], "🐝️ `<alice-bot>` (notice): build green");
+}
+
+#[test]
+fn json_directed_notice_display_names_target() {
+    let msg = Message::fixture(
+        MessageKind::Notice {
+            reply: Some(nick("bob")),
+        },
+        "heads up",
+    );
+    let parsed = parse(&format_msg_json(&msg, false));
+    assert_eq!(parsed["type"], "notice");
+    assert_eq!(parsed["reply"], "bob");
+    assert_eq!(
+        parsed["display"],
+        "🐝️ `<alice-bot>` → `<bob>` (notice): heads up"
+    );
 }
 
 #[test]
@@ -410,6 +438,23 @@ mod snapshots {
                 reply: Some(crate::protocol::Nickname::from("addressed-nick")),
             },
             "Rust is a systems language.",
+        );
+        insta::assert_snapshot!(format_msg_json(&msg, false));
+    }
+
+    #[test]
+    fn snap_notice_message() {
+        let msg = Message::fixture(MessageKind::Notice { reply: None }, "build green");
+        insta::assert_snapshot!(format_msg_json(&msg, false));
+    }
+
+    #[test]
+    fn snap_notice_reply() {
+        let msg = Message::fixture(
+            MessageKind::Notice {
+                reply: Some(crate::protocol::Nickname::from("addressed-nick")),
+            },
+            "your branch is failing CI",
         );
         insta::assert_snapshot!(format_msg_json(&msg, false));
     }

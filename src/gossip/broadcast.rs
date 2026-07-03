@@ -198,7 +198,17 @@ pub(crate) async fn handle_stdin_line(
         };
         (body, None)
     };
-    match broadcast_message(swarm, author, body, reply, state, sender, out).await {
+    match broadcast_message(
+        swarm,
+        author,
+        body,
+        MessageKind::Msg { reply },
+        state,
+        sender,
+        out,
+    )
+    .await
+    {
         Ok(_) => state.last_sent_at = Instant::now(),
         Err(error) => out.report_error(&error),
     }
@@ -319,16 +329,16 @@ fn split_body(body: &str, budget: usize) -> Option<Vec<&str>> {
     Some(chunks)
 }
 
-/// Build, chain-stamp, part-tag and sign one outbound `Msg`/reply (without
-/// serializing — the caller measures or serializes).
+/// Build, chain-stamp, part-tag and sign one outbound chat message (`Msg` or
+/// `Notice`, without serializing — the caller measures or serializes).
 #[expect(
     clippy::too_many_arguments,
-    reason = "a chained, part-tagged Msg needs the kind (reply), body, chain (seq/prev/parents), part header and signer; the daemon stamps these inline to interleave chain stamping with the multipart split"
+    reason = "a chained, part-tagged chat message needs the kind, body, chain (seq/prev/parents), part header and signer; the daemon stamps these inline to interleave chain stamping with the multipart split"
 )]
 fn build_msg(
     swarm: &SwarmId,
     author: &Nickname,
-    reply: Option<&Nickname>,
+    kind: &MessageKind,
     body: MessageBody,
     seq: u64,
     prev: Option<String>,
@@ -336,14 +346,11 @@ fn build_msg(
     part: Option<Part>,
     signer: &Identity,
 ) -> Message {
-    match reply {
-        None => Message::new_message(swarm, author, body),
-        Some(target) => Message::new_reply(swarm, author, target.clone(), body),
-    }
-    .with_chain(seq, prev)
-    .with_parents(parents)
-    .with_part(part)
-    .signed(signer)
+    Message::new_chat(swarm, author, kind.clone(), body)
+        .with_chain(seq, prev)
+        .with_parents(parents)
+        .with_part(part)
+        .signed(signer)
 }
 
 /// Broadcast (or buffer, while unmeshed) one fully-built `Msg` and commit it to
@@ -374,31 +381,29 @@ async fn send_msg_part(
     Ok(())
 }
 
-/// The reassembled logical `Msg` to echo + return after a multipart send. Its
-/// `id` is the part `group`, so the sender and every receiver name the
-/// reassembled body identically. Unsigned / unchained — a local view, not a wire
-/// message (the parts carry the wire bytes and the chain entries).
+/// The reassembled logical chat message to echo + return after a multipart
+/// send. Its `id` is the part `group`, so the sender and every receiver name
+/// the reassembled body identically. Unsigned / unchained — a local view, not
+/// a wire message (the parts carry the wire bytes and the chain entries).
 fn synthesize_logical_msg(
     swarm: &SwarmId,
     author: &Nickname,
-    reply: Option<&Nickname>,
+    kind: &MessageKind,
     body: MessageBody,
     group: &PartGroup,
 ) -> Message {
-    let mut msg = match reply {
-        None => Message::new_message(swarm, author, body),
-        Some(target) => Message::new_reply(swarm, author, target.clone(), body),
-    };
+    let mut msg = Message::new_chat(swarm, author, kind.clone(), body);
     msg.id = MessageId::new(group.as_str()).expect("a part group is a valid message id");
     msg
 }
 
-/// Build, sign, log and gossip-broadcast one outbound message. The
-/// single source of truth for the send path: the CLI socket's IPC `Msg`
-/// command and the typed in-process `SessionRequest::Send` both funnel
-/// through here so they cannot drift. A body too large for one message is
-/// transparently split into `part`-tagged messages the receiver reassembles;
-/// the returned [`Message`] is the whole logical body either way.
+/// Build, sign, log and gossip-broadcast one outbound chat message (`kind` is
+/// `Msg` or `Notice`, open or directed). The single source of truth for the
+/// send path: the CLI socket's IPC `Msg`/`Notice` commands and the typed
+/// in-process `SessionRequest::Send` all funnel through here so they cannot
+/// drift. A body too large for one message is transparently split into
+/// `part`-tagged messages the receiver reassembles; the returned [`Message`]
+/// is the whole logical body either way.
 ///
 /// # Errors
 /// Propagates a [`Message::serialize`] failure and a gossip broadcast error,
@@ -408,7 +413,7 @@ pub(crate) async fn broadcast_message(
     swarm: &SwarmId,
     author: &Nickname,
     body: MessageBody,
-    reply: Option<Nickname>,
+    kind: MessageKind,
     state: &mut EventLoopState,
     sender: &GossipSender,
     out: &output::Output,
@@ -420,7 +425,7 @@ pub(crate) async fn broadcast_message(
     let single = build_msg(
         swarm,
         author,
-        reply.as_ref(),
+        &kind,
         body.clone(),
         state.self_seq,
         state.self_prev.clone(),
@@ -450,7 +455,7 @@ pub(crate) async fn broadcast_message(
     let probe = build_msg(
         swarm,
         author,
-        reply.as_ref(),
+        &kind,
         MessageBody::new(String::new()).expect("empty body is valid"),
         state.self_seq,
         Some(hash_stub),
@@ -487,7 +492,7 @@ pub(crate) async fn broadcast_message(
         let msg = build_msg(
             swarm,
             author,
-            reply.as_ref(),
+            &kind,
             chunk_body,
             state.self_seq,
             state.self_prev.clone(),
@@ -498,7 +503,7 @@ pub(crate) async fn broadcast_message(
         let bytes = Bytes::from(msg.serialize()?);
         send_msg_part(state, sender, out, &msg, bytes, false).await?;
     }
-    let logical = synthesize_logical_msg(swarm, author, reply.as_ref(), body, &group);
+    let logical = synthesize_logical_msg(swarm, author, &kind, body, &group);
     out.print_message_ex(&logical, true);
     Ok((logical.id.clone(), logical))
 }
@@ -717,8 +722,18 @@ pub(crate) async fn handle_session_request(
     output: &output::Output,
 ) -> bool {
     match req {
-        SessionRequest::Send { body, reply, resp } => {
-            let outcome = broadcast_message(swarm, author, body, reply, state, sender, output)
+        SessionRequest::Send {
+            body,
+            reply,
+            notice,
+            resp,
+        } => {
+            let kind = if notice {
+                MessageKind::Notice { reply }
+            } else {
+                MessageKind::Msg { reply }
+            };
+            let outcome = broadcast_message(swarm, author, body, kind, state, sender, output)
                 .await
                 .map(|(_id, msg)| msg);
             let sent_ok = outcome.is_ok();

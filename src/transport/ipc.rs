@@ -47,6 +47,15 @@ pub(crate) enum IpcCommand {
         #[serde(skip_serializing_if = "Option::is_none")]
         reply: Option<Nickname>,
     },
+    /// Send a notice — a `Msg` in every respect except the receiver contract
+    /// that agents must never auto-reply to one (loop prevention).
+    #[serde(rename = "notice")]
+    Notice {
+        swarm: SwarmId,
+        body: MessageBody,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        reply: Option<Nickname>,
+    },
     #[serde(rename = "poll")]
     Poll {
         swarm: SwarmId,
@@ -119,6 +128,7 @@ impl IpcCommand {
     pub(crate) fn swarm_id(&self) -> Option<&SwarmId> {
         match self {
             IpcCommand::Msg { swarm, .. }
+            | IpcCommand::Notice { swarm, .. }
             | IpcCommand::Poll { swarm, .. }
             | IpcCommand::Ping { swarm }
             | IpcCommand::Task { swarm, .. }
@@ -457,6 +467,7 @@ mod tests {
             | IpcCommand::MetaMerge { .. }
             | IpcCommand::MetaGet { .. }
             | IpcCommand::StateGet { .. }
+            | IpcCommand::Notice { .. }
             | IpcCommand::Info => panic!("expected StateMerge"),
         }
     }
@@ -482,6 +493,7 @@ mod tests {
             | IpcCommand::MetaMerge { .. }
             | IpcCommand::MetaGet { .. }
             | IpcCommand::StateGet { .. }
+            | IpcCommand::Notice { .. }
             | IpcCommand::Info => panic!("expected Msg"),
         }
     }
@@ -508,6 +520,7 @@ mod tests {
             | IpcCommand::MetaMerge { .. }
             | IpcCommand::MetaGet { .. }
             | IpcCommand::StateGet { .. }
+            | IpcCommand::Notice { .. }
             | IpcCommand::Info => panic!("expected Poll"),
         }
     }
@@ -530,6 +543,7 @@ mod tests {
             | IpcCommand::MetaMerge { .. }
             | IpcCommand::MetaGet { .. }
             | IpcCommand::StateGet { .. }
+            | IpcCommand::Notice { .. }
             | IpcCommand::Info => panic!("expected Ping"),
         }
     }
@@ -560,6 +574,7 @@ mod tests {
             | IpcCommand::MetaMerge { .. }
             | IpcCommand::MetaGet { .. }
             | IpcCommand::StateGet { .. }
+            | IpcCommand::Notice { .. }
             | IpcCommand::Info => panic!("expected Task"),
         }
     }
@@ -582,6 +597,7 @@ mod tests {
             | IpcCommand::MetaMerge { .. }
             | IpcCommand::MetaGet { .. }
             | IpcCommand::StateGet { .. }
+            | IpcCommand::Notice { .. }
             | IpcCommand::Info => panic!("expected Peers"),
         }
     }
@@ -756,7 +772,8 @@ mod tests {
                     IpcCommand::Msg { body, .. } => {
                         let _ = resp_tx.send(json_ok(&format!("got: {body}")));
                     }
-                    IpcCommand::Poll { .. }
+                    IpcCommand::Notice { .. }
+                    | IpcCommand::Poll { .. }
                     | IpcCommand::Ping { .. }
                     | IpcCommand::Task { .. }
                     | IpcCommand::Peers { .. }

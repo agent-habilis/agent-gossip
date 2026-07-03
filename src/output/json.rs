@@ -221,6 +221,17 @@ fn msg_display(author: &str, body: &str, reply: Option<&str>) -> String {
     }
 }
 
+/// `display` line for a `notice` event — the msg line with a `(notice)`
+/// marker after the nick(s), so a reader applying the no-auto-reply contract
+/// sees it without parsing the `type` field. See [`msg_display`] for the
+/// backtick rationale.
+fn notice_display(author: &str, body: &str, reply: Option<&str>) -> String {
+    match reply {
+        Some(target) => format!("🐝️ `<{author}>` → `<{target}>` (notice): {body}"),
+        None => format!("🐝️ `<{author}>` (notice): {body}"),
+    }
+}
+
 /// `display` line for a `task` event:
 /// `` 🐝️ task offer `<author>` → `<to>`: body ``. See
 /// [`msg_display`] for the backtick rationale. The skill may render a
@@ -305,7 +316,7 @@ pub(super) fn format_presence_json(msg: &Message, subtype: PresenceSubtype) -> S
     .expect("presence event serialization should never fail")
 }
 
-/// Format a Msg as a JSON string. Presence uses
+/// Format a chat message (`Msg`/`Notice`) as a JSON string. Presence uses
 /// `format_presence_json`; `PeerInfo` is never printed.
 pub(super) fn format_msg_json(msg: &Message, is_self: bool) -> String {
     match &msg.kind {
@@ -321,6 +332,18 @@ pub(super) fn format_msg_json(msg: &Message, is_self: bool) -> String {
             is_self,
         })
         .expect("message event serialization should never fail"),
+        MessageKind::Notice { reply } => serde_json::to_string(&MsgLine {
+            header: message_header(msg, "notice"),
+            body: msg.body.as_str(),
+            reply: reply.as_ref().map(Nickname::as_str),
+            display: notice_display(
+                msg.author.as_str(),
+                msg.body.as_str(),
+                reply.as_ref().map(Nickname::as_str),
+            ),
+            is_self,
+        })
+        .expect("notice event serialization should never fail"),
         MessageKind::Presence { .. }
         | MessageKind::PeerInfo
         | MessageKind::Digest
@@ -331,7 +354,7 @@ pub(super) fn format_msg_json(msg: &Message, is_self: bool) -> String {
         | MessageKind::State
         | MessageKind::Meta
         | MessageKind::Task { .. } => {
-            unreachable!("format_msg_json only handles Msg")
+            unreachable!("format_msg_json only handles the chat kinds")
         }
     }
 }

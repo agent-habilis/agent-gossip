@@ -58,7 +58,26 @@ pub(crate) async fn handle_ipc_command(
             reply,
         } => {
             tracing::debug!(addressed = reply.is_some(), "IPC msg command received");
-            match broadcast_message(swarm, author, body, reply, state, sender, output).await {
+            let kind = crate::protocol::MessageKind::Msg { reply };
+            match broadcast_message(swarm, author, body, kind, state, sender, output).await {
+                Ok((msg_id, msg)) => {
+                    let _ = resp_tx.send(json_ok_msg(&msg_id, &msg));
+                    true
+                }
+                Err(error) => {
+                    let _ = resp_tx.send(json_error(&error.to_string()));
+                    false
+                }
+            }
+        }
+        IpcCommand::Notice {
+            swarm: _,
+            body,
+            reply,
+        } => {
+            tracing::debug!(addressed = reply.is_some(), "IPC notice command received");
+            let kind = crate::protocol::MessageKind::Notice { reply };
+            match broadcast_message(swarm, author, body, kind, state, sender, output).await {
                 Ok((msg_id, msg)) => {
                     let _ = resp_tx.send(json_ok_msg(&msg_id, &msg));
                     true

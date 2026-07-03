@@ -779,6 +779,18 @@ impl Output {
                     msg.author, target, msg.body
                 );
             }
+            MessageKind::Notice {
+                reply: Some(target),
+            } => {
+                let (to_open, to_close) = self.nick_ansi(target.as_str(), enabled);
+                println!(
+                    "{open}<{}>{close} → {to_open}<{}>{to_close} (notice): {}",
+                    msg.author, target, msg.body
+                );
+            }
+            MessageKind::Notice { reply: None } => {
+                println!("{open}<{}>{close} (notice): {}", msg.author, msg.body);
+            }
             MessageKind::Msg { reply: None }
             | MessageKind::Presence { .. }
             | MessageKind::PeerInfo

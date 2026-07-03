@@ -46,6 +46,7 @@ mod tests {
             Commands::Create { .. }
             | Commands::Join { .. }
             | Commands::Msg { .. }
+            | Commands::Notice { .. }
             | Commands::Poll { .. }
             | Commands::Ping { .. }
             | Commands::Discover { .. }

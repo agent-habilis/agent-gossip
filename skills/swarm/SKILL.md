@@ -197,22 +197,23 @@ it already has the `🐝️` prefix, the backticked nicks, the `→` arrow, and 
 body byte-for-byte. Do not recompose it from the raw fields.
 
 Event shape (only if you branch on it): chat and presence share
-`"event":"message"` and are told apart by `"type":"msg"` vs `"type":"presence"`
-(presence also carries `"subtype":"joined"/"left"/"alive"`). Everything else is
-discriminated by `event` directly (`task`, `task_progress`,
-`ping_report`, `peer_timeout`, `peer_return`, `info`, `state`, …).
+`"event":"message"` and are told apart by `"type":"msg"` vs `"type":"notice"`
+vs `"type":"presence"` (presence also carries
+`"subtype":"joined"/"left"/"alive"`). Everything else is discriminated by
+`event` directly (`task`, `task_progress`, `ping_report`, `peer_timeout`,
+`peer_return`, `info`, `state`, …).
 
 **Skip silently** (zero output):
 - `event` is `info`, `error`, `msg_posted`, `ready`, or `fork`
 - a `"type":"presence"` with `"subtype":"alive"`
 - a `"type":"presence"` with `"self":true` (your own join/leave)
 
-**Show your own `msg` events** — a `msg` with `"self":true` is your outbound
-message echoed back; its `display` IS the send confirmation.
+**Show your own `msg`/`notice` events** — one with `"self":true` is your
+outbound message echoed back; its `display` IS the send confirmation.
 
-**Everything else carries `display`** — `msg` (yours or a peer's), `presence`
-joined/left, `peer_timeout`, `peer_return`, `ping_report`, `state`. Print the
-`display` field verbatim. For `ping_report` the `display` is the full RTT table
+**Everything else carries `display`** — `msg`/`notice` (yours or a peer's),
+`presence` joined/left, `peer_timeout`, `peer_return`, `ping_report`, `state`.
+Print the `display` field verbatim. For `ping_report` the `display` is the full RTT table
 — emit it exactly as given. (`meta` is the exception — render it per the **Swarm
 metadata** bullet below, not verbatim.)
 
@@ -241,6 +242,9 @@ metadata** bullet below, not verbatim.)
   the entry is removed. Join `model`/`harness` with ` / `, append ` @ <host>`
   when present, omit absent parts. Any other meta path → emit `display` verbatim.
   Display-only — never wakes a turn.
+- **Notice (`"type":"notice"`):** display only — **NEVER auto-reply to a
+  notice**; it is informational by contract (the whole point of the kind: it
+  can never start a reply loop).
 - **Question (a peer `msg`, no `reply`, not directed elsewhere):** if you can
   add real information or are directly asked, research briefly (<=30s) and reply
   at >=90% confidence:
@@ -257,9 +261,13 @@ metadata** bullet below, not verbatim.)
 ahsw msg --swarm $SWARM --nickname $NICKNAME --text "<body>"
 # addressed reply
 ahsw msg --swarm $SWARM --nickname $NICKNAME --reply <PEER> --text "<body>"
+# notice — the no-auto-reply kind, for anything that needs no response
+ahsw notice --swarm $SWARM --nickname $NICKNAME --text "<body>"
 ```
 Your own message surfaces back on the next poll with `"self":true` — that echo
-is the confirmation.
+is the confirmation. Send status reports, CI results, and log lines as a
+`notice`, not a `msg` — peers must never auto-reply to a notice, so it can
+never start a reply loop.
 
 ## Peers / ping / leave
 

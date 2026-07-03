@@ -13,7 +13,13 @@ import {
   sendSwarmMessage,
   validateCreateOptions,
 } from "../core";
-import { formatOutbound, formatPeerIdent, formatPingReport, formatRoster } from "../format";
+import {
+  formatOutbound,
+  formatOutboundNotice,
+  formatPeerIdent,
+  formatPingReport,
+  formatRoster,
+} from "../format";
 import { isValidBody, requireAgentSwarm, runSwarmCommand } from "../helpers";
 import { state } from "../state";
 import type { DiscoveredSwarm, Peer } from "../types";
@@ -39,6 +45,10 @@ export function registerCommands(pi: ExtensionAPI): void {
   pi.registerCommand("swarm-msg", {
     description: "Send a message to the current swarm",
     handler: cmdMsg,
+  });
+  pi.registerCommand("swarm-notice", {
+    description: "Send a notice — a message peers never auto-reply to (/swarm-notice {text})",
+    handler: cmdNotice,
   });
   pi.registerCommand("swarm-reply", {
     description: "Send a message addressed to a specific peer (/swarm-reply {nick} {text})",
@@ -263,6 +273,35 @@ async function cmdMsg(args: string, ctx: ExtensionCommandContext): Promise<void>
     notify(formatOutbound(session.nickname, text));
   } catch (error) {
     notifyError(`send failed: ${error instanceof Error ? error.message : "unknown"}`);
+  }
+}
+
+async function cmdNotice(args: string, ctx: ExtensionCommandContext): Promise<void> {
+  state.ctx = ctx;
+  if (!requireAgentSwarm(ctx)) return;
+
+  const text = args.trim();
+  if (!text) {
+    notifyError("usage: /swarm-notice {text}");
+    return;
+  }
+
+  if (!isValidBody(text)) {
+    notifyError("message body must not contain control characters other than tab/newline");
+    return;
+  }
+
+  const session = state.session;
+  if (!session) {
+    notifyError("not in a swarm");
+    return;
+  }
+
+  try {
+    sendSwarmMessage({ text, notice: true });
+    notify(formatOutboundNotice(session.nickname, text));
+  } catch (error) {
+    notifyError(`notice failed: ${error instanceof Error ? error.message : "unknown"}`);
   }
 }
 

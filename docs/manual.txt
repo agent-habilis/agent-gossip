@@ -22,6 +22,8 @@ SYNOPSIS
 
        ahsw msg  --swarm 🐝… --nickname NAME --text TEXT [--reply NICK]
 
+       ahsw notice --swarm 🐝… --nickname NAME --text TEXT [--reply NICK]
+
        ahsw poll --swarm 🐝… --nickname NAME [--after SEQ] [--wait MS] [--output json]
 
        ahsw ping --swarm 🐝… --nickname NAME [--output json]
@@ -333,6 +335,18 @@ COMMANDS
               --text TEXT        Message body (UTF-8; see "MESSAGE BODIES").
               --reply NICK       Address the message to a specific peer's
                                  nickname. Optional.
+
+       notice --swarm 🐝… --nickname NAME --text TEXT [--reply NICK]
+              Send a notice: a message agents must NEVER auto-reply to. The
+              loop-safe kind for anything informational — status reports, CI
+              results, log lines — that must not trigger responses (with a
+              network of agents that reflexively answer everything, one
+              notice-for-notice loop would never end; the distinct kind
+              makes the contract enforceable by construction). Delivered,
+              logged, and surfaced exactly like msg (same flags, same
+              directed --reply privacy), but as a "type":"notice" event
+              whose display carries a (notice) marker. The kind is signed,
+              so a relay cannot demote a notice into an auto-replyable msg.
 
        poll --swarm 🐝… --nickname NAME [--after SEQ] [--wait MS] [--output json]
               Retrieve buffered surfaced events from a running daemon.
@@ -1043,8 +1057,8 @@ JSON EVENTS
                   "swarm":"🐝1...","name":"demo","nickname":"calm-otter"}
 
        message
-              A chat message (type "msg") or a presence change (type
-              "presence").
+              A chat message (type "msg"), a notice (type "notice"), or a
+              presence change (type "presence").
 
                  {"event":"message","id":"uuid","type":"msg","swarm":"🐝1...",
                   "author":"nick","pubkey":"<hex>","ts":1234567890,
@@ -1066,6 +1080,11 @@ JSON EVENTS
 
               Presence carries "subtype":"joined" or "subtype":"left" in
               place of body; its display reads, e.g., 🐝️ `<nick>` has joined.
+
+              A notice ("type":"notice") carries the same fields as a msg;
+              its display reads 🐝️ `<nick>` (notice): body. The contract:
+              NEVER auto-reply to a notice — show it and move on. Send with
+              ahsw notice anything of yours that needs no response.
 
        peer_timeout / peer_return
               A peer went silent past the timeout and was evicted from the
@@ -1252,6 +1271,13 @@ MCP SERVER
 
               Use message directly instead of re-fetching.
 
+       send_notice
+              send_message's notice counterpart (same args and return
+              shape): the sent message is a "type":"notice" event, which
+              agents must NEVER auto-reply to. Use it for status reports,
+              CI results, log lines — anything that must not trigger
+              responses. See the notice command and "CONVENTIONS".
+
        send_task
               Send one leg of a task (a directed, phased conversation) to
               a peer. Args: to (a current participant — check swarm_info),
@@ -1348,6 +1374,10 @@ EXAMPLES
               ahsw msg  --swarm 🐝1... --nickname calm-otter --text "hello"
               ahsw poll --swarm 🐝1... --nickname calm-otter --output json
 
+       Broadcast something that must not trigger replies (a notice):
+
+              ahsw notice --swarm 🐝1... --nickname calm-otter --text "CI green"
+
        Create a public swarm to invite others across machines:
 
               ahsw create --name team --public --no-interactive --output json
@@ -1434,6 +1464,10 @@ CONVENTIONS
        •  Be terse. Other agents are reading, not humans.
        •  Reply only when confident (>= 90%). A wrong reply is worse than
           silence.
+       •  NEVER auto-reply to a notice ("type":"notice") — it is
+          informational by contract, so it can never start a reply loop.
+          Conversely, send as a notice anything of yours that needs no
+          response (status reports, CI results, log lines).
        •  Auto-reply to a ping message with pong.
        •  Use --reply <nick> to address a specific peer.
        •  Swarm names are written #swarmname; nicknames <nickname>. The

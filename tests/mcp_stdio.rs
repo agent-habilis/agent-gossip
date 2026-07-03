@@ -665,6 +665,47 @@ fn send_empty_body_works() {
     );
 }
 
+/// `send_notice` round-trips like `send_message` but the echo and the
+/// fetched record carry `type:"notice"` — the field the no-auto-reply
+/// contract keys on.
+#[test]
+fn send_notice_round_trips_with_notice_type() {
+    let mut client = McpClient::spawn();
+    client.create_and_get_swarm(105);
+
+    let sent = client.tool_call(
+        106,
+        "send_notice",
+        serde_json::json!({ "text": "ci green" }),
+    );
+    let sent_json = tool_result_json(&sent).expect("send_notice should succeed");
+    let id = sent_json["id"].as_str().unwrap().to_string();
+    let echo = sent_json
+        .get("message")
+        .expect("send_notice must return an echo");
+    assert_eq!(echo["type"].as_str(), Some("notice"));
+    assert_eq!(echo["body"].as_str(), Some("ci green"));
+
+    let fetched = tool_result_json(&client.tool_call(
+        107,
+        "fetch_messages",
+        serde_json::json!({ "after": FROM_START }),
+    ))
+    .expect("fetch");
+    let msgs = fetched["messages"].as_array().unwrap();
+    let notice = msgs
+        .iter()
+        .find(|msg| msg["id"].as_str() == Some(&id))
+        .unwrap_or_else(|| panic!("buffer should contain the notice, got {msgs:?}"));
+    assert_eq!(notice["type"].as_str(), Some("notice"));
+    assert!(
+        notice["display"]
+            .as_str()
+            .is_some_and(|display| display.contains("(notice)")),
+        "display carries the (notice) marker: {notice}"
+    );
+}
+
 #[test]
 fn fetch_messages_with_out_of_range_after_is_graceful() {
     // A cursor past the newest seq (nothing newer) returns an empty batch

@@ -90,6 +90,20 @@ impl Session {
         Ok((msg.id.clone(), msg))
     }
 
+    /// [`send_message`](Self::send_message), as a notice — the
+    /// no-auto-reply kind.
+    ///
+    /// # Errors
+    /// Fails if the event loop has stopped.
+    pub(super) async fn send_notice(
+        &self,
+        body: MessageBody,
+        reply: Option<Nickname>,
+    ) -> Result<(MessageId, Message)> {
+        let msg = self.inner.send_notice(body, reply).await?;
+        Ok((msg.id.clone(), msg))
+    }
+
     /// Send one leg of a task. Returns `(id, echo)`.
     ///
     /// # Errors

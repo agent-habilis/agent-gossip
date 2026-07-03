@@ -118,6 +118,27 @@ impl CraftedMsg {
         self
     }
 
+    /// Flip the kind between `Msg` and `Notice` (keeping `reply`). After
+    /// signing, this is the kind-demotion attack: a relay rewriting a notice
+    /// into an auto-replyable msg (or vice versa) — the signature must break.
+    pub fn flip_chat_kind(mut self) -> Self {
+        self.msg.kind = match self.msg.kind.clone() {
+            MessageKind::Msg { reply } => MessageKind::Notice { reply },
+            MessageKind::Notice { reply } => MessageKind::Msg { reply },
+            MessageKind::Presence { .. }
+            | MessageKind::PeerInfo
+            | MessageKind::Digest
+            | MessageKind::StateDigest
+            | MessageKind::MetaDigest
+            | MessageKind::Ping
+            | MessageKind::Pong { .. }
+            | MessageKind::Task { .. }
+            | MessageKind::State
+            | MessageKind::Meta => panic!("flip_chat_kind takes a chat message"),
+        };
+        self
+    }
+
     /// This message's content hash — use as another message's `prev`/parent.
     #[must_use]
     pub fn content_hash_hex(&self) -> String {
