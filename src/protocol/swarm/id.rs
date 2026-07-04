@@ -1,4 +1,4 @@
-//! [`SwarmId`] — the validated `🐝…` *string* (shallow: prefix +
+//! [`SwarmId`] — the validated `💬…` *string* (shallow: prefix +
 //! length + Base58 charset). Cheap boundary check at the CLI / IPC
 //! edge; full structural decoding lives in [`super::Swarm`].
 
@@ -13,9 +13,9 @@ use super::{PREFIX, SEPARATOR};
 const MIN_LEN: usize = 7;
 const MAX_LEN: usize = 512;
 
-/// A swarm identifier — the encoded `🐝...` Base58Check string.
+/// A swarm identifier — the encoded `💬...` Base58Check string.
 ///
-/// Validation is shallow: prefix `🐝`, length 7..=512, Base58
+/// Validation is shallow: prefix `💬`, length 7..=512, Base58
 /// charset (`[1-9A-HJ-NP-Za-km-z]`). Full structural decoding lives
 /// in `Swarm::from_str`; the newtype rejects obvious typos at the
 /// CLI / IPC boundary without paying the decode cost on every flow.
@@ -76,10 +76,10 @@ impl SwarmId {
             }
             return Err(SwarmIdError::MissingPrefix);
         };
-        // The `://` is optional on input; normalize both `🐝<payload>` and
-        // `🐝://<payload>` to the canonical form below.
+        // The `://` is optional on input; normalize both `💬<payload>` and
+        // `💬://<payload>` to the canonical form below.
         let payload = rest.strip_prefix(SEPARATOR).unwrap_or(rest);
-        // Length is measured on the bare `🐝<payload>` form so the bounds
+        // Length is measured on the bare `💬<payload>` form so the bounds
         // don't shift with the optional separator.
         let bare_len = PREFIX.len() + payload.len();
         if !(MIN_LEN..=MAX_LEN).contains(&bare_len) {
@@ -135,15 +135,15 @@ mod swarm_id_tests {
 
     #[test]
     fn new_accepts_well_formed_id() {
-        SwarmId::new("🐝AbCdEf1234").unwrap();
+        SwarmId::new("💬AbCdEf1234").unwrap();
     }
 
     #[test]
     fn new_normalizes_to_canonical_uri_form() {
-        // Bare and `🐝://` inputs collapse to the same canonical string.
-        let bare = SwarmId::new("🐝AbCdEf1234").unwrap();
-        let uri = SwarmId::new("🐝://AbCdEf1234").unwrap();
-        assert_eq!(bare.as_str(), "🐝://AbCdEf1234");
+        // Bare and `💬://` inputs collapse to the same canonical string.
+        let bare = SwarmId::new("💬AbCdEf1234").unwrap();
+        let uri = SwarmId::new("💬://AbCdEf1234").unwrap();
+        assert_eq!(bare.as_str(), "💬://AbCdEf1234");
         assert_eq!(bare, uri);
     }
 
@@ -164,23 +164,23 @@ mod swarm_id_tests {
 
     #[test]
     fn new_rejects_too_short() {
-        assert!(matches!(SwarmId::new("🐝a"), Err(SwarmIdError::Length(_))));
+        assert!(matches!(SwarmId::new("💬a"), Err(SwarmIdError::Length(_))));
     }
 
     #[test]
     fn new_rejects_invalid_base58_chars() {
         // `0`, `O`, `I`, `l` are not in the Base58 alphabet.
         assert!(matches!(
-            SwarmId::new("🐝AbCdEf0xyz"),
+            SwarmId::new("💬AbCdEf0xyz"),
             Err(SwarmIdError::Charset(_))
         ));
     }
 
     #[test]
     fn serde_transparent_round_trip() {
-        let id = SwarmId::from("🐝AbCdEf1234");
+        let id = SwarmId::from("💬AbCdEf1234");
         let json = serde_json::to_string(&id).unwrap();
-        assert_eq!(json, "\"🐝://AbCdEf1234\"");
+        assert_eq!(json, "\"💬://AbCdEf1234\"");
         let parsed: SwarmId = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed, id);
     }

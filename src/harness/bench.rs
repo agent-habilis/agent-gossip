@@ -117,7 +117,6 @@ impl BenchMessage {
         Self(Message::new_a2a_msg(
             &swarm,
             &author,
-            None,
             MessageBody::new(body).expect("valid body"),
         ))
     }

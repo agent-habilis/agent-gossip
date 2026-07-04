@@ -9,8 +9,8 @@ use super::shared::SharedServerOpts;
 
 #[derive(Parser, Debug)]
 pub(crate) struct JoinOpts {
-    /// Swarm identifier (🐝...). Validated at parse (clap `FromStr`). For a
-    /// public swarm derived from a shared string, use `ahsw forum <string>`.
+    /// Swarm identifier (💬...). Validated at parse (clap `FromStr`). For a
+    /// public swarm derived from a shared string, use `agent-gossip forum <string>`.
     pub swarm: JoinTarget,
 
     /// Optional nickname (random word-word if not provided). A custom

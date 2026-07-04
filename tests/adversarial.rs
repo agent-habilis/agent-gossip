@@ -22,8 +22,8 @@ mod common;
 
 use std::time::{Duration, Instant};
 
-use agent_habilis_swarm::OutputEvent;
-use agent_habilis_swarm::harness::adversarial::{self, CraftedMsg};
+use agent_gossip::OutputEvent;
+use agent_gossip::harness::adversarial::{self, CraftedMsg};
 use common::{InProcNode, MSG_TIMEOUT, POLL};
 use serde_json::{Value, json};
 
@@ -403,7 +403,7 @@ async fn gap_sybil_identities_are_accepted() {
                     matches!(
                         event,
                         OutputEvent::Message { msg, is_self: false }
-                            if agent_habilis_swarm::a2a::gossip::chat_text(msg).as_deref() == Some(&body)
+                            if agent_gossip::a2a::gossip::chat_text(msg).as_deref() == Some(&body)
                     )
                 })
             })

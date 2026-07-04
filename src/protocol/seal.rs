@@ -26,7 +26,7 @@ use super::crypto::derive_secret;
 
 /// KDF label separating the seal key from every other seed-derived secret, and
 /// the AEAD associated data (bound into the tag).
-const SEAL_LABEL: &[u8] = b"agent-habilis-swarm/seal/v1";
+const SEAL_LABEL: &[u8] = b"agent-gossip/seal/v1";
 
 /// Envelope construction tag — bumped only on a breaking crypto change.
 const ENVELOPE_VERSION: &str = "x25519-chacha20poly1305/1";

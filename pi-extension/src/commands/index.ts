@@ -31,7 +31,7 @@ export function registerCommands(pi: ExtensionAPI): void {
     handler: cmdCreate,
   });
   pi.registerCommand("swarm-join", {
-    description: "Join an existing swarm by its 🐝… ID",
+    description: "Join an existing swarm by its 💬… ID",
     handler: cmdJoin,
   });
   pi.registerCommand("swarm-forum", {
@@ -90,7 +90,7 @@ export function registerCommands(pi: ExtensionAPI): void {
 }
 
 // Parse `/swarm-create [name] [flags]`. The first non-flag token is the
-// optional swarm name; recognized flags mirror the `ahsw create` CLI.
+// optional swarm name; recognized flags mirror the `agent-gossip create` CLI.
 function parseCreateArgs(args: string): {
   options: CreateOptions;
   error?: string;
@@ -176,7 +176,7 @@ async function cmdJoin(args: string, ctx: ExtensionCommandContext): Promise<void
 
   const target = args.trim();
   if (!target) {
-    notifyError("usage: /swarm-join {🐝...}");
+    notifyError("usage: /swarm-join {💬...}");
     return;
   }
 
@@ -226,7 +226,7 @@ async function cmdDiscover(args: string, ctx: ExtensionCommandContext): Promise<
     }
 
     // Option label carries name + peers + a short id so distinct swarms never
-    // collide; map it back to the full `🐝…` id for the join.
+    // collide; map it back to the full `💬…` id for the join.
     const byOption = new Map(
       swarms.map((swarm): [string, DiscoveredSwarm] => [
         `#${swarm.name} · ${swarm.peers} peers · ${swarm.swarm.slice(0, 14)}…`,
@@ -496,7 +496,7 @@ async function cmdPing(_args: string, ctx: ExtensionCommandContext): Promise<voi
   }
 }
 
-// `ahsw status` reports the binary version and whether each installed
+// `agent-gossip status` reports the binary version and whether each installed
 // integration still matches the binary — the on-demand drift check, the
 // counterpart to the startup warning folded into the `ready` event.
 async function cmdVersion(_args: string, ctx: ExtensionCommandContext): Promise<void> {

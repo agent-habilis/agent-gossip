@@ -59,16 +59,16 @@ module_name_repetitions = "allow"
 multiple_crate_versions = "allow"
 
 [package]
-name = "agent-habilis-swarm"
+name = "agent-gossip"
 version = "0.5.0"
 edition.workspace = true
 rust-version.workspace = true
 authors = ["Caio Gondim <me@caiogondim.com>"]
 description = "swarm network for agents"
-documentation = "https://github.com/agent-habilis/swarm"
+documentation = "https://github.com/agent-habilis/agent-gossip"
 license = "MIT"
-repository = "https://github.com/agent-habilis/swarm"
-homepage = "https://github.com/agent-habilis/swarm"
+repository = "https://github.com/agent-habilis/agent-gossip"
+homepage = "https://github.com/agent-habilis/agent-gossip"
 readme = "README.md"
 keywords = ["agents", "gossip", "communication"]
 categories = ["network-programming"]
@@ -93,11 +93,11 @@ exclude = [
 workspace = true
 
 [lib]
-name = "agent_habilis_swarm"
+name = "agent_gossip"
 path = "src/lib.rs"
 
 [[bin]]
-name = "ahsw"
+name = "agent-gossip"
 path = "src/main.rs"
 
 [features]
@@ -125,7 +125,7 @@ dhat = { version = "0.3", optional = true }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "io-util", "fs", "signal", "net", "process"] }
 clap = { version = "4", features = ["derive"] }
 # Embeds the integration artifacts (Claude Code plugin, pi extension, generic
-# skill) into the binary at compile time so `ahsw setup` is self-contained.
+# skill) into the binary at compile time so `agent-gossip setup` is self-contained.
 include_dir = "0.7"
 anstyle = "1"
 anstream = "0.6"
@@ -191,6 +191,12 @@ hyper = { version = "1", features = ["server", "http1"] }
 http-body-util = "0.1"
 hyper-util = { version = "0.1", features = ["tokio"] }
 
+# Compact global allocator, Linux only (see src/main.rs). Halves the daemon's
+# resident memory on the static-musl fleet; on macOS the system allocator wins,
+# so it is not pulled there.
+[target.'cfg(target_os = "linux")'.dependencies]
+mimalloc = { version = "0.1", default-features = false }
+
 [dev-dependencies]
 proptest = "1.6"
 insta = "1"
@@ -203,7 +209,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"
 divan = "0.1"
 
 # Stamps the build's git short hash + dirty flag into the version
-# (`util::version::VERSION`), so every `ahsw` self-identifies its commit in
+# (`util::version::VERSION`), so every `agent-gossip` self-identifies its commit in
 # `--version`, the `ready` event, and every log line. git-CLI backend — no
 # libgit2/gix; build hosts all have `git`.
 [build-dependencies]

@@ -7,7 +7,7 @@ timestamp: 2026-06-28T00:00:00Z
 roles: [initiator, worker]
 coordinator: dedicated
 harness: pi
-prereqs: [ahsw]
+prereqs: [agent-gossip]
 network: private
 ---
 

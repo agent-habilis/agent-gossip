@@ -136,7 +136,7 @@ struct CreateSwarmArgs {
     #[serde(default)]
     relay: Option<String>,
     /// List this swarm in a directory so others can find it with
-    /// `ahsw discover` (no id to share). Requires `network: "public"`. Note:
+    /// `agent-gossip discover` (no id to share). Requires `network: "public"`. Note:
     /// advertising broadcasts the join token — the swarm becomes open to
     /// anyone discovering the directory.
     #[serde(default)]
@@ -153,7 +153,7 @@ struct CreateSwarmArgs {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct JoinSwarmArgs {
-    /// Swarm identifier (🐝…). A shared string derives its own public
+    /// Swarm identifier (💬…). A shared string derives its own public
     /// swarm — use the `forum` command — and is not a valid join target.
     swarm: String,
     /// Optional nickname in `word-word` form. Random if omitted.
@@ -478,7 +478,7 @@ impl AgentSwarmServer {
     }
 
     #[tool(
-        description = "Join an existing swarm by its 🐝… identifier. (A shared string derives its own public swarm — that is the `forum` command — and is not a join target.) Idempotent when called for the same swarm id with the same nickname. Poll `fetch_messages` to observe incoming traffic; the server auto-tracks a per-session cursor so repeat cursor-less calls return only new entries."
+        description = "Join an existing swarm by its 💬… identifier. (A shared string derives its own public swarm — that is the `forum` command — and is not a join target.) Idempotent when called for the same swarm id with the same nickname. Poll `fetch_messages` to observe incoming traffic; the server auto-tracks a per-session cursor so repeat cursor-less calls return only new entries."
     )]
     async fn join_swarm(
         &self,
@@ -883,7 +883,7 @@ surface.
 ONE EVENT IN, ONE LINE OUT. For anything you surface, emit its `display` value \
 VERBATIM as exactly one line — never recompose it from the raw fields, never \
 summarize, paraphrase, tabulate, batch into a digest, or add a \
-preamble/postamble. `display` already carries the `🐝️` prefix, the nicks, the \
+preamble/postamble. `display` already carries the `💬️` prefix, the nicks, the \
 `→` arrow, and the body byte-for-byte.
 
 WHICH EVENTS TO SHOW. Skip silently (zero output): `event` of `info`, `error`, \

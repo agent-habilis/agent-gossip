@@ -189,7 +189,7 @@ pub(crate) fn spawn_ticket_advertiser(
                 Ok(session) => session,
                 Err(error) => {
                     tracing::warn!(
-                        target: "agent_habilis_swarm::directory",
+                        target: "agent_gossip::directory",
                         %error,
                         directory = %directory,
                         "a2a advertise: could not join the directory; ticket stays unlisted"
@@ -202,7 +202,7 @@ pub(crate) fn spawn_ticket_advertiser(
             ticker.tick().await;
             if let Err(error) = session.send(body.clone()).await {
                 tracing::debug!(
-                    target: "agent_habilis_swarm::directory",
+                    target: "agent_gossip::directory",
                     %error,
                     "a2a advertise: re-broadcast failed (will retry next tick)"
                 );
@@ -377,7 +377,7 @@ mod tests {
     #[test]
     fn swarm_ads_and_ticket_ads_never_cross_parse() {
         // A swarm ad has `id`; a ticket ad `ticket`.
-        assert!(TicketAd::parse(r#"{"id":"🐝abc","peers":2}"#).is_none());
+        assert!(TicketAd::parse(r#"{"id":"💬abc","peers":2}"#).is_none());
     }
 
     #[test]

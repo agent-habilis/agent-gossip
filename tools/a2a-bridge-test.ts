@@ -1,11 +1,11 @@
 #!/usr/bin/env bun
 // End-to-end a2a bridge test: bridge two vanilla A2A agents over the swarm.
 //
-//   agent A (server) ──▶ ahsw a2a expose ──swarm──▶ ahsw a2a connect ──▶ agent B (client)
+//   agent A (server) ──▶ agent-gossip a2a expose ──swarm──▶ agent-gossip a2a connect ──▶ agent B (client)
 //
 // Agent B discovers agent A purely through the bridge (the Agent Card's
 // rewritten `url`) and exchanges a message with the raw A2A protocol. Both
-// `ahsw` sides run with `--loopback`, so the whole thing is hermetic on one
+// `agent-gossip` sides run with `--loopback`, so the whole thing is hermetic on one
 // machine — the ticket carries the exposer's direct 127.0.0.1 address and no
 // mDNS/DHT/relay is used.
 //
@@ -17,14 +17,14 @@ const REPO_ROOT = dirname(import.meta.dir);
 const AGENT = join(REPO_ROOT, "tools", "a2a-agent", "agent.ts");
 const TEXT = "hello over the swarm";
 
-/** Invoke the ahsw binary through cargo — it resolves the debug build itself,
+/** Invoke the agent-gossip binary through cargo — it resolves the debug build itself,
  * so there is no hardcoded target/ path to keep in sync. */
-const ahsw = (args: string[]): string[] => [
+const agent-gossip = (args: string[]): string[] => [
   "cargo",
   "run",
   "--quiet",
   "--bin",
-  "ahsw",
+  "agent-gossip",
   "--",
   ...args,
 ];
@@ -102,8 +102,8 @@ function run(label: string): void {
 }
 
 async function main(): Promise<void> {
-  run("building ahsw");
-  const build = Bun.spawnSync(["cargo", "build", "--quiet", "--bin", "ahsw"], {
+  run("building agent-gossip");
+  const build = Bun.spawnSync(["cargo", "build", "--quiet", "--bin", "agent-gossip"], {
     cwd: REPO_ROOT,
     stdout: "inherit",
     stderr: "inherit",
@@ -121,18 +121,18 @@ async function main(): Promise<void> {
   children.push(server);
   await waitForUrl(`http://127.0.0.1:${originPort}/.well-known/agent-card.json`);
 
-  run("exposing agent A over the swarm (ahsw a2a expose --loopback)");
+  run("exposing agent A over the swarm (agent-gossip a2a expose --loopback)");
   const expose = Bun.spawn(
-    ahsw(["a2a", "expose", "--to", `http://127.0.0.1:${originPort}`, "--loopback", "--output", "json"]),
+    agent-gossip(["a2a", "expose", "--to", `http://127.0.0.1:${originPort}`, "--loopback", "--output", "json"]),
     { cwd: REPO_ROOT, stdout: "pipe", stderr: "ignore" },
   );
   children.push(expose);
   const ticket = await readTicket(expose.stdout as ReadableStream<Uint8Array>);
   console.log(`    ticket: ${ticket.slice(0, 24)}…`);
 
-  run(`connecting from the other end (ahsw a2a connect --port ${localPort})`);
+  run(`connecting from the other end (agent-gossip a2a connect --port ${localPort})`);
   const connect = Bun.spawn(
-    ahsw(["a2a", "connect", ticket, "--port", String(localPort), "--output", "json"]),
+    agent-gossip(["a2a", "connect", ticket, "--port", String(localPort), "--output", "json"]),
     { cwd: REPO_ROOT, stdout: "ignore", stderr: "ignore" },
   );
   children.push(connect);

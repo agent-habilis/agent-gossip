@@ -45,7 +45,7 @@ pub(crate) use state::{StateAction, StateOpts};
 
 #[derive(Parser, Debug)]
 #[command(
-    name = "ahsw",
+    name = "agent-gossip",
     about = "swarm network for agents",
     version = crate::util::version::VERSION,
     after_help = "a tool by agent-habilis █🫈"
@@ -194,7 +194,7 @@ pub(crate) enum Commands {
     ///
     /// The readiness gate for driving the daemon over the CLI: launch
     /// `create`/`join` in the background with a `--state-file`, then
-    /// `ahsw ready --state-file <path>` blocks until that file reports the
+    /// `agent-gossip ready --state-file <path>` blocks until that file reports the
     /// daemon is serving, exiting 0 (non-zero on timeout). In `human` mode a
     /// silent gate (exit code only); with `--output json` it prints
     /// `{swarm,name,nickname}` on success, so the gate doubles as the
@@ -263,7 +263,7 @@ pub(crate) enum Commands {
     /// With no `--swarm`: a machine-health report — binary/OS, which agents
     /// have the integration installed (and where), the local network
     /// capability (UDP, NAT/hole-punch behavior, public address, relay
-    /// latency), and the swarms running on this machine. With `--swarm <🐝…>`:
+    /// latency), and the swarms running on this machine. With `--swarm <💬…>`:
     /// decode that swarm's declared connection methods and live-probe which
     /// reach it (down to direct-vs-relay path per peer). `--output json` for
     /// the machine form.

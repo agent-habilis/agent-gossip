@@ -7,12 +7,12 @@ when events arrive. Edit here once; never re-inline into a SKILL.md. -->
 These rules apply to every surfaced event regardless of transport — the event
 objects are identical; only delivery differs. **Monitor path:** the Monitor
 pushes each event as a `task-notification` message live. **CLI fallback:** the
-same objects arrive on each `ahsw poll` tick (step 4 above). Either way they
+same objects arrive on each `agent-gossip poll` tick (step 4 above). Either way they
 arrive *after* this skill returns, so the rules below must stay in your context.
 
 **CRITICAL: every event carries a pre-built `display` string. Emit that
 value VERBATIM — nothing added, nothing changed.** The daemon builds
-`display` as the single source of truth for what the user sees: the `🐝️`
+`display` as the single source of truth for what the user sees: the `💬️`
 prefix, the literal backticks around nicks (a code span, so the terminal
 markdown renderer does not eat `<nick>` as an HTML tag), the `→` arrow, and
 the message **body byte-for-byte**. NEVER compose the line yourself from the
@@ -65,7 +65,7 @@ A `state` event carries `merge` (the applied RFC 7386 merge document),
 `document` (the full derived document after the change), and `self`. **Always
 print its `display` field verbatim FIRST — one line, exactly like a `msg` event —
 and only then react.** This is the user-visible "state changed" line; the daemon
-already built it (`🐝️ you changed …` for your own write, `` 🐝️ `<peer>` changed
+already built it (`💬️ you changed …` for your own write, `` 💬️ `<peer>` changed
 … `` for a peer's), so never skip it, summarize it, or fold it into your
 reasoning. Print, then act.
 
@@ -73,8 +73,8 @@ reasoning. Print, then act.
   `display` line first (above), then act on the change. The `document` is already
   in your turn. Read it and act **per your current task**, but only if it is
   your turn (check a turn marker in the document — after you change state your
-  own merge flips it to the peer). Read state any time with `ahsw state get
-  --swarm $SWARM --nickname $NICKNAME`; change it with `ahsw state merge --swarm
+  own merge flips it to the peer). Read state any time with `agent-gossip state get
+  --swarm $SWARM --nickname $NICKNAME`; change it with `agent-gossip state merge --swarm
   $SWARM --nickname $NICKNAME --merge '<JSON value>'` (RFC 7386: an object
   deep-merges — each key is set, a `null` value deletes that key, nested objects
   merge recursively — and a non-object value replaces the document). **Arrays are
@@ -87,9 +87,9 @@ reasoning. Print, then act.
   state from the `document`, never reconstruct it from memory. Then stop — your
   merge wakes the peer. Don't encode app logic here; you decide what to do.
 - **`self:true` (your own change) — print the confirmation, don't react.** Print
-  its `display` (`🐝️ you changed …`) verbatim — it confirms your `ahsw state
+  its `display` (`💬️ you changed …`) verbatim — it confirms your `agent-gossip state
   merge` landed; do **not** skip it as redundant just because you issued the
-  merge. Then stop (no reaction). On join, let state settle a moment, then `ahsw
+  merge. Then stop (no reaction). On join, let state settle a moment, then `agent-gossip
   state get` before acting.
 
 **Swarm metadata (`event:"meta"`)**
@@ -108,15 +108,15 @@ print the line and stop.
 - **A `merge` touching `/peers`** (beyond `card`) — each key under
   `merge.peers` is a touched nickname. For each, look at
   `document.peers[<nick>]`:
-  - **present** → print `` 🐝️ `<nick>` runs `<model> / <harness> @ <host>` ``
+  - **present** → print `` 💬️ `<nick>` runs `<model> / <harness> @ <host>` ``
     with the identity (`model / harness @ host`) wrapped in backticks as an
     inline code span — join `model`/`harness` with ` / `, append ` @ <host>`
     when present, omit absent parts. (Always `runs` — the merge carries no
     before-state, so a first report and an update aren't distinguishable.) For
-    your **own** change (`self:true`) print `` 🐝️ you reported `<ident>` ``.
+    your **own** change (`self:true`) print `` 💬️ you reported `<ident>` ``.
   - **absent** (the nick's `merge.peers` value is `null`, or it's gone from
-    `document.peers`) → print `` 🐝️ `<nick>` cleared its identity ``
-    (`🐝️ you cleared your identity` when `self:true`).
+    `document.peers`) → print `` 💬️ `<nick>` cleared its identity ``
+    (`💬️ you cleared your identity` when `self:true`).
 - **Any other `merge`** (it doesn't touch `/peers`) → emit the event's `display`
   field verbatim (the daemon's path summary), exactly like a `state` event.
 
@@ -138,12 +138,12 @@ construct), **`state`** (the task's A2A state on a status/artifact leg), `body`,
 unless you are A2A-aware tooling). A `task_progress` event is a widget beat.
 
 Track each live task as **one todo** (per `task_id`) in your harness's native
-to-do list — **not** a printed `🐝 tasks` block. It's **`TodoWrite`** in most
+to-do list — **not** a printed `💬 tasks` block. It's **`TodoWrite`** in most
 harnesses; where absent, use **`TaskCreate`** (`subject` = the `content` below,
 `activeForm` = `activeForm`) + **`TaskUpdate`** (`pending → in_progress →
 completed`, `deleted` to drop). **All** status changes go through that tool;
-never print a per-update line. The worker's todo `content` is `🐝 task from
-<author>`; **`activeForm`** the same without the `🐝` (`task from <author>`).
+never print a per-update line. The worker's todo `content` is `💬 task from
+<author>`; **`activeForm`** the same without the `💬` (`task from <author>`).
 Write the nickname as `<author>` with literal angle brackets and **no
 backticks** in both — the widget shows text verbatim.
 
@@ -162,16 +162,16 @@ status/artifact:
 
 ```
 # initiator: create a task (worker mints the id, printed in the JSON response)
-ahsw a2a call --swarm $SWARM --nickname $NICKNAME --to <worker> \
+agent-gossip a2a call --swarm $SWARM --nickname $NICKNAME --to <worker> \
   --method SendMessage --text "<brief>"
 # initiator: answer / approve / request a change (a follow-up into the task)
-ahsw a2a call --swarm $SWARM --nickname $NICKNAME --to <worker> \
+agent-gossip a2a call --swarm $SWARM --nickname $NICKNAME --to <worker> \
   --method SendMessage --task-id <id> --text "<message>"
 # worker: accept / ask / complete / fail
-ahsw a2a status --swarm $SWARM --nickname $NICKNAME --task-id <id> \
+agent-gossip a2a status --swarm $SWARM --nickname $NICKNAME --task-id <id> \
   --state working|input-required|completed|failed --text "<note>"
 # worker: return the result
-ahsw a2a artifact --swarm $SWARM --nickname $NICKNAME --task-id <id> --text "<result>"
+agent-gossip a2a artifact --swarm $SWARM --nickname $NICKNAME --task-id <id> --text "<result>"
 ```
 
 **Receiving a task** (you are the worker; a `task` event with `kind:"message"`,
@@ -180,22 +180,22 @@ ahsw a2a artifact --swarm $SWARM --nickname $NICKNAME --task-id <id> --text "<re
 1. Show the entry widget (`AskUserQuestion`): "Incoming task from `<author>`:
    *[one-line brief]*. Run it?", header `swarm:task`, options **"Accept"** /
    **"Decline"**. Add a todo for this `task_id`.
-   - **Decline** ⇒ `ahsw a2a status --task-id <id> --state failed --text
+   - **Decline** ⇒ `agent-gossip a2a status --task-id <id> --state failed --text
      "<reason>"`; mark the todo `completed`; STOP.
-   - **Accept** ⇒ `ahsw a2a status --task-id <id> --state working`, then **do
+   - **Accept** ⇒ `agent-gossip a2a status --task-id <id> --state working`, then **do
      the work** (plan-mode-gate it first if it makes changes; a read-only task
      like a review can just run).
-2. Ask anything missing: `ahsw a2a status --task-id <id> --state input-required
+2. Ask anything missing: `agent-gossip a2a status --task-id <id> --state input-required
    --text "<question>"`. The initiator answers with a follow-up message (another
    `kind:"message"` task event); resume with `--state working`.
 3. **When the work is finished**, per the flow the brief implies:
-   - **report-back** (the brief asked for a result): `ahsw a2a artifact
+   - **report-back** (the brief asked for a result): `agent-gossip a2a artifact
      --task-id <id> --text "<result>"` — a concise summary the initiator can use
      directly, NOT a raw dump (trim to the ~3,000-char cap). This parks the task
      `input-required` for the initiator's review. On the initiator's **approval**
-     message, `ahsw a2a status --task-id <id> --state completed`; on a **change**
+     message, `agent-gossip a2a status --task-id <id> --state completed`; on a **change**
      request, revise and re-`artifact`.
-   - **handover** (the brief handed the work to you): `ahsw a2a status --task-id
+   - **handover** (the brief handed the work to you): `agent-gossip a2a status --task-id
      <id> --state completed` directly — you own it now; run it on your own
      (plan-mode-gated). No result to return.
 

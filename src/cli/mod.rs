@@ -1,4 +1,4 @@
-//! The `ahsw` command-line interface: the clap-derived argument shape
+//! The `agent-gossip` command-line interface: the clap-derived argument shape
 //! lives in [`args`], the live `discover` picker in [`discover`], and the
 //! per-subcommand handlers + [`dispatch`] here. `lib.rs::run_cli` parses
 //! argv and calls `dispatch`; each handler is the thin glue between the
@@ -33,7 +33,7 @@ use args::{
     PingOpts, PollOpts, ReadyOpts, SharedServerOpts, StateAction, StateOpts,
 };
 
-/// `join` has no `--public`/`--name`: both are encoded in the `🐝…`
+/// `join` has no `--public`/`--name`: both are encoded in the `💬…`
 /// identifier and auto-detected. Without this, clap rejects them with
 /// a generic "unexpected argument" + a misleading "pass as a value"
 /// tip; this gives the real reason instead.
@@ -155,7 +155,7 @@ async fn run_session(resolved: Resolved, shared: SharedServerOpts) -> Result<()>
     );
     // Nag once at startup if an installed integration has fallen behind this
     // binary. CLI-only: the embed/MCP paths pass `None` so in-process tests
-    // stay hermetic. `ahsw status` is the on-demand counterpart.
+    // stay hermetic. `agent-gossip status` is the on-demand counterpart.
     let drift = agent::home_dir()
         .ok()
         .and_then(|home| agent::drift_warning(&home));
@@ -212,7 +212,7 @@ async fn create(opts: CreateOpts) -> Result<()> {
     run_session(resolved, opts.shared).await
 }
 
-/// Join an existing swarm by its identifier (🐝...), a domain, or a
+/// Join an existing swarm by its identifier (💬...), a domain, or a
 /// supported git repo URL. The swarm's config (lookups) is decoded from
 /// the id — `join` takes no lookup flags.
 #[expect(
@@ -659,7 +659,7 @@ async fn ready(opts: ReadyOpts) -> Result<()> {
             }
             Ok(_) => {}
             Err(error) => {
-                tracing::debug!(%error, path = %state_file.display(), "ahsw ready: state-file read failed; retrying");
+                tracing::debug!(%error, path = %state_file.display(), "agent-gossip ready: state-file read failed; retrying");
             }
         }
         if tokio::time::Instant::now() >= deadline {
@@ -675,7 +675,7 @@ async fn ready(opts: ReadyOpts) -> Result<()> {
     }
 }
 
-/// Print the session identity as a JSON object for `ahsw ready --output json`,
+/// Print the session identity as a JSON object for `agent-gossip ready --output json`,
 /// omitting any field the state file lacks — so a degenerate (identity-less)
 /// file yields `{}` rather than `{"swarm":null,…}` that a caller might splice
 /// into the next command as the literal string "null".

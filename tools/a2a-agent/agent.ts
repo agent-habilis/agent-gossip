@@ -15,7 +15,7 @@
 //
 // This is deliberately raw HTTP/JSON-RPC (no SDK) so it exercises the protocol
 // as a real A2A client/server would — including discovery via the card's `url`,
-// which is exactly what `ahsw a2a` must rewrite to make the bridge transparent.
+// which is exactly what `agent-gossip a2a` must rewrite to make the bridge transparent.
 
 import { parseArgs } from "node:util";
 

@@ -19,17 +19,17 @@ If you hold `$SWARM`/`$NICKNAME` from a `/swarm:create` or `/swarm:join`
 follow `../shared/reattach.md` (resolved relative to this SKILL.md's
 directory). Only if reattach also yields no swarm, print:
 ```
-🐝 Not in a swarm. Use /swarm:create or /swarm:join first.
+💬 Not in a swarm. Use /swarm:create or /swarm:join first.
 ```
 and STOP.
 
 ## Trigger the ping
 
-`$SWARM`/`$NICKNAME` are from the `ready` event (copy the `🐝…` id
+`$SWARM`/`$NICKNAME` are from the `ready` event (copy the `💬…` id
 verbatim):
 
 ```bash
-ahsw ping --swarm "$SWARM" --nickname "$NICKNAME"
+agent-gossip ping --swarm "$SWARM" --nickname "$NICKNAME"
 ```
 
 This is fire-and-forget: the daemon broadcasts a probe, every peer
@@ -40,7 +40,7 @@ immediately — do **not** wait here and do **not** print anything.
 
 Nothing from this skill. A few seconds later the daemon emits a
 `ping_report` event, and the `/swarm:create`/`/swarm:join` event handler
-renders the RTT table (the `🐝️ ping` block). Under Monitor it arrives as a
+renders the RTT table (the `💬️ ping` block). Under Monitor it arrives as a
 push; in CLI fallback mode `ping_report` is pollable like any other event, so
 it surfaces on the next poll tick. The report only appears if a create/join
 session is live — which it always is when you are in a swarm.
@@ -48,7 +48,7 @@ session is live — which it always is when you are in a swarm.
 ## Notes
 
 - Requires an active `/swarm:create` or `/swarm:join` session (a live
-  daemon): `ahsw ping` talks to it over IPC.
+  daemon): `agent-gossip ping` talks to it over IPC.
 - RTT includes message propagation through the gossip layer, not just
   network latency.
 - The collection window (~10s) and the report are owned by the daemon;

@@ -66,7 +66,7 @@ fn nick(name: &str) -> crate::protocol::Nickname {
 }
 
 fn sid() -> crate::protocol::SwarmId {
-    crate::protocol::SwarmId::from("🐝://test")
+    crate::protocol::SwarmId::from("💬://test")
 }
 
 /// A chat frame carrying a real A2A payload, its frame id pinned to the
@@ -86,7 +86,7 @@ fn json_message_has_all_fields() {
     let parsed = parse(&json);
     assert_eq!(parsed["event"], "message");
     assert_eq!(parsed["type"], "msg");
-    assert_eq!(parsed["swarm"], "🐝://test");
+    assert_eq!(parsed["swarm"], "💬://test");
     assert_eq!(parsed["author"], "alice");
     assert_eq!(parsed["body"], "hello");
     assert!(parsed["to"].is_null());
@@ -135,11 +135,11 @@ fn ready_event_drift_is_present_only_when_stale() {
 
     // Stale: the warning rides along verbatim.
     let stale = parse(&make(Some(
-        "⚠️ swarm skill out of date. Run `ahsw plug` to update",
+        "⚠️ swarm skill out of date. Run `agent-gossip plug` to update",
     )));
     assert_eq!(
         stale["drift"],
-        "⚠️ swarm skill out of date. Run `ahsw plug` to update"
+        "⚠️ swarm skill out of date. Run `agent-gossip plug` to update"
     );
 }
 
@@ -193,8 +193,8 @@ fn json_presence_joined() {
     assert_eq!(parsed["type"], "presence");
     assert_eq!(parsed["subtype"], "joined");
     assert_eq!(parsed["author"], "alice");
-    assert_eq!(parsed["swarm"], "🐝://test");
-    assert_eq!(parsed["display"], "🐝️ `<alice>` has joined");
+    assert_eq!(parsed["swarm"], "💬://test");
+    assert_eq!(parsed["display"], "💬️ `<alice>` has joined");
 }
 
 #[test]
@@ -307,7 +307,7 @@ fn task_progress_event_json_shape() {
     assert!(parsed.get("phase").is_none());
     assert_eq!(
         parsed["display"],
-        "🐝️ task progress `<calm-otter>` → `<drift-oak>`: 35/100"
+        "💬️ task progress `<calm-otter>` → `<drift-oak>`: 35/100"
     );
 }
 
@@ -331,27 +331,27 @@ fn peer_timeout_json_shape() {
     let json = serde_json::to_string(&SimpleEvent::PeerTimeout {
         nickname: "ball-blue",
         last_seen_secs_ago: 94,
-        display: "🐝️ `<ball-blue>` went quiet".to_owned(),
+        display: "💬️ `<ball-blue>` went quiet".to_owned(),
     })
     .unwrap();
     let parsed = parse(&json);
     assert_eq!(parsed["event"], "peer_timeout");
     assert_eq!(parsed["nickname"], "ball-blue");
     assert_eq!(parsed["last_seen_secs_ago"], 94);
-    assert_eq!(parsed["display"], "🐝️ `<ball-blue>` went quiet");
+    assert_eq!(parsed["display"], "💬️ `<ball-blue>` went quiet");
 }
 
 #[test]
 fn peer_return_json_shape() {
     let json = serde_json::to_string(&SimpleEvent::PeerReturn {
         nickname: "ball-blue",
-        display: "🐝️ `<ball-blue>` came back".to_owned(),
+        display: "💬️ `<ball-blue>` came back".to_owned(),
     })
     .unwrap();
     let parsed = parse(&json);
     assert_eq!(parsed["event"], "peer_return");
     assert_eq!(parsed["nickname"], "ball-blue");
-    assert_eq!(parsed["display"], "🐝️ `<ball-blue>` came back");
+    assert_eq!(parsed["display"], "💬️ `<ball-blue>` came back");
 }
 
 // ── all outputs are valid single-line JSON ─────────────────────
@@ -394,7 +394,7 @@ mod snapshots {
     ) -> String {
         let tid = crate::a2a::TaskId::from(SNAP_TASK_ID);
         let mut update = crate::a2a::gossip::status_update(
-            &crate::protocol::SwarmId::from("🐝://test"),
+            &crate::protocol::SwarmId::from("💬://test"),
             &tid,
             state,
             note,
@@ -438,7 +438,7 @@ mod snapshots {
     fn snap_task_done() {
         let tid = crate::a2a::TaskId::from(SNAP_TASK_ID);
         let mut update = crate::a2a::gossip::artifact_update(
-            &crate::protocol::SwarmId::from("🐝://test"),
+            &crate::protocol::SwarmId::from("💬://test"),
             &tid,
             "2 findings: missing await in recv; unbounded buffer in flush",
         );
@@ -459,7 +459,7 @@ mod snapshots {
     /// the frame keeps the id == messageId invariant.
     fn snap_chat_frame(text: &str) -> Message {
         let mut payload =
-            crate::a2a::gossip::chat_message(&crate::protocol::SwarmId::from("🐝://test"), text);
+            crate::a2a::gossip::chat_message(&crate::protocol::SwarmId::from("💬://test"), text);
         payload.message_id = crate::a2a::MessageId::from("00000000-0000-0000-0000-000000000001");
         let body = crate::a2a::gossip::payload_body(&payload).expect("payload serializes");
         Message::fixture(MessageKind::A2aMsg, body.as_str())

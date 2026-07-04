@@ -1,4 +1,4 @@
-//! `ahsw a2a discover`: open a named directory, collect advertised a2a bridge
+//! `agent-gossip a2a discover`: open a named directory, collect advertised a2a bridge
 //! tickets, and either run the live picker (binding a local endpoint on the
 //! chosen bridge) or stream `ticket_found`/`ticket_lost` JSON for an agent. The
 //! collector lives in [`crate::a2a::TicketDirectory`]; the terminal machinery in
@@ -17,7 +17,7 @@ use super::picker::{self, PickerOutcome, PickerText, interrupted, sigterm_stream
 /// whole multi-hundred-char token (the pick carries the full one).
 const TICKET_PREVIEW_CHARS: usize = 16;
 
-/// Run `ahsw a2a discover`: browse `directory` for advertised bridges. Human +
+/// Run `agent-gossip a2a discover`: browse `directory` for advertised bridges. Human +
 /// TTY runs the picker and, on a pick, binds the local bridge (`a2a connect`);
 /// `json` (or no TTY) streams directory changes and returns.
 ///

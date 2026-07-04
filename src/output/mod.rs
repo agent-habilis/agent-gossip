@@ -6,6 +6,7 @@ use tokio::sync::mpsc::UnboundedSender;
 use crate::a2a::TaskId;
 use crate::protocol::swarm::SwarmName;
 use crate::protocol::{Message, MessageId, MessageKind, Nickname, SwarmId};
+use crate::util::consts::SWARM_GLYPH;
 
 mod json;
 #[cfg(test)]
@@ -119,7 +120,7 @@ pub enum OutputEvent {
     },
     /// A shared-state change: the patch event, the freshly-derived document, and
     /// whether it was our own write. Drives the reaction hook and the human
-    /// `🐝 … changed shared state` line.
+    /// `💬 … changed shared state` line.
     StateChanged {
         channel: crate::protocol::Channel,
         event: Box<Message>,
@@ -139,7 +140,7 @@ pub(crate) mod style {
     pub(super) const PEER_NICK: &str = "\x1b[1;36m";
     /// Bold yellow — a swarm name.
     pub(crate) const SWARM: &str = "\x1b[1;33m";
-    /// Bold blue — the runnable hint (`ahsw join` on create, `ahsw pipe connect`
+    /// Bold blue — the runnable hint (`agent-gossip join` on create, `agent-gossip pipe connect`
     /// on the pipe producer).
     pub(crate) const BLUE: &str = "\x1b[1;34m";
     /// Bold — the highlighted row in the `discover` picker.
@@ -426,8 +427,8 @@ impl Output {
     }
 
     /// Surface the swarm identifier at startup (stderr). Human mode
-    /// prints the runnable join command (`ahsw join <id>`); JSON mode
-    /// prints the bare `🐝…` id (the integration harness greps this);
+    /// prints the runnable join command (`agent-gossip join <id>`); JSON mode
+    /// prints the bare `💬…` id (the integration harness greps this);
     /// Silent suppresses it.
     pub(crate) fn swarm_id_line(&self, id: &SwarmId) {
         self.dispatch(
@@ -439,7 +440,7 @@ impl Output {
                     } else {
                         ("", "")
                     };
-                    eprintln!("others can join with: {open}ahsw join {id}{close}");
+                    eprintln!("others can join with: {open}agent-gossip join {id}{close}");
                 }
                 OutputMode::Json => eprintln!("{id}"),
                 OutputMode::Silent => {}
@@ -606,7 +607,7 @@ impl Output {
         );
     }
 
-    /// Surface a shared-state change: the human `🐝 … changed shared state`
+    /// Surface a shared-state change: the human `💬 … changed shared state`
     /// line, the structured `state` event for the agent API (poll / `--output
     /// json` / embed `events()`), and the surfaced-ring mirror. F5: a *self*
     /// change goes to poll/UI but is **never** delivered to the embed `events()`
@@ -657,10 +658,13 @@ impl Output {
         let what = json::state_change_summary_from_body(event.body.as_str());
         let ch = channel.label();
         if is_self {
-            eprintln!("🐝️ you changed {what} ({ch})");
+            eprintln!("{SWARM_GLYPH}\u{FE0F} you changed {what} ({ch})");
         } else {
             let (open, close) = self.nick_ansi(event.author.as_str(), stderr_color());
-            eprintln!("🐝️ {open}<{}>{close} changed {what} ({ch})", event.author);
+            eprintln!(
+                "{SWARM_GLYPH}\u{FE0F} {open}<{}>{close} changed {what} ({ch})",
+                event.author
+            );
         }
     }
 
@@ -810,7 +814,7 @@ impl Output {
         self.error(&error.to_string());
     }
 
-    /// Emit the result of an `ahsw ping` round: per-peer RTT, plus how
+    /// Emit the result of an `agent-gossip ping` round: per-peer RTT, plus how
     /// many of the known peers responded (the responder count is just
     /// `peers.len()`). `known` is the current participant roster size.
     pub(crate) fn ping_report(&self, peers: Vec<PingPeer>, known: usize) {

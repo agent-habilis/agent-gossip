@@ -9,7 +9,7 @@ mod common;
 
 use std::time::Duration;
 
-use agent_habilis_swarm::TaskState;
+use agent_gossip::TaskState;
 use common::{InProcNode, MSG_TIMEOUT};
 
 const TASK_WAIT: Duration = MSG_TIMEOUT;
@@ -33,7 +33,8 @@ async fn a_file_result_is_offloaded_as_a_url_reference() {
     assert!(bob.wait_task_message(TASK_WAIT).await, "bob saw the brief");
 
     // A result file the worker "produced".
-    let path = std::env::temp_dir().join(format!("ahsw-blob-it-{}.bin", std::process::id()));
+    let path =
+        std::env::temp_dir().join(format!("agent-gossip-blob-it-{}.bin", std::process::id()));
     std::fs::write(&path, vec![0x5au8; 128 * 1024]).expect("write result file");
 
     bob.task_artifact_file(&task_id, &path).await;
@@ -52,8 +53,7 @@ async fn a_file_result_is_offloaded_as_a_url_reference() {
         .tasks()
         .into_iter()
         .find(|(msg, _)| {
-            agent_habilis_swarm::a2a::gossip::frame_task_state(msg)
-                == Some(TaskState::InputRequired)
+            agent_gossip::a2a::gossip::frame_task_state(msg) == Some(TaskState::InputRequired)
         })
         .expect("initiator surfaced the artifact");
     let payload: serde_json::Value =

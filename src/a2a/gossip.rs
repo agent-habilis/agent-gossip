@@ -382,7 +382,7 @@ mod tests {
     use crate::protocol::swarm::SwarmId;
 
     fn swarm() -> SwarmId {
-        SwarmId::from("🐝test")
+        SwarmId::from("💬test")
     }
 
     /// A logical broadcast frame carrying `payload` — id already aligned to the
@@ -414,7 +414,7 @@ mod tests {
     #[test]
     fn foreign_context_is_rejected() {
         let mut payload = chat_message(&swarm(), "hi");
-        payload.context_id = Some("🐝other".to_string());
+        payload.context_id = Some("💬other".to_string());
         let frame = frame_for(&payload);
         assert!(chat_payload(&frame).is_err());
     }

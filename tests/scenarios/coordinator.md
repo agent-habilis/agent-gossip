@@ -17,7 +17,7 @@ the agents to run, and the **human validates behavior + UX**.
 Everything is driven over the swarm itself — messages, and shared state only
 where a scenario needs it — never local files, so the coordinator and each role
 session can run on **different machines**. For a cross-machine run, create the
-swarm `--public` (optionally `--advertise` so peers find it via `ahsw discover`);
+swarm `--public` (optionally `--advertise` so peers find it via `agent-gossip discover`);
 peers join by swarm id or discovery.
 
 The coordinator **never plays a scenario role**, and — critically — it **never

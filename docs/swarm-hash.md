@@ -1,4 +1,4 @@
-# The swarm hash (`🐝…` id)
+# The swarm hash (`💬…` id)
 
 > 🚧 **Under construction.** This document is a work in progress and may be
 > incomplete or out of date.
@@ -66,30 +66,30 @@ silently deriving a different topic and sitting in an empty swarm. A
 passwordless config encodes byte-for-byte as before the feature byte existed
 (the config bytes feed the topic derivation, so the encoding is canonical: a
 zero feature byte is rejected). Base58Check-encoded with a 4-byte SHA256d
-checksum, and rendered as **`🐝://<base58>`** — the `🐝` sigil, a `://`
+checksum, and rendered as **`💬://<base58>`** — the `💬` sigil, a `://`
 separator, then the payload. The version byte is reserved for future format
 evolution; an unknown version is rejected. (Derivations — topic, rendezvous
 keypair, port ladder — are in `docs/discovery.md`.)
 
-The `://` separator is optional on input: a legacy bare `🐝<base58>` id still
-parses and normalizes to the canonical `🐝://` form. The reverse is not true —
-a pre-`🐝://` binary rejects a `🐝://…` id (the `://` fails its Base58 charset
+The `://` separator is optional on input: a legacy bare `💬<base58>` id still
+parses and normalizes to the canonical `💬://` form. The reverse is not true —
+a pre-`💬://` binary rejects a `💬://…` id (the `://` fails its Base58 charset
 check), so discovery is forward-compatible only, the same one-way break the
 retired `ahs` prefix had.
 
 > [!NOTE]
 > We use Base58 (not base64/hex) for readability: it drops visually ambiguous
-> glyphs (`0`/`O`, `I`/`l`) and all punctuation, so a `🐝://…` id
+> glyphs (`0`/`O`, `I`/`l`) and all punctuation, so a `💬://…` id
 > double-click-selects as one token and is safe to copy/paste or read aloud.
-> The `🐝://` styling is cosmetic recognizability, not a registrable URI scheme
+> The `💬://` styling is cosmetic recognizability, not a registrable URI scheme
 > — an emoji scheme won't auto-linkify or drive an OS protocol handler.
 
 ## Examples
 
 ```
-ahsw create --public                            # default lookups
-ahsw create --public --relay https://r.example  # custom relay ladder, baked in
-ahsw create --public --password=pw              # verifier baked in; joiners need pw
-ahsw join 🐝…                                    # inherits ALL of the above
-ahsw join 🐝… --password=pw                      # verified locally before any network
+agent-gossip create --public                            # default lookups
+agent-gossip create --public --relay https://r.example  # custom relay ladder, baked in
+agent-gossip create --public --password=pw              # verifier baked in; joiners need pw
+agent-gossip join 💬…                                    # inherits ALL of the above
+agent-gossip join 💬… --password=pw                      # verified locally before any network
 ```

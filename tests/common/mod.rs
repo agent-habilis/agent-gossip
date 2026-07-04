@@ -18,7 +18,7 @@ use std::time::{Duration, Instant};
 // The single source of truth for the runtime base dir lives in the shared
 // crate (a dev-dependency); re-export it so test code keeps using
 // `common::RUNTIME_DIR` without a divergent copy.
-pub(crate) use agent_habilis_swarm::RUNTIME_DIR;
+pub(crate) use agent_gossip::RUNTIME_DIR;
 
 pub(crate) const CONNECT_TIMEOUT: Duration = Duration::from_mins(1);
 /// Steady-state delivery budget: how long a meshed peer may take to surface a
@@ -69,16 +69,17 @@ pub(crate) fn serial_guard() -> std::sync::MutexGuard<'static, ()> {
 
 /// Use the freshly built test binary to avoid stale release output formats.
 pub(crate) fn bin() -> PathBuf {
-    PathBuf::from(env!("CARGO_BIN_EXE_ahsw"))
+    PathBuf::from(env!("CARGO_BIN_EXE_agent-gossip"))
 }
 
 /// Per-test-process log dir so `cargo task test` never writes into
-/// the operator's default `agent-habilis/swarm/logs`. Passed via the
+/// the operator's default `agent-gossip/logs`. Passed via the
 /// global `--log-dir` flag.
 pub(crate) fn test_log_dir() -> &'static str {
     static DIR: OnceLock<String> = OnceLock::new();
     DIR.get_or_init(|| {
-        let dir = std::env::temp_dir().join(format!("ahsw-test-logs-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("agent-gossip-test-logs-{}", std::process::id()));
         let _ = fs::create_dir_all(&dir);
         dir.to_string_lossy().into_owned()
     })
@@ -111,7 +112,7 @@ fn apply_flags(cmd: &mut Command, pairs: &[(&str, &str)]) {
     }
 }
 
-/// Turn `(flag, value)` tuning pairs into CLI args for a spawned `ahsw`
+/// Turn `(flag, value)` tuning pairs into CLI args for a spawned `agent-gossip`
 /// (replaces the former `.envs(...)` overrides). An empty value yields a
 /// bare flag — e.g. the boolean `("--directory-private", "")`. For pair lists
 /// that never include `RUST_LOG` (directory / monitor spawns); use
@@ -134,7 +135,7 @@ static COUNTER: AtomicU32 = AtomicU32::new(0);
 pub(crate) fn tmp_log(tag: &str) -> PathBuf {
     let sequence = COUNTER.fetch_add(1, Ordering::Relaxed);
     std::env::temp_dir().join(format!(
-        "ahsw-test-{}-{}-{}.log",
+        "agent-gossip-test-{}-{}-{}.log",
         tag,
         std::process::id(),
         sequence
@@ -144,19 +145,19 @@ pub(crate) fn tmp_log(tag: &str) -> PathBuf {
 pub(crate) fn socket_path(swarm: &str, nickname: &str) -> String {
     format!(
         "{RUNTIME_DIR}/{}/{nickname}.ipc.sock",
-        agent_habilis_swarm::swarm_prefix(swarm)
+        agent_gossip::swarm_prefix(swarm)
     )
 }
 
 /// A node's tracing-sink log (distinct from its captured stdout/stderr
-/// in `Node::log`). Mirrors `agent_habilis_swarm::logs::log_file_path`:
+/// in `Node::log`). Mirrors `agent_gossip::logs::log_file_path`:
 /// `<swarm_prefix>/<nick>.tracing.log` under the per-test log dir. Use this to
 /// assert on `tracing` output (warn/info) the operator stream never carries.
 pub(crate) fn trace_log(swarm: &str, nickname: &str) -> String {
     let path = format!(
         "{}/{}/{nickname}.tracing.log",
         test_log_dir(),
-        agent_habilis_swarm::swarm_prefix(swarm)
+        agent_gossip::swarm_prefix(swarm)
     );
     fs::read_to_string(path).unwrap_or_default()
 }
@@ -175,9 +176,9 @@ pub(crate) fn wait_until(count_fn: impl Fn() -> usize, target: usize, timeout: D
 
 // ── CLI helpers ───────────────────────────────────────────────────
 
-/// Spawn `ahsw msg …` and return the raw `Output`
+/// Spawn `agent-gossip msg …` and return the raw `Output`
 /// (no success assertion — callers that test failure paths inspect it).
-/// Broadcast a swarm chat message via the CLI — `ahsw a2a call --method
+/// Broadcast a swarm chat message via the CLI — `agent-gossip a2a call --method
 /// message/send --text` with no `--to` (A2A is point-to-point, so a swarm-wide
 /// message declares itself).
 pub(crate) fn cli_msg_raw(swarm: &str, nickname: &str, body: &str) -> Output {
@@ -215,7 +216,7 @@ pub(crate) fn cli_msg_checked(swarm: &str, nickname: &str, body: &str) -> String
     String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
 
-/// Spawn `ahsw poll … --output json`, assert success,
+/// Spawn `agent-gossip poll … --output json`, assert success,
 /// return trimmed stdout.
 pub(crate) fn cli_poll(swarm: &str, nickname: &str, after: Option<&str>) -> String {
     let mut args = vec![
@@ -242,7 +243,7 @@ pub(crate) fn cli_poll(swarm: &str, nickname: &str, after: Option<&str>) -> Stri
     String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
 
-/// `ahsw poll --long` (long-poll; blocks until events arrive), returning the
+/// `agent-gossip poll --long` (long-poll; blocks until events arrive), returning the
 /// JSON stdout and how long the call took — so a test can assert it blocked /
 /// resolved promptly.
 pub(crate) fn cli_poll_long(
@@ -282,7 +283,7 @@ pub(crate) fn cli_poll_long(
 
 /// Send one raw JSON command line straight to a daemon's Unix socket and
 /// return the (trimmed) response line — the wire-contract path, bypassing the
-/// `ahsw` client entirely (so a test can exercise a single daemon-side
+/// `agent-gossip` client entirely (so a test can exercise a single daemon-side
 /// long-poll park, which `poll --long` deliberately hides behind its
 /// re-issue loop).
 pub(crate) fn ipc_raw(swarm: &str, nickname: &str, line: &str) -> String {
@@ -300,7 +301,7 @@ pub(crate) fn ipc_raw(swarm: &str, nickname: &str, line: &str) -> String {
     response.trim().to_string()
 }
 
-/// Create a task on `to` via the CLI (`ahsw a2a call --to <peer> --method
+/// Create a task on `to` via the CLI (`agent-gossip a2a call --to <peer> --method
 /// message/send --text`) and return the raw `Output` (no success assertion —
 /// callers that test the unknown-participant failure path inspect it).
 pub(crate) fn cli_task_create_raw(swarm: &str, nickname: &str, to: &str, text: &str) -> Output {
@@ -341,7 +342,7 @@ pub(crate) fn cli_task_create(swarm: &str, nickname: &str, to: &str, text: &str)
         .to_string()
 }
 
-/// Worker-emit a task status via the CLI (`ahsw a2a status`). Panics on failure.
+/// Worker-emit a task status via the CLI (`agent-gossip a2a status`). Panics on failure.
 pub(crate) fn cli_task_status(swarm: &str, nickname: &str, task_id: &str, state: &str) {
     let out = test_cmd()
         .args([
@@ -365,7 +366,7 @@ pub(crate) fn cli_task_status(swarm: &str, nickname: &str, task_id: &str, state:
     );
 }
 
-/// Spawn `ahsw peers …`, assert success, return trimmed stdout (the
+/// Spawn `agent-gossip peers …`, assert success, return trimmed stdout (the
 /// raw `{ok, participants, count}` JSON line).
 pub(crate) fn cli_peers(swarm: &str, nickname: &str) -> String {
     let out = test_cmd()
@@ -380,7 +381,7 @@ pub(crate) fn cli_peers(swarm: &str, nickname: &str) -> String {
     String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
 
-/// Spawn `ahsw ping … `, assert success. Fire-and-forget — the RTT
+/// Spawn `agent-gossip ping … `, assert success. Fire-and-forget — the RTT
 /// report lands on the target daemon's own output stream, not here.
 pub(crate) fn cli_ping(swarm: &str, nickname: &str) {
     let out = test_cmd()
@@ -403,7 +404,7 @@ pub(crate) fn channel_subcommand(channel: Channel) -> &'static str {
     }
 }
 
-/// Spawn `ahsw <channel> get … `, assert success, return trimmed stdout (the
+/// Spawn `agent-gossip <channel> get … `, assert success, return trimmed stdout (the
 /// raw `{ok, document}` JSON line). Drives the real CLI → IPC socket → daemon
 /// read path the embed harness bypasses.
 pub(crate) fn cli_channel_get(channel: Channel, swarm: &str, nickname: &str) -> String {
@@ -421,7 +422,7 @@ pub(crate) fn cli_channel_get(channel: Channel, swarm: &str, nickname: &str) -> 
     String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
 
-/// Spawn `ahsw <channel> merge …`, returning the raw
+/// Spawn `agent-gossip <channel> merge …`, returning the raw
 /// [`Output`](std::process::Output). The CLI **exits non-zero** on a rejected
 /// `{ok:false}` merge (the scriptable exit-code contract), so this returns the
 /// status + stdout unjudged for the caller to assert on.
@@ -440,8 +441,8 @@ pub(crate) fn cli_channel_merge(
 
 // ── In-process harness (embed::SwarmSession) ──────────────────────
 
-use agent_habilis_swarm::embed::{CreateConfig, JoinConfig, SwarmSession};
-use agent_habilis_swarm::{
+use agent_gossip::embed::{CreateConfig, JoinConfig, SwarmSession};
+use agent_gossip::{
     Channel, Message, MessageBody, MessageId, MessageKind, Nickname, OutputEvent, PresenceSubtype,
     SwarmName, TaskId, TaskState,
 };
@@ -466,7 +467,7 @@ fn test_swarm_name(name: &str) -> SwarmName {
 }
 
 impl InProcNode {
-    /// Create a new private swarm. `self.swarm` holds the `🐝…` id.
+    /// Create a new private swarm. `self.swarm` holds the `💬…` id.
     pub(crate) async fn create(name: &str) -> Self {
         Self::from_session(
             SwarmSession::create(CreateConfig::new(test_swarm_name(name)))
@@ -510,7 +511,7 @@ impl InProcNode {
         }
     }
 
-    /// Join `swarm` (a `🐝…` id) with an explicit nickname.
+    /// Join `swarm` (a `💬…` id) with an explicit nickname.
     pub(crate) async fn join(swarm: &str, nickname: &str) -> Self {
         let target = swarm.parse().expect("valid test join target");
         let mut cfg = JoinConfig::new(target);
@@ -528,7 +529,7 @@ impl InProcNode {
         swarm: &str,
         nickname: &str,
         password: &str,
-    ) -> Result<Self, agent_habilis_swarm::embed::JoinError> {
+    ) -> Result<Self, agent_gossip::embed::JoinError> {
         let target = swarm.parse().expect("valid test join target");
         let mut cfg = JoinConfig::new(target);
         cfg.nickname = Some(Nickname::new(nickname).expect("valid test nickname"));
@@ -670,11 +671,8 @@ impl InProcNode {
         // seal is one-shot, so wait for it first — otherwise, under the concurrent
         // suite's load, the request is silently dropped and the call hangs.
         self.await_peer_card(target).await;
-        let msg = agent_habilis_swarm::a2a::gossip::send_message_payload(
-            self.session.swarm_id(),
-            None,
-            text,
-        );
+        let msg =
+            agent_gossip::a2a::gossip::send_message_payload(self.session.swarm_id(), None, text);
         self.a2a_call(target, "SendMessage", serde_json::json!({ "message": msg }))
             .await
     }
@@ -701,7 +699,7 @@ impl InProcNode {
         task_id: &TaskId,
         text: &str,
     ) -> serde_json::Value {
-        let msg = agent_habilis_swarm::a2a::gossip::send_message_payload(
+        let msg = agent_gossip::a2a::gossip::send_message_payload(
             self.session.swarm_id(),
             Some(task_id),
             text,
@@ -794,7 +792,7 @@ impl InProcNode {
                 matches!(
                     event,
                     OutputEvent::Task { msg, .. }
-                        if agent_habilis_swarm::a2a::gossip::frame_task_state(msg) == Some(state)
+                        if agent_gossip::a2a::gossip::frame_task_state(msg) == Some(state)
                 )
             })
         })
@@ -837,7 +835,7 @@ impl InProcNode {
         self.pump();
         self.drained
             .iter()
-            .filter_map(agent_habilis_swarm::event_json)
+            .filter_map(agent_gossip::event_json)
             .filter_map(|line| serde_json::from_str(&line).ok())
             .collect()
     }
@@ -898,7 +896,7 @@ impl InProcNode {
                 matches!(
                     event,
                     OutputEvent::Message { msg, is_self: false }
-                        if agent_habilis_swarm::a2a::gossip::chat_text(msg).as_deref() == Some(body)
+                        if agent_gossip::a2a::gossip::chat_text(msg).as_deref() == Some(body)
                 )
             })
         })
@@ -927,7 +925,7 @@ impl InProcNode {
                 matches!(
                     event,
                     OutputEvent::Message { msg, is_self: false }
-                        if agent_habilis_swarm::a2a::gossip::chat_text(msg).as_deref() == Some(body)
+                        if agent_gossip::a2a::gossip::chat_text(msg).as_deref() == Some(body)
                 )
             })
             .count()
@@ -1049,7 +1047,7 @@ pub(crate) async fn three_peers(suffix: &str) -> (InProcNode, InProcNode, InProc
     (creator, joiner_a, joiner_b)
 }
 
-// ── Subprocess harness (real `ahsw` processes) ─────
+// ── Subprocess harness (real `agent-gossip` processes) ─────
 //
 // For the reliability / contract tests that must exercise the shipped
 // binary: real SIGKILL / SIGSTOP-SIGCONT, real stdout, real
@@ -1062,12 +1060,12 @@ pub(crate) struct Node {
 }
 
 impl Node {
-    /// Spawn `ahsw create`, wait for 🐝... and the assigned nickname.
+    /// Spawn `agent-gossip create`, wait for 💬... and the assigned nickname.
     pub(crate) fn create() -> (Self, String) {
         Self::create_named("itest")
     }
 
-    /// Spawn `ahsw create --name <name>`. Uses a fixed name by default
+    /// Spawn `agent-gossip create --name <name>`. Uses a fixed name by default
     /// since tests don't care what the swarm is called — only that creation
     /// and join round-trip.
     pub(crate) fn create_named(name: &str) -> (Self, String) {
@@ -1109,10 +1107,10 @@ impl Node {
             let content = fs::read_to_string(&log).unwrap_or_default();
             for line in content.lines() {
                 let trimmed = line.trim();
-                // Human-mode create prints `others can join with: ahsw
+                // Human-mode create prints `others can join with: agent-gossip
                 // join <id>`; pull the id token out of that hint.
                 if swarm_id.is_none()
-                    && let Some((_, after)) = trimmed.split_once("ahsw join ")
+                    && let Some((_, after)) = trimmed.split_once("agent-gossip join ")
                 {
                     swarm_id = after.split_whitespace().next().map(str::to_owned);
                 }
@@ -1146,7 +1144,7 @@ impl Node {
         )
     }
 
-    /// Spawn `ahsw join <swarm> --nickname <nickname>`.
+    /// Spawn `agent-gossip join <swarm> --nickname <nickname>`.
     pub(crate) fn join(swarm: &str, nickname: &str) -> Self {
         Self::join_flags(swarm, nickname, &[])
     }
@@ -1282,7 +1280,7 @@ impl Drop for Node {
 /// The text projection of a chat frame's A2A payload — what a test asserts
 /// against, since the frame `body` carries the serialized payload.
 pub(crate) fn chat_text(msg: &Message) -> String {
-    agent_habilis_swarm::a2a::gossip::chat_text(msg).expect("a chat frame carries an a2a payload")
+    agent_gossip::a2a::gossip::chat_text(msg).expect("a chat frame carries an a2a payload")
 }
 
 #[derive(Debug, Clone)]

@@ -1,4 +1,4 @@
-//! Wire-contract test for `ahsw man`: the binary must print its embedded
+//! Wire-contract test for `agent-gossip man`: the binary must print its embedded
 //! manual to stdout, exit 0, and render the canonical man-page sections.
 
 mod common;
@@ -8,11 +8,11 @@ fn man_prints_manual_to_stdout() {
     let output = common::test_cmd()
         .arg("man")
         .output()
-        .expect("failed to run `ahsw man`");
+        .expect("failed to run `agent-gossip man`");
 
     assert!(
         output.status.success(),
-        "`ahsw man` should exit 0, got {:?}",
+        "`agent-gossip man` should exit 0, got {:?}",
         output.status
     );
 
@@ -29,7 +29,7 @@ fn man_prints_manual_to_stdout() {
         "JOIN HORIZON",
         "EXAMPLES",
         "EXIT STATUS",
-        "ahsw man",
+        "agent-gossip man",
         "--nickname",
         "ping_report",
         "create",

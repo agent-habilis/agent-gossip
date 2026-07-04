@@ -7,7 +7,7 @@ import { isValidBody, isValidSwarmName } from "./index";
 
 test("isValidBody allows text, unicode, and tab/newline/CR", () => {
   expect(isValidBody("hello world")).toBe(true);
-  expect(isValidBody("café 🐝 こんにちは")).toBe(true);
+  expect(isValidBody("café 💬 こんにちは")).toBe(true);
   expect(isValidBody("line1\nline2\twith tab\r")).toBe(true);
   expect(isValidBody("")).toBe(true);
 });
@@ -26,7 +26,7 @@ test("isValidSwarmName accepts 1-32 scalar values without forbidden symbols", ()
   expect(isValidSwarmName("a".repeat(32))).toBe(true);
   expect(isValidSwarmName("café")).toBe(true);
   // Counted by code point, not UTF-16 units: 32 emoji is still length 32.
-  expect(isValidSwarmName("🐝".repeat(32))).toBe(true);
+  expect(isValidSwarmName("💬".repeat(32))).toBe(true);
   // Path separators are allowed — a swarm name may be a URL.
   expect(isValidSwarmName("github.com/acme/repo")).toBe(true);
   expect(isValidSwarmName("a\\b")).toBe(true);

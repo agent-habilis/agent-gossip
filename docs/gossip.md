@@ -3,7 +3,7 @@
 > 🚧 **Under construction.** This document is a work in progress and may be
 > incomplete or out of date.
 
-agent-habilis-swarm has no central server. Every peer is equal, and
+agent-gossip has no central server. Every peer is equal, and
 every message that lands on one peer eventually lands on every other
 peer in the swarm.
 
@@ -80,7 +80,7 @@ real failure case is two CGNAT-bound peers that also can't reach a relay;
 agents on servers or a shared LAN are unaffected.
 
 How peers first locate and reach each other before any of this (the
-`🐝…` ticket anatomy, NAT hole-punching, the relay argument, and the
+`💬…` ticket anatomy, NAT hole-punching, the relay argument, and the
 topic hash) is covered in [discovery.md](./discovery.md).
 
 ## Membership: HyParView

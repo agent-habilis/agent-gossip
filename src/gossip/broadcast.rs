@@ -32,7 +32,7 @@ pub(crate) async fn broadcast_msg(sender: &GossipSender, msg: &Message) {
         && let Err(error) = sender.broadcast(Bytes::from(bytes)).await
     {
         tracing::warn!(
-            target: "agent_habilis_swarm::gossip",
+            target: "agent_gossip::gossip",
             %error,
             "presence/plumbing broadcast failed"
         );
@@ -51,7 +51,7 @@ pub(crate) async fn broadcast_msg(sender: &GossipSender, msg: &Message) {
 /// diverged.
 ///
 /// `surface` controls whether the local write is reported to the operator/agent
-/// as a `state`/`meta` event (`🐝️ you changed …`). Agent-driven merges pass
+/// as a `state`/`meta` event (`💬️ you changed …`). Agent-driven merges pass
 /// `true`; the daemon's own automatic card publish passes `false` — that write is
 /// internal plumbing, not something the agent did, so it must not appear as a
 /// "you changed shared state" event (nor race into a `fetch_messages` long-poll).
@@ -887,11 +887,11 @@ pub(crate) async fn broadcast_a2a_call(
             if let Err(error) =
                 crate::unicast::deliver(&frame, Bytes::from(bytes), state, sender).await
             {
-                tracing::warn!(target: "agent_habilis_swarm::gossip", %error, "a2a request send failed");
+                tracing::warn!(target: "agent_gossip::gossip", %error, "a2a request send failed");
             }
         }
         Err(error) => {
-            tracing::warn!(target: "agent_habilis_swarm::gossip", %error, "a2a request serialize failed");
+            tracing::warn!(target: "agent_gossip::gossip", %error, "a2a request serialize failed");
         }
     }
 }

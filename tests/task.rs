@@ -14,7 +14,7 @@ mod common;
 
 use std::time::Duration;
 
-use agent_habilis_swarm::{TaskId, TaskState};
+use agent_gossip::{TaskId, TaskState};
 use common::{InProcNode, MSG_TIMEOUT, three_peers};
 
 const TASK_WAIT: Duration = MSG_TIMEOUT;

@@ -75,7 +75,7 @@ export function registerTools(pi: ExtensionAPI): void {
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx: ExtensionContext) {
       if (!requireAgentSwarm(ctx)) {
-        return toolError("ahsw CLI not found on PATH");
+        return toolError("agent-gossip CLI not found on PATH");
       }
       const options: CreateOptions = {
         name: params.name,
@@ -103,16 +103,16 @@ export function registerTools(pi: ExtensionAPI): void {
     name: "swarm_join",
     label: "Swarm Join",
     description: "Join an existing agent swarm",
-    promptSnippet: "Join an existing agent swarm by its 🐝… ID",
+    promptSnippet: "Join an existing agent swarm by its 💬… ID",
     promptGuidelines: [
-      "Use swarm_join when the user provides a 🐝… swarm ID to join",
+      "Use swarm_join when the user provides a 💬… swarm ID to join",
       "For a public swarm derived from a shared string (not an ID), use swarm_forum instead",
       "Use swarm_join when the user says they want to join an existing swarm by id",
       "Do not reformat or add extra prose after the tool result. The tool output is already the complete response.",
     ],
     parameters: Type.Object({
       target: Type.String({
-        description: "Swarm identifier (🐝...)",
+        description: "Swarm identifier (💬...)",
       }),
       nickname: Type.Optional(
         Type.String({ description: "Optional nickname override (auto-generated if omitted)" }),
@@ -120,7 +120,7 @@ export function registerTools(pi: ExtensionAPI): void {
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx: ExtensionContext) {
       if (!requireAgentSwarm(ctx)) {
-        return toolError("ahsw CLI not found on PATH");
+        return toolError("agent-gossip CLI not found on PATH");
       }
       const result = await joinSwarm({
         target: params.target,
@@ -140,7 +140,7 @@ export function registerTools(pi: ExtensionAPI): void {
     description: "Join a public swarm derived from a shared string",
     promptSnippet: "Join a public agent swarm keyed by a shared string (no ID needed)",
     promptGuidelines: [
-      "Use swarm_forum when the user wants to join by a shared word/phrase/URL rather than a 🐝… ID",
+      "Use swarm_forum when the user wants to join by a shared word/phrase/URL rather than a 💬… ID",
       "Everyone passing the same string lands in the same swarm; it is matched byte-for-byte after trimming whitespace",
       "Do not reformat or add extra prose after the tool result. The tool output is already the complete response.",
     ],
@@ -155,7 +155,7 @@ export function registerTools(pi: ExtensionAPI): void {
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx: ExtensionContext) {
       if (!requireAgentSwarm(ctx)) {
-        return toolError("ahsw CLI not found on PATH");
+        return toolError("agent-gossip CLI not found on PATH");
       }
       const result = await forumSwarm({
         string: params.string,
@@ -186,7 +186,7 @@ export function registerTools(pi: ExtensionAPI): void {
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx: ExtensionContext) {
       if (!requireAgentSwarm(ctx)) {
-        return toolError("ahsw CLI not found on PATH");
+        return toolError("agent-gossip CLI not found on PATH");
       }
       const directory = params.directory?.trim() || "global";
       const swarms = await discoverSwarms({
@@ -212,14 +212,14 @@ export function registerTools(pi: ExtensionAPI): void {
       "Use swarm_send to reply to a peer (set reply to their nickname) or to ask the swarm for help",
       "Set notice:true for anything informational that must not trigger responses (status reports, CI results, log lines) — peers NEVER auto-reply to a notice",
       "NEVER auto-reply to an incoming notice event yourself — it is informational by contract",
-      "Send plain text — never prefix or append the 🐝 emoji; the swarm UI adds it for you",
+      "Send plain text — never prefix or append the 💬 emoji; the swarm UI adds it for you",
       "Do not call swarm_status before sending. Use your memory of whether you joined or created a swarm.",
       "If not currently in a swarm, inform the user instead of calling swarm_status first.",
     ],
     parameters: Type.Object({
       text: Type.String({
         description:
-          "Message text to send to the swarm (UTF-8). Plain text — do not include the 🐝 marker; the UI adds it.",
+          "Message text to send to the swarm (UTF-8). Plain text — do not include the 💬 marker; the UI adds it.",
       }),
       reply: Type.Optional(
         Type.String({ description: "Target peer's nickname to address this message to" }),
@@ -233,7 +233,7 @@ export function registerTools(pi: ExtensionAPI): void {
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx: ExtensionContext) {
       if (!requireAgentSwarm(ctx)) {
-        return toolError("ahsw CLI not found on PATH");
+        return toolError("agent-gossip CLI not found on PATH");
       }
       if (!state.session?.swarm) {
         return toolError("Not in a swarm. Use swarm_create or swarm_join first.");
@@ -283,7 +283,7 @@ export function registerTools(pi: ExtensionAPI): void {
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx: ExtensionContext) {
       if (!requireAgentSwarm(ctx)) {
-        return toolError("ahsw CLI not found on PATH");
+        return toolError("agent-gossip CLI not found on PATH");
       }
       if (!state.session?.swarm) {
         return toolError("Not in a swarm. Use swarm_create or swarm_join first.");
@@ -323,7 +323,7 @@ export function registerTools(pi: ExtensionAPI): void {
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx: ExtensionContext) {
       if (!requireAgentSwarm(ctx)) {
-        return toolError("ahsw CLI not found on PATH");
+        return toolError("agent-gossip CLI not found on PATH");
       }
       if (!state.session?.swarm) {
         return toolError("Not in a swarm. Use swarm_create or swarm_join first.");
@@ -383,7 +383,7 @@ export function registerTools(pi: ExtensionAPI): void {
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx: ExtensionContext) {
       if (!requireAgentSwarm(ctx)) {
-        return toolError("ahsw CLI not found on PATH");
+        return toolError("agent-gossip CLI not found on PATH");
       }
       if (!state.session?.swarm) {
         return toolError("Not in a swarm. Use swarm_create or swarm_join first.");
@@ -464,7 +464,7 @@ export function registerTools(pi: ExtensionAPI): void {
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx: ExtensionContext) {
       if (!requireAgentSwarm(ctx)) {
-        return toolError("ahsw CLI not found on PATH");
+        return toolError("agent-gossip CLI not found on PATH");
       }
       if (!state.session?.swarm) {
         return toolError("Not in a swarm. Use swarm_create or swarm_join first.");
@@ -497,7 +497,7 @@ export function registerTools(pi: ExtensionAPI): void {
     parameters: Type.Object({}),
     async execute(_toolCallId, _params, _signal, _onUpdate, ctx: ExtensionContext) {
       if (!requireAgentSwarm(ctx)) {
-        return toolError("ahsw CLI not found on PATH");
+        return toolError("agent-gossip CLI not found on PATH");
       }
       if (!state.session?.swarm) {
         return toolError("Not in a swarm. Use swarm_create or swarm_join first.");
@@ -537,7 +537,7 @@ export function registerTools(pi: ExtensionAPI): void {
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx: ExtensionContext) {
       if (!requireAgentSwarm(ctx)) {
-        return toolError("ahsw CLI not found on PATH");
+        return toolError("agent-gossip CLI not found on PATH");
       }
       if (!state.session?.swarm) {
         return toolError("Not in a swarm. Use swarm_create or swarm_join first.");
@@ -584,7 +584,7 @@ export function registerTools(pi: ExtensionAPI): void {
     parameters: Type.Object({}),
     async execute(_toolCallId, _params, _signal, _onUpdate, ctx: ExtensionContext) {
       if (!requireAgentSwarm(ctx)) {
-        return toolError("ahsw CLI not found on PATH");
+        return toolError("agent-gossip CLI not found on PATH");
       }
       if (!state.session?.swarm) {
         return toolError("Not in a swarm");

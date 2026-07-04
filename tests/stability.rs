@@ -14,7 +14,7 @@ mod common;
 
 use std::time::Duration;
 
-use agent_habilis_swarm::OutputEvent;
+use agent_gossip::OutputEvent;
 use common::InProcNode;
 
 /// How long the steady-state test holds the swarm quiet before asserting

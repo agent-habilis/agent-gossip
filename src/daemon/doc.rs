@@ -1,7 +1,7 @@
 //! The shared-document engine backing the `state` and `meta` channels.
 //!
 //! Each channel is an [`automerge`] CRDT. A local write is expressed as an
-//! RFC 7386-style JSON merge (the unchanged `ahsw state|meta merge` surface),
+//! RFC 7386-style JSON merge (the unchanged `agent-gossip state|meta merge` surface),
 //! translated into one automerge change; peers exchange those changes and
 //! automerge merges them conflict-free — so we no longer own an ordered-log
 //! fold. Convergence is automerge's job; ours is authenticity.
@@ -116,7 +116,7 @@ impl SwarmDoc {
             .collect()
     }
 
-    /// The derived document as JSON — the shape `ahsw state|meta get` returns.
+    /// The derived document as JSON — the shape `agent-gossip state|meta get` returns.
     pub(crate) fn to_json(&self) -> Value {
         doc_json(&self.doc)
     }
@@ -283,9 +283,7 @@ fn doc_json(doc: &Automerge) -> Value {
 /// object id — is identical on every replica.
 fn peers_genesis() -> Change {
     let mut doc = Automerge::new();
-    doc.set_actor(automerge::ActorId::from(
-        b"agent-habilis-swarm/genesis".as_slice(),
-    ));
+    doc.set_actor(automerge::ActorId::from(b"agent-gossip/genesis".as_slice()));
     {
         let mut tx = doc.transaction();
         tx.put_object(&ROOT, "peers", ObjType::Map)
@@ -466,7 +464,7 @@ mod tests {
     /// `author` + `body`; a valid signature is `gossip::ingest`'s job).
     fn frame(who: &Nickname, bytes: &[u8]) -> Message {
         Message::new_channel_event(
-            &SwarmId::from("🐝test"),
+            &SwarmId::from("💬test"),
             who,
             change_body(bytes, None).expect("body"),
             Channel::State,

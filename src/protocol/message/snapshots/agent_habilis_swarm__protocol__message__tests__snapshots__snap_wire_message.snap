@@ -1,5 +1,0 @@
----
-source: src/protocol/message/mod.rs
-expression: wire
----
-{"v":"7.0","id":"00000000-0000-0000-0000-000000000001","type":"a2a_msg","swarm":"🐝://test","author":"alice-bot","ts":1700000000,"body":"{\"messageId\":\"00000000-0000-0000-0000-000000000001\",\"role\":\"ROLE_USER\",\"parts\":[{\"text\":\"What is Rust?\"}],\"contextId\":\"🐝://test\",\"extensions\":[\"https://agent-habilis.dev/a2a/ext/swarm-broadcast/v1\"]}","ext":{}}

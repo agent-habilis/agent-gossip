@@ -42,7 +42,7 @@ If you hold `$SWARM`/`$NICKNAME` from a `/swarm:create` or `/swarm:join`
 follow `../shared/reattach.md` (resolved relative to this SKILL.md's
 directory). Only if reattach also yields no swarm, print:
 ```
-🐝 Not in a swarm. Use /swarm:create or /swarm:join first.
+💬 Not in a swarm. Use /swarm:create or /swarm:join first.
 ```
 and STOP.
 
@@ -88,14 +88,14 @@ continue below.
 
 ## Pick the worker
 
-Now that the task is set, choose who runs it. The roster (`ahsw peers`) carries
+Now that the task is set, choose who runs it. The roster (`agent-gossip peers`) carries
 connectivity; what each peer **runs on** lives in the **meta** channel (peers
 self-report it there, the binary does not). Read both, silently — don't print
 either:
 
 ```bash
-ahsw peers --swarm "$SWARM" --nickname "$NICKNAME"
-ahsw meta get --swarm "$SWARM" --nickname "$NICKNAME"
+agent-gossip peers --swarm "$SWARM" --nickname "$NICKNAME"
+agent-gossip meta get --swarm "$SWARM" --nickname "$NICKNAME"
 ```
 
 `peers` returns
@@ -122,7 +122,7 @@ header `swarm:handover`, options = the **top 3** by recency. For each option:
 The free-text "Other" entry lets the user type a nickname; re-validate it
 against the roster. The chosen nickname (without the brackets) is `$TARGET`.
 
-If the roster has no eligible peers, print `🐝️ no available peers to hand over to`
+If the roster has no eligible peers, print `💬️ no available peers to hand over to`
 and STOP.
 
 ## Create the task
@@ -133,7 +133,7 @@ worker to take it and run it, not to report a result). The **worker mints the
 task id** and returns the `Task` — capture `result.task.id` as `$TASK_ID`:
 
 ```bash
-ahsw a2a call --swarm "$SWARM" --nickname "$NICKNAME" --to "$TARGET" \
+agent-gossip a2a call --swarm "$SWARM" --nickname "$NICKNAME" --to "$TARGET" \
   --method SendMessage --text "$BRIEF"
 ```
 
@@ -155,7 +155,7 @@ for the session). In short, for this `task_id`:
   complete: set the todo `completed` and **stop watching**. The worker runs the
   work on its own; there is nothing for you to review, approve, or confirm.
 - **`state:"input-required"` with a question** — answer from your task context
-  with a follow-up message (`ahsw a2a call --to $TARGET --method SendMessage
+  with a follow-up message (`agent-gossip a2a call --to $TARGET --method SendMessage
   --task-id "$TASK_ID" --text "<answer>"`). Silent (widget only).
 - **`state:"failed"` / `task_timeout`** — the worker passed or dropped; record
   the reason and stop.
@@ -165,7 +165,7 @@ You never wait for the worker to *run* the work.
 ## Track the task in the to-do list
 
 Use your harness's native to-do list as the **single source of truth** for
-handover status — **not** a printed `🐝 tasks` block. It's **`TodoWrite`** in
+handover status — **not** a printed `💬 tasks` block. It's **`TodoWrite`** in
 most harnesses; where that tool is absent, use **`TaskCreate`** (`subject` = the
 `content` line below, `activeForm` = `activeForm`) + **`TaskUpdate`** (status
 `pending → in_progress → completed`, `deleted` to drop), one task per
@@ -174,10 +174,10 @@ most harnesses; where that tool is absent, use **`TaskCreate`** (`subject` = the
 todo for this handover and keep it updated as the daemon emits events for this
 `task_id`; never print a per-update status line.
 
-- Add it on send: a todo whose `content` is **exactly** `🐝 handover to
-  <$TARGET>` (e.g. `🐝 handover to <crystal-azure>`), status `in_progress`.
-  The `🐝` prefix labels it as a swarm task (`TodoWrite` has no widget title).
-  The companion **`activeForm`** uses the same text without the `🐝`, e.g.
+- Add it on send: a todo whose `content` is **exactly** `💬 handover to
+  <$TARGET>` (e.g. `💬 handover to <crystal-azure>`), status `in_progress`.
+  The `💬` prefix labels it as a swarm task (`TodoWrite` has no widget title).
+  The companion **`activeForm`** uses the same text without the `💬`, e.g.
   `activeForm: "handover to <crystal-azure>"`. Write the nickname as
   `<$TARGET>` with literal angle brackets and **no backticks** in **both**
   fields — the widget shows text verbatim: markdown isn't rendered (backticks
@@ -195,7 +195,7 @@ There are **no printed status or outcome lines** — not even a final "task
 handed over" line. The native to-do list (via `TodoWrite`) is the sole status
 surface; its `completed` state is the terminal indication. The only other
 things that may appear are the not-in-swarm guard line, plan mode, and the
-worker picker. No `🐝 tasks` text block, no per-leg lines, no narration.
+worker picker. No `💬 tasks` text block, no per-leg lines, no narration.
 
 After marking the todo `completed`, **end silently** — do **not** print a
 closing or summary sentence (e.g. "The handover is complete — `<peer>` will

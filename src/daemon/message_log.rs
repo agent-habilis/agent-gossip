@@ -179,7 +179,7 @@ mod tests {
 
     fn msg(id: &str) -> Message {
         Message::new_a2a_msg(
-            &crate::protocol::SwarmId::from("🐝test"),
+            &crate::protocol::SwarmId::from("💬test"),
             &crate::protocol::Nickname::from("author"),
             crate::protocol::MessageBody::from(id),
         )

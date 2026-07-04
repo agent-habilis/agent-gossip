@@ -1,4 +1,4 @@
-//! Session state file — the agent-habilis-swarm daemon writes its
+//! Session state file — the agent-gossip daemon writes its
 //! view of the swarm into this file so external tools (e.g. a shell
 //! statusline) and the `/swarm:*` skills can render the current swarm,
 //! nickname, and participant count with a plain local file read. No
@@ -11,21 +11,21 @@
 //! (no read-merge: there are no foreign keys to preserve).
 //!
 //! `ready` is `false` at the early identity write and flips to `true`
-//! once the event loop is serving IPC, so a reader (e.g. `ahsw ready`)
+//! once the event loop is serving IPC, so a reader (e.g. `agent-gossip ready`)
 //! can gate on it rather than on the file's mere existence.
 //! `participant_count` is the total number of agents in the swarm,
 //! including self. `last_updated` is a unix timestamp the daemon
 //! refreshes on a fixed heartbeat (see `tuning::STATE_REFRESH_SECS`)
 //! even when membership is unchanged, so a reader can treat a fresh
 //! value as a liveness signal. `pid` is the daemon's own process id —
-//! what lets `ahsw leave`/`ahsw session` map a state file back to a
+//! what lets `agent-gossip leave`/`agent-gossip session` map a state file back to a
 //! running daemon (and, via its ancestry, to the agent session that
 //! spawned it).
 //!
 //! File shape (keys are serialized in sorted order — `serde_json::Map` is a
 //! `BTreeMap` here, no `preserve_order` feature):
 //! ```json
-//! {"last_updated":1776720604,"name":"cool-team","nickname":"treat-empire","participant_count":3,"pid":34299,"ready":true,"swarm":"🐝..."}
+//! {"last_updated":1776720604,"name":"cool-team","nickname":"treat-empire","participant_count":3,"pid":34299,"ready":true,"swarm":"💬..."}
 //! ```
 //!
 //! Writes are atomic (tempfile + rename on the same filesystem), so a
@@ -158,7 +158,7 @@ impl Drop for StateFile {
     }
 }
 
-/// What the `ahsw ready` gate needs out of a state file on every poll: whether
+/// What the `agent-gossip ready` gate needs out of a state file on every poll: whether
 /// the daemon is serving (`ready`) and how fresh that claim is (`last_updated`,
 /// unix seconds — the daemon rewrites it on a fixed heartbeat, so a stale
 /// `ready: true` left by a prior daemon killed with SIGKILL is rejected). The
@@ -169,7 +169,7 @@ pub(crate) struct ReadySnapshot {
     pub last_updated: u64,
 }
 
-/// Best-effort session identity for `ahsw ready --output json`. Each field is
+/// Best-effort session identity for `agent-gossip ready --output json`. Each field is
 /// `None` when the state file is unreadable, not JSON, or predates that field
 /// — so the JSON the gate prints carries only the keys actually present.
 pub(crate) struct SessionIdentity {
@@ -200,8 +200,8 @@ pub(crate) fn read_identity(path: &Path) -> SessionIdentity {
     }
 }
 
-/// One running daemon as seen through its state file — what `ahsw leave` /
-/// `ahsw session` need to map the file back to a live process and decide
+/// One running daemon as seen through its state file — what `agent-gossip leave` /
+/// `agent-gossip session` need to map the file back to a live process and decide
 /// whether the calling session owns it. Every field is `Option`: a file
 /// written by an older binary predates `pid`, and discovery must still be
 /// able to *report* such an entry rather than error on it.
@@ -290,7 +290,7 @@ mod tests {
 
     fn unique_path(tag: &str) -> PathBuf {
         std::env::temp_dir().join(format!(
-            "agent-habilis-swarm-state-test-{}-{}-{}.json",
+            "agent-gossip-state-test-{}-{}-{}.json",
             tag,
             std::process::id(),
             clock::unix_nanos(),
@@ -302,14 +302,14 @@ mod tests {
         let path = unique_path("shape");
         let state_file = StateFile::new(
             path.clone(),
-            &SwarmId::from("🐝abcd"),
+            &SwarmId::from("💬abcd"),
             &Nickname::from("treat-empire"),
             &name("cool-team"),
         );
         state_file.write(3, true);
         let contents = std::fs::read_to_string(&path).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&contents).unwrap();
-        assert_eq!(parsed["swarm"], "🐝://abcd");
+        assert_eq!(parsed["swarm"], "💬://abcd");
         assert_eq!(parsed["name"], "cool-team");
         assert_eq!(parsed["nickname"], "treat-empire");
         assert_eq!(parsed["ready"], true);
@@ -324,7 +324,7 @@ mod tests {
         let path = unique_path("overwrite");
         let state_file = StateFile::new(
             path.clone(),
-            &SwarmId::from("🐝xyzw"),
+            &SwarmId::from("💬xyzw"),
             &Nickname::from("swift-cedar"),
             &name("cool-team"),
         );
@@ -343,7 +343,7 @@ mod tests {
         let path = unique_path("remove");
         let state_file = StateFile::new(
             path.clone(),
-            &SwarmId::from("🐝test"),
+            &SwarmId::from("💬test"),
             &Nickname::from("n"),
             &name("cool-team"),
         );
@@ -359,7 +359,7 @@ mod tests {
         {
             let state_file = StateFile::new(
                 path.clone(),
-                &SwarmId::from("🐝test"),
+                &SwarmId::from("💬test"),
                 &Nickname::from("n"),
                 &name("cool-team"),
             );
@@ -373,7 +373,7 @@ mod tests {
     fn creates_parent_dir() {
         let mut path = std::env::temp_dir();
         path.push(format!(
-            "agent-habilis-swarm-state-test-parent-{}",
+            "agent-gossip-state-test-parent-{}",
             std::process::id()
         ));
         path.push("sessions");
@@ -381,7 +381,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
         let state_file = StateFile::new(
             path.clone(),
-            &SwarmId::from("🐝test"),
+            &SwarmId::from("💬test"),
             &Nickname::from("n"),
             &name("cool-team"),
         );
@@ -400,14 +400,14 @@ mod tests {
         std::fs::write(&path, br#"{"name":"stale","auto_reply":false,"junk":1}"#).unwrap();
         let state_file = StateFile::new(
             path.clone(),
-            &SwarmId::from("🐝fresh"),
+            &SwarmId::from("💬fresh"),
             &Nickname::from("swift-cedar"),
             &name("cool-team"),
         );
         state_file.write(3, true);
         let parsed: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        assert_eq!(parsed["swarm"], "🐝://fresh");
+        assert_eq!(parsed["swarm"], "💬://fresh");
         assert_eq!(parsed["name"], "cool-team");
         assert_eq!(parsed["nickname"], "swift-cedar");
         assert_eq!(parsed["participant_count"], 3);
@@ -422,7 +422,7 @@ mod tests {
         let path = unique_path("snapshot");
         let state_file = StateFile::new(
             path.clone(),
-            &SwarmId::from("🐝round"),
+            &SwarmId::from("💬round"),
             &Nickname::from("treat-empire"),
             &name("cool-team"),
         );
@@ -447,13 +447,13 @@ mod tests {
         let path = unique_path("identity");
         let state_file = StateFile::new(
             path.clone(),
-            &SwarmId::from("🐝round"),
+            &SwarmId::from("💬round"),
             &Nickname::from("treat-empire"),
             &name("cool-team"),
         );
         state_file.write(2, true);
         let identity = super::read_identity(&path);
-        assert_eq!(identity.swarm.as_deref(), Some("🐝://round"));
+        assert_eq!(identity.swarm.as_deref(), Some("💬://round"));
         assert_eq!(identity.name.as_deref(), Some("cool-team"));
         assert_eq!(identity.nickname.as_deref(), Some("treat-empire"));
         state_file.remove();
@@ -464,13 +464,13 @@ mod tests {
         let path = unique_path("session-entry");
         let state_file = StateFile::new(
             path.clone(),
-            &SwarmId::from("🐝round"),
+            &SwarmId::from("💬round"),
             &Nickname::from("treat-empire"),
             &name("cool-team"),
         );
         state_file.write(2, true);
         let entry = super::read_session_entry(&path).expect("present");
-        assert_eq!(entry.swarm.as_deref(), Some("🐝://round"));
+        assert_eq!(entry.swarm.as_deref(), Some("💬://round"));
         assert_eq!(entry.name.as_deref(), Some("cool-team"));
         assert_eq!(entry.nickname.as_deref(), Some("treat-empire"));
         assert_eq!(entry.pid, Some(std::process::id()));
@@ -483,11 +483,11 @@ mod tests {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(
             &path,
-            r#"{"last_updated":1,"name":"old","nickname":"n-n","participant_count":1,"ready":true,"swarm":"🐝old"}"#,
+            r#"{"last_updated":1,"name":"old","nickname":"n-n","participant_count":1,"ready":true,"swarm":"💬old"}"#,
         )
         .unwrap();
         let entry = super::read_session_entry(&path).expect("present");
-        assert_eq!(entry.swarm.as_deref(), Some("🐝old"));
+        assert_eq!(entry.swarm.as_deref(), Some("💬old"));
         assert_eq!(entry.pid, None);
         let _ = std::fs::remove_file(&path);
     }
@@ -522,10 +522,10 @@ mod tests {
         std::fs::write(&path, b"not json").unwrap();
         assert!(super::read_snapshot(&path).is_err());
         // JSON object missing the `ready` / `last_updated` fields the gate needs.
-        std::fs::write(&path, r#"{"swarm":"🐝x","name":"n"}"#).unwrap();
+        std::fs::write(&path, r#"{"swarm":"💬x","name":"n"}"#).unwrap();
         assert!(super::read_snapshot(&path).is_err());
         // Has `ready` but still missing `last_updated`.
-        std::fs::write(&path, r#"{"ready":true,"swarm":"🐝round"}"#).unwrap();
+        std::fs::write(&path, r#"{"ready":true,"swarm":"💬round"}"#).unwrap();
         assert!(super::read_snapshot(&path).is_err());
         let _ = std::fs::remove_file(&path);
     }

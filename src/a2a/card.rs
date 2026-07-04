@@ -42,7 +42,7 @@ pub(crate) fn own_card(nickname: &Nickname, pubkey_hex: &str, seal_pubkey_b58: &
     AgentCard {
         name: nickname.as_str().to_string(),
         description: format!(
-            "agent-habilis-swarm participant `{nickname}` — an AI agent reachable over the \
+            "agent-gossip participant `{nickname}` — an AI agent reachable over the \
              swarm's A2A gossip binding"
         ),
         supported_interfaces: vec![AgentInterface {

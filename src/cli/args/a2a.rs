@@ -39,7 +39,7 @@ pub(crate) enum A2aAction {
         lookups: PublicLookupArgs,
 
         /// Advertise this bridge's ticket in a directory so a peer can find it
-        /// with `ahsw a2a discover` — no `📡…` to copy. Bare `--advertise` ⇒ the
+        /// with `agent-gossip a2a discover` — no `📡…` to copy. Bare `--advertise` ⇒ the
         /// default `global` directory; `--advertise <name>` ⇒ that named
         /// directory (share the name with the peer). The ad carries the full
         /// bearer ticket, so pair it with `--password`.
@@ -80,7 +80,7 @@ pub(crate) enum A2aAction {
     /// exposer over the swarm and rewrites the Agent Card so the client
     /// discovers the local bridge, not the unreachable origin.
     Connect {
-        /// The `📡…` ticket printed by `ahsw a2a expose`.
+        /// The `📡…` ticket printed by `agent-gossip a2a expose`.
         ticket: String,
 
         /// Local port to bind the bridge on (default: an ephemeral port — the
@@ -154,7 +154,7 @@ pub(crate) enum A2aAction {
     /// the whole swarm (A2A is point-to-point, so a swarm-wide message declares
     /// itself). Exits non-zero when the response is an error or times out.
     Call {
-        /// Swarm identifier (🐝...)
+        /// Swarm identifier (💬...)
         #[arg(long)]
         swarm: SwarmId,
 
@@ -194,7 +194,7 @@ pub(crate) enum A2aAction {
     /// task you're serving to `working` / `input-required` / `completed` /
     /// `failed`. Pushed fire-and-forget to the other party.
     Status {
-        /// Swarm identifier (🐝...)
+        /// Swarm identifier (💬...)
         #[arg(long)]
         swarm: SwarmId,
         /// Nickname of the local agent (must have a running join/create session)
@@ -215,7 +215,7 @@ pub(crate) enum A2aAction {
     /// Worker-emit a task `TaskArtifactUpdate` (the result) for a task you're
     /// serving. Parks the task in `input-required` for the initiator's approval.
     Artifact {
-        /// Swarm identifier (🐝...)
+        /// Swarm identifier (💬...)
         #[arg(long)]
         swarm: SwarmId,
         /// Nickname of the local agent (must have a running join/create session)

@@ -199,10 +199,10 @@ test("formatMeta: a non-/peers meta change falls back to the daemon display", ()
         author: "otter-embark",
         merge: { caps: { review: true } },
         document: { caps: { review: true } },
-        display: "🐝️ `<otter-embark>` changed /caps/review",
+        display: "💬️ `<otter-embark>` changed /caps/review",
       }),
     ),
-  ).toBe("🐝️ `<otter-embark>` changed /caps/review");
+  ).toBe("💬️ `<otter-embark>` changed /caps/review");
 });
 
 test("formatRoster includes a status column, empty when a peer has not reported", () => {

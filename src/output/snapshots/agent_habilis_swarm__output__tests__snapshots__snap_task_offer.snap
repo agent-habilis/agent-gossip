@@ -1,5 +1,0 @@
----
-source: src/output/tests.rs
-expression: "super::super::json::format_task_json(&frame, false)"
----
-{"event":"task","id":"550e8400-e29b-41d4-a716-446655440000","swarm":"🐝test","author":"alice-bot","ts":1700000000,"to":"calm-otter","task_id":"550e8400-e29b-41d4-a716-446655440000","phase":"offer","body":"## Task\nport the parser","payload":{"contextId":"🐝test","extensions":["https://agent-habilis.dev/a2a/ext/swarm-task/v1"],"kind":"message","messageId":"550e8400-e29b-41d4-a716-446655440000","parts":[{"kind":"text","text":"## Task\nport the parser"}],"role":"user"},"display":"🐝️ task offer `<alice-bot>` → `<calm-otter>`: ## Task\nport the parser","self":false}
