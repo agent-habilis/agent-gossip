@@ -249,14 +249,14 @@ pub(crate) async fn handle_op(
                 .ok_or_else(|| RpcError::task_not_found(&task_id))
         }
         A2aOp::ChannelGet { channel } => {
-            let log = match channel {
-                Channel::State => &state.state_log,
-                Channel::Meta => &state.meta_log,
+            let document = match channel {
+                Channel::State => state.state_doc.to_json(),
+                Channel::Meta => state.meta_doc.to_json(),
             };
-            Ok(crate::daemon::state_doc::derive_document(log))
+            Ok(document)
         }
         A2aOp::ChannelMerge { channel, merge } => {
-            broadcast_state_merge(swarm, author, merge, state, sender, output, channel)
+            broadcast_state_merge(swarm, author, merge, state, sender, output, channel, true)
                 .await
                 .map_err(|error| RpcError::internal(error.to_string()))?;
             Ok(serde_json::json!({ "ok": true }))
@@ -275,7 +275,7 @@ pub(crate) async fn handle_op(
             serde_json::to_value(&card).map_err(|error| RpcError::internal(error.to_string()))
         }
         A2aOp::PeerCard { peer } => {
-            let doc = crate::daemon::state_doc::derive_document(&state.meta_log);
+            let doc = state.meta_doc.to_json();
             let mut card = doc
                 .pointer(&format!("/peers/{peer}/card"))
                 .cloned()

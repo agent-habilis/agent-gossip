@@ -243,15 +243,15 @@ pub(crate) struct EventLoopState {
     /// once even if a shard is re-fetched (via anti-entropy) after its id aged
     /// out of [`seen`](Self::seen). Bounded — groups are rare and short-lived.
     pub reassembled_groups: BoundedFifoSet<ShardGroup>,
-    /// The durable, un-pruned log of signed `State` events (membership edits,
-    /// settings, …) — separate from `message_log` so swarm state never ages out
-    /// of the chat retention window. Swarm state is the deterministic fold over
-    /// this log; see [`super::state_log`].
-    pub state_log: super::state_log::StateLog,
-    /// The `meta` channel's log — a second, independent shared-state channel,
-    /// identical machinery to `state_log`. Distinguished only by application
-    /// convention (`meta` for swarm metadata, `state` for the task).
-    pub meta_log: super::state_log::StateLog,
+    /// The `state` channel: an automerge CRDT plus the signed change frames that
+    /// carried it (the re-serve store). Convergence and card authorization live
+    /// in [`super::doc`]; reconciliation is heads-based anti-entropy. This is the
+    /// document `ahsw state get` reads.
+    pub state_doc: super::doc::SwarmDoc,
+    /// The `meta` channel's document — a second, independent shared-state channel.
+    /// Gates foreign-card writes (unlike `state`), since a `meta` card carries a
+    /// peer's cryptographic identity.
+    pub meta_doc: super::doc::SwarmDoc,
     /// Local, seq-ordered record of everything surfaced to the
     /// operator/agent — the history `poll` / `fetch_messages` drain. Fed by
     /// the [`Output`](crate::output::Output) tap (the event loop mirrors each
@@ -260,19 +260,12 @@ pub(crate) struct EventLoopState {
     /// monotonic local `seq` (see [`super::surfaced::SurfacedEvents`]) —
     /// deliberately separate from `message_log`'s cross-node `eviction_key`.
     pub surfaced_events: super::surfaced::SurfacedEvents,
-    /// Rolling start index for the anti-entropy digest window: each round
-    /// advertises `message_log[digest_cursor ..]` (up to
+    /// Rolling start index for the **chat** anti-entropy digest window: each
+    /// round advertises `message_log[digest_cursor ..]` (up to
     /// `ANTIENTROPY_DIGEST_MAX_IDS`), then advances/wraps so a log larger
-    /// than one digest is swept over several rounds.
+    /// than one digest is swept over several rounds. (State/meta reconcile by
+    /// automerge heads and need no cursor.)
     pub digest_cursor: usize,
-    /// The same rolling start index, for the **state** anti-entropy digest's
-    /// older-portion window. Separate from `digest_cursor` so chat and state
-    /// sweep their (independently sized, unbounded for state) logs on their own
-    /// cursors.
-    pub state_digest_cursor: usize,
-    /// The `meta` channel's anti-entropy cursor — independent of
-    /// `state_digest_cursor` so the two logs sweep on their own.
-    pub meta_digest_cursor: usize,
     /// This member's signing identity (Ed25519). Shared with the
     /// send path so messages we author are signed before broadcast.
     /// The public key is the durable identity; the nickname is a
@@ -544,14 +537,12 @@ impl EventLoopState {
             live_count: None,
             message_log: MessageLog::new(message_log_size()),
             reassembled_groups: BoundedFifoSet::new(message_log_size()),
-            state_log: super::state_log::StateLog::new(),
-            meta_log: super::state_log::StateLog::new(),
+            state_doc: super::doc::SwarmDoc::new(false),
+            meta_doc: super::doc::SwarmDoc::new(true),
             surfaced_events: super::surfaced::SurfacedEvents::new(
                 crate::util::consts::SURFACED_EVENTS_CAP,
             ),
             digest_cursor: 0,
-            state_digest_cursor: 0,
-            meta_digest_cursor: 0,
             identity,
             self_seq: 0,
             self_prev: None,

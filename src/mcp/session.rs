@@ -618,8 +618,9 @@ mod tests {
         second.leave().await;
     }
 
-    /// A merge applies and is reflected by `state_get` (any JSON value is valid —
-    /// there is no rejection path beyond a stopped event loop).
+    /// An object merge applies and is reflected by `state_get`; a non-object
+    /// top-level merge is rejected (automerge's document root is always a map, so
+    /// the old RFC 7386 "replace the whole document" case has no representation).
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn apply_state_merge_applies_and_reads_back() {
         let session = Session::create(create_cfg("merge", "alice"))
@@ -635,24 +636,15 @@ mod tests {
             json!("a")
         );
 
-        // The fold order is `(timestamp, id)` at one-second resolution, so two
-        // changes authored in the same second sort by the random id tiebreak —
-        // the documented turn-based contract (the glossary's *Shared state
-        // converges deterministically* invariant). Cross the second boundary
-        // so the second merge deterministically folds last.
-        let stamped = crate::util::clock::unix_secs();
-        while crate::util::clock::unix_secs() == stamped {
-            tokio::time::sleep(Duration::from_millis(25)).await;
-        }
-
-        // A non-object merge replaces the document (RFC 7386), no rejection.
-        session
-            .apply_state_merge(json!([1, 2, 3]))
-            .await
-            .expect("a non-object merge applies");
+        // A non-object top-level merge cannot be represented on the automerge
+        // root and is refused — the prior document stands.
+        assert!(
+            session.apply_state_merge(json!([1, 2, 3])).await.is_err(),
+            "a non-object top-level merge must be rejected"
+        );
         assert_eq!(
             session.state_get().await.expect("state_get"),
-            json!([1, 2, 3])
+            json!({"turn": "a"})
         );
 
         session.leave().await;

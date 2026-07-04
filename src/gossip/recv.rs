@@ -109,6 +109,20 @@ pub(crate) async fn handle_gossip_event(
                     state.meshed = true;
                     state.degraded = false;
                     flush_pending(state, ctx, "first real-peer link up").await;
+                    // Re-publish our card now that we're meshed: the home relay
+                    // is homed by this point, so the card's endpoint hint gets a
+                    // real dial path (the startup publish may have had none). A
+                    // no-op if the address is unchanged.
+                    crate::daemon::event_loop::publish_own_card(
+                        ctx.swarm,
+                        ctx.author,
+                        ctx.our_pubkey,
+                        state,
+                        ctx.sender,
+                        ctx.output,
+                        ctx.endpoint,
+                    )
+                    .await;
                 }
             }
         }
@@ -400,13 +414,7 @@ pub(crate) async fn ingest(content: Bytes, state: &mut EventLoopState, ctx: &Han
             return;
         }
         MessageKind::State => {
-            ingest_channel_event(
-                Channel::State,
-                &mut state.state_log,
-                &message,
-                surfaceable,
-                ctx,
-            );
+            dispatch_channel(Channel::State, &message, surfaceable, state, ctx);
             return;
         }
         MessageKind::StateDigest => {
@@ -414,13 +422,7 @@ pub(crate) async fn ingest(content: Bytes, state: &mut EventLoopState, ctx: &Han
             return;
         }
         MessageKind::Meta => {
-            ingest_channel_event(
-                Channel::Meta,
-                &mut state.meta_log,
-                &message,
-                surfaceable,
-                ctx,
-            );
+            dispatch_channel(Channel::Meta, &message, surfaceable, state, ctx);
             return;
         }
         MessageKind::MetaDigest => {
@@ -760,37 +762,79 @@ fn retain_and_index(
 /// and we're past the join horizon (a backfilling joiner updates its doc silently
 /// instead of reacting to replayed intermediate states). A received event is
 /// never our own (`is_self = false`). Both channels share this path verbatim.
+/// Route a received `State`/`Meta` event to its channel doc, then — for `meta` —
+/// adopt the author's endpoint hint into the dial book. Selects the disjoint doc
+/// field so the borrow released by [`ingest_channel_event`] frees `state` for the
+/// address adoption.
+fn dispatch_channel(
+    channel: Channel,
+    message: &Message,
+    surfaceable: bool,
+    state: &mut EventLoopState,
+    ctx: &HandlerCtx<'_>,
+) {
+    let doc = match channel {
+        Channel::State => &mut state.state_doc,
+        Channel::Meta => &mut state.meta_doc,
+    };
+    ingest_channel_event(channel, doc, message, surfaceable, ctx);
+    if channel == Channel::Meta {
+        adopt_meta_endpoint(&message.author, state, ctx);
+    }
+}
+
 fn ingest_channel_event(
     channel: Channel,
-    log: &mut crate::daemon::state_log::StateLog,
+    doc: &mut crate::daemon::doc::SwarmDoc,
     message: &Message,
     surfaceable: bool,
     ctx: &HandlerCtx<'_>,
 ) {
-    // A meta merge may only write its own author's AgentCard: the card
-    // carries the peer's cryptographic identity, so a signed member forging
-    // another member's `/peers/<nick>/card` would spoof that member's A2A
-    // identity to `ahsw card` and the `--a2a-serve` surface. Drop such an
-    // event before it folds — every recipient applies the same gate, so the
-    // forgery converges nowhere.
-    if channel == Channel::Meta
-        && crate::daemon::state_doc::meta_merge_forges_foreign_card(
-            message.body.as_str(),
-            &message.author,
-        )
-    {
-        tracing::warn!(
-            author = %message.author,
-            "dropping a meta merge that forges another peer's agent card"
-        );
-        return;
-    }
-    let before = crate::daemon::state_doc::derive_document(log);
-    if log.insert(message.clone()) {
-        let after = crate::daemon::state_doc::derive_document(log);
-        if surfaceable && after != before {
+    // The doc dedups by change hash, buffers out-of-order changes until their
+    // deps land, retains the signed frame for re-serve, and gates card forgery
+    // (the card carries the peer's cryptographic identity) — every recipient
+    // applies the same gate, so a forgery converges nowhere.
+    use crate::daemon::doc::Ingested;
+    match doc.ingest(message) {
+        Ingested::Applied {
+            changed: true,
+            doc: after,
+        } if surfaceable => {
             ctx.output.state_changed(channel, message, &after, false);
         }
+        Ingested::Rejected => {
+            tracing::warn!(
+                author = %message.author,
+                "dropping a {} change that forges another peer's agent card",
+                channel.label()
+            );
+        }
+        Ingested::Applied { .. } | Ingested::Duplicate | Ingested::Buffered | Ingested::Ignored => {
+        }
+    }
+}
+
+/// Adopt `author`'s published endpoint hint (`/peers/<nick>/card/endpoint`) into
+/// the dial book — the meta-doc counterpart to [`handle_peer_info`]. It binds
+/// `participant_endpoints[author] = eid` and seeds iroh's address book via
+/// [`add_peer_addr`], so a directed unicast can reach a peer we learned about
+/// from the synced meta doc even before its gossiped `PeerInfo` arrives (a
+/// forgery-gated, authenticated supplement). Both are last-writer-wins /
+/// additive, so this never conflicts with `PeerInfo`. Unlike `handle_peer_info`
+/// it does **not** graft a gossip link (`join_peers`) — mesh formation stays
+/// `PeerInfo`'s job; this only enables directed dialing.
+fn adopt_meta_endpoint(author: &Nickname, state: &mut EventLoopState, ctx: &HandlerCtx<'_>) {
+    let doc = state.meta_doc.to_json();
+    let Some((peer_id, peer_addr)) = crate::a2a::card::peer_endpoint(&doc, author) else {
+        return;
+    };
+    // Never bind our own endpoint or the rendezvous pseudo-node.
+    if peer_id == ctx.endpoint.id() || peer_id == ctx.rendezvous_id {
+        return;
+    }
+    state.participant_endpoints.insert(author.clone(), peer_id);
+    if let Err(error) = add_peer_addr(ctx.endpoint, peer_addr) {
+        tracing::debug!(%error, %author, "could not seed a meta-doc endpoint into the address book");
     }
 }
 

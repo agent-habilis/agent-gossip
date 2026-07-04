@@ -46,15 +46,17 @@ const _: () = assert!(
     "MAX_MESSAGE_SIZE leaves too little room under iroh-gossip's DEFAULT_MAX_MESSAGE_SIZE"
 );
 
-/// Protocol version embedded in every message. Bumped to `6.0` for **directed
-/// sealing**: a frame with a `to` recipient now carries a body encrypted to that
-/// recipient (`protocol::seal`), so a `5.0` peer (plaintext directed bodies) and
-/// a `6.0` peer must NOT interoperate. (`5.0` was the A2A v1.0 / `ProtoJSON`
-/// migration; `4.0` the native-A2A port; `3.0` the A2A migration; `2.0` the RFC
-/// 6902 → RFC 7386 shared-state change.) The exact-match gate in `parse` drops
-/// cross-version messages loudly rather than letting them silently fold to
-/// no-ops and diverge.
-pub(crate) const VERSION: &str = "6.0";
+/// Protocol version embedded in every message. Bumped to `7.0` for the
+/// **automerge `state`/`meta` channels**: a `State`/`Meta` body now carries one
+/// Base58 automerge change (`{"k":"change",…}`, not the old RFC 7386
+/// `{"k":"merge",…}`), and a `StateDigest`/`MetaDigest` body now carries the
+/// doc's automerge heads, not windowed event ids — so a `6.0` peer and a `7.0`
+/// peer must NOT interoperate on these channels. (`6.0` was directed sealing;
+/// `5.0` the A2A v1.0 / `ProtoJSON` migration; `4.0` the native-A2A port; `3.0`
+/// the A2A migration; `2.0` the RFC 6902 → RFC 7386 shared-state change.) The
+/// exact-match gate in `parse` drops cross-version messages loudly rather than
+/// letting them silently fold to no-ops and diverge.
+pub(crate) const VERSION: &str = "7.0";
 
 /// Presence subtype.
 /// `Joined`/`Left` are user-visible; `Alive` is a silent keepalive used
@@ -186,29 +188,27 @@ pub enum MessageKind {
         to: Nickname,
         rpc_id: crate::a2a::A2aRpcId,
     },
-    /// A durable swarm-state event (membership edits, settings, …). Carried
-    /// on the same gossip topic as everything else but routed to a **separate,
-    /// un-pruned** log (`daemon::state_log`); swarm state is the deterministic
-    /// fold over that log. The payload lives opaquely in `body` — the log layer
-    /// never interprets it; projections (a future allowlist, …) do. Signed like
-    /// any message; never entered into the chat message-log, never surfaced
-    /// via poll/fetch.
+    /// A durable `state`-channel event: one Base58 automerge change
+    /// (`{"k":"change",…}`) applied to the channel's [`SwarmDoc`](crate::daemon::doc)
+    /// CRDT. Carried on the gossip topic like everything else; the signed frame
+    /// is retained as the doc's re-serve store. Signed like any message; never
+    /// entered into the chat message-log, never surfaced via poll/fetch.
     State,
-    /// Anti-entropy digest for the **state** log — the dedicated counterpart to
-    /// [`Digest`](MessageKind::Digest). Body is the Base58-packed ids of the
-    /// `State` events the sender holds; a receiver re-broadcasts any state event
-    /// absent from that set, so a cold/late joiner (advertising an empty set)
-    /// pulls the whole state log. Separate from `Digest` for its own
-    /// gossip-message and resend budgets. Plumbing like `Digest`.
+    /// Anti-entropy digest for the **state** channel — the dedicated counterpart
+    /// to [`Digest`](MessageKind::Digest). Body is the doc's automerge heads; a
+    /// receiver computes the changes the sender lacks (`changes_since`) and
+    /// re-broadcasts their frames, so a cold/late joiner (advertising an empty or
+    /// genesis-only frontier) pulls the whole history over successive rounds.
+    /// Separate from `Digest` for its own resend budget. Plumbing like `Digest`.
     StateDigest,
     /// A durable event on the **meta** channel — a second shared-state channel,
-    /// byte-for-byte identical to [`State`](MessageKind::State) in every respect
-    /// (own un-pruned log, own anti-entropy, own derived doc). The binary does
-    /// not differentiate the two; the split is application convention (`meta` for
+    /// identical machinery to [`State`](MessageKind::State) but with the
+    /// foreign-card forgery gate enabled (a `meta` card carries a peer's
+    /// cryptographic identity). The split is application convention (`meta` for
     /// swarm metadata, `state` for the task).
     Meta,
-    /// Anti-entropy digest for the **meta** log — the meta-channel counterpart to
-    /// [`StateDigest`](MessageKind::StateDigest).
+    /// Anti-entropy digest for the **meta** channel — the meta-channel counterpart
+    /// to [`StateDigest`](MessageKind::StateDigest).
     MetaDigest,
 }
 
@@ -280,7 +280,7 @@ fn empty_body() -> MessageBody {
 ///
 /// Wire format (compact JSON, one line):
 /// ```json
-/// {"v":"6.0","id":"<uuid>","type":"a2a_msg","swarm":"🐝...","author":"word-word","ts":1234567890,"body":"{\"messageId\":\"<uuid>\",\"role\":\"ROLE_USER\",...}","ext":{}}
+/// {"v":"7.0","id":"<uuid>","type":"a2a_msg","swarm":"🐝...","author":"word-word","ts":1234567890,"body":"{\"messageId\":\"<uuid>\",\"role\":\"ROLE_USER\",...}","ext":{}}
 /// ```
 ///
 /// `to` (the addressee nickname) is inlined into the JSON for directed `a2a_msg` kinds.
@@ -921,7 +921,7 @@ mod tests {
     #[test]
     fn test_unknown_ext_fields_ignored() {
         let json = format!(
-            r#"{{"v":"6.0","id":"{FIXTURE_ID}","type":"a2a_msg","swarm":"🐝test","author":"a-b","ts":0,"body":"hi","ext":{{"future_field":"value","another":42}}}}"#
+            r#"{{"v":"7.0","id":"{FIXTURE_ID}","type":"a2a_msg","swarm":"🐝test","author":"a-b","ts":0,"body":"hi","ext":{{"future_field":"value","another":42}}}}"#
         );
         let parsed = Message::parse(json.as_bytes()).unwrap();
         assert_eq!(parsed.body.as_str(), "hi");
@@ -931,7 +931,7 @@ mod tests {
     #[test]
     fn test_missing_ext_defaults_to_empty_object() {
         let json = format!(
-            r#"{{"v":"6.0","id":"{FIXTURE_ID}","type":"a2a_msg","swarm":"🐝test","author":"a-b","ts":0,"body":"hi"}}"#
+            r#"{{"v":"7.0","id":"{FIXTURE_ID}","type":"a2a_msg","swarm":"🐝test","author":"a-b","ts":0,"body":"hi"}}"#
         );
         let parsed = Message::parse(json.as_bytes()).unwrap();
         assert_eq!(parsed.ext, serde_json::json!({}));
@@ -953,14 +953,14 @@ mod tests {
     // escapes / spoof the `<nick>`/`#swarm` conventions (bad body/author).
     #[test]
     fn parse_rejects_non_uuid_id() {
-        let json = r#"{"v":"6.0","id":"not-a-uuid","type":"a2a_msg","swarm":"🐝test","author":"a-b","ts":0,"body":"hi","ext":{}}"#;
+        let json = r#"{"v":"7.0","id":"not-a-uuid","type":"a2a_msg","swarm":"🐝test","author":"a-b","ts":0,"body":"hi","ext":{}}"#;
         assert!(Message::parse(json.as_bytes()).is_err());
     }
 
     #[test]
     fn parse_rejects_control_char_body() {
         let json = format!(
-            r#"{{"v":"6.0","id":"{FIXTURE_ID}","type":"a2a_msg","swarm":"🐝test","author":"a-b","ts":0,"body":"evil\u0000body","ext":{{}}}}"#
+            r#"{{"v":"7.0","id":"{FIXTURE_ID}","type":"a2a_msg","swarm":"🐝test","author":"a-b","ts":0,"body":"evil\u0000body","ext":{{}}}}"#
         );
         assert!(Message::parse(json.as_bytes()).is_err());
     }
@@ -968,7 +968,7 @@ mod tests {
     #[test]
     fn parse_rejects_unsafe_author_nickname() {
         let json = format!(
-            r#"{{"v":"6.0","id":"{FIXTURE_ID}","type":"a2a_msg","swarm":"🐝test","author":"a#b","ts":0,"body":"hi","ext":{{}}}}"#
+            r#"{{"v":"7.0","id":"{FIXTURE_ID}","type":"a2a_msg","swarm":"🐝test","author":"a#b","ts":0,"body":"hi","ext":{{}}}}"#
         );
         assert!(Message::parse(json.as_bytes()).is_err());
     }
@@ -980,7 +980,7 @@ mod tests {
         // so a crafted value never reaches the fork/DAG indexes or sig verify.
         let base = |extra: &str| {
             format!(
-                r#"{{"v":"6.0","id":"{FIXTURE_ID}","type":"a2a_msg","swarm":"🐝test","author":"a-b","ts":0,"body":"hi"{extra},"ext":{{}}}}"#
+                r#"{{"v":"7.0","id":"{FIXTURE_ID}","type":"a2a_msg","swarm":"🐝test","author":"a-b","ts":0,"body":"hi"{extra},"ext":{{}}}}"#
             )
         };
         // 3KB garbage pubkey, non-hex / wrong-length variants, and a bad hash.

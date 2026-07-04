@@ -439,17 +439,24 @@ fn log_daemon_start(author: &Nickname) {
 /// card is the peer's canonical A2A self-description, architectural rather
 /// than app state). Unmeshed it buffers/backfills like any state event;
 /// agent-side facts (model/harness/host) stay the agent's merge.
-async fn publish_own_card(
+pub(crate) async fn publish_own_card(
     swarm: &SwarmId,
     author: &Nickname,
     our_pubkey: &str,
     state: &mut EventLoopState,
     sender: &GossipSender,
     output: &output::Output,
+    endpoint: &Endpoint,
 ) {
     let seal_b58 = bs58::encode(state.identity.seal_public()).into_string();
     let card = crate::a2a::card::own_card(author, our_pubkey, &seal_b58);
-    let merge = crate::a2a::card::publish_merge(author, &card);
+    // Fold our stable dial hint (EndpointId + home relay) into the card so a peer
+    // that has synced the meta doc can dial us without a gossiped `PeerInfo`.
+    // Re-publishing with an unchanged address is a no-op (an automerge change
+    // with no ops), so this is safe to call repeatedly (e.g. on mesh/relay
+    // changes) and only writes when the relay actually moves.
+    let mut merge = crate::a2a::card::publish_merge(author, &card);
+    merge["peers"][author.as_str()]["card"]["endpoint"] = crate::a2a::card::endpoint_hint(endpoint);
     if let Err(error) = gossip::broadcast_state_merge(
         swarm,
         author,
@@ -458,6 +465,9 @@ async fn publish_own_card(
         sender,
         output,
         crate::protocol::Channel::Meta,
+        // Internal plumbing: the agent didn't write this, so don't surface it as
+        // a "you changed shared state" event (nor race a fetch long-poll).
+        false,
     )
     .await
     {
@@ -556,6 +566,7 @@ async fn event_loop(loop_state: EventLoop) -> Result<()> {
         &mut state,
         &sender,
         &output,
+        &endpoint,
     )
     .await;
 

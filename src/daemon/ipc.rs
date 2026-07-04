@@ -175,6 +175,7 @@ pub(crate) async fn handle_ipc_command(
                 sender,
                 output,
                 crate::protocol::Channel::State,
+                true,
             )
             .await;
             let (response, broadcast) = state_merge_response(outcome);
@@ -194,6 +195,7 @@ pub(crate) async fn handle_ipc_command(
                 sender,
                 output,
                 crate::protocol::Channel::Meta,
+                true,
             )
             .await;
             let (response, broadcast) = state_merge_response(outcome);
@@ -267,11 +269,10 @@ fn state_merge_response(outcome: anyhow::Result<()>) -> (String, bool) {
 
 /// The `ahsw state get` response: the derived document.
 fn state_get_response(state: &EventLoopState, channel: crate::protocol::Channel) -> String {
-    let log = match channel {
-        crate::protocol::Channel::State => &state.state_log,
-        crate::protocol::Channel::Meta => &state.meta_log,
+    let document = match channel {
+        crate::protocol::Channel::State => state.state_doc.to_json(),
+        crate::protocol::Channel::Meta => state.meta_doc.to_json(),
     };
-    let document = crate::daemon::state_doc::derive_document(log);
     let doc_json = serde_json::to_string(&document).unwrap_or_else(|_| "null".to_owned());
     format!(r#"{{"ok":true,"document":{doc_json}}}"#)
 }

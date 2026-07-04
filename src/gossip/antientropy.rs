@@ -71,6 +71,15 @@ struct DigestBody {
     windows: Vec<WireWindow>,
 }
 
+/// The state/meta anti-entropy digest body: this channel's automerge heads
+/// (Base58 change hashes). Heads compactly represent the whole causal frontier,
+/// so a holder computes exactly what the sender is missing in one step — no
+/// windowing. Replaces the windowed [`DigestBody`] for these two channels.
+#[derive(Serialize, Deserialize)]
+struct HeadsBody {
+    heads: Vec<String>,
+}
+
 /// Broadcast an anti-entropy digest: an **open-ended newest** window (so
 /// holders re-send every newer message we lack — reconnect recovery) plus,
 /// when the log is larger than one window, a rolling **closed** older
@@ -203,37 +212,11 @@ pub(crate) async fn broadcast_state_digest(
     if !state.meshed {
         return;
     }
-    let recent = ANTIENTROPY_DIGEST_WINDOW_IDS;
-    // Select this channel's log + sweep cursor (disjoint fields of `state`).
-    let (log, cursor) = match channel {
-        Channel::State => (&state.state_log, &mut state.state_digest_cursor),
-        Channel::Meta => (&state.meta_log, &mut state.meta_digest_cursor),
+    let heads = match channel {
+        Channel::State => state.state_doc.heads(),
+        Channel::Meta => state.meta_doc.heads(),
     };
-    let windows = if log.len() <= recent {
-        // Whole set fits one window: advertise it open at both ends so a holder
-        // fills every gap below, inside, and above — the full-history bootstrap.
-        *cursor = 0;
-        vec![WireWindow::encode(&log.bootstrap_window())]
-    } else {
-        let Some(newest) = log.recent_window(recent) else {
-            return; // unreachable (len > recent ⇒ non-empty), but stay total.
-        };
-        let mut windows = vec![WireWindow::encode(&newest)];
-        let older_len = log.older_len(recent);
-        let start = *cursor % older_len;
-        if let Some(mut older) = log.older_window(recent, start, recent) {
-            // Open the bottom on the lowest sweep so a peer missing events below
-            // its oldest held event (e.g. it received a live patch before
-            // backfilling history) still pulls them.
-            if start == 0 {
-                older.lo = i64::MIN;
-            }
-            *cursor = (start + older.ids.len()) % older_len;
-            windows.push(WireWindow::encode(&older));
-        }
-        windows
-    };
-    let Ok(json) = serde_json::to_string(&DigestBody { windows }) else {
+    let Ok(json) = serde_json::to_string(&HeadsBody { heads }) else {
         return;
     };
     let Ok(body) = MessageBody::new(json) else {
@@ -246,59 +229,36 @@ pub(crate) async fn broadcast_state_digest(
     .await;
 }
 
-/// Handle a received state digest: for each advertised window, re-broadcast our
-/// held state events the sender lacks **within that window** (oldest-first, so a
-/// catching-up joiner fills bottom-up), up to a **own** resend budget (separate
-/// from the chat digest's, so a busy chat log can't starve state backfill).
-///
-/// Unlike the chat digest, the windows' `have` ids are **unioned** before the
-/// diff. State events authored in a burst share a one-second timestamp, so the
-/// recent (`[lo, MAX]`) and older (`[MIN, hi]`) windows' ranges overlap; a
-/// per-window `have` would then treat an event the sender holds, but listed
-/// under the *other* window, as missing and re-send it forever — wasting the
-/// budget and starving the genuinely-missing tail. Unioning first means we only
-/// ever resend what the sender truly lacks.
+/// Handle a received state digest: the sender advertised its automerge heads, so
+/// re-broadcast the signed change frames it is missing (`changes_since`), up to
+/// an own resend budget (separate from the chat digest's, so a busy chat log
+/// can't starve state backfill). automerge's DAG collapses "what's missing" into
+/// one query — no windows, no cursor. A late joiner advertising an empty (or
+/// genesis-only) frontier pulls the whole history over successive rounds as its
+/// heads advance.
 pub(crate) async fn handle_state_digest(
     channel: Channel,
     message: &Message,
     state: &EventLoopState,
     ctx: &HandlerCtx<'_>,
 ) {
-    let Ok(body) = serde_json::from_str::<DigestBody>(message.body.as_str()) else {
+    let Ok(body) = serde_json::from_str::<HeadsBody>(message.body.as_str()) else {
         return;
     };
-    let log = match channel {
-        Channel::State => &state.state_log,
-        Channel::Meta => &state.meta_log,
+    let budget = antientropy_max_resend();
+    let missing = match channel {
+        Channel::State => state.state_doc.changes_since(&body.heads, budget),
+        Channel::Meta => state.meta_doc.changes_since(&body.heads, budget),
     };
-    let mut have: HashSet<[u8; 16]> = HashSet::new();
-    for window in &body.windows {
-        if let Some(ids) = window.decode_ids() {
-            have.extend(ids);
-        }
-    }
-    let mut budget = antientropy_max_resend();
     let mut resent = 0usize;
-    for window in &body.windows {
-        if budget == 0 {
-            break;
-        }
-        for event in log.missing_in_window(window.lo, window.hi, &have, budget) {
-            if let Ok(bytes) = event.serialize() {
-                let _ = ctx.sender.broadcast(Bytes::from(bytes)).await;
-                // Mark it sent so the next (overlapping) window doesn't re-send
-                // it and waste budget — equal-timestamp ranges overlap heavily.
-                have.insert(event.dedup_key());
-                resent += 1;
-                budget -= 1;
-            }
+    for frame in missing {
+        if let Ok(bytes) = frame.serialize() {
+            let _ = ctx.sender.broadcast(Bytes::from(bytes)).await;
+            resent += 1;
         }
     }
     if resent > 0 {
-        tracing::debug!(
-            resent,
-            "state anti-entropy: resent state events a peer lacked"
-        );
+        tracing::debug!(resent, "state anti-entropy: resent frames a peer lacked");
     }
 }
 
@@ -306,7 +266,7 @@ pub(crate) async fn handle_state_digest(
 mod tests {
     use std::collections::HashSet;
 
-    use super::{ANTIENTROPY_DIGEST_WINDOW_IDS, DigestBody, WireWindow};
+    use super::{ANTIENTROPY_DIGEST_WINDOW_IDS, DigestBody, HeadsBody, WireWindow};
     use crate::daemon::message_log::{DigestWindow, MessageLog};
     use crate::protocol::{Message, MessageBody, Nickname, SwarmId};
 
@@ -401,42 +361,31 @@ mod tests {
         assert_eq!(empty.decode_ids().map(|set| set.len()), Some(0));
     }
 
-    /// A **state** digest over a large (unbounded) log must still fit one gossip
-    /// message — the windowed body caps it at two `ANTIENTROPY_DIGEST_WINDOW_IDS`
-    /// windows, the regression guard for the overflow that advertising the whole
-    /// flat id set would cause once the log grows past ~170 events.
+    /// A state/meta heads digest round-trips and stays tiny — automerge heads are
+    /// a bounded frontier (a handful of 32-byte hashes), so unlike the windowed
+    /// chat digest there is no overflow risk as the doc's history grows.
     #[test]
-    fn state_digest_fits_gossip_cap() {
-        use crate::daemon::state_log::StateLog;
-
+    fn state_heads_digest_round_trips_and_is_small() {
         let swarm = SwarmId::from(
             "🐝6bLvZNPGxuqnsbaPVGwf277NyTp8cYPCMiBxXED8d6TyBZpDDzZADkKHL7tTB1EjFagbCXYZ",
         );
         let author = Nickname::from("a-fairly-long-nickname");
-        let mut log = StateLog::new();
-        // Far more than one window's worth, so both the newest and a full older
-        // window are populated — the worst case for digest size.
-        let total = ANTIENTROPY_DIGEST_WINDOW_IDS * 4;
-        for index in 0..total {
-            let mut event = Message::new_state(
-                &swarm,
-                &author,
-                MessageBody::from(format!("s{index}").as_str()),
-            );
-            event.timestamp = 1_700_000_000 + i64::try_from(index).unwrap();
-            assert!(log.insert(event), "fill the log");
-        }
-        let recent = ANTIENTROPY_DIGEST_WINDOW_IDS;
-        let newest = log.recent_window(recent).expect("non-empty");
-        let older = log.older_window(recent, 0, recent).expect("older portion");
-        let windows = vec![WireWindow::encode(&newest), WireWindow::encode(&older)];
-        let json = serde_json::to_string(&DigestBody { windows }).expect("serialize body");
-        let body = MessageBody::new(json).expect("digest body has no control chars");
+        let heads: Vec<String> = (0..4u8)
+            .map(|seed| bs58::encode([seed; 32]).into_string())
+            .collect();
+        let json = serde_json::to_string(&HeadsBody {
+            heads: heads.clone(),
+        })
+        .expect("serialize heads body");
+        let back: HeadsBody = serde_json::from_str(&json).expect("round-trip");
+        assert_eq!(back.heads, heads);
+
+        let body = MessageBody::new(json).expect("heads body has no control chars");
         let digest = Message::new_state_digest(&swarm, &author, body);
         let wire = digest.serialize().expect("serialize state digest");
         assert!(
             wire.len() <= crate::util::consts::MAX_MESSAGE_SIZE,
-            "windowed state digest is {} bytes, over the {}-byte gossip cap",
+            "heads digest is {} bytes, over the {}-byte gossip cap",
             wire.len(),
             crate::util::consts::MAX_MESSAGE_SIZE
         );

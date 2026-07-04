@@ -23,6 +23,7 @@ async fn a_file_result_is_offloaded_as_a_url_reference() {
     alice.send("warmup").await;
     assert!(bob.wait_body("warmup", MSG_TIMEOUT).await, "mesh formed");
 
+    // `create_task` waits for bob's card (the directed-seal key) before sending.
     let resp = alice.create_task("t-blob-bob", "render the report").await;
     let task_id = resp["result"]["task"]["id"]
         .as_str()

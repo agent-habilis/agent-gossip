@@ -129,6 +129,10 @@ clap = { version = "4", features = ["derive"] }
 include_dir = "0.7"
 anstyle = "1"
 anstream = "0.6"
+# The shared `state`/`meta` documents are automerge CRDTs: concurrent edits
+# merge without a bespoke ordered-log fold. `default-features` stays on (the
+# `storage-v2` on-disk format is unused — we carry changes on the wire).
+automerge = "0.10"
 iroh = { version = "1.0.0-rc.0", features = ["tls-ring"] }
 iroh-gossip = { version = "0.99", features = ["net"] }
 # mDNS + mainline-DHT address-lookup providers were extracted from iroh core

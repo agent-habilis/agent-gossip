@@ -23,12 +23,12 @@ pub(crate) mod ipc;
 // In-memory accounting stores owned by `EventLoopState`. `pub(crate)` so
 // the gossip anti-entropy layer (and its tests) can name `MessageLog` /
 // `DigestWindow`; still crate-internal.
+pub(crate) mod doc;
 pub(crate) mod message_log;
 pub(crate) mod params;
 pub(crate) mod setup;
 pub(crate) mod state;
 pub(crate) mod state_doc;
-pub(crate) mod state_log;
 // Local, seq-ordered record of surfaced events — the `poll` / `fetch_messages`
 // history. Distinct from `message_log` (the cross-node anti-entropy buffer).
 pub(crate) mod surfaced;
@@ -37,7 +37,7 @@ pub(crate) mod surfaced;
 pub(crate) mod state_file;
 pub(crate) mod timers;
 
-mod event_loop;
+pub(crate) mod event_loop;
 
 pub(crate) use config::{CoHostPolicy, DriverMode, EventLoopConfig, SessionRequest};
 pub(crate) use event_loop::run;

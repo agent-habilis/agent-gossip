@@ -504,3 +504,53 @@ async fn unsigned_state_merge_is_dropped() {
     victim.leave().await;
     attacker.leave().await;
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn signed_foreign_card_forgery_is_rejected_on_receipt() {
+    // A malicious peer that bypasses its own author-side gate can still SIGN and
+    // inject a meta change forging another member's `/peers/<nick>/card` — the
+    // card carries that member's cryptographic identity. Every honest receiver
+    // must reject it before it folds, so the forgery converges nowhere.
+    let (victim, injector) = meshed_pair("card-forge").await;
+    let attacker_key = adversarial::new_key();
+    let swarm = injector.session.swarm_id();
+    let victim_nick = victim.nickname.as_str().to_owned();
+    let fake = "ff00beefff00beef"; // distinctive marker for the forged identity
+
+    let forged = CraftedMsg::meta_forge_card(
+        swarm,
+        "attacker",
+        &victim_nick,
+        &json!({"metadata": {"pubkey": fake}}),
+    )
+    .sign(&attacker_key)
+    .bytes();
+    injector
+        .session
+        .inject_raw(forged)
+        .await
+        .expect("inject forged card");
+
+    // Barrier: a genuine meta write from the injector's own subtree (not a card,
+    // so ungated). Once the victim derives it, the forged frame — sent first on
+    // the same link — has had its turn.
+    injector
+        .meta_merge(json!({"peers": {injector.nickname.as_str(): {"barrier": true}}}))
+        .await;
+    let barrier_ptr = format!("/peers/{}/barrier", injector.nickname);
+    let deadline = Instant::now() + T;
+    while victim.meta_get().await.pointer(&barrier_ptr) != Some(&json!(true)) {
+        assert!(
+            Instant::now() < deadline,
+            "barrier meta merge never derived"
+        );
+        tokio::time::sleep(POLL).await;
+    }
+
+    assert!(
+        !victim.meta_get().await.to_string().contains(fake),
+        "a signed forged foreign card must be rejected on receipt, never folded"
+    );
+    victim.leave().await;
+    injector.leave().await;
+}

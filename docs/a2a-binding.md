@@ -25,7 +25,7 @@ bindings while preserving the spec's semantics ("functional equivalence").
 
 ## Layering
 
-The wire **frame** (protocol version `5.0`, `src/protocol/message`) is the
+The wire **frame** (protocol version `7.0`, `src/protocol/message`) is the
 binding's transport layer, below A2A — as HTTP/TLS sit below JSON-RPC:
 
 | frame concern | role |
@@ -161,7 +161,7 @@ Declared in every member's card (`capabilities.extensions`):
   every member, so there is nothing to seal 1:1; they remain signed + verifiable.
   Only the body is sealed; routing metadata (`to`, `task_id`, `author`, kind,
   timestamp) stays cleartext so relays can route and anti-entropy can heal.
-- `https://agent-habilis.dev/a2a/ext/swarm-state/v1` — the shared RFC 7386
+- `https://agent-habilis.dev/a2a/ext/swarm-state/v1` — the shared automerge CRDT
   document per swarm (`state`/`meta` channels), exposed over JSON-RPC as
   `swarm/state.get|merge` and `swarm/meta.get|merge`. The channels
   themselves are replication substrate below the A2A layer (their

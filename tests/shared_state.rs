@@ -432,17 +432,23 @@ async fn foreign_card_forgery_is_rejected() {
         .expect("bob's genuine gossip-interface url")
         .to_owned();
 
-    // Alice forges bob's card with a fake identity, then a legit self-write
-    // (the delivery barrier — once alice's own key lands, the forgery, sent
-    // first on the same log, has had its turn).
+    // Alice tries to forge bob's card with a fake identity. The card-forgery
+    // gate runs on the author's own doc too, so the write is refused at the
+    // source (an honest daemon cannot author it) — the receive-side gate against
+    // a *malicious* peer that bypasses this path is exercised by the adversarial
+    // suite injecting crafted frames. A legit self-write is the delivery barrier.
     let fake_url = format!("swarm+gossip://{}", "ff".repeat(32));
-    alice
-        .meta_merge(
+    let forged = alice
+        .try_meta_merge(
             json!({"peers": {&bob_nick: {"card": {"supportedInterfaces": [
                 {"url": fake_url, "protocolBinding": "x", "protocolVersion": "1.0"}
             ]}}}}),
         )
         .await;
+    assert!(
+        forged.is_err(),
+        "forging another peer's card must be rejected at the source"
+    );
     alice
         .meta_merge(json!({"peers": {alice.nickname.as_str(): {"note": "barrier"}}}))
         .await;
@@ -455,7 +461,7 @@ async fn foreign_card_forgery_is_rejected() {
     );
 
     // Bob's view of his OWN card must still carry his genuine identity — the
-    // forgery was dropped, never folded.
+    // forgery never entered any doc.
     assert_eq!(
         bob.meta_get()
             .await
@@ -495,6 +501,9 @@ async fn agent_cards_publish_to_meta_on_join() {
                     .as_str()
                     .and_then(|url| url.strip_prefix("swarm+gossip://"))
                     .is_some_and(|key| key.len() == 64)
+                // The stable dial hint (EndpointId + home relay) rides inside the
+                // card, so a synced peer can dial without a gossiped PeerInfo.
+                && card["endpoint"]["id"].is_string()
         })
     };
 
