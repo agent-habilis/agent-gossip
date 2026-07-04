@@ -2,4 +2,4 @@
 source: src/protocol/message/mod.rs
 expression: wire
 ---
-{"v":"5.0","id":"00000000-0000-0000-0000-000000000001","type":"state","swarm":"🐝://test","author":"alice-bot","ts":1700000000,"body":"{\"k\":\"merge\",\"merge\":{\"turn\":\"b\"}}","ext":{}}
+{"v":"6.0","id":"00000000-0000-0000-0000-000000000001","type":"state","swarm":"🐝://test","author":"alice-bot","ts":1700000000,"body":"{\"k\":\"merge\",\"merge\":{\"turn\":\"b\"}}","ext":{}}

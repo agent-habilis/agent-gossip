@@ -366,6 +366,45 @@ refused on send. The split is invisible to agents: a body sends and arrives
 whole. (Renamed from *part*: the A2A layer owns that word for a message's
 content unit.)
 
+### seal
+
+*Layer: protocol — an end-to-end encryption of a **frame** body, under the
+**a2a** layer.*
+
+The encryption applied to a **directed** frame (one addressed with a `to`:
+`A2aStatus` / `A2aArtifact` / `A2aReq` / `A2aResp`) so only the addressee can read
+it. A NaCl-style sealed box (`src/protocol/seal.rs`): a fresh ephemeral X25519
+key does ECDH with the recipient's static X25519 public key (published in the
+recipient's card under the `swarm-seal` extension, derived from its identity
+seed), the shared secret is run through `derive_secret` into a ChaCha20-Poly1305
+key, and the body is encrypted and Base58-wrapped into a `MessageBody`-safe JSON
+envelope. The recipient decrypts with its static secret; a relay forwards the
+frame and **verifies the Ed25519 signature** (which covers the ciphertext) but
+cannot read the body. Only the body is sealed — routing metadata (`to`,
+`task_id`, author, kind) stays cleartext so relays route and anti-entropy heals.
+**Broadcast (`A2aMsg`) and the `state`/`meta` channels are never sealed** — their
+audience is every member; they stay public and signed. Forward secrecy comes
+from the per-frame ephemeral key; sender authenticity from the frame signature.
+
+### blob
+
+*Layer: blob transport — a direct QUIC channel beside gossip, under the **a2a**
+layer.*
+
+A large file carried by an A2A **part** without inlining its bytes over gossip.
+The producer's daemon serves the content — addressed by its SHA-256 — from a
+per-peer spool (`<RUNTIME_DIR>/<swarm-prefix>/<nick>.blobs/<hash>`, hardlinked or
+copied from the source so the original can change freely) over a dedicated,
+lazily-bound endpoint on the `agent-habilis-swarm/blob/1` ALPN. The **blob
+reference** — a `📦…` Base58Check *ticket* (its own emoji namespace, like the
+swarm `🐝` and a2a `📡`) carrying the producer's address, a bearer secret, the
+hash, and the size — rides gossip inside a `Part.url`. The consumer decodes it,
+dials the producer, presents the secret, and streams the bytes to stdout,
+verifying the SHA-256 as they arrive (`ahsw a2a fetch`). Symmetric: an input
+file rides a request `Message.parts`, an output rides a result `Artifact.parts`.
+Confidentiality equals swarm membership (the flooded ticket lets any member
+fetch); availability lasts only while the producer's daemon is alive.
+
 ### shared state
 
 *Layer: state · two **channels** per swarm (`state`, `meta`), each a document

@@ -224,9 +224,32 @@ pub(crate) enum A2aAction {
         /// The task id (uuid).
         #[arg(long)]
         task_id: crate::a2a::TaskId,
-        /// The result text.
+        /// The result text (optional when --file is given).
         #[arg(long)]
-        text: String,
+        text: Option<String>,
+        /// Attach a file as the result, transferred peer-to-peer over the blob
+        /// channel and referenced as a Part.url. For binaries too large to
+        /// inline; the receiver fetches it with `ahsw a2a fetch <📦…>`.
+        #[arg(long)]
+        file: Option<std::path::PathBuf>,
+        /// Filename to advertise for --file (defaults to the file's own name).
+        #[arg(long)]
+        file_name: Option<String>,
+        /// MIME type to advertise for --file (e.g. application/pdf).
+        #[arg(long)]
+        file_mime: Option<String>,
+    },
+
+    /// Fetch a blob artifact by its `📦…` reference (the `url` of a received
+    /// file part), streaming the raw bytes to stdout — redirect or pipe them,
+    /// e.g. `ahsw a2a fetch 📦… > report.pdf`. A direct peer-to-peer transfer;
+    /// no swarm session needed.
+    Fetch {
+        /// The `📦…` blob ticket copied from a received file part's `url`.
+        ticket: String,
+        /// Password, if the ticket is password-protected.
+        #[arg(long)]
+        password: Option<String>,
     },
 }
 

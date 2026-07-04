@@ -272,9 +272,10 @@ fn surface_logical(
 /// the gossip event pump (`handle_gossip_event`) and the unicast inbound arm
 /// (`daemon::event_loop`) funnel here, so signature-verify, the swarm gate, and
 /// `mark_seen` dedup are identical on both planes — a message delivered over
-/// both surfaces exactly once.
+/// both surfaces exactly once. `message` is mutable so a directed frame sealed
+/// to us can be decrypted in place before surfacing (see `gate_and_decrypt`).
 pub(crate) async fn ingest(content: Bytes, state: &mut EventLoopState, ctx: &HandlerCtx<'_>) {
-    let Ok(message) = Message::parse(&content) else {
+    let Ok(mut message) = Message::parse(&content) else {
         ctx.output.error("Failed to parse message");
         tracing::warn!("failed to parse inbound gossip message");
         return;
@@ -347,14 +348,17 @@ pub(crate) async fn ingest(content: Bytes, state: &mut EventLoopState, ctx: &Han
         return;
     }
 
-    // The A2A boundary gate: a chat frame whose payload fails to parse or
-    // contradicts its frame (id/context/addressing/role — see
-    // `a2a::gossip::chat_payload`) is dropped whole, before the embed push,
-    // the print path, and retention. Sharded bodies get the same gate on
-    // their reassembled logical view above.
-    if !chat_payload_valid(&message) {
-        return;
-    }
+    // Directed frames are sealed to their addressee. A **relay** forwards and
+    // retains the opaque frame but never validates or surfaces its content (it
+    // can't read it, and `maybe_push_embed`/dispatch below are already gated to
+    // the addressee). The **addressee** decrypts the body in place, then the
+    // recovered plaintext passes the A2A boundary gate exactly as a broadcast
+    // does. A frame sealed to us that fails to open (tampered / wrong key) is
+    // dropped.
+    let sealed_body = match gate_and_decrypt(&mut message, state, ctx) {
+        Gated::Pass(sealed) => sealed,
+        Gated::Drop => return,
+    };
 
     maybe_push_embed(ctx, &message, surfaceable);
 
@@ -445,6 +449,11 @@ pub(crate) async fn ingest(content: Bytes, state: &mut EventLoopState, ctx: &Han
         }
     }
 
+    // Restore the sealed body (if we decrypted a directed frame for ourselves)
+    // so the message log + anti-entropy re-serve the exact signed wire frame.
+    if let Some(sealed) = sealed_body {
+        message.body = sealed;
+    }
     retain_and_index(message, &canonical, state, ctx);
 }
 
@@ -544,6 +553,14 @@ async fn handle_a2a_req(
     let Ok(body) = MessageBody::new(response.to_string()) else {
         tracing::warn!("a2a rpc response body invalid");
         return;
+    };
+    // Seal the response to the requester — a relay forwards it but cannot read it.
+    let body = match crate::gossip::broadcast::seal_directed(state, &requester, &body) {
+        Ok(sealed) => sealed,
+        Err(error) => {
+            tracing::warn!(%error, "cannot seal a2a rpc response — dropping");
+            return;
+        }
     };
     let reply = Message::new_a2a_resp(ctx.swarm, ctx.author, requester, rpc_id.clone(), body)
         .signed(ctx.identity);
@@ -670,7 +687,12 @@ fn handle_shard(
         return;
     }
     retain_and_index(message.clone(), canonical, state, ctx);
-    if let Some(logical) = state.reassemble(message) {
+    if let Some(mut logical) = state.reassemble(message) {
+        // Only the addressee reaches here (non-addressed directed shards returned
+        // above), so decrypt the reassembled directed body before validating it.
+        if !decrypt_directed(&mut logical, state, ctx) {
+            return;
+        }
         if !chat_payload_valid(&logical) {
             return;
         }
@@ -779,6 +801,75 @@ fn ingest_channel_event(
 /// receive path (the pubkey self-echo gate drops them earlier), so on receive
 /// "addressee" is the whole rule. This is the same gate the print/log path
 /// applies in `lifecycle::{handle_msg, handle_task}`.
+/// A directed frame carrying a **sealed** A2A payload (worker status/artifact
+/// push, or an RPC request/response). `Pong` is directed but bodiless, so it is
+/// not sealed. Sealing keys off exactly this set.
+fn is_directed_content(kind: &MessageKind) -> bool {
+    matches!(
+        kind,
+        MessageKind::A2aStatus { .. }
+            | MessageKind::A2aArtifact { .. }
+            | MessageKind::A2aReq { .. }
+            | MessageKind::A2aResp { .. }
+    )
+}
+
+/// If `message` is a directed payload sealed **to us**, decrypt its body in
+/// place so the surfacing pipeline sees plaintext. Returns `false` only when a
+/// frame sealed to us fails to open (tampered / wrong key), so the caller drops
+/// it. A relay (not the addressee), broadcast, and plumbing pass through
+/// untouched — the caller only invokes this on the addressee's path.
+/// Outcome of the inbound gate. `Pass` carries the original **sealed** body to
+/// restore before retention (so anti-entropy re-serves the wire frame, not our
+/// decrypted view) — `Some` when we decrypted a directed frame addressed to us,
+/// `None` when we did not (relay of a directed frame, or broadcast/plumbing).
+enum Gated {
+    Drop,
+    Pass(Option<MessageBody>),
+}
+
+/// Validate + (for the addressee) decrypt an inbound **non-sharded** logical
+/// frame before surfacing.
+fn gate_and_decrypt(message: &mut Message, state: &EventLoopState, ctx: &HandlerCtx<'_>) -> Gated {
+    if is_directed_content(&message.kind) {
+        if addressed_to_us(message, ctx.author) {
+            let sealed = message.body.clone();
+            if !decrypt_directed(message, state, ctx) || !chat_payload_valid(message) {
+                return Gated::Drop;
+            }
+            return Gated::Pass(Some(sealed));
+        }
+        // Relay: an opaque directed frame — forwarded + retained, never validated
+        // or surfaced (the dispatch below is gated to the addressee).
+        return Gated::Pass(None);
+    }
+    // Broadcast / other logical frames validate in place, as before.
+    if chat_payload_valid(message) {
+        Gated::Pass(None)
+    } else {
+        Gated::Drop
+    }
+}
+
+fn decrypt_directed(message: &mut Message, state: &EventLoopState, ctx: &HandlerCtx<'_>) -> bool {
+    if !is_directed_content(&message.kind) || !addressed_to_us(message, ctx.author) {
+        return true;
+    }
+    match crate::protocol::seal::unseal_from_body(&state.identity.seal_secret(), &message.body) {
+        Ok(plaintext) => match MessageBody::new(plaintext) {
+            Ok(body) => {
+                message.body = body;
+                true
+            }
+            Err(_) => false,
+        },
+        Err(error) => {
+            tracing::warn!(%error, author = %message.author, "dropping a directed frame sealed to us that failed to open");
+            false
+        }
+    }
+}
+
 fn addressed_to_us(message: &Message, us: &Nickname) -> bool {
     match &message.kind {
         MessageKind::A2aStatus { to, .. }

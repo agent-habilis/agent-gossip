@@ -60,6 +60,7 @@ operations become signed frames.
 | `SendMessage` into a task | a request/response `SendMessage` carrying the `taskId` — the initiator's answer / approval / change request; the worker's *skill* interprets it |
 | task status | worker-pushed `a2a_status` frames (the A2A streaming plane): `working` / `input-required` / `completed` / `failed`; `canceled` is open to both (and to the daemon's idle timeout, `metadata:{"swarm:reason":"timeout"}`). The **worker** authors `completed`. |
 | the result | a worker-pushed `a2a_artifact` frame; receiving it parks the task in `input-required` for the initiator's approval |
+| a file on a part | a `Part` may carry a **large file** in either direction (an input `Message.parts`, an output `Artifact.parts`). Instead of inlining bytes, its `url` holds a `📦…` blob ticket; the bytes stream point-to-point over a dedicated QUIC ALPN (`swarm-blob`), SHA-256-verified. The receiver fetches with `ahsw a2a fetch <📦…>`. The bytes never touch gossip — only the small reference does. The ticket's bearer secret blocks *outsiders*; any swarm member who sees the frame can fetch (confidentiality == membership, same as directed messages). Availability lasts only while the producer's daemon is alive. |
 | liveness | a status update with `metadata:{"swarm:beat":true}` (+ optional done/total) — plumbing, never retained |
 | `GetTask` / `ListTasks` | served locally from the replicated task state (or over request/response) |
 | `CancelTask` | a `canceled` status frame |
@@ -142,6 +143,24 @@ Declared in every member's card (`capabilities.extensions`):
 - `https://agent-habilis.dev/a2a/ext/swarm-a2a-rpc/v1` — the member serves
   A2A over gossip (request/response) for the safe method subset above; this is
   also how task delegation works (a directed `SendMessage` creates a task)
+- `https://agent-habilis.dev/a2a/ext/swarm-blob/v1` — a large file on a `Part`
+  travels as a `url` reference (a `📦…` ticket) whose bytes stream
+  point-to-point over the `agent-habilis-swarm/blob/1` ALPN and are
+  SHA-256-verified, instead of inlining over gossip. The `📦…` in `Part.url` is
+  an opaque in-network capability token, not an RFC URL.
+- `https://agent-habilis.dev/a2a/ext/swarm-seal/v1` — **directed frames are
+  end-to-end sealed.** A frame addressed to a peer (`A2aStatus`, `A2aArtifact`,
+  `A2aReq`, `A2aResp` — anything with a `to`) carries a body encrypted to that
+  peer's X25519 key (a NaCl-style sealed box: ephemeral X25519 → ChaCha20-Poly1305,
+  `src/protocol/seal.rs`). The recipient's X25519 public key is published in this
+  extension's `params.x25519` (base58) in the peer's card. A relay forwards the
+  frame and **verifies the Ed25519 signature** (knows who authored it) but cannot
+  read the body; only the addressee decrypts. The `📦…` blob ticket rides inside
+  a sealed artifact body, so a relay cannot fetch the blob either. **Broadcast
+  (`A2aMsg`) and the `state`/`meta` channels stay public** — their audience is
+  every member, so there is nothing to seal 1:1; they remain signed + verifiable.
+  Only the body is sealed; routing metadata (`to`, `task_id`, `author`, kind,
+  timestamp) stays cleartext so relays can route and anti-entropy can heal.
 - `https://agent-habilis.dev/a2a/ext/swarm-state/v1` — the shared RFC 7386
   document per swarm (`state`/`meta` channels), exposed over JSON-RPC as
   `swarm/state.get|merge` and `swarm/meta.get|merge`. The channels

@@ -497,12 +497,14 @@ impl InProcessSession {
         &self,
         task_id: TaskId,
         text: String,
+        file: Option<crate::blob::FileRef>,
     ) -> anyhow::Result<Message> {
         let (resp_tx, resp_rx) = oneshot::channel();
         self.req_tx
             .send(SessionRequest::TaskArtifact {
                 task_id,
                 text,
+                file,
                 resp: resp_tx,
             })
             .await
@@ -943,8 +945,20 @@ impl SwarmSession {
     ///
     /// # Errors
     /// Fails if the event loop has stopped or dropped the response.
-    pub async fn task_artifact(&self, task_id: TaskId, text: String) -> anyhow::Result<Message> {
-        self.core.task_artifact(task_id, text).await
+    pub async fn task_artifact(
+        &self,
+        task_id: TaskId,
+        text: String,
+        file: Option<std::path::PathBuf>,
+        file_name: Option<String>,
+        file_mime: Option<String>,
+    ) -> anyhow::Result<Message> {
+        let file = file.map(|path| crate::blob::FileRef {
+            path,
+            name: file_name,
+            mime: file_mime,
+        });
+        self.core.task_artifact(task_id, text, file).await
     }
 
     /// Call a peer's A2A server over gossip (request/response). Returns the

@@ -46,15 +46,15 @@ const _: () = assert!(
     "MAX_MESSAGE_SIZE leaves too little room under iroh-gossip's DEFAULT_MAX_MESSAGE_SIZE"
 );
 
-/// Protocol version embedded in every message. Bumped to `5.0` for the A2A
-/// **v1.0** migration: every A2A object is now `ProtoJSON` (`SCREAMING_SNAKE`
-/// enums, redesigned `Part`, no inline `kind`, no `final`, `PascalCase` RPC
-/// methods), so the payload wire form breaks — a `4.0` peer and a `5.0` peer
-/// must NOT interoperate. (`4.0` was the native-A2A port; `3.0` the A2A
-/// migration; `2.0` the RFC 6902 → RFC 7386 shared-state change.) The
-/// exact-match gate in `parse` drops cross-version messages loudly rather than
-/// letting them silently fold to no-ops and diverge.
-pub(crate) const VERSION: &str = "5.0";
+/// Protocol version embedded in every message. Bumped to `6.0` for **directed
+/// sealing**: a frame with a `to` recipient now carries a body encrypted to that
+/// recipient (`protocol::seal`), so a `5.0` peer (plaintext directed bodies) and
+/// a `6.0` peer must NOT interoperate. (`5.0` was the A2A v1.0 / `ProtoJSON`
+/// migration; `4.0` the native-A2A port; `3.0` the A2A migration; `2.0` the RFC
+/// 6902 → RFC 7386 shared-state change.) The exact-match gate in `parse` drops
+/// cross-version messages loudly rather than letting them silently fold to
+/// no-ops and diverge.
+pub(crate) const VERSION: &str = "6.0";
 
 /// Presence subtype.
 /// `Joined`/`Left` are user-visible; `Alive` is a silent keepalive used
@@ -280,7 +280,7 @@ fn empty_body() -> MessageBody {
 ///
 /// Wire format (compact JSON, one line):
 /// ```json
-/// {"v":"5.0","id":"<uuid>","type":"a2a_msg","swarm":"🐝...","author":"word-word","ts":1234567890,"body":"{\"messageId\":\"<uuid>\",\"role\":\"ROLE_USER\",...}","ext":{}}
+/// {"v":"6.0","id":"<uuid>","type":"a2a_msg","swarm":"🐝...","author":"word-word","ts":1234567890,"body":"{\"messageId\":\"<uuid>\",\"role\":\"ROLE_USER\",...}","ext":{}}
 /// ```
 ///
 /// `to` (the addressee nickname) is inlined into the JSON for directed `a2a_msg` kinds.
@@ -921,7 +921,7 @@ mod tests {
     #[test]
     fn test_unknown_ext_fields_ignored() {
         let json = format!(
-            r#"{{"v":"5.0","id":"{FIXTURE_ID}","type":"a2a_msg","swarm":"🐝test","author":"a-b","ts":0,"body":"hi","ext":{{"future_field":"value","another":42}}}}"#
+            r#"{{"v":"6.0","id":"{FIXTURE_ID}","type":"a2a_msg","swarm":"🐝test","author":"a-b","ts":0,"body":"hi","ext":{{"future_field":"value","another":42}}}}"#
         );
         let parsed = Message::parse(json.as_bytes()).unwrap();
         assert_eq!(parsed.body.as_str(), "hi");
@@ -931,7 +931,7 @@ mod tests {
     #[test]
     fn test_missing_ext_defaults_to_empty_object() {
         let json = format!(
-            r#"{{"v":"5.0","id":"{FIXTURE_ID}","type":"a2a_msg","swarm":"🐝test","author":"a-b","ts":0,"body":"hi"}}"#
+            r#"{{"v":"6.0","id":"{FIXTURE_ID}","type":"a2a_msg","swarm":"🐝test","author":"a-b","ts":0,"body":"hi"}}"#
         );
         let parsed = Message::parse(json.as_bytes()).unwrap();
         assert_eq!(parsed.ext, serde_json::json!({}));
@@ -953,14 +953,14 @@ mod tests {
     // escapes / spoof the `<nick>`/`#swarm` conventions (bad body/author).
     #[test]
     fn parse_rejects_non_uuid_id() {
-        let json = r#"{"v":"5.0","id":"not-a-uuid","type":"a2a_msg","swarm":"🐝test","author":"a-b","ts":0,"body":"hi","ext":{}}"#;
+        let json = r#"{"v":"6.0","id":"not-a-uuid","type":"a2a_msg","swarm":"🐝test","author":"a-b","ts":0,"body":"hi","ext":{}}"#;
         assert!(Message::parse(json.as_bytes()).is_err());
     }
 
     #[test]
     fn parse_rejects_control_char_body() {
         let json = format!(
-            r#"{{"v":"5.0","id":"{FIXTURE_ID}","type":"a2a_msg","swarm":"🐝test","author":"a-b","ts":0,"body":"evil\u0000body","ext":{{}}}}"#
+            r#"{{"v":"6.0","id":"{FIXTURE_ID}","type":"a2a_msg","swarm":"🐝test","author":"a-b","ts":0,"body":"evil\u0000body","ext":{{}}}}"#
         );
         assert!(Message::parse(json.as_bytes()).is_err());
     }
@@ -968,7 +968,7 @@ mod tests {
     #[test]
     fn parse_rejects_unsafe_author_nickname() {
         let json = format!(
-            r#"{{"v":"5.0","id":"{FIXTURE_ID}","type":"a2a_msg","swarm":"🐝test","author":"a#b","ts":0,"body":"hi","ext":{{}}}}"#
+            r#"{{"v":"6.0","id":"{FIXTURE_ID}","type":"a2a_msg","swarm":"🐝test","author":"a#b","ts":0,"body":"hi","ext":{{}}}}"#
         );
         assert!(Message::parse(json.as_bytes()).is_err());
     }
@@ -980,7 +980,7 @@ mod tests {
         // so a crafted value never reaches the fork/DAG indexes or sig verify.
         let base = |extra: &str| {
             format!(
-                r#"{{"v":"5.0","id":"{FIXTURE_ID}","type":"a2a_msg","swarm":"🐝test","author":"a-b","ts":0,"body":"hi"{extra},"ext":{{}}}}"#
+                r#"{{"v":"6.0","id":"{FIXTURE_ID}","type":"a2a_msg","swarm":"🐝test","author":"a-b","ts":0,"body":"hi"{extra},"ext":{{}}}}"#
             )
         };
         // 3KB garbage pubkey, non-hex / wrong-length variants, and a bad hash.

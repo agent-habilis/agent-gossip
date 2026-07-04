@@ -44,6 +44,18 @@ pub const MAX_MESSAGE_SHARDS: usize = 16;
 /// rather than a truncated read.
 pub const MAX_LOGICAL_BODY_BYTES: usize = MAX_MESSAGE_SHARDS * MAX_MESSAGE_SIZE;
 
+/// Largest single file the blob channel will offload. Streamed from disk on
+/// both ends (never buffered whole), so this is a disk-bound per-blob ceiling,
+/// not a memory cap — a generous limit that stops a hostile ticket from
+/// claiming an absurd `size`.
+pub(crate) const MAX_BLOB_BYTES: u64 = 2 * 1024 * 1024 * 1024; // 2 GiB
+
+/// Spool-disk budget for one peer's blob store (`<nick>.blobs/`). Snapshotting a
+/// new blob that would push the store past this unlinks the oldest spooled
+/// blobs to make room — a hard cap, so it can drop a still-referenced blob under
+/// pressure (the fetch then fails cleanly rather than corrupting).
+pub(crate) const MAX_BLOB_STORE_BYTES: u64 = 4 * 1024 * 1024 * 1024; // 4 GiB
+
 /// Default number of recent messages each member retains in its in-memory
 /// log (anti-entropy recovery source + poll/fetch history). A fixed value
 /// (see `tuning::message_log_size`); edit + commit here to change it. A

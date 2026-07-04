@@ -417,15 +417,38 @@ async fn a2a(action: A2aAction) -> Result<()> {
             nickname,
             task_id,
             text,
+            file,
+            file_name,
+            file_mime,
         } => {
+            if text.is_none() && file.is_none() {
+                anyhow::bail!("provide --text and/or --file");
+            }
+            // Default the advertised filename to the file's own basename.
+            let file_name = file_name.or_else(|| {
+                file.as_ref()
+                    .and_then(|path| path.file_name())
+                    .and_then(|name| name.to_str())
+                    .map(str::to_owned)
+            });
             let cmd = IpcCommand::A2aArtifact {
                 swarm,
                 task_id,
-                text,
+                text: text.unwrap_or_default(),
+                file,
+                file_name,
+                file_mime,
             };
             let resp = ipc::send(&cmd, &nickname).await?;
             let id = finish_send(&resp, "task artifact")?;
             Output::new(OutputMode::Human, false, None).msg_posted(&id);
+            Ok(())
+        }
+        A2aAction::Fetch { ticket, password } => {
+            let ticket = crate::blob::BlobTicket::decode(&ticket)?;
+            let password = password.map(crate::protocol::crypto::Password::new);
+            let mut stdout = tokio::io::stdout();
+            crate::blob::fetch(&ticket, &mut stdout, password).await?;
             Ok(())
         }
     }

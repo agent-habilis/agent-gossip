@@ -50,6 +50,7 @@ pub(crate) enum SessionRequest {
     TaskArtifact {
         task_id: TaskId,
         text: String,
+        file: Option<crate::blob::FileRef>,
         resp: oneshot::Sender<Result<Message>>,
     },
     /// Snapshot the live participant roster (active + quiet, recency-sorted).

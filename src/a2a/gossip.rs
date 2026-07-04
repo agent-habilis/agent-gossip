@@ -27,7 +27,21 @@ pub fn chat_message(swarm: &SwarmId, text: &str) -> Message {
 /// swarm; **no** broadcast extension (it is point-to-point).
 #[must_use]
 pub fn send_message_payload(swarm: &SwarmId, task_id: Option<&TaskId>, text: &str) -> Message {
-    let mut message = Message::text(Role::User, text);
+    send_message_payload_parts(swarm, task_id, vec![Part::text(text)])
+}
+
+/// As [`send_message_payload`] but carrying arbitrary parts — used when the
+/// message attaches a file (a `Part` with a blob `url`) alongside or instead of
+/// text. Input files ride the request `Message.parts`; they are never wrapped in
+/// an `Artifact` (the A2A request has no artifact slot).
+#[must_use]
+pub fn send_message_payload_parts(
+    swarm: &SwarmId,
+    task_id: Option<&TaskId>,
+    parts: Vec<Part>,
+) -> Message {
+    let mut message = Message::text(Role::User, "");
+    message.parts = parts;
     message.context_id = Some(swarm.as_str().to_string());
     message.task_id = task_id.cloned();
     message
@@ -164,12 +178,23 @@ pub fn beat_metadata(fraction: Option<(u64, u64)>) -> serde_json::Value {
 /// parts carry the result text.
 #[must_use]
 pub fn artifact_update(swarm: &SwarmId, task_id: &TaskId, text: &str) -> TaskArtifactUpdate {
+    artifact_update_parts(swarm, task_id, vec![Part::text(text)])
+}
+
+/// As [`artifact_update`] but carrying arbitrary parts — used when the result
+/// attaches a file (a `Part` with a blob `url`) alongside or instead of text.
+#[must_use]
+pub fn artifact_update_parts(
+    swarm: &SwarmId,
+    task_id: &TaskId,
+    parts: Vec<Part>,
+) -> TaskArtifactUpdate {
     TaskArtifactUpdate {
         task_id: task_id.clone(),
         context_id: swarm.as_str().to_string(),
         artifact: super::Artifact {
             artifact_id: uuid::Uuid::new_v4().to_string(),
-            parts: vec![Part::text(text)],
+            parts,
             name: None,
             description: None,
             extensions: Vec::new(),

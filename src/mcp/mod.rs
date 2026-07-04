@@ -228,8 +228,20 @@ struct TaskStatusArgs {
 struct TaskArtifactArgs {
     /// The task id (UUID) you're serving.
     task_id: String,
-    /// The result text.
+    /// The result text (optional when `file` is given).
+    #[serde(default)]
     text: String,
+    /// Optional local file path to attach as the result, transferred
+    /// peer-to-peer over the blob channel (referenced as a Part.url). For
+    /// binaries too large to inline; the initiator fetches it separately.
+    #[serde(default)]
+    file: Option<String>,
+    /// Filename to advertise for `file` (defaults to the file's own name).
+    #[serde(default)]
+    file_name: Option<String>,
+    /// MIME type to advertise for `file`.
+    #[serde(default)]
+    file_mime: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -730,7 +742,17 @@ impl AgentSwarmServer {
         let guard = self.session.lock().await;
         let session = guard.as_ref().ok_or_else(not_in_swarm_error)?;
         let task_id = parse_task_id(&args.task_id)?;
-        match session.task_artifact(task_id, args.text).await {
+        let file = args.file.map(std::path::PathBuf::from);
+        let file_name = args.file_name.or_else(|| {
+            file.as_ref()
+                .and_then(|path| path.file_name())
+                .and_then(|name| name.to_str())
+                .map(str::to_owned)
+        });
+        match session
+            .task_artifact(task_id, args.text, file, file_name, args.file_mime)
+            .await
+        {
             Ok((id, message)) => ok_json(SendMessageResult { id, message }),
             Err(error) => Err(to_mcp_error(error)),
         }

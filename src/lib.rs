@@ -37,6 +37,7 @@
 // share, and embedders speak it directly.
 pub mod a2a;
 pub(crate) mod beacon;
+pub(crate) mod blob;
 pub(crate) mod cli;
 pub(crate) mod daemon;
 pub(crate) mod directory;

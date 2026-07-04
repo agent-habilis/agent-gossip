@@ -109,8 +109,16 @@ impl Session {
         &self,
         task_id: TaskId,
         text: String,
+        file: Option<std::path::PathBuf>,
+        file_name: Option<String>,
+        file_mime: Option<String>,
     ) -> Result<(MessageId, Message)> {
-        let msg = self.inner.task_artifact(task_id, text).await?;
+        let file = file.map(|path| crate::blob::FileRef {
+            path,
+            name: file_name,
+            mime: file_mime,
+        });
+        let msg = self.inner.task_artifact(task_id, text, file).await?;
         Ok((msg.id.clone(), msg))
     }
 

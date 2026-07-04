@@ -31,6 +31,15 @@ pub const EXT_SWARM_STATE: &str = "https://agent-habilis.dev/a2a/ext/swarm-state
 /// `SendMessage` creates a task the worker mints and returns; `SubscribeToTask`
 /// opens a stream the worker propagates over gossip.
 pub const EXT_SWARM_A2A_RPC: &str = "https://agent-habilis.dev/a2a/ext/swarm-a2a-rpc/v1";
+/// Extension URI advertising the blob channel: a large file on a `Part` travels
+/// as a `url` reference (a `📦…` ticket) and its bytes stream point-to-point over
+/// a dedicated QUIC ALPN, SHA-256-verified — instead of inlining over gossip.
+pub const EXT_SWARM_BLOB: &str = "https://agent-habilis.dev/a2a/ext/swarm-blob/v1";
+/// Extension URI advertising end-to-end sealing: directed frames (those with a
+/// `to`) are encrypted to the recipient's X25519 key, carried in this extension's
+/// `params.x25519` (base58). Relays forward + verify the signature but cannot
+/// read the body. Broadcast stays public.
+pub const EXT_SWARM_SEAL: &str = "https://agent-habilis.dev/a2a/ext/swarm-seal/v1";
 
 /// Metadata key marking a status update as a **liveness beat** (keepalive /
 /// progress): plumbing, never logged, surfaced only as `task_progress`.
