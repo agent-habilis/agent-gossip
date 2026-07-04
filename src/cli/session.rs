@@ -62,6 +62,17 @@ fn discover() -> Discovery {
     Discovery { live, cleaned }
 }
 
+/// Resolve a live session's swarm id from its nickname — for commands that need
+/// the session's runtime dir without retyping the swarm id (e.g. `a2a fetch`
+/// landing a blob under `<nick>.recv`). `None` if no live session claims it.
+pub(crate) fn swarm_for_nickname(nickname: &str) -> Option<String> {
+    discover()
+        .live
+        .into_iter()
+        .find(|target| target.nickname.as_deref() == Some(nickname))
+        .map(|target| target.swarm)
+}
+
 fn state_file_paths() -> Vec<PathBuf> {
     let Ok(swarm_dirs) = std::fs::read_dir(RUNTIME_DIR) else {
         return Vec::new();

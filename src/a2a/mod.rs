@@ -32,7 +32,7 @@ pub const EXT_SWARM_STATE: &str = "https://agent-habilis.dev/a2a/ext/swarm-state
 /// opens a stream the worker propagates over gossip.
 pub const EXT_SWARM_A2A_RPC: &str = "https://agent-habilis.dev/a2a/ext/swarm-a2a-rpc/v1";
 /// Extension URI advertising the blob channel: a large file on a `Part` travels
-/// as a `url` reference (a `📦…` ticket) and its bytes stream point-to-point over
+/// as a `url` reference (a `💬…` ticket) and its bytes stream point-to-point over
 /// a dedicated QUIC ALPN, SHA-256-verified — instead of inlining over gossip.
 pub const EXT_SWARM_BLOB: &str = "https://agent-habilis.dev/a2a/ext/swarm-blob/v1";
 /// Extension URI advertising end-to-end sealing: directed frames (those with a

@@ -444,11 +444,57 @@ async fn a2a(action: A2aAction) -> Result<()> {
             Output::new(OutputMode::Human, false, None).msg_posted(&id);
             Ok(())
         }
-        A2aAction::Fetch { ticket, password } => {
+        A2aAction::Fetch {
+            ticket,
+            nickname,
+            output,
+            password,
+        } => {
             let ticket = crate::blob::BlobTicket::decode(&ticket)?;
             let password = password.map(crate::protocol::crypto::Password::new);
-            let mut stdout = tokio::io::stdout();
-            crate::blob::fetch(&ticket, &mut stdout, password).await?;
+
+            // Where the bytes land, `None` meaning stdout. Precedence:
+            //   `--output -`       → stdout
+            //   `--output <path>`  → that path
+            //   `--nickname <n>`   → `<session-dir>/<n>.recv/<sha256hex>`
+            //   (none)             → stdout (session-less pipe, unchanged)
+            let dest: Option<std::path::PathBuf> = match output {
+                Some(path) if path.as_os_str() == "-" => None,
+                Some(path) => Some(path),
+                None => match &nickname {
+                    Some(nick) => {
+                        let swarm = session::swarm_for_nickname(nick.as_str()).ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "no live session for nickname '{}' — start one, or pass --output",
+                                nick.as_str()
+                            )
+                        })?;
+                        let dir = crate::util::swarm_runtime_dir(&swarm)
+                            .join(format!("{}.recv", nick.as_str()));
+                        tokio::fs::create_dir_all(&dir).await?;
+                        Some(dir.join(ticket.sha256_hex()))
+                    }
+                    None => None,
+                },
+            };
+
+            match dest {
+                None => {
+                    let mut stdout = tokio::io::stdout();
+                    crate::blob::fetch(&ticket, &mut stdout, password).await?;
+                }
+                Some(path) => {
+                    let mut file = tokio::fs::File::create(&path).await?;
+                    if let Err(error) = crate::blob::fetch(&ticket, &mut file, password).await {
+                        // fetch verifies the hash as it streams; a partial file
+                        // from a failed transfer is meaningless, so drop it.
+                        drop(file);
+                        let _ = tokio::fs::remove_file(&path).await;
+                        return Err(error);
+                    }
+                    println!("{}", path.display());
+                }
+            }
             Ok(())
         }
     }

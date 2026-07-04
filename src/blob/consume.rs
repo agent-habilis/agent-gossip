@@ -1,4 +1,4 @@
-//! The blob consumer: redeem a `📦` ticket by dialing the producer's blob
+//! The blob consumer: redeem a `💬` ticket by dialing the producer's blob
 //! endpoint, presenting the bearer secret, and streaming the content-addressed
 //! bytes to a writer while verifying them against the ticket's SHA-256. Constant
 //! memory — nothing is buffered whole. Standalone: it builds its own participant

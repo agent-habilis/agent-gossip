@@ -2,7 +2,7 @@
 //! artifacts/attachments, off the gossip plane. A file too big to inline in a
 //! gossip frame is offloaded here: the producer's daemon serves the content,
 //! content-addressed by SHA-256, over a dedicated QUIC endpoint, and hands the
-//! consumer a `📦` [`ticket::BlobTicket`] reference (placed in an A2A
+//! consumer a `💬` [`ticket::BlobTicket`] reference (placed in an A2A
 //! `Part.url`). The consumer dials the producer, presents the ticket's bearer
 //! secret, and streams the bytes — verified against the advertised hash.
 //!
@@ -39,7 +39,7 @@ pub(crate) struct FileRef {
 }
 
 /// Offload `file` over the blob channel and return an A2A `Part` that references
-/// it by `url` (a `📦` ticket) — for an output `Artifact.parts` or an input
+/// it by `url` (a `💬` ticket) — for an output `Artifact.parts` or an input
 /// `Message.parts`. Lazily binds the daemon's blob server on the first offload
 /// (into `spool_dir`), reusing it thereafter.
 ///

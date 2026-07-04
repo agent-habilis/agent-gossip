@@ -1,7 +1,7 @@
 //! Blob-channel integration (in-process, via the `InProcNode` harness): a
 //! worker returns a **file** as its task result. The file is offloaded over the
 //! blob channel and the emitted `TaskArtifactUpdate` carries a `Part.url`
-//! reference (a `📦…` ticket) rather than inline bytes — and the initiator
+//! reference (a `💬…` ticket) rather than inline bytes — and the initiator
 //! observes the artifact (review park). The point-to-point fetch + SHA-256
 //! verification is unit-tested in `src/blob` (loopback round-trip + adversarial).
 
@@ -61,8 +61,8 @@ async fn a_file_result_is_offloaded_as_a_url_reference() {
     let part = &payload["artifact"]["parts"][0];
     let url = part["url"].as_str().expect("the file part carries a url");
     assert!(
-        url.starts_with("📦"),
-        "the result must be a 📦 blob reference, got: {url}"
+        url.starts_with("💬"),
+        "the result must be a 💬 blob reference, got: {url}"
     );
     assert!(
         part["raw"].is_null(),
