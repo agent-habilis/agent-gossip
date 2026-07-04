@@ -430,14 +430,14 @@ mod tests {
     #[test]
     fn ipc_command_msg_round_trip() {
         let cmd = IpcCommand::Msg {
-            swarm: SwarmId::from("🐝test"),
+            swarm: SwarmId::from("🐝://test"),
             body: MessageBody::from("hello"),
         };
         let json = serde_json::to_string(&cmd).unwrap();
         let parsed: IpcCommand = serde_json::from_str(&json).unwrap();
         assert_eq!(
             parsed.swarm_id().expect("Msg is swarm-addressed").as_str(),
-            "🐝test"
+            "🐝://test"
         );
     }
 
@@ -452,7 +452,7 @@ mod tests {
     #[test]
     fn ipc_command_state_merge_round_trip() {
         let cmd = IpcCommand::StateMerge {
-            swarm: SwarmId::from("🐝test"),
+            swarm: SwarmId::from("🐝://test"),
             merge: serde_json::json!({"turn": "b"}),
         };
         let json = serde_json::to_string(&cmd).unwrap();
@@ -461,7 +461,7 @@ mod tests {
         let parsed: IpcCommand = serde_json::from_str(&json).unwrap();
         match parsed {
             IpcCommand::StateMerge { swarm, merge } => {
-                assert_eq!(swarm.as_str(), "🐝test");
+                assert_eq!(swarm.as_str(), "🐝://test");
                 assert_eq!(merge, serde_json::json!({"turn": "b"}));
             }
             IpcCommand::Msg { .. }
@@ -481,7 +481,7 @@ mod tests {
     #[test]
     fn ipc_command_poll_round_trip() {
         let cmd = IpcCommand::Poll {
-            swarm: SwarmId::from("🐝test"),
+            swarm: SwarmId::from("🐝://test"),
             after: Some(42),
             long: false,
         };
@@ -512,13 +512,13 @@ mod tests {
     #[test]
     fn ipc_command_ping_round_trip() {
         let cmd = IpcCommand::Ping {
-            swarm: SwarmId::from("🐝test"),
+            swarm: SwarmId::from("🐝://test"),
         };
         let json = serde_json::to_string(&cmd).unwrap();
         assert!(json.contains("\"command\":\"ping\""));
         let parsed: IpcCommand = serde_json::from_str(&json).unwrap();
         match parsed {
-            IpcCommand::Ping { swarm } => assert_eq!(swarm.as_str(), "🐝test"),
+            IpcCommand::Ping { swarm } => assert_eq!(swarm.as_str(), "🐝://test"),
             IpcCommand::Msg { .. }
             | IpcCommand::Poll { .. }
             | IpcCommand::A2aStatus { .. }
@@ -536,7 +536,7 @@ mod tests {
     #[test]
     fn ipc_command_a2a_status_round_trip() {
         let cmd = IpcCommand::A2aStatus {
-            swarm: SwarmId::from("🐝test"),
+            swarm: SwarmId::from("🐝://test"),
             task_id: TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
             state: TaskState::Working,
             note: Some("on it".to_string()),
@@ -567,13 +567,13 @@ mod tests {
     #[test]
     fn ipc_command_peers_round_trip() {
         let cmd = IpcCommand::Peers {
-            swarm: SwarmId::from("🐝test"),
+            swarm: SwarmId::from("🐝://test"),
         };
         let json = serde_json::to_string(&cmd).unwrap();
         assert!(json.contains("\"command\":\"peers\""));
         let parsed: IpcCommand = serde_json::from_str(&json).unwrap();
         match parsed {
-            IpcCommand::Peers { swarm } => assert_eq!(swarm.as_str(), "🐝test"),
+            IpcCommand::Peers { swarm } => assert_eq!(swarm.as_str(), "🐝://test"),
             IpcCommand::Msg { .. }
             | IpcCommand::Poll { .. }
             | IpcCommand::Ping { .. }
@@ -591,7 +591,7 @@ mod tests {
     #[test]
     fn ipc_command_poll_no_after_skips_field() {
         let cmd = IpcCommand::Poll {
-            swarm: SwarmId::from("🐝test"),
+            swarm: SwarmId::from("🐝://test"),
             after: None,
             long: false,
         };
@@ -603,7 +603,7 @@ mod tests {
     #[test]
     fn ipc_command_poll_long_serializes_true() {
         let cmd = IpcCommand::Poll {
-            swarm: SwarmId::from("🐝test"),
+            swarm: SwarmId::from("🐝://test"),
             after: None,
             long: true,
         };
@@ -707,7 +707,9 @@ mod tests {
             #[test]
             fn prop_swarm_prefix_is_prefix_of_input(swarm in arb_swarm()) {
                 let prefix = swarm_prefix(swarm.as_str());
-                prop_assert!(swarm.as_str().starts_with(&prefix));
+                // `swarm_prefix` strips the `://` scheme separator before taking
+                // 16 chars, so it prefixes the scheme-stripped id.
+                prop_assert!(swarm.as_str().replace("://", "").starts_with(&prefix));
             }
         }
     }

@@ -49,14 +49,8 @@ mod tests {
             | Commands::Ping { .. }
             | Commands::Discover { .. }
             | Commands::Peers { .. }
-            | Commands::Pipe { .. }
-            | Commands::Port { .. }
-            | Commands::File { .. }
-            | Commands::Sh { .. }
-            | Commands::Mount { .. }
             | Commands::State { .. }
             | Commands::Meta { .. }
-            | Commands::Card { .. }
             | Commands::A2a { .. }
             | Commands::Ready { .. }
             | Commands::Mcp { .. }

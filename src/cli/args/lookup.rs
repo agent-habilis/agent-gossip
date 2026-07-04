@@ -95,18 +95,12 @@ mod tests {
             | Commands::Forum { .. }
             | Commands::Poll { .. }
             | Commands::Ping { .. }
-            | Commands::Pipe { .. }
-            | Commands::Port { .. }
-            | Commands::File { .. }
-            | Commands::Sh { .. }
-            | Commands::Mount { .. }
             | Commands::Discover { .. }
             | Commands::Mcp { .. }
             | Commands::Man
             | Commands::Peers { .. }
             | Commands::State { .. }
             | Commands::Meta { .. }
-            | Commands::Card { .. }
             | Commands::A2a { .. }
             | Commands::Ready { .. }
             | Commands::Plug { .. }
@@ -176,18 +170,12 @@ mod tests {
             | Commands::Forum { .. }
             | Commands::Poll { .. }
             | Commands::Ping { .. }
-            | Commands::Pipe { .. }
-            | Commands::Port { .. }
-            | Commands::File { .. }
-            | Commands::Sh { .. }
-            | Commands::Mount { .. }
             | Commands::Discover { .. }
             | Commands::Mcp { .. }
             | Commands::Man
             | Commands::Peers { .. }
             | Commands::State { .. }
             | Commands::Meta { .. }
-            | Commands::Card { .. }
             | Commands::A2a { .. }
             | Commands::Ready { .. }
             | Commands::Plug { .. }

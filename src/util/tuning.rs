@@ -68,22 +68,6 @@ pub(crate) fn antientropy_max_resend() -> usize {
     current().antientropy_max_resend.max(1)
 }
 
-/// Whether the unicast (point-to-point) transport is attempted for directed
-/// messages. Default on; hidden flag `--no-unicast` turns it off, forcing every
-/// message onto gossip (the pre-unicast behavior). See [`crate::unicast`].
-pub(crate) fn unicast_enabled() -> bool {
-    current().unicast_enabled
-}
-
-/// Whether gossip may carry (or fall back for) a **directed** message. Default
-/// on; hidden flag `--no-gossip-directed` turns it off, making directed messages
-/// unicast-only (a cold peer is dialed inline; failure is an error). Broadcasts
-/// and infrastructure kinds always ride gossip regardless — they have no other
-/// transport.
-pub(crate) fn gossip_directed_enabled() -> bool {
-    current().gossip_directed_enabled
-}
-
 /// Default max direct peer connections (gossip relays beyond this)
 pub(crate) const DEFAULT_MAX_DIRECT_PEERS: usize = 25;
 
@@ -212,8 +196,6 @@ pub(crate) struct Tuning {
     pub directory_private: bool,
     pub gossip_active_view_capacity: usize,
     pub gossip_passive_view_capacity: usize,
-    pub unicast_enabled: bool,
-    pub gossip_directed_enabled: bool,
 }
 
 impl Tuning {
@@ -236,8 +218,6 @@ impl Tuning {
         directory_private: false,
         gossip_active_view_capacity: crate::util::consts::GOSSIP_ACTIVE_VIEW_CAPACITY,
         gossip_passive_view_capacity: crate::util::consts::GOSSIP_PASSIVE_VIEW_CAPACITY,
-        unicast_enabled: true,
-        gossip_directed_enabled: true,
     };
 }
 

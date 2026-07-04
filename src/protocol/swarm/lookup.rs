@@ -396,40 +396,6 @@ pub(crate) fn resolve_lookups(public: bool, lookups: LookupSet) -> LookupOpts {
     }
 }
 
-/// Resolve a transfer command's (`pipe`/`file`/`port`/`sh`/`mount`)
-/// discovery config from its two alternative sources: a `--swarm 🐝…` id
-/// (whose embedded lookups win) or the create-style
-/// `--mdns/--dht/--relay` flags (naming any uses only those). Unlike
-/// [`resolve_lookups`], naming **nothing** is the all-on public preset —
-/// a transfer is inherently networked, so its default is public where
-/// `create`'s is loopback. `--public`, the preset's explicit alias, and
-/// the `--swarm`-vs-flags exclusivity are enforced by clap; the both-
-/// sources bail below is a backstop for non-CLI callers.
-///
-/// # Errors
-/// Both sources given (ambiguous), or an invalid `--swarm` id.
-pub(crate) fn resolve_transfer_lookups(
-    swarm: Option<&str>,
-    flags: LookupSet,
-) -> Result<LookupOpts> {
-    match swarm {
-        Some(id) => {
-            if flags.any() {
-                bail!(
-                    "--swarm already carries a discovery config; \
-                     drop the --mdns/--dht/--relay flags"
-                );
-            }
-            Ok(id
-                .parse::<super::Swarm>()
-                .context("invalid --swarm id")?
-                .lookups()
-                .clone())
-        }
-        None => Ok(resolve_lookups(true, flags)),
-    }
-}
-
 /// Parse a comma-separated, ordered relay **ladder** (`a,b,c`) — order
 /// preserved (the beacon homes on the first reachable rung); an empty or
 /// whitespace-only entry is a hard error so a typo never silently
@@ -520,7 +486,7 @@ impl fmt::Display for RelayLadder {
 mod lookup_tests {
     use super::{
         LookupOpts, LookupSet, RelayChoice, RelayLadder, RelaySelection, SwarmConfig,
-        resolve_lookups, resolve_transfer_lookups,
+        resolve_lookups,
     };
 
     fn lookups(mdns: bool, dht: bool, relay: RelaySelection) -> LookupSet {
@@ -607,38 +573,6 @@ mod lookup_tests {
         let ladder: RelayLadder = "https://a.example,https://b.example".parse().unwrap();
         let opts = resolve_lookups(false, lookups(false, false, RelaySelection::Custom(ladder)));
         assert_eq!(opts.relay, RelayChoice::Custom(vec![rung0, rung1]));
-    }
-
-    #[test]
-    fn transfer_no_flags_is_the_public_preset() {
-        let opts = resolve_transfer_lookups(None, LookupSet::default()).unwrap();
-        assert_eq!(opts, LookupOpts::public_preset());
-    }
-
-    #[test]
-    fn transfer_named_flags_restrict_to_those() {
-        let opts =
-            resolve_transfer_lookups(None, lookups(true, false, RelaySelection::Unset)).unwrap();
-        assert!(opts.mdns && !opts.dht);
-        assert_eq!(opts.relay, RelayChoice::Disabled);
-    }
-
-    #[test]
-    fn transfer_swarm_id_wins_and_rejects_flags() {
-        let id = super::super::Swarm::new(
-            [7u8; super::super::SEED_LEN],
-            super::super::SwarmName::new("test").unwrap(),
-            SwarmConfig::loopback(),
-        )
-        .to_string();
-        // The id's embedded lookups win when no flag is passed.
-        let opts = resolve_transfer_lookups(Some(&id), LookupSet::default()).unwrap();
-        assert!(opts.is_loopback());
-        // Both sources at once is ambiguous (clap rejects it first on the CLI).
-        let error =
-            resolve_transfer_lookups(Some(&id), lookups(true, false, RelaySelection::Unset))
-                .unwrap_err();
-        assert!(error.to_string().contains("--swarm"), "got: {error}");
     }
 
     #[test]

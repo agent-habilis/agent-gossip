@@ -2302,7 +2302,9 @@ fn ready_identity(log: &std::path::Path) -> Option<(String, String)> {
 }
 
 fn default_state_file(swarm: &str, nickname: &str) -> PathBuf {
-    let prefix: String = swarm.chars().take(16).collect();
+    // Mirror `util::swarm_prefix`: strip the `://` scheme separator before
+    // taking 16 chars, so the path matches where the daemon writes its state.
+    let prefix: String = swarm.replace("://", "").chars().take(16).collect();
     PathBuf::from(RUNTIME_DIR)
         .join(prefix)
         .join(format!("{nickname}.state.json"))

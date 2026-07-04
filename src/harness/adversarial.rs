@@ -13,6 +13,7 @@
 
 use crate::protocol::identity::{self, Identity};
 use crate::protocol::message::Message;
+use crate::protocol::message::PresenceSubtype;
 use crate::protocol::{MessageBody, MessageKind, Nickname, SwarmId};
 
 /// An opaque attacker/peer signing key. Wraps the crate-internal `Identity`
@@ -166,23 +167,28 @@ impl CraftedMsg {
         self
     }
 
-    /// Flip the kind between `Msg` and `Notice` (keeping `reply`). After
-    /// signing, this is the kind-demotion attack: a relay rewriting a notice
-    /// into an auto-replyable msg (or vice versa) — the signature must break.
+    /// Rewrite the kind after signing — the kind-tamper attack. The kind is
+    /// part of the canonical bytes, so a relay flipping a signed broadcast chat
+    /// `A2aMsg` into a `Presence` beat (or the reverse) must break the
+    /// signature and the victim must drop it.
     pub fn flip_chat_kind(mut self) -> Self {
         self.msg.kind = match self.msg.kind.clone() {
-            MessageKind::Msg { reply } => MessageKind::Notice { reply },
-            MessageKind::Notice { reply } => MessageKind::Msg { reply },
-            MessageKind::Presence { .. }
-            | MessageKind::PeerInfo
+            MessageKind::A2aMsg => MessageKind::Presence {
+                subtype: PresenceSubtype::Alive,
+            },
+            MessageKind::Presence { .. } => MessageKind::A2aMsg,
+            MessageKind::PeerInfo
             | MessageKind::Digest
             | MessageKind::StateDigest
             | MessageKind::MetaDigest
             | MessageKind::Ping
             | MessageKind::Pong { .. }
-            | MessageKind::Task { .. }
+            | MessageKind::A2aStatus { .. }
+            | MessageKind::A2aArtifact { .. }
+            | MessageKind::A2aReq { .. }
+            | MessageKind::A2aResp { .. }
             | MessageKind::State
-            | MessageKind::Meta => panic!("flip_chat_kind takes a chat message"),
+            | MessageKind::Meta => panic!("flip_chat_kind takes a broadcast chat message"),
         };
         self
     }

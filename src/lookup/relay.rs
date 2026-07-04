@@ -48,7 +48,7 @@ use crate::util::tuning::{
 /// on such a move so we review (do these hosts still operate?) before
 /// shipping the bump. See docs/iroh-ecosystem-research.md.
 const RENDEZVOUS_RELAY_LADDER: [&str; 5] = [
-    "https://swarm-relay.agent-habilis.com./",         // ours (rung 0)
+    "https://swarm-relay.agent-habilis.com./", // ours (rung 0)
     "https://use1-1.relay.n0.iroh-canary.iroh.link./", // NA-east
     "https://usw1-1.relay.n0.iroh-canary.iroh.link./", // NA-west
     "https://euc1-1.relay.n0.iroh-canary.iroh.link./", // EU
