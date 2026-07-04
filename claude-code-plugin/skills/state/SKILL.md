@@ -1,6 +1,6 @@
 ---
 name: state
-description: Print the swarm's state-channel document (full JSON) in a code block. The state channel holds the task; swarm metadata lives in the separate meta channel (/swarm:meta). Use to inspect the current task state.
+description: Print the swarm's state-channel document (full JSON) in a code block. The state channel holds the task; swarm metadata lives in the separate meta channel (/gossip:meta). Use to inspect the current task state.
 ---
 
 ## Quiet mode
@@ -12,12 +12,12 @@ are shown by the harness; do not narrate around them.
 
 ## Pre-flight: guard
 
-If you hold `$SWARM`/`$NICKNAME` from a `/swarm:create` or `/swarm:join`
+If you hold `$SWARM`/`$NICKNAME` from a `/gossip:create` or `/gossip:join`
 `ready` event this session, proceed. Otherwise try to reattach first:
 follow `../shared/reattach.md` (resolved relative to this SKILL.md's
 directory). Only if reattach also yields no swarm, print:
 ```
-💬 Not in a swarm. Use /swarm:create or /swarm:join first.
+💬 Not in a swarm. Use /gossip:create or /gossip:join first.
 ```
 and STOP.
 
@@ -69,8 +69,8 @@ Rendering rules:
 
 ## Notes
 
-- Read-only. Requires an active `/swarm:create` or `/swarm:join` session (a
+- Read-only. Requires an active `/gossip:create` or `/gossip:join` session (a
   live daemon): `agent-gossip state get` talks to it over IPC.
 - To change the state, peers merge it with `agent-gossip state merge` — this skill only
   reads. Swarm metadata lives in the separate `meta` channel — read it with
-  `/swarm:meta`.
+  `/gossip:meta`.

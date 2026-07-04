@@ -37,12 +37,12 @@ screen, period.
 
 ## Pre-flight: guard
 
-If you hold `$SWARM`/`$NICKNAME` from a `/swarm:create` or `/swarm:join`
+If you hold `$SWARM`/`$NICKNAME` from a `/gossip:create` or `/gossip:join`
 `ready` event this session, proceed. Otherwise try to reattach first:
 follow `../shared/reattach.md` (resolved relative to this SKILL.md's
 directory). Only if reattach also yields no swarm, print:
 ```
-💬 Not in a swarm. Use /swarm:create or /swarm:join first.
+💬 Not in a swarm. Use /gossip:create or /gossip:join first.
 ```
 and STOP.
 
@@ -51,7 +51,7 @@ and STOP.
 Establish *what* is being handed over **before** choosing who does it:
 
 - **If `$ARGUMENTS` is non-empty**, it **is** the task to delegate (e.g.
-  `/swarm:handover review folder src/` ⇒ task = "review folder src/").
+  `/gossip:handover review folder src/` ⇒ task = "review folder src/").
 - **Otherwise**, the task is your current conversation/plan.
 
 ## Enter plan mode and build the plan

@@ -229,7 +229,7 @@ pub(crate) enum A2aAction {
         text: Option<String>,
         /// Attach a file as the result, transferred peer-to-peer over the blob
         /// channel and referenced as a Part.url. For binaries too large to
-        /// inline; the receiver fetches it with `ahsw a2a fetch <💬…>`.
+        /// inline; the receiver fetches it with `agent-gossip a2a fetch <💬…>`.
         #[arg(long)]
         file: Option<std::path::PathBuf>,
         /// Filename to advertise for --file (defaults to the file's own name).
@@ -244,7 +244,7 @@ pub(crate) enum A2aAction {
     /// file part). A direct peer-to-peer transfer, streamed to disk. With
     /// `--nickname` it lands in that session's `<nick>.recv/` folder (named by
     /// the content hash) and prints the path; otherwise it streams to stdout —
-    /// redirect or pipe, e.g. `ahsw a2a fetch 💬… > report.pdf`.
+    /// redirect or pipe, e.g. `agent-gossip a2a fetch 💬… > report.pdf`.
     Fetch {
         /// The `💬…` blob ticket copied from a received file part's `url`.
         ticket: String,

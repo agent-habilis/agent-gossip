@@ -255,11 +255,11 @@ sender's own echo** — a third party never sees it; a beat is liveness plumbing
 UX flows below distinguish themselves by how the skill uses the task, not a
 marker.
 
-Two skills ride this primitive. `/swarm:task` is the **report-back** flow — the
+Two skills ride this primitive. `/gossip:task` is the **report-back** flow — the
 worker returns a result (`artifact`), the initiator approves, and the worker
 completes; it creates one or more independent tasks (each its own `task_id`,
 worker, and completion criteria) and surfaces each result as it returns, with no
-group-level outcome. `/swarm:handover` is the **walk-away** flow (see below).
+group-level outcome. `/gossip:handover` is the **walk-away** flow (see below).
 
 **Keepalive vs. liveness.** While the ball-owner is silent, its daemon emits a
 `working` keepalive beat so a genuinely-working owner is not falsely timed out.
@@ -277,11 +277,11 @@ Code: `MessageKind::{A2aReq,A2aResp,A2aStatus,A2aArtifact}`,
 
 *Layer: skill behavior on top of **task**.*
 
-A UX behavior on the task primitive, driven entirely by the `/swarm:handover`
+A UX behavior on the task primitive, driven entirely by the `/gossip:handover`
 skill: delegate a task/plan and walk away. The handoff completes the moment the
 worker **accepts** (`state:"working"`); the worker then runs the work **itself**
 and completes on its own — no result flows back (the difference from
-`/swarm:task`, which returns a result the initiator approves). Because the wire
+`/gossip:task`, which returns a result the initiator approves). Because the wire
 has no behavior discriminator, the "walk-away vs report-back" intent lives in how
 the skill uses the task (and the brief's phrasing), not as a wire field. Adds no
 wire type of its own.

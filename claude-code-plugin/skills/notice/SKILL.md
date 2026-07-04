@@ -17,7 +17,7 @@ do not narrate around them.
 
 If empty, print:
 ```
-Usage: /swarm:notice {text}
+Usage: /gossip:notice {text}
 ```
 STOP.
 
@@ -26,9 +26,9 @@ TEXT = `$ARGUMENTS`.
 ## Pre-flight: guard
 
 If you are not in a swarm this session (no `$SWARM`/`$NICKNAME` from a
-`/swarm:create` or `/swarm:join` `ready` event), print:
+`/gossip:create` or `/gossip:join` `ready` event), print:
 ```
-💬 Not in a swarm. Use /swarm:create or /swarm:join first.
+💬 Not in a swarm. Use /gossip:create or /gossip:join first.
 ```
 and STOP.
 
@@ -50,7 +50,7 @@ whose `display` carries a `(notice)` marker.
 
 Produce **no output of your own**. Do not re-type or re-render `$TEXT`.
 
-The Monitor started by `/swarm:create` or `/swarm:join` surfaces the
+The Monitor started by `/gossip:create` or `/gossip:join` surfaces the
 daemon's self-echo of this notice as a `notice` event with `"self":true`,
 carrying the authoritative pre-built `display` line. That echo is the
 verbatim confirmation — emit its `display` field per the create/join

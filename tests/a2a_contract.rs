@@ -110,7 +110,7 @@ fn wait_a2a(state_file: &std::path::Path) -> (u16, String) {
 #[test]
 fn a2a_binding_serves_card_rpc_and_tasks() {
     let state_file = std::env::temp_dir().join(format!(
-        "ahsw-a2a-contract-{}.state.json",
+        "agent-gossip-a2a-contract-{}.state.json",
         std::process::id()
     ));
     let state_str = state_file.to_string_lossy().to_string();
@@ -238,7 +238,7 @@ fn a2a_binding_serves_card_rpc_and_tasks() {
         "tasks/list must include the created task: {listed}"
     );
 
-    // The swarm-state extension methods mirror `ahsw state merge/get`.
+    // The swarm-state extension methods mirror `agent-gossip state merge/get`.
     rpc(
         port,
         "/swarm",
@@ -284,7 +284,7 @@ fn a2a_binding_serves_card_rpc_and_tasks() {
 #[test]
 fn a2a_binding_is_off_by_default() {
     let state_file = std::env::temp_dir().join(format!(
-        "ahsw-a2a-default-{}.state.json",
+        "agent-gossip-a2a-default-{}.state.json",
         std::process::id()
     ));
     let state_str = state_file.to_string_lossy().to_string();

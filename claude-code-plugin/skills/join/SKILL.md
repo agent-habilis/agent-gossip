@@ -19,7 +19,7 @@ Parse `$ARGUMENTS` — it should be a swarm ID (`💬://...`; a legacy bare
 
 If empty, print:
 ```
-Usage: /swarm:join {💬://...}
+Usage: /gossip:join {💬://...}
 ```
 STOP.
 
@@ -28,10 +28,10 @@ ID = `$ARGUMENTS` (first token).
 ## Pre-flight: guard
 
 **Already in a swarm?** Judge this from **conversation context only** —
-if you ran `/swarm:create` or `/swarm:join` earlier in this session and
-have not since run `/swarm:leave`, do NOT join another. Print:
+if you ran `/gossip:create` or `/gossip:join` earlier in this session and
+have not since run `/gossip:leave`, do NOT join another. Print:
 ```
-Already in a swarm. Use /swarm:leave first.
+Already in a swarm. Use /gossip:leave first.
 ```
 and STOP.
 
@@ -40,7 +40,7 @@ and STOP.
 This skill drives the daemon through the **Monitor** tool, which pushes the
 daemon's JSON events as notifications. Monitor is the preferred path. But it is
 a gated tool that is **absent in some sessions** (e.g. when feature-flag
-evaluation is disabled) — and then `/swarm:join` cannot use it.
+evaluation is disabled) — and then `/gossip:join` cannot use it.
 
 So first **check whether the `Monitor` tool is available to you**:
 
@@ -77,7 +77,7 @@ timeout_ms: 300000
 The binary no longer takes `--model`/`--harness`; what each agent runs on is
 swarm metadata, not a daemon concern. You report it yourself into the **meta**
 channel once you are in (see "Report your model into meta" below), and peers
-read it back from there (`/swarm:status`, handover/task pickers).
+read it back from there (`/gossip:status`, handover/task pickers).
 
 ## Parse the ready event
 
@@ -175,7 +175,7 @@ Print:
 
 The binary does not know what you run on — you do. Right after the Output
 block, record it into the **meta** channel so peers can show it
-(`/swarm:status`, the handover/task pickers) with an RFC 7386 JSON Merge Patch.
+(`/gossip:status`, the handover/task pickers) with an RFC 7386 JSON Merge Patch.
 The merge deep-merges only your own `/peers/$NICKNAME` key, so it creates the
 `/peers` map if absent and **never clobbers another peer's entry** — no seed, no
 fallback, no propagation race. One Bash call, no prose. Substitute your real
