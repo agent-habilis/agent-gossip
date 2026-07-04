@@ -70,10 +70,9 @@ operations become signed frames.
 ## Gossip request/response (directed peer RPC)
 
 On top of the fire-and-forget plane, a peer can call another peer's A2A
-server **over gossip** and await its response — so any member is a
-gossip-reachable A2A server, not just a localhost one. This is what makes
-the swarm feel client-server without a direct socket (direct-QUIC streaming
-is deferred).
+server and await its response — so any member is an A2A server, not just a
+localhost one. This is what makes the swarm feel client-server without a held
+socket (a held streaming socket is still deferred).
 
 - **Wire.** Two directed, presence-like frame kinds: `a2a_req` (body = a
   JSON-RPC `{method, params}`) and `a2a_resp` (body = `{result}` or
@@ -81,6 +80,11 @@ is deferred).
   never logged, never chain/DAG-folded, and never surface on the chat stream
   — the response reaches the caller through a parked waiter
   (`src/daemon/state.rs`), which times out per call.
+- **Transport.** Being directed, both frames take the **unicast**
+  point-to-point channel when the addressee is dialable, falling back to the
+  gossip flood otherwise (see the `unicast` entry in `glossary.md`). Either way
+  the wire frame is identical and the receiver's validate/dedup path is the
+  same, so the choice is invisible above the transport.
 - **Server (`src/a2a/gossip_rpc.rs`).** The receiving peer serves a **safe
   method subset**, distinct from the localhost binding's full surface:
   `GetTask`, `ListTasks`, `CancelTask` (only for a task the caller is a

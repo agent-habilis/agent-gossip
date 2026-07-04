@@ -322,10 +322,9 @@ async fn send_msg_part(
 ) -> anyhow::Result<()> {
     if state.meshed {
         commit_outbound_part(state, msg, out, echo);
-        sender
-            .broadcast(bytes)
-            .await
-            .map_err(|error| anyhow::anyhow!("{error}"))?;
+        // Single send decision: a directed message goes point-to-point over
+        // unicast when the addressee is dialable, else gossip (see `unicast`).
+        crate::unicast::deliver(msg, bytes, state, sender).await?;
     } else if state.pending_outbound.push(bytes) {
         commit_outbound_part(state, msg, out, echo);
     } else {
@@ -687,13 +686,11 @@ async fn send_task_leg(
     content: bool,
 ) -> anyhow::Result<()> {
     if state.meshed {
-        // Meshed: retain locally, then hit the wire (a transient broadcast error
-        // still leaves a content leg in our log for anti-entropy).
+        // Meshed: retain locally, then hit the wire (a transient send error
+        // still leaves a content leg in our log for anti-entropy). Unicast when
+        // the addressee is dialable, else gossip (see `unicast::deliver`).
         retain_leg(state, msg, out, echo, content);
-        sender
-            .broadcast(bytes)
-            .await
-            .map_err(|error| anyhow::anyhow!("{error}"))?;
+        crate::unicast::deliver(msg, bytes, state, sender).await?;
     } else if state.pending_outbound.push(bytes) {
         retain_leg(state, msg, out, echo, content);
     } else {
@@ -800,7 +797,21 @@ pub(crate) async fn broadcast_a2a_call(
         unregistered.send_response(&rpc_error(-32603, "too many in-flight a2a calls"));
         return;
     }
-    broadcast_msg(sender, &frame).await;
+    // Directed request: unicast to the peer when dialable, else gossip
+    // (see `unicast::deliver`). Mirrors `broadcast_msg`'s log-then-serialize.
+    crate::logging::messages::log_out(&frame);
+    match frame.serialize() {
+        Ok(bytes) => {
+            if let Err(error) =
+                crate::unicast::deliver(&frame, Bytes::from(bytes), state, sender).await
+            {
+                tracing::warn!(target: "agent_habilis_swarm::gossip", %error, "a2a request send failed");
+            }
+        }
+        Err(error) => {
+            tracing::warn!(target: "agent_habilis_swarm::gossip", %error, "a2a request serialize failed");
+        }
+    }
 }
 
 /// Handle one typed in-process [`SessionRequest`] (embed / MCP). `Send`

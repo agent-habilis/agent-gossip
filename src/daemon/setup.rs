@@ -5,7 +5,7 @@ use std::time::Duration;
 use anyhow::Result;
 use iroh::{Endpoint, EndpointAddr, RelayUrl};
 use rand::RngCore;
-use tokio::sync::watch;
+use tokio::sync::{mpsc, watch};
 
 use crate::lookup::{
     add_peer_addr, build_participant_endpoint, build_swarm, relay_ladder, select_bootstrap_rung,
@@ -162,9 +162,25 @@ pub(crate) fn register_rendezvous(endpoint: &Endpoint, params: &RendezvousParams
 ///
 /// Output ordering differs by design: `Create` prints the swarm ID to
 /// stderr, then `info`, then `ready`; `Join` emits `ready` then `info`.
+/// The unicast inbound channel + its Router acceptor. The acceptor forwards
+/// received `UNICAST_ALPN` frames to the returned receiver, which the event
+/// loop drains into `gossip::ingest`. Bounded so a flooding peer can't
+/// back-pressure the loop (a dropped frame heals via anti-entropy).
+fn unicast_inbox() -> (
+    mpsc::Receiver<bytes::Bytes>,
+    crate::unicast::UnicastAcceptor,
+) {
+    let (tx, rx) = mpsc::channel::<bytes::Bytes>(crate::util::consts::UNICAST_INBOX_CAP);
+    (rx, crate::unicast::UnicastAcceptor::new(tx))
+}
+
 #[expect(
     clippy::too_many_arguments,
     reason = "the one-shot session assembly: every argument is a distinct per-session input (identity, io, tuning, bindings) with no meaningful grouping"
+)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "the one-shot session assembly: a Create/Join match whose arms each build endpoint + swarm + rendezvous; splitting it would thread a dozen locals through a helper for no clarity gain"
 )]
 pub(crate) async fn setup_swarm(
     kind: SetupKind,
@@ -203,6 +219,8 @@ pub(crate) async fn setup_swarm(
     // rung 0 (empty ladder ⇒ `None`).
     let ladder = relay_ladder(&lookups.relay);
     let (rung_tx, rung_rx) = watch::channel(ladder.first().cloned());
+
+    let (unicast_rx, unicast_acceptor) = unicast_inbox();
 
     let (swarm_id, swarm_name, endpoint, router, gossip, topic, rdv, cohost) = match kind {
         SetupKind::Create {
@@ -252,7 +270,8 @@ pub(crate) async fn setup_swarm(
             );
 
             let topic_id = swarm.topic_id();
-            let (gossip, router) = build_swarm(endpoint.clone(), max_peers);
+            let (gossip, router) =
+                build_swarm(endpoint.clone(), max_peers, Some(unicast_acceptor.clone()));
             // Creator has no peers yet — bootstrap is empty.
             let topic = gossip.subscribe(topic_id, vec![]).await?;
 
@@ -296,7 +315,8 @@ pub(crate) async fn setup_swarm(
             // (reachable across machines).
             register_rendezvous(&endpoint, &rdv);
 
-            let (gossip, router) = build_swarm(endpoint.clone(), max_peers);
+            let (gossip, router) =
+                build_swarm(endpoint.clone(), max_peers, Some(unicast_acceptor.clone()));
             // Non-blocking, like `create`: `ready` fires immediately so
             // the joiner is never invisible while bootstrapping, and an
             // empty swarm (everyone left) is still joinable. We
@@ -350,6 +370,7 @@ pub(crate) async fn setup_swarm(
         rung_rx,
         cohost,
         state_file,
+        unicast_rx,
         a2a,
         // Set by the advertise path (cli::create / embed::create) before
         // `run`; absent for every non-advertising session.

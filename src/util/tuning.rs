@@ -68,6 +68,22 @@ pub(crate) fn antientropy_max_resend() -> usize {
     current().antientropy_max_resend.max(1)
 }
 
+/// Whether the unicast (point-to-point) transport is attempted for directed
+/// messages. Default on; hidden flag `--no-unicast` turns it off, forcing every
+/// message onto gossip (the pre-unicast behavior). See [`crate::unicast`].
+pub(crate) fn unicast_enabled() -> bool {
+    current().unicast_enabled
+}
+
+/// Whether gossip may carry (or fall back for) a **directed** message. Default
+/// on; hidden flag `--no-gossip-directed` turns it off, making directed messages
+/// unicast-only (a cold peer is dialed inline; failure is an error). Broadcasts
+/// and infrastructure kinds always ride gossip regardless — they have no other
+/// transport.
+pub(crate) fn gossip_directed_enabled() -> bool {
+    current().gossip_directed_enabled
+}
+
 /// Capacity of the embed facade's inbound broadcast channel. Bounded
 /// so a slow embedder never backpressures the gossip/membership loop;
 /// under sustained lag the oldest buffered messages are dropped and
@@ -175,6 +191,8 @@ pub(crate) struct Tuning {
     pub directory_expiry_secs: u64,
     pub antientropy_max_resend: usize,
     pub directory_private: bool,
+    pub unicast_enabled: bool,
+    pub gossip_directed_enabled: bool,
 }
 
 impl Tuning {
@@ -195,6 +213,8 @@ impl Tuning {
         directory_expiry_secs: crate::util::consts::DIRECTORY_EXPIRY_SECS,
         antientropy_max_resend: crate::util::consts::ANTIENTROPY_MAX_RESEND,
         directory_private: false,
+        unicast_enabled: true,
+        gossip_directed_enabled: true,
     };
 }
 

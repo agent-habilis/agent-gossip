@@ -14,8 +14,9 @@ use std::time::{Duration, Instant};
 
 use common::{
     CONNECT_TIMEOUT, InProcNode, MSG_TIMEOUT, Msg, Node, POLL, RECOVERY_TIMEOUT, RUNTIME_DIR, bin,
-    chat_text, cli_message, cli_message_raw, cli_peers, cli_ping, cli_poll, cli_poll_long, ipc_raw,
-    serial_guard, socket_path, tmp_log, trace_log, wait_total, wait_until,
+    chat_text, cli_message, cli_message_raw, cli_peers, cli_ping, cli_poll, cli_poll_long,
+    cli_task_create, cli_task_create_raw, ipc_raw, serial_guard, socket_path, tmp_log, trace_log,
+    wait_total, wait_until,
 };
 use serde_json::json;
 
@@ -2464,4 +2465,78 @@ fn leave_nothing_owned_is_a_clean_noop() {
 
     let _ = idle.kill();
     let _ = idle.wait();
+}
+
+/// With `--no-gossip-directed`, gossip carries no directed traffic, so a
+/// directed A2A task that still round-trips (request out, worker-minted id
+/// back) proves the unicast transport delivers point-to-point — not via the
+/// gossip flood. Broadcasts still ride gossip, so the warmup meshes the
+/// daemons and exchanges the `PeerInfo` the sender's unicast dial resolves on.
+#[test]
+fn unicast_only_delivers_directed_task() {
+    let (creator, swarm) = Node::create_flags("uni-only", &[("--no-gossip-directed", "")]);
+    let joiner = Node::join_flags(&swarm, "uni-only-b", &[("--no-gossip-directed", "")]);
+    assert!(creator.wait_ready(&swarm), "creator never ready");
+    assert!(joiner.wait_ready(&swarm), "joiner never ready");
+
+    // Warmup broadcast (always gossip) meshes them + exchanges addresses.
+    cli_message(&swarm, &creator.nickname, "warmup");
+    assert!(
+        wait_until(
+            || joiner.count_from(&creator.nickname, "warmup"),
+            1,
+            MSG_TIMEOUT
+        ) >= 1,
+        "warmup broadcast never reached the joiner (mesh didn't form)"
+    );
+
+    // Directed task: gossip won't carry the A2aReq/A2aResp, so a round-trip (a
+    // worker-minted task id) can only have gone point-to-point. Under strict
+    // unicast-only the send can fail until the sender has learned the worker's
+    // endpoint (its signed `PeerInfo`) and warmed a dial, so retry until it
+    // lands — a success proves unicast delivered both legs.
+    let deadline = Instant::now() + MSG_TIMEOUT;
+    loop {
+        let out = cli_task_create_raw(&swarm, &creator.nickname, &joiner.nickname, "uni hello");
+        if out.status.success()
+            && let Ok(parsed) = serde_json::from_str::<serde_json::Value>(
+                String::from_utf8_lossy(&out.stdout).trim(),
+            )
+            && parsed["result"]["task"]["id"].is_string()
+        {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "directed task never round-tripped under unicast-only — unicast failed to deliver"
+        );
+        std::thread::sleep(POLL);
+    }
+}
+
+/// With `--no-unicast`, the point-to-point transport is off and every directed
+/// frame rides gossip (the pre-unicast behavior). A directed A2A task must
+/// still round-trip — the safety-switch parity check.
+#[test]
+fn gossip_only_delivers_directed_task() {
+    let (creator, swarm) = Node::create_flags("gos-only", &[("--no-unicast", "")]);
+    let joiner = Node::join_flags(&swarm, "gos-only-b", &[("--no-unicast", "")]);
+    assert!(creator.wait_ready(&swarm), "creator never ready");
+    assert!(joiner.wait_ready(&swarm), "joiner never ready");
+
+    cli_message(&swarm, &creator.nickname, "warmup");
+    assert!(
+        wait_until(
+            || joiner.count_from(&creator.nickname, "warmup"),
+            1,
+            MSG_TIMEOUT
+        ) >= 1,
+        "warmup never reached the joiner"
+    );
+
+    let id = cli_task_create(&swarm, &creator.nickname, &joiner.nickname, "gossip hello");
+    assert!(
+        !id.is_empty(),
+        "directed task returned no id under gossip-only"
+    );
 }

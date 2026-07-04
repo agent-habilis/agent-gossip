@@ -222,6 +222,10 @@ pub(crate) struct EventLoopConfig {
     pub cohost: CoHostPolicy,
     /// When set, the daemon writes peer count changes to this file.
     pub state_file: Option<PathBuf>,
+    /// Inbound unicast frames from the `UNICAST_ALPN` acceptor. The event loop
+    /// drains this into `gossip::ingest` (the same path as gossip), so both
+    /// transports share signature-verify + dedup. Built in `setup_swarm`.
+    pub unicast_rx: mpsc::Receiver<bytes::Bytes>,
     /// `--a2a-serve`: the already-bound localhost A2A JSON-RPC binding
     /// (bound in setup so the `ready` event carries the real port; served
     /// once the event loop starts). `None` (the default) serves nothing.

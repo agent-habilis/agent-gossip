@@ -77,6 +77,35 @@ impl fmt::Display for PresenceSubtype {
     }
 }
 
+/// The single addressee of a directed frame — the routing mirror of
+/// `gossip::recv::addressed_to_us`. `Some(nick)` for a frame that targets
+/// exactly one participant (`Pong`, the A2A task-push legs, the A2A RPC
+/// request/response); `None` for a broadcast or infrastructure kind. The
+/// [`crate::unicast`] send router uses this to decide point-to-point vs gossip.
+///
+/// Deliberately **separate** from `addressed_to_us`: that answers a *surfacing*
+/// question and treats `Pong` as broadcast-visible, whereas routing wants the
+/// `Pong`'s addressee too. Merging them would change the surface/relay filter.
+#[must_use]
+pub(crate) fn sole_addressee(kind: &MessageKind) -> Option<&Nickname> {
+    match kind {
+        MessageKind::Pong { to }
+        | MessageKind::A2aStatus { to, .. }
+        | MessageKind::A2aArtifact { to, .. }
+        | MessageKind::A2aReq { to, .. }
+        | MessageKind::A2aResp { to, .. } => Some(to),
+        MessageKind::A2aMsg
+        | MessageKind::Presence { .. }
+        | MessageKind::PeerInfo
+        | MessageKind::Digest
+        | MessageKind::Ping
+        | MessageKind::State
+        | MessageKind::StateDigest
+        | MessageKind::Meta
+        | MessageKind::MetaDigest => None,
+    }
+}
+
 /// Message kind — the frame's routing discriminator:
 /// - `A2aMsg`: **swarm-wide broadcast** chat — the body is a serialized
 ///   [`crate::a2a::Message`] (declaring the `swarm-broadcast` extension). A2A

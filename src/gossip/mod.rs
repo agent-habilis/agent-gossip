@@ -20,7 +20,7 @@ pub(crate) use broadcast::{
     broadcast_a2a_call, broadcast_message, broadcast_msg, broadcast_state_merge,
     emit_task_artifact, emit_task_status, handle_session_request, handle_stdin_line,
 };
-pub(crate) use recv::{drain_dead_receiver, handle_gossip_event};
+pub(crate) use recv::{drain_dead_receiver, handle_gossip_event, ingest};
 
 /// Snapshot the active transport path to `node_id`: a short label
 /// (`direct` / `relay` / `mixed` / `unknown`) plus the relay URL when

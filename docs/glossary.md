@@ -31,6 +31,29 @@ or a relayed one — a boolean, never the node id.
 
 State: `linked_endpoints` (the links), `participant_endpoints` (the bridge).
 
+### unicast
+
+*Layer: transport · keyed by node id (hex).*
+
+The point-to-point QUIC channel a **directed** frame (one addressee) takes when
+its addressee is dialable — a real client/server link this node opens to one
+participant's endpoint, on its own ALPN (`agent-habilis-swarm/unicast/1`), off
+the gossip flood. Gossip stays the transport for broadcasts and the fallback
+for a directed frame whose addressee can't be reached by unicast. Without it,
+a directed frame (`a2a_req`/`a2a_resp`, a task push leg, a `pong`) floods every
+neighbor and is filtered at the receiver — O(N) fan-out to reach one peer.
+
+Distinct from **link** (a gossip active-view neighbor) and from the roster's
+**connected/gossip** `reach` tag, which stays a gossip-overlay fact — a live
+unicast connection does **not** make a peer show as `connected`. Also distinct
+from the **a2a** JSON-RPC binding. Inbound unicast frames are validated +
+dispatched by the *same* `gossip::ingest` path as gossip, so signature-verify
+and dedup are identical and a frame delivered over both transports surfaces
+exactly once. Every wire frame stays ≤ `MAX_MESSAGE_SIZE` on both planes, so
+any frame remains gossip-carriable and anti-entropy-healable.
+
+State: `unicast_pool` (the per-peer connection pool). See [`src/unicast`].
+
 ### participant
 
 *Layer: membership · keyed by nickname.*

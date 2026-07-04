@@ -82,6 +82,12 @@ pub(crate) const SURFACED_EVENTS_CAP: usize = POLL_RESPONSE_MAX_MSGS;
 /// registry can never grow without bound (the bounded-everything discipline).
 pub(crate) const POLL_WAITERS_CAP: usize = 64;
 
+/// Capacity of the unicast inbound channel — frames the `UNICAST_ALPN` acceptor
+/// forwards to the event loop for `gossip::ingest`. Bounded so a peer flooding a
+/// unicast stream can't back-pressure the loop; over the cap a frame is dropped
+/// (non-blocking `try_send`) and recovered via anti-entropy.
+pub(crate) const UNICAST_INBOX_CAP: usize = 256;
+
 /// Upper bound on a client-supplied A2A-call `timeout_secs`. Clamped before it
 /// is added to a `tokio::time::Instant` (an unbounded value would overflow the
 /// platform `Instant` and panic the event loop). Generous — any real RPC round

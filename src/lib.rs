@@ -49,6 +49,7 @@ pub(crate) mod output;
 pub(crate) mod protocol;
 pub(crate) mod resolver;
 pub(crate) mod transport;
+pub(crate) mod unicast;
 pub(crate) mod util;
 
 pub mod embed;

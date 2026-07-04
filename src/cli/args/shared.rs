@@ -11,6 +11,10 @@ use super::output::OutputFormat;
 
 /// Shared options for server commands.
 #[derive(Parser, Debug)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "flat clap flag group; each bool is an independent CLI switch, not a state machine to model as an enum"
+)]
 pub(crate) struct SharedServerOpts {
     /// Disable interactive message input from stdin
     #[arg(long, default_value_t = false)]
@@ -116,6 +120,17 @@ pub(crate) struct SharedServerOpts {
     /// Use the loopback (private) directory + relax the advertise→public guard.
     #[arg(long, hide = true, default_value_t = false)]
     pub directory_private: bool,
+
+    /// Disable the unicast (point-to-point) transport: force every message onto
+    /// gossip, the pre-unicast behavior.
+    #[arg(long, hide = true, default_value_t = false)]
+    pub no_unicast: bool,
+
+    /// Make directed messages unicast-only: gossip no longer carries or falls
+    /// back for them (broadcasts still ride gossip). Tests use this to prove
+    /// unicast delivery in isolation.
+    #[arg(long, hide = true, default_value_t = false)]
+    pub no_gossip_directed: bool,
 }
 
 impl SharedServerOpts {
@@ -144,6 +159,8 @@ impl SharedServerOpts {
             directory_expiry_secs: self.directory_expiry_secs,
             antientropy_max_resend: self.antientropy_max_resend,
             directory_private: self.directory_private,
+            unicast_enabled: !self.no_unicast,
+            gossip_directed_enabled: !self.no_gossip_directed,
         }
     }
 }

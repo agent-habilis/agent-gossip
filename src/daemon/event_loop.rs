@@ -56,6 +56,7 @@ pub(crate) async fn run(cfg: EventLoopConfig) -> Result<()> {
         rung_rx,
         cohost,
         state_file,
+        unicast_rx,
         a2a,
         live_count,
         driver,
@@ -103,6 +104,9 @@ pub(crate) async fn run(cfg: EventLoopConfig) -> Result<()> {
         .map(|path| StateFile::new(path, &swarm_str, &author, &swarm_name));
     let (a2a_port, a2a_rx) = spawn_a2a(a2a, state_file.as_ref());
     let mut state = EventLoopState::new(state_file, started, identity);
+    // Replace the detached default pool with one wired to this endpoint, so
+    // directed sends can dial peers over the unicast ALPN.
+    state.unicast_pool = crate::unicast::UnicastPool::new(endpoint.clone());
     // Advertise path only: the directory re-broadcast task reads the
     // live count from here. Set before the first write below so the
     // initial ad carries a real count.
@@ -199,6 +203,7 @@ pub(crate) async fn run(cfg: EventLoopConfig) -> Result<()> {
         exit_on_quit,
         a2a_rx,
         a2a_port,
+        unicast_rx: Some(unicast_rx),
     }))
     .await
 }
@@ -407,6 +412,10 @@ struct EventLoop {
     /// The `--a2a-serve` request channel + bound port (`None` = binding off).
     a2a_rx: Option<mpsc::Receiver<crate::a2a::rpc::A2aRequest>>,
     a2a_port: Option<u16>,
+    /// Inbound unicast frames from the `UNICAST_ALPN` acceptor, drained into
+    /// `gossip::ingest` (same validation + dedup path as gossip). `Option` so
+    /// the `select!` arm can disable itself if the channel ever closes.
+    unicast_rx: Option<mpsc::Receiver<bytes::Bytes>>,
 }
 
 /// The daemon's `select!` loop. Never returns normally on the CLI
@@ -486,6 +495,7 @@ async fn event_loop(loop_state: EventLoop) -> Result<()> {
         exit_on_quit,
         mut a2a_rx,
         a2a_port,
+        mut unicast_rx,
     } = loop_state;
 
     log_daemon_start(&author);
@@ -571,6 +581,11 @@ async fn event_loop(loop_state: EventLoop) -> Result<()> {
                 let ctx = parts.ctx(&sender);
                 gossip::handle_gossip_event(event, &mut state, &ctx).await;
             }
+            // Inbound unicast rides the *same* validate + dedup path as gossip (`ingest`).
+            frame = recv_opt(&mut unicast_rx) => match frame {
+                Some(bytes) => gossip::ingest(bytes, &mut state, &parts.ctx(&sender)).await,
+                None => unicast_rx = None,
+            },
             _ = intervals.prune.tick() => timers::tick_prune(&mut state, &output),
             _ = intervals.alive.tick() => {
                 alive_arm(&mut anchors, &mut state, &sender, &swarm_str, &author).await;
