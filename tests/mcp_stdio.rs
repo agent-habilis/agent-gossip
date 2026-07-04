@@ -712,26 +712,34 @@ fn fetch_messages_long_parks_then_times_out_empty() {
     // round-trip + timeout shape. (Cursor first advanced past history.)
     let mut client = McpClient::spawn_with_args(&["--longpoll-max-ms", "500"]);
     client.create_and_get_swarm(130);
-    // Advance the implicit cursor past any startup/self events.
-    let _ = client.tool_call(131, "fetch_messages", serde_json::json!({}));
 
-    let started = Instant::now();
-    let resp = tool_result_json(&client.tool_call(
-        132,
-        "fetch_messages",
-        serde_json::json!({ "long": true }),
-    ))
-    .expect("long-poll fetch returns a JSON result");
-    let elapsed = started.elapsed();
-
-    assert!(
-        resp["messages"].as_array().is_some_and(Vec::is_empty),
-        "no traffic → empty messages: {resp}"
-    );
-    assert!(
-        elapsed >= Duration::from_millis(300),
-        "long must actually park (~500ms cap), took {elapsed:?}"
-    );
+    // A lone session still emits one async join-time event: the daemon publishes
+    // its own agent-card to the meta channel. A single immediate fetch to
+    // "advance the cursor" races that publish — if the card surfaces after it,
+    // the long-poll below catches it and the empty assertion flakes. Long-poll
+    // repeatedly instead: each call either consumes pending startup traffic or
+    // parks the full window empty. The first poll that parks empty proves
+    // startup drained AND is the park-then-timeout behavior under test. (`long`
+    // resolves early on traffic, so a mid-park self-card is returned, not
+    // missed.)
+    for request_id in 131..139 {
+        let started = Instant::now();
+        let resp = tool_result_json(&client.tool_call(
+            request_id,
+            "fetch_messages",
+            serde_json::json!({ "long": true }),
+        ))
+        .expect("long-poll fetch returns a JSON result");
+        if resp["messages"].as_array().is_some_and(Vec::is_empty) {
+            assert!(
+                started.elapsed() >= Duration::from_millis(300),
+                "long must actually park (~500ms cap), took {:?}",
+                started.elapsed()
+            );
+            return;
+        }
+    }
+    panic!("startup traffic never drained after 8 long-polls");
 }
 
 #[test]
