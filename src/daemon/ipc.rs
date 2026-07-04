@@ -206,6 +206,10 @@ pub(crate) async fn handle_ipc_command(
             let _ = resp_tx.send(state_get_response(state, crate::protocol::Channel::Meta));
             false
         }
+        IpcCommand::Topology { swarm: _ } => {
+            let _ = resp_tx.send(topology_response(state));
+            false
+        }
         IpcCommand::A2aCall {
             swarm: _,
             to,
@@ -265,6 +269,17 @@ fn state_merge_response(outcome: anyhow::Result<()>) -> (String, bool) {
         Ok(()) => (json_ack(), true),
         Err(error) => (json_error(&error.to_string()), false),
     }
+}
+
+/// Serialize this daemon's whisper routing topology (its assembled mesh graph) for
+/// the `topology` IPC query. `{"ok":true,"topology":{self_id, edges:[…]}}`.
+fn topology_response(state: &EventLoopState) -> String {
+    let Some(endpoint) = state.unicast_pool.endpoint() else {
+        return r#"{"ok":true,"topology":{"self_id":"","edges":[]}}"#.to_owned();
+    };
+    let topology = state.link_state.topology(endpoint.id());
+    let topo_json = serde_json::to_string(&topology).unwrap_or_else(|_| "null".to_owned());
+    format!(r#"{{"ok":true,"topology":{topo_json}}}"#)
 }
 
 /// The `agent-gossip state get` response: the derived document.

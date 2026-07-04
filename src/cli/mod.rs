@@ -30,7 +30,7 @@ mod session;
 pub(crate) use args::Cli;
 use args::{
     A2aAction, Commands, CreateOpts, MetaAction, MetaOpts, OutputFormat, PeersOpts, PingOpts,
-    PollOpts, ReadyOpts, SharedServerOpts, StateAction, StateOpts, TopicOpts,
+    PollOpts, ReadyOpts, SharedServerOpts, StateAction, StateOpts, TopicOpts, TopologyOpts,
 };
 
 /// `join` has no `--public`/`--name`: both are encoded in the `💬…`
@@ -97,6 +97,7 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
         // `large_futures` budget.
         Commands::State { opts } => state(opts).await,
         Commands::Meta { opts } => meta(opts).await,
+        Commands::Topology { opts } => topology_cmd(opts).await,
         Commands::Ready { opts } => ready(opts).await,
         Commands::Discover { opts } => {
             crate::util::tuning::init(opts.shared.tuning());
@@ -198,6 +199,8 @@ async fn create(opts: CreateOpts) -> Result<()> {
         // The verifier is baked in at setup: its salt is the seed, which is
         // minted there. The flag's presence is all `resolve` needs.
         password: None,
+        // `--no-gossip` is a swarm-wide characteristic baked into the id, so
+        // every joiner inherits it from the ticket alone.
     };
     // `resolve` validates `--advertise` against the config (never a silent
     // no-op) before any setup work.
@@ -589,6 +592,19 @@ async fn peers(opts: PeersOpts) -> Result<()> {
     let cmd = IpcCommand::Peers { swarm };
     let resp = ipc::send(&cmd, &nickname).await?;
     println!("{resp}");
+    Ok(())
+}
+
+/// Print the whisper routing topology (assembled mesh graph) from the running
+/// daemon, as JSON. Backs the `/swarm:topology` render.
+async fn topology_cmd(opts: TopologyOpts) -> Result<()> {
+    let cmd = IpcCommand::Topology { swarm: opts.swarm };
+    let resp = ipc::send(&cmd, &opts.nickname).await?;
+    println!("{resp}");
+    let parsed: MsgResponse = serde_json::from_str(&resp)?;
+    if !parsed.ok {
+        std::process::exit(1);
+    }
     Ok(())
 }
 

@@ -288,7 +288,8 @@ pub fn frame_task_id(frame: &Frame) -> Option<TaskId> {
         | MessageKind::A2aReq { .. }
         | MessageKind::A2aResp { .. }
         | MessageKind::State
-        | MessageKind::Meta => None,
+        | MessageKind::Meta
+        | MessageKind::LinkState => None,
     }
 }
 
@@ -311,7 +312,8 @@ pub fn task_event_kind(frame: &Frame) -> Option<&'static str> {
         | MessageKind::A2aReq { .. }
         | MessageKind::A2aResp { .. }
         | MessageKind::State
-        | MessageKind::Meta => None,
+        | MessageKind::Meta
+        | MessageKind::LinkState => None,
     }
 }
 
@@ -338,7 +340,8 @@ pub fn frame_task_state(frame: &Frame) -> Option<TaskState> {
         | MessageKind::A2aReq { .. }
         | MessageKind::A2aResp { .. }
         | MessageKind::State
-        | MessageKind::Meta => None,
+        | MessageKind::Meta
+        | MessageKind::LinkState => None,
     }
 }
 
@@ -370,7 +373,8 @@ pub fn task_text(frame: &Frame) -> String {
         | MessageKind::A2aReq { .. }
         | MessageKind::A2aResp { .. }
         | MessageKind::State
-        | MessageKind::Meta => String::new(),
+        | MessageKind::Meta
+        | MessageKind::LinkState => String::new(),
     }
 }
 

@@ -46,6 +46,18 @@ pub(crate) const KNOWN_ENDPOINTS_CAP: usize = 64;
 /// cost is one tiny message per interval.
 pub(crate) const ANTIENTROPY_INTERVAL_SECS: u64 = 10;
 
+/// How often a node re-broadcasts its relay **link-state** vector (its own
+/// measured links) so every peer keeps a fresh routing graph. Steady-state cost
+/// is one small message per interval; churn triggers a fresh vector out-of-band
+/// is not yet wired, so this cadence bounds convergence time.
+pub(crate) const LINKSTATE_INTERVAL_SECS: u64 = 15;
+
+/// Max node-disjoint relay circuits tried (best-first) for one directed message
+/// before falling back to gossip — the "up to N tries" retry budget. Kept small:
+/// disjoint alternates give diminishing returns and each is a full telescoping
+/// build.
+pub(crate) const WHISPER_MAX_PATHS: usize = 3;
+
 /// Max ids advertised per digest **window**. A digest carries up to two
 /// windows: an **open-ended newest** one (`[lo, i64::MAX]`, which drives
 /// reconnect recovery — holders re-send every *newer* message the sender
@@ -82,6 +94,14 @@ pub(crate) fn unicast_enabled() -> bool {
 /// transport.
 pub(crate) fn gossip_directed_enabled() -> bool {
     current().gossip_directed_enabled
+}
+
+/// Whether the whisper (multi-hop circuit) transport is attempted for a directed
+/// message with no direct unicast route. Default on; hidden flag `--no-whisper`
+/// turns it off, so a directed message with no direct route falls back to
+/// gossip (or is undeliverable under `--no-gossip-directed`).
+pub(crate) fn whisper_enabled() -> bool {
+    current().whisper_enabled
 }
 
 /// Capacity of the embed facade's inbound broadcast channel. Bounded
@@ -175,6 +195,10 @@ pub(crate) fn ppid_watch_interval_ms() -> u64 {
 /// the flag. Production runs on [`Tuning::DEFAULTS`] (the `crate::util::consts`
 /// values) when [`init`] is never called (the embed / MCP path).
 #[derive(Clone, Copy, Debug)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent transport/behavior toggles, each sourced from its own hidden CLI flag"
+)]
 pub(crate) struct Tuning {
     pub alive_timeout_secs: u64,
     pub sweep_interval_secs: u64,
@@ -193,6 +217,7 @@ pub(crate) struct Tuning {
     pub directory_private: bool,
     pub unicast_enabled: bool,
     pub gossip_directed_enabled: bool,
+    pub whisper_enabled: bool,
 }
 
 impl Tuning {
@@ -215,6 +240,7 @@ impl Tuning {
         directory_private: false,
         unicast_enabled: true,
         gossip_directed_enabled: true,
+        whisper_enabled: true,
     };
 }
 

@@ -62,6 +62,8 @@ pub(crate) fn directory_config(lookups: LookupOpts) -> SwarmConfig {
     SwarmConfig {
         lookups,
         password: None,
+        // The directory rendezvous always uses gossip — it is how advertisers
+        // and discoverers meet.
     }
 }
 
