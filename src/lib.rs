@@ -20,7 +20,7 @@
 //! # async fn run() -> anyhow::Result<()> {
 //! let session = SwarmSession::join(JoinConfig::new("💬...".parse()?)).await?;
 //! let mut rx = session.messages();
-//! session.send(MessageBody::new("hello")?, None).await?;
+//! session.send(MessageBody::new("hello")?).await?;
 //! while let Ok(msg) = rx.recv().await {
 //!     println!("{} : {}", msg.author, msg.body);
 //! }
