@@ -161,6 +161,35 @@ pub(crate) fn is_content_phase(phase: TaskPhase) -> bool {
     !matches!(phase, TaskPhase::Progress)
 }
 
+/// The single addressee of a directed message — the routing mirror of
+/// `gossip::recv::addressed_to_us`. `Some(nick)` for a message that targets
+/// exactly one participant (a directed `Msg`/`Notice`, any `Task` leg, a
+/// `Pong`); `None` for a broadcast or infrastructure kind. The [`crate::unicast`]
+/// send router uses this to decide point-to-point vs gossip.
+///
+/// Deliberately **separate** from `addressed_to_us`: that answers a *surfacing*
+/// question and treats `Pong` as broadcast-visible, whereas routing wants the
+/// `Pong`'s addressee too. Merging them would change the embed-push filter.
+#[must_use]
+pub(crate) fn sole_addressee(kind: &MessageKind) -> Option<&Nickname> {
+    match kind {
+        MessageKind::Msg { reply: Some(to) }
+        | MessageKind::Notice { reply: Some(to) }
+        | MessageKind::Task { to, .. }
+        | MessageKind::Pong { to } => Some(to),
+        MessageKind::Msg { reply: None }
+        | MessageKind::Notice { reply: None }
+        | MessageKind::Presence { .. }
+        | MessageKind::PeerInfo
+        | MessageKind::Digest
+        | MessageKind::Ping
+        | MessageKind::State
+        | MessageKind::StateDigest
+        | MessageKind::Meta
+        | MessageKind::MetaDigest => None,
+    }
+}
+
 /// Message kind — three types cover all protocol needs:
 /// - `Msg`: content. `reply: None` = open message, `reply: Some(nick)` = directed at a peer.
 /// - `Presence`: agent lifecycle (joined/left), empty body, no `reply`.

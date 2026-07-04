@@ -14,8 +14,9 @@ use std::time::{Duration, Instant};
 
 use common::{
     CONNECT_TIMEOUT, InProcNode, MSG_TIMEOUT, Msg, Node, POLL, RECOVERY_TIMEOUT, RUNTIME_DIR, bin,
-    cli_message, cli_message_raw, cli_notice, cli_peers, cli_ping, cli_poll, cli_poll_long,
-    ipc_raw, serial_guard, socket_path, tmp_log, trace_log, wait_total, wait_until,
+    cli_message, cli_message_raw, cli_msg_checked, cli_msg_stdout, cli_notice, cli_peers, cli_ping,
+    cli_poll, cli_poll_long, ipc_raw, serial_guard, socket_path, tmp_log, trace_log, wait_total,
+    wait_until,
 };
 use serde_json::json;
 
@@ -322,6 +323,86 @@ async fn test_reply_only_visible_to_addressee() {
             .iter()
             .any(|msg| msg.body.as_str() == "filter-test reply"),
         "gamma (uninvolved) should NOT see the directed reply but did"
+    );
+}
+
+/// With `--no-gossip-directed`, gossip carries no directed traffic, so a
+/// directed reply that still reaches its addressee proves the unicast transport
+/// actually delivers point-to-point — not via the gossip flood. Broadcasts
+/// still ride gossip, so the warmup meshes the daemons and exchanges the
+/// `PeerInfo` the sender's unicast dial resolves on.
+#[test]
+fn unicast_only_delivers_directed_reply() {
+    let (creator, swarm) = Node::create_flags("uni-only", &[("--no-gossip-directed", "")]);
+    let joiner = Node::join_flags(&swarm, "uni-only-b", &[("--no-gossip-directed", "")]);
+    assert!(creator.wait_ready(&swarm), "creator never ready");
+    assert!(joiner.wait_ready(&swarm), "joiner never ready");
+
+    // Warmup broadcast (always gossip) meshes them + exchanges addresses.
+    cli_message(&swarm, &creator.nickname, "warmup");
+    assert!(
+        wait_until(
+            || joiner.count_from(&creator.nickname, "warmup"),
+            1,
+            MSG_TIMEOUT
+        ) >= 1,
+        "warmup broadcast never reached the joiner (mesh didn't form)"
+    );
+
+    // Directed reply: gossip won't carry it, so delivery ⇒ it went over unicast.
+    // Under strict unicast-only the send *errors* until the sender has learned
+    // the addressee's endpoint (its signed `PeerInfo`), so retry until it lands
+    // — a success that reaches the joiner can only have gone point-to-point.
+    let deadline = Instant::now() + MSG_TIMEOUT;
+    while joiner.count_from(&creator.nickname, "unicast-only hello") == 0 {
+        let _ = cli_message_raw(&swarm, &creator.nickname, "warmup"); // keep the mesh live
+        let _ = cli_msg_stdout(
+            &swarm,
+            &creator.nickname,
+            "unicast-only hello",
+            Some(&joiner.nickname),
+        );
+        assert!(
+            Instant::now() < deadline,
+            "directed reply never arrived under unicast-only — unicast failed to deliver"
+        );
+        std::thread::sleep(POLL);
+    }
+}
+
+/// With `--no-unicast`, the point-to-point transport is off and every message
+/// rides gossip (the pre-unicast behavior). A directed reply must still reach
+/// its addressee — the safety-switch parity check.
+#[test]
+fn gossip_only_delivers_directed_reply() {
+    let (creator, swarm) = Node::create_flags("gos-only", &[("--no-unicast", "")]);
+    let joiner = Node::join_flags(&swarm, "gos-only-b", &[("--no-unicast", "")]);
+    assert!(creator.wait_ready(&swarm), "creator never ready");
+    assert!(joiner.wait_ready(&swarm), "joiner never ready");
+
+    cli_message(&swarm, &creator.nickname, "warmup");
+    assert!(
+        wait_until(
+            || joiner.count_from(&creator.nickname, "warmup"),
+            1,
+            MSG_TIMEOUT
+        ) >= 1,
+        "warmup never reached the joiner"
+    );
+
+    cli_msg_checked(
+        &swarm,
+        &creator.nickname,
+        "gossip-only hello",
+        Some(&joiner.nickname),
+    );
+    assert!(
+        wait_until(
+            || joiner.count_from(&creator.nickname, "gossip-only hello"),
+            1,
+            MSG_TIMEOUT
+        ) >= 1,
+        "directed reply never arrived under gossip-only"
     );
 }
 
@@ -2347,7 +2428,7 @@ fn test_starvation_watchdog_recovers_loudly() {
     );
     // Degraded, not broken: the IPC plane still accepts a send (it is
     // buffered until traffic proves the mesh again).
-    let _ = common::cli_msg_checked(&swarm, &survivor.nickname, "sv-after", None);
+    let _ = cli_msg_checked(&swarm, &survivor.nickname, "sv-after", None);
 }
 
 /// False-positive guard: a lone creator is alone by construction — it

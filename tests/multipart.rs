@@ -42,6 +42,49 @@ async fn multipart_message_reassembles_into_one() {
     bob.leave().await;
 }
 
+/// A body approaching the ~1 `MiB` logical ceiling round-trips and surfaces
+/// once. This body is far larger than the old 16-part / ~60 `KiB` cap (it would
+/// have been refused on send), so it pins the raised `MAX_MESSAGE_PARTS` +
+/// message-log sizing: ~250 parts must all coexist in the receiver's log to
+/// reassemble.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn near_max_logical_body_reassembles_into_one() {
+    let alice = InProcNode::create("mp-big").await;
+    let mut bob = InProcNode::join(&alice.swarm, "mp-big-bob").await;
+    // Mesh first so the split body is actually delivered.
+    alice.send("warmup").await;
+    assert!(
+        bob.wait_body("warmup", MSG_TIMEOUT).await,
+        "mesh never formed"
+    );
+
+    // ~900 KB — over 14× the old 60 KiB ceiling, well under the new ~1 MiB one.
+    let big = "packet01 ".repeat(100_000);
+    let id = alice.send(&big).await;
+
+    assert!(
+        bob.wait_body(&big, MSG_TIMEOUT).await,
+        "the near-max reassembled body never arrived"
+    );
+    assert_eq!(
+        bob.count_body(&big),
+        1,
+        "the body must surface once, not once per part"
+    );
+    let received = bob
+        .inbound()
+        .into_iter()
+        .find(|message| message.body.as_str() == big)
+        .expect("reassembled message present");
+    assert_eq!(
+        received.id, id,
+        "sender and receiver name it by the same id"
+    );
+
+    alice.leave().await;
+    bob.leave().await;
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn multipart_task_leg_reassembles_into_one() {
     let alice = InProcNode::create("mp-ex").await;

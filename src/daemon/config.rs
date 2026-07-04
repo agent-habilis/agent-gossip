@@ -208,6 +208,10 @@ pub(crate) struct EventLoopConfig {
     pub cohost: CoHostPolicy,
     /// When set, the daemon writes peer count changes to this file.
     pub state_file: Option<PathBuf>,
+    /// Inbound unicast frames from the `UNICAST_ALPN` acceptor. The event loop
+    /// drains this into `gossip::ingest` (the same path as gossip), so both
+    /// transports share signature-verify + dedup. Built in `setup_swarm`.
+    pub unicast_rx: mpsc::Receiver<bytes::Bytes>,
     /// When advertising (`create --advertise`), the shared counter the
     /// directory re-broadcast task reads the live participant count
     /// from. `setup_swarm` leaves this `None`; the advertise path sets

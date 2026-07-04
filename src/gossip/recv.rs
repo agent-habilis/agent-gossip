@@ -19,11 +19,11 @@ use crate::protocol::identity;
 use crate::protocol::{Channel, Message, MessageKind, Nickname, TaskPhase};
 use crate::util::tuning::RECLAIM_WINDOW_SECS;
 
-use super::broadcast::{announce_arrival, broadcast_msg, broadcast_peer_info};
+use super::broadcast::{announce_arrival, broadcast_peer_info};
 use super::{antientropy, conn_path};
 
 /// Dispatch a single item from the gossip receiver stream:
-/// `Received` → `handle_gossip_received`; `NeighborUp` →
+/// `Received` → `ingest`; `NeighborUp` →
 /// announce / `PeerInfo` re-send; `NeighborDown` → prune the link and
 /// arm reclaim; `Lagged` / errors logged; terminal `None` flips
 /// `state.gossip_open` to `false`.
@@ -34,7 +34,7 @@ pub(crate) async fn handle_gossip_event(
 ) {
     match event {
         Some(Ok(Event::Received(received))) => {
-            handle_gossip_received(received.content, state, ctx).await;
+            ingest(received.content, state, ctx).await;
         }
         Some(Ok(Event::NeighborUp(node_id))) => {
             let (conn, relay) = conn_path(ctx.endpoint, node_id).await;
@@ -179,7 +179,7 @@ pub(crate) async fn drain_dead_receiver(
     loop {
         match receiver.next().now_or_never() {
             Some(Some(Ok(Event::Received(incoming)))) => {
-                handle_gossip_received(incoming.content, state, ctx).await;
+                ingest(incoming.content, state, ctx).await;
                 recovered += 1;
             }
             // Skip stale membership events / errors; stop on a terminal
@@ -263,7 +263,12 @@ fn surface_logical(
     }
 }
 
-async fn handle_gossip_received(content: Bytes, state: &mut EventLoopState, ctx: &HandlerCtx<'_>) {
+/// Validate + dispatch one inbound wire message, regardless of transport. Both
+/// the gossip event pump (`handle_gossip_event`) and the unicast inbound arm
+/// (`daemon::event_loop`) funnel here, so signature-verify, the swarm gate, and
+/// `mark_seen` dedup are identical on both planes — a message delivered over
+/// both surfaces exactly once.
+pub(crate) async fn ingest(content: Bytes, state: &mut EventLoopState, ctx: &HandlerCtx<'_>) {
     let Ok(message) = Message::parse(&content) else {
         ctx.output.error("Failed to parse message");
         tracing::warn!("failed to parse inbound gossip message");
@@ -355,17 +360,16 @@ async fn handle_gossip_received(content: Bytes, state: &mut EventLoopState, ctx:
             return;
         }
         MessageKind::Ping => {
-            // Auto-respond to every probe with a pong addressed to the
-            // pinger. The daemon owns this — no agent involvement. Pong
-            // is gossip-broadcast (no unicast transport), so one probe in
-            // an N-node swarm fans out to N flooded pongs; acceptable for
-            // the small swarms and rare manual `ahsw ping` this serves.
-            broadcast_msg(
-                ctx.sender,
-                &Message::new_pong(ctx.swarm, ctx.author, message.author.clone())
-                    .signed(ctx.identity),
-            )
-            .await;
+            // Auto-respond to every probe with a pong addressed to the pinger.
+            // The daemon owns this — no agent involvement. The pong is directed,
+            // so `deliver` sends it unicast to the pinger when reachable that
+            // way, avoiding the N-flooded-pongs fan-out; else it rides gossip.
+            let pong = Message::new_pong(ctx.swarm, ctx.author, message.author.clone())
+                .signed(ctx.identity);
+            crate::logging::messages::log_out(&pong);
+            if let Ok(bytes) = pong.serialize() {
+                let _ = crate::unicast::deliver(&pong, Bytes::from(bytes), state, ctx.sender).await;
+            }
             return;
         }
         MessageKind::Pong { to } => {

@@ -199,6 +199,14 @@ pub(crate) struct EventLoopState {
     /// user messages are buffered until `meshed`, then flushed, so the
     /// first message after a join can't be a lost one-shot.
     pub meshed: bool,
+    /// The unicast (point-to-point) connection pool: dials + reuses a QUIC
+    /// connection to each addressable participant so a directed message goes
+    /// p2p instead of flooding the gossip mesh. Interior-mutable (Arc), so the
+    /// send helpers reach it through `&EventLoopState`. `new` installs a
+    /// detached pool; the real loop replaces it with an endpoint-backed one.
+    /// Independent of `linked_endpoints` by design (unicast can reach a
+    /// non-neighbor). See [`crate::unicast`].
+    pub unicast_pool: crate::unicast::UnicastPool,
     /// When `Some(deadline)` and not yet elapsed, the event loop runs
     /// a fast `beacon::ensure` burst (event-driven failover). Armed
     /// on `NeighborDown` — the beacon may have just died — so a
@@ -429,6 +437,7 @@ impl EventLoopState {
             rendezvous_linked: false,
             announced: false,
             meshed: false,
+            unicast_pool: crate::unicast::UnicastPool::disconnected(),
             reclaim_until: None,
             seen: BoundedIdSet::new(seen_ids_cap()),
             pending_outbound: BoundedQueue::new(PENDING_OUTBOUND_CAP),

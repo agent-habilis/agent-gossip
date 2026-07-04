@@ -244,7 +244,8 @@ pub(crate) async fn ensure(
         return;
     };
 
-    let (gossip, router) = build_swarm(endpoint.clone());
+    // The rendezvous pseudo-node accepts no unicast — it is not a participant.
+    let (gossip, router) = build_swarm(endpoint.clone(), None);
 
     // Register the participant's address so the rendezvous can dial it
     // in private mode (no lookup); a harmless direct hint in public.

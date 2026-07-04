@@ -198,7 +198,10 @@ pub(crate) async fn probe_connect(
 /// The Router spawns an accept loop that routes incoming QUIC connections
 /// with the gossip ALPN to the Gossip protocol handler. Without this,
 /// peers cannot accept inbound connections from other peers.
-pub(crate) fn build_swarm(endpoint: Endpoint) -> (Gossip, Router) {
+pub(crate) fn build_swarm(
+    endpoint: Endpoint,
+    unicast: Option<crate::unicast::UnicastAcceptor>,
+) -> (Gossip, Router) {
     // Raise HyParView's active view above iroh-gossip's default (5) so swarms up
     // to the configured size form a full mesh with nothing to shuffle — no
     // membership churn, hence none of the churn-driven per-connection leak. The
@@ -212,9 +215,13 @@ pub(crate) fn build_swarm(endpoint: Endpoint) -> (Gossip, Router) {
     let gossip = Gossip::builder()
         .membership_config(membership)
         .spawn(endpoint.clone());
-    let router = Router::builder(endpoint)
-        .accept(GOSSIP_ALPN, gossip.clone())
-        .spawn();
+    let mut builder = Router::builder(endpoint).accept(GOSSIP_ALPN, gossip.clone());
+    // A participant also accepts inbound unicast; the rendezvous/beacon endpoint
+    // passes `None` (it is not a participant and carries no unicast traffic).
+    if let Some(acceptor) = unicast {
+        builder = builder.accept(crate::unicast::UNICAST_ALPN, acceptor);
+    }
+    let router = builder.spawn();
     (gossip, router)
 }
 
