@@ -252,7 +252,7 @@ pub(crate) async fn setup_swarm(
             );
 
             let topic_id = swarm.topic_id();
-            let (gossip, router) = build_swarm(endpoint.clone());
+            let (gossip, router) = build_swarm(endpoint.clone(), max_peers);
             // Creator has no peers yet — bootstrap is empty.
             let topic = gossip.subscribe(topic_id, vec![]).await?;
 
@@ -296,7 +296,7 @@ pub(crate) async fn setup_swarm(
             // (reachable across machines).
             register_rendezvous(&endpoint, &rdv);
 
-            let (gossip, router) = build_swarm(endpoint.clone());
+            let (gossip, router) = build_swarm(endpoint.clone(), max_peers);
             // Non-blocking, like `create`: `ready` fires immediately so
             // the joiner is never invisible while bootstrapping, and an
             // empty swarm (everyone left) is still joinable. We

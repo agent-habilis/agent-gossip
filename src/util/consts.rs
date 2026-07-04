@@ -238,19 +238,15 @@ pub(crate) const RESIDENT_MEMORY_WARN_MB: u64 = 1024;
 /// membership churn** (and thus none of the per-connection-churn memory leak);
 /// past it the overlay maintains a partial mesh and continuously
 /// promotes/demotes peers (the churn). Raised from iroh-gossip's default of 5
-/// to **32** so realistic agent swarms (≤ 33) stay churn-free. The ceiling is
-/// performance, not correctness: each slot is a live connection + keepalive,
-/// and a full mesh costs O(S²) broadcast amplification, so ~48–50 is the
-/// practical upper bound on Pi-class hardware. Distinct from the
-/// `DEFAULT_MAX_DIRECT_PEERS` (25) soft address-tracking cap. Flag (hidden):
-/// `--active-view-capacity` — set it *small* to deliberately reproduce the
-/// gossip-churn leak at any node count.
-pub(crate) const GOSSIP_ACTIVE_VIEW_CAPACITY: usize = 32;
-
-/// HyParView **passive view** capacity — the backup contact pool used for
-/// healing/shuffle when active-view links drop. Kept ≥ 2× the active view
-/// (iroh-gossip default 30). Flag (hidden): `--passive-view-capacity`.
-pub(crate) const GOSSIP_PASSIVE_VIEW_CAPACITY: usize = 64;
+/// to **64** so realistic agent swarms (≤ 65) stay churn-free. The ceiling is
+/// performance, not correctness: each slot is a live connection + keepalive
+/// (~0.5 MB resident per link) and a full mesh costs O(S²) broadcast
+/// amplification, so a fully-meshed node runs ~50 MB — 64 deliberately trades
+/// that heavier per-node cost for a larger churn-free swarm. This is the default
+/// for the public `--max-peers` cap; the passive (healing/shuffle) pool is
+/// derived as 2× the live view. Set `--max-peers` *small* to deliberately
+/// reproduce the gossip-churn leak at any node count.
+pub(crate) const GOSSIP_ACTIVE_VIEW_CAPACITY: usize = 64;
 
 // QUIC keep-alive / idle timeout are intentionally left at iroh's
 // holepunch-tuned transport defaults (~1s keep-alive, 15s direct / 30s relay

@@ -68,25 +68,6 @@ pub(crate) fn antientropy_max_resend() -> usize {
     current().antientropy_max_resend.max(1)
 }
 
-/// Default max direct peer connections (gossip relays beyond this)
-pub(crate) const DEFAULT_MAX_DIRECT_PEERS: usize = 25;
-
-/// HyParView active-view capacity — the full-mesh threshold that eliminates
-/// membership churn (and the churn-driven leak) for swarms ≤ it. Default
-/// [`crate::util::consts::GOSSIP_ACTIVE_VIEW_CAPACITY`] (32); hidden flag
-/// `--active-view-capacity` — set it *small* to deliberately reproduce the
-/// gossip-churn leak at any node count.
-pub(crate) fn gossip_active_view_capacity() -> usize {
-    current().gossip_active_view_capacity.max(1)
-}
-
-/// HyParView passive-view capacity (healing/shuffle contact pool). Default
-/// [`crate::util::consts::GOSSIP_PASSIVE_VIEW_CAPACITY`] (64); hidden flag
-/// `--passive-view-capacity`.
-pub(crate) fn gossip_passive_view_capacity() -> usize {
-    current().gossip_passive_view_capacity.max(1)
-}
-
 /// Capacity of the embed facade's inbound broadcast channel. Bounded
 /// so a slow embedder never backpressures the gossip/membership loop;
 /// under sustained lag the oldest buffered messages are dropped and
@@ -96,7 +77,7 @@ pub(crate) const EMBED_INBOUND_CAP: usize = 1024;
 /// Soft resident-memory threshold (`MiB`) above which the daemon emits a
 /// one-shot `warn` (log + JSON `info` event) on its slow prune tick — the
 /// in-process leak-visibility signal the distributed soak lacked. **Warn-only**:
-/// it never exits; host safety is the scenario runbook's OS resource caps. Fixed at
+/// it never exits; host safety is the a2a runbook's OS resource caps. Fixed at
 /// [`crate::util::consts::RESIDENT_MEMORY_WARN_MB`] (1024, well above a healthy
 /// node's tens of `MiB`); `0` there disables it. Edit the const to tune.
 pub(crate) fn resident_memory_warn_mb() -> u64 {
@@ -194,8 +175,6 @@ pub(crate) struct Tuning {
     pub directory_expiry_secs: u64,
     pub antientropy_max_resend: usize,
     pub directory_private: bool,
-    pub gossip_active_view_capacity: usize,
-    pub gossip_passive_view_capacity: usize,
 }
 
 impl Tuning {
@@ -216,8 +195,6 @@ impl Tuning {
         directory_expiry_secs: crate::util::consts::DIRECTORY_EXPIRY_SECS,
         antientropy_max_resend: crate::util::consts::ANTIENTROPY_MAX_RESEND,
         directory_private: false,
-        gossip_active_view_capacity: crate::util::consts::GOSSIP_ACTIVE_VIEW_CAPACITY,
-        gossip_passive_view_capacity: crate::util::consts::GOSSIP_PASSIVE_VIEW_CAPACITY,
     };
 }
 

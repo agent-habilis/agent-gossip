@@ -256,10 +256,11 @@ COMMANDS
                      for agents (see "JSON EVENTS"). Default human.
 
               --max-peers N
-                     Soft ceiling on tracked peer addresses; the overlay
-                     relays to peers beyond it. Not the live connection count
-                     — the gossip mesh keeps its own fixed active-neighbor set
-                     regardless.
+                     Cap on live direct connections — the gossip mesh's
+                     active-neighbor set. The node holds at most N open QUIC
+                     links and relays to peers beyond it; a swarm up to N
+                     members forms a full mesh with no membership churn.
+                     Default 64.
 
               --filter-self
                      Suppress your own messages from the --output stream, for
