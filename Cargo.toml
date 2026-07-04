@@ -180,6 +180,12 @@ hyper = { version = "1", features = ["server", "http1"] }
 http-body-util = "0.1"
 hyper-util = { version = "0.1", features = ["tokio"] }
 
+# Compact global allocator, Linux only (see src/main.rs). Halves the daemon's
+# resident memory on the static-musl fleet; on macOS the system allocator wins,
+# so it is not pulled there.
+[target.'cfg(target_os = "linux")'.dependencies]
+mimalloc = { version = "0.1", default-features = false }
+
 [dev-dependencies]
 proptest = "1.6"
 insta = "1"

@@ -51,7 +51,21 @@ fn suppress_ctrl_c_echo() {
 #[global_allocator]
 static ALLOC: dhat::Alloc = dhat::Alloc;
 
-#[tokio::main]
+/// Compact global allocator, Linux only. The fleet ships a static-musl binary,
+/// and musl's built-in malloc holds a lot of resident memory; swapping in
+/// mimalloc roughly halves the daemon's anonymous RSS (measured on the aarch64
+/// Pi fleet). Not on macOS: Apple's libmalloc is already lean there, so mimalloc
+/// is pure overhead (measured ~1.6 MB worse), and the OS keeps its default.
+/// Yielded to dhat's allocator under the profiling feature.
+#[cfg(all(not(feature = "dhat-heap"), target_os = "linux"))]
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
+// Single-threaded runtime: the daemon is I/O-bound (awaits sockets + timers),
+// so a worker-per-core pool only spends RSS on idle thread stacks and per-thread
+// malloc arenas. current_thread keeps one thread; spawn_blocking still offloads
+// the rare blocking call to the blocking pool.
+#[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
     // Heap profiler (dhat-heap feature): writes `dhat-heap.json` to CWD when this
     // guard drops. The daemon's CLI quit path normally `process::exit`s (skipping
