@@ -1,5 +1,5 @@
 ---
-type: a2a-runbook
+type: scenario-runbook
 title: Task edge cases
 description: The non-happy-path task outcomes — decline, cancel, clarifying questions, and revision.
 tags: [task, decline, cancel, context, revision]
@@ -35,7 +35,7 @@ A todo plugin should be installed for both.
 
 ## Briefing
 
-- swarm: `a2a-task-edges`
+- swarm: `scenario-task-edges`
 - the four tasks (any small tasks; the point is the outcome):
   - **decline:** an offer the receiver is expected to turn down.
   - **cancel:** an offer the initiator withdraws before it completes.

@@ -244,8 +244,15 @@ pub(crate) async fn ensure(
         return;
     };
 
+    // The rendezvous pseudo-node's active view is overlay plumbing, not the
+    // participant peer cap, so it stays at the shipped default rather than
+    // tracking `--max-peers`.
     // The rendezvous pseudo-node accepts no unicast — it is not a participant.
-    let (gossip, router) = build_swarm(endpoint.clone(), None);
+    let (gossip, router) = build_swarm(
+        endpoint.clone(),
+        crate::util::consts::GOSSIP_ACTIVE_VIEW_CAPACITY,
+        None,
+    );
 
     // Register the participant's address so the rendezvous can dial it
     // in private mode (no lookup); a harmless direct hint in public.

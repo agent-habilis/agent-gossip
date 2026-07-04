@@ -200,16 +200,17 @@ pub(crate) async fn probe_connect(
 /// peers cannot accept inbound connections from other peers.
 pub(crate) fn build_swarm(
     endpoint: Endpoint,
+    active_view_capacity: usize,
     unicast: Option<crate::unicast::UnicastAcceptor>,
 ) -> (Gossip, Router) {
-    // Raise HyParView's active view above iroh-gossip's default (5) so swarms up
-    // to the configured size form a full mesh with nothing to shuffle — no
-    // membership churn, hence none of the churn-driven per-connection leak. The
-    // capacity is overridable (hidden `--active-view-capacity`); set it small to
-    // reproduce the churn. See `crate::util::tuning::gossip_active_view_capacity`.
+    // `active_view_capacity` is the live direct-neighbor cap (`--max-peers`),
+    // raised above iroh-gossip's default (5) so swarms up to it form a full mesh
+    // with nothing to shuffle — no membership churn, hence none of the
+    // churn-driven per-connection leak. Set it small to reproduce the churn. The
+    // passive (healing/shuffle) pool is kept at 2× the active view.
     let membership = HyparviewConfig {
-        active_view_capacity: crate::util::tuning::gossip_active_view_capacity(),
-        passive_view_capacity: crate::util::tuning::gossip_passive_view_capacity(),
+        active_view_capacity: active_view_capacity.max(1),
+        passive_view_capacity: (active_view_capacity * 2).max(1),
         ..Default::default()
     };
     let gossip = Gossip::builder()

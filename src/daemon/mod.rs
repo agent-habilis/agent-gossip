@@ -35,7 +35,6 @@ pub(crate) mod surfaced;
 // The session state file the daemon writes for external readers (its
 // sole writer). Daemon-session state, not a generic `util` helper.
 pub(crate) mod state_file;
-pub(crate) mod task;
 pub(crate) mod timers;
 
 mod event_loop;

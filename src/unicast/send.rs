@@ -134,12 +134,13 @@ mod tests {
     use iroh::{EndpointId, SecretKey};
 
     use super::{Route, route};
+    use crate::a2a::A2aRpcId;
     use crate::daemon::state::EventLoopState;
     use crate::protocol::identity::Identity;
-    use crate::protocol::{Message, MessageBody, Nickname, SwarmId, TaskId, TaskPhase};
+    use crate::protocol::{Message, MessageBody, Nickname, SwarmId};
 
     fn nick(name: &str) -> Nickname {
-        Nickname::new(name.to_owned()).expect("valid test nickname")
+        Nickname::from(name)
     }
 
     fn endpoint_id(seed: u8) -> EndpointId {
@@ -163,8 +164,9 @@ mod tests {
         (state, bob)
     }
 
+    /// A directed frame addressed to `bob` — a `Pong` is the simplest one.
     fn directed_msg() -> Message {
-        Message::new_reply(&swarm(), &nick("alice"), nick("bob"), body())
+        Message::new_pong(&swarm(), &nick("alice"), nick("bob"))
     }
 
     // ── the p2p path ──────────────────────────────────────────────────
@@ -179,19 +181,18 @@ mod tests {
     }
 
     #[test]
-    fn directed_task_and_pong_also_take_unicast() {
+    fn directed_rpc_and_pong_also_take_unicast() {
         let (state, bob) = state_knowing_bob();
-        let task = Message::new_task(
+        let req = Message::new_a2a_req(
             &swarm(),
             &nick("alice"),
             nick("bob"),
-            TaskId::random(),
-            TaskPhase::Offer,
+            A2aRpcId::random(),
             body(),
         );
         let pong = Message::new_pong(&swarm(), &nick("alice"), nick("bob"));
         assert_eq!(
-            route(&task, &state, true, true),
+            route(&req, &state, true, true),
             Route::UnicastPreferred(bob)
         );
         assert_eq!(
@@ -214,7 +215,7 @@ mod tests {
     #[test]
     fn broadcast_message_always_takes_gossip() {
         let (state, _) = state_knowing_bob();
-        let open = Message::new_message(&swarm(), &nick("alice"), body());
+        let open = Message::new_a2a_msg(&swarm(), &nick("alice"), body());
         // Even with unicast on and a known peer, a non-directed kind gossips —
         // and stays gossip regardless of policy.
         assert_eq!(route(&open, &state, true, true), Route::Gossip);
@@ -279,7 +280,7 @@ mod tests {
         // A non-directed kind never hits the undeliverable arm — gossip is
         // structural for broadcasts, not subject to the directed-gossip switch.
         let (state, _) = state_knowing_bob();
-        let open = Message::new_message(&swarm(), &nick("alice"), body());
+        let open = Message::new_a2a_msg(&swarm(), &nick("alice"), body());
         assert_eq!(route(&open, &state, false, false), Route::Gossip);
     }
 }

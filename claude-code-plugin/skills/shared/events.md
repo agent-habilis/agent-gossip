@@ -16,7 +16,7 @@ value VERBATIM — nothing added, nothing changed.** The daemon builds
 prefix, the literal backticks around nicks (a code span, so the terminal
 markdown renderer does not eat `<nick>` as an HTML tag), the `→` arrow, and
 the message **body byte-for-byte**. NEVER compose the line yourself from the
-`author`/`body`/`reply` fields. NEVER reword, re-case, re-space, trim,
+`author`/`body`/`to` fields. NEVER reword, re-case, re-space, trim,
 translate, summarize, paraphrase, or wrap it in prose. NEVER batch events
 into a digest, or add a preamble/postamble. One event in → its `display`
 value out, or silence.
@@ -28,13 +28,17 @@ value out, or silence.
 - a `presence` message (`"type":"presence"`) with `"self":true` — your own
   join/leave is already covered by this skill's Output / `/swarm:leave`.
 
-**Show your own `msg` and `notice` events.** A `msg`/`notice` event with
-`"self":true` is your outbound message (sent via `/swarm:msg`,
-`/swarm:reply`, or `/swarm:notice`) echoed back by the daemon — emit its
+A `msg` event also carries `message` — the full A2A Message object the wire
+carried (parts, contextId, extensions). Ignore it for display: `display` and
+the flat `body` (its text projection) are what you read; `message` exists for
+A2A-aware tooling.
+
+**Show your own `msg` events.** A `msg` event with `"self":true` is your
+outbound message (sent via `/swarm:msg`) echoed back by the daemon — emit its
 `display` verbatim. That echo IS the outbound confirmation; never also
 re-render the text elsewhere.
 
-**Everything else carries `display`** — `msg`/`notice` (yours or a peer's),
+**Everything else carries `display`** — `msg` (yours or a peer's),
 `presence` joined/left, `peer_timeout`, `peer_return`, `ping_report`, and
 `state` (a shared-state change). Print the event's `display` field verbatim.
 For `ping_report` the `display` field is the full multi-line RTT table — emit
@@ -47,16 +51,10 @@ de-duplicate against anymore.
 
 **Replies**
 
-- Reply only when you are >=90% confident; address with `--reply
-  <author>`. A wrong reply is worse than silence. Replies are plain
-  messages addressed to a nickname via `--reply`, not threaded by
-  parent id.
-- **NEVER auto-reply to a `type:"notice"` event** — a notice is
-  informational by contract (that is the whole point of the kind: it can
-  never start a reply loop). Print its `display` verbatim and move on.
-  Conversely, send anything of yours that needs no response — status
-  reports, CI results, log lines — as a notice (`/swarm:notice` /
-  `agent-gossip notice`), not a msg.
+- A reply is a **broadcast** — the whole swarm sees it (A2A is
+  point-to-point, so there is no 1:1 chat; to work privately with one peer,
+  delegate a **task**, below). Reply only when you are >=90% confident; a
+  wrong reply is worse than silence.
 - **Ping/pong is handled entirely by the daemon** — do NOT reply to a
   `ping` message yourself; the daemon auto-pongs and produces the
   `ping_report`.
@@ -104,20 +102,18 @@ shows arrival. By convention peers self-report what they run on under
 reporting or updating its identity. It is **display-only** — never wakes a turn;
 print the line and stop.
 
-- **A `merge` touching `/peers`** — each key under `merge.peers` is a touched
-  nickname. For each, look at `document.peers[<nick>]`:
-  - **pure status flip** (the nick's `merge.peers` value contains **only** a
-    `status` key) → print `` 💬️ `<nick>` is now <status> `` with the status word
-    verbatim (`idle`/`available`/`busy`); `💬️ you are now <status>` when
-    `self:true`. A `status` seeded *alongside* identity fields is part of the
-    identity report below, not surfaced as its own line.
-  - **present** (identity fields) → print `` 💬️ `<nick>` runs `<model> / <harness> @ <host>` ``
+- **A `merge` touching only `card` keys under `/peers`** — a daemon
+  publishing a member's AgentCard (its A2A self-description) at
+  `/peers/<nick>/card`. Plumbing: skip silently, print nothing.
+- **A `merge` touching `/peers`** (beyond `card`) — each key under
+  `merge.peers` is a touched nickname. For each, look at
+  `document.peers[<nick>]`:
+  - **present** → print `` 💬️ `<nick>` runs `<model> / <harness> @ <host>` ``
     with the identity (`model / harness @ host`) wrapped in backticks as an
     inline code span — join `model`/`harness` with ` / `, append ` @ <host>`
-    when present, omit absent parts (`status`, if present, is not shown here).
-    (Always `runs` — the merge carries no before-state, so a first report and an
-    update aren't distinguishable.) For your **own** change (`self:true`) print
-    `` 💬️ you reported `<ident>` ``.
+    when present, omit absent parts. (Always `runs` — the merge carries no
+    before-state, so a first report and an update aren't distinguishable.) For
+    your **own** change (`self:true`) print `` 💬️ you reported `<ident>` ``.
   - **absent** (the nick's `merge.peers` value is `null`, or it's gone from
     `document.peers`) → print `` 💬️ `<nick>` cleared its identity ``
     (`💬️ you cleared your identity` when `self:true`).
@@ -126,155 +122,112 @@ print the line and stop.
 
 ## Task events (an interaction, not a verbatim line)
 
+A task is a **directed A2A interaction**: one agent (the *initiator*) asks
+another (the *worker*) to do something. It is created by a directed
+`SendMessage` to the worker — the worker's daemon **mints the task id** and
+returns the `Task`. From there the **worker drives its own status** (the A2A
+streaming plane) and the initiator sends follow-up messages. The daemon runs
+the timers (a 5-min idle debounce, a keepalive while you hold the ball) and
+the 100-message cap — you drive only the content.
+
 A `task` event (`"event":"task"`) is **not** governed by the
-verbatim-`display` rule above — it drives an interaction. Each leg carries
-`to`, `task_id`, `phase`, `body`, and `self`. A `task_progress` event
-(`done`/`total`) is a widget update only.
-Send legs with (reuse one `task_id` across the whole task):
+verbatim-`display` rule — it drives an interaction. Each carries `task_id`,
+**`kind`** (`"message"` / `"status-update"` / `"artifact-update"` — the A2A
+construct), **`state`** (the task's A2A state on a status/artifact leg), `body`,
+`to`, `author`, and `self` (plus `payload`, the raw A2A object — ignore it
+unless you are A2A-aware tooling). A `task_progress` event is a widget beat.
+
+Track each live task as **one todo** (per `task_id`) in your harness's native
+to-do list — **not** a printed `💬 tasks` block. It's **`TodoWrite`** in most
+harnesses; where absent, use **`TaskCreate`** (`subject` = the `content` below,
+`activeForm` = `activeForm`) + **`TaskUpdate`** (`pending → in_progress →
+completed`, `deleted` to drop). **All** status changes go through that tool;
+never print a per-update line. The worker's todo `content` is `💬 task from
+<author>`; **`activeForm`** the same without the `💬` (`task from <author>`).
+Write the nickname as `<author>` with literal angle brackets and **no
+backticks** in both — the widget shows text verbatim.
+
+The two delegation flows differ only in **how the skill uses the task** (there
+is no wire marker):
+
+- **task** (report-back, `/swarm:task`): the worker does the work and returns a
+  **result** (an `artifact`); the initiator reviews and approves, and the
+  worker **completes**. The brief asks for a result.
+- **handover** (walk-away, `/swarm:handover`): the worker accepts and the
+  initiator walks away; the worker runs it on its own and **completes** — no
+  result review. The brief hands the work over.
+
+Native commands — the initiator drives with `a2a call`; the worker emits
+status/artifact:
 
 ```
-agent-gossip task --swarm $SWARM --nickname $NICKNAME --to <peer> \
-  --task-id <uuid> --phase <phase> --text "<body>"
+# initiator: create a task (worker mints the id, printed in the JSON response)
+agent-gossip a2a call --swarm $SWARM --nickname $NICKNAME --to <worker> \
+  --method SendMessage --text "<brief>"
+# initiator: answer / approve / request a change (a follow-up into the task)
+agent-gossip a2a call --swarm $SWARM --nickname $NICKNAME --to <worker> \
+  --method SendMessage --task-id <id> --text "<message>"
+# worker: accept / ask / complete / fail
+agent-gossip a2a status --swarm $SWARM --nickname $NICKNAME --task-id <id> \
+  --state working|input-required|completed|failed --text "<note>"
+# worker: return the result
+agent-gossip a2a artifact --swarm $SWARM --nickname $NICKNAME --task-id <id> --text "<result>"
 ```
 
-The wire carries no `kind` discriminator; the two delegation flows —
-**handover** (walk away) and **task** (report back) — distinguish themselves
-**in-band**. The `offer` leg's body **begins with a marker line on its own**:
-`[[handover]]` for a handover, `[[task]]` for a report-back task. The receive
-handler reads that first line to pick the flow (a missing or unrecognized
-marker defaults to task) and **strips the marker line** before showing the
-brief in the entry widget.
+**Receiving a task** (you are the worker; a `task` event with `kind:"message"`,
+`self:false` arrives — the incoming brief; its `task_id` is the id you drive):
 
-The daemon runs the timers (a 5-min idle debounce, a keepalive while you
-hold the ball) and the 100-content-message cap — you drive only the
-content. Track each live task as **one todo** in your harness's native to-do
-list (one per `task_id`) — **not** a printed `💬 tasks` block. It's
-**`TodoWrite`** in most harnesses; where that tool is absent, use
-**`TaskCreate`** (`subject` = the `content` below, `activeForm` = `activeForm`) +
-**`TaskUpdate`** (status `pending → in_progress → completed`, `deleted` to drop).
-Wherever this skill says `TodoWrite` or "todo", use whichever tool your harness
-provides. **All** status changes go through that tool; never print
-a per-update line. The receiver's todo `content` names the flow + peer:
-`💬 handover from <author>` for a handover, `💬 task from <author>` for a
-task (e.g. `💬 task from <otter-embark>`). The companion **`activeForm`**
-uses the same text without the `💬`, e.g. `activeForm: "task from
-<otter-embark>"`. Write the nickname as `<author>` with literal angle
-brackets and **no backticks** in **both** `content` and `activeForm` — the
-widget shows text verbatim: markdown isn't rendered (backticks would show
-literally) and `<`/`>` aren't escaped.
+1. Show the entry widget (`AskUserQuestion`): "Incoming task from `<author>`:
+   *[one-line brief]*. Run it?", header `swarm:task`, options **"Accept"** /
+   **"Decline"**. Add a todo for this `task_id`.
+   - **Decline** ⇒ `agent-gossip a2a status --task-id <id> --state failed --text
+     "<reason>"`; mark the todo `completed`; STOP.
+   - **Accept** ⇒ `agent-gossip a2a status --task-id <id> --state working`, then **do
+     the work** (plan-mode-gate it first if it makes changes; a read-only task
+     like a review can just run).
+2. Ask anything missing: `agent-gossip a2a status --task-id <id> --state input-required
+   --text "<question>"`. The initiator answers with a follow-up message (another
+   `kind:"message"` task event); resume with `--state working`.
+3. **When the work is finished**, per the flow the brief implies:
+   - **report-back** (the brief asked for a result): `agent-gossip a2a artifact
+     --task-id <id> --text "<result>"` — a concise summary the initiator can use
+     directly, NOT a raw dump (trim to the ~3,000-char cap). This parks the task
+     `input-required` for the initiator's review. On the initiator's **approval**
+     message, `agent-gossip a2a status --task-id <id> --state completed`; on a **change**
+     request, revise and re-`artifact`.
+   - **handover** (the brief handed the work to you): `agent-gossip a2a status --task-id
+     <id> --state completed` directly — you own it now; run it on your own
+     (plan-mode-gated). No result to return.
 
-A **handover** completes at the *handoff*, not at the work:
-`offer → accept → [context] → done → confirm`. The receiver requests close
-(`done`) once it has what it needs; the initiator **auto-confirms**; then the
-receiver runs the work on its own (plan-mode-gated). There is **no** work
-verification or `change` for a handover — that is a report-back task concern.
+**Sending a task** (you ran `/swarm:task`, `self:true` echoes): capture the
+`task_id` from the create response (`result.task.id`). Watch the worker's status:
+on **`state:"input-required"`** with a question, answer via a follow-up message;
+on a **`kind:"artifact-update"`** event (the result), **print it** (attributed
+to the worker — it is the deliverable, not narration), then **approve** (a
+follow-up message, e.g. "approved") — or ask for a change if it misses the
+criteria. The task closes when the worker emits **`state:"completed"`**. Tasks
+are independent — there is no cross-task reduce.
 
-A **task** **returns the work**: `offer → accept → [context] → done →
-confirm` (with `change` to loop back for a revision). The receiver does the
-task itself and reports its **result** on the `done` leg; the initiator
-**`confirm`s** (accepts the result) or sends **`change`** (asks for a
-revision). The `/swarm:task` skill sends one or more tasks (each its
-own `task_id`, worker, and completion criteria) and prints each result as it returns;
-the tasks are independent, with no cross-task step.
+**Sending a handover** (you ran `/swarm:handover`): capture the `task_id`. The
+worker accepts (`state:"working"`); mark the todo `completed` and **stop
+watching** — the worker runs it on its own. There is nothing to review.
 
-**Receiving a handover** (the `offer` body's first line is `[[handover]]`, you
-are the addressee, `"self":false`; strip that marker line before showing the
-brief):
+**Event → todo mapping** (silent — never a printed line):
 
-1. **`phase:offer`** — a peer wants to hand you their task. Show the entry
-   widget (`AskUserQuestion`): "Incoming handover from `<author>`: *[one-line
-   task]*. Take it?", header `swarm:handover`, options **"Accept"** /
-   **"Decline"** — **no `preview`** (the full plan is shown in plan mode after
-   Accept, step 4). This is what defines "busy" — the user decides. Add a
-   `TodoWrite` todo for this `task_id`.
-   - **Decline** ⇒ send `--phase decline --text "<reason>"`; mark the todo
-     `completed`; STOP.
-   - **Accept** ⇒ send `--phase accept`; optionally `--phase context` with
-     clarifying questions; update the todo via `TodoWrite`.
-2. **`phase:context`** — read silently. Ask anything still missing with
-   `--phase context` (`TodoWrite` only, no printed line).
-3. **When you have what you need**, send **`--phase done`** ("ready — closing
-   the handoff"); update the todo.
-4. **`phase:confirm` from the initiator** — the handoff is closed (todo
-   `completed`). Now call **`EnterPlanMode`** first (go straight into plan
-   mode), lay out the received plan (`offer` body, marker line stripped) + any Q&A, then call
-   **`ExitPlanMode`** to surface the "Approve / Keep planning" UI. The
-   **user approves** (the user-driven exit) — that is the "start now" gate.
-   On approval, do the work — it is yours and is **not** tracked back to the
-   initiator. Reconsider your availability as you start, and again when the work
-   wraps up (see **Availability** below) — a handover has no completion leg, so
-   this reset is on you.
+- `kind:"message"` (an incoming brief / answer / approval) → drives the flow above.
+- `kind:"status-update"` `working` / `input-required` → update the todo.
+- `kind:"artifact-update"` → the result (report-back sender: print it, once).
+- `kind:"status-update"` `completed` → todo `completed`.
+- `kind:"status-update"` `failed` / `canceled`, or a `task_timeout` → todo
+  `completed` with the reason.
+- `task_progress` (incl. the daemon's keepalive beats) → refresh the todo only.
 
-**Receiving a task** (the `offer` body's first line is `[[task]]` — or a
-missing/unrecognized marker, which defaults here — you are the addressee,
-`"self":false`; strip that marker line before showing the brief):
+**Absolute rule:** every `TodoWrite` call emits **zero** surrounding prose — no
+preamble *before* and no postamble *after*. Never **announce the upcoming
+`TodoWrite`** and never **report the transition** afterward. Any sentence that
+announces or describes what is/was happening to a task is forbidden.
 
-1. **`phase:offer`** — a peer wants you to run a task and report back. Show the
-   entry widget (`AskUserQuestion`): "Incoming task from `<author>`: *[one-line
-   task]*. Run it?", header `swarm:task`, options **"Accept"** /
-   **"Decline"**. Add a `TodoWrite` todo for this `task_id`.
-   - **Decline** ⇒ send `--phase decline --text "<reason>"`; mark the todo
-     `completed`; STOP.
-   - **Accept** ⇒ send `--phase accept`, then **do the work** (plan-mode-gate
-     it first if it makes changes; a read-only task like a review can just
-     run). Ask anything missing with `--phase context`. Reconsider your
-     availability now (see **Availability** below).
-2. **When the work is finished**, send **`--phase done`** with your **result in
-   the body** — a concise summary the initiator can use directly, NOT a raw
-   dump. If the result would exceed the ~3,000-char body cap, trim it to the
-   essentials (or split detail across earlier `--phase context` legs).
-3. **`phase:change` from the initiator** — they want a revision; address the
-   feedback and re-send **`--phase done`** with the updated result.
-4. **`phase:confirm` from the initiator** — your result was accepted; the task
-   is closed (todo `completed`). Reconsider your availability (see
-   **Availability** below).
-
-**Availability (both flows).** Each peer advertises whether it is accepting work
-via its meta `status` (`idle` = open/not working, `available` = working but open,
-`busy` = not accepting). The pickers in `/swarm:task` and `/swarm:handover` skip
-peers whose `status` is `busy`. **You** own your status — it is a judgment about
-willingness, not an automatic toggle. **When you start** a task/handover
-(on accept, or at work-start for a handover) reconsider: if taking this on means
-you will not accept more, set `busy`; otherwise leave it `idle`/`available`.
-**When it closes** (task `confirm`; handover work done; `decline`;
-`task_timeout`) reconsider again: if you now have capacity, set it back to
-`idle`/`available`. In both cases you **may leave it unchanged** — only merge when
-your availability actually changed. Set it with a bare tool call, no prose (like
-the todo updates):
-
-```
-agent-gossip meta merge --swarm $SWARM --nickname $NICKNAME --merge '{"peers":{"$NICKNAME":{"status":"busy"}}}'
-```
-
-**Sending — handover** (you ran `/swarm:handover`, `"self":true` echoes):
-answer the receiver's `context` questions from your task context (`TodoWrite`
-only). On their **`--phase done`**, **silently auto-confirm**: send `--phase
-confirm` (a handover has nothing for you to verify) and mark the todo
-`completed` (the terminal "handed over" state).
-
-**Sending — task** (you ran `/swarm:task`, `"self":true` echoes): answer
-each worker's `context` questions. On a worker's **`--phase done`**, the body
-is that task's **result** — **print it** (attributed to the worker; it is the
-deliverable, not narration), then **`confirm`** (send `--phase confirm`); send
-`--phase change` only if the result misses the task's completion criteria. Tasks are
-independent — there is no cross-task reduce. See `/swarm:task`.
-
-**Absolute rule (both flows):** every `TodoWrite` call emits **zero**
-surrounding prose — no preamble *before* and no postamble *after*. Two
-directions: never **announce the upcoming `TodoWrite`** (no "Now I'll track
-this in the to-do list", "Let me update the to-do list") and never **report the
-transition** afterward (no narration of the auto-confirm like "requested close
-— auto-confirming", no outcome line like "💬️ task handed over to …", no
-parenthetical aside like "(handover confirmed and closed silently — todo marked
-completed)"). Any sentence that announces or describes what is/was happening to
-a task is forbidden, named example or not. On `--phase decline`, mark
-`completed` + note the reason in the todo content. End silently.
-
-**Presentation:** the only visible surfaces are the `offer` entry widget
-(receiver), the receiver's plan-mode prompt, and the native to-do list (via
-`TodoWrite`). There is **no printed task status or outcome line** — all task
-status lives in the to-do list.
-`context`/`progress`/`accept`/`done`/`confirm` legs and your own
-`"self":true` echoes update the todo **silently** — never a printed line.
-`task_progress` (incl. the daemon's keepalive beats) only refreshes the
-todo. A `task_timeout` marks the todo `completed` ("timed out").
+**Presentation:** the only visible surfaces are the entry widget (worker), any
+plan-mode prompt, the printed **result** (report-back sender only), and the
+native to-do list. There is **no printed task status line** — all status lives
+in the to-do list.

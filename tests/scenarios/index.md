@@ -1,12 +1,12 @@
 ---
-type: a2a-index
-title: Swarm a2a runbooks
+type: scenario-index
+title: Swarm scenario runbooks
 description: Coordinator-set-up agent-to-agent runbooks that validate swarm behavior and UX, judged by a human.
-tags: [a2a, swarm, runbook, coordinator, okf]
+tags: [scenario, swarm, runbook, coordinator, okf]
 timestamp: 2026-06-28T00:00:00Z
 ---
 
-# Swarm a2a runbooks
+# Swarm scenario runbooks
 
 This is an [OKF](https://okf.md/) bundle of agent-to-agent runbooks for the
 agent-habilis swarm. A **dedicated coordinator** peer briefs each role's **goal**

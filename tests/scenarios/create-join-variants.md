@@ -1,5 +1,5 @@
 ---
-type: a2a-runbook
+type: scenario-runbook
 title: Create/join variants
 description: Create swarms across network options and join forms, and surface the version/drift check.
 tags: [create, join, network, advertise, relay, version, drift, briefing-only]

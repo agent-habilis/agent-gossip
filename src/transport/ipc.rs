@@ -9,7 +9,8 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncWriteExt, BufReader};
 use tokio::sync::mpsc;
 
-use crate::protocol::{MessageBody, MessageId, Nickname, SwarmId, TaskId, TaskPhase};
+use crate::a2a::{TaskId, TaskState};
+use crate::protocol::{MessageBody, MessageId, Nickname, SwarmId};
 use crate::util::bounded_read::{LineRead, read_bounded_line};
 use crate::util::consts::{
     MAX_IPC_COMMAND_BYTES, MAX_IPC_RESPONSE_BYTES, RUNTIME_DIR, SWARM_GLYPH,
@@ -42,22 +43,9 @@ pub(crate) type IpcMessage = (IpcCommand, tokio::sync::oneshot::Sender<String>);
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "command")]
 pub(crate) enum IpcCommand {
+    /// Broadcast a swarm chat message (A2A `message/send` with no addressee).
     #[serde(rename = "msg")]
-    Msg {
-        swarm: SwarmId,
-        body: MessageBody,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        reply: Option<Nickname>,
-    },
-    /// Send a notice — a `Msg` in every respect except the receiver contract
-    /// that agents must never auto-reply to one (loop prevention).
-    #[serde(rename = "notice")]
-    Notice {
-        swarm: SwarmId,
-        body: MessageBody,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        reply: Option<Nickname>,
-    },
+    Msg { swarm: SwarmId, body: MessageBody },
     #[serde(rename = "poll")]
     Poll {
         swarm: SwarmId,
@@ -78,17 +66,22 @@ pub(crate) enum IpcCommand {
     /// `--output json` stream. Fire-and-forget — the ack is immediate.
     #[serde(rename = "ping")]
     Ping { swarm: SwarmId },
-    /// Send one leg of a task to `to`, correlated by `task_id`.
-    /// `Offer` carries the task brief; later phases the Q&A / progress /
-    /// outcome. The daemon validates `to` against the live roster for
-    /// `Offer` only.
-    #[serde(rename = "task")]
-    Task {
+    /// Worker-emit a `TaskStatusUpdate` on a task we're serving (`a2a status`).
+    #[serde(rename = "a2a_status")]
+    A2aStatus {
         swarm: SwarmId,
-        to: Nickname,
         task_id: TaskId,
-        phase: TaskPhase,
-        body: MessageBody,
+        #[serde(with = "crate::a2a::friendly_state")]
+        state: TaskState,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        note: Option<String>,
+    },
+    /// Worker-emit a `TaskArtifactUpdate` (the result) on a task (`a2a artifact`).
+    #[serde(rename = "a2a_artifact")]
+    A2aArtifact {
+        swarm: SwarmId,
+        task_id: TaskId,
+        text: String,
     },
     /// Query the live participant roster (nicknames + recency) — backs the
     /// task sender's target picker and nickname validation.
@@ -115,6 +108,18 @@ pub(crate) enum IpcCommand {
     /// `meta`-channel counterpart of [`StateGet`](IpcCommand::StateGet).
     #[serde(rename = "meta_get")]
     MetaGet { swarm: SwarmId },
+    /// A gossip A2A call: send a directed A2A JSON-RPC request to `to` and
+    /// return its response (or a timeout error). `to` serves the safe method
+    /// set only.
+    #[serde(rename = "a2a_call")]
+    A2aCall {
+        swarm: SwarmId,
+        to: Nickname,
+        method: String,
+        #[serde(default)]
+        params: serde_json::Value,
+        timeout_secs: u64,
+    },
     /// Identity probe for `doctor`: the daemon answers with its own swarm id,
     /// human name, nickname, and participant count. Carries no swarm — a
     /// socket serves exactly one swarm and `doctor` is asking *which*, so it
@@ -130,15 +135,16 @@ impl IpcCommand {
     pub(crate) fn swarm_id(&self) -> Option<&SwarmId> {
         match self {
             IpcCommand::Msg { swarm, .. }
-            | IpcCommand::Notice { swarm, .. }
             | IpcCommand::Poll { swarm, .. }
             | IpcCommand::Ping { swarm }
-            | IpcCommand::Task { swarm, .. }
+            | IpcCommand::A2aStatus { swarm, .. }
+            | IpcCommand::A2aArtifact { swarm, .. }
             | IpcCommand::Peers { swarm }
             | IpcCommand::StateMerge { swarm, .. }
             | IpcCommand::StateGet { swarm }
             | IpcCommand::MetaMerge { swarm, .. }
-            | IpcCommand::MetaGet { swarm } => Some(swarm),
+            | IpcCommand::MetaGet { swarm }
+            | IpcCommand::A2aCall { swarm, .. } => Some(swarm),
             IpcCommand::Info => None,
         }
     }
@@ -374,7 +380,7 @@ pub(crate) fn active_socket_paths() -> Vec<std::path::PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::{
-        IpcCommand, IpcMessage, MessageBody, Nickname, SwarmId, TaskId, TaskPhase, bind,
+        IpcCommand, IpcMessage, MessageBody, Nickname, SwarmId, TaskId, TaskState, bind,
         json_error, json_ok, mpsc, send, serve, socket_path,
     };
 
@@ -426,9 +432,8 @@ mod tests {
     #[test]
     fn ipc_command_msg_round_trip() {
         let cmd = IpcCommand::Msg {
-            swarm: SwarmId::from("💬test"),
+            swarm: SwarmId::from("💬://test"),
             body: MessageBody::from("hello"),
-            reply: None,
         };
         let json = serde_json::to_string(&cmd).unwrap();
         let parsed: IpcCommand = serde_json::from_str(&json).unwrap();
@@ -449,7 +454,7 @@ mod tests {
     #[test]
     fn ipc_command_state_merge_round_trip() {
         let cmd = IpcCommand::StateMerge {
-            swarm: SwarmId::from("💬test"),
+            swarm: SwarmId::from("💬://test"),
             merge: serde_json::json!({"turn": "b"}),
         };
         let json = serde_json::to_string(&cmd).unwrap();
@@ -464,46 +469,21 @@ mod tests {
             IpcCommand::Msg { .. }
             | IpcCommand::Poll { .. }
             | IpcCommand::Ping { .. }
-            | IpcCommand::Task { .. }
+            | IpcCommand::A2aStatus { .. }
+            | IpcCommand::A2aArtifact { .. }
             | IpcCommand::Peers { .. }
             | IpcCommand::MetaMerge { .. }
             | IpcCommand::MetaGet { .. }
             | IpcCommand::StateGet { .. }
-            | IpcCommand::Notice { .. }
+            | IpcCommand::A2aCall { .. }
             | IpcCommand::Info => panic!("expected StateMerge"),
-        }
-    }
-
-    #[test]
-    fn ipc_command_msg_with_reply_target() {
-        let target = Nickname::from("alice");
-        let cmd = IpcCommand::Msg {
-            swarm: SwarmId::from("💬test"),
-            body: MessageBody::from("reply"),
-            reply: Some(target.clone()),
-        };
-        let json = serde_json::to_string(&cmd).unwrap();
-        assert!(json.contains("alice"));
-        let parsed: IpcCommand = serde_json::from_str(&json).unwrap();
-        match parsed {
-            IpcCommand::Msg { reply, .. } => assert_eq!(reply, Some(target)),
-            IpcCommand::Poll { .. }
-            | IpcCommand::Ping { .. }
-            | IpcCommand::Task { .. }
-            | IpcCommand::Peers { .. }
-            | IpcCommand::StateMerge { .. }
-            | IpcCommand::MetaMerge { .. }
-            | IpcCommand::MetaGet { .. }
-            | IpcCommand::StateGet { .. }
-            | IpcCommand::Notice { .. }
-            | IpcCommand::Info => panic!("expected Msg"),
         }
     }
 
     #[test]
     fn ipc_command_poll_round_trip() {
         let cmd = IpcCommand::Poll {
-            swarm: SwarmId::from("💬test"),
+            swarm: SwarmId::from("💬://test"),
             after: Some(42),
             long: false,
         };
@@ -519,13 +499,14 @@ mod tests {
             }
             IpcCommand::Msg { .. }
             | IpcCommand::Ping { .. }
-            | IpcCommand::Task { .. }
+            | IpcCommand::A2aStatus { .. }
+            | IpcCommand::A2aArtifact { .. }
             | IpcCommand::Peers { .. }
             | IpcCommand::StateMerge { .. }
             | IpcCommand::MetaMerge { .. }
             | IpcCommand::MetaGet { .. }
             | IpcCommand::StateGet { .. }
-            | IpcCommand::Notice { .. }
+            | IpcCommand::A2aCall { .. }
             | IpcCommand::Info => panic!("expected Poll"),
         }
     }
@@ -533,7 +514,7 @@ mod tests {
     #[test]
     fn ipc_command_ping_round_trip() {
         let cmd = IpcCommand::Ping {
-            swarm: SwarmId::from("💬test"),
+            swarm: SwarmId::from("💬://test"),
         };
         let json = serde_json::to_string(&cmd).unwrap();
         assert!(json.contains("\"command\":\"ping\""));
@@ -542,52 +523,53 @@ mod tests {
             IpcCommand::Ping { swarm } => assert_eq!(swarm.as_str(), "💬://test"),
             IpcCommand::Msg { .. }
             | IpcCommand::Poll { .. }
-            | IpcCommand::Task { .. }
+            | IpcCommand::A2aStatus { .. }
+            | IpcCommand::A2aArtifact { .. }
             | IpcCommand::Peers { .. }
             | IpcCommand::StateMerge { .. }
             | IpcCommand::MetaMerge { .. }
             | IpcCommand::MetaGet { .. }
             | IpcCommand::StateGet { .. }
-            | IpcCommand::Notice { .. }
+            | IpcCommand::A2aCall { .. }
             | IpcCommand::Info => panic!("expected Ping"),
         }
     }
 
     #[test]
-    fn ipc_command_task_round_trip() {
-        let cmd = IpcCommand::Task {
-            swarm: SwarmId::from("💬test"),
-            to: Nickname::from("calm-otter"),
+    fn ipc_command_a2a_status_round_trip() {
+        let cmd = IpcCommand::A2aStatus {
+            swarm: SwarmId::from("💬://test"),
             task_id: TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
-            phase: TaskPhase::Offer,
-            body: MessageBody::from("## Task\nport the parser"),
+            state: TaskState::Working,
+            note: Some("on it".to_string()),
         };
         let json = serde_json::to_string(&cmd).unwrap();
-        assert!(json.contains("\"command\":\"task\""));
-        assert!(json.contains("\"phase\":\"offer\""));
+        assert!(json.contains("\"command\":\"a2a_status\""));
+        assert!(json.contains("\"state\":\"working\""));
         let parsed: IpcCommand = serde_json::from_str(&json).unwrap();
         match parsed {
-            IpcCommand::Task { to, phase, .. } => {
-                assert_eq!(to, Nickname::from("calm-otter"));
-                assert_eq!(phase, TaskPhase::Offer);
+            IpcCommand::A2aStatus { state, note, .. } => {
+                assert_eq!(state, TaskState::Working);
+                assert_eq!(note.as_deref(), Some("on it"));
             }
             IpcCommand::Msg { .. }
             | IpcCommand::Poll { .. }
             | IpcCommand::Ping { .. }
+            | IpcCommand::A2aArtifact { .. }
             | IpcCommand::Peers { .. }
             | IpcCommand::StateMerge { .. }
             | IpcCommand::MetaMerge { .. }
             | IpcCommand::MetaGet { .. }
             | IpcCommand::StateGet { .. }
-            | IpcCommand::Notice { .. }
-            | IpcCommand::Info => panic!("expected Task"),
+            | IpcCommand::A2aCall { .. }
+            | IpcCommand::Info => panic!("expected A2aStatus"),
         }
     }
 
     #[test]
     fn ipc_command_peers_round_trip() {
         let cmd = IpcCommand::Peers {
-            swarm: SwarmId::from("💬test"),
+            swarm: SwarmId::from("💬://test"),
         };
         let json = serde_json::to_string(&cmd).unwrap();
         assert!(json.contains("\"command\":\"peers\""));
@@ -597,12 +579,13 @@ mod tests {
             IpcCommand::Msg { .. }
             | IpcCommand::Poll { .. }
             | IpcCommand::Ping { .. }
-            | IpcCommand::Task { .. }
+            | IpcCommand::A2aStatus { .. }
+            | IpcCommand::A2aArtifact { .. }
             | IpcCommand::StateMerge { .. }
             | IpcCommand::MetaMerge { .. }
             | IpcCommand::MetaGet { .. }
             | IpcCommand::StateGet { .. }
-            | IpcCommand::Notice { .. }
+            | IpcCommand::A2aCall { .. }
             | IpcCommand::Info => panic!("expected Peers"),
         }
     }
@@ -610,7 +593,7 @@ mod tests {
     #[test]
     fn ipc_command_poll_no_after_skips_field() {
         let cmd = IpcCommand::Poll {
-            swarm: SwarmId::from("💬test"),
+            swarm: SwarmId::from("💬://test"),
             after: None,
             long: false,
         };
@@ -622,7 +605,7 @@ mod tests {
     #[test]
     fn ipc_command_poll_long_serializes_true() {
         let cmd = IpcCommand::Poll {
-            swarm: SwarmId::from("💬test"),
+            swarm: SwarmId::from("💬://test"),
             after: None,
             long: true,
         };
@@ -668,7 +651,6 @@ mod tests {
                 let (bytes, built) = crate::protocol::message::build_msg_bytes(
                     &swarm,
                     body,
-                    None,
                     &author,
                     &identity,
                     crate::protocol::message::ChainCtx::genesis(),
@@ -679,40 +661,7 @@ mod tests {
                 prop_assert_eq!(&parsed.author, &author);
                 prop_assert_eq!(&parsed.body, &expected_body);
                 prop_assert_eq!(&parsed.swarm, &swarm);
-                prop_assert_eq!(parsed.kind, crate::protocol::MessageKind::Msg { reply: None });
-            }
-
-            #[test]
-            fn prop_build_msg_bytes_reply_round_trip(
-                swarm in arb_swarm(),
-                body in arb_ascii_body(),
-                author in arb_nickname(),
-                target in arb_nickname(),
-            ) {
-                let author = Nickname::new(author).unwrap();
-                let target = Nickname::new(target).unwrap();
-                let body = MessageBody::new(body).unwrap();
-                let expected_body = body.clone();
-                let expected_target = target.clone();
-                let identity = crate::protocol::identity::Identity::generate();
-                let (bytes, built) = crate::protocol::message::build_msg_bytes(
-                    &swarm,
-                    body,
-                    Some(target),
-                    &author,
-                    &identity,
-                    crate::protocol::message::ChainCtx::genesis(),
-                )
-                .unwrap();
-                prop_assert!(!built.id.as_str().is_empty());
-                let parsed = crate::protocol::Message::parse(&bytes).unwrap();
-                prop_assert_eq!(&parsed.author, &author);
-                prop_assert_eq!(&parsed.body, &expected_body);
-                prop_assert_eq!(&parsed.swarm, &swarm);
-                prop_assert_eq!(
-                    parsed.kind,
-                    crate::protocol::MessageKind::Msg { reply: Some(expected_target) }
-                );
+                prop_assert_eq!(parsed.kind, crate::protocol::MessageKind::A2aMsg);
             }
 
             // ── JSON response validity ────────────────────────────
@@ -759,10 +708,9 @@ mod tests {
 
             #[test]
             fn prop_swarm_prefix_is_prefix_of_input(swarm in arb_swarm()) {
-                // The stem drops the `://` separator (it must never reach a
-                // path), so it's a prefix of the separator-stripped id, not
-                // the raw canonical string.
                 let prefix = swarm_prefix(swarm.as_str());
+                // `swarm_prefix` strips the `://` scheme separator before taking
+                // 16 chars, so it prefixes the scheme-stripped id.
                 prop_assert!(swarm.as_str().replace("://", "").starts_with(&prefix));
             }
         }
@@ -791,15 +739,16 @@ mod tests {
                     IpcCommand::Msg { body, .. } => {
                         let _ = resp_tx.send(json_ok(&format!("got: {body}")));
                     }
-                    IpcCommand::Notice { .. }
-                    | IpcCommand::Poll { .. }
+                    IpcCommand::Poll { .. }
                     | IpcCommand::Ping { .. }
-                    | IpcCommand::Task { .. }
+                    | IpcCommand::A2aStatus { .. }
+                    | IpcCommand::A2aArtifact { .. }
                     | IpcCommand::Peers { .. }
                     | IpcCommand::StateMerge { .. }
                     | IpcCommand::MetaMerge { .. }
                     | IpcCommand::MetaGet { .. }
                     | IpcCommand::StateGet { .. }
+                    | IpcCommand::A2aCall { .. }
                     | IpcCommand::Info => {
                         let _ = resp_tx.send(json_error("unexpected command"));
                     }
@@ -811,7 +760,6 @@ mod tests {
         let cmd = IpcCommand::Msg {
             swarm: swarm.clone(),
             body: MessageBody::from("test message"),
-            reply: None,
         };
         let response = send(&cmd, &nickname).await.unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&response).unwrap();

@@ -17,8 +17,6 @@ mod join;
 mod leave;
 mod lookup;
 mod meta;
-mod msg;
-mod notice;
 mod output;
 mod peers;
 mod ping;
@@ -27,7 +25,6 @@ mod ready;
 mod session;
 mod shared;
 mod state;
-mod task;
 
 pub(crate) use a2a::{A2aAction, A2aOpts};
 pub(crate) use create::CreateOpts;
@@ -37,8 +34,6 @@ pub(crate) use forum::ForumOpts;
 pub(crate) use join::JoinOpts;
 pub(crate) use leave::LeaveOpts;
 pub(crate) use meta::{MetaAction, MetaOpts};
-pub(crate) use msg::MsgOpts;
-pub(crate) use notice::NoticeOpts;
 pub(crate) use output::OutputFormat;
 pub(crate) use peers::PeersOpts;
 pub(crate) use ping::PingOpts;
@@ -47,7 +42,6 @@ pub(crate) use ready::ReadyOpts;
 pub(crate) use session::SessionOpts;
 pub(crate) use shared::SharedServerOpts;
 pub(crate) use state::{StateAction, StateOpts};
-pub(crate) use task::TaskOpts;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -126,23 +120,6 @@ pub(crate) enum Commands {
         opts: SessionOpts,
     },
 
-    /// Post a message to a swarm
-    Msg {
-        #[command(flatten)]
-        opts: MsgOpts,
-    },
-
-    /// Post a notice to a swarm.
-    ///
-    /// A notice is a message agents must NEVER auto-reply to (IRC NOTICE
-    /// semantics) — the loop-safe kind for CI results, status broadcasts,
-    /// and log lines. Delivered and surfaced like `msg`, as a
-    /// `"type":"notice"` event.
-    Notice {
-        #[command(flatten)]
-        opts: NoticeOpts,
-    },
-
     /// Check for new messages in a swarm
     Poll {
         #[command(flatten)]
@@ -178,18 +155,6 @@ pub(crate) enum Commands {
     A2a {
         #[command(flatten)]
         opts: A2aOpts,
-    },
-
-    /// Send one leg of a task to a specific peer.
-    ///
-    /// A task is a directed, phased conversation correlated by `--task-id`
-    /// (offer → accept → context → done → confirm/change). The receiving
-    /// daemon surfaces a `task` (or `task_progress`) event on its
-    /// `--output json` stream. `--phase offer` validates `--to` against the
-    /// live roster and errors on an unknown nickname.
-    Task {
-        #[command(flatten)]
-        opts: TaskOpts,
     },
 
     /// List the live participant roster of a swarm.

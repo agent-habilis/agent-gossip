@@ -321,7 +321,7 @@ mod tests {
         let total = ANTIENTROPY_DIGEST_WINDOW_IDS * 3;
         let mut log = MessageLog::new(total);
         for index in 0..total {
-            let mut message = Message::new_message(
+            let mut message = Message::new_a2a_msg(
                 &SwarmId::from("💬test"),
                 &Nickname::from("author"),
                 MessageBody::from(format!("m{index}").as_str()),

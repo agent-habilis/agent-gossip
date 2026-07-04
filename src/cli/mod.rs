@@ -29,9 +29,8 @@ mod session;
 
 pub(crate) use args::Cli;
 use args::{
-    A2aAction, Commands, CreateOpts, ForumOpts, MetaAction, MetaOpts, MsgOpts, NoticeOpts,
-    OutputFormat, PeersOpts, PingOpts, PollOpts, ReadyOpts, SharedServerOpts, StateAction,
-    StateOpts, TaskOpts,
+    A2aAction, Commands, CreateOpts, ForumOpts, MetaAction, MetaOpts, OutputFormat, PeersOpts,
+    PingOpts, PollOpts, ReadyOpts, SharedServerOpts, StateAction, StateOpts,
 };
 
 /// `join` has no `--public`/`--name`: both are encoded in the `💬…`
@@ -89,11 +88,8 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
         }
         Commands::Leave { opts } => session::leave(opts).await,
         Commands::Session { opts } => session::session(opts).await,
-        Commands::Msg { opts } => msg(opts).await,
-        Commands::Notice { opts } => notice(opts).await,
         Commands::Poll { opts } => poll(opts).await,
         Commands::Ping { opts } => ping(opts).await,
-        Commands::Task { opts } => task(opts).await,
         Commands::A2a { opts } => Box::pin(a2a(opts.action)).await,
         Commands::Peers { opts } => peers(opts).await,
         // Boxed like the event-loop futures above: the discover arm holds a
@@ -171,6 +167,7 @@ async fn run_session(resolved: Resolved, shared: SharedServerOpts) -> Result<()>
         shared.state_file,
         out,
         drift.as_deref(),
+        shared.a2a_serve,
     )
     .await?;
     // Advertising (`create --advertise`): start the re-broadcast task. It
@@ -288,61 +285,174 @@ fn finish_send(resp: &str, what: &str) -> Result<MessageId> {
 }
 
 /// Post a message to a swarm via the running server's IPC socket.
-async fn msg(opts: MsgOpts) -> Result<()> {
-    let MsgOpts {
-        swarm,
-        nickname,
-        text,
-        reply,
-    } = opts;
-    let cmd = IpcCommand::Msg {
-        swarm,
-        body: text,
-        reply,
-    };
-
-    let resp = ipc::send(&cmd, &nickname).await?;
-    let id = finish_send(&resp, "message")?;
-    // `msg` has no `--output` flag — always the human confirmation.
-    // No nickname is rendered here (only `message posted` + id).
-    let out = Output::new(OutputMode::Human, false, None);
-    out.msg_posted(&id);
-
-    Ok(())
+#[expect(
+    clippy::too_many_lines,
+    reason = "flat dispatch over the a2a subcommand: the tunnel arms (expose/connect/discover) and the messaging arms (call/status/artifact) are each self-contained, so splitting would just scatter the one match"
+)]
+async fn a2a(action: A2aAction) -> Result<()> {
+    match action {
+        A2aAction::Expose {
+            to,
+            lookups,
+            advertise,
+            password,
+            loopback,
+            output,
+        } => {
+            let json = matches!(output, OutputFormat::Json);
+            let password = password::resolve_password(password, /* confirm */ true, json)?;
+            let advertise = crate::protocol::swarm::DirectorySelection::from_flag(advertise);
+            Box::pin(crate::a2a::expose(
+                &to,
+                lookups.to_set(),
+                advertise,
+                loopback,
+                json,
+                password,
+            ))
+            .await
+        }
+        A2aAction::Connect {
+            ticket,
+            port,
+            password,
+            output,
+        } => {
+            let json = matches!(output, OutputFormat::Json);
+            // Prompt when the ticket needs a password and none was passed
+            // (mirrors the swarm-join UX); otherwise resolve the given flag.
+            let password = match password {
+                None if crate::a2a::ticket_requires_password(&ticket) => {
+                    Some(password::require_password(json, "ticket")?)
+                }
+                other => password::resolve_password(other, /* confirm */ false, json)?,
+            };
+            crate::a2a::connect(&ticket, port, json, password).await
+        }
+        A2aAction::Discover {
+            directory,
+            port,
+            lookups,
+            password,
+            output,
+        } => {
+            let json = matches!(output, OutputFormat::Json);
+            Box::pin(a2a_discover::discover(
+                directory,
+                port,
+                lookups.to_set(),
+                password,
+                json,
+            ))
+            .await
+        }
+        A2aAction::Call {
+            swarm,
+            nickname,
+            to,
+            method,
+            text,
+            task_id,
+            params,
+            timeout_secs,
+        } => {
+            // No peer + SendMessage = swarm broadcast chat (fire-and-forget).
+            if to.is_none() && method == "SendMessage" {
+                let text = text.ok_or_else(|| {
+                    anyhow::anyhow!("broadcast SendMessage needs --text (or a --to peer)")
+                })?;
+                let body = crate::protocol::MessageBody::new(text)
+                    .map_err(|error| anyhow::anyhow!("{error}"))?;
+                let resp = ipc::send(&IpcCommand::Msg { swarm, body }, &nickname).await?;
+                let id = finish_send(&resp, "message")?;
+                Output::new(OutputMode::Human, false, None).msg_posted(&id);
+                return Ok(());
+            }
+            let to = to.ok_or_else(|| {
+                anyhow::anyhow!(
+                    "--to <peer> is required for an RPC call (only broadcast SendMessage omits it)"
+                )
+            })?;
+            // Compose params from --text/--task-id sugar, unless raw --params given.
+            let params: serde_json::Value = match params {
+                Some(raw) => serde_json::from_str(&raw)
+                    .map_err(|error| anyhow::anyhow!("--params must be valid JSON: {error}"))?,
+                None => compose_a2a_params(&method, &swarm, text.as_deref(), task_id.as_ref()),
+            };
+            let cmd = IpcCommand::A2aCall {
+                swarm,
+                to,
+                method,
+                params,
+                timeout_secs,
+            };
+            let resp = ipc::send(&cmd, &nickname).await?;
+            println!("{resp}");
+            let parsed: serde_json::Value = serde_json::from_str(&resp)?;
+            if !parsed["error"].is_null() {
+                std::process::exit(1);
+            }
+            Ok(())
+        }
+        A2aAction::Status {
+            swarm,
+            nickname,
+            task_id,
+            state,
+            note,
+        } => {
+            let cmd = IpcCommand::A2aStatus {
+                swarm,
+                task_id,
+                state,
+                note,
+            };
+            let resp = ipc::send(&cmd, &nickname).await?;
+            let id = finish_send(&resp, "task status")?;
+            Output::new(OutputMode::Human, false, None).msg_posted(&id);
+            Ok(())
+        }
+        A2aAction::Artifact {
+            swarm,
+            nickname,
+            task_id,
+            text,
+        } => {
+            let cmd = IpcCommand::A2aArtifact {
+                swarm,
+                task_id,
+                text,
+            };
+            let resp = ipc::send(&cmd, &nickname).await?;
+            let id = finish_send(&resp, "task artifact")?;
+            Output::new(OutputMode::Human, false, None).msg_posted(&id);
+            Ok(())
+        }
+    }
 }
 
-/// Post a notice (the no-auto-reply message class) via the running
-/// server's IPC socket. Mirrors [`msg`] in every respect but the kind.
-async fn notice(opts: NoticeOpts) -> Result<()> {
-    let NoticeOpts {
-        swarm,
-        nickname,
-        text,
-        reply,
-    } = opts;
-    let cmd = IpcCommand::Notice {
-        swarm,
-        body: text,
-        reply,
-    };
-
-    let resp = ipc::send(&cmd, &nickname).await?;
-    let id = finish_send(&resp, "notice")?;
-    let out = Output::new(OutputMode::Human, false, None);
-    out.msg_posted(&id);
-
-    Ok(())
+fn compose_a2a_params(
+    method: &str,
+    swarm: &crate::protocol::SwarmId,
+    text: Option<&str>,
+    task_id: Option<&crate::a2a::TaskId>,
+) -> serde_json::Value {
+    match method {
+        "SendMessage" | "SendStreamingMessage" => {
+            let message =
+                crate::a2a::gossip::send_message_payload(swarm, task_id, text.unwrap_or_default());
+            serde_json::json!({ "message": message })
+        }
+        "GetTask" | "CancelTask" | "SubscribeToTask" => task_id.map_or_else(
+            || serde_json::json!({}),
+            |id| serde_json::json!({ "id": id }),
+        ),
+        _ => serde_json::json!({}),
+    }
 }
 
-/// Retrieve buffered messages from a running swarm process via IPC.
-/// `poll` always emits the raw IPC JSON; the `--output` flag is accepted
-/// for symmetry but not consulted here.
-///
-/// With `--long` the daemon parks each read up to its ~60s cap; an empty
-/// return just means the window elapsed quietly, so the identical request
-/// (same `--after` cursor) is re-issued until events arrive — from the
-/// caller's side one blocking call with no timeout. An IPC error (daemon
-/// gone) propagates instead of retrying.
+/// Query the running daemon's live participant roster. Always emits the
+/// raw IPC JSON (`{ok, participants, participant_count}`), like `poll`.
 async fn poll(opts: PollOpts) -> Result<()> {
     let PollOpts {
         swarm,
@@ -401,99 +511,6 @@ async fn ping(opts: PingOpts) -> Result<()> {
     Ok(())
 }
 
-/// Send one leg of a task via the running daemon's IPC socket.
-/// The receiving daemon surfaces a `task` (or `task_progress`) event; this
-/// command itself only confirms the send (or reports an
-/// unknown-participant / oversize error).
-async fn task(opts: TaskOpts) -> Result<()> {
-    let TaskOpts {
-        swarm,
-        nickname,
-        to,
-        task_id,
-        phase,
-        text,
-    } = opts;
-    let cmd = IpcCommand::Task {
-        swarm,
-        to,
-        task_id,
-        phase,
-        body: text,
-    };
-    let resp = ipc::send(&cmd, &nickname).await?;
-    let id = finish_send(&resp, "task")?;
-    let out = Output::new(OutputMode::Human, false, None);
-    out.msg_posted(&id);
-    Ok(())
-}
-
-/// `agent-gossip a2a` — bridge a local A2A HTTP server to a peer over the swarm, an
-/// off-gossip direct link with no daemon. `expose` serves a local origin and
-/// prints the `connect` command; `connect` redeems a ticket and binds a local
-/// endpoint a client points at.
-async fn a2a(action: A2aAction) -> Result<()> {
-    match action {
-        A2aAction::Expose {
-            to,
-            lookups,
-            advertise,
-            password,
-            loopback,
-            output,
-        } => {
-            let json = matches!(output, OutputFormat::Json);
-            let password = password::resolve_password(password, /* confirm */ true, json)?;
-            let advertise = crate::protocol::swarm::DirectorySelection::from_flag(advertise);
-            Box::pin(crate::a2a::expose(
-                &to,
-                lookups.to_set(),
-                advertise,
-                loopback,
-                json,
-                password,
-            ))
-            .await
-        }
-        A2aAction::Connect {
-            ticket,
-            port,
-            password,
-            output,
-        } => {
-            let json = matches!(output, OutputFormat::Json);
-            // Prompt when the ticket needs a password and none was passed
-            // (mirrors the swarm-join UX); otherwise resolve the given flag.
-            let password = match password {
-                None if crate::a2a::ticket_requires_password(&ticket) => {
-                    Some(password::require_password(json, "ticket")?)
-                }
-                other => password::resolve_password(other, /* confirm */ false, json)?,
-            };
-            crate::a2a::connect(&ticket, port, json, password).await
-        }
-        A2aAction::Discover {
-            directory,
-            port,
-            lookups,
-            password,
-            output,
-        } => {
-            let json = matches!(output, OutputFormat::Json);
-            Box::pin(a2a_discover::discover(
-                directory,
-                port,
-                lookups.to_set(),
-                password,
-                json,
-            ))
-            .await
-        }
-    }
-}
-
-/// Query the running daemon's live participant roster. Always emits the
-/// raw IPC JSON (`{ok, participants, participant_count}`), like `poll`.
 async fn peers(opts: PeersOpts) -> Result<()> {
     let PeersOpts {
         swarm,

@@ -7,8 +7,6 @@ use clap::Parser;
 
 use crate::util::consts;
 
-use crate::util::tuning::DEFAULT_MAX_DIRECT_PEERS;
-
 use super::output::OutputFormat;
 
 /// Shared options for server commands.
@@ -30,12 +28,23 @@ pub(crate) struct SharedServerOpts {
     #[arg(long, default_value_t = false)]
     pub filter_self: bool,
 
-    /// Soft ceiling on tracked peer addresses (gossip relays beyond
-    /// this). Note: the gossip overlay maintains HyParView's
-    /// `active_view_capacity` (5) active neighbors regardless — this is
-    /// not the live connection count.
-    #[arg(long, default_value_t = DEFAULT_MAX_DIRECT_PEERS)]
+    /// Cap on live direct connections (the gossip overlay's active-neighbor
+    /// set). The mesh holds at most this many QUIC links and relays to peers
+    /// beyond it; swarms up to this size form a full mesh with no membership
+    /// churn.
+    #[arg(long, default_value_t = consts::GOSSIP_ACTIVE_VIEW_CAPACITY)]
     pub max_peers: usize,
+
+    /// Serve the A2A JSON-RPC 2.0 binding on 127.0.0.1 (off by default).
+    ///
+    /// Optional value = the TCP port; omit it (or pass 0) for an
+    /// OS-assigned port. The bound port and the per-daemon bearer token are
+    /// written to the session state file and the `ready` event
+    /// (`a2a_port`), so a local A2A client can discover both. The card is
+    /// served unauthenticated at `/.well-known/agent-card.json`; every
+    /// JSON-RPC call requires `Authorization: Bearer <token>`.
+    #[arg(long = "a2a-serve", num_args = 0..=1, default_missing_value = "0")]
+    pub a2a_serve: Option<u16>,
 
     /// Override the session state-file path. The daemon writes
     /// `{swarm, name, nickname, participant_count, ready, last_updated}` to a
@@ -112,15 +121,6 @@ pub(crate) struct SharedServerOpts {
     #[arg(long, hide = true, default_value_t = false)]
     pub directory_private: bool,
 
-    /// HyParView active-view capacity (direct gossip neighbors). Set *small*
-    /// (e.g. 5) to deliberately reproduce the gossip partial-mesh churn / leak.
-    #[arg(long, hide = true, default_value_t = consts::GOSSIP_ACTIVE_VIEW_CAPACITY)]
-    pub active_view_capacity: usize,
-
-    /// HyParView passive-view capacity (healing/shuffle contact pool).
-    #[arg(long, hide = true, default_value_t = consts::GOSSIP_PASSIVE_VIEW_CAPACITY)]
-    pub passive_view_capacity: usize,
-
     /// Disable the unicast (point-to-point) transport: force every message onto
     /// gossip, the pre-unicast behavior.
     #[arg(long, hide = true, default_value_t = false)]
@@ -159,8 +159,6 @@ impl SharedServerOpts {
             directory_expiry_secs: self.directory_expiry_secs,
             antientropy_max_resend: self.antientropy_max_resend,
             directory_private: self.directory_private,
-            gossip_active_view_capacity: self.active_view_capacity,
-            gossip_passive_view_capacity: self.passive_view_capacity,
             unicast_enabled: !self.no_unicast,
             gossip_directed_enabled: !self.no_gossip_directed,
         }

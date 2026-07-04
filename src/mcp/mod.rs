@@ -9,8 +9,9 @@
 //! - `discover_swarms`
 //! - `leave_swarm`
 //! - `send_message`
-//! - `send_notice`
-//! - `send_task`
+//! - `a2a_call`
+//! - `task_status`
+//! - `task_artifact`
 //! - `fetch_messages`
 //! - `apply_state_merge`
 //! - `get_state`
@@ -54,15 +55,14 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 
+use crate::a2a::TaskId;
 use crate::daemon::derive_forum_swarm;
 use crate::daemon::state::RosterEntry;
 use crate::embed::{CreateConfig, CreateError, Directory, ForumConfig, JoinConfig, JoinError};
 use crate::protocol::swarm::{LookupSet, RelayLadder, RelaySelection, SwarmName};
-use crate::protocol::{
-    Message, MessageBody, MessageId, Nickname, SwarmId, TaskId, TaskPhase, TaskPhaseError,
-};
+use crate::protocol::{Message, MessageBody, MessageId, Nickname, SwarmId};
 use crate::resolver::JoinTarget;
-use crate::util::tuning::DEFAULT_MAX_DIRECT_PEERS;
+use crate::util::consts::GOSSIP_ACTIVE_VIEW_CAPACITY;
 use session::Session;
 
 /// Run the MCP server over stdio. Blocks until the client disconnects.
@@ -189,11 +189,9 @@ struct DiscoverSwarmsArgs {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct SendMessageArgs {
     /// Message body. UTF-8; newlines/tabs allowed, other control
-    /// characters rejected.
+    /// characters rejected. Broadcast to the whole swarm (A2A is
+    /// point-to-point, so directed 1:1 is a task via `a2a_call`, not chat).
     text: String,
-    /// Optional target nickname to address this message to.
-    #[serde(default)]
-    reply: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -214,37 +212,64 @@ struct FetchMessagesArgs {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-struct SendTaskArgs {
-    /// Addressee: the peer's nickname this task leg is directed at.
-    /// For `phase: "offer"` it must be a current participant.
-    to: String,
-    /// Task correlation id (UUID): mint a fresh one for the opening
-    /// `offer`, then echo the same id on every later leg of that task.
+struct TaskStatusArgs {
+    /// The task id (UUID) you're serving.
     task_id: String,
-    /// Lifecycle phase: "offer" (the brief), "accept"/"decline" (entry),
-    /// "context" (Q&A), "progress" (a done/total beat), "done" (request
-    /// close + verification instructions), "confirm"/"change" (the
-    /// initiator's verify decision), "cancel".
-    phase: String,
-    /// Leg body: the brief for "offer"; a question/answer for "context";
-    /// `done/total` (e.g. "35/100") for "progress"; the summary +
-    /// verification instructions for "done"; a reason for the rest.
+    /// The A2A task state: "working", "input-required" (a question, or
+    /// "please review" after an artifact), "completed", "failed", "canceled".
+    state: String,
+    /// Optional note — the status message (a question, a completion summary,
+    /// a failure reason), or a `done/total` progress fraction like "35/100".
+    #[serde(default)]
+    note: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct TaskArtifactArgs {
+    /// The task id (UUID) you're serving.
+    task_id: String,
+    /// The result text.
     text: String,
 }
 
-/// Parse a task phase string into [`TaskPhase`], delegating to its
-/// `FromStr` (the single phase mapping) and surfacing a bad value as MCP
-/// `invalid_params`.
-fn parse_task_phase(raw: &str) -> Result<TaskPhase, McpError> {
-    raw.parse()
-        .map_err(|error: TaskPhaseError| McpError::invalid_params(error.to_string(), None))
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct A2aCallArgs {
+    /// The peer to call (a current participant).
+    to: String,
+    /// The A2A JSON-RPC method. The peer serves a safe subset:
+    /// "`GetTask`", "`ListTasks`", "`CancelTask`" (only a task you're a
+    /// party to), "swarm/state.get", "swarm/meta.get", and "`SendMessage`"
+    /// directed at the peer (it ingests the message and returns the Task).
+    method: String,
+    /// The JSON-RPC params object (default `{}`).
+    #[serde(default)]
+    params: serde_json::Value,
+    /// How long to wait for the peer's response, in seconds (default 15).
+    #[serde(default = "default_a2a_timeout_secs")]
+    timeout_secs: u64,
+}
+
+fn default_a2a_timeout_secs() -> u64 {
+    15
+}
+
+/// Parse an A2A task state from its friendly (kebab-case) name — the agent
+/// surface, not the A2A wire's `ProtoJSON` `TASK_STATE_*`.
+fn parse_task_state(raw: &str) -> Result<crate::a2a::TaskState, McpError> {
+    crate::a2a::TaskState::from_friendly(raw).ok_or_else(|| {
+        McpError::invalid_params(
+            format!(
+                "invalid task state '{raw}' (working|input-required|completed|failed|canceled)"
+            ),
+            None,
+        )
+    })
 }
 
 /// Parse a task id string into [`TaskId`].
 fn parse_task_id(raw: &str) -> Result<TaskId, McpError> {
-    raw.parse().map_err(|error: crate::protocol::TaskIdError| {
-        McpError::invalid_params(error.to_string(), None)
-    })
+    raw.parse()
+        .map_err(|error: String| McpError::invalid_params(error, None))
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -330,10 +355,10 @@ struct PingResult {
 #[derive(Debug, Serialize)]
 struct SendMessageResult {
     id: MessageId,
-    /// Full authoritative record of the message just sent (id,
-    /// author, ts, body, reply) — same shape `fetch_messages`
-    /// returns. Agents should read this instead of issuing a
-    /// follow-up fetch just to learn their own timestamp.
+    /// Full authoritative record of the frame just sent (id, author, ts,
+    /// `to`, and `body` carrying the serialized A2A Message payload).
+    /// Agents should read this instead of issuing a follow-up fetch just
+    /// to learn their own timestamp.
     message: Message,
 }
 
@@ -426,7 +451,7 @@ impl AgentSwarmServer {
             },
             advertise: args.advertise,
             directory,
-            max_peers: DEFAULT_MAX_DIRECT_PEERS,
+            max_peers: GOSSIP_ACTIVE_VIEW_CAPACITY,
             password: args.password,
         };
         let session = Session::create(cfg).await.map_err(|error| match error {
@@ -464,7 +489,7 @@ impl AgentSwarmServer {
         let session = Session::join(JoinConfig {
             target,
             nickname,
-            max_peers: DEFAULT_MAX_DIRECT_PEERS,
+            max_peers: GOSSIP_ACTIVE_VIEW_CAPACITY,
             password: args.password,
         })
         .await
@@ -571,7 +596,7 @@ impl AgentSwarmServer {
     }
 
     #[tool(
-        description = "Broadcast a message to the current swarm. Returns the new message's id and a full echo of the authoritative record (id, author, ts, body, reply) — same shape `fetch_messages` returns — so the agent doesn't need a follow-up fetch just to see its own send."
+        description = "Broadcast a message to the current swarm. Returns the new message's id and a full echo of the authoritative record (id, author, ts, to, and body carrying the serialized A2A Message payload) so the agent doesn't need a follow-up fetch just to see its own send."
     )]
     async fn send_message(
         &self,
@@ -579,42 +604,9 @@ impl AgentSwarmServer {
     ) -> Result<CallToolResult, McpError> {
         let guard = self.session.lock().await;
         let session = guard.as_ref().ok_or_else(not_in_swarm_error)?;
-        let reply = match args.reply {
-            None => None,
-            Some(raw) => Some(Nickname::new(raw).map_err(|error| {
-                McpError::invalid_params(format!("invalid reply target: {error}"), None)
-            })?),
-        };
         let body = MessageBody::new(args.text)
             .map_err(|error| McpError::invalid_params(format!("{error}"), None))?;
-        let (id, message) = session
-            .send_message(body, reply)
-            .await
-            .map_err(to_mcp_error)?;
-        ok_json(SendMessageResult { id, message })
-    }
-
-    #[tool(
-        description = "Broadcast a notice to the current swarm — a message agents must NEVER auto-reply to (loop prevention). Use it for status reports, CI results, log lines: anything informational that must not trigger responses. Delivered and surfaced like send_message but as type \"notice\"; same args and return shape."
-    )]
-    async fn send_notice(
-        &self,
-        Parameters(args): Parameters<SendMessageArgs>,
-    ) -> Result<CallToolResult, McpError> {
-        let guard = self.session.lock().await;
-        let session = guard.as_ref().ok_or_else(not_in_swarm_error)?;
-        let reply = match args.reply {
-            None => None,
-            Some(raw) => Some(Nickname::new(raw).map_err(|error| {
-                McpError::invalid_params(format!("invalid reply target: {error}"), None)
-            })?),
-        };
-        let body = MessageBody::new(args.text)
-            .map_err(|error| McpError::invalid_params(format!("{error}"), None))?;
-        let (id, message) = session
-            .send_notice(body, reply)
-            .await
-            .map_err(to_mcp_error)?;
+        let (id, message) = session.send_message(body).await.map_err(to_mcp_error)?;
         ok_json(SendMessageResult { id, message })
     }
 
@@ -712,36 +704,69 @@ impl AgentSwarmServer {
     }
 
     #[tool(
-        description = "Send one leg of a task to a specific peer. A task is a directed, phased conversation correlated by `task_id` (mint a UUID for the opening \"offer\", echo it on every later leg). Phases: \"offer\" (brief), \"accept\"/\"decline\" (entry), \"context\" (Q&A), \"progress\" (a done/total beat, e.g. text \"35/100\"), \"done\" (request close + verification instructions), \"confirm\"/\"change\" (verify), \"cancel\". The \"offer\" body must begin with a flow marker on its own first line — \"[[task]]\" (report-back: the worker returns a result on \"done\") or \"[[handover]]\" (walk-away: the worker runs it itself, no result); the receiver strips it. For \"offer\" the `to` nickname must be a current participant (check `swarm_info`). Returns the new message id and authoritative echo."
+        description = "As the WORKER on a task you're serving, emit a TaskStatusUpdate (the A2A streaming plane). Use \"working\" to accept/resume, \"input-required\" to ask the initiator a question or (after `task_artifact`) request approval, \"completed\" to close it after the initiator approves, \"failed\"/\"canceled\" to end it. A directed task is created by `a2a_call` message/send (the worker mints the id and returns the Task); drive it forward with this. `note` becomes the status message (a question / summary / reason)."
     )]
-    async fn send_task(
+    async fn task_status(
         &self,
-        Parameters(args): Parameters<SendTaskArgs>,
+        Parameters(args): Parameters<TaskStatusArgs>,
     ) -> Result<CallToolResult, McpError> {
         let guard = self.session.lock().await;
         let session = guard.as_ref().ok_or_else(not_in_swarm_error)?;
-        let to = Nickname::new(args.to).map_err(|error| {
-            McpError::invalid_params(format!("invalid task target: {error}"), None)
-        })?;
         let task_id = parse_task_id(&args.task_id)?;
-        let phase = parse_task_phase(&args.phase)?;
-        let body = MessageBody::new(args.text)
-            .map_err(|error| McpError::invalid_params(format!("{error}"), None))?;
-        // The daemon's `broadcast_task` validates the addressee (offer
-        // only), so we don't repeat it here. An unknown participant comes back
-        // as an error; re-classify it as `invalid_params` since it's bad input,
-        // not an internal fault.
-        match session.send_task(to, task_id, phase, body).await {
+        let state = parse_task_state(&args.state)?;
+        match session.task_status(task_id, state, args.note).await {
             Ok((id, message)) => ok_json(SendMessageResult { id, message }),
-            Err(error) => {
-                let message = error.to_string();
-                if message.contains("unknown participant") {
-                    Err(McpError::invalid_params(message, None))
-                } else {
-                    Err(McpError::internal_error(message, None))
-                }
-            }
+            Err(error) => Err(to_mcp_error(error)),
         }
+    }
+
+    #[tool(
+        description = "As the WORKER on a task you're serving, emit a TaskArtifactUpdate — the result. Parks the task in input-required for the initiator's approval; on approval, follow with `task_status` \"completed\"."
+    )]
+    async fn task_artifact(
+        &self,
+        Parameters(args): Parameters<TaskArtifactArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let guard = self.session.lock().await;
+        let session = guard.as_ref().ok_or_else(not_in_swarm_error)?;
+        let task_id = parse_task_id(&args.task_id)?;
+        match session.task_artifact(task_id, args.text).await {
+            Ok((id, message)) => ok_json(SendMessageResult { id, message }),
+            Err(error) => Err(to_mcp_error(error)),
+        }
+    }
+
+    #[tool(
+        description = "Call a peer's A2A server over gossip (request/response) and return its JSON-RPC response. The peer serves a SAFE subset of A2A v1.0 (PascalCase) methods: \"GetTask\" (params {id}), \"ListTasks\", \"CancelTask\" (params {id}; only for a task you're a party to), \"SubscribeToTask\" (params {id}; snapshot + the worker's pushed frames), \"swarm/state.get\", \"swarm/meta.get\", and \"SendMessage\" (params {message: <A2A Message>}) directed at that peer — no taskId opens a task the worker mints and returns as {\"task\": <Task>}; a taskId is a follow-up. Global-state writes (swarm/state.merge, swarm/meta.merge) and broadcast SendMessage are refused. Blocks until the peer answers or times out; the result is the JSON-RPC response object ({result} or {error})."
+    )]
+    async fn a2a_call(
+        &self,
+        Parameters(args): Parameters<A2aCallArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let guard = self.session.lock().await;
+        let session = guard.as_ref().ok_or_else(not_in_swarm_error)?;
+        let peer = Nickname::new(args.to)
+            .map_err(|error| McpError::invalid_params(format!("invalid peer: {error}"), None))?;
+        let response = session
+            .a2a_call(
+                peer,
+                args.method,
+                args.params,
+                Duration::from_secs(args.timeout_secs),
+            )
+            .await
+            .map_err(to_mcp_error)?;
+        // Surface a JSON-RPC error as a tool error so the agent sees it fail.
+        if !response["error"]["message"].is_null() {
+            return Err(McpError::internal_error(
+                response["error"]["message"]
+                    .as_str()
+                    .unwrap_or("a2a call failed")
+                    .to_string(),
+                None,
+            ));
+        }
+        ok_json(&response)
     }
 
     #[tool(
@@ -825,8 +850,8 @@ never for a one-shot check.
 
 EVENT SHAPE. Each entry in `fetch_messages().messages` is a JSON object. Chat \
 and presence share `event:\"message\"` and are distinguished by a `type` field \
-(`type:\"msg\"`, `type:\"notice\"`, or `type:\"presence\"`, with \
-`subtype:\"joined\"/\"left\"/\"alive\"` on presence). Everything else is discriminated by `event` directly \
+(`type:\"msg\"` or `type:\"presence\"`, with `subtype:\"joined\"/\"left\"/\"alive\"` \
+on presence). Everything else is discriminated by `event` directly \
 (`state`, `task`, `task_progress`, `ping_report`, `peer_timeout`, \
 `peer_return`, `info`, `error`, `ready`, …). Most entries also carry `self` \
 (true if you authored it) and a pre-built `display` string. You rarely branch on these \
@@ -843,20 +868,16 @@ WHICH EVENTS TO SHOW. Skip silently (zero output): `event` of `info`, `error`, \
 `msg_posted`, `ready`, or `fork`; a `type:\"presence\"` with `subtype:\"alive\"`; \
 and any entry with `self:true` EXCEPT your own `type:\"msg\"` (a `msg` with \
 `self:true` is your outbound message echoed back — emit its `display`; that echo \
-is the send confirmation). Show (emit `display` verbatim): a peer's `type:\"msg\"` \
-or `type:\"notice\"`, a `type:\"presence\"` joined/left, `event:\"peer_timeout\"`, \
-`event:\"peer_return\"`, and `event:\"ping_report\"` (its `display` is the full RTT \
-table). Drive, do not print: an `event:\"task\"` (see TASKS); \
-`event:\"task_progress\"` is a widget beat, never a chat line.
+is the send confirmation). Show (emit `display` verbatim): a peer's `type:\"msg\"`, \
+a `type:\"presence\"` joined/left, `event:\"peer_timeout\"`, `event:\"peer_return\"`, \
+and `event:\"ping_report\"` (its `display` is the full RTT table). Drive, do not \
+print: an `event:\"task\"` (see TASKS); `event:\"task_progress\"` is a \
+widget beat, never a chat line.
 
 REPLY to a peer's `msg` (no `reply`, not directed elsewhere) when you can add \
 real information or are asked a direct question, and only at >=90% confidence (a \
 wrong answer is worse than silence) — `send_message` with `reply` set to the \
-asker's nickname. Keep answers concise first, expand only if asked. NEVER reply \
-to a `type:\"notice\"` — a notice is informational by contract (that is the \
-whole point of the kind: it can never start a reply loop); show its `display` \
-and move on. Conversely, send with `send_notice` (not `send_message`) anything \
-of yours that needs no response: status reports, CI results, log lines.
+asker's nickname. Keep answers concise first, expand only if asked.
 
 PING/PONG is handled entirely by the daemon — it auto-answers a peer's ping and \
 emits the `ping_report`. Do NOT send a pong yourself. To measure RTT yourself, \

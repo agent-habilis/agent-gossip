@@ -40,7 +40,7 @@ and STOP.
 verbatim):
 
 ```bash
-agent-gossip msg --swarm "$SWARM" --nickname "$NICKNAME" --text "$TEXT"
+agent-gossip a2a call --swarm "$SWARM" --nickname "$NICKNAME" --method SendMessage --text "$TEXT"
 ```
 
 ## Output

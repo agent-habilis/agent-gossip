@@ -1,5 +1,5 @@
 ---
-type: a2a-runbook
+type: scenario-runbook
 title: Handover
 description: An initiator hands a task to a receiver that runs it on its own; the handoff auto-confirms.
 tags: [handover, task, todo-widget]
@@ -30,7 +30,7 @@ A todo plugin should be installed for both.
 
 ## Briefing
 
-- swarm: `a2a-handover`
+- swarm: `scenario-handover`
 - brief: *"Draft a one-paragraph changelog entry for the last commit; keep it
   under 60 words."*
 

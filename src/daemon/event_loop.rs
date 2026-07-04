@@ -35,7 +35,8 @@ use crate::util::tuning::{
 use super::config::{CoHostPolicy, DriverMode, EventLoopConfig, SessionRequest};
 use super::ctx::HandlerCtx;
 use super::state::EventLoopState;
-use super::{ipc, setup, task, timers};
+use super::{ipc, setup, timers};
+use crate::a2a::task;
 
 /// Never returns normally — exits the process on ctrl-c / SIGTERM.
 pub(crate) async fn run(cfg: EventLoopConfig) -> Result<()> {
@@ -55,9 +56,10 @@ pub(crate) async fn run(cfg: EventLoopConfig) -> Result<()> {
         rung_rx,
         cohost,
         state_file,
+        unicast_rx,
+        a2a,
         live_count,
         driver,
-        unicast_rx,
     } = cfg;
 
     // Every driver-derived fact in one place. Only the CLI exits the
@@ -100,6 +102,7 @@ pub(crate) async fn run(cfg: EventLoopConfig) -> Result<()> {
             })
         })
         .map(|path| StateFile::new(path, &swarm_str, &author, &swarm_name));
+    let (a2a_port, a2a_rx) = spawn_a2a(a2a, state_file.as_ref());
     let mut state = EventLoopState::new(state_file, started, identity);
     // Replace the detached default pool with one wired to this endpoint, so
     // directed sends can dial peers over the unicast ALPN.
@@ -198,9 +201,175 @@ pub(crate) async fn run(cfg: EventLoopConfig) -> Result<()> {
         external_msg_tx,
         quit_rx,
         exit_on_quit,
+        a2a_rx,
+        a2a_port,
         unicast_rx: Some(unicast_rx),
     }))
     .await
+}
+
+/// The alive tick: note the gap, then broadcast the keepalive presence.
+async fn alive_arm(
+    anchors: &mut TickAnchors,
+    state: &mut EventLoopState,
+    sender: &GossipSender,
+    swarm: &SwarmId,
+    author: &Nickname,
+) {
+    timers::note_tick_gap(
+        "alive",
+        &mut anchors.alive,
+        &mut anchors.alive_wall,
+        Duration::from_secs(ALIVE_INTERVAL_SECS),
+    );
+    lifecycle::heartbeat::tick_alive(state, sender, swarm, author).await;
+}
+
+/// The anti-entropy tick: note the gap, advertise the chat digest, then both
+/// channel digests, so peers can request anything we hold that they miss.
+async fn antientropy_arm(
+    anchors: &mut TickAnchors,
+    state: &mut EventLoopState,
+    sender: &GossipSender,
+    swarm: &SwarmId,
+    author: &Nickname,
+) {
+    timers::note_tick_gap(
+        "antientropy",
+        &mut anchors.antientropy,
+        &mut anchors.antientropy_wall,
+        Duration::from_secs(ANTIENTROPY_INTERVAL_SECS),
+    );
+    gossip::antientropy::broadcast_digest(state, sender, swarm, author).await;
+    gossip::antientropy::broadcast_state_digests(state, sender, swarm, author).await;
+}
+
+/// One typed in-process session request (embed / MCP): dispatch it and
+/// refresh the heartbeat clock when it broadcast. `false` means the channel
+/// closed and polling should stop.
+async fn handle_session_arm(
+    req: Option<SessionRequest>,
+    swarm: &SwarmId,
+    author: &Nickname,
+    state: &mut EventLoopState,
+    sender: &GossipSender,
+    output: &output::Output,
+) -> bool {
+    let Some(req) = req else {
+        return false;
+    };
+    if gossip::handle_session_request(req, swarm, author, state, sender, output).await {
+        state.last_sent_at = Instant::now();
+    }
+    true
+}
+
+/// The sweep-tick arm: note the gap, evict silent peers, then run the task
+/// timers that ride the sweep cadence (each gates on its own elapsed-time
+/// budget) — evict idle-debounce-expired tasks, then keepalive the ones
+/// whose ball we still hold.
+async fn sweep_arm(
+    anchors: &mut TickAnchors,
+    state: &mut EventLoopState,
+    sender: &GossipSender,
+    swarm: &SwarmId,
+    author: &Nickname,
+    output: &output::Output,
+) {
+    timers::note_tick_gap(
+        "sweep",
+        &mut anchors.sweep,
+        &mut anchors.sweep_wall,
+        Duration::from_secs(sweep_interval_secs()),
+    );
+    lifecycle::heartbeat::tick_sweep(state, output);
+    task::tick_task_sweep(state, sender, swarm, author, output).await;
+    task::tick_task_keepalive(state, sender, swarm, author).await;
+}
+
+/// One `--a2a-serve` JSON-RPC request from the HTTP task: execute against
+/// the live loop state and answer on its oneshot. `false` means the channel
+/// closed (the HTTP task is gone — daemon teardown) and polling should stop.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the per-arm dispatch needs the same daemon coordinates as the IPC arm plus the binding's port"
+)]
+async fn handle_a2a_arm(
+    req: Option<crate::a2a::rpc::A2aRequest>,
+    swarm: &SwarmId,
+    author: &Nickname,
+    our_pubkey: &str,
+    a2a_port: Option<u16>,
+    state: &mut EventLoopState,
+    sender: &GossipSender,
+    output: &output::Output,
+) -> bool {
+    let Some(crate::a2a::rpc::A2aRequest { op, resp }) = req else {
+        return false;
+    };
+    // A directed `message/send` (task creation) needs the synchronous gossip
+    // request/response round-trip — the peer mints the task id and returns the
+    // Task. Route it through the waiter so the HTTP handler's oneshot resolves
+    // when the peer answers (or times out); the event loop is never blocked.
+    // This is what lets an off-the-shelf A2A client delegate a task over the
+    // compliant localhost binding. Everything else executes inline.
+    if let crate::a2a::rpc::A2aOp::SendMessage {
+        to: Some(peer),
+        message,
+    } = op
+    {
+        gossip::broadcast_a2a_call(
+            swarm,
+            author,
+            peer,
+            "SendMessage",
+            serde_json::json!({ "message": message }),
+            Duration::from_secs(30),
+            crate::daemon::state::A2aResponder::Rpc(resp),
+            state,
+            sender,
+        )
+        .await;
+        return true;
+    }
+    let outcome = crate::a2a::rpc::handle_op(
+        op,
+        swarm,
+        author,
+        our_pubkey,
+        a2a_port.unwrap_or_default(),
+        state,
+        sender,
+        output,
+    )
+    .await;
+    let _ = resp.send(outcome);
+    true
+}
+
+/// `--a2a-serve`: note the bound port + bearer token in the state file (the
+/// local client's discovery channel; the file is chmod 600 because of the
+/// token), then hand the listener to the HTTP task. Requests come back
+/// through the returned receiver into the select loop. `(None, None)` when
+/// the binding is off.
+fn spawn_a2a(
+    a2a: Option<crate::a2a::http::A2aBinding>,
+    state_file: Option<&StateFile>,
+) -> (
+    Option<u16>,
+    Option<mpsc::Receiver<crate::a2a::rpc::A2aRequest>>,
+) {
+    let Some(binding) = a2a else {
+        return (None, None);
+    };
+    let port = binding.port;
+    if let Some(sf) = state_file {
+        sf.set_a2a(port, binding.token.clone());
+    }
+    let (a2a_tx, a2a_rx) =
+        mpsc::channel::<crate::a2a::rpc::A2aRequest>(crate::a2a::http::REQUEST_QUEUE);
+    crate::a2a::http::spawn(binding, a2a_tx);
+    (Some(port), Some(a2a_rx))
 }
 
 /// Owned working set for [`event_loop`]. `run` does setup, fills this,
@@ -240,6 +409,9 @@ struct EventLoop {
     external_msg_tx: Option<broadcast::Sender<Message>>,
     quit_rx: mpsc::Receiver<()>,
     exit_on_quit: bool,
+    /// The `--a2a-serve` request channel + bound port (`None` = binding off).
+    a2a_rx: Option<mpsc::Receiver<crate::a2a::rpc::A2aRequest>>,
+    a2a_port: Option<u16>,
     /// Inbound unicast frames from the `UNICAST_ALPN` acceptor, drained into
     /// `gossip::ingest` (same validation + dedup path as gossip). `Option` so
     /// the `select!` arm can disable itself if the channel ever closes.
@@ -262,6 +434,40 @@ fn log_daemon_start(author: &Nickname) {
     );
 }
 
+/// Publish this member's `AgentCard` at meta `/peers/<nick>/card` — the one
+/// channel write the daemon itself makes (documented glossary exception: the
+/// card is the peer's canonical A2A self-description, architectural rather
+/// than app state). Unmeshed it buffers/backfills like any state event;
+/// agent-side facts (model/harness/host) stay the agent's merge.
+async fn publish_own_card(
+    swarm: &SwarmId,
+    author: &Nickname,
+    our_pubkey: &str,
+    state: &mut EventLoopState,
+    sender: &GossipSender,
+    output: &output::Output,
+) {
+    let card = crate::a2a::card::own_card(author, our_pubkey);
+    let merge = crate::a2a::card::publish_merge(author, &card);
+    if let Err(error) = gossip::broadcast_state_merge(
+        swarm,
+        author,
+        merge,
+        state,
+        sender,
+        output,
+        crate::protocol::Channel::Meta,
+    )
+    .await
+    {
+        tracing::warn!(%error, "failed to publish this member's agent card");
+    }
+}
+
+#[expect(
+    clippy::too_many_lines,
+    reason = "the daemon's central select! loop: one arm per event source (stdin, ipc, a2a, gossip, the maintenance ticks, quit); each arm delegates to a helper, but the arm list itself is irreducibly long"
+)]
 async fn event_loop(loop_state: EventLoop) -> Result<()> {
     let EventLoop {
         mut sender,
@@ -287,6 +493,8 @@ async fn event_loop(loop_state: EventLoop) -> Result<()> {
         external_msg_tx,
         mut quit_rx,
         exit_on_quit,
+        mut a2a_rx,
+        a2a_port,
         mut unicast_rx,
     } = loop_state;
 
@@ -340,21 +548,39 @@ async fn event_loop(loop_state: EventLoop) -> Result<()> {
     // daemon shuts down rather than pretend to be a live member.
     let mut resubscribe_attempts: u32 = 0;
 
+    publish_own_card(
+        &swarm_str,
+        &author,
+        &our_pubkey,
+        &mut state,
+        &sender,
+        &output,
+    )
+    .await;
+
     loop {
         tokio::select! {
-            result = read_bounded_line(&mut stdin_reader, MAX_STDIN_LINE_BYTES), if stdin_open => {
-                stdin_open = handle_stdin_arm(result, &sender, &swarm_str, &author, &mut state, &output).await;
-            }
-            () = sleep_until_opt(state.ping_round.as_ref().map(|round| round.deadline)) => {
-                finalize_ping_round(&mut state, &output);
-            }
+            result = read_bounded_line(&mut stdin_reader, MAX_STDIN_LINE_BYTES), if stdin_open =>
+                stdin_open = handle_stdin_arm(result, &sender, &swarm_str, &author, &mut state, &output).await,
+            () = sleep_until_opt(state.ping_round.as_ref().map(|round| round.deadline)) =>
+                finalize_ping_round(&mut state, &output),
             () = sleep_until_opt(state.earliest_poll_deadline()) => poll_deadline_arm(&mut state),
+            () = sleep_until_opt(state.earliest_a2a_deadline()) =>
+                state.expire_a2a_waiters(tokio::time::Instant::now()),
             ipc_msg = recv_opt(&mut ipc_rx) => {
                 if !handle_ipc_arm(ipc_msg, &swarm_str, &swarm_name, &author, &mut state, &sender, &output).await {
                     ipc_rx = None;
                 }
             }
-            event = receiver.next(), if state.gossip_open => gossip::handle_gossip_event(event, &mut state, &parts.ctx(&sender)).await,
+            a2a_req = recv_opt(&mut a2a_rx) => {
+                if !handle_a2a_arm(a2a_req, &swarm_str, &author, &our_pubkey, a2a_port, &mut state, &sender, &output).await {
+                    a2a_rx = None;
+                }
+            }
+            event = receiver.next(), if state.gossip_open => {
+                let ctx = parts.ctx(&sender);
+                gossip::handle_gossip_event(event, &mut state, &ctx).await;
+            }
             // Inbound unicast rides the *same* validate + dedup path as gossip (`ingest`).
             frame = recv_opt(&mut unicast_rx) => match frame {
                 Some(bytes) => gossip::ingest(bytes, &mut state, &parts.ctx(&sender)).await,
@@ -362,17 +588,10 @@ async fn event_loop(loop_state: EventLoop) -> Result<()> {
             },
             _ = intervals.prune.tick() => timers::tick_prune(&mut state, &output),
             _ = intervals.alive.tick() => {
-                timers::note_tick_gap("alive", &mut anchors.alive, &mut anchors.alive_wall, Duration::from_secs(ALIVE_INTERVAL_SECS));
-                lifecycle::heartbeat::tick_alive(&mut state, &sender, &swarm_str, &author).await;
+                alive_arm(&mut anchors, &mut state, &sender, &swarm_str, &author).await;
             }
             _ = intervals.sweep.tick() => {
-                timers::note_tick_gap("sweep", &mut anchors.sweep, &mut anchors.sweep_wall, Duration::from_secs(sweep_interval_secs()));
-                lifecycle::heartbeat::tick_sweep(&mut state, &output);
-                // Task timers ride the sweep cadence (each gates on its own
-                // elapsed-time budget): evict idle-debounce-expired tasks, then
-                // keepalive the ones whose ball we still hold.
-                task::tick_task_sweep(&mut state, &sender, &swarm_str, &author, &output).await;
-                task::tick_task_keepalive(&mut state, &sender, &swarm_str, &author).await;
+                sweep_arm(&mut anchors, &mut state, &sender, &swarm_str, &author, &output).await;
             }
             _ = intervals.heal.tick() => {
                 let (mono_gap, wall_gap) = timers::note_tick_gap("heal", &mut anchors.heal, &mut anchors.heal_wall, Duration::from_secs(HEAL_INTERVAL_SECS));
@@ -389,13 +608,10 @@ async fn event_loop(loop_state: EventLoop) -> Result<()> {
             // A bootstrap rung chosen off-loop (startup probe / beacon self-monitor); apply it cheaply.
             // `Ok(())` only: a closed channel (impossible while the beacon params live) disables the arm.
             Ok(()) = rung_rx.changed() => apply_rung_change(&mut rendezvous_params, &endpoint, &mut rendezvous, &rung_rx),
-            _ = intervals.reclaim.tick() => {
-                maybe_reclaim(cohost, &state, &rendezvous_params, &endpoint, &mut rendezvous).await;
-            }
+            _ = intervals.reclaim.tick() =>
+                maybe_reclaim(cohost, &state, &rendezvous_params, &endpoint, &mut rendezvous).await,
             _ = intervals.antientropy.tick() => {
-                timers::note_tick_gap("antientropy", &mut anchors.antientropy, &mut anchors.antientropy_wall, Duration::from_secs(ANTIENTROPY_INTERVAL_SECS));
-                gossip::antientropy::broadcast_digest(&mut state, &sender, &swarm_str, &author).await;
-                gossip::antientropy::broadcast_state_digests(&mut state, &sender, &swarm_str, &author).await;
+                antientropy_arm(&mut anchors, &mut state, &sender, &swarm_str, &author).await;
             }
             _ = intervals.state_refresh.tick() => timers::tick_state_refresh(&state, &endpoint).await,
             _ = recv_opt(&mut external_quit_rx) => {
@@ -404,13 +620,8 @@ async fn event_loop(loop_state: EventLoop) -> Result<()> {
                 break;
             }
             req = recv_opt(&mut external_req_rx) => {
-                match req {
-                    Some(req) => {
-                        if gossip::handle_session_request(req, &swarm_str, &author, &mut state, &sender, &output).await {
-                            state.last_sent_at = Instant::now();
-                        }
-                    }
-                    None => external_req_rx = None,
+                if !handle_session_arm(req, &swarm_str, &author, &mut state, &sender, &output).await {
+                    external_req_rx = None;
                 }
             }
             _ = quit_rx.recv() => {
@@ -463,15 +674,11 @@ fn is_pollable(event: &output::OutputEvent) -> bool {
         | OutputEvent::PeerTimeout { .. }
         | OutputEvent::PeerReturn { .. }
         | OutputEvent::TaskTimeout { .. }
+        | OutputEvent::TaskMessage { .. }
         | OutputEvent::StateChanged { .. }
         | OutputEvent::Fork { .. } => true,
-        OutputEvent::Task { msg, .. } => !matches!(
-            msg.kind,
-            crate::protocol::MessageKind::Task {
-                phase: crate::protocol::TaskPhase::Progress,
-                ..
-            }
-        ),
+        OutputEvent::Task { msg, .. } => !crate::a2a::gossip::status_payload(msg)
+            .is_ok_and(|payload| crate::a2a::gossip::is_beat(&payload)),
         OutputEvent::Info { .. }
         | OutputEvent::Error { .. }
         | OutputEvent::MsgPosted { .. }
@@ -534,6 +741,7 @@ async fn announce_and_maybe_exit(
     // clean timeout (empty) rather than a dropped-channel error — and before
     // the `exit_on_quit` path below may `std::process::exit`.
     state.close_poll_waiters();
+    state.close_a2a_waiters();
     shutdown(sender, swarm, name, author, state, output).await;
     #[cfg(not(feature = "dhat-heap"))]
     if exit_on_quit {

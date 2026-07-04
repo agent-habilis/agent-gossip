@@ -11,10 +11,11 @@ use serde::Serialize;
 
 use super::bounded_id_set::BoundedIdSet;
 use super::message_log::MessageLog;
+use crate::a2a::TaskId;
 use crate::daemon::state_file::StateFile;
 use crate::output;
 use crate::protocol::identity::Identity;
-use crate::protocol::{Message, MessageBody, MessageId, Nickname, PartGroup, TaskId};
+use crate::protocol::{Message, MessageBody, MessageId, Nickname, ShardGroup};
 use crate::util::bounded_fifo_set::BoundedFifoSet;
 use crate::util::bounded_queue::BoundedQueue;
 use crate::util::cooldown::Cooldown;
@@ -154,10 +155,10 @@ pub(crate) struct EventLoopState {
     /// peers currently in `quiet`, so a stale entry never surfaces.
     pub quiet_since: HashMap<Nickname, Instant>,
     /// In-flight tasks this node is a party to, keyed by `task_id`
-    /// (see [`crate::daemon::task`]). The coarse state machine + the two
+    /// (see [`crate::a2a::task`]). The coarse state machine + the two
     /// task timers (debounce sweep, ball-owner keepalive) read/write this;
     /// the skill owns the content. Third-party relays never insert here.
-    pub tasks: HashMap<TaskId, crate::daemon::task::TaskRecord>,
+    pub tasks: HashMap<TaskId, crate::a2a::task::TaskRecord>,
     /// Presentation layer: participants for whom we have *surfaced* an
     /// arrival (synthetic `joined`, real `Presence::Joined`, or
     /// `peer_return`). Gates departure surfacing so a participant whose
@@ -238,10 +239,10 @@ pub(crate) struct EventLoopState {
     /// non-advertising case (no shared counter to maintain).
     pub live_count: Option<Arc<AtomicUsize>>,
     pub message_log: MessageLog,
-    /// Multipart groups already reassembled + surfaced, so a body is surfaced
-    /// once even if a part is re-fetched (via anti-entropy) after its id aged
+    /// Shard groups already reassembled + surfaced, so a body is surfaced
+    /// once even if a shard is re-fetched (via anti-entropy) after its id aged
     /// out of [`seen`](Self::seen). Bounded — groups are rare and short-lived.
-    pub reassembled_groups: BoundedFifoSet<PartGroup>,
+    pub reassembled_groups: BoundedFifoSet<ShardGroup>,
     /// The durable, un-pruned log of signed `State` events (membership edits,
     /// settings, …) — separate from `message_log` so swarm state never ages out
     /// of the chat retention window. Swarm state is the deterministic fold over
@@ -335,6 +336,98 @@ pub(crate) struct EventLoopState {
     /// fulfilled right after `drain_surfaced`, expired by the loop's poll-deadline
     /// arm — the same shape as `ping_round`. The daemon never blocks on these.
     pub poll_waiters: Vec<PollWaiter>,
+    /// Outstanding gossip A2A RPC calls: an `A2aReq` was broadcast toward a
+    /// peer and we're waiting for its `A2aResp` (matched by `rpc_id`) or the
+    /// call's deadline. Same registry shape as `poll_waiters`, but fulfilled
+    /// directly by the matching response frame rather than a surfaced-events
+    /// advance. Bounded by [`POLL_WAITERS_CAP`](crate::util::consts::POLL_WAITERS_CAP).
+    pub a2a_waiters: Vec<A2aWaiter>,
+}
+
+/// How a fulfilled/expired gossip A2A call's response is delivered, per
+/// transport: the CLI/IPC path wants the JSON-RPC response string to print;
+/// the in-process path wants the parsed response `Value`; the localhost
+/// JSON-RPC binding wants the `Result<Value, RpcError>` its HTTP handler
+/// returns (so an external A2A client's `message/send` to a peer is served
+/// over the same request/response waiter — task creation over the compliant
+/// transport).
+pub(crate) enum A2aResponder {
+    Ipc(tokio::sync::oneshot::Sender<String>),
+    Typed(tokio::sync::oneshot::Sender<serde_json::Value>),
+    Rpc(tokio::sync::oneshot::Sender<Result<serde_json::Value, crate::a2a::rpc::RpcError>>),
+}
+
+impl A2aResponder {
+    /// Deliver the peer's JSON-RPC response (`body` is the full
+    /// `{"result"|"error"}` object string).
+    pub(crate) fn send_response(self, body: &str) {
+        match self {
+            A2aResponder::Ipc(tx) => {
+                let _ = tx.send(body.to_string());
+            }
+            A2aResponder::Typed(tx) => {
+                let value = serde_json::from_str(body).unwrap_or(serde_json::Value::Null);
+                let _ = tx.send(value);
+            }
+            A2aResponder::Rpc(tx) => {
+                let _ = tx.send(rpc_result_from_body(body));
+            }
+        }
+    }
+
+    /// Deliver a timeout (no response arrived before the deadline).
+    pub(crate) fn send_timeout(self) {
+        let message = "a2a request timed out (peer unreachable or slow)";
+        match self {
+            A2aResponder::Ipc(tx) => {
+                let _ = tx.send(
+                    serde_json::json!({ "error": { "code": -32000, "message": message } })
+                        .to_string(),
+                );
+            }
+            A2aResponder::Typed(tx) => {
+                let _ =
+                    tx.send(serde_json::json!({ "error": { "code": -32000, "message": message } }));
+            }
+            A2aResponder::Rpc(tx) => {
+                let _ = tx.send(Err(crate::a2a::rpc::RpcError {
+                    code: -32000,
+                    message: message.to_string(),
+                }));
+            }
+        }
+    }
+}
+
+/// Parse a peer's JSON-RPC response `body` (`{"result":…}` | `{"error":…}`)
+/// into the `Result<Value, RpcError>` the localhost binding's HTTP handler
+/// returns. A malformed/absent body reads as an internal error.
+fn rpc_result_from_body(body: &str) -> Result<serde_json::Value, crate::a2a::rpc::RpcError> {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(body) else {
+        return Err(crate::a2a::rpc::RpcError {
+            code: -32603,
+            message: "peer returned a malformed a2a response".to_string(),
+        });
+    };
+    if !value["error"].is_null() {
+        return Err(crate::a2a::rpc::RpcError {
+            code: value["error"]["code"].as_i64().unwrap_or(-32603),
+            message: value["error"]["message"]
+                .as_str()
+                .unwrap_or("peer error")
+                .to_string(),
+        });
+    }
+    Ok(value["result"].clone())
+}
+
+/// An outstanding gossip A2A call, waiting for an `A2aResp` with a matching
+/// `rpc_id` from `peer`, or for `deadline` to elapse.
+pub(crate) struct A2aWaiter {
+    rpc_id: crate::a2a::A2aRpcId,
+    peer: Nickname,
+    deadline: TokioInstant,
+    responder: A2aResponder,
 }
 
 /// How a fulfilled/expired long-poll waiter's batch is delivered, per
@@ -468,6 +561,7 @@ impl EventLoopState {
             resident_memory_warned: false,
             ping_round: None,
             poll_waiters: Vec::new(),
+            a2a_waiters: Vec::new(),
         }
     }
 
@@ -629,6 +723,121 @@ impl EventLoopState {
         }
     }
 
+    /// Register an outstanding gossip A2A call. Returns the responder back
+    /// (unregistered) when the registry is at [`POLL_WAITERS_CAP`], so the
+    /// caller can fail it fast instead of parking silently.
+    #[must_use]
+    pub(crate) fn register_a2a_waiter(
+        &mut self,
+        rpc_id: crate::a2a::A2aRpcId,
+        peer: Nickname,
+        deadline: TokioInstant,
+        responder: A2aResponder,
+    ) -> Option<A2aResponder> {
+        if self.a2a_waiters.len() >= crate::util::consts::POLL_WAITERS_CAP {
+            return Some(responder);
+        }
+        self.a2a_waiters.push(A2aWaiter {
+            rpc_id,
+            peer,
+            deadline,
+            responder,
+        });
+        None
+    }
+
+    /// Resolve the waiter matching `rpc_id` **from the peer we called**
+    /// (`from`) with its JSON-RPC response `body`, and drop it. A response
+    /// with no matching waiter, or one purporting to answer a call we made to
+    /// a *different* peer (a forged reply with a guessed `rpc_id`), is a no-op.
+    pub(crate) fn fulfill_a2a_waiter(
+        &mut self,
+        rpc_id: &crate::a2a::A2aRpcId,
+        from: &Nickname,
+        body: &str,
+    ) {
+        if let Some(index) = self
+            .a2a_waiters
+            .iter()
+            .position(|waiter| waiter.rpc_id == *rpc_id && waiter.peer == *from)
+        {
+            let waiter = self.a2a_waiters.swap_remove(index);
+            waiter.responder.send_response(body);
+        }
+    }
+
+    /// Whether we have an outstanding A2A call to `peer` correlated by `rpc_id`
+    /// — the gate that keeps an unsolicited/forged `A2aResp` from being acted on.
+    pub(crate) fn has_a2a_waiter(&self, rpc_id: &crate::a2a::A2aRpcId, peer: &Nickname) -> bool {
+        self.a2a_waiters
+            .iter()
+            .any(|waiter| waiter.rpc_id == *rpc_id && waiter.peer == *peer)
+    }
+
+    /// Adopt the authoritative `Task` a `SendMessage` returned (from `peer`, the
+    /// worker) into our initiator-side registry. A `SendMessage` result is a
+    /// `SendMessageResponse` (`{"task":…}`); a `GetTask` returns a bare `Task`.
+    /// A non-Task response (a list, an error, a message echo) has no task and is
+    /// ignored.
+    pub(crate) fn adopt_returned_task(&mut self, peer: &Nickname, body: &str) {
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(body) else {
+            return;
+        };
+        let result = &value["result"];
+        // Unwrap the SendMessageResponse oneof if present, else treat the result
+        // as a bare Task (GetTask). A v1.0 Task has no inline `kind`, so a Task
+        // is recognized by its required `id` + `status.state`.
+        let task = if result.get("task").is_some() {
+            &result["task"]
+        } else {
+            result
+        };
+        let Some(task_id) = task["id"].as_str().and_then(TaskId::from_uuid_str) else {
+            return;
+        };
+        let Some(task_state) = task["status"]["state"]
+            .as_str()
+            .and_then(|raw| serde_json::from_value(serde_json::Value::String(raw.to_owned())).ok())
+        else {
+            return;
+        };
+        crate::a2a::task::adopt_initiator(
+            &mut self.tasks,
+            &task_id,
+            peer,
+            task_state,
+            Instant::now(),
+        );
+    }
+
+    /// The earliest A2A-call deadline, for the loop's `sleep_until_opt` arm.
+    pub(crate) fn earliest_a2a_deadline(&self) -> Option<TokioInstant> {
+        self.a2a_waiters.iter().map(|waiter| waiter.deadline).min()
+    }
+
+    /// Time out every A2A call past its deadline.
+    pub(crate) fn expire_a2a_waiters(&mut self, now: TokioInstant) {
+        let survivors: Vec<A2aWaiter> = std::mem::take(&mut self.a2a_waiters)
+            .into_iter()
+            .filter_map(|waiter| {
+                if waiter.deadline <= now {
+                    waiter.responder.send_timeout();
+                    None
+                } else {
+                    Some(waiter)
+                }
+            })
+            .collect();
+        self.a2a_waiters = survivors;
+    }
+
+    /// Time out every outstanding A2A call on shutdown.
+    pub(crate) fn close_a2a_waiters(&mut self) {
+        for waiter in std::mem::take(&mut self.a2a_waiters) {
+            waiter.responder.send_timeout();
+        }
+    }
+
     /// Write `participant_count = participants.len() + 1` (we add 1
     /// for self) to the state file, if configured, carrying the current
     /// `ready` flag, and mirror the count into the advertise counter, if
@@ -733,22 +942,22 @@ impl EventLoopState {
         self.seen.mark(message.dedup_key())
     }
 
-    /// Try to reassemble the multipart body the just-retained `trigger` part
-    /// belongs to. Returns the synthesized logical [`Message`] once every part of
+    /// Try to reassemble the sharded body the just-retained `trigger` shard
+    /// belongs to. Returns the synthesized logical [`Message`] once every shard of
     /// the group (this author's, slotted by `idx`) is present and the group has
     /// not been surfaced before; `None` while incomplete or already surfaced. The
-    /// parts stay in the log for anti-entropy; the returned message is a surfacing
+    /// shards stay in the log for anti-entropy; the returned message is a surfacing
     /// view whose `id` is the group, so sender and receivers name it alike.
     pub(crate) fn reassemble(&mut self, trigger: &Message) -> Option<Message> {
-        let part = trigger.part.as_ref()?;
-        if self.reassembled_groups.contains(&part.group) {
+        let shard = trigger.shard.as_ref()?;
+        if self.reassembled_groups.contains(&shard.group) {
             return None;
         }
         let slots = self
             .message_log
-            .collect_parts(&part.group, &trigger.pubkey, part.total);
+            .collect_shards(&shard.group, &trigger.pubkey, shard.total);
         if slots.iter().any(Option::is_none) {
-            return None; // a part is still missing
+            return None; // a shard is still missing
         }
         let mut body = String::new();
         for slot in &slots {
@@ -758,20 +967,20 @@ impl EventLoopState {
         // chars), but fail closed rather than surface a malformed body.
         let body = MessageBody::new(body).ok()?;
         let logical =
-            Self::synthesize_logical(slots[0].expect("part 0 present"), body, &part.group);
-        self.reassembled_groups.insert(part.group.clone());
+            Self::synthesize_logical(slots[0].expect("shard 0 present"), body, &shard.group);
+        self.reassembled_groups.insert(shard.group.clone());
         Some(logical)
     }
 
-    /// Build the logical-message surfacing view from a body's parts: part 0's
+    /// Build the logical-message surfacing view from a body's shards: shard 0's
     /// envelope (kind/author/pubkey/swarm/ts), the concatenated `body`, the group
-    /// as `id`, and no `part`/chain (the view is neither a wire message nor a
-    /// chain entry — the parts are).
-    fn synthesize_logical(first: &Message, body: MessageBody, group: &PartGroup) -> Message {
+    /// as `id`, and no `shard`/chain (the view is neither a wire message nor a
+    /// chain entry — the shards are).
+    fn synthesize_logical(first: &Message, body: MessageBody, group: &ShardGroup) -> Message {
         let mut msg = first.clone();
-        msg.id = MessageId::new(group.as_str()).expect("a part group is a valid message id");
+        msg.id = MessageId::new(group.as_str()).expect("a shard group is a valid message id");
         msg.body = body;
-        msg.part = None;
+        msg.shard = None;
         msg.seq = None;
         msg.prev = None;
         msg.parents = Vec::new();
@@ -925,7 +1134,7 @@ const MAX_DAG_PARENTS: usize = 16;
 mod tests {
     use super::{
         Duration, EndpointId, EventLoopState, Instant, KNOWN_ENDPOINTS_CAP, Message, MessageBody,
-        MessageId, Nickname, QUIET_CAP, RELINK_COOLDOWN_SECS, Reach,
+        MessageId, Nickname, QUIET_CAP, RELINK_COOLDOWN_SECS, Reach, rpc_result_from_body,
     };
     use crate::protocol::SwarmId;
 
@@ -933,10 +1142,54 @@ mod tests {
         Nickname::new(name.to_owned()).expect("valid test nickname")
     }
 
+    /// The localhost binding's `A2aResponder::Rpc` unwraps a peer's JSON-RPC
+    /// response body into the `Result<Value, RpcError>` its HTTP handler
+    /// returns: `result` → `Ok`, `error` → the peer's code/message, and a
+    /// malformed/absent body → an internal error (never a panic).
+    #[test]
+    fn rpc_result_from_body_maps_result_error_and_garbage() {
+        // A result comes back as Ok(the result value).
+        let ok = rpc_result_from_body(r#"{"result":{"task":{"id":"t1"}}}"#)
+            .expect("a result body is Ok");
+        assert_eq!(ok["task"]["id"], "t1");
+
+        // A JSON-RPC error carries the peer's code + message verbatim.
+        let err =
+            rpc_result_from_body(r#"{"error":{"code":-32602,"message":"unknown participant"}}"#)
+                .expect_err("an error body is Err");
+        assert_eq!(err.code, -32602);
+        assert_eq!(err.message, "unknown participant");
+
+        // Garbage is an internal error, not a panic.
+        let garbage = rpc_result_from_body("not json").expect_err("garbage is Err");
+        assert_eq!(garbage.code, -32603);
+    }
+
+    /// The `Rpc` responder delivers a fulfilled peer response and a deadline
+    /// timeout to the localhost HTTP handler's oneshot as `Result<Value,
+    /// RpcError>`.
+    #[test]
+    fn rpc_responder_delivers_response_and_timeout() {
+        use super::A2aResponder;
+
+        // A fulfilled response resolves to the parsed result.
+        let (ok_tx, ok_rx) = tokio::sync::oneshot::channel();
+        A2aResponder::Rpc(ok_tx).send_response(r#"{"result":{"task":{"id":"x"}}}"#);
+        assert_eq!(ok_rx.blocking_recv().unwrap().unwrap()["task"]["id"], "x");
+
+        // A deadline timeout resolves to the standard -32000 error.
+        let (timeout_tx, timeout_rx) = tokio::sync::oneshot::channel();
+        A2aResponder::Rpc(timeout_tx).send_timeout();
+        assert_eq!(
+            timeout_rx.blocking_recv().unwrap().unwrap_err().code,
+            -32000
+        );
+    }
+
     /// An unsigned chat message carrying `id` — enough to exercise
     /// `mark_seen`, which keys on `dedup_key()` (`SHA-256(pubkey ‖ id)`).
     fn msg_with_id(id: &MessageId) -> Message {
-        let mut message = Message::new_message(
+        let mut message = Message::new_a2a_msg(
             &SwarmId::from("💬test"),
             &nick("author-nick"),
             MessageBody::from("body"),

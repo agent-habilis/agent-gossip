@@ -14,9 +14,9 @@ use std::time::{Duration, Instant};
 
 use common::{
     CONNECT_TIMEOUT, InProcNode, MSG_TIMEOUT, Msg, Node, POLL, RECOVERY_TIMEOUT, RUNTIME_DIR, bin,
-    cli_message, cli_message_raw, cli_msg_checked, cli_msg_stdout, cli_notice, cli_peers, cli_ping,
-    cli_poll, cli_poll_long, ipc_raw, serial_guard, socket_path, tmp_log, trace_log, wait_total,
-    wait_until,
+    chat_text, cli_message, cli_message_raw, cli_peers, cli_ping, cli_poll, cli_poll_long,
+    cli_task_create, cli_task_create_raw, ipc_raw, serial_guard, socket_path, tmp_log, trace_log,
+    wait_total, wait_until,
 };
 use serde_json::json;
 
@@ -88,7 +88,7 @@ async fn test_two_node_message_delivery() {
     );
     let received = joiner.inbound();
     assert_eq!(received.len(), 1, "expected exactly 1 delivery");
-    assert_eq!(received[0].body.as_str(), "hello from the network");
+    assert_eq!(chat_text(received[0]), "hello from the network");
 }
 
 /// A passworded swarm: the right password joins and messages flow; a wrong
@@ -127,10 +127,7 @@ async fn test_passworded_swarm_verifies_locally_and_meshes() {
         joiner.wait_inbound(1, MSG_TIMEOUT).await,
         "passworded joiner never received the creator's message"
     );
-    assert_eq!(
-        joiner.inbound()[0].body.as_str(),
-        "hello behind the password"
-    );
+    assert_eq!(chat_text(joiner.inbound()[0]), "hello behind the password");
 }
 
 /// The subprocess wire contract for `--password`: `create --password=pw`
@@ -268,225 +265,8 @@ async fn test_three_node_full_delivery() {
         "expected both beta and gamma to receive the broadcast"
     );
     for msg in beta.inbound().into_iter().chain(gamma.inbound()) {
-        assert_eq!(msg.body.as_str(), "broadcast to all three nodes");
+        assert_eq!(chat_text(msg), "broadcast to all three nodes");
     }
-}
-
-/// A reply addressed to its target is delivered to the addressee.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn test_reply_delivery() {
-    let mut creator = InProcNode::create("netreply").await;
-    let mut joiner = InProcNode::join(&creator.swarm, "joiner-reply").await;
-
-    creator.send("what is 2 + 2?").await;
-    assert!(
-        joiner.wait_inbound(1, MSG_TIMEOUT).await,
-        "joiner never got the question"
-    );
-
-    joiner.reply(&creator.nickname, "4").await;
-    assert!(
-        creator.wait_body("4", MSG_TIMEOUT).await,
-        "creator (the addressee) never received the reply"
-    );
-}
-
-/// Directed replies are only surfaced to the addressee, not to uninvolved
-/// peers. In a 3-node swarm, if A sends and B replies to A, observer C
-/// should NOT see the reply — saving tokens for peers it is not addressed to.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn test_reply_only_visible_to_addressee() {
-    let mut alpha = InProcNode::create("netfilter").await;
-    let mut beta = InProcNode::join(&alpha.swarm, "beta-filter").await;
-    let mut gamma = InProcNode::join(&alpha.swarm, "gamma-filter").await;
-
-    alpha.send("filter-test message").await;
-    assert!(
-        beta.wait_inbound(1, MSG_TIMEOUT).await && gamma.wait_inbound(1, MSG_TIMEOUT).await,
-        "alpha's message never reached beta and gamma"
-    );
-
-    beta.reply(&alpha.nickname, "filter-test reply").await;
-
-    // Alpha (the addressee) MUST see the reply.
-    assert!(
-        alpha.wait_body("filter-test reply", MSG_TIMEOUT).await,
-        "alpha (the addressee) should see the directed reply but didn't"
-    );
-
-    // Gamma (uninvolved) must NOT see it — directed replies are
-    // filtered at the receiver for non-addressees.
-    assert!(
-        !gamma
-            .inbound()
-            .iter()
-            .any(|msg| msg.body.as_str() == "filter-test reply"),
-        "gamma (uninvolved) should NOT see the directed reply but did"
-    );
-}
-
-/// With `--no-gossip-directed`, gossip carries no directed traffic, so a
-/// directed reply that still reaches its addressee proves the unicast transport
-/// actually delivers point-to-point — not via the gossip flood. Broadcasts
-/// still ride gossip, so the warmup meshes the daemons and exchanges the
-/// `PeerInfo` the sender's unicast dial resolves on.
-#[test]
-fn unicast_only_delivers_directed_reply() {
-    let (creator, swarm) = Node::create_flags("uni-only", &[("--no-gossip-directed", "")]);
-    let joiner = Node::join_flags(&swarm, "uni-only-b", &[("--no-gossip-directed", "")]);
-    assert!(creator.wait_ready(&swarm), "creator never ready");
-    assert!(joiner.wait_ready(&swarm), "joiner never ready");
-
-    // Warmup broadcast (always gossip) meshes them + exchanges addresses.
-    cli_message(&swarm, &creator.nickname, "warmup");
-    assert!(
-        wait_until(
-            || joiner.count_from(&creator.nickname, "warmup"),
-            1,
-            MSG_TIMEOUT
-        ) >= 1,
-        "warmup broadcast never reached the joiner (mesh didn't form)"
-    );
-
-    // Directed reply: gossip won't carry it, so delivery ⇒ it went over unicast.
-    // Under strict unicast-only the send *errors* until the sender has learned
-    // the addressee's endpoint (its signed `PeerInfo`), so retry until it lands
-    // — a success that reaches the joiner can only have gone point-to-point.
-    let deadline = Instant::now() + MSG_TIMEOUT;
-    while joiner.count_from(&creator.nickname, "unicast-only hello") == 0 {
-        let _ = cli_message_raw(&swarm, &creator.nickname, "warmup"); // keep the mesh live
-        let _ = cli_msg_stdout(
-            &swarm,
-            &creator.nickname,
-            "unicast-only hello",
-            Some(&joiner.nickname),
-        );
-        assert!(
-            Instant::now() < deadline,
-            "directed reply never arrived under unicast-only — unicast failed to deliver"
-        );
-        std::thread::sleep(POLL);
-    }
-}
-
-/// With `--no-unicast`, the point-to-point transport is off and every message
-/// rides gossip (the pre-unicast behavior). A directed reply must still reach
-/// its addressee — the safety-switch parity check.
-#[test]
-fn gossip_only_delivers_directed_reply() {
-    let (creator, swarm) = Node::create_flags("gos-only", &[("--no-unicast", "")]);
-    let joiner = Node::join_flags(&swarm, "gos-only-b", &[("--no-unicast", "")]);
-    assert!(creator.wait_ready(&swarm), "creator never ready");
-    assert!(joiner.wait_ready(&swarm), "joiner never ready");
-
-    cli_message(&swarm, &creator.nickname, "warmup");
-    assert!(
-        wait_until(
-            || joiner.count_from(&creator.nickname, "warmup"),
-            1,
-            MSG_TIMEOUT
-        ) >= 1,
-        "warmup never reached the joiner"
-    );
-
-    cli_msg_checked(
-        &swarm,
-        &creator.nickname,
-        "gossip-only hello",
-        Some(&joiner.nickname),
-    );
-    assert!(
-        wait_until(
-            || joiner.count_from(&creator.nickname, "gossip-only hello"),
-            1,
-            MSG_TIMEOUT
-        ) >= 1,
-        "directed reply never arrived under gossip-only"
-    );
-}
-
-/// A broadcast notice is delivered like a msg but surfaces as
-/// `type:"notice"` with the `(notice)` display marker — the field agents
-/// key the never-auto-reply contract on.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn test_notice_delivery_surfaces_as_notice() {
-    let creator = InProcNode::create("netnotice").await;
-    let mut joiner = InProcNode::join(&creator.swarm, "joiner-notice").await;
-
-    creator.notice(None, "build green").await;
-
-    assert!(
-        joiner.wait_body("build green", MSG_TIMEOUT).await,
-        "joiner never received the notice"
-    );
-    let notices: Vec<serde_json::Value> = joiner
-        .json_events()
-        .into_iter()
-        .filter(|event| event["type"] == "notice")
-        .collect();
-    assert_eq!(notices.len(), 1, "expected exactly 1 notice");
-    assert_eq!(notices[0]["event"], "message");
-    assert_eq!(notices[0]["body"], "build green");
-    assert!(notices[0]["reply"].is_null());
-    assert_eq!(
-        notices[0]["display"],
-        format!("💬️ `<{}>` (notice): build green", creator.nickname)
-    );
-}
-
-/// A directed notice has the same privacy as a directed msg: surfaced only
-/// by its addressee; an uninvolved peer relays without seeing it.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn test_directed_notice_only_visible_to_addressee() {
-    let mut alpha = InProcNode::create("netnotdir").await;
-    let mut beta = InProcNode::join(&alpha.swarm, "beta-notdir").await;
-    let mut gamma = InProcNode::join(&alpha.swarm, "gamma-notdir").await;
-
-    alpha.send("warm up the mesh").await;
-    assert!(
-        beta.wait_inbound(1, MSG_TIMEOUT).await && gamma.wait_inbound(1, MSG_TIMEOUT).await,
-        "alpha's message never reached beta and gamma"
-    );
-
-    beta.notice(Some(&alpha.nickname), "directed notice").await;
-
-    assert!(
-        alpha.wait_body("directed notice", MSG_TIMEOUT).await,
-        "alpha (the addressee) should see the directed notice but didn't"
-    );
-    assert!(
-        !gamma
-            .inbound()
-            .iter()
-            .any(|msg| msg.body.as_str() == "directed notice"),
-        "gamma (uninvolved) should NOT see the directed notice but did"
-    );
-}
-
-/// Two agents on the same swarm must each get a distinct IPC socket.
-#[test]
-fn test_ipc_socket_isolation() {
-    let (creator, swarm) = Node::create();
-    let joiner = Node::join(&swarm, "joiner-ipc");
-    assert!(creator.wait_ready(&swarm), "creator socket never appeared");
-    assert!(joiner.wait_ready(&swarm), "joiner socket never appeared");
-
-    let prefix = agent_gossip::swarm_prefix(&swarm);
-    let sockets: Vec<_> = fs::read_dir(format!("{RUNTIME_DIR}/{prefix}"))
-        .expect("swarm runtime dir missing")
-        .flatten()
-        .filter(|entry| entry.file_name().to_string_lossy().ends_with(".sock"))
-        .collect();
-
-    assert!(
-        sockets.len() >= 2,
-        "expected ≥2 per-agent sockets for this swarm, got {}: {:?}",
-        sockets.len(),
-        sockets
-            .iter()
-            .map(fs::DirEntry::file_name)
-            .collect::<Vec<_>>()
-    );
 }
 
 /// Send from both sides and verify each receives the other's message.
@@ -555,15 +335,15 @@ fn test_no_server_error() {
 }
 
 /// A body over the single-message cap is transparently split and delivered;
-/// only a body too large for even `MAX_MESSAGE_PARTS` parts is refused.
+/// only a body too large for even `MAX_MESSAGE_SHARDS` shards is refused.
 #[test]
-fn test_oversize_body_splits_then_refuses_past_the_part_cap() {
+fn test_oversize_body_splits_then_refuses_past_the_shard_cap() {
     let (creator, swarm) = Node::create();
     let joiner = Node::join(&swarm, "joiner-mp");
     assert!(creator.wait_ready(&swarm), "creator socket never appeared");
     assert!(joiner.wait_ready(&swarm), "joiner socket never appeared");
 
-    // Over the single-message cap: the daemon splits it into parts and the
+    // Over the single-message cap: the daemon splits it into shards and the
     // receiver reassembles, so it surfaces once as the whole body on each
     // stream — the sender's self-echo and the peer's delivery.
     let body = "a".repeat(agent_gossip::MAX_MESSAGE_SIZE * 2);
@@ -582,12 +362,12 @@ fn test_oversize_body_splits_then_refuses_past_the_part_cap() {
         assert_eq!(msg.body, body, "the reassembled body matches the original");
     }
 
-    // Too large for the part cap: refused on the sender with a clear error.
+    // Too large for the shard cap: refused on the sender with a clear error.
     let huge = "a".repeat(agent_gossip::MAX_LOGICAL_BODY_BYTES);
     let out = cli_message_raw(&swarm, &creator.nickname, &huge);
     assert!(
         !out.status.success(),
-        "a body past the part cap must be refused"
+        "a body past the shard cap must be refused"
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
@@ -707,7 +487,7 @@ async fn test_ask_targets_specific_agent_three_peers() {
         let msg = node
             .inbound()
             .into_iter()
-            .find(|msg| msg.body.as_str() == "tag-from-alpha")
+            .find(|msg| chat_text(msg) == "tag-from-alpha")
             .expect("alpha's message missing");
         assert_eq!(
             msg.author.to_string(),
@@ -729,7 +509,7 @@ async fn test_ask_targets_specific_agent_three_peers() {
     assert_eq!(
         beta.inbound()
             .into_iter()
-            .find(|msg| msg.body.as_str() == "tag-from-gamma")
+            .find(|msg| chat_text(msg) == "tag-from-gamma")
             .expect("gamma msg missing on beta")
             .author
             .to_string(),
@@ -1122,54 +902,6 @@ fn test_ready_gate_emits_identity_json_on_success() {
     assert_eq!(parsed["name"], "cool-team");
     assert_eq!(parsed["nickname"], "calm-otter");
     let _ = fs::remove_file(&state_file);
-}
-
-/// The subprocess wire contract for `agent-gossip notice`: the CLI accepts it, and
-/// the poll record carries the pinned `type:"notice"` shape with the
-/// `(notice)` display marker — what agents key the no-auto-reply contract on.
-#[test]
-fn test_notice_wire_contract_over_cli_and_poll() {
-    let (creator, swarm) = Node::create();
-    let joiner = Node::join(&swarm, "joiner-notice-cli");
-    assert!(creator.wait_ready(&swarm), "creator socket never appeared");
-    assert!(joiner.wait_ready(&swarm), "joiner socket never appeared");
-    std::thread::sleep(Duration::from_secs(2));
-
-    cli_notice(&swarm, &joiner.nickname, "ci green", None);
-
-    // The sender's own echo lands in its poll buffer with the pinned shape.
-    let polled = wait_until(
-        || {
-            let raw = cli_poll(&swarm, &joiner.nickname, None);
-            let events: Vec<serde_json::Value> = serde_json::from_str(&raw).unwrap_or_default();
-            events
-                .iter()
-                .filter(|event| event["type"] == "notice")
-                .count()
-        },
-        1,
-        MSG_TIMEOUT,
-    );
-    assert_eq!(polled, 1, "notice never surfaced in poll");
-
-    let raw = cli_poll(&swarm, &joiner.nickname, None);
-    let events: Vec<serde_json::Value> = serde_json::from_str(&raw)
-        .unwrap_or_else(|error| panic!("failed to parse poll JSON: {error}\nraw: {raw}"));
-    let notice = events
-        .iter()
-        .find(|event| event["type"] == "notice")
-        .expect("notice record present");
-    assert!(
-        notice["seq"].is_u64(),
-        "poll record carries a seq: {notice}"
-    );
-    assert_eq!(notice["event"], "message");
-    assert_eq!(notice["body"], "ci green");
-    assert_eq!(notice["self"], true, "joiner authored it → self:true");
-    assert_eq!(
-        notice["display"],
-        "💬️ `<joiner-notice-cli>` (notice): ci green"
-    );
 }
 
 /// The poll command retrieves buffered events from a running swarm process,
@@ -2323,7 +2055,7 @@ async fn same_nickname_peers_communicate() {
     let from_alpha = beta
         .inbound()
         .into_iter()
-        .find(|msg| msg.body.as_str() == "from-alpha")
+        .find(|msg| chat_text(msg) == "from-alpha")
         .expect("alpha's message is present");
     assert_eq!(
         from_alpha.pubkey.len(),
@@ -2435,7 +2167,7 @@ fn test_starvation_watchdog_recovers_loudly() {
     );
     // Degraded, not broken: the IPC plane still accepts a send (it is
     // buffered until traffic proves the mesh again).
-    let _ = cli_msg_checked(&swarm, &survivor.nickname, "sv-after", None);
+    let _ = common::cli_msg_checked(&swarm, &survivor.nickname, "sv-after");
 }
 
 /// False-positive guard: a lone creator is alone by construction — it
@@ -2458,8 +2190,8 @@ fn test_lone_creator_never_trips_starvation() {
 }
 
 /// The 2026-05-31 roster-collapse, mechanized: a 5-node swarm at
-/// `--active-view-capacity 2` (the partial-mesh churn regime) put
-/// through SIGSTOP/SIGCONT flap rounds. Pre-fix, a node could end up
+/// `--max-peers 2` (the partial-mesh churn regime) put through
+/// SIGSTOP/SIGCONT flap rounds. Pre-fix, a node could end up
 /// with an empty roster and phantom links forever — silent message
 /// loss. Post-fix (link truth + starvation watchdog), every node must
 /// deliver again once the storm passes.
@@ -2469,7 +2201,7 @@ fn test_flap_storm_all_rosters_recover() {
         ("--alive-timeout-secs", "3"),
         ("--sweep-interval-secs", "1"),
         ("--starvation-threshold-secs", "6"),
-        ("--active-view-capacity", "2"),
+        ("--max-peers", "2"),
     ];
     // Serialize against the other timing-sensitive tests (see `serial_guard`).
     let _serial = serial_guard();
@@ -2578,7 +2310,9 @@ fn ready_identity(log: &std::path::Path) -> Option<(String, String)> {
 }
 
 fn default_state_file(swarm: &str, nickname: &str) -> PathBuf {
-    let prefix = agent_gossip::swarm_prefix(swarm);
+    // Mirror `util::swarm_prefix`: strip the `://` scheme separator before
+    // taking 16 chars, so the path matches where the daemon writes its state.
+    let prefix: String = swarm.replace("://", "").chars().take(16).collect();
     PathBuf::from(RUNTIME_DIR)
         .join(prefix)
         .join(format!("{nickname}.state.json"))
@@ -2738,4 +2472,78 @@ fn leave_nothing_owned_is_a_clean_noop() {
 
     let _ = idle.kill();
     let _ = idle.wait();
+}
+
+/// With `--no-gossip-directed`, gossip carries no directed traffic, so a
+/// directed A2A task that still round-trips (request out, worker-minted id
+/// back) proves the unicast transport delivers point-to-point — not via the
+/// gossip flood. Broadcasts still ride gossip, so the warmup meshes the
+/// daemons and exchanges the `PeerInfo` the sender's unicast dial resolves on.
+#[test]
+fn unicast_only_delivers_directed_task() {
+    let (creator, swarm) = Node::create_flags("uni-only", &[("--no-gossip-directed", "")]);
+    let joiner = Node::join_flags(&swarm, "uni-only-b", &[("--no-gossip-directed", "")]);
+    assert!(creator.wait_ready(&swarm), "creator never ready");
+    assert!(joiner.wait_ready(&swarm), "joiner never ready");
+
+    // Warmup broadcast (always gossip) meshes them + exchanges addresses.
+    cli_message(&swarm, &creator.nickname, "warmup");
+    assert!(
+        wait_until(
+            || joiner.count_from(&creator.nickname, "warmup"),
+            1,
+            MSG_TIMEOUT
+        ) >= 1,
+        "warmup broadcast never reached the joiner (mesh didn't form)"
+    );
+
+    // Directed task: gossip won't carry the A2aReq/A2aResp, so a round-trip (a
+    // worker-minted task id) can only have gone point-to-point. Under strict
+    // unicast-only the send can fail until the sender has learned the worker's
+    // endpoint (its signed `PeerInfo`) and warmed a dial, so retry until it
+    // lands — a success proves unicast delivered both legs.
+    let deadline = Instant::now() + MSG_TIMEOUT;
+    loop {
+        let out = cli_task_create_raw(&swarm, &creator.nickname, &joiner.nickname, "uni hello");
+        if out.status.success()
+            && let Ok(parsed) = serde_json::from_str::<serde_json::Value>(
+                String::from_utf8_lossy(&out.stdout).trim(),
+            )
+            && parsed["result"]["task"]["id"].is_string()
+        {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "directed task never round-tripped under unicast-only — unicast failed to deliver"
+        );
+        std::thread::sleep(POLL);
+    }
+}
+
+/// With `--no-unicast`, the point-to-point transport is off and every directed
+/// frame rides gossip (the pre-unicast behavior). A directed A2A task must
+/// still round-trip — the safety-switch parity check.
+#[test]
+fn gossip_only_delivers_directed_task() {
+    let (creator, swarm) = Node::create_flags("gos-only", &[("--no-unicast", "")]);
+    let joiner = Node::join_flags(&swarm, "gos-only-b", &[("--no-unicast", "")]);
+    assert!(creator.wait_ready(&swarm), "creator never ready");
+    assert!(joiner.wait_ready(&swarm), "joiner never ready");
+
+    cli_message(&swarm, &creator.nickname, "warmup");
+    assert!(
+        wait_until(
+            || joiner.count_from(&creator.nickname, "warmup"),
+            1,
+            MSG_TIMEOUT
+        ) >= 1,
+        "warmup never reached the joiner"
+    );
+
+    let id = cli_task_create(&swarm, &creator.nickname, &joiner.nickname, "gossip hello");
+    assert!(
+        !id.is_empty(),
+        "directed task returned no id under gossip-only"
+    );
 }

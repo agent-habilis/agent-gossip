@@ -21,8 +21,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use crate::daemon::state_log::{StateLog, StateProjection};
-use crate::protocol::Message;
 use crate::protocol::message::MessageBody;
+use crate::protocol::{Message, Nickname};
 
 /// The tagged `State` message body. Phase 1 has only `Merge`; `Snapshot` arrives
 /// with compaction. An unknown tag fails to parse and is ignored by the reducer
@@ -37,6 +37,30 @@ enum StateOp {
 pub(crate) fn merge_body(merge: Value) -> anyhow::Result<MessageBody> {
     let json = serde_json::to_string(&StateOp::Merge { merge })?;
     MessageBody::new(json).map_err(|error| anyhow::anyhow!("{error}"))
+}
+
+/// Does this **meta**-channel merge body write another peer's `AgentCard` at
+/// `/peers/<nick>/card` (set or `null`-delete) for a `nick` other than
+/// `author`? The card carries the peer's cryptographic identity
+/// (`metadata.pubkey`), so a forged card would let any signed member spoof
+/// another member's A2A identity to `ahsw card` and the `--a2a-serve` HTTP
+/// surface. The receive path drops such an event before it folds (a member
+/// only writes its OWN `/peers/<self>/card`, per the glossary invariant).
+/// A malformed body parses to no merge and touches nothing → `false`.
+#[must_use]
+pub(crate) fn meta_merge_forges_foreign_card(body: &str, author: &Nickname) -> bool {
+    let Ok(StateOp::Merge { merge }) = serde_json::from_str::<StateOp>(body) else {
+        return false;
+    };
+    let Some(peers) = merge.get("peers").and_then(Value::as_object) else {
+        return false;
+    };
+    peers.iter().any(|(nick, entry)| {
+        nick != author.as_str()
+            && entry
+                .as_object()
+                .is_some_and(|fields| fields.contains_key("card"))
+    })
 }
 
 /// RFC 7386 §2: recursively merge `patch` into `target`. An object patch recurses
@@ -249,5 +273,40 @@ mod tests {
         log.insert(merge_event(&swarm, &author, 10, json!("scalar")));
         log.insert(merge_event(&swarm, &author, 20, json!({"turn": "b"})));
         assert_eq!(derive_document(&log), json!({"turn": "b"}));
+    }
+
+    #[test]
+    fn foreign_card_write_is_rejected_own_is_allowed() {
+        use super::meta_merge_forges_foreign_card;
+        let alice = Nickname::from("alice");
+        let card = |nick: &str, value: Value| {
+            merge_body(json!({"peers": {nick: {"card": value}}}))
+                .unwrap()
+                .as_str()
+                .to_owned()
+        };
+        // Setting or null-deleting ANOTHER peer's card is a forgery.
+        assert!(meta_merge_forges_foreign_card(
+            &card("bob", json!({"metadata": {"pubkey": "ff".repeat(32)}})),
+            &alice,
+        ));
+        assert!(meta_merge_forges_foreign_card(
+            &card("bob", Value::Null),
+            &alice
+        ));
+        // Writing your OWN card is fine.
+        assert!(!meta_merge_forges_foreign_card(
+            &card("alice", json!({"name": "alice"})),
+            &alice,
+        ));
+        // Non-card writes to another peer (model/harness/host) aren't gated
+        // by this identity check.
+        let model = merge_body(json!({"peers": {"bob": {"model": "Opus"}}}))
+            .unwrap()
+            .as_str()
+            .to_owned();
+        assert!(!meta_merge_forges_foreign_card(&model, &alice));
+        // A malformed / non-merge body touches nothing.
+        assert!(!meta_merge_forges_foreign_card("not json", &alice));
     }
 }

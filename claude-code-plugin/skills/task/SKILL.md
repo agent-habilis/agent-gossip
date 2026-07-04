@@ -6,11 +6,12 @@ description: Send one or more tasks to peers and get their results back. Use whe
 ## What this does
 
 Sends **one or more tasks** to other participants and collects each result.
-Each task is one **task exchange** on the swarm: a directed, phased exchange
-correlated by a `task_id` where the worker **runs the work and reports its
-result** on the `done` leg, and you `confirm` it (or `change` for a revision).
-That is the difference from `/swarm:handover`, which hands a task off and walks
-away with no result.
+Each task is one **A2A task** on the swarm: a directed `SendMessage` creates
+it (the worker mints the task id and returns the `Task`); the worker **runs the
+work and returns its result** as an `artifact`, and you **approve** it (or ask
+for a change), after which the worker marks it `completed`. That is the
+difference from `/swarm:handover`, which hands a task off and walks away with no
+result.
 
 Every task is **independent**: its own `task_id`, its own worker, its own
 clear **completion criteria**, its own to-do entry. There is **no** group-level
@@ -115,44 +116,47 @@ user-driven exit), and that approval is the "send these" signal. If the user
 keeps planning / edits (reassigns a worker, edits a brief, adds/removes a
 task), revise and `ExitPlanMode` again. On approval, continue below.
 
-## Send the offers
+## Create the tasks
 
-Mint **one fresh UUID `task_id` per task** (never reuse one — each task is
-independent). For each task, send its opening offer to its worker with that
-task's brief, **prepending the `[[task]]` marker as the body's own first line**
-so the receiver runs the report-back task flow:
+For **each** task, create it on its worker with a directed `SendMessage`. The
+**worker mints the task id** and returns the `Task` in the JSON-RPC response —
+capture `result.task.id` as that task's `task_id` (you do not choose it):
 
 ```bash
-agent-gossip task --swarm "$SWARM" --nickname "$NICKNAME" --to "$WORKER" \
-  --task-id "$TASK_ID" --phase offer --text "[[task]]
-$BRIEF"
+agent-gossip a2a call --swarm "$SWARM" --nickname "$NICKNAME" --to "$WORKER" \
+  --method SendMessage --text "$BRIEF"
 ```
 
-Handle errors per send:
-- `unknown participant` ⇒ that peer left between the roster read and the send;
+The brief itself should ask the worker to **report a result back** (that is
+what makes this a report-back task rather than a handover). Handle errors per
+create:
+- `unknown participant` ⇒ that peer left between the roster read and the create;
   drop that task (note it in its todo) and continue with the rest.
 - `message too large` ⇒ shorten that task's brief and retry once.
-
-Each send echoes back as a `task` `"self":true` event.
 
 ## Drive each task
 
 The per-task mechanics live in the create/join event handler (loaded for the
-session) — do not duplicate them here. (If that session is on the CLI fallback
-rather than Monitor, the worker's legs arrive on the poll tick, not instantly —
-same handling, slightly later.) For **each** task's `task_id`:
+session) — do not duplicate them here. (On the CLI fallback rather than Monitor,
+the worker's status/artifact legs arrive on the poll tick, not instantly — same
+handling, slightly later.) For **each** task's `task_id`:
 
-- **`context` from the worker** — answer from your task context with `--phase
-  context`. Silent (todo only).
-- **`progress` from the worker** — a liveness/percent beat; refresh that
-  task's todo, never a printed line.
-- **`done` from the worker** ("here is my result") — the `body` is that task's
-  **result**. **Print it**, attributed to the worker (it is the deliverable),
-  then **`confirm`**: send `--phase confirm`. Use `--phase change` only if the
-  result plainly misses the completion criteria and a revision is worth a round trip.
-  Confirm closes that task.
-- **`decline` / `task_timeout`** — that task's worker dropped out; record it
-  (no result) and move on. Other tasks are unaffected.
+- **`state:"input-required"` with a question** — the worker needs input; answer
+  from your task context with a follow-up message (`agent-gossip a2a call --to $WORKER
+  --method SendMessage --task-id "$TASK_ID" --text "<answer>"`). Silent (todo
+  only).
+- **`task_progress`** — a liveness/percent beat; refresh that task's todo, never
+  a printed line.
+- **`kind:"artifact-update"` from the worker** ("here is my result") — the
+  `body` is that task's **result**. **Print it**, attributed to the worker (it
+  is the deliverable), then **approve** it with a follow-up message
+  (`--method SendMessage --task-id "$TASK_ID" --text "approved"`). Send a
+  change request instead only if the result plainly misses the completion
+  criteria and a revision is worth a round trip. The worker then emits
+  `state:"completed"`, which closes that task.
+- **`state:"failed"` / `task_timeout`** — that task's worker dropped out or
+  couldn't finish; record it (no result) and move on. Other tasks are
+  unaffected.
 
 Tasks are independent — there is no waiting for all of them, and no step that
 runs once they all finish.
@@ -177,9 +181,10 @@ below, `activeForm` = `activeForm`) + **`TaskUpdate`** (status
   would show literally) and `<`/`>` aren't escaped. Use this exact format;
   don't invent a `task to <worker>` phrasing.
 - Move each todo through its lifecycle off that task's events
-  (`accepted`/`progress`) via `TodoWrite`; on your `confirm` set it
-  `completed`. On `decline`/`task_timeout` set it `completed` and note "dropped
-  (declined/timed out)" **in the todo content**.
+  (`working`/`input-required`/`task_progress`) via `TodoWrite`; when the worker
+  emits `completed` (after your approval) set it `completed`. On
+  `failed`/`task_timeout` set it `completed` and note "dropped (failed/timed
+  out)" **in the todo content**.
 
 Re-invoking `/swarm:task` appends new todos to this same list.
 

@@ -1,6 +1,6 @@
 //! Gossip **outbound/send plane**: building, signing, logging and
 //! broadcasting messages; the unmeshed-join outbound buffer; presence /
-//! `PeerInfo` announcements; and the interactive `/reply` stdin path.
+//! `PeerInfo` announcements; and the interactive broadcast stdin path.
 //! [`broadcast_message`] is the single source of truth for the send
 //! path — the IPC `Msg` command, the typed in-process `SessionRequest`,
 //! and stdin all funnel through it so they cannot drift. Inbound dispatch
@@ -17,10 +17,9 @@ use crate::daemon::state::EventLoopState;
 use crate::output;
 use crate::protocol::identity::Identity;
 use crate::protocol::{
-    Channel, Message, MessageBody, MessageId, MessageKind, Nickname, Part, PartGroup, SwarmId,
-    TaskId, TaskPhase,
+    Channel, Message, MessageBody, MessageId, MessageKind, Nickname, Shard, ShardGroup, SwarmId,
 };
-use crate::util::consts::{MAX_MESSAGE_PARTS, MAX_MESSAGE_SIZE};
+use crate::util::consts::{MAX_MESSAGE_SHARDS, MAX_MESSAGE_SIZE};
 
 /// Fire-and-forget gossip broadcast. Serialize errors are swallowed:
 /// this helper is for presence / `PeerInfo` announcements where a
@@ -158,11 +157,10 @@ pub(super) async fn announce_arrival(
     broadcast_peer_info(sender, swarm, author, identity, endpoint).await;
 }
 
-/// Process one line of interactive stdin: parse a `/reply <nick> ...`
-/// command or treat the line as a plain broadcast, validate the
-/// nickname/body, then delegate to `broadcast_message` so the send
-/// (and its oversize/serialize error handling) is identical to the
-/// IPC and embed paths.
+/// Process one line of interactive stdin as a swarm broadcast (A2A is
+/// point-to-point, so directed 1:1 is a task, not a chat line) — validate the
+/// body, then delegate to `broadcast_message` so the send (and its
+/// oversize/serialize error handling) is identical to the IPC and embed paths.
 pub(crate) async fn handle_stdin_line(
     text: &str,
     sender: &GossipSender,
@@ -175,40 +173,14 @@ pub(crate) async fn handle_stdin_line(
     if text.is_empty() {
         return;
     }
-    let (body, reply) = if let Some((nick, raw_body)) = parse_reply_command(text) {
-        let body = match MessageBody::new(raw_body) {
-            Ok(body) => body,
-            Err(error) => {
-                out.report_error(&error);
-                return;
-            }
-        };
-        let Ok(target) = Nickname::new(nick) else {
-            out.error(&format!("invalid nickname '{nick}'"));
+    let body = match MessageBody::new(text) {
+        Ok(body) => body,
+        Err(error) => {
+            out.report_error(&error);
             return;
-        };
-        (body, Some(target))
-    } else {
-        let body = match MessageBody::new(text) {
-            Ok(body) => body,
-            Err(error) => {
-                out.report_error(&error);
-                return;
-            }
-        };
-        (body, None)
+        }
     };
-    match broadcast_message(
-        swarm,
-        author,
-        body,
-        MessageKind::Msg { reply },
-        state,
-        sender,
-        out,
-    )
-    .await
-    {
+    match broadcast_message(swarm, author, body, state, sender, out).await {
         Ok(_) => state.last_sent_at = Instant::now(),
         Err(error) => out.report_error(&error),
     }
@@ -231,32 +203,10 @@ fn retain_outbound(state: &mut EventLoopState, msg: &Message) {
     crate::logging::messages::log_out(msg);
 }
 
-/// Echo a just-built outbound task leg to the operator and, for **content**
-/// legs, retain it in the message log for anti-entropy. The `Progress` phase
-/// is liveness plumbing — echoed (so the sender's own widget updates) but
-/// never retained, mirroring its receive-side handling.
-fn echo_and_retain_task(state: &mut EventLoopState, msg: &Message, out: &output::Output) {
-    out.print_task(msg, true);
-    retain_task(state, msg);
-}
-
-/// Retain a just-built outbound task leg for anti-entropy **without**
-/// echoing it — the raw parts of a split leg retain silently; the reassembled
-/// logical leg is echoed once. Content legs retain; the `Progress` beat doesn't.
-fn retain_task(state: &mut EventLoopState, msg: &Message) {
-    let retain = matches!(
-        &msg.kind,
-        MessageKind::Task { phase, .. } if crate::protocol::message::is_content_phase(*phase)
-    );
-    if retain {
-        retain_outbound(state, msg);
-    }
-}
-
 /// Commit a just-built outbound `Msg` into local state: advance the per-author
 /// hash chain (`seq`/`prev`) and the DAG tips, retain it in the message log
 /// (pruning the fork/DAG indexes on eviction), write the dev log, and — when
-/// `echo` — print the operator line. The raw parts of a split body commit
+/// `echo` — print the operator line. The raw shards of a split body commit
 /// silently (`echo == false`); only the reassembled logical message is echoed.
 /// Shared by the meshed and queued send paths so the chain bookkeeping can't
 /// drift between them.
@@ -276,13 +226,13 @@ fn commit_outbound_part(
     retain_outbound(state, msg);
 }
 
-/// Headroom subtracted from a part's body budget so the first part's measured
-/// envelope still covers later parts, whose `seq` may have grown a digit or two.
+/// Headroom subtracted from a shard's body budget so the first shard's measured
+/// envelope still covers later shards, whose `seq` may have grown a digit or two.
 const PART_BUDGET_MARGIN: usize = 16;
 
 /// JSON-escaped byte length of one char inside a `"…"` string. `serde_json` keeps
 /// non-ASCII as UTF-8; only the quote, backslash, and `\n`/`\t`/`\r` expand.
-/// Used to split a body so each part's *serialized* size fits the wire cap.
+/// Used to split a body so each shard's *serialized* size fits the wire cap.
 fn escaped_char_len(ch: char) -> usize {
     match ch {
         '"' | '\\' | '\n' | '\t' | '\r' => 2,
@@ -291,14 +241,14 @@ fn escaped_char_len(ch: char) -> usize {
     }
 }
 
-/// The escaped-body budget per part: the wire cap minus the serialized envelope
-/// of an empty-body part (built with worst-case header digits), minus margin.
-fn part_body_budget(empty_part: &Message) -> usize {
+/// The escaped-body budget per shard: the wire cap minus the serialized envelope
+/// of an empty-body shard (built with worst-case header digits), minus margin.
+fn shard_body_budget(empty_part: &Message) -> usize {
     MAX_MESSAGE_SIZE.saturating_sub(empty_part.wire_len() + PART_BUDGET_MARGIN)
 }
 
 /// Split `body` into the fewest UTF-8-safe chunks whose JSON-escaped length each
-/// fits `budget`. `None` if it would need more than [`MAX_MESSAGE_PARTS`] parts
+/// fits `budget`. `None` if it would need more than [`MAX_MESSAGE_SHARDS`] shards
 /// (the caller refuses the send) — or `budget` is zero.
 fn split_body(body: &str, budget: usize) -> Option<Vec<&str>> {
     if budget == 0 {
@@ -322,39 +272,45 @@ fn split_body(body: &str, budget: usize) -> Option<Vec<&str>> {
         }
         chunks.push(&body[start..end]);
         start = end;
-        if chunks.len() > MAX_MESSAGE_PARTS {
+        if chunks.len() > MAX_MESSAGE_SHARDS {
             return None;
         }
     }
     Some(chunks)
 }
 
-/// Build, chain-stamp, part-tag and sign one outbound chat message (`Msg` or
-/// `Notice`, without serializing — the caller measures or serializes).
+/// Build, chain-stamp, shard-tag and sign one outbound chat frame (without
+/// serializing — the caller measures or serializes). `id` pins the frame id:
+/// the payload's A2A `messageId` for a single-frame body (`None` keeps the
+/// minted id — shards of a split body keep their own ids; the *group* carries
+/// the A2A id there).
 #[expect(
     clippy::too_many_arguments,
-    reason = "a chained, part-tagged chat message needs the kind, body, chain (seq/prev/parents), part header and signer; the daemon stamps these inline to interleave chain stamping with the multipart split"
+    reason = "a chained, shard-tagged chat frame needs the body, pinned id, chain (seq/prev/parents), shard header and signer; the daemon stamps these inline to interleave chain stamping with the shard split"
 )]
 fn build_msg(
     swarm: &SwarmId,
     author: &Nickname,
-    kind: &MessageKind,
     body: MessageBody,
+    id: Option<MessageId>,
     seq: u64,
     prev: Option<String>,
     parents: Vec<String>,
-    part: Option<Part>,
+    shard: Option<Shard>,
     signer: &Identity,
 ) -> Message {
-    Message::new_chat(swarm, author, kind.clone(), body)
-        .with_chain(seq, prev)
+    let mut msg = Message::new_a2a_msg(swarm, author, body);
+    if let Some(id) = id {
+        msg = msg.with_id(id);
+    }
+    msg.with_chain(seq, prev)
         .with_parents(parents)
-        .with_part(part)
+        .with_shard(shard)
         .signed(signer)
 }
 
 /// Broadcast (or buffer, while unmeshed) one fully-built `Msg` and commit it to
-/// the per-author chain + log. `echo` gates the operator print so the raw parts
+/// the per-author chain + log. `echo` gates the operator print so the raw shards
 /// of a split body commit silently. Errors if the unmeshed buffer is full.
 async fn send_msg_part(
     state: &mut EventLoopState,
@@ -380,52 +336,56 @@ async fn send_msg_part(
     Ok(())
 }
 
-/// The reassembled logical chat message to echo + return after a multipart
-/// send. Its `id` is the part `group`, so the sender and every receiver name
-/// the reassembled body identically. Unsigned / unchained — a local view, not
-/// a wire message (the parts carry the wire bytes and the chain entries).
+/// The reassembled logical chat frame to echo + return after a sharded send.
+/// Its `id` is the shard `group` — which the chat path pins to the payload's
+/// A2A `messageId` — so the sender and every receiver name the reassembled
+/// body identically. Unsigned / unchained — a local view, not a wire message
+/// (the shards carry the wire bytes and the chain entries).
 fn synthesize_logical_msg(
     swarm: &SwarmId,
     author: &Nickname,
-    kind: &MessageKind,
     body: MessageBody,
-    group: &PartGroup,
+    group: &ShardGroup,
 ) -> Message {
-    let mut msg = Message::new_chat(swarm, author, kind.clone(), body);
-    msg.id = MessageId::new(group.as_str()).expect("a part group is a valid message id");
+    let mut msg = Message::new_a2a_msg(swarm, author, body);
+    msg.id = MessageId::new(group.as_str()).expect("a shard group is a valid message id");
     msg
 }
 
-/// Build, sign, log and gossip-broadcast one outbound chat message (`kind` is
-/// `Msg` or `Notice`, open or directed). The single source of truth for the
-/// send path: the CLI socket's IPC `Msg`/`Notice` commands and the typed
-/// in-process `SessionRequest::Send` all funnel through here so they cannot
-/// drift. A body too large for one message is transparently split into
-/// `part`-tagged messages the receiver reassembles; the returned [`Message`]
-/// is the whole logical body either way.
+/// Build, sign, log and gossip-broadcast one outbound chat message. The
+/// single source of truth for the send path: the CLI socket's IPC `Msg`
+/// command and the typed in-process `SessionRequest::Send` both funnel
+/// through here so they cannot drift. `text` is the operator/agent input; it
+/// is wrapped here — and only here — into the A2A payload the wire carries
+/// (see [`crate::a2a::gossip::chat_message`]), so role/context/extension
+/// stamping cannot drift between callers. A payload too large for one frame
+/// is transparently split into `shard`-tagged messages the receiver
+/// reassembles; the returned [`Message`] is the whole logical frame either
+/// way, its id pinned to the payload's A2A `messageId`.
 ///
 /// # Errors
 /// Propagates a [`Message::serialize`] failure and a gossip broadcast error,
 /// errors if the unmeshed pending-outbound buffer is full, and refuses a body
-/// that would need more than [`MAX_MESSAGE_PARTS`] parts.
+/// that would need more than [`MAX_MESSAGE_SHARDS`] shards.
 pub(crate) async fn broadcast_message(
     swarm: &SwarmId,
     author: &Nickname,
-    body: MessageBody,
-    kind: MessageKind,
+    text: MessageBody,
     state: &mut EventLoopState,
     sender: &GossipSender,
     out: &output::Output,
 ) -> anyhow::Result<(MessageId, Message)> {
     let signer = state.identity.clone();
-    // Fast path: the whole body in one message. If it fits the wire cap, send it
-    // as today — no `part` header, so an ordinary message's wire form is
-    // unchanged.
+    let payload = crate::a2a::gossip::chat_message(swarm, text.as_str());
+    let payload_id =
+        MessageId::new(payload.message_id.as_str()).expect("an a2a message id is a valid frame id");
+    let body = crate::a2a::gossip::payload_body(&payload)?;
+    // Fast path: the whole payload in one frame, its id the A2A messageId.
     let single = build_msg(
         swarm,
         author,
-        &kind,
         body.clone(),
+        Some(payload_id.clone()),
         state.self_seq,
         state.self_prev.clone(),
         state.dag_parents(),
@@ -438,43 +398,45 @@ pub(crate) async fn broadcast_message(
         send_msg_part(state, sender, out, &single, bytes, true).await?;
         return Ok((id, single));
     }
-    // Too big: split the body across part-tagged messages. Each part is an
-    // ordinary chained `Msg`, retained for anti-entropy; only the reassembled
-    // body is echoed to the operator and returned.
-    let group = PartGroup::random();
-    let max_parts = u32::try_from(MAX_MESSAGE_PARTS).unwrap_or(u32::MAX);
-    // Size the probe against the *largest* part's envelope, not the first's. Each
-    // later part chains off the prior, so even from genesis (empty `prev`/`parents`)
-    // every part after the first carries a 64-char `prev` and one parent hash.
+    // Too big: split the payload across shard-tagged frames. Each shard is an
+    // ordinary chained frame with its own minted id, retained for
+    // anti-entropy; the *group* carries the A2A messageId, so the reassembled
+    // logical frame — the only thing echoed and returned — is named by it.
+    let group = ShardGroup::from_uuid_str(payload.message_id.as_str())
+        .expect("an a2a message id is a valid shard group");
+    let max_parts = u32::try_from(MAX_MESSAGE_SHARDS).unwrap_or(u32::MAX);
+    // Size the probe against the *largest* shard's envelope, not the first's. Each
+    // later shard chains off the prior, so even from genesis (empty `prev`/`parents`)
+    // every shard after the first carries a 64-char `prev` and one parent hash.
     // Worst-case both: a full-length `prev` and as many parent hashes as the first
-    // part could hold (its current tips, never fewer than the one-hash link later
-    // parts carry). A 64-char zero string stands in for any content hash.
+    // shard could hold (its current tips, never fewer than the one-hash link later
+    // shards carry). A 64-char zero string stands in for any content hash.
     let hash_stub = "0".repeat(64);
     let probe_parents = vec![hash_stub.clone(); state.dag_parents().len().max(1)];
     let probe = build_msg(
         swarm,
         author,
-        &kind,
         MessageBody::new(String::new()).expect("empty body is valid"),
+        None,
         state.self_seq,
         Some(hash_stub),
         probe_parents,
-        Some(Part {
+        Some(Shard {
             group: group.clone(),
             idx: max_parts - 1,
             total: max_parts,
         }),
         &signer,
     );
-    let budget = part_body_budget(&probe);
+    let budget = shard_body_budget(&probe);
     let chunks = split_body(body.as_str(), budget).ok_or_else(|| {
         anyhow::anyhow!(
-            "message too large: a {}-byte body needs more than {MAX_MESSAGE_PARTS} parts",
+            "message too large: a {}-byte body needs more than {MAX_MESSAGE_SHARDS} shards",
             body.as_str().len()
         )
     })?;
-    let total = u32::try_from(chunks.len()).expect("chunk count is bounded by MAX_MESSAGE_PARTS");
-    // Atomic admission while unmeshed: all parts or none, so a half-buffered body
+    let total = u32::try_from(chunks.len()).expect("chunk count is bounded by MAX_MESSAGE_SHARDS");
+    // Atomic admission while unmeshed: all shards or none, so a half-buffered body
     // (which could never reassemble) never reaches peers.
     if !state.meshed && state.pending_outbound.remaining() < chunks.len() {
         return Err(anyhow::anyhow!(
@@ -482,181 +444,238 @@ pub(crate) async fn broadcast_message(
         ));
     }
     for (idx, chunk) in chunks.iter().enumerate() {
-        let part = Part {
+        let shard = Shard {
             group: group.clone(),
-            idx: u32::try_from(idx).expect("idx is bounded by MAX_MESSAGE_PARTS"),
+            idx: u32::try_from(idx).expect("idx is bounded by MAX_MESSAGE_SHARDS"),
             total,
         };
         let chunk_body = MessageBody::new(*chunk).expect("a substring of a valid body is valid");
         let msg = build_msg(
             swarm,
             author,
-            &kind,
             chunk_body,
+            None,
             state.self_seq,
             state.self_prev.clone(),
             state.dag_parents(),
-            Some(part),
+            Some(shard),
             &signer,
         );
         let bytes = Bytes::from(msg.serialize()?);
         send_msg_part(state, sender, out, &msg, bytes, false).await?;
     }
-    let logical = synthesize_logical_msg(swarm, author, &kind, body, &group);
+    let logical = synthesize_logical_msg(swarm, author, body, &group);
     out.print_message_ex(&logical, true);
     Ok((logical.id.clone(), logical))
 }
 
-/// One outbound task leg's payload (addressee + correlation id +
-/// phase + body), bundled so [`broadcast_task`] stays within the argument
-/// budget. The IPC `task` command and the typed `SessionRequest::Task` both
-/// build it from their carried fields.
-pub(crate) struct TaskLeg {
-    pub to: Nickname,
-    pub task_id: TaskId,
-    pub phase: TaskPhase,
-    pub body: MessageBody,
-}
-
-/// Build, sign, log and gossip-broadcast one task leg. Sibling of
-/// [`broadcast_message`] for the typed `Task` kind: **content** legs take the
-/// meshed/unmeshed retain paths, but the `Progress` phase is liveness plumbing —
-/// never retained. No hash-chain or DAG stamping (task legs are presence-like —
-/// see [`MessageKind::Task`]). Always echoes the sender's own leg through
-/// `print_task` (a `task`/`task_progress` event with `self:true`), the same
-/// way an outbound `msg` echoes. Showing the leg to its *addressee* is the
-/// receiver-side job of [`lifecycle::handle_task`](crate::lifecycle::handle_task).
-///
-/// This is where `Offer` addressee validation lives: an `Offer` leg must name
-/// a current participant. The CLI, MCP, and embed callers all reach this
-/// function, so validating here covers every path. Later phases skip the check
-/// so a brief peer flap mid-task can't wedge the conversation.
+/// One outbound task leg's input (addressee + correlation id + verb +
+/// body), bundled so [`broadcast_task`] stays within the argument budget.
+/// Broadcast one already-composed task frame (a worker's `TaskStatusUpdate`
+/// or `TaskArtifactUpdate`), sharding a large body, retaining **content**
+/// legs for anti-entropy, echoing the operator line, and advancing our own
+/// coarse task machine. `content` is false for a liveness beat (never
+/// retained/reassembled). Fire-and-forget worker→initiator push — the A2A
+/// streaming plane over gossip.
 ///
 /// # Errors
-/// Returns an `unknown participant` error for an `Offer` to a non-participant;
-/// propagates [`Message::serialize`] failure (oversized brief) and a gossip
-/// broadcast error.
-pub(crate) async fn broadcast_task(
+/// Propagates a [`Message::serialize`] failure, a gossip broadcast error, and
+/// a full unmeshed pending-outbound buffer.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "a task-frame emit threads swarm/author identity, the target + task id + payload, and the state/sender/output it broadcasts through"
+)]
+async fn broadcast_task_frame(
     swarm: &SwarmId,
     author: &Nickname,
-    leg: TaskLeg,
+    kind: MessageKind,
+    payload_body: MessageBody,
+    content: bool,
     state: &mut EventLoopState,
     sender: &GossipSender,
     out: &output::Output,
 ) -> anyhow::Result<(MessageId, Message)> {
-    let TaskLeg {
-        to,
-        task_id,
-        phase,
-        body,
-    } = leg;
-    if matches!(phase, TaskPhase::Offer) && !state.participants.contains(to.as_str()) {
-        return Err(anyhow::anyhow!("unknown participant '{to}'"));
-    }
     let signer = state.identity.clone();
-    // Fast path: the whole leg in one message.
-    let single = build_task(
-        swarm,
-        author,
-        &to,
-        &task_id,
-        phase,
-        body.clone(),
-        None,
-        &signer,
-    );
+    // Fast path: the whole leg in one frame.
+    let single =
+        Message::new_frame(swarm, author, kind.clone(), payload_body.clone()).signed(&signer);
     if single.wire_len() <= MAX_MESSAGE_SIZE {
         let bytes = Bytes::from(single.serialize()?);
         let id = single.id.clone();
-        send_task_leg(state, sender, out, &single, bytes, true).await?;
+        send_task_leg(state, sender, out, &single, bytes, true, content).await?;
         ingest_own_leg(state, &single, out);
         return Ok((id, single));
     }
-    // Only content legs are ever large enough to split; the `Progress` beat is a
-    // tiny liveness widget and is never retained/reassembled.
-    if !crate::protocol::message::is_content_phase(phase) {
-        return Err(anyhow::anyhow!("task {phase} leg too large to send"));
+    // Only content legs are ever large enough to split; the beat is a tiny
+    // liveness widget and is never retained/reassembled.
+    if !content {
+        return Err(anyhow::anyhow!("task beat leg too large to send"));
     }
-    let group = PartGroup::random();
-    let max_parts = u32::try_from(MAX_MESSAGE_PARTS).unwrap_or(u32::MAX);
-    let probe = build_task(
+    let logical_id = single.id.clone();
+    // The shard group carries the logical id, so the reassembled view is
+    // named identically on both ends.
+    let group =
+        ShardGroup::from_uuid_str(logical_id.as_str()).expect("a frame id is a valid shard group");
+    let max_parts = u32::try_from(MAX_MESSAGE_SHARDS).unwrap_or(u32::MAX);
+    let probe = Message::new_frame(
         swarm,
         author,
-        &to,
-        &task_id,
-        phase,
+        kind.clone(),
         MessageBody::new(String::new()).expect("empty body is valid"),
-        Some(Part {
-            group: group.clone(),
-            idx: max_parts - 1,
-            total: max_parts,
-        }),
-        &signer,
-    );
-    let budget = part_body_budget(&probe);
-    let chunks = split_body(body.as_str(), budget).ok_or_else(|| {
+    )
+    .with_shard(Some(Shard {
+        group: group.clone(),
+        idx: max_parts - 1,
+        total: max_parts,
+    }))
+    .signed(&signer);
+    let budget = shard_body_budget(&probe);
+    let chunks = split_body(payload_body.as_str(), budget).ok_or_else(|| {
         anyhow::anyhow!(
-            "task leg too large: a {}-byte body needs more than {MAX_MESSAGE_PARTS} parts",
-            body.as_str().len()
+            "task leg too large: a {}-byte body needs more than {MAX_MESSAGE_SHARDS} shards",
+            payload_body.as_str().len()
         )
     })?;
-    let total = u32::try_from(chunks.len()).expect("chunk count is bounded by MAX_MESSAGE_PARTS");
+    let total = u32::try_from(chunks.len()).expect("chunk count is bounded by MAX_MESSAGE_SHARDS");
     if !state.meshed && state.pending_outbound.remaining() < chunks.len() {
         return Err(anyhow::anyhow!(
             "pending outbound buffer full; multipart task leg dropped"
         ));
     }
     for (idx, chunk) in chunks.iter().enumerate() {
-        let part = Part {
+        let shard = Shard {
             group: group.clone(),
-            idx: u32::try_from(idx).expect("idx is bounded by MAX_MESSAGE_PARTS"),
+            idx: u32::try_from(idx).expect("idx is bounded by MAX_MESSAGE_SHARDS"),
             total,
         };
         let chunk_body = MessageBody::new(*chunk).expect("a substring of a valid body is valid");
-        let msg = build_task(
-            swarm,
-            author,
-            &to,
-            &task_id,
-            phase,
-            chunk_body,
-            Some(part),
-            &signer,
-        );
+        let msg = Message::new_frame(swarm, author, kind.clone(), chunk_body)
+            .with_shard(Some(shard))
+            .signed(&signer);
         let bytes = Bytes::from(msg.serialize()?);
-        send_task_leg(state, sender, out, &msg, bytes, false).await?;
+        send_task_leg(state, sender, out, &msg, bytes, false, content).await?;
     }
     // Echo + ingest the logical leg once (one content leg toward the cap).
-    let mut logical = Message::new_task(swarm, author, to, task_id, phase, body);
-    logical.id = MessageId::new(group.as_str()).expect("a part group is a valid message id");
+    let logical = Message::new_frame(swarm, author, kind, payload_body).with_id(logical_id);
     out.print_task(&logical, true);
     ingest_own_leg(state, &logical, out);
     Ok((logical.id.clone(), logical))
 }
 
-/// Build, part-tag and sign one outbound task leg (no serialize).
+/// Worker-emit a `TaskStatusUpdate` for a task we're serving: resolve the
+/// other party from the task record and push the status to it. A progress note
+/// like `"35/100"` on a non-terminal `working` state rides as a beat fraction.
+///
+/// # Errors
+/// `unknown task` if we hold no record for `task_id`; otherwise a
+/// serialize/broadcast failure.
 #[expect(
     clippy::too_many_arguments,
-    reason = "a task leg carries to/task_id/phase/body plus the part header and signer; bundling them buys nothing over the existing TaskLeg"
+    reason = "a task-frame emit threads swarm/author identity, the target + task id + payload, and the state/sender/output it broadcasts through"
 )]
-fn build_task(
+pub(crate) async fn emit_task_status(
     swarm: &SwarmId,
     author: &Nickname,
-    to: &Nickname,
-    task_id: &TaskId,
-    phase: TaskPhase,
-    body: MessageBody,
-    part: Option<Part>,
-    signer: &Identity,
-) -> Message {
-    Message::new_task(swarm, author, to.clone(), task_id.clone(), phase, body)
-        .with_part(part)
-        .signed(signer)
+    task_id: &crate::a2a::TaskId,
+    task_state: crate::a2a::TaskState,
+    note: Option<&str>,
+    state: &mut EventLoopState,
+    sender: &GossipSender,
+    out: &output::Output,
+) -> anyhow::Result<Message> {
+    let Some(peer) = state.tasks.get(task_id).map(|rec| rec.peer.clone()) else {
+        return Err(anyhow::anyhow!("unknown task '{task_id}'"));
+    };
+    broadcast_task_status(
+        swarm, author, &peer, task_id, task_state, note, state, sender, out,
+    )
+    .await
+    .map(|(_id, msg)| msg)
+}
+
+/// Worker-emit a `TaskArtifactUpdate` (the result) for a task we're serving.
+///
+/// # Errors
+/// `unknown task` if we hold no record for `task_id`; otherwise a
+/// serialize/broadcast failure.
+pub(crate) async fn emit_task_artifact(
+    swarm: &SwarmId,
+    author: &Nickname,
+    task_id: &crate::a2a::TaskId,
+    text: &str,
+    state: &mut EventLoopState,
+    sender: &GossipSender,
+    out: &output::Output,
+) -> anyhow::Result<Message> {
+    let Some(peer) = state.tasks.get(task_id).map(|rec| rec.peer.clone()) else {
+        return Err(anyhow::anyhow!("unknown task '{task_id}'"));
+    };
+    broadcast_task_artifact(swarm, author, &peer, task_id, text, state, sender, out)
+        .await
+        .map(|(_id, msg)| msg)
+}
+
+/// A worker-emitted `TaskStatusUpdate` (`a2a status`): compose the A2A status
+/// payload and push it to `peer` fire-and-forget.
+///
+/// # Errors
+/// Propagates a serialize/broadcast failure.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "a task-frame emit threads swarm/author identity, the target + task id + payload, and the state/sender/output it broadcasts through"
+)]
+pub(crate) async fn broadcast_task_status(
+    swarm: &SwarmId,
+    author: &Nickname,
+    peer: &Nickname,
+    task_id: &crate::a2a::TaskId,
+    task_state: crate::a2a::TaskState,
+    note: Option<&str>,
+    state: &mut EventLoopState,
+    sender: &GossipSender,
+    out: &output::Output,
+) -> anyhow::Result<(MessageId, Message)> {
+    let update = crate::a2a::gossip::status_update(swarm, task_id, task_state, note, None);
+    let body = crate::a2a::gossip::payload_body(&update)?;
+    let kind = MessageKind::A2aStatus {
+        to: peer.clone(),
+        task_id: task_id.clone(),
+    };
+    broadcast_task_frame(swarm, author, kind, body, true, state, sender, out).await
+}
+
+/// A worker-emitted `TaskArtifactUpdate` (`a2a artifact`): compose the A2A
+/// artifact payload and push it to `peer` fire-and-forget.
+///
+/// # Errors
+/// Propagates a serialize/broadcast failure.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "a task-frame emit threads swarm/author identity, the target + task id + payload, and the state/sender/output it broadcasts through"
+)]
+pub(crate) async fn broadcast_task_artifact(
+    swarm: &SwarmId,
+    author: &Nickname,
+    peer: &Nickname,
+    task_id: &crate::a2a::TaskId,
+    text: &str,
+    state: &mut EventLoopState,
+    sender: &GossipSender,
+    out: &output::Output,
+) -> anyhow::Result<(MessageId, Message)> {
+    let update = crate::a2a::gossip::artifact_update(swarm, task_id, text);
+    let body = crate::a2a::gossip::payload_body(&update)?;
+    let kind = MessageKind::A2aArtifact {
+        to: peer.clone(),
+        task_id: task_id.clone(),
+    };
+    broadcast_task_frame(swarm, author, kind, body, true, state, sender, out).await
 }
 
 /// Broadcast (or buffer, while unmeshed) one fully-built task leg, retaining
-/// content legs for anti-entropy. `echo` gates the operator print so the raw
-/// parts of a split leg commit silently. Errors if the unmeshed buffer is full.
+/// **content** legs for anti-entropy. `echo` gates the operator print so the
+/// raw shards of a split leg commit silently. Errors if the unmeshed buffer
+/// is full.
 async fn send_task_leg(
     state: &mut EventLoopState,
     sender: &GossipSender,
@@ -664,15 +683,16 @@ async fn send_task_leg(
     msg: &Message,
     bytes: Bytes,
     echo: bool,
+    content: bool,
 ) -> anyhow::Result<()> {
     if state.meshed {
         // Meshed: retain locally, then hit the wire (a transient send error
         // still leaves a content leg in our log for anti-entropy). Unicast when
         // the addressee is dialable, else gossip (see `unicast::deliver`).
-        retain_leg(state, msg, out, echo);
+        retain_leg(state, msg, out, echo, content);
         crate::unicast::deliver(msg, bytes, state, sender).await?;
     } else if state.pending_outbound.push(bytes) {
-        retain_leg(state, msg, out, echo);
+        retain_leg(state, msg, out, echo, content);
     } else {
         tracing::warn!("pending outbound buffer full; outbound message dropped");
         return Err(anyhow::anyhow!(
@@ -683,20 +703,27 @@ async fn send_task_leg(
 }
 
 /// Retain a task leg locally, echoing the operator line only when `echo`
-/// (false for the raw parts of a split leg). Content legs retain; `Progress`
-/// doesn't — see [`retain_task`].
-fn retain_leg(state: &mut EventLoopState, msg: &Message, out: &output::Output, echo: bool) {
+/// (false for the raw shards of a split leg). Content legs retain; the beat
+/// doesn't.
+fn retain_leg(
+    state: &mut EventLoopState,
+    msg: &Message,
+    out: &output::Output,
+    echo: bool,
+    content: bool,
+) {
     if echo {
-        echo_and_retain_task(state, msg, out);
-    } else {
-        retain_task(state, msg);
+        out.print_task(msg, true);
+    }
+    if content {
+        retain_outbound(state, msg);
     }
 }
 
 /// Advance our own coarse task state machine for a leg we just sent and warn
 /// once if a content leg pushed the task past its whole-task cap.
 fn ingest_own_leg(state: &mut EventLoopState, msg: &Message, out: &output::Output) {
-    if crate::daemon::task::ingest(&mut state.tasks, msg, true, Instant::now()) {
+    if crate::a2a::task::ingest(&mut state.tasks, msg, true, Instant::now()) {
         out.info(&format!(
             "task exceeded {} messages; wrap it up",
             crate::util::consts::TASK_CONTENT_CAP
@@ -705,11 +732,97 @@ fn ingest_own_leg(state: &mut EventLoopState, msg: &Message, out: &output::Outpu
     }
 }
 
+/// Client side of the gossip A2A request/response: mint an `rpc_id`, park a
+/// waiter (keyed by `rpc_id` + `peer`, with `timeout`), and broadcast an
+/// `A2aReq` directed at `peer` carrying the JSON-RPC `{method, params}`. The
+/// peer serves the safe method set and replies with an `A2aResp` that the
+/// receive path routes into the waiter (`state.fulfill_a2a_waiter`); the
+/// waiter times out via the loop's a2a-deadline arm. Fails fast (through the
+/// responder) when `peer` isn't a current participant or the waiter registry
+/// is full — no silent park.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the client call carries swarm/author identity, the target + RPC method/params/timeout, the transport-specific responder, and the state + sender it parks and broadcasts through"
+)]
+pub(crate) async fn broadcast_a2a_call(
+    swarm: &SwarmId,
+    author: &Nickname,
+    peer: Nickname,
+    method: &str,
+    params: serde_json::Value,
+    timeout: std::time::Duration,
+    responder: crate::daemon::state::A2aResponder,
+    state: &mut EventLoopState,
+    sender: &GossipSender,
+) {
+    let rpc_error = |code: i64, message: &str| {
+        serde_json::json!({ "error": { "code": code, "message": message } }).to_string()
+    };
+    // Fast-fail an unknown participant, EXCEPT when we already hold a task with
+    // this peer: a follow-up / read / cancel into a live task must survive a
+    // brief roster flap (the waiter's timeout is the feedback if the peer is
+    // truly gone), so it isn't wedged. Task creation (we hold no task with the
+    // peer yet) and any read/cancel to a peer we share no task with still
+    // require the peer present — method-agnostic, so `SendStreamingMessage`
+    // creates gate the same as `SendMessage`.
+    let party_to_a_task = state.tasks.values().any(|rec| rec.peer == peer);
+    if !party_to_a_task && !state.participants.contains(peer.as_str()) {
+        responder.send_response(&rpc_error(-32602, &format!("unknown participant '{peer}'")));
+        return;
+    }
+    let envelope = serde_json::json!({ "method": method, "params": params });
+    let Ok(body) = MessageBody::new(envelope.to_string()) else {
+        responder.send_response(&rpc_error(
+            -32602,
+            "request params contain control characters",
+        ));
+        return;
+    };
+    let rpc_id = crate::a2a::A2aRpcId::random();
+    let frame = Message::new_a2a_req(swarm, author, peer.clone(), rpc_id.clone(), body)
+        .signed(&state.identity);
+    // Clamp before adding to `Instant`: an unclamped client `timeout_secs` would
+    // overflow the platform `Instant` and panic the event loop.
+    let max_timeout =
+        std::time::Duration::from_secs(crate::util::consts::A2A_CALL_MAX_TIMEOUT_SECS);
+    if timeout > max_timeout {
+        tracing::warn!(
+            requested_secs = timeout.as_secs(),
+            capped_secs = crate::util::consts::A2A_CALL_MAX_TIMEOUT_SECS,
+            "a2a call timeout clamped to the maximum"
+        );
+    }
+    let deadline = tokio::time::Instant::now() + timeout.min(max_timeout);
+    if let Some(unregistered) = state.register_a2a_waiter(rpc_id, peer, deadline, responder) {
+        unregistered.send_response(&rpc_error(-32603, "too many in-flight a2a calls"));
+        return;
+    }
+    // Directed request: unicast to the peer when dialable, else gossip
+    // (see `unicast::deliver`). Mirrors `broadcast_msg`'s log-then-serialize.
+    crate::logging::messages::log_out(&frame);
+    match frame.serialize() {
+        Ok(bytes) => {
+            if let Err(error) =
+                crate::unicast::deliver(&frame, Bytes::from(bytes), state, sender).await
+            {
+                tracing::warn!(target: "agent_gossip::gossip", %error, "a2a request send failed");
+            }
+        }
+        Err(error) => {
+            tracing::warn!(target: "agent_gossip::gossip", %error, "a2a request serialize failed");
+        }
+    }
+}
+
 /// Handle one typed in-process [`SessionRequest`] (embed / MCP). `Send`
 /// broadcasts via the shared helper and echoes the canonical [`Message`]
 /// back on the oneshot; `Poll` returns the join-horizon-filtered buffer.
 /// Returns `true` if anything was broadcast so the caller can refresh
 /// `last_sent_at` (mirrors `handle_ipc_command`).
+#[expect(
+    clippy::too_many_lines,
+    reason = "a dispatch match with one arm per SessionRequest variant (mirrors handle_ipc_command)"
+)]
 pub(crate) async fn handle_session_request(
     req: SessionRequest,
     swarm: &SwarmId,
@@ -719,18 +832,8 @@ pub(crate) async fn handle_session_request(
     output: &output::Output,
 ) -> bool {
     match req {
-        SessionRequest::Send {
-            body,
-            reply,
-            notice,
-            resp,
-        } => {
-            let kind = if notice {
-                MessageKind::Notice { reply }
-            } else {
-                MessageKind::Msg { reply }
-            };
-            let outcome = broadcast_message(swarm, author, body, kind, state, sender, output)
+        SessionRequest::Send { body, resp } => {
+            let outcome = broadcast_message(swarm, author, body, state, sender, output)
                 .await
                 .map(|(_id, msg)| msg);
             let sent_ok = outcome.is_ok();
@@ -749,22 +852,34 @@ pub(crate) async fn handle_session_request(
             );
             false
         }
-        SessionRequest::Task {
-            to,
+        SessionRequest::TaskStatus {
             task_id,
-            phase,
-            body,
+            state: task_state,
+            note,
             resp,
         } => {
-            let leg = TaskLeg {
-                to,
-                task_id,
-                phase,
-                body,
-            };
-            let outcome = broadcast_task(swarm, author, leg, state, sender, output)
-                .await
-                .map(|(_id, msg)| msg);
+            let outcome = emit_task_status(
+                swarm,
+                author,
+                &task_id,
+                task_state,
+                note.as_deref(),
+                state,
+                sender,
+                output,
+            )
+            .await;
+            let sent_ok = outcome.is_ok();
+            let _ = resp.send(outcome);
+            sent_ok
+        }
+        SessionRequest::TaskArtifact {
+            task_id,
+            text,
+            resp,
+        } => {
+            let outcome =
+                emit_task_artifact(swarm, author, &task_id, &text, state, sender, output).await;
             let sent_ok = outcome.is_ok();
             let _ = resp.send(outcome);
             sent_ok
@@ -817,6 +932,27 @@ pub(crate) async fn handle_session_request(
             .await;
             true
         }
+        SessionRequest::A2aCall {
+            peer,
+            method,
+            params,
+            timeout,
+            resp,
+        } => {
+            broadcast_a2a_call(
+                swarm,
+                author,
+                peer,
+                &method,
+                params,
+                timeout,
+                crate::daemon::state::A2aResponder::Typed(resp),
+                state,
+                sender,
+            )
+            .await;
+            true
+        }
         // Raw injection (adversarial only): broadcast the bytes verbatim, no
         // signing or chain stamping — a malicious/crafted message on the wire.
         #[cfg(feature = "adversarial")]
@@ -845,77 +981,10 @@ pub(crate) async fn handle_session_request(
     }
 }
 
-/// Parse `/reply <nickname> body` from interactive stdin input.
-/// Returns `Some((nickname, body))` if the input matches, `None`
-/// otherwise. Lives here because the interactive stdin handler
-/// (`handle_stdin_line`) is its only consumer. `<`/`>` are reserved
-/// (not valid in a nickname), so the bracket delimiters are unambiguous.
-fn parse_reply_command(input: &str) -> Option<(&str, &str)> {
-    let rest = input.strip_prefix("/reply ")?;
-    let rest = rest.strip_prefix('<')?;
-    let bracket_end = rest.find('>')?;
-    let nickname = &rest[..bracket_end];
-    let body = rest[bracket_end + 1..].trim();
-    if nickname.is_empty() || body.is_empty() {
-        return None;
-    }
-    Some((nickname, body))
-}
-
-#[cfg(test)]
-mod parse_reply_tests {
-    use super::parse_reply_command;
-
-    #[test]
-    fn parse_reply_valid() {
-        assert_eq!(
-            parse_reply_command("/reply <alice> hello world"),
-            Some(("alice", "hello world"))
-        );
-    }
-
-    #[test]
-    fn parse_reply_trims_body() {
-        assert_eq!(
-            parse_reply_command("/reply <bob>   spaced out  "),
-            Some(("bob", "spaced out"))
-        );
-    }
-
-    #[test]
-    fn parse_reply_not_a_reply() {
-        assert_eq!(parse_reply_command("just a normal message"), None);
-    }
-
-    #[test]
-    fn parse_reply_missing_brackets() {
-        assert_eq!(parse_reply_command("/reply alice hello"), None);
-    }
-
-    #[test]
-    fn parse_reply_empty_nickname() {
-        assert_eq!(parse_reply_command("/reply <> hello"), None);
-    }
-
-    #[test]
-    fn parse_reply_empty_body() {
-        assert_eq!(parse_reply_command("/reply <alice>"), None);
-        assert_eq!(parse_reply_command("/reply <alice>   "), None);
-    }
-
-    #[test]
-    fn parse_reply_hyphenated_nickname() {
-        assert_eq!(
-            parse_reply_command("/reply <bright-fern> thanks!"),
-            Some(("bright-fern", "thanks!"))
-        );
-    }
-}
-
 #[cfg(test)]
 mod split_body_tests {
     use super::{escaped_char_len, split_body};
-    use crate::util::consts::MAX_MESSAGE_PARTS;
+    use crate::util::consts::MAX_MESSAGE_SHARDS;
 
     #[test]
     fn escaped_len_counts_json_escapes() {
@@ -933,9 +1002,9 @@ mod split_body_tests {
     #[test]
     fn chunks_concatenate_back_and_respect_budget() {
         let body = "0123456789".repeat(6); // 60 ASCII bytes
-        let chunks = split_body(&body, 16).expect("60 bytes at budget 16 fits in MAX parts");
+        let chunks = split_body(&body, 16).expect("60 bytes at budget 16 fits in MAX shards");
         assert!(chunks.len() > 1, "the body must actually split");
-        assert!(chunks.len() <= MAX_MESSAGE_PARTS);
+        assert!(chunks.len() <= MAX_MESSAGE_SHARDS);
         assert_eq!(chunks.concat(), body, "chunks reassemble to the original");
         for chunk in &chunks {
             let escaped: usize = chunk.chars().map(escaped_char_len).sum();
@@ -946,7 +1015,7 @@ mod split_body_tests {
     #[test]
     fn splits_multibyte_on_char_boundaries() {
         let body = "héllo🌍".repeat(8); // 2-byte é and 4-byte emoji
-        let chunks = split_body(&body, 8).expect("fits in MAX parts");
+        let chunks = split_body(&body, 8).expect("fits in MAX shards");
         assert_eq!(chunks.concat(), body, "no char is split mid-codepoint");
         assert!(chunks.iter().all(|chunk| !chunk.is_empty()));
     }
@@ -954,7 +1023,7 @@ mod split_body_tests {
     #[test]
     fn refuses_a_body_needing_too_many_parts() {
         let body = "x".repeat(1000);
-        // One byte per part would need 1000 parts, far over MAX_MESSAGE_PARTS.
+        // One byte per shard would need 1000 shards, far over MAX_MESSAGE_SHARDS.
         assert!(split_body(&body, 1).is_none());
     }
 }

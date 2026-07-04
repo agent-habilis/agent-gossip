@@ -12,10 +12,11 @@ use iroh::{Endpoint, protocol::Router};
 use iroh_gossip::api::GossipTopic;
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
 
+use crate::a2a::TaskId;
 use crate::daemon::state::RosterSnapshot;
 use crate::output;
 use crate::protocol::swarm::SwarmName;
-use crate::protocol::{Message, MessageBody, Nickname, SwarmId, TaskId, TaskPhase};
+use crate::protocol::{Message, MessageBody, Nickname, SwarmId};
 
 use crate::beacon;
 
@@ -24,11 +25,9 @@ use crate::beacon;
 /// (which must serialize). `Send` broadcasts a message and echoes back the
 /// canonical [`Message`]; `Poll` reads the buffered history after a cursor.
 pub(crate) enum SessionRequest {
+    /// Broadcast a swarm chat message; echoes back the canonical [`Message`].
     Send {
         body: MessageBody,
-        reply: Option<Nickname>,
-        /// Send as a `Notice` (the no-auto-reply kind) instead of a `Msg`.
-        notice: bool,
         resp: oneshot::Sender<Result<Message>>,
     },
     Poll {
@@ -38,15 +37,19 @@ pub(crate) enum SessionRequest {
         long: bool,
         resp: oneshot::Sender<Vec<crate::daemon::surfaced::SurfacedEvent>>,
     },
-    /// Send one leg of a task to `to`, correlated by `task_id`.
-    /// Echoes back the canonical [`Message`], like
-    /// [`Send`](SessionRequest::Send). Addressee validation for `Offer`
-    /// lives in `broadcast_task`.
-    Task {
-        to: Nickname,
+    /// Worker-emit a `TaskStatusUpdate` on a task we're serving (`a2a status`):
+    /// the daemon resolves the peer from the task record and pushes it.
+    TaskStatus {
         task_id: TaskId,
-        phase: TaskPhase,
-        body: MessageBody,
+        state: crate::a2a::TaskState,
+        note: Option<String>,
+        resp: oneshot::Sender<Result<Message>>,
+    },
+    /// Worker-emit a `TaskArtifactUpdate` (the result) on a task we're serving
+    /// (`a2a artifact`).
+    TaskArtifact {
+        task_id: TaskId,
+        text: String,
         resp: oneshot::Sender<Result<Message>>,
     },
     /// Snapshot the live participant roster (active + quiet, recency-sorted).
@@ -77,6 +80,17 @@ pub(crate) enum SessionRequest {
     },
     /// `meta`-channel counterpart of [`StateGet`](SessionRequest::StateGet).
     MetaGet {
+        resp: oneshot::Sender<serde_json::Value>,
+    },
+    /// A **gossip A2A call**: send a directed A2A JSON-RPC request to `peer`
+    /// (which serves the safe method set) and await its response. The reply
+    /// arrives only when the peer answers or `timeout` elapses — the response
+    /// is the parsed JSON-RPC object (`{"result"|"error"}`).
+    A2aCall {
+        peer: Nickname,
+        method: String,
+        params: serde_json::Value,
+        timeout: std::time::Duration,
         resp: oneshot::Sender<serde_json::Value>,
     },
     /// Broadcast pre-built wire bytes **verbatim** — no signing, no chain
@@ -212,6 +226,10 @@ pub(crate) struct EventLoopConfig {
     /// drains this into `gossip::ingest` (the same path as gossip), so both
     /// transports share signature-verify + dedup. Built in `setup_swarm`.
     pub unicast_rx: mpsc::Receiver<bytes::Bytes>,
+    /// `--a2a-serve`: the already-bound localhost A2A JSON-RPC binding
+    /// (bound in setup so the `ready` event carries the real port; served
+    /// once the event loop starts). `None` (the default) serves nothing.
+    pub a2a: Option<crate::a2a::http::A2aBinding>,
     /// When advertising (`create --advertise`), the shared counter the
     /// directory re-broadcast task reads the live participant count
     /// from. `setup_swarm` leaves this `None`; the advertise path sets

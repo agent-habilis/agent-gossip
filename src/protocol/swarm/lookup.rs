@@ -292,8 +292,9 @@ pub(crate) const DEFAULT_DIRECTORY: &str = "global";
 
 impl DirectorySelection {
     /// Resolve a clap three-state `--advertise` optional-value flag
-    /// (absent / bare / valued) — the converter behind `create`'s
-    /// `--advertise`.
+    /// (absent / bare / valued) — the one converter shared by every
+    /// command that advertises (`create`, `pipe listen`, `file send`,
+    /// `port listen`).
     #[expect(
         clippy::option_option,
         reason = "clap optional-value flag: absent/bare/valued are three distinct directory states"

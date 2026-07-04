@@ -114,9 +114,10 @@ impl BenchMessage {
         let swarm = SwarmId::new(swarm_token(&name, &BenchConfig::loopback()))
             .expect("Swarm::to_string is a valid SwarmId");
         let author = Nickname::new("bench-author").expect("valid nickname");
-        Self(Message::new_message(
+        Self(Message::new_a2a_msg(
             &swarm,
             &author,
+            None,
             MessageBody::new(body).expect("valid body"),
         ))
     }

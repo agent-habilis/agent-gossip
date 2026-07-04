@@ -35,24 +35,22 @@ State: `linked_endpoints` (the links), `participant_endpoints` (the bridge).
 
 *Layer: transport · keyed by node id (hex).*
 
-The point-to-point QUIC channel a **single-addressee** message takes when its
-addressee is dialable — a real client/server link this node opens to one
+The point-to-point QUIC channel a **directed** frame (one addressee) takes when
+its addressee is dialable — a real client/server link this node opens to one
 participant's endpoint, on its own ALPN (`agent-gossip/unicast/1`), off
-the gossip flood. Gossip stays the transport for broadcasts and the fallback for
-a directed message whose addressee can't be reached by unicast.
+the gossip flood. Gossip stays the transport for broadcasts and the fallback
+for a directed frame whose addressee can't be reached by unicast. Without it,
+a directed frame (`a2a_req`/`a2a_resp`, a task push leg, a `pong`) floods every
+neighbor and is filtered at the receiver — O(N) fan-out to reach one peer.
 
 Distinct from **link** (a gossip active-view neighbor) and from the roster's
 **connected/gossip** `reach` tag, which stays a gossip-overlay fact — a live
 unicast connection does **not** make a peer show as `connected`. Also distinct
-from **a2a** (an HTTP tunnel that carries no swarm messages). Inbound unicast
-frames are validated + dispatched by the *same* `gossip::ingest` path as gossip,
-so signature-verify and dedup are identical and a message delivered over both
-transports surfaces exactly once.
-
-The wire message stays ≤ `MAX_MESSAGE_SIZE` on both planes (a large body is
-split into parts either way), so any message remains gossip-carriable and
-anti-entropy-healable; unicast just pipelines those parts over one warm
-connection instead of flooding.
+from the **a2a** JSON-RPC binding. Inbound unicast frames are validated +
+dispatched by the *same* `gossip::ingest` path as gossip, so signature-verify
+and dedup are identical and a frame delivered over both transports surfaces
+exactly once. Every wire frame stays ≤ `MAX_MESSAGE_SIZE` on both planes, so
+any frame remains gossip-carriable and anti-entropy-healable.
 
 State: `unicast_pool` (the per-peer connection pool). See [`src/unicast`].
 
@@ -105,19 +103,24 @@ Code: `protocol::crypto::topic_seed`, `Swarm::from_topic`,
 
 ### password
 
-*Layer: identity · optional, per swarm.*
+*Layer: identity · optional, per swarm or per transfer ticket.*
 
 An optional knowledge factor on top of the bearer capability: with one set,
-holding the `💬…` hash alone no longer admits. The password's value never
-travels. `create --password` stretches it with Argon2id (salt = the seed)
-into a key that replaces the seed in *every* derivation (topic, rendezvous,
-port ladder), and the hash carries a one-way **verifier** of that key so
-`join` can check a candidate locally — a wrong password fails immediately,
-before any network. A passworded swarm is therefore safe to **advertise**:
-the ad carries the bearer token, but joining still needs the password.
+holding the `💬…` hash or ticket alone no longer admits. The password's value
+never travels. For a **swarm**, `create --password` stretches it with Argon2id
+(salt = the seed) into a key that replaces the seed in *every* derivation
+(topic, rendezvous, port ladder), and the hash carries a one-way **verifier**
+of that key so `join` can check a candidate locally — a wrong password fails
+immediately, before any network. For a **ticket** (pipe/port/file), the
+consumer presents the Argon2id stretch of the password (salt = the ticket
+secret) instead of the raw secret; the producer verifies online and rejects
+with a distinct "wrong password" close. Tickets carry no verifier —
+advertised ads are public, and a verifier there would be an offline grinding
+target; the swarm hash accepts that trade for local verifiability. A
+passworded swarm or ticket is therefore safe to **advertise**.
 
-Code: `protocol::crypto` (`stretch_swarm_password`, `password_verifier`),
-`Swarm::{set_password, apply_password}`.
+Code: `protocol::crypto` (`stretch_swarm_password`, `password_verifier`,
+`TicketAuth`), `Swarm::{set_password, apply_password}`.
 
 ### rendezvous
 
@@ -230,88 +233,138 @@ and broadcasting the id makes the swarm open to anyone who finds it.
 Browse a directory's live swarms (`agent-gossip discover`) and join one — the consumer
 side of **advertise**.
 
-### notice
-
-*Layer: messaging · `MessageKind::Notice`.*
-
-A chat message with the IRC-NOTICE receiver contract: an agent must **never
-auto-reply** to one — the loop-prevention bit for a network of agents that
-reflexively answer everything. On every other axis it *is* a `Msg`: open or
-directed via `reply`, chained (`seq`/`prev`/`parents`), fork-detected,
-message-logged, join-horizon gated, multipart-splittable. The kind is signed
-(covered by `canonical_bytes`), so a relay cannot demote a notice into an
-auto-replyable msg. Surfaced in the `event:"message"` family as
-`"type":"notice"` with a `(notice)` display marker. The binary attaches no
-send-side behavior — the contract lives with the receiver, documented in the
-manual's CONVENTIONS and the MCP instructions.
-
-Code: `MessageKind::Notice`, `gossip::broadcast::broadcast_message` (the
-kind-parameterized chat send path).
-
 ### task
 
-*Layer: messaging · keyed by `task_id` (correlation) + the two parties' nicknames.*
+*Layer: a2a · keyed by `task_id` (correlation) + the two parties' nicknames.*
 
-The delegation **primitive** (formerly a generic "exchange" with a `kind`
-discriminator; that layer was collapsed — the binary never branched on the
-kind). A typed, phased, directed conversation (`MessageKind::Task`, phases
-`offer`/`accept`/`decline`/`context`/`progress`/`done`/`confirm`/`change`/`cancel`)
-correlated by a `task_id`. The daemon state machine (`daemon::task`) owns the
-*coarse* lifecycle (phase advance, the per-task idle-debounce timeout, the
-ball-owner keepalive, the 100-content-message cap); the *content* is owned by
-the skill. Like a directed `Msg --reply`, a leg is delivered to all members for
-relay but **surfaced and logged only by its addressee and the sender's own
-echo** — a third party never sees it. The `progress` phase is liveness plumbing
-(never logged). Not part of the per-author hash chain or DAG (presence-like).
-The wire carries **no** behavior discriminator: every task is identical to the
-binary, and the two delegation UX flows below distinguish themselves in-band.
+The delegation **primitive**, native A2A on the wire: a directed `SendMessage`
+with no `taskId` (over the gossip request/response binding) creates it — the
+**worker** (the A2A server) **mints the task id** and returns the `Task`.
+`TaskStatusUpdate`s and `TaskArtifactUpdate`s (worker→initiator push) and
+mid-task `SendMessage`s (initiator→worker follow-ups) advance it, and the
+**worker** authors the terminal `completed` after the initiator's approval
+message — native server-completes semantics (see
+[a2a-binding.md](./a2a-binding.md)). The daemon state machine (`a2a::task`)
+owns the *coarse* lifecycle (state advance, the per-task idle-debounce timeout,
+the ball-owner keepalive, the 100-content-message cap); the *content* is owned
+by the skill. A worker-push leg (`a2a_status`/`a2a_artifact`) is delivered to
+all members for relay but **surfaced and logged only by its addressee and the
+sender's own echo** — a third party never sees it; a beat is liveness plumbing
+(never logged). Task legs are not part of the per-author hash chain or DAG
+(presence-like). There is **no** wire behavior discriminator: the two delegation
+UX flows below distinguish themselves by how the skill uses the task, not a
+marker.
 
 Two skills ride this primitive. `/swarm:task` is the **report-back** flow — the
-worker does the work and returns its result on `done`, and the initiator
-confirms (or `change`s for a revision); it sends one or more independent tasks
-(each its own `task_id`, worker, and completion criteria) and surfaces each
-result as it returns, with no group-level outcome. `/swarm:handover` is the
-**walk-away** flow (see below).
+worker returns a result (`artifact`), the initiator approves, and the worker
+completes; it creates one or more independent tasks (each its own `task_id`,
+worker, and completion criteria) and surfaces each result as it returns, with no
+group-level outcome. `/swarm:handover` is the **walk-away** flow (see below).
 
 **Keepalive vs. liveness.** While the ball-owner is silent, its daemon emits a
-`progress` keepalive so a genuinely-working owner is not falsely timed out. But
-the keepalive is bounded by **skill** liveness, not process liveness: it only
-fires while a real leg has been driven within `TASK_KEEPALIVE_MAX_SECS` (a leg
-the daemon's own keepalive never counts as). Past that, the keepalive stops and
-the peer's debounce reaps the task — so a crashed or abandoned skill cannot hold
-the peer forever. A skill doing very long silent work refreshes the window by
-sending its own `progress` beat.
+`working` keepalive beat so a genuinely-working owner is not falsely timed out.
+But the keepalive is bounded by **skill** liveness, not process liveness: it
+only fires while a real leg has been driven within `TASK_KEEPALIVE_MAX_SECS` (a
+leg the daemon's own keepalive never counts as). Past that, the keepalive stops
+and the peer's debounce reaps the task — so a crashed or abandoned skill cannot
+hold the peer forever.
 
-Code: `MessageKind::Task`, `lifecycle::handle_task`, `broadcast_task`,
-`daemon::task` (`TaskRecord::should_keepalive`).
+Code: `MessageKind::{A2aReq,A2aResp,A2aStatus,A2aArtifact}`,
+`gossip::recv::ingest_remote_message`, `gossip::emit_task_status`/`emit_task_artifact`,
+`a2a::task` (`TaskRecord::should_keepalive`, `adopt_initiator`).
 
 ### handover
 
 *Layer: skill behavior on top of **task**.*
 
 A UX behavior on the task primitive, driven entirely by the `/swarm:handover`
-skill: delegate a task/plan and walk away. The receiver runs the work **itself**
-after the handoff and the initiator **auto-confirms** — no result flows back
-(the difference from `/swarm:task`, which returns a result). It uses the same
-task phases (`offer → accept → context → done → confirm`), ending at the close
-handshake. Because the wire has no `kind`, the "walk-away vs report-back" intent
-travels **in-band** — a marker in the `offer` body (and the skill's todo text) —
-not as a wire field. Adds no wire type of its own.
+skill: delegate a task/plan and walk away. The handoff completes the moment the
+worker **accepts** (`state:"working"`); the worker then runs the work **itself**
+and completes on its own — no result flows back (the difference from
+`/swarm:task`, which returns a result the initiator approves). Because the wire
+has no behavior discriminator, the "walk-away vs report-back" intent lives in how
+the skill uses the task (and the brief's phrasing), not as a wire field. Adds no
+wire type of its own.
 
-### part
+### a2a
+
+*Layer: protocol — the agent-communication layer.*
+
+The [A2A protocol](https://a2a-protocol.org): every semantic exchange between
+participants — chat, delegation, task status, results — is an A2A object
+(`Message`, `Task`, status/artifact update) from `src/a2a`. The layer owns the
+A2A spec's words — *message parts*, *artifact*, *role*, *context* — and is
+carried by a **binding**; everything below it (signing, dedup, digests,
+presence, shards) is replication machinery, not communication. Note the word
+`Part` belongs to this layer (a message's content unit); the transport slice
+formerly called "part" is a **shard**.
+
+### binding
+
+*Layer: protocol.*
+
+One concrete carrier of the A2A core: the **gossip binding** (custom, spec
+§12 — always on, the peer-to-peer plane) or the **local JSON-RPC binding**
+(`--a2a-serve`, off by default — how off-the-shelf A2A clients on this
+machine reach the swarm). Both execute the same operations against the same
+state; the JSON-RPC binding relays writes onto the gossip binding. The
+gossip binding additionally carries a **request/response** mode (`agent-gossip a2a
+call`): a peer calls another peer's A2A server and awaits its reply over
+gossip (a safe method subset — reads, a party-checked cancel, and
+SendMessage directed at the peer). See [a2a-binding.md](./a2a-binding.md).
+
+### frame
+
+*Layer: transport — the `Message` struct.*
+
+The signed wire envelope (protocol version `3.0`): id, kind, swarm, author,
+timestamp, body, signature, history-integrity fields, shard header. The
+gossip binding's transport layer, below A2A — a frame carries exactly one
+A2A-domain payload in `body` (chat/status/artifact) or a plumbing body
+(presence, digests, ping/pong, state events); it never grows a competing
+message vocabulary. Receive-side, every logical frame passes the A2A
+boundary gate (`a2a::gossip`) — a payload that fails to parse or
+contradicts its frame is dropped whole.
+
+### card
+
+*Layer: a2a · keyed by nickname.*
+
+A participant's `AgentCard` — its canonical A2A self-description (A2A v1.0:
+`supportedInterfaces[]` each with a `protocolVersion`, capabilities, declared
+extensions, default skills, and its Ed25519 identity carried in the gossip
+`AgentInterface` url, `swarm+gossip://<pubkey>`). Each member's daemon publishes its card
+into the **meta** channel at `/peers/<nick>/card` on join — the one channel
+write the binary itself makes (see the amended invariant under *shared
+state*) — so peers enumerate each other's cards from the meta document with
+no HTTP anywhere. Read with `agent-gossip card [--peer <nick>]`. Agent-side facts
+the daemon cannot know (`model`, `harness`, `host`, extra skills) remain the
+agent's own merge, as sibling keys under `/peers/<nick>`.
+
+The receive path **enforces** that a member only writes its own
+`/peers/<self>/card`: a meta merge touching another peer's `card` (set or
+`null`-delete) is dropped before it folds, so the card — and the identity in
+its gossip interface url — is a contract, not a forgeable label
+(`state_doc::meta_merge_forges_foreign_card`).
+
+Code: `a2a::card`.
+
+### shard
 
 *Layer: protocol — a header on **message**.*
 
-One slice of a body too large for a single gossip message. When a `msg` or a
-task leg's body exceeds `MAX_MESSAGE_SIZE`, the sender splits it into several
-ordinary signed messages, each carrying a `part` header — a `group` (a UUID
-shared by the body's parts), an `idx`, and the `total` count. Each part is a real
-message (own id/seq/signature) retained in the **message log**, so a missing part
-heals through anti-entropy like any message. The receiver reassembles the parts
-of a `group` (keyed also by author key, so a crafted cross-author part can't
-inject a slice) into the one logical message it surfaces; the raw parts never
-surface. Capped at `MAX_MESSAGE_PARTS` per body — a larger body is refused on
-send. The split is invisible to agents: a body sends and arrives whole.
+One slice of a body too large for a single gossip message. When a body
+exceeds `MAX_MESSAGE_SIZE`, the sender splits it into several ordinary signed
+messages, each carrying a `shard` header — a `group` (a UUID shared by the
+body's shards), an `idx`, and the `total` count. Each shard is a real message
+(own id/seq/signature) retained in the **message log**, so a missing shard
+heals through anti-entropy like any message. The receiver reassembles the
+shards of a `group` (keyed also by author key, so a crafted cross-author shard
+can't inject a slice) into the one logical message it surfaces; the raw shards
+never surface. Capped at `MAX_MESSAGE_SHARDS` per body — a larger body is
+refused on send. The split is invisible to agents: a body sends and arrives
+whole. (Renamed from *part*: the A2A layer owns that word for a message's
+content unit.)
 
 ### shared state
 
@@ -328,12 +381,12 @@ Each swarm carries **two channels**, `state` and `meta` — byte-for-byte the
 same machinery (same reducer, log, anti-entropy, RFC 7386 merge rules),
 differing only by **convention**: `state` is the task working area;
 `meta` holds swarm metadata, by convention `/peers/<nick> = { model, harness,
-host, status }` that each agent self-reports (`host` is the machine's
-self-reported hostname; `status` is its availability — `idle`/`available`/`busy`,
-where `busy` means "not accepting work" and the delegation pickers skip it). The
-binary does **not** differentiate them and
-never writes a channel itself — the **only** way to change either is a JSON
-merge (`agent-gossip state merge` / `agent-gossip meta merge`). Read with `agent-gossip state get` /
+host }` that each agent self-reports (`host` is the machine's self-reported
+hostname). The binary does **not** differentiate them and —
+with exactly one exception — never writes a channel itself: the daemon
+publishes its own **card** at meta `/peers/<nick>/card` on join (the card is
+architectural peer self-description, not app state). Every other change to
+either channel is a JSON merge (`agent-gossip state merge` / `agent-gossip meta merge`). Read with `agent-gossip state get` /
 `agent-gossip meta get`. A change surfaces as the `state` / `meta` event, carrying both
 the merge and the newly-derived document.
 

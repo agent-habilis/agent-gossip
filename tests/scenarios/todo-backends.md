@@ -1,5 +1,5 @@
 ---
-type: a2a-runbook
+type: scenario-runbook
 title: Todo backends
 description: Run a task and judge how it surfaces, with or without a todo plugin installed.
 tags: [todo, widget, task, fallback, harness]
@@ -30,7 +30,7 @@ pi (where the todo integration lives). Set up per the
 
 ## Briefing
 
-- swarm: `a2a-todo`
+- swarm: `scenario-todo`
 - a small, checkable task (any)
 - todo plugin: present or absent — the runner's choice; the brief is the same.
 

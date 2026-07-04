@@ -93,23 +93,20 @@ mod tests {
             Commands::Create { opts } => opts.lookups.to_set().relay,
             Commands::Join { .. }
             | Commands::Forum { .. }
-            | Commands::Msg { .. }
-            | Commands::Notice { .. }
             | Commands::Poll { .. }
             | Commands::Ping { .. }
             | Commands::Discover { .. }
             | Commands::Mcp { .. }
             | Commands::Man
-            | Commands::Task { .. }
             | Commands::Peers { .. }
             | Commands::State { .. }
             | Commands::Meta { .. }
+            | Commands::A2a { .. }
             | Commands::Ready { .. }
             | Commands::Plug { .. }
             | Commands::Unplug { .. }
             | Commands::Doctor { .. }
             | Commands::Leave { .. }
-            | Commands::A2a { .. }
             | Commands::Session { .. } => panic!("expected Create"),
         }
     }
@@ -171,23 +168,20 @@ mod tests {
             Commands::Create { opts } => opts,
             Commands::Join { .. }
             | Commands::Forum { .. }
-            | Commands::Msg { .. }
-            | Commands::Notice { .. }
             | Commands::Poll { .. }
             | Commands::Ping { .. }
             | Commands::Discover { .. }
             | Commands::Mcp { .. }
             | Commands::Man
-            | Commands::Task { .. }
             | Commands::Peers { .. }
             | Commands::State { .. }
             | Commands::Meta { .. }
+            | Commands::A2a { .. }
             | Commands::Ready { .. }
             | Commands::Plug { .. }
             | Commands::Unplug { .. }
             | Commands::Doctor { .. }
             | Commands::Leave { .. }
-            | Commands::A2a { .. }
             | Commands::Session { .. } => panic!("expected Create"),
         };
         let lookups = resolve_lookups(opts.public, opts.lookups.to_set());

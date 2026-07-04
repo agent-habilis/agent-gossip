@@ -5,7 +5,7 @@
 //! visibility** — resident memory was only observable from an external `ps`
 //! sampler. This reads our own so the daemon can emit a `warn` when it crosses
 //! a soft threshold ([`crate::util::tuning::resident_memory_warn_mb`]).
-//! Warn-only by design: host safety comes from the a2a runbook's OS resource
+//! Warn-only by design: host safety comes from the scenario runbook's OS resource
 //! caps, not from the daemon exiting.
 
 /// This process's peak resident memory in **bytes**, or `None` if it can't

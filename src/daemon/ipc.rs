@@ -18,7 +18,7 @@ use crate::transport::ipc::{IpcCommand, json_ack, json_error, json_ok_msg};
 use crate::util::tuning::ping_window_secs;
 
 use crate::gossip::{
-    TaskLeg, broadcast_message, broadcast_msg, broadcast_state_merge, broadcast_task,
+    broadcast_message, broadcast_msg, broadcast_state_merge, emit_task_artifact, emit_task_status,
 };
 
 /// Returns `true` if the handler broadcast anything, so the caller
@@ -52,32 +52,9 @@ pub(crate) async fn handle_ipc_command(
         return false;
     }
     match cmd {
-        IpcCommand::Msg {
-            swarm: _,
-            body,
-            reply,
-        } => {
-            tracing::debug!(addressed = reply.is_some(), "IPC msg command received");
-            let kind = crate::protocol::MessageKind::Msg { reply };
-            match broadcast_message(swarm, author, body, kind, state, sender, output).await {
-                Ok((msg_id, msg)) => {
-                    let _ = resp_tx.send(json_ok_msg(&msg_id, &msg));
-                    true
-                }
-                Err(error) => {
-                    let _ = resp_tx.send(json_error(&error.to_string()));
-                    false
-                }
-            }
-        }
-        IpcCommand::Notice {
-            swarm: _,
-            body,
-            reply,
-        } => {
-            tracing::debug!(addressed = reply.is_some(), "IPC notice command received");
-            let kind = crate::protocol::MessageKind::Notice { reply };
-            match broadcast_message(swarm, author, body, kind, state, sender, output).await {
+        IpcCommand::Msg { swarm: _, body } => {
+            tracing::debug!("IPC msg command received");
+            match broadcast_message(swarm, author, body, state, sender, output).await {
                 Ok((msg_id, msg)) => {
                     let _ = resp_tx.send(json_ok_msg(&msg_id, &msg));
                     true
@@ -129,26 +106,44 @@ pub(crate) async fn handle_ipc_command(
             let _ = resp_tx.send(json_ack());
             true
         }
-        IpcCommand::Task {
+        IpcCommand::A2aStatus {
             swarm: _,
-            to,
             task_id,
-            phase,
-            body,
+            state: task_state,
+            note,
         } => {
-            // `broadcast_task` validates the addressee (Offer only); an
-            // unknown participant comes back through the `Err` arm below as
-            // `{"ok":false,"error":"unknown participant '<nick>'"}`.
-            tracing::debug!(%to, %task_id, %phase, "IPC task command received");
-            let leg = TaskLeg {
-                to,
-                task_id,
-                phase,
-                body,
-            };
-            match broadcast_task(swarm, author, leg, state, sender, output).await {
-                Ok((msg_id, msg)) => {
-                    let _ = resp_tx.send(json_ok_msg(&msg_id, &msg));
+            tracing::debug!(%task_id, ?task_state, "IPC a2a status command received");
+            match emit_task_status(
+                swarm,
+                author,
+                &task_id,
+                task_state,
+                note.as_deref(),
+                state,
+                sender,
+                output,
+            )
+            .await
+            {
+                Ok(msg) => {
+                    let _ = resp_tx.send(json_ok_msg(&msg.id.clone(), &msg));
+                    true
+                }
+                Err(error) => {
+                    let _ = resp_tx.send(json_error(&error.to_string()));
+                    false
+                }
+            }
+        }
+        IpcCommand::A2aArtifact {
+            swarm: _,
+            task_id,
+            text,
+        } => {
+            tracing::debug!(%task_id, "IPC a2a artifact command received");
+            match emit_task_artifact(swarm, author, &task_id, &text, state, sender, output).await {
+                Ok(msg) => {
+                    let _ = resp_tx.send(json_ok_msg(&msg.id.clone(), &msg));
                     true
                 }
                 Err(error) => {
@@ -198,6 +193,30 @@ pub(crate) async fn handle_ipc_command(
         IpcCommand::MetaGet { swarm: _ } => {
             let _ = resp_tx.send(state_get_response(state, crate::protocol::Channel::Meta));
             false
+        }
+        IpcCommand::A2aCall {
+            swarm: _,
+            to,
+            method,
+            params,
+            timeout_secs,
+        } => {
+            // The response arrives later (the peer's `A2aResp`, or a timeout),
+            // so park `resp_tx` in the waiter — like the long-poll `Poll` arm —
+            // and answer nothing now.
+            crate::gossip::broadcast_a2a_call(
+                swarm,
+                author,
+                to,
+                &method,
+                params,
+                Duration::from_secs(timeout_secs),
+                crate::daemon::state::A2aResponder::Ipc(resp_tx),
+                state,
+                sender,
+            )
+            .await;
+            true
         }
         IpcCommand::Info => {
             let _ = resp_tx.send(info_response(swarm, name, author, state));
