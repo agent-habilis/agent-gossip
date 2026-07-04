@@ -239,7 +239,7 @@ COMMANDS
                      active-neighbor set. The node holds at most N open QUIC
                      links and relays to peers beyond it; a swarm up to N
                      members forms a full mesh with no membership churn.
-                     Default 32.
+                     Default 64.
 
               --filter-self
                      Suppress your own messages from the --output stream, for
