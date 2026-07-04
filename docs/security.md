@@ -307,7 +307,7 @@ swarm is open to anyone browsing the directory, while a passworded one is
 safe to list — the ad carries the bearer token, but joining still needs the
 password.
 
-A **forum** swarm (`agent-gossip forum <string>`) is world-joinable by design:
+A **topic** swarm (`agent-gossip topic <string>`) is world-joinable by design:
 its seed is derived from the shared string, so anyone who knows or guesses
 the string joins (see `discovery.md` §7). Treat the string like a room
 password — low entropy means low protection. The topic hash binds the name

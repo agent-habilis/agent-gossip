@@ -85,11 +85,11 @@ agent-gossip join <💬…> \
 ```
 Also backgrounded. `join` takes only the `💬…` id — network mode, name, and
 config are decoded from the id. To join a **public** swarm by a shared string
-instead of an id (same string ⇒ same swarm, on any machine), use `agent-gossip forum
+instead of an id (same string ⇒ same swarm, on any machine), use `agent-gossip topic
 <string>` — everything is derived from the string, so it takes no other flags:
 
 ```bash
-agent-gossip forum <string> \
+agent-gossip topic <string> \
   --state-file <SF> --no-interactive --output json > /dev/null &
 ```
 As with `create`, report what you run on into the **meta** channel after

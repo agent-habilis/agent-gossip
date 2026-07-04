@@ -56,9 +56,9 @@ use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 
 use crate::a2a::TaskId;
-use crate::daemon::derive_forum_swarm;
+use crate::daemon::derive_topic_swarm;
 use crate::daemon::state::RosterEntry;
-use crate::embed::{CreateConfig, CreateError, Directory, ForumConfig, JoinConfig, JoinError};
+use crate::embed::{CreateConfig, CreateError, Directory, JoinConfig, JoinError, TopicConfig};
 use crate::protocol::swarm::{LookupSet, RelayLadder, RelaySelection, SwarmName};
 use crate::protocol::{Message, MessageBody, MessageId, Nickname, SwarmId};
 use crate::resolver::JoinTarget;
@@ -154,7 +154,7 @@ struct CreateSwarmArgs {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct JoinSwarmArgs {
     /// Swarm identifier (💬…). A shared string derives its own public
-    /// swarm — use the `forum` command — and is not a valid join target.
+    /// swarm — use the `topic` command — and is not a valid join target.
     swarm: String,
     /// Optional nickname in `word-word` form. Random if omitted.
     #[serde(default)]
@@ -166,11 +166,11 @@ struct JoinSwarmArgs {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-struct ForumSwarmArgs {
+struct TopicSwarmArgs {
     /// Any string. Hashed into a deterministic **public** swarm — anyone who
     /// joins with the same string lands in the same swarm, on any machine.
     /// Compared byte-for-byte after trimming surrounding whitespace (not
-    /// lowercased), so `http://x` and `https://x` are different forums.
+    /// lowercased), so `http://x` and `https://x` are different topics.
     string: String,
     /// Optional nickname in `word-word` form. Random if omitted.
     #[serde(default)]
@@ -478,7 +478,7 @@ impl AgentSwarmServer {
     }
 
     #[tool(
-        description = "Join an existing swarm by its 💬… identifier. (A shared string derives its own public swarm — that is the `forum` command — and is not a join target.) Idempotent when called for the same swarm id with the same nickname. Poll `fetch_messages` to observe incoming traffic; the server auto-tracks a per-session cursor so repeat cursor-less calls return only new entries."
+        description = "Join an existing swarm by its 💬… identifier. (A shared string derives its own public swarm — that is the `topic` command — and is not a join target.) Idempotent when called for the same swarm id with the same nickname. Poll `fetch_messages` to observe incoming traffic; the server auto-tracks a per-session cursor so repeat cursor-less calls return only new entries."
     )]
     async fn join_swarm(
         &self,
@@ -512,13 +512,13 @@ impl AgentSwarmServer {
     }
 
     #[tool(
-        description = "Join a public swarm derived deterministically from a shared string — no id to share. Anyone who calls forum_swarm with the same string joins the same swarm, on any machine (the string is hashed into the swarm seed; the name is derived and networking is always public). The string is matched byte-for-byte after trimming whitespace, so pick an exact, agreed value. Idempotent when called for the same string with the same nickname. Poll `fetch_messages` to observe traffic."
+        description = "Join a public swarm derived deterministically from a shared string — no id to share. Anyone who calls topic_swarm with the same string joins the same swarm, on any machine (the string is hashed into the swarm seed; the name is derived and networking is always public). The string is matched byte-for-byte after trimming whitespace, so pick an exact, agreed value. Idempotent when called for the same string with the same nickname. Poll `fetch_messages` to observe traffic."
     )]
-    async fn forum_swarm(
+    async fn topic_swarm(
         &self,
-        Parameters(args): Parameters<ForumSwarmArgs>,
+        Parameters(args): Parameters<TopicSwarmArgs>,
     ) -> Result<CallToolResult, McpError> {
-        let derived = derive_forum_swarm(&args.string)
+        let derived = derive_topic_swarm(&args.string)
             .map_err(|error| McpError::invalid_params(error.to_string(), None))?;
         let mut guard = self.session.lock().await;
         if let Some(existing) = guard.as_ref() {
@@ -531,9 +531,9 @@ impl AgentSwarmServer {
                 McpError::invalid_params(format!("invalid nickname: {error}"), None)
             })?),
         };
-        let mut cfg = ForumConfig::new(args.string);
+        let mut cfg = TopicConfig::new(args.string);
         cfg.nickname = nickname;
-        let session = Session::forum(cfg).await.map_err(join_error_to_mcp)?;
+        let session = Session::topic(cfg).await.map_err(join_error_to_mcp)?;
         let result = SwarmRef::from(&session);
         *guard = Some(session);
         ok_json(result)
@@ -964,7 +964,7 @@ fn already_in_swarm_error(existing: &Session) -> McpError {
     )
 }
 
-/// Idempotency shared by `join_swarm` / `forum_swarm`: re-joining the swarm
+/// Idempotency shared by `join_swarm` / `topic_swarm`: re-joining the swarm
 /// the request resolves to, with the same (or no) nickname, is a no-op that
 /// returns the existing session; any other request while in a swarm errors.
 fn rejoin_existing(

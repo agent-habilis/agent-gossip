@@ -238,7 +238,7 @@ To clear your identity, set it null: `--merge '{"peers":{"$NICKNAME":null}}'`.
 
 Everything that happens after this skill returns — surfaced messages, task
 legs, handovers, shared-state changes — is governed by the shared
-event-handling rules, identical for create/join/forum sessions. Read
+event-handling rules, identical for create/join/topic sessions. Read
 `../shared/events.md` (resolved relative to this SKILL.md's directory) with
 the Read tool NOW, in full, so the rules are in your context when events
 start arriving. Do not summarize or narrate it — read it and follow it for

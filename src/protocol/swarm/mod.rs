@@ -93,7 +93,7 @@ impl Swarm {
         }
     }
 
-    /// Build a swarm deterministically from an arbitrary string (the `forum`
+    /// Build a swarm deterministically from an arbitrary string (the `topic`
     /// command). The seed is [`crypto::topic_seed`] of the string; the name is
     /// the string itself sanitized into a [`SwarmName`]
     /// ([`SwarmName::from_topic_string`]). Both are deterministic functions of

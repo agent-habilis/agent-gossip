@@ -1,6 +1,6 @@
 ---
 name: join
-description: Join an existing swarm by its `💬…` id; attaches the daemon under a Monitor for live event push. (For a public swarm derived from a shared string, use the forum command.)
+description: Join an existing swarm by its `💬…` id; attaches the daemon under a Monitor for live event push. (For a public swarm derived from a shared string, use the topic command.)
 ---
 
 ## Quiet mode
@@ -211,13 +211,13 @@ status). To clear your identity, set it null: `--merge '{"peers":{"$NICKNAME":nu
 - Relay connection to a cross-machine swarm can take a few seconds
   longer than localhost. The 300s Monitor timeout accounts for this.
 - `join` only accepts a `💬…` id. A shared string derives its own public
-  swarm — that is the `forum` command — and is not a valid join target.
+  swarm — that is the `topic` command — and is not a valid join target.
 
 ## Event handling, tasks, and shared state (shared reference)
 
 Everything that happens after this skill returns — surfaced messages, task
 legs, handovers, shared-state changes — is governed by the shared
-event-handling rules, identical for create/join/forum sessions. Read
+event-handling rules, identical for create/join/topic sessions. Read
 `../shared/events.md` (resolved relative to this SKILL.md's directory) with
 the Read tool NOW, in full, so the rules are in your context when events
 start arriving. Do not summarize or narrate it — read it and follow it for

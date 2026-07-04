@@ -19,8 +19,8 @@ use crate::a2a::TaskId;
 use crate::daemon::setup::{SetupKind, setup_swarm};
 use crate::daemon::state::RosterSnapshot;
 use crate::daemon::{
-    CoHostPolicy, CreateParams, DriverMode, EventLoopConfig, ForumParams, JoinParams, Resolved,
-    SessionRequest,
+    CoHostPolicy, CreateParams, DriverMode, EventLoopConfig, JoinParams, Resolved, SessionRequest,
+    TopicParams,
 };
 use crate::directory::{self, Listing, ListingChange, Listings, directory_swarm};
 use crate::output::{Output, OutputEvent};
@@ -39,7 +39,7 @@ pub struct JoinConfig {
     /// What to join: an `💬…` id, classified into a [`JoinTarget`] at the
     /// boundary (parse a string with [`str::parse`]). The network mode and
     /// name are decoded from the id. (A shared *string* derives its own
-    /// swarm — see the `forum` command — and is not a join target.)
+    /// swarm — see the `topic` command — and is not a join target.)
     pub target: JoinTarget,
     /// Local nickname. `None` mints a random `word-word` one.
     pub nickname: Option<Nickname>,
@@ -66,12 +66,12 @@ impl JoinConfig {
     }
 }
 
-/// How to join a **forum**: a public swarm derived deterministically from a
+/// How to join a **topic**: a public swarm derived deterministically from a
 /// shared string. The name and (always-public) config are derived from the
 /// string, so it is the only input — anyone passing the same string converges
 /// on the same swarm.
 #[derive(Debug, Clone)]
-pub struct ForumConfig {
+pub struct TopicConfig {
     /// The shared string. Hashed into the swarm seed after trimming
     /// surrounding whitespace (never case-folded).
     pub string: String,
@@ -81,7 +81,7 @@ pub struct ForumConfig {
     pub max_peers: usize,
 }
 
-impl ForumConfig {
+impl TopicConfig {
     /// A config for `string` with a random nickname and the default peer cap.
     #[must_use]
     pub fn new(string: String) -> Self {
@@ -289,13 +289,13 @@ async fn join_setup(cfg: JoinConfig, output: Output) -> Result<EventLoopConfig, 
     resolved_setup(resolved, cfg.max_peers, output).await
 }
 
-/// Resolve + set up a forum (a string-derived public swarm).
+/// Resolve + set up a topic (a string-derived public swarm).
 ///
 /// # Errors
 /// [`JoinError::Resolve`] if the string is empty/whitespace;
 /// [`JoinError::Setup`] on endpoint/gossip failure.
-async fn forum_setup(cfg: ForumConfig, output: Output) -> Result<EventLoopConfig, JoinError> {
-    let resolved = ForumParams {
+async fn topic_setup(cfg: TopicConfig, output: Output) -> Result<EventLoopConfig, JoinError> {
+    let resolved = TopicParams {
         string: cfg.string,
         nickname: cfg.nickname,
     }
@@ -304,7 +304,7 @@ async fn forum_setup(cfg: ForumConfig, output: Output) -> Result<EventLoopConfig
     resolved_setup(resolved, cfg.max_peers, output).await
 }
 
-/// The shared tail of [`join_setup`] / [`forum_setup`]: run `setup_swarm` for
+/// The shared tail of [`join_setup`] / [`topic_setup`]: run `setup_swarm` for
 /// an already-resolved join-flavored setup.
 async fn resolved_setup(
     resolved: Resolved,
@@ -392,14 +392,14 @@ impl InProcessSession {
         Ok(Self::spawn(elc, None, None, true))
     }
 
-    /// Join a forum (string-derived public swarm) as a poll-only, silent core
+    /// Join a topic (string-derived public swarm) as a poll-only, silent core
     /// (the MCP server).
     ///
     /// # Errors
     /// [`JoinError::Resolve`] on an empty string; [`JoinError::Setup`] on
     /// endpoint/gossip failure.
-    pub(crate) async fn forum_poll(cfg: ForumConfig) -> Result<Self, JoinError> {
-        let elc = forum_setup(cfg, Output::silent()).await?;
+    pub(crate) async fn topic_poll(cfg: TopicConfig) -> Result<Self, JoinError> {
+        let elc = topic_setup(cfg, Output::silent()).await?;
         Ok(Self::spawn(elc, None, None, true))
     }
 
@@ -737,16 +737,16 @@ impl SwarmSession {
         Ok(Self::with_events(elc, None, events_rx))
     }
 
-    /// Join a forum — a public swarm derived deterministically from
+    /// Join a topic — a public swarm derived deterministically from
     /// `cfg.string` — and spawn its event loop in the background. Output is
     /// captured per-session into [`SwarmSession::events`].
     ///
     /// # Errors
     /// [`JoinError::Resolve`] if `cfg.string` is empty/whitespace;
     /// [`JoinError::Setup`] on endpoint/gossip failure.
-    pub async fn forum(cfg: ForumConfig) -> Result<Self, JoinError> {
+    pub async fn topic(cfg: TopicConfig) -> Result<Self, JoinError> {
         let (output, events_rx) = capture();
-        let elc = forum_setup(cfg, output).await?;
+        let elc = topic_setup(cfg, output).await?;
         Ok(Self::with_events(elc, None, events_rx))
     }
 
@@ -1308,25 +1308,25 @@ impl Drop for Directory {
 }
 
 #[cfg(test)]
-mod forum_tests {
+mod topic_tests {
     use std::time::Duration;
 
     use crate::daemon::CoHostPolicy;
     use crate::protocol::swarm::{Swarm, SwarmConfig};
     use crate::protocol::{MessageBody, Nickname};
 
-    use super::{ForumConfig, JoinError, SwarmSession};
+    use super::{JoinError, SwarmSession, TopicConfig};
 
-    /// The empty/whitespace-string guard is centralized in `ForumParams::resolve`,
+    /// The empty/whitespace-string guard is centralized in `TopicParams::resolve`,
     /// so it holds for the public embed API too (not just the CLI/MCP edges) —
     /// an empty string would otherwise join one globally-fixed swarm.
     #[tokio::test]
-    async fn forum_rejects_empty_string() {
+    async fn topic_rejects_empty_string() {
         for raw in ["", "   "] {
-            let result = SwarmSession::forum(ForumConfig::new(raw.to_owned())).await;
+            let result = SwarmSession::topic(TopicConfig::new(raw.to_owned())).await;
             assert!(
                 matches!(result, Err(JoinError::Resolve(_))),
-                "empty forum string must be rejected, got {:?}",
+                "empty topic string must be rejected, got {:?}",
                 result.map(|_| "Ok")
             );
         }
@@ -1335,9 +1335,9 @@ mod forum_tests {
     /// End-to-end convergence: two peers deriving from the *same string* land
     /// in the same swarm and mesh. Loopback keeps the test hermetic; the seed +
     /// name derivation and the `EagerProbed` first-peer beaconing are identical
-    /// to a real (public) `forum` — only the transport differs.
+    /// to a real (public) `topic` — only the transport differs.
     #[tokio::test]
-    async fn forum_peers_from_same_string_converge_and_exchange() {
+    async fn topic_peers_from_same_string_converge_and_exchange() {
         let topic = "agent-habilis";
         let first = Swarm::from_topic(topic, SwarmConfig::loopback());
         let second = Swarm::from_topic(topic, SwarmConfig::loopback());
@@ -1349,18 +1349,18 @@ mod forum_tests {
 
         let alice = SwarmSession::join_decoded(
             first,
-            Some(Nickname::new("alice-forum").unwrap()),
+            Some(Nickname::new("alice-topic").unwrap()),
             CoHostPolicy::EagerProbed,
         )
         .await
-        .expect("alice forum session");
+        .expect("alice topic session");
         let bob = SwarmSession::join_decoded(
             second,
-            Some(Nickname::new("bob-forum").unwrap()),
+            Some(Nickname::new("bob-topic").unwrap()),
             CoHostPolicy::EagerProbed,
         )
         .await
-        .expect("bob forum session");
+        .expect("bob topic session");
         assert_eq!(alice.swarm_id(), bob.swarm_id(), "both derived the same id");
 
         let mut bob_rx = bob.messages();
@@ -1369,16 +1369,16 @@ mod forum_tests {
         let mut received = false;
         while !received && tokio::time::Instant::now() < deadline {
             alice
-                .send(MessageBody::from("hello forum"))
+                .send(MessageBody::from("hello topic"))
                 .await
                 .expect("alice send");
             let seen = tokio::time::timeout(Duration::from_millis(500), async {
                 loop {
                     match bob_rx.recv().await {
                         Ok(msg) => {
-                            if msg.author.as_str() == "alice-forum"
+                            if msg.author.as_str() == "alice-topic"
                                 && crate::a2a::gossip::chat_text(&msg).as_deref()
-                                    == Some("hello forum")
+                                    == Some("hello topic")
                             {
                                 break true;
                             }
@@ -1392,7 +1392,7 @@ mod forum_tests {
         }
         assert!(
             received,
-            "bob should receive alice's message over the forum swarm"
+            "bob should receive alice's message over the topic swarm"
         );
 
         bob.leave().await.ok();

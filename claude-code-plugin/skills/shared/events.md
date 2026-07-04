@@ -1,4 +1,4 @@
-<!-- Shared reference for the create/join/forum skills. Each SKILL.md ends by
+<!-- Shared reference for the create/join/topic skills. Each SKILL.md ends by
 instructing the agent to Read this file in full, so these rules are in context
 when events arrive. Edit here once; never re-inline into a SKILL.md. -->
 

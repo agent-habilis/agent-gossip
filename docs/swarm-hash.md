@@ -11,7 +11,7 @@ identically: no extra flags, no out-of-band config.
 
 - **seed** — 32 bytes; all crypto identity (gossip topic, rendezvous
   keypair, loopback port ladder) derives from it. Random at `create`;
-  string-derived (`SHA256(TOPIC_DOMAIN ‖ string)`) for a `forum` swarm. Either
+  string-derived (`SHA256(TOPIC_DOMAIN ‖ string)`) for a `topic` swarm. Either
   way the wire format below is unchanged. No peer address is ever stored, so the
   swarm is creator-independent and survives the creator's death.
 - **name** — human label (1..=32 scalars).

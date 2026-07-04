@@ -41,11 +41,11 @@ pub(crate) enum SetupKind {
     Join {
         swarm: Swarm,
     },
-    /// A `forum` swarm derived from a shared string. Identical to `Join`
+    /// A `topic` swarm derived from a shared string. Identical to `Join`
     /// except the first peer must beacon: there is no distinguished creator,
     /// so it co-hosts the shared rendezvous eagerly-but-probed
     /// ([`CoHostPolicy::EagerProbed`]) rather than deferring.
-    Forum {
+    Topic {
         swarm: Swarm,
     },
 }
@@ -209,7 +209,7 @@ pub(crate) async fn setup_swarm(
     // from the id — one source of truth either way.
     let lookups = match &kind {
         SetupKind::Create { config, .. } => config.lookups.clone(),
-        SetupKind::Join { swarm } | SetupKind::Forum { swarm } => swarm.lookups().clone(),
+        SetupKind::Join { swarm } | SetupKind::Topic { swarm } => swarm.lookups().clone(),
     };
 
     // The off-loop rung channel: the backgrounded startup probe and the
@@ -292,13 +292,13 @@ pub(crate) async fn setup_swarm(
                 CoHostPolicy::Eager,
             )
         }
-        kind @ (SetupKind::Join { .. } | SetupKind::Forum { .. }) => {
-            // Join and Forum share one attach path; they differ only in the
-            // co-host policy (Forum has no distinguished creator, so its first
+        kind @ (SetupKind::Join { .. } | SetupKind::Topic { .. }) => {
+            // Join and Topic share one attach path; they differ only in the
+            // co-host policy (Topic has no distinguished creator, so its first
             // peer must beacon) and the startup verb.
             let (swarm, cohost, verb) = match kind {
                 SetupKind::Join { swarm } => (swarm, CoHostPolicy::Deferred, "joined"),
-                SetupKind::Forum { swarm } => (swarm, CoHostPolicy::EagerProbed, "joined forum"),
+                SetupKind::Topic { swarm } => (swarm, CoHostPolicy::EagerProbed, "joined topic"),
                 SetupKind::Create { .. } => unreachable!("outer arm excludes Create"),
             };
             let id_str = swarm.to_string();
@@ -324,7 +324,7 @@ pub(crate) async fn setup_swarm(
             // plain join — `daemon::run` defers co-hosting our own (same
             // seed-id) rendezvous until we are meshed, so we never register a
             // duplicate `rendezvous_id` on the shared pinned relay that could
-            // capture our own bootstrap dial. A forum instead claims eagerly
+            // capture our own bootstrap dial. A topic instead claims eagerly
             // (probe-first) so the first peer beacons. See
             // `EventLoopConfig::cohost`.
             let topic = gossip.subscribe(topic_id, vec![rdv.id]).await?;

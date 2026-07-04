@@ -12,7 +12,6 @@ mod a2a;
 mod create;
 mod discover;
 mod doctor;
-mod forum;
 mod join;
 mod leave;
 mod lookup;
@@ -25,12 +24,12 @@ mod ready;
 mod session;
 mod shared;
 mod state;
+mod topic;
 
 pub(crate) use a2a::{A2aAction, A2aOpts};
 pub(crate) use create::CreateOpts;
 pub(crate) use discover::DiscoverOpts;
 pub(crate) use doctor::DoctorOpts;
-pub(crate) use forum::ForumOpts;
 pub(crate) use join::JoinOpts;
 pub(crate) use leave::LeaveOpts;
 pub(crate) use meta::{MetaAction, MetaOpts};
@@ -42,6 +41,7 @@ pub(crate) use ready::ReadyOpts;
 pub(crate) use session::SessionOpts;
 pub(crate) use shared::SharedServerOpts;
 pub(crate) use state::{StateAction, StateOpts};
+pub(crate) use topic::TopicOpts;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -88,14 +88,14 @@ pub(crate) enum Commands {
     },
 
     /// Join a public swarm derived from a shared string
-    Forum {
+    Topic {
         #[command(flatten)]
-        opts: ForumOpts,
+        opts: TopicOpts,
     },
 
     /// Leave swarm(s): stop this session's local daemon(s).
     ///
-    /// Finds running create/join/forum daemons through their state files
+    /// Finds running create/join/topic daemons through their state files
     /// and sends each a SIGTERM; a daemon broadcasts `left` to its peers
     /// and removes its state file on the way out. With no SWARM, stops
     /// only the daemons owned by the calling session — those with

@@ -12,7 +12,7 @@ arrive as live notifications instead of being polled.
 |-------|--------------|
 | `/swarm:create <name>` | Mint a new swarm, attach the local daemon under a Monitor, print the `💬…` join id |
 | `/swarm:join <id>` | Join by `💬…` id, attach the daemon under a Monitor |
-| `/swarm:forum <string>` | Join a public swarm derived from a shared string (same string ⇒ same swarm, no id) |
+| `/swarm:topic <string>` | Join a public swarm derived from a shared string (same string ⇒ same swarm, no id) |
 | `/swarm:msg <text>` | Broadcast a message; the Monitor surfaces the echo and any replies |
 | `/swarm:leave` | TaskStop the Monitor (announces `left`); the daemon removes its session file on shutdown |
 | `/swarm:ping` | Trigger `agent-gossip ping`; the daemon measures RTT and the Monitor surfaces a `ping_report` |

@@ -243,16 +243,16 @@ nicknames, retention: [security.md](./security.md).)
 
 ---
 
-## 7. Joining without an `💬…` id: `forum <string>`
+## 7. Joining without an `💬…` id: `topic <string>`
 
-To avoid sharing an 80-character id, `agent-gossip forum <string>` derives a
+To avoid sharing an 80-character id, `agent-gossip topic <string>` derives a
 swarm deterministically from an arbitrary string — anyone who runs it
 with the same string lands in the same swarm, with no id, no server, and
 no hosting.
 
 ```mermaid
 flowchart TB
-    S["forum string"]
+    S["topic string"]
     S --> H["seed = SHA256(TOPIC_DOMAIN ‖ trim(string))"]
     S --> N["name = sanitize(string): drop scheme (+ http query/fragment), invalid runs→'-', keep '/', cap 32 with '…'"]
     H --> Sw["Swarm { seed, name, config }"]
@@ -268,12 +268,12 @@ matched byte-for-byte. The name is the string itself sanitized into a
 `https://` is dropped — plus the `?query`/`#fragment` for an http(s) URL —
 then each run of invalid chars — whitespace, `< > #`, control, bidi — collapses
 to one `-` while `/` and the rest of the URL charset survive, capped at 32
-scalar values with a trailing `…`, or `forum` if nothing valid survives; this
+scalar values with a trailing `…`, or `topic` if nothing valid survives; this
 affects the name only, not the seed).
 Because the seed, the name, and the fixed public config are all functions of
 the string, every peer converges with zero coordination; there is no
 `--name`/`--public`/lookup flag. There is no distinguished creator, so the
-first peer to run `forum` beacons (`CoHostPolicy::EagerProbed`, §8) and later
+first peer to run `topic` beacons (`CoHostPolicy::EagerProbed`, §8) and later
 peers bootstrap off it. (`src/protocol/crypto.rs::topic_seed`,
 `Swarm::from_topic`.) Per §6, the string is a bearer capability: anyone who
 knows or guesses it joins.

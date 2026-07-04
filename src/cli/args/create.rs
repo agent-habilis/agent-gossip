@@ -106,7 +106,7 @@ mod tests {
                 );
             }
             Commands::Join { .. }
-            | Commands::Forum { .. }
+            | Commands::Topic { .. }
             | Commands::Poll { .. }
             | Commands::Ping { .. }
             | Commands::Discover { .. }
@@ -136,7 +136,7 @@ mod tests {
                 assert_eq!(opts.nickname, None);
             }
             Commands::Join { .. }
-            | Commands::Forum { .. }
+            | Commands::Topic { .. }
             | Commands::Poll { .. }
             | Commands::Ping { .. }
             | Commands::Discover { .. }
@@ -163,7 +163,7 @@ mod tests {
         match cli.command {
             Commands::Create { opts } => assert_eq!(opts.name, None),
             Commands::Join { .. }
-            | Commands::Forum { .. }
+            | Commands::Topic { .. }
             | Commands::Poll { .. }
             | Commands::Ping { .. }
             | Commands::Discover { .. }
@@ -211,7 +211,7 @@ mod tests {
             match Cli::parse_from(args).command {
                 Commands::Create { opts } => opts.advertise_selection(),
                 Commands::Join { .. }
-                | Commands::Forum { .. }
+                | Commands::Topic { .. }
                 | Commands::Poll { .. }
                 | Commands::Ping { .. }
                 | Commands::Discover { .. }
@@ -262,7 +262,7 @@ mod tests {
             match Cli::parse_from(args).command {
                 Commands::Create { opts } => opts.password,
                 Commands::Join { .. }
-                | Commands::Forum { .. }
+                | Commands::Topic { .. }
                 | Commands::Poll { .. }
                 | Commands::Ping { .. }
                 | Commands::Discover { .. }
@@ -324,7 +324,7 @@ mod tests {
                 assert!(opts.shared.no_interactive);
             }
             Commands::Join { .. }
-            | Commands::Forum { .. }
+            | Commands::Topic { .. }
             | Commands::Poll { .. }
             | Commands::Ping { .. }
             | Commands::Discover { .. }

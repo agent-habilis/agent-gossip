@@ -84,7 +84,7 @@ itself.
 Code: `protocol::swarm` (`Swarm` / `SwarmConfig`). Byte layout:
 [swarm-hash.md](./swarm-hash.md).
 
-### forum swarm
+### topic swarm
 
 *Layer: identity · keyed by seed.*
 
@@ -92,11 +92,11 @@ A `Swarm` whose `seed` is derived from an arbitrary string —
 `SHA256(TOPIC_DOMAIN ‖ trim(string))` — rather than minted randomly at
 `create`. The name is the string itself sanitized into a `SwarmName` (leading
 URL scheme dropped — plus the `?query`/`#fragment` for an http(s) URL — invalid
-runs → `-`, `/` and URL chars kept, capped at 32 with a trailing `…`, or `forum`
+runs → `-`, `/` and URL chars kept, capped at 32 with a trailing `…`, or `topic`
 if empty; this affects the name only, not the seed), and the config is always
 the public preset — so the
-**string alone** determines the swarm: anyone running `agent-gossip forum <string>`
-converges. Joined via the `forum` command, not `join`.
+**string alone** determines the swarm: anyone running `agent-gossip topic <string>`
+converges. Joined via the `topic` command, not `join`.
 
 Code: `protocol::crypto::topic_seed`, `Swarm::from_topic`,
 `SwarmName::from_topic_string`. See [discovery.md](./discovery.md) §7.
