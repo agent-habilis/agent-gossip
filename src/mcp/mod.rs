@@ -62,7 +62,7 @@ use crate::protocol::{
     Message, MessageBody, MessageId, Nickname, SwarmId, TaskId, TaskPhase, TaskPhaseError,
 };
 use crate::resolver::JoinTarget;
-use crate::util::tuning::DEFAULT_MAX_DIRECT_PEERS;
+use crate::util::consts::GOSSIP_ACTIVE_VIEW_CAPACITY;
 use session::Session;
 
 /// Run the MCP server over stdio. Blocks until the client disconnects.
@@ -426,7 +426,7 @@ impl AgentSwarmServer {
             },
             advertise: args.advertise,
             directory,
-            max_peers: DEFAULT_MAX_DIRECT_PEERS,
+            max_peers: GOSSIP_ACTIVE_VIEW_CAPACITY,
             password: args.password,
         };
         let session = Session::create(cfg).await.map_err(|error| match error {
@@ -464,7 +464,7 @@ impl AgentSwarmServer {
         let session = Session::join(JoinConfig {
             target,
             nickname,
-            max_peers: DEFAULT_MAX_DIRECT_PEERS,
+            max_peers: GOSSIP_ACTIVE_VIEW_CAPACITY,
             password: args.password,
         })
         .await

@@ -2451,8 +2451,8 @@ fn test_lone_creator_never_trips_starvation() {
 }
 
 /// The 2026-05-31 roster-collapse, mechanized: a 5-node swarm at
-/// `--active-view-capacity 2` (the partial-mesh churn regime) put
-/// through SIGSTOP/SIGCONT flap rounds. Pre-fix, a node could end up
+/// `--max-peers 2` (the partial-mesh churn regime) put through
+/// SIGSTOP/SIGCONT flap rounds. Pre-fix, a node could end up
 /// with an empty roster and phantom links forever — silent message
 /// loss. Post-fix (link truth + starvation watchdog), every node must
 /// deliver again once the storm passes.
@@ -2462,7 +2462,7 @@ fn test_flap_storm_all_rosters_recover() {
         ("--alive-timeout-secs", "3"),
         ("--sweep-interval-secs", "1"),
         ("--starvation-threshold-secs", "6"),
-        ("--active-view-capacity", "2"),
+        ("--max-peers", "2"),
     ];
     // Serialize against the other timing-sensitive tests (see `serial_guard`).
     let _serial = serial_guard();

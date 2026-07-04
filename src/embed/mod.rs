@@ -29,9 +29,8 @@ use crate::protocol::swarm::{
 };
 use crate::protocol::{Message, MessageBody, Nickname, SwarmId, TaskId, TaskPhase};
 use crate::resolver::JoinTarget;
-use crate::util::tuning::{
-    DEFAULT_MAX_DIRECT_PEERS, EMBED_INBOUND_CAP, advertise_interval_secs, directory_expiry_secs,
-};
+use crate::util::consts::GOSSIP_ACTIVE_VIEW_CAPACITY;
+use crate::util::tuning::{EMBED_INBOUND_CAP, advertise_interval_secs, directory_expiry_secs};
 
 /// How to join a swarm.
 #[derive(Debug, Clone)]
@@ -60,7 +59,7 @@ impl JoinConfig {
         Self {
             target,
             nickname: None,
-            max_peers: DEFAULT_MAX_DIRECT_PEERS,
+            max_peers: GOSSIP_ACTIVE_VIEW_CAPACITY,
             password: None,
         }
     }
@@ -88,7 +87,7 @@ impl ForumConfig {
         Self {
             string,
             nickname: None,
-            max_peers: DEFAULT_MAX_DIRECT_PEERS,
+            max_peers: GOSSIP_ACTIVE_VIEW_CAPACITY,
         }
     }
 }
@@ -141,7 +140,7 @@ impl CreateConfig {
             lookups: LookupSet::default(),
             advertise: false,
             directory: None,
-            max_peers: DEFAULT_MAX_DIRECT_PEERS,
+            max_peers: GOSSIP_ACTIVE_VIEW_CAPACITY,
             password: None,
         }
     }
@@ -753,7 +752,7 @@ impl SwarmSession {
             SetupKind::Join { swarm },
             author,
             /* interactive */ false,
-            DEFAULT_MAX_DIRECT_PEERS,
+            GOSSIP_ACTIVE_VIEW_CAPACITY,
             /* state_file */ None,
             output,
             /* drift */ None,
