@@ -920,13 +920,14 @@ COMMANDS
                 agent-gossip state merge --swarm 💬… --nickname NAME \
                   --merge '{"turn":"b"}'
 
-              Merge semantics are the full RFC 7386: an object deep-merges (each
-              key is set, a null value deletes that key, nested objects merge
-              recursively), and a non-object value (scalar, array, or null)
-              replaces the target, including the document root. Any JSON value is
-              valid, so a merge always applies. Because each peer writes only its
-              own keys, concurrent writers to different keys never clobber one
-              another.
+              Merge input is RFC 7386-style: an object deep-merges (each key is
+              set, a null value deletes that key, nested objects merge
+              recursively). It is translated into one change on the shared
+              automerge CRDT. A non-object TOP-LEVEL merge (a bare scalar, array,
+              or null) is REJECTED — the document root is always an object — but
+              a non-object VALUE nested under a key replaces that key as usual.
+              Because each peer writes only its own subtree, concurrent writers to
+              different keys never clobber; concurrent edits merge conflict-free.
 
               Arrays are replaced wholesale — RFC 7386 has no array append, so a
               merge naming an array key replaces the whole array. Model a mutable
@@ -940,12 +941,12 @@ COMMANDS
 
                 {"ok":true,"document":{…}}
 
-              ORDERING. Every member replays the log in the same (timestamp, id)
-              order, so all converge to the byte-identical document even though
-              merge is not commutative. Distinct keys are order-independent; two
-              changes where one depends on a value the other set should be spaced
-              in time or sent as one merge object — the natural shape for turn-based
-              use, a change per member on its turn. Members react to a change via
+              ORDERING. The shared state is a CRDT, so members converge to the
+              byte-identical document regardless of the order changes arrive —
+              concurrent edits merge conflict-free. Distinct keys are independent;
+              two changes where one depends on a value the other set should be
+              spaced in time or sent as one merge object — the natural shape for
+              turn-based use, a change per member on its turn. Members react via
               the state event on the --output json stream (see "JSON EVENTS"); your
               own change is not pushed back, so a read→change loop needs no echo
               handling. Each turn: state get, check a turn marker, change only if
@@ -1156,7 +1157,7 @@ A2A
               peer's identity are refused.
 
               iroh-gossip replicates A2A payloads to all members inside the
-              signed wire frame (protocol version 5.0). The frame — signing,
+              signed wire frame (protocol version 7.0). The frame — signing,
               dedup, anti-entropy, presence, sharding — is replication
               machinery below the A2A layer, exactly as HTTP/TLS sit below
               JSON-RPC in the standard bindings. Broadcast chat declares the

@@ -57,17 +57,44 @@ impl CraftedMsg {
     }
 
     /// A crafted shared-state merge (`MessageKind::State`) from `author`, whose
-    /// body is the `{"k":"merge","merge":<merge>}` envelope the reducer parses.
-    /// `merge` is taken verbatim, so a test can inject a non-object merge that a
-    /// correct client's boundary validation would have rejected — and assert the
-    /// receiver folds it as a deterministic no-op (never a panic, never a root
-    /// replace). Unsigned until [`sign`](CraftedMsg::sign).
+    /// body is the legacy `{"k":"merge","merge":<merge>}` envelope. The automerge
+    /// engine no longer folds this shape (it is a deterministic no-op), so a test
+    /// can assert the receiver never applies it — never a panic, never a change.
+    /// Unsigned until [`sign`](CraftedMsg::sign).
     pub fn state_merge(swarm: &SwarmId, author: &str, merge: serde_json::Value) -> Self {
         let author = Nickname::new(author.to_owned()).expect("test author is a valid nickname");
         let body = crate::daemon::state_doc::merge_body(merge)
             .expect("state merge envelope composes from any merge value");
         Self {
             msg: Message::new_state(swarm, &author, body),
+        }
+    }
+
+    /// A crafted `meta` frame carrying a real automerge change that forges
+    /// `victim`'s `/peers/<victim>/card` — the receive-side card-forgery a
+    /// correct client's own gate refuses to author. Built on the deterministic
+    /// `/peers` genesis, so its only causal dep is one every meta replica holds:
+    /// the change is thus *applicable* at the victim and actually exercises the
+    /// forgery gate (rather than being harmlessly buffered for missing deps).
+    /// Unsigned until [`sign`](CraftedMsg::sign).
+    pub fn meta_forge_card(
+        swarm: &SwarmId,
+        author: &str,
+        victim: &str,
+        fake_card: &serde_json::Value,
+    ) -> Self {
+        let author = Nickname::new(author.to_owned()).expect("test author is a valid nickname");
+        let merge = serde_json::json!({ "peers": { victim: { "card": fake_card } } });
+        // `build_change` composes the change without the gate (the gate lives in
+        // `ingest`), exactly as a malicious peer bypassing our write path would.
+        let change = crate::daemon::doc::SwarmDoc::new(true)
+            .build_change(&merge, &author)
+            .expect("forge change builds")
+            .expect("forge merge is not a no-op");
+        let body =
+            crate::daemon::state_doc::change_body(&change, None).expect("change body composes");
+        Self {
+            msg: Message::new_channel_event(swarm, &author, body, crate::protocol::Channel::Meta),
         }
     }
 

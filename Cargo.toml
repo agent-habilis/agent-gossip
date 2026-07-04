@@ -129,6 +129,10 @@ clap = { version = "4", features = ["derive"] }
 include_dir = "0.7"
 anstyle = "1"
 anstream = "0.6"
+# The shared `state`/`meta` documents are automerge CRDTs: concurrent edits
+# merge without a bespoke ordered-log fold. `default-features` stays on (the
+# `storage-v2` on-disk format is unused — we carry changes on the wire).
+automerge = "0.10"
 iroh = { version = "1.0.0-rc.0", features = ["tls-ring"] }
 iroh-gossip = { version = "0.99", features = ["net"] }
 # mDNS + mainline-DHT address-lookup providers were extracted from iroh core
@@ -186,6 +190,12 @@ async-trait = "0.1.89"
 hyper = { version = "1", features = ["server", "http1"] }
 http-body-util = "0.1"
 hyper-util = { version = "0.1", features = ["tokio"] }
+
+# Compact global allocator, Linux only (see src/main.rs). Halves the daemon's
+# resident memory on the static-musl fleet; on macOS the system allocator wins,
+# so it is not pulled there.
+[target.'cfg(target_os = "linux")'.dependencies]
+mimalloc = { version = "0.1", default-features = false }
 
 [dev-dependencies]
 proptest = "1.6"

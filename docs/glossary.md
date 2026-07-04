@@ -421,11 +421,14 @@ The producer's daemon serves the content — addressed by its SHA-256 — from a
 per-peer spool (`<RUNTIME_DIR>/<swarm-prefix>/<nick>.blobs/<hash>`, hardlinked or
 copied from the source so the original can change freely) over a dedicated,
 lazily-bound endpoint on the `agent-gossip/blob/1` ALPN. The **blob
-reference** — a `📦…` Base58Check *ticket* (its own emoji namespace, like the
-swarm `💬` and a2a `📡`) carrying the producer's address, a bearer secret, the
-hash, and the size — rides gossip inside a `Part.url`. The consumer decodes it,
-dials the producer, presents the secret, and streams the bytes to stdout,
-verifying the SHA-256 as they arrive (`agent-gossip a2a fetch`). Symmetric: an input
+reference** — a `💬…` Base58Check *ticket* carrying the producer's address, a
+bearer secret, the hash, and the size — rides gossip inside a `Part.url`. The
+ticket shares the swarm's `💬` brand with the swarm id and the a2a bridge
+ticket; a *kind* byte inside the framed payload tells the three apart, so a
+wrong-kind token fails cleanly on decode. The consumer decodes it, dials the
+producer, presents the secret, and streams the bytes to disk, verifying the
+SHA-256 as they arrive (`agent-gossip a2a fetch` — by default into the session's
+`<nick>.recv/` folder, or to stdout with `--output -`). Symmetric: an input
 file rides a request `Message.parts`, an output rides a result `Artifact.parts`.
 Confidentiality equals swarm membership (the flooded ticket lets any member
 fetch); availability lasts only while the producer's daemon is alive.
@@ -436,57 +439,65 @@ fetch); availability lasts only while the producer's daemon is alive.
 derived from its own **state log**.*
 
 A JSON document the whole swarm shares, separate from the chat message log. It
-is never sent whole on the wire: every member **derives** it by folding the
-**state log** (the `(timestamp, id)`-ordered replay of every **change**) from
-`{}`. Same event set ⇒ byte-identical document on every member (see the *Shared
-state converges deterministically* invariant).
+is an **automerge CRDT**: each member holds a replica, and members exchange
+signed **changes** that automerge merges conflict-free, so the same change set ⇒
+byte-identical document on every member (see the *Shared state converges
+deterministically* invariant). It is never sent whole on the wire; only changes
+are (`agent-gossip state get` reads the local replica as JSON).
 
-Each swarm carries **two channels**, `state` and `meta` — byte-for-byte the
-same machinery (same reducer, log, anti-entropy, RFC 7386 merge rules),
-differing only by **convention**: `state` is the task working area;
-`meta` holds swarm metadata, by convention `/peers/<nick> = { model, harness,
-host }` that each agent self-reports (`host` is the machine's self-reported
-hostname). The binary does **not** differentiate them and —
-with exactly one exception — never writes a channel itself: the daemon
-publishes its own **card** at meta `/peers/<nick>/card` on join (the card is
-architectural peer self-description, not app state). Every other change to
-either channel is a JSON merge (`agent-gossip state merge` / `agent-gossip meta merge`). Read with `agent-gossip state get` /
-`agent-gossip meta get`. A change surfaces as the `state` / `meta` event, carrying both
-the merge and the newly-derived document.
+Each swarm carries **two channels**, `state` and `meta` — the same machinery
+(the [`SwarmDoc`](#state-doc) engine), differing by **convention** and one gate:
+`state` is the task working area; `meta` holds swarm metadata, by convention
+`/peers/<nick> = { model, harness, host }` that each agent self-reports (`host`
+is the machine's self-reported hostname). `meta` alone gates **card forgery**
+(see [state doc](#state-doc)) and seeds a deterministic `/peers` container so
+concurrent per-peer writes merge. With exactly one exception the binary never
+writes a channel itself: the daemon publishes its own **card** at meta
+`/peers/<nick>/card` on join (architectural peer self-description, not app
+state). Every other change is `agent-gossip state merge` / `agent-gossip meta merge`. A change
+surfaces as the `state` / `meta` event, carrying both the merge and the
+newly-derived document.
 
-Code: `daemon::state_doc` (the reducer `JsonDoc` + `derive_document`),
-`protocol::Channel`, `OutputEvent::StateChanged`.
+Code: `daemon::doc::SwarmDoc`, `protocol::Channel`, `OutputEvent::StateChanged`.
 
-### state log
+### state doc
 
-*Layer: state · `MessageKind::State` / `MessageKind::Meta`, one un-pruned,
-unbounded store per **channel**.*
+*Layer: state · `MessageKind::State` / `MessageKind::Meta`, one automerge doc +
+signed-frame store per **channel**.*
 
-The signed channel events a swarm folds into a **shared state** document — one
-log per channel (`State` for `state`, `Meta` for `meta`), distinct from the chat
-**message log** in three ways: each is **un-pruned and unbounded** (the fold
-needs the complete set, so nothing ages out), dedup-keyed by id, and reconciled
-by its **own** anti-entropy digest (windowed like the chat digest, but
-advertised open at both ends so a late joiner backfills the *whole* log, not
-just a recent tail). Bounding total growth (compaction/snapshots) is deferred.
+The convergent document engine ([`SwarmDoc`](#shared-state)): an automerge
+document plus a `HashMap<ChangeHash, Message>` of the signed frames that carried
+each applied change — the **re-serve store** (a peer forwards another author's
+change with its original signature intact). Distinct from the chat **message
+log**: un-pruned (verifiable history = full history; compaction is deferred, as
+before), and reconciled by a **heads-based** anti-entropy digest — a peer
+advertises its automerge heads and a holder computes exactly the changes it
+lacks (`changes_since`), so a late joiner backfills the whole history over
+successive rounds with no windowing. Changes apply in causal order (orphans
+buffer until deps land) and, on `meta`, pass a **card-forgery gate**: a change is
+rejected (never merged) if it would alter any peer's `/peers/<nick>/card` other
+than the author's own — the card carries that peer's cryptographic identity.
+Every honest member runs the same gate, so a forgery converges nowhere.
 
-Code: `daemon::state_log::StateLog`, `gossip::antientropy::{broadcast,handle}_state_digest`.
+Code: `daemon::doc::SwarmDoc`, `gossip::antientropy::{broadcast,handle}_state_digest`.
 
 ### change (state merge)
 
-*Layer: state · an RFC 7386 JSON Merge Patch document in a `State` event body.*
+*Layer: state · one automerge change, composed from an RFC 7386-style merge in a
+`State`/`Meta` event body.*
 
-One modification to the **shared state**: an RFC 7386 JSON Merge Patch — any
-JSON value applied to the document. An object deep-merges (each key set; a
-`null` value deletes that key; nested objects merge recursively; arrays are
-replaced wholesale), and a non-object value (scalar/array/`null`) replaces the
-target, including the document root. There is no validation and no rejection: any
-JSON value is a valid merge. Merge is not commutative, but every member folds the
-same log in the same `(timestamp, id)` order, so all converge; because each
-writer touches only its own keys, concurrent writers to different keys never
-clobber.
+One modification to the **shared state**. The `agent-gossip state|meta merge` surface
+still takes an RFC 7386-style merge document (an object deep-merges — each key
+set, a `null` value deletes, nested objects recurse, arrays replace wholesale),
+which is translated into a single automerge change. Two semantics differ from a
+plain JSON fold: (1) a **non-object top-level merge is rejected** — automerge's
+document root is always a map, so there is no "replace the whole document" case;
+(2) concurrent edits merge **conflict-free** via the CRDT rather than by a
+deterministic replay order. Each writer still touches only its own subtree, so
+concurrent writers to different keys never clobber. Every change is carried in a
+signed frame; the signature covers the change.
 
-Code: `daemon::state_doc::{merge_body, apply_merge_body, merge_into}`.
+Code: `daemon::doc::SwarmDoc::{build_change, ingest}`, `daemon::state_doc::change_body`.
 
 ## Layering
 
@@ -524,22 +535,22 @@ separate concept.
 
 ### Shared state converges deterministically
 
-Every member derives the **shared state** by folding the **state log** in one
-total order — `(timestamp, id)` — that every member computes identically, with a
-failed/out-of-subset **change** as a deterministic no-op. So the document is a
-pure function of the *set* of changes: the same set always yields the
-byte-identical document, regardless of arrival order. Convergence is
-unconditional.
+Every member's **shared state** is an automerge CRDT replica fed the same set of
+signed **changes**; automerge merges them conflict-free, so the document is a
+pure function of the *set* of changes — the same set always yields the
+byte-identical document, regardless of arrival order. Changes apply in causal
+order (a change whose dependencies have not yet arrived buffers until they do),
+and convergence is unconditional.
 
-*Causal faithfulness* is the weaker, conditional property: that a change lands
-*after* the change it depends on. The timestamp is one-second resolution, so two
-changes to the **same key** authored in the same second can sort by the `id`
-tiebreak in either order — convergent, but the one that "wins" (folds last) may
-not be the one a reader intended. Phase 1 resolves this by **timing, not a
-clock**: changes are turn-based (seconds apart) and a member changes the state on
-its turn, so dependent changes are naturally separated; multi-key updates that
-must land together go in **one** merge object. Sub-second concurrent multi-writer
-causality is out of scope (a future causal DAG via per-author `seq`/`parents`).
+*Concurrent same-field edits* resolve by automerge's own deterministic rule (an
+actor-id tiebreak) — convergent, but the value a reader sees may not be the one a
+given writer intended. In practice writers stay in their own subtree
+(`/peers/<nick>/…`), so this only arises for genuinely co-edited fields; turn-based
+use (a change per member on its turn) avoids it, and multi-key updates that must
+land together go in **one** merge object. The one write automerge does *not*
+merge is a per-peer **card** on `meta`: a change altering another peer's
+`/peers/<nick>/card` is rejected before it merges (that card is cryptographic
+identity), so a forgery converges nowhere.
 
 ### Lookups are independently sufficient
 

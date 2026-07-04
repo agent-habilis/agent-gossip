@@ -1,3 +1,5 @@
+use iroh::{Endpoint, EndpointAddr, EndpointId};
+
 use crate::protocol::nickname::Nickname;
 
 use super::{
@@ -70,7 +72,7 @@ pub(crate) fn own_card(nickname: &Nickname, pubkey_hex: &str, seal_pubkey_b58: &
                 ),
                 extension(
                     EXT_SWARM_BLOB,
-                    "large files on a Part travel as a url reference (a 📦 ticket), fetched point-to-point over a dedicated QUIC channel and SHA-256-verified, instead of inlining over gossip",
+                    "large files on a Part travel as a url reference (a 💬 ticket), fetched point-to-point over a dedicated QUIC channel and SHA-256-verified, instead of inlining over gossip",
                 ),
                 AgentExtension {
                     uri: EXT_SWARM_SEAL.to_string(),
@@ -136,6 +138,35 @@ pub(crate) fn peer_seal_key(meta_doc: &serde_json::Value, peer: &Nickname) -> Op
         .pointer("/params/x25519")?
         .as_str()?;
     bs58::decode(b58).into_vec().ok()?.try_into().ok()
+}
+
+/// The stable dial hint published *inside* the card at
+/// `/peers/<nick>/card/endpoint`: the member's transport `EndpointId` and home
+/// relay. The volatile direct IPs are omitted — iroh re-holepunches from the
+/// relay — so this only re-publishes when the relay re-homes, not on every path
+/// change. Living inside the card, it is covered by the same forgery gate as the
+/// seal key (a sibling `/peers/<nick>/addr` would be forgeable by any peer). It
+/// **supplements** gossiped `PeerInfo`: a peer that has synced the meta doc can
+/// dial without waiting for a `PeerInfo` to arrive.
+#[must_use]
+pub(crate) fn endpoint_hint(endpoint: &Endpoint) -> serde_json::Value {
+    let addr = endpoint.addr();
+    serde_json::json!({
+        "id": addr.id.to_string(),
+        "relay": addr.relay_urls().next().map(ToString::to_string),
+    })
+}
+
+/// Read peer `<nick>`'s published endpoint hint from the derived meta document →
+/// its `EndpointId` and a bare `EndpointAddr` (id + relay). `None` if the card or
+/// hint hasn't replicated yet. Authenticated by the card-forgery gate, exactly
+/// like [`peer_seal_key`].
+pub(crate) fn peer_endpoint(
+    meta_doc: &serde_json::Value,
+    peer: &Nickname,
+) -> Option<(EndpointId, EndpointAddr)> {
+    let hint = meta_doc.pointer(&format!("/peers/{peer}/card/endpoint"))?;
+    crate::protocol::peer_addr::endpoint_addr_from_json(hint).ok()
 }
 
 /// The RFC 7386 merge that publishes `card` at `/peers/<nick>/card`.

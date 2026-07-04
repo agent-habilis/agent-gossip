@@ -666,10 +666,29 @@ impl InProcNode {
     /// worker mints the id and returns the `Task`. Returns the parsed JSON-RPC
     /// response.
     pub(crate) async fn create_task(&self, target: &str, text: &str) -> serde_json::Value {
+        // Task creation seals the request to `target`'s card
+        // (`a2a::card::peer_seal_key`). The card propagates asynchronously and the
+        // seal is one-shot, so wait for it first — otherwise, under the concurrent
+        // suite's load, the request is silently dropped and the call hangs.
+        self.await_peer_card(target).await;
         let msg =
             agent_gossip::a2a::gossip::send_message_payload(self.session.swarm_id(), None, text);
         self.a2a_call(target, "SendMessage", serde_json::json!({ "message": msg }))
             .await
+    }
+
+    /// Block until `target`'s card is present in this node's `meta` doc (the
+    /// seal key source for any directed A2A call), or panic on timeout.
+    pub(crate) async fn await_peer_card(&self, target: &str) {
+        let pointer = format!("/peers/{target}/card");
+        let deadline = Instant::now() + MSG_TIMEOUT;
+        while self.meta_get().await.pointer(&pointer).is_none() {
+            assert!(
+                Instant::now() < deadline,
+                "{target}'s card never reached this node's meta doc"
+            );
+            tokio::time::sleep(POLL).await;
+        }
     }
 
     /// Send a follow-up message (answer / approval / change) into an existing
@@ -725,7 +744,7 @@ impl InProcNode {
 
     /// Worker-emit a `TaskArtifactUpdate` whose result is a file, offloaded over
     /// the blob channel and referenced by a `Part.url`. Returns the daemon's echo
-    /// so a test can read the minted `📦…` reference.
+    /// so a test can read the minted `💬…` reference.
     pub(crate) async fn task_artifact_file(
         &self,
         task_id: &TaskId,

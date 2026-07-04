@@ -150,7 +150,7 @@ pub(crate) enum Commands {
     /// Bridge an A2A (agent-to-agent) HTTP server to a peer over the swarm.
     ///
     /// `a2a expose --to http://127.0.0.1:PORT` runs next to a local A2A server
-    /// and prints a `📡…` ticket; `a2a connect <ticket>` binds a local endpoint
+    /// and prints a `💬…` ticket; `a2a connect <ticket>` binds a local endpoint
     /// an unmodified A2A client points at, tunnelling its requests to the
     /// exposer. The Agent Card's URLs are rewritten so discovery resolves
     /// through the bridge. Strictly 1:1 — one consumer per exposer at a time.

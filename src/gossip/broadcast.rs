@@ -39,50 +39,80 @@ pub(crate) async fn broadcast_msg(sender: &GossipSender, msg: &Message) {
     }
 }
 
-/// Author + broadcast a durable `State` event, retaining it locally first.
-/// Gossip never echoes to self, so the author must hold what it authored or the
-/// state anti-entropy path could never serve it. The low-level primitive skips
-/// the per-author `Msg` hash chain — state lives in its own un-pruned log.
-/// When unmeshed the bytes are buffered for flush-on-connect;
-/// even if that buffer is full the event is safe in the local state log, so
-/// anti-entropy backfills peers once meshed.
+/// The single shared-state write helper, shared by the IPC `state_merge` command
+/// and the embed `StateMerge` request. Translates the RFC 7386 merge into one
+/// automerge change, gossips it inside a signed frame, and retains it locally so
+/// anti-entropy can serve it (gossip never echoes to self).
+///
+/// The change is built on a fork and the frame size-gated **before** the change
+/// touches the live doc, so an oversize merge never lands in a doc it could not
+/// be gossiped for. Applying then runs through [`SwarmDoc::ingest`]'s gate, so a
+/// local write that would forge another peer's card is refused, not silently
+/// diverged.
+///
+/// `surface` controls whether the local write is reported to the operator/agent
+/// as a `state`/`meta` event (`💬️ you changed …`). Agent-driven merges pass
+/// `true`; the daemon's own automatic card publish passes `false` — that write is
+/// internal plumbing, not something the agent did, so it must not appear as a
+/// "you changed shared state" event (nor race into a `fetch_messages` long-poll).
 ///
 /// # Errors
-/// Serialization or broadcast failure.
+/// Unrepresentable merge, oversize frame, a rejected foreign-card write, or a
+/// broadcast refusal.
 #[expect(
     clippy::too_many_arguments,
     reason = "the channel-parameterized state write; every argument is load-bearing"
 )]
-pub(crate) async fn broadcast_state(
+pub(crate) async fn broadcast_state_merge(
     swarm: &SwarmId,
     author: &Nickname,
-    body: MessageBody,
+    merge: serde_json::Value,
     state: &mut EventLoopState,
     sender: &GossipSender,
     output: &output::Output,
     channel: Channel,
-    // The pre-insert document, when the caller already derived it. `None` ⇒
-    // derive it here. Avoids a second full fold of the un-pruned state log.
-    before: Option<serde_json::Value>,
+    surface: bool,
 ) -> anyhow::Result<()> {
+    use crate::daemon::doc::Ingested;
+
+    // 1. Build the change on a fork (no live mutation yet); a no-op merge is a
+    //    silent success.
+    let built = match channel {
+        Channel::State => state.state_doc.build_change(&merge, author)?,
+        Channel::Meta => state.meta_doc.build_change(&merge, author)?,
+    };
+    let Some(change_bytes) = built else {
+        return Ok(());
+    };
+
+    // 2. Compose + sign + size-gate before the change touches the live doc.
+    //    Carry the input merge as the surfaced delta only for agent-visible
+    //    writes; the internal card publish stays lean (no delta on the wire).
+    let body = crate::daemon::state_doc::change_body(&change_bytes, surface.then_some(&merge))?;
     let signed = Message::new_channel_event(swarm, author, body, channel).signed(&state.identity);
-    // Serialize **before** the local insert: an oversize body fails here and the
-    // event never enters the log, so the author can't hold a patch it can never
-    // gossip (anti-entropy can't resend an un-serializable event either) — that
-    // would diverge permanently. A failed *broadcast* below still inserts and is
-    // recoverable via anti-entropy; only a failed *serialize* is blocked.
     let bytes = signed.serialize()?;
     crate::logging::messages::log_out(&signed);
-    let log = match channel {
-        Channel::State => &mut state.state_log,
-        Channel::Meta => &mut state.meta_log,
+
+    // 3. Apply the signed frame to the live doc through the authorization gate.
+    //    Ingest retains the frame as the re-serve store (replacing `StateLog`),
+    //    so anti-entropy can forward it with its original signature.
+    let ingested = match channel {
+        Channel::State => state.state_doc.ingest(&signed),
+        Channel::Meta => state.meta_doc.ingest(&signed),
     };
-    let before = before.unwrap_or_else(|| crate::daemon::state_doc::derive_document(log));
-    log.insert(signed.clone());
-    let after = crate::daemon::state_doc::derive_document(log);
-    // Surface our own change (is_self) when the document actually changed — a
-    // no-op patch (and non-patch substrate state) surfaces nothing.
-    if after != before {
+    let after = match ingested {
+        Ingested::Applied { doc, .. } => doc,
+        Ingested::Duplicate => return Ok(()),
+        Ingested::Rejected => {
+            anyhow::bail!("write rejected: a member may only write its own /peers/<nick>/card")
+        }
+        Ingested::Buffered => unreachable!("a locally-built change's deps are always present"),
+        Ingested::Ignored => unreachable!("a locally-built change body always decodes"),
+    };
+
+    // 4. Surface our own change, and gossip it (or buffer when unmeshed — the
+    //    change is safe in the local doc for heads-based anti-entropy).
+    if surface {
         output.state_changed(channel, &signed, &after, true);
     }
     if state.meshed {
@@ -94,27 +124,6 @@ pub(crate) async fn broadcast_state(
         let _ = state.pending_outbound.push(Bytes::from(bytes));
     }
     Ok(())
-}
-
-/// The single shared-state write helper, shared by the IPC `state_merge` command
-/// and the embed `StateMerge` request. An RFC 7386 merge always applies (any JSON
-/// value is valid), so this just composes the body and gossips via
-/// [`broadcast_state`]. No size check here — `Message::serialize` is the single
-/// size gate, inside `broadcast_state`.
-///
-/// # Errors
-/// Propagates a `broadcast_state` failure (oversize body / broadcast refusal).
-pub(crate) async fn broadcast_state_merge(
-    swarm: &SwarmId,
-    author: &Nickname,
-    merge: serde_json::Value,
-    state: &mut EventLoopState,
-    sender: &GossipSender,
-    output: &output::Output,
-    channel: Channel,
-) -> anyhow::Result<()> {
-    let body = crate::daemon::state_doc::merge_body(merge)?;
-    broadcast_state(swarm, author, body, state, sender, output, channel, None).await
 }
 
 /// Broadcast a `PeerInfo` carrying our endpoint address so peers can
@@ -631,7 +640,7 @@ pub(crate) fn seal_directed(
     to: &Nickname,
     body: &MessageBody,
 ) -> anyhow::Result<MessageBody> {
-    let doc = crate::daemon::state_doc::derive_document(&state.meta_log);
+    let doc = state.meta_doc.to_json();
     let key = crate::a2a::card::peer_seal_key(&doc, to).ok_or_else(|| {
         anyhow::anyhow!(
             "cannot seal to '{to}': its encryption key is not known yet (cards still propagating)"
@@ -964,27 +973,43 @@ pub(crate) async fn handle_session_request(
             false
         }
         SessionRequest::StateMerge { merge, resp } => {
-            let outcome =
-                broadcast_state_merge(swarm, author, merge, state, sender, output, Channel::State)
-                    .await;
+            let outcome = broadcast_state_merge(
+                swarm,
+                author,
+                merge,
+                state,
+                sender,
+                output,
+                Channel::State,
+                true,
+            )
+            .await;
             let sent = outcome.is_ok();
             let _ = resp.send(outcome);
             sent
         }
         SessionRequest::StateGet { resp } => {
-            let _ = resp.send(crate::daemon::state_doc::derive_document(&state.state_log));
+            let _ = resp.send(state.state_doc.to_json());
             false
         }
         SessionRequest::MetaMerge { merge, resp } => {
-            let outcome =
-                broadcast_state_merge(swarm, author, merge, state, sender, output, Channel::Meta)
-                    .await;
+            let outcome = broadcast_state_merge(
+                swarm,
+                author,
+                merge,
+                state,
+                sender,
+                output,
+                Channel::Meta,
+                true,
+            )
+            .await;
             let sent = outcome.is_ok();
             let _ = resp.send(outcome);
             sent
         }
         SessionRequest::MetaGet { resp } => {
-            let _ = resp.send(crate::daemon::state_doc::derive_document(&state.meta_log));
+            let _ = resp.send(state.meta_doc.to_json());
             false
         }
         SessionRequest::Ping { resp } => {

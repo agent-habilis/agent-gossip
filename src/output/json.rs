@@ -539,10 +539,19 @@ fn state_change_summary(merge: Option<&serde_json::Value>) -> String {
 /// [`state_change_summary`]). For the human render path, which holds the body
 /// string rather than the parsed merge.
 pub(super) fn state_change_summary_from_body(body: &str) -> String {
-    let merge = serde_json::from_str::<serde_json::Value>(body)
-        .ok()
-        .and_then(|parsed| parsed.get("merge").cloned());
-    state_change_summary(merge.as_ref())
+    state_change_summary(body_merge(body).as_ref())
+}
+
+/// The surfaced RFC 7386 delta inside a channel-event body: the new `change`
+/// form carries it under `m`; a legacy `merge` body under `merge`. `None` when
+/// absent (an internal write, or an opaque/unparseable body).
+fn body_merge(body: &str) -> Option<serde_json::Value> {
+    let parsed = serde_json::from_str::<serde_json::Value>(body).ok()?;
+    parsed
+        .get("m")
+        .or_else(|| parsed.get("merge"))
+        .filter(|value| !value.is_null())
+        .cloned()
 }
 
 /// `display` line for a `state` event: `` 💬️ `<author>` changed /board, /turn ``,
@@ -566,12 +575,10 @@ pub(super) fn format_state_json(
     document: &serde_json::Value,
     is_self: bool,
 ) -> String {
-    // The merge document lives inside the State body `{"k":"merge","merge":{...}}`.
-    // Parse the State body once: the `merge` object feeds both the `merge` field
-    // (the delta) and the touched-paths summary in the `display`.
-    let merge = serde_json::from_str::<serde_json::Value>(event.body.as_str())
-        .ok()
-        .and_then(|body| body.get("merge").cloned());
+    // The surfaced delta feeds both the `merge` field and the touched-paths
+    // `display` summary. It rides the change body under `m` (a legacy `merge`
+    // body under `merge`); an internal write carries none.
+    let merge = body_merge(event.body.as_str());
     let what = state_change_summary(merge.as_ref());
     serde_json::to_string(&StateLine {
         event: channel.label(),
