@@ -1,6 +1,6 @@
 //! Developer-log plumbing: the tracing directive filter ([`log_filter`]),
 //! the deferred per-member file sink ([`sink`]), and the per-message
-//! [`messages`] logger on the `agent_habilis_swarm::messages` target.
+//! [`messages`] logger on the `agent_gossip::messages` target.
 //! `--output json` (stdout) is a separate path and is unaffected by
 //! anything here.
 
@@ -24,12 +24,12 @@ pub(crate) use sink::{attach, detach, flush_pending_to_stderr, install};
 /// never affects the event stream.
 pub(crate) fn log_filter() -> tracing_subscriber::EnvFilter {
     use tracing_subscriber::EnvFilter;
-    const SUBSYSTEMS: &str = "agent_habilis_swarm::gossip=info,\
-        agent_habilis_swarm::lookup=info,\
-        agent_habilis_swarm::beacon=info,\
-        agent_habilis_swarm::lifecycle=info,\
-        agent_habilis_swarm::directory=info,\
-        agent_habilis_swarm::messages=info";
+    const SUBSYSTEMS: &str = "agent_gossip::gossip=info,\
+        agent_gossip::lookup=info,\
+        agent_gossip::beacon=info,\
+        agent_gossip::lifecycle=info,\
+        agent_gossip::directory=info,\
+        agent_gossip::messages=info";
     EnvFilter::try_from_default_env().unwrap_or_else(|_| {
         EnvFilter::new(if cfg!(debug_assertions) {
             format!("info,noq_proto::connection=off,{SUBSYSTEMS}")

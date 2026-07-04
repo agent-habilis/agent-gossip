@@ -139,9 +139,19 @@ pub(crate) async fn handle_ipc_command(
             swarm: _,
             task_id,
             text,
+            file,
+            file_name,
+            file_mime,
         } => {
             tracing::debug!(%task_id, "IPC a2a artifact command received");
-            match emit_task_artifact(swarm, author, &task_id, &text, state, sender, output).await {
+            let file = file.map(|path| crate::blob::FileRef {
+                path,
+                name: file_name,
+                mime: file_mime,
+            });
+            match emit_task_artifact(swarm, author, &task_id, &text, file, state, sender, output)
+                .await
+            {
                 Ok(msg) => {
                     let _ = resp_tx.send(json_ok_msg(&msg.id.clone(), &msg));
                     true
@@ -255,7 +265,7 @@ fn state_merge_response(outcome: anyhow::Result<()>) -> (String, bool) {
     }
 }
 
-/// The `ahsw state get` response: the derived document.
+/// The `agent-gossip state get` response: the derived document.
 fn state_get_response(state: &EventLoopState, channel: crate::protocol::Channel) -> String {
     let log = match channel {
         crate::protocol::Channel::State => &state.state_log,
@@ -266,7 +276,7 @@ fn state_get_response(state: &EventLoopState, channel: crate::protocol::Channel)
     format!(r#"{{"ok":true,"document":{doc_json}}}"#)
 }
 
-/// Serialize the live roster snapshot as the `ahsw peers` response.
+/// Serialize the live roster snapshot as the `agent-gossip peers` response.
 /// `ok:true` plus the snapshot's `participants` (recency-sorted, peers only)
 /// and `participant_count` (`participants.len() + 1` — the `+1` is self, so
 /// the count is swarm size, not the array length). Matches the field name the

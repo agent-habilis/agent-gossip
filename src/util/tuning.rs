@@ -53,7 +53,7 @@ pub(crate) const ANTIENTROPY_INTERVAL_SECS: u64 = 10;
 /// deep interior gaps without re-sending the out-of-window remainder). At
 /// 70 ids each (~140 total) the body packs ids as raw 16-byte UUIDs
 /// Base58-encoded (~22 chars/id) to ~3.1 KB; plus the `{windows:[…]}` and
-/// message envelope (the `🐝…` id alone is ~80 chars) it stays under
+/// message envelope (the `💬…` id alone is ~80 chars) it stays under
 /// `MAX_MESSAGE_SIZE` (3840) — guarded by the `digest_fits_gossip_cap`
 /// test. Sized to a single gossip message, **not** the (larger,
 /// configurable) log, which the rolling cursor sweeps across rounds.
@@ -153,7 +153,7 @@ pub(crate) fn cohost_grace_secs() -> u64 {
     current().cohost_grace_secs
 }
 
-/// How long an `ahsw ping` round collects pongs before the daemon
+/// How long an `agent-gossip ping` round collects pongs before the daemon
 /// emits its `ping_report`. Long enough for a relayed round-trip
 /// across the mesh; hidden flag `--ping-window-secs` so tests don't
 /// wait the full window.
@@ -275,7 +275,7 @@ pub(crate) const IPC_ACCEPT_BACKOFF_MAX_SECS: u64 = 5;
 /// real `msg`/`poll` round-trip, so only a hung client ever hits it.
 pub(crate) const IPC_IO_TIMEOUT_SECS: u64 = 10;
 
-/// `ahsw ready` gate: how long to wait for the daemon's `--state-file` to
+/// `agent-gossip ready` gate: how long to wait for the daemon's `--state-file` to
 /// report `ready: true` before giving up (the `--timeout-secs` default),
 /// and the fixed interval between file reads while waiting. 30s covers a
 /// cold daemon start (the file appears sub-second once the process is up).
@@ -299,7 +299,7 @@ pub(crate) fn longpoll_max_ms() -> u64 {
     current().longpoll_max_ms
 }
 
-/// Floor on one `ahsw poll --long` re-issue cycle. Normally dormant — a parked
+/// Floor on one `agent-gossip poll --long` re-issue cycle. Normally dormant — a parked
 /// read returns at the ~60s cap, far above it — it only engages when the
 /// daemon degrades a long read to an immediate empty (waiter registry at
 /// `POLL_WAITERS_CAP`), keeping the CLI's re-poll loop from spinning hot.
@@ -379,7 +379,7 @@ pub(crate) const QUIET_CAP: usize = 1024;
 /// still maintains links independently — this only throttles *our* piling-on.
 pub(crate) const RELINK_COOLDOWN_SECS: u64 = 10;
 
-/// How often an advertising `create` re-broadcasts its `🐝…` id into
+/// How often an advertising `create` re-broadcasts its `💬…` id into
 /// the directory. Short enough that a fresh discoverer sees every live
 /// swarm within one cycle (the join-horizon only surfaces ads stamped
 /// after the discoverer joined), long enough that the directory stays

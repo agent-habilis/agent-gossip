@@ -1,0 +1,6 @@
+---
+source: src/output/tests.rs
+assertion_line: 459
+expression: "format_msg_json(&msg, false)"
+---
+{"event":"message","id":"00000000-0000-0000-0000-000000000001","type":"notice","swarm":"💬://test","author":"alice-bot","ts":1700000000,"body":"your branch is failing CI","reply":"addressed-nick","display":"💬️ `<alice-bot>` → `<addressed-nick>` (notice): your branch is failing CI","self":false}

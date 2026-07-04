@@ -2,7 +2,7 @@
 //!
 //! - [`message`]: the `Message` envelope + its value types
 //!   (`MessageBody`, `MessageId`) + the size cap.
-//! - [`swarm`]: the `🐝…` identifier (`SwarmId` shallow string +
+//! - [`swarm`]: the `💬…` identifier (`SwarmId` shallow string +
 //!   `Swarm` decoded form) + `SwarmName` / `SwarmConfig` (lookups) /
 //!   relay-ladder parsing.
 //! - [`nickname`]: the `Nickname` newtype.
@@ -15,6 +15,7 @@ pub(crate) mod identity;
 pub(crate) mod message;
 pub(crate) mod nickname;
 pub(crate) mod peer_addr;
+pub(crate) mod seal;
 pub(crate) mod swarm;
 mod wordlist;
 

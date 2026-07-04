@@ -10,7 +10,7 @@ being mistaken for an identity. When reading or changing code, hold the
 following meanings.
 
 For the mechanisms behind these terms, see the companion docs:
-[swarm-hash.md](./swarm-hash.md) (the `🐝…` token),
+[swarm-hash.md](./swarm-hash.md) (the `💬…` token),
 [discovery.md](./discovery.md) (rendezvous, beacon, lookups, directories),
 [gossip.md](./gossip.md) (message fan-out),
 [topologies.md](./topologies.md) (network shapes), and
@@ -25,7 +25,7 @@ For the mechanisms behind these terms, see the companion docs:
 An iroh `EndpointId` and the gossip neighbor link to it. This is pure
 plumbing — the node id itself is never surfaced to operators or agents. The
 one thing derived from it is the per-participant **connected vs gossip** tag
-(`ahsw peers` / `swarm_info` `reach`): `participant_endpoints` maps a nickname
+(`agent-gossip peers` / `swarm_info` `reach`): `participant_endpoints` maps a nickname
 to its self-advertised endpoint, so the roster can mark a peer as a live link
 or a relayed one — a boolean, never the node id.
 
@@ -37,7 +37,7 @@ State: `linked_endpoints` (the links), `participant_endpoints` (the bridge).
 
 The point-to-point QUIC channel a **directed** frame (one addressee) takes when
 its addressee is dialable — a real client/server link this node opens to one
-participant's endpoint, on its own ALPN (`agent-habilis-swarm/unicast/1`), off
+participant's endpoint, on its own ALPN (`agent-gossip/unicast/1`), off
 the gossip flood. Gossip stays the transport for broadcasts and the fallback
 for a directed frame whose addressee can't be reached by unicast. Without it,
 a directed frame (`a2a_req`/`a2a_resp`, a task push leg, a `pong`) floods every
@@ -76,7 +76,7 @@ reach for **participant** instead.
 
 *Layer: identity · keyed by seed.*
 
-The `🐝…` id: a self-describing token carrying the `seed`, the name, and the
+The `💬…` id: a self-describing token carrying the `seed`, the name, and the
 swarm's **config** (lookups). The config is mixed into the gossip topic, so
 every member necessarily shares it, and `join` needs nothing beyond the hash
 itself.
@@ -95,7 +95,7 @@ URL scheme dropped — plus the `?query`/`#fragment` for an http(s) URL — inva
 runs → `-`, `/` and URL chars kept, capped at 32 with a trailing `…`, or `forum`
 if empty; this affects the name only, not the seed), and the config is always
 the public preset — so the
-**string alone** determines the swarm: anyone running `ahsw forum <string>`
+**string alone** determines the swarm: anyone running `agent-gossip forum <string>`
 converges. Joined via the `forum` command, not `join`.
 
 Code: `protocol::crypto::topic_seed`, `Swarm::from_topic`,
@@ -106,7 +106,7 @@ Code: `protocol::crypto::topic_seed`, `Swarm::from_topic`,
 *Layer: identity · optional, per swarm or per transfer ticket.*
 
 An optional knowledge factor on top of the bearer capability: with one set,
-holding the `🐝…` hash or ticket alone no longer admits. The password's value
+holding the `💬…` hash or ticket alone no longer admits. The password's value
 never travels. For a **swarm**, `create --password` stretches it with Argon2id
 (salt = the seed) into a key that replaces the seed in *every* derivation
 (topic, rendezvous, port ladder), and the hash carries a one-way **verifier**
@@ -212,7 +212,7 @@ State: `quiet`.
 *Layer: discovery · keyed by directory name.*
 
 A named, well-known public `Swarm` (`derive_secret(DIRECTORY_BASE_SEED,
-name)`) that swarms **advertise** their `🐝…` id into and that **discover**
+name)`) that swarms **advertise** their `💬…` id into and that **discover**
 browses. It is not a server — it is itself a swarm, with its own rendezvous,
 reached via the lookups. The default directory is `global`.
 
@@ -230,7 +230,7 @@ and broadcasting the id makes the swarm open to anyone who finds it.
 
 *Layer: discovery.*
 
-Browse a directory's live swarms (`ahsw discover`) and join one — the consumer
+Browse a directory's live swarms (`agent-gossip discover`) and join one — the consumer
 side of **advertise**.
 
 ### task
@@ -308,7 +308,7 @@ One concrete carrier of the A2A core: the **gossip binding** (custom, spec
 (`--a2a-serve`, off by default — how off-the-shelf A2A clients on this
 machine reach the swarm). Both execute the same operations against the same
 state; the JSON-RPC binding relays writes onto the gossip binding. The
-gossip binding additionally carries a **request/response** mode (`ahsw a2a
+gossip binding additionally carries a **request/response** mode (`agent-gossip a2a
 call`): a peer calls another peer's A2A server and awaits its reply over
 gossip (a safe method subset — reads, a party-checked cancel, and
 SendMessage directed at the peer). See [a2a-binding.md](./a2a-binding.md).
@@ -337,7 +337,7 @@ extensions, default skills, and its Ed25519 identity carried in the gossip
 into the **meta** channel at `/peers/<nick>/card` on join — the one channel
 write the binary itself makes (see the amended invariant under *shared
 state*) — so peers enumerate each other's cards from the meta document with
-no HTTP anywhere. Read with `ahsw card [--peer <nick>]`. Agent-side facts
+no HTTP anywhere. Read with `agent-gossip card [--peer <nick>]`. Agent-side facts
 the daemon cannot know (`model`, `harness`, `host`, extra skills) remain the
 agent's own merge, as sibling keys under `/peers/<nick>`.
 
@@ -366,6 +366,45 @@ refused on send. The split is invisible to agents: a body sends and arrives
 whole. (Renamed from *part*: the A2A layer owns that word for a message's
 content unit.)
 
+### seal
+
+*Layer: protocol — an end-to-end encryption of a **frame** body, under the
+**a2a** layer.*
+
+The encryption applied to a **directed** frame (one addressed with a `to`:
+`A2aStatus` / `A2aArtifact` / `A2aReq` / `A2aResp`) so only the addressee can read
+it. A NaCl-style sealed box (`src/protocol/seal.rs`): a fresh ephemeral X25519
+key does ECDH with the recipient's static X25519 public key (published in the
+recipient's card under the `swarm-seal` extension, derived from its identity
+seed), the shared secret is run through `derive_secret` into a ChaCha20-Poly1305
+key, and the body is encrypted and Base58-wrapped into a `MessageBody`-safe JSON
+envelope. The recipient decrypts with its static secret; a relay forwards the
+frame and **verifies the Ed25519 signature** (which covers the ciphertext) but
+cannot read the body. Only the body is sealed — routing metadata (`to`,
+`task_id`, author, kind) stays cleartext so relays route and anti-entropy heals.
+**Broadcast (`A2aMsg`) and the `state`/`meta` channels are never sealed** — their
+audience is every member; they stay public and signed. Forward secrecy comes
+from the per-frame ephemeral key; sender authenticity from the frame signature.
+
+### blob
+
+*Layer: blob transport — a direct QUIC channel beside gossip, under the **a2a**
+layer.*
+
+A large file carried by an A2A **part** without inlining its bytes over gossip.
+The producer's daemon serves the content — addressed by its SHA-256 — from a
+per-peer spool (`<RUNTIME_DIR>/<swarm-prefix>/<nick>.blobs/<hash>`, hardlinked or
+copied from the source so the original can change freely) over a dedicated,
+lazily-bound endpoint on the `agent-gossip/blob/1` ALPN. The **blob
+reference** — a `📦…` Base58Check *ticket* (its own emoji namespace, like the
+swarm `💬` and a2a `📡`) carrying the producer's address, a bearer secret, the
+hash, and the size — rides gossip inside a `Part.url`. The consumer decodes it,
+dials the producer, presents the secret, and streams the bytes to stdout,
+verifying the SHA-256 as they arrive (`agent-gossip a2a fetch`). Symmetric: an input
+file rides a request `Message.parts`, an output rides a result `Artifact.parts`.
+Confidentiality equals swarm membership (the flooded ticket lets any member
+fetch); availability lasts only while the producer's daemon is alive.
+
 ### shared state
 
 *Layer: state · two **channels** per swarm (`state`, `meta`), each a document
@@ -386,8 +425,8 @@ hostname). The binary does **not** differentiate them and —
 with exactly one exception — never writes a channel itself: the daemon
 publishes its own **card** at meta `/peers/<nick>/card` on join (the card is
 architectural peer self-description, not app state). Every other change to
-either channel is a JSON merge (`ahsw state merge` / `ahsw meta merge`). Read with `ahsw state get` /
-`ahsw meta get`. A change surfaces as the `state` / `meta` event, carrying both
+either channel is a JSON merge (`agent-gossip state merge` / `agent-gossip meta merge`). Read with `agent-gossip state get` /
+`agent-gossip meta get`. A change surfaces as the `state` / `meta` event, carrying both
 the merge and the newly-derived document.
 
 Code: `daemon::state_doc` (the reducer `JsonDoc` + `derive_document`),
@@ -448,7 +487,7 @@ presence (`joined` / `left`), plus the heartbeat events `peer_timeout` /
 `peer_return`. All are join-horizon gated and symmetric — a departure is
 surfaced only if the matching arrival was. There is **no** transport-level
 `peer_join` / `peer_leave` event: a raw link to an opaque node id is not
-participant lifecycle. (`ahsw leave` is a CLI verb on top of this
+participant lifecycle. (`agent-gossip leave` is a CLI verb on top of this
 vocabulary, not a new event: it stops a local daemon, whose shutdown emits
 the one `left`.)
 

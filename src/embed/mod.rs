@@ -5,7 +5,7 @@
 //! IPC. Inbound traffic is pushed over a bounded broadcast channel;
 //! outbound sends go through a dedicated channel into the same shared
 //! broadcast path the CLI/IPC uses. No `iroh` type is exposed: a join
-//! target is a `🐝…` id parsed from a string at the boundary.
+//! target is a `💬…` id parsed from a string at the boundary.
 
 use std::fmt;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -36,7 +36,7 @@ use crate::util::tuning::{EMBED_INBOUND_CAP, advertise_interval_secs, directory_
 /// How to join a swarm.
 #[derive(Debug, Clone)]
 pub struct JoinConfig {
-    /// What to join: an `🐝…` id, classified into a [`JoinTarget`] at the
+    /// What to join: an `💬…` id, classified into a [`JoinTarget`] at the
     /// boundary (parse a string with [`str::parse`]). The network mode and
     /// name are decoded from the id. (A shared *string* derives its own
     /// swarm — see the `forum` command — and is not a join target.)
@@ -54,7 +54,7 @@ impl JoinConfig {
     /// A config for `target` with a random nickname and the default
     /// peer cap. Set [`JoinConfig::nickname`] / [`JoinConfig::max_peers`]
     /// afterwards to override. Build the [`JoinTarget`] by parsing a
-    /// string (`"🐝…".parse()?`).
+    /// string (`"💬…".parse()?`).
     #[must_use]
     pub fn new(target: JoinTarget) -> Self {
         Self {
@@ -115,7 +115,7 @@ pub struct CreateConfig {
     /// CLI `--mdns`/`--dht`/`--relay` flags.
     pub lookups: LookupSet,
     /// List this swarm in a directory so discoverers can find it
-    /// without its `🐝…` id. Requires `public`. Default `false`.
+    /// without its `💬…` id. Requires `public`. Default `false`.
     pub advertise: bool,
     /// The directory to advertise into when `advertise` is set.
     /// `None` ⇒ the well-known `global` directory.
@@ -188,7 +188,7 @@ impl std::error::Error for CreateError {
 }
 
 /// Why [`SwarmSession::join`] failed — the symmetric counterpart to
-/// [`CreateError`]. `Resolve` is a malformed `🐝…` id; `Setup` is an
+/// [`CreateError`]. `Resolve` is a malformed `💬…` id; `Setup` is an
 /// endpoint/gossip failure. The MCP server maps both to an internal error.
 #[derive(Debug)]
 pub enum JoinError {
@@ -497,12 +497,14 @@ impl InProcessSession {
         &self,
         task_id: TaskId,
         text: String,
+        file: Option<crate::blob::FileRef>,
     ) -> anyhow::Result<Message> {
         let (resp_tx, resp_rx) = oneshot::channel();
         self.req_tx
             .send(SessionRequest::TaskArtifact {
                 task_id,
                 text,
+                file,
                 resp: resp_tx,
             })
             .await
@@ -943,8 +945,20 @@ impl SwarmSession {
     ///
     /// # Errors
     /// Fails if the event loop has stopped or dropped the response.
-    pub async fn task_artifact(&self, task_id: TaskId, text: String) -> anyhow::Result<Message> {
-        self.core.task_artifact(task_id, text).await
+    pub async fn task_artifact(
+        &self,
+        task_id: TaskId,
+        text: String,
+        file: Option<std::path::PathBuf>,
+        file_name: Option<String>,
+        file_mime: Option<String>,
+    ) -> anyhow::Result<Message> {
+        let file = file.map(|path| crate::blob::FileRef {
+            path,
+            name: file_name,
+            mime: file_mime,
+        });
+        self.core.task_artifact(task_id, text, file).await
     }
 
     /// Call a peer's A2A server over gossip (request/response). Returns the
@@ -1016,7 +1030,7 @@ pub(crate) const DIRECTORY_ADVERTISER_COHOST: CoHostPolicy = CoHostPolicy::Eager
 
 /// Spawn the directory re-broadcast task for `cfg`'s swarm: wire a fresh
 /// live-participant counter into `cfg.live_count`, then re-send the
-/// swarm's `🐝…` id (with that count) into `directory` every
+/// swarm's `💬…` id (with that count) into `directory` every
 /// `ADVERTISE_INTERVAL_SECS` over the swarm's own `lookups`. Returns the
 /// task handle so the owner can abort it (the inner directory session is
 /// dropped with the task, closing that membership). A directory-join
@@ -1043,7 +1057,7 @@ pub(crate) fn spawn_advertiser(
                 Ok(session) => session,
                 Err(error) => {
                     tracing::warn!(
-                        target: "agent_habilis_swarm::directory",
+                        target: "agent_gossip::directory",
                         %error,
                         directory = %directory,
                         "directory advertise: could not join the directory; swarm stays unlisted"
@@ -1060,7 +1074,7 @@ pub(crate) fn spawn_advertiser(
             };
             if let Err(error) = session.send(ad.to_body()).await {
                 tracing::debug!(
-                    target: "agent_habilis_swarm::directory",
+                    target: "agent_gossip::directory",
                     %error,
                     "directory advertise: re-broadcast failed (will retry next tick)"
                 );
@@ -1119,8 +1133,8 @@ fn public_listing(listing: &Listing) -> SwarmListing {
 /// (or let it fall out of scope) to leave the directory.
 ///
 /// ```no_run
-/// # use agent_habilis_swarm::embed::Directory;
-/// # use agent_habilis_swarm::LookupSet;
+/// # use agent_gossip::embed::Directory;
+/// # use agent_gossip::LookupSet;
 /// # async fn run() -> anyhow::Result<()> {
 /// // Bare `LookupSet::default()` ⇒ all-on (mDNS + DHT + relay).
 /// let mut directory = Directory::open(Some("demo"), LookupSet::default()).await?;

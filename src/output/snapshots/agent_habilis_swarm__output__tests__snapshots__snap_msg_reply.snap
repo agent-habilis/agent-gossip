@@ -1,5 +1,0 @@
----
-source: src/output/tests.rs
-expression: "format_msg_json(&snap_chat_frame(Some(\"addressed-nick\"),\n\"Rust is a systems language.\"), false)"
----
-{"event":"message","id":"00000000-0000-0000-0000-000000000001","type":"msg","swarm":"🐝test","author":"alice-bot","ts":1700000000,"body":"Rust is a systems language.","to":"addressed-nick","message":{"kind":"message","messageId":"00000000-0000-0000-0000-000000000001","role":"user","parts":[{"kind":"text","text":"Rust is a systems language."}],"contextId":"🐝test"},"display":"🐝️ `<alice-bot>` → `<addressed-nick>`: Rust is a systems language.","self":false}

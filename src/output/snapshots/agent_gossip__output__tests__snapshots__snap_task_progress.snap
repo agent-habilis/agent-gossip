@@ -1,0 +1,5 @@
+---
+source: src/output/tests.rs
+expression: "snap_task(TaskPhase::Progress, \"35/100\")"
+---
+{"event":"task_progress","id":"00000000-0000-0000-0000-000000000001","swarm":"💬://test","author":"alice-bot","ts":1700000000,"to":"calm-otter","task_id":"550e8400-e29b-41d4-a716-446655440000","done":35,"total":100,"display":"💬️ task progress `<alice-bot>` → `<calm-otter>`: 35/100","self":false}

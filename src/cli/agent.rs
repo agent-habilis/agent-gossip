@@ -107,7 +107,7 @@ impl Agent {
         match self {
             Agent::ClaudeCode => home.join(".claude/skills/swarm"),
             // pi-package source, materialized then `pi install`ed.
-            Agent::Pi => home.join(".agent-habilis/swarm/pi-extension"),
+            Agent::Pi => home.join(".agent-gossip/pi-extension"),
             Agent::Generic => home.join(".agents/skills/swarm"),
             // Cursor reads global Agent Skills from `~/.cursor/skills`; it
             // gets the same portable skill the generic target ships.
@@ -191,7 +191,7 @@ pub(crate) fn home_dir() -> Result<PathBuf> {
 }
 
 /// Each agent, its install path, and its state — in display order. Drives
-/// `ahsw doctor`'s Integrations section.
+/// `agent-gossip doctor`'s Integrations section.
 pub(crate) fn states(home: &Path) -> Vec<(Agent, PathBuf, AgentState)> {
     Agent::ALL
         .into_iter()
@@ -201,13 +201,14 @@ pub(crate) fn states(home: &Path) -> Vec<(Agent, PathBuf, AgentState)> {
 
 /// The one canonical "skill out of date" nag, shared by the `ready`-event
 /// drift warning (below) and the MCP `swarm_version` tool — one source of
-/// truth so the two can't drift apart. `ahsw plug` refreshes every
+/// truth so the two can't drift apart. `agent-gossip plug` refreshes every
 /// installed integration, so the message names no specific one.
-pub(crate) const SKILL_DRIFT_MSG: &str = "⚠️ swarm skill out of date. Run `ahsw plug` to update";
+pub(crate) const SKILL_DRIFT_MSG: &str =
+    "⚠️ swarm skill out of date. Run `agent-gossip plug` to update";
 
 /// A one-line drift warning if any installed integration has fallen behind the
 /// binary (`OutOfDate`), else `None`. The daemon folds this into its `ready`
-/// event so a stale skill nags the agent at swarm start; `ahsw doctor` is the
+/// event so a stale skill nags the agent at swarm start; `agent-gossip doctor` is the
 /// on-demand counterpart.
 pub(crate) fn drift_warning(home: &Path) -> Option<String> {
     let any_stale = states(home)
@@ -241,7 +242,7 @@ mod tests {
         assert!(
             Agent::Pi
                 .install_path(home)
-                .ends_with(".agent-habilis/swarm/pi-extension")
+                .ends_with(".agent-gossip/pi-extension")
         );
         assert!(
             Agent::Generic
@@ -257,7 +258,7 @@ mod tests {
 
     #[test]
     fn generic_in_sync_only_when_skill_matches_embedded() {
-        let home = std::env::temp_dir().join(format!("ahsw-insync-{}", std::process::id()));
+        let home = std::env::temp_dir().join(format!("agent-gossip-insync-{}", std::process::id()));
         let dir = Agent::Generic.install_path(&home);
         std::fs::create_dir_all(&dir).unwrap();
 
@@ -277,7 +278,8 @@ mod tests {
 
     #[test]
     fn cursor_in_sync_only_when_skill_matches_embedded() {
-        let home = std::env::temp_dir().join(format!("ahsw-cursor-insync-{}", std::process::id()));
+        let home =
+            std::env::temp_dir().join(format!("agent-gossip-cursor-insync-{}", std::process::id()));
         let dir = Agent::Cursor.install_path(&home);
         std::fs::create_dir_all(&dir).unwrap();
 
@@ -298,7 +300,7 @@ mod tests {
 
     #[test]
     fn drift_warning_fires_only_for_a_diverged_install() {
-        let home = std::env::temp_dir().join(format!("ahsw-drift-{}", std::process::id()));
+        let home = std::env::temp_dir().join(format!("agent-gossip-drift-{}", std::process::id()));
         let dir = Agent::Generic.install_path(&home);
         std::fs::create_dir_all(&dir).unwrap();
         let file = dir.join("SKILL.md");
@@ -312,7 +314,7 @@ mod tests {
         let warning = super::drift_warning(&home).expect("diverged install warns");
         assert_eq!(warning, super::SKILL_DRIFT_MSG);
         assert!(warning.contains("out of date"));
-        assert!(warning.contains("ahsw plug"));
+        assert!(warning.contains("agent-gossip plug"));
 
         std::fs::remove_dir_all(&home).unwrap();
     }

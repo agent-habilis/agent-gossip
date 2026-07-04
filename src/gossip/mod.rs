@@ -18,7 +18,7 @@ use iroh::{Endpoint, EndpointId, RelayUrl, TransportAddr};
 
 pub(crate) use broadcast::{
     broadcast_a2a_call, broadcast_message, broadcast_msg, broadcast_state_merge,
-    emit_task_artifact, emit_task_status, handle_session_request, handle_stdin_line,
+    emit_task_artifact, emit_task_status, handle_session_request, handle_stdin_line, seal_directed,
 };
 pub(crate) use recv::{drain_dead_receiver, handle_gossip_event, ingest};
 

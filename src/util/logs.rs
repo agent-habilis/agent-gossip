@@ -37,7 +37,7 @@ fn config() -> LogConfig {
 }
 
 /// Log base dir. The `--log-dir` flag overrides; default is [`RUNTIME_DIR`]
-/// (`/tmp/agent-habilis/swarm`), the same base sockets + state files use. The
+/// (`/tmp/agent-gossip`), the same base sockets + state files use. The
 /// per-swarm subfolder is added by [`log_file_path`].
 #[must_use]
 pub(crate) fn log_dir() -> PathBuf {
@@ -87,7 +87,7 @@ mod tests {
     #[test]
     fn default_is_runtime_dir() {
         let dir = resolve_log_dir(None);
-        assert_eq!(dir, PathBuf::from("/tmp/agent-habilis/swarm"));
+        assert_eq!(dir, PathBuf::from("/tmp/agent-gossip"));
     }
 
     #[test]

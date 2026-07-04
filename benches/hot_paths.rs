@@ -1,15 +1,15 @@
 //! Offline microbenchmarks for the pure, deterministic hot paths run on
-//! every create/join/broadcast: crypto/identity derivation, the `🐝…`
+//! every create/join/broadcast: crypto/identity derivation, the `💬…`
 //! token + config codec, parsing/validation, and message
 //! (de)serialization. No network, no async — divan prints a summary
 //! table at the end.
 //!
 //! Run: `cargo task bench` (or `cargo bench --features bench`). The
-//! `bench` feature exposes `agent_habilis_swarm::harness::bench`, the in-crate
+//! `bench` feature exposes `agent_gossip::harness::bench`, the in-crate
 //! shim over the otherwise-`pub(crate)` internals.
 
-use agent_habilis_swarm::harness::bench::{self as api, BenchConfig, BenchMessage};
-use agent_habilis_swarm::{MessageBody, Nickname, SwarmName};
+use agent_gossip::harness::bench::{self as api, BenchConfig, BenchMessage};
+use agent_gossip::{MessageBody, Nickname, SwarmName};
 use divan::counter::BytesCount;
 use divan::{Bencher, black_box};
 
@@ -99,7 +99,7 @@ mod token {
 mod parsing {
     use super::{Bencher, MAX_NAME, Nickname, SwarmName, api, black_box};
 
-    // A valid `🐝…` token to exercise the accept path of `SwarmId::new`.
+    // A valid `💬…` token to exercise the accept path of `SwarmId::new`.
     fn valid_token() -> String {
         api::swarm_token(
             &SwarmName::new("bench").unwrap(),

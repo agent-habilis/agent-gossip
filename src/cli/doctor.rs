@@ -139,7 +139,7 @@ async fn machine_report(no_probe: bool) -> Report {
 
 fn environment_section() -> Section {
     let checks = vec![
-        Check::new("ahsw", Verdict::Ok, crate::util::version::VERSION),
+        Check::new("agent-gossip", Verdict::Ok, crate::util::version::VERSION),
         Check::new(
             "platform",
             Verdict::Ok,
@@ -171,7 +171,7 @@ fn integrations_section() -> Section {
                 };
                 let base = format!("{} ({})", state.label(), output::home_path(&path));
                 let detail = if state == AgentState::OutOfDate {
-                    format!("{base} — run `ahsw plug --agent {}`", agent.label())
+                    format!("{base} — run `agent-gossip plug --agent {}`", agent.label())
                 } else {
                     base
                 };

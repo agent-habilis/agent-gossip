@@ -31,6 +31,15 @@ pub const EXT_SWARM_STATE: &str = "https://agent-habilis.dev/a2a/ext/swarm-state
 /// `SendMessage` creates a task the worker mints and returns; `SubscribeToTask`
 /// opens a stream the worker propagates over gossip.
 pub const EXT_SWARM_A2A_RPC: &str = "https://agent-habilis.dev/a2a/ext/swarm-a2a-rpc/v1";
+/// Extension URI advertising the blob channel: a large file on a `Part` travels
+/// as a `url` reference (a `📦…` ticket) and its bytes stream point-to-point over
+/// a dedicated QUIC ALPN, SHA-256-verified — instead of inlining over gossip.
+pub const EXT_SWARM_BLOB: &str = "https://agent-habilis.dev/a2a/ext/swarm-blob/v1";
+/// Extension URI advertising end-to-end sealing: directed frames (those with a
+/// `to`) are encrypted to the recipient's X25519 key, carried in this extension's
+/// `params.x25519` (base58). Relays forward + verify the signature but cannot
+/// read the body. Broadcast stays public.
+pub const EXT_SWARM_SEAL: &str = "https://agent-habilis.dev/a2a/ext/swarm-seal/v1";
 
 /// Metadata key marking a status update as a **liveness beat** (keepalive /
 /// progress): plumbing, never logged, surfaced only as `task_progress`.
@@ -286,7 +295,7 @@ impl TaskState {
     }
 
     /// The friendly kebab name for display lines, our `--output json` stream,
-    /// and the `ahsw a2a status --state` flag — the agent-facing surface, kept
+    /// and the `agent-gossip a2a status --state` flag — the agent-facing surface, kept
     /// readable while the A2A wire carries the `ProtoJSON` `TASK_STATE_*` form.
     #[must_use]
     pub fn as_str(self) -> &'static str {
@@ -515,7 +524,7 @@ mod tests {
             message_id: MessageId::from("00000000-0000-0000-0000-000000000001"),
             role: Role::User,
             parts: vec![Part::text("What is Rust?")],
-            context_id: Some("🐝test".to_string()),
+            context_id: Some("💬test".to_string()),
             task_id: None,
             reference_task_ids: Vec::new(),
             extensions: vec![super::EXT_SWARM_BROADCAST.to_string()],
@@ -594,7 +603,7 @@ mod tests {
         fn snap_a2a_task() {
             let task = Task {
                 id: TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
-                context_id: "🐝test".to_string(),
+                context_id: "💬test".to_string(),
                 status: TaskStatus {
                     state: TaskState::Working,
                     message: None,
@@ -611,7 +620,7 @@ mod tests {
         fn snap_a2a_status_update() {
             let update = TaskStatusUpdate {
                 task_id: TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
-                context_id: "🐝test".to_string(),
+                context_id: "💬test".to_string(),
                 status: TaskStatus {
                     state: TaskState::InputRequired,
                     message: None,
@@ -626,7 +635,7 @@ mod tests {
         fn snap_a2a_artifact_update() {
             let update = TaskArtifactUpdate {
                 task_id: TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
-                context_id: "🐝test".to_string(),
+                context_id: "💬test".to_string(),
                 artifact: Artifact {
                     artifact_id: "00000000-0000-0000-0000-00000000000a".to_string(),
                     parts: vec![Part::text("the parser now handles multiline")],
@@ -664,7 +673,7 @@ pub(crate) use expose::expose;
 
 /// ALPN for the a2a bridge — a raw bidirectional QUIC stream with its own
 /// protocol identity, distinct from the gossip protocol's `GOSSIP_ALPN`.
-pub(crate) const A2A_ALPN: &[u8] = b"agent-habilis-swarm/a2a/1";
+pub(crate) const A2A_ALPN: &[u8] = b"agent-gossip/a2a/1";
 
 /// Length of the bearer-capability secret carried in an a2a ticket, and of the
 /// auth token that opens every bi-stream (the raw secret, or its Argon2id

@@ -3,8 +3,8 @@
   "name": "swarm",
   "version": "0.1.0",
   "description": "mesh skills for Claude Code. Agents collaborate as peers — exchange messages and delegate tasks, no central server.",
-  "homepage": "https://github.com/agent-habilis/swarm",
-  "repository": "https://github.com/agent-habilis/swarm",
+  "homepage": "https://github.com/agent-habilis/agent-gossip",
+  "repository": "https://github.com/agent-habilis/agent-gossip",
   "license": "MIT",
   "keywords": ["agents", "gossip", "swarm", "mesh"]
 }

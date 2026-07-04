@@ -30,7 +30,7 @@ const BATCH_CAP = 128;
 // knows the standing reply policy: answer anything addressed to it, weigh in on
 // a broadcast only when it can help.
 const REPLY_POLICY =
-  "Swarm messages. Reply with swarm_send to any addressed to you (→ you); for a broadcast, reply only when you are ≥90% confident you can help — otherwise take no action. Ping/pong is automatic; never reply to a ping. Replies are plain text, not threaded — do not add the 🐝️, the swarm UI adds it.";
+  "Swarm messages. Reply with swarm_send to any addressed to you (→ you); for a broadcast, reply only when you are ≥90% confident you can help — otherwise take no action. Ping/pong is automatic; never reply to a ping. Replies are plain text, not threaded — do not add the 💬️, the swarm UI adds it.";
 
 function pushPending(event: SwarmEvent): void {
   if (state.pendingMessages.length >= PENDING_CAP) {

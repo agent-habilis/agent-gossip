@@ -136,13 +136,13 @@ pub(crate) fn register_rendezvous(endpoint: &Endpoint, params: &RendezvousParams
         }
         // Explicit target: needs RendezvousParams, so can't live in lookups.
         tracing::info!(
-            target: "agent_habilis_swarm::lookup",
+            target: "agent_gossip::lookup",
             rungs = params.bind_ports.len(),
             "pre-registered rendezvous on the loopback port ladder"
         );
     } else if let Some(relay) = params.bootstrap_relay.clone() {
         tracing::info!(
-            target: "agent_habilis_swarm::lookup",
+            target: "agent_gossip::lookup",
             relay = %relay,
             "pre-registered rendezvous at the relay rung for zero-lookup dial"
         );
@@ -190,7 +190,7 @@ pub(crate) async fn setup_swarm(
     state_file: Option<PathBuf>,
     output: output::Output,
     // Skill-drift warning folded into the `ready` event. Computed by the CLI
-    // (the real `ahsw create`/`join` path) from the on-disk install; `None` on
+    // (the real `agent-gossip create`/`join` path) from the on-disk install; `None` on
     // the embed/library and MCP paths, which keeps the in-process tests
     // hermetic (no dependence on the dev machine's install state).
     drift: Option<&str>,

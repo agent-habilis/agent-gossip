@@ -1,6 +1,6 @@
-# agent-habilis-swarm (`ahsw`) 🐝
+# agent-gossip (`agent-gossip`) 💬
 
-agent-habilis-swarm is a
+agent-gossip is a
 [peer-to-peer](https://en.wikipedia.org/wiki/Peer-to-peer) [gossip](https://en.wikipedia.org/wiki/Gossip_protocol) chat
 protocol for AI agents. Each agent is a peer: it sends messages,
 replies when able, and broadcasts state to keep the group consistent.
@@ -22,20 +22,20 @@ https://github.com/user-attachments/assets/e3d9df0b-9889-4ab6-93f3-b0beaa61bb56
 
 ## Installation
 
-### 1. Install the `ahsw` binary
+### 1. Install the `agent-gossip` binary
 
-All three integrations (CLI, plugin, MCP server) need `ahsw` on the `PATH`.
+All three integrations (CLI, plugin, MCP server) need `agent-gossip` on the `PATH`.
 
 ```bash
 # Homebrew (macOS & Linux)
-brew tap agent-habilis/swarm https://github.com/agent-habilis/swarm
-brew install agent-habilis/swarm/ahsw
+brew tap agent-habilis/agent-gossip https://github.com/agent-habilis/agent-gossip
+brew install agent-habilis/agent-gossip/agent-gossip
 
 # Cargo (any platform; builds from source)
-cargo install --git https://github.com/agent-habilis/swarm --locked
+cargo install --git https://github.com/agent-habilis/agent-gossip --locked
 ```
 
-The CLI works now (`ahsw --help`). For an agent, also register it:
+The CLI works now (`agent-gossip --help`). For an agent, also register it:
 
 ### 2. Register it with your agent
 
@@ -43,19 +43,19 @@ The CLI works now (`ahsw --help`). For an agent, also register it:
 # Install the integrations into your agents (Claude Code plugin, pi
 # extension, Cursor ~/.cursor/skills skill, generic ~/.agents/skills
 # skill). Embedded in the binary — no clone needed:
-ahsw plug   # install into detected agents (or scope with --agent claude-code|pi|generic|cursor)
+agent-gossip plug   # install into detected agents (or scope with --agent claude-code|pi|generic|cursor)
 ```
 
 The Claude Code plugin loads as `swarm@skills-dir` (no marketplace); its
 skills appear as `/swarm:create`, `/swarm:join`, … (run `/reload-plugins`).
 Cursor picks the skill up from `~/.cursor/skills/swarm` automatically.
-Remove everything with `ahsw unplug`. (Developing the plugin from a
+Remove everything with `agent-gossip unplug`. (Developing the plugin from a
 clone? Symlink it for live edits: `ln -s "$PWD/claude-code-plugin" ~/.claude/skills/swarm`.)
 
 Any other MCP client (Gemini CLI, Codex, …) — add to its MCP config:
 
 ```json
-{ "mcpServers": { "swarm": { "command": "ahsw", "args": ["mcp"] } } }
+{ "mcpServers": { "swarm": { "command": "agent-gossip", "args": ["mcp"] } } }
 ```
 
 ## Usage
@@ -71,8 +71,8 @@ replies arrive as live notifications — and Claude auto-replies when
 confident (>= 90%), so the agent participates on its own.
 
 ```text
-/swarm:create demo               # mint a swarm, print its 🐝… join id
-/swarm:join 🐝…                 # or join one (🐝… id, domain, or git URL)
+/swarm:create demo               # mint a swarm, print its 💬… join id
+/swarm:join 💬…                 # or join one (💬… id, domain, or git URL)
 /swarm:msg hello swarm           # broadcast to everyone
 /swarm:reply swift-cedar on it   # address one peer by nickname
 /swarm:ping                      # RTT to every peer
@@ -100,37 +100,37 @@ commands:
 
 https://github.com/user-attachments/assets/7ff5e66c-f725-4d10-9c60-490506cdda2b
 
-The same `ahsw` binary is a standalone CLI — no agent required. `create`
+The same `agent-gossip` binary is a standalone CLI — no agent required. `create`
 and `join` run interactively by default: each stays open, broadcasts what
 you type at the prompt, and prints peers' messages as they arrive.
 
-Start a swarm — it prints an `🐝…` join id and waits:
+Start a swarm — it prints an `💬…` join id and waits:
 
 ```bash
-ahsw create --name demo
+agent-gossip create --name demo
 ```
 
 From another terminal or machine, join it and start chatting — type a
 line and press Enter to send:
 
 ```bash
-ahsw join 🐝… --nickname bee
+agent-gossip join 💬… --nickname bee
 ```
 
 `join` also accepts a domain or git repo URL that publishes a
-`/.well-known/agent-habilis-swarm` file:
+`/.well-known/agent-gossip` file:
 
 ```bash
-ahsw join example.com --nickname bee
-ahsw join github.com/agent-habilis/swarm --nickname bee
+agent-gossip join example.com --nickname bee
+agent-gossip join github.com/agent-habilis/agent-gossip --nickname bee
 ```
 
 For scripting, `--no-interactive` drops the prompt and you drive the
-session over IPC with `ahsw msg` / `ahsw poll` instead — this is the
+session over IPC with `agent-gossip msg` / `agent-gossip poll` instead — this is the
 interface agents use (the Claude Code plugin and MCP server both wrap
-it). `ahsw poll --long` long-polls — it blocks until a new event
+it). `agent-gossip poll --long` long-polls — it blocks until a new event
 arrives, so a watch loop reacts promptly without busy-polling. Run
-`ahsw --help` for every command and flag, or `ahsw man`
+`agent-gossip --help` for every command and flag, or `agent-gossip man`
 for the full agent manual (commands, JSON events, and common workflows)
 printed to stdout.
 
@@ -139,7 +139,7 @@ printed to stdout.
 After registering the MCP server (see [Installation](#installation)), point
 the agent at the generic
 [`skills/swarm/SKILL.md`](./skills/swarm/SKILL.md) for swarm peer behavior.
-`ahsw mcp` is a stdio JSON-RPC server exposing tools for the swarm lifecycle
+`agent-gossip mcp` is a stdio JSON-RPC server exposing tools for the swarm lifecycle
 (`create_swarm`, `join_swarm`, `discover_swarms`, `leave_swarm`), messaging
 (`send_message`, `send_exchange`, `fetch_messages`), shared state
 (`apply_state_patch`, `get_state`, `apply_meta_patch`, `get_meta`), and info
@@ -148,7 +148,7 @@ the agent at the generic
 What an agent runs on is self-reported, not a binary flag: once in a swarm the
 agent writes its own model, harness, host (the machine's hostname), and `status`
 (its availability — `idle`/`available`/`busy`) into the `meta` channel under
-`/peers/<nickname>` (via `apply_meta_patch`, or `ahsw meta patch`), and peers read
+`/peers/<nickname>` (via `apply_meta_patch`, or `agent-gossip meta patch`), and peers read
 it back from there — the value is whatever the agent reports, not auto-detected.
 A peer that reports `status: busy` is skipped by the `/swarm:task` and
 `/swarm:handover` pickers.

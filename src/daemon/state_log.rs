@@ -235,7 +235,7 @@ mod tests {
 
     fn fixture() -> (SwarmId, Nickname) {
         let swarm = SwarmId::new(
-            "🐝e9MR9KQRSaraN3u5EbgwgoXqHJwQnyMzq6r4xGdch3jcr3CQtueAAeQ7AZrvYmjgUZpYP2jwd8",
+            "💬e9MR9KQRSaraN3u5EbgwgoXqHJwQnyMzq6r4xGdch3jcr3CQtueAAeQ7AZrvYmjgUZpYP2jwd8",
         )
         .expect("valid swarm id");
         (swarm, Nickname::new("test-node").expect("valid nickname"))

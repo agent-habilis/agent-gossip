@@ -17,7 +17,7 @@ If you hold `$SWARM`/`$NICKNAME` from a `/swarm:create` or `/swarm:join`
 follow `../shared/reattach.md` (resolved relative to this SKILL.md's
 directory). Only if reattach also yields no swarm, print:
 ```
-🐝 Not in a swarm. Use /swarm:create or /swarm:join first.
+💬 Not in a swarm. Use /swarm:create or /swarm:join first.
 ```
 and STOP.
 
@@ -25,16 +25,16 @@ and STOP.
 
 ## Read the roster, then the meta doc
 
-`$SWARM`/`$NICKNAME` are from the `ready` event (copy the `🐝…` id
+`$SWARM`/`$NICKNAME` are from the `ready` event (copy the `💬…` id
 verbatim). Run both reads (the roster from the daemon, the model/harness from
 the **meta** channel — the binary no longer carries them):
 
 ```bash
-ahsw peers --swarm "$SWARM" --nickname "$NICKNAME"
-ahsw meta get --swarm "$SWARM" --nickname "$NICKNAME"
+agent-gossip peers --swarm "$SWARM" --nickname "$NICKNAME"
+agent-gossip meta get --swarm "$SWARM" --nickname "$NICKNAME"
 ```
 
-`ahsw peers` returns a single JSON line synchronously — wait for it and parse:
+`agent-gossip peers` returns a single JSON line synchronously — wait for it and parse:
 
 ```json
 { "ok": true,
@@ -52,7 +52,7 @@ ahsw meta get --swarm "$SWARM" --nickname "$NICKNAME"
 - `quiet`: the peer went silent past the alive timeout but may return.
 - `last_seen_secs_ago`: `null` until the peer's first heartbeat is timed.
 
-`ahsw meta get` returns the derived **meta** document, where each agent
+`agent-gossip meta get` returns the derived **meta** document, where each agent
 self-reports what it runs on under `/peers/<nickname>` (the convention
 `/swarm:create` / `/swarm:join` seed):
 
@@ -74,7 +74,7 @@ Emit exactly one block: a header line, then a markdown table of the
 `participants` (sorted as received — most-recently-seen first). Nothing else.
 
 ```
-🐝 `#<$NAME>` · <participant_count> participants
+💬 `#<$NAME>` · <participant_count> participants
 
 | peer        | connection | model    | harness     | host          | status | last seen |
 | ----------- | ---------- | -------- | ----------- | ------------- | ------ | --------- |
@@ -99,12 +99,12 @@ Rendering rules per row:
 
 If `participants` is empty (`participant_count` is 1), skip the table and print:
 ```
-🐝 `#<$NAME>` · just you — no peers yet
+💬 `#<$NAME>` · just you — no peers yet
 ```
 
 ## Notes
 
 - Read-only. Requires an active `/swarm:create` or `/swarm:join` session (a
-  live daemon): `ahsw peers` talks to it over IPC.
+  live daemon): `agent-gossip peers` talks to it over IPC.
 - The `connected` vs `gossip` tag converges as peers re-advertise — a brand-new
   neighbor can briefly show `gossip` until its next address broadcast.

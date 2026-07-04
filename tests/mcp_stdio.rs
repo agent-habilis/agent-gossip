@@ -1,4 +1,4 @@
-//! Integration tests: `ahsw mcp` over stdio.
+//! Integration tests: `agent-gossip mcp` over stdio.
 //!
 //! Spawns the binary, pipes in JSON-RPC, asserts the server's
 //! responses. These are the reliability guarantees we make at the
@@ -40,7 +40,7 @@ impl McpClient {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .expect("spawn ahsw mcp");
+            .expect("spawn agent-gossip mcp");
         let stdin = child.stdin.take().expect("child stdin");
         let stdout = child.stdout.take().expect("child stdout");
         let reader = BufReader::new(stdout);
@@ -61,7 +61,7 @@ impl McpClient {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .expect("spawn ahsw mcp");
+            .expect("spawn agent-gossip mcp");
         let stdin = child.stdin.take().expect("child stdin");
         let stdout = child.stdout.take().expect("child stdout");
         let reader = BufReader::new(stdout);
@@ -465,7 +465,7 @@ fn create_swarm_twice_errors_cleanly() {
     let mut client = McpClient::spawn();
     let first = client.tool_call(20, "create_swarm", serde_json::json!({ "name": "twice1" }));
     let first_json = tool_result_json(&first).expect("first create_swarm should succeed");
-    assert!(first_json["swarm"].as_str().unwrap().starts_with("🐝"));
+    assert!(first_json["swarm"].as_str().unwrap().starts_with("💬"));
     assert_eq!(first_json["name"].as_str(), Some("twice1"));
 
     let second = client.tool_call(21, "create_swarm", serde_json::json!({ "name": "twice2" }));
@@ -585,7 +585,7 @@ fn create_swarm_with_granular_relay_succeeds() {
         result["swarm"]
             .as_str()
             .unwrap_or_default()
-            .starts_with("🐝"),
+            .starts_with("💬"),
         "expected a swarm id, got: {result}"
     );
 }
@@ -601,7 +601,7 @@ fn create_swarm_without_name_mints_random() {
         result["swarm"]
             .as_str()
             .unwrap_or_default()
-            .starts_with("🐝"),
+            .starts_with("💬"),
         "expected a swarm id, got: {result}"
     );
     assert!(
@@ -669,47 +669,6 @@ fn send_empty_body_works() {
     assert!(
         msgs.iter().any(|msg| msg["id"].as_str() == Some(&id)),
         "buffer should contain the just-sent message, got {msgs:?}"
-    );
-}
-
-/// `send_notice` round-trips like `send_message` but the echo and the
-/// fetched record carry `type:"notice"` — the field the no-auto-reply
-/// contract keys on.
-#[test]
-fn send_notice_round_trips_with_notice_type() {
-    let mut client = McpClient::spawn();
-    client.create_and_get_swarm(105);
-
-    let sent = client.tool_call(
-        106,
-        "send_notice",
-        serde_json::json!({ "text": "ci green" }),
-    );
-    let sent_json = tool_result_json(&sent).expect("send_notice should succeed");
-    let id = sent_json["id"].as_str().unwrap().to_string();
-    let echo = sent_json
-        .get("message")
-        .expect("send_notice must return an echo");
-    assert_eq!(echo["type"].as_str(), Some("notice"));
-    assert_eq!(echo["body"].as_str(), Some("ci green"));
-
-    let fetched = tool_result_json(&client.tool_call(
-        107,
-        "fetch_messages",
-        serde_json::json!({ "after": FROM_START }),
-    ))
-    .expect("fetch");
-    let msgs = fetched["messages"].as_array().unwrap();
-    let notice = msgs
-        .iter()
-        .find(|msg| msg["id"].as_str() == Some(&id))
-        .unwrap_or_else(|| panic!("buffer should contain the notice, got {msgs:?}"));
-    assert_eq!(notice["type"].as_str(), Some("notice"));
-    assert!(
-        notice["display"]
-            .as_str()
-            .is_some_and(|display| display.contains("(notice)")),
-        "display carries the (notice) marker: {notice}"
     );
 }
 

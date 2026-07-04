@@ -136,7 +136,7 @@ struct CreateSwarmArgs {
     #[serde(default)]
     relay: Option<String>,
     /// List this swarm in a directory so others can find it with
-    /// `ahsw discover` (no id to share). Requires `network: "public"`. Note:
+    /// `agent-gossip discover` (no id to share). Requires `network: "public"`. Note:
     /// advertising broadcasts the join token — the swarm becomes open to
     /// anyone discovering the directory.
     #[serde(default)]
@@ -153,7 +153,7 @@ struct CreateSwarmArgs {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct JoinSwarmArgs {
-    /// Swarm identifier (🐝…). A shared string derives its own public
+    /// Swarm identifier (💬…). A shared string derives its own public
     /// swarm — use the `forum` command — and is not a valid join target.
     swarm: String,
     /// Optional nickname in `word-word` form. Random if omitted.
@@ -228,8 +228,20 @@ struct TaskStatusArgs {
 struct TaskArtifactArgs {
     /// The task id (UUID) you're serving.
     task_id: String,
-    /// The result text.
+    /// The result text (optional when `file` is given).
+    #[serde(default)]
     text: String,
+    /// Optional local file path to attach as the result, transferred
+    /// peer-to-peer over the blob channel (referenced as a Part.url). For
+    /// binaries too large to inline; the initiator fetches it separately.
+    #[serde(default)]
+    file: Option<String>,
+    /// Filename to advertise for `file` (defaults to the file's own name).
+    #[serde(default)]
+    file_name: Option<String>,
+    /// MIME type to advertise for `file`.
+    #[serde(default)]
+    file_mime: Option<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -466,7 +478,7 @@ impl AgentSwarmServer {
     }
 
     #[tool(
-        description = "Join an existing swarm by its 🐝… identifier. (A shared string derives its own public swarm — that is the `forum` command — and is not a join target.) Idempotent when called for the same swarm id with the same nickname. Poll `fetch_messages` to observe incoming traffic; the server auto-tracks a per-session cursor so repeat cursor-less calls return only new entries."
+        description = "Join an existing swarm by its 💬… identifier. (A shared string derives its own public swarm — that is the `forum` command — and is not a join target.) Idempotent when called for the same swarm id with the same nickname. Poll `fetch_messages` to observe incoming traffic; the server auto-tracks a per-session cursor so repeat cursor-less calls return only new entries."
     )]
     async fn join_swarm(
         &self,
@@ -730,7 +742,17 @@ impl AgentSwarmServer {
         let guard = self.session.lock().await;
         let session = guard.as_ref().ok_or_else(not_in_swarm_error)?;
         let task_id = parse_task_id(&args.task_id)?;
-        match session.task_artifact(task_id, args.text).await {
+        let file = args.file.map(std::path::PathBuf::from);
+        let file_name = args.file_name.or_else(|| {
+            file.as_ref()
+                .and_then(|path| path.file_name())
+                .and_then(|name| name.to_str())
+                .map(str::to_owned)
+        });
+        match session
+            .task_artifact(task_id, args.text, file, file_name, args.file_mime)
+            .await
+        {
             Ok((id, message)) => ok_json(SendMessageResult { id, message }),
             Err(error) => Err(to_mcp_error(error)),
         }
@@ -861,7 +883,7 @@ surface.
 ONE EVENT IN, ONE LINE OUT. For anything you surface, emit its `display` value \
 VERBATIM as exactly one line — never recompose it from the raw fields, never \
 summarize, paraphrase, tabulate, batch into a digest, or add a \
-preamble/postamble. `display` already carries the `🐝️` prefix, the nicks, the \
+preamble/postamble. `display` already carries the `💬️` prefix, the nicks, the \
 `→` arrow, and the body byte-for-byte.
 
 WHICH EVENTS TO SHOW. Skip silently (zero output): `event` of `info`, `error`, \

@@ -7,7 +7,7 @@ use crate::protocol::{Nickname, SwarmId};
 
 #[derive(Parser, Debug)]
 pub(crate) struct CardOpts {
-    /// Swarm identifier (🐝...)
+    /// Swarm identifier (💬...)
     #[arg(long)]
     pub swarm: SwarmId,
 

@@ -262,7 +262,8 @@ pub(crate) async fn handle_op(
             Ok(serde_json::json!({ "ok": true }))
         }
         A2aOp::OwnCard => {
-            let mut card = super::card::own_card(author, our_pubkey);
+            let seal_b58 = bs58::encode(state.identity.seal_public()).into_string();
+            let mut card = super::card::own_card(author, our_pubkey, &seal_b58);
             // Served over the localhost binding, so advertise the JSONRPC
             // interface alongside the always-present gossip one.
             card.supported_interfaces.push(super::AgentInterface {

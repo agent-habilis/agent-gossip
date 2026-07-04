@@ -35,14 +35,14 @@ test("no todo plugin: prints a simple line on start and on each state change", (
 
   expect(sends).toHaveLength(2);
   expect(sends[0]?.customType).toBe("swarm-info");
-  expect(sends[0]?.content).toBe("🐝️ handover → `<bob>`: offered");
-  expect(sends[1]?.content).toBe("🐝️ handover → `<bob>`: accepted");
+  expect(sends[0]?.content).toBe("💬️ handover → `<bob>`: offered");
+  expect(sends[1]?.content).toBe("💬️ handover → `<bob>`: accepted");
 });
 
 test("receiver side reads 'from <peer>', not '→'", () => {
   withTools([]);
   trackStart({ mode: "task", peer: "alice", role: "receiver", status: "accepted" });
-  expect(sends[0]?.content).toBe("🐝️ task from `<alice>`: accepted");
+  expect(sends[0]?.content).toBe("💬️ task from `<alice>`: accepted");
 });
 
 test("todo plugin present: nudges the agent silently on start AND each change", () => {

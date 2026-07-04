@@ -23,7 +23,7 @@ pub(crate) enum StateAction {
     /// mutable collection as an object keyed by index), and a non-object value
     /// replaces the document.
     Merge {
-        /// Swarm identifier (🐝...)
+        /// Swarm identifier (💬...)
         #[arg(long)]
         swarm: SwarmId,
 
@@ -38,7 +38,7 @@ pub(crate) enum StateAction {
 
     /// Read the current derived shared-state document.
     Get {
-        /// Swarm identifier (🐝...)
+        /// Swarm identifier (💬...)
         #[arg(long)]
         swarm: SwarmId,
 

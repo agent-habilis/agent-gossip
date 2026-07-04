@@ -32,7 +32,7 @@ pub(crate) async fn broadcast_msg(sender: &GossipSender, msg: &Message) {
         && let Err(error) = sender.broadcast(Bytes::from(bytes)).await
     {
         tracing::warn!(
-            target: "agent_habilis_swarm::gossip",
+            target: "agent_gossip::gossip",
             %error,
             "presence/plumbing broadcast failed"
         );
@@ -598,11 +598,16 @@ pub(crate) async fn emit_task_status(
 /// # Errors
 /// `unknown task` if we hold no record for `task_id`; otherwise a
 /// serialize/broadcast failure.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "threads swarm/author identity, the task id + result text/file, and the state/sender/output it broadcasts through"
+)]
 pub(crate) async fn emit_task_artifact(
     swarm: &SwarmId,
     author: &Nickname,
     task_id: &crate::a2a::TaskId,
     text: &str,
+    file: Option<crate::blob::FileRef>,
     state: &mut EventLoopState,
     sender: &GossipSender,
     out: &output::Output,
@@ -610,9 +615,29 @@ pub(crate) async fn emit_task_artifact(
     let Some(peer) = state.tasks.get(task_id).map(|rec| rec.peer.clone()) else {
         return Err(anyhow::anyhow!("unknown task '{task_id}'"));
     };
-    broadcast_task_artifact(swarm, author, &peer, task_id, text, state, sender, out)
-        .await
-        .map(|(_id, msg)| msg)
+    broadcast_task_artifact(
+        swarm, author, &peer, task_id, text, file, state, sender, out,
+    )
+    .await
+    .map(|(_id, msg)| msg)
+}
+
+/// Seal a directed payload `body` to `to`'s published X25519 key. A directed
+/// frame is **never** sent in plaintext — if the recipient's card / seal key has
+/// not replicated yet, this errors rather than leaking the body. The Ed25519
+/// frame signature (added later, over this ciphertext) authenticates the sender.
+pub(crate) fn seal_directed(
+    state: &EventLoopState,
+    to: &Nickname,
+    body: &MessageBody,
+) -> anyhow::Result<MessageBody> {
+    let doc = crate::daemon::state_doc::derive_document(&state.meta_log);
+    let key = crate::a2a::card::peer_seal_key(&doc, to).ok_or_else(|| {
+        anyhow::anyhow!(
+            "cannot seal to '{to}': its encryption key is not known yet (cards still propagating)"
+        )
+    })?;
+    crate::protocol::seal::seal_to_body(&key, body.as_str())
 }
 
 /// A worker-emitted `TaskStatusUpdate` (`a2a status`): compose the A2A status
@@ -636,7 +661,7 @@ pub(crate) async fn broadcast_task_status(
     out: &output::Output,
 ) -> anyhow::Result<(MessageId, Message)> {
     let update = crate::a2a::gossip::status_update(swarm, task_id, task_state, note, None);
-    let body = crate::a2a::gossip::payload_body(&update)?;
+    let body = seal_directed(state, peer, &crate::a2a::gossip::payload_body(&update)?)?;
     let kind = MessageKind::A2aStatus {
         to: peer.clone(),
         task_id: task_id.clone(),
@@ -659,17 +684,57 @@ pub(crate) async fn broadcast_task_artifact(
     peer: &Nickname,
     task_id: &crate::a2a::TaskId,
     text: &str,
+    file: Option<crate::blob::FileRef>,
     state: &mut EventLoopState,
     sender: &GossipSender,
     out: &output::Output,
 ) -> anyhow::Result<(MessageId, Message)> {
-    let update = crate::a2a::gossip::artifact_update(swarm, task_id, text);
-    let body = crate::a2a::gossip::payload_body(&update)?;
+    let parts = build_offload_parts(swarm, author, task_id, text, file, state).await?;
+    let update = crate::a2a::gossip::artifact_update_parts(swarm, task_id, parts);
+    let body = seal_directed(state, peer, &crate::a2a::gossip::payload_body(&update)?)?;
     let kind = MessageKind::A2aArtifact {
         to: peer.clone(),
         task_id: task_id.clone(),
     };
     broadcast_task_frame(swarm, author, kind, body, true, state, sender, out).await
+}
+
+/// Resolve the parts of a `--file`-bearing leg: with no file, a single text
+/// part (today's behavior); with a file, offload it over the blob channel into a
+/// `Part.url` reference (+ the text part when non-empty). Lazily binds this
+/// peer's blob server on the first offload. The heavy read+hash runs off the
+/// event loop inside `blob::url_part`.
+async fn build_offload_parts(
+    swarm: &SwarmId,
+    author: &Nickname,
+    task_id: &crate::a2a::TaskId,
+    text: &str,
+    file: Option<crate::blob::FileRef>,
+    state: &mut EventLoopState,
+) -> anyhow::Result<Vec<crate::a2a::Part>> {
+    let Some(file) = file else {
+        return Ok(vec![crate::a2a::Part::text(text)]);
+    };
+    let lookups = swarm
+        .as_str()
+        .parse::<crate::protocol::swarm::Swarm>()
+        .map_err(|error| anyhow::anyhow!("cannot resolve swarm lookups for blob offload: {error}"))?
+        .lookups()
+        .clone();
+    let spool = crate::util::swarm_runtime_dir(swarm.as_str()).join(format!("{author}.blobs"));
+    let part = crate::blob::url_part(
+        file,
+        &mut state.blob_server,
+        &lookups,
+        spool,
+        task_id.clone(),
+    )
+    .await?;
+    let mut parts = vec![part];
+    if !text.is_empty() {
+        parts.push(crate::a2a::Part::text(text));
+    }
+    Ok(parts)
 }
 
 /// Broadcast (or buffer, while unmeshed) one fully-built task leg, retaining
@@ -778,6 +843,14 @@ pub(crate) async fn broadcast_a2a_call(
         ));
         return;
     };
+    // Seal the request to the addressee — a relay forwards it but cannot read it.
+    let body = match seal_directed(state, &peer, &body) {
+        Ok(sealed) => sealed,
+        Err(error) => {
+            responder.send_response(&rpc_error(-32603, &error.to_string()));
+            return;
+        }
+    };
     let rpc_id = crate::a2a::A2aRpcId::random();
     let frame = Message::new_a2a_req(swarm, author, peer.clone(), rpc_id.clone(), body)
         .signed(&state.identity);
@@ -805,11 +878,11 @@ pub(crate) async fn broadcast_a2a_call(
             if let Err(error) =
                 crate::unicast::deliver(&frame, Bytes::from(bytes), state, sender).await
             {
-                tracing::warn!(target: "agent_habilis_swarm::gossip", %error, "a2a request send failed");
+                tracing::warn!(target: "agent_gossip::gossip", %error, "a2a request send failed");
             }
         }
         Err(error) => {
-            tracing::warn!(target: "agent_habilis_swarm::gossip", %error, "a2a request serialize failed");
+            tracing::warn!(target: "agent_gossip::gossip", %error, "a2a request serialize failed");
         }
     }
 }
@@ -876,10 +949,12 @@ pub(crate) async fn handle_session_request(
         SessionRequest::TaskArtifact {
             task_id,
             text,
+            file,
             resp,
         } => {
             let outcome =
-                emit_task_artifact(swarm, author, &task_id, &text, state, sender, output).await;
+                emit_task_artifact(swarm, author, &task_id, &text, file, state, sender, output)
+                    .await;
             let sent_ok = outcome.is_ok();
             let _ = resp.send(outcome);
             sent_ok

@@ -1,5 +1,5 @@
 //! One line per swarm message (sent/received) on the
-//! `agent_habilis_swarm::messages` tracing target, pinned always-on in
+//! `agent_gossip::messages` tracing target, pinned always-on in
 //! the default filter (`src/main.rs`). Logging only, no control flow.
 //! Msg + presence joined/left at `info`; Alive/PeerInfo/Digest at
 //! `trace`.
@@ -54,7 +54,7 @@ fn log(direction: &'static str, msg: &Message) {
         MessageKind::A2aMsg => {
             if log_raw() {
                 tracing::info!(
-                    target: "agent_habilis_swarm::messages",
+                    target: "agent_gossip::messages",
                     dir = direction,
                     author = %msg.author,
                     ts = msg.timestamp,
@@ -63,7 +63,7 @@ fn log(direction: &'static str, msg: &Message) {
                 );
             } else {
                 tracing::info!(
-                    target: "agent_habilis_swarm::messages",
+                    target: "agent_gossip::messages",
                     dir = direction,
                     author = %msg.author,
                     ts = msg.timestamp,
@@ -75,7 +75,7 @@ fn log(direction: &'static str, msg: &Message) {
         MessageKind::Presence {
             subtype: subtype @ (PresenceSubtype::Joined | PresenceSubtype::Left),
         } => tracing::info!(
-            target: "agent_habilis_swarm::messages",
+            target: "agent_gossip::messages",
             dir = direction,
             author = %msg.author,
             ts = msg.timestamp,
@@ -84,7 +84,7 @@ fn log(direction: &'static str, msg: &Message) {
         ),
         MessageKind::A2aStatus { to, task_id } | MessageKind::A2aArtifact { to, task_id } => {
             tracing::info!(
-                target: "agent_habilis_swarm::messages",
+                target: "agent_gossip::messages",
                 dir = direction,
                 author = %msg.author,
                 ts = msg.timestamp,
@@ -98,7 +98,7 @@ fn log(direction: &'static str, msg: &Message) {
         // Durable state event: worth an info line (membership/settings change),
         // body redacted by default like a `Msg`.
         MessageKind::State | MessageKind::Meta => tracing::info!(
-            target: "agent_habilis_swarm::messages",
+            target: "agent_gossip::messages",
             dir = direction,
             author = %msg.author,
             ts = msg.timestamp,
@@ -118,7 +118,7 @@ fn log(direction: &'static str, msg: &Message) {
         | MessageKind::Pong { .. }
         | MessageKind::A2aReq { .. }
         | MessageKind::A2aResp { .. } => tracing::trace!(
-            target: "agent_habilis_swarm::messages",
+            target: "agent_gossip::messages",
             dir = direction,
             author = %msg.author,
             kind = %msg.kind,

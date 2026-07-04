@@ -86,7 +86,7 @@ pub(super) async fn discover(opts: DiscoverOpts) -> Result<()> {
     Ok(())
 }
 
-/// One directory change as a JSON line for `ahsw discover --output json`.
+/// One directory change as a JSON line for `agent-gossip discover --output json`.
 /// `Found`/`Updated` both surface as `swarm_found` (upsert semantics —
 /// the agent treats a re-ad as a refresh); a departure is `swarm_lost`.
 fn discover_event_json(event: &DirectoryEvent) -> String {
@@ -108,7 +108,7 @@ fn discover_event_json(event: &DirectoryEvent) -> String {
 }
 
 /// Drive the shared picker with swarm rendering: the directory + each
-/// swarm name in yellow, the full `🐝…` id, peer count, and a local
+/// swarm name in yellow, the full `💬…` id, peer count, and a local
 /// first-seen timestamp; `enter` joins the highlighted swarm.
 async fn run_swarm_picker(
     directory_label: &str,

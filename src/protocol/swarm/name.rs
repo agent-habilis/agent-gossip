@@ -226,9 +226,11 @@ mod tests {
 
     #[test]
     fn url_scheme_stripped_and_slashes_kept() {
+        // The scheme is stripped and the `/`s kept; this URL also exceeds the
+        // 32-char name cap, so the tail truncates to `…` (see `MAX_CHARS`).
         assert_eq!(
-            SwarmName::from_topic_string("https://github.com/agent-habilis/swarm").as_str(),
-            "github.com/agent-habilis/swarm"
+            SwarmName::from_topic_string("https://github.com/agent-habilis/agent-gossip").as_str(),
+            "github.com/agent-habilis/agent…"
         );
         assert_eq!(SwarmName::from_topic_string("git://h/a").as_str(), "h/a");
         // Only the `scheme://` form is stripped.
@@ -239,10 +241,10 @@ mod tests {
     fn http_url_drops_query_and_fragment() {
         assert_eq!(
             SwarmName::from_topic_string(
-                "https://github.com/agent-habilis/swarm?tab=readme#install"
+                "https://github.com/agent-habilis/agent-gossip?tab=readme#install"
             )
             .as_str(),
-            "github.com/agent-habilis/swarm"
+            "github.com/agent-habilis/agent…"
         );
         assert_eq!(
             SwarmName::from_topic_string("https://x/p?q=1#f").as_str(),

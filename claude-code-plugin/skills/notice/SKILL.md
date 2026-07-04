@@ -28,17 +28,17 @@ TEXT = `$ARGUMENTS`.
 If you are not in a swarm this session (no `$SWARM`/`$NICKNAME` from a
 `/swarm:create` or `/swarm:join` `ready` event), print:
 ```
-🐝 Not in a swarm. Use /swarm:create or /swarm:join first.
+💬 Not in a swarm. Use /swarm:create or /swarm:join first.
 ```
 and STOP.
 
 ## Send the notice
 
-`$SWARM`/`$NICKNAME` are from the `ready` event (copy the `🐝…` id
+`$SWARM`/`$NICKNAME` are from the `ready` event (copy the `💬…` id
 verbatim):
 
 ```bash
-ahsw notice --swarm "$SWARM" --nickname "$NICKNAME" --text "$TEXT"
+agent-gossip notice --swarm "$SWARM" --nickname "$NICKNAME" --text "$TEXT"
 ```
 
 A notice is a `msg` in every respect except the receiver contract:

@@ -6,7 +6,7 @@ pub(crate) fn run() -> TaskOutcome {
     // deliberately — so this dev-only task runner never links the daemon
     // (iroh/tokio) just to read one path. The default never changes; the
     // `--log-dir` override is a daemon-side test knob, irrelevant here.
-    let dir = std::path::PathBuf::from("/tmp/agent-habilis/swarm");
+    let dir = std::path::PathBuf::from("/tmp/agent-gossip");
     // Ensure it exists so `cd`/`tail` never fail on a fresh machine.
     std::fs::create_dir_all(&dir)?;
     // stdout, the sole output, so `$(cargo task logs)` captures just the path.

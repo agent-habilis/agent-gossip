@@ -10,7 +10,7 @@ use super::output::OutputFormat;
 
 #[derive(Parser, Debug)]
 pub(crate) struct PeersOpts {
-    /// Swarm identifier (🐝...)
+    /// Swarm identifier (💬...)
     #[arg(long)]
     pub swarm: SwarmId,
 
@@ -33,10 +33,10 @@ mod tests {
     #[test]
     fn peers_accepts_output_flag() {
         let cli = Cli::parse_from([
-            "ahsw",
+            "agent-gossip",
             "peers",
             "--swarm",
-            "🐝AbCdEf1234",
+            "💬AbCdEf1234",
             "--nickname",
             "my-nick",
             "--output",
@@ -51,10 +51,10 @@ mod tests {
     #[test]
     fn peers_output_defaults_to_human() {
         let cli = Cli::parse_from([
-            "ahsw",
+            "agent-gossip",
             "peers",
             "--swarm",
-            "🐝AbCdEf1234",
+            "💬AbCdEf1234",
             "--nickname",
             "my-nick",
         ]);

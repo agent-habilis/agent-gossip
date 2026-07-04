@@ -16,7 +16,7 @@ use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use agent_habilis_swarm::Channel;
+use agent_gossip::Channel;
 use common::{
     CONNECT_TIMEOUT, InProcNode, MSG_TIMEOUT, POLL, RECOVERY_TIMEOUT, serial_guard, socket_path,
     tmp_log, wait_until,
@@ -30,7 +30,7 @@ struct JsonNode {
 }
 
 impl JsonNode {
-    /// Spawn `ahsw create --no-interactive --output json`, wait for the
+    /// Spawn `agent-gossip create --no-interactive --output json`, wait for the
     /// `ready` event, and return the node + swarm identifier.
     fn create() -> (Self, String) {
         Self::create_with_flags(&[])
@@ -93,7 +93,7 @@ impl JsonNode {
         )
     }
 
-    /// Spawn `ahsw join <swarm> --nickname <nickname> --no-interactive --output json`.
+    /// Spawn `agent-gossip join <swarm> --nickname <nickname> --no-interactive --output json`.
     fn join(swarm: &str, nickname: &str) -> Self {
         Self::join_with_flags(swarm, nickname, &[])
     }
@@ -229,7 +229,7 @@ async fn test_ready_event_shape() {
     let mut creator = InProcNode::create("readyshape").await;
     let swarm = creator.swarm.clone();
     let nick = creator.nickname.clone();
-    assert!(swarm.starts_with("🐝"));
+    assert!(swarm.starts_with("💬"));
     assert!(!nick.is_empty());
 
     let events = creator.json_events();
@@ -247,10 +247,7 @@ async fn test_ready_event_shape() {
     assert_eq!(ready["nickname"].as_str().unwrap(), nick);
     // The build self-identifies: the ready event carries the exact version
     // string (crate version + git sha + dirty flag).
-    assert_eq!(
-        ready["version"].as_str().unwrap(),
-        agent_habilis_swarm::VERSION
-    );
+    assert_eq!(ready["version"].as_str().unwrap(), agent_gossip::VERSION);
 }
 
 /// Three peers: creator surfaces a membership `joined` presence for
@@ -473,7 +470,7 @@ async fn test_all_lines_are_valid_json() {
     // Every event the daemon would write in `--output json` mode must
     // render to valid JSON (SwarmId is the bare stderr line → None).
     for event in creator.events() {
-        if let Some(line) = agent_habilis_swarm::event_json(event) {
+        if let Some(line) = agent_gossip::event_json(event) {
             assert!(
                 serde_json::from_str::<serde_json::Value>(&line).is_ok(),
                 "rendered line is not valid JSON: {line:?}"
@@ -1208,7 +1205,7 @@ async fn test_task_times_out_when_skill_goes_silent() {
     );
 }
 
-/// `ahsw peers` returns the live roster: `ok`, a `count` (participants + 1
+/// `agent-gossip peers` returns the live roster: `ok`, a `count` (participants + 1
 /// for self), and a `participants` array carrying nickname + recency +
 /// quiet flag + reach (direct/gossip) for each known peer.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1298,7 +1295,7 @@ async fn test_peers_roster_shape() {
     );
 }
 
-/// Poll/stream parity: a `msg` returned by `ahsw poll --output json` is the
+/// Poll/stream parity: a `msg` returned by `agent-gossip poll --output json` is the
 /// **byte-identical** object the live `--output json` stream emitted for the
 /// same message — except for the leading `seq` the poll record adds as its
 /// cursor. This is the contract a Monitor-less fallback relies on: parse one
@@ -1397,9 +1394,9 @@ fn test_ping_report_is_pollable() {
 }
 
 /// Shared-state wire contract over the REAL path the in-process harness bypasses:
-/// `ahsw <channel> merge` on one daemon → the change gossips → the peer's
+/// `agent-gossip <channel> merge` on one daemon → the change gossips → the peer's
 /// `--output json` stream carries a `{"event":"<chan>","type":"<chan>",...}`
-/// record with the merge + derived document, and `ahsw <channel> get` on the peer
+/// record with the merge + derived document, and `agent-gossip <channel> get` on the peer
 /// reflects it. Run for both channels (`state`, `meta`) to prove parity end to
 /// end.
 fn channel_wire_contract(channel: Channel) {

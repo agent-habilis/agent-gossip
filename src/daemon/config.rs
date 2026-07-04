@@ -50,6 +50,7 @@ pub(crate) enum SessionRequest {
     TaskArtifact {
         task_id: TaskId,
         text: String,
+        file: Option<crate::blob::FileRef>,
         resp: oneshot::Sender<Result<Message>>,
     },
     /// Snapshot the live participant roster (active + quiet, recency-sorted).
@@ -123,7 +124,7 @@ pub(crate) enum SessionRequest {
 /// process on quit?" and "spawn the unix-socket listener?" instead of
 /// carrying them as independent, drift-prone bools.
 pub(crate) enum DriverMode {
-    /// The `ahsw create` / `join` CLI. Owns the unix-socket IPC listener
+    /// The `agent-gossip create` / `join` CLI. Owns the unix-socket IPC listener
     /// (for `msg` / `poll`); ctrl-c / SIGTERM `std::process::exit`s.
     Cli,
     /// Fully in-process, shared by the embed facade and the MCP server.
@@ -190,7 +191,7 @@ pub(crate) struct EventLoopConfig {
     /// In-process / ephemeral for now (see [`crate::protocol::identity`]).
     pub identity: std::sync::Arc<crate::protocol::identity::Identity>,
     pub swarm: SwarmId,
-    /// Decoded swarm name (from the `🐝…` id). Carried so the
+    /// Decoded swarm name (from the `💬…` id). Carried so the
     /// shutdown path can print `left #NAME` without re-parsing
     /// the id.
     pub name: SwarmName,

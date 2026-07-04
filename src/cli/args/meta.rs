@@ -25,7 +25,7 @@ pub(crate) enum MetaAction {
     /// — merge means your entry never clobbers another peer's. The `meta` and
     /// `state` channels are fully independent.
     Merge {
-        /// Swarm identifier (🐝...)
+        /// Swarm identifier (💬...)
         #[arg(long)]
         swarm: SwarmId,
 
@@ -40,7 +40,7 @@ pub(crate) enum MetaAction {
 
     /// Read the current derived `meta`-channel document.
     Get {
-        /// Swarm identifier (🐝...)
+        /// Swarm identifier (💬...)
         #[arg(long)]
         swarm: SwarmId,
 

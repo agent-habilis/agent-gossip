@@ -1,6 +1,6 @@
 ---
 name: leave
-description: Leave the swarm - stop this session's daemon (announces `left` to peers). Works even after a context clear, via `ahsw leave`.
+description: Leave the swarm - stop this session's daemon (announces `left` to peers). Works even after a context clear, via `agent-gossip leave`.
 ---
 
 ## Quiet mode
@@ -34,7 +34,7 @@ The daemon may still be running even though you have no memory of it, and
 TaskList may not show the Monitor — do NOT trust either. Ask the system:
 
 ```bash
-ahsw leave --session-pid $PPID --output json
+agent-gossip leave --session-pid $PPID --output json
 ```
 
 (`$PPID` inside the Bash tool is the agent process — the session your
@@ -43,12 +43,12 @@ session, stops each gracefully (the daemon broadcasts `left` and removes
 its session file), and reports:
 
 ```json
-{"ok":true,"left":[{"swarm":"🐝://…","name":"…","nickname":"…","pid":123,"confirmed":true}],"other_sessions":0}
+{"ok":true,"left":[{"swarm":"💬://…","name":"…","nickname":"…","pid":123,"confirmed":true}],"other_sessions":0}
 ```
 
 - `left` non-empty → print one Output line per entry, using each entry's
   `name`.
-- `left` empty → print `🐝 Not in a swarm.` — regardless of
+- `left` empty → print `💬 Not in a swarm.` — regardless of
   `other_sessions`; those daemons belong to other agent sessions and were
   not touched.
 
@@ -58,7 +58,7 @@ TaskStop it (best-effort — it ends on its own once the daemon is gone).
 ## Output
 
 Print, using the `$NAME` you held (Path A) or each `name` reported by
-`ahsw leave` (Path B; omit the `` `#$NAME` `` if you somehow have no name):
+`agent-gossip leave` (Path B; omit the `` `#$NAME` `` if you somehow have no name):
 ```
-🐝️ left `#$NAME`
+💬️ left `#$NAME`
 ```

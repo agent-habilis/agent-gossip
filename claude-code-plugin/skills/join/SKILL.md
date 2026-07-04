@@ -1,6 +1,6 @@
 ---
 name: join
-description: Join an existing swarm by its `🐝…` id; attaches the daemon under a Monitor for live event push. (For a public swarm derived from a shared string, use the forum command.)
+description: Join an existing swarm by its `💬…` id; attaches the daemon under a Monitor for live event push. (For a public swarm derived from a shared string, use the forum command.)
 ---
 
 ## Quiet mode
@@ -14,12 +14,12 @@ do not narrate around them.
 
 ## Arguments
 
-Parse `$ARGUMENTS` — it should be a swarm ID (`🐝://...`; a legacy bare
-`🐝...` id is also accepted). Pass it through verbatim; the daemon normalizes.
+Parse `$ARGUMENTS` — it should be a swarm ID (`💬://...`; a legacy bare
+`💬...` id is also accepted). Pass it through verbatim; the daemon normalizes.
 
 If empty, print:
 ```
-Usage: /swarm:join {🐝://...}
+Usage: /swarm:join {💬://...}
 ```
 STOP.
 
@@ -68,7 +68,7 @@ notifications instead of needing to be polled. Do NOT pass `--nickname`
 — the daemon generates a random `word-word` nickname.
 
 ```
-command: "ahsw join {ID} --no-interactive --output json"
+command: "agent-gossip join {ID} --no-interactive --output json"
 description: "swarm"
 persistent: true
 timeout_ms: 300000
@@ -83,12 +83,12 @@ read it back from there (`/swarm:status`, handover/task pickers).
 
 The first event from the Monitor will be:
 ```
-{"event":"ready","swarm":"🐝://...","name":"...","nickname":"..."}
+{"event":"ready","swarm":"💬://...","name":"...","nickname":"..."}
 ```
 
 From this event, hold three values for the rest of the skill:
 
-- `$SWARM`    = `ready.swarm`    (the `🐝...` id)
+- `$SWARM`    = `ready.swarm`    (the `💬...` id)
 - `$NAME`     = `ready.name`     (the swarm name, decoded from the id)
 - `$NICKNAME` = `ready.nickname` (your assigned `word-word` nick for
   this session)
@@ -99,12 +99,12 @@ STOP. If the failure looks like a creator-unreachable timeout, print
 `creator unreachable, swarm may be dead`.
 
 The `ready` event may also carry an optional `drift` field — a warning
-that the installed swarm skill has fallen behind the `ahsw` binary. If
+that the installed swarm skill has fallen behind the `agent-gossip` binary. If
 present, print its value verbatim as its own line right after the
 Output block (it already names the fix). If absent, print nothing.
 
 The daemon persists `swarm`, `name`, `nickname`, and live count to its
-own state file (`/tmp/agent-habilis/swarm/<swarm-prefix>/<nick>.state.json`,
+own state file (`/tmp/agent-gossip/<swarm-prefix>/<nick>.state.json`,
 beside its socket + log), so this skill writes nothing — it is read-only. Sibling
 skills (`msg`, `reply`, `leave`, `ping`) don't read that file; they carry
 `$SWARM`/`$NICKNAME` from the `ready` event above and address the daemon over
@@ -115,13 +115,13 @@ its socket.
 Take this path **only** when the `Monitor` tool is not available (see "Pick the
 transport"). It runs the same daemon and surfaces the same events; it just
 launches via a background shell and pulls events with `poll` instead of
-receiving pushes. Before driving it, run `ahsw man` once and read its **COMMANDS**
+receiving pushes. Before driving it, run `agent-gossip man` once and read its **COMMANDS**
 and **JSON EVENTS** sections — that is the authoritative contract; the notes
 here are only the deltas from the Monitor path.
 
 **Use only the public CLI surface — never read the daemon's stdout/log.**
-Readiness comes from `ahsw ready` (which gates on the `--state-file`); identity
-and events come from the `--state-file` and `ahsw poll`. The daemon's own stdout
+Readiness comes from `agent-gossip ready` (which gates on the `--state-file`); identity
+and events come from the `--state-file` and `agent-gossip poll`. The daemon's own stdout
 stream is NOT to be parsed by this skill (it is a developer log, not the API);
 discard it.
 
@@ -132,19 +132,19 @@ discard it.
    `--nickname`); send its stdout to `/dev/null` (you will not read it —
    readiness and events come from `--state-file` and `poll`):
    ```
-   ahsw join {ID} --state-file /tmp/agent-habilis/swarm/sessions/${PPID}.json --no-interactive --output json
+   agent-gossip join {ID} --state-file /tmp/agent-gossip/sessions/${PPID}.json --no-interactive --output json
    ```
    `${PPID}` verbatim.
 2. **Gate on readiness, then read identity.** Block until the daemon is
-   serving with a single `ahsw ready --state-file
-   /tmp/agent-habilis/swarm/sessions/${PPID}.json` (it waits for that file's
+   serving with a single `agent-gossip ready --state-file
+   /tmp/agent-gossip/sessions/${PPID}.json` (it waits for that file's
    `ready` flag to flip true; exits 0 when serving, non-zero on timeout). On a
    non-zero exit, print `failed to join swarm` and STOP (same failure
    contract). On success, read `$SWARM`/`$NAME`/`$NICKNAME` from that same
    state-file — a plain read; the gate guaranteed it is complete.
 3. **Print the same Output block** as the Monitor path (below).
 4. **Event handling = the shared "Event handler", long-polled.** Run a
-   blocking poll: `ahsw poll --swarm $SWARM --nickname $NICKNAME --long
+   blocking poll: `agent-gossip poll --swarm $SWARM --nickname $NICKNAME --long
    --after $LAST --output json` (omit `--after` on the first poll). `--long`
    blocks until new traffic arrives — you react the moment it lands, with no
    busy tick and no timeout to tune, and the daemon never blocks. If your
@@ -160,7 +160,7 @@ discard it.
    right after each batch (drive it with the `loop` skill / a
    `ScheduleWakeup`). `--long` is for this **active watch loop** only. For a
    **one-shot read** — the user asks "any new messages?" outside the loop, or
-   you just want what is buffered now — run a plain `ahsw poll --swarm $SWARM
+   you just want what is buffered now — run a plain `agent-gossip poll --swarm $SWARM
    --nickname $NICKNAME --after $LAST --output json` with **no `--long`**: it
    returns immediately.
 
@@ -168,7 +168,7 @@ discard it.
 
 Print:
 ```
-🐝️ joined `#$NAME` as `<$NICKNAME>`
+💬️ joined `#$NAME` as `<$NICKNAME>`
 ```
 
 ## Report your model into meta
@@ -193,7 +193,7 @@ values — never copy the examples:
 - `{HOST}` — this machine's short hostname (run `hostname -s`).
 
 ```
-ahsw meta merge --swarm $SWARM --nickname $NICKNAME --merge '{"peers":{"$NICKNAME":{"model":"{MODEL}","harness":"{HARNESS}","host":"{HOST}","status":"idle"}}}'
+agent-gossip meta merge --swarm $SWARM --nickname $NICKNAME --merge '{"peers":{"$NICKNAME":{"model":"{MODEL}","harness":"{HARNESS}","host":"{HOST}","status":"idle"}}}'
 ```
 
 `status` advertises whether you are accepting work: `idle` (open, not working),
@@ -210,7 +210,7 @@ status). To clear your identity, set it null: `--merge '{"peers":{"$NICKNAME":nu
 
 - Relay connection to a cross-machine swarm can take a few seconds
   longer than localhost. The 300s Monitor timeout accounts for this.
-- `join` only accepts a `🐝…` id. A shared string derives its own public
+- `join` only accepts a `💬…` id. A shared string derives its own public
   swarm — that is the `forum` command — and is not a valid join target.
 
 ## Event handling, tasks, and shared state (shared reference)

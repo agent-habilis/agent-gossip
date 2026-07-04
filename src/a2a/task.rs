@@ -446,7 +446,21 @@ pub(crate) async fn tick_task_sweep(
 
     // GC: drop terminal records past the dedup window so the registry stays
     // bounded over a long-lived daemon-side task churn (the analogue of the
-    // heartbeat sweep pruning `quiet_since`).
+    // heartbeat sweep pruning `quiet_since`). A reaped task's offloaded blobs go
+    // with it — unlink their spool files (the review window has long closed).
+    let reaped: Vec<TaskId> = state
+        .tasks
+        .iter()
+        .filter(|(_, rec)| {
+            rec.state.is_terminal() && now.duration_since(rec.last_activity) > timeout
+        })
+        .map(|(task_id, _)| task_id.clone())
+        .collect();
+    if let Some(server) = state.blob_server.as_ref() {
+        for task_id in &reaped {
+            server.evict_task(task_id).await;
+        }
+    }
     state.tasks.retain(|_, rec| {
         !rec.state.is_terminal() || now.duration_since(rec.last_activity) <= timeout
     });
@@ -513,6 +527,13 @@ async fn broadcast_status(
     update: &super::TaskStatusUpdate,
 ) {
     let Ok(body) = gossip::payload_body(update) else {
+        return;
+    };
+    // Directed status frames are sealed to the peer like every other directed
+    // frame (the receive path always unseals a directed body). If the peer's key
+    // isn't known yet, skip this beat/cancel — it is fire-and-forget plumbing and
+    // a later one retries.
+    let Ok(body) = crate::gossip::seal_directed(state, peer, &body) else {
         return;
     };
     let msg = Message::new_a2a_status(swarm, author, peer.clone(), task_id.clone(), body)

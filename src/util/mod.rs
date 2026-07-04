@@ -21,9 +21,9 @@ pub(crate) mod version;
 /// identifier. The stem of every per-swarm file (socket / log / state), so it
 /// lives here rather than in any one module. See [`swarm_runtime_dir`].
 ///
-/// The canonical id carries a `🐝://` separator; the `://` is stripped first so
-/// it never lands in a path (the `🐝` sigil is filesystem-safe and kept, which
-/// also keeps the stem identical to a legacy bare `🐝<base58>` id).
+/// The canonical id carries a `💬://` separator; the `://` is stripped first so
+/// it never lands in a path (the `💬` sigil is filesystem-safe and kept, which
+/// also keeps the stem identical to a legacy bare `💬<base58>` id).
 #[must_use]
 pub fn swarm_prefix(swarm_id: &str) -> String {
     swarm_id
@@ -48,26 +48,26 @@ mod tests {
 
     #[test]
     fn truncates_to_16_chars() {
-        assert_eq!(swarm_prefix("🐝abcdefghijkmnpqrs").chars().count(), 16);
+        assert_eq!(swarm_prefix("💬abcdefghijkmnpqrs").chars().count(), 16);
     }
 
     #[test]
     fn short_input_unchanged() {
-        assert_eq!(swarm_prefix("🐝abcd"), "🐝abcd");
+        assert_eq!(swarm_prefix("💬abcd"), "💬abcd");
     }
 
     #[test]
     fn result_is_a_prefix_of_input() {
-        let input = "🐝abcdefghijkmnpqrstuvwx";
+        let input = "💬abcdefghijkmnpqrstuvwx";
         assert!(input.starts_with(&swarm_prefix(input)));
     }
 
     #[test]
     fn strips_uri_separator_and_matches_legacy_stem() {
-        // The `🐝://` and legacy bare `🐝` forms of the same id must produce an
+        // The `💬://` and legacy bare `💬` forms of the same id must produce an
         // identical, `/`-free filesystem stem.
-        let uri = swarm_prefix("🐝://abcdefghijkmnpqrs");
-        let bare = swarm_prefix("🐝abcdefghijkmnpqrs");
+        let uri = swarm_prefix("💬://abcdefghijkmnpqrs");
+        let bare = swarm_prefix("💬abcdefghijkmnpqrs");
         assert_eq!(uri, bare);
         assert!(!uri.contains('/'));
     }

@@ -147,7 +147,7 @@ mod tests {
             "1abc",     // leading digit
             "café",     // accents
             "日本語",   // CJK
-            "agent-🐝", // emoji
+            "agent-💬", // emoji
             "👨‍👩‍👧",       // ZWJ emoji sequence
             "alice!",   // punctuation symbol
         ] {

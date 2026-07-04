@@ -8,7 +8,7 @@ import { registerMessageRenderers } from "./src/ui";
 export default function register(pi: ExtensionAPI) {
   state.pi = pi;
 
-  // Inline transcript renderers for the 🐝 display lines (see src/ui.ts):
+  // Inline transcript renderers for the 💬 display lines (see src/ui.ts):
   // info plain, warning yellow, error red — same layout as a peer message.
   registerMessageRenderers(pi);
 

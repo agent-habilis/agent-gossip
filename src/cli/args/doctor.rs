@@ -1,6 +1,6 @@
 //! `doctor` command args: the environment + network diagnostic. With no
 //! `--swarm` it reports machine health (environment, integrations, network
-//! capability, active swarms); with `--swarm <🐝…>` it analyzes the connection
+//! capability, active swarms); with `--swarm <💬…>` it analyzes the connection
 //! methods to a specific swarm.
 
 use clap::Parser;
@@ -11,7 +11,7 @@ use super::output::OutputFormat;
 
 #[derive(Parser, Debug)]
 pub(crate) struct DoctorOpts {
-    /// Analyze a specific swarm (🐝...): decode its declared connection
+    /// Analyze a specific swarm (💬...): decode its declared connection
     /// methods and live-probe which actually reach it. Omit for the
     /// machine-health report.
     #[arg(long)]
@@ -35,7 +35,7 @@ mod tests {
 
     #[test]
     fn doctor_defaults_to_machine_health_human() {
-        let cli = Cli::parse_from(["ahsw", "doctor"]);
+        let cli = Cli::parse_from(["agent-gossip", "doctor"]);
         let Commands::Doctor { opts } = cli.command else {
             panic!("expected Doctor command");
         };
@@ -47,10 +47,10 @@ mod tests {
     #[test]
     fn doctor_accepts_swarm_and_json() {
         let cli = Cli::parse_from([
-            "ahsw",
+            "agent-gossip",
             "doctor",
             "--swarm",
-            "🐝AbCdEf1234",
+            "💬AbCdEf1234",
             "--no-probe",
             "--output",
             "json",

@@ -6,7 +6,7 @@
 //! serving the rendezvous — the **beacon** — lives in
 //! [`crate::beacon`].
 //!
-//! The `🐝…` token carries a random 32-byte `seed` (see
+//! The `💬…` token carries a random 32-byte `seed` (see
 //! [`crate::protocol::swarm`]). Every value the swarm needs is derived
 //! from it in memory — no stored address, no file:
 //!
@@ -32,13 +32,13 @@ use crate::util::consts::{PASSWORD_KDF_M_COST_KIB, PASSWORD_KDF_P_COST, PASSWORD
 /// Domain-separation prefix mixed into every seed derivation. Bumping
 /// this is a wire-incompatible change (peers derive a different
 /// topic/identity and never meet).
-const DOMAIN: &[u8] = b"agent-habilis-swarm/v2";
+const DOMAIN: &[u8] = b"agent-gossip/v2";
 
 /// Domain-separation prefix for the topic-string → seed derivation
 /// ([`topic_seed`]). Distinct from [`DOMAIN`] so an arbitrary user string can
 /// never reproduce a [`derive_secret`] output. Versioned independently:
 /// bumping it makes every string derive a fresh swarm.
-const TOPIC_DOMAIN: &[u8] = b"agent-habilis-swarm/topic-seed/v1";
+const TOPIC_DOMAIN: &[u8] = b"agent-gossip/topic-seed/v1";
 
 /// Deterministically derive a swarm `seed` from an arbitrary string:
 /// `SHA256(TOPIC_DOMAIN ‖ topic.trim())`. Two callers passing the same string
@@ -177,7 +177,7 @@ fn stretch_password(password: &Password, salt_seed: &[u8; 32], label: &[u8]) -> 
 
 /// The stretched key for a passworded swarm: every derivation (topic,
 /// rendezvous, port ladder) switches from the wire seed onto this value, so
-/// holding the `🐝…` id without the password computes nothing reachable.
+/// holding the `💬…` id without the password computes nothing reachable.
 #[must_use]
 pub(crate) fn stretch_swarm_password(password: &Password, seed: &[u8; 32]) -> [u8; 32] {
     stretch_password(password, seed, b"password")
@@ -185,7 +185,7 @@ pub(crate) fn stretch_swarm_password(password: &Password, seed: &[u8; 32]) -> [u
 
 /// Length of the password verifier carried in a passworded swarm hash.
 /// 16 bytes: only guess-checking matters (collisions are irrelevant), and
-/// every extra byte grows the shared `🐝…` string.
+/// every extra byte grows the shared `💬…` string.
 pub(crate) const PASSWORD_VERIFIER_LEN: usize = 16;
 
 /// The one-way check value a passworded swarm hash carries so `join` can
@@ -249,7 +249,7 @@ pub(crate) fn ct_eq(left: &[u8; 32], right: &[u8; 32]) -> bool {
 }
 
 /// Derive the gossip TopicId from the swarm `seed` + name + config. The
-/// seed is the random 32 bytes carried in the `🐝…` token, so the topic
+/// seed is the random 32 bytes carried in the `💬…` token, so the topic
 /// is **creator-independent**: it never depends on any node's ephemeral
 /// key and survives the creator's death. The name and the canonical
 /// config bytes are each length-prefixed before hashing so distinct

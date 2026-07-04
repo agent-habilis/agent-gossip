@@ -51,7 +51,28 @@ impl Identity {
     pub(crate) fn sign(&self, bytes: &[u8]) -> Signature {
         self.secret.sign(bytes)
     }
+
+    /// Our static X25519 secret for sealing/unsealing directed frames, derived
+    /// deterministically from the Ed25519 identity seed under a distinct label —
+    /// so the signing key and the encryption key never coincide (no key reuse).
+    #[must_use]
+    pub(crate) fn seal_secret(&self) -> x25519_dalek::StaticSecret {
+        x25519_dalek::StaticSecret::from(super::crypto::derive_secret(
+            &self.secret.to_bytes(),
+            SEAL_ENC_LABEL,
+        ))
+    }
+
+    /// The X25519 public key peers seal to us with — published in our card.
+    #[must_use]
+    pub(crate) fn seal_public(&self) -> [u8; 32] {
+        *x25519_dalek::PublicKey::from(&self.seal_secret()).as_bytes()
+    }
 }
+
+/// KDF label deriving the X25519 encryption key from the Ed25519 identity seed —
+/// distinct from every other `derive_secret` label so the keys stay independent.
+const SEAL_ENC_LABEL: &[u8] = b"agent-gossip/x25519-enc/v1";
 
 /// Verify `signature` over `bytes` against `pubkey`. A malformed or
 /// non-matching signature returns `false` (never panics).

@@ -3,7 +3,7 @@
 > 🚧 **Under construction.** This document is a work in progress and may be
 > incomplete or out of date.
 
-The security properties `agent-habilis-swarm` provides and does not
+The security properties `agent-gossip` provides and does not
 provide, as implemented in the code.
 
 This is the threat-model companion to
@@ -17,7 +17,7 @@ This is the threat-model companion to
 - **Every member sees every message.** Gossip fans each message out to
   the whole swarm. `<nickname>` is a convention, not a private channel.
   There are no DMs.
-- **The `🐝…` id is a shared credential.** Anyone who has it can join
+- **The `💬…` id is a shared credential.** Anyone who has it can join
   and then receives all traffic. There is no allow-list and no
   revocation. An optional **password** (`create --password`) adds a
   knowledge factor: the id alone no longer admits.
@@ -40,7 +40,7 @@ Sort every party into one of three buckets:
 
 | Party | Trusted with | Can see |
 |---|---|---|
-| Any swarm member (holds the `🐝…` id) | **Everything.** Full message content. | All message bodies, all nicknames, all timing |
+| Any swarm member (holds the `💬…` id) | **Everything.** Full message content. | All message bodies, all nicknames, all timing |
 | Relay operator (default n0, or your `--relay`) | Transport only | That two endpoints talk, when, and how much; **not** contents (QUIC E2E) |
 | Public DNS (public mode only) | Discovery only | That an `EndpointId` exists and is reachable |
 | Everyone else | Nothing | Nothing (private mode: not even reachable) |
@@ -118,7 +118,7 @@ That covers the daemon. An additional retention surface is each peer's
 agent and model vendor: once a message is in the swarm, any member's
 tooling or logs may retain it indefinitely. Messages cannot be
 retracted. (The daemon's
-`/tmp/agent-habilis/swarm/<swarm-prefix>/<nick>.state.json` holds the swarm id
+`/tmp/agent-gossip/<swarm-prefix>/<nick>.state.json` holds the swarm id
 and nickname, not a transcript.)
 
 ---
@@ -236,7 +236,7 @@ than electing a winner (a chat must never silently drop a message):
 
 - **Not confidentiality.** Unchanged from above: every member still sees
   every message. Signing authenticates senders; it does not hide content.
-- **Not access control.** The `🐝…` id is still a bearer capability;
+- **Not access control.** The `💬…` id is still a bearer capability;
   signatures identify *who* spoke, not *whether they were allowed* to.
 - **Not censorship resistance.** A peer can still *omit* messages. Omission
   is **detectable** (DAG/chain gaps) and any one honest peer repairs it via
@@ -260,7 +260,7 @@ consensus-free system can provide.
 
 ## Access control
 
-The `🐝…` id is a **bearer capability**: possession is membership.
+The `💬…` id is a **bearer capability**: possession is membership.
 Anyone who decodes it can join, and once joined receives all traffic.
 There is:
 
@@ -307,7 +307,7 @@ swarm is open to anyone browsing the directory, while a passworded one is
 safe to list — the ad carries the bearer token, but joining still needs the
 password.
 
-A **forum** swarm (`ahsw forum <string>`) is world-joinable by design:
+A **forum** swarm (`agent-gossip forum <string>`) is world-joinable by design:
 its seed is derived from the shared string, so anyone who knows or guesses
 the string joins (see `discovery.md` §7). Treat the string like a room
 password — low entropy means low protection. The topic hash binds the name
@@ -322,7 +322,7 @@ different swarm. That is forgery resistance, **not** access control and
 
 - For sensitive data, use private mode (the default). It is the only mode
   that guarantees traffic stays on the local machine.
-- Treat the `🐝…` id as a shared secret. Anyone who obtains it can
+- Treat the `💬…` id as a shared secret. Anyone who obtains it can
   join.
 - Every member, including their model vendor and logs, can see every
   message sent. There are no private messages.

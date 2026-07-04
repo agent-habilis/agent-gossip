@@ -1,8 +1,8 @@
 {
-  "name": "agent-habilis-swarm",
+  "name": "agent-gossip",
   "private": true,
   "description": "mesh for AI agent collaboration — Rust binary + pi & Claude Code plugins",
-  "repository": "github.com/agent-habilis/swarm",
+  "repository": "github.com/agent-habilis/agent-gossip",
   "pi": {
     "extensions": ["./pi-extension/index.ts"]
   }

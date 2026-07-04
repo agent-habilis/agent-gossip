@@ -12,7 +12,9 @@ use tokio::sync::mpsc;
 use crate::a2a::{TaskId, TaskState};
 use crate::protocol::{MessageBody, MessageId, Nickname, SwarmId};
 use crate::util::bounded_read::{LineRead, read_bounded_line};
-use crate::util::consts::{MAX_IPC_COMMAND_BYTES, MAX_IPC_RESPONSE_BYTES, RUNTIME_DIR};
+use crate::util::consts::{
+    MAX_IPC_COMMAND_BYTES, MAX_IPC_RESPONSE_BYTES, RUNTIME_DIR, SWARM_GLYPH,
+};
 use crate::util::swarm_runtime_dir;
 use crate::util::tuning::{
     IPC_ACCEPT_BACKOFF_MAX_SECS, IPC_ACCEPT_BACKOFF_MIN_MS, IPC_IO_TIMEOUT_SECS,
@@ -75,11 +77,19 @@ pub(crate) enum IpcCommand {
         note: Option<String>,
     },
     /// Worker-emit a `TaskArtifactUpdate` (the result) on a task (`a2a artifact`).
+    /// An optional `file` is offloaded over the blob channel and referenced as a
+    /// `Part.url`; a path (not bytes) so the IPC line stays bounded.
     #[serde(rename = "a2a_artifact")]
     A2aArtifact {
         swarm: SwarmId,
         task_id: TaskId,
         text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        file: Option<std::path::PathBuf>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        file_name: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        file_mime: Option<String>,
     },
     /// Query the live participant roster (nicknames + recency) — backs the
     /// task sender's target picker and nickname validation.
@@ -317,7 +327,7 @@ pub(crate) async fn send(cmd: &IpcCommand, nickname: &Nickname) -> Result<String
     let path = socket_path(swarm, nickname);
     let name = to_name(&path).map_err(|error| anyhow::anyhow!("invalid socket name: {error}"))?;
     let stream = Stream::connect(name).await.map_err(|_| anyhow::anyhow!(
-        "No active swarm server running for nickname '{nickname}'. Start one with `ahsw create` or `ahsw join {{🐝...}} --nickname {nickname}`."
+        "No active swarm server running for nickname '{nickname}'. Start one with `agent-gossip create` or `agent-gossip join {{{SWARM_GLYPH}...}} --nickname {nickname}`."
     ))?;
     round_trip(stream, cmd).await
 }
@@ -417,12 +427,12 @@ mod tests {
     #[test]
     fn socket_path_format() {
         let path = socket_path(
-            &SwarmId::from("🐝abcdefghijkmnpqr"),
+            &SwarmId::from("💬abcdefghijkmnpqr"),
             &Nickname::from("my-nick"),
         );
-        assert!(path.starts_with("/tmp/agent-habilis/swarm/"));
+        assert!(path.starts_with("/tmp/agent-gossip/"));
         assert!(path.ends_with("/my-nick.ipc.sock"));
-        assert!(path.contains("🐝abcdefghijkmnpq")); // 16-char swarm folder
+        assert!(path.contains("💬abcdefghijkmnpq")); // 16-char swarm folder
     }
 
     // ── IpcCommand serialization ───────────────────────────────────
@@ -430,14 +440,14 @@ mod tests {
     #[test]
     fn ipc_command_msg_round_trip() {
         let cmd = IpcCommand::Msg {
-            swarm: SwarmId::from("🐝://test"),
+            swarm: SwarmId::from("💬://test"),
             body: MessageBody::from("hello"),
         };
         let json = serde_json::to_string(&cmd).unwrap();
         let parsed: IpcCommand = serde_json::from_str(&json).unwrap();
         assert_eq!(
             parsed.swarm_id().expect("Msg is swarm-addressed").as_str(),
-            "🐝://test"
+            "💬://test"
         );
     }
 
@@ -452,7 +462,7 @@ mod tests {
     #[test]
     fn ipc_command_state_merge_round_trip() {
         let cmd = IpcCommand::StateMerge {
-            swarm: SwarmId::from("🐝://test"),
+            swarm: SwarmId::from("💬://test"),
             merge: serde_json::json!({"turn": "b"}),
         };
         let json = serde_json::to_string(&cmd).unwrap();
@@ -461,7 +471,7 @@ mod tests {
         let parsed: IpcCommand = serde_json::from_str(&json).unwrap();
         match parsed {
             IpcCommand::StateMerge { swarm, merge } => {
-                assert_eq!(swarm.as_str(), "🐝://test");
+                assert_eq!(swarm.as_str(), "💬://test");
                 assert_eq!(merge, serde_json::json!({"turn": "b"}));
             }
             IpcCommand::Msg { .. }
@@ -481,7 +491,7 @@ mod tests {
     #[test]
     fn ipc_command_poll_round_trip() {
         let cmd = IpcCommand::Poll {
-            swarm: SwarmId::from("🐝://test"),
+            swarm: SwarmId::from("💬://test"),
             after: Some(42),
             long: false,
         };
@@ -512,13 +522,13 @@ mod tests {
     #[test]
     fn ipc_command_ping_round_trip() {
         let cmd = IpcCommand::Ping {
-            swarm: SwarmId::from("🐝://test"),
+            swarm: SwarmId::from("💬://test"),
         };
         let json = serde_json::to_string(&cmd).unwrap();
         assert!(json.contains("\"command\":\"ping\""));
         let parsed: IpcCommand = serde_json::from_str(&json).unwrap();
         match parsed {
-            IpcCommand::Ping { swarm } => assert_eq!(swarm.as_str(), "🐝://test"),
+            IpcCommand::Ping { swarm } => assert_eq!(swarm.as_str(), "💬://test"),
             IpcCommand::Msg { .. }
             | IpcCommand::Poll { .. }
             | IpcCommand::A2aStatus { .. }
@@ -536,7 +546,7 @@ mod tests {
     #[test]
     fn ipc_command_a2a_status_round_trip() {
         let cmd = IpcCommand::A2aStatus {
-            swarm: SwarmId::from("🐝://test"),
+            swarm: SwarmId::from("💬://test"),
             task_id: TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
             state: TaskState::Working,
             note: Some("on it".to_string()),
@@ -567,13 +577,13 @@ mod tests {
     #[test]
     fn ipc_command_peers_round_trip() {
         let cmd = IpcCommand::Peers {
-            swarm: SwarmId::from("🐝://test"),
+            swarm: SwarmId::from("💬://test"),
         };
         let json = serde_json::to_string(&cmd).unwrap();
         assert!(json.contains("\"command\":\"peers\""));
         let parsed: IpcCommand = serde_json::from_str(&json).unwrap();
         match parsed {
-            IpcCommand::Peers { swarm } => assert_eq!(swarm.as_str(), "🐝://test"),
+            IpcCommand::Peers { swarm } => assert_eq!(swarm.as_str(), "💬://test"),
             IpcCommand::Msg { .. }
             | IpcCommand::Poll { .. }
             | IpcCommand::Ping { .. }
@@ -591,7 +601,7 @@ mod tests {
     #[test]
     fn ipc_command_poll_no_after_skips_field() {
         let cmd = IpcCommand::Poll {
-            swarm: SwarmId::from("🐝://test"),
+            swarm: SwarmId::from("💬://test"),
             after: None,
             long: false,
         };
@@ -603,7 +613,7 @@ mod tests {
     #[test]
     fn ipc_command_poll_long_serializes_true() {
         let cmd = IpcCommand::Poll {
-            swarm: SwarmId::from("🐝://test"),
+            swarm: SwarmId::from("💬://test"),
             after: None,
             long: true,
         };
@@ -629,7 +639,7 @@ mod tests {
         }
 
         fn arb_swarm() -> impl Strategy<Value = SwarmId> {
-            "🐝[1-9A-HJ-NP-Za-km-z]{4,24}".prop_map(|raw| SwarmId::new(raw).unwrap())
+            "💬[1-9A-HJ-NP-Za-km-z]{4,24}".prop_map(|raw| SwarmId::new(raw).unwrap())
         }
 
         proptest! {
@@ -720,7 +730,7 @@ mod tests {
     async fn ipc_listen_and_send_msg() {
         // Base58-encode the pid so the swarm id passes strict charset validation.
         let pid_b58 = bs58::encode(std::process::id().to_le_bytes()).into_string();
-        let swarm = SwarmId::new(format!("🐝ipctest{pid_b58}")).unwrap();
+        let swarm = SwarmId::new(format!("💬ipctest{pid_b58}")).unwrap();
         let nickname = Nickname::from("test-nick");
 
         let (tx, mut rx) = mpsc::channel::<IpcMessage>(8);
@@ -798,7 +808,7 @@ mod tests {
         use tokio::io::AsyncReadExt;
 
         let pid_b58 = bs58::encode(std::process::id().to_le_bytes()).into_string();
-        let swarm = SwarmId::new(format!("🐝ipcquiet{pid_b58}")).unwrap();
+        let swarm = SwarmId::new(format!("💬ipcquiet{pid_b58}")).unwrap();
         let nickname = Nickname::from("idle-nick");
         let (tx, mut rx) = mpsc::channel::<IpcMessage>(8);
         let listener = bind(&swarm, &nickname).expect("bind IPC socket");

@@ -10,7 +10,7 @@ use super::output::OutputFormat;
 
 #[derive(Parser, Debug)]
 pub(crate) struct PingOpts {
-    /// Swarm identifier (🐝...)
+    /// Swarm identifier (💬...)
     #[arg(long)]
     pub swarm: SwarmId,
 
@@ -33,10 +33,10 @@ mod tests {
     #[test]
     fn ping_accepts_output_flag() {
         let cli = Cli::parse_from([
-            "ahsw",
+            "agent-gossip",
             "ping",
             "--swarm",
-            "🐝AbCdEf1234",
+            "💬AbCdEf1234",
             "--nickname",
             "my-nick",
             "--output",
