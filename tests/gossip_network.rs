@@ -1,6 +1,6 @@
 //! Integration tests for the gossip network.
 //!
-//! Each test spawns real `ahsw` processes, exercises the network,
+//! Each test spawns real `agent-gossip` processes, exercises the network,
 //! and asserts on what each node actually received. Tests are independent —
 //! each creates its own swarm so IPC sockets never collide.
 //!
@@ -109,11 +109,10 @@ async fn test_passworded_swarm_verifies_locally_and_meshes() {
 
     // No password: a crisp requirement error, not a silent empty swarm.
     let target = creator.swarm.parse().expect("join target");
-    let missing = agent_habilis_swarm::embed::SwarmSession::join(
-        agent_habilis_swarm::embed::JoinConfig::new(target),
-    )
-    .await
-    .expect_err("a missing password must be rejected");
+    let missing =
+        agent_gossip::embed::SwarmSession::join(agent_gossip::embed::JoinConfig::new(target))
+            .await
+            .expect_err("a missing password must be rejected");
     assert!(
         missing.to_string().contains("password-protected"),
         "got: {missing}"
@@ -431,7 +430,7 @@ async fn test_notice_delivery_surfaces_as_notice() {
     assert!(notices[0]["reply"].is_null());
     assert_eq!(
         notices[0]["display"],
-        format!("🐝️ `<{}>` (notice): build green", creator.nickname)
+        format!("💬️ `<{}>` (notice): build green", creator.nickname)
     );
 }
 
@@ -472,7 +471,7 @@ fn test_ipc_socket_isolation() {
     assert!(creator.wait_ready(&swarm), "creator socket never appeared");
     assert!(joiner.wait_ready(&swarm), "joiner socket never appeared");
 
-    let prefix = agent_habilis_swarm::swarm_prefix(&swarm);
+    let prefix = agent_gossip::swarm_prefix(&swarm);
     let sockets: Vec<_> = fs::read_dir(format!("{RUNTIME_DIR}/{prefix}"))
         .expect("swarm runtime dir missing")
         .flatten()
@@ -542,7 +541,7 @@ fn test_stdout_format_parseable() {
 #[test]
 fn test_no_server_error() {
     // All-`1` Base58 payload — valid charset, can't match a real swarm.
-    let fake_swarm = "🐝1111111111111111111111111111111111111111111111111111111111111";
+    let fake_swarm = "💬1111111111111111111111111111111111111111111111111111111111111";
     let out = cli_message_raw(fake_swarm, "ghost-nick", "hello");
     assert!(
         !out.status.success(),
@@ -567,7 +566,7 @@ fn test_oversize_body_splits_then_refuses_past_the_part_cap() {
     // Over the single-message cap: the daemon splits it into parts and the
     // receiver reassembles, so it surfaces once as the whole body on each
     // stream — the sender's self-echo and the peer's delivery.
-    let body = "a".repeat(agent_habilis_swarm::MAX_MESSAGE_SIZE * 2);
+    let body = "a".repeat(agent_gossip::MAX_MESSAGE_SIZE * 2);
     cli_message(&swarm, &creator.nickname, &body);
     let total = wait_total(|| creator.messages().len() + joiner.messages().len(), 2);
     assert_eq!(
@@ -584,7 +583,7 @@ fn test_oversize_body_splits_then_refuses_past_the_part_cap() {
     }
 
     // Too large for the part cap: refused on the sender with a clear error.
-    let huge = "a".repeat(agent_habilis_swarm::MAX_LOGICAL_BODY_BYTES);
+    let huge = "a".repeat(agent_gossip::MAX_LOGICAL_BODY_BYTES);
     let out = cli_message_raw(&swarm, &creator.nickname, &huge);
     assert!(
         !out.status.success(),
@@ -605,7 +604,7 @@ fn test_utf8_body_round_trip() {
     assert!(creator.wait_ready(&swarm), "creator socket never appeared");
     assert!(joiner.wait_ready(&swarm), "joiner socket never appeared");
 
-    let body = "héllo 🐝 日本語";
+    let body = "héllo 💬 日本語";
     cli_message(&swarm, &creator.nickname, body);
 
     // One send surfaces twice: the sender's self-echo + the peer's delivery.
@@ -876,7 +875,7 @@ fn test_state_file_removed_on_signal() {
         let log = tmp_log(&format!("statefile{signal}"));
         let file = File::create(&log).unwrap();
         let state_file = std::env::temp_dir().join(format!(
-            "ahsw-statefile-test-{}-{signal}.json",
+            "agent-gossip-statefile-test-{}-{signal}.json",
             std::process::id()
         ));
         let _ = fs::remove_file(&state_file);
@@ -922,7 +921,7 @@ fn test_state_file_removed_on_signal() {
     }
 }
 
-/// `ahsw ready --state-file PATH` is the CLI-fallback readiness gate: it blocks
+/// `agent-gossip ready --state-file PATH` is the CLI-fallback readiness gate: it blocks
 /// until the daemon writing PATH flips the file's `ready` flag to true (set
 /// only once the event loop is serving), then exits 0. This covers the gate
 /// against an already-up daemon and asserts the file then carries `ready:true`
@@ -931,8 +930,10 @@ fn test_state_file_removed_on_signal() {
 fn test_ready_gate_succeeds_when_serving() {
     let log = tmp_log("ready-before");
     let file = File::create(&log).unwrap();
-    let state_file =
-        std::env::temp_dir().join(format!("ahsw-ready-before-{}.json", std::process::id()));
+    let state_file = std::env::temp_dir().join(format!(
+        "agent-gossip-ready-before-{}.json",
+        std::process::id()
+    ));
     let _ = fs::remove_file(&state_file);
 
     let mut child = common::test_cmd()
@@ -951,10 +952,10 @@ fn test_ready_gate_succeeds_when_serving() {
         .arg(&state_file)
         .args(["--timeout-secs", "60"])
         .status()
-        .expect("failed to run ahsw ready");
+        .expect("failed to run agent-gossip ready");
     assert!(
         status.success(),
-        "ahsw ready should exit 0 against a serving daemon\nlog:\n{}",
+        "agent-gossip ready should exit 0 against a serving daemon\nlog:\n{}",
         fs::read_to_string(&log).unwrap_or_default()
     );
 
@@ -967,7 +968,7 @@ fn test_ready_gate_succeeds_when_serving() {
     assert!(
         parsed["swarm"]
             .as_str()
-            .is_some_and(|swarm| swarm.starts_with("🐝"))
+            .is_some_and(|swarm| swarm.starts_with("💬"))
     );
     assert!(parsed["nickname"].as_str().is_some());
 
@@ -979,15 +980,17 @@ fn test_ready_gate_succeeds_when_serving() {
     let _ = fs::remove_file(&state_file);
 }
 
-/// The race the gate exists for: `ahsw ready` is started *before* the daemon, so
+/// The race the gate exists for: `agent-gossip ready` is started *before* the daemon, so
 /// the state file does not exist yet. The gate must block (file-appears, then
 /// ready-flips) and still exit 0 once the daemon comes up and serves.
 #[test]
 fn test_ready_gate_waits_for_a_late_daemon() {
     let log = tmp_log("ready-after");
     let file = File::create(&log).unwrap();
-    let state_file =
-        std::env::temp_dir().join(format!("ahsw-ready-after-{}.json", std::process::id()));
+    let state_file = std::env::temp_dir().join(format!(
+        "agent-gossip-ready-after-{}.json",
+        std::process::id()
+    ));
     let _ = fs::remove_file(&state_file);
 
     // Start the gate first — nothing has written the file yet.
@@ -997,7 +1000,7 @@ fn test_ready_gate_waits_for_a_late_daemon() {
         .arg(&state_file)
         .args(["--timeout-secs", "60"])
         .spawn()
-        .expect("failed to spawn ahsw ready");
+        .expect("failed to spawn agent-gossip ready");
 
     // Launch the daemon a beat later, writing the same state file.
     std::thread::sleep(Duration::from_millis(500));
@@ -1010,10 +1013,10 @@ fn test_ready_gate_waits_for_a_late_daemon() {
         .spawn()
         .expect("failed to spawn create --state-file");
 
-    let status = gate.wait().expect("ahsw ready never exited");
+    let status = gate.wait().expect("agent-gossip ready never exited");
     assert!(
         status.success(),
-        "ahsw ready started before the daemon should still exit 0 once it serves\nlog:\n{}",
+        "agent-gossip ready started before the daemon should still exit 0 once it serves\nlog:\n{}",
         fs::read_to_string(&log).unwrap_or_default()
     );
 
@@ -1031,7 +1034,7 @@ fn test_ready_gate_waits_for_a_late_daemon() {
 #[test]
 fn test_ready_gate_times_out_without_a_daemon() {
     let state_file = std::env::temp_dir().join(format!(
-        "ahsw-ready-timeout-{}-never.json",
+        "agent-gossip-ready-timeout-{}-never.json",
         std::process::id()
     ));
     let _ = fs::remove_file(&state_file);
@@ -1042,10 +1045,10 @@ fn test_ready_gate_times_out_without_a_daemon() {
         .arg(&state_file)
         .args(["--timeout-secs", "2"])
         .status()
-        .expect("failed to run ahsw ready");
+        .expect("failed to run agent-gossip ready");
     assert!(
         !status.success(),
-        "ahsw ready should exit non-zero when no daemon ever writes the state file"
+        "agent-gossip ready should exit non-zero when no daemon ever writes the state file"
     );
 }
 
@@ -1055,12 +1058,14 @@ fn test_ready_gate_times_out_without_a_daemon() {
 /// out. Without the freshness check this file would be a false-positive ready.
 #[test]
 fn test_ready_gate_rejects_a_stale_ready_file() {
-    let state_file =
-        std::env::temp_dir().join(format!("ahsw-ready-stale-{}.json", std::process::id()));
+    let state_file = std::env::temp_dir().join(format!(
+        "agent-gossip-ready-stale-{}.json",
+        std::process::id()
+    ));
     // ready:true but last_updated far in the past (well beyond READY_FRESH_SECS).
     fs::write(
         &state_file,
-        r#"{"last_updated":1000000000,"name":"stale","nickname":"old-nick","participant_count":1,"ready":true,"swarm":"🐝deadbeef"}"#,
+        r#"{"last_updated":1000000000,"name":"stale","nickname":"old-nick","participant_count":1,"ready":true,"swarm":"💬deadbeef"}"#,
     )
     .unwrap();
 
@@ -1070,22 +1075,24 @@ fn test_ready_gate_rejects_a_stale_ready_file() {
         .arg(&state_file)
         .args(["--timeout-secs", "2"])
         .status()
-        .expect("failed to run ahsw ready");
+        .expect("failed to run agent-gossip ready");
     assert!(
         !status.success(),
-        "ahsw ready must reject a stale ready:true file (last_updated too old) and time out"
+        "agent-gossip ready must reject a stale ready:true file (last_updated too old) and time out"
     );
     let _ = fs::remove_file(&state_file);
 }
 
-/// `ahsw ready --output json` doubles as the identity read: on a fresh
+/// `agent-gossip ready --output json` doubles as the identity read: on a fresh
 /// `ready:true` file it prints `{swarm,name,nickname}` and exits 0, so a
 /// fallback caller learns its own identity from the gate without parsing the
 /// state file (or guessing its `${PPID}` name) itself.
 #[test]
 fn test_ready_gate_emits_identity_json_on_success() {
-    let state_file =
-        std::env::temp_dir().join(format!("ahsw-ready-json-{}.json", std::process::id()));
+    let state_file = std::env::temp_dir().join(format!(
+        "agent-gossip-ready-json-{}.json",
+        std::process::id()
+    ));
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -1093,7 +1100,7 @@ fn test_ready_gate_emits_identity_json_on_success() {
     fs::write(
         &state_file,
         format!(
-            r#"{{"last_updated":{now},"name":"cool-team","nickname":"calm-otter","participant_count":1,"ready":true,"swarm":"🐝deadbeef"}}"#
+            r#"{{"last_updated":{now},"name":"cool-team","nickname":"calm-otter","participant_count":1,"ready":true,"swarm":"💬deadbeef"}}"#
         ),
     )
     .unwrap();
@@ -1104,20 +1111,20 @@ fn test_ready_gate_emits_identity_json_on_success() {
         .arg(&state_file)
         .args(["--timeout-secs", "5", "--output", "json"])
         .output()
-        .expect("failed to run ahsw ready");
+        .expect("failed to run agent-gossip ready");
     assert!(
         output.status.success(),
         "a fresh ready:true file should pass the gate"
     );
     let parsed: serde_json::Value =
         serde_json::from_slice(&output.stdout).expect("ready --output json prints a JSON object");
-    assert_eq!(parsed["swarm"], "🐝deadbeef");
+    assert_eq!(parsed["swarm"], "💬deadbeef");
     assert_eq!(parsed["name"], "cool-team");
     assert_eq!(parsed["nickname"], "calm-otter");
     let _ = fs::remove_file(&state_file);
 }
 
-/// The subprocess wire contract for `ahsw notice`: the CLI accepts it, and
+/// The subprocess wire contract for `agent-gossip notice`: the CLI accepts it, and
 /// the poll record carries the pinned `type:"notice"` shape with the
 /// `(notice)` display marker — what agents key the no-auto-reply contract on.
 #[test]
@@ -1161,7 +1168,7 @@ fn test_notice_wire_contract_over_cli_and_poll() {
     assert_eq!(notice["self"], true, "joiner authored it → self:true");
     assert_eq!(
         notice["display"],
-        "🐝️ `<joiner-notice-cli>` (notice): ci green"
+        "💬️ `<joiner-notice-cli>` (notice): ci green"
     );
 }
 
@@ -1215,7 +1222,7 @@ fn test_poll_returns_messages() {
     );
     assert_eq!(first["event"], "message");
     assert_eq!(first["type"], "msg");
-    assert_eq!(first["display"], "🐝️ `<joiner-poll>`: hello from poll test");
+    assert_eq!(first["display"], "💬️ `<joiner-poll>`: hello from poll test");
     assert_eq!(first["self"], true, "joiner authored it → self:true");
 
     // Poll with `--after <seq>` of the first message → excludes it, keeps the
@@ -1260,7 +1267,7 @@ fn poll_cursor(swarm: &str, nickname: &str) -> Option<String> {
 
 /// The wire single-park contract: a raw `{"command":"poll",...,"long":true}`
 /// with no new traffic is held for ~the daemon's park cap, then returns
-/// exactly `[]`. Sent straight over the Unix socket — the `ahsw` client would
+/// exactly `[]`. Sent straight over the Unix socket — the `agent-gossip` client would
 /// hide the empty return behind its `--long` re-issue loop.
 #[test]
 fn test_ipc_poll_long_park_times_out_empty() {
@@ -1362,7 +1369,7 @@ fn test_poll_long_loops_past_empty_parks() {
     );
 }
 
-/// `ahsw ping` is daemon-owned: the transient command arms a round over
+/// `agent-gossip ping` is daemon-owned: the transient command arms a round over
 /// IPC, the daemon broadcasts a probe, every peer auto-pongs, and the
 /// originator emits a `ping_report` on its own output stream listing
 /// each responder's RTT. The probe/pong never surface as chat. A short
@@ -2187,7 +2194,7 @@ fn test_steady_state_no_resend_churn() {
     // Serialize against the other timing-sensitive tests (see `serial_guard`).
     let _serial = serial_guard();
     let envs = [
-        ("RUST_LOG", "agent_habilis_swarm::gossip=debug"),
+        ("RUST_LOG", "agent_gossip::gossip=debug"),
         ("--log-max-bytes", "0"), // no rotation, so the full log is one file
     ];
 
@@ -2571,7 +2578,7 @@ fn ready_identity(log: &std::path::Path) -> Option<(String, String)> {
 }
 
 fn default_state_file(swarm: &str, nickname: &str) -> PathBuf {
-    let prefix = agent_habilis_swarm::swarm_prefix(swarm);
+    let prefix = agent_gossip::swarm_prefix(swarm);
     PathBuf::from(RUNTIME_DIR)
         .join(prefix)
         .join(format!("{nickname}.state.json"))
@@ -2595,7 +2602,7 @@ fn state_file_carries_daemon_pid() {
     let _ = fs::remove_file(&log);
 }
 
-/// `ahsw leave <🐝id>` (explicit target) stops exactly that swarm's local
+/// `agent-gossip leave <💬id>` (explicit target) stops exactly that swarm's local
 /// daemon — the state file disappears (proof of the graceful shutdown path)
 /// — and leaves an unrelated daemon untouched.
 #[test]
@@ -2608,7 +2615,7 @@ fn leave_explicit_target_stops_only_that_swarm() {
     let out = common::test_cmd()
         .args(["leave", &victim_swarm, "--output", "json"])
         .output()
-        .expect("failed to run ahsw leave");
+        .expect("failed to run agent-gossip leave");
     assert!(out.status.success(), "leave failed: {out:?}");
     let report: serde_json::Value =
         serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim()).unwrap();
@@ -2635,8 +2642,8 @@ fn leave_explicit_target_stops_only_that_swarm() {
 }
 
 /// Session scope end to end: a daemon spawned under a decoy "agent" shell is
-/// owned by that shell's pid. `ahsw session --session-pid <shell>` reports it
-/// without touching it; `ahsw leave --session-pid <shell>` stops it. Daemons
+/// owned by that shell's pid. `agent-gossip session --session-pid <shell>` reports it
+/// without touching it; `agent-gossip leave --session-pid <shell>` stops it. Daemons
 /// belonging to other tests (children of this test binary, not of the decoy
 /// shell) must never match.
 #[test]
@@ -2674,7 +2681,7 @@ fn leave_session_scope_via_decoy_parent() {
     let out = common::test_cmd()
         .args(["session", "--session-pid", &decoy_pid, "--output", "json"])
         .output()
-        .expect("failed to run ahsw session");
+        .expect("failed to run agent-gossip session");
     assert!(out.status.success(), "session failed: {out:?}");
     let report: serde_json::Value =
         serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim()).unwrap();
@@ -2690,7 +2697,7 @@ fn leave_session_scope_via_decoy_parent() {
     let leave_out = common::test_cmd()
         .args(["leave", "--session-pid", &decoy_pid, "--output", "json"])
         .output()
-        .expect("failed to run ahsw leave");
+        .expect("failed to run agent-gossip leave");
     assert!(leave_out.status.success(), "leave failed: {leave_out:?}");
     let leave_report: serde_json::Value =
         serde_json::from_str(String::from_utf8_lossy(&leave_out.stdout).trim()).unwrap();
@@ -2722,7 +2729,7 @@ fn leave_nothing_owned_is_a_clean_noop() {
             "json",
         ])
         .output()
-        .expect("failed to run ahsw leave");
+        .expect("failed to run agent-gossip leave");
     assert!(out.status.success(), "leave should exit 0 on a no-op");
     let report: serde_json::Value =
         serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim()).unwrap();

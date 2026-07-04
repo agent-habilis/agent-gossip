@@ -1,5 +1,5 @@
 //! Thin binary shim. All CLI logic lives in the library
-//! ([`agent_habilis_swarm::run_cli`]); `main` owns only process-level
+//! ([`agent_gossip::run_cli`]); `main` owns only process-level
 //! concerns the library must not: tracing init and terminal echo.
 
 use anyhow::Result;
@@ -24,7 +24,7 @@ extern "C" fn restore_ctrl_c_echo() {
 /// original and registering a libc `atexit` restore. `atexit` not
 /// `Drop`: the daemon's ctrl-c / SIGTERM path exits via
 /// `std::process::exit`, which runs C `atexit` handlers but skips
-/// destructors — otherwise `ahsw` would leave the terminal with `^C`
+/// destructors — otherwise `agent-gossip` would leave the terminal with `^C`
 /// echo off after it exits.
 #[expect(
     unsafe_code,
@@ -65,12 +65,12 @@ async fn main() -> Result<()> {
     // flushes to the per-member file; else stderr. The filter + sink
     // both live in the crate's `logging` module.
     tracing_subscriber::fmt()
-        .with_env_filter(agent_habilis_swarm::log_filter())
-        .with_writer(agent_habilis_swarm::install_log_sink())
+        .with_env_filter(agent_gossip::log_filter())
+        .with_writer(agent_gossip::install_log_sink())
         .with_ansi(false)
         .init();
     suppress_ctrl_c_echo();
-    let result = agent_habilis_swarm::run_cli().await;
-    agent_habilis_swarm::flush_log_if_pending();
+    let result = agent_gossip::run_cli().await;
+    agent_gossip::flush_log_if_pending();
     result
 }

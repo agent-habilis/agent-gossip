@@ -9,7 +9,7 @@ use super::output::OutputFormat;
 
 #[derive(Parser, Debug)]
 pub(crate) struct PollOpts {
-    /// Swarm identifier (🐝...)
+    /// Swarm identifier (💬...)
     #[arg(long)]
     pub swarm: SwarmId,
 

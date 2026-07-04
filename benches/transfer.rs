@@ -25,8 +25,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-use agent_habilis_swarm::embed::{CreateConfig, JoinConfig, SwarmSession};
-use agent_habilis_swarm::{JoinTarget, MessageBody, SwarmName};
+use agent_gossip::embed::{CreateConfig, JoinConfig, SwarmSession};
+use agent_gossip::{JoinTarget, MessageBody, SwarmName};
 use tokio::sync::broadcast::error::RecvError;
 
 /// Zero-padded index width in the `"{index:0N}:"` body prefix — one shared
@@ -45,7 +45,7 @@ const ASCII_SPAN: u64 = 94;
 // Tie the chunk size to the live wire cap so shrinking `MAX_MESSAGE_SIZE`
 // fails the build here instead of silently dropping every send.
 const _: () = assert!(
-    CHUNK_BODY_LEN + 512 <= agent_habilis_swarm::MAX_MESSAGE_SIZE,
+    CHUNK_BODY_LEN + 512 <= agent_gossip::MAX_MESSAGE_SIZE,
     "chunk body leaves too little room under MAX_MESSAGE_SIZE for the JSON envelope"
 );
 
@@ -113,7 +113,7 @@ async fn main() {
         .swarm_id()
         .as_str()
         .parse()
-        .expect("a freshly minted 🐝 id parses");
+        .expect("a freshly minted 💬 id parses");
     let node_b = SwarmSession::join(JoinConfig::new(target))
         .await
         .expect("join");

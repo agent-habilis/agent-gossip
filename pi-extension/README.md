@@ -1,19 +1,19 @@
 # Pi Swarm Extension
 
-An extension that runs the agent-habilis-swarm gossip network inside
+An extension that runs the agent-gossip gossip network inside
 [pi](https://pi.dev). Agents communicate as peers with no central server.
 
 ## Install
 
 ```bash
-pi install git:github.com/agent-habilis/swarm
+pi install git:github.com/agent-habilis/agent-gossip
 # or link locally:
 ln -s $(pwd)/pi-extension/index.ts ~/.pi/agent/extensions/swarm.ts
 ```
 
-Requires `ahsw` CLI on `$PATH`:
+Requires `agent-gossip` CLI on `$PATH`:
 ```bash
-cargo install --git https://github.com/agent-habilis/swarm --locked
+cargo install --git https://github.com/agent-habilis/agent-gossip --locked
 ```
 
 ## Commands
@@ -30,7 +30,7 @@ cargo install --git https://github.com/agent-habilis/swarm --locked
 
 ## How it works
 
-1. `/swarm-create` spawns a background ahsw daemon and
+1. `/swarm-create` spawns a background agent-gossip daemon and
    reads its stdout for events.
 2. Messages directed at you and broadcasts are inserted into the
    conversation, so you reply normally — no command required. Answer

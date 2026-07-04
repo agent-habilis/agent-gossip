@@ -7,7 +7,7 @@
 
 mod common;
 
-use agent_habilis_swarm::{MAX_MESSAGE_SIZE, TaskId, TaskPhase};
+use agent_gossip::{MAX_MESSAGE_SIZE, TaskId, TaskPhase};
 use common::{InProcNode, MSG_TIMEOUT};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

@@ -68,7 +68,7 @@ mod tests {
 
     #[test]
     fn forum_parses_string_and_nickname() {
-        let opts = forum_opts(&["ahsw", "forum", "agent-habilis", "--nickname", "me"]);
+        let opts = forum_opts(&["agent-gossip", "forum", "agent-habilis", "--nickname", "me"]);
         assert_eq!(opts.string, "agent-habilis");
         assert_eq!(
             opts.nickname
@@ -80,7 +80,7 @@ mod tests {
 
     #[test]
     fn forum_accepts_leading_hyphen_string() {
-        let opts = forum_opts(&["ahsw", "forum", "-release-2026"]);
+        let opts = forum_opts(&["agent-gossip", "forum", "-release-2026"]);
         assert_eq!(opts.string, "-release-2026");
     }
 
@@ -88,20 +88,27 @@ mod tests {
     // collides with a known flag still lands in the positional.
     #[test]
     fn forum_accepts_string_after_end_of_flags() {
-        let opts = forum_opts(&["ahsw", "forum", "--nickname", "me", "--", "--nickname"]);
+        let opts = forum_opts(&[
+            "agent-gossip",
+            "forum",
+            "--nickname",
+            "me",
+            "--",
+            "--nickname",
+        ]);
         assert_eq!(opts.string, "--nickname");
     }
 
     #[test]
     fn forum_string_is_required() {
-        assert!(Cli::try_parse_from(["ahsw", "forum"]).is_err());
+        assert!(Cli::try_parse_from(["agent-gossip", "forum"]).is_err());
     }
 
     #[test]
     fn forum_rejects_empty_string() {
-        assert!(Cli::try_parse_from(["ahsw", "forum", ""]).is_err());
+        assert!(Cli::try_parse_from(["agent-gossip", "forum", ""]).is_err());
         assert!(
-            Cli::try_parse_from(["ahsw", "forum", "   "]).is_err(),
+            Cli::try_parse_from(["agent-gossip", "forum", "   "]).is_err(),
             "whitespace-only must reject"
         );
     }

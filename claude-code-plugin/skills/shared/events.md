@@ -7,12 +7,12 @@ when events arrive. Edit here once; never re-inline into a SKILL.md. -->
 These rules apply to every surfaced event regardless of transport — the event
 objects are identical; only delivery differs. **Monitor path:** the Monitor
 pushes each event as a `task-notification` message live. **CLI fallback:** the
-same objects arrive on each `ahsw poll` tick (step 4 above). Either way they
+same objects arrive on each `agent-gossip poll` tick (step 4 above). Either way they
 arrive *after* this skill returns, so the rules below must stay in your context.
 
 **CRITICAL: every event carries a pre-built `display` string. Emit that
 value VERBATIM — nothing added, nothing changed.** The daemon builds
-`display` as the single source of truth for what the user sees: the `🐝️`
+`display` as the single source of truth for what the user sees: the `💬️`
 prefix, the literal backticks around nicks (a code span, so the terminal
 markdown renderer does not eat `<nick>` as an HTML tag), the `→` arrow, and
 the message **body byte-for-byte**. NEVER compose the line yourself from the
@@ -56,7 +56,7 @@ de-duplicate against anymore.
   never start a reply loop). Print its `display` verbatim and move on.
   Conversely, send anything of yours that needs no response — status
   reports, CI results, log lines — as a notice (`/swarm:notice` /
-  `ahsw notice`), not a msg.
+  `agent-gossip notice`), not a msg.
 - **Ping/pong is handled entirely by the daemon** — do NOT reply to a
   `ping` message yourself; the daemon auto-pongs and produces the
   `ping_report`.
@@ -67,7 +67,7 @@ A `state` event carries `merge` (the applied RFC 7386 merge document),
 `document` (the full derived document after the change), and `self`. **Always
 print its `display` field verbatim FIRST — one line, exactly like a `msg` event —
 and only then react.** This is the user-visible "state changed" line; the daemon
-already built it (`🐝️ you changed …` for your own write, `` 🐝️ `<peer>` changed
+already built it (`💬️ you changed …` for your own write, `` 💬️ `<peer>` changed
 … `` for a peer's), so never skip it, summarize it, or fold it into your
 reasoning. Print, then act.
 
@@ -75,8 +75,8 @@ reasoning. Print, then act.
   `display` line first (above), then act on the change. The `document` is already
   in your turn. Read it and act **per your current task**, but only if it is
   your turn (check a turn marker in the document — after you change state your
-  own merge flips it to the peer). Read state any time with `ahsw state get
-  --swarm $SWARM --nickname $NICKNAME`; change it with `ahsw state merge --swarm
+  own merge flips it to the peer). Read state any time with `agent-gossip state get
+  --swarm $SWARM --nickname $NICKNAME`; change it with `agent-gossip state merge --swarm
   $SWARM --nickname $NICKNAME --merge '<JSON value>'` (RFC 7386: an object
   deep-merges — each key is set, a `null` value deletes that key, nested objects
   merge recursively — and a non-object value replaces the document). **Arrays are
@@ -89,9 +89,9 @@ reasoning. Print, then act.
   state from the `document`, never reconstruct it from memory. Then stop — your
   merge wakes the peer. Don't encode app logic here; you decide what to do.
 - **`self:true` (your own change) — print the confirmation, don't react.** Print
-  its `display` (`🐝️ you changed …`) verbatim — it confirms your `ahsw state
+  its `display` (`💬️ you changed …`) verbatim — it confirms your `agent-gossip state
   merge` landed; do **not** skip it as redundant just because you issued the
-  merge. Then stop (no reaction). On join, let state settle a moment, then `ahsw
+  merge. Then stop (no reaction). On join, let state settle a moment, then `agent-gossip
   state get` before acting.
 
 **Swarm metadata (`event:"meta"`)**
@@ -107,20 +107,20 @@ print the line and stop.
 - **A `merge` touching `/peers`** — each key under `merge.peers` is a touched
   nickname. For each, look at `document.peers[<nick>]`:
   - **pure status flip** (the nick's `merge.peers` value contains **only** a
-    `status` key) → print `` 🐝️ `<nick>` is now <status> `` with the status word
-    verbatim (`idle`/`available`/`busy`); `🐝️ you are now <status>` when
+    `status` key) → print `` 💬️ `<nick>` is now <status> `` with the status word
+    verbatim (`idle`/`available`/`busy`); `💬️ you are now <status>` when
     `self:true`. A `status` seeded *alongside* identity fields is part of the
     identity report below, not surfaced as its own line.
-  - **present** (identity fields) → print `` 🐝️ `<nick>` runs `<model> / <harness> @ <host>` ``
+  - **present** (identity fields) → print `` 💬️ `<nick>` runs `<model> / <harness> @ <host>` ``
     with the identity (`model / harness @ host`) wrapped in backticks as an
     inline code span — join `model`/`harness` with ` / `, append ` @ <host>`
     when present, omit absent parts (`status`, if present, is not shown here).
     (Always `runs` — the merge carries no before-state, so a first report and an
     update aren't distinguishable.) For your **own** change (`self:true`) print
-    `` 🐝️ you reported `<ident>` ``.
+    `` 💬️ you reported `<ident>` ``.
   - **absent** (the nick's `merge.peers` value is `null`, or it's gone from
-    `document.peers`) → print `` 🐝️ `<nick>` cleared its identity ``
-    (`🐝️ you cleared your identity` when `self:true`).
+    `document.peers`) → print `` 💬️ `<nick>` cleared its identity ``
+    (`💬️ you cleared your identity` when `self:true`).
 - **Any other `merge`** (it doesn't touch `/peers`) → emit the event's `display`
   field verbatim (the daemon's path summary), exactly like a `state` event.
 
@@ -133,7 +133,7 @@ verbatim-`display` rule above — it drives an interaction. Each leg carries
 Send legs with (reuse one `task_id` across the whole task):
 
 ```
-ahsw task --swarm $SWARM --nickname $NICKNAME --to <peer> \
+agent-gossip task --swarm $SWARM --nickname $NICKNAME --to <peer> \
   --task-id <uuid> --phase <phase> --text "<body>"
 ```
 
@@ -148,16 +148,16 @@ brief in the entry widget.
 The daemon runs the timers (a 5-min idle debounce, a keepalive while you
 hold the ball) and the 100-content-message cap — you drive only the
 content. Track each live task as **one todo** in your harness's native to-do
-list (one per `task_id`) — **not** a printed `🐝 tasks` block. It's
+list (one per `task_id`) — **not** a printed `💬 tasks` block. It's
 **`TodoWrite`** in most harnesses; where that tool is absent, use
 **`TaskCreate`** (`subject` = the `content` below, `activeForm` = `activeForm`) +
 **`TaskUpdate`** (status `pending → in_progress → completed`, `deleted` to drop).
 Wherever this skill says `TodoWrite` or "todo", use whichever tool your harness
 provides. **All** status changes go through that tool; never print
 a per-update line. The receiver's todo `content` names the flow + peer:
-`🐝 handover from <author>` for a handover, `🐝 task from <author>` for a
-task (e.g. `🐝 task from <otter-embark>`). The companion **`activeForm`**
-uses the same text without the `🐝`, e.g. `activeForm: "task from
+`💬 handover from <author>` for a handover, `💬 task from <author>` for a
+task (e.g. `💬 task from <otter-embark>`). The companion **`activeForm`**
+uses the same text without the `💬`, e.g. `activeForm: "task from
 <otter-embark>"`. Write the nickname as `<author>` with literal angle
 brackets and **no backticks** in **both** `content` and `activeForm` — the
 widget shows text verbatim: markdown isn't rendered (backticks would show
@@ -243,7 +243,7 @@ your availability actually changed. Set it with a bare tool call, no prose (like
 the todo updates):
 
 ```
-ahsw meta merge --swarm $SWARM --nickname $NICKNAME --merge '{"peers":{"$NICKNAME":{"status":"busy"}}}'
+agent-gossip meta merge --swarm $SWARM --nickname $NICKNAME --merge '{"peers":{"$NICKNAME":{"status":"busy"}}}'
 ```
 
 **Sending — handover** (you ran `/swarm:handover`, `"self":true` echoes):
@@ -264,7 +264,7 @@ surrounding prose — no preamble *before* and no postamble *after*. Two
 directions: never **announce the upcoming `TodoWrite`** (no "Now I'll track
 this in the to-do list", "Let me update the to-do list") and never **report the
 transition** afterward (no narration of the auto-confirm like "requested close
-— auto-confirming", no outcome line like "🐝️ task handed over to …", no
+— auto-confirming", no outcome line like "💬️ task handed over to …", no
 parenthetical aside like "(handover confirmed and closed silently — todo marked
 completed)"). Any sentence that announces or describes what is/was happening to
 a task is forbidden, named example or not. On `--phase decline`, mark

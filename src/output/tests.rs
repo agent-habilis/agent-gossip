@@ -70,7 +70,7 @@ fn body(text: &str) -> crate::protocol::MessageBody {
 }
 
 fn sid() -> crate::protocol::SwarmId {
-    crate::protocol::SwarmId::from("🐝test")
+    crate::protocol::SwarmId::from("💬test")
 }
 
 #[test]
@@ -80,7 +80,7 @@ fn json_message_has_all_fields() {
     let parsed = parse(&json);
     assert_eq!(parsed["event"], "message");
     assert_eq!(parsed["type"], "msg");
-    assert_eq!(parsed["swarm"], "🐝://test");
+    assert_eq!(parsed["swarm"], "💬://test");
     assert_eq!(parsed["author"], "alice");
     assert_eq!(parsed["body"], "hello");
     assert!(parsed["reply"].is_null());
@@ -123,11 +123,11 @@ fn ready_event_drift_is_present_only_when_stale() {
 
     // Stale: the warning rides along verbatim.
     let stale = parse(&make(Some(
-        "⚠️ swarm skill out of date. Run `ahsw plug` to update",
+        "⚠️ swarm skill out of date. Run `agent-gossip plug` to update",
     )));
     assert_eq!(
         stale["drift"],
-        "⚠️ swarm skill out of date. Run `ahsw plug` to update"
+        "⚠️ swarm skill out of date. Run `agent-gossip plug` to update"
     );
 }
 
@@ -163,7 +163,7 @@ fn json_notice_type_and_display_marker() {
     assert_eq!(parsed["type"], "notice");
     assert_eq!(parsed["body"], "build green");
     assert!(parsed["reply"].is_null());
-    assert_eq!(parsed["display"], "🐝️ `<alice-bot>` (notice): build green");
+    assert_eq!(parsed["display"], "💬️ `<alice-bot>` (notice): build green");
 }
 
 #[test]
@@ -179,7 +179,7 @@ fn json_directed_notice_display_names_target() {
     assert_eq!(parsed["reply"], "bob");
     assert_eq!(
         parsed["display"],
-        "🐝️ `<alice-bot>` → `<bob>` (notice): heads up"
+        "💬️ `<alice-bot>` → `<bob>` (notice): heads up"
     );
 }
 
@@ -216,8 +216,8 @@ fn json_presence_joined() {
     assert_eq!(parsed["type"], "presence");
     assert_eq!(parsed["subtype"], "joined");
     assert_eq!(parsed["author"], "alice");
-    assert_eq!(parsed["swarm"], "🐝://test");
-    assert_eq!(parsed["display"], "🐝️ `<alice>` has joined");
+    assert_eq!(parsed["swarm"], "💬://test");
+    assert_eq!(parsed["display"], "💬️ `<alice>` has joined");
 }
 
 #[test]
@@ -261,7 +261,7 @@ fn task_event_json_shape() {
     assert!(parsed["ts"].is_number());
     assert_eq!(
         parsed["display"],
-        "🐝️ task offer `<drift-oak>` → `<calm-otter>`: ## Task\nport the parser"
+        "💬️ task offer `<drift-oak>` → `<calm-otter>`: ## Task\nport the parser"
     );
     assert!(parsed.get("kind").is_none());
     // Distinct top-level event — never the `message` family, no `type` key.
@@ -317,7 +317,7 @@ fn task_progress_event_json_shape() {
     assert!(parsed.get("phase").is_none());
     assert_eq!(
         parsed["display"],
-        "🐝️ task progress `<calm-otter>` → `<drift-oak>`: 35/100"
+        "💬️ task progress `<calm-otter>` → `<drift-oak>`: 35/100"
     );
 }
 
@@ -341,27 +341,27 @@ fn peer_timeout_json_shape() {
     let json = serde_json::to_string(&SimpleEvent::PeerTimeout {
         nickname: "ball-blue",
         last_seen_secs_ago: 94,
-        display: "🐝️ `<ball-blue>` went quiet".to_owned(),
+        display: "💬️ `<ball-blue>` went quiet".to_owned(),
     })
     .unwrap();
     let parsed = parse(&json);
     assert_eq!(parsed["event"], "peer_timeout");
     assert_eq!(parsed["nickname"], "ball-blue");
     assert_eq!(parsed["last_seen_secs_ago"], 94);
-    assert_eq!(parsed["display"], "🐝️ `<ball-blue>` went quiet");
+    assert_eq!(parsed["display"], "💬️ `<ball-blue>` went quiet");
 }
 
 #[test]
 fn peer_return_json_shape() {
     let json = serde_json::to_string(&SimpleEvent::PeerReturn {
         nickname: "ball-blue",
-        display: "🐝️ `<ball-blue>` came back".to_owned(),
+        display: "💬️ `<ball-blue>` came back".to_owned(),
     })
     .unwrap();
     let parsed = parse(&json);
     assert_eq!(parsed["event"], "peer_return");
     assert_eq!(parsed["nickname"], "ball-blue");
-    assert_eq!(parsed["display"], "🐝️ `<ball-blue>` came back");
+    assert_eq!(parsed["display"], "💬️ `<ball-blue>` came back");
 }
 
 // ── all outputs are valid single-line JSON ─────────────────────

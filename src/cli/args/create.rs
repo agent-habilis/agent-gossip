@@ -37,13 +37,13 @@ pub(crate) struct CreateOpts {
 
     /// Optional nickname (random word-word if not provided). A custom
     /// nickname is 1..=32 UTF-8 characters, excluding control chars,
-    /// whitespace, and any of / \ < > #. Symmetric with `ahsw join
+    /// whitespace, and any of / \ < > #. Symmetric with `agent-gossip join
     /// --nickname`.
     #[arg(long)]
     pub nickname: Option<Nickname>,
 
     /// List this swarm in a directory so others can find it with
-    /// `ahsw discover` — no `🐝…` id to share. Optional-value, like
+    /// `agent-gossip discover` — no `💬…` id to share. Optional-value, like
     /// `--relay`: absent ⇒ unlisted; bare `--advertise` ⇒ the default
     /// `global` directory; `--advertise <directory>` ⇒ that named directory.
     /// Requires `--public` (a directory listing only makes sense for a
@@ -89,7 +89,14 @@ mod tests {
 
     #[test]
     fn create_opts_with_nickname() {
-        let cli = Cli::parse_from(["ahsw", "create", "--name", "team", "--nickname", "my-nick"]);
+        let cli = Cli::parse_from([
+            "agent-gossip",
+            "create",
+            "--name",
+            "team",
+            "--nickname",
+            "my-nick",
+        ]);
         match cli.command {
             Commands::Create { opts } => {
                 assert_eq!(opts.name.as_ref().map(SwarmName::as_str), Some("team"));
@@ -125,7 +132,7 @@ mod tests {
 
     #[test]
     fn create_opts_without_nickname() {
-        let cli = Cli::parse_from(["ahsw", "create", "--name", "team"]);
+        let cli = Cli::parse_from(["agent-gossip", "create", "--name", "team"]);
         match cli.command {
             Commands::Create { opts } => {
                 assert_eq!(opts.name.as_ref().map(SwarmName::as_str), Some("team"));
@@ -158,7 +165,7 @@ mod tests {
 
     #[test]
     fn create_opts_name_optional() {
-        let cli = Cli::parse_from(["ahsw", "create"]);
+        let cli = Cli::parse_from(["agent-gossip", "create"]);
         match cli.command {
             Commands::Create { opts } => assert_eq!(opts.name, None),
             Commands::Join { .. }
@@ -188,21 +195,21 @@ mod tests {
 
     #[test]
     fn create_opts_rejects_invalid_name() {
-        assert!(Cli::try_parse_from(["ahsw", "create", "--name", ""]).is_err());
+        assert!(Cli::try_parse_from(["agent-gossip", "create", "--name", ""]).is_err());
         assert!(
-            Cli::try_parse_from(["ahsw", "create", "--name", "has space"]).is_err(),
+            Cli::try_parse_from(["agent-gossip", "create", "--name", "has space"]).is_err(),
             "whitespace must reject"
         );
         assert!(
-            Cli::try_parse_from(["ahsw", "create", "--name", "a#b"]).is_err(),
+            Cli::try_parse_from(["agent-gossip", "create", "--name", "a#b"]).is_err(),
             "the #swarm marker must reject"
         );
         assert!(
-            Cli::try_parse_from(["ahsw", "create", "--name", "a/b"]).is_ok(),
+            Cli::try_parse_from(["agent-gossip", "create", "--name", "a/b"]).is_ok(),
             "a swarm name may contain a path separator (it is never a filename)"
         );
         assert!(
-            Cli::try_parse_from(["ahsw", "create", "--name", &"a".repeat(33)]).is_err(),
+            Cli::try_parse_from(["agent-gossip", "create", "--name", &"a".repeat(33)]).is_err(),
             "33 chars must reject"
         );
     }
@@ -235,17 +242,23 @@ mod tests {
             }
         }
         assert_eq!(
-            advertise_of(&["ahsw", "create", "--public"]),
+            advertise_of(&["agent-gossip", "create", "--public"]),
             DirectorySelection::Unset,
             "absent ⇒ Unset (unlisted)"
         );
         assert_eq!(
-            advertise_of(&["ahsw", "create", "--public", "--advertise"]),
+            advertise_of(&["agent-gossip", "create", "--public", "--advertise"]),
             DirectorySelection::Default,
             "bare ⇒ Default (global directory)"
         );
         assert_eq!(
-            advertise_of(&["ahsw", "create", "--public", "--advertise", "gamedev"]),
+            advertise_of(&[
+                "agent-gossip",
+                "create",
+                "--public",
+                "--advertise",
+                "gamedev"
+            ]),
             DirectorySelection::Named(SwarmName::new("gamedev").unwrap()),
             "valued ⇒ Named directory"
         );
@@ -282,27 +295,31 @@ mod tests {
                 | Commands::Session { .. } => panic!("expected Create"),
             }
         }
-        assert_eq!(password_of(&["ahsw", "create"]), None, "absent ⇒ None");
         assert_eq!(
-            password_of(&["ahsw", "create", "--password"]),
+            password_of(&["agent-gossip", "create"]),
+            None,
+            "absent ⇒ None"
+        );
+        assert_eq!(
+            password_of(&["agent-gossip", "create", "--password"]),
             Some(None),
             "bare ⇒ prompt"
         );
         assert_eq!(
-            password_of(&["ahsw", "create", "--password=hunter2"]),
+            password_of(&["agent-gossip", "create", "--password=hunter2"]),
             Some(Some("hunter2".to_owned())),
             "valued ⇒ inline"
         );
         // require_equals is load-bearing: a space-separated value must NOT
         // be swallowed as the password (it would eat positionals on the
         // connect-style commands).
-        assert!(Cli::try_parse_from(["ahsw", "create", "--password", "hunter2"]).is_err());
+        assert!(Cli::try_parse_from(["agent-gossip", "create", "--password", "hunter2"]).is_err());
     }
 
     #[test]
     fn create_opts_nickname_with_other_flags() {
         let cli = Cli::parse_from([
-            "ahsw",
+            "agent-gossip",
             "create",
             "--name",
             "team",

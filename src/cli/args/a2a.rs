@@ -37,7 +37,7 @@ pub(crate) enum A2aAction {
         lookups: PublicLookupArgs,
 
         /// Advertise this bridge's ticket in a directory so a peer can find it
-        /// with `ahsw a2a discover` — no `📡…` to copy. Bare `--advertise` ⇒ the
+        /// with `agent-gossip a2a discover` — no `📡…` to copy. Bare `--advertise` ⇒ the
         /// default `global` directory; `--advertise <name>` ⇒ that named
         /// directory (share the name with the peer). The ad carries the full
         /// bearer ticket, so pair it with `--password`.
@@ -78,7 +78,7 @@ pub(crate) enum A2aAction {
     /// exposer over the swarm and rewrites the Agent Card so the client
     /// discovers the local bridge, not the unreachable origin.
     Connect {
-        /// The `📡…` ticket printed by `ahsw a2a expose`.
+        /// The `📡…` ticket printed by `agent-gossip a2a expose`.
         ticket: String,
 
         /// Local port to bind the bridge on (default: an ephemeral port — the

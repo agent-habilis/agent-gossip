@@ -27,7 +27,7 @@ mod common;
 
 use std::time::{Duration, Instant};
 
-use agent_habilis_swarm::Channel;
+use agent_gossip::Channel;
 use common::{InProcNode, MSG_TIMEOUT, POLL, RECOVERY_TIMEOUT};
 use serde_json::{Value, json};
 

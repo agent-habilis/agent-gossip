@@ -5,12 +5,12 @@ import { state } from "../state";
 // Every swarm line is prefixed with this, applied once in `send()` — call
 // sites never write it themselves. Exported for `flushMessageBatch`, which
 // builds one bee per peer line.
-export const BEE = "🐝️";
+export const BEE = "💬️";
 
 // The single output library for the extension: everything user- or
 // agent-facing goes through `pi.sendMessage` here, never `sendUserMessage`.
 // Two intents share one primitive:
-//   - print (notify/notifyBlock/notifyWarning/notifyError): a 🐝 line shown
+//   - print (notify/notifyBlock/notifyWarning/notifyError): a 💬 line shown
 //     inline in the transcript. When idle it renders immediately with no LLM
 //     turn — a peer joining or a status table shouldn't make the model respond;
 //     while streaming it rides in on `nextTurn`, shown without interrupting.
@@ -84,7 +84,7 @@ function send(customType: string, text: string, trigger: boolean): boolean {
   }
 }
 
-// 🐝 lines read like ordinary transcript lines (no `Box`/background — the
+// 💬 lines read like ordinary transcript lines (no `Box`/background — the
 // default message framing handles padding). info/inject go through pi's own
 // Markdown renderer so inline code spans (and fenced blocks) render like every
 // other message; block stays plain to preserve column alignment; warning yellow,

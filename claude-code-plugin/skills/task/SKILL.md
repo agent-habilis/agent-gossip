@@ -47,7 +47,7 @@ If you hold `$SWARM`/`$NICKNAME` from a `/swarm:create` or `/swarm:join`
 follow `../shared/reattach.md` (resolved relative to this SKILL.md's
 directory). Only if reattach also yields no swarm, print:
 ```
-🐝 Not in a swarm. Use /swarm:create or /swarm:join first.
+💬 Not in a swarm. Use /swarm:create or /swarm:join first.
 ```
 and STOP.
 
@@ -67,8 +67,8 @@ self-reports it runs on — the binary does not carry it) — silently, don't pr
 either:
 
 ```bash
-ahsw peers --swarm "$SWARM" --nickname "$NICKNAME"
-ahsw meta get --swarm "$SWARM" --nickname "$NICKNAME"
+agent-gossip peers --swarm "$SWARM" --nickname "$NICKNAME"
+agent-gossip meta get --swarm "$SWARM" --nickname "$NICKNAME"
 ```
 
 `peers` returns
@@ -80,7 +80,7 @@ Look up each peer's `model`/`harness`/`host`/`status` by nickname in
 accepting work; `idle`/`available`/absent all stay eligible). Rank the rest by
 availability then recency: `idle` ahead of `available` ahead of unreported, and
 within each by `last_seen_secs_ago` ascending (most recently active first). If
-there are no eligible peers, print `🐝️ no available peers to send tasks to` and
+there are no eligible peers, print `💬️ no available peers to send tasks to` and
 STOP.
 
 ## Enter plan mode and build the tasks
@@ -123,7 +123,7 @@ task's brief, **prepending the `[[task]]` marker as the body's own first line**
 so the receiver runs the report-back task flow:
 
 ```bash
-ahsw task --swarm "$SWARM" --nickname "$NICKNAME" --to "$WORKER" \
+agent-gossip task --swarm "$SWARM" --nickname "$NICKNAME" --to "$WORKER" \
   --task-id "$TASK_ID" --phase offer --text "[[task]]
 $BRIEF"
 ```
@@ -168,9 +168,9 @@ below, `activeForm` = `activeForm`) + **`TaskUpdate`** (status
 `TodoWrite` or "todo", use whichever tool your harness provides. On send, add
 **one todo per task**:
 
-- `content` is **exactly** `🐝 <one-line task> · <worker>` (e.g. `🐝 review
+- `content` is **exactly** `💬 <one-line task> · <worker>` (e.g. `💬 review
   src/net · <crystal-azure>`), status `in_progress`. The companion
-  **`activeForm`** uses the same text without the `🐝`, e.g.
+  **`activeForm`** uses the same text without the `💬`, e.g.
   `activeForm: "review src/net · <crystal-azure>"`. Write the nickname as
   `<worker>` with literal angle brackets and **no backticks** in **both**
   fields — the widget shows text verbatim: markdown isn't rendered (backticks
@@ -187,6 +187,6 @@ Re-invoking `/swarm:task` appends new todos to this same list.
 
 The only things this skill prints are: the not-in-swarm guard line, plan mode,
 the to-do list, and **each worker's returned result** when its task finishes
-(attributed to the worker). There are **no** per-leg status lines, no `🐝 tasks`
+(attributed to the worker). There are **no** per-leg status lines, no `💬 tasks`
 block, and no narration of transitions — the to-do list carries all in-flight
 status. When there is nothing left to drive, **end silently**.

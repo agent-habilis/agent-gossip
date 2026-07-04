@@ -34,7 +34,7 @@ impl Session {
     }
 
     /// Join an existing swarm — poll-only, silent — from a [`JoinConfig`]
-    /// (decodes the `🐝…` id target internally).
+    /// (decodes the `💬…` id target internally).
     ///
     /// # Errors
     /// [`JoinError`] if the target can't be resolved or setup fails.
@@ -290,7 +290,7 @@ mod tests {
         let session = Session::create(create_cfg("test1", "alice-test"))
             .await
             .expect("create");
-        assert!(session.swarm().as_str().starts_with("🐝"));
+        assert!(session.swarm().as_str().starts_with("💬"));
         assert_eq!(session.name().as_str(), "test1");
         assert_eq!(session.nickname().as_str(), "alice-test");
         session.leave().await;

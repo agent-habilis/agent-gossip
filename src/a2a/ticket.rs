@@ -4,7 +4,7 @@
 //! address-json` (lookups is self-delimiting, so the address occupies the
 //! remainder). Bit 0 of the flags byte marks a password-protected ticket.
 //!
-//! The token is its own namespace (`📡`, distinct from the swarm id's `🐝`), so
+//! The token is its own namespace (`📡`, distinct from the swarm id's `💬`), so
 //! there is no type byte — the whole payload is one shape. Wire: `📡` +
 //! Base58Check(`version ‖ payload`) with a `SHA256d` checksum; the emoji is the
 //! brand, everything after it ASCII Base58.
@@ -163,7 +163,7 @@ mod tests {
 
     #[test]
     fn rejects_a_swarm_token() {
-        // A `🐝` swarm id is a valid token but the wrong brand for an a2a ticket.
+        // A `💬` swarm id is a valid token but the wrong brand for an a2a ticket.
         let swarm = crate::protocol::swarm::Swarm::new(
             [1u8; 32],
             crate::protocol::swarm::SwarmName::new("t").unwrap(),

@@ -109,7 +109,7 @@ mod tests {
     use serde_json::{Value, json};
 
     fn fixture() -> (SwarmId, Nickname) {
-        (SwarmId::from("🐝test"), Nickname::from("test-node"))
+        (SwarmId::from("💬test"), Nickname::from("test-node"))
     }
 
     /// Build a `State` merge event with a fixed timestamp so replay order is
@@ -125,7 +125,7 @@ mod tests {
         // The reported bug: peers reporting into a shared `/peers` map must all
         // converge, in any replay order, with no peer clobbering another. Distinct
         // keys commute, so forward and reverse insert order yield the same doc.
-        let swarm = SwarmId::from("🐝test");
+        let swarm = SwarmId::from("💬test");
         let (alice, bob, carol) = (
             Nickname::from("alice"),
             Nickname::from("bob"),

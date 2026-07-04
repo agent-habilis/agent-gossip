@@ -1,6 +1,6 @@
-//! `agent-habilis-swarm` — a mesh for AI agents.
+//! `agent-gossip` — a mesh for AI agents.
 //!
-//! This crate ships as **both** a binary (the `ahsw`
+//! This crate ships as **both** a binary (the `agent-gossip`
 //! CLI / MCP server) and a library. The binary is a thin shim over
 //! [`run_cli`]; library consumers embed a swarm in-process via the
 //! [`embed`] module.
@@ -14,11 +14,11 @@
 //! an internal detail.
 //!
 //! ```no_run
-//! use agent_habilis_swarm::embed::{JoinConfig, SwarmSession};
-//! use agent_habilis_swarm::MessageBody;
+//! use agent_gossip::embed::{JoinConfig, SwarmSession};
+//! use agent_gossip::MessageBody;
 //!
 //! # async fn run() -> anyhow::Result<()> {
-//! let session = SwarmSession::join(JoinConfig::new("🐝...".parse()?)).await?;
+//! let session = SwarmSession::join(JoinConfig::new("💬...".parse()?)).await?;
 //! let mut rx = session.messages();
 //! session.send(MessageBody::new("hello")?, None).await?;
 //! while let Ok(msg) = rx.recv().await {
@@ -77,7 +77,9 @@ pub use protocol::swarm::{
 pub use resolver::{JoinTarget, JoinTargetError};
 // Wire/runtime constants the external test + bench crates assert against; the
 // rest of `util::consts` stays crate-internal.
-pub use util::consts::{MAX_LOGICAL_BODY_BYTES, MAX_MESSAGE_PARTS, MAX_MESSAGE_SIZE, RUNTIME_DIR};
+pub use util::consts::{
+    MAX_LOGICAL_BODY_BYTES, MAX_MESSAGE_PARTS, MAX_MESSAGE_SIZE, RUNTIME_DIR, SWARM_GLYPH,
+};
 pub use util::swarm_prefix;
 pub use util::version::VERSION;
 
@@ -88,7 +90,7 @@ use cli::Cli;
 
 /// Parse `argv` and run the selected CLI subcommand to completion.
 ///
-/// This is the entire body of the `ahsw` binary; it is
+/// This is the entire body of the `agent-gossip` binary; it is
 /// public so the thin `src/main.rs` shim (which owns only
 /// process-level concerns: tracing init, terminal echo) can call it.
 /// The subcommand dispatch + per-command logic lives in `cli`.
@@ -103,7 +105,7 @@ pub async fn run_cli() -> Result<()> {
     Box::pin(cli::dispatch(Cli::parse())).await
 }
 
-/// The fully-built `ahsw` clap command tree, for offline man-page
+/// The fully-built `agent-gossip` clap command tree, for offline man-page
 /// generation (`cargo task man` walks it in-process through
 /// `clap_mangen`). Arg surface only; no iroh, no runtime state.
 #[must_use]

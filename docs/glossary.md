@@ -10,7 +10,7 @@ being mistaken for an identity. When reading or changing code, hold the
 following meanings.
 
 For the mechanisms behind these terms, see the companion docs:
-[swarm-hash.md](./swarm-hash.md) (the `🐝…` token),
+[swarm-hash.md](./swarm-hash.md) (the `💬…` token),
 [discovery.md](./discovery.md) (rendezvous, beacon, lookups, directories),
 [gossip.md](./gossip.md) (message fan-out),
 [topologies.md](./topologies.md) (network shapes), and
@@ -25,7 +25,7 @@ For the mechanisms behind these terms, see the companion docs:
 An iroh `EndpointId` and the gossip neighbor link to it. This is pure
 plumbing — the node id itself is never surfaced to operators or agents. The
 one thing derived from it is the per-participant **connected vs gossip** tag
-(`ahsw peers` / `swarm_info` `reach`): `participant_endpoints` maps a nickname
+(`agent-gossip peers` / `swarm_info` `reach`): `participant_endpoints` maps a nickname
 to its self-advertised endpoint, so the roster can mark a peer as a live link
 or a relayed one — a boolean, never the node id.
 
@@ -37,7 +37,7 @@ State: `linked_endpoints` (the links), `participant_endpoints` (the bridge).
 
 The point-to-point QUIC channel a **single-addressee** message takes when its
 addressee is dialable — a real client/server link this node opens to one
-participant's endpoint, on its own ALPN (`agent-habilis-swarm/unicast/1`), off
+participant's endpoint, on its own ALPN (`agent-gossip/unicast/1`), off
 the gossip flood. Gossip stays the transport for broadcasts and the fallback for
 a directed message whose addressee can't be reached by unicast.
 
@@ -78,7 +78,7 @@ reach for **participant** instead.
 
 *Layer: identity · keyed by seed.*
 
-The `🐝…` id: a self-describing token carrying the `seed`, the name, and the
+The `💬…` id: a self-describing token carrying the `seed`, the name, and the
 swarm's **config** (lookups). The config is mixed into the gossip topic, so
 every member necessarily shares it, and `join` needs nothing beyond the hash
 itself.
@@ -97,7 +97,7 @@ URL scheme dropped — plus the `?query`/`#fragment` for an http(s) URL — inva
 runs → `-`, `/` and URL chars kept, capped at 32 with a trailing `…`, or `forum`
 if empty; this affects the name only, not the seed), and the config is always
 the public preset — so the
-**string alone** determines the swarm: anyone running `ahsw forum <string>`
+**string alone** determines the swarm: anyone running `agent-gossip forum <string>`
 converges. Joined via the `forum` command, not `join`.
 
 Code: `protocol::crypto::topic_seed`, `Swarm::from_topic`,
@@ -108,7 +108,7 @@ Code: `protocol::crypto::topic_seed`, `Swarm::from_topic`,
 *Layer: identity · optional, per swarm.*
 
 An optional knowledge factor on top of the bearer capability: with one set,
-holding the `🐝…` hash alone no longer admits. The password's value never
+holding the `💬…` hash alone no longer admits. The password's value never
 travels. `create --password` stretches it with Argon2id (salt = the seed)
 into a key that replaces the seed in *every* derivation (topic, rendezvous,
 port ladder), and the hash carries a one-way **verifier** of that key so
@@ -209,7 +209,7 @@ State: `quiet`.
 *Layer: discovery · keyed by directory name.*
 
 A named, well-known public `Swarm` (`derive_secret(DIRECTORY_BASE_SEED,
-name)`) that swarms **advertise** their `🐝…` id into and that **discover**
+name)`) that swarms **advertise** their `💬…` id into and that **discover**
 browses. It is not a server — it is itself a swarm, with its own rendezvous,
 reached via the lookups. The default directory is `global`.
 
@@ -227,7 +227,7 @@ and broadcasting the id makes the swarm open to anyone who finds it.
 
 *Layer: discovery.*
 
-Browse a directory's live swarms (`ahsw discover`) and join one — the consumer
+Browse a directory's live swarms (`agent-gossip discover`) and join one — the consumer
 side of **advertise**.
 
 ### notice
@@ -333,8 +333,8 @@ self-reported hostname; `status` is its availability — `idle`/`available`/`bus
 where `busy` means "not accepting work" and the delegation pickers skip it). The
 binary does **not** differentiate them and
 never writes a channel itself — the **only** way to change either is a JSON
-merge (`ahsw state merge` / `ahsw meta merge`). Read with `ahsw state get` /
-`ahsw meta get`. A change surfaces as the `state` / `meta` event, carrying both
+merge (`agent-gossip state merge` / `agent-gossip meta merge`). Read with `agent-gossip state get` /
+`agent-gossip meta get`. A change surfaces as the `state` / `meta` event, carrying both
 the merge and the newly-derived document.
 
 Code: `daemon::state_doc` (the reducer `JsonDoc` + `derive_document`),
@@ -395,7 +395,7 @@ presence (`joined` / `left`), plus the heartbeat events `peer_timeout` /
 `peer_return`. All are join-horizon gated and symmetric — a departure is
 surfaced only if the matching arrival was. There is **no** transport-level
 `peer_join` / `peer_leave` event: a raw link to an opaque node id is not
-participant lifecycle. (`ahsw leave` is a CLI verb on top of this
+participant lifecycle. (`agent-gossip leave` is a CLI verb on top of this
 vocabulary, not a new event: it stops a local daemon, whose shutdown emits
 the one `left`.)
 

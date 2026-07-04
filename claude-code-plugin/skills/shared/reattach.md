@@ -10,7 +10,7 @@ this: after a context clear the swarm Monitor may be live yet unlisted.
 Run:
 
 ```bash
-ahsw session --session-pid $PPID --output json
+agent-gossip session --session-pid $PPID --output json
 ```
 
 (`$PPID` inside the Bash tool is the agent process — the session your
@@ -19,7 +19,7 @@ daemons are parented under.)
 It prints the swarms owned by *this* session:
 
 ```json
-{"ok":true,"sessions":[{"swarm":"🐝://…","name":"…","nickname":"…","pid":123}],"other_sessions":0}
+{"ok":true,"sessions":[{"swarm":"💬://…","name":"…","nickname":"…","pid":123}],"other_sessions":0}
 ```
 
 - **Exactly one entry** → adopt it: `$SWARM` = `swarm`, `$NAME` = `name`,

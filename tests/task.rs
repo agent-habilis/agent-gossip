@@ -10,14 +10,14 @@
 //! to the `--output json` wire the skills consume.
 //!
 //! The CLI/stdout/Unix-socket wire contract (the exact `{"event":"task"}`
-//! line, the unknown-participant error, and `ahsw peers`) lives in
+//! line, the unknown-participant error, and `agent-gossip peers`) lives in
 //! `monitor_contract.rs`; the MCP surface in `mcp_stdio.rs`.
 
 mod common;
 
 use std::time::Duration;
 
-use agent_habilis_swarm::{MessageKind, OutputEvent, TaskId, TaskPhase};
+use agent_gossip::{MessageKind, OutputEvent, TaskId, TaskPhase};
 use common::{InProcNode, MSG_TIMEOUT, three_peers};
 
 const TASK_WAIT: Duration = MSG_TIMEOUT;

@@ -17,7 +17,7 @@ If you hold `$SWARM`/`$NICKNAME` from a `/swarm:create` or `/swarm:join`
 follow `../shared/reattach.md` (resolved relative to this SKILL.md's
 directory). Only if reattach also yields no swarm, print:
 ```
-🐝 Not in a swarm. Use /swarm:create or /swarm:join first.
+💬 Not in a swarm. Use /swarm:create or /swarm:join first.
 ```
 and STOP.
 
@@ -25,11 +25,11 @@ and STOP.
 
 ## Read the state
 
-`$SWARM`/`$NICKNAME` are from the `ready` event (copy the `🐝…` id
+`$SWARM`/`$NICKNAME` are from the `ready` event (copy the `💬…` id
 verbatim):
 
 ```bash
-ahsw state get --swarm "$SWARM" --nickname "$NICKNAME"
+agent-gossip state get --swarm "$SWARM" --nickname "$NICKNAME"
 ```
 
 This returns a single JSON line synchronously — wait for it and parse it:
@@ -42,7 +42,7 @@ This returns a single JSON line synchronously — wait for it and parse it:
   verbatim — do not filter or reorder keys.
 - If `ok` is `false` (or the call errors), print:
   ```
-  🐝 Could not read shared state.
+  💬 Could not read shared state.
   ```
   and STOP.
 
@@ -52,7 +52,7 @@ Emit exactly one block: a header line, a blank line, then the pretty-printed
 `document` in a ```json code block. Nothing else.
 
 ````
-🐝 `#<$NAME>` · state
+💬 `#<$NAME>` · state
 
 ```json
 {
@@ -70,7 +70,7 @@ Rendering rules:
 ## Notes
 
 - Read-only. Requires an active `/swarm:create` or `/swarm:join` session (a
-  live daemon): `ahsw state get` talks to it over IPC.
-- To change the state, peers merge it with `ahsw state merge` — this skill only
+  live daemon): `agent-gossip state get` talks to it over IPC.
+- To change the state, peers merge it with `agent-gossip state merge` — this skill only
   reads. Swarm metadata lives in the separate `meta` channel — read it with
   `/swarm:meta`.

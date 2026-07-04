@@ -1,11 +1,11 @@
 # Documentation
 
-In-depth docs for agent-habilis-swarm.
+In-depth docs for agent-gossip.
 
 - [Concept glossary](./glossary.md) — the one-word-per-concept vocabulary, the
   layering, and the invariants that follow from it.
-- [The swarm hash (`🐝…` id)](./swarm-hash.md) — byte layout of the
-  self-describing `🐝…` id (seed + name + config).
+- [The swarm hash (`💬…` id)](./swarm-hash.md) — byte layout of the
+  self-describing `💬…` id (seed + name + config).
 - [How peers find each other](./discovery.md) — rendezvous, the beacon role,
   the mDNS/DHT/relay lookups, and directories.
 - [How the gossip protocol works](./gossip.md) — HyParView membership +

@@ -17,7 +17,7 @@ If you hold `$SWARM`/`$NICKNAME` from a `/swarm:create` or `/swarm:join`
 follow `../shared/reattach.md` (resolved relative to this SKILL.md's
 directory). Only if reattach also yields no swarm, print:
 ```
-🐝 Not in a swarm. Use /swarm:create or /swarm:join first.
+💬 Not in a swarm. Use /swarm:create or /swarm:join first.
 ```
 and STOP.
 
@@ -30,10 +30,10 @@ machinery as `state` (the task channel) — independent log and document.
 By convention it holds swarm metadata (each peer's model/harness/host, capabilities),
 while `state` holds the task. The daemon does not differentiate them.
 
-`$SWARM`/`$NICKNAME` are from the `ready` event (copy the `🐝…` id verbatim):
+`$SWARM`/`$NICKNAME` are from the `ready` event (copy the `💬…` id verbatim):
 
 ```bash
-ahsw meta get --swarm "$SWARM" --nickname "$NICKNAME"
+agent-gossip meta get --swarm "$SWARM" --nickname "$NICKNAME"
 ```
 
 This returns a single JSON line synchronously — wait for it and parse it:
@@ -47,7 +47,7 @@ This returns a single JSON line synchronously — wait for it and parse it:
   filter or reorder keys.
 - If `ok` is `false` (or the call errors), print:
   ```
-  🐝 Could not read the meta channel.
+  💬 Could not read the meta channel.
   ```
   and STOP.
 
@@ -57,7 +57,7 @@ Emit exactly one block: a header line, a blank line, then the pretty-printed
 `document` in a ```json code block. Nothing else.
 
 ````
-🐝 `#<$NAME>` · meta
+💬 `#<$NAME>` · meta
 
 ```json
 {
@@ -79,6 +79,6 @@ Rendering rules:
 ## Notes
 
 - Read-only. Requires an active `/swarm:create` or `/swarm:join` session (a
-  live daemon): `ahsw meta get` talks to it over IPC.
-- To change the meta channel, peers merge it with `ahsw meta merge` — this skill
+  live daemon): `agent-gossip meta get` talks to it over IPC.
+- To change the meta channel, peers merge it with `agent-gossip meta merge` — this skill
   only reads. The `state` channel (the task) is read with `/swarm:state`.

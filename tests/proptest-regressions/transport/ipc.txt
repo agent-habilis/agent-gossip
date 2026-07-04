@@ -4,4 +4,4 @@
 #
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
-cc 83f60619e2eb52c6da2a0c9f16f701b843d8c4eb9d3da1be74f8e31f6fff6906 # shrinks to swarm = SwarmId("🐝PaaP")
+cc 83f60619e2eb52c6da2a0c9f16f701b843d8c4eb9d3da1be74f8e31f6fff6906 # shrinks to swarm = SwarmId("💬PaaP")

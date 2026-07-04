@@ -4,7 +4,7 @@ use anyhow::Result;
 
 use crate::daemon::state_file::read_session_entry;
 use crate::protocol::Nickname;
-use crate::util::consts::RUNTIME_DIR;
+use crate::util::consts::{RUNTIME_DIR, SWARM_GLYPH};
 use crate::util::process;
 
 use super::args::{LeaveOpts, OutputFormat, SessionOpts};
@@ -23,7 +23,7 @@ pub(crate) struct Target {
 
 pub(crate) struct Discovery {
     live: Vec<Target>,
-    /// State files whose recorded pid is gone (or reused by a non-`ahsw`
+    /// State files whose recorded pid is gone (or reused by a non-`agent-gossip`
     /// process) — leftovers of a SIGKILL/power-loss that the daemon never
     /// got to remove itself. Deleted during discovery so they stop
     /// rendering as ghost sessions (e.g. a statusline pill).
@@ -46,7 +46,7 @@ fn discover() -> Discovery {
             // daemon, so it is neither actionable nor safely removable.
             continue;
         };
-        if process::is_alive(pid) && process::comm_of(pid).as_deref() == Some("ahsw") {
+        if process::is_alive(pid) && process::comm_of(pid).as_deref() == Some("agent-gossip") {
             live.push(Target {
                 path,
                 swarm,
@@ -97,7 +97,7 @@ fn select_explicit(live: Vec<Target>, swarm: &str, nickname: Option<&str>) -> Ve
 }
 
 /// The default ownership anchor when `--session-pid` is not given: this
-/// command's own parent. When an agent's Bash tool runs `ahsw leave`
+/// command's own parent. When an agent's Bash tool runs `agent-gossip leave`
 /// directly (not via a wrapping shell script), that parent *is* the shell
 /// whose parent is the agent — so skills pass `$PPID` explicitly instead of
 /// relying on this.
@@ -194,16 +194,16 @@ pub(crate) async fn leave(opts: LeaveOpts) -> Result<()> {
         OutputFormat::Human => {
             if confirmed.is_empty() {
                 if other_sessions == 0 {
-                    println!("🐝 not in a swarm");
+                    println!("{SWARM_GLYPH} not in a swarm");
                 } else {
                     println!(
-                        "🐝 no swarm owned by this session ({other_sessions} running for other sessions — untouched)"
+                        "{SWARM_GLYPH} no swarm owned by this session ({other_sessions} running for other sessions — untouched)"
                     );
                 }
             }
             for (target, gone) in &confirmed {
                 let suffix = if *gone { "" } else { " (unconfirmed)" };
-                println!("🐝 left {}{suffix}", display_name(target));
+                println!("{SWARM_GLYPH} left {}{suffix}", display_name(target));
             }
         }
     }
@@ -236,15 +236,19 @@ pub(crate) async fn session(opts: SessionOpts) -> Result<()> {
         OutputFormat::Human => {
             if owned.is_empty() {
                 if other_sessions == 0 {
-                    println!("🐝 not in a swarm");
+                    println!("{SWARM_GLYPH} not in a swarm");
                 } else {
                     println!(
-                        "🐝 no swarm owned by this session ({other_sessions} running for other sessions)"
+                        "{SWARM_GLYPH} no swarm owned by this session ({other_sessions} running for other sessions)"
                     );
                 }
             }
             for target in &owned {
-                println!("🐝 {} (pid {})", display_name(target), target.pid);
+                println!(
+                    "{SWARM_GLYPH} {} (pid {})",
+                    display_name(target),
+                    target.pid
+                );
             }
         }
     }
@@ -268,8 +272,8 @@ mod tests {
     #[test]
     fn split_owned_partitions_by_pid() {
         let live = vec![
-            target("🐝aaaa", "one-two", 10),
-            target("🐝bbbb", "three-four", 20),
+            target("💬aaaa", "one-two", 10),
+            target("💬bbbb", "three-four", 20),
         ];
         let (owned, other_sessions) = split_owned(live, |pid| pid == 10);
         assert_eq!(owned.len(), 1);
@@ -280,13 +284,13 @@ mod tests {
     #[test]
     fn select_explicit_matches_full_id_and_prefix() {
         let live = vec![
-            target("🐝aaaabbbbccccdddd1111", "one-two", 10),
-            target("🐝zzzzyyyyxxxxwwww2222", "three-four", 20),
+            target("💬aaaabbbbccccdddd1111", "one-two", 10),
+            target("💬zzzzyyyyxxxxwwww2222", "three-four", 20),
         ];
-        let full = select_explicit(live.clone(), "🐝aaaabbbbccccdddd1111", None);
+        let full = select_explicit(live.clone(), "💬aaaabbbbccccdddd1111", None);
         assert_eq!(full.len(), 1);
         assert_eq!(full[0].pid, 10);
-        let prefix = select_explicit(live, "🐝aaaabbbbccccddd", None);
+        let prefix = select_explicit(live, "💬aaaabbbbccccddd", None);
         assert_eq!(prefix.len(), 1);
         assert_eq!(prefix[0].pid, 10);
     }
@@ -294,17 +298,17 @@ mod tests {
     #[test]
     fn select_explicit_narrows_by_nickname() {
         let live = vec![
-            target("🐝aaaa", "one-two", 10),
-            target("🐝aaaa", "three-four", 20),
+            target("💬aaaa", "one-two", 10),
+            target("💬aaaa", "three-four", 20),
         ];
-        let matched = select_explicit(live, "🐝aaaa", Some("three-four"));
+        let matched = select_explicit(live, "💬aaaa", Some("three-four"));
         assert_eq!(matched.len(), 1);
         assert_eq!(matched[0].pid, 20);
     }
 
     #[test]
     fn select_explicit_no_match_is_empty() {
-        let live = vec![target("🐝aaaa", "one-two", 10)];
-        assert!(select_explicit(live, "🐝none", None).is_empty());
+        let live = vec![target("💬aaaa", "one-two", 10)];
+        assert!(select_explicit(live, "💬none", None).is_empty());
     }
 }

@@ -1,4 +1,4 @@
-//! The swarm-wide config carried in the `🐝…` id — the lookup
+//! The swarm-wide config carried in the `💬…` id — the lookup
 //! allowlist (`mdns`/`dht`/`relay`) — plus its byte codec and the
 //! `--advertise` directory selection. A swarm's network reach is fully
 //! described by its lookups: no lookups means loopback-only; any lookup
@@ -227,7 +227,7 @@ impl SwarmConfig {
             let features = bytes[pos];
             pos += 1;
             if features & !FEATURE_PASSWORD != 0 {
-                bail!("unsupported swarm feature flags {features:#04x} — upgrade ahsw");
+                bail!("unsupported swarm feature flags {features:#04x} — upgrade agent-gossip");
             }
             if features == 0 {
                 // A zero feature byte re-encodes without itself, silently
@@ -645,7 +645,10 @@ mod lookup_tests {
         bytes.push(0b0010); // an undefined feature bit
         bytes.extend_from_slice(&[0u8; 16]);
         let error = SwarmConfig::from_bytes(&bytes).unwrap_err();
-        assert!(error.to_string().contains("upgrade ahsw"), "got: {error}");
+        assert!(
+            error.to_string().contains("upgrade agent-gossip"),
+            "got: {error}"
+        );
     }
 
     #[test]

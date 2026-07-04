@@ -1,5 +1,5 @@
 //! The a2a exposer: bind an endpoint next to a local A2A server, print the
-//! consumer's `ahsw a2a connect` command, and raw-proxy each authenticated
+//! consumer's `agent-gossip a2a connect` command, and raw-proxy each authenticated
 //! bi-stream to the origin. Strictly 1:1 — one consumer connection is served at
 //! a time; a second is refused until the first disconnects.
 
@@ -33,7 +33,7 @@ const WRONG_PASSWORD: u32 = 3;
 const BAD_SECRET: u32 = 1;
 
 /// Exposer: forward a local `http://` A2A origin to a single peer over the
-/// swarm. Prints the consumer's `ahsw a2a connect` command on stdout.
+/// swarm. Prints the consumer's `agent-gossip a2a connect` command on stdout.
 ///
 /// `loopback` (a hidden test flag) forces loopback-only lookups so two agents
 /// on one machine bridge hermetically off the ticket's direct address, with no
@@ -77,7 +77,7 @@ pub(crate) async fn expose(
     super::announce(
         json,
         &format!("A2A {origin} → swarm"),
-        &format!("ahsw a2a connect {}", ticket.encode()),
+        &format!("agent-gossip a2a connect {}", ticket.encode()),
     );
     let origin = Arc::new(origin);
     let paired = Arc::new(AtomicBool::new(false));

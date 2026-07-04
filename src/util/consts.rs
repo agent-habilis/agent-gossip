@@ -9,7 +9,13 @@
 /// (avoids the macOS `AF_UNIX` `sun_path` ~104-byte limit) and shared with
 /// sibling agent-habilis projects in the `/tmp/agent-habilis/` namespace.
 /// Per-swarm paths are built via [`crate::util::swarm_runtime_dir`].
-pub const RUNTIME_DIR: &str = "/tmp/agent-habilis/swarm";
+pub const RUNTIME_DIR: &str = "/tmp/agent-gossip";
+
+/// The swarm sigil — the single definition of the glyph. It prefixes every
+/// swarm id (`💬://<base58>`) and marks every human/operator output line.
+/// Change this one line to re-glyph the project. Display code that wants the
+/// emoji-presentation selector appends `\u{FE0F}` itself (see `crate::output`).
+pub const SWARM_GLYPH: &str = "💬";
 
 /// Max bytes a per-member log file grows before rotating to `<file>.1`
 /// (active + one backup ⇒ bounded at `2 ×` this). The `--log-max-bytes` flag
@@ -73,7 +79,7 @@ pub const MAX_LOGICAL_BODY_BYTES: usize = MAX_MESSAGE_PARTS * MAX_MESSAGE_SIZE;
 pub(crate) const DEFAULT_MESSAGE_LOG_SIZE: usize = 3000;
 
 /// Max messages a single `poll` / `fetch_messages` returns — a **fixed**
-/// IPC contract (the `ahsw poll` client can't know the daemon's configured
+/// IPC contract (the `agent-gossip poll` client can't know the daemon's configured
 /// log size, so the read cap can't depend on it). At the default log size
 /// this equals the log, so `poll` returns everything; a larger configured
 /// log just means `poll` surfaces the most-recent `POLL_RESPONSE_MAX_MSGS`.
@@ -150,7 +156,7 @@ pub(crate) const PASSWORD_KDF_P_COST: u32 = 1;
 // control, with history), never an ephemeral shell var. Each is the default
 // for the matching hidden CLI flag (`--alive-timeout-secs`, …) that the
 // subprocess test suite passes to run with short timings; production reads the
-// const. See `agent_habilis_swarm::util::tuning`.
+// const. See `agent_gossip::util::tuning`.
 
 /// How long a peer can go unheard before the sweeper evicts it. Must exceed
 /// the alive-keepalive interval comfortably (3× absorbs one or two lost
@@ -195,7 +201,7 @@ pub(crate) const TASK_CONTENT_CAP: u32 = 100;
 /// `--beacon-cohost-grace-secs`.
 pub(crate) const BEACON_COHOST_GRACE_SECS: u64 = 10;
 
-/// How long an `ahsw ping` round collects pongs before the daemon emits its
+/// How long an `agent-gossip ping` round collects pongs before the daemon emits its
 /// `ping_report`. Flag: `--ping-window-secs`.
 pub(crate) const PING_WINDOW_SECS: u64 = 10;
 
@@ -214,7 +220,7 @@ pub(crate) const HEAL_STALL_THRESHOLD_SECS: u64 = 60;
 /// Flag: `--starvation-threshold-secs`.
 pub(crate) const STARVATION_THRESHOLD_SECS: u64 = 2 * ALIVE_TIMEOUT_SECS;
 
-/// How often an advertising `create` re-broadcasts its `🐝…` id into the
+/// How often an advertising `create` re-broadcasts its `💬…` id into the
 /// directory. Flag: `--advertise-interval-secs`.
 pub(crate) const ADVERTISE_INTERVAL_SECS: u64 = 20;
 
@@ -231,7 +237,7 @@ pub(crate) const ANTIENTROPY_MAX_RESEND: usize = 64;
 /// before returning an empty batch — the single long-poll park length. Kept
 /// under typical MCP-host per-request timeouts so a held call returns before
 /// the host gives up; the daemon itself never blocks (the waiter parks in a
-/// registry). Infinite waiting is a *client* concern: `ahsw poll --long`
+/// registry). Infinite waiting is a *client* concern: `agent-gossip poll --long`
 /// re-issues the read on each empty return. Flag: `--longpoll-max-ms`
 /// (tests shorten it to force the timeout path).
 pub(crate) const LONGPOLL_MAX_MS: u64 = 60_000;

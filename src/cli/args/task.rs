@@ -4,7 +4,7 @@ use crate::protocol::{MessageBody, Nickname, SwarmId, TaskId, TaskPhase, TaskPha
 
 #[derive(Parser, Debug)]
 pub(crate) struct TaskOpts {
-    /// Swarm identifier (🐝...)
+    /// Swarm identifier (💬...)
     #[arg(long)]
     pub swarm: SwarmId,
 

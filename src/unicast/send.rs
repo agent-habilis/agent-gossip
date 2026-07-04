@@ -147,7 +147,7 @@ mod tests {
     }
 
     fn swarm() -> SwarmId {
-        SwarmId::from("🐝test")
+        SwarmId::from("💬test")
     }
 
     fn body() -> MessageBody {

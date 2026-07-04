@@ -7,7 +7,7 @@ timestamp: 2026-06-28T00:00:00Z
 roles: [player-a, player-b]
 coordinator: dedicated
 harness: any
-prereqs: [ahsw]
+prereqs: [agent-gossip]
 network: private
 ---
 

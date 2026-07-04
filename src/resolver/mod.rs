@@ -5,14 +5,15 @@ use anyhow::{Result, anyhow};
 
 use crate::protocol::SwarmId;
 use crate::protocol::swarm::{Swarm, SwarmIdError};
+use crate::util::consts::SWARM_GLYPH;
 
-/// What `join` accepts: a literal `🐝…` swarm id. A shared *string* is not a
-/// join target — it derives its own swarm via `ahsw forum`. Classified and
+/// What `join` accepts: a literal `💬…` swarm id. A shared *string* is not a
+/// join target — it derives its own swarm via `agent-gossip forum`. Classified and
 /// validated **once**, at the boundary (clap `FromStr` / MCP entry), so
 /// `resolve` matches the variant instead of re-sniffing a `String`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum JoinTarget {
-    /// A literal `🐝…` id — resolves with no I/O.
+    /// A literal `💬…` id — resolves with no I/O.
     Swarm(SwarmId),
 }
 
@@ -38,7 +39,7 @@ impl FromStr for JoinTarget {
             // A legacy `ahs…` id is unmistakably a (stale) id — surface the
             // explanatory message rather than the generic forum hint.
             Err(error @ SwarmIdError::LegacyPrefix) => Err(JoinTargetError(error.to_string())),
-            // Anything else isn't a `🐝…` id. Point at `forum`, which is what a
+            // Anything else isn't a `💬…` id. Point at `forum`, which is what a
             // plain string is for. The hint is meant to be copy-pasted into a
             // shell, so the string is single-quoted (with embedded `'` escaped
             // POSIX-style) — unquoted, whitespace would split into extra args
@@ -46,8 +47,8 @@ impl FromStr for JoinTarget {
             Err(_) => {
                 let quoted = format!("'{}'", trimmed.replace('\'', "'\\''"));
                 Err(JoinTargetError(format!(
-                    "`{trimmed}` is not a swarm id (expected a 🐝… token). To join a \
-                     public swarm derived from a shared string, use `ahsw forum {quoted}`."
+                    "`{trimmed}` is not a swarm id (expected a {SWARM_GLYPH}… token). To join a \
+                     public swarm derived from a shared string, use `agent-gossip forum {quoted}`."
                 )))
             }
         }
@@ -80,7 +81,7 @@ mod tests {
         let err = "github.com/alice/proj".parse::<JoinTarget>().unwrap_err();
         assert!(
             err.to_string()
-                .contains("ahsw forum 'github.com/alice/proj'"),
+                .contains("agent-gossip forum 'github.com/alice/proj'"),
             "got: {err}"
         );
     }
@@ -91,12 +92,14 @@ mod tests {
         assert!(
             whitespace_err
                 .to_string()
-                .contains("ahsw forum 'my secret room'"),
+                .contains("agent-gossip forum 'my secret room'"),
             "got: {whitespace_err}"
         );
         let quote_err = "it's here".parse::<JoinTarget>().unwrap_err();
         assert!(
-            quote_err.to_string().contains(r"ahsw forum 'it'\''s here'"),
+            quote_err
+                .to_string()
+                .contains(r"agent-gossip forum 'it'\''s here'"),
             "got: {quote_err}"
         );
     }

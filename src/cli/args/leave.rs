@@ -6,7 +6,7 @@ use super::output::OutputFormat;
 
 #[derive(Parser, Debug)]
 pub(crate) struct LeaveOpts {
-    /// The `🐝…` id of the swarm to leave — the full id or a unique prefix
+    /// The `💬…` id of the swarm to leave — the full id or a unique prefix
     /// of it. Omitted: every swarm owned by the calling session.
     pub swarm: Option<SwarmId>,
 
@@ -40,7 +40,7 @@ mod tests {
 
     #[test]
     fn leave_defaults() {
-        let cli = Cli::parse_from(["ahsw", "leave"]);
+        let cli = Cli::parse_from(["agent-gossip", "leave"]);
         let Commands::Leave { opts } = cli.command else {
             panic!("expected Leave command");
         };
@@ -54,9 +54,9 @@ mod tests {
     #[test]
     fn leave_accepts_explicit_target() {
         let cli = Cli::parse_from([
-            "ahsw",
+            "agent-gossip",
             "leave",
-            "🐝AbCdEf1234",
+            "💬AbCdEf1234",
             "--nickname",
             "my-nick",
             "--output",
@@ -65,13 +65,13 @@ mod tests {
         let Commands::Leave { opts } = cli.command else {
             panic!("expected Leave command");
         };
-        assert_eq!(opts.swarm.unwrap().as_str(), "🐝://AbCdEf1234");
+        assert_eq!(opts.swarm.unwrap().as_str(), "💬://AbCdEf1234");
         assert_eq!(opts.nickname.unwrap().as_str(), "my-nick");
         assert_eq!(opts.output, OutputFormat::Json);
     }
 
     #[test]
     fn leave_nickname_requires_swarm() {
-        assert!(Cli::try_parse_from(["ahsw", "leave", "--nickname", "my-nick"]).is_err());
+        assert!(Cli::try_parse_from(["agent-gossip", "leave", "--nickname", "my-nick"]).is_err());
     }
 }

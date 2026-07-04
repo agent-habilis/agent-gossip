@@ -7,7 +7,7 @@ timestamp: 2026-06-28T00:00:00Z
 roles: [host, discoverer]
 coordinator: briefing-only
 harness: any
-prereqs: [ahsw]
+prereqs: [agent-gossip]
 network: public
 ---
 

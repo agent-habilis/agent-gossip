@@ -50,13 +50,13 @@ Coverage:
 
 ## How to run
 
-1. **Prerequisites:** the `ahsw` binary on `PATH`. For the todo cases, a todo
+1. **Prerequisites:** the `agent-gossip` binary on `PATH`. For the todo cases, a todo
    plugin installed in the role peers. For [cross-harness](/cross-harness.md),
    one pi and one Claude Code session.
 2. Open **one coordinator session + one per role** (the runbook's `roles:`
    frontmatter). Each is a real, independent swarm member — and may run on a
    **different machine** (create the swarm `--public`, join by id or
-   `ahsw discover`).
+   `agent-gossip discover`).
 3. The coordinator **briefs** each role's goal + the scenario by **swarm
    message**, then observes. The agents run on their own. Nothing travels
    through local files.
@@ -79,8 +79,8 @@ Each runbook has four parts:
 
 Expected UI strings reference the canonical `display` lines the daemon emits
 (`src/output/json.rs` `*_display`) and the front-end Output sections
-(`claude-code-plugin/skills/*/SKILL.md`). The bee is `🐝️` (U+FE0F); a swarm id
-is canonically `🐝://<base58>`.
+(`claude-code-plugin/skills/*/SKILL.md`). The bee is `💬️` (U+FE0F); a swarm id
+is canonically `💬://<base58>`.
 
 ## Capability reference (for the human, not the agents)
 
@@ -100,7 +100,7 @@ skills. This table is only to help you read what happened.
 | advance a task leg | — | `swarm_advance` | (skill drives the legs) |
 | status / roster | `/swarm-status` | `swarm_status` | `/swarm:status` |
 | ping | `/swarm-ping` | `swarm_ping` | `/swarm:ping` |
-| read state | `/swarm-state` | `swarm_get_state` | `ahsw state get` |
-| merge state | `/swarm-state-merge` | `swarm_apply_merge` | `ahsw state merge` |
+| read state | `/swarm-state` | `swarm_get_state` | `agent-gossip state get` |
+| merge state | `/swarm-state-merge` | `swarm_apply_merge` | `agent-gossip state merge` |
 | leave | `/swarm-leave` | `swarm_leave` | `/swarm:leave` |
 | version / drift | `/swarm-version` | — | `/swarm:version` |

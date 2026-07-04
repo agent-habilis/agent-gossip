@@ -33,7 +33,7 @@ pub(crate) async fn broadcast_msg(sender: &GossipSender, msg: &Message) {
         && let Err(error) = sender.broadcast(Bytes::from(bytes)).await
     {
         tracing::warn!(
-            target: "agent_habilis_swarm::gossip",
+            target: "agent_gossip::gossip",
             %error,
             "presence/plumbing broadcast failed"
         );

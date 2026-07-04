@@ -255,7 +255,7 @@ struct EventLoop {
 /// survives a release build's `error` base.
 fn log_daemon_start(author: &Nickname) {
     tracing::info!(
-        target: "agent_habilis_swarm::lifecycle",
+        target: "agent_gossip::lifecycle",
         version = crate::VERSION,
         nickname = %author,
         "daemon starting"
@@ -801,7 +801,7 @@ async fn run_heal(
     let hard_edge = is_resume(mono_gap, threshold) || is_wall_resume(wall_gap, mono_gap, threshold);
     if hard_edge {
         tracing::warn!(
-            target: "agent_habilis_swarm::gossip",
+            target: "agent_gossip::gossip",
             mono_gap_ms = u64::try_from(mono_gap.as_millis()).unwrap_or(u64::MAX),
             wall_gap_ms = u64::try_from(wall_gap.as_millis()).unwrap_or(u64::MAX),
             "heal: hard re-bootstrap edge"
@@ -823,7 +823,7 @@ async fn run_heal(
         // the healthy link; see `tick_heal`). `NeighborDown` re-arms
         // this gate instantly.
         tracing::debug!(
-            target: "agent_habilis_swarm::gossip",
+            target: "agent_gossip::gossip",
             "heal tick: rendezvous linked; idle"
         );
     } else {
@@ -1027,7 +1027,7 @@ async fn try_resubscribe(
         Ok(topic) => {
             *attempts = 0;
             tracing::warn!(
-                target: "agent_habilis_swarm::gossip",
+                target: "agent_gossip::gossip",
                 "gossip stream restored (resubscribed)"
             );
             output.info("gossip stream restored; rejoining the mesh");
@@ -1037,7 +1037,7 @@ async fn try_resubscribe(
         Err(error) => {
             *attempts += 1;
             tracing::warn!(
-                target: "agent_habilis_swarm::gossip",
+                target: "agent_gossip::gossip",
                 %error,
                 attempts = *attempts,
                 "gossip resubscribe failed"
@@ -1069,7 +1069,7 @@ fn apply_rung_change(
         lookup::plan_rung_refresh(params.bootstrap_relay.as_ref(), selected)
     {
         tracing::info!(
-            target: "agent_habilis_swarm::beacon",
+            target: "agent_gossip::beacon",
             old = ?params.bootstrap_relay,
             new = ?new,
             "bootstrap relay rung changed; re-registering rendezvous and re-homing the beacon"

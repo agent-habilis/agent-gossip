@@ -68,7 +68,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "agent-habilis-swarm"
+name = "agent-gossip"
 version = "0.5.0"
 dependencies = [
  "anstream 0.6.21",
@@ -4369,7 +4369,7 @@ checksum = "adb6935a6f5c20170eeceb1a3835a49e12e19d792f6dd344ccc76a985ca5a6ca"
 name = "tasks"
 version = "0.1.0"
 dependencies = [
- "agent-habilis-swarm",
+ "agent-gossip",
  "anstream 0.6.21",
  "anstyle",
  "cargo-zigbuild",

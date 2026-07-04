@@ -43,7 +43,7 @@ pub(crate) enum Reach {
 /// `None` until the peer's first heartbeat is timed; `quiet` marks a
 /// peer heartbeat-evicted past `ALIVE_TIMEOUT_SECS` (still returnable);
 /// `reach` is `direct` only while we hold a live link to it.
-/// Serialized directly into the `ahsw peers` response and the MCP
+/// Serialized directly into the `agent-gossip peers` response and the MCP
 /// `swarm_info` roster.
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct RosterEntry {
@@ -229,7 +229,7 @@ pub(crate) struct EventLoopState {
     /// Whether the event loop is serving IPC yet. Starts `false` (the
     /// pre-loop state-file write reports "identity up, not yet serving");
     /// flipped `true` once the loop is draining, so a state-file reader
-    /// (`ahsw ready`) can gate on a write that means the daemon will answer.
+    /// (`agent-gossip ready`) can gate on a write that means the daemon will answer.
     pub ready: bool,
     /// When advertising (`create --advertise`), the directory's
     /// re-broadcast task reads the live participant count from here.
@@ -323,7 +323,7 @@ pub(crate) struct EventLoopState {
     /// tick. Purely observability — never gates behavior (see
     /// `timers::tick_prune`).
     pub resident_memory_warned: bool,
-    /// Active `ahsw ping` round, if one is in flight. Armed by the
+    /// Active `agent-gossip ping` round, if one is in flight. Armed by the
     /// `Ping` IPC command, filled by inbound `Pong`s, and finalized
     /// into a `ping_report` when its `deadline` elapses. One at a time:
     /// a fresh ping replaces any in-flight round. Boxed to keep the
@@ -644,7 +644,7 @@ impl EventLoopState {
     }
 
     /// Snapshot the live roster (active participants + quiet evictees),
-    /// sorted most-recently-seen first. Backs `ahsw peers`, the MCP
+    /// sorted most-recently-seen first. Backs `agent-gossip peers`, the MCP
     /// `swarm_info` roster, and the task sender's target picker /
     /// nickname validation.
     pub(crate) fn roster_snapshot(&self) -> RosterSnapshot {
@@ -937,7 +937,7 @@ mod tests {
     /// `mark_seen`, which keys on `dedup_key()` (`SHA-256(pubkey ‖ id)`).
     fn msg_with_id(id: &MessageId) -> Message {
         let mut message = Message::new_message(
-            &SwarmId::from("🐝test"),
+            &SwarmId::from("💬test"),
             &nick("author-nick"),
             MessageBody::from("body"),
         );

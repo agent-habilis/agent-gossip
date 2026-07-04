@@ -24,7 +24,7 @@ mod tests {
 
     #[test]
     fn session_defaults() {
-        let cli = Cli::parse_from(["ahsw", "session"]);
+        let cli = Cli::parse_from(["agent-gossip", "session"]);
         let Commands::Session { opts } = cli.command else {
             panic!("expected Session command");
         };
@@ -34,7 +34,14 @@ mod tests {
 
     #[test]
     fn session_accepts_pid_and_json() {
-        let cli = Cli::parse_from(["ahsw", "session", "--session-pid", "42", "--output", "json"]);
+        let cli = Cli::parse_from([
+            "agent-gossip",
+            "session",
+            "--session-pid",
+            "42",
+            "--output",
+            "json",
+        ]);
         let Commands::Session { opts } = cli.command else {
             panic!("expected Session command");
         };

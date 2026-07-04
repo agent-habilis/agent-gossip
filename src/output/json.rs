@@ -11,6 +11,8 @@ use std::io::Write;
 
 use serde::Serialize;
 
+use crate::util::consts::SWARM_GLYPH;
+
 use super::OutputEvent;
 use crate::protocol::{Message, MessageKind, Nickname, PresenceSubtype, TaskPhase};
 
@@ -216,8 +218,8 @@ fn message_header<'a>(msg: &'a Message, ty: &'static str) -> MessageHeader<'a> {
 /// backticks).
 fn msg_display(author: &str, body: &str, reply: Option<&str>) -> String {
     match reply {
-        Some(target) => format!("🐝️ `<{author}>` → `<{target}>`: {body}"),
-        None => format!("🐝️ `<{author}>`: {body}"),
+        Some(target) => format!("{SWARM_GLYPH}\u{FE0F} `<{author}>` → `<{target}>`: {body}"),
+        None => format!("{SWARM_GLYPH}\u{FE0F} `<{author}>`: {body}"),
     }
 }
 
@@ -227,57 +229,59 @@ fn msg_display(author: &str, body: &str, reply: Option<&str>) -> String {
 /// backtick rationale.
 fn notice_display(author: &str, body: &str, reply: Option<&str>) -> String {
     match reply {
-        Some(target) => format!("🐝️ `<{author}>` → `<{target}>` (notice): {body}"),
-        None => format!("🐝️ `<{author}>` (notice): {body}"),
+        Some(target) => {
+            format!("{SWARM_GLYPH}\u{FE0F} `<{author}>` → `<{target}>` (notice): {body}")
+        }
+        None => format!("{SWARM_GLYPH}\u{FE0F} `<{author}>` (notice): {body}"),
     }
 }
 
 /// `display` line for a `task` event:
-/// `` 🐝️ task offer `<author>` → `<to>`: body ``. See
+/// `` 💬️ task offer `<author>` → `<to>`: body ``. See
 /// [`msg_display`] for the backtick rationale. The skill may render a
 /// richer interaction (the tasks widget, collapsed status lines) instead
 /// of echoing this verbatim; it is the canonical line for raw
 /// `--output json` consumers.
 fn task_display(author: &str, to: &str, phase: TaskPhase, body: &str) -> String {
-    format!("🐝️ task {phase} `<{author}>` → `<{to}>`: {body}")
+    format!("{SWARM_GLYPH}\u{FE0F} task {phase} `<{author}>` → `<{to}>`: {body}")
 }
 
 /// `display` line for a `task_progress` event:
-/// `` 🐝️ task progress `<author>` → `<to>`: 35/100 `` (or
+/// `` 💬️ task progress `<author>` → `<to>`: 35/100 `` (or
 /// `working` when indeterminate).
 fn task_progress_display(author: &str, to: &str, done: Option<u64>, total: Option<u64>) -> String {
     match (done, total) {
         (Some(done), Some(total)) => {
-            format!("🐝️ task progress `<{author}>` → `<{to}>`: {done}/{total}")
+            format!("{SWARM_GLYPH}\u{FE0F} task progress `<{author}>` → `<{to}>`: {done}/{total}")
         }
-        _ => format!("🐝️ task progress `<{author}>` → `<{to}>`: working"),
+        _ => format!("{SWARM_GLYPH}\u{FE0F} task progress `<{author}>` → `<{to}>`: working"),
     }
 }
 
-/// `display` line for a presence event: `` 🐝️ `<author>` has joined `` /
-/// `` 🐝️ `<author>` has joined `` / `… has left`. See [`msg_display`] for the
+/// `display` line for a presence event: `` 💬️ `<author>` has joined `` /
+/// `` 💬️ `<author>` has joined `` / `… has left`. See [`msg_display`] for the
 /// backtick rationale.
 fn presence_display(author: &str, subtype: PresenceSubtype) -> String {
-    format!("🐝️ `<{author}>` has {subtype}")
+    format!("{SWARM_GLYPH}\u{FE0F} `<{author}>` has {subtype}")
 }
 
 /// `display` line for a `peer_timeout` event.
 pub(super) fn peer_timeout_display(nickname: &str) -> String {
-    format!("🐝️ `<{nickname}>` went quiet")
+    format!("{SWARM_GLYPH}\u{FE0F} `<{nickname}>` went quiet")
 }
 
 /// `display` line for a `peer_return` event.
 pub(super) fn peer_return_display(nickname: &str) -> String {
-    format!("🐝️ `<{nickname}>` came back")
+    format!("{SWARM_GLYPH}\u{FE0F} `<{nickname}>` came back")
 }
 
 /// `display` block for a `ping_report` event: a markdown RTT table (one
 /// row per responding peer), or a single line when no peer answered.
 pub(super) fn ping_report_display(peers: &[PingPeer], known: usize) -> String {
     if peers.is_empty() {
-        return "🐝️ ping: no peers responded".to_owned();
+        return format!("{SWARM_GLYPH}\u{FE0F} ping: no peers responded");
     }
-    let mut out = String::from("🐝️ ping\n| peer | RTT |\n|---|---|\n");
+    let mut out = format!("{SWARM_GLYPH}\u{FE0F} ping\n| peer | RTT |\n|---|---|\n");
     for peer in peers {
         let _ = writeln!(out, "| `<{}>` | {}ms |", peer.nickname, peer.rtt_ms);
     }
@@ -475,15 +479,15 @@ pub(super) fn state_change_summary_from_body(body: &str) -> String {
     state_change_summary(merge.as_ref())
 }
 
-/// `display` line for a `state` event: `` 🐝️ `<author>` changed /board, /turn ``,
-/// or `🐝️ you changed …` for your own write (`shared state` when the touched
+/// `display` line for a `state` event: `` 💬️ `<author>` changed /board, /turn ``,
+/// or `💬️ you changed …` for your own write (`shared state` when the touched
 /// paths aren't known). A peer's nick is backtick-wrapped like every other event
 /// so the skill's markdown renderer keeps the `<nick>`; "you" is plain text.
 fn state_display(author: &str, is_self: bool, what: &str) -> String {
     if is_self {
-        format!("🐝️ you changed {what}")
+        format!("{SWARM_GLYPH}\u{FE0F} you changed {what}")
     } else {
-        format!("🐝️ `<{author}>` changed {what}")
+        format!("{SWARM_GLYPH}\u{FE0F} `<{author}>` changed {what}")
     }
 }
 
@@ -541,7 +545,7 @@ pub fn surfaced_event_json(seq: u64, event: &OutputEvent) -> Option<String> {
 /// as the `Stream` sink, so in-process tests assert the byte-identical
 /// wire format the `/swarm` skill + MCP clients parse. `None` for events
 /// that produce no JSON line in JSON mode (`SwarmId` is the bare stderr
-/// `🐝…` line, never JSON).
+/// `💬…` line, never JSON).
 #[must_use]
 pub fn event_json(event: &OutputEvent) -> Option<String> {
     let json = match event {

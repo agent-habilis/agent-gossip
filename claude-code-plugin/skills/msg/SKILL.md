@@ -30,17 +30,17 @@ If you hold `$SWARM`/`$NICKNAME` from a `/swarm:create` or `/swarm:join`
 follow `../shared/reattach.md` (resolved relative to this SKILL.md's
 directory). Only if reattach also yields no swarm, print:
 ```
-🐝 Not in a swarm. Use /swarm:create or /swarm:join first.
+💬 Not in a swarm. Use /swarm:create or /swarm:join first.
 ```
 and STOP.
 
 ## Send the message
 
-`$SWARM`/`$NICKNAME` are from the `ready` event (copy the `🐝…` id
+`$SWARM`/`$NICKNAME` are from the `ready` event (copy the `💬…` id
 verbatim):
 
 ```bash
-ahsw msg --swarm "$SWARM" --nickname "$NICKNAME" --text "$TEXT"
+agent-gossip msg --swarm "$SWARM" --nickname "$NICKNAME" --text "$TEXT"
 ```
 
 ## Output

@@ -101,7 +101,7 @@ impl CreateParams {
 }
 
 impl JoinParams {
-    /// Resolve the `🐝…` id target into a [`Swarm`], verify the password
+    /// Resolve the `💬…` id target into a [`Swarm`], verify the password
     /// against the id's verifier (locally — a wrong password fails here,
     /// before any network), and default the nickname. `join` never
     /// advertises.
@@ -134,7 +134,7 @@ impl JoinParams {
 /// guard, shared by [`ForumParams::resolve`] and the MCP idempotency check so
 /// neither can drift — an empty string would otherwise silently derive one
 /// globally-fixed swarm that every empty-string caller lands in. (The clap
-/// `value_parser` on `ahsw forum` re-checks emptiness only to surface it as a
+/// `value_parser` on `agent-gossip forum` re-checks emptiness only to surface it as a
 /// parse-time usage error.)
 pub(crate) fn derive_forum_swarm(string: &str) -> Result<Swarm> {
     if string.trim().is_empty() {

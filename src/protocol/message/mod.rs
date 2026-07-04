@@ -336,7 +336,7 @@ fn empty_body() -> MessageBody {
 ///
 /// Wire format (compact JSON, one line):
 /// ```json
-/// {"v":"2.0","id":"<uuid>","type":"msg","swarm":"🐝...","author":"word-word","ts":1234567890,"body":"text","ext":{}}
+/// {"v":"2.0","id":"<uuid>","type":"msg","swarm":"💬...","author":"word-word","ts":1234567890,"body":"text","ext":{}}
 /// ```
 ///
 /// `reply` (the addressee nickname) is inlined into the JSON for directed `msg` kinds.
@@ -630,7 +630,7 @@ impl Message {
     /// (deterministic, sorted-key) `serde_json` encodings.
     #[must_use]
     pub(crate) fn canonical_bytes(&self) -> Vec<u8> {
-        const DOMAIN: &[u8] = b"agent-habilis-swarm/msg";
+        const DOMAIN: &[u8] = b"agent-gossip/msg";
         let mut buf = Vec::new();
         let mut field = |bytes: &[u8]| {
             buf.extend_from_slice(
@@ -828,7 +828,7 @@ impl Message {
             version: VERSION.to_string(),
             id: "00000000-0000-0000-0000-000000000001".into(),
             kind,
-            swarm: SwarmId::from("🐝test"),
+            swarm: SwarmId::from("💬test"),
             author: "alice-bot".into(),
             timestamp: 1_700_000_000,
             body: body.into(),
@@ -855,7 +855,7 @@ mod tests {
     }
 
     fn sid() -> SwarmId {
-        SwarmId::from("🐝test")
+        SwarmId::from("💬test")
     }
 
     #[test]
@@ -1040,7 +1040,7 @@ mod tests {
     #[test]
     fn test_unknown_ext_fields_ignored() {
         let json = format!(
-            r#"{{"v":"2.0","id":"{FIXTURE_ID}","type":"msg","swarm":"🐝test","author":"a-b","ts":0,"body":"hi","ext":{{"future_field":"value","another":42}}}}"#
+            r#"{{"v":"2.0","id":"{FIXTURE_ID}","type":"msg","swarm":"💬test","author":"a-b","ts":0,"body":"hi","ext":{{"future_field":"value","another":42}}}}"#
         );
         let parsed = Message::parse(json.as_bytes()).unwrap();
         assert_eq!(parsed.body.as_str(), "hi");
@@ -1050,7 +1050,7 @@ mod tests {
     #[test]
     fn test_missing_ext_defaults_to_empty_object() {
         let json = format!(
-            r#"{{"v":"2.0","id":"{FIXTURE_ID}","type":"msg","swarm":"🐝test","author":"a-b","ts":0,"body":"hi"}}"#
+            r#"{{"v":"2.0","id":"{FIXTURE_ID}","type":"msg","swarm":"💬test","author":"a-b","ts":0,"body":"hi"}}"#
         );
         let parsed = Message::parse(json.as_bytes()).unwrap();
         assert_eq!(parsed.ext, serde_json::json!({}));
@@ -1061,7 +1061,7 @@ mod tests {
         // A `1.0` (pre-merge) message must be rejected by this `2.0` binary — the
         // rolling-upgrade guard: cross-version state never silently folds.
         let json = format!(
-            r#"{{"v":"1.0","id":"{FIXTURE_ID}","type":"msg","swarm":"🐝test","author":"a-b","ts":0,"body":"hi","ext":{{}}}}"#
+            r#"{{"v":"1.0","id":"{FIXTURE_ID}","type":"msg","swarm":"💬test","author":"a-b","ts":0,"body":"hi","ext":{{}}}}"#
         );
         assert!(Message::parse(json.as_bytes()).is_err());
     }
@@ -1072,14 +1072,14 @@ mod tests {
     // escapes / spoof the `<nick>`/`#swarm` conventions (bad body/author).
     #[test]
     fn parse_rejects_non_uuid_id() {
-        let json = r#"{"v":"2.0","id":"not-a-uuid","type":"msg","swarm":"🐝test","author":"a-b","ts":0,"body":"hi","ext":{}}"#;
+        let json = r#"{"v":"2.0","id":"not-a-uuid","type":"msg","swarm":"💬test","author":"a-b","ts":0,"body":"hi","ext":{}}"#;
         assert!(Message::parse(json.as_bytes()).is_err());
     }
 
     #[test]
     fn parse_rejects_control_char_body() {
         let json = format!(
-            r#"{{"v":"2.0","id":"{FIXTURE_ID}","type":"msg","swarm":"🐝test","author":"a-b","ts":0,"body":"evil\u0000body","ext":{{}}}}"#
+            r#"{{"v":"2.0","id":"{FIXTURE_ID}","type":"msg","swarm":"💬test","author":"a-b","ts":0,"body":"evil\u0000body","ext":{{}}}}"#
         );
         assert!(Message::parse(json.as_bytes()).is_err());
     }
@@ -1087,7 +1087,7 @@ mod tests {
     #[test]
     fn parse_rejects_unsafe_author_nickname() {
         let json = format!(
-            r#"{{"v":"2.0","id":"{FIXTURE_ID}","type":"msg","swarm":"🐝test","author":"a#b","ts":0,"body":"hi","ext":{{}}}}"#
+            r#"{{"v":"2.0","id":"{FIXTURE_ID}","type":"msg","swarm":"💬test","author":"a#b","ts":0,"body":"hi","ext":{{}}}}"#
         );
         assert!(Message::parse(json.as_bytes()).is_err());
     }
@@ -1099,7 +1099,7 @@ mod tests {
         // so a crafted value never reaches the fork/DAG indexes or sig verify.
         let base = |extra: &str| {
             format!(
-                r#"{{"v":"2.0","id":"{FIXTURE_ID}","type":"msg","swarm":"🐝test","author":"a-b","ts":0,"body":"hi"{extra},"ext":{{}}}}"#
+                r#"{{"v":"2.0","id":"{FIXTURE_ID}","type":"msg","swarm":"💬test","author":"a-b","ts":0,"body":"hi"{extra},"ext":{{}}}}"#
             )
         };
         // 3KB garbage pubkey, non-hex / wrong-length variants, and a bad hash.

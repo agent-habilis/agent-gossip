@@ -1,4 +1,4 @@
-//! `ahsw plug` / `ahsw unplug`: install or remove the swarm integrations
+//! `agent-gossip plug` / `agent-gossip unplug`: install or remove the swarm integrations
 //! across agents. Each artifact is embedded at compile time (like the manual),
 //! so a brew/cargo-installed binary carries them with no repo or external
 //! installer. Both act immediately; `plug` is reversible with `unplug`.

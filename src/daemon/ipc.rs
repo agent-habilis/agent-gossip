@@ -236,7 +236,7 @@ fn state_merge_response(outcome: anyhow::Result<()>) -> (String, bool) {
     }
 }
 
-/// The `ahsw state get` response: the derived document.
+/// The `agent-gossip state get` response: the derived document.
 fn state_get_response(state: &EventLoopState, channel: crate::protocol::Channel) -> String {
     let log = match channel {
         crate::protocol::Channel::State => &state.state_log,
@@ -247,7 +247,7 @@ fn state_get_response(state: &EventLoopState, channel: crate::protocol::Channel)
     format!(r#"{{"ok":true,"document":{doc_json}}}"#)
 }
 
-/// Serialize the live roster snapshot as the `ahsw peers` response.
+/// Serialize the live roster snapshot as the `agent-gossip peers` response.
 /// `ok:true` plus the snapshot's `participants` (recency-sorted, peers only)
 /// and `participant_count` (`participants.len() + 1` — the `+1` is self, so
 /// the count is swarm size, not the array length). Matches the field name the

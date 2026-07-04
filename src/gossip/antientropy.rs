@@ -322,7 +322,7 @@ mod tests {
         let mut log = MessageLog::new(total);
         for index in 0..total {
             let mut message = Message::new_message(
-                &SwarmId::from("🐝test"),
+                &SwarmId::from("💬test"),
                 &Nickname::from("author"),
                 MessageBody::from(format!("m{index}").as_str()),
             );
@@ -343,9 +343,9 @@ mod tests {
         let json = serde_json::to_string(&digest_body).unwrap();
         let body = MessageBody::new(json).expect("digest body has no control chars");
 
-        // Worst-case envelope: a realistically long `🐝…` swarm id.
+        // Worst-case envelope: a realistically long `💬…` swarm id.
         let swarm = SwarmId::from(
-            "🐝6bLvZNPGxuqnsbaPVGwf277NyTp8cYPCMiBxXED8d6TyBZpDDzZADkKHL7tTB1EjFagbCXYZ",
+            "💬6bLvZNPGxuqnsbaPVGwf277NyTp8cYPCMiBxXED8d6TyBZpDDzZADkKHL7tTB1EjFagbCXYZ",
         );
         let digest = Message::new_digest(&swarm, &Nickname::from("a-fairly-long-nickname"), body);
         let wire = digest.serialize().expect("serialize digest");
@@ -410,7 +410,7 @@ mod tests {
         use crate::daemon::state_log::StateLog;
 
         let swarm = SwarmId::from(
-            "🐝6bLvZNPGxuqnsbaPVGwf277NyTp8cYPCMiBxXED8d6TyBZpDDzZADkKHL7tTB1EjFagbCXYZ",
+            "💬6bLvZNPGxuqnsbaPVGwf277NyTp8cYPCMiBxXED8d6TyBZpDDzZADkKHL7tTB1EjFagbCXYZ",
         );
         let author = Nickname::from("a-fairly-long-nickname");
         let mut log = StateLog::new();

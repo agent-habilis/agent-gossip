@@ -48,7 +48,7 @@ use crate::util::tuning::{
 /// on such a move so we review (do these hosts still operate?) before
 /// shipping the bump. See docs/iroh-ecosystem-research.md.
 const RENDEZVOUS_RELAY_LADDER: [&str; 5] = [
-    "https://swarm-relay.agent-habilis.com./",         // ours (rung 0)
+    "https://swarm-relay.agent-habilis.com./", // ours (rung 0)
     "https://use1-1.relay.n0.iroh-canary.iroh.link./", // NA-east
     "https://usw1-1.relay.n0.iroh-canary.iroh.link./", // NA-west
     "https://euc1-1.relay.n0.iroh-canary.iroh.link./", // EU
@@ -130,17 +130,17 @@ pub(crate) async fn select_bootstrap_rung(
     let selected = select_first_reachable(ladder, |rung| async move {
         let reachable = relay_rung_reachable(&rung, per_rung).await;
         if !reachable {
-            tracing::debug!(target: "agent_habilis_swarm::lookup", relay = %rung, "bootstrap relay rung unreachable; trying next");
+            tracing::debug!(target: "agent_gossip::lookup", relay = %rung, "bootstrap relay rung unreachable; trying next");
         }
         reachable
     })
     .await;
     match &selected {
         Some(rung) => {
-            tracing::info!(target: "agent_habilis_swarm::lookup", relay = %rung, "selected bootstrap relay rung");
+            tracing::info!(target: "agent_gossip::lookup", relay = %rung, "selected bootstrap relay rung");
         }
         None if !ladder.is_empty() => {
-            tracing::info!(target: "agent_habilis_swarm::lookup", rungs = ladder.len(), "no relay ladder rung reachable; relying on mDNS/DHT");
+            tracing::info!(target: "agent_gossip::lookup", rungs = ladder.len(), "no relay ladder rung reachable; relying on mDNS/DHT");
         }
         None => {}
     }
@@ -296,7 +296,7 @@ pub(crate) fn spawn_relay_monitor(
                     continue;
                 }
                 tracing::info!(
-                    target: "agent_habilis_swarm::lookup",
+                    target: "agent_gossip::lookup",
                     fails,
                     "beacon relay rung unreachable; re-walking the ladder"
                 );
@@ -311,7 +311,7 @@ pub(crate) fn spawn_relay_monitor(
         loop {
             if let Some(rung) = select_bootstrap_rung(&ladder, probe).await {
                 tracing::info!(
-                    target: "agent_habilis_swarm::lookup",
+                    target: "agent_gossip::lookup",
                     relay = %rung,
                     "relay-less beacon rediscovered a reachable rung"
                 );

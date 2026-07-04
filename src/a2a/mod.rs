@@ -1,4 +1,4 @@
-//! `ahsw a2a` — bridge an A2A (agent-to-agent) HTTP/JSON-RPC server over the
+//! `agent-gossip a2a` — bridge an A2A (agent-to-agent) HTTP/JSON-RPC server over the
 //! swarm's iroh layer, off the gossip log. `a2a expose` binds an endpoint next
 //! to a local A2A server and prints a `📡…` ticket; `a2a connect` redeems the
 //! ticket, binds a local `127.0.0.1:PORT`, and forwards every HTTP request to
@@ -31,7 +31,7 @@ pub(crate) use expose::expose;
 
 /// ALPN for the a2a bridge — a raw bidirectional QUIC stream with its own
 /// protocol identity, distinct from the gossip protocol's `GOSSIP_ALPN`.
-pub(crate) const A2A_ALPN: &[u8] = b"agent-habilis-swarm/a2a/1";
+pub(crate) const A2A_ALPN: &[u8] = b"agent-gossip/a2a/1";
 
 /// Length of the bearer-capability secret carried in an a2a ticket, and of the
 /// auth token that opens every bi-stream (the raw secret, or its Argon2id

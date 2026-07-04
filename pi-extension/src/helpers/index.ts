@@ -30,7 +30,7 @@ export function isValidSwarmName(name: string): boolean {
 
 export function agentSwarmAvailable(): boolean {
   try {
-    execSync("which ahsw", { stdio: "ignore" });
+    execSync("which agent-gossip", { stdio: "ignore" });
     return true;
   } catch {
     return false;
@@ -39,14 +39,14 @@ export function agentSwarmAvailable(): boolean {
 
 export function requireAgentSwarm(_ctx: ExtensionContext): boolean {
   if (!agentSwarmAvailable()) {
-    notifyError("ahsw CLI not found on PATH");
+    notifyError("agent-gossip CLI not found on PATH");
     return false;
   }
   return true;
 }
 
 export function runSwarmCommand(args: string[]): string {
-  return execSync(`ahsw ${args.map((arg) => `"${arg}"`).join(" ")}`, {
+  return execSync(`agent-gossip ${args.map((arg) => `"${arg}"`).join(" ")}`, {
     encoding: "utf-8",
     timeout: 15_000,
   }).trim();

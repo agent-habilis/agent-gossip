@@ -1,6 +1,6 @@
 //! The swarm identifier, at two levels:
 //!
-//! - [`SwarmId`] — the validated `🐝…` *string* (shallow: prefix +
+//! - [`SwarmId`] — the validated `💬…` *string* (shallow: prefix +
 //!   length + Base58 charset). Cheap boundary check at the CLI / IPC
 //!   edge. Code: [`id`].
 //! - [`Swarm`] — the *decoded* structure (32-byte seed + name +
@@ -34,10 +34,10 @@ pub(crate) use lookup::{
 pub use lookup::{LookupSet, RelayLadder, RelayLadderError, RelaySelection};
 pub use name::{NameError, SwarmName};
 
-const PREFIX: &str = "🐝";
+const PREFIX: &str = crate::util::consts::SWARM_GLYPH;
 
-/// The URI separator that follows the `🐝` sigil in the canonical id
-/// (`🐝://<base58>`). Optional on input — a legacy bare `🐝<base58>` id
+/// The URI separator that follows the `💬` sigil in the canonical id
+/// (`💬://<base58>`). Optional on input — a legacy bare `💬<base58>` id
 /// still parses. Never appears in a filesystem path (see
 /// [`crate::util::swarm_prefix`]).
 pub(crate) const SEPARATOR: &str = "://";
@@ -52,7 +52,7 @@ const SEED_LEN: usize = 32;
 /// 1-byte length field).
 const NAME_MAX_BYTES: usize = super::ident::MAX_CHARS * 4;
 
-/// A swarm identifier — Base58Check payload with a `🐝` prefix.
+/// A swarm identifier — Base58Check payload with a `💬` prefix.
 ///
 /// The token carries the random `seed` plus the swarm's [`SwarmConfig`]
 /// (lookups); **no peer address is ever stored**. The
@@ -320,7 +320,7 @@ impl FromStr for Swarm {
     fn from_str(s: &str) -> Result<Self> {
         let rest = s
             .strip_prefix(PREFIX)
-            .context("Invalid swarm prefix: expected '🐝'")?;
+            .with_context(|| format!("Invalid swarm prefix: expected '{PREFIX}'"))?;
         let payload = rest.strip_prefix(SEPARATOR).unwrap_or(rest);
         let bytes = base58check_decode(payload)?;
         Self::decode_bytes(&bytes)
@@ -357,7 +357,7 @@ mod swarm_tests {
     fn round_trip_loopback() {
         let swarm = Swarm::new(dummy_seed(), dummy_name(), SwarmConfig::loopback());
         let encoded = swarm.to_string();
-        assert!(encoded.starts_with("🐝"));
+        assert!(encoded.starts_with("💬"));
         let decoded: Swarm = encoded.parse().unwrap();
         assert_eq!(decoded.seed(), swarm.seed());
         assert_eq!(decoded.name, swarm.name);
@@ -479,13 +479,13 @@ mod swarm_tests {
         let swarm = Swarm::new(dummy_seed(), dummy_name(), SwarmConfig::public_preset());
         assert_eq!(
             swarm.to_string(),
-            "🐝://2UXAThUkdBAbiJNXvCt4YeMGQ9myFg7gJJZSr3pG3MAGzUwWmmV7D2NgrWBn1"
+            "💬://2UXAThUkdBAbiJNXvCt4YeMGQ9myFg7gJJZSr3pG3MAGzUwWmmV7D2NgrWBn1"
         );
         let topic =
             super::crypto::derive_topic_id(swarm.seed(), &swarm.name, &swarm.config_bytes());
         assert_eq!(
             format!("{topic:?}"),
-            "TopicId(3d20258943e8604421caaabcc59fca2a0d86ef87f5c6976cf33a3a32005a14b3)"
+            "TopicId(a9de3aea27630a0a362a8c3dad39c66d73de4241f8914b61cd3b1e307a67e126)"
         );
     }
 
@@ -499,11 +499,12 @@ mod swarm_tests {
     #[test]
     fn from_topic_name_is_the_sanitized_string() {
         let swarm = Swarm::from_topic(
-            "https://github.com/agent-habilis/swarm",
+            "https://github.com/agent-habilis/agent-gossip",
             SwarmConfig::public_preset(),
         );
-        // Scheme stripped, `/`s kept, 30 chars ≤ 32 so no truncation.
-        assert_eq!(swarm.name.as_str(), "github.com/agent-habilis/swarm");
+        // Scheme stripped, `/`s kept; the 37-char URL exceeds the 32-char cap,
+        // so the tail truncates to `…`.
+        assert_eq!(swarm.name.as_str(), "github.com/agent-habilis/agent…");
     }
 
     #[test]
@@ -566,7 +567,7 @@ mod swarm_tests {
 
     #[test]
     fn swarm_id_round_trips_unicode_name() {
-        let name = SwarmName::new("café-日本-🐝").unwrap();
+        let name = SwarmName::new("café-日本-💬").unwrap();
         let swarm = Swarm::new(dummy_seed(), name.clone(), SwarmConfig::loopback());
         let decoded: Swarm = swarm.to_string().parse().expect("decode failed");
         assert_eq!(decoded.name, name);
@@ -576,7 +577,7 @@ mod swarm_tests {
     fn swarm_id_round_trips_max_byte_name() {
         // 32 four-byte scalars = 128 bytes = the most the 1-byte name
         // length field can carry; exercises the encode/decode upper edge.
-        let name = SwarmName::new("🐝".repeat(32)).unwrap();
+        let name = SwarmName::new("💬".repeat(32)).unwrap();
         assert_eq!(name.as_bytes().len(), 128);
         let swarm = Swarm::new(dummy_seed(), name.clone(), SwarmConfig::public_preset());
         let decoded: Swarm = swarm.to_string().parse().expect("decode failed");
@@ -633,7 +634,7 @@ mod swarm_tests {
             #[test]
             fn prop_prefix(seed in arb_seed(), name in arb_name()) {
                 let swarm = Swarm::new(seed, name, SwarmConfig::loopback());
-                prop_assert!(swarm.to_string().starts_with("🐝"));
+                prop_assert!(swarm.to_string().starts_with("💬"));
             }
 
             #[test]

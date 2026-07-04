@@ -7,7 +7,7 @@ timestamp: 2026-06-28T00:00:00Z
 roles: [initiator, worker-1, worker-2]
 coordinator: dedicated
 harness: any
-prereqs: [ahsw, todo-plugin]
+prereqs: [agent-gossip, todo-plugin]
 network: private
 ---
 
