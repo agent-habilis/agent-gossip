@@ -1,14 +1,16 @@
-//! The blob ticket — a `📦` token carrying everything a consumer needs to fetch
+//! The blob ticket — a `💬` token carrying everything a consumer needs to fetch
 //! one content-addressed blob from its producer: the bearer secret, the content
 //! hash + size, the swarm's discovery config, and the producer's blob-endpoint
 //! address. Payload layout: `secret(32) ‖ flags(1) ‖ sha256(32) ‖ size(8, LE) ‖
 //! lookups ‖ address-json` (lookups is self-delimiting, so the address occupies
 //! the remainder). Bit 0 of the flags byte marks a password-protected ticket.
 //!
-//! Its own namespace (`📦`, distinct from the swarm id's `💬` and the a2a
-//! bridge's `📡`), so there is no type byte. Wire: `📦` + Base58Check(`version ‖
-//! payload`) with a `SHA256d` checksum — the emoji is the brand, the remainder
-//! ASCII Base58. Mirrors [`crate::a2a::ticket`].
+//! Wire: the shared `💬` brand + Base58Check(`version ‖ kind ‖ payload`) with a
+//! `SHA256d` checksum — the emoji is the brand, the remainder ASCII Base58. The
+//! `💬` glyph is shared with the swarm id and the a2a bridge ticket, so it no
+//! longer disambiguates on its own: the `kind` byte marks this as a *blob*
+//! ticket and makes a wrong-kind token (e.g. an a2a ticket) fail cleanly on
+//! decode. Mirrors [`crate::a2a::ticket`].
 
 use anyhow::{Context, Result, bail};
 use iroh::EndpointAddr;
@@ -16,16 +18,23 @@ use sha2::{Digest, Sha256};
 
 use crate::protocol::peer_addr::{endpoint_addr_from_json, endpoint_addr_to_json};
 use crate::protocol::swarm::LookupOpts;
+use crate::util::consts::SWARM_GLYPH;
 
 use super::{HASH_LEN, SECRET_LEN};
 
-/// Branding prefix on every blob ticket — a single emoji (4 UTF-8 bytes); the
-/// remainder of the string is ASCII Base58Check.
-pub(crate) const PREFIX: &str = "📦";
+/// Branding prefix on every ticket — the shared swarm glyph (4 UTF-8 bytes); the
+/// remainder of the string is ASCII Base58Check. Blob and a2a tickets share this
+/// brand and are told apart by [`KIND`].
+pub(crate) const PREFIX: &str = SWARM_GLYPH;
 
 /// Framing version. Bumped only on a breaking framing change; an unknown
 /// version is rejected on decode.
 const VERSION: u8 = 1;
+
+/// Ticket-kind discriminant, framed after [`VERSION`]. Distinct from the a2a
+/// bridge ticket's kind so a token of the wrong kind is rejected on decode now
+/// that both share the `💬` brand.
+const KIND: u8 = 1;
 
 /// Bit 0 of the flags byte: the password flag.
 const PASSWORD_BIT: u8 = 0b0000_0001;
@@ -44,7 +53,7 @@ pub(crate) struct BlobTicket {
 }
 
 impl BlobTicket {
-    /// Encode as a `📦` token.
+    /// Encode as a `💬` blob token.
     pub(crate) fn encode(&self) -> String {
         let mut payload = Vec::with_capacity(SECRET_LEN + 1 + HASH_LEN + 8 + 64);
         payload.extend_from_slice(&self.secret);
@@ -55,27 +64,45 @@ impl BlobTicket {
         let addr_json = serde_json::to_vec(&endpoint_addr_to_json(&self.addr))
             .expect("EndpointAddr JSON always serializes");
         payload.extend_from_slice(&addr_json);
-        let mut framed = Vec::with_capacity(1 + payload.len());
+        let mut framed = Vec::with_capacity(2 + payload.len());
         framed.push(VERSION);
+        framed.push(KIND);
         framed.extend_from_slice(&payload);
         format!("{PREFIX}{}", base58check_encode(&framed))
     }
 
-    /// Decode a `📦` blob ticket.
+    /// The blob's content hash as lowercase hex — the content-addressed name to
+    /// land the fetched bytes under, mirroring the producer's spool filename
+    /// (`src/blob/store.rs`).
+    pub(crate) fn sha256_hex(&self) -> String {
+        use std::fmt::Write as _;
+        let mut out = String::with_capacity(self.sha256.len() * 2);
+        for byte in &self.sha256 {
+            let _ = write!(out, "{byte:02x}");
+        }
+        out
+    }
+
+    /// Decode a `💬` blob ticket.
     ///
     /// # Errors
-    /// Not a `📦` token, a bad checksum/version, or a malformed payload.
+    /// Not a `💬` token, the wrong ticket kind, a bad checksum/version, or a
+    /// malformed payload.
     pub(crate) fn decode(ticket: &str) -> Result<Self> {
         let body = ticket
             .trim()
             .strip_prefix(PREFIX)
-            .context("not a blob ticket: must start with 📦")?;
+            .with_context(|| format!("not a blob ticket: must start with {PREFIX}"))?;
         let framed = base58check_decode(body)?;
         let version = *framed.first().context("ticket too short")?;
         if version != VERSION {
             bail!("unsupported blob ticket version: {version}");
         }
-        let payload = &framed[1..];
+        let kind = *framed.get(1).context("ticket too short")?;
+        if kind != KIND {
+            bail!("not a blob ticket: wrong ticket kind");
+        }
+        let payload = &framed[2..];
         let mut pos = 0;
         let secret =
             take_array::<SECRET_LEN>(payload, &mut pos).context("ticket missing secret")?;
@@ -183,8 +210,17 @@ mod tests {
     }
 
     #[test]
+    fn sha256_hex_is_the_lowercase_content_hash() {
+        // The receiver lands the fetched bytes under this name, so it must equal
+        // the producer's spool filename (lowercase hex of the SHA-256).
+        let ticket = sample(false); // sha256 == [7u8; HASH_LEN]
+        assert_eq!(ticket.sha256_hex(), "07".repeat(HASH_LEN));
+    }
+
+    #[test]
     fn rejects_a_swarm_token() {
-        // A `💬` swarm id is a valid token but the wrong brand for a blob ticket.
+        // A swarm id shares the `💬` brand but its `://` body is not Base58Check,
+        // so it fails to decode as a blob ticket.
         let swarm = crate::protocol::swarm::Swarm::new(
             [1u8; 32],
             crate::protocol::swarm::SwarmName::new("t").unwrap(),

@@ -744,7 +744,7 @@ impl InProcNode {
 
     /// Worker-emit a `TaskArtifactUpdate` whose result is a file, offloaded over
     /// the blob channel and referenced by a `Part.url`. Returns the daemon's echo
-    /// so a test can read the minted `📦…` reference.
+    /// so a test can read the minted `💬…` reference.
     pub(crate) async fn task_artifact_file(
         &self,
         task_id: &TaskId,

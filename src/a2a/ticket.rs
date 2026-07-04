@@ -1,13 +1,15 @@
-//! The a2a bridge ticket — a `📡` token carrying everything a consumer needs
+//! The a2a bridge ticket — a `💬` token carrying everything a consumer needs
 //! to dial the exposer: the bearer secret, the swarm's discovery config, and
 //! the exposer's address. Payload layout: `secret(32) ‖ flags(1) ‖ lookups ‖
 //! address-json` (lookups is self-delimiting, so the address occupies the
 //! remainder). Bit 0 of the flags byte marks a password-protected ticket.
 //!
-//! The token is its own namespace (`📡`, distinct from the swarm id's `💬`), so
-//! there is no type byte — the whole payload is one shape. Wire: `📡` +
-//! Base58Check(`version ‖ payload`) with a `SHA256d` checksum; the emoji is the
-//! brand, everything after it ASCII Base58.
+//! Wire: the shared `💬` brand + Base58Check(`version ‖ kind ‖ payload`) with a
+//! `SHA256d` checksum; the emoji is the brand, everything after it ASCII Base58.
+//! The `💬` glyph is shared with the swarm id and the blob ticket, so it no
+//! longer disambiguates on its own: the `kind` byte marks this as an *a2a bridge*
+//! ticket and makes a wrong-kind token (e.g. a blob ticket) fail cleanly on
+//! decode.
 
 use anyhow::{Context, Result, bail};
 use iroh::EndpointAddr;
@@ -15,16 +17,23 @@ use sha2::{Digest, Sha256};
 
 use crate::protocol::peer_addr::{endpoint_addr_from_json, endpoint_addr_to_json};
 use crate::protocol::swarm::LookupOpts;
+use crate::util::consts::SWARM_GLYPH;
 
 use super::SECRET_LEN;
 
-/// Branding prefix on every a2a ticket — a single emoji (4 UTF-8 bytes); the
-/// remainder of the string is ASCII Base58Check.
-pub(crate) const PREFIX: &str = "📡";
+/// Branding prefix on every ticket — the shared swarm glyph (4 UTF-8 bytes); the
+/// remainder of the string is ASCII Base58Check. Blob and a2a tickets share this
+/// brand and are told apart by [`KIND`].
+pub(crate) const PREFIX: &str = SWARM_GLYPH;
 
 /// Framing version. Bumped only on a breaking framing change; an unknown
 /// version is rejected on decode.
 const VERSION: u8 = 1;
+
+/// Ticket-kind discriminant, framed after [`VERSION`]. Distinct from the blob
+/// ticket's kind so a token of the wrong kind is rejected on decode now that
+/// both share the `💬` brand.
+const KIND: u8 = 2;
 
 /// Bit 0 of the flags byte: the password flag.
 const PASSWORD_BIT: u8 = 0b0000_0001;
@@ -42,7 +51,7 @@ pub(crate) struct A2aTicket {
 }
 
 impl A2aTicket {
-    /// Encode as a `📡` token.
+    /// Encode as a `💬` a2a bridge token.
     pub(crate) fn encode(&self) -> String {
         let mut payload = Vec::with_capacity(SECRET_LEN + 1 + 64);
         payload.extend_from_slice(&self.secret);
@@ -51,27 +60,33 @@ impl A2aTicket {
         let addr_json = serde_json::to_vec(&endpoint_addr_to_json(&self.addr))
             .expect("EndpointAddr JSON always serializes");
         payload.extend_from_slice(&addr_json);
-        let mut framed = Vec::with_capacity(1 + payload.len());
+        let mut framed = Vec::with_capacity(2 + payload.len());
         framed.push(VERSION);
+        framed.push(KIND);
         framed.extend_from_slice(&payload);
         format!("{PREFIX}{}", base58check_encode(&framed))
     }
 
-    /// Decode a `📡` a2a ticket.
+    /// Decode a `💬` a2a ticket.
     ///
     /// # Errors
-    /// Not a `📡` token, a bad checksum/version, or a malformed payload.
+    /// Not a `💬` token, the wrong ticket kind, a bad checksum/version, or a
+    /// malformed payload.
     pub(crate) fn decode(ticket: &str) -> Result<Self> {
         let body = ticket
             .trim()
             .strip_prefix(PREFIX)
-            .context("not an a2a ticket: must start with 📡")?;
+            .with_context(|| format!("not an a2a ticket: must start with {PREFIX}"))?;
         let framed = base58check_decode(body)?;
         let version = *framed.first().context("ticket too short")?;
         if version != VERSION {
             bail!("unsupported a2a ticket version: {version}");
         }
-        let payload = &framed[1..];
+        let kind = *framed.get(1).context("ticket too short")?;
+        if kind != KIND {
+            bail!("not an a2a ticket: wrong ticket kind");
+        }
+        let payload = &framed[2..];
         let secret_slice = payload.get(..SECRET_LEN).context("ticket too short")?;
         let mut secret = [0u8; SECRET_LEN];
         secret.copy_from_slice(secret_slice);
@@ -163,7 +178,8 @@ mod tests {
 
     #[test]
     fn rejects_a_swarm_token() {
-        // A `💬` swarm id is a valid token but the wrong brand for an a2a ticket.
+        // A swarm id shares the `💬` brand but its `://` body is not Base58Check,
+        // so it fails to decode as an a2a ticket.
         let swarm = crate::protocol::swarm::Swarm::new(
             [1u8; 32],
             crate::protocol::swarm::SwarmName::new("t").unwrap(),
@@ -171,6 +187,28 @@ mod tests {
         )
         .to_string();
         assert!(A2aTicket::decode(&swarm).is_err());
+    }
+
+    #[test]
+    fn rejects_a_cross_kind_ticket() {
+        // The blob ticket shares the `💬` brand but carries a different kind
+        // byte, so it must not decode as an a2a ticket — and vice versa.
+        let blob = crate::blob::BlobTicket {
+            addr: sample_addr(3),
+            secret: [9u8; crate::blob::SECRET_LEN],
+            sha256: [7u8; crate::blob::HASH_LEN],
+            size: 1_234_567,
+            lookups: LookupOpts::public_preset(),
+            password: false,
+        };
+        let a2a = A2aTicket {
+            addr: sample_addr(4),
+            secret: [9u8; SECRET_LEN],
+            lookups: LookupOpts::public_preset(),
+            password: false,
+        };
+        assert!(A2aTicket::decode(&blob.encode()).is_err());
+        assert!(crate::blob::BlobTicket::decode(&a2a.encode()).is_err());
     }
 
     #[test]

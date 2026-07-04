@@ -396,11 +396,14 @@ The producer's daemon serves the content — addressed by its SHA-256 — from a
 per-peer spool (`<RUNTIME_DIR>/<swarm-prefix>/<nick>.blobs/<hash>`, hardlinked or
 copied from the source so the original can change freely) over a dedicated,
 lazily-bound endpoint on the `agent-gossip/blob/1` ALPN. The **blob
-reference** — a `📦…` Base58Check *ticket* (its own emoji namespace, like the
-swarm `💬` and a2a `📡`) carrying the producer's address, a bearer secret, the
-hash, and the size — rides gossip inside a `Part.url`. The consumer decodes it,
-dials the producer, presents the secret, and streams the bytes to stdout,
-verifying the SHA-256 as they arrive (`agent-gossip a2a fetch`). Symmetric: an input
+reference** — a `💬…` Base58Check *ticket* carrying the producer's address, a
+bearer secret, the hash, and the size — rides gossip inside a `Part.url`. The
+ticket shares the swarm's `💬` brand with the swarm id and the a2a bridge
+ticket; a *kind* byte inside the framed payload tells the three apart, so a
+wrong-kind token fails cleanly on decode. The consumer decodes it, dials the
+producer, presents the secret, and streams the bytes to disk, verifying the
+SHA-256 as they arrive (`agent-gossip a2a fetch` — by default into the session's
+`<nick>.recv/` folder, or to stdout with `--output -`). Symmetric: an input
 file rides a request `Message.parts`, an output rides a result `Artifact.parts`.
 Confidentiality equals swarm membership (the flooded ticket lets any member
 fetch); availability lasts only while the producer's daemon is alive.

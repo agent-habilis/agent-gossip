@@ -72,7 +72,7 @@ pub(crate) fn own_card(nickname: &Nickname, pubkey_hex: &str, seal_pubkey_b58: &
                 ),
                 extension(
                     EXT_SWARM_BLOB,
-                    "large files on a Part travel as a url reference (a 📦 ticket), fetched point-to-point over a dedicated QUIC channel and SHA-256-verified, instead of inlining over gossip",
+                    "large files on a Part travel as a url reference (a 💬 ticket), fetched point-to-point over a dedicated QUIC channel and SHA-256-verified, instead of inlining over gossip",
                 ),
                 AgentExtension {
                     uri: EXT_SWARM_SEAL.to_string(),
