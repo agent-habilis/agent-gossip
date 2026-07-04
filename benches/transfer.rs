@@ -176,7 +176,7 @@ async fn main() {
             Instant::now() < warmup_deadline,
             "mesh never formed: node B received no chunk within 20s"
         );
-        let _ = node_a.send(bodies[0].clone(), None).await;
+        let _ = node_a.send(bodies[0].clone()).await;
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
 
@@ -184,7 +184,7 @@ async fn main() {
     // index 0 (warmup) is harmless: the receiver dedups by index.
     let started = Instant::now();
     for body in bodies {
-        let _ = node_a.send(body, None).await;
+        let _ = node_a.send(body).await;
     }
 
     // Wait for drain: done at N, or give up after a no-progress stall /

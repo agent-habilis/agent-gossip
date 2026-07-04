@@ -3,8 +3,9 @@ use std::sync::LazyLock;
 
 use tokio::sync::mpsc::UnboundedSender;
 
+use crate::a2a::TaskId;
 use crate::protocol::swarm::SwarmName;
-use crate::protocol::{Message, MessageId, MessageKind, Nickname, SwarmId, TaskId};
+use crate::protocol::{Message, MessageId, MessageKind, Nickname, SwarmId};
 
 mod json;
 #[cfg(test)]
@@ -48,6 +49,9 @@ pub enum OutputEvent {
         /// fallen behind this binary (see `cli::agent::drift_warning`), else
         /// `None`. The startup nag for stale skills.
         drift: Option<String>,
+        /// The bound `--a2a-serve` port; `None` when the binding is off
+        /// (the default), keeping the common event unchanged.
+        a2a_port: Option<u16>,
     },
     SwarmId {
         id: SwarmId,
@@ -95,6 +99,19 @@ pub enum OutputEvent {
         msg: Box<Message>,
         is_self: bool,
     },
+    /// An RPC `message/send` task leg (the initiator's brief / answer, or the
+    /// created `Task`) surfaced with no backing frame — it arrived over the
+    /// request/response binding. Renders as a `task` event, `kind:message`.
+    TaskMessage {
+        id: String,
+        swarm: String,
+        author: String,
+        peer: String,
+        task_id: String,
+        state: Option<crate::a2a::TaskState>,
+        text: String,
+        is_self: bool,
+    },
     /// A task was evicted for crossing its idle-debounce timeout (the
     /// daemon-side per-task silence sweep). Daemon-originated — no `Message`.
     TaskTimeout {
@@ -122,8 +139,8 @@ pub(crate) mod style {
     pub(super) const PEER_NICK: &str = "\x1b[1;36m";
     /// Bold yellow — a swarm name.
     pub(crate) const SWARM: &str = "\x1b[1;33m";
-    /// Bold blue — the runnable hint (`ahsw join` on create, `ahsw file get`
-    /// on a file producer).
+    /// Bold blue — the runnable hint (`ahsw join` on create, `ahsw pipe connect`
+    /// on the pipe producer).
     pub(crate) const BLUE: &str = "\x1b[1;34m";
     /// Bold — the highlighted row in the `discover` picker.
     pub(crate) const BOLD: &str = "\x1b[1m";
@@ -382,6 +399,7 @@ impl Output {
         name: &SwarmName,
         nickname: &Nickname,
         drift: Option<&str>,
+        a2a_port: Option<u16>,
     ) {
         self.dispatch(
             || OutputEvent::Ready {
@@ -389,6 +407,7 @@ impl Output {
                 name: name.clone(),
                 nickname: nickname.clone(),
                 drift: drift.map(str::to_owned),
+                a2a_port,
             },
             |mode| {
                 // In human mode, `info("joined as <nick>")` covers this.
@@ -399,6 +418,7 @@ impl Output {
                         name: name.as_str(),
                         nickname: nickname.as_str(),
                         drift,
+                        a2a_port,
                     });
                 }
             },
@@ -407,7 +427,7 @@ impl Output {
 
     /// Surface the swarm identifier at startup (stderr). Human mode
     /// prints the runnable join command (`ahsw join <id>`); JSON mode
-    /// prints the canonical `🐝://…` id (the integration harness greps this);
+    /// prints the bare `🐝…` id (the integration harness greps this);
     /// Silent suppresses it.
     pub(crate) fn swarm_id_line(&self, id: &SwarmId) {
         self.dispatch(
@@ -462,17 +482,31 @@ impl Output {
         );
     }
 
-    /// Surface a task leg. Distinct top-level `task` event (not
-    /// the `message` family) so skills branch on `event`. When
-    /// `filter_self` is enabled, self-authored legs are suppressed.
+    /// Surface a worker-pushed task frame (an `a2a_status` or `a2a_artifact`).
+    /// Distinct top-level `task` event (not the `message` family) so skills
+    /// branch on `event`. When `filter_self` is enabled, self-authored legs are
+    /// suppressed.
     pub(crate) fn print_task(&self, msg: &Message, is_self: bool) {
-        let MessageKind::Task { to, phase, .. } = &msg.kind else {
-            return;
+        let to = match &msg.kind {
+            MessageKind::A2aStatus { to, .. } | MessageKind::A2aArtifact { to, .. } => to.clone(),
+            MessageKind::A2aMsg
+            | MessageKind::Presence { .. }
+            | MessageKind::PeerInfo
+            | MessageKind::Digest
+            | MessageKind::StateDigest
+            | MessageKind::MetaDigest
+            | MessageKind::Ping
+            | MessageKind::Pong { .. }
+            | MessageKind::A2aReq { .. }
+            | MessageKind::A2aResp { .. }
+            | MessageKind::State
+            | MessageKind::Meta => return,
         };
         if is_self && self.filters_self() {
             return;
         }
-        let (to, phase) = (to.clone(), *phase);
+        let kind = crate::a2a::gossip::task_event_kind(msg).unwrap_or("status-update");
+        let state = crate::a2a::gossip::frame_task_state(msg);
         self.dispatch(
             || OutputEvent::Task {
                 msg: Box::new(msg.clone()),
@@ -482,12 +516,70 @@ impl Output {
                 OutputMode::Human => {
                     let (open, close) = self.nick_ansi(msg.author.as_str(), stdout_color());
                     let (to_open, to_close) = self.nick_ansi(to.as_str(), stdout_color());
+                    let label =
+                        state.map_or_else(|| kind.to_owned(), |state| format!("{kind} {state}"));
                     println!(
-                        "task {phase} {open}<{}>{close} → {to_open}<{to}>{to_close}: {}",
-                        msg.author, msg.body
+                        "task {label} {open}<{}>{close} → {to_open}<{to}>{to_close}: {}",
+                        msg.author,
+                        crate::a2a::gossip::task_text(msg)
                     );
                 }
                 OutputMode::Json => json::print_task_json(msg, is_self),
+                OutputMode::Silent => {}
+            },
+        );
+    }
+
+    /// Surface an RPC `message/send` task leg — the initiator's brief / answer
+    /// (on the worker), or the created `Task` (on the initiator). No frame
+    /// backs it (the leg arrived over the request/response binding), so the
+    /// fields are passed explicitly. Emits a `task` event with `kind:message`.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "a message-leg task event needs id/swarm/author/peer/task_id/state/text and the self flag; there is no frame to derive them from"
+    )]
+    pub(crate) fn task_message(
+        &self,
+        id: &str,
+        swarm: &str,
+        author: &str,
+        peer: &str,
+        task_id: &TaskId,
+        state: Option<crate::a2a::TaskState>,
+        text: &str,
+        is_self: bool,
+    ) {
+        if is_self && self.filters_self() {
+            return;
+        }
+        let (id, swarm, author, peer, task_id, text) = (
+            id.to_owned(),
+            swarm.to_owned(),
+            author.to_owned(),
+            peer.to_owned(),
+            task_id.as_str().to_owned(),
+            text.to_owned(),
+        );
+        self.dispatch(
+            || OutputEvent::TaskMessage {
+                id: id.clone(),
+                swarm: swarm.clone(),
+                author: author.clone(),
+                peer: peer.clone(),
+                task_id: task_id.clone(),
+                state,
+                text: text.clone(),
+                is_self,
+            },
+            |mode| match mode {
+                OutputMode::Human => {
+                    let label = state
+                        .map_or_else(|| "message".to_owned(), |state| format!("message {state}"));
+                    println!("task {label} <{author}> → <{peer}>: {text}");
+                }
+                OutputMode::Json => emit(&json::format_task_message_json(
+                    &id, &swarm, &author, &peer, &task_id, state, &text, is_self,
+                )),
                 OutputMode::Silent => {}
             },
         );
@@ -761,50 +853,21 @@ impl Output {
         }
     }
 
-    /// Render a message in Human mode: `<author>: body`, or
-    /// `<author> → <target>: body` for a reply. The author/target
-    /// `<nick>` tokens are colored (self vs peer); the **body** is
-    /// printed raw — it may legitimately contain `<`, `>`, `#`, so it
-    /// must never be run through the colorizer.
+    /// Render a broadcast chat message in Human mode: `<author>: text`. The
+    /// author `<nick>` token is colored (self vs peer); the **text** is printed
+    /// raw — it may legitimately contain `<`, `>`, `#`, so it must never be run
+    /// through the colorizer.
     fn print_message_human(&self, msg: &Message) {
         let enabled = stdout_color();
         let (open, close) = self.nick_ansi(msg.author.as_str(), enabled);
-        match &msg.kind {
-            MessageKind::Msg {
-                reply: Some(target),
-            } => {
-                let (to_open, to_close) = self.nick_ansi(target.as_str(), enabled);
-                println!(
-                    "{open}<{}>{close} → {to_open}<{}>{to_close}: {}",
-                    msg.author, target, msg.body
-                );
-            }
-            MessageKind::Notice {
-                reply: Some(target),
-            } => {
-                let (to_open, to_close) = self.nick_ansi(target.as_str(), enabled);
-                println!(
-                    "{open}<{}>{close} → {to_open}<{}>{to_close} (notice): {}",
-                    msg.author, target, msg.body
-                );
-            }
-            MessageKind::Notice { reply: None } => {
-                println!("{open}<{}>{close} (notice): {}", msg.author, msg.body);
-            }
-            MessageKind::Msg { reply: None }
-            | MessageKind::Presence { .. }
-            | MessageKind::PeerInfo
-            | MessageKind::Digest
-            | MessageKind::StateDigest
-            | MessageKind::MetaDigest
-            | MessageKind::Ping
-            | MessageKind::Pong { .. }
-            | MessageKind::State
-            | MessageKind::Meta
-            | MessageKind::Task { .. } => {
-                println!("{open}<{}>{close}: {}", msg.author, msg.body);
-            }
-        }
+        // Chat carries an A2A payload; show its text projection, not the
+        // JSON. The fallback (raw body) can only fire on crafted input the
+        // receive path already dropped — a display path never panics.
+        let text = serde_json::from_str::<crate::a2a::Message>(msg.body.as_str()).map_or_else(
+            |_| msg.body.as_str().to_owned(),
+            |payload| crate::a2a::gossip::display_text(&payload),
+        );
+        println!("{open}<{}>{close}: {text}", msg.author);
     }
 
     /// Clear the last line typed by the user (move up + erase). Human

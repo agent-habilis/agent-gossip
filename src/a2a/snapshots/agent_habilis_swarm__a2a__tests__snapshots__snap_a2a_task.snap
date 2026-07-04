@@ -1,0 +1,5 @@
+---
+source: src/a2a/mod.rs
+expression: "serde_json::to_string(&task).unwrap()"
+---
+{"id":"550e8400-e29b-41d4-a716-446655440000","contextId":"🐝test","status":{"state":"TASK_STATE_WORKING","timestamp":"2026-01-01T00:00:00Z"},"history":[{"messageId":"00000000-0000-0000-0000-000000000001","role":"ROLE_USER","parts":[{"text":"What is Rust?"}],"contextId":"🐝test","extensions":["https://agent-habilis.dev/a2a/ext/swarm-broadcast/v1"]}]}

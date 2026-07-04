@@ -1,6 +1,6 @@
 //! The **gossip subsystem**: the message transport plane. The outbound
 //! send plane is [`broadcast`] (broadcast/buffer, presence/`PeerInfo`,
-//! the `/reply` stdin path); the inbound plane is [`recv`] (the
+//! the broadcast stdin path); the inbound plane is [`recv`] (the
 //! gossip-event pump, neighbor up/down bookkeeping, the per-message
 //! router); anti-entropy and the healer are [`antientropy`] / [`heal`].
 //! This module itself holds only the shared `conn_path` diagnostic and
@@ -17,8 +17,8 @@ use iroh::endpoint::TransportAddrUsage;
 use iroh::{Endpoint, EndpointId, RelayUrl, TransportAddr};
 
 pub(crate) use broadcast::{
-    TaskLeg, broadcast_message, broadcast_msg, broadcast_state_merge, broadcast_task,
-    handle_session_request, handle_stdin_line,
+    broadcast_a2a_call, broadcast_message, broadcast_msg, broadcast_state_merge,
+    emit_task_artifact, emit_task_status, handle_session_request, handle_stdin_line,
 };
 pub(crate) use recv::{drain_dead_receiver, handle_gossip_event, ingest};
 

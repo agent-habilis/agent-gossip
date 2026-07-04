@@ -45,9 +45,9 @@ pub(crate) fn compute(
         }
         | MessageKind::State
         | MessageKind::Meta => false,
-        MessageKind::Msg { .. }
-        | MessageKind::Notice { .. }
-        | MessageKind::Task { .. }
+        MessageKind::A2aMsg
+        | MessageKind::A2aStatus { .. }
+        | MessageKind::A2aArtifact { .. }
         | MessageKind::Presence {
             subtype: PresenceSubtype::Joined | PresenceSubtype::Alive,
         }
@@ -56,7 +56,9 @@ pub(crate) fn compute(
         | MessageKind::StateDigest
         | MessageKind::MetaDigest
         | MessageKind::Ping
-        | MessageKind::Pong { .. } => !state.participants.contains(author.as_str()),
+        | MessageKind::Pong { .. }
+        | MessageKind::A2aReq { .. }
+        | MessageKind::A2aResp { .. } => !state.participants.contains(author.as_str()),
     };
     MembershipUpdate {
         returned,
@@ -110,11 +112,7 @@ mod tests {
     #[test]
     fn first_time_seeing_author_is_joined_new() {
         let state = fresh_state();
-        let update = compute(
-            &MessageKind::Msg { reply: None },
-            &nick("swift-cedar"),
-            &state,
-        );
+        let update = compute(&MessageKind::A2aMsg, &nick("swift-cedar"), &state);
         assert!(update.joined_new);
         assert!(!update.returned);
     }
@@ -123,11 +121,7 @@ mod tests {
     fn known_author_is_not_joined_new() {
         let mut state = fresh_state();
         state.participants.insert(nick("swift-cedar"));
-        let update = compute(
-            &MessageKind::Msg { reply: None },
-            &nick("swift-cedar"),
-            &state,
-        );
+        let update = compute(&MessageKind::A2aMsg, &nick("swift-cedar"), &state);
         assert!(!update.joined_new);
         assert!(!update.returned);
     }
@@ -149,11 +143,7 @@ mod tests {
     fn quiet_peer_message_marks_returned() {
         let mut state = fresh_state();
         state.quiet.insert(nick("swift-cedar"));
-        let update = compute(
-            &MessageKind::Msg { reply: None },
-            &nick("swift-cedar"),
-            &state,
-        );
+        let update = compute(&MessageKind::A2aMsg, &nick("swift-cedar"), &state);
         assert!(update.returned);
         assert!(update.joined_new); // not in participants yet
     }

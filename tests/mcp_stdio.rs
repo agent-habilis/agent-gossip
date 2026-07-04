@@ -648,7 +648,14 @@ fn send_empty_body_works() {
         .get("message")
         .expect("send_message must return an echo");
     assert_eq!(echo["id"].as_str(), Some(id.as_str()));
-    assert_eq!(echo["body"].as_str(), Some(""));
+    // The frame body carries the serialized A2A payload; the sent text
+    // (empty here) is its first text part, and the payload's messageId is
+    // the frame id.
+    let payload: serde_json::Value =
+        serde_json::from_str(echo["body"].as_str().expect("frame body is a string"))
+            .expect("frame body is a serialized a2a message");
+    assert_eq!(payload["parts"][0]["text"].as_str(), Some(""));
+    assert_eq!(payload["messageId"].as_str(), Some(id.as_str()));
     assert!(echo["ts"].is_i64());
 
     // FROM_START dodges the implicit cursor to inspect the whole buffer.
@@ -769,21 +776,17 @@ fn fetch_messages_long_parks_then_times_out_empty() {
 }
 
 #[test]
-fn reply_to_unknown_nickname_still_succeeds() {
-    // We don't validate the reply target nickname at the protocol
-    // level — the message is broadcast, peers can still receive it.
-    // Just confirm the server doesn't panic.
+fn send_message_broadcasts_to_the_swarm() {
+    // `send_message` is a swarm broadcast (A2A is point-to-point, so directed
+    // 1:1 is a task via `a2a_call`, not chat). Confirm a plain send succeeds.
     let mut client = McpClient::spawn();
     client.create_and_get_swarm(120);
     let resp = client.tool_call(
         121,
         "send_message",
-        serde_json::json!({
-            "text": "orphan reply",
-            "reply": "no-such-peer"
-        }),
+        serde_json::json!({ "text": "hello swarm" }),
     );
-    let json = tool_result_json(&resp).expect("reply to unknown nick should succeed");
+    let json = tool_result_json(&resp).expect("broadcast send should succeed");
     assert!(!json["id"].as_str().unwrap().is_empty());
 }
 
@@ -898,33 +901,38 @@ fn fetch_messages_cursor_returns_only_new_since_last_call() {
 
 // ─── task + roster ───────────────────────────────────────────────
 
-const MCP_TASK_ID: &str = "550e8400-e29b-41d4-a716-446655440000";
-
-/// A task `offer` sent (via `send_task`) by the joiner to the creator
-/// surfaces on the creator's `fetch_messages` as the stream-shaped
-/// `event:"task"` record with the `to`/`task_id`/`phase`/`body`
-/// fields (plus `display` and `self`).
+/// Creating a task (via the `a2a_call` tool, `message/send`) from the joiner
+/// to the creator: the worker mints the id and returns a submitted `Task`, and
+/// the creator (worker) surfaces the incoming message on `fetch_messages` as a
+/// `message`-kind `event:"task"` record.
 #[test]
-fn send_task_surfaces_to_addressee_via_fetch() {
-    let (mut creator, mut joiner, _swarm, creator_nick) = create_pair(700);
+fn task_creation_surfaces_to_worker_via_fetch() {
+    let (mut creator, mut joiner, swarm, creator_nick) = create_pair(700);
 
-    let sent = tool_result_json(&joiner.tool_call(
+    let resp = tool_result_json(&joiner.tool_call(
         710,
-        "send_task",
+        "a2a_call",
         serde_json::json!({
             "to": creator_nick,
-            "task_id": MCP_TASK_ID,
-            "phase": "offer",
-            "text": "## Task\nport it",
+            "method": "SendMessage",
+            "params": { "message": {
+                "messageId": "550e8400-e29b-41d4-a716-446655440000",
+                "role": "ROLE_USER",
+                "parts": [{ "text": "## Task\nport it" }],
+                "contextId": swarm,
+            }},
         }),
     ))
-    .expect("send_task should succeed");
-    // The echo is the authoritative task record.
-    assert_eq!(sent["message"]["type"], "task");
-    assert_eq!(sent["message"]["phase"], "offer");
-    assert_eq!(sent["message"]["to"], creator_nick);
+    .expect("a2a_call should succeed");
+    // The worker mints the task id and returns a submitted Task (v1.0
+    // SendMessageResponse oneof: `{"task": <Task>}`).
+    assert!(resp["result"]["task"].is_object(), "got: {resp}");
+    let task_id = resp["result"]["task"]["id"]
+        .as_str()
+        .expect("server-minted task id")
+        .to_string();
 
-    // The creator fetches and sees the task leg addressed to it.
+    // The creator (worker) fetches and sees the incoming message as a task leg.
     let deadline = Instant::now() + MSG_TIMEOUT;
     let mut probe = 720;
     let task = loop {
@@ -951,29 +959,33 @@ fn send_task_surfaces_to_addressee_via_fetch() {
         probe += 1;
         std::thread::sleep(Duration::from_millis(100));
     };
-    assert_eq!(task["task_id"], MCP_TASK_ID);
-    assert_eq!(task["phase"], "offer");
+    assert_eq!(task["task_id"], task_id.as_str());
+    assert_eq!(task["kind"], "message");
     assert_eq!(task["to"], creator_nick);
     assert_eq!(task["body"], "## Task\nport it");
 }
 
-/// `send_task --phase offer` to a nickname that is not a current
-/// participant is rejected with an `unknown participant` error.
+/// A directed `message/send` (task creation) to a nickname that is not a
+/// current participant is rejected with an `unknown participant` error.
 #[test]
-fn send_task_offer_to_unknown_participant_errors() {
+fn task_creation_to_unknown_participant_errors() {
     let mut client = McpClient::spawn();
-    let _ = client.create_and_get_swarm(730);
+    let (swarm, _nick) = client.create_and_get_swarm(730);
     let resp = client.tool_call(
         731,
-        "send_task",
+        "a2a_call",
         serde_json::json!({
             "to": "ghost-peer",
-            "task_id": MCP_TASK_ID,
-            "phase": "offer",
-            "text": "brief",
+            "method": "SendMessage",
+            "params": { "message": {
+                "messageId": "550e8400-e29b-41d4-a716-446655440000",
+                "role": "ROLE_USER",
+                "parts": [{ "text": "brief" }],
+                "contextId": swarm,
+            }},
         }),
     );
-    let err = tool_error(&resp).expect("task offer to unknown participant should error");
+    let err = tool_error(&resp).expect("task creation to unknown participant should error");
     assert!(
         err.contains("unknown participant"),
         "expected unknown-participant error, got: {err}"

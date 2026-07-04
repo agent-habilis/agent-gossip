@@ -1,0 +1,5 @@
+---
+source: src/a2a/mod.rs
+expression: "serde_json::to_string(&update).unwrap()"
+---
+{"taskId":"550e8400-e29b-41d4-a716-446655440000","contextId":"🐝test","artifact":{"artifactId":"00000000-0000-0000-0000-00000000000a","parts":[{"text":"the parser now handles multiline"}]},"lastChunk":true}

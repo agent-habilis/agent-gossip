@@ -1,8 +1,8 @@
 ---
-type: a2a-protocol
+type: scenario-protocol
 title: Coordinator protocol
 description: How a dedicated coordinator peer resets state, distributes each role's goal, and observes.
-tags: [a2a, coordinator, orchestration, shared-state, protocol]
+tags: [scenario, coordinator, orchestration, shared-state, protocol]
 timestamp: 2026-06-28T00:00:00Z
 ---
 

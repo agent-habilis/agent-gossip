@@ -45,15 +45,19 @@ mod tests {
             Commands::Forum { opts } => opts,
             Commands::Create { .. }
             | Commands::Join { .. }
-            | Commands::Msg { .. }
-            | Commands::Notice { .. }
             | Commands::Poll { .. }
             | Commands::Ping { .. }
             | Commands::Discover { .. }
-            | Commands::Task { .. }
             | Commands::Peers { .. }
+            | Commands::Pipe { .. }
+            | Commands::Port { .. }
+            | Commands::File { .. }
+            | Commands::Sh { .. }
+            | Commands::Mount { .. }
             | Commands::State { .. }
             | Commands::Meta { .. }
+            | Commands::Card { .. }
+            | Commands::A2a { .. }
             | Commands::Ready { .. }
             | Commands::Mcp { .. }
             | Commands::Man
@@ -61,7 +65,6 @@ mod tests {
             | Commands::Unplug { .. }
             | Commands::Doctor { .. }
             | Commands::Leave { .. }
-            | Commands::A2a { .. }
             | Commands::Session { .. } => panic!("expected Forum command"),
         }
     }

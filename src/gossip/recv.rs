@@ -16,14 +16,15 @@ use crate::daemon::state::EventLoopState;
 use crate::lifecycle;
 use crate::lookup::add_peer_addr;
 use crate::protocol::identity;
-use crate::protocol::{Channel, Message, MessageKind, Nickname, TaskPhase};
+use crate::protocol::message::MessageBody;
+use crate::protocol::{Channel, Message, MessageKind, Nickname};
 use crate::util::tuning::RECLAIM_WINDOW_SECS;
 
-use super::broadcast::{announce_arrival, broadcast_peer_info};
+use super::broadcast::{announce_arrival, broadcast_msg, broadcast_peer_info};
 use super::{antientropy, conn_path};
 
 /// Dispatch a single item from the gossip receiver stream:
-/// `Received` → `ingest`; `NeighborUp` →
+/// `Received` → `handle_gossip_received`; `NeighborUp` →
 /// announce / `PeerInfo` re-send; `NeighborDown` → prune the link and
 /// arm reclaim; `Lagged` / errors logged; terminal `None` flips
 /// `state.gossip_open` to `false`.
@@ -34,7 +35,7 @@ pub(crate) async fn handle_gossip_event(
 ) {
     match event {
         Some(Ok(Event::Received(received))) => {
-            ingest(received.content, state, ctx).await;
+            handle_gossip_received(received.content, state, ctx).await;
         }
         Some(Ok(Event::NeighborUp(node_id))) => {
             let (conn, relay) = conn_path(ctx.endpoint, node_id).await;
@@ -179,7 +180,7 @@ pub(crate) async fn drain_dead_receiver(
     loop {
         match receiver.next().now_or_never() {
             Some(Some(Ok(Event::Received(incoming)))) => {
-                ingest(incoming.content, state, ctx).await;
+                handle_gossip_received(incoming.content, state, ctx).await;
                 recovered += 1;
             }
             // Skip stale membership events / errors; stop on a terminal
@@ -213,28 +214,28 @@ async fn flush_pending(state: &mut EventLoopState, ctx: &HandlerCtx<'_>, edge: &
 /// rate-check, run the lifecycle observer (heartbeat / membership /
 /// surfacing / horizon), dispatch by kind, and finally push to the
 /// message log if loggable.
-/// Process an inbound task leg for its addressee: advance the coarse
-/// state machine (addressee only — a third-party relay tracks nothing), then
-/// surface it via the lifecycle layer. Returns `false` when the caller should
-/// stop processing this message (it is not loggable past this point).
+/// Process an inbound task leg (a task-related `a2a_msg`, an `a2a_status`,
+/// or an `a2a_artifact`) for its addressee: advance the coarse state machine
+/// (addressee only — a third-party relay tracks nothing), then surface it via
+/// the lifecycle layer. Returns `false` when the caller should stop
+/// processing this message (it is not loggable past this point).
 fn handle_task_leg(
     message: &Message,
     to: &Nickname,
-    phase: TaskPhase,
     surfaceable: bool,
     state: &mut EventLoopState,
     ctx: &HandlerCtx<'_>,
 ) -> bool {
     // Only the addressee is a party: a third-party relay tracks nothing.
     if to == ctx.author {
-        crate::daemon::task::ingest(&mut state.tasks, message, false, Instant::now());
+        crate::a2a::task::ingest(&mut state.tasks, message, false, Instant::now());
     }
-    lifecycle::handle_task(ctx.output, message, to, phase, surfaceable, ctx.author)
+    lifecycle::handle_task(ctx.output, message, to, surfaceable, ctx.author)
 }
 
 /// Surface a reassembled multipart body (a `Msg` or a `Task` content leg)
 /// through the same lifecycle path an unsplit message of that kind takes. The
-/// raw parts were already retained; this only surfaces the logical view, so it
+/// raw shards were already retained; this only surfaces the logical view, so it
 /// does **not** re-retain or re-index.
 fn surface_logical(
     logical: &Message,
@@ -243,14 +244,16 @@ fn surface_logical(
     ctx: &HandlerCtx<'_>,
 ) {
     match &logical.kind {
-        MessageKind::Msg { .. } | MessageKind::Notice { .. } => {
-            lifecycle::handle_msg(ctx.output, logical, surfaceable, ctx.author);
+        MessageKind::A2aMsg => {
+            // `A2aMsg` is broadcast chat (task legs never shard through here —
+            // `message/send` rides RPC, status/artifact are small).
+            lifecycle::handle_msg(ctx.output, logical, surfaceable);
         }
-        MessageKind::Task { to, phase, .. } => {
-            handle_task_leg(logical, to, *phase, surfaceable, state, ctx);
+        MessageKind::A2aStatus { to, .. } | MessageKind::A2aArtifact { to, .. } => {
+            handle_task_leg(logical, to, surfaceable, state, ctx);
         }
-        // Only the chat kinds and content `Task` legs are ever split (the
-        // sender refuses to split anything else), so other kinds never reach here.
+        // Only content frames are ever split (the sender refuses to split
+        // anything else), so other kinds never reach here.
         MessageKind::Presence { .. }
         | MessageKind::PeerInfo
         | MessageKind::Digest
@@ -258,17 +261,14 @@ fn surface_logical(
         | MessageKind::MetaDigest
         | MessageKind::Ping
         | MessageKind::Pong { .. }
+        | MessageKind::A2aReq { .. }
+        | MessageKind::A2aResp { .. }
         | MessageKind::State
         | MessageKind::Meta => {}
     }
 }
 
-/// Validate + dispatch one inbound wire message, regardless of transport. Both
-/// the gossip event pump (`handle_gossip_event`) and the unicast inbound arm
-/// (`daemon::event_loop`) funnel here, so signature-verify, the swarm gate, and
-/// `mark_seen` dedup are identical on both planes — a message delivered over
-/// both surfaces exactly once.
-pub(crate) async fn ingest(content: Bytes, state: &mut EventLoopState, ctx: &HandlerCtx<'_>) {
+async fn handle_gossip_received(content: Bytes, state: &mut EventLoopState, ctx: &HandlerCtx<'_>) {
     let Ok(message) = Message::parse(&content) else {
         ctx.output.error("Failed to parse message");
         tracing::warn!("failed to parse inbound gossip message");
@@ -335,16 +335,19 @@ pub(crate) async fn ingest(content: Bytes, state: &mut EventLoopState, ctx: &Han
     let observed = lifecycle::observe(&message, state, ctx);
     let surfaceable = observed.surfaceable;
 
-    // A part of a split body never surfaces as a raw slice. Retain it for
-    // anti-entropy (so a missing part heals like any message), and when its
-    // group completes, surface the reassembled logical message once — embed-
-    // pushed and dispatched exactly like an ordinary inbound message.
-    if message.part.is_some() {
-        retain_and_index(message.clone(), &canonical, state, ctx);
-        if let Some(logical) = state.reassemble(&message) {
-            maybe_push_embed(ctx, &logical, surfaceable);
-            surface_logical(&logical, surfaceable, state, ctx);
-        }
+    // A shard of a split body never surfaces as a raw slice — see
+    // `handle_shard` for the retain/reassemble/gate/surface sequence.
+    if message.shard.is_some() {
+        handle_shard(&message, &canonical, surfaceable, state, ctx);
+        return;
+    }
+
+    // The A2A boundary gate: a chat frame whose payload fails to parse or
+    // contradicts its frame (id/context/addressing/role — see
+    // `a2a::gossip::chat_payload`) is dropped whole, before the embed push,
+    // the print path, and retention. Sharded bodies get the same gate on
+    // their reassembled logical view above.
+    if !chat_payload_valid(&message) {
         return;
     }
 
@@ -360,16 +363,17 @@ pub(crate) async fn ingest(content: Bytes, state: &mut EventLoopState, ctx: &Han
             return;
         }
         MessageKind::Ping => {
-            // Auto-respond to every probe with a pong addressed to the pinger.
-            // The daemon owns this — no agent involvement. The pong is directed,
-            // so `deliver` sends it unicast to the pinger when reachable that
-            // way, avoiding the N-flooded-pongs fan-out; else it rides gossip.
-            let pong = Message::new_pong(ctx.swarm, ctx.author, message.author.clone())
-                .signed(ctx.identity);
-            crate::logging::messages::log_out(&pong);
-            if let Ok(bytes) = pong.serialize() {
-                let _ = crate::unicast::deliver(&pong, Bytes::from(bytes), state, ctx.sender).await;
-            }
+            // Auto-respond to every probe with a pong addressed to the
+            // pinger. The daemon owns this — no agent involvement. Pong
+            // is gossip-broadcast (no unicast transport), so one probe in
+            // an N-node swarm fans out to N flooded pongs; acceptable for
+            // the small swarms and rare manual `ahsw ping` this serves.
+            broadcast_msg(
+                ctx.sender,
+                &Message::new_pong(ctx.swarm, ctx.author, message.author.clone())
+                    .signed(ctx.identity),
+            )
+            .await;
             return;
         }
         MessageKind::Pong { to } => {
@@ -426,13 +430,12 @@ pub(crate) async fn ingest(content: Bytes, state: &mut EventLoopState, ctx: &Han
             )
             .await;
         }
-        MessageKind::Msg { .. } | MessageKind::Notice { .. } => {
-            if !lifecycle::handle_msg(ctx.output, &message, surfaceable, ctx.author) {
-                return;
-            }
+        MessageKind::A2aReq { .. } | MessageKind::A2aResp { .. } => {
+            handle_a2a_rpc(&message, state, ctx).await;
+            return;
         }
-        MessageKind::Task { to, phase, .. } => {
-            if !handle_task_leg(&message, to, *phase, surfaceable, state, ctx) {
+        MessageKind::A2aMsg | MessageKind::A2aStatus { .. } | MessageKind::A2aArtifact { .. } => {
+            if !route_content(&message, surfaceable, state, ctx) {
                 return;
             }
         }
@@ -441,26 +444,253 @@ pub(crate) async fn ingest(content: Bytes, state: &mut EventLoopState, ctx: &Han
     retain_and_index(message, &canonical, state, ctx);
 }
 
+/// Route an A2A RPC frame: a request addressed to us is served (and a
+/// response broadcast back); a response to one of our calls resolves its
+/// waiter (matched by `rpc_id` *and* the responding peer). Frames addressed
+/// to another peer are relayed only, never handled here. Plumbing — never
+/// logged/retained.
+async fn handle_a2a_rpc(message: &Message, state: &mut EventLoopState, ctx: &HandlerCtx<'_>) {
+    match &message.kind {
+        MessageKind::A2aReq { to, rpc_id } if to == ctx.author => {
+            handle_a2a_req(message, &rpc_id.clone(), state, ctx).await;
+        }
+        MessageKind::A2aResp { to, rpc_id } if to == ctx.author => {
+            // Only act on a response to a call WE actually issued (a matching
+            // outstanding waiter). An unsolicited A2aResp is ignored — otherwise
+            // any member could inject phantom initiator-side task records into
+            // the uncapped task table by forging responses.
+            if state.has_a2a_waiter(rpc_id, &message.author) {
+                // Adopt the authoritative `Task` a `SendMessage` returned, so our
+                // (initiator) daemon holds the record for lifecycle + surfacing
+                // the worker's later pushes.
+                state.adopt_returned_task(&message.author, message.body.as_str());
+                state.fulfill_a2a_waiter(rpc_id, &message.author, message.body.as_str());
+            }
+        }
+        // Not for us (relay only), or a non-RPC kind the caller mis-routed.
+        MessageKind::A2aReq { .. }
+        | MessageKind::A2aResp { .. }
+        | MessageKind::A2aMsg
+        | MessageKind::A2aStatus { .. }
+        | MessageKind::A2aArtifact { .. }
+        | MessageKind::Presence { .. }
+        | MessageKind::PeerInfo
+        | MessageKind::Digest
+        | MessageKind::StateDigest
+        | MessageKind::MetaDigest
+        | MessageKind::Ping
+        | MessageKind::Pong { .. }
+        | MessageKind::State
+        | MessageKind::Meta => {}
+    }
+}
+
+/// Serve one inbound `A2aReq` addressed to us: classify the JSON-RPC request
+/// against the safe method set (`a2a::gossip_rpc::classify`), run the
+/// resulting action, and broadcast an `A2aResp` back to the requester echoing
+/// `rpc_id`. Runs inline in the event loop (`&mut state`), so it calls
+/// `handle_op` directly — no channel round-trip.
+async fn handle_a2a_req(
+    message: &Message,
+    rpc_id: &crate::a2a::A2aRpcId,
+    state: &mut EventLoopState,
+    ctx: &HandlerCtx<'_>,
+) {
+    use crate::a2a::gossip_rpc::Served;
+    let requester = message.author.clone();
+    // Parse the JSON-RPC envelope; a malformed request is a parse-error reply.
+    let outcome: Result<serde_json::Value, crate::a2a::rpc::RpcError> = match serde_json::from_str::<
+        serde_json::Value,
+    >(
+        message.body.as_str(),
+    ) {
+        Ok(envelope) => {
+            let method = envelope["method"].as_str().unwrap_or_default();
+            match crate::a2a::gossip_rpc::classify(method, &envelope["params"], &requester, state) {
+                Served::Op(op) => {
+                    crate::a2a::rpc::handle_op(
+                        op,
+                        ctx.swarm,
+                        ctx.author,
+                        ctx.our_pubkey,
+                        // No local HTTP port on the gossip path; only
+                        // card ops read it, and those aren't in the safe
+                        // set served here.
+                        0,
+                        state,
+                        ctx.sender,
+                        ctx.output,
+                    )
+                    .await
+                }
+                Served::Ingest(payload) => ingest_remote_message(&payload, &requester, state, ctx),
+                Served::Reject(error) => Err(error),
+            }
+        }
+        Err(error) => Err(crate::a2a::rpc::RpcError::invalid_params(format!(
+            "malformed JSON-RPC request: {error}"
+        ))),
+    };
+    let response = match outcome {
+        Ok(result) => serde_json::json!({ "result": result }),
+        Err(error) => {
+            serde_json::json!({ "error": { "code": error.code, "message": error.message } })
+        }
+    };
+    let Ok(body) = MessageBody::new(response.to_string()) else {
+        tracing::warn!("a2a rpc response body invalid");
+        return;
+    };
+    let reply = Message::new_a2a_resp(ctx.swarm, ctx.author, requester, rpc_id.clone(), body)
+        .signed(ctx.identity);
+    broadcast_msg(ctx.sender, &reply).await;
+}
+
+/// A `message/send` directed at us over gossip-RPC — we are the task's A2A
+/// **server** (the worker). A message with no `taskId` opens a new task (we
+/// mint the id); one with a `taskId` is a follow-up (the initiator's answer /
+/// approval / change request). Either way we advance our coarse machine,
+/// surface the message to our skill, and return the authoritative `Task`.
+fn ingest_remote_message(
+    payload: &crate::a2a::Message,
+    requester: &Nickname,
+    state: &mut EventLoopState,
+    ctx: &HandlerCtx<'_>,
+) -> Result<serde_json::Value, crate::a2a::rpc::RpcError> {
+    use crate::a2a::task::{LegInfo, LegKind};
+    let now = Instant::now();
+    let (task_id, kind) = match &payload.task_id {
+        Some(task_id) => (task_id.clone(), LegKind::Text),
+        None => (crate::a2a::TaskId::random(), LegKind::Offer),
+    };
+    // A follow-up (taskId set) may only be driven by the task's own party. The
+    // requester is signature-verified, but signature ≠ party: without this
+    // check any swarm member could drive and read a task they are not part of.
+    if kind == LegKind::Text {
+        match state.tasks.get(&task_id) {
+            None => {
+                return Err(crate::a2a::rpc::RpcError::invalid_params(
+                    "SendMessage names a taskId with no task on this peer",
+                ));
+            }
+            Some(rec) if &rec.peer != requester => {
+                return Err(crate::a2a::rpc::RpcError {
+                    code: -32003,
+                    message: "not a party to the task named by taskId".to_string(),
+                });
+            }
+            Some(_) => {}
+        }
+    }
+    crate::a2a::task::apply(
+        &mut state.tasks,
+        &LegInfo {
+            task_id: &task_id,
+            peer: requester,
+            kind,
+            mine: false,
+            fraction: None,
+        },
+        now,
+    );
+    // Surface the incoming message to our skill (a `task` event, kind:message).
+    let rec_state = state.tasks.get(&task_id).map(|rec| rec.state);
+    let text = crate::a2a::gossip::display_text(payload);
+    ctx.output.task_message(
+        payload.message_id.as_str(),
+        ctx.swarm.as_str(),
+        requester.as_str(),
+        ctx.author.as_str(),
+        &task_id,
+        rec_state,
+        &text,
+        /* is_self */ false,
+    );
+    // A2A v1.0 `SendMessage` returns a `SendMessageResponse` oneof — creation
+    // yields `{"task": <Task>}`.
+    state
+        .tasks
+        .get(&task_id)
+        .map(|rec| serde_json::json!({ "task": crate::a2a::rpc::task_object(&task_id, rec, ctx.swarm) }))
+        .ok_or_else(|| crate::a2a::rpc::RpcError::internal("task record missing after ingest"))
+}
+
+/// Route a content frame — chat, or one of the three task shapes — to its
+/// lifecycle handler. Returns whether the frame is loggable (a directed
+/// frame addressed elsewhere, or a liveness beat, is not).
+fn route_content(
+    message: &Message,
+    surfaceable: bool,
+    state: &mut EventLoopState,
+    ctx: &HandlerCtx<'_>,
+) -> bool {
+    match &message.kind {
+        MessageKind::A2aMsg => lifecycle::handle_msg(ctx.output, message, surfaceable),
+        MessageKind::A2aStatus { to, .. } | MessageKind::A2aArtifact { to, .. } => {
+            handle_task_leg(message, to, surfaceable, state, ctx)
+        }
+        MessageKind::Presence { .. }
+        | MessageKind::PeerInfo
+        | MessageKind::Digest
+        | MessageKind::StateDigest
+        | MessageKind::MetaDigest
+        | MessageKind::Ping
+        | MessageKind::Pong { .. }
+        | MessageKind::A2aReq { .. }
+        | MessageKind::A2aResp { .. }
+        | MessageKind::State
+        | MessageKind::Meta => false,
+    }
+}
+
+/// One shard of a split body: retain it for anti-entropy (so a missing shard
+/// heals like any message) and, when its group completes, gate the
+/// reassembled logical message through the A2A boundary and surface it once —
+/// embed-pushed and dispatched exactly like an ordinary inbound message.
+fn handle_shard(
+    message: &Message,
+    canonical: &[u8],
+    surfaceable: bool,
+    state: &mut EventLoopState,
+    ctx: &HandlerCtx<'_>,
+) {
+    // A directed shard (task leg / RPC) not addressed to us is relayed at the
+    // gossip layer but never retained or reassembled here — a third party must
+    // not persist or reconstruct a task exchange it is not part of. The
+    // single-frame path drops non-addressee directed frames the same way.
+    if !addressed_to_us(message, ctx.author) {
+        return;
+    }
+    retain_and_index(message.clone(), canonical, state, ctx);
+    if let Some(logical) = state.reassemble(message) {
+        if !chat_payload_valid(&logical) {
+            return;
+        }
+        maybe_push_embed(ctx, &logical, surfaceable);
+        surface_logical(&logical, surfaceable, state, ctx);
+    }
+}
+
 /// Fork detection, cross-author DAG folding, and chat-log retention for a
 /// surviving inbound message. Coupled to logging on purpose: only a message we
 /// actually **retain** is folded into the indexes, so `by_hash`/`dag_heads`/
 /// `author_seqs` stay bounded by the log window (pruned on eviction). A
-/// rate-dropped `Msg`, a reply to another peer, or a `State` event returned
-/// earlier and never reaches here. Only the chat kinds (`Msg`/`Notice`) carry
-/// `seq`/parents; presence is loggable but not indexed.
+/// rate-dropped chat frame, one addressed to another peer, or a `State` event
+/// returned earlier and never reaches here. Only a **broadcast chat** `a2a_msg`
+/// carries `seq`/parents; task-related `a2a_msg` frames (offer/context/change)
+/// are presence-like — `broadcast_task` stamps them without a chain, so they
+/// must stay out of the fork/DAG indexes (see the `task` glossary invariant).
+/// Presence is loggable but not indexed.
 fn retain_and_index(
     message: Message,
     canonical: &[u8],
     state: &mut EventLoopState,
     ctx: &HandlerCtx<'_>,
 ) {
-    if !is_loggable(&message.kind) {
+    if !is_loggable(&message.kind) || is_beat_frame(&message) {
         return;
     }
-    if matches!(
-        message.kind,
-        MessageKind::Msg { .. } | MessageKind::Notice { .. }
-    ) {
+    if matches!(message.kind, MessageKind::A2aMsg) {
         let hash = identity::content_hash_hex(canonical);
         // A second, *different* content hash at an already-seen `(pubkey, seq)`
         // is cryptographic proof of equivocation — surface a `fork` once per
@@ -507,6 +737,24 @@ fn ingest_channel_event(
     surfaceable: bool,
     ctx: &HandlerCtx<'_>,
 ) {
+    // A meta merge may only write its own author's AgentCard: the card
+    // carries the peer's cryptographic identity, so a signed member forging
+    // another member's `/peers/<nick>/card` would spoof that member's A2A
+    // identity to `ahsw card` and the `--a2a-serve` surface. Drop such an
+    // event before it folds — every recipient applies the same gate, so the
+    // forgery converges nowhere.
+    if channel == Channel::Meta
+        && crate::daemon::state_doc::meta_merge_forges_foreign_card(
+            message.body.as_str(),
+            &message.author,
+        )
+    {
+        tracing::warn!(
+            author = %message.author,
+            "dropping a meta merge that forges another peer's agent card"
+        );
+        return;
+    }
     let before = crate::daemon::state_doc::derive_document(log);
     if log.insert(message.clone()) {
         let after = crate::daemon::state_doc::derive_document(log);
@@ -516,24 +764,21 @@ fn ingest_channel_event(
     }
 }
 
-/// A directed leg (a `Msg --reply` or a `Task`) is surfaced **only by its
-/// addressee** — a third party relays it without ever seeing it (glossary:
-/// "a third party never sees it"). Broadcast (`reply: None`) and non-directed
-/// kinds are for everyone. Our own echoes never reach the receive path (the
-/// pubkey self-echo gate drops them earlier), so on receive "addressee" is the
-/// whole rule. This is the same gate the print/log path applies in
-/// `lifecycle::{handle_msg, handle_task}`.
+/// A directed leg (a directed `a2a_msg` or a `Task`) is surfaced **only by
+/// its addressee** — a third party relays it without ever seeing it
+/// (glossary: "a third party never sees it"). Broadcast (`to: None`) and
+/// non-directed kinds are for everyone. Our own echoes never reach the
+/// receive path (the pubkey self-echo gate drops them earlier), so on receive
+/// "addressee" is the whole rule. This is the same gate the print/log path
+/// applies in `lifecycle::{handle_msg, handle_task}`.
 fn addressed_to_us(message: &Message, us: &Nickname) -> bool {
     match &message.kind {
-        MessageKind::Msg {
-            reply: Some(target),
-        }
-        | MessageKind::Notice {
-            reply: Some(target),
-        } => target == us,
-        MessageKind::Task { to, .. } => to == us,
-        MessageKind::Msg { reply: None }
-        | MessageKind::Notice { reply: None }
+        MessageKind::A2aStatus { to, .. }
+        | MessageKind::A2aArtifact { to, .. }
+        | MessageKind::A2aReq { to, .. }
+        | MessageKind::A2aResp { to, .. } => to == us,
+        // Broadcast chat is delivered to everyone.
+        MessageKind::A2aMsg
         | MessageKind::Presence { .. }
         | MessageKind::PeerInfo
         | MessageKind::Digest
@@ -560,11 +805,13 @@ fn maybe_push_embed(ctx: &HandlerCtx<'_>, message: &Message, surfaceable: bool) 
                 | MessageKind::Meta
                 | MessageKind::Ping
                 | MessageKind::Pong { .. }
-                | MessageKind::Task {
-                    phase: TaskPhase::Progress,
-                    ..
-                }
+                // RPC plumbing (request/response) is not chat — an embed
+                // consumer must not receive it, and a burst must not lag real
+                // messages out of the bounded broadcast channel.
+                | MessageKind::A2aReq { .. }
+                | MessageKind::A2aResp { .. }
         )
+        && !is_beat_frame(message)
     {
         let _ = tx.send(message.clone());
     }
@@ -635,9 +882,49 @@ async fn handle_peer_info(
     }
 }
 
+/// The A2A boundary gate for a **logical** frame (a single wire message or a
+/// reassembled shard group — never a raw shard, which carries a payload
+/// fragment): a chat/task Message, a status update, or an artifact update
+/// must parse and agree with its frame (id / context / addressing / role /
+/// correlation — see `a2a::gossip`). Plumbing kinds pass through: their
+/// bodies are transport machinery, not A2A payloads. A failing frame is
+/// dropped whole — never pushed, printed, or retained — so a crafted payload
+/// cannot reach the agent surface half-validated.
+fn chat_payload_valid(message: &Message) -> bool {
+    let outcome = match &message.kind {
+        MessageKind::A2aMsg => crate::a2a::gossip::chat_payload(message).map(|_| ()),
+        MessageKind::A2aStatus { .. } => crate::a2a::gossip::status_payload(message).map(|_| ()),
+        MessageKind::A2aArtifact { .. } => {
+            crate::a2a::gossip::artifact_payload(message).map(|_| ())
+        }
+        MessageKind::Presence { .. }
+        | MessageKind::PeerInfo
+        | MessageKind::Digest
+        | MessageKind::StateDigest
+        | MessageKind::MetaDigest
+        | MessageKind::Ping
+        | MessageKind::Pong { .. }
+        | MessageKind::A2aReq { .. }
+        | MessageKind::A2aResp { .. }
+        | MessageKind::State
+        | MessageKind::Meta => Ok(()),
+    };
+    match outcome {
+        Ok(()) => true,
+        Err(error) => {
+            tracing::warn!(
+                author = %message.author,
+                %error,
+                "dropping a2a frame with an invalid payload"
+            );
+            false
+        }
+    }
+}
+
 /// `Alive` keepalives, `PeerInfo` endpoint plumbing, anti-entropy `Digest`s,
-/// and ping/pong probes are infrastructure; everything else (real `Msg`s and
-/// `joined`/`left` presence) goes in the log (and so to `poll`/`fetch`).
+/// and ping/pong probes are infrastructure; everything else (real chat frames
+/// and `joined`/`left` presence) goes in the log (and so to `poll`/`fetch`).
 ///
 /// `PeerInfo` is classified as non-loggable here so the rule is encoded in one
 /// place rather than relying on its match arm's early `return`: a future code
@@ -652,19 +939,28 @@ fn is_loggable(kind: &MessageKind) -> bool {
             | MessageKind::Digest | MessageKind::StateDigest | MessageKind::MetaDigest
             | MessageKind::Ping
             | MessageKind::Pong { .. }
+            // A2A RPC request/response frames are plumbing (like ping/pong):
+            // the result reaches the requester via its parked waiter, never
+            // the chat log / poll-fetch buffer.
+            | MessageKind::A2aReq { .. }
+            | MessageKind::A2aResp { .. }
             // Durable state lives in its own un-pruned log, never the chat
             // message-log / poll-fetch buffer (it also returns before reaching
             // here; this keeps the predicate honest if that changes).
             | MessageKind::State
             | MessageKind::Meta
-            // The `Progress` task phase is liveness plumbing — never retained
-            // or surfaced via poll/fetch, only emitted as a `task_progress`
-            // widget event. Content task legs stay loggable like `Msg`.
-            | MessageKind::Task {
-                phase: TaskPhase::Progress,
-                ..
-            }
     )
+}
+
+/// Is this frame a task liveness **beat** (a status update marked
+/// `swarm:beat`)? Beats are plumbing — never retained or surfaced via
+/// poll/fetch, only emitted as a `task_progress` widget event. Payload-level
+/// (unlike [`is_loggable`], which is kind-static), so it is checked
+/// separately at the retain/push gates.
+fn is_beat_frame(frame: &Message) -> bool {
+    matches!(frame.kind, MessageKind::A2aStatus { .. })
+        && crate::a2a::gossip::status_payload(frame)
+            .is_ok_and(|payload| crate::a2a::gossip::is_beat(&payload))
 }
 
 #[cfg(test)]
@@ -691,7 +987,7 @@ mod is_loggable_tests {
 
     #[test]
     fn msg_is_loggable_but_peerinfo_is_not() {
-        assert!(is_loggable(&MessageKind::Msg { reply: None }));
+        assert!(is_loggable(&MessageKind::A2aMsg));
         // PeerInfo is endpoint plumbing — never logged/surfaced, and the
         // classifier (not just its early-return) now says so.
         assert!(!is_loggable(&MessageKind::PeerInfo));

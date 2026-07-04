@@ -51,15 +51,13 @@ pub(crate) fn log_out(msg: &Message) {
 
 fn log(direction: &'static str, msg: &Message) {
     match &msg.kind {
-        MessageKind::Msg { reply } | MessageKind::Notice { reply } => {
+        MessageKind::A2aMsg => {
             if log_raw() {
                 tracing::info!(
                     target: "agent_habilis_swarm::messages",
                     dir = direction,
                     author = %msg.author,
                     ts = msg.timestamp,
-                    kind = %msg.kind,
-                    reply = ?reply,
                     body = %msg.body,
                     "msg"
                 );
@@ -69,8 +67,6 @@ fn log(direction: &'static str, msg: &Message) {
                     dir = direction,
                     author = %msg.author,
                     ts = msg.timestamp,
-                    kind = %msg.kind,
-                    reply = ?reply,
                     body = %redacted_body(msg),
                     "msg"
                 );
@@ -86,17 +82,19 @@ fn log(direction: &'static str, msg: &Message) {
             presence = %subtype,
             "presence"
         ),
-        MessageKind::Task { to, task_id, phase } => tracing::info!(
-            target: "agent_habilis_swarm::messages",
-            dir = direction,
-            author = %msg.author,
-            ts = msg.timestamp,
-            to = %to,
-            task_id = %task_id,
-            phase = %phase,
-            body = %if log_raw() { msg.body.as_str().to_owned() } else { redacted_body(msg) },
-            "task"
-        ),
+        MessageKind::A2aStatus { to, task_id } | MessageKind::A2aArtifact { to, task_id } => {
+            tracing::info!(
+                target: "agent_habilis_swarm::messages",
+                dir = direction,
+                author = %msg.author,
+                ts = msg.timestamp,
+                to = %to,
+                task_id = %task_id,
+                kind = %msg.kind,
+                body = %if log_raw() { msg.body.as_str().to_owned() } else { redacted_body(msg) },
+                "task"
+            );
+        }
         // Durable state event: worth an info line (membership/settings change),
         // body redacted by default like a `Msg`.
         MessageKind::State | MessageKind::Meta => tracing::info!(
@@ -117,7 +115,9 @@ fn log(direction: &'static str, msg: &Message) {
         | MessageKind::StateDigest
         | MessageKind::MetaDigest
         | MessageKind::Ping
-        | MessageKind::Pong { .. } => tracing::trace!(
+        | MessageKind::Pong { .. }
+        | MessageKind::A2aReq { .. }
+        | MessageKind::A2aResp { .. } => tracing::trace!(
             target: "agent_habilis_swarm::messages",
             dir = direction,
             author = %msg.author,
@@ -135,7 +135,7 @@ mod tests {
     #[test]
     fn redacted_body_omits_raw_text() {
         let secret = "totally private chat content";
-        let msg = Message::fixture(MessageKind::Msg { reply: None }, secret);
+        let msg = Message::fixture(MessageKind::A2aMsg, secret);
         let redacted = redacted_body(&msg);
         assert!(
             !redacted.contains(secret),
@@ -146,7 +146,7 @@ mod tests {
     #[test]
     fn redacted_body_carries_length_and_hash_prefix() {
         let body = "hello world"; // 11 bytes
-        let msg = Message::fixture(MessageKind::Msg { reply: None }, body);
+        let msg = Message::fixture(MessageKind::A2aMsg, body);
         let redacted = redacted_body(&msg);
 
         assert!(
@@ -169,14 +169,14 @@ mod tests {
 
     #[test]
     fn redacted_body_is_deterministic_for_the_same_message() {
-        let msg = Message::fixture(MessageKind::Msg { reply: None }, "same body");
+        let msg = Message::fixture(MessageKind::A2aMsg, "same body");
         assert_eq!(redacted_body(&msg), redacted_body(&msg));
     }
 
     #[test]
     fn redacted_body_differs_when_content_changes() {
-        let alpha = Message::fixture(MessageKind::Msg { reply: None }, "alpha");
-        let beta = Message::fixture(MessageKind::Msg { reply: None }, "beta");
+        let alpha = Message::fixture(MessageKind::A2aMsg, "alpha");
+        let beta = Message::fixture(MessageKind::A2aMsg, "beta");
         // Different lengths *and* different hashes ⇒ different strings.
         assert_ne!(redacted_body(&alpha), redacted_body(&beta));
     }

@@ -17,46 +17,32 @@ pub const RUNTIME_DIR: &str = "/tmp/agent-habilis/swarm";
 /// [`crate::util::logs::log_max_bytes`].
 pub(crate) const LOG_FILE_MAX_BYTES: u64 = 10 * 1024 * 1024; // 10 MiB
 
-/// Maximum size in bytes of a serialized swarm **wire** message. This is a
-/// **gossip-transport** cap, not a product limit: it is kept below
-/// iroh-gossip's `DEFAULT_MAX_MESSAGE_SIZE` (4096) minus its ~39-byte wire
-/// header, because a message larger than gossip's payload budget is silently
-/// dropped by the gossip layer (it never propagates and the sender gets no
-/// error). A compile-time assertion in the binary guards that relationship
-/// against the live gossip constant; the value is hardcoded here rather than
-/// derived from iroh-gossip's (so this module pulls in no dependency).
+/// Maximum size in bytes of a serialized swarm message. A network-wide
+/// wire contract (must be uniform across members), so it lives here.
 ///
-/// **Uniform-wire-form invariant.** Every wire message stays under this cap —
-/// including messages that travel over the [`crate::unicast`] point-to-point
-/// channel. Unicast carries the *same* split parts as gossip (see
-/// [`MAX_MESSAGE_PARTS`]); it does not introduce a larger wire frame. Keeping
-/// the wire form uniform is what lets any message fall back to gossip and be
-/// healed by anti-entropy (both run over gossip). Larger *logical* bodies are
-/// expressed by splitting into more parts, never by a bigger wire message.
+/// Kept below iroh-gossip's `DEFAULT_MAX_MESSAGE_SIZE` (4096) minus its
+/// ~39-byte wire header: a message larger than gossip's payload budget
+/// is silently dropped by the gossip layer (it never propagates and the
+/// sender gets no error), so our cap must stay under it. A compile-time
+/// assertion in the binary guards that relationship against the live
+/// gossip constant; the value is hardcoded here rather than derived from
+/// iroh-gossip's (so this module pulls in no dependency).
 pub const MAX_MESSAGE_SIZE: usize = 3840;
 
-/// Maximum number of parts a single logical body is split into when it exceeds
-/// [`MAX_MESSAGE_SIZE`]. Each part is an ordinary message that occupies one
+/// Maximum number of shards a single logical body is split into when it exceeds
+/// [`MAX_MESSAGE_SIZE`]. Each shard is an ordinary message that occupies one
 /// message-log slot, so this also bounds how many slots one body consumes and
 /// caps a crafted peer's reassembly buffering. A body that would need more
-/// parts than this is refused on send.
-///
-/// Sized so [`MAX_LOGICAL_BODY_BYTES`] reaches ~1 `MiB`: unicast carries a large
-/// body's parts pipelined over one warm connection (no flood), and gossip still
-/// splits+heals the same parts as the universal fallback. The reassembly window
-/// is the message log itself (`reassemble` needs every part present at once), so
-/// this is kept well under [`DEFAULT_MESSAGE_LOG_SIZE`] — several max-size bodies
-/// plus normal history must coexist without a part evicting before the last
-/// arrives.
-pub const MAX_MESSAGE_PARTS: usize = 300;
+/// shards than this is refused on send.
+pub const MAX_MESSAGE_SHARDS: usize = 16;
 
 /// Upper bound on a logical (possibly multipart) body the daemon will accept
 /// from a caller — the input ceiling for `msg`/`task`. The send path is the
-/// real gate (it refuses a body that needs more than [`MAX_MESSAGE_PARTS`]
-/// parts); this is the generous limit the stdin/IPC readers enforce so an
+/// real gate (it refuses a body that needs more than [`MAX_MESSAGE_SHARDS`]
+/// shards); this is the generous limit the stdin/IPC readers enforce so an
 /// oversize body still reaches the daemon and gets a clear "too large" error
 /// rather than a truncated read.
-pub const MAX_LOGICAL_BODY_BYTES: usize = MAX_MESSAGE_PARTS * MAX_MESSAGE_SIZE;
+pub const MAX_LOGICAL_BODY_BYTES: usize = MAX_MESSAGE_SHARDS * MAX_MESSAGE_SIZE;
 
 /// Default number of recent messages each member retains in its in-memory
 /// log (anti-entropy recovery source + poll/fetch history). A fixed value
@@ -65,12 +51,7 @@ pub const MAX_LOGICAL_BODY_BYTES: usize = MAX_MESSAGE_PARTS * MAX_MESSAGE_SIZE;
 /// longer gap. Not coupled to the IPC response cap — that is the separate,
 /// fixed [`POLL_RESPONSE_MAX_MSGS`] (the log can exceed it; `poll` then
 /// surfaces the most-recent window and anti-entropy carries the rest).
-///
-/// Sized to the raised [`MAX_MESSAGE_PARTS`] ceiling: a ~1 `MiB` body splits into
-/// ~300 parts that must all be present in this log at once to reassemble, so the
-/// log must comfortably hold several max-size bodies plus normal history or a
-/// part could evict mid-reassembly and the body would never surface.
-pub(crate) const DEFAULT_MESSAGE_LOG_SIZE: usize = 3000;
+pub(crate) const DEFAULT_MESSAGE_LOG_SIZE: usize = 1000;
 
 /// Max messages a single `poll` / `fetch_messages` returns — a **fixed**
 /// IPC contract (the `ahsw poll` client can't know the daemon's configured
@@ -101,11 +82,11 @@ pub(crate) const SURFACED_EVENTS_CAP: usize = POLL_RESPONSE_MAX_MSGS;
 /// registry can never grow without bound (the bounded-everything discipline).
 pub(crate) const POLL_WAITERS_CAP: usize = 64;
 
-/// Capacity of the unicast inbound channel — frames the `UNICAST_ALPN` acceptor
-/// forwards to the event loop for `gossip::ingest`. Bounded so a peer flooding a
-/// unicast stream can't back-pressure the loop; over the cap a frame is dropped
-/// (non-blocking `try_send`) and recovered via anti-entropy.
-pub(crate) const UNICAST_INBOX_CAP: usize = 256;
+/// Upper bound on a client-supplied A2A-call `timeout_secs`. Clamped before it
+/// is added to a `tokio::time::Instant` (an unbounded value would overflow the
+/// platform `Instant` and panic the event loop). Generous — any real RPC round
+/// trip answers well inside an hour.
+pub(crate) const A2A_CALL_MAX_TIMEOUT_SECS: u64 = 3600;
 
 /// Max bytes for one stdin line. A body up to a full logical (multipart) body
 /// is accepted; the daemon splits it across the wire.

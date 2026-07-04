@@ -40,7 +40,7 @@ and STOP.
 verbatim):
 
 ```bash
-ahsw msg --swarm "$SWARM" --nickname "$NICKNAME" --text "$TEXT"
+ahsw a2a call --swarm "$SWARM" --nickname "$NICKNAME" --method SendMessage --text "$TEXT"
 ```
 
 ## Output

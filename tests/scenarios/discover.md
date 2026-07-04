@@ -1,5 +1,5 @@
 ---
-type: a2a-runbook
+type: scenario-runbook
 title: Discover
 description: A host makes a swarm discoverable in a directory; a discoverer finds and joins it.
 tags: [discover, advertise, directory, briefing-only]
@@ -29,8 +29,8 @@ validates directly**.
 
 ## Briefing
 
-- directory: `a2a-dir` (named, to avoid the noisy global directory)
-- swarm: `a2a-discover`
+- directory: `scenario-dir` (named, to avoid the noisy global directory)
+- swarm: `scenario-discover`
 - ordering: the discoverer should look at the directory **before** the host
   advertises (so it first sees the empty state).
 

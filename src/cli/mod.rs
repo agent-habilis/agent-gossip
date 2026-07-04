@@ -17,7 +17,6 @@ use crate::protocol::{MessageId, Nickname};
 use crate::resolver::JoinTarget;
 use crate::transport::ipc::{self, IpcCommand};
 
-mod a2a_discover;
 pub(crate) mod agent;
 mod args;
 mod discover;
@@ -26,12 +25,13 @@ mod password;
 mod picker;
 mod plug;
 mod session;
+mod ticket_discover;
 
 pub(crate) use args::Cli;
 use args::{
-    A2aAction, Commands, CreateOpts, ForumOpts, MetaAction, MetaOpts, MsgOpts, NoticeOpts,
-    OutputFormat, PeersOpts, PingOpts, PollOpts, ReadyOpts, SharedServerOpts, StateAction,
-    StateOpts, TaskOpts,
+    A2aAction, A2aOpts, CardOpts, Commands, CreateOpts, FileAction, ForumOpts, MetaAction,
+    MetaOpts, MountAction, OutputFormat, PeersOpts, PingOpts, PipeAction, PollOpts, PortAction,
+    ReadyOpts, ShAction, SharedServerOpts, StateAction, StateOpts,
 };
 
 /// `join` has no `--public`/`--name`: both are encoded in the `🐝…`
@@ -89,18 +89,27 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
         }
         Commands::Leave { opts } => session::leave(opts).await,
         Commands::Session { opts } => session::session(opts).await,
-        Commands::Msg { opts } => msg(opts).await,
-        Commands::Notice { opts } => notice(opts).await,
         Commands::Poll { opts } => poll(opts).await,
         Commands::Ping { opts } => ping(opts).await,
-        Commands::Task { opts } => task(opts).await,
-        Commands::A2a { opts } => Box::pin(a2a(opts.action)).await,
         Commands::Peers { opts } => peers(opts).await,
-        // Boxed like the event-loop futures above: the discover arm holds a
-        // picker + connect chain that puts it over clippy's 16 KiB
+        // Boxed like the event-loop futures above: the discover arms hold a
+        // picker + connect chain that puts these over clippy's 16 KiB
         // `large_futures` budget.
+        Commands::Pipe { action } => Box::pin(pipe(action)).await,
+        Commands::Port { action } => Box::pin(port(action)).await,
+        Commands::File { action } => Box::pin(file(action)).await,
+        Commands::Sh { action } => sh(action).await,
+        Commands::Mount {
+            action,
+            ticket,
+            mountpoint,
+            no_mount,
+            output,
+        } => mount(action, ticket, mountpoint, no_mount, output).await,
         Commands::State { opts } => state(opts).await,
         Commands::Meta { opts } => meta(opts).await,
+        Commands::Card { opts } => card(opts).await,
+        Commands::A2a { opts } => a2a(opts).await,
         Commands::Ready { opts } => ready(opts).await,
         Commands::Discover { opts } => {
             crate::util::tuning::init(opts.shared.tuning());
@@ -171,6 +180,7 @@ async fn run_session(resolved: Resolved, shared: SharedServerOpts) -> Result<()>
         shared.state_file,
         out,
         drift.as_deref(),
+        shared.a2a_serve,
     )
     .await?;
     // Advertising (`create --advertise`): start the re-broadcast task. It
@@ -287,53 +297,6 @@ fn finish_send(resp: &str, what: &str) -> Result<MessageId> {
         .ok_or_else(|| anyhow::anyhow!("{what} response missing id"))
 }
 
-/// Post a message to a swarm via the running server's IPC socket.
-async fn msg(opts: MsgOpts) -> Result<()> {
-    let MsgOpts {
-        swarm,
-        nickname,
-        text,
-        reply,
-    } = opts;
-    let cmd = IpcCommand::Msg {
-        swarm,
-        body: text,
-        reply,
-    };
-
-    let resp = ipc::send(&cmd, &nickname).await?;
-    let id = finish_send(&resp, "message")?;
-    // `msg` has no `--output` flag — always the human confirmation.
-    // No nickname is rendered here (only `message posted` + id).
-    let out = Output::new(OutputMode::Human, false, None);
-    out.msg_posted(&id);
-
-    Ok(())
-}
-
-/// Post a notice (the no-auto-reply message class) via the running
-/// server's IPC socket. Mirrors [`msg`] in every respect but the kind.
-async fn notice(opts: NoticeOpts) -> Result<()> {
-    let NoticeOpts {
-        swarm,
-        nickname,
-        text,
-        reply,
-    } = opts;
-    let cmd = IpcCommand::Notice {
-        swarm,
-        body: text,
-        reply,
-    };
-
-    let resp = ipc::send(&cmd, &nickname).await?;
-    let id = finish_send(&resp, "notice")?;
-    let out = Output::new(OutputMode::Human, false, None);
-    out.msg_posted(&id);
-
-    Ok(())
-}
-
 /// Retrieve buffered messages from a running swarm process via IPC.
 /// `poll` always emits the raw IPC JSON; the `--output` flag is accepted
 /// for symmetry but not consulted here.
@@ -401,97 +364,6 @@ async fn ping(opts: PingOpts) -> Result<()> {
     Ok(())
 }
 
-/// Send one leg of a task via the running daemon's IPC socket.
-/// The receiving daemon surfaces a `task` (or `task_progress`) event; this
-/// command itself only confirms the send (or reports an
-/// unknown-participant / oversize error).
-async fn task(opts: TaskOpts) -> Result<()> {
-    let TaskOpts {
-        swarm,
-        nickname,
-        to,
-        task_id,
-        phase,
-        text,
-    } = opts;
-    let cmd = IpcCommand::Task {
-        swarm,
-        to,
-        task_id,
-        phase,
-        body: text,
-    };
-    let resp = ipc::send(&cmd, &nickname).await?;
-    let id = finish_send(&resp, "task")?;
-    let out = Output::new(OutputMode::Human, false, None);
-    out.msg_posted(&id);
-    Ok(())
-}
-
-/// `ahsw a2a` — bridge a local A2A HTTP server to a peer over the swarm, an
-/// off-gossip direct link with no daemon. `expose` serves a local origin and
-/// prints the `connect` command; `connect` redeems a ticket and binds a local
-/// endpoint a client points at.
-async fn a2a(action: A2aAction) -> Result<()> {
-    match action {
-        A2aAction::Expose {
-            to,
-            lookups,
-            advertise,
-            password,
-            loopback,
-            output,
-        } => {
-            let json = matches!(output, OutputFormat::Json);
-            let password = password::resolve_password(password, /* confirm */ true, json)?;
-            let advertise = crate::protocol::swarm::DirectorySelection::from_flag(advertise);
-            Box::pin(crate::a2a::expose(
-                &to,
-                lookups.to_set(),
-                advertise,
-                loopback,
-                json,
-                password,
-            ))
-            .await
-        }
-        A2aAction::Connect {
-            ticket,
-            port,
-            password,
-            output,
-        } => {
-            let json = matches!(output, OutputFormat::Json);
-            // Prompt when the ticket needs a password and none was passed
-            // (mirrors the swarm-join UX); otherwise resolve the given flag.
-            let password = match password {
-                None if crate::a2a::ticket_requires_password(&ticket) => {
-                    Some(password::require_password(json, "ticket")?)
-                }
-                other => password::resolve_password(other, /* confirm */ false, json)?,
-            };
-            crate::a2a::connect(&ticket, port, json, password).await
-        }
-        A2aAction::Discover {
-            directory,
-            port,
-            lookups,
-            password,
-            output,
-        } => {
-            let json = matches!(output, OutputFormat::Json);
-            Box::pin(a2a_discover::discover(
-                directory,
-                port,
-                lookups.to_set(),
-                password,
-                json,
-            ))
-            .await
-        }
-    }
-}
-
 /// Query the running daemon's live participant roster. Always emits the
 /// raw IPC JSON (`{ok, participants, participant_count}`), like `poll`.
 async fn peers(opts: PeersOpts) -> Result<()> {
@@ -504,6 +376,384 @@ async fn peers(opts: PeersOpts) -> Result<()> {
     let resp = ipc::send(&cmd, &nickname).await?;
     println!("{resp}");
     Ok(())
+}
+
+/// `ahsw pipe` — a standalone, off-gossip direct byte stream (no daemon).
+/// `listen` reads stdin and prints the connect command on stdout; `connect`
+/// redeems one and streams the peer's bytes to stdout.
+async fn pipe(action: PipeAction) -> Result<()> {
+    match action {
+        PipeAction::Listen {
+            swarm,
+            lookups,
+            advertise,
+            tuning,
+            throttle,
+            output,
+            password,
+            follow,
+        } => {
+            crate::util::tuning::init(tuning.tuning());
+            let json = matches!(output, OutputFormat::Json);
+            let password = password::resolve_password(password, /* confirm */ true, json)?;
+            crate::pipe::listen(
+                swarm.as_ref().map(crate::protocol::SwarmId::as_str),
+                lookups.to_set(),
+                crate::protocol::swarm::DirectorySelection::from_flag(advertise),
+                throttle,
+                json,
+                follow,
+                password,
+            )
+            .await
+        }
+        PipeAction::Connect {
+            ticket,
+            throttle,
+            password,
+        } => {
+            let password =
+                consumer_password(password, &ticket, crate::pipe::ticket_requires_password)?;
+            crate::pipe::connect(&ticket, throttle, password).await
+        }
+        PipeAction::Discover {
+            name,
+            lookups,
+            tuning,
+            throttle,
+            password,
+            output,
+        } => {
+            crate::util::tuning::init(tuning.tuning());
+            let json = matches!(output, OutputFormat::Json);
+            let password = password::resolve_password(password, /* confirm */ false, json)?;
+            match ticket_discover::discover_ticket(
+                name,
+                lookups.to_set(),
+                crate::protocol::token::TokenType::Pipe,
+                json,
+            )
+            .await?
+            {
+                Some(ticket) => {
+                    let password = match password {
+                        None if crate::pipe::ticket_requires_password(&ticket) => {
+                            Some(password::require_password(false, "ticket")?)
+                        }
+                        other => other,
+                    };
+                    ticket_discover::interruptible(crate::pipe::connect(
+                        &ticket, throttle, password,
+                    ))
+                    .await
+                }
+                None => Ok(()),
+            }
+        }
+        PipeAction::Bench {
+            ticket,
+            serve,
+            swarm,
+            lookups,
+            budget,
+            pings,
+            password,
+            output,
+        } => {
+            let json = matches!(output, OutputFormat::Json);
+            // clap enforces the producer/consumer split: `--serve`/`--swarm`
+            // and the lookup flags conflict with a ticket, `--budget`/`--pings`
+            // require one. So a ticket means consumer, its absence means
+            // producer.
+            match ticket {
+                None => {
+                    let password =
+                        password::resolve_password(password, /* confirm */ true, json)?;
+                    crate::pipe::listen_bench(
+                        swarm.as_ref().map(crate::protocol::SwarmId::as_str),
+                        lookups.to_set(),
+                        serve,
+                        json,
+                        password,
+                    )
+                    .await
+                }
+                Some(ticket) => {
+                    let password = consumer_password(
+                        password,
+                        &ticket,
+                        crate::pipe::ticket_requires_password,
+                    )?;
+                    let opts = crate::pipe::BenchOpts {
+                        budget: budget.unwrap_or_default(),
+                        pings: pings.unwrap_or(20),
+                    };
+                    crate::pipe::connect_bench(&ticket, opts, json, password).await
+                }
+            }
+        }
+    }
+}
+
+/// Resolve a consumer-side `--password` flag, prompting when the flag is
+/// absent but `ticket` decodes as password-protected (per `requires` — each
+/// transfer kind checks its own ticket codec). The prompt itself fails
+/// cleanly without a TTY, telling the caller to pass `--password=<pw>`.
+#[expect(
+    clippy::option_option,
+    reason = "clap optional-value flag: absent/bare/valued are three distinct password states"
+)]
+fn consumer_password(
+    flag: Option<Option<String>>,
+    ticket: &str,
+    requires: impl Fn(&str) -> bool,
+) -> Result<Option<crate::protocol::crypto::Password>> {
+    let password = password::resolve_password(flag, /* confirm */ false, false)?;
+    match password {
+        None if requires(ticket) => Ok(Some(password::require_password(false, "ticket")?)),
+        other => Ok(other),
+    }
+}
+
+/// `ahsw port` — a standalone, off-gossip TCP forward (no daemon). `listen`
+/// exposes a local port and prints the connect command on stdout; `connect`
+/// redeems a ticket and forwards each local connection to the producer.
+async fn port(action: PortAction) -> Result<()> {
+    match action {
+        PortAction::Listen {
+            ports,
+            swarm,
+            lookups,
+            advertise,
+            tuning,
+            password,
+            output,
+        } => {
+            crate::util::tuning::init(tuning.tuning());
+            let json = matches!(output, OutputFormat::Json);
+            let password = password::resolve_password(password, /* confirm */ true, json)?;
+            crate::port::listen(
+                swarm.as_ref().map(crate::protocol::SwarmId::as_str),
+                lookups.to_set(),
+                crate::protocol::swarm::DirectorySelection::from_flag(advertise),
+                &ports,
+                json,
+                password,
+            )
+            .await
+        }
+        PortAction::Connect {
+            ticket,
+            ports,
+            password,
+            output,
+        } => {
+            let password =
+                consumer_password(password, &ticket, crate::port::ticket_requires_password)?;
+            crate::port::connect(
+                &ticket,
+                &ports,
+                matches!(output, OutputFormat::Json),
+                password,
+            )
+            .await
+        }
+        PortAction::Discover {
+            name,
+            ports,
+            lookups,
+            tuning,
+            password,
+            output,
+        } => {
+            crate::util::tuning::init(tuning.tuning());
+            let json = matches!(output, OutputFormat::Json);
+            let password = password::resolve_password(password, /* confirm */ false, json)?;
+            match ticket_discover::discover_ticket(
+                name,
+                lookups.to_set(),
+                crate::protocol::token::TokenType::Port,
+                json,
+            )
+            .await?
+            {
+                Some(ticket) => {
+                    // No explicit mappings ⇒ forward every advertised port to
+                    // the same local port.
+                    let mappings = if ports.is_empty() {
+                        crate::port::identity_mappings(&ticket)?
+                    } else {
+                        ports
+                    };
+                    let password = match password {
+                        None if crate::port::ticket_requires_password(&ticket) => {
+                            Some(password::require_password(false, "ticket")?)
+                        }
+                        other => other,
+                    };
+                    ticket_discover::interruptible(crate::port::connect(
+                        &ticket, &mappings, json, password,
+                    ))
+                    .await
+                }
+                None => Ok(()),
+            }
+        }
+    }
+}
+
+/// `ahsw file` — a standalone, off-gossip file/folder transfer (no daemon).
+/// `send` serves a path and prints the `get` command on stdout; `get` redeems a
+/// ticket and receives the tree, fetching only what has changed.
+async fn file(action: FileAction) -> Result<()> {
+    match action {
+        FileAction::Send {
+            path,
+            swarm,
+            lookups,
+            advertise,
+            tuning,
+            throttle,
+            password,
+            output,
+        } => {
+            crate::util::tuning::init(tuning.tuning());
+            let json = matches!(output, OutputFormat::Json);
+            let password = password::resolve_password(password, /* confirm */ true, json)?;
+            crate::file::send(
+                swarm.as_ref().map(crate::protocol::SwarmId::as_str),
+                lookups.to_set(),
+                crate::protocol::swarm::DirectorySelection::from_flag(advertise),
+                &path,
+                throttle,
+                json,
+                password,
+            )
+            .await
+        }
+        FileAction::Get {
+            ticket,
+            out,
+            throttle,
+            password,
+            output,
+        } => {
+            let password =
+                consumer_password(password, &ticket, crate::file::ticket_requires_password)?;
+            crate::file::get(
+                &ticket,
+                out.as_deref(),
+                throttle,
+                matches!(output, OutputFormat::Json),
+                password,
+            )
+            .await
+        }
+        FileAction::Discover {
+            name,
+            lookups,
+            tuning,
+            out,
+            throttle,
+            password,
+            output,
+        } => {
+            crate::util::tuning::init(tuning.tuning());
+            let json = matches!(output, OutputFormat::Json);
+            let password = password::resolve_password(password, /* confirm */ false, json)?;
+            match ticket_discover::discover_ticket(
+                name,
+                lookups.to_set(),
+                crate::protocol::token::TokenType::File,
+                json,
+            )
+            .await?
+            {
+                Some(ticket) => {
+                    let password = match password {
+                        None if crate::file::ticket_requires_password(&ticket) => {
+                            Some(password::require_password(false, "ticket")?)
+                        }
+                        other => other,
+                    };
+                    ticket_discover::interruptible(crate::file::get(
+                        &ticket,
+                        out.as_deref(),
+                        throttle,
+                        json,
+                        password,
+                    ))
+                    .await
+                }
+                None => Ok(()),
+            }
+        }
+    }
+}
+
+async fn sh(action: ShAction) -> Result<()> {
+    match action {
+        ShAction::Listen {
+            swarm,
+            lookups,
+            output,
+            write,
+            command,
+            cols,
+            rows,
+            password,
+        } => {
+            let json = matches!(output, OutputFormat::Json);
+            let password = password::resolve_password(password, /* confirm */ true, json)?;
+            crate::sh::listen(
+                swarm.as_ref().map(crate::protocol::SwarmId::as_str),
+                lookups.to_set(),
+                json,
+                write,
+                command.as_deref(),
+                cols,
+                rows,
+                password,
+            )
+            .await
+        }
+        ShAction::Connect { ticket, password } => {
+            let password =
+                consumer_password(password, &ticket, crate::sh::ticket_requires_password)?;
+            crate::sh::connect(&ticket, password).await
+        }
+    }
+}
+
+async fn mount(
+    action: Option<MountAction>,
+    ticket: Option<String>,
+    mountpoint: Option<std::path::PathBuf>,
+    no_mount: bool,
+    output: OutputFormat,
+) -> Result<()> {
+    let json = matches!(output, OutputFormat::Json);
+    if let Some(MountAction::Serve {
+        dir,
+        swarm,
+        lookups,
+        output: serve_output,
+    }) = action
+    {
+        return crate::mount::serve(
+            swarm.as_ref().map(crate::protocol::SwarmId::as_str),
+            lookups.to_set(),
+            &dir,
+            matches!(serve_output, OutputFormat::Json),
+        )
+        .await;
+    }
+    // The bare form: both positionals are optional at the clap layer (the
+    // `serve` subcommand shares the slot), so require them here.
+    let (Some(ticket), Some(mountpoint)) = (ticket, mountpoint) else {
+        anyhow::bail!("usage: ahsw mount <🐝…> <mountpoint>, or ahsw mount serve <dir>");
+    };
+    crate::mount::attach(&ticket, &mountpoint, no_mount, json).await
 }
 
 /// Read or change the swarm's shared state via the running daemon. Emits the
@@ -570,6 +820,146 @@ async fn meta(opts: MetaOpts) -> Result<()> {
     if !parsed.ok {
         std::process::exit(1);
     }
+    Ok(())
+}
+
+/// Read a participant's `AgentCard` from the meta document (published at
+/// `/peers/<nick>/card` on join). Prints the raw card JSON; exits non-zero
+/// when the peer has no published card (e.g. not a member, or still
+/// backfilling).
+/// Call a peer's A2A server over gossip and print the JSON-RPC response.
+/// The daemon parks the call until the peer answers or the timeout elapses,
+/// so this blocks for up to `--timeout-secs`. Exits non-zero when the
+/// response carries an `error` (including a timeout).
+/// Compose the JSON-RPC `params` for an `a2a call` from the `--text` /
+/// `--task-id` sugar. `message/send` composes an A2A Message (via the shared
+/// [`crate::a2a::gossip::send_message_payload`]); `tasks/*` take the id.
+fn compose_a2a_params(
+    method: &str,
+    swarm: &crate::protocol::SwarmId,
+    text: Option<&str>,
+    task_id: Option<&crate::a2a::TaskId>,
+) -> serde_json::Value {
+    match method {
+        "SendMessage" | "SendStreamingMessage" => {
+            let message =
+                crate::a2a::gossip::send_message_payload(swarm, task_id, text.unwrap_or_default());
+            serde_json::json!({ "message": message })
+        }
+        "GetTask" | "CancelTask" | "SubscribeToTask" => task_id.map_or_else(
+            || serde_json::json!({}),
+            |id| serde_json::json!({ "id": id }),
+        ),
+        _ => serde_json::json!({}),
+    }
+}
+
+async fn a2a(opts: A2aOpts) -> Result<()> {
+    match opts.action {
+        A2aAction::Call {
+            swarm,
+            nickname,
+            to,
+            method,
+            text,
+            task_id,
+            params,
+            timeout_secs,
+        } => {
+            // No peer + SendMessage = swarm broadcast chat (fire-and-forget).
+            if to.is_none() && method == "SendMessage" {
+                let text = text.ok_or_else(|| {
+                    anyhow::anyhow!("broadcast SendMessage needs --text (or a --to peer)")
+                })?;
+                let body = crate::protocol::MessageBody::new(text)
+                    .map_err(|error| anyhow::anyhow!("{error}"))?;
+                let resp = ipc::send(&IpcCommand::Msg { swarm, body }, &nickname).await?;
+                let id = finish_send(&resp, "message")?;
+                Output::new(OutputMode::Human, false, None).msg_posted(&id);
+                return Ok(());
+            }
+            let to = to.ok_or_else(|| {
+                anyhow::anyhow!(
+                    "--to <peer> is required for an RPC call (only broadcast SendMessage omits it)"
+                )
+            })?;
+            // Compose params from --text/--task-id sugar, unless raw --params given.
+            let params: serde_json::Value = match params {
+                Some(raw) => serde_json::from_str(&raw)
+                    .map_err(|error| anyhow::anyhow!("--params must be valid JSON: {error}"))?,
+                None => compose_a2a_params(&method, &swarm, text.as_deref(), task_id.as_ref()),
+            };
+            let cmd = IpcCommand::A2aCall {
+                swarm,
+                to,
+                method,
+                params,
+                timeout_secs,
+            };
+            let resp = ipc::send(&cmd, &nickname).await?;
+            println!("{resp}");
+            let parsed: serde_json::Value = serde_json::from_str(&resp)?;
+            if !parsed["error"].is_null() {
+                std::process::exit(1);
+            }
+            Ok(())
+        }
+        A2aAction::Status {
+            swarm,
+            nickname,
+            task_id,
+            state,
+            note,
+        } => {
+            let cmd = IpcCommand::A2aStatus {
+                swarm,
+                task_id,
+                state,
+                note,
+            };
+            let resp = ipc::send(&cmd, &nickname).await?;
+            let id = finish_send(&resp, "task status")?;
+            Output::new(OutputMode::Human, false, None).msg_posted(&id);
+            Ok(())
+        }
+        A2aAction::Artifact {
+            swarm,
+            nickname,
+            task_id,
+            text,
+        } => {
+            let cmd = IpcCommand::A2aArtifact {
+                swarm,
+                task_id,
+                text,
+            };
+            let resp = ipc::send(&cmd, &nickname).await?;
+            let id = finish_send(&resp, "task artifact")?;
+            Output::new(OutputMode::Human, false, None).msg_posted(&id);
+            Ok(())
+        }
+    }
+}
+
+async fn card(opts: CardOpts) -> Result<()> {
+    let CardOpts {
+        swarm,
+        nickname,
+        peer,
+    } = opts;
+    let resp = ipc::send(&IpcCommand::MetaGet { swarm }, &nickname).await?;
+    let parsed: serde_json::Value = serde_json::from_str(&resp)?;
+    if parsed["ok"] != serde_json::Value::Bool(true) {
+        eprintln!("{resp}");
+        std::process::exit(1);
+    }
+    let subject = peer.as_ref().unwrap_or(&nickname);
+    let card = &parsed["document"]["peers"][subject.as_str()]["card"];
+    if card.is_null() {
+        eprintln!("no card published for '{subject}' (yet)");
+        std::process::exit(1);
+    }
+    println!("{card}");
     Ok(())
 }
 

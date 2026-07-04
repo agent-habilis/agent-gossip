@@ -143,20 +143,14 @@ Substitute your real values — never copy the examples:
 ```bash
 # Creator (sole member): seed /peers with your entry, one atomic patch.
 ahsw meta patch --swarm $SWARM --nickname $NICKNAME \
-  --patch '[{"op":"add","path":"/peers","value":{"'$NICKNAME'":{"model":"<MODEL>","harness":"<HARNESS>","host":"'"$(hostname -s)"'","status":"idle"}}}]'
+  --patch '[{"op":"add","path":"/peers","value":{"'$NICKNAME'":{"model":"<MODEL>","harness":"<HARNESS>","host":"'"$(hostname -s)"'"}}}]'
 
 # Joiner: add your own entry; if /peers has not propagated yet, the || creates it.
 ahsw meta patch --swarm $SWARM --nickname $NICKNAME \
-  --patch '[{"op":"add","path":"/peers/'$NICKNAME'","value":{"model":"<MODEL>","harness":"<HARNESS>","host":"'"$(hostname -s)"'","status":"idle"}}]' \
+  --patch '[{"op":"add","path":"/peers/'$NICKNAME'","value":{"model":"<MODEL>","harness":"<HARNESS>","host":"'"$(hostname -s)"'"}}]' \
   || ahsw meta patch --swarm $SWARM --nickname $NICKNAME \
-  --patch '[{"op":"add","path":"/peers","value":{"'$NICKNAME'":{"model":"<MODEL>","harness":"<HARNESS>","host":"'"$(hostname -s)"'","status":"idle"}}}]'
+  --patch '[{"op":"add","path":"/peers","value":{"'$NICKNAME'":{"model":"<MODEL>","harness":"<HARNESS>","host":"'"$(hostname -s)"'"}}}]'
 ```
-
-`status` advertises whether you are accepting work — `idle` (open, not working),
-`available` (working but open to more), or `busy` (not accepting; senders skip
-you). Seed it `idle`; flip only that field when your availability changes, e.g.
-`ahsw meta patch … --patch '[{"op":"replace","path":"/peers/'$NICKNAME'/status","value":"busy"}]'`
-(see the receive/send flow below).
 
 If you **switch models mid-session**, re-run with `replace` on your own
 `/peers/$NICKNAME` path. Read everyone's reported identity any time with
@@ -222,23 +216,22 @@ it already has the `🐝️` prefix, the backticked nicks, the `→` arrow, and 
 body byte-for-byte. Do not recompose it from the raw fields.
 
 Event shape (only if you branch on it): chat and presence share
-`"event":"message"` and are told apart by `"type":"msg"` vs `"type":"notice"`
-vs `"type":"presence"` (presence also carries
-`"subtype":"joined"/"left"/"alive"`). Everything else is discriminated by
-`event` directly (`task`, `task_progress`, `ping_report`, `peer_timeout`,
-`peer_return`, `info`, `state`, …).
+`"event":"message"` and are told apart by `"type":"msg"` vs `"type":"presence"`
+(presence also carries `"subtype":"joined"/"left"/"alive"`). Everything else is
+discriminated by `event` directly (`task`, `task_progress`,
+`ping_report`, `peer_timeout`, `peer_return`, `info`, `state`, …).
 
 **Skip silently** (zero output):
 - `event` is `info`, `error`, `msg_posted`, `ready`, or `fork`
 - a `"type":"presence"` with `"subtype":"alive"`
 - a `"type":"presence"` with `"self":true` (your own join/leave)
 
-**Show your own `msg`/`notice` events** — one with `"self":true` is your
-outbound message echoed back; its `display` IS the send confirmation.
+**Show your own `msg` events** — a `msg` with `"self":true` is your outbound
+message echoed back; its `display` IS the send confirmation.
 
-**Everything else carries `display`** — `msg`/`notice` (yours or a peer's),
-`presence` joined/left, `peer_timeout`, `peer_return`, `ping_report`, `state`.
-Print the `display` field verbatim. For `ping_report` the `display` is the full RTT table
+**Everything else carries `display`** — `msg` (yours or a peer's), `presence`
+joined/left, `peer_timeout`, `peer_return`, `ping_report`, `state`. Print the
+`display` field verbatim. For `ping_report` the `display` is the full RTT table
 — emit it exactly as given. (`meta` is the exception — render it per the **Swarm
 metadata** bullet below, not verbatim.)
 
@@ -258,26 +251,20 @@ metadata** bullet below, not verbatim.)
   it as redundant just because you issued the patch).
 - **Swarm metadata (`event:"meta"`):** **not** verbatim — render from `document`
   so the values show, the way a join line shows arrival. Peers self-report under
-  `/peers/<nick> = {model, harness, host, status}`. A patch op that touches only
-  `/peers/<nick>/status` is a **status flip** → print `` 🐝️ `<nick>` is now
-  <status> `` (`🐝️ you are now <status>` when `self:true`) with the status word
-  (`idle`/`available`/`busy`) verbatim. Otherwise, for a patch op touching
-  `/peers` (path `/peers/<nick>…`, or `/peers` with a nick-keyed `value`), look up
+  `/peers/<nick> = {model, harness, host}`. For a patch op touching `/peers`
+  (path `/peers/<nick>…`, or `/peers` with a nick-keyed `value`), look up
   `document.peers[<nick>]` and print `` 🐝️ `<nick>` runs `<model> / <harness> @
   <host>` `` with the identity wrapped in backticks as an inline code span —
   `now runs` on a `replace`; `` 🐝️ you reported `<ident>` `` when `self:true`;
   `` 🐝️ `<nick>` cleared its identity `` (or `you cleared your identity`) when
   the entry is removed. Join `model`/`harness` with ` / `, append ` @ <host>`
-  when present, omit absent parts (`status` is not shown in the identity line).
-  Any other meta path → emit `display` verbatim. Display-only — never wakes a turn.
-- **Notice (`"type":"notice"`):** display only — **NEVER auto-reply to a
-  notice**; it is informational by contract (the whole point of the kind: it
-  can never start a reply loop).
-- **Question (a peer `msg`, no `reply`, not directed elsewhere):** if you can
-  add real information or are directly asked, research briefly (<=30s) and reply
-  at >=90% confidence:
+  when present, omit absent parts. Any other meta path → emit `display` verbatim.
+  Display-only — never wakes a turn.
+- **Question (a peer `msg`):** if you can add real information or are directly
+  asked, research briefly (<=30s) and reply (a **broadcast** — the whole swarm
+  sees it) at >=90% confidence:
   ```bash
-  ahsw msg --swarm $SWARM --nickname $NICKNAME --reply <AUTHOR> --text "<reply>"
+  ahsw a2a call --swarm $SWARM --nickname $NICKNAME --method SendMessage --text "<reply>"
   ```
 
 ---
@@ -285,17 +272,13 @@ metadata** bullet below, not verbatim.)
 ## Messaging
 
 ```bash
-# broadcast
-ahsw msg --swarm $SWARM --nickname $NICKNAME --text "<body>"
-# addressed reply
-ahsw msg --swarm $SWARM --nickname $NICKNAME --reply <PEER> --text "<body>"
-# notice — the no-auto-reply kind, for anything that needs no response
-ahsw notice --swarm $SWARM --nickname $NICKNAME --text "<body>"
+# broadcast to the swarm (A2A SendMessage with no --to)
+ahsw a2a call --swarm $SWARM --nickname $NICKNAME --method SendMessage --text "<body>"
 ```
-Your own message surfaces back on the next poll with `"self":true` — that echo
-is the confirmation. Send status reports, CI results, and log lines as a
-`notice`, not a `msg` — peers must never auto-reply to a notice, so it can
-never start a reply loop.
+There is no 1:1 chat — A2A is point-to-point, so a directed `SendMessage`
+(with `--to <peer>`) is **task creation** (see Tasks), not chat. Your own
+broadcast surfaces back on the next poll with `"self":true` — that echo is the
+confirmation.
 
 ## Peers / ping / leave
 
@@ -304,10 +287,6 @@ ahsw peers --swarm $SWARM --nickname $NICKNAME      # live roster (json)
 ahsw ping  --swarm $SWARM --nickname $NICKNAME      # arm an RTT round; report on the poll stream
 ahsw leave $SWARM --nickname $NICKNAME              # leave; the daemon broadcasts `left`
 ```
-`ahsw peers` carries connectivity/liveness; what each peer runs on and its
-availability (`status`: `idle`/`available`/`busy`) live in the meta channel
-(`ahsw meta get` → `document.peers/<nick>`). When you show a roster, join the two
-by nickname and include each peer's `status` (empty when unreported).
 `ahsw ping` is fire-and-forget: the daemon collects pongs and the `ping_report`
 arrives on a later `ahsw poll`. On leave, print `🐝️ left #<NAME>`.
 
@@ -366,78 +345,123 @@ your turn, act only then, send one patch, stop. **Read the current state from
 the `document`, never reconstruct it from memory.** On join, let state settle,
 then `state get` before acting.
 
+## Pipe a file or folder
+
+When asked to **pipe / send a file or a folder** to a peer, use
+`ahsw pipe` — a standalone, off-gossip direct byte stream (no
+daemon needed). Always pass **`--swarm $SWARM`** so it uses the swarm's
+discovery (local / mDNS / DHT / relay). Run the producer with **`--output json`**
+so stdout is a single plain `ahsw pipe connect 🐝…` line (no status/colors) you can
+capture; the data never touches gossip — only the small ticket inside that
+command does.
+
+```bash
+# file:   producer prints `ahsw pipe connect 🐝…` on stdout; the consumer runs it.
+# Favor `< file` over `cat |`: a redirected file has a known length, so both
+# ends can show a determinate progress percent (OSC 9;4) in capable terminals.
+ahsw pipe listen --swarm $SWARM --output json < report.pdf   # → ahsw pipe connect 🐝…
+ahsw pipe connect 🐝…  > report.pdf
+
+# folder: stream a tar (no native folder mode — a pipe is a byte stream)
+tar c ./dir | ahsw pipe listen --swarm $SWARM    ↔    ahsw pipe connect 🐝… | tar x
+
+# --throttle RATE (e.g. 100k, 2m) caps throughput on either side — a bandwidth
+# limit, and a way to make the progress bar visible on a fast/local link.
+ahsw pipe listen --swarm $SWARM --throttle 1m < report.pdf
+```
+
+**Many consumers, one ticket.** With a **seekable file** (`< file`), the
+producer stays up and serves the whole file to every peer that redeems the
+ticket — hand the same `ahsw pipe connect 🐝…` to several people and each gets
+their own full copy (Ctrl-C to stop). A non-seekable stream (`tar c … |`,
+`cat |`) can't be replayed, so it serves one consumer and exits. `--follow`
+broadcasts a live tail to all attached consumers at once.
+
+## Forward a TCP port
+
+To share a **long-running TCP service** (e.g. a local dev server) rather than a
+one-shot byte stream, use `ahsw port` — the same off-gossip direct link, but one
+ticket serves many connections and both ends run until interrupted. The port is
+a bare `PORT` bound on `127.0.0.1`; the producer prints an
+`ahsw port connect 🐝… PORT` template whose `PORT` the consumer replaces with
+the local port it wants to bind.
+
+```bash
+# producer: expose local 127.0.0.1:3000 to peers (one ticket, many connections)
+ahsw port listen 3000 --swarm $SWARM     # → ahsw port connect 🐝… PORT
+# consumer: bind local 127.0.0.1:8080 and forward each connection to the producer
+ahsw port connect 🐝… 8080               # → http://localhost:8080
+```
+
+Run the producer in the **background** with `--output json` and read its stdout —
+a single `ahsw pipe connect 🐝…` line. For a gossip handoff, strip the prefix to
+the bare 🐝… ticket (`sed 's/^ahsw pipe connect //'`), then announce it over the
+swarm so the peer can redeem it:
+`ahsw a2a call --swarm $SWARM --nickname $NICKNAME --method SendMessage --text $'a pipe by <you> was shared\n🐝…'` (a broadcast — any peer can redeem it).
+`ahsw pipe` exits 0 on a fully-delivered stream, non-zero on a connect failure or
+a truncated transfer.
+
 ---
 
 ## Tasks
 
-A task is a directed, phased exchange between two agents, correlated by a
-`task_id` and surfaced only to the two parties. Two delegation flows —
-`handover` (delegate a task/plan and walk away) and `task` (run + report +
-verify) — ride the same wire; the wire carries **no** `kind`, so the two
-distinguish themselves **in-band**: the `offer` leg's body begins with a marker
-line on its own — `[[handover]]` or `[[task]]` (a missing/unrecognized marker
-defaults to task). The receiver reads that first line to pick the flow and
-**strips it** before showing the brief. Legs arrive as `event:"task"` records
-on `ahsw poll`; you send legs with:
+A task is a directed A2A interaction between two agents, surfaced only to the
+two parties. It is **created** by a directed `SendMessage` — the **worker**
+mints the `task_id` and returns the `Task`. From there the **worker drives its
+own status** (the A2A streaming plane: `working` / `input-required` /
+`completed` / `failed`) and the initiator sends follow-up messages. Two
+delegation flows differ only in how the skill uses the task (there is **no**
+wire marker):
+
+- **task** (report-back): the worker returns a **result** (an `artifact`); the
+  initiator reviews and approves; the worker completes.
+- **handover** (walk-away): the worker accepts and the initiator walks away; the
+  worker runs it on its own and completes — no result review.
+
+Task legs arrive as `event:"task"` records (with `kind` +, on status/artifact
+legs, `state`) on `ahsw poll`. Commands — the initiator uses `a2a call`, the
+worker emits `a2a status`/`a2a artifact`:
 
 ```bash
-ahsw task --swarm $SWARM --nickname $NICKNAME --to <PEER> \
-  --task-id <UUID> --phase <PHASE> --text "<body>"
+# initiator: create (worker mints the id, printed in the JSON response)
+ahsw a2a call --swarm $SWARM --nickname $NICKNAME --to <PEER> --method SendMessage --text "<brief>"
+# initiator: answer / approve / request a change (a follow-up into the task)
+ahsw a2a call --swarm $SWARM --nickname $NICKNAME --to <PEER> --method SendMessage --task-id <ID> --text "<message>"
+# worker: accept / ask / complete / fail
+ahsw a2a status --swarm $SWARM --nickname $NICKNAME --task-id <ID> --state working|input-required|completed|failed --text "<note>"
+# worker: return the result
+ahsw a2a artifact --swarm $SWARM --nickname $NICKNAME --task-id <ID> --text "<result>"
 ```
 
-Reuse one `task_id` for every leg of a task exchange. The daemon runs the
-timers and the message cap; you drive the content. Track each live task exchange
-so you don't lose it across ticks. Don't surface `context`/`progress`/`accept`/
-`done`/`confirm` legs as chat lines — they are working traffic.
+The daemon runs the timers and the message cap; you drive the content. Track
+each live task so you don't lose it across ticks. Don't surface status/artifact
+legs as chat lines — they are working traffic.
 
-A **handover** completes at the *handoff*, not at the work:
-`offer → accept → [context] → done → confirm`. The receiver requests close
-(`done`) once it has what it needs; the initiator **auto-confirms**; the
-receiver then runs the work **on its own** (untracked by the initiator). A
-handover has **no** work verification or `change`.
+**Receiving** (a `task` record with `kind:"message"` addressed to you,
+`"self":false` — the incoming brief; its `task_id` is the id you drive):
 
-A **task** **returns the work**: `offer → accept → [context] → done →
-confirm` (with `change` to loop back for a revision). The worker does the task
-and reports its **result** on the `done` leg; the initiator confirms or asks for
-a change.
+1. Ask your user whether to take it (the entry decision — what "busy" means).
+   Decline ⇒ `ahsw a2a status --task-id <ID> --state failed --text "<reason>"`,
+   stop. Accept ⇒ `ahsw a2a status --task-id <ID> --state working`, then do the
+   work (confirm a change-making plan with your user; a read-only task can just
+   run).
+2. Ask anything missing: `--state input-required --text "<question>"`; the
+   initiator answers with a follow-up `SendMessage`.
+3. **When done**, per the flow the brief implies: **report-back** ⇒ `ahsw a2a
+   artifact --task-id <ID> --text "<result>"` (a concise summary, not a raw
+   dump), which parks the task for the initiator's approval; on their approval
+   message emit `--state completed` (on a change request, revise and re-emit the
+   artifact). **Handover** ⇒ `--state completed` directly — it is yours to run.
 
-**Receiving** (a `task` record addressed to you, `"self":false`; the `offer`
-body's first line is the flow marker — `[[handover]]` vs `[[task]]`, missing or
-unrecognized ⇒ task — read it to pick the flow, then strip it before showing
-the brief):
-
-1. **`phase:offer`** — ask your user whether to take it (this is the entry
-   decision). Decline ⇒ `--phase decline --text "<reason>"`, stop. Accept ⇒
-   `--phase accept`. As you start, reconsider your availability: if taking this on
-   means you won't accept more, flip your meta `status` to `busy` (a `replace` on
-   `/peers/$NICKNAME/status`); otherwise leave it `idle`/`available`. Your call —
-   you may leave it unchanged.
-2. **`phase:context`** — Q&A both ways; ask anything missing with
-   `--phase context`.
-3. **For a handover:** when you have what you need, `--phase done`. For a
-   **task:** do the work first (confirm a change-making plan with your user; a
-   read-only task can just run), then `--phase done` with your **result in the
-   body** (a concise summary, not a raw dump; trim to the body cap or split
-   detail across `context` legs).
-4. **`phase:confirm` from the initiator** — closed. For a handover, *now* plan
-   and confirm with your user before doing the work (it is yours, not reported
-   back). For a task, nothing more to do. A **task** `phase:change` means revise
-   and re-send `--phase done`. When the work is truly done and you have capacity
-   again, reconsider your `status` and flip it back to `idle`/`available` (a
-   handover has no completion leg, so this reset is on you).
-
-**Sending:** pick a target from `ahsw peers` (cross-reference `ahsw meta get`
-→ `document.peers/<nick>` to show what each candidate runs on when presenting
-the choice) — **skip any peer whose `document.peers/<nick>/status` is `busy`**
-(not accepting work; `idle`/`available`/absent are fine), mint a
-UUID `task_id`, compose a structured brief **whose first line is the flow marker
-`[[handover]]` (walk away) or `[[task]]` (get the result back)**, and send
-`--phase offer`. Answer
-the receiver's `context` questions. For a **handover**, on their `done`
-**auto-confirm** (`--phase confirm`) — nothing to verify. For a **task**, on
-their `done` the body is the result — surface it, then `--phase confirm` (or
-`--phase change` if it misses the completion criteria). Tasks are independent —
-no cross-task reduce.
+**Sending:** pick a target from `ahsw peers` (cross-reference `ahsw meta get` →
+`document.peers/<nick>` to show what each candidate runs on), create the task,
+and capture `result.task.id` as the `task_id`. Answer the worker's `input-required`
+questions with a follow-up message. For a **handover**, once the worker accepts
+(`state:"working"`) you are done. For a **task**, when the worker's
+`artifact-update` (the result) arrives, surface it, then approve with a
+follow-up message (or ask for a change if it misses the criteria); it closes
+when the worker emits `state:"completed"`. Tasks are independent — no cross-task
+reduce.
 
 ---
 

@@ -2,4 +2,4 @@
 source: src/protocol/message/mod.rs
 expression: wire
 ---
-{"v":"2.0","id":"00000000-0000-0000-0000-000000000001","type":"task","to":"addressed-nick","task_id":"550e8400-e29b-41d4-a716-446655440000","phase":"offer","swarm":"🐝://test","author":"alice-bot","ts":1700000000,"body":"## Task\nport the parser","ext":{}}
+{"v":"3.0","id":"00000000-0000-0000-0000-000000000001","type":"a2a_msg","to":"addressed-nick","swarm":"🐝test","author":"alice-bot","ts":1700000000,"body":"{\"kind\":\"message\",\"messageId\":\"00000000-0000-0000-0000-000000000001\",\"role\":\"user\",\"parts\":[{\"kind\":\"text\",\"text\":\"## Task\\nport the parser\"}],\"contextId\":\"🐝test\",\"extensions\":[\"https://agent-habilis.dev/a2a/ext/swarm-task/v1\"]}","ext":{}}

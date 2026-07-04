@@ -15,8 +15,7 @@ use std::time::Instant;
 use crate::daemon::ctx::HandlerCtx;
 use crate::daemon::state::EventLoopState;
 use crate::output;
-use crate::protocol::message::is_content_phase;
-use crate::protocol::{Message, MessageKind, Nickname, PresenceSubtype, TaskPhase};
+use crate::protocol::{Message, MessageKind, Nickname, PresenceSubtype};
 
 use crate::gossip;
 
@@ -152,34 +151,15 @@ pub(crate) async fn handle_presence(
     }
 }
 
-/// Returns whether the message should be logged (pushed to the poll
-/// buffer). A reply addressed to another peer is neither logged nor
-/// shown here. `surfaceable` gates only the *display*: a pre-join
-/// message is still logged/relayed but not printed.
-pub(crate) fn handle_msg(
-    out: &output::Output,
-    message: &Message,
-    surfaceable: bool,
-    self_author: &Nickname,
-) -> bool {
+/// Returns whether the message should be logged (pushed to the poll buffer).
+/// `A2aMsg` is swarm broadcast chat — always loggable. `surfaceable` gates
+/// only the *display*: a pre-join message is still logged/relayed but not
+/// printed.
+pub(crate) fn handle_msg(out: &output::Output, message: &Message, surfaceable: bool) -> bool {
     match &message.kind {
-        MessageKind::Msg { reply: None } | MessageKind::Notice { reply: None } => {
+        MessageKind::A2aMsg => {
             if surfaceable {
                 out.print_message(message);
-            }
-            true
-        }
-        MessageKind::Msg {
-            reply: Some(target),
-        }
-        | MessageKind::Notice {
-            reply: Some(target),
-        } => {
-            if target != self_author {
-                return false;
-            }
-            if surfaceable {
-                out.print_message_ex(message, false);
             }
             true
         }
@@ -192,22 +172,25 @@ pub(crate) fn handle_msg(
         | MessageKind::Pong { .. }
         | MessageKind::State
         | MessageKind::Meta
-        | MessageKind::Task { .. } => false,
+        | MessageKind::A2aStatus { .. }
+        | MessageKind::A2aArtifact { .. }
+        | MessageKind::A2aReq { .. }
+        | MessageKind::A2aResp { .. } => false,
     }
 }
 
-/// A task leg: surfaced + logged only by the addressee (`to ==
+/// A task leg (a task-related `a2a_msg`, an `a2a_status`, or an
+/// `a2a_artifact`): surfaced + logged only by the addressee (`to ==
 /// self_author`) and, via the sender's echo path, the sender itself —
 /// third parties relay it without retaining, exactly like a directed
-/// `Msg` (see [`handle_msg`]). Returns whether to **log** (content phases
-/// only — the `Progress` phase is liveness plumbing, surfaced as a
-/// `task_progress` widget event but never retained). `surfaceable` gates
-/// only the *display* (join-horizon), never the relay/log.
+/// message (see [`handle_msg`]). Returns whether to **log** (content legs
+/// only — a beat status is liveness plumbing, surfaced as a `task_progress`
+/// widget event but never retained). `surfaceable` gates only the *display*
+/// (join-horizon), never the relay/log.
 pub(crate) fn handle_task(
     out: &output::Output,
     message: &Message,
     to: &Nickname,
-    phase: TaskPhase,
     surfaceable: bool,
     self_author: &Nickname,
 ) -> bool {
@@ -217,5 +200,8 @@ pub(crate) fn handle_task(
     if surfaceable {
         out.print_task(message, false);
     }
-    is_content_phase(phase)
+    // Content legs log; a liveness beat (a status marked `swarm:beat`) is
+    // plumbing — surfaced as a `task_progress` widget event but never retained.
+    !crate::a2a::gossip::status_payload(message)
+        .is_ok_and(|payload| crate::a2a::gossip::is_beat(&payload))
 }

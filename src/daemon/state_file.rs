@@ -50,6 +50,9 @@ pub(crate) struct StateFile {
     swarm: String,
     name: String,
     nickname: String,
+    /// The `--a2a-serve` port + bearer token, when the binding is on. The
+    /// token is why every write chmods the file to 0o600.
+    a2a: std::sync::Mutex<Option<(u16, String)>>,
 }
 
 impl StateFile {
@@ -64,7 +67,14 @@ impl StateFile {
             swarm: swarm.as_str().to_string(),
             name: name.as_str().to_string(),
             nickname: nickname.as_str().to_string(),
+            a2a: std::sync::Mutex::new(None),
         }
+    }
+
+    /// Note the bound `--a2a-serve` port + bearer token so subsequent writes
+    /// publish them (`a2a_port` / `a2a_token`) for local A2A clients.
+    pub(crate) fn set_a2a(&self, port: u16, token: String) {
+        *self.a2a.lock().expect("state-file a2a mutex not poisoned") = Some((port, token));
     }
 
     /// Write a fresh, complete state document — `swarm`, `name`,
@@ -93,6 +103,15 @@ impl StateFile {
         obj.insert("pid".into(), std::process::id().into());
         obj.insert("ready".into(), ready.into());
         obj.insert("participant_count".into(), participant_count.into());
+        if let Some((port, token)) = self
+            .a2a
+            .lock()
+            .expect("state-file a2a mutex not poisoned")
+            .clone()
+        {
+            obj.insert("a2a_port".into(), port.into());
+            obj.insert("a2a_token".into(), token.into());
+        }
         obj.insert("last_updated".into(), clock::unix_secs().into());
         let mut json = serde_json::to_vec(&obj).map_err(std::io::Error::other)?;
         json.push(b'\n');
@@ -100,7 +119,30 @@ impl StateFile {
         // No fsync: statusline is best-effort; kernel buffer-writeback
         // is plenty. Atomic rename still gives readers a consistent view.
         let tmp = tmp_sibling(&self.path);
-        std::fs::File::create(&tmp)?.write_all(&json)?;
+        // 0o600 at create, not chmod-after: with `--a2a-serve` the file
+        // carries the bearer token, and a create-then-chmod sequence leaves a
+        // window where the token is written at the umask-default mode (often
+        // world-readable) — a local co-tenant polling the predictable tmp
+        // path could open an fd during that window (POSIX checks perms at
+        // open, not per read). Being born at 0o600 closes the window; the
+        // uniform mode also keeps the common (no-token) case indistinguishable.
+        let mut file = {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt as _;
+                std::fs::OpenOptions::new()
+                    .write(true)
+                    .create(true)
+                    .truncate(true)
+                    .mode(0o600)
+                    .open(&tmp)?
+            }
+            #[cfg(not(unix))]
+            {
+                std::fs::File::create(&tmp)?
+            }
+        };
+        file.write_all(&json)?;
         std::fs::rename(&tmp, &self.path)
     }
 

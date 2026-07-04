@@ -200,7 +200,7 @@ impl Drop for JsonNode {
 // already-running daemon; success is asserted.
 
 fn cli_send(swarm: &str, nickname: &str, body: &str) -> String {
-    common::cli_msg_checked(swarm, nickname, body, None)
+    common::cli_msg_checked(swarm, nickname, body)
 }
 
 // ── test fixtures ──────────────────────────────────────────────────────────
@@ -296,7 +296,11 @@ async fn test_cross_peer_message_delivery() {
     assert_eq!(msg["author"], "mon-xpeer-a");
     assert!(msg["ts"].is_number(), "ts should be a number");
     assert_eq!(msg["body"], "hello from A");
-    assert!(msg["reply"].is_null(), "message should have reply: null");
+    assert!(msg["to"].is_null(), "message should have to: null");
+    assert_eq!(
+        msg["message"]["role"], "ROLE_USER",
+        "the embedded a2a payload rides the event"
+    );
     assert_eq!(msg["self"], false, "receiver should see self: false");
 }
 
@@ -320,75 +324,6 @@ async fn test_bidirectional_multi_peer() {
         .collect();
     assert!(bodies.iter().any(|body| body == "msg from A"));
     assert!(bodies.iter().any(|body| body == "msg from B"));
-}
-
-/// Reply addressing: `reply` field carries the target nickname.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn test_reply_addressing_json() {
-    let (mut creator, mut joiner_a, joiner_b) = common::three_peers("reply").await;
-    let a_nick = joiner_a.nickname.clone();
-
-    joiner_a.send("what is 2+2?").await;
-    assert!(
-        creator.wait_inbound(1, MSG_TIMEOUT).await,
-        "question never propagated"
-    );
-
-    joiner_b.reply(&a_nick, "4").await;
-    assert!(
-        joiner_a.wait_body("4", MSG_TIMEOUT).await,
-        "addressee joiner_a never received the reply"
-    );
-
-    let msgs = joiner_a.msg_events();
-    let reply = msgs
-        .iter()
-        .find(|value| value["body"] == "4")
-        .expect("reply not found");
-
-    assert_eq!(reply["type"], "msg");
-    assert!(
-        reply["reply"].is_string(),
-        "reply should have reply field as string, got: {}",
-        reply["reply"]
-    );
-    assert_eq!(reply["reply"].as_str().unwrap(), a_nick);
-}
-
-/// Directed replies are only surfaced to the addressee, not to uninvolved
-/// peers. With 3 peers, if A sends and B replies to A, peer C should NOT
-/// see the reply in its JSON output or poll buffer.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn test_reply_filtering_json() {
-    let (mut creator, mut joiner_a, mut joiner_b) = common::three_peers("rfilt").await;
-    let a_nick = joiner_a.nickname.clone();
-
-    joiner_a.send("filter-test message").await;
-    assert!(
-        creator.wait_inbound(1, MSG_TIMEOUT).await && joiner_b.wait_inbound(1, MSG_TIMEOUT).await,
-        "message never reached creator and joiner_b"
-    );
-
-    joiner_b.reply(&a_nick, "filter-test reply").await;
-
-    // joiner_a (the addressee) MUST see the reply.
-    assert!(
-        joiner_a.wait_body("filter-test reply", MSG_TIMEOUT).await,
-        "joiner_a (the addressee) should see the reply"
-    );
-
-    // creator (uninvolved) must NOT see it — directed replies are
-    // filtered at the receiver for non-addressees.
-    tokio::time::sleep(Duration::from_secs(2)).await;
-    let creator_replies = creator
-        .msg_events()
-        .into_iter()
-        .filter(|value| value["body"] == "filter-test reply")
-        .count();
-    assert_eq!(
-        creator_replies, 0,
-        "creator (uninvolved) should NOT see the reply, but got {creator_replies} copies"
-    );
 }
 
 /// Self-echo suppression: the sender does NOT see its own message in JSON output
@@ -567,10 +502,10 @@ async fn test_message_event_has_all_required_fields() {
         assert!(msg["author"].is_string(), "missing author field: {msg}");
         assert!(msg["ts"].is_number(), "missing ts field: {msg}");
         assert!(msg["body"].is_string(), "missing body field: {msg}");
-        // reply should be present (null or string).
+        // to should be present (null or string).
         assert!(
-            msg["reply"].is_null() || msg["reply"].is_string(),
-            "reply should be null or string: {msg}"
+            msg["to"].is_null() || msg["to"].is_string(),
+            "to should be null or string: {msg}"
         );
         // self should be a boolean.
         assert!(msg["self"].is_boolean(), "missing self field: {msg}");
@@ -1042,27 +977,18 @@ async fn create_without_nickname_uses_random_name() {
 
 // ── task + peers wire contract ───────────────────────────────────────────────
 
-const WIRE_TASK_ID: &str = "550e8400-e29b-41d4-a716-446655440000";
-
-/// The `task` event wire shape: a leg sent from the creator to a specific
-/// joiner is surfaced on **that joiner's** `--output json` stream with the
-/// documented fields, and is **absent** from a third peer's stream
-/// (delivered for relay, never surfaced to a bystander).
+/// The `task` event wire shape: creating a task (a directed `message/send`)
+/// is surfaced on **the worker's** `--output json` stream as a `message`-kind
+/// task event with the documented fields, and is **absent** from a third
+/// peer's stream (delivered for relay, never surfaced to a bystander).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_task_event_wire_contract() {
     let (creator, joiner_a, joiner_b, swarm) = three_peers("ho");
-    let addressee = joiner_a.nickname.clone();
+    let worker = joiner_a.nickname.clone();
 
-    common::cli_task_checked(
-        &swarm,
-        &creator.nickname,
-        &addressee,
-        WIRE_TASK_ID,
-        "offer",
-        "## Task\nport it",
-    );
+    let task_id = common::cli_task_create(&swarm, &creator.nickname, &worker, "## Task\nport it");
 
-    // Give the leg time to propagate and be written to the addressee's log.
+    // The worker surfaces the incoming `message/send` as a task event.
     let deadline = Instant::now() + MSG_TIMEOUT;
     let mut task = None;
     while Instant::now() < deadline {
@@ -1076,23 +1002,19 @@ async fn test_task_event_wire_contract() {
         }
         std::thread::sleep(POLL);
     }
-    let task = task.expect("addressee never surfaced a task event");
+    let task = task.expect("the worker never surfaced a task event");
     assert_eq!(task["event"], "task");
-    assert_eq!(task["task_id"], WIRE_TASK_ID);
-    assert_eq!(task["phase"], "offer");
-    assert_eq!(task["to"], addressee);
+    assert_eq!(task["kind"], "message");
+    assert_eq!(task["task_id"], task_id);
+    assert_eq!(task["to"], worker);
     assert_eq!(task["author"], creator.nickname);
     assert_eq!(task["body"], "## Task\nport it");
     assert_eq!(task["self"], false);
     assert!(task["id"].is_string());
     assert!(task["ts"].is_number());
     assert!(
-        task["display"]
-            .as_str()
-            .unwrap()
-            .starts_with("🐝️ task offer"),
-        "display: {}",
-        task["display"]
+        task.get("phase").is_none(),
+        "no phase field in the native model"
     );
     // A distinct top-level event — never the `message` family.
     assert!(task.get("type").is_none());
@@ -1107,28 +1029,25 @@ async fn test_task_event_wire_contract() {
     );
 }
 
-/// `ahsw task --phase offer` to a nickname that is not a current
-/// participant exits non-zero with an `unknown participant` error.
+/// A directed `message/send` (task creation) to a nickname that is not a
+/// current participant exits non-zero with an `unknown participant` error.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_task_unknown_participant_errors() {
     let (creator, _joiner_a, _joiner_b, swarm) = three_peers("ho-unknown");
 
-    let out = common::cli_task_raw(
-        &swarm,
-        &creator.nickname,
-        "ghost-peer",
-        WIRE_TASK_ID,
-        "offer",
-        "brief",
-    );
+    let out = common::cli_task_create_raw(&swarm, &creator.nickname, "ghost-peer", "brief");
     assert!(
         !out.status.success(),
-        "task offer to an unknown participant must exit non-zero"
+        "task creation to an unknown participant must exit non-zero"
     );
-    let stderr = String::from_utf8_lossy(&out.stderr);
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert!(
-        stderr.contains("unknown participant"),
-        "expected an unknown-participant error, got: {stderr}"
+        combined.contains("unknown participant"),
+        "expected an unknown-participant error, got: {combined}"
     );
 }
 
@@ -1162,22 +1081,21 @@ async fn test_task_idle_timeout_after_owner_dies() {
     );
     assert!(saw_join >= 1, "creator never saw the joiner join");
 
-    let tid = WIRE_TASK_ID;
-    // Creator offers; joiner accepts → the joiner (receiver) holds the ball.
-    common::cli_task_checked(&swarm, &creator.nickname, "tk-bob", tid, "offer", "port it");
+    // Creator creates the task; the worker (joiner) holds the ball and accepts.
+    let tid = common::cli_task_create(&swarm, &creator.nickname, "tk-bob", "port it");
     let saw_offer = wait_until(
         || {
             joiner
                 .json_events()
                 .iter()
-                .filter(|value| value["event"] == "task" && value["phase"] == "offer")
+                .filter(|value| value["event"] == "task" && value["kind"] == "message")
                 .count()
         },
         1,
         MSG_TIMEOUT,
     );
-    assert!(saw_offer >= 1, "joiner never surfaced the offer");
-    common::cli_task_checked(&swarm, "tk-bob", &creator.nickname, tid, "accept", "ok");
+    assert!(saw_offer >= 1, "joiner never surfaced the task message");
+    common::cli_task_status(&swarm, "tk-bob", &tid, "working");
 
     // Both alive well past the 3s timeout: the joiner's keepalive must keep
     // the task alive — no spurious `task_timeout` on the creator.
@@ -1197,7 +1115,9 @@ async fn test_task_idle_timeout_after_owner_dies() {
             creator
                 .json_events()
                 .iter()
-                .filter(|value| value["event"] == "task_timeout" && value["task_id"] == tid)
+                .filter(|value| {
+                    value["event"] == "task_timeout" && value["task_id"] == tid.as_str()
+                })
                 .count()
         },
         1,
@@ -1240,31 +1160,23 @@ async fn test_task_times_out_when_skill_goes_silent() {
     );
     assert!(saw_join >= 1, "creator never saw the joiner join");
 
-    let tid = WIRE_TASK_ID;
-    // Creator offers; joiner accepts → the joiner (receiver) holds the ball,
-    // then its skill sends nothing more (simulating a crash/abandon while the
-    // daemon process keeps running).
-    common::cli_task_checked(
-        &swarm,
-        &creator.nickname,
-        "tk-silent",
-        tid,
-        "offer",
-        "port it",
-    );
+    // Creator creates; the worker (joiner) holds the ball and accepts, then its
+    // skill sends nothing more (simulating a crash/abandon while the daemon
+    // process keeps running).
+    let tid = common::cli_task_create(&swarm, &creator.nickname, "tk-silent", "port it");
     let saw_offer = wait_until(
         || {
             joiner
                 .json_events()
                 .iter()
-                .filter(|value| value["event"] == "task" && value["phase"] == "offer")
+                .filter(|value| value["event"] == "task" && value["kind"] == "message")
                 .count()
         },
         1,
         MSG_TIMEOUT,
     );
-    assert!(saw_offer >= 1, "joiner never surfaced the offer");
-    common::cli_task_checked(&swarm, "tk-silent", &creator.nickname, tid, "accept", "ok");
+    assert!(saw_offer >= 1, "joiner never surfaced the task message");
+    common::cli_task_status(&swarm, "tk-silent", &tid, "working");
 
     // The ball-owner's daemon is still alive, but its skill is silent past the
     // keepalive-max window, so the keepalive stops and the task is reaped. The
@@ -1276,7 +1188,9 @@ async fn test_task_times_out_when_skill_goes_silent() {
             let count = |node: &JsonNode| {
                 node.json_events()
                     .iter()
-                    .filter(|value| value["event"] == "task_timeout" && value["task_id"] == tid)
+                    .filter(|value| {
+                        value["event"] == "task_timeout" && value["task_id"] == tid.as_str()
+                    })
                     .count()
             };
             count(&creator) + count(&joiner)
@@ -1518,7 +1432,11 @@ fn channel_wire_contract(channel: Channel) {
         let poll = common::cli_poll(&swarm, &joiner.nickname, None);
         let records: Vec<serde_json::Value> =
             serde_json::from_str(&poll).expect("poll JSON parses");
-        event = records.into_iter().find(|record| record["event"] == label);
+        // Select OUR merge's event: on the meta channel the daemons' own
+        // card publications (`/peers/<nick>/card`) also surface here.
+        event = records
+            .into_iter()
+            .find(|record| record["event"] == label && record["merge"] == want_doc);
         if event.is_some() {
             break;
         }
@@ -1530,17 +1448,28 @@ fn channel_wire_contract(channel: Channel) {
         event["merge"], want_doc,
         "{label} event carries the applied merge document: {event}"
     );
+    // The derived document carries the merge; on the meta channel the
+    // daemon-published cards are masked out of the comparison.
+    let mut document = event["document"].clone();
+    if let Some(map) = document.as_object_mut() {
+        map.remove("peers");
+    }
     assert_eq!(
-        event["document"], want_doc,
+        document, want_doc,
         "{label} event carries the derived document: {event}"
     );
 
-    // The `<chan> get` command on the joiner returns the same document.
+    // The `<chan> get` command on the joiner returns the same document
+    // (cards masked on meta, as above).
     let got = common::cli_channel_get(channel, &swarm, &joiner.nickname);
     let got: serde_json::Value = serde_json::from_str(&got).expect("get stdout is JSON");
     assert_eq!(got["ok"], true);
+    let mut got_doc = got["document"].clone();
+    if let Some(map) = got_doc.as_object_mut() {
+        map.remove("peers");
+    }
     assert_eq!(
-        got["document"], want_doc,
+        got_doc, want_doc,
         "{label} get on the peer reflects the creator's merge"
     );
 }

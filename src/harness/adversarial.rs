@@ -43,13 +43,15 @@ pub struct CraftedMsg {
 }
 
 impl CraftedMsg {
-    /// An open `Msg` from `author` on `swarm` carrying `body`. Unsigned
+    /// An open chat frame from `author` on `swarm` carrying `body` verbatim
+    /// (NOT wrapped as an A2A payload — the attacker controls the raw body;
+    /// use a serialized payload for a frame meant to pass the boundary). Unsigned
     /// until [`sign`](CraftedMsg::sign).
     pub fn new(swarm: &SwarmId, author: &str, body: &str) -> Self {
         let author = Nickname::new(author.to_owned()).expect("test author is a valid nickname");
         let body = MessageBody::new(body.to_owned()).expect("test body is valid");
         Self {
-            msg: Message::new_message(swarm, &author, body),
+            msg: Message::new_a2a_msg(swarm, &author, body),
         }
     }
 
@@ -68,6 +70,44 @@ impl CraftedMsg {
         }
     }
 
+    /// A crafted `a2a_status` frame whose FRAME correlation field carries
+    /// `frame_task_id` while the PAYLOAD claims `payload_task_id` — the
+    /// cross-validation attack shape a correct client never produces. Both
+    /// must be valid UUIDs. Unsigned until [`sign`](CraftedMsg::sign).
+    pub fn status_frame(
+        swarm: &SwarmId,
+        author: &str,
+        to: &str,
+        frame_task_id: &str,
+        payload_task_id: &str,
+    ) -> Self {
+        let author = Nickname::new(author.to_owned()).expect("test author is a valid nickname");
+        let to = Nickname::new(to.to_owned()).expect("valid target");
+        let frame_tid =
+            crate::a2a::TaskId::from_uuid_str(frame_task_id).expect("valid frame task id");
+        let payload_tid =
+            crate::a2a::TaskId::from_uuid_str(payload_task_id).expect("valid payload task id");
+        let update = crate::a2a::gossip::status_update(
+            swarm,
+            &payload_tid,
+            crate::a2a::TaskState::Working,
+            None,
+            None,
+        );
+        let body = crate::a2a::gossip::payload_body(&update).expect("crafted payload serializes");
+        Self {
+            msg: Message::new_frame(
+                swarm,
+                &author,
+                MessageKind::A2aStatus {
+                    to,
+                    task_id: frame_tid,
+                },
+                body,
+            ),
+        }
+    }
+
     /// Stamp the per-author hash chain (Phase 2): `seq` + optional `prev`.
     pub fn chain(mut self, seq: u64, prev: Option<String>) -> Self {
         self.msg = self.msg.with_chain(seq, prev);
@@ -81,14 +121,22 @@ impl CraftedMsg {
         self
     }
 
-    /// Make this a directed reply addressed to `target` instead of an open
-    /// `Msg` — a message a receiver relays but, if `target` is someone else,
-    /// never logs (so it must never be folded into the fork/DAG indexes).
-    pub fn reply_to(mut self, target: &str) -> Self {
-        let target = Nickname::new(target.to_owned()).expect("valid reply target");
-        self.msg.kind = MessageKind::Msg {
-            reply: Some(target),
-        };
+    /// Wrap the current raw body into a **valid** A2A broadcast chat payload
+    /// consistent with the frame's current id / swarm, so the frame passes the
+    /// receiver's A2A boundary gate. Call after any `id` mutation and before
+    /// `sign` — the attack under test is then something *other* than a
+    /// malformed payload. A frame built without this carries its raw body
+    /// verbatim and is dropped at the boundary.
+    pub fn wrap_a2a(mut self) -> Self {
+        assert!(
+            matches!(&self.msg.kind, MessageKind::A2aMsg),
+            "wrap_a2a applies to chat frames only"
+        );
+        let mut payload = crate::a2a::gossip::chat_message(&self.msg.swarm, self.msg.body.as_str());
+        payload.message_id = crate::a2a::MessageId::from_uuid_str(self.msg.id.as_str())
+            .expect("frame id is a valid uuid");
+        self.msg.body =
+            crate::a2a::gossip::payload_body(&payload).expect("crafted payload serializes");
         self
     }
 

@@ -21,13 +21,11 @@ use super::swarm::SwarmId;
 
 mod body;
 mod id;
-mod part;
-mod task_id;
+mod shard;
 
 pub use body::{BodyError, MessageBody};
 pub use id::{IdError, MessageId};
-pub use part::{Part, PartGroup};
-pub use task_id::{TaskId, TaskIdError};
+pub use shard::{Shard, ShardGroup};
 
 /// Maximum serialized message size — a network-wide wire contract kept
 /// under iroh-gossip's payload budget so a message we accept always fits
@@ -48,13 +46,15 @@ const _: () = assert!(
     "MAX_MESSAGE_SIZE leaves too little room under iroh-gossip's DEFAULT_MAX_MESSAGE_SIZE"
 );
 
-/// Protocol version embedded in every message. Bumped to `2.0` for the
-/// RFC 6902 → RFC 7386 shared-state wire-contract change: the `State`/`Meta`
-/// body shape changed incompatibly (`{"k":"patch","ops":[…]}` → `{"k":"merge",
-/// "merge":{…}}`), so a `1.0` peer and a `2.0` peer must NOT interoperate. The
+/// Protocol version embedded in every message. Bumped to `5.0` for the A2A
+/// **v1.0** migration: every A2A object is now `ProtoJSON` (`SCREAMING_SNAKE`
+/// enums, redesigned `Part`, no inline `kind`, no `final`, `PascalCase` RPC
+/// methods), so the payload wire form breaks — a `4.0` peer and a `5.0` peer
+/// must NOT interoperate. (`4.0` was the native-A2A port; `3.0` the A2A
+/// migration; `2.0` the RFC 6902 → RFC 7386 shared-state change.) The
 /// exact-match gate in `parse` drops cross-version messages loudly rather than
-/// letting them silently fold to no-ops and diverge the shared document.
-pub(crate) const VERSION: &str = "2.0";
+/// letting them silently fold to no-ops and diverge.
+pub(crate) const VERSION: &str = "5.0";
 
 /// Presence subtype.
 /// `Joined`/`Left` are user-visible; `Alive` is a silent keepalive used
@@ -77,140 +77,21 @@ impl fmt::Display for PresenceSubtype {
     }
 }
 
-/// Phase of a task — the behavior-agnostic lifecycle
-/// every task shares. `Offer` opens with the brief; `Accept`/
-/// `Decline` are the entry decision; `Context` carries the bidirectional
-/// Q&A; `Progress` is the receiver's liveness+percent heartbeat (plumbing,
-/// like `Alive`); `Done` requests close; `Confirm`/`Change` are the
-/// initiator's verify decision (`Change` loops back to `Context`); `Cancel`
-/// aborts. See the daemon task state machine for the transitions.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum TaskPhase {
-    Offer,
-    Accept,
-    Decline,
-    Context,
-    Progress,
-    Done,
-    Confirm,
-    Change,
-    Cancel,
-}
-
-impl fmt::Display for TaskPhase {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            TaskPhase::Offer => write!(f, "offer"),
-            TaskPhase::Accept => write!(f, "accept"),
-            TaskPhase::Decline => write!(f, "decline"),
-            TaskPhase::Context => write!(f, "context"),
-            TaskPhase::Progress => write!(f, "progress"),
-            TaskPhase::Done => write!(f, "done"),
-            TaskPhase::Confirm => write!(f, "confirm"),
-            TaskPhase::Change => write!(f, "change"),
-            TaskPhase::Cancel => write!(f, "cancel"),
-        }
-    }
-}
-
-/// Error parsing a [`TaskPhase`] from its lowercase string form.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TaskPhaseError(String);
-
-impl fmt::Display for TaskPhaseError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "invalid phase '{}' (expected offer|accept|decline|context|progress|done|confirm|change|cancel)",
-            self.0
-        )
-    }
-}
-
-impl std::error::Error for TaskPhaseError {}
-
-/// Parse a phase from its lowercase string. The CLI `--phase` parser and the
-/// MCP `send_task` tool both delegate here, so the accepted set is defined
-/// once (and [`TaskPhase`]'s `Display` is its inverse).
-impl std::str::FromStr for TaskPhase {
-    type Err = TaskPhaseError;
-
-    fn from_str(raw: &str) -> Result<Self, Self::Err> {
-        match raw {
-            "offer" => Ok(TaskPhase::Offer),
-            "accept" => Ok(TaskPhase::Accept),
-            "decline" => Ok(TaskPhase::Decline),
-            "context" => Ok(TaskPhase::Context),
-            "progress" => Ok(TaskPhase::Progress),
-            "done" => Ok(TaskPhase::Done),
-            "confirm" => Ok(TaskPhase::Confirm),
-            "change" => Ok(TaskPhase::Change),
-            "cancel" => Ok(TaskPhase::Cancel),
-            other => Err(TaskPhaseError(other.to_owned())),
-        }
-    }
-}
-
-/// Is this phase a **content** leg (counts toward the per-task message
-/// cap, logged like `Msg`)? `Progress` is the only non-content task
-/// phase — it is liveness plumbing (exempt from the cap, never logged), the
-/// rest carry real conversation.
-#[must_use]
-pub(crate) fn is_content_phase(phase: TaskPhase) -> bool {
-    !matches!(phase, TaskPhase::Progress)
-}
-
-/// The single addressee of a directed message — the routing mirror of
-/// `gossip::recv::addressed_to_us`. `Some(nick)` for a message that targets
-/// exactly one participant (a directed `Msg`/`Notice`, any `Task` leg, a
-/// `Pong`); `None` for a broadcast or infrastructure kind. The [`crate::unicast`]
-/// send router uses this to decide point-to-point vs gossip.
-///
-/// Deliberately **separate** from `addressed_to_us`: that answers a *surfacing*
-/// question and treats `Pong` as broadcast-visible, whereas routing wants the
-/// `Pong`'s addressee too. Merging them would change the embed-push filter.
-#[must_use]
-pub(crate) fn sole_addressee(kind: &MessageKind) -> Option<&Nickname> {
-    match kind {
-        MessageKind::Msg { reply: Some(to) }
-        | MessageKind::Notice { reply: Some(to) }
-        | MessageKind::Task { to, .. }
-        | MessageKind::Pong { to } => Some(to),
-        MessageKind::Msg { reply: None }
-        | MessageKind::Notice { reply: None }
-        | MessageKind::Presence { .. }
-        | MessageKind::PeerInfo
-        | MessageKind::Digest
-        | MessageKind::Ping
-        | MessageKind::State
-        | MessageKind::StateDigest
-        | MessageKind::Meta
-        | MessageKind::MetaDigest => None,
-    }
-}
-
-/// Message kind — three types cover all protocol needs:
-/// - `Msg`: content. `reply: None` = open message, `reply: Some(nick)` = directed at a peer.
-/// - `Presence`: agent lifecycle (joined/left), empty body, no `reply`.
+/// Message kind — the frame's routing discriminator:
+/// - `A2aMsg`: **swarm-wide broadcast** chat — the body is a serialized
+///   [`crate::a2a::Message`] (declaring the `swarm-broadcast` extension). A2A
+///   is point-to-point, so directed 1:1 communication is a **task**
+///   (`A2aReq`/`A2aResp` `message/send`), never a directed chat frame.
+/// - `Presence`: agent lifecycle (joined/left), empty body.
 /// - `PeerInfo`: infrastructure — carries endpoint address for mesh formation. Not user-visible.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum MessageKind {
-    Msg {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        reply: Option<Nickname>,
-    },
-    /// A no-auto-reply message (IRC NOTICE semantics): identical to `Msg` on
-    /// every path — directed via `reply`, chained, fork-detected, logged,
-    /// multipart-splittable — except for the receiver contract that an agent
-    /// must NEVER auto-respond to one. The distinct kind is what makes the
-    /// contract enforceable by construction: status broadcasts, CI results
-    /// and log lines sent as notices can never start an agent reply loop.
-    Notice {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        reply: Option<Nickname>,
-    },
+    /// A swarm-wide broadcast A2A chat Message carried whole in `body`
+    /// (compact JSON). Broadcast only — it carries no addressee; A2A's
+    /// point-to-point traffic rides `A2aReq`/`A2aResp` (task `message/send`).
+    #[serde(rename = "a2a_msg")]
+    A2aMsg,
     Presence {
         subtype: PresenceSubtype,
     },
@@ -232,20 +113,49 @@ pub enum MessageKind {
     Pong {
         to: Nickname,
     },
-    /// One leg of a task, addressed to `to` and correlated by
-    /// `task_id` (so both sides group the legs into one conversation).
-    /// `phase` is the lifecycle position. Delivered to every peer (gossip
-    /// floods) but surfaced and logged only by the addressee and the sender —
-    /// third parties relay without retaining, exactly like a directed `Msg`.
-    /// **Content** phases are logged with `Msg`; the `Progress` phase is
-    /// liveness plumbing (never logged). Not part of the per-author hash chain
-    /// or DAG (presence-like). How the two parties *use* a task (delegate a
-    /// plan, run work and return a result, …) is a skill-land convention
-    /// carried in the offer body — the primitive itself has no notion of it.
-    Task {
+    /// A worker-pushed task status transition or liveness beat, addressed to
+    /// the initiator `to` and correlated by `task_id` (duplicated from the
+    /// payload so the daemon routes without parsing; receive validates the two
+    /// agree). The body is a serialized [`crate::a2a::TaskStatusUpdate`] — the
+    /// A2A streaming plane over gossip. Delivered to every peer (gossip floods)
+    /// but surfaced and logged only by the addressee and the sender — third
+    /// parties relay without retaining. Beats (`metadata:{"swarm:beat":true}`)
+    /// are liveness plumbing, never logged. Not part of the per-author hash
+    /// chain or DAG (presence-like).
+    #[serde(rename = "a2a_status")]
+    A2aStatus {
         to: Nickname,
-        task_id: TaskId,
-        phase: TaskPhase,
+        task_id: crate::a2a::TaskId,
+    },
+    /// The worker's result: the body is a serialized
+    /// [`crate::a2a::TaskArtifactUpdate`]. Receiving it parks the task in
+    /// `input-required` for the initiator's approval. Same
+    /// addressing/privacy/chain rules as `A2aStatus`.
+    #[serde(rename = "a2a_artifact")]
+    A2aArtifact {
+        to: Nickname,
+        task_id: crate::a2a::TaskId,
+    },
+    /// A directed A2A JSON-RPC **request** to `to`, correlated by `rpc_id`.
+    /// The body is a JSON-RPC envelope (`{"method","params"}`); the addressee
+    /// serves it as an A2A server (a safe method subset) and replies with an
+    /// [`A2aResp`](MessageKind::A2aResp) carrying the same `rpc_id`. Plumbing
+    /// like `Ping`/`Pong`: never logged, never chain/DAG-folded, surfaced only
+    /// to the addressee for relay — the RPC result reaches the requester via
+    /// its parked waiter, never the chat stream.
+    #[serde(rename = "a2a_req")]
+    A2aReq {
+        to: Nickname,
+        rpc_id: crate::a2a::A2aRpcId,
+    },
+    /// The reply to an [`A2aReq`](MessageKind::A2aReq), addressed to the
+    /// original requester (`to`) and echoing its `rpc_id`. The body is the
+    /// JSON-RPC response (`{"result"}` or `{"error":{code,message}}`). Same
+    /// plumbing treatment as `A2aReq`.
+    #[serde(rename = "a2a_resp")]
+    A2aResp {
+        to: Nickname,
+        rpc_id: crate::a2a::A2aRpcId,
     },
     /// A durable swarm-state event (membership edits, settings, …). Carried
     /// on the same gossip topic as everything else but routed to a **separate,
@@ -308,14 +218,16 @@ impl Channel {
 impl fmt::Display for MessageKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            MessageKind::Msg { .. } => write!(f, "msg"),
-            MessageKind::Notice { .. } => write!(f, "notice"),
+            MessageKind::A2aMsg => write!(f, "a2a_msg"),
             MessageKind::Presence { .. } => write!(f, "presence"),
             MessageKind::PeerInfo => write!(f, "peerinfo"),
             MessageKind::Digest => write!(f, "digest"),
             MessageKind::Ping => write!(f, "ping"),
             MessageKind::Pong { .. } => write!(f, "pong"),
-            MessageKind::Task { .. } => write!(f, "task"),
+            MessageKind::A2aStatus { .. } => write!(f, "a2a_status"),
+            MessageKind::A2aArtifact { .. } => write!(f, "a2a_artifact"),
+            MessageKind::A2aReq { .. } => write!(f, "a2a_req"),
+            MessageKind::A2aResp { .. } => write!(f, "a2a_resp"),
             MessageKind::State => write!(f, "state"),
             MessageKind::StateDigest => write!(f, "state_digest"),
             MessageKind::Meta => write!(f, "meta"),
@@ -332,14 +244,17 @@ fn empty_body() -> MessageBody {
     MessageBody::new("").expect("empty string is always a valid MessageBody")
 }
 
-/// A protocol message — serialized as JSON on the wire.
+/// A protocol frame — serialized as JSON on the wire. The transport
+/// envelope beneath the A2A layer: for chat (`a2a_msg`), `body` carries a
+/// whole serialized [`crate::a2a::Message`]; plumbing kinds (presence,
+/// digests, ping/pong, state/meta) carry their own opaque bodies.
 ///
 /// Wire format (compact JSON, one line):
 /// ```json
-/// {"v":"2.0","id":"<uuid>","type":"msg","swarm":"🐝...","author":"word-word","ts":1234567890,"body":"text","ext":{}}
+/// {"v":"5.0","id":"<uuid>","type":"a2a_msg","swarm":"🐝...","author":"word-word","ts":1234567890,"body":"{\"messageId\":\"<uuid>\",\"role\":\"ROLE_USER\",...}","ext":{}}
 /// ```
 ///
-/// `reply` (the addressee nickname) is inlined into the JSON for directed `msg` kinds.
+/// `to` (the addressee nickname) is inlined into the JSON for directed `a2a_msg` kinds.
 /// `ext`: free-form object for experimental/future fields; parsers MUST ignore unknown keys inside it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
@@ -381,11 +296,11 @@ pub struct Message {
     /// predecessor. See [`docs/history-integrity.md`].
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub parents: Vec<String>,
-    /// Multipart header: present only on a message that is one slice of a body
-    /// too large for a single message (see [`Part`]). `None` on an ordinary
+    /// Shard header: present only on a message that is one slice of a body
+    /// too large for a single message (see [`Shard`]). `None` on an ordinary
     /// message, so its wire form is unchanged. Signed like every other field.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub part: Option<Part>,
+    pub shard: Option<Shard>,
     /// Extension escape hatch. Add experimental fields here; stable fields get promoted to top-level.
     #[serde(default = "default_ext")]
     pub ext: serde_json::Value,
@@ -415,17 +330,27 @@ impl Message {
             seq: None,
             prev: None,
             parents: Vec::new(),
-            part: None,
+            shard: None,
             ext: default_ext(),
         }
     }
 
-    /// An open `Msg`. Test/harness convenience; production chat construction
-    /// goes through [`new_chat`](Self::new_chat), which the parameterized
-    /// send path uses for `Msg` and `Notice` alike.
-    #[cfg(any(test, feature = "adversarial", feature = "bench"))]
-    pub(crate) fn new_message(swarm: &SwarmId, author: &Nickname, body: MessageBody) -> Self {
-        Self::new(swarm, author, MessageKind::Msg { reply: None }, body)
+    /// A frame of an explicit `kind` — the generic constructor the task
+    /// send path uses to build A2A message/status/artifact frames through
+    /// one shard-splitting flow.
+    pub(crate) fn new_frame(
+        swarm: &SwarmId,
+        author: &Nickname,
+        kind: MessageKind,
+        body: MessageBody,
+    ) -> Self {
+        Self::new(swarm, author, kind, body)
+    }
+
+    /// A swarm-wide broadcast chat frame whose `body` is a serialized
+    /// [`crate::a2a::Message`] (declaring the `swarm-broadcast` extension).
+    pub(crate) fn new_a2a_msg(swarm: &SwarmId, author: &Nickname, body: MessageBody) -> Self {
+        Self::new(swarm, author, MessageKind::A2aMsg, body)
     }
 
     pub(crate) fn new_joined(swarm: &SwarmId, author: &Nickname) -> Self {
@@ -463,34 +388,6 @@ impl Message {
         )
     }
 
-    /// A directed `Msg`. Test-only sibling of [`new_message`](Self::new_message).
-    #[cfg(test)]
-    pub(crate) fn new_reply(
-        swarm: &SwarmId,
-        author: &Nickname,
-        reply: Nickname,
-        body: MessageBody,
-    ) -> Self {
-        Self::new(swarm, author, MessageKind::Msg { reply: Some(reply) }, body)
-    }
-
-    /// A chat message of a caller-chosen kind — `Msg` or `Notice`, open or
-    /// directed. The one construction point the parameterized send path uses
-    /// so both kinds share it verbatim; the non-chat kinds have their own
-    /// constructors and never come through here.
-    pub(crate) fn new_chat(
-        swarm: &SwarmId,
-        author: &Nickname,
-        kind: MessageKind,
-        body: MessageBody,
-    ) -> Self {
-        debug_assert!(
-            matches!(kind, MessageKind::Msg { .. } | MessageKind::Notice { .. }),
-            "new_chat takes only the chat kinds"
-        );
-        Self::new(swarm, author, kind, body)
-    }
-
     /// A liveness probe (broadcast). Receivers auto-respond with a
     /// `Pong` addressed back to `author`.
     pub(crate) fn new_ping(swarm: &SwarmId, author: &Nickname) -> Self {
@@ -502,25 +399,40 @@ impl Message {
         Self::new(swarm, author, MessageKind::Pong { to }, empty_body())
     }
 
-    /// One leg of a task addressed to `to`, correlated by
-    /// `task_id`. `Offer` carries the task brief in the body; `Context`
-    /// the Q&A; `Progress` a `done/total` fraction; `Done`/`Change`/
-    /// `Decline`/`Cancel` an optional summary/reason; `Accept`/`Confirm`
-    /// an optional note.
-    pub(crate) fn new_task(
+    /// A task status frame addressed to `to`, whose `body` is a serialized
+    /// [`crate::a2a::TaskStatusUpdate`] correlated by `task_id`.
+    pub(crate) fn new_a2a_status(
         swarm: &SwarmId,
         author: &Nickname,
         to: Nickname,
-        task_id: TaskId,
-        phase: TaskPhase,
+        task_id: crate::a2a::TaskId,
         body: MessageBody,
     ) -> Self {
-        Self::new(
-            swarm,
-            author,
-            MessageKind::Task { to, task_id, phase },
-            body,
-        )
+        Self::new(swarm, author, MessageKind::A2aStatus { to, task_id }, body)
+    }
+
+    /// A directed A2A JSON-RPC request to `to`, whose `body` is a JSON-RPC
+    /// `{"method","params"}` envelope correlated by `rpc_id`.
+    pub(crate) fn new_a2a_req(
+        swarm: &SwarmId,
+        author: &Nickname,
+        to: Nickname,
+        rpc_id: crate::a2a::A2aRpcId,
+        body: MessageBody,
+    ) -> Self {
+        Self::new(swarm, author, MessageKind::A2aReq { to, rpc_id }, body)
+    }
+
+    /// The reply to an `A2aReq`, addressed to the requester `to`, whose `body`
+    /// is the JSON-RPC response, echoing `rpc_id`.
+    pub(crate) fn new_a2a_resp(
+        swarm: &SwarmId,
+        author: &Nickname,
+        to: Nickname,
+        rpc_id: crate::a2a::A2aRpcId,
+        body: MessageBody,
+    ) -> Self {
+        Self::new(swarm, author, MessageKind::A2aResp { to, rpc_id }, body)
     }
 
     /// Create a `PeerInfo` message. The body carries endpoint address data
@@ -663,9 +575,9 @@ impl Message {
         // Parents (DAG causal links) are signed too. Serialized as their
         // deterministic JSON array; empty for no-parent messages.
         field(&serde_json::to_vec(&self.parents).unwrap_or_default());
-        // The multipart header is signed so a part can't be re-grouped or
+        // The shard header is signed so a shard can't be re-grouped or
         // re-indexed by a relay. `None` (ordinary message) folds as `null`.
-        field(&serde_json::to_vec(&self.part).unwrap_or_default());
+        field(&serde_json::to_vec(&self.shard).unwrap_or_default());
         field(&serde_json::to_vec(&self.ext).unwrap_or_default());
         buf
     }
@@ -690,7 +602,7 @@ impl Message {
     /// Stamp the per-author log fields before signing (`Msg` only). `seq`
     /// is the author's monotonic counter, `prev` the hash of their previous
     /// `Msg` (`None` at `seq 0`). Consuming-builder so it composes with
-    /// [`signed`](Self::signed): `Message::new_message(..).with_chain(..).signed(..)`.
+    /// [`signed`](Self::signed): `Message::new_a2a_msg(..).with_chain(..).signed(..)`.
     #[must_use]
     pub(crate) fn with_chain(mut self, seq: u64, prev: Option<String>) -> Self {
         self.seq = Some(seq);
@@ -707,11 +619,21 @@ impl Message {
         self
     }
 
-    /// Stamp the multipart [`Part`] header (which slice of a split body this
+    /// Stamp the [`Shard`] header (which slice of a split body this
     /// message carries) before signing. `None` leaves it an ordinary message.
     #[must_use]
-    pub(crate) fn with_part(mut self, part: Option<Part>) -> Self {
-        self.part = part;
+    pub(crate) fn with_shard(mut self, shard: Option<Shard>) -> Self {
+        self.shard = shard;
+        self
+    }
+
+    /// Replace the minted random id before signing. The chat path pins the
+    /// frame id to the payload's A2A `messageId` so every consumer-visible id
+    /// (dedup, poll cursor, echo) *is* the A2A id; receive validates the two
+    /// agree.
+    #[must_use]
+    pub(crate) fn with_id(mut self, id: MessageId) -> Self {
+        self.id = id;
         self
     }
 
@@ -725,7 +647,7 @@ impl Message {
     /// Sign this message with `identity`, filling `pubkey` then `sig`.
     /// `pubkey` is set before the canonical bytes are computed so the key
     /// is part of what is signed; consuming-builder style so it composes in
-    /// the construction expression (`Message::new_message(..).signed(&id)`).
+    /// the construction expression (`Message::new_a2a_msg(..).signed(&id)`).
     #[must_use]
     pub(crate) fn signed(mut self, identity: &Identity) -> Self {
         self.pubkey = identity::encode_pubkey(&identity.public());
@@ -805,18 +727,14 @@ impl ChainCtx {
 pub(crate) fn build_msg_bytes(
     swarm: &SwarmId,
     body: MessageBody,
-    reply: Option<Nickname>,
     author: &Nickname,
     identity: &Identity,
     chain: ChainCtx,
 ) -> Result<(Bytes, Message)> {
-    let msg = match reply {
-        None => Message::new_message(swarm, author, body),
-        Some(target) => Message::new_reply(swarm, author, target, body),
-    }
-    .with_chain(chain.seq, chain.prev)
-    .with_parents(chain.parents)
-    .signed(identity);
+    let msg = Message::new_a2a_msg(swarm, author, body)
+        .with_chain(chain.seq, chain.prev)
+        .with_parents(chain.parents)
+        .signed(identity);
     let raw = msg.serialize()?;
     Ok((Bytes::from(raw), msg))
 }
@@ -837,7 +755,7 @@ impl Message {
             seq: None,
             prev: None,
             parents: Vec::new(),
-            part: None,
+            shard: None,
             ext: serde_json::json!({}),
         }
     }
@@ -860,7 +778,7 @@ mod tests {
 
     #[test]
     fn test_round_trip() {
-        let msg = Message::new_message(
+        let msg = Message::new_a2a_msg(
             &sid(),
             &nick("word-word"),
             MessageBody::from("Hello, world!"),
@@ -868,75 +786,8 @@ mod tests {
         let bytes = msg.serialize().unwrap();
         let parsed = Message::parse(&bytes).unwrap();
         assert_eq!(parsed.id, msg.id);
-        assert_eq!(parsed.kind, MessageKind::Msg { reply: None });
+        assert_eq!(parsed.kind, MessageKind::A2aMsg);
         assert_eq!(parsed.body, msg.body);
-    }
-
-    #[test]
-    fn test_reply_round_trip() {
-        let msg = Message::new_message(&sid(), &nick("word-word"), MessageBody::from("A message?"));
-        let reply = Message::new_reply(
-            &sid(),
-            &nick("other-nick"),
-            msg.author.clone(),
-            MessageBody::from("A reply."),
-        );
-        let bytes = reply.serialize().unwrap();
-        let parsed = Message::parse(&bytes).unwrap();
-        assert_eq!(
-            parsed.kind,
-            MessageKind::Msg {
-                reply: Some(msg.author)
-            }
-        );
-    }
-
-    #[test]
-    fn test_notice_round_trip() {
-        let msg = Message::new_chat(
-            &sid(),
-            &nick("word-word"),
-            MessageKind::Notice { reply: None },
-            MessageBody::from("build green"),
-        );
-        let bytes = msg.serialize().unwrap();
-        assert!(String::from_utf8_lossy(&bytes).contains("\"type\":\"notice\""));
-        let parsed = Message::parse(&bytes).unwrap();
-        assert_eq!(parsed.kind, MessageKind::Notice { reply: None });
-        assert_eq!(parsed.body.as_str(), "build green");
-    }
-
-    #[test]
-    fn test_directed_notice_round_trip() {
-        let target = nick("calm-otter");
-        let msg = Message::new_chat(
-            &sid(),
-            &nick("word-word"),
-            MessageKind::Notice {
-                reply: Some(target.clone()),
-            },
-            MessageBody::from("heads up"),
-        );
-        let parsed = Message::parse(&msg.serialize().unwrap()).unwrap();
-        assert_eq!(
-            parsed.kind,
-            MessageKind::Notice {
-                reply: Some(target)
-            }
-        );
-    }
-
-    #[test]
-    fn signed_notice_verifies_and_covers_the_kind() {
-        let identity = crate::protocol::identity::Identity::generate();
-        let msg = Message::fixture(MessageKind::Notice { reply: None }, "hello").signed(&identity);
-        assert!(msg.verify_signature());
-        // Flipping the kind to `Msg` must break the signature: the kind is
-        // part of the canonical bytes, so a relay cannot demote a notice
-        // into an auto-replyable msg.
-        let mut forged = msg;
-        forged.kind = MessageKind::Msg { reply: None };
-        assert!(!forged.verify_signature());
     }
 
     #[test]
@@ -974,58 +825,59 @@ mod tests {
     }
 
     #[test]
-    fn test_task_round_trip() {
-        use super::{TaskId, TaskPhase};
+    fn test_task_status_round_trip() {
         let target = nick("calm-otter");
-        let task_id = TaskId::random();
-        let msg = Message::new_task(
+        let task_id = crate::a2a::TaskId::random();
+        let msg = Message::new_a2a_status(
             &sid(),
             &nick("word-word"),
             target.clone(),
             task_id.clone(),
-            TaskPhase::Offer,
-            MessageBody::from("## Task\nport the parser"),
+            MessageBody::from(r#"{"kind":"status-update"}"#),
         );
         let bytes = msg.serialize().unwrap();
         let wire = String::from_utf8_lossy(&bytes);
-        assert!(wire.contains("\"type\":\"task\""));
-        assert!(wire.contains("\"phase\":\"offer\""));
+        assert!(wire.contains("\"type\":\"a2a_status\""));
         let parsed = Message::parse(&bytes).unwrap();
         assert_eq!(
             parsed.kind,
-            MessageKind::Task {
+            MessageKind::A2aStatus {
                 to: target,
                 task_id,
-                phase: TaskPhase::Offer,
             }
         );
         assert_eq!(parsed.body, msg.body);
     }
 
     #[test]
-    fn task_phase_from_str_round_trips_display() {
-        use super::TaskPhase;
-        for phase in [
-            TaskPhase::Offer,
-            TaskPhase::Accept,
-            TaskPhase::Decline,
-            TaskPhase::Context,
-            TaskPhase::Progress,
-            TaskPhase::Done,
-            TaskPhase::Confirm,
-            TaskPhase::Change,
-            TaskPhase::Cancel,
-        ] {
-            let rendered = phase.to_string();
-            assert_eq!(rendered.parse::<TaskPhase>().unwrap(), phase);
-        }
-        assert!("bogus".parse::<TaskPhase>().is_err());
+    fn test_task_artifact_round_trip() {
+        let target = nick("calm-otter");
+        let task_id = crate::a2a::TaskId::random();
+        let msg = Message::new_frame(
+            &sid(),
+            &nick("word-word"),
+            MessageKind::A2aArtifact {
+                to: target.clone(),
+                task_id: task_id.clone(),
+            },
+            MessageBody::from(r#"{"kind":"artifact-update"}"#),
+        );
+        let bytes = msg.serialize().unwrap();
+        assert!(String::from_utf8_lossy(&bytes).contains("\"type\":\"a2a_artifact\""));
+        let parsed = Message::parse(&bytes).unwrap();
+        assert_eq!(
+            parsed.kind,
+            MessageKind::A2aArtifact {
+                to: target,
+                task_id,
+            }
+        );
     }
 
     #[test]
     fn test_ext_round_trip() {
         let mut msg =
-            Message::new_message(&sid(), &nick("word-word"), MessageBody::from("With ext."));
+            Message::new_a2a_msg(&sid(), &nick("word-word"), MessageBody::from("With ext."));
         msg.ext = serde_json::json!({"tags": ["rust", "p2p"], "priority": 1});
         let bytes = msg.serialize().unwrap();
         let parsed = Message::parse(&bytes).unwrap();
@@ -1040,7 +892,7 @@ mod tests {
     #[test]
     fn test_unknown_ext_fields_ignored() {
         let json = format!(
-            r#"{{"v":"2.0","id":"{FIXTURE_ID}","type":"msg","swarm":"🐝test","author":"a-b","ts":0,"body":"hi","ext":{{"future_field":"value","another":42}}}}"#
+            r#"{{"v":"5.0","id":"{FIXTURE_ID}","type":"a2a_msg","swarm":"🐝test","author":"a-b","ts":0,"body":"hi","ext":{{"future_field":"value","another":42}}}}"#
         );
         let parsed = Message::parse(json.as_bytes()).unwrap();
         assert_eq!(parsed.body.as_str(), "hi");
@@ -1050,7 +902,7 @@ mod tests {
     #[test]
     fn test_missing_ext_defaults_to_empty_object() {
         let json = format!(
-            r#"{{"v":"2.0","id":"{FIXTURE_ID}","type":"msg","swarm":"🐝test","author":"a-b","ts":0,"body":"hi"}}"#
+            r#"{{"v":"5.0","id":"{FIXTURE_ID}","type":"a2a_msg","swarm":"🐝test","author":"a-b","ts":0,"body":"hi"}}"#
         );
         let parsed = Message::parse(json.as_bytes()).unwrap();
         assert_eq!(parsed.ext, serde_json::json!({}));
@@ -1072,14 +924,14 @@ mod tests {
     // escapes / spoof the `<nick>`/`#swarm` conventions (bad body/author).
     #[test]
     fn parse_rejects_non_uuid_id() {
-        let json = r#"{"v":"2.0","id":"not-a-uuid","type":"msg","swarm":"🐝test","author":"a-b","ts":0,"body":"hi","ext":{}}"#;
+        let json = r#"{"v":"5.0","id":"not-a-uuid","type":"a2a_msg","swarm":"🐝test","author":"a-b","ts":0,"body":"hi","ext":{}}"#;
         assert!(Message::parse(json.as_bytes()).is_err());
     }
 
     #[test]
     fn parse_rejects_control_char_body() {
         let json = format!(
-            r#"{{"v":"2.0","id":"{FIXTURE_ID}","type":"msg","swarm":"🐝test","author":"a-b","ts":0,"body":"evil\u0000body","ext":{{}}}}"#
+            r#"{{"v":"5.0","id":"{FIXTURE_ID}","type":"a2a_msg","swarm":"🐝test","author":"a-b","ts":0,"body":"evil\u0000body","ext":{{}}}}"#
         );
         assert!(Message::parse(json.as_bytes()).is_err());
     }
@@ -1087,7 +939,7 @@ mod tests {
     #[test]
     fn parse_rejects_unsafe_author_nickname() {
         let json = format!(
-            r#"{{"v":"2.0","id":"{FIXTURE_ID}","type":"msg","swarm":"🐝test","author":"a#b","ts":0,"body":"hi","ext":{{}}}}"#
+            r#"{{"v":"5.0","id":"{FIXTURE_ID}","type":"a2a_msg","swarm":"🐝test","author":"a#b","ts":0,"body":"hi","ext":{{}}}}"#
         );
         assert!(Message::parse(json.as_bytes()).is_err());
     }
@@ -1099,7 +951,7 @@ mod tests {
         // so a crafted value never reaches the fork/DAG indexes or sig verify.
         let base = |extra: &str| {
             format!(
-                r#"{{"v":"2.0","id":"{FIXTURE_ID}","type":"msg","swarm":"🐝test","author":"a-b","ts":0,"body":"hi"{extra},"ext":{{}}}}"#
+                r#"{{"v":"5.0","id":"{FIXTURE_ID}","type":"a2a_msg","swarm":"🐝test","author":"a-b","ts":0,"body":"hi"{extra},"ext":{{}}}}"#
             )
         };
         // 3KB garbage pubkey, non-hex / wrong-length variants, and a bad hash.
@@ -1128,7 +980,6 @@ mod tests {
         let (bytes, built) = build_msg_bytes(
             &sid(),
             MessageBody::from("hello"),
-            None,
             &alice,
             &identity,
             ChainCtx::genesis(),
@@ -1141,40 +992,6 @@ mod tests {
         assert_eq!(msg.author, alice);
     }
 
-    #[test]
-    fn build_msg_bytes_reply() {
-        let target = nick("alice");
-        let bob = nick("bob");
-        let identity = crate::protocol::identity::Identity::generate();
-        let (bytes, _) = build_msg_bytes(
-            &sid(),
-            MessageBody::from("reply"),
-            Some(target.clone()),
-            &bob,
-            &identity,
-            ChainCtx::genesis(),
-        )
-        .unwrap();
-        let msg = Message::parse(&bytes).unwrap();
-        assert_eq!(msg.body.as_str(), "reply");
-        match msg.kind {
-            MessageKind::Msg { reply } => assert_eq!(reply, Some(target)),
-            MessageKind::Notice { .. }
-            | MessageKind::Presence { .. }
-            | MessageKind::PeerInfo
-            | MessageKind::Digest
-            | MessageKind::StateDigest
-            | MessageKind::MetaDigest
-            | MessageKind::Ping
-            | MessageKind::Pong { .. }
-            | MessageKind::State
-            | MessageKind::Meta
-            | MessageKind::Task { .. } => {
-                panic!("expected Msg kind")
-            }
-        }
-    }
-
     mod signing {
         use super::super::{Message, MessageKind};
         use crate::protocol::identity::Identity;
@@ -1185,100 +1002,70 @@ mod tests {
 
         #[test]
         fn signed_message_verifies() {
-            let msg =
-                Message::fixture(MessageKind::Msg { reply: None }, "hello").signed(&identity());
+            let msg = Message::fixture(MessageKind::A2aMsg, "hello").signed(&identity());
             assert!(!msg.pubkey.is_empty() && !msg.sig.is_empty());
             assert!(msg.verify_signature());
         }
 
         #[test]
         fn unsigned_message_does_not_verify() {
-            let msg = Message::fixture(MessageKind::Msg { reply: None }, "hello");
+            let msg = Message::fixture(MessageKind::A2aMsg, "hello");
             assert!(!msg.verify_signature(), "empty pubkey/sig must not verify");
         }
 
         #[test]
         fn tampered_body_breaks_signature() {
-            let mut msg =
-                Message::fixture(MessageKind::Msg { reply: None }, "hello").signed(&identity());
+            let mut msg = Message::fixture(MessageKind::A2aMsg, "hello").signed(&identity());
             msg.body = "tampered".into();
             assert!(!msg.verify_signature());
         }
 
         #[test]
         fn tampered_author_breaks_signature() {
-            let mut msg =
-                Message::fixture(MessageKind::Msg { reply: None }, "hello").signed(&identity());
+            let mut msg = Message::fixture(MessageKind::A2aMsg, "hello").signed(&identity());
             msg.author = "impostor-bot".into();
             assert!(!msg.verify_signature());
         }
 
         #[test]
         fn tampered_task_target_breaks_signature() {
-            use super::super::{TaskId, TaskPhase};
-            let task_id = TaskId::random();
+            let task_id = crate::a2a::TaskId::random();
             let mut msg = Message::fixture(
-                MessageKind::Task {
+                MessageKind::A2aStatus {
                     to: "calm-otter".into(),
                     task_id: task_id.clone(),
-                    phase: TaskPhase::Offer,
                 },
-                "brief",
+                "{}",
             )
             .signed(&identity());
             assert!(msg.verify_signature());
-            msg.kind = MessageKind::Task {
+            msg.kind = MessageKind::A2aStatus {
                 to: "evil-otter".into(),
                 task_id,
-                phase: TaskPhase::Offer,
             };
             assert!(!msg.verify_signature(), "task `to` is a signed field");
         }
 
         #[test]
-        fn tampered_task_phase_breaks_signature() {
-            use super::super::{TaskId, TaskPhase};
-            let task_id = TaskId::random();
-            let mut msg = Message::fixture(
-                MessageKind::Task {
-                    to: "calm-otter".into(),
-                    task_id: task_id.clone(),
-                    phase: TaskPhase::Offer,
-                },
-                "brief",
-            )
-            .signed(&identity());
-            msg.kind = MessageKind::Task {
-                to: "calm-otter".into(),
-                task_id,
-                phase: TaskPhase::Confirm,
-            };
-            assert!(!msg.verify_signature(), "task `phase` is a signed field");
-        }
-
-        #[test]
         fn tampered_task_id_breaks_signature() {
-            use super::super::{TaskId, TaskPhase};
             let mut msg = Message::fixture(
-                MessageKind::Task {
+                MessageKind::A2aStatus {
                     to: "calm-otter".into(),
-                    task_id: TaskId::random(),
-                    phase: TaskPhase::Offer,
+                    task_id: crate::a2a::TaskId::random(),
                 },
-                "brief",
+                "{}",
             )
             .signed(&identity());
-            msg.kind = MessageKind::Task {
+            msg.kind = MessageKind::A2aStatus {
                 to: "calm-otter".into(),
-                task_id: TaskId::random(),
-                phase: TaskPhase::Offer,
+                task_id: crate::a2a::TaskId::random(),
             };
             assert!(!msg.verify_signature(), "task `task_id` is a signed field");
         }
 
         #[test]
         fn signature_survives_wire_round_trip() {
-            let msg = Message::fixture(MessageKind::Msg { reply: None }, "hi").signed(&identity());
+            let msg = Message::fixture(MessageKind::A2aMsg, "hi").signed(&identity());
             let parsed = Message::parse(&msg.serialize().unwrap()).unwrap();
             assert!(parsed.verify_signature());
             assert_eq!(parsed.pubkey, msg.pubkey);
@@ -1288,7 +1075,7 @@ mod tests {
         fn unsigned_wire_omits_signature_fields() {
             // The skip-if-empty fields keep an unsigned message byte-identical
             // to the v1 wire, so existing snapshots are unaffected.
-            let bytes = Message::fixture(MessageKind::Msg { reply: None }, "hi")
+            let bytes = Message::fixture(MessageKind::A2aMsg, "hi")
                 .serialize()
                 .unwrap();
             let wire = String::from_utf8(bytes).unwrap();
@@ -1302,7 +1089,7 @@ mod tests {
         use crate::protocol::identity::Identity;
 
         fn msg(body: &str) -> Message {
-            Message::fixture(MessageKind::Msg { reply: None }, body)
+            Message::fixture(MessageKind::A2aMsg, body)
         }
 
         #[test]
@@ -1365,36 +1152,44 @@ mod tests {
     mod snapshots {
         use super::{Message, MessageKind, Nickname, PresenceSubtype};
 
+        /// A deterministic chat frame carrying a real A2A payload (its random
+        /// `messageId` pinned to the fixture id), so the snapshot pins the
+        /// payload-in-body wire form, not a placeholder.
+        fn chat_fixture(text: &str) -> Message {
+            let mut payload =
+                crate::a2a::gossip::chat_message(&super::super::SwarmId::from("🐝test"), text);
+            payload.message_id =
+                crate::a2a::MessageId::from("00000000-0000-0000-0000-000000000001");
+            let body = crate::a2a::gossip::payload_body(&payload).expect("payload serializes");
+            Message::fixture(MessageKind::A2aMsg, body.as_str())
+        }
+
         #[test]
         fn snap_wire_message() {
-            let msg = Message::fixture(MessageKind::Msg { reply: None }, "What is Rust?");
+            let msg = chat_fixture("What is Rust?");
             let bytes = msg.serialize().unwrap();
             let wire = String::from_utf8(bytes).unwrap();
             insta::assert_snapshot!(wire);
         }
 
+        /// The status-frame wire shape: a worker's `working` (accept) status.
         #[test]
-        fn snap_wire_reply() {
-            let msg = Message::fixture(
-                MessageKind::Msg {
-                    reply: Some(Nickname::from("addressed-nick")),
-                },
-                "Rust is a systems language.",
+        fn snap_wire_task_status() {
+            let task_id = crate::a2a::TaskId::from("00000000-0000-0000-0000-000000000001");
+            let update = crate::a2a::gossip::status_update(
+                &super::super::SwarmId::from("🐝test"),
+                &task_id,
+                crate::a2a::TaskState::Working,
+                None,
+                None,
             );
-            let bytes = msg.serialize().unwrap();
-            let wire = String::from_utf8(bytes).unwrap();
-            insta::assert_snapshot!(wire);
-        }
-
-        #[test]
-        fn snap_wire_task_offer() {
+            let body = crate::a2a::gossip::payload_body(&update).expect("payload serializes");
             let msg = Message::fixture(
-                MessageKind::Task {
+                MessageKind::A2aStatus {
                     to: Nickname::from("addressed-nick"),
-                    task_id: super::super::TaskId::from("550e8400-e29b-41d4-a716-446655440000"),
-                    phase: super::super::TaskPhase::Offer,
+                    task_id,
                 },
-                "## Task\nport the parser",
+                body.as_str(),
             );
             let bytes = msg.serialize().unwrap();
             let wire = String::from_utf8(bytes).unwrap();
@@ -1422,6 +1217,35 @@ mod tests {
             let msg = Message::fixture(MessageKind::State, r#"{"k":"merge","merge":{"turn":"b"}}"#);
             let bytes = msg.serialize().unwrap();
             let wire = String::from_utf8(bytes).unwrap();
+            insta::assert_snapshot!(wire);
+        }
+
+        /// The gossip A2A **request** frame: directed, correlated by `rpc_id`,
+        /// body = a JSON-RPC `{method, params}` envelope.
+        #[test]
+        fn snap_wire_a2a_req() {
+            let msg = Message::fixture(
+                MessageKind::A2aReq {
+                    to: Nickname::from("addressed-nick"),
+                    rpc_id: crate::a2a::A2aRpcId::from("00000000-0000-0000-0000-0000000000aa"),
+                },
+                r#"{"method":"tasks/list","params":{}}"#,
+            );
+            let wire = String::from_utf8(msg.serialize().unwrap()).unwrap();
+            insta::assert_snapshot!(wire);
+        }
+
+        /// The gossip A2A **response** frame, echoing the request's `rpc_id`.
+        #[test]
+        fn snap_wire_a2a_resp() {
+            let msg = Message::fixture(
+                MessageKind::A2aResp {
+                    to: Nickname::from("addressed-nick"),
+                    rpc_id: crate::a2a::A2aRpcId::from("00000000-0000-0000-0000-0000000000aa"),
+                },
+                r#"{"result":{"tasks":[]}}"#,
+            );
+            let wire = String::from_utf8(msg.serialize().unwrap()).unwrap();
             insta::assert_snapshot!(wire);
         }
     }
@@ -1453,32 +1277,13 @@ mod tests {
                 author in arb_nickname(),
             ) {
                 let body = MessageBody::new(body).unwrap();
-                let msg = Message::new_message(&sid(), &author, body);
+                let msg = Message::new_a2a_msg(&sid(), &author, body);
                 let bytes = msg.serialize().unwrap();
                 let parsed = Message::parse(&bytes).unwrap();
                 prop_assert_eq!(&parsed.body, &msg.body);
                 prop_assert_eq!(&parsed.author, &msg.author);
                 prop_assert_eq!(&parsed.version, VERSION);
-                prop_assert_eq!(parsed.kind, MessageKind::Msg { reply: None });
-            }
-
-            #[test]
-            fn prop_reply_round_trip(
-                body in arb_ascii_body(),
-                author in arb_nickname(),
-                target in arb_nickname(),
-            ) {
-                let body = MessageBody::new(body).unwrap();
-                let expected_body = body.clone();
-                let expected_target = target.clone();
-                let msg = Message::new_reply(&sid(), &author, target, body);
-                let bytes = msg.serialize().unwrap();
-                let parsed = Message::parse(&bytes).unwrap();
-                prop_assert_eq!(&parsed.body, &expected_body);
-                prop_assert_eq!(
-                    parsed.kind,
-                    MessageKind::Msg { reply: Some(expected_target) }
-                );
+                prop_assert_eq!(parsed.kind, MessageKind::A2aMsg);
             }
 
             #[test]
@@ -1512,7 +1317,7 @@ mod tests {
             ) {
                 let body = MessageBody::new(body).unwrap();
                 let expected = body.clone();
-                let msg = Message::new_message(&sid(), &author, body);
+                let msg = Message::new_a2a_msg(&sid(), &author, body);
                 let bytes = msg.serialize().unwrap();
                 let parsed = Message::parse(&bytes).unwrap();
                 prop_assert_eq!(&parsed.body, &expected);
@@ -1522,7 +1327,7 @@ mod tests {
             fn prop_serialized_size_within_limit(
                 body in arb_ascii_body(),
             ) {
-                let msg = Message::new_message(
+                let msg = Message::new_a2a_msg(
                     &sid(),
                     &Nickname::from("nick-name"),
                     MessageBody::new(body).unwrap(),

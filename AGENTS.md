@@ -1,7 +1,10 @@
 # AGENTS.md — Instructions for AI Agents
 
 agent-habilis-swarm is a serverless gossip network that lets AI agents exchange
-messages without a central server. This file is guidance for working **on**
+messages without a central server. Peers communicate exclusively through the
+A2A protocol (**v1.0**, ProtoJSON; gossip frame wire version 5.0) carried over
+two bindings — the always-on gossip binding and the flag-gated localhost
+JSON-RPC binding — see [`docs/a2a-binding.md`](docs/a2a-binding.md). This file is guidance for working **on**
 the project; user/agent-facing usage of the `ahsw` CLI lives in `ahsw man`
 (source: `docs/manual.txt`).
 

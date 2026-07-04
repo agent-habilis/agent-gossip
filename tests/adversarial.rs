@@ -133,10 +133,12 @@ async fn equivocation_surfaces_a_fork() {
     // Same key, same seq, two different bodies → two valid but conflicting
     // signed messages: cryptographic proof of equivocation.
     let first = CraftedMsg::new(swarm, "two-face", "fork-a")
+        .wrap_a2a()
         .chain(7, None)
         .sign(&key)
         .bytes();
     let second = CraftedMsg::new(swarm, "two-face", "fork-b")
+        .wrap_a2a()
         .chain(7, None)
         .sign(&key)
         .bytes();
@@ -185,6 +187,7 @@ async fn forged_message_does_not_suppress_genuine_with_replayed_id() {
     // 2) A genuine SIGNED message reusing that id must still be delivered.
     let genuine = CraftedMsg::new(swarm, "ghost", "genuine")
         .id(shared_id)
+        .wrap_a2a()
         .sign(&key)
         .bytes();
     attacker
@@ -230,6 +233,7 @@ async fn signed_forgery_with_replayed_id_does_not_suppress_victim() {
     //    the forgery's dedup key differs, so it never marked the id "seen".
     let genuine = CraftedMsg::new(swarm, "victim", "genuine")
         .id(shared_id)
+        .wrap_a2a()
         .sign(&victim_key)
         .bytes();
     injector
@@ -246,41 +250,77 @@ async fn signed_forgery_with_replayed_id_does_not_suppress_victim() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn directed_replies_to_third_party_do_not_leak_into_indexes() {
-    // A reply addressed to someone else is relayed but never logged. It must
-    // therefore never be folded into the fork/DAG indexes — otherwise those
-    // maps grow without bound (the leak). Only the two open messages from the
-    // attacker's own key are retained and indexed.
-    let (mut victim, attacker) = meshed_pair("noleak").await;
+async fn junk_payload_chat_is_dropped() {
+    let (mut victim, attacker) = meshed_pair("junk-payload").await;
     let key = adversarial::new_key();
-    let swarm = attacker.session.swarm_id();
+    // Validly signed, but the body is raw text, not a serialized A2A Message.
+    let evil = CraftedMsg::new(attacker.session.swarm_id(), "ghost", "raw-not-a2a")
+        .sign(&key)
+        .bytes();
+    attacker.session.inject_raw(evil).await.expect("inject");
+    attacker.send("barrier-junk").await;
+    assert!(victim.wait_body("barrier-junk", T).await, "barrier lost");
+    assert!(
+        !surfaced(&mut victim, "raw-not-a2a"),
+        "a signed chat frame with a non-A2A body must be dropped at the boundary"
+    );
+    victim.leave().await;
+    attacker.leave().await;
+}
 
-    for index in 0..20u32 {
-        let bytes = CraftedMsg::new(swarm, "ghost", &format!("to-other-{index}"))
-            .reply_to("someone-else")
-            .chain(u64::from(index), None)
-            .sign(&key)
-            .bytes();
-        attacker
-            .session
-            .inject_raw(bytes)
-            .await
-            .expect("inject reply");
-    }
-    // Barrier: an open message that IS logged + indexed, and confirms the 20
-    // replies (injected first, same link) were already processed.
-    attacker.send("barrier").await;
-    assert!(victim.wait_body("barrier", T).await, "barrier lost");
-
-    let (by_hash, _dag_heads, author_seqs) =
-        victim.session.index_stats().await.expect("index stats");
-    assert_eq!(
-        author_seqs, 1,
-        "only the attacker's own key is indexed; replies to a third party must not leak (was 2 before the fix)"
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn payload_frame_id_mismatch_is_dropped() {
+    let (mut victim, attacker) = meshed_pair("id-mismatch").await;
+    let key = adversarial::new_key();
+    // Wrap a valid payload first, then re-id the FRAME — the payload's
+    // messageId no longer names the frame, a mismatch only a crafted client
+    // produces.
+    let evil = CraftedMsg::new(attacker.session.swarm_id(), "ghost", "id-mismatch-body")
+        .wrap_a2a()
+        .id("00000000-0000-0000-0000-00000000beef")
+        .sign(&key)
+        .bytes();
+    attacker.session.inject_raw(evil).await.expect("inject");
+    attacker.send("barrier-mismatch").await;
+    assert!(
+        victim.wait_body("barrier-mismatch", T).await,
+        "barrier lost"
     );
     assert!(
-        by_hash <= 2,
-        "only the warmup + barrier open messages are indexed, not the 20 directed replies: by_hash={by_hash}"
+        !surfaced(&mut victim, "id-mismatch-body"),
+        "a payload whose messageId contradicts the frame id must be dropped"
+    );
+    victim.leave().await;
+    attacker.leave().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn status_task_id_mismatch_is_dropped() {
+    // An a2a_status frame whose payload taskId contradicts the frame's
+    // correlation field — only a crafted client produces this; the boundary
+    // gate must drop it before it can touch the task machine or surface.
+    let (mut victim, attacker) = meshed_pair("status-mismatch").await;
+    let key = adversarial::new_key();
+    let victim_nick = victim.nickname.clone();
+    let evil = CraftedMsg::status_frame(
+        attacker.session.swarm_id(),
+        "ghost",
+        &victim_nick,
+        "550e8400-e29b-41d4-a716-446655440000", // frame correlation
+        "660e8400-e29b-41d4-a716-446655440001", // payload taskId — mismatch
+    )
+    .sign(&key)
+    .bytes();
+    attacker.session.inject_raw(evil).await.expect("inject");
+    attacker.send("barrier-status").await;
+    assert!(victim.wait_body("barrier-status", T).await, "barrier lost");
+    let surfaced_status = victim
+        .events()
+        .iter()
+        .any(|event| matches!(event, OutputEvent::Task { .. }));
+    assert!(
+        !surfaced_status,
+        "a status whose payload taskId contradicts the frame must be dropped"
     );
     victim.leave().await;
     attacker.leave().await;
@@ -301,6 +341,7 @@ async fn gap_future_timestamp_is_accepted() {
     let (mut victim, attacker) = meshed_pair("future-ts").await;
     let key = adversarial::new_key();
     let evil = CraftedMsg::new(attacker.session.swarm_id(), "time-lord", "from-the-future")
+        .wrap_a2a()
         .timestamp(4_102_444_800) // 2100-01-01
         .sign(&key)
         .bytes();
@@ -325,6 +366,7 @@ async fn gap_nickname_impersonation_is_accepted() {
     let victim_nick = victim.nickname.clone();
     let key = adversarial::new_key(); // NOT the victim's key
     let evil = CraftedMsg::new(attacker.session.swarm_id(), &victim_nick, "i-am-you")
+        .wrap_a2a()
         .sign(&key)
         .bytes();
     attacker.session.inject_raw(evil).await.expect("inject");
@@ -348,6 +390,7 @@ async fn gap_sybil_identities_are_accepted() {
     for index in 0..5u32 {
         let key = adversarial::new_key();
         let bytes = CraftedMsg::new(swarm, &format!("sybil-{index}"), &format!("flood-{index}"))
+            .wrap_a2a()
             .sign(&key)
             .bytes();
         attacker.session.inject_raw(bytes).await.expect("inject");
@@ -357,7 +400,11 @@ async fn gap_sybil_identities_are_accepted() {
             (0..5u32).all(|index| {
                 let body = format!("flood-{index}");
                 events.iter().any(|event| {
-                    matches!(event, OutputEvent::Message { msg, is_self: false } if msg.body.as_str() == body)
+                    matches!(
+                        event,
+                        OutputEvent::Message { msg, is_self: false }
+                            if agent_habilis_swarm::a2a::gossip::chat_text(msg).as_deref() == Some(&body)
+                    )
                 })
             })
         })

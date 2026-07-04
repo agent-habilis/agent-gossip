@@ -12,7 +12,7 @@ use std::io::Write;
 use serde::Serialize;
 
 use super::OutputEvent;
-use crate::protocol::{Message, MessageKind, Nickname, PresenceSubtype, TaskPhase};
+use crate::protocol::{Message, MessageKind, Nickname, PresenceSubtype};
 
 /// One-shot events (everything except the `"event":"message"` family).
 /// `#[serde(tag = "event")]` inlines the discriminator as the first field.
@@ -28,6 +28,9 @@ pub(super) enum SimpleEvent<'a> {
         /// the install is current, so the common case stays unchanged.
         #[serde(skip_serializing_if = "Option::is_none")]
         drift: Option<&'a str>,
+        /// The bound `--a2a-serve` port; omitted when the binding is off.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        a2a_port: Option<u16>,
     },
     MsgPosted {
         id: &'a str,
@@ -97,8 +100,17 @@ struct MessageHeader<'a> {
 struct MsgLine<'a> {
     #[serde(flatten)]
     pub header: MessageHeader<'a>,
-    pub body: &'a str,
-    pub reply: Option<&'a str>,
+    /// The plain-text projection of the A2A payload (text parts joined) —
+    /// the convenience field agents read without unpacking `message`.
+    pub body: String,
+    pub to: Option<&'a str>,
+    /// The embedded A2A `Message` object the frame carried — the full
+    /// payload (parts, contextId, extensions, metadata) for A2A-aware
+    /// consumers. `None` only for an unparseable payload, which the receive
+    /// path already drops; it survives here so a display path can never
+    /// panic on crafted input.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<crate::a2a::Message>,
     /// Pre-formatted, markdown-safe line the `/swarm` skill echoes
     /// verbatim — the single source of truth for what the user sees.
     /// See [`msg_display`].
@@ -117,8 +129,10 @@ struct PresenceLine<'a> {
 }
 
 /// A `{"event":"task",...}` line for a **content** task leg. A distinct
-/// top-level event (not the `message` family) so skills branch on
-/// `event`; field order is part of the wire format.
+/// top-level event (not the `message` family) so skills branch on `event`;
+/// field order is part of the wire format. `kind` is the native A2A construct
+/// (`"message"` / `"status-update"` / `"artifact-update"`), `state` the task's
+/// A2A state; `payload` is the construct whole for A2A-aware consumers.
 #[derive(Serialize)]
 struct TaskLine<'a> {
     pub event: &'static str,
@@ -129,18 +143,24 @@ struct TaskLine<'a> {
     pub pubkey: Option<&'a str>,
     pub ts: i64,
     pub to: &'a str,
-    pub task_id: &'a str,
-    pub phase: TaskPhase,
-    pub body: &'a str,
+    pub task_id: String,
+    pub kind: &'static str,
+    /// The friendly kebab state (`working`/`input-required`/…) — our agent API,
+    /// not the A2A wire's `ProtoJSON` `TASK_STATE_*` (which rides `payload`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub state: Option<&'static str>,
+    pub body: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub payload: Option<serde_json::Value>,
     /// Pre-formatted, markdown-safe line (see [`task_display`]).
     pub display: String,
     #[serde(rename = "self")]
     pub is_self: bool,
 }
 
-/// A `{"event":"task_progress",...}` line for the `Progress` phase — the
-/// receiver's liveness+percent heartbeat. `done`/`total` are `None` when
-/// the receiver reports indeterminate progress (no fraction in the body).
+/// A `{"event":"task_progress",...}` line for a liveness beat — the
+/// ball-owner's keepalive/percent heartbeat. `done`/`total` are `None` when
+/// the beat reports indeterminate progress (no fraction in its metadata).
 #[derive(Serialize)]
 struct TaskProgressLine<'a> {
     pub event: &'static str,
@@ -149,7 +169,7 @@ struct TaskProgressLine<'a> {
     pub author: &'a str,
     pub ts: i64,
     pub to: &'a str,
-    pub task_id: &'a str,
+    pub task_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub done: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -181,19 +201,6 @@ struct StateLine<'a> {
     is_self: bool,
 }
 
-/// Parse a `Progress` body's `done/total` fraction (e.g. `"35/100"`).
-/// Returns `(None, None)` for an empty or unparseable body — an
-/// indeterminate "still working" beat.
-fn parse_progress(body: &str) -> (Option<u64>, Option<u64>) {
-    let Some((done, total)) = body.split_once('/') else {
-        return (None, None);
-    };
-    match (done.trim().parse::<u64>(), total.trim().parse::<u64>()) {
-        (Ok(done), Ok(total)) => (Some(done), Some(total)),
-        _ => (None, None),
-    }
-}
-
 fn message_header<'a>(msg: &'a Message, ty: &'static str) -> MessageHeader<'a> {
     MessageHeader {
         event: "message",
@@ -221,25 +228,21 @@ fn msg_display(author: &str, body: &str, reply: Option<&str>) -> String {
     }
 }
 
-/// `display` line for a `notice` event — the msg line with a `(notice)`
-/// marker after the nick(s), so a reader applying the no-auto-reply contract
-/// sees it without parsing the `type` field. See [`msg_display`] for the
-/// backtick rationale.
-fn notice_display(author: &str, body: &str, reply: Option<&str>) -> String {
-    match reply {
-        Some(target) => format!("🐝️ `<{author}>` → `<{target}>` (notice): {body}"),
-        None => format!("🐝️ `<{author}>` (notice): {body}"),
-    }
-}
-
 /// `display` line for a `task` event:
 /// `` 🐝️ task offer `<author>` → `<to>`: body ``. See
 /// [`msg_display`] for the backtick rationale. The skill may render a
 /// richer interaction (the tasks widget, collapsed status lines) instead
 /// of echoing this verbatim; it is the canonical line for raw
 /// `--output json` consumers.
-fn task_display(author: &str, to: &str, phase: TaskPhase, body: &str) -> String {
-    format!("🐝️ task {phase} `<{author}>` → `<{to}>`: {body}")
+fn task_display(
+    author: &str,
+    to: &str,
+    kind: &str,
+    state: Option<crate::a2a::TaskState>,
+    body: &str,
+) -> String {
+    let label = state.map_or_else(|| kind.to_owned(), |state| format!("{kind} {state}"));
+    format!("🐝️ task {label} `<{author}>` → `<{to}>`: {body}")
 }
 
 /// `display` line for a `task_progress` event:
@@ -316,34 +319,30 @@ pub(super) fn format_presence_json(msg: &Message, subtype: PresenceSubtype) -> S
     .expect("presence event serialization should never fail")
 }
 
-/// Format a chat message (`Msg`/`Notice`) as a JSON string. Presence uses
+/// Format a chat frame as a JSON string. Presence uses
 /// `format_presence_json`; `PeerInfo` is never printed.
 pub(super) fn format_msg_json(msg: &Message, is_self: bool) -> String {
     match &msg.kind {
-        MessageKind::Msg { reply } => serde_json::to_string(&MsgLine {
-            header: message_header(msg, "msg"),
-            body: msg.body.as_str(),
-            reply: reply.as_ref().map(Nickname::as_str),
-            display: msg_display(
-                msg.author.as_str(),
-                msg.body.as_str(),
-                reply.as_ref().map(Nickname::as_str),
-            ),
-            is_self,
-        })
-        .expect("message event serialization should never fail"),
-        MessageKind::Notice { reply } => serde_json::to_string(&MsgLine {
-            header: message_header(msg, "notice"),
-            body: msg.body.as_str(),
-            reply: reply.as_ref().map(Nickname::as_str),
-            display: notice_display(
-                msg.author.as_str(),
-                msg.body.as_str(),
-                reply.as_ref().map(Nickname::as_str),
-            ),
-            is_self,
-        })
-        .expect("notice event serialization should never fail"),
+        MessageKind::A2aMsg => {
+            // Inbound frames were validated at the receive boundary and our
+            // own echoes are built by `broadcast_message`, so the parse
+            // succeeds in practice; the fallback keeps a display path from
+            // ever panicking on a crafted body.
+            let payload = serde_json::from_str::<crate::a2a::Message>(msg.body.as_str()).ok();
+            let body = payload.as_ref().map_or_else(
+                || msg.body.as_str().to_owned(),
+                crate::a2a::gossip::display_text,
+            );
+            serde_json::to_string(&MsgLine {
+                header: message_header(msg, "msg"),
+                display: msg_display(msg.author.as_str(), &body, None),
+                body,
+                to: None,
+                message: payload,
+                is_self,
+            })
+            .expect("message event serialization should never fail")
+        }
         MessageKind::Presence { .. }
         | MessageKind::PeerInfo
         | MessageKind::Digest
@@ -351,10 +350,13 @@ pub(super) fn format_msg_json(msg: &Message, is_self: bool) -> String {
         | MessageKind::MetaDigest
         | MessageKind::Ping
         | MessageKind::Pong { .. }
+        | MessageKind::A2aReq { .. }
+        | MessageKind::A2aResp { .. }
         | MessageKind::State
         | MessageKind::Meta
-        | MessageKind::Task { .. } => {
-            unreachable!("format_msg_json only handles the chat kinds")
+        | MessageKind::A2aStatus { .. }
+        | MessageKind::A2aArtifact { .. } => {
+            unreachable!("format_msg_json only handles chat frames")
         }
     }
 }
@@ -363,15 +365,36 @@ pub(super) fn print_message_json(msg: &Message, is_self: bool) {
     emit(&format_msg_json(msg, is_self));
 }
 
-/// Format a task leg as its JSON line. Only `Task` kinds reach here
-/// (callers match first). The `Progress` phase renders as a
-/// `task_progress` event; every other (content) phase as a `task` event.
+/// Format a worker-pushed task frame (an `a2a_status` or `a2a_artifact`) as
+/// its JSON line. A beat renders as a `task_progress` event; every other leg
+/// as a `task` event carrying the native A2A `kind` + `state`, the text
+/// projection as `body`, and the whole A2A payload.
 pub(super) fn format_task_json(msg: &Message, is_self: bool) -> String {
-    let MessageKind::Task { to, task_id, phase } = &msg.kind else {
-        unreachable!("format_task_json only handles Task")
+    let to = match &msg.kind {
+        MessageKind::A2aStatus { to, .. } | MessageKind::A2aArtifact { to, .. } => to,
+        MessageKind::A2aMsg
+        | MessageKind::Presence { .. }
+        | MessageKind::PeerInfo
+        | MessageKind::Digest
+        | MessageKind::StateDigest
+        | MessageKind::MetaDigest
+        | MessageKind::Ping
+        | MessageKind::Pong { .. }
+        | MessageKind::A2aReq { .. }
+        | MessageKind::A2aResp { .. }
+        | MessageKind::State
+        | MessageKind::Meta => unreachable!("format_task_json only handles status/artifact frames"),
     };
-    if matches!(phase, TaskPhase::Progress) {
-        let (done, total) = parse_progress(msg.body.as_str());
+    let task_id = crate::a2a::gossip::frame_task_id(msg)
+        .expect("a task frame carries its task id")
+        .as_str()
+        .to_owned();
+    // A liveness beat (a status marked `swarm:beat`) → task_progress widget.
+    if let Ok(payload) = crate::a2a::gossip::status_payload(msg)
+        && crate::a2a::gossip::is_beat(&payload)
+    {
+        let (done, total) = crate::a2a::gossip::beat_fraction(&payload)
+            .map_or((None, None), |(done, total)| (Some(done), Some(total)));
         return serde_json::to_string(&TaskProgressLine {
             event: "task_progress",
             id: msg.id.as_str(),
@@ -379,7 +402,7 @@ pub(super) fn format_task_json(msg: &Message, is_self: bool) -> String {
             author: msg.author.as_str(),
             ts: msg.timestamp,
             to: to.as_str(),
-            task_id: task_id.as_str(),
+            task_id,
             done,
             total,
             display: task_progress_display(msg.author.as_str(), to.as_str(), done, total),
@@ -387,6 +410,9 @@ pub(super) fn format_task_json(msg: &Message, is_self: bool) -> String {
         })
         .expect("task_progress event serialization should never fail");
     }
+    let kind = crate::a2a::gossip::task_event_kind(msg).unwrap_or("status-update");
+    let state = crate::a2a::gossip::frame_task_state(msg);
+    let body = crate::a2a::gossip::task_text(msg);
     serde_json::to_string(&TaskLine {
         event: "task",
         id: msg.id.as_str(),
@@ -395,10 +421,48 @@ pub(super) fn format_task_json(msg: &Message, is_self: bool) -> String {
         pubkey: (!msg.pubkey.is_empty()).then_some(msg.pubkey.as_str()),
         ts: msg.timestamp,
         to: to.as_str(),
-        task_id: task_id.as_str(),
-        phase: *phase,
-        body: msg.body.as_str(),
-        display: task_display(msg.author.as_str(), to.as_str(), *phase, msg.body.as_str()),
+        task_id,
+        kind,
+        state: state.map(crate::a2a::TaskState::as_str),
+        display: task_display(msg.author.as_str(), to.as_str(), kind, state, &body),
+        body,
+        payload: serde_json::from_str(msg.body.as_str()).ok(),
+        is_self,
+    })
+    .expect("task event serialization should never fail")
+}
+
+/// Format an RPC `message/send` task leg (the initiator's brief / answer /
+/// approval, surfaced on the worker; or the created `Task` adopted on the
+/// initiator) as a `{"event":"task","kind":"message",...}` line.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "a message-leg task event carries id/swarm/author/peer/task_id/state/text and the self flag; there is no frame to derive them from (the leg arrived over RPC)"
+)]
+pub(super) fn format_task_message_json(
+    id: &str,
+    swarm: &str,
+    author: &str,
+    peer: &str,
+    task_id: &str,
+    state: Option<crate::a2a::TaskState>,
+    text: &str,
+    is_self: bool,
+) -> String {
+    serde_json::to_string(&TaskLine {
+        event: "task",
+        id,
+        swarm,
+        author,
+        pubkey: None,
+        ts: crate::util::clock::unix_secs(),
+        to: peer,
+        task_id: task_id.to_owned(),
+        kind: "message",
+        state: state.map(crate::a2a::TaskState::as_str),
+        display: task_display(author, peer, "message", state, text),
+        body: text.to_owned(),
+        payload: None,
         is_self,
     })
     .expect("task event serialization should never fail")
@@ -550,16 +614,32 @@ pub fn event_json(event: &OutputEvent) -> Option<String> {
             name,
             nickname,
             drift,
+            a2a_port,
         } => serde_json::to_string(&SimpleEvent::Ready {
             version: crate::VERSION,
             swarm: swarm.as_str(),
             name: name.as_str(),
             nickname: nickname.as_str(),
             drift: drift.as_deref(),
+            a2a_port: *a2a_port,
         }),
         OutputEvent::Message { msg, is_self } => return Some(format_msg_json(msg, *is_self)),
         OutputEvent::Task { msg, is_self } => {
             return Some(format_task_json(msg, *is_self));
+        }
+        OutputEvent::TaskMessage {
+            id,
+            swarm,
+            author,
+            peer,
+            task_id,
+            state,
+            text,
+            is_self,
+        } => {
+            return Some(format_task_message_json(
+                id, swarm, author, peer, task_id, *state, text, *is_self,
+            ));
         }
         OutputEvent::TaskTimeout { task_id } => serde_json::to_string(&SimpleEvent::TaskTimeout {
             task_id: task_id.as_str(),

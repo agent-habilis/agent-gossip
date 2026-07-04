@@ -1,19 +1,18 @@
 ---
 name: handover
-description: Hand a task to another peer in the swarm. Use when the user wants to delegate work to another agent. Task-first - $ARGUMENTS is the task to delegate (else the current plan); composes a brief, then picks a worker, then drives the task exchange until the receiver accepts.
+description: Hand a task to another peer in the swarm. Use when the user wants to delegate work to another agent. Task-first - $ARGUMENTS is the task to delegate (else the current plan); composes a brief, then picks a worker, then creates the task and hands it off once the worker accepts.
 ---
 
 ## What this does
 
 Hands a task to another participant. A handover is one delegation **flow** of
-the swarm's **task exchange**: a directed, phased exchange correlated by a
-`task_id`. The flow is **task-first**: establish the task,
-build a **plan in plan mode** (that plan *is* the brief you send), *then*
-pick the worker, then drive the task exchange. The handover completes at the
-**handoff** — `offer → accept → [context] → done → confirm` — not at the
-receiver's execution: the receiver requests close (`done`), you confirm,
-and you are finished; the receiver then runs the work on its own. Every leg
-is surfaced only to the two parties.
+the swarm's **A2A task**: a directed `SendMessage` creates it (the worker mints
+the task id). The flow is **task-first**: establish the task, build a **plan in
+plan mode** (that plan *is* the brief you send), *then* pick the worker, then
+create the task. The handover completes at the **handoff** — the moment the
+worker **accepts** (`state:"working"`) — not at the worker's execution: once it
+accepts you are finished, and it then runs the work on its own. Every leg is
+surfaced only to the two parties.
 
 ## Silent execution
 
@@ -59,17 +58,11 @@ Establish *what* is being handed over **before** choosing who does it:
 
 Go **straight into plan mode**: as the first action after establishing the
 task, **call the `EnterPlanMode` tool** — this enters plan mode and shows the
-plan-mode UI. Do this *before* anything else (before minting the id or
-drafting).
+plan-mode UI. Do this *before* anything else (before drafting).
 
 Then, **inside plan mode** and silently:
 
-1. Mint one UUID for this whole handover (reused on every leg) — hold it as
-   `$TASK_ID`, don't print it:
-   ```bash
-   TASK_ID=$(uuidgen | tr 'A-Z' 'a-z')
-   ```
-2. Draft the plan for the task. The plan you write **is** the brief you hand
+1. Draft the plan for the task. The plan you write **is** the brief you hand
    over. Keep it under ~2,500 characters (the wire caps a message near
    3,000); push extra detail into the later Q&A. Structure it so the receiver
    can act on it:
@@ -132,45 +125,42 @@ against the roster. The chosen nickname (without the brackets) is `$TARGET`.
 If the roster has no eligible peers, print `🐝️ no available peers to hand over to`
 and STOP.
 
-## Send the offer
+## Create the task
 
 The plan (`$BRIEF`) was already approved in plan mode and the worker picked,
-so send straight away — **prepend the `[[handover]]` marker as the body's own
-first line** so the receiver runs the walk-away handover flow:
+so create straight away. The brief should **hand the work over** (ask the
+worker to take it and run it, not to report a result). The **worker mints the
+task id** and returns the `Task` — capture `result.task.id` as `$TASK_ID`:
 
 ```bash
-ahsw task --swarm "$SWARM" --nickname "$NICKNAME" --to "$TARGET" \
-  --task-id "$TASK_ID" --phase offer --text "[[handover]]
-$BRIEF"
+ahsw a2a call --swarm "$SWARM" --nickname "$NICKNAME" --to "$TARGET" \
+  --method SendMessage --text "$BRIEF"
 ```
 
 Handle errors from the command:
 
 - `unknown participant` ⇒ the peer left between the roster read and the
-  send; print the error and STOP.
+  create; print the error and STOP.
 - `message too large` ⇒ shorten the brief and retry once.
 
-Your own send echoes back as a `task` `"self":true` event. Open the tasks
-widget (see below) with this task `offered`.
+Open the tasks widget (see below) with this task in progress.
 
-## Drive the task exchange
+## The handoff completes when the worker accepts
 
-The receiver drives the lifecycle; you answer and close. The full sender
-state machine lives in the create/join event handler (loaded for the session) —
-do not duplicate it here. (If that session is on the CLI fallback rather than
-Monitor, the receiver's legs arrive on the poll tick, not instantly — same
-handling, slightly later.) In short, for this `task_id`:
+A handover is done the moment the worker takes it — you never wait for the
+work. The full sender handling lives in the create/join event handler (loaded
+for the session). In short, for this `task_id`:
 
-- **`context` from the receiver** — answer from your task context with
-  `--phase context`. Silent (widget only, see below).
-- **`done` from the receiver** ("I have what I need, close the handoff") —
-  **auto-confirm**: send `--phase confirm`. A handover has nothing for you to
-  verify (the receiver runs it on its own), so there is **no review widget
-  and no `change`** — that is a report-back task concern. This closes the
-  task.
-- **`decline`** — the receiver passed; record the reason and stop.
+- **`state:"working"` from the worker** (it accepted) — the handoff is
+  complete: set the todo `completed` and **stop watching**. The worker runs the
+  work on its own; there is nothing for you to review, approve, or confirm.
+- **`state:"input-required"` with a question** — answer from your task context
+  with a follow-up message (`ahsw a2a call --to $TARGET --method SendMessage
+  --task-id "$TASK_ID" --text "<answer>"`). Silent (widget only).
+- **`state:"failed"` / `task_timeout`** — the worker passed or dropped; record
+  the reason and stop.
 
-You never wait for the receiver to *run* the work.
+You never wait for the worker to *run* the work.
 
 ## Track the task in the to-do list
 
@@ -192,12 +182,12 @@ todo for this handover and keep it updated as the daemon emits events for this
   `<$TARGET>` with literal angle brackets and **no backticks** in **both**
   fields — the widget shows text verbatim: markdown isn't rendered (backticks
   would show literally) and `<`/`>` aren't escaped.
-- Move it through the lifecycle off the `task` events (`offered`/`accepted`/
-  …) by calling `TodoWrite` again. `task_progress` (incl. the daemon's
-  keepalive beats) just refreshes the todo — **never** a printed line.
-- On your `confirm`, set it `completed` (the terminal "handed over" state).
-  On a terminal `decline`/`timeout`, set it `completed` too and note the
-  reason **in the todo content** (not a printed line).
+- Move it through the lifecycle off the `task` events for this `task_id` by
+  calling `TodoWrite` again. `task_progress` (incl. the daemon's keepalive
+  beats) just refreshes the todo — **never** a printed line.
+- On the worker's `state:"working"` (accept), set it `completed` (the terminal
+  "handed over" state). On a terminal `failed`/`timeout`, set it `completed`
+  too and note the reason **in the todo content** (not a printed line).
 
 ## Output
 

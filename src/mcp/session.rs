@@ -7,12 +7,13 @@ use std::sync::Mutex;
 
 use anyhow::Result;
 
+use crate::a2a::TaskId;
 use crate::daemon::state::RosterSnapshot;
 use crate::embed::{
     CreateConfig, CreateError, ForumConfig, InProcessSession, JoinConfig, JoinError,
 };
 use crate::protocol::swarm::SwarmName;
-use crate::protocol::{Message, MessageBody, MessageId, Nickname, SwarmId, TaskId, TaskPhase};
+use crate::protocol::{Message, MessageBody, MessageId, Nickname, SwarmId};
 
 /// One active swarm for the MCP server: the shared [`InProcessSession`]
 /// core (poll-only, silent) plus the per-session implicit `after` cursor.
@@ -81,42 +82,51 @@ impl Session {
     ///
     /// # Errors
     /// Fails if the event loop has stopped.
-    pub(super) async fn send_message(
-        &self,
-        body: MessageBody,
-        reply: Option<Nickname>,
-    ) -> Result<(MessageId, Message)> {
-        let msg = self.inner.send(body, reply).await?;
+    pub(super) async fn send_message(&self, body: MessageBody) -> Result<(MessageId, Message)> {
+        let msg = self.inner.send(body).await?;
         Ok((msg.id.clone(), msg))
     }
 
-    /// [`send_message`](Self::send_message), as a notice — the
-    /// no-auto-reply kind.
+    /// Worker-emit a task `TaskStatusUpdate`. Returns `(id, echo)`.
     ///
     /// # Errors
     /// Fails if the event loop has stopped.
-    pub(super) async fn send_notice(
+    pub(super) async fn task_status(
         &self,
-        body: MessageBody,
-        reply: Option<Nickname>,
-    ) -> Result<(MessageId, Message)> {
-        let msg = self.inner.send_notice(body, reply).await?;
-        Ok((msg.id.clone(), msg))
-    }
-
-    /// Send one leg of a task. Returns `(id, echo)`.
-    ///
-    /// # Errors
-    /// Fails if the event loop has stopped.
-    pub(super) async fn send_task(
-        &self,
-        to: Nickname,
         task_id: TaskId,
-        phase: TaskPhase,
-        body: MessageBody,
+        state: crate::a2a::TaskState,
+        note: Option<String>,
     ) -> Result<(MessageId, Message)> {
-        let msg = self.inner.task(to, task_id, phase, body).await?;
+        let msg = self.inner.task_status(task_id, state, note).await?;
         Ok((msg.id.clone(), msg))
+    }
+
+    /// Worker-emit a task `TaskArtifactUpdate` (the result). Returns `(id, echo)`.
+    ///
+    /// # Errors
+    /// Fails if the event loop has stopped.
+    pub(super) async fn task_artifact(
+        &self,
+        task_id: TaskId,
+        text: String,
+    ) -> Result<(MessageId, Message)> {
+        let msg = self.inner.task_artifact(task_id, text).await?;
+        Ok((msg.id.clone(), msg))
+    }
+
+    /// Call a peer's A2A server over gossip (request/response); returns the
+    /// parsed JSON-RPC response.
+    ///
+    /// # Errors
+    /// Fails if the event loop has stopped.
+    pub(super) async fn a2a_call(
+        &self,
+        peer: Nickname,
+        method: String,
+        params: serde_json::Value,
+        timeout: std::time::Duration,
+    ) -> Result<serde_json::Value> {
+        self.inner.a2a_call(peer, method, params, timeout).await
     }
 
     /// Snapshot the live participant roster (active + quiet, recency-sorted).
@@ -255,6 +265,7 @@ mod tests {
             | OutputEvent::Error { .. }
             | OutputEvent::PingReport { .. }
             | OutputEvent::StateChanged { .. }
+            | OutputEvent::TaskMessage { .. }
             | OutputEvent::TaskTimeout { .. } => None,
         }
     }
@@ -274,7 +285,7 @@ mod tests {
                 for entry in &events {
                     if let Some(msg) = as_message(&entry.event)
                         && msg.author.as_str() == author
-                        && msg.body.as_str() == body
+                        && crate::a2a::gossip::chat_text(msg).as_deref() == Some(body)
                     {
                         return Some(msg.id.clone());
                     }
@@ -310,7 +321,7 @@ mod tests {
 
         // Send from creator → joiner should see it.
         let (sent_id, _) = creator
-            .send_message(MessageBody::from("hi bob"), None)
+            .send_message(MessageBody::from("hi bob"))
             .await
             .expect("send_message");
 
@@ -323,7 +334,7 @@ mod tests {
 
         // And the reverse direction.
         let (reply_id, _) = joiner
-            .send_message(MessageBody::from("hi alice"), None)
+            .send_message(MessageBody::from("hi alice"))
             .await
             .expect("send_message reply");
         let observed2 = wait_for_gossip(&creator, "bob-two", "hi alice").await;
@@ -346,7 +357,7 @@ mod tests {
         // Mesh first (a delivered message proves the link) so the long-poll
         // below is waiting on a *fresh* event, not racing initial bootstrap.
         creator
-            .send_message(MessageBody::from("warmup"), None)
+            .send_message(MessageBody::from("warmup"))
             .await
             .expect("send warmup");
         assert!(
@@ -371,7 +382,7 @@ mod tests {
         let delayed_send = async {
             tokio::time::sleep(Duration::from_millis(300)).await;
             creator
-                .send_message(MessageBody::from("after warmup"), None)
+                .send_message(MessageBody::from("after warmup"))
                 .await
                 .expect("send");
         };
@@ -390,7 +401,9 @@ mod tests {
                 if events
                     .iter()
                     .filter_map(|item| as_message(&item.event))
-                    .any(|msg| msg.body.as_str() == "after warmup")
+                    .any(|msg| {
+                        crate::a2a::gossip::chat_text(msg).as_deref() == Some("after warmup")
+                    })
                 {
                     break;
                 }
@@ -432,12 +445,15 @@ mod tests {
             .expect("create");
 
         let (sent, echo) = alice
-            .send_message(MessageBody::from("self-echo"), None)
+            .send_message(MessageBody::from("self-echo"))
             .await
             .expect("send_message");
         assert_eq!(echo.id, sent);
         assert_eq!(echo.author.as_str(), "alice-replay");
-        assert_eq!(echo.body.as_str(), "self-echo");
+        assert_eq!(
+            crate::a2a::gossip::chat_text(&echo).as_deref(),
+            Some("self-echo")
+        );
         assert!(echo.timestamp > 0, "echo must carry a unix timestamp");
 
         // The self-send surfaces in a fetch, marked `self:true`.
@@ -520,7 +536,7 @@ mod tests {
 
         // Bob sends — alice's next cursor-less fetch must surface bob's
         // message, nothing older.
-        bob.send_message(MessageBody::from("hi via cursor"), None)
+        bob.send_message(MessageBody::from("hi via cursor"))
             .await
             .expect("send");
         let mut saw_body = false;
@@ -533,7 +549,7 @@ mod tests {
             saw_body = events
                 .iter()
                 .filter_map(|item| as_message(&item.event))
-                .any(|msg| msg.body.as_str() == "hi via cursor");
+                .any(|msg| crate::a2a::gossip::chat_text(msg).as_deref() == Some("hi via cursor"));
             if !saw_body {
                 tokio::time::sleep(Duration::from_millis(150)).await;
             }
@@ -553,7 +569,7 @@ mod tests {
             forced
                 .iter()
                 .filter_map(|item| as_message(&item.event))
-                .any(|msg| msg.body.as_str() == "hi via cursor"),
+                .any(|msg| crate::a2a::gossip::chat_text(msg).as_deref() == Some("hi via cursor")),
             "explicit after must replay from the given seq"
         );
 

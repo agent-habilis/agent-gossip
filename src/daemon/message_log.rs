@@ -61,25 +61,25 @@ impl MessageLog {
         self.messages.len()
     }
 
-    /// The retained parts of multipart `group` authored by `pubkey`, slotted by
-    /// `idx` (first-seen wins per idx); `total` slots, each `None` until its part
+    /// The retained shards of multipart `group` authored by `pubkey`, slotted by
+    /// `idx` (first-seen wins per idx); `total` slots, each `None` until its shard
     /// arrives. Keying on `pubkey` as well as `group` is the security boundary: a
-    /// peer can only sign parts under its own key, so a crafted part carrying
+    /// peer can only sign shards under its own key, so a crafted shard carrying
     /// someone else's `group` forms a separate, never-completing set and can't
     /// inject a slice into the victim's body.
-    pub(crate) fn collect_parts<'a>(
+    pub(crate) fn collect_shards<'a>(
         &'a self,
-        group: &crate::protocol::PartGroup,
+        group: &crate::protocol::ShardGroup,
         pubkey: &str,
         total: u32,
     ) -> Vec<Option<&'a Message>> {
         let mut slots: Vec<Option<&Message>> = vec![None; total as usize];
         for msg in &self.messages {
-            let Some(part) = &msg.part else { continue };
-            if part.group == *group
-                && part.total == total
+            let Some(shard) = &msg.shard else { continue };
+            if shard.group == *group
+                && shard.total == total
                 && msg.pubkey == pubkey
-                && let Some(slot) = slots.get_mut(part.idx as usize)
+                && let Some(slot) = slots.get_mut(shard.idx as usize)
                 && slot.is_none()
             {
                 *slot = Some(msg);
@@ -178,7 +178,7 @@ mod tests {
     use super::{Message, MessageLog};
 
     fn msg(id: &str) -> Message {
-        Message::new_message(
+        Message::new_a2a_msg(
             &crate::protocol::SwarmId::from("🐝test"),
             &crate::protocol::Nickname::from("author"),
             crate::protocol::MessageBody::from(id),
@@ -193,16 +193,16 @@ mod tests {
     }
 
     /// A `Msg` carrying a multipart header, signed (notionally) by `pubkey`.
-    fn part_msg(
+    fn shard_msg(
         body: &str,
         pubkey: &str,
-        group: &crate::protocol::PartGroup,
+        group: &crate::protocol::ShardGroup,
         idx: u32,
         total: u32,
     ) -> Message {
         let mut message = msg(body);
         message.pubkey = pubkey.to_owned();
-        message.part = Some(crate::protocol::Part {
+        message.shard = Some(crate::protocol::Shard {
             group: group.clone(),
             idx,
             total,
@@ -211,31 +211,35 @@ mod tests {
     }
 
     #[test]
-    fn collect_parts_isolates_by_author() {
+    fn collect_shards_isolates_by_author() {
         // Two authors reuse the SAME group id. Each forms its own set; one
-        // author's part never fills another's slot, so a crafted cross-author
-        // part can't inject a slice into the victim's reassembled body.
-        let group = crate::protocol::PartGroup::random();
+        // author's shard never fills another's slot, so a crafted cross-author
+        // shard can't inject a slice into the victim's reassembled body.
+        let group =
+            crate::protocol::ShardGroup::from_uuid_str("550e8400-e29b-41d4-a716-446655440000")
+                .expect("valid group");
         let mut log = MessageLog::new(10);
-        log.push(part_msg("alice-0", "alice", &group, 0, 2));
-        log.push(part_msg("mallory-1", "mallory", &group, 1, 2));
+        log.push(shard_msg("alice-0", "alice", &group, 0, 2));
+        log.push(shard_msg("mallory-1", "mallory", &group, 1, 2));
 
-        let alice = log.collect_parts(&group, "alice", 2);
-        assert!(alice[0].is_some(), "alice's own part is collected");
+        let alice = log.collect_shards(&group, "alice", 2);
+        assert!(alice[0].is_some(), "alice's own shard is collected");
         assert!(
             alice[1].is_none(),
-            "mallory's same-group part must not fill alice's missing slot"
+            "mallory's same-group shard must not fill alice's missing slot"
         );
     }
 
     #[test]
-    fn collect_parts_slots_by_idx_not_arrival() {
-        let group = crate::protocol::PartGroup::random();
+    fn collect_shards_slots_by_idx_not_arrival() {
+        let group =
+            crate::protocol::ShardGroup::from_uuid_str("550e8400-e29b-41d4-a716-446655440000")
+                .expect("valid group");
         let mut log = MessageLog::new(10);
-        log.push(part_msg("b", "a", &group, 1, 3));
-        log.push(part_msg("a", "a", &group, 0, 3));
-        log.push(part_msg("c", "a", &group, 2, 3));
-        let slots = log.collect_parts(&group, "a", 3);
+        log.push(shard_msg("b", "a", &group, 1, 3));
+        log.push(shard_msg("a", "a", &group, 0, 3));
+        log.push(shard_msg("c", "a", &group, 2, 3));
+        let slots = log.collect_shards(&group, "a", 3);
         let bodies: Vec<&str> = slots
             .iter()
             .map(|slot| slot.expect("complete set").body.as_str())

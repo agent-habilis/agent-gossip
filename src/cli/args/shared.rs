@@ -37,6 +37,17 @@ pub(crate) struct SharedServerOpts {
     #[arg(long, default_value_t = DEFAULT_MAX_DIRECT_PEERS)]
     pub max_peers: usize,
 
+    /// Serve the A2A JSON-RPC 2.0 binding on 127.0.0.1 (off by default).
+    ///
+    /// Optional value = the TCP port; omit it (or pass 0) for an
+    /// OS-assigned port. The bound port and the per-daemon bearer token are
+    /// written to the session state file and the `ready` event
+    /// (`a2a_port`), so a local A2A client can discover both. The card is
+    /// served unauthenticated at `/.well-known/agent-card.json`; every
+    /// JSON-RPC call requires `Authorization: Bearer <token>`.
+    #[arg(long = "a2a-serve", num_args = 0..=1, default_missing_value = "0")]
+    pub a2a_serve: Option<u16>,
+
     /// Override the session state-file path. The daemon writes
     /// `{swarm, name, nickname, participant_count, ready, last_updated}` to a
     /// JSON file on every peer-set change and a ~10s heartbeat, and deletes it

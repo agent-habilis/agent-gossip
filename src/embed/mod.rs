@@ -15,19 +15,22 @@ use std::time::{Duration, Instant};
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio::task::JoinHandle;
 
+use crate::a2a::TaskId;
 use crate::daemon::setup::{SetupKind, setup_swarm};
 use crate::daemon::state::RosterSnapshot;
 use crate::daemon::{
     CoHostPolicy, CreateParams, DriverMode, EventLoopConfig, ForumParams, JoinParams, Resolved,
     SessionRequest,
 };
+use crate::directory::ticket::{TicketAd, TicketChange, TicketListing, TicketListings};
 use crate::directory::{self, Listing, ListingChange, Listings, directory_swarm};
 use crate::output::{Output, OutputEvent};
 use crate::protocol::swarm::{
     DEFAULT_DIRECTORY, DirectorySelection, LookupOpts, LookupSet, Swarm, SwarmConfig, SwarmName,
     resolve_lookups,
 };
-use crate::protocol::{Message, MessageBody, Nickname, SwarmId, TaskId, TaskPhase};
+use crate::protocol::token::TokenType;
+use crate::protocol::{Message, MessageBody, Nickname, SwarmId};
 use crate::resolver::JoinTarget;
 use crate::util::tuning::{
     DEFAULT_MAX_DIRECT_PEERS, EMBED_INBOUND_CAP, advertise_interval_secs, directory_expiry_secs,
@@ -261,6 +264,7 @@ async fn create_setup(
     .map_err(|_| CreateError::AdvertiseRequiresReachable)?;
     let mut elc = setup_swarm(
         kind, author, /* interactive */ false, max_peers, None, output, /* drift */ None,
+        /* a2a_serve */ None,
     )
     .await
     .map_err(|error| CreateError::Setup(error.context("setup_swarm failed")))?;
@@ -313,6 +317,7 @@ async fn resolved_setup(
     let Resolved { kind, author, .. } = resolved;
     setup_swarm(
         kind, author, /* interactive */ false, max_peers, None, output, /* drift */ None,
+        /* a2a_serve */ None,
     )
     .await
     .map_err(|error| JoinError::Setup(error.context("setup_swarm failed")))
@@ -419,38 +424,11 @@ impl InProcessSession {
     ///
     /// # Errors
     /// Fails if the event loop has stopped or dropped the response.
-    pub(crate) async fn send(
-        &self,
-        body: MessageBody,
-        reply: Option<Nickname>,
-    ) -> anyhow::Result<Message> {
-        self.send_chat(body, reply, false).await
-    }
-
-    /// [`send`](Self::send), as a notice — the no-auto-reply kind.
-    ///
-    /// # Errors
-    /// Fails if the event loop has stopped or dropped the response.
-    pub(crate) async fn send_notice(
-        &self,
-        body: MessageBody,
-        reply: Option<Nickname>,
-    ) -> anyhow::Result<Message> {
-        self.send_chat(body, reply, true).await
-    }
-
-    async fn send_chat(
-        &self,
-        body: MessageBody,
-        reply: Option<Nickname>,
-        notice: bool,
-    ) -> anyhow::Result<Message> {
+    pub(crate) async fn send(&self, body: MessageBody) -> anyhow::Result<Message> {
         let (resp_tx, resp_rx) = oneshot::channel();
         self.req_tx
             .send(SessionRequest::Send {
                 body,
-                reply,
-                notice,
                 resp: resp_tx,
             })
             .await
@@ -487,24 +465,23 @@ impl InProcessSession {
             .map_err(|_| anyhow::anyhow!("swarm event loop dropped the response"))
     }
 
-    /// Send one leg of a task; returns the canonical [`Message`].
+    /// Worker-emit a `TaskStatusUpdate` on a task we're serving; returns the
+    /// canonical [`Message`].
     ///
     /// # Errors
     /// Fails if the event loop has stopped or dropped the response.
-    pub(crate) async fn task(
+    pub(crate) async fn task_status(
         &self,
-        to: Nickname,
         task_id: TaskId,
-        phase: TaskPhase,
-        body: MessageBody,
+        state: crate::a2a::TaskState,
+        note: Option<String>,
     ) -> anyhow::Result<Message> {
         let (resp_tx, resp_rx) = oneshot::channel();
         self.req_tx
-            .send(SessionRequest::Task {
-                to,
+            .send(SessionRequest::TaskStatus {
                 task_id,
-                phase,
-                body,
+                state,
+                note,
                 resp: resp_tx,
             })
             .await
@@ -513,6 +490,59 @@ impl InProcessSession {
             Ok(result) => result,
             Err(_) => Err(anyhow::anyhow!("swarm event loop dropped the response")),
         }
+    }
+
+    /// Worker-emit a `TaskArtifactUpdate` (the result) on a task we're serving.
+    ///
+    /// # Errors
+    /// Fails if the event loop has stopped or dropped the response.
+    pub(crate) async fn task_artifact(
+        &self,
+        task_id: TaskId,
+        text: String,
+    ) -> anyhow::Result<Message> {
+        let (resp_tx, resp_rx) = oneshot::channel();
+        self.req_tx
+            .send(SessionRequest::TaskArtifact {
+                task_id,
+                text,
+                resp: resp_tx,
+            })
+            .await
+            .map_err(|_| anyhow::anyhow!("swarm event loop has stopped"))?;
+        match resp_rx.await {
+            Ok(result) => result,
+            Err(_) => Err(anyhow::anyhow!("swarm event loop dropped the response")),
+        }
+    }
+
+    /// Call a peer's A2A server over gossip (request/response) and return the
+    /// parsed JSON-RPC response object (`{"result"|"error"}`). Blocks until
+    /// the peer answers or `timeout` elapses.
+    ///
+    /// # Errors
+    /// Fails if the event loop has stopped or dropped the response.
+    pub(crate) async fn a2a_call(
+        &self,
+        peer: Nickname,
+        method: String,
+        params: serde_json::Value,
+        timeout: Duration,
+    ) -> anyhow::Result<serde_json::Value> {
+        let (resp_tx, resp_rx) = oneshot::channel();
+        self.req_tx
+            .send(SessionRequest::A2aCall {
+                peer,
+                method,
+                params,
+                timeout,
+                resp: resp_tx,
+            })
+            .await
+            .map_err(|_| anyhow::anyhow!("swarm event loop has stopped"))?;
+        resp_rx
+            .await
+            .map_err(|_| anyhow::anyhow!("swarm event loop dropped the response"))
     }
 
     /// Snapshot the live participant roster (active + quiet, recency-sorted).
@@ -757,6 +787,7 @@ impl SwarmSession {
             /* state_file */ None,
             output,
             /* drift */ None,
+            /* a2a_serve */ None,
         )
         .await?;
         elc.cohost = cohost;
@@ -829,30 +860,13 @@ impl SwarmSession {
         self.msg_tx.subscribe()
     }
 
-    /// Build, sign and gossip-broadcast a message. Returns the canonical
-    /// [`Message`] the loop built (read `.id` for the new id).
+    /// Build, sign and gossip-broadcast a swarm chat message. Returns the
+    /// canonical [`Message`] the loop built (read `.id` for the new id).
     ///
     /// # Errors
     /// Fails if the event loop has stopped or dropped the response.
-    pub async fn send(
-        &self,
-        body: MessageBody,
-        reply: Option<Nickname>,
-    ) -> anyhow::Result<Message> {
-        self.core.send(body, reply).await
-    }
-
-    /// [`send`](Self::send), as a notice — the kind agents must never
-    /// auto-reply to.
-    ///
-    /// # Errors
-    /// Fails if the event loop has stopped or dropped the response.
-    pub async fn send_notice(
-        &self,
-        body: MessageBody,
-        reply: Option<Nickname>,
-    ) -> anyhow::Result<Message> {
-        self.core.send_notice(body, reply).await
+    pub async fn send(&self, body: MessageBody) -> anyhow::Result<Message> {
+        self.core.send(body).await
     }
 
     /// Apply an RFC 7386 JSON Merge Patch to the shared state: an object merges
@@ -913,21 +927,45 @@ impl SwarmSession {
         self.core.fetch(after, long).await
     }
 
-    /// Send one leg of a task to `to`, correlated by `task_id`.
-    /// Returns the canonical [`Message`] the loop built. Addressee
-    /// validation (for `Offer`) happens in `broadcast_task` — see the
-    /// MCP `send_task` tool.
+    /// Worker-emit a `TaskStatusUpdate` on a task we're serving (the A2A
+    /// streaming plane) — `working` / `input-required` / `completed` /
+    /// `failed`. Returns the canonical [`Message`] the loop built.
     ///
     /// # Errors
     /// Fails if the event loop has stopped or dropped the response.
-    pub async fn task(
+    pub async fn task_status(
         &self,
-        to: Nickname,
         task_id: TaskId,
-        phase: TaskPhase,
-        body: MessageBody,
+        state: crate::a2a::TaskState,
+        note: Option<String>,
     ) -> anyhow::Result<Message> {
-        self.core.task(to, task_id, phase, body).await
+        self.core.task_status(task_id, state, note).await
+    }
+
+    /// Worker-emit a `TaskArtifactUpdate` (the result) on a task we're serving.
+    ///
+    /// # Errors
+    /// Fails if the event loop has stopped or dropped the response.
+    pub async fn task_artifact(&self, task_id: TaskId, text: String) -> anyhow::Result<Message> {
+        self.core.task_artifact(task_id, text).await
+    }
+
+    /// Call a peer's A2A server over gossip (request/response). Returns the
+    /// parsed JSON-RPC response (`{"result"|"error"}`); blocks until the peer
+    /// answers or `timeout` elapses. The peer serves a safe method subset
+    /// (reads, party-checked `tasks/cancel`, and `message/send` directed at
+    /// it) — mutating global-state ops and broadcast sends are refused.
+    ///
+    /// # Errors
+    /// Fails if the event loop has stopped or dropped the response.
+    pub async fn a2a_call(
+        &self,
+        peer: Nickname,
+        method: String,
+        params: serde_json::Value,
+        timeout: Duration,
+    ) -> anyhow::Result<serde_json::Value> {
+        self.core.a2a_call(peer, method, params, timeout).await
     }
 
     /// Broadcast pre-built wire bytes **verbatim** into the swarm — no
@@ -1023,7 +1061,7 @@ pub(crate) fn spawn_advertiser(
                 id: swarm_id.clone(),
                 peers: live_count.load(Ordering::Relaxed),
             };
-            if let Err(error) = session.send(ad.to_body(), None).await {
+            if let Err(error) = session.send(ad.to_body()).await {
                 tracing::debug!(
                     target: "agent_habilis_swarm::directory",
                     %error,
@@ -1153,7 +1191,13 @@ impl Directory {
                             let now = Instant::now();
                             let event = {
                                 let mut dir = collector.lock().expect("directory mutex not poisoned");
-                                match dir.note(message.body.as_str(), now) {
+                                // Ads ride broadcast chat frames, so the ad
+                                // text is the payload's text projection, not
+                                // the raw frame body (a serialized A2A object).
+                                let Some(ad_text) = crate::a2a::gossip::chat_text(&message) else {
+                                    continue;
+                                };
+                                match dir.note(&ad_text, now) {
                                     Some(ListingChange::Found(id)) => dir
                                         .get(&id)
                                         .map(|listing| DirectoryEvent::Found(public_listing(listing))),
@@ -1252,6 +1296,209 @@ impl Drop for Directory {
     }
 }
 
+// ── Ticket advertise / discover (pipe · file · port) ────────────────────
+
+/// Spawn the ticket re-broadcast task: join `directory` over `lookups` and
+/// re-send `ad` (a full bearer ticket) every `ADVERTISE_INTERVAL_SECS`. The
+/// daemon-less serve commands (`pipe listen` / `file send` / `port listen`)
+/// run this beside their serve loop — unlike [`spawn_advertiser`] there is no
+/// event loop to couple to, so the ad is fixed for the session. Returns the
+/// task handle; dropping/aborting it closes the directory membership. A
+/// directory-join failure logs and ends the task — the transfer keeps
+/// serving, just unlisted.
+///
+/// # Errors
+/// The ad fails to serialize into a message body (a label with control
+/// characters or over the body cap).
+pub(crate) fn spawn_ticket_advertiser(
+    directory: SwarmName,
+    lookups: LookupOpts,
+    ad: &TicketAd,
+) -> anyhow::Result<JoinHandle<()>> {
+    // Validate/render once, eagerly — a bad label errors at spawn time
+    // rather than silently every tick.
+    let body = ad.to_body()?;
+    Ok(tokio::spawn(async move {
+        let swarm = directory_swarm(&directory, lookups);
+        // Co-host from t=0 like the swarm advertiser, so a beacon exists
+        // before any discoverer subscribes.
+        let session =
+            match SwarmSession::join_decoded(swarm, None, DIRECTORY_ADVERTISER_COHOST).await {
+                Ok(session) => session,
+                Err(error) => {
+                    tracing::warn!(
+                        target: "agent_habilis_swarm::directory",
+                        %error,
+                        directory = %directory,
+                        "directory advertise: could not join the directory; ticket stays unlisted"
+                    );
+                    return;
+                }
+            };
+        let mut ticker = tokio::time::interval(Duration::from_secs(advertise_interval_secs()));
+        loop {
+            ticker.tick().await;
+            if let Err(error) = session.send(body.clone()).await {
+                tracing::debug!(
+                    target: "agent_habilis_swarm::directory",
+                    %error,
+                    "directory advertise: re-broadcast failed (will retry next tick)"
+                );
+            }
+        }
+    }))
+}
+
+/// A ticket-directory change observed by a [`TicketDirectory`] — the ticket
+/// counterpart of [`DirectoryEvent`], keyed by the ticket string.
+#[derive(Debug, Clone)]
+pub(crate) enum TicketDirectoryEvent {
+    /// A ticket appeared in the directory.
+    Found(TicketListing),
+    /// An already-listed ticket re-advertised with changed data (the label).
+    Updated(TicketListing),
+    /// A ticket's ads stopped and its listing aged out.
+    Lost(String),
+}
+
+/// A live view of a directory's **ticket** ads of one [`TokenType`] — the
+/// consumer side of [`spawn_ticket_advertiser`], mirroring [`Directory`]
+/// (join as a pure consumer, collect in the background, age out silent
+/// publishers). CLI-only for now, so `pub(crate)` — not part of the public
+/// embed surface.
+#[derive(Debug)]
+pub(crate) struct TicketDirectory {
+    session: Option<SwarmSession>,
+    listings: Arc<Mutex<TicketListings>>,
+    events_rx: Option<mpsc::UnboundedReceiver<TicketDirectoryEvent>>,
+    task: Option<JoinHandle<()>>,
+}
+
+impl TicketDirectory {
+    /// Open a directory by name and collect ticket ads of `kind`, reaching it
+    /// over `lookups` — the same topic-coupling rule as [`Directory::open`]:
+    /// advertiser and discoverer meet only over the **same** lookups; bare
+    /// flags resolve to the all-on preset, matching a `--public` advertiser.
+    ///
+    /// # Errors
+    /// The directory session cannot be established (endpoint/gossip setup,
+    /// bootstrap unreachable).
+    pub(crate) async fn open(
+        name: SwarmName,
+        lookups: LookupSet,
+        kind: TokenType,
+    ) -> anyhow::Result<Self> {
+        let resolved = resolve_lookups(!crate::util::tuning::directory_private_for_test(), lookups);
+        let swarm = directory_swarm(&name, resolved);
+        let session = SwarmSession::join_decoded(swarm, None, CoHostPolicy::Never).await?;
+        let mut inbound = session.messages();
+        let listings = Arc::new(Mutex::new(TicketListings::new(kind)));
+        let (events_tx, events_rx) = mpsc::unbounded_channel();
+
+        let collector = listings.clone();
+        let task = tokio::spawn(async move {
+            let ttl = Duration::from_secs(directory_expiry_secs());
+            let mut expiry = tokio::time::interval(ttl);
+            expiry.tick().await; // eat the immediate first tick
+            loop {
+                tokio::select! {
+                    received = inbound.recv() => match received {
+                        Ok(message) => {
+                            let now = Instant::now();
+                            let event = {
+                                let mut dir = collector.lock().expect("ticket directory mutex not poisoned");
+                                // Same unwrapping as the swarm directory: the
+                                // ad text is the chat payload's projection.
+                                let Some(ad_text) = crate::a2a::gossip::chat_text(&message) else {
+                                    continue;
+                                };
+                                match dir.note(&ad_text, now) {
+                                    Some(TicketChange::Found(ticket)) => dir
+                                        .get(&ticket)
+                                        .map(|listing| TicketDirectoryEvent::Found(listing.clone())),
+                                    Some(TicketChange::Updated(ticket)) => dir
+                                        .get(&ticket)
+                                        .map(|listing| TicketDirectoryEvent::Updated(listing.clone())),
+                                    None => None,
+                                }
+                            };
+                            if let Some(event) = event {
+                                let _ = events_tx.send(event);
+                            }
+                        }
+                        // Slow consumer dropped some inbound — listings
+                        // self-heal on the next re-ad, so skip and continue.
+                        Err(broadcast::error::RecvError::Lagged(_)) => {}
+                        Err(broadcast::error::RecvError::Closed) => break,
+                    },
+                    _ = expiry.tick() => {
+                        let now = Instant::now();
+                        let lost = {
+                            let mut dir = collector.lock().expect("ticket directory mutex not poisoned");
+                            dir.expire(ttl, now)
+                        };
+                        for ticket in lost {
+                            let _ = events_tx.send(TicketDirectoryEvent::Lost(ticket));
+                        }
+                    }
+                }
+            }
+        });
+
+        Ok(Self {
+            session: Some(session),
+            listings,
+            events_rx: Some(events_rx),
+            task: Some(task),
+        })
+    }
+
+    /// The current live ticket listings, sorted by label then ticket.
+    pub(crate) fn snapshot(&self) -> Vec<TicketListing> {
+        self.listings
+            .lock()
+            .expect("ticket directory mutex not poisoned")
+            .snapshot()
+    }
+
+    /// Take the event stream (`Found` / `Updated` / `Lost`). Single-consumer:
+    /// returns the receiver **once**, then `None`.
+    pub(crate) fn events(&mut self) -> Option<mpsc::UnboundedReceiver<TicketDirectoryEvent>> {
+        self.events_rx.take()
+    }
+
+    /// The directory session's `(swarm id, nickname)` while open — for
+    /// `logging::attach`, like [`Directory::session_identity`].
+    pub(crate) fn session_identity(&self) -> Option<(&SwarmId, &Nickname)> {
+        self.session
+            .as_ref()
+            .map(|session| (session.swarm_id(), session.nickname()))
+    }
+
+    /// Leave the directory and stop collecting.
+    ///
+    /// # Errors
+    /// Propagates a clean-shutdown error from the underlying directory
+    /// [`SwarmSession::leave`].
+    pub(crate) async fn close(mut self) -> anyhow::Result<()> {
+        if let Some(task) = self.task.take() {
+            task.abort();
+        }
+        if let Some(session) = self.session.take() {
+            session.leave().await?;
+        }
+        Ok(())
+    }
+}
+
+impl Drop for TicketDirectory {
+    fn drop(&mut self) {
+        if let Some(task) = self.task.take() {
+            task.abort();
+        }
+    }
+}
+
 #[cfg(test)]
 mod forum_tests {
     use std::time::Duration;
@@ -1314,7 +1561,7 @@ mod forum_tests {
         let mut received = false;
         while !received && tokio::time::Instant::now() < deadline {
             alice
-                .send(MessageBody::from("hello forum"), None)
+                .send(MessageBody::from("hello forum"))
                 .await
                 .expect("alice send");
             let seen = tokio::time::timeout(Duration::from_millis(500), async {
@@ -1322,7 +1569,8 @@ mod forum_tests {
                     match bob_rx.recv().await {
                         Ok(msg) => {
                             if msg.author.as_str() == "alice-forum"
-                                && msg.body.as_str() == "hello forum"
+                                && crate::a2a::gossip::chat_text(&msg).as_deref()
+                                    == Some("hello forum")
                             {
                                 break true;
                             }

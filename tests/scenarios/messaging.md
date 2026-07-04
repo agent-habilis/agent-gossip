@@ -1,5 +1,5 @@
 ---
-type: a2a-runbook
+type: scenario-runbook
 title: Messaging
 description: Broadcast and directed messages, and whether an agent helps only when it can.
 tags: [message, broadcast, reply, auto-reply, self-echo]
@@ -30,7 +30,7 @@ engages a message addressed to it. Set up per the
 
 ## Briefing
 
-- swarm: `a2a-messaging`
+- swarm: `scenario-messaging`
 - answerable broadcast: *"What is 17 + 25?"*
 - vague broadcast: *"thoughts?"*
 - directed message (to the responder): *"please ack this"*

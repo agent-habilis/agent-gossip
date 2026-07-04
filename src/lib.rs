@@ -32,22 +32,28 @@
 // Internal modules stay `pub(crate)`: the curated public surface is
 // the `embed` facade plus the protocol re-exports below. Keeping these
 // crate-private means iroh / internal refactors are never breaking
-// public API changes.
-pub(crate) mod a2a;
+// public API changes. `a2a` is public on purpose — it is the
+// agent-communication data model both bindings (gossip, local JSON-RPC)
+// share, and embedders speak it directly.
+pub mod a2a;
 pub(crate) mod beacon;
 pub(crate) mod cli;
 pub(crate) mod daemon;
 pub(crate) mod directory;
+pub(crate) mod file;
 pub(crate) mod gossip;
 pub(crate) mod lifecycle;
 pub(crate) mod logging;
 pub(crate) mod lookup;
 pub(crate) mod mcp;
+pub(crate) mod mount;
 pub(crate) mod output;
+pub(crate) mod pipe;
+pub(crate) mod port;
 pub(crate) mod protocol;
 pub(crate) mod resolver;
+pub(crate) mod sh;
 pub(crate) mod transport;
-pub(crate) mod unicast;
 pub(crate) mod util;
 
 pub mod embed;
@@ -62,12 +68,13 @@ pub mod harness;
 // (otherwise `pub(crate)`) modules; re-exporting them from the crate
 // root is what makes them externally reachable and satisfies
 // `unreachable_pub`.
+pub use a2a::{TaskId, TaskState};
 pub use daemon::surfaced::SurfacedEvent;
 pub use logging::LogSink;
 pub use output::{OutputEvent, event_json, surfaced_event_json};
 pub use protocol::message::{
-    BodyError, Channel, IdError, Message, MessageBody, MessageId, MessageKind, Part, PartGroup,
-    PresenceSubtype, TaskId, TaskIdError, TaskPhase, TaskPhaseError,
+    BodyError, Channel, IdError, Message, MessageBody, MessageId, MessageKind, PresenceSubtype,
+    Shard, ShardGroup,
 };
 pub use protocol::nickname::{Nickname, NicknameError};
 pub use protocol::swarm::{
@@ -77,7 +84,7 @@ pub use protocol::swarm::{
 pub use resolver::{JoinTarget, JoinTargetError};
 // Wire/runtime constants the external test + bench crates assert against; the
 // rest of `util::consts` stays crate-internal.
-pub use util::consts::{MAX_LOGICAL_BODY_BYTES, MAX_MESSAGE_PARTS, MAX_MESSAGE_SIZE, RUNTIME_DIR};
+pub use util::consts::{MAX_LOGICAL_BODY_BYTES, MAX_MESSAGE_SHARDS, MAX_MESSAGE_SIZE, RUNTIME_DIR};
 pub use util::swarm_prefix;
 pub use util::version::VERSION;
 

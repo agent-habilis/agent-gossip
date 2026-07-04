@@ -177,74 +177,39 @@ pub(crate) fn wait_until(count_fn: impl Fn() -> usize, target: usize, timeout: D
 
 /// Spawn `ahsw msg …` and return the raw `Output`
 /// (no success assertion — callers that test failure paths inspect it).
-pub(crate) fn cli_msg_raw(swarm: &str, nickname: &str, body: &str, reply: Option<&str>) -> Output {
-    let mut args = vec![
-        "msg",
-        "--swarm",
-        swarm,
-        "--nickname",
-        nickname,
-        "--text",
-        body,
-    ];
-    if let Some(target) = reply {
-        args.extend(["--reply", target]);
-    }
+/// Broadcast a swarm chat message via the CLI — `ahsw a2a call --method
+/// message/send --text` with no `--to` (A2A is point-to-point, so a swarm-wide
+/// message declares itself).
+pub(crate) fn cli_msg_raw(swarm: &str, nickname: &str, body: &str) -> Output {
     test_cmd()
-        .args(&args)
+        .args([
+            "a2a",
+            "call",
+            "--swarm",
+            swarm,
+            "--nickname",
+            nickname,
+            "--method",
+            "SendMessage",
+            "--text",
+            body,
+        ])
         .output()
-        .expect("msg command failed to spawn")
+        .expect("a2a call command failed to spawn")
 }
 
 /// `cli_msg_raw` + trim stdout. No success assertion.
-pub(crate) fn cli_msg_stdout(
-    swarm: &str,
-    nickname: &str,
-    body: &str,
-    reply: Option<&str>,
-) -> String {
-    let out = cli_msg_raw(swarm, nickname, body, reply);
+pub(crate) fn cli_msg_stdout(swarm: &str, nickname: &str, body: &str) -> String {
+    let out = cli_msg_raw(swarm, nickname, body);
     String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
 
 /// `cli_msg_raw` + assert success + trim stdout.
-pub(crate) fn cli_msg_checked(
-    swarm: &str,
-    nickname: &str,
-    body: &str,
-    reply: Option<&str>,
-) -> String {
-    let out = cli_msg_raw(swarm, nickname, body, reply);
+pub(crate) fn cli_msg_checked(swarm: &str, nickname: &str, body: &str) -> String {
+    let out = cli_msg_raw(swarm, nickname, body);
     assert!(
         out.status.success(),
-        "msg failed: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8_lossy(&out.stdout).trim().to_string()
-}
-
-/// Spawn `ahsw notice …`, assert success, trim stdout. The notice
-/// counterpart of [`cli_msg_checked`].
-pub(crate) fn cli_notice(swarm: &str, nickname: &str, body: &str, reply: Option<&str>) -> String {
-    let mut args = vec![
-        "notice",
-        "--swarm",
-        swarm,
-        "--nickname",
-        nickname,
-        "--text",
-        body,
-    ];
-    if let Some(target) = reply {
-        args.extend(["--reply", target]);
-    }
-    let out = test_cmd()
-        .args(&args)
-        .output()
-        .expect("notice command failed to spawn");
-    assert!(
-        out.status.success(),
-        "notice failed: {}",
+        "a2a call (broadcast) failed: {}",
         String::from_utf8_lossy(&out.stderr)
     );
     String::from_utf8_lossy(&out.stdout).trim().to_string()
@@ -335,50 +300,67 @@ pub(crate) fn ipc_raw(swarm: &str, nickname: &str, line: &str) -> String {
     response.trim().to_string()
 }
 
-/// Spawn `ahsw task …` and return the raw `Output` (no success
-/// assertion — callers that test the unknown-participant
-/// failure paths inspect it).
-pub(crate) fn cli_task_raw(
-    swarm: &str,
-    nickname: &str,
-    to: &str,
-    task_id: &str,
-    phase: &str,
-    text: &str,
-) -> Output {
+/// Create a task on `to` via the CLI (`ahsw a2a call --to <peer> --method
+/// message/send --text`) and return the raw `Output` (no success assertion —
+/// callers that test the unknown-participant failure path inspect it).
+pub(crate) fn cli_task_create_raw(swarm: &str, nickname: &str, to: &str, text: &str) -> Output {
     test_cmd()
         .args([
-            "task",
+            "a2a",
+            "call",
             "--swarm",
             swarm,
             "--nickname",
             nickname,
             "--to",
             to,
-            "--task-id",
-            task_id,
-            "--phase",
-            phase,
+            "--method",
+            "SendMessage",
             "--text",
             text,
         ])
         .output()
-        .expect("task command failed to spawn")
+        .expect("a2a call command failed to spawn")
 }
 
-/// `cli_task_raw` + assert success.
-pub(crate) fn cli_task_checked(
-    swarm: &str,
-    nickname: &str,
-    to: &str,
-    task_id: &str,
-    phase: &str,
-    text: &str,
-) {
-    let out = cli_task_raw(swarm, nickname, to, task_id, phase, text);
+/// Create a task and return the **worker-minted** task id (parsed from the
+/// JSON-RPC response the call prints on stdout). Panics on failure.
+pub(crate) fn cli_task_create(swarm: &str, nickname: &str, to: &str, text: &str) -> String {
+    let out = cli_task_create_raw(swarm, nickname, to, text);
     assert!(
         out.status.success(),
-        "task failed: {}",
+        "a2a create failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let parsed: serde_json::Value =
+        serde_json::from_str(stdout.trim()).expect("a2a call prints a JSON-RPC response");
+    parsed["result"]["task"]["id"]
+        .as_str()
+        .expect("the worker returned a Task id")
+        .to_string()
+}
+
+/// Worker-emit a task status via the CLI (`ahsw a2a status`). Panics on failure.
+pub(crate) fn cli_task_status(swarm: &str, nickname: &str, task_id: &str, state: &str) {
+    let out = test_cmd()
+        .args([
+            "a2a",
+            "status",
+            "--swarm",
+            swarm,
+            "--nickname",
+            nickname,
+            "--task-id",
+            task_id,
+            "--state",
+            state,
+        ])
+        .output()
+        .expect("a2a status command failed to spawn");
+    assert!(
+        out.status.success(),
+        "a2a status failed: {}",
         String::from_utf8_lossy(&out.stderr)
     );
 }
@@ -461,7 +443,7 @@ pub(crate) fn cli_channel_merge(
 use agent_habilis_swarm::embed::{CreateConfig, JoinConfig, SwarmSession};
 use agent_habilis_swarm::{
     Channel, Message, MessageBody, MessageId, MessageKind, Nickname, OutputEvent, PresenceSubtype,
-    SwarmName, TaskId, TaskPhase,
+    SwarmName, TaskId, TaskState,
 };
 use tokio::sync::mpsc::UnboundedReceiver;
 
@@ -556,9 +538,11 @@ impl InProcNode {
 
     /// Broadcast a plain message; returns the new message id.
     pub(crate) async fn send(&self, text: &str) -> MessageId {
-        self.send_to(None, text)
+        self.session
+            .send(MessageBody::new(text).expect("valid body"))
             .await
             .expect("in-process send failed")
+            .id
     }
 
     /// Apply an RFC 7386 merge to the shared state. Panics if the merge is
@@ -677,64 +661,72 @@ impl InProcNode {
         .await
     }
 
-    /// Send a message addressed to `target`; returns the new id.
-    pub(crate) async fn reply(&self, target: &str, text: &str) -> MessageId {
-        self.send_to(Some(target), text)
+    /// Create a task on `target` (native A2A `message/send`, no `taskId`): the
+    /// worker mints the id and returns the `Task`. Returns the parsed JSON-RPC
+    /// response.
+    pub(crate) async fn create_task(&self, target: &str, text: &str) -> serde_json::Value {
+        let msg = agent_habilis_swarm::a2a::gossip::send_message_payload(
+            self.session.swarm_id(),
+            None,
+            text,
+        );
+        self.a2a_call(target, "SendMessage", serde_json::json!({ "message": msg }))
             .await
-            .expect("in-process reply failed")
     }
 
-    /// Broadcast a notice (the no-auto-reply kind); `target` directs it
-    /// to one peer, like [`Self::reply`].
-    pub(crate) async fn notice(&self, target: Option<&str>, text: &str) -> MessageId {
-        let reply = target.map(|nick| Nickname::new(nick).expect("valid target nickname"));
-        let sent = self
-            .session
-            .send_notice(MessageBody::new(text).expect("valid body"), reply)
-            .await
-            .expect("in-process notice failed");
-        sent.id
-    }
-
-    /// Shared send path for [`Self::send`] and [`Self::reply`]:
-    /// `target` `None` is an open broadcast, `Some` a directed reply.
-    async fn send_to(&self, target: Option<&str>, text: &str) -> anyhow::Result<MessageId> {
-        let reply = target.map(|nick| Nickname::new(nick).expect("valid target nickname"));
-        // `send` returns the canonical `Message`; the harness only needs its id.
-        let sent = self
-            .session
-            .send(MessageBody::new(text).expect("valid body"), reply)
-            .await?;
-        Ok(sent.id)
-    }
-
-    /// Send one task leg to `target`, correlated by `task_id`; returns the
-    /// new id. Panics on transport error — addressee validation is
-    /// `broadcast_task`'s job. (Returns `Option` purely for caller
-    /// ergonomics; a successful leg is always `Some`.)
-    pub(crate) async fn task(
+    /// Send a follow-up message (answer / approval / change) into an existing
+    /// task on `target`. Returns the updated `Task` response.
+    pub(crate) async fn task_message(
         &self,
         target: &str,
         task_id: &TaskId,
-        phase: TaskPhase,
         text: &str,
-    ) -> Option<MessageId> {
-        let to = Nickname::new(target).expect("valid target nickname");
-        let sent = self
-            .session
-            .task(
-                to,
-                task_id.clone(),
-                phase,
-                MessageBody::new(text).expect("valid body"),
-            )
+    ) -> serde_json::Value {
+        let msg = agent_habilis_swarm::a2a::gossip::send_message_payload(
+            self.session.swarm_id(),
+            Some(task_id),
+            text,
+        );
+        self.a2a_call(target, "SendMessage", serde_json::json!({ "message": msg }))
             .await
-            .expect("in-process task failed");
-        Some(sent.id)
     }
 
-    /// Captured task legs (any phase; includes self echoes — filter on
-    /// `is_self`/author as needed).
+    /// A directed A2A call to `target`; returns the parsed JSON-RPC response.
+    pub(crate) async fn a2a_call(
+        &self,
+        target: &str,
+        method: &str,
+        params: serde_json::Value,
+    ) -> serde_json::Value {
+        self.session
+            .a2a_call(
+                Nickname::new(target).expect("valid target"),
+                method.to_owned(),
+                params,
+                Duration::from_mins(1),
+            )
+            .await
+            .expect("a2a_call transport")
+    }
+
+    /// Worker-emit a `TaskStatusUpdate` on a task we're serving.
+    pub(crate) async fn task_status(&self, task_id: &TaskId, state: TaskState, note: Option<&str>) {
+        self.session
+            .task_status(task_id.clone(), state, note.map(str::to_owned))
+            .await
+            .expect("in-process task_status failed");
+    }
+
+    /// Worker-emit a `TaskArtifactUpdate` (the result) on a task we're serving.
+    pub(crate) async fn task_artifact(&self, task_id: &TaskId, text: &str) {
+        self.session
+            .task_artifact(task_id.clone(), text.to_owned())
+            .await
+            .expect("in-process task_artifact failed");
+    }
+
+    /// Captured worker-pushed task frames (status/artifact; includes self
+    /// echoes — filter on `is_self`/author as needed).
     pub(crate) fn tasks(&mut self) -> Vec<(&Message, bool)> {
         self.pump();
         self.drained
@@ -746,16 +738,37 @@ impl InProcNode {
             .collect()
     }
 
-    /// Wait until a task leg of `phase` (from any author) is surfaced.
-    pub(crate) async fn wait_task(&mut self, phase: TaskPhase, timeout: Duration) -> bool {
+    /// Whether any `message`-kind task event (an RPC `message/send` leg) has
+    /// been surfaced so far.
+    pub(crate) fn saw_task_message(&mut self) -> bool {
+        self.pump();
+        self.drained
+            .iter()
+            .any(|event| matches!(event, OutputEvent::TaskMessage { .. }))
+    }
+
+    /// Wait until a worker-pushed task frame in `state` (from any author) is
+    /// surfaced.
+    pub(crate) async fn wait_task_state(&mut self, state: TaskState, timeout: Duration) -> bool {
         self.wait_for(timeout, |events| {
             events.iter().any(|event| {
                 matches!(
                     event,
                     OutputEvent::Task { msg, .. }
-                        if matches!(&msg.kind, MessageKind::Task { phase: got, .. } if *got == phase)
+                        if agent_habilis_swarm::a2a::gossip::frame_task_state(msg) == Some(state)
                 )
             })
+        })
+        .await
+    }
+
+    /// Wait until a `message`-kind task event (an RPC `message/send` leg) is
+    /// surfaced to us (the worker).
+    pub(crate) async fn wait_task_message(&mut self, timeout: Duration) -> bool {
+        self.wait_for(timeout, |events| {
+            events
+                .iter()
+                .any(|event| matches!(event, OutputEvent::TaskMessage { .. }))
         })
         .await
     }
@@ -845,7 +858,8 @@ impl InProcNode {
             events.iter().any(|event| {
                 matches!(
                     event,
-                    OutputEvent::Message { msg, is_self: false } if msg.body.as_str() == body
+                    OutputEvent::Message { msg, is_self: false }
+                        if agent_habilis_swarm::a2a::gossip::chat_text(msg).as_deref() == Some(body)
                 )
             })
         })
@@ -873,7 +887,8 @@ impl InProcNode {
             .filter(|event| {
                 matches!(
                     event,
-                    OutputEvent::Message { msg, is_self: false } if msg.body.as_str() == body
+                    OutputEvent::Message { msg, is_self: false }
+                        if agent_habilis_swarm::a2a::gossip::chat_text(msg).as_deref() == Some(body)
                 )
             })
             .count()
@@ -1225,6 +1240,12 @@ impl Drop for Node {
     }
 }
 
+/// The text projection of a chat frame's A2A payload — what a test asserts
+/// against, since the frame `body` carries the serialized payload.
+pub(crate) fn chat_text(msg: &Message) -> String {
+    agent_habilis_swarm::a2a::gossip::chat_text(msg).expect("a chat frame carries an a2a payload")
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct Msg {
     pub author: String,
@@ -1270,12 +1291,12 @@ fn parse_messages(output: &str) -> Vec<Msg> {
 
 /// `cli_msg_raw` with no success assertion — the gossip tests' default.
 pub(crate) fn cli_message_raw(swarm: &str, nickname: &str, body: &str) -> Output {
-    cli_msg_raw(swarm, nickname, body, None)
+    cli_msg_raw(swarm, nickname, body)
 }
 
 /// `cli_msg_stdout` shorthand.
 pub(crate) fn cli_message(swarm: &str, nickname: &str, body: &str) -> String {
-    cli_msg_stdout(swarm, nickname, body, None)
+    cli_msg_stdout(swarm, nickname, body)
 }
 
 /// `wait_until` with the standard message-delivery timeout.
