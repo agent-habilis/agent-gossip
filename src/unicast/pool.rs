@@ -64,6 +64,13 @@ impl UnicastPool {
         }
     }
 
+    /// The underlying participant endpoint, when wired — used by the relay
+    /// transport to dial the first circuit hop (and to learn our own id). `None`
+    /// for a detached pool (unit-test states).
+    pub(crate) fn endpoint(&self) -> Option<Endpoint> {
+        self.inner.endpoint.clone()
+    }
+
     /// Send `bytes` over a warm connection to `eid` if one exists, returning
     /// `true` on a fire-and-forget handoff. `false` means no warm connection —
     /// the caller then warms in the background and rides gossip for this

@@ -181,7 +181,8 @@ pub(crate) fn ingest(
         | MessageKind::A2aReq { .. }
         | MessageKind::A2aResp { .. }
         | MessageKind::State
-        | MessageKind::Meta => return false,
+        | MessageKind::Meta
+        | MessageKind::LinkState => return false,
     };
     let peer = if mine { to } else { &frame.author };
     apply(

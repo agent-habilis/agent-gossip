@@ -215,7 +215,8 @@ impl CraftedMsg {
             | MessageKind::A2aReq { .. }
             | MessageKind::A2aResp { .. }
             | MessageKind::State
-            | MessageKind::Meta => panic!("flip_chat_kind takes a broadcast chat message"),
+            | MessageKind::Meta
+            | MessageKind::LinkState => panic!("flip_chat_kind takes a broadcast chat message"),
         };
         self
     }

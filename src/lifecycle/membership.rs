@@ -58,7 +58,8 @@ pub(crate) fn compute(
         | MessageKind::Ping
         | MessageKind::Pong { .. }
         | MessageKind::A2aReq { .. }
-        | MessageKind::A2aResp { .. } => !state.participants.contains(author.as_str()),
+        | MessageKind::A2aResp { .. }
+        | MessageKind::LinkState => !state.participants.contains(author.as_str()),
     };
     MembershipUpdate {
         returned,

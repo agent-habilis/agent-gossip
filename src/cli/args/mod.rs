@@ -25,6 +25,7 @@ mod session;
 mod shared;
 mod state;
 mod topic;
+mod topology;
 
 pub(crate) use a2a::{A2aAction, A2aOpts};
 pub(crate) use create::CreateOpts;
@@ -42,6 +43,7 @@ pub(crate) use session::SessionOpts;
 pub(crate) use shared::SharedServerOpts;
 pub(crate) use state::{StateAction, StateOpts};
 pub(crate) use topic::TopicOpts;
+pub(crate) use topology::TopologyOpts;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -188,6 +190,16 @@ pub(crate) enum Commands {
     Meta {
         #[command(flatten)]
         opts: MetaOpts,
+    },
+
+    /// Print the relay routing topology from a running daemon's point of view.
+    ///
+    /// Emits the metric-weighted mesh graph the daemon has assembled from
+    /// gossiped link-state, as JSON (`{self_id, edges:[{from,to,metric}]}`) —
+    /// the data behind the `/swarm:topology` render.
+    Topology {
+        #[command(flatten)]
+        opts: TopologyOpts,
     },
 
     /// Wait until a swarm daemon is serving, then exit.

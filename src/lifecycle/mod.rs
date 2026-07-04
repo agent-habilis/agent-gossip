@@ -175,7 +175,8 @@ pub(crate) fn handle_msg(out: &output::Output, message: &Message, surfaceable: b
         | MessageKind::A2aStatus { .. }
         | MessageKind::A2aArtifact { .. }
         | MessageKind::A2aReq { .. }
-        | MessageKind::A2aResp { .. } => false,
+        | MessageKind::A2aResp { .. }
+        | MessageKind::LinkState => false,
     }
 }
 

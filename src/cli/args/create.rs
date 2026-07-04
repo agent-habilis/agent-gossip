@@ -115,6 +115,7 @@ mod tests {
             | Commands::Peers { .. }
             | Commands::State { .. }
             | Commands::Meta { .. }
+            | Commands::Topology { .. }
             | Commands::A2a { .. }
             | Commands::Ready { .. }
             | Commands::Plug { .. }
@@ -145,6 +146,7 @@ mod tests {
             | Commands::Peers { .. }
             | Commands::State { .. }
             | Commands::Meta { .. }
+            | Commands::Topology { .. }
             | Commands::A2a { .. }
             | Commands::Ready { .. }
             | Commands::Plug { .. }
@@ -172,6 +174,7 @@ mod tests {
             | Commands::Peers { .. }
             | Commands::State { .. }
             | Commands::Meta { .. }
+            | Commands::Topology { .. }
             | Commands::A2a { .. }
             | Commands::Ready { .. }
             | Commands::Plug { .. }
@@ -220,6 +223,7 @@ mod tests {
                 | Commands::Peers { .. }
                 | Commands::State { .. }
                 | Commands::Meta { .. }
+                | Commands::Topology { .. }
                 | Commands::A2a { .. }
                 | Commands::Ready { .. }
                 | Commands::Plug { .. }
@@ -271,6 +275,7 @@ mod tests {
                 | Commands::Peers { .. }
                 | Commands::State { .. }
                 | Commands::Meta { .. }
+                | Commands::Topology { .. }
                 | Commands::A2a { .. }
                 | Commands::Ready { .. }
                 | Commands::Plug { .. }
@@ -333,6 +338,7 @@ mod tests {
             | Commands::Peers { .. }
             | Commands::State { .. }
             | Commands::Meta { .. }
+            | Commands::Topology { .. }
             | Commands::A2a { .. }
             | Commands::Ready { .. }
             | Commands::Plug { .. }
