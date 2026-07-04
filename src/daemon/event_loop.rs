@@ -447,7 +447,8 @@ async fn publish_own_card(
     sender: &GossipSender,
     output: &output::Output,
 ) {
-    let card = crate::a2a::card::own_card(author, our_pubkey);
+    let seal_b58 = bs58::encode(state.identity.seal_public()).into_string();
+    let card = crate::a2a::card::own_card(author, our_pubkey, &seal_b58);
     let merge = crate::a2a::card::publish_merge(author, &card);
     if let Err(error) = gossip::broadcast_state_merge(
         swarm,
@@ -703,9 +704,14 @@ async fn shutdown(
     swarm: &SwarmId,
     name: &SwarmName,
     author: &Nickname,
-    state: &EventLoopState,
+    state: &mut EventLoopState,
     output: &output::Output,
 ) {
+    // Close the blob-serving endpoint (if we ever bound one); dropping its store
+    // removes the `<nick>.blobs/` spool.
+    if let Some(server) = state.blob_server.take() {
+        server.shutdown().await;
+    }
     if let Some(sf) = state.state_file.as_ref() {
         sf.remove();
     }

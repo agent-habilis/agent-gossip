@@ -718,9 +718,29 @@ impl InProcNode {
     /// Worker-emit a `TaskArtifactUpdate` (the result) on a task we're serving.
     pub(crate) async fn task_artifact(&self, task_id: &TaskId, text: &str) {
         self.session
-            .task_artifact(task_id.clone(), text.to_owned())
+            .task_artifact(task_id.clone(), text.to_owned(), None, None, None)
             .await
             .expect("in-process task_artifact failed");
+    }
+
+    /// Worker-emit a `TaskArtifactUpdate` whose result is a file, offloaded over
+    /// the blob channel and referenced by a `Part.url`. Returns the daemon's echo
+    /// so a test can read the minted `📦…` reference.
+    pub(crate) async fn task_artifact_file(
+        &self,
+        task_id: &TaskId,
+        path: &std::path::Path,
+    ) -> Message {
+        self.session
+            .task_artifact(
+                task_id.clone(),
+                String::new(),
+                Some(path.to_path_buf()),
+                None,
+                None,
+            )
+            .await
+            .expect("in-process task_artifact_file failed")
     }
 
     /// Captured worker-pushed task frames (status/artifact; includes self

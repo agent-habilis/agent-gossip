@@ -139,9 +139,19 @@ pub(crate) async fn handle_ipc_command(
             swarm: _,
             task_id,
             text,
+            file,
+            file_name,
+            file_mime,
         } => {
             tracing::debug!(%task_id, "IPC a2a artifact command received");
-            match emit_task_artifact(swarm, author, &task_id, &text, state, sender, output).await {
+            let file = file.map(|path| crate::blob::FileRef {
+                path,
+                name: file_name,
+                mime: file_mime,
+            });
+            match emit_task_artifact(swarm, author, &task_id, &text, file, state, sender, output)
+                .await
+            {
                 Ok(msg) => {
                     let _ = resp_tx.send(json_ok_msg(&msg.id.clone(), &msg));
                     true

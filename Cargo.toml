@@ -153,6 +153,13 @@ governor = "0.10"
 bytes = "1"
 futures-util = "0.3"
 bs58 = "0.5"
+# End-to-end sealing of directed frames: a NaCl-style sealed box (ephemeral
+# X25519 ECDH → ChaCha20-Poly1305) so only the addressed recipient can read a
+# directed body. The AEAD key is derived from the ECDH secret via the in-tree
+# `crypto::derive_secret` (SHA-256), so no HKDF dep. Both crates are pure-Rust
+# (no `unsafe`, which the workspace denies).
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+chacha20poly1305 = "0.10"
 serde = { version = "1", features = ["derive"] }
 # `raw_value` lets the MCP `fetch_messages` result embed each event's
 # already-rendered, field-order-pinned JSON verbatim (a `RawValue`) instead of

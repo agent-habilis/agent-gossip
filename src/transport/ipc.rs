@@ -77,11 +77,19 @@ pub(crate) enum IpcCommand {
         note: Option<String>,
     },
     /// Worker-emit a `TaskArtifactUpdate` (the result) on a task (`a2a artifact`).
+    /// An optional `file` is offloaded over the blob channel and referenced as a
+    /// `Part.url`; a path (not bytes) so the IPC line stays bounded.
     #[serde(rename = "a2a_artifact")]
     A2aArtifact {
         swarm: SwarmId,
         task_id: TaskId,
         text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        file: Option<std::path::PathBuf>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        file_name: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        file_mime: Option<String>,
     },
     /// Query the live participant roster (nicknames + recency) — backs the
     /// task sender's target picker and nickname validation.

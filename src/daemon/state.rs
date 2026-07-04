@@ -342,6 +342,11 @@ pub(crate) struct EventLoopState {
     /// directly by the matching response frame rather than a surfaced-events
     /// advance. Bounded by [`POLL_WAITERS_CAP`](crate::util::consts::POLL_WAITERS_CAP).
     pub a2a_waiters: Vec<A2aWaiter>,
+    /// The blob channel's serving endpoint + content-addressed store, bound
+    /// lazily on the first large-file offload (an `a2a artifact`/`call --file`)
+    /// and kept for the process lifetime so its address stays stable while we're
+    /// alive to serve. `None` until the first offload; closed on shutdown.
+    pub blob_server: Option<crate::blob::BlobServer>,
 }
 
 /// How a fulfilled/expired gossip A2A call's response is delivered, per
@@ -562,6 +567,7 @@ impl EventLoopState {
             ping_round: None,
             poll_waiters: Vec::new(),
             a2a_waiters: Vec::new(),
+            blob_server: None,
         }
     }
 

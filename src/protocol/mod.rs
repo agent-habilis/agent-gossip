@@ -15,6 +15,7 @@ pub(crate) mod identity;
 pub(crate) mod message;
 pub(crate) mod nickname;
 pub(crate) mod peer_addr;
+pub(crate) mod seal;
 pub(crate) mod swarm;
 mod wordlist;
 
