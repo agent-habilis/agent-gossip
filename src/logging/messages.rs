@@ -117,7 +117,8 @@ fn log(direction: &'static str, msg: &Message) {
         | MessageKind::Ping
         | MessageKind::Pong { .. }
         | MessageKind::A2aReq { .. }
-        | MessageKind::A2aResp { .. } => tracing::trace!(
+        | MessageKind::A2aResp { .. }
+        | MessageKind::LinkState => tracing::trace!(
             target: "agent_gossip::messages",
             dir = direction,
             author = %msg.author,

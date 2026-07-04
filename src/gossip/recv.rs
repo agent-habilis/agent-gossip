@@ -264,7 +264,8 @@ fn surface_logical(
         | MessageKind::A2aReq { .. }
         | MessageKind::A2aResp { .. }
         | MessageKind::State
-        | MessageKind::Meta => {}
+        | MessageKind::Meta
+        | MessageKind::LinkState => {}
     }
 }
 
@@ -274,6 +275,10 @@ fn surface_logical(
 /// `mark_seen` dedup are identical on both planes — a message delivered over
 /// both surfaces exactly once. `message` is mutable so a directed frame sealed
 /// to us can be decrypted in place before surfacing (see `gate_and_decrypt`).
+#[expect(
+    clippy::too_many_lines,
+    reason = "the central inbound-frame dispatch — one arm per MessageKind"
+)]
 pub(crate) async fn ingest(content: Bytes, state: &mut EventLoopState, ctx: &HandlerCtx<'_>) {
     let Ok(mut message) = Message::parse(&content) else {
         ctx.output.error("Failed to parse message");
@@ -427,6 +432,10 @@ pub(crate) async fn ingest(content: Bytes, state: &mut EventLoopState, ctx: &Han
             antientropy::handle_state_digest(Channel::Meta, &message, state, ctx).await;
             return;
         }
+        MessageKind::LinkState => {
+            handle_link_state(&message, state);
+            return;
+        }
         MessageKind::Presence { subtype } => {
             lifecycle::handle_presence(
                 &message,
@@ -455,6 +464,32 @@ pub(crate) async fn ingest(content: Bytes, state: &mut EventLoopState, ctx: &Han
         message.body = sealed;
     }
     retain_and_index(message, &canonical, state, ctx);
+}
+
+/// Fold a received relay link-state advertisement into the routing table. The
+/// author's own measured links (`body` = a serialized `LinkVector`) supersede
+/// the last vector we held for that origin. Plumbing like the digests — never
+/// logged or surfaced; a malformed body is dropped.
+fn handle_link_state(message: &Message, state: &mut EventLoopState) {
+    match crate::whisper::LinkVector::from_json(message.body.as_str()) {
+        Ok(vector) => {
+            let updated = state.link_state.ingest(vector);
+            tracing::debug!(
+                target: crate::whisper::LOG_TARGET,
+                author = %message.author,
+                updated,
+                "relay link-state received"
+            );
+        }
+        Err(error) => {
+            tracing::debug!(
+                target: crate::whisper::LOG_TARGET,
+                author = %message.author,
+                %error,
+                "dropping malformed relay link-state"
+            );
+        }
+    }
 }
 
 /// Route an A2A RPC frame: a request addressed to us is served (and a
@@ -494,7 +529,8 @@ async fn handle_a2a_rpc(message: &Message, state: &mut EventLoopState, ctx: &Han
         | MessageKind::Ping
         | MessageKind::Pong { .. }
         | MessageKind::State
-        | MessageKind::Meta => {}
+        | MessageKind::Meta
+        | MessageKind::LinkState => {}
     }
 }
 
@@ -664,7 +700,8 @@ fn route_content(
         | MessageKind::A2aReq { .. }
         | MessageKind::A2aResp { .. }
         | MessageKind::State
-        | MessageKind::Meta => false,
+        | MessageKind::Meta
+        | MessageKind::LinkState => false,
     }
 }
 
@@ -886,7 +923,8 @@ fn addressed_to_us(message: &Message, us: &Nickname) -> bool {
         | MessageKind::Ping
         | MessageKind::Pong { .. }
         | MessageKind::State
-        | MessageKind::Meta => true,
+        | MessageKind::Meta
+        | MessageKind::LinkState => true,
     }
 }
 
@@ -1006,7 +1044,8 @@ fn chat_payload_valid(message: &Message) -> bool {
         | MessageKind::A2aReq { .. }
         | MessageKind::A2aResp { .. }
         | MessageKind::State
-        | MessageKind::Meta => Ok(()),
+        | MessageKind::Meta
+        | MessageKind::LinkState => Ok(()),
     };
     match outcome {
         Ok(()) => true,

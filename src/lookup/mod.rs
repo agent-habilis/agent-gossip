@@ -202,6 +202,7 @@ pub(crate) fn build_swarm(
     endpoint: Endpoint,
     active_view_capacity: usize,
     unicast: Option<crate::unicast::UnicastAcceptor>,
+    relay: Option<crate::whisper::WhisperAcceptor>,
 ) -> (Gossip, Router) {
     // `active_view_capacity` is the live direct-neighbor cap (`--max-peers`),
     // raised above iroh-gossip's default (5) so swarms up to it form a full mesh
@@ -221,6 +222,11 @@ pub(crate) fn build_swarm(
     // passes `None` (it is not a participant and carries no unicast traffic).
     if let Some(acceptor) = unicast {
         builder = builder.accept(crate::unicast::UNICAST_ALPN, acceptor);
+    }
+    // A participant also accepts inbound relay circuits (peel + splice/deliver);
+    // the rendezvous/beacon endpoint passes `None` like unicast.
+    if let Some(acceptor) = relay {
+        builder = builder.accept(crate::whisper::WHISPER_ALPN, acceptor);
     }
     let router = builder.spawn();
     (gossip, router)

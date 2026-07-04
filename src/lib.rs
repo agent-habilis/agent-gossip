@@ -20,7 +20,7 @@
 //! # async fn run() -> anyhow::Result<()> {
 //! let session = SwarmSession::join(JoinConfig::new("💬...".parse()?)).await?;
 //! let mut rx = session.messages();
-//! session.send(MessageBody::new("hello")?, None).await?;
+//! session.send(MessageBody::new("hello")?).await?;
 //! while let Ok(msg) = rx.recv().await {
 //!     println!("{} : {}", msg.author, msg.body);
 //! }
@@ -48,10 +48,21 @@ pub(crate) mod lookup;
 pub(crate) mod mcp;
 pub(crate) mod output;
 pub(crate) mod protocol;
+// Graph search + telemetry probes are exercised by unit tests and get wired into
+// the send path in phases 3-4; until then they're dead in a non-test build only,
+// so the expectation is scoped to that build (a test build uses them freely).
 pub(crate) mod resolver;
 pub(crate) mod transport;
 pub(crate) mod unicast;
 pub(crate) mod util;
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "relay graph search / telemetry not yet reachable from production; wired in phases 3-4"
+    )
+)]
+pub(crate) mod whisper;
 
 pub mod embed;
 

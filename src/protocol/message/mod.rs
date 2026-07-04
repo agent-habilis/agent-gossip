@@ -102,7 +102,8 @@ pub(crate) fn sole_addressee(kind: &MessageKind) -> Option<&Nickname> {
         | MessageKind::State
         | MessageKind::StateDigest
         | MessageKind::Meta
-        | MessageKind::MetaDigest => None,
+        | MessageKind::MetaDigest
+        | MessageKind::LinkState => None,
     }
 }
 
@@ -210,6 +211,14 @@ pub enum MessageKind {
     /// Anti-entropy digest for the **meta** log — the meta-channel counterpart to
     /// [`StateDigest`](MessageKind::StateDigest).
     MetaDigest,
+    /// A relay-routing **link-state** advertisement: the author's own measured
+    /// links (`body` is a serialized [`crate::whisper::LinkVector`]). Broadcast
+    /// plumbing like `Digest`/`Ping` — never logged, never surfaced, never
+    /// chain/DAG-folded; every node folds the freshest vector per origin into its
+    /// routing graph. Ephemeral (a fresh vector supersedes the old by `seq`), so
+    /// it rides gossip rather than a durable channel log.
+    #[serde(rename = "linkstate")]
+    LinkState,
 }
 
 /// Which shared-state channel an event/digest belongs to. The two channels share
@@ -261,6 +270,7 @@ impl fmt::Display for MessageKind {
             MessageKind::StateDigest => write!(f, "state_digest"),
             MessageKind::Meta => write!(f, "meta"),
             MessageKind::MetaDigest => write!(f, "meta_digest"),
+            MessageKind::LinkState => write!(f, "linkstate"),
         }
     }
 }
@@ -478,6 +488,16 @@ impl Message {
     /// recent message ids we hold) in the body.
     pub(crate) fn new_digest(swarm: &SwarmId, author: &Nickname, ids_json: MessageBody) -> Self {
         Self::new(swarm, author, MessageKind::Digest, ids_json)
+    }
+
+    /// A relay link-state advertisement; `vector_json` is a serialized
+    /// [`crate::whisper::LinkVector`].
+    pub(crate) fn new_link_state(
+        swarm: &SwarmId,
+        author: &Nickname,
+        vector_json: MessageBody,
+    ) -> Self {
+        Self::new(swarm, author, MessageKind::LinkState, vector_json)
     }
 
     /// A durable state event whose opaque payload is `body`. Routed to the

@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use futures_util::StreamExt;
-use iroh::{Endpoint, RelayUrl};
+use iroh::{Endpoint, EndpointId, RelayUrl};
 use iroh_gossip::api::{GossipReceiver, GossipSender};
 use tokio::io::BufReader;
 use tokio::sync::{broadcast, mpsc, watch};
@@ -27,8 +27,8 @@ use crate::{beacon, gossip, lifecycle, lookup};
 // Bare `ipc` is `daemon::ipc`; transport's socket server is by-item.
 use crate::transport::ipc::IpcMessage;
 use crate::util::tuning::{
-    ALIVE_INTERVAL_SECS, ANTIENTROPY_INTERVAL_SECS, HEAL_INTERVAL_SECS, RECLAIM_INTERVAL_MS,
-    RESUBSCRIBE_MAX_ATTEMPTS, STATE_REFRESH_SECS, heal_stall_threshold_secs,
+    ALIVE_INTERVAL_SECS, ANTIENTROPY_INTERVAL_SECS, HEAL_INTERVAL_SECS, LINKSTATE_INTERVAL_SECS,
+    RECLAIM_INTERVAL_MS, RESUBSCRIBE_MAX_ATTEMPTS, STATE_REFRESH_SECS, heal_stall_threshold_secs,
     ppid_watch_interval_ms, sweep_interval_secs,
 };
 
@@ -242,6 +242,40 @@ async fn antientropy_arm(
     );
     gossip::antientropy::broadcast_digest(state, sender, swarm, author).await;
     gossip::antientropy::broadcast_state_digests(state, sender, swarm, author).await;
+}
+
+/// The relay link-state tick: re-broadcast our own measured links (one per direct
+/// neighbour) so every peer keeps a fresh routing graph. No-op until meshed — a
+/// vector with no links helps no one.
+async fn linkstate_arm(
+    state: &mut EventLoopState,
+    sender: &GossipSender,
+    swarm: &SwarmId,
+    author: &Nickname,
+    origin: EndpointId,
+) {
+    if !state.meshed {
+        return;
+    }
+    state.link_state_seq += 1;
+    let vector = crate::whisper::self_vector(
+        origin,
+        state.link_state_seq,
+        state.identity.seal_public(),
+        &state.linked_endpoints,
+        &state.whisper_telemetry,
+    );
+    let Ok(json) = vector.to_json() else {
+        return;
+    };
+    let Ok(body) = crate::protocol::MessageBody::new(json) else {
+        return;
+    };
+    gossip::broadcast_msg(
+        sender,
+        &Message::new_link_state(swarm, author, body).signed(&state.identity),
+    )
+    .await;
 }
 
 /// One typed in-process session request (embed / MCP): dispatch it and
@@ -615,6 +649,9 @@ async fn event_loop(loop_state: EventLoop) -> Result<()> {
                 antientropy_arm(&mut anchors, &mut state, &sender, &swarm_str, &author).await;
             }
             _ = intervals.state_refresh.tick() => timers::tick_state_refresh(&state, &endpoint).await,
+            _ = intervals.linkstate.tick() => {
+                linkstate_arm(&mut state, &sender, &swarm_str, &author, endpoint.id()).await;
+            }
             _ = recv_opt(&mut external_quit_rx) => {
                 // External quit is always embedded (MCP): never hard-exit (`false`).
                 announce_and_maybe_exit(&sender, &swarm_str, &swarm_name, &author, &mut state, &output, false).await;
@@ -912,6 +949,32 @@ fn finalize_ping_round(state: &mut EventLoopState, output: &output::Output) {
     let Some(round) = state.ping_round.take() else {
         return;
     };
+    // Fold this round's RTT + delivery into per-neighbour whisper telemetry (the
+    // metrics we advertise for our own links). Bounded to our **direct
+    // neighbours** — `whisper::self_vector` only advertises those, and the active
+    // view is capped by `--max-peers` — so the map can't grow over peer churn:
+    // prune entries for peers no longer linked, and record only for linked ones.
+    // (Collect first to avoid borrowing `participant_endpoints`/`linked_endpoints`
+    // while mutating `whisper_telemetry`.)
+    let linked = state.linked_endpoints.clone();
+    state
+        .whisper_telemetry
+        .retain(|endpoint, _| linked.contains(endpoint));
+    let neighbors: Vec<(Nickname, EndpointId)> = state
+        .participant_endpoints
+        .iter()
+        .filter(|(_, endpoint)| linked.contains(*endpoint))
+        .map(|(nickname, endpoint)| (nickname.clone(), *endpoint))
+        .collect();
+    for (nickname, endpoint) in neighbors {
+        let profile = state.whisper_telemetry.entry(endpoint).or_default();
+        if let Some(arrival) = round.pongs.get(&nickname) {
+            profile.record_rtt(arrival.duration_since(round.t1));
+            profile.record_success();
+        } else {
+            profile.record_failure();
+        }
+    }
     let mut peers: Vec<output::PingPeer> = round
         .pongs
         .iter()
@@ -1129,7 +1192,7 @@ struct CtxParts<'a> {
     identity: &'a crate::protocol::identity::Identity,
     our_pubkey: &'a str,
     max_peers: usize,
-    rendezvous_id: iroh::EndpointId,
+    rendezvous_id: EndpointId,
     external_msg_tx: Option<&'a broadcast::Sender<Message>>,
     output: &'a output::Output,
 }
@@ -1397,6 +1460,9 @@ struct MaintenanceIntervals {
     /// while partitioned/asleep).
     antientropy: tokio::time::Interval,
     state_refresh: tokio::time::Interval,
+    /// Periodic relay link-state re-broadcast (our own measured links), so peers
+    /// keep a fresh routing graph.
+    linkstate: tokio::time::Interval,
 }
 
 /// Build the maintenance tickers, eating the first immediate tick on
@@ -1432,6 +1498,9 @@ async fn build_maintenance_intervals() -> MaintenanceIntervals {
     let mut state_refresh = tokio::time::interval(Duration::from_secs(STATE_REFRESH_SECS));
     state_refresh.set_missed_tick_behavior(Skip);
     state_refresh.tick().await;
+    let mut linkstate = tokio::time::interval(Duration::from_secs(LINKSTATE_INTERVAL_SECS));
+    linkstate.set_missed_tick_behavior(Skip);
+    linkstate.tick().await;
     MaintenanceIntervals {
         prune,
         alive,
@@ -1440,6 +1509,7 @@ async fn build_maintenance_intervals() -> MaintenanceIntervals {
         reclaim,
         antientropy,
         state_refresh,
+        linkstate,
     }
 }
 
