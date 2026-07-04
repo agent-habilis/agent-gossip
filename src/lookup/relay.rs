@@ -37,17 +37,19 @@ use crate::util::tuning::{
 /// dial: a creator-independent bootstrap that needs no address lookup to
 /// reach the rendezvous.
 ///
-/// rung 0 is iroh `defaults::prod` NA-east. Hardcoded, **not**
-/// `defaults::prod::default_relay_map()`, so members on different iroh
-/// versions still agree on the *same* ladder. Relay infra is versioned
-/// and not cross-compatible (sendme #121): an iroh bump can move
-/// `defaults::prod` off these hosts, silently breaking the relay-direct
-/// bootstrap for members on a different iroh version.
+/// rung 0 is our own operated relay; rungs 1..4 are iroh `defaults::prod`
+/// (NA-east, NA-west, EU, AP) as the resilient fallback. Hardcoded,
+/// **not** `defaults::prod::default_relay_map()`, so members on different
+/// iroh versions still agree on the *same* ladder. Relay infra is
+/// versioned and not cross-compatible (sendme #121): an iroh bump can
+/// move `defaults::prod` off these hosts, silently breaking the
+/// relay-direct bootstrap for members on a different iroh version.
 /// `pinned_ladder_matches_iroh_prod` is the tripwire — it fails
 /// on such a move so we review (do these hosts still operate?) before
 /// shipping the bump. See docs/iroh-ecosystem-research.md.
-const RENDEZVOUS_RELAY_LADDER: [&str; 4] = [
-    "https://use1-1.relay.n0.iroh-canary.iroh.link./", // NA-east (rung 0)
+const RENDEZVOUS_RELAY_LADDER: [&str; 5] = [
+    "https://swarm-relay.agent-habilis.com./",         // ours (rung 0)
+    "https://use1-1.relay.n0.iroh-canary.iroh.link./", // NA-east
     "https://usw1-1.relay.n0.iroh-canary.iroh.link./", // NA-west
     "https://euc1-1.relay.n0.iroh-canary.iroh.link./", // EU
     "https://aps1-1.relay.n0.iroh-canary.iroh.link./", // AP
@@ -330,13 +332,14 @@ mod tests {
         select_first_reachable, should_evict_rung,
     };
 
-    /// Tripwire: our pinned rendezvous ladder must stay equal to iroh's
-    /// `defaults::prod` relay hosts, **in order** (rung 0 = NA-east).
-    /// Relay infra is versioned and not cross-compatible (sendme #121);
-    /// if an iroh bump moves a prod relay off these hosts, the
-    /// relay-direct bootstrap silently breaks for members on a different
-    /// iroh version. Failing here forces a manual review (are these hosts
-    /// still served?) before the bump ships.
+    /// Tripwire: the iroh fallback rungs of our pinned rendezvous ladder
+    /// must stay equal to iroh's `defaults::prod` relay hosts, **in
+    /// order** (rung 1 = NA-east). Rung 0 is our own operated relay and
+    /// is excluded here. Relay infra is versioned and not cross-compatible
+    /// (sendme #121); if an iroh bump moves a prod relay off these hosts,
+    /// the relay-direct bootstrap silently breaks for members on a
+    /// different iroh version. Failing here forces a manual review (are
+    /// these hosts still served?) before the bump ships.
     #[test]
     fn pinned_ladder_matches_iroh_prod() {
         use iroh::defaults::prod;
@@ -346,8 +349,10 @@ mod tests {
             prod::EU_RELAY_HOSTNAME,
             prod::AP_RELAY_HOSTNAME,
         ];
+        // Skip rung 0 (our own relay); the rest must track iroh's prod set.
         let ours: Vec<&str> = RENDEZVOUS_RELAY_LADDER_URLS
             .iter()
+            .skip(1)
             .map(|url| {
                 url.host_str()
                     .expect("ladder relay URL has a host")
