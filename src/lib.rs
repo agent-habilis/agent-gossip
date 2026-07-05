@@ -42,6 +42,7 @@ pub(crate) mod cli;
 pub(crate) mod daemon;
 pub(crate) mod directory;
 pub(crate) mod gossip;
+pub(crate) mod invite;
 pub(crate) mod lifecycle;
 pub(crate) mod logging;
 pub(crate) mod lookup;
@@ -78,6 +79,7 @@ pub mod harness;
 // `unreachable_pub`.
 pub use a2a::{TaskId, TaskState};
 pub use daemon::surfaced::SurfacedEvent;
+pub use invite::InviteTicket;
 pub use logging::LogSink;
 pub use output::{OutputEvent, event_json, surfaced_event_json};
 pub use protocol::message::{

@@ -17,7 +17,8 @@ use std::fmt;
 use std::str::FromStr;
 
 use anyhow::{Context, Result, bail};
-use iroh::EndpointId;
+use iroh::{EndpointId, SecretKey};
+use rand::RngCore;
 use sha2::{Digest, Sha256};
 
 use super::crypto;
@@ -71,7 +72,7 @@ const NAME_MAX_BYTES: usize = super::ident::MAX_CHARS * 4;
 /// [N bytes name (UTF-8, <=32 scalars, charset enforced by SwarmName)]
 /// [2 bytes config length] [config bytes (see SwarmConfig::to_bytes)]
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub(crate) struct Swarm {
     pub name: SwarmName,
     seed: [u8; SEED_LEN],
@@ -80,7 +81,35 @@ pub(crate) struct Swarm {
     /// so holding the id without the password computes nothing reachable.
     /// Never serialized — `encode_bytes` writes `seed`.
     stretched_key: Option<[u8; SEED_LEN]>,
+    /// The invite-only derivation secret (the "root"), held only in memory:
+    /// baked into no hash, carried only by creator-minted invites. When set,
+    /// every derivation switches onto it (see [`Self::effective_seed`]), so the
+    /// bare invite-only hash reaches nothing. Set on the creator by
+    /// [`Self::set_invite`] and on a redeemer by [`Self::apply_invite`].
+    invite_key: Option<[u8; SEED_LEN]>,
+    /// The Ed25519 issuer **private** key of an invite-only swarm — the mint
+    /// authority, held only by the creator's live session (in-memory only, so a
+    /// restart ends minting). `None` on every non-creator. The matching public
+    /// key rides the hash (`config.issuer_pubkey`).
+    issuer_secret: Option<[u8; 32]>,
     pub config: SwarmConfig,
+}
+
+impl fmt::Debug for Swarm {
+    // Redact all secret material — the seed *is* the join capability, and the
+    // invite root / issuer secret gate an invite-only swarm — so a stray `{:?}`
+    // in a log can never leak them (mirrors `crypto::Password`).
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("Swarm")
+            .field("name", &self.name)
+            .field("seed", &"***")
+            .field("stretched_key", &self.stretched_key.map(|_| "***"))
+            .field("invite_key", &self.invite_key.map(|_| "***"))
+            .field("issuer_secret", &self.issuer_secret.map(|_| "***"))
+            .field("config", &self.config)
+            .finish()
+    }
 }
 
 impl Swarm {
@@ -89,6 +118,8 @@ impl Swarm {
             name,
             seed,
             stretched_key: None,
+            invite_key: None,
+            issuer_secret: None,
             config,
         }
     }
@@ -106,6 +137,8 @@ impl Swarm {
             name,
             seed,
             stretched_key: None,
+            invite_key: None,
+            issuer_secret: None,
             config,
         }
     }
@@ -118,21 +151,28 @@ impl Swarm {
         &self.seed
     }
 
-    /// The seed every derivation uses: the stretched password key when one
-    /// is applied, else the wire seed. Asserts a passworded swarm never
-    /// derives before `apply_password`/`set_password` — deriving from the
-    /// raw seed would silently land in an unreachable topic, which is
-    /// strictly worse than failing loudly.
+    /// The seed every derivation uses: the invite root for an invite-only
+    /// swarm, the stretched password key when a password is applied, else the
+    /// wire seed. Asserts the secret is present before deriving — deriving from
+    /// the raw seed would silently land in an unreachable topic, strictly worse
+    /// than failing loudly. (Invite-only and password are mutually exclusive in
+    /// the id: an invite-only swarm's password, if any, only wraps its invite
+    /// tickets — it never folds into the topic here.)
     fn effective_seed(&self) -> &[u8; SEED_LEN] {
-        if let Some(key) = &self.stretched_key {
-            key
-        } else {
-            assert!(
-                self.config.password.is_none(),
-                "passworded swarm derived before the password was applied"
-            );
-            &self.seed
+        if self.requires_invite() {
+            return self
+                .invite_key
+                .as_ref()
+                .expect("invite-only swarm derived before an invite was applied");
         }
+        if let Some(key) = &self.stretched_key {
+            return key;
+        }
+        assert!(
+            self.config.password.is_none(),
+            "passworded swarm derived before the password was applied"
+        );
+        &self.seed
     }
 
     /// Whether the id carries a password verifier (joiners must present
@@ -177,6 +217,58 @@ impl Swarm {
         self.stretched_key = Some(key);
     }
 
+    /// Whether this swarm is invite-only (the id carries an issuer pubkey, so
+    /// the bare hash cannot join — a creator-minted invite is required).
+    pub(crate) fn requires_invite(&self) -> bool {
+        self.config.issuer_pubkey.is_some()
+    }
+
+    /// Create-side: turn this into an invite-only swarm. Mints a random invite
+    /// **root** (the derivation secret, held only in memory and in the invites
+    /// this creator issues) and an Ed25519 **issuer** keypair (the mint
+    /// authority), baking the issuer public key into the id. Both secrets stay
+    /// in-memory only, so a creator restart ends minting.
+    pub(crate) fn set_invite(&mut self) {
+        let mut root = [0u8; SEED_LEN];
+        rand::rng().fill_bytes(&mut root);
+        let mut issuer = [0u8; 32];
+        rand::rng().fill_bytes(&mut issuer);
+        let issuer_pubkey = SecretKey::from_bytes(&issuer).public();
+        self.config.issuer_pubkey = Some(*issuer_pubkey.as_bytes());
+        self.invite_key = Some(root);
+        self.issuer_secret = Some(issuer);
+    }
+
+    /// Redeem-side: switch every derivation onto the invite `root` carried by a
+    /// verified invite ticket. The redeemer holds no issuer secret, so it can
+    /// join but never mint.
+    pub(crate) fn apply_invite(&mut self, root: [u8; SEED_LEN]) {
+        self.invite_key = Some(root);
+    }
+
+    /// The issuer private key, for signing a minted invite (creator only).
+    pub(crate) fn issuer_secret(&self) -> Option<&[u8; 32]> {
+        self.issuer_secret.as_ref()
+    }
+
+    /// The issuer public key the id carries — a redeemer verifies each invite's
+    /// signature against it.
+    pub(crate) fn issuer_pubkey(&self) -> Option<&[u8; 32]> {
+        self.config.issuer_pubkey.as_ref()
+    }
+
+    /// The invite root secret to embed in a minted invite (creator only).
+    pub(crate) fn invite_key(&self) -> Option<&[u8; SEED_LEN]> {
+        self.invite_key.as_ref()
+    }
+
+    /// The public identity salt (the wire seed) an invite ticket wraps its root
+    /// under when password-protected — public and in the hash, so both minter
+    /// and redeemer derive the same wrap key from the password alone.
+    pub(crate) fn wrap_salt(&self) -> &[u8; SEED_LEN] {
+        &self.seed
+    }
+
     /// The gossip `TopicId` — the one derivation entry point, so no caller
     /// can forget the password mix.
     pub(crate) fn topic_id(&self) -> iroh_gossip::proto::TopicId {
@@ -184,7 +276,7 @@ impl Swarm {
     }
 
     /// The shared rendezvous endpoint secret every co-host binds.
-    pub(crate) fn rendezvous_secret(&self) -> iroh::SecretKey {
+    pub(crate) fn rendezvous_secret(&self) -> SecretKey {
         crypto::rendezvous_secret(self.effective_seed())
     }
 
@@ -280,6 +372,8 @@ impl Swarm {
             name,
             seed,
             stretched_key: None,
+            invite_key: None,
+            issuer_secret: None,
             config,
         })
     }
@@ -358,6 +452,7 @@ mod swarm_tests {
                 ]),
             },
             password: None,
+            issuer_pubkey: None,
         }
     }
 
@@ -421,6 +516,7 @@ mod swarm_tests {
         let passworded = SwarmConfig {
             lookups: LookupOpts::public_preset(),
             password: Some([0x5Au8; 16]),
+            issuer_pubkey: None,
         };
         let one = Swarm::new(dummy_seed(), dummy_name(), SwarmConfig::public_preset());
         let two = Swarm::new(dummy_seed(), dummy_name(), passworded.clone());

@@ -196,6 +196,36 @@ Code: `protocol::crypto` (`stretch_swarm_password`, `password_verifier`,
 stretched_key}`, `protocol::seal::{seal_symmetric, open_symmetric}`,
 `daemon::state_doc::{encrypt_body, decrypt_body}`.
 
+### invite
+
+*Layer: identity · optional, per swarm.*
+
+An **invite-only** swarm (`create --invite-only`) withholds its derivation
+secret from the published hash: the bare `💬…` id reaches nothing (the topic is
+gated by a random **invite root** the same way a password's stretched key gates
+a passworded swarm — see the `effective_seed` mechanism). Joining needs a
+creator-minted **invite**: a `🎟️` bearer ticket carrying the swarm hash, the
+invite root, an **expiry** (TTL), and the creator's **Ed25519 signature** over
+those fields. A redeemer verifies the signature against the **issuer pubkey** the
+id carries, checks the expiry against its local clock, and derives the topic;
+`agent-gossip join <🎟️…>` does this. If the swarm has a password, the invite's
+root is `seal_symmetric`-wrapped under a password-derived key, so a scraped
+invite still needs the password.
+
+**Only the creator can mint.** The issuer *private* key is held in-memory by the
+creating session alone, so a member who holds the root (having redeemed) can
+package the bytes but not a *valid* (issuer-signed) invite. Consequences, all
+deliberate and documented: after the creator's daemon restarts the issuer key is
+gone and **no new invites can be minted** (already-issued ones still redeem, the
+swarm keeps running); TTL is a *redemption window* (a bearer who already redeemed
+keeps the key — revoking one invitee means re-keying the swarm); and a rogue
+member could still leak the raw root out-of-band (unpreventable in a bearer
+system, same class as TTL).
+
+Code: `Swarm::{set_invite, apply_invite, requires_invite, issuer_secret,
+invite_key}`, `crypto::invite_wrap_key`, `invite::{mint, InviteTicket}`,
+`resolver::JoinTarget::Invite`, the `invite` CLI + `IpcCommand::Invite`.
+
 ### rendezvous
 
 *Layer: identity · keyed by seed.*

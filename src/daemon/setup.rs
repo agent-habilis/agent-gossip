@@ -37,6 +37,10 @@ pub(crate) enum SetupKind {
         /// by the frontend: the verifier's salt is the seed, which is
         /// minted below.
         password: Option<Password>,
+        /// `--invite-only`: mint an invite root + issuer keypair here (the
+        /// issuer pubkey is baked into the id) so the bare hash can't join —
+        /// only creator-minted `🎟️` invites can.
+        invite_only: bool,
     },
     Join {
         swarm: Swarm,
@@ -239,6 +243,9 @@ struct Assembled {
     /// The Argon2id-stretched swarm key — retained to derive the state/meta/
     /// broadcast content-encryption keys. `None` when passwordless. Wiped on drop.
     swarm_key: Option<zeroize::Zeroizing<[u8; 32]>>,
+    /// The invite-only creator's swarm (with its in-memory issuer key + root),
+    /// retained so `invite` can mint. `Some` only on an invite-only creator.
+    mint_swarm: Option<Swarm>,
 }
 
 pub(crate) async fn setup_swarm(
@@ -315,13 +322,15 @@ pub(crate) async fn setup_swarm(
         cohost,
         swarm_password,
         swarm_key,
+        mint_swarm,
     } = match kind {
         SetupKind::Create {
             name,
             config,
             advertise,
             password,
-        } => setup_create(&build, name, config, advertise, password).await?,
+            invite_only,
+        } => setup_create(&build, name, config, advertise, password, invite_only).await?,
         kind @ (SetupKind::Join { .. } | SetupKind::Topic { .. }) => {
             setup_join(&build, kind).await?
         }
@@ -346,6 +355,7 @@ pub(crate) async fn setup_swarm(
         name: swarm_name,
         swarm_password,
         swarm_key,
+        mint_swarm,
         output,
         interactive,
         endpoint,
@@ -379,6 +389,7 @@ async fn setup_create(
     config: SwarmConfig,
     advertise: Option<SwarmName>,
     password: Option<Password>,
+    invite_only: bool,
 ) -> Result<Assembled> {
     let output = build.output;
     let author = build.author;
@@ -388,14 +399,19 @@ async fn setup_create(
 
     let endpoint = build_participant_endpoint(build.lookups).await?;
 
-    let swarm = Swarm::new(seed, name.clone(), config);
-    // Bake the verifier into the config BEFORE the id is rendered
-    // (the id must carry it) and before any derivation. The
-    // ~100ms Argon2id stretch runs off the async worker. The password is
-    // returned from the worker (not dropped) so the daemon can key blob
-    // tickets with it.
-    let (swarm, swarm_password) = match password {
-        Some(password) => {
+    let mut swarm = Swarm::new(seed, name.clone(), config);
+    // Invite-only: mint the invite root + issuer keypair and bake the issuer
+    // pubkey into the id BEFORE it is rendered. Cheap (random keys, no Argon2).
+    if invite_only {
+        swarm.set_invite();
+    }
+    // Password: on a plain swarm it stretches the topic (the verifier is baked
+    // into the id) off the async worker; on an invite-only swarm the topic is
+    // already gated by the invite root, so the password only wraps minted
+    // invites — retained, never folded into derivation. Either way the raw
+    // password is returned (not dropped) so the daemon can key tickets with it.
+    let (swarm, swarm_password) = match (password, invite_only) {
+        (Some(password), false) => {
             tokio::task::spawn_blocking(move || {
                 let mut swarm = swarm;
                 swarm.set_password(&password);
@@ -403,9 +419,11 @@ async fn setup_create(
             })
             .await?
         }
-        None => (swarm, None),
+        (password, _) => (swarm, password),
     };
     let swarm_key = swarm.stretched_key().map(zeroize::Zeroizing::new);
+    // The creator alone retains its full swarm (issuer key + root) to mint from.
+    let mint_swarm = swarm.requires_invite().then(|| swarm.clone());
     let id_str = swarm.to_string();
     let swarm_id =
         SwarmId::new(id_str.clone()).expect("Swarm::to_string always produces a valid SwarmId");
@@ -413,6 +431,9 @@ async fn setup_create(
     output.info(&format!("created #{name} and joined as <{author}>"));
     if swarm.requires_password() {
         output.info("password-protected — joiners must present the password");
+    }
+    if swarm.requires_invite() {
+        output.info("invite-only — mint a 🎟️ invite with `agent-gossip invite` for joiners");
     }
     if let Some(directory) = &advertise {
         output.info(&format!("advertising on #{directory}"));
@@ -450,6 +471,7 @@ async fn setup_create(
         cohost: CoHostPolicy::Eager,
         swarm_password,
         swarm_key,
+        mint_swarm,
     })
 }
 
@@ -516,5 +538,8 @@ async fn setup_join(build: &SetupBuild<'_>, kind: SetupKind) -> Result<Assembled
         cohost,
         swarm_password,
         swarm_key,
+        // A joiner holds no issuer key, so it can never mint — even after
+        // redeeming an invite-only swarm.
+        mint_swarm: None,
     })
 }

@@ -255,6 +255,7 @@ async fn create_setup(
     let config = SwarmConfig {
         lookups: resolve_lookups(cfg.public, cfg.lookups),
         password: None,
+        issuer_pubkey: None,
     };
     // The advertiser reaches the directory over this swarm's own lookups.
     let directory_lookups = config.lookups.clone();
@@ -277,6 +278,9 @@ async fn create_setup(
         config,
         advertise,
         password: cfg.password.map(crate::protocol::crypto::Password::new),
+        // Invite-only is a CLI-driven feature; the embed facade does not expose
+        // it yet (a documented follow-up).
+        invite_only: false,
     }
     .resolve()
     .map_err(|_| CreateError::AdvertiseRequiresReachable)?;

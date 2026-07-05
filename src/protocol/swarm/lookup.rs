@@ -160,11 +160,21 @@ pub(super) fn read_u16(bytes: &[u8], pos: &mut usize) -> Result<u16> {
     Ok(u16::from_le_bytes([slice[0], slice[1]]))
 }
 
-/// Feature byte appended after the lookups when a swarm has a password.
-/// Appended — not a spare lookup-flags bit — because old binaries ignore
-/// unknown flag bits (they would silently decode a passworded id and sit
-/// in an empty topic) but hard-error on trailing config bytes.
+/// Feature byte appended after the lookups when a swarm carries a password
+/// and/or is invite-only. Appended — not a spare lookup-flags bit — because
+/// old binaries ignore unknown flag bits (they would silently decode a
+/// featured id and sit in an empty topic) but hard-error on trailing config
+/// bytes. One feature byte gates both features; their fields follow in a fixed
+/// order (password verifier, then issuer pubkey).
 const FEATURE_PASSWORD: u8 = 0b0001;
+
+/// Feature bit marking an invite-only swarm: joining needs a creator-minted
+/// `🎟️` invite, not the bare hash. The issuer public key (below) follows the
+/// password verifier when both bits are set.
+const FEATURE_INVITE_ONLY: u8 = 0b0010;
+
+/// Byte length of the Ed25519 issuer public key an invite-only swarm carries.
+const ISSUER_PUBKEY_LEN: usize = 32;
 
 /// The swarm-wide configuration carried in the id and mixed into the
 /// gossip topic, so every member that joins behaves identically. A
@@ -177,6 +187,11 @@ pub(crate) struct SwarmConfig {
     /// password itself. `None` ⇒ passwordless. Carried in the id so `join`
     /// can verify a candidate password locally before any network.
     pub password: Option<[u8; PASSWORD_VERIFIER_LEN]>,
+    /// The Ed25519 issuer public key of an **invite-only** swarm — the mint
+    /// authority. `Some` ⇒ invite-only: the bare hash reaches nothing (the
+    /// derivation secret lives only in creator-minted invites), and a redeemer
+    /// verifies each invite's signature against this key. `None` ⇒ open join.
+    pub issuer_pubkey: Option<[u8; ISSUER_PUBKEY_LEN]>,
 }
 
 impl SwarmConfig {
@@ -188,6 +203,7 @@ impl SwarmConfig {
         SwarmConfig {
             lookups: LookupOpts::loopback(),
             password: None,
+            issuer_pubkey: None,
         }
     }
 
@@ -198,6 +214,7 @@ impl SwarmConfig {
         SwarmConfig {
             lookups: LookupOpts::public_preset(),
             password: None,
+            issuer_pubkey: None,
         }
     }
 
@@ -209,9 +226,23 @@ impl SwarmConfig {
     pub(crate) fn to_bytes(&self) -> Vec<u8> {
         let mut buf = Vec::with_capacity(2);
         self.lookups.encode_into(&mut buf);
-        if let Some(verifier) = &self.password {
-            buf.push(FEATURE_PASSWORD);
-            buf.extend_from_slice(verifier);
+        let mut features = 0u8;
+        if self.password.is_some() {
+            features |= FEATURE_PASSWORD;
+        }
+        if self.issuer_pubkey.is_some() {
+            features |= FEATURE_INVITE_ONLY;
+        }
+        if features != 0 {
+            buf.push(features);
+            // Fixed field order so the encoding is canonical: password verifier
+            // then issuer pubkey, each present iff its bit is set.
+            if let Some(verifier) = &self.password {
+                buf.extend_from_slice(verifier);
+            }
+            if let Some(pubkey) = &self.issuer_pubkey {
+                buf.extend_from_slice(pubkey);
+            }
         }
         buf
     }
@@ -221,12 +252,12 @@ impl SwarmConfig {
     pub(crate) fn from_bytes(bytes: &[u8]) -> Result<Self> {
         let mut pos = 0;
         let lookups = LookupOpts::decode_from(bytes, &mut pos)?;
-        let password = if pos == bytes.len() {
-            None
+        let (password, issuer_pubkey) = if pos == bytes.len() {
+            (None, None)
         } else {
             let features = bytes[pos];
             pos += 1;
-            if features & !FEATURE_PASSWORD != 0 {
+            if features & !(FEATURE_PASSWORD | FEATURE_INVITE_ONLY) != 0 {
                 bail!("unsupported swarm feature flags {features:#04x} — upgrade agent-gossip");
             }
             if features == 0 {
@@ -235,19 +266,40 @@ impl SwarmConfig {
                 // non-canonical form outright.
                 bail!("non-canonical swarm config: zero feature flags");
             }
-            let end = pos
-                .checked_add(PASSWORD_VERIFIER_LEN)
-                .context("password verifier length overflow")?;
-            let raw = bytes.get(pos..end).context("truncated password verifier")?;
-            pos = end;
-            let mut verifier = [0u8; PASSWORD_VERIFIER_LEN];
-            verifier.copy_from_slice(raw);
-            Some(verifier)
+            let password = if features & FEATURE_PASSWORD != 0 {
+                let end = pos
+                    .checked_add(PASSWORD_VERIFIER_LEN)
+                    .context("password verifier length overflow")?;
+                let raw = bytes.get(pos..end).context("truncated password verifier")?;
+                pos = end;
+                let mut verifier = [0u8; PASSWORD_VERIFIER_LEN];
+                verifier.copy_from_slice(raw);
+                Some(verifier)
+            } else {
+                None
+            };
+            let issuer_pubkey = if features & FEATURE_INVITE_ONLY != 0 {
+                let end = pos
+                    .checked_add(ISSUER_PUBKEY_LEN)
+                    .context("issuer pubkey length overflow")?;
+                let raw = bytes.get(pos..end).context("truncated issuer pubkey")?;
+                pos = end;
+                let mut pubkey = [0u8; ISSUER_PUBKEY_LEN];
+                pubkey.copy_from_slice(raw);
+                Some(pubkey)
+            } else {
+                None
+            };
+            (password, issuer_pubkey)
         };
         if pos != bytes.len() {
             bail!("trailing bytes in swarm config");
         }
-        Ok(SwarmConfig { lookups, password })
+        Ok(SwarmConfig {
+            lookups,
+            password,
+            issuer_pubkey,
+        })
     }
 }
 
@@ -619,6 +671,7 @@ mod lookup_tests {
                 ]),
             },
             password: None,
+            issuer_pubkey: None,
         };
         let decoded = SwarmConfig::from_bytes(&config.to_bytes()).unwrap();
         assert_eq!(decoded, config);
@@ -645,6 +698,7 @@ mod lookup_tests {
         let config = SwarmConfig {
             lookups: LookupOpts::public_preset(),
             password: Some([0xA5u8; 16]),
+            issuer_pubkey: None,
         };
         let decoded = SwarmConfig::from_bytes(&config.to_bytes()).unwrap();
         assert_eq!(decoded, config);
@@ -661,13 +715,45 @@ mod lookup_tests {
     #[test]
     fn config_rejects_unknown_feature_flags() {
         let mut bytes = SwarmConfig::public_preset().to_bytes();
-        bytes.push(0b0010); // an undefined feature bit
+        bytes.push(0b0100); // an undefined feature bit (password=1, invite=2 are taken)
         bytes.extend_from_slice(&[0u8; 16]);
         let error = SwarmConfig::from_bytes(&bytes).unwrap_err();
         assert!(
             error.to_string().contains("upgrade agent-gossip"),
             "got: {error}"
         );
+    }
+
+    #[test]
+    fn config_round_trips_issuer_pubkey() {
+        let config = SwarmConfig {
+            lookups: LookupOpts::public_preset(),
+            password: None,
+            issuer_pubkey: Some([0x3Cu8; 32]),
+        };
+        let decoded = SwarmConfig::from_bytes(&config.to_bytes()).unwrap();
+        assert_eq!(decoded, config);
+    }
+
+    #[test]
+    fn config_round_trips_password_and_invite_together() {
+        // Both feature bits set: the fixed field order (verifier, then issuer
+        // pubkey) must round-trip.
+        let config = SwarmConfig {
+            lookups: LookupOpts::loopback(),
+            password: Some([0xA5u8; 16]),
+            issuer_pubkey: Some([0x3Cu8; 32]),
+        };
+        let decoded = SwarmConfig::from_bytes(&config.to_bytes()).unwrap();
+        assert_eq!(decoded, config);
+    }
+
+    #[test]
+    fn config_rejects_truncated_issuer_pubkey() {
+        let mut bytes = SwarmConfig::public_preset().to_bytes();
+        bytes.push(0b0010); // invite-only bit
+        bytes.extend_from_slice(&[0u8; 16]); // half a pubkey
+        assert!(SwarmConfig::from_bytes(&bytes).is_err());
     }
 
     #[test]

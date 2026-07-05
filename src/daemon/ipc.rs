@@ -151,10 +151,28 @@ pub(crate) async fn handle_ipc_command(
             .await;
             true
         }
+        IpcCommand::Invite { swarm: _, ttl } => {
+            let _ = resp_tx.send(invite_response(state, ttl));
+            false
+        }
         IpcCommand::Info => {
             let _ = resp_tx.send(info_response(ctx.swarm, name, ctx.author, state));
             false
         }
+    }
+}
+
+/// The `agent-gossip invite` response: mint a `🎟️` invite from the retained
+/// creator swarm (issuer key + root), inheriting the swarm password so the
+/// invite is password-protected iff the swarm is. Only the creator holds
+/// `mint_swarm`, so a joiner's daemon returns a crisp refusal.
+fn invite_response(state: &EventLoopState, ttl: u64) -> String {
+    let Some(swarm) = &state.mint_swarm else {
+        return json_error("invites can only be minted by the creator of an invite-only swarm");
+    };
+    match crate::invite::mint(swarm, Some(ttl), state.swarm_password.as_ref()) {
+        Ok(token) => serde_json::json!({ "ok": true, "invite": token }).to_string(),
+        Err(error) => json_error(&error.to_string()),
     }
 }
 

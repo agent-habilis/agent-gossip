@@ -21,16 +21,21 @@ pub const SWARM_GLYPH: &str = "💬";
 /// collide. Emoji-presentation by default, so no variation selector.
 pub(crate) const PEER_GLYPH: &str = "🤖";
 
-/// The ticket sigil — brands a bearer capability to dial one live endpoint
-/// (`🎟️://<base58check>`), shared by the a2a-bridge and blob tickets and told
-/// apart by a kind byte in the payload. The base `🎟` (`U+1F39F`) defaults to
-/// *text* presentation, so the canonical form carries the `\u{FE0F}` selector
-/// that makes it render as the colorful emoji users copy; decoders also accept
-/// the bare form.
+/// The ticket sigil — brands a bearer capability (`🎟️://<base58check>`),
+/// shared by the a2a-bridge, blob, and invite tickets and told apart by a kind
+/// byte in the payload. The base `🎟` (`U+1F39F`) defaults to *text*
+/// presentation, so the canonical form carries the `\u{FE0F}` selector that
+/// makes it render as the colorful emoji users copy; decoders also accept the
+/// bare form.
 pub(crate) const TICKET_GLYPH: &str = "🎟\u{FE0F}";
 
 /// The `://` that follows every token glyph in its canonical form.
 pub(crate) const SWARM_URI_SEPARATOR: &str = "://";
+
+/// Default lifetime of a minted invite ticket when `--ttl` is omitted (24h).
+/// A finite window by default so a forgotten invite stops admitting; the
+/// creator can override, and `--ttl none`/`0` mints a no-expiry invite.
+pub(crate) const INVITE_DEFAULT_TTL_SECS: u64 = 24 * 60 * 60;
 
 /// Max bytes a per-member log file grows before rotating to `<file>.1`
 /// (active + one backup ⇒ bounded at `2 ×` this). The `--log-max-bytes` flag

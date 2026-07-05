@@ -52,6 +52,7 @@ fn cfg(lookups: LookupOpts) -> SwarmConfig {
     SwarmConfig {
         lookups,
         password: None,
+        issuer_pubkey: None,
     }
 }
 

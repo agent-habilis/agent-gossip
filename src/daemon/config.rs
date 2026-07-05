@@ -15,7 +15,7 @@ use tokio::sync::{broadcast, mpsc, oneshot, watch};
 use crate::a2a::TaskId;
 use crate::daemon::state::RosterSnapshot;
 use crate::output;
-use crate::protocol::swarm::SwarmName;
+use crate::protocol::swarm::{Swarm, SwarmName};
 use crate::protocol::{Message, MessageBody, Nickname, SwarmId};
 
 use crate::beacon;
@@ -218,6 +218,11 @@ pub(crate) struct EventLoopConfig {
     /// broadcast chat. `None` for a passwordless swarm — those stay plaintext.
     /// Wiped on drop.
     pub swarm_key: Option<zeroize::Zeroizing<[u8; 32]>>,
+    /// The invite-only **creator's** swarm, retained (in-memory, secrets and
+    /// all) so the `invite` command can mint from its issuer key + root. `Some`
+    /// only on the creator of an invite-only swarm; `None` everywhere else (a
+    /// joiner holds no issuer key, so it could never mint).
+    pub mint_swarm: Option<Swarm>,
     /// Per-loop output sink. Threaded to every handler so multiple
     /// in-process sessions each have their own and never race a shared
     /// global.

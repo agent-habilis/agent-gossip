@@ -12,6 +12,7 @@ mod a2a;
 mod create;
 mod discover;
 mod doctor;
+mod invite;
 mod join;
 mod leave;
 mod lookup;
@@ -31,6 +32,7 @@ pub(crate) use a2a::{A2aAction, A2aOpts};
 pub(crate) use create::CreateOpts;
 pub(crate) use discover::DiscoverOpts;
 pub(crate) use doctor::DoctorOpts;
+pub(crate) use invite::InviteOpts;
 pub(crate) use join::JoinOpts;
 pub(crate) use leave::LeaveOpts;
 pub(crate) use meta::{MetaAction, MetaOpts};
@@ -169,6 +171,18 @@ pub(crate) enum Commands {
     Peers {
         #[command(flatten)]
         opts: PeersOpts,
+    },
+
+    /// Mint a 🎟️ invite to an invite-only swarm (creator only).
+    ///
+    /// The creating session's daemon signs the invite with its in-memory issuer
+    /// key and prints the `🎟️…` token — share it so a peer can `join` with it.
+    /// After the creator's daemon restarts the issuer key is gone, so no new
+    /// invites can be minted (already-issued ones still redeem). Password: an
+    /// invite inherits the swarm's password, so a scraped invite still needs it.
+    Invite {
+        #[command(flatten)]
+        opts: InviteOpts,
     },
 
     /// Read or change the swarm's shared state.

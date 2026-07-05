@@ -15,6 +15,7 @@ use crate::a2a::TaskId;
 use crate::daemon::state_file::StateFile;
 use crate::output;
 use crate::protocol::identity::Identity;
+use crate::protocol::swarm::Swarm;
 use crate::protocol::{Message, MessageBody, MessageId, Nickname, ShardGroup};
 use crate::util::bounded_fifo_set::BoundedFifoSet;
 use crate::util::bounded_queue::BoundedQueue;
@@ -360,6 +361,11 @@ pub(crate) struct EventLoopState {
     /// blob ticket inherits the same password — a scraped ticket then can't be
     /// redeemed without it. Kept out of logs (`Password` redacts its `Debug`).
     pub swarm_password: Option<crate::protocol::crypto::Password>,
+    /// The invite-only **creator's** swarm (secrets and all), retained so the
+    /// `invite` IPC command can mint. `Some` only on the creator; set from
+    /// [`EventLoopConfig`] after construction, so `new` defaults it to `None`
+    /// and the many test call sites need no new argument.
+    pub mint_swarm: Option<Swarm>,
     /// Symmetric key for broadcast-chat (`A2aMsg`) bodies on a passworded
     /// swarm, `derive_secret(swarm_key, "broadcast")` — domain-separated from
     /// the state/meta doc keys. `None` ⇒ chat stays plaintext. Wiped on drop.
@@ -606,6 +612,7 @@ impl EventLoopState {
             a2a_waiters: Vec::new(),
             blob_server: None,
             swarm_password,
+            mint_swarm: None,
             broadcast_key,
         }
     }

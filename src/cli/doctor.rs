@@ -371,10 +371,11 @@ async fn swarm_report(swarm_id: &SwarmId, no_probe: bool) -> Report {
         swarm_identity_section(&swarm),
         declared_methods_section(&swarm),
     ];
-    // The rendezvous identity and port ladder of a passworded swarm derive
-    // from the stretched key, which doctor doesn't hold — probing the
-    // password-less derivations would analyze a swarm that doesn't exist.
-    if !no_probe && !swarm.requires_password() {
+    // The rendezvous identity and port ladder of a passworded *or* invite-only
+    // swarm derive from a secret the bare hash withholds (the stretched key /
+    // the invite root), which doctor doesn't hold — probing those derivations
+    // would analyze a swarm that doesn't exist (and panic in `effective_seed`).
+    if !no_probe && !swarm.requires_password() && !swarm.requires_invite() {
         sections.push(live_reachability_section(&swarm).await);
     }
     Report::new("swarm", sections)
@@ -444,9 +445,16 @@ fn declared_methods_section(swarm: &Swarm) -> Section {
     ));
 
     if swarm.is_loopback() {
-        // The ladder of a passworded swarm derives from the stretched key,
-        // which doctor doesn't hold.
-        if swarm.requires_password() {
+        // The ladder derives from the effective seed, which a passworded or
+        // invite-only swarm withholds from the bare hash — deriving it here
+        // would panic in `effective_seed`, so report why instead.
+        if swarm.requires_invite() {
+            checks.push(Check::new(
+                "loopback ports",
+                Verdict::Ok,
+                "invite-derived — need a 🎟️ invite to compute",
+            ));
+        } else if swarm.requires_password() {
             checks.push(Check::new(
                 "loopback ports",
                 Verdict::Ok,
@@ -582,4 +590,34 @@ fn yes_no(value: bool) -> &'static str {
 
 fn plural(count: usize, singular: &'static str, plural: &'static str) -> &'static str {
     if count == 1 { singular } else { plural }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::declared_methods_section;
+    use crate::protocol::swarm::{Swarm, SwarmConfig, SwarmName};
+
+    #[test]
+    fn declared_methods_does_not_derive_ports_for_an_invite_only_swarm() {
+        // Regression: an invite-only swarm withholds its derivation secret from
+        // the bare hash, so deriving the loopback ladder used to panic in
+        // `effective_seed`. `doctor` must report the reason instead of crashing.
+        let mut swarm =
+            Swarm::new([1u8; 32], SwarmName::new("t").unwrap(), SwarmConfig::loopback());
+        swarm.set_invite();
+        let section = declared_methods_section(&swarm);
+        let ports = section
+            .checks
+            .iter()
+            .find(|check| check.name == "loopback ports")
+            .expect("loopback ports check present");
+        assert!(
+            ports
+                .detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("invite")),
+            "got: {:?}",
+            ports.detail
+        );
+    }
 }

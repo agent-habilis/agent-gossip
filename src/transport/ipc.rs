@@ -130,6 +130,11 @@ pub(crate) enum IpcCommand {
         params: serde_json::Value,
         timeout_secs: u64,
     },
+    /// Mint a `🎟️` invite for this (invite-only) swarm — creator only. `ttl`
+    /// is the invite lifetime in seconds; `0` mints a no-expiry invite. The
+    /// daemon signs it with its in-memory issuer key and returns the token.
+    #[serde(rename = "invite")]
+    Invite { swarm: SwarmId, ttl: u64 },
     /// Identity probe for `doctor`: the daemon answers with its own swarm id,
     /// human name, nickname, and participant count. Carries no swarm — a
     /// socket serves exactly one swarm and `doctor` is asking *which*, so it
@@ -155,7 +160,8 @@ impl IpcCommand {
             | IpcCommand::MetaMerge { swarm, .. }
             | IpcCommand::MetaGet { swarm }
             | IpcCommand::Topology { swarm }
-            | IpcCommand::A2aCall { swarm, .. } => Some(swarm),
+            | IpcCommand::A2aCall { swarm, .. }
+            | IpcCommand::Invite { swarm, .. } => Some(swarm),
             IpcCommand::Info => None,
         }
     }
@@ -503,6 +509,7 @@ mod tests {
             | IpcCommand::StateGet { .. }
             | IpcCommand::A2aCall { .. }
             | IpcCommand::Topology { .. }
+            | IpcCommand::Invite { .. }
             | IpcCommand::Info => panic!("expected StateMerge"),
         }
     }
@@ -535,6 +542,7 @@ mod tests {
             | IpcCommand::StateGet { .. }
             | IpcCommand::A2aCall { .. }
             | IpcCommand::Topology { .. }
+            | IpcCommand::Invite { .. }
             | IpcCommand::Info => panic!("expected Poll"),
         }
     }
@@ -560,6 +568,7 @@ mod tests {
             | IpcCommand::StateGet { .. }
             | IpcCommand::A2aCall { .. }
             | IpcCommand::Topology { .. }
+            | IpcCommand::Invite { .. }
             | IpcCommand::Info => panic!("expected Ping"),
         }
     }
@@ -592,6 +601,7 @@ mod tests {
             | IpcCommand::StateGet { .. }
             | IpcCommand::A2aCall { .. }
             | IpcCommand::Topology { .. }
+            | IpcCommand::Invite { .. }
             | IpcCommand::Info => panic!("expected A2aStatus"),
         }
     }
@@ -617,6 +627,7 @@ mod tests {
             | IpcCommand::StateGet { .. }
             | IpcCommand::A2aCall { .. }
             | IpcCommand::Topology { .. }
+            | IpcCommand::Invite { .. }
             | IpcCommand::Info => panic!("expected Peers"),
         }
     }
@@ -781,6 +792,7 @@ mod tests {
                     | IpcCommand::StateGet { .. }
                     | IpcCommand::A2aCall { .. }
                     | IpcCommand::Topology { .. }
+                    | IpcCommand::Invite { .. }
                     | IpcCommand::Info => {
                         let _ = resp_tx.send(json_error("unexpected command"));
                     }

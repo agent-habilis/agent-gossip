@@ -29,8 +29,9 @@ mod session;
 
 pub(crate) use args::Cli;
 use args::{
-    A2aAction, Commands, CreateOpts, MetaAction, MetaOpts, OutputFormat, PeersOpts, PingOpts,
-    PollOpts, ReadyOpts, SharedServerOpts, StateAction, StateOpts, TopicOpts, TopologyOpts,
+    A2aAction, Commands, CreateOpts, InviteOpts, MetaAction, MetaOpts, OutputFormat, PeersOpts,
+    PingOpts, PollOpts, ReadyOpts, SharedServerOpts, StateAction, StateOpts, TopicOpts,
+    TopologyOpts,
 };
 
 /// `join` has no `--public`/`--name`: both are encoded in the `💬…`
@@ -92,6 +93,7 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
         Commands::Ping { opts } => ping(opts).await,
         Commands::A2a { opts } => Box::pin(a2a(opts.action)).await,
         Commands::Peers { opts } => peers(opts).await,
+        Commands::Invite { opts } => invite(opts).await,
         // Boxed like the event-loop futures above: the discover arm holds a
         // picker + connect chain that puts it over clippy's 16 KiB
         // `large_futures` budget.
@@ -206,6 +208,9 @@ async fn create(opts: CreateOpts) -> Result<()> {
         // The verifier is baked in at setup: its salt is the seed, which is
         // minted there. The flag's presence is all `resolve` needs.
         password: None,
+        // Likewise the issuer pubkey: `set_invite` mints the keypair at setup
+        // and bakes the pubkey; the `--invite-only` flag rides `CreateParams`.
+        issuer_pubkey: None,
         // `--no-gossip` is a swarm-wide characteristic baked into the id, so
         // every joiner inherits it from the ticket alone.
     };
@@ -217,6 +222,7 @@ async fn create(opts: CreateOpts) -> Result<()> {
         config,
         advertise,
         password,
+        invite_only: opts.invite_only,
     }
     .resolve()?;
     // Boxed: the session future carries the full `EventLoopConfig` and sits
@@ -237,16 +243,22 @@ async fn join(
     let no_prompt = shared.no_prompt();
     let mut password =
         password::resolve_password(password_flag, /* confirm */ false, no_prompt)?;
-    // A protected id with the flag absent still prompts on a TTY — the
-    // operator pasted an id and shouldn't need to know about the flag.
-    if password.is_none()
-        && let JoinTarget::Swarm(id) = &target
-        && id
-            .as_str()
-            .parse::<Swarm>()
-            .is_ok_and(|swarm| swarm.requires_password())
-    {
-        password = Some(password::require_password(no_prompt, "swarm")?);
+    // A protected id/invite with the flag absent still prompts on a TTY — the
+    // operator pasted a token and shouldn't need to know about the flag. Both
+    // join-target variants can be password-protected (a `💬` id or a `🎟️`
+    // invite), so classify either before prompting.
+    if password.is_none() {
+        let prompt_for = match &target {
+            JoinTarget::Swarm(id) => id
+                .as_str()
+                .parse::<Swarm>()
+                .is_ok_and(|swarm| swarm.requires_password())
+                .then_some("swarm"),
+            JoinTarget::Invite(invite) => invite.requires_password().then_some("invite"),
+        };
+        if let Some(what) = prompt_for {
+            password = Some(password::require_password(no_prompt, what)?);
+        }
     }
     // `join` never advertises — that is a create-time decision.
     let resolved = JoinParams {
@@ -603,6 +615,63 @@ async fn peers(opts: PeersOpts) -> Result<()> {
     let cmd = IpcCommand::Peers { swarm };
     let resp = ipc::send(&cmd, &nickname).await?;
     println!("{resp}");
+    Ok(())
+}
+
+/// Parse a `--ttl` value into seconds: a bare number (seconds), a `s`/`m`/`h`/`d`
+/// suffixed duration, or `none`/`0` for no expiry. Absent ⇒ the 24h default.
+fn parse_ttl(raw: Option<&str>) -> Result<u64> {
+    let Some(raw) = raw.map(str::trim) else {
+        return Ok(crate::util::consts::INVITE_DEFAULT_TTL_SECS);
+    };
+    if raw.eq_ignore_ascii_case("none") {
+        return Ok(0);
+    }
+    let (digits, multiplier) = match raw.as_bytes().last() {
+        Some(b's' | b'S') => (&raw[..raw.len() - 1], 1),
+        Some(b'm' | b'M') => (&raw[..raw.len() - 1], 60),
+        Some(b'h' | b'H') => (&raw[..raw.len() - 1], 3600),
+        Some(b'd' | b'D') => (&raw[..raw.len() - 1], 86_400),
+        _ => (raw, 1),
+    };
+    let value: u64 = digits.trim().parse().map_err(|_| {
+        anyhow::anyhow!("invalid --ttl `{raw}` — use seconds, `1h`, `30m`, `7d`, or `none`")
+    })?;
+    Ok(value.saturating_mul(multiplier))
+}
+
+/// Mint a 🎟️ invite via the creating session's daemon (only it holds the issuer
+/// key). Human mode prints just the copyable token; `--output json` prints the
+/// raw `{ok,invite}` line. Exits non-zero on refusal (e.g. not the creator).
+async fn invite(opts: InviteOpts) -> Result<()> {
+    let InviteOpts {
+        swarm,
+        nickname,
+        ttl,
+        output,
+    } = opts;
+    let ttl = parse_ttl(ttl.as_deref())?;
+    let cmd = IpcCommand::Invite { swarm, ttl };
+    let resp = ipc::send(&cmd, &nickname).await?;
+    if matches!(output, OutputFormat::Json) {
+        println!("{resp}");
+    }
+    let parsed: serde_json::Value = serde_json::from_str(&resp)?;
+    if parsed.get("ok").and_then(serde_json::Value::as_bool) != Some(true) {
+        let error = parsed
+            .get("error")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("invite failed");
+        if !matches!(output, OutputFormat::Json) {
+            eprintln!("{error}");
+        }
+        std::process::exit(1);
+    }
+    if !matches!(output, OutputFormat::Json)
+        && let Some(token) = parsed.get("invite").and_then(serde_json::Value::as_str)
+    {
+        println!("{token}");
+    }
     Ok(())
 }
 
