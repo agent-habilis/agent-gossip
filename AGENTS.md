@@ -53,9 +53,15 @@ every subcommand.
 ### Testing
 
 `cargo task test` / `cargo task ci` run the suite. **Always run tests in the
-background**: the subprocess reliability tests pay an irreducible ~34s+ heal
-floor (the 15s heal interval is a fixed `const`, not a knob), so the suite
-takes minutes.
+background**: most reliability tests inject short cadences via the hidden
+tuning flags (`--heal-interval-secs`, `--antientropy-interval-secs`) and poll
+observable markers instead of sleeping fixed floors, but the suite still
+takes minutes end to end. The remaining floors are iroh-bound, not ours:
+the 15s direct-path idle timeout floors the freeze-window tests, the two
+beacon-migration tests keep a fixed ~36s handoff wait at the production heal
+cadence (see `RENDEZVOUS_HANDOFF` in `tests/gossip_network.rs` — shortening
+the cadence there trips a zombie-link pathology), and the serial-gated
+reliability section runs one test at a time.
 
 Three layers:
 - **In-process (default, fast):** behavioral + output-schema tests drive the
@@ -73,8 +79,8 @@ Three layers:
 **No environment-variable config.** Every knob is a `const` in
 `util::consts` (edit + commit to experiment). The few the suite must
 vary per-run are **hidden CLI flags** (`#[arg(hide = true)]`, e.g.
-`--alive-timeout-secs`, `--log-dir`). Only `RUST_LOG` and `NO_COLOR` are read
-from the environment.
+`--alive-timeout-secs`, `--heal-interval-secs`, `--log-dir`). Only `RUST_LOG`
+and `NO_COLOR` are read from the environment.
 
 ### Logging
 

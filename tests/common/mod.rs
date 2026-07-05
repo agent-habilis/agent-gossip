@@ -24,19 +24,21 @@ pub(crate) const CONNECT_TIMEOUT: Duration = Duration::from_mins(1);
 /// Steady-state delivery budget: how long a meshed peer may take to surface a
 /// message/presence/task leg. The suite-wide standard for every positive
 /// (adaptive, break-on-success) delivery wait. A meshed in-process round trip
-/// is normally sub-second; the headroom is for a loaded CI host running the
-/// suite in a **debug** build, where crypto is ~10x slower than release and two
+/// is normally sub-second; the headroom is for a loaded CI host where two
 /// concurrent in-process meshes can stall a delivery well past a tighter
-/// budget. `wait_for`/`wait_until` are adaptive, so a healthy run returns
+/// budget (crypto-heavy deps are release-optimized even in dev builds via the
+/// `[profile.dev.package]` overrides, so debug crypto is no longer the
+/// bottleneck). `wait_for`/`wait_until` are adaptive, so a healthy run returns
 /// immediately and only a genuine stall pays the ceiling.
 pub(crate) const MSG_TIMEOUT: Duration = Duration::from_mins(1);
 pub(crate) const POLL: Duration = Duration::from_millis(250);
 
 /// Budget for a delivery asserted **after a disruption** (beacon death,
 /// SIGSTOP freeze, rendezvous migration, creator departure). Re-meshing waits
-/// on the fixed 15s heal cadence, so a recovery that just missed a tick needs
+/// on the heal cadence (production 15s; the reliability tests inject a short
+/// `--heal-interval-secs`), so a recovery that just missed a tick needs
 /// another cycle — the steady-state `MSG_TIMEOUT` (1 min) sits right on that
-/// cliff and flakes on a loaded host. 2 min clears ~8 heal cycles; `wait_until`
+/// cliff and flakes on a loaded host. 2 min clears many cycles; `wait_until`
 /// is adaptive, so a healthy run returns in seconds and only a genuine stall
 /// pays the ceiling. The extra headroom over a bare "few cycles" is for a host
 /// running real swarm daemons alongside the suite (dogfooding) — CPU starvation
@@ -1248,6 +1250,17 @@ impl Node {
     /// if the test didn't.)
     pub(crate) fn kill(&self) {
         self.signal("-KILL");
+    }
+
+    /// Block until the child exits **on its own** (e.g. after
+    /// [`sigint`](Self::sigint)). `Drop` SIGKILLs immediately, which
+    /// truncates a graceful shutdown mid-flight — the daemon never
+    /// finishes its `Left` broadcast + clean QUIC close, leaving peers
+    /// a zombie link that takes iroh's idle timeout to die. Reaping
+    /// here guarantees the shutdown (including socket release) fully
+    /// completed before the test proceeds.
+    pub(crate) fn wait_exit(&mut self) {
+        let _ = self.child.wait();
     }
 
     /// SIGSTOP — suspend the process (simulates sleep / a frozen

@@ -27,8 +27,8 @@ use crate::{beacon, gossip, lifecycle, lookup};
 // Bare `ipc` is `daemon::ipc`; transport's socket server is by-item.
 use crate::transport::ipc::IpcMessage;
 use crate::util::tuning::{
-    ALIVE_INTERVAL_SECS, ANTIENTROPY_INTERVAL_SECS, HEAL_INTERVAL_SECS, LINKSTATE_INTERVAL_SECS,
-    RECLAIM_INTERVAL_MS, RESUBSCRIBE_MAX_ATTEMPTS, STATE_REFRESH_SECS, heal_stall_threshold_secs,
+    ALIVE_INTERVAL_SECS, LINKSTATE_INTERVAL_SECS, RECLAIM_INTERVAL_MS, RESUBSCRIBE_MAX_ATTEMPTS,
+    STATE_REFRESH_SECS, antientropy_interval_secs, heal_interval_secs, heal_stall_threshold_secs,
     ppid_watch_interval_ms, sweep_interval_secs,
 };
 
@@ -238,7 +238,7 @@ async fn antientropy_arm(
         "antientropy",
         &mut anchors.antientropy,
         &mut anchors.antientropy_wall,
-        Duration::from_secs(ANTIENTROPY_INTERVAL_SECS),
+        Duration::from_secs(antientropy_interval_secs()),
     );
     gossip::antientropy::broadcast_digest(state, sender, swarm, author).await;
     gossip::antientropy::broadcast_state_digests(state, sender, swarm, author).await;
@@ -598,7 +598,7 @@ async fn event_loop(loop_state: EventLoop) -> Result<()> {
                 sweep_arm(&mut anchors, &mut state, &sender, &swarm_str, &author, &output).await;
             }
             _ = intervals.heal.tick() => {
-                let (mono_gap, wall_gap) = timers::note_tick_gap("heal", &mut anchors.heal, &mut anchors.heal_wall, Duration::from_secs(HEAL_INTERVAL_SECS));
+                let (mono_gap, wall_gap) = timers::note_tick_gap("heal", &mut anchors.heal, &mut anchors.heal_wall, Duration::from_secs(heal_interval_secs()));
                 if state.gossip_open {
                     let ctx = parts.ctx(&sender);
                     heal_tick(mono_gap, wall_gap, &mut state, &ctx, &rendezvous_params, cohost, started, &mut rendezvous).await;
@@ -1450,13 +1450,13 @@ async fn build_maintenance_intervals() -> MaintenanceIntervals {
     let mut sweep = tokio::time::interval(Duration::from_secs(sweep_interval_secs()));
     sweep.set_missed_tick_behavior(Skip);
     sweep.tick().await;
-    let mut heal = tokio::time::interval(Duration::from_secs(HEAL_INTERVAL_SECS));
+    let mut heal = tokio::time::interval(Duration::from_secs(heal_interval_secs()));
     heal.set_missed_tick_behavior(Skip);
     heal.tick().await;
     let mut reclaim = tokio::time::interval(Duration::from_millis(RECLAIM_INTERVAL_MS));
     reclaim.set_missed_tick_behavior(Skip);
     reclaim.tick().await;
-    let mut antientropy = tokio::time::interval(Duration::from_secs(ANTIENTROPY_INTERVAL_SECS));
+    let mut antientropy = tokio::time::interval(Duration::from_secs(antientropy_interval_secs()));
     antientropy.set_missed_tick_behavior(Skip);
     antientropy.tick().await;
     let mut state_refresh = tokio::time::interval(Duration::from_secs(STATE_REFRESH_SECS));

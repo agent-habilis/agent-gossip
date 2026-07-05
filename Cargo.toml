@@ -235,6 +235,35 @@ harness = false
 name = "adversarial"
 required-features = ["adversarial"]
 
+# Dependencies get light optimization in dev/test builds; workspace members
+# stay at opt-level 0 (`package."*"` never applies to them) so incremental
+# builds stay fast. Debug-built curve/AEAD/hash math is ~10x slower and
+# inflates every connect/handshake in the subprocess test suite, so the hot
+# crypto crates get full optimization. `ring` needs no entry (C/asm core).
+[profile.dev.package."*"]
+opt-level = 1
+
+[profile.dev.package.curve25519-dalek]
+opt-level = 3
+[profile.dev.package.ed25519-dalek]
+opt-level = 3
+[profile.dev.package.x25519-dalek]
+opt-level = 3
+[profile.dev.package.chacha20]
+opt-level = 3
+[profile.dev.package.chacha20poly1305]
+opt-level = 3
+[profile.dev.package.aes]
+opt-level = 3
+[profile.dev.package.aes-gcm]
+opt-level = 3
+[profile.dev.package.sha2]
+opt-level = 3
+[profile.dev.package.blake3]
+opt-level = 3
+[profile.dev.package.argon2]
+opt-level = 3
+
 [profile.release]
 opt-level = 3
 lto = "fat"

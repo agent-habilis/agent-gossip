@@ -36,10 +36,11 @@ jobs:
     # Outer wedged-run cap for the unit/integration suite. It is
     # mostly in-process (sub-second) plus the every-run subprocess
     # reliability/contract set — including the relocated ungraceful-
-    # death, sleep/wake heal, and anti-entropy-backfill tests (heal
-    # cadence is a fixed 15s `const`, so each still pays its real
-    # ~34s; the env-overridable alive-timeout is shortened). A healthy
-    # run is a few minutes. In-test polling deadlines (`CONNECT_TIMEOUT`
+    # death, sleep/wake heal, and anti-entropy-backfill tests (they
+    # inject short cadences via the hidden tuning flags, e.g.
+    # `--heal-interval-secs`, and poll observable markers instead of
+    # sleeping fixed floors). A healthy run is a few minutes. In-test
+    # polling deadlines (`CONNECT_TIMEOUT`
     # 1m / `MSG_TIMEOUT` 30s) self-abort a stuck test well before this.
     # The cap must also clear a *cold* `rust-cache` run: the first push
     # (or any post-eviction run) compiles the whole iroh/gossip/DHT

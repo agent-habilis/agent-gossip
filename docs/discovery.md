@@ -340,7 +340,7 @@ sequenceDiagram
 
 Recovery is bounded by the heartbeat timescale (~`alive_timeout`,
 ≈90 s) plus a heal/reclaim tick. (`heal_targets`/`tick_heal` in
-`src/daemon/timers.rs`; `HEAL_INTERVAL_SECS`, `alive_timeout_secs`,
+`src/daemon/timers.rs`; `heal_interval_secs`, `alive_timeout_secs`,
 `RECLAIM_WINDOW_SECS`, `BOOTSTRAP_CACHE_SIZE` in `src/tuning.rs`.)
 
 ---

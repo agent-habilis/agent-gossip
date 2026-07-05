@@ -202,10 +202,19 @@ pub(crate) const BEACON_COHOST_GRACE_SECS: u64 = 10;
 /// `ping_report`. Flag: `--ping-window-secs`.
 pub(crate) const PING_WINDOW_SECS: u64 = 10;
 
+/// Cadence of the unconditional gossip healer (`gossip::heal::tick_heal`).
+/// 15s balances fast re-mesh after a partition against steady-state cost —
+/// one HyParView control message per tick when already healthy; shorter
+/// cadences empirically destabilise convergence in production meshes. Flag:
+/// `--heal-interval-secs` (tests shorten it to collapse the multi-cycle
+/// rendezvous-handoff floor; production always runs the default).
+pub(crate) const HEAL_INTERVAL_SECS: u64 = 15;
+
 /// A heal inter-tick gap above this (seconds) means the process was frozen
 /// between ticks (App Nap / sleep) and must hard re-bootstrap. Safely above
-/// the 15s heal interval so normal slack never trips it. Flag:
-/// `--heal-stall-threshold-secs`.
+/// the default heal interval so normal slack never trips it; a test that
+/// shortens one must keep this comfortably above `--heal-interval-secs`.
+/// Flag: `--heal-stall-threshold-secs`.
 pub(crate) const HEAL_STALL_THRESHOLD_SECS: u64 = 60;
 
 /// No verified inbound gossip for this long (seconds), while real peers are
@@ -224,6 +233,12 @@ pub(crate) const ADVERTISE_INTERVAL_SECS: u64 = 20;
 /// How long a discoverer keeps showing a swarm after its last ad (~3×
 /// `ADVERTISE_INTERVAL_SECS`). Flag: `--directory-expiry-secs`.
 pub(crate) const DIRECTORY_EXPIRY_SECS: u64 = 60;
+
+/// How often a member broadcasts its anti-entropy digest (recent message
+/// ids it holds) so peers re-send anything it missed while
+/// partitioned/asleep. Flag: `--antientropy-interval-secs` (tests
+/// reconcile backfill gaps in seconds).
+pub(crate) const ANTIENTROPY_INTERVAL_SECS: u64 = 10;
 
 /// Max messages re-broadcast in response to one received digest, so a
 /// far-behind peer can't trigger an unbounded backfill burst. Flag:

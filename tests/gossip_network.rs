@@ -4,7 +4,9 @@
 //! and asserts on what each node actually received. Tests are independent —
 //! each creates its own swarm so IPC sockets never collide.
 //!
-//! Run `cargo build --release` first for faster crypto (shorter connect times).
+//! Crypto-heavy deps are optimized even in dev builds (see the
+//! `[profile.dev.package]` overrides in `Cargo.toml`), so debug `cargo test`
+//! runs at near-release connect speeds.
 mod common;
 
 use std::fs::{self, File};
@@ -13,22 +15,92 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use common::{
-    CONNECT_TIMEOUT, InProcNode, MSG_TIMEOUT, Msg, Node, POLL, RECOVERY_TIMEOUT, bin,
-    chat_text, cli_message, cli_message_raw, cli_peers, cli_ping, cli_poll, cli_poll_long,
-    cli_task_create, cli_task_create_raw, ipc_raw, serial_guard, socket_path, tmp_log, trace_log,
-    wait_total, wait_until,
+    CONNECT_TIMEOUT, InProcNode, MSG_TIMEOUT, Msg, Node, POLL, RECOVERY_TIMEOUT, bin, chat_text,
+    cli_message, cli_message_raw, cli_peers, cli_ping, cli_poll, cli_poll_long, cli_task_create,
+    cli_task_create_raw, ipc_raw, serial_guard, socket_path, tmp_log, trace_log, wait_total,
+    wait_until,
 };
 use serde_json::json;
 
-/// How long a survivor needs to claim a dead beacon's seed-derived
-/// rendezvous (the claim-if-free handoff). The heal tick is a fixed 15s
-/// `const`, and a claim takes **≥2 cycles** (the first confirms the old
-/// beacon is gone, the next binds) — so the real floor is ~34s. We wait
-/// `2 * HEAL_INTERVAL_SECS + margin` before a fresh peer can bootstrap
-/// through the migrated beacon. Irreducible (the cadence is a `const`),
-/// and shared by every post-departure-join test so they can't drift to a
-/// too-short value (the cause of a flaky `test_first_message_…`).
+/// Heal cadence injected into the reliability tests via the hidden
+/// `--heal-interval-secs` flag. Floored at 3s: below that the
+/// claim-if-free walk, the 8s `BEACON_MESH_WAIT_SECS` overlap, and the
+/// probe timeouts get racy. Production stays at the 15s default.
+const TEST_HEAL_SECS: u64 = 3;
+
+/// Anti-entropy cadence injected into the backfill tests via the hidden
+/// `--antientropy-interval-secs` flag (production default 10s).
+const TEST_AE_SECS: u64 = 2;
+
+/// Freeze window that guarantees a `SIGSTOP`ped peer's QUIC link dies:
+/// iroh's direct-path idle timeout is 15s (deliberately left at the
+/// transport default — see the note at the bottom of
+/// `src/util/consts.rs`), so this floor is iroh-bound, not ours.
+const LINK_DEATH_FREEZE: Duration = Duration::from_secs(18);
+
+/// Ceiling for the post-departure handoff poll (a survivor serving the
+/// seed-derived rendezvous after the old beacon's process exited). A
+/// co-host/claim takes a couple of heal cycles at the injected cadence
+/// plus up to `BEACON_MESH_WAIT_SECS` (8s) to bridge; the rest is
+/// loaded-host margin. Callers poll [`survivor_serves_rendezvous`] and
+/// pay only the real handoff time.
+fn handoff_budget() -> Duration {
+    Duration::from_secs(6 * TEST_HEAL_SECS + 20)
+}
+
+/// Blind post-departure migration wait for the tests whose asserts
+/// need the handoff **fully settled** (`test_first_message_…`,
+/// `test_creator_sigkill_…`). These run at the **production** heal
+/// cadence: a short injected cadence makes the survivor co-host a
+/// beacon *before* the old one dies, and because every beacon shares
+/// the seed-derived endpoint id, the survivor's gossip slot for that
+/// id then holds a zombie link to the dead beacon until iroh's idle
+/// teardown clears it (30-60s, no close frames on process exit) — a
+/// joiner arriving earlier bootstraps into a deaf beacon and its first
+/// broadcast is unrecoverable. At the 15s production cadence the death
+/// always precedes the first co-host tick, so the claim is clean; ≥2
+/// cycles + margin is the empirically stable floor. Iroh-bound, not
+/// heal-bound — do not shorten via `--heal-interval-secs`.
 const RENDEZVOUS_HANDOFF: Duration = Duration::from_secs(36);
+
+/// Whether this survivor can bootstrap a fresh joiner: it has bound a
+/// rendezvous rung at least once (co-host or claim-if-free — every
+/// beacon shares the seed-derived endpoint id, so which rung is
+/// irrelevant) and its own rendezvous gossip link is currently up
+/// (ups > downs), so the beacon is bridged into the surviving mesh,
+/// not a bare socket.
+///
+/// Callers must first ensure the departed beacon's **process has
+/// exited** (graceful `sigint` + `wait_exit`, or SIGKILL): the OS then
+/// has released its sockets, so a joiner's rung-walk cannot dial a
+/// dead-but-bound rung — the historical first-message-lost flake.
+fn survivor_serves_rendezvous(swarm: &str, nick: &str) -> bool {
+    let trace = trace_log(swarm, nick);
+    let rendezvous_links = |direction: &str| {
+        trace
+            .lines()
+            .filter(|line| line.contains(direction) && line.contains("is_rendezvous=true"))
+            .count()
+    };
+    trace.contains("beacon assumed")
+        && rendezvous_links("gossip neighbor up") > rendezvous_links("gossip neighbor down")
+}
+
+/// Poll until any survivor serves the rendezvous (see
+/// [`survivor_serves_rendezvous`]). Returns whether that landed within
+/// [`handoff_budget`].
+fn wait_rendezvous_served(swarm: &str, survivors: &[&str]) -> bool {
+    wait_until(
+        || {
+            survivors
+                .iter()
+                .filter(|nick| survivor_serves_rendezvous(swarm, nick))
+                .count()
+        },
+        1,
+        handoff_budget(),
+    ) >= 1
+}
 
 // ── tests ─────────────────────────────────────────────────────────────────────
 
@@ -1213,9 +1285,11 @@ fn test_join_empty_swarm_succeeds_and_reseeds() {
 fn test_join_after_creator_departed_with_surviving_member() {
     // Serialize against the other timing-sensitive tests (see `serial_guard`).
     let _serial = serial_guard();
-    // 1. Creator + a bystander that will outlive it.
-    let (creator, swarm) = Node::create();
-    let bystander = Node::join(&swarm, "bystander");
+    // 1. Creator + a bystander that will outlive it. Heal-only profile:
+    //    the handoff is heal-gated, and production evict windows keep the
+    //    test's membership semantics unchanged.
+    let (mut creator, swarm) = Node::create_flags("itest", &FAST_HEAL);
+    let bystander = Node::join_flags(&swarm, "bystander", &FAST_HEAL);
     assert!(creator.wait_ready(&swarm), "creator socket never appeared");
     assert!(
         bystander.wait_ready(&swarm),
@@ -1228,21 +1302,24 @@ fn test_join_after_creator_departed_with_surviving_member() {
     let delivered = wait_total(|| creator.messages().len() + bystander.messages().len(), 1);
     assert!(delivered >= 1, "creator/bystander never meshed pre-death");
 
-    // 2. Hard-kill the creator. It was the initial rendezvous beacon;
-    //    the deterministic port is now free for the bystander to claim
-    //    on its next heal tick (~HEAL_INTERVAL_SECS).
+    // 2. Retire the creator and wait for its process to fully exit —
+    //    graceful `Left` + clean close + socket release — then poll
+    //    until the bystander serves the rendezvous. Joining while the
+    //    old socket lingers or before a survivor beacon is bridged is
+    //    the historical flake (see `survivor_serves_rendezvous`).
     creator.sigint();
+    creator.wait_exit();
     drop(creator);
-    // Wait the full claim-if-free handoff floor before a fresh peer
-    // bootstraps: the bystander needs ≥2 heal cycles to win the freed port
-    // and stand its rendezvous up (see `RENDEZVOUS_HANDOFF`). 22s (~1 heal
-    // tick) raced the migration and flaked under load.
-    std::thread::sleep(RENDEZVOUS_HANDOFF);
+    assert!(
+        wait_rendezvous_served(&swarm, &[&bystander.nickname]),
+        "bystander never served the rendezvous after creator exit\nbystander log tail:\n{}",
+        bystander.log_tail(15),
+    );
 
     // 3. A brand-new joiner that never saw the creator. Its only
     //    bootstrap target is the seed-derived rendezvous id; reaching
     //    `ready` proves the bystander is now serving it.
-    let latecomer = Node::join(&swarm, "latecomer");
+    let latecomer = Node::join_flags(&swarm, "latecomer", &FAST_HEAL);
     assert!(
         latecomer.wait_ready(&swarm),
         "latecomer could not join after creator death — rendezvous failover broke\nbystander log tail:\n{}\nlatecomer log tail:\n{}",
@@ -1277,6 +1354,8 @@ fn test_join_after_creator_departed_with_surviving_member() {
 fn test_first_message_after_post_departure_join_is_delivered() {
     // Serialize against the other timing-sensitive tests (see `serial_guard`).
     let _serial = serial_guard();
+    // Production heal cadence — see `RENDEZVOUS_HANDOFF` for why this
+    // test must not inject a short one.
     let (creator, swarm) = Node::create();
     let bystander = Node::join(&swarm, "fm-bystander");
     assert!(creator.wait_ready(&swarm), "creator socket never appeared");
@@ -1291,14 +1370,17 @@ fn test_first_message_after_post_departure_join_is_delivered() {
         "creator/bystander never meshed pre-death"
     );
 
+    // This test exercises post-departure-join *delivery*, not migration
+    // speed, so the migration must be fully settled first — the blind
+    // migration wait; see `RENDEZVOUS_HANDOFF` for why this cannot be a
+    // marker poll. `drop` SIGKILLs before the graceful grace completes:
+    // deliberate — letting the shutdown finish makes the bystander's
+    // fast-reclaim re-stand the beacon while its gossip still holds the
+    // dying beacon's link (same endpoint id), tripping the iroh
+    // stale-connection stall (iroh-gossip#10) instead of a clean
+    // claim-on-heal-tick.
     creator.sigint();
     drop(creator);
-    // Wait the full claim-if-free handoff floor so the bystander has
-    // actually claimed the freed rendezvous before the latecomer joins —
-    // this test exercises post-departure-join *delivery*, not migration
-    // speed, so the migration must complete first (see `RENDEZVOUS_HANDOFF`).
-    // The old 22s (~1 heal tick) let the latecomer join mid-migration and
-    // flaked under CI load.
     std::thread::sleep(RENDEZVOUS_HANDOFF);
 
     let joiner = Node::join(&swarm, "fm-joiner");
@@ -1313,7 +1395,7 @@ fn test_first_message_after_post_departure_join_is_delivered() {
     // trigger): joiner -> bystander. Post-disruption delivery, so it gets
     // `RECOVERY_TIMEOUT`, not the steady-state `MSG_TIMEOUT`: routing the
     // joiner's first message waits on its `NeighborUp` re-announce, which is
-    // gated by the 15s heal cadence, so a join that just missed a heal tick
+    // gated by the heal cadence, so a join that just missed a heal tick
     // legitimately needs another cycle.
     let j2b_id = cli_message(&swarm, &joiner.nickname, "j2b first");
     assert!(!j2b_id.is_empty(), "joiner msg returned empty id");
@@ -1349,18 +1431,23 @@ fn test_first_message_after_post_departure_join_is_delivered() {
 /// observable here; only the view is filtered). A message sent *after*
 /// it joined must still arrive, proving the node is meshed and only
 /// the horizon, not connectivity, hides the old messages.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn test_join_horizon_hides_pre_join_history() {
-    let creator = InProcNode::create("nethorizon").await;
-    let mut early = InProcNode::join(&creator.swarm, "jh-early").await;
+///
+/// Subprocess (not `InProcNode`): the negative wait must span several
+/// anti-entropy cycles, and only a spawned daemon can take the hidden
+/// `--antientropy-interval-secs` flag (the embed path runs production
+/// defaults).
+#[test]
+fn test_join_horizon_hides_pre_join_history() {
+    let (creator, swarm) = Node::create_flags("nethorizon", &FAST_AE);
+    let early = Node::join_flags(&swarm, "jh-early", &FAST_AE);
+    assert!(creator.wait_ready(&swarm), "creator never ready");
+    assert!(early.wait_ready(&swarm), "early peer never ready");
 
     // History taskd *before* the late peer exists.
     for tag in ["hist-1", "hist-2", "hist-3"] {
-        creator.send(tag).await;
-    }
-    for tag in ["hist-1", "hist-2", "hist-3"] {
+        let _ = cli_message(&swarm, &creator.nickname, tag);
         assert!(
-            early.wait_body(tag, MSG_TIMEOUT).await,
+            wait_until(|| early.count_from(&creator.nickname, tag), 1, MSG_TIMEOUT) >= 1,
             "history not delivered to the existing peer before the late join: {tag}"
         );
     }
@@ -1368,43 +1455,69 @@ async fn test_join_horizon_hides_pre_join_history() {
     // Whole-second timestamps: keep the history strictly an earlier
     // second than the late join (off the 1-second boundary; the real
     // case is seconds-to-minutes old).
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    std::thread::sleep(Duration::from_secs(2));
 
-    let mut late = InProcNode::join(&creator.swarm, "jh-late").await;
+    let late = Node::join_flags(&swarm, "jh-late", &FAST_AE);
+    assert!(late.wait_ready(&swarm), "late peer never ready");
 
-    // Well over an anti-entropy cycle so a later "still zero" means the
-    // horizon suppressed the backfill, not that it merely hadn't
-    // arrived yet (anti-entropy still relays it at the wire — that is
-    // intentionally not observable here; only the view is filtered).
-    tokio::time::sleep(Duration::from_secs(25)).await;
+    // Well over an anti-entropy cycle (at the injected cadence) so a
+    // later "still zero" means the horizon suppressed the backfill, not
+    // that it merely hadn't arrived yet. Inherent blind wait (negative
+    // assertion).
+    std::thread::sleep(Duration::from_secs(3 * TEST_AE_SECS));
     for tag in ["hist-1", "hist-2", "hist-3"] {
         assert_eq!(
-            late.count_body(tag),
+            late.count_from(&creator.nickname, tag),
             0,
             "pre-join history {tag} was surfaced to the late joiner"
         );
     }
 
     // But it IS meshed: a message sent after it joined must surface.
-    creator.send("post-join-live").await;
+    let _ = cli_message(&swarm, &creator.nickname, "post-join-live");
     assert!(
-        late.wait_body("post-join-live", MSG_TIMEOUT).await,
+        wait_until(
+            || late.count_from(&creator.nickname, "post-join-live"),
+            1,
+            MSG_TIMEOUT
+        ) >= 1,
         "post-join message not delivered to the late joiner — connectivity broken, not just horizon"
     );
 }
 
 // ── reliability tests ────────────────────────────────────────────────────────
 //
-// `ALIVE_TIMEOUT_SECS`/`SWEEP_INTERVAL_SECS` are env-overridable, so
-// `SHORT_EVICT` collapses the ~90s eviction window to seconds.
-// `HEAL_INTERVAL_SECS` is not — it is a fixed 15s `const`; shortening
-// it empirically destabilises convergence (see `src/tuning.rs`). So a
-// claim-if-free handoff still costs its real ~34s: that floor is
-// irreducible and dominates these tests' runtime.
+// `SHORT_EVICT` collapses the ~90s eviction window and the 15s heal
+// cadence to seconds via the hidden tuning flags. `TEST_HEAL_SECS` is
+// floored at 3s: below that the claim-if-free walk, the 8s
+// `BEACON_MESH_WAIT_SECS` overlap, and the probe timeouts get racy
+// (production stays at the 15s default — shorter cadences destabilise
+// convergence in real meshes; a loopback test tolerates them).
 
-const SHORT_EVICT: [(&str, &str); 2] = [
+const SHORT_EVICT: [(&str, &str); 3] = [
     ("--alive-timeout-secs", "3"),
     ("--sweep-interval-secs", "1"),
+    ("--heal-interval-secs", "3"),
+];
+
+// Heal cadence only — for tests whose waits are heal-gated but whose
+// semantics need the production eviction windows.
+const FAST_HEAL: [(&str, &str); 1] = [("--heal-interval-secs", "3")];
+
+// Short eviction at the production heal cadence — for the migration
+// tests that must not shorten the heal interval (see
+// `RENDEZVOUS_HANDOFF`).
+const EVICT_ONLY: [(&str, &str); 2] = [
+    ("--alive-timeout-secs", "3"),
+    ("--sweep-interval-secs", "1"),
+];
+
+// Fast reconcile: short heal + anti-entropy cadences with production
+// eviction windows — for the backfill tests, whose frozen peer must
+// STAY a member (no `SHORT_EVICT`) while recovery converges quickly.
+const FAST_AE: [(&str, &str); 2] = [
+    ("--heal-interval-secs", "3"),
+    ("--antientropy-interval-secs", "2"),
 ];
 
 /// Assert `receiver` records `body` from `sender` within `within`,
@@ -1428,13 +1541,12 @@ fn assert_received(receiver: &Node, sender: &str, body: &str, within: Duration) 
 fn test_creator_sigkill_independence() {
     // Serialize against the other timing-sensitive tests (see `serial_guard`).
     let _serial = serial_guard();
-    // The claim-if-free handoff floor (see `RENDEZVOUS_HANDOFF`): >= 2 heal
-    // cycles + margin for the claim and a cold joiner's connect.
-    let handoff = RENDEZVOUS_HANDOFF;
 
-    let (creator, swarm) = Node::create_flags("itest", &SHORT_EVICT);
-    let alpha = Node::join_flags(&swarm, "ck-alpha", &SHORT_EVICT);
-    let bravo = Node::join_flags(&swarm, "ck-bravo", &SHORT_EVICT);
+    // `EVICT_ONLY`, not `SHORT_EVICT`: this migration must run at the
+    // production heal cadence — see `RENDEZVOUS_HANDOFF`.
+    let (creator, swarm) = Node::create_flags("itest", &EVICT_ONLY);
+    let alpha = Node::join_flags(&swarm, "ck-alpha", &EVICT_ONLY);
+    let bravo = Node::join_flags(&swarm, "ck-bravo", &EVICT_ONLY);
     assert!(creator.wait_ready(&swarm), "creator never ready");
     assert!(alpha.wait_ready(&swarm), "alpha never ready");
     assert!(bravo.wait_ready(&swarm), "bravo never ready");
@@ -1449,9 +1561,10 @@ fn test_creator_sigkill_independence() {
     assert_received(&bravo, &alpha.nickname, "ck-survive", RECOVERY_TIMEOUT);
 
     // A brand-new joiner can only reach the swarm if a survivor now
-    // serves the seed-derived rendezvous.
-    std::thread::sleep(handoff);
-    let charlie = Node::join_flags(&swarm, "ck-charlie", &SHORT_EVICT);
+    // serves the seed-derived rendezvous. Blind migration wait — see
+    // `RENDEZVOUS_HANDOFF` for why this cannot be a marker poll.
+    std::thread::sleep(RENDEZVOUS_HANDOFF);
+    let charlie = Node::join_flags(&swarm, "ck-charlie", &EVICT_ONLY);
     assert!(
         charlie.wait_ready(&swarm),
         "fresh joiner could not bootstrap after creator SIGKILL\nalpha:\n{}\ncharlie:\n{}",
@@ -1585,12 +1698,9 @@ fn test_orphaned_daemon_self_terminates() {
 fn test_sleep_wake_heal_recovery() {
     // Serialize against the other timing-sensitive tests (see `serial_guard`).
     let _serial = serial_guard();
-    // Past ALIVE_TIMEOUT_SECS + SWEEP_INTERVAL_SECS (+margin) so the
-    // sweeper evicts the frozen peer.
-    let asleep = Duration::from_secs(8);
-    // One heal tick (fixed 15s `const`) + margin to re-mesh the woken
-    // peer. Irreducible.
-    let wake_settle = Duration::from_secs(18);
+    // Eviction lands after ALIVE_TIMEOUT + SWEEP_INTERVAL (3+1s); the
+    // ceiling is slack for a loaded host, not paid time.
+    let evict_bound = Duration::from_secs(12);
 
     let (creator, swarm) = Node::create_flags("itest", &SHORT_EVICT);
     let sleeper = Node::join_flags(&swarm, "sw-sleeper", &SHORT_EVICT);
@@ -1600,15 +1710,19 @@ fn test_sleep_wake_heal_recovery() {
     assert_received(&sleeper, &creator.nickname, "sw-pre", MSG_TIMEOUT);
 
     sleeper.stop();
-    std::thread::sleep(asleep);
     assert!(
-        creator.log_contents().contains("went quiet"),
+        wait_until(
+            || usize::from(creator.log_contents().contains("went quiet")),
+            1,
+            evict_bound,
+        ) >= 1,
         "creator never surfaced the frozen peer going quiet\n{}",
         creator.log_tail(20),
     );
 
+    // Send immediately on wake: re-mesh (heal cadence) plus anti-entropy
+    // backfill deliver it; `assert_received` returns the moment it lands.
     sleeper.cont();
-    std::thread::sleep(wake_settle);
     let _ = cli_message(&swarm, &creator.nickname, "sw-post");
     assert_received(&sleeper, &creator.nickname, "sw-post", RECOVERY_TIMEOUT);
 }
@@ -1629,12 +1743,14 @@ fn test_sleep_wake_heal_recovery() {
 fn test_fixed_id_reconnect_admits_fast() {
     // Serialize against the other timing-sensitive tests (see `serial_guard`).
     let _serial = serial_guard();
-    // Past SHORT_EVICT (3+1s) + margin so the sleeper is evicted.
-    let asleep = Duration::from_secs(8);
-    // Above our re-mesh cost (~1-2 fixed 15s heal cycles + resume
-    // re-bootstrap) yet far below iroh's minutes-long stale-connection
-    // timeout: a pass means admission is heal-bound.
-    let admit_bound = Duration::from_secs(50);
+    // Eviction lands after ALIVE_TIMEOUT + SWEEP_INTERVAL (3+1s); the
+    // ceiling is slack for a loaded host, not paid time.
+    let evict_bound = Duration::from_secs(12);
+    // Above our re-mesh cost (a few heal cycles at the injected cadence
+    // + resume re-bootstrap + anti-entropy backfill) yet far below
+    // iroh's minutes-long stale-connection timeout: a pass means
+    // admission is heal-bound.
+    let admit_bound = Duration::from_secs((5 * TEST_HEAL_SECS + 10).max(15));
 
     let (creator, swarm) = Node::create_flags("itest", &SHORT_EVICT);
     let sleeper = Node::join_flags(&swarm, "fr-sleeper", &SHORT_EVICT);
@@ -1644,9 +1760,12 @@ fn test_fixed_id_reconnect_admits_fast() {
     assert_received(&sleeper, &creator.nickname, "fr-pre", MSG_TIMEOUT);
 
     sleeper.stop();
-    std::thread::sleep(asleep);
     assert!(
-        creator.log_contents().contains("went quiet"),
+        wait_until(
+            || usize::from(creator.log_contents().contains("went quiet")),
+            1,
+            evict_bound,
+        ) >= 1,
         "creator never evicted the frozen peer\n{}",
         creator.log_tail(20),
     );
@@ -1664,28 +1783,29 @@ fn test_fixed_id_reconnect_admits_fast() {
 /// — reset `meshed`, re-assert the rendezvous hint, long probe — not
 /// just the weak periodic heal that the old code relied on (and which
 /// silently failed to rebuild a fully-collapsed mesh). Shortens
-/// `HEAL_STALL_THRESHOLD_SECS` so an 8s `SIGSTOP` trips it, then
+/// `--heal-stall-threshold-secs` so a 12s `SIGSTOP` trips it, then
 /// asserts both the hard-path log marker and that post-wake traffic
 /// flows again.
 #[test]
 fn test_resume_triggers_hard_rebootstrap() {
     // SHORT_EVICT + a shortened stall threshold. The threshold MUST
-    // exceed the fixed 15s `HEAL_INTERVAL_SECS` (else every normal
-    // ~15s heal tick false-positives as a resume and the node hard-
-    // reboots forever), and the freeze MUST exceed the threshold.
-    // 20s threshold < 30s freeze satisfies both; production is 60s.
-    const STALL_EVICT: [(&str, &str); 3] = [
+    // comfortably exceed the injected heal cadence (else every normal
+    // heal tick false-positives as a resume and the node hard-reboots
+    // forever), and the freeze MUST exceed the threshold. 3s cadence <
+    // 8s threshold < 12s freeze satisfies both; production is 15s/60s.
+    const STALL_EVICT: [(&str, &str); 4] = [
         ("--alive-timeout-secs", "3"),
         ("--sweep-interval-secs", "1"),
-        ("--heal-stall-threshold-secs", "20"),
+        ("--heal-interval-secs", "3"),
+        ("--heal-stall-threshold-secs", "8"),
     ];
     // Serialize against the other timing-sensitive tests (see `serial_guard`).
     let _serial = serial_guard();
-    // > stall threshold (20s), > evict window (3+1s).
-    let asleep = Duration::from_secs(30);
-    // tokio burst-fires the missed heal tick on SIGCONT; this is
-    // headroom for the hard path to run and log the marker.
-    let wake_settle = Duration::from_secs(20);
+    // > stall threshold (8s), > evict window (3+1s).
+    let asleep = Duration::from_secs(12);
+    // tokio burst-fires the missed heal tick on SIGCONT; ceiling for the
+    // hard path to run and log its markers (adaptive — polled below).
+    let wake_settle = Duration::from_secs(4 * TEST_HEAL_SECS + 8);
 
     let (creator, swarm) = Node::create_flags("itest", &STALL_EVICT);
     let sleeper = Node::join_flags(&swarm, "rb-sleeper", &STALL_EVICT);
@@ -1697,24 +1817,29 @@ fn test_resume_triggers_hard_rebootstrap() {
     sleeper.stop();
     std::thread::sleep(asleep);
     sleeper.cont();
-    std::thread::sleep(wake_settle);
 
-    // The hard-path marker is a `tracing` warn — it lands in the
+    // The hard-path markers are `tracing` output — they land in the
     // sink log (AHS_LOG_DIR), not the operator stdout/stderr capture.
-    let trace = trace_log(&swarm, &sleeper.nickname);
-    assert!(
-        trace.contains("hard re-bootstrap edge"),
-        "woken peer never took the hard re-bootstrap path\nsink tail:\n{}",
-        trace.lines().rev().take(30).collect::<Vec<_>>().join("\n"),
-    );
-    // The hard edge also fires the rendezvous-independent re-bridge: the
-    // sleeper linked the creator before freezing, so on resume it
-    // re-dials it directly rather than relying solely on a rendezvous
+    // "hard re-bootstrap edge" is the hard path itself;
+    // "rendezvous-independent re-bridge" proves the resume also re-dials
+    // known peers directly rather than relying solely on a rendezvous
     // graft that a stale connection (iroh-gossip#10) could stall.
+    let both_markers = || {
+        let trace = trace_log(&swarm, &sleeper.nickname);
+        usize::from(
+            trace.contains("hard re-bootstrap edge")
+                && trace.contains("rendezvous-independent re-bridge"),
+        )
+    };
     assert!(
-        trace.contains("rendezvous-independent re-bridge"),
-        "woken peer never re-dialed known peers on the hard edge\nsink tail:\n{}",
-        trace.lines().rev().take(30).collect::<Vec<_>>().join("\n"),
+        wait_until(both_markers, 1, wake_settle) >= 1,
+        "woken peer never took the hard re-bootstrap path (or skipped the re-bridge)\nsink tail:\n{}",
+        trace_log(&swarm, &sleeper.nickname)
+            .lines()
+            .rev()
+            .take(30)
+            .collect::<Vec<_>>()
+            .join("\n"),
     );
     let _ = cli_message(&swarm, &creator.nickname, "rb-post");
     assert_received(&sleeper, &creator.nickname, "rb-post", RECOVERY_TIMEOUT);
@@ -1726,21 +1851,23 @@ fn test_resume_triggers_hard_rebootstrap() {
 /// anti-entropy digest task must reconcile the gap.
 ///
 /// Not `SHORT_EVICT`: the peer must stay a member, so the production
-/// alive-timeout is required. The irreducible cost is the fixed 10s
-/// anti-entropy cycle; the adaptive probe pays only real latency.
+/// alive-timeout is required (`FAST_AE` shortens only the reconcile
+/// cadences). The irreducible cost is the iroh-bound
+/// `LINK_DEATH_FREEZE`; the adaptive probe pays only real latency.
 #[test]
 fn test_anti_entropy_set_convergence() {
     // Serialize against the other timing-sensitive tests (see `serial_guard`).
     let _serial = serial_guard();
     // Well under the ~90s alive-timeout: the peer stays a member.
-    let gap = Duration::from_secs(25);
-    // Several 10s anti-entropy cycles, plus a heal if the freeze
-    // dropped the gossip link. Adaptive — paid only if needed.
-    let reconcile = Duration::from_secs(90);
+    let gap = LINK_DEATH_FREEZE;
+    // Several anti-entropy cycles at the injected cadence, plus a heal
+    // if the freeze dropped the gossip link. Adaptive — paid only if
+    // needed.
+    let reconcile = Duration::from_secs(10 * TEST_AE_SECS + 6 * TEST_HEAL_SECS);
 
-    let (creator, swarm) = Node::create();
-    let alpha = Node::join(&swarm, "ae-alpha");
-    let bravo = Node::join(&swarm, "ae-bravo");
+    let (creator, swarm) = Node::create_flags("itest", &FAST_AE);
+    let alpha = Node::join_flags(&swarm, "ae-alpha", &FAST_AE);
+    let bravo = Node::join_flags(&swarm, "ae-bravo", &FAST_AE);
     assert!(creator.wait_ready(&swarm), "creator never ready");
     assert!(alpha.wait_ready(&swarm), "alpha never ready");
     assert!(bravo.wait_ready(&swarm), "bravo never ready");
@@ -1777,8 +1904,12 @@ fn test_large_gap_reconnect_replication() {
     let _serial = serial_guard();
     // Production alive-timeout (no `SHORT_EVICT`) so alpha stays a member
     // while frozen; a faster max-resend so the deep backfill converges
-    // inside the window.
-    let envs = [("--antientropy-max-resend", "128")];
+    // inside the window, plus the fast reconcile cadences.
+    let envs = [
+        ("--antientropy-max-resend", "128"),
+        ("--heal-interval-secs", "3"),
+        ("--antientropy-interval-secs", "2"),
+    ];
 
     let (creator, swarm) = Node::create_args("itest", &[], &envs);
     let alpha = Node::join_flags(&swarm, "lg-alpha", &envs);
@@ -1815,18 +1946,18 @@ fn test_large_gap_reconnect_replication() {
     );
     assert_eq!(bravo_total, TOTAL, "bravo never received the full burst");
 
-    // Hold the freeze past iroh's default direct-path idle timeout (15s) so
-    // alpha's link dies and the gap is genuinely missed — recovery then must go
+    // Hold the freeze past iroh's direct-path idle timeout so alpha's
+    // link dies and the gap is genuinely missed — recovery then must go
     // through anti-entropy rather than a buffered post-resume delivery.
-    std::thread::sleep(Duration::from_secs(25));
-    // Resume: anti-entropy must backfill the gap. Generous — a frozen link
-    // re-meshes on the 15s heal tick, then digests reconcile over a few
-    // 10s cycles.
+    std::thread::sleep(LINK_DEATH_FREEZE);
+    // Resume: anti-entropy must backfill the gap. A frozen link re-meshes
+    // on a heal tick, then digests reconcile over a few cycles at the
+    // injected cadences. Adaptive ceiling.
     alpha.cont();
     let final_count = wait_until(
         || alpha.count_distinct_from(&author, "lg-"),
         TOTAL,
-        Duration::from_secs(150),
+        Duration::from_secs(10 * TEST_AE_SECS + 6 * TEST_HEAL_SECS),
     );
     assert_eq!(
         final_count,
@@ -1849,7 +1980,11 @@ fn test_interior_gap_recovered_via_rolling_window() {
     const TOTAL: usize = OLD + GAP + TAIL;
     // Serialize against the other timing-sensitive tests (see `serial_guard`).
     let _serial = serial_guard();
-    let envs = [("--antientropy-max-resend", "128")];
+    let envs = [
+        ("--antientropy-max-resend", "128"),
+        ("--heal-interval-secs", "3"),
+        ("--antientropy-interval-secs", "2"),
+    ];
 
     let (creator, swarm) = Node::create_args("itest", &[], &envs);
     let alpha = Node::join_flags(&swarm, "ig-alpha", &envs);
@@ -1890,10 +2025,10 @@ fn test_interior_gap_recovered_via_rolling_window() {
         OLD + GAP,
         "bravo missed the gap batch"
     );
-    // Hold the freeze past iroh's default direct-path idle timeout (15s) so
-    // alpha's link dies and it genuinely misses the gap (recoverable only via
+    // Hold the freeze past iroh's direct-path idle timeout so alpha's
+    // link dies and it genuinely misses the gap (recoverable only via
     // anti-entropy, not a buffered post-resume delivery).
-    std::thread::sleep(Duration::from_secs(25));
+    std::thread::sleep(LINK_DEATH_FREEZE);
     // Resume and send the newer TAIL. alpha ends up holding OLD + TAIL with
     // the GAP strictly below its newest window, so the gap is recoverable
     // only via the rolling older window.
@@ -1902,10 +2037,12 @@ fn test_interior_gap_recovered_via_rolling_window() {
         let _ = cli_message_raw(&swarm, &creator.nickname, &format!("ig-{idx}"));
         idx += 1;
     }
+    // The rolling older window needs several cycles to sweep across the
+    // interior gap. Adaptive ceiling at the injected cadences.
     let final_count = wait_until(
         || alpha.count_distinct_from(&author, "ig-"),
         TOTAL,
-        Duration::from_secs(150),
+        Duration::from_secs(20 * TEST_AE_SECS + 6 * TEST_HEAL_SECS),
     );
     assert_eq!(
         final_count,
@@ -1928,6 +2065,7 @@ fn test_steady_state_no_resend_churn() {
     let envs = [
         ("RUST_LOG", "agent_gossip::gossip=debug"),
         ("--log-max-bytes", "0"), // no rotation, so the full log is one file
+        ("--antientropy-interval-secs", "2"),
     ];
 
     let (creator, swarm) = Node::create_args("itest", &[], &envs);
@@ -1969,11 +2107,12 @@ fn test_steady_state_no_resend_churn() {
             .map(|node| node.log_contents().matches("anti-entropy: resent").count())
             .sum()
     };
-    // Settle past the convergence-era resends.
-    std::thread::sleep(Duration::from_secs(25));
+    // Settle past the convergence-era resends, then observe ≥2 more
+    // anti-entropy cycles in a now-converged swarm. Inherent blind waits
+    // (negative assertion), derived from the injected cadence.
+    std::thread::sleep(Duration::from_secs(4 * TEST_AE_SECS));
     let before = resends();
-    // Two more anti-entropy cycles in a now-converged swarm.
-    std::thread::sleep(Duration::from_secs(25));
+    std::thread::sleep(Duration::from_secs(3 * TEST_AE_SECS));
     let after = resends();
     assert_eq!(
         before, after,
@@ -1989,7 +2128,12 @@ fn test_multi_round_throttled_backfill() {
     const GAP: usize = 40;
     // Serialize against the other timing-sensitive tests (see `serial_guard`).
     let _serial = serial_guard();
-    let envs = [("--antientropy-max-resend", "5")]; // tiny budget ⇒ many rounds
+    // Tiny budget ⇒ many rounds, at the fast reconcile cadences.
+    let envs = [
+        ("--antientropy-max-resend", "5"),
+        ("--heal-interval-secs", "3"),
+        ("--antientropy-interval-secs", "2"),
+    ];
 
     let (creator, swarm) = Node::create_args("itest", &[], &envs);
     let alpha = Node::join_flags(&swarm, "mr-alpha", &envs);
@@ -2010,14 +2154,16 @@ fn test_multi_round_throttled_backfill() {
         GAP,
         Duration::from_mins(1),
     );
-    // Hold the freeze past iroh's default direct-path idle timeout (15s) so the
-    // gap is genuinely missed and recovered through anti-entropy's throttled resend.
-    std::thread::sleep(Duration::from_secs(25));
+    // Hold the freeze past iroh's direct-path idle timeout so the gap is
+    // genuinely missed and recovered through anti-entropy's throttled resend.
+    std::thread::sleep(LINK_DEATH_FREEZE);
     alpha.cont();
+    // ~8 rounds (GAP 40 / budget 5) at the injected cadence, plus re-mesh
+    // margin. Adaptive ceiling.
     let final_count = wait_until(
         || alpha.count_distinct_from(&author, "mr-"),
         GAP,
-        Duration::from_secs(150),
+        Duration::from_secs(12 * TEST_AE_SECS + 6 * TEST_HEAL_SECS),
     );
     assert_eq!(
         final_count,
@@ -2128,9 +2274,10 @@ async fn nickname_reusable_after_peer_leaves() {
 // flag (not derived from the alive timeout) precisely so the short-evict
 // profile used across this suite never arms the watchdog by accident;
 // these tests opt in explicitly.
-const STARVE_EVICT: [(&str, &str); 3] = [
+const STARVE_EVICT: [(&str, &str); 4] = [
     ("--alive-timeout-secs", "3"),
     ("--sweep-interval-secs", "1"),
+    ("--heal-interval-secs", "3"),
     ("--starvation-threshold-secs", "6"),
 ];
 
@@ -2143,8 +2290,9 @@ const STARVE_EVICT: [(&str, &str); 3] = [
 fn test_starvation_watchdog_recovers_loudly() {
     // Serialize against the other timing-sensitive tests (see `serial_guard`).
     let _serial = serial_guard();
-    // Threshold (6s) + at most one heal tick (fixed 15s) + margin.
-    let detect = Duration::from_secs(45);
+    // Threshold (6s) + a couple of heal ticks at the injected cadence +
+    // margin. Adaptive — ceiling only.
+    let detect = Duration::from_secs(6 + 2 * TEST_HEAL_SECS + 8);
 
     let (creator, swarm) = Node::create_flags("itest", &STARVE_EVICT);
     let survivor = Node::join_flags(&swarm, "sv-alpha", &STARVE_EVICT);
@@ -2180,8 +2328,10 @@ fn test_lone_creator_never_trips_starvation() {
     let _serial = serial_guard();
     let (creator, swarm) = Node::create_flags("itest", &STARVE_EVICT);
     assert!(creator.wait_ready(&swarm), "creator never ready");
-    // Threshold (6s) + two heal ticks (15s each) of opportunity to misfire.
-    std::thread::sleep(Duration::from_secs(32));
+    // Threshold (6s) + several heal ticks of opportunity to misfire —
+    // an inherent blind wait (negative assertion), derived from the
+    // injected cadence.
+    std::thread::sleep(Duration::from_secs(6 + 3 * TEST_HEAL_SECS));
     assert!(
         !creator.log_contents().contains("mesh starvation"),
         "lone creator false-tripped the starvation watchdog\n{}",
@@ -2197,20 +2347,22 @@ fn test_lone_creator_never_trips_starvation() {
 /// deliver again once the storm passes.
 #[test]
 fn test_flap_storm_all_rosters_recover() {
-    const CAP2_STARVE: [(&str, &str); 4] = [
+    const CAP2_STARVE: [(&str, &str); 5] = [
         ("--alive-timeout-secs", "3"),
         ("--sweep-interval-secs", "1"),
+        ("--heal-interval-secs", "3"),
         ("--starvation-threshold-secs", "6"),
         ("--max-peers", "2"),
     ];
     // Serialize against the other timing-sensitive tests (see `serial_guard`).
     let _serial = serial_guard();
     // Stop window: past the 3+1s evict so victims get swept; resume gap
-    // long enough for partial re-meshing before the next round hits.
+    // a couple of heal ticks so partial re-meshing happens before the
+    // next round hits.
     let stop_window = Duration::from_secs(8);
-    let resume_gap = Duration::from_secs(5);
-    // Recovery bound: starvation threshold (6s) + a couple of fixed 15s
-    // heal ticks for re-bridge/re-announce to propagate, plus margin.
+    let resume_gap = Duration::from_secs(2 * TEST_HEAL_SECS);
+    // Recovery bound: starvation threshold (6s) + a couple of heal ticks
+    // for re-bridge/re-announce to propagate, plus margin.
     let recover = RECOVERY_TIMEOUT;
 
     let (creator, swarm) = Node::create_flags("itest", &CAP2_STARVE);
@@ -2246,8 +2398,9 @@ fn test_flap_storm_all_rosters_recover() {
         std::thread::sleep(resume_gap);
     }
 
-    // Settle, then the invariant: a fresh broadcast reaches EVERY node.
-    std::thread::sleep(Duration::from_secs(10));
+    // Settle a couple of heal ticks, then the invariant: a fresh
+    // broadcast reaches EVERY node.
+    std::thread::sleep(Duration::from_secs(2 * TEST_HEAL_SECS));
     let _ = cli_message(&swarm, &creator.nickname, "fs-probe");
     for joiner in &joiners {
         assert_received(joiner, &creator.nickname, "fs-probe", recover);
