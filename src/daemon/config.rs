@@ -234,6 +234,11 @@ pub(crate) struct EventLoopConfig {
     pub cohost: CoHostPolicy,
     /// When set, the daemon writes peer count changes to this file.
     pub state_file: Option<PathBuf>,
+    /// `--spool DIR`: mirror every outbound frame into `DIR/<swarm-prefix>/` and
+    /// ingest frames other daemons write there. The event loop installs the
+    /// spool (`transport::spool::install`), wraps the gossip sender to tee, and
+    /// drains the inbound files into `gossip::ingest`. `None` disables it.
+    pub spool: Option<PathBuf>,
     /// Inbound unicast frames from the `UNICAST_ALPN` acceptor. The event loop
     /// drains this into `gossip::ingest` (the same path as gossip), so both
     /// transports share signature-verify + dedup. Built in `setup_swarm`.

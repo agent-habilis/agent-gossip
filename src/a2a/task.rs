@@ -20,8 +20,8 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
+use crate::transport::SwarmSender;
 use bytes::Bytes;
-use iroh_gossip::api::GossipSender;
 
 use crate::daemon::state::EventLoopState;
 use crate::output;
@@ -413,7 +413,7 @@ fn advance(rec: &mut TaskRecord, kind: LegKind, mine: bool) {
 /// analogue of [`crate::lifecycle::heartbeat::tick_sweep`].
 pub(crate) async fn tick_task_sweep(
     state: &mut EventLoopState,
-    sender: &GossipSender,
+    sender: &SwarmSender,
     swarm: &SwarmId,
     author: &Nickname,
     out: &output::Output,
@@ -476,7 +476,7 @@ pub(crate) async fn tick_task_sweep(
 /// [`TaskRecord::should_keepalive`].
 pub(crate) async fn tick_task_keepalive(
     state: &mut EventLoopState,
-    sender: &GossipSender,
+    sender: &SwarmSender,
     swarm: &SwarmId,
     author: &Nickname,
 ) {
@@ -520,7 +520,7 @@ pub(crate) async fn tick_task_keepalive(
 /// like any other plumbing broadcast — the payloads are small literals.
 async fn broadcast_status(
     state: &EventLoopState,
-    sender: &GossipSender,
+    sender: &SwarmSender,
     swarm: &SwarmId,
     author: &Nickname,
     peer: &Nickname,

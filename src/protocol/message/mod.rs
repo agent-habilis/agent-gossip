@@ -254,6 +254,37 @@ impl Channel {
     }
 }
 
+impl MessageKind {
+    /// Whether a frame of this kind is worth mirroring to the filesystem spool
+    /// (`crate::transport::spool`). True for the **durable** content a late or
+    /// offline joiner actually needs — chat, task legs, and the shared
+    /// `state`/`meta` docs — which is exactly the set anti-entropy re-serves.
+    /// **Ephemeral plumbing** is skipped: persisting a `Presence`/`PeerInfo`
+    /// frame would resurrect a departed peer when the file is ingested later
+    /// (sneakernet, hours on), and digests / ping-pong / link-state / directed
+    /// RPC are worthless on disk (they coordinate live peers, not history).
+    /// Exhaustive on purpose — a new kind must classify itself here.
+    pub(crate) fn is_spoolable(&self) -> bool {
+        match self {
+            MessageKind::A2aMsg
+            | MessageKind::A2aStatus { .. }
+            | MessageKind::A2aArtifact { .. }
+            | MessageKind::State
+            | MessageKind::Meta => true,
+            MessageKind::Presence { .. }
+            | MessageKind::PeerInfo
+            | MessageKind::Digest
+            | MessageKind::Ping
+            | MessageKind::Pong { .. }
+            | MessageKind::A2aReq { .. }
+            | MessageKind::A2aResp { .. }
+            | MessageKind::StateDigest
+            | MessageKind::MetaDigest
+            | MessageKind::LinkState => false,
+        }
+    }
+}
+
 impl fmt::Display for MessageKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

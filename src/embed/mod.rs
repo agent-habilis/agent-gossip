@@ -48,6 +48,9 @@ pub struct JoinConfig {
     /// Password for a password-protected id. Verified locally against the
     /// id's verifier before any network; required iff the id carries one.
     pub password: Option<String>,
+    /// Mirror frames into this shared directory (and ingest frames peers write
+    /// there) — the filesystem spool. `None` disables it.
+    pub spool: Option<std::path::PathBuf>,
 }
 
 impl JoinConfig {
@@ -62,6 +65,7 @@ impl JoinConfig {
             nickname: None,
             max_peers: GOSSIP_ACTIVE_VIEW_CAPACITY,
             password: None,
+            spool: None,
         }
     }
 }
@@ -79,6 +83,9 @@ pub struct TopicConfig {
     pub nickname: Option<Nickname>,
     /// Max direct peer connections before gossip relays the rest.
     pub max_peers: usize,
+    /// Mirror frames into this shared directory (and ingest frames peers write
+    /// there) — the filesystem spool. `None` disables it.
+    pub spool: Option<std::path::PathBuf>,
 }
 
 impl TopicConfig {
@@ -89,6 +96,7 @@ impl TopicConfig {
             string,
             nickname: None,
             max_peers: GOSSIP_ACTIVE_VIEW_CAPACITY,
+            spool: None,
         }
     }
 }
@@ -126,6 +134,9 @@ pub struct CreateConfig {
     /// minted id (joiners must present the password), and every derivation
     /// switches onto the Argon2id-stretched key.
     pub password: Option<String>,
+    /// Mirror frames into this shared directory (and ingest frames peers write
+    /// there) — the filesystem spool. `None` disables it.
+    pub spool: Option<std::path::PathBuf>,
 }
 
 impl CreateConfig {
@@ -143,6 +154,7 @@ impl CreateConfig {
             directory: None,
             max_peers: GOSSIP_ACTIVE_VIEW_CAPACITY,
             password: None,
+            spool: None,
         }
     }
 }
@@ -266,6 +278,7 @@ async fn create_setup(
             interactive: false,
             max_peers,
             state_file: None,
+            spool: cfg.spool,
             output,
             drift: None,
             a2a_serve: None,
@@ -294,7 +307,7 @@ async fn join_setup(cfg: JoinConfig, output: Output) -> Result<EventLoopConfig, 
     }
     .resolve()
     .map_err(JoinError::Resolve)?;
-    resolved_setup(resolved, cfg.max_peers, output).await
+    resolved_setup(resolved, cfg.max_peers, cfg.spool, output).await
 }
 
 /// Resolve + set up a topic (a string-derived public swarm).
@@ -309,7 +322,7 @@ async fn topic_setup(cfg: TopicConfig, output: Output) -> Result<EventLoopConfig
     }
     .resolve()
     .map_err(JoinError::Resolve)?;
-    resolved_setup(resolved, cfg.max_peers, output).await
+    resolved_setup(resolved, cfg.max_peers, cfg.spool, output).await
 }
 
 /// The shared tail of [`join_setup`] / [`topic_setup`]: run `setup_swarm` for
@@ -317,6 +330,7 @@ async fn topic_setup(cfg: TopicConfig, output: Output) -> Result<EventLoopConfig
 async fn resolved_setup(
     resolved: Resolved,
     max_peers: usize,
+    spool: Option<std::path::PathBuf>,
     output: Output,
 ) -> Result<EventLoopConfig, JoinError> {
     let Resolved { kind, author, .. } = resolved;
@@ -327,6 +341,7 @@ async fn resolved_setup(
             interactive: false,
             max_peers,
             state_file: None,
+            spool,
             output,
             drift: None,
             a2a_serve: None,
@@ -806,6 +821,7 @@ impl SwarmSession {
                 interactive: false,
                 max_peers: GOSSIP_ACTIVE_VIEW_CAPACITY,
                 state_file: None,
+                spool: None,
                 output,
                 drift: None,
                 a2a_serve: None,

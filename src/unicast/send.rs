@@ -7,11 +7,11 @@
 use anyhow::Result;
 use bytes::Bytes;
 use iroh::EndpointId;
-use iroh_gossip::api::GossipSender;
 
 use crate::daemon::state::EventLoopState;
 use crate::protocol::message::sole_addressee;
 use crate::protocol::{Message, Nickname};
+use crate::transport::SwarmSender;
 use crate::util::tuning;
 
 /// Route one already-signed, already-serialized message. `bytes` MUST be
@@ -33,7 +33,7 @@ pub(crate) async fn deliver(
     msg: &Message,
     bytes: Bytes,
     state: &EventLoopState,
-    sender: &GossipSender,
+    sender: &SwarmSender,
 ) -> Result<()> {
     // The transport decision is pure (see `route`); this function just runs it.
     match route(
@@ -48,7 +48,9 @@ pub(crate) async fn deliver(
         Route::UnicastPreferred(eid) => {
             let pool = state.unicast_pool.clone();
             if pool.send_if_warm(eid, bytes.clone()).await {
-                // Sent point-to-point; the flood is avoided.
+                // Sent point-to-point; the flood is avoided. This frame skipped
+                // `broadcast`'s tee, so mirror it to the spool explicitly.
+                sender.spool(&bytes);
                 Ok(())
             } else {
                 // Cold: warm for next time, ride gossip now.
@@ -59,11 +61,19 @@ pub(crate) async fn deliver(
         Route::UnicastOnly(eid) => {
             let pool = state.unicast_pool.clone();
             if pool.send_if_warm(eid, bytes.clone()).await {
+                // Sent point-to-point; mirror to the spool (it bypassed
+                // `broadcast`'s tee).
+                sender.spool(&bytes);
                 Ok(())
             } else {
-                // No gossip fallback under this policy — dial inline; a failure
-                // surfaces rather than silently flooding.
-                pool.dial_and_send(eid, bytes).await
+                // No gossip fallback under this policy — dial inline. Mirror to
+                // the spool only if the send succeeded, so a returned error
+                // still means the frame reached no transport.
+                let result = pool.dial_and_send(eid, bytes.clone()).await;
+                if result.is_ok() {
+                    sender.spool(&bytes);
+                }
+                result
             }
         }
         Route::Undeliverable => Err(anyhow::anyhow!(
@@ -162,7 +172,7 @@ async fn deliver_over_circuit(
     target: EndpointId,
     bytes: Bytes,
     state: &EventLoopState,
-    sender: &GossipSender,
+    sender: &SwarmSender,
 ) -> Result<()> {
     let Some(endpoint) = state.unicast_pool.endpoint() else {
         return broadcast(sender, bytes).await; // detached pool: gossip
@@ -178,7 +188,11 @@ async fn deliver_over_circuit(
     for path in &paths {
         let circuit_id: u64 = rand::random();
         match crate::circuit::open_circuit(&endpoint, circuit_id, path, bytes.as_ref()).await {
-            Ok(()) => return Ok(()),
+            Ok(()) => {
+                // Circuit-delivered — bypassed `broadcast`'s tee, so mirror now.
+                sender.spool(&bytes);
+                return Ok(());
+            }
             Err(error) => tracing::debug!(
                 target: crate::circuit::LOG_TARGET,
                 %error,
@@ -194,7 +208,7 @@ async fn deliver_over_circuit(
     broadcast(sender, bytes).await
 }
 
-async fn broadcast(sender: &GossipSender, bytes: Bytes) -> Result<()> {
+async fn broadcast(sender: &SwarmSender, bytes: Bytes) -> Result<()> {
     sender
         .broadcast(bytes)
         .await

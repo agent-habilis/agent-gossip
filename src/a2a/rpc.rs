@@ -311,7 +311,7 @@ async fn send_message(
     swarm: &SwarmId,
     author: &Nickname,
     state: &mut EventLoopState,
-    sender: &iroh_gossip::api::GossipSender,
+    sender: &crate::transport::SwarmSender,
     output: &output::Output,
 ) -> Result<Value, RpcError> {
     if to.is_some() {
