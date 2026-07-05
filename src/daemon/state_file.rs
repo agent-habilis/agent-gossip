@@ -1,10 +1,10 @@
 //! Session state file — the agent-gossip daemon writes its
 //! view of the swarm into this file so external tools (e.g. a shell
-//! statusline) and the `/swarm:*` skills can render the current swarm,
+//! statusline) and the `/gossip:*` skills can render the current swarm,
 //! nickname, and participant count with a plain local file read. No
 //! IPC, no gossip, no subprocess.
 //!
-//! The daemon is the **sole writer**: the `/swarm:*` skills are
+//! The daemon is the **sole writer**: the `/gossip:*` skills are
 //! read-only and never touch this file. The daemon owns every key —
 //! `swarm`, `name`, `nickname`, `pid`, `ready`, `participant_count`,
 //! `last_updated` — and writes a fresh, complete document on each update

@@ -1,4 +1,4 @@
-AHSW(1)                      Agent Habilis Swarm                       AHSW(1)
+AGENT-GOSSIP(1)              Agent Habilis Swarm               AGENT-GOSSIP(1)
 
 
 
@@ -484,8 +484,8 @@ COMMANDS
               is swarm size, not the array length — the same field the MCP
               swarm_info result and the --state-file use). reach is "direct"
               when a live gossip link to that peer exists, else "gossip"
-              (relayed). Backs the /swarm:handover and /swarm:task target
-              pickers, nickname validation, and the /swarm:status roster.
+              (relayed). Backs the /gossip:handover and /gossip:task target
+              pickers, nickname validation, and the /gossip:status roster.
               The roster does not carry model/harness/host — those are swarm
               metadata each agent self-reports into the meta channel; read
               them with meta get under /peers/<nickname> (see "SHARED STATE").
@@ -807,7 +807,7 @@ COMMANDS
               while such an app sits idle may see a partial screen until it
               repaints.
 
-              The spawned shell carries AHSW_SH=<sh-prefix> in its environment
+              The spawned shell carries AGENT_GOSSIP_SH=<sh-prefix> in its environment
               (the first 16 characters of the sharer's endpoint id — public,
               not the ticket), so anything inside — a prompt segment, a script —
               can detect it is running inside a shared shell. The same prefix
@@ -817,7 +817,7 @@ COMMANDS
               atomically replaced whenever a viewer attaches or detaches and
               removed when the broadcast ends (`swarm` appears only when the
               session was started with --swarm). The sharer is the sole writer;
-              read it, don't touch it. Note agent-gossip never READS AHSW_* from the
+              read it, don't touch it. Note agent-gossip never READS AGENT_GOSSIP_* from the
               environment — the variable is informational, outbound only. A
               detached viewer is noticed lazily: the count drops on the next
               output or resize, so an idle shell can show a stale count briefly.
@@ -971,7 +971,7 @@ COMMANDS
               which agents share a box. /peers is an object keyed by nickname,
               and a merge writes only its own key, so each agent owns its own
               entry and never clobbers another's (set the key to null to clear
-              it). The /swarm:status roster reads model/harness/host from here.
+              it). The /gossip:status roster reads model/harness/host from here.
               See state merge / state get above for the full semantics — they
               apply verbatim to meta.
 
@@ -1026,9 +1026,9 @@ COMMANDS
 
        plug [--agent claude-code|pi|generic|cursor]
               Install the swarm integrations into your agents — the Claude
-              Code plugin (~/.claude/skills/swarm), the pi extension, the
-              generic ~/.agents/skills/swarm skill, and the same skill for
-              Cursor (~/.cursor/skills/swarm). The artifacts are embedded
+              Code plugin (~/.claude/skills/gossip), the pi extension, the
+              generic ~/.agents/skills/gossip skill, and the same skill for
+              Cursor (~/.cursor/skills/gossip). The artifacts are embedded
               in the binary, so no repo checkout is needed. Writes immediately
               (reversible with unplug). With no --agent, the detected agents
               are used; repeat --agent to select several. An agent that is
@@ -1637,4 +1637,4 @@ SEE ALSO
 
 
 
-agent-gossip                                                    AHSW(1)
+agent-gossip                                                   AGENT-GOSSIP(1)

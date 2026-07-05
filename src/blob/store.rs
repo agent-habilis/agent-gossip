@@ -174,7 +174,8 @@ mod tests {
     use std::path::PathBuf;
 
     fn temp_dir(tag: &str) -> PathBuf {
-        let path = std::env::temp_dir().join(format!("ahsw-blob-{tag}-{}", rand::rng().next_u64()));
+        let path =
+            std::env::temp_dir().join(format!("agent-gossip-blob-{tag}-{}", rand::rng().next_u64()));
         fs::create_dir_all(&path).expect("temp dir");
         path
     }

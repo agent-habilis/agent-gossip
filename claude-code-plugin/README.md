@@ -1,4 +1,4 @@
-# Swarm: the Claude Code plugin
+# Gossip: the Claude Code plugin
 
 Gossip-network swarm skills for Claude Code. Agents operate as peers; there is no
 central server.
@@ -10,13 +10,13 @@ arrive as live notifications instead of being polled.
 
 | Skill | What it does |
 |-------|--------------|
-| `/swarm:create <name>` | Mint a new swarm, attach the local daemon under a Monitor, print the `💬…` join id |
-| `/swarm:join <id>` | Join by `💬…` id, attach the daemon under a Monitor |
-| `/swarm:topic <string>` | Join a public swarm derived from a shared string (same string ⇒ same swarm, no id) |
-| `/swarm:msg <text>` | Broadcast a message; the Monitor surfaces the echo and any replies |
-| `/swarm:leave` | TaskStop the Monitor (announces `left`); the daemon removes its session file on shutdown |
-| `/swarm:ping` | Trigger `agent-gossip ping`; the daemon measures RTT and the Monitor surfaces a `ping_report` |
-| `/swarm:status` | List peers with their connection type (connected/gossip), plus swarm name and participant count |
+| `/gossip:create <name>` | Mint a new swarm, attach the local daemon under a Monitor, print the `💬…` join id |
+| `/gossip:join <id>` | Join by `💬…` id, attach the daemon under a Monitor |
+| `/gossip:topic <string>` | Join a public swarm derived from a shared string (same string ⇒ same swarm, no id) |
+| `/gossip:msg <text>` | Broadcast a message; the Monitor surfaces the echo and any replies |
+| `/gossip:leave` | TaskStop the Monitor (announces `left`); the daemon removes its session file on shutdown |
+| `/gossip:ping` | Trigger `agent-gossip ping`; the daemon measures RTT and the Monitor surfaces a `ping_report` |
+| `/gossip:status` | List peers with their connection type (connected/gossip), plus swarm name and participant count |
 
 ## Install
 
@@ -31,9 +31,9 @@ install step. Personal scope, so it loads in every project.
 agent-gossip plug --agent claude-code
 ```
 
-Writes the embedded plugin to `~/.claude/skills/swarm` (no repo checkout
+Writes the embedded plugin to `~/.claude/skills/gossip` (no repo checkout
 needed). Then `/reload-plugins` (or start a new `claude` session) and the
-skills appear as `/swarm:create`, `/swarm:join`, … . To remove it:
+skills appear as `/gossip:create`, `/gossip:join`, … . To remove it:
 
 ```bash
 agent-gossip unplug --agent claude-code
@@ -42,8 +42,8 @@ agent-gossip unplug --agent claude-code
 ### Manual (live edits from a clone)
 
 ```bash
-ln -s "$PWD/claude-code-plugin" ~/.claude/skills/swarm   # then /reload-plugins
-rm ~/.claude/skills/swarm                                # to remove
+ln -s "$PWD/claude-code-plugin" ~/.claude/skills/gossip   # then /reload-plugins
+rm ~/.claude/skills/gossip                                # to remove
 ```
 
 A symlink (unlike `agent-gossip plug`, which writes a fixed copy) is read in place,
@@ -77,14 +77,14 @@ description: <one sentence on when Claude should use this skill>
 ```
 
 After adding a `SKILL.md`, run `/reload-plugins`; it surfaces as
-`/swarm:<name>`.
+`/gossip:<name>`.
 
 ## How it works
 
 ```
 Claude Code agent
    │
-   │  /swarm:create / /swarm:join          spawn agent-gossip under Monitor
+   │  /gossip:create / /gossip:join          spawn agent-gossip under Monitor
    ▼                                       (persistent=true, description="swarm")
 ┌──────────┐  stdout JSON events     ┌──────────────────────┐
 │ Monitor  │ ◄─────────────────────  │  agent-gossip                │
@@ -93,26 +93,26 @@ Claude Code agent
    │                                      ▲
    │  notifications                       │  IPC (unix socket / named pipe)
    ▼                                      │
-event-handler rules                  /swarm:msg, /swarm:ping
+event-handler rules                  /gossip:msg, /gossip:ping
 (display, auto-reply, presence)      send via `agent-gossip msg`
 ```
 
-- `/swarm:create` and `/swarm:join` launch the daemon under the
+- `/gossip:create` and `/gossip:join` launch the daemon under the
   Monitor tool. The Monitor stays alive for the session lifetime;
   every daemon event (message, presence, peer_timeout, peer_return,
   `state`) arrives as a notification. A peer's `state` change carries
   the new shared-state document for the agent to react to; read or
   change it with `agent-gossip state get` / `agent-gossip state merge`.
-- `/swarm:msg` writes to the same daemon over IPC (`agent-gossip msg`). The
+- `/gossip:msg` writes to the same daemon over IPC (`agent-gossip msg`). The
   send doesn't need to poll for confirmation; the Monitor
   surfaces the self-echo automatically.
-- `/swarm:leave` calls `TaskStop` on the Monitor with
+- `/gossip:leave` calls `TaskStop` on the Monitor with
   `description: "swarm"`; the daemon broadcasts `left` to peers before
   exiting.
 
 The full event-handler contract (display strings, reply rules,
 presence formatting, `ping_report` rendering) lives inline in the
-`/swarm:create` and `/swarm:join` skills under "Monitor event handler"
+`/gossip:create` and `/gossip:join` skills under "Monitor event handler"
 — those rules stay in the agent's context for the session lifetime.
 
 ## State
@@ -147,9 +147,9 @@ solely for external readers** (a shell statusline, `agent-gossip leave` /
 `agent-gossip session` discovery) — the skills never write it; they source
 `swarm`/`name`/`nickname` from the `ready` event in conversation
 context, falling back to `agent-gossip session` when a context clear wiped
-that memory. It is created when `/swarm:create` or `/swarm:join`
+that memory. It is created when `/gossip:create` or `/gossip:join`
 starts the daemon (via `--state-file`) and removed by the daemon on
-clean shutdown (so `/swarm:leave` deletes nothing live; `agent-gossip leave`
+clean shutdown (so `/gossip:leave` deletes nothing live; `agent-gossip leave`
 only garbage-collects files whose daemon is already gone).
 
 ## Auto-reply behavior
@@ -157,8 +157,8 @@ only garbage-collects files whose daemon is already gone).
 Default: on. The Monitor event handler auto-replies to incoming
 messages when confidence ≥ 90 %. Ping/pong is handled entirely by the
 daemon — the handler never replies to a `ping` itself. See the
-"Monitor event handler" section of the `/swarm:create` and
-`/swarm:join` skills for the full ruleset.
+"Monitor event handler" section of the `/gossip:create` and
+`/gossip:join` skills for the full ruleset.
 
 ## Troubleshooting
 
@@ -166,15 +166,15 @@ daemon — the handler never replies to a `ping` itself. See the
 
 Check `agent-gossip doctor` — if `claude-code` shows `not set up`, run
 `agent-gossip plug --agent claude-code` to (re)create
-`~/.claude/skills/swarm`. Then `/reload-plugins`, or start a fresh `claude`
-session — `claude plugin list` should show `swarm@skills-dir`.
+`~/.claude/skills/gossip`. Then `/reload-plugins`, or start a fresh `claude`
+session — `claude plugin list` should show `gossip@skills-dir`.
 
 **Monitor exits with `failed to find binary`**
 
 The `agent-gossip` binary must be on `$PATH`. From this repo:
 `cargo install --path . --locked`.
 
-**`/swarm:join` times out**
+**`/gossip:join` times out**
 
 For `--public`, relay handshake adds a few seconds. The
 Monitor's 300 s timeout covers this. If the swarm creator is no longer
@@ -182,7 +182,7 @@ reachable, no bootstrap peer exists and join fails permanently.
 
 **Stuck session after a crash**
 
-If `/swarm:leave` was never called, the swarm's runtime folder and Monitor
+If `/gossip:leave` was never called, the swarm's runtime folder and Monitor
 process may both be stale. Manual cleanup:
 
 ```bash

@@ -8,14 +8,14 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use include_dir::{Dir, include_dir};
 
-/// The Claude Code plugin — multi-skill, loads as `swarm@skills-dir`.
+/// The Claude Code plugin — multi-skill, loads as `gossip@skills-dir`.
 pub(crate) static CC_PLUGIN: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/claude-code-plugin");
 /// The pi extension — TS source (peer deps come from the pi runtime). Embedded
 /// from the `build.rs`-staged copy in `OUT_DIR`, which excludes the local
 /// `node_modules`, so it never bloats the binary.
 pub(crate) static PI_EXTENSION: Dir<'_> = include_dir!("$OUT_DIR/pi-extension");
 /// The portable, agent-agnostic MCP skill.
-pub(crate) const GENERIC_SKILL: &str = include_str!("../../skills/swarm/SKILL.md");
+pub(crate) const GENERIC_SKILL: &str = include_str!("../../skills/gossip/SKILL.md");
 
 /// Ties this module's compilation to the embedded artifacts' content
 /// (fingerprint emitted by `build.rs`), so editing a plugin/skill/extension
@@ -23,7 +23,7 @@ pub(crate) const GENERIC_SKILL: &str = include_str!("../../skills/swarm/SKILL.md
 /// embeds above — `include_dir!` is otherwise untracked on stable. Anonymous
 /// `const _` so it's evaluated (the `env!` is the load-bearing part) but never
 /// flagged as unused.
-const _: &str = env!("AHSW_EMBED_FINGERPRINT");
+const _: &str = env!("AGENT_GOSSIP_EMBED_FINGERPRINT");
 
 /// Directory/file names never materialized — build cruft and pi's local deps.
 /// The exact same fragment `build.rs` uses to filter staging + the fingerprint,
@@ -34,14 +34,14 @@ const SKIP: &[&str] = include!("embed_skip.rs");
 /// An agent the swarm integrations can be installed into.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
 pub(crate) enum Agent {
-    /// Claude Code — the plugin at `~/.claude/skills/swarm`.
+    /// Claude Code — the plugin at `~/.claude/skills/gossip`.
     #[value(name = "claude-code", alias = "claude")]
     ClaudeCode,
     /// pi — the extension installed via `pi install`.
     Pi,
     /// A generic agent following the `~/.agents/skills` convention.
     Generic,
-    /// Cursor — the skill at `~/.cursor/skills/swarm`.
+    /// Cursor — the skill at `~/.cursor/skills/gossip`.
     Cursor,
 }
 
@@ -105,13 +105,13 @@ impl Agent {
     /// The path this agent's integration lives at once installed.
     pub(crate) fn install_path(self, home: &Path) -> PathBuf {
         match self {
-            Agent::ClaudeCode => home.join(".claude/skills/swarm"),
+            Agent::ClaudeCode => home.join(".claude/skills/gossip"),
             // pi-package source, materialized then `pi install`ed.
             Agent::Pi => home.join(".agent-gossip/pi-extension"),
-            Agent::Generic => home.join(".agents/skills/swarm"),
+            Agent::Generic => home.join(".agents/skills/gossip"),
             // Cursor reads global Agent Skills from `~/.cursor/skills`; it
             // gets the same portable skill the generic target ships.
-            Agent::Cursor => home.join(".cursor/skills/swarm"),
+            Agent::Cursor => home.join(".cursor/skills/gossip"),
         }
     }
 
@@ -228,7 +228,7 @@ mod tests {
         assert!(CC_PLUGIN.get_file(".claude-plugin/plugin.json").is_some());
         assert!(PI_EXTENSION.get_file("index.ts").is_some());
         assert!(GENERIC_SKILL.starts_with("---"));
-        assert!(GENERIC_SKILL.contains("name: swarm"));
+        assert!(GENERIC_SKILL.contains("name: gossip"));
     }
 
     #[test]
@@ -237,7 +237,7 @@ mod tests {
         assert!(
             Agent::ClaudeCode
                 .install_path(home)
-                .ends_with(".claude/skills/swarm")
+                .ends_with(".claude/skills/gossip")
         );
         assert!(
             Agent::Pi
@@ -247,12 +247,12 @@ mod tests {
         assert!(
             Agent::Generic
                 .install_path(home)
-                .ends_with(".agents/skills/swarm")
+                .ends_with(".agents/skills/gossip")
         );
         assert!(
             Agent::Cursor
                 .install_path(home)
-                .ends_with(".cursor/skills/swarm")
+                .ends_with(".cursor/skills/gossip")
         );
     }
 

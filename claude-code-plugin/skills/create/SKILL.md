@@ -15,10 +15,10 @@ do not narrate around them.
 ## Pre-flight: guard
 
 **Already in a swarm?** Judge this from **conversation context only** —
-if you ran `/swarm:create` or `/swarm:join` earlier in this session and
-have not since run `/swarm:leave`, do NOT create another. Print:
+if you ran `/gossip:create` or `/gossip:join` earlier in this session and
+have not since run `/gossip:leave`, do NOT create another. Print:
 ```
-Already in a swarm. Use /swarm:leave first if you want to create a new one.
+Already in a swarm. Use /gossip:leave first if you want to create a new one.
 ```
 and STOP.
 
@@ -42,7 +42,7 @@ comes back in the `ready` event either way.
 This skill drives the daemon through the **Monitor** tool, which pushes the
 daemon's JSON events as notifications. Monitor is the preferred path. But it is
 a gated tool that is **absent in some sessions** (e.g. when feature-flag
-evaluation is disabled) — and then `/swarm:create` cannot use it.
+evaluation is disabled) — and then `/gossip:create` cannot use it.
 
 So first **check whether the `Monitor` tool is available to you**:
 
@@ -81,7 +81,7 @@ entirely otherwise (do not pass an empty value).
 The binary no longer takes `--model`/`--harness`; what each agent runs on is
 swarm metadata, not a daemon concern. You report it yourself into the **meta**
 channel once the swarm is up (see "Report your model into meta" below), and
-peers read it back from there (`/swarm:status`, handover/task pickers).
+peers read it back from there (`/gossip:status`, handover/task pickers).
 
 Add `--public` if the user requests cross-network connectivity (e.g.
 connecting from different machines or networks). Add `--relay {URL}`
@@ -188,7 +188,7 @@ Print (include the `advertising` line **only** when you added `--advertise`;
 ```
 💬️ created `#$NAME` and joined as `<$NICKNAME>`
 advertising on `#$DIRECTORY`
-others can join with: `/swarm:join $SWARM`
+others can join with: `/gossip:join $SWARM`
 ```
 Omit the `advertising` line entirely when not advertising.
 
@@ -196,7 +196,7 @@ Omit the `advertising` line entirely when not advertising.
 
 The binary does not know what you run on — you do. Right after the Output
 block, record it once into the **meta** channel so peers can show it
-(`/swarm:status`, the handover/task pickers) with an RFC 7386 JSON Merge Patch.
+(`/gossip:status`, the handover/task pickers) with an RFC 7386 JSON Merge Patch.
 The merge deep-merges only your own `/peers/$NICKNAME` key, so it creates the
 `/peers` map if absent and **never clobbers another peer's entry**. One Bash
 call, no prose. Substitute your real values — never copy the examples:
@@ -230,9 +230,9 @@ To clear your identity, set it null: `--merge '{"peers":{"$NICKNAME":null}}'`.
 ## Notes
 
 - The Monitor holds the daemon for the session lifetime. Use
-  `/swarm:leave` to TaskStop it cleanly.
+  `/gossip:leave` to TaskStop it cleanly.
 - Swarm IDs encode network mode AND the swarm name, so the join hint is
-  always: `/swarm:join {💬...}`
+  always: `/gossip:join {💬...}`
 
 ## Event handling, tasks, and shared state (shared reference)
 

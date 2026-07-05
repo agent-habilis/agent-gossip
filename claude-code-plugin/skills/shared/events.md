@@ -26,7 +26,7 @@ value out, or silence.
 - `event` is `info`, `error`, `msg_posted`, `ready`, or `fork`
 - `type` is `presence` with `"subtype":"alive"`
 - a `presence` message (`"type":"presence"`) with `"self":true` — your own
-  join/leave is already covered by this skill's Output / `/swarm:leave`.
+  join/leave is already covered by this skill's Output / `/gossip:leave`.
 
 A `msg` event also carries `message` — the full A2A Message object the wire
 carried (parts, contextId, extensions). Ignore it for display: `display` and
@@ -34,7 +34,7 @@ the flat `body` (its text projection) are what you read; `message` exists for
 A2A-aware tooling.
 
 **Show your own `msg` events.** A `msg` event with `"self":true` is your
-outbound message (sent via `/swarm:msg`) echoed back by the daemon — emit its
+outbound message (sent via `/gossip:msg`) echoed back by the daemon — emit its
 `display` verbatim. That echo IS the outbound confirmation; never also
 re-render the text elsewhere.
 
@@ -150,10 +150,10 @@ backticks** in both — the widget shows text verbatim.
 The two delegation flows differ only in **how the skill uses the task** (there
 is no wire marker):
 
-- **task** (report-back, `/swarm:task`): the worker does the work and returns a
+- **task** (report-back, `/gossip:task`): the worker does the work and returns a
   **result** (an `artifact`); the initiator reviews and approves, and the
   worker **completes**. The brief asks for a result.
-- **handover** (walk-away, `/swarm:handover`): the worker accepts and the
+- **handover** (walk-away, `/gossip:handover`): the worker accepts and the
   initiator walks away; the worker runs it on its own and **completes** — no
   result review. The brief hands the work over.
 
@@ -199,7 +199,7 @@ agent-gossip a2a artifact --swarm $SWARM --nickname $NICKNAME --task-id <id> --t
      <id> --state completed` directly — you own it now; run it on your own
      (plan-mode-gated). No result to return.
 
-**Sending a task** (you ran `/swarm:task`, `self:true` echoes): capture the
+**Sending a task** (you ran `/gossip:task`, `self:true` echoes): capture the
 `task_id` from the create response (`result.task.id`). Watch the worker's status:
 on **`state:"input-required"`** with a question, answer via a follow-up message;
 on a **`kind:"artifact-update"`** event (the result), **print it** (attributed
@@ -208,7 +208,7 @@ follow-up message, e.g. "approved") — or ask for a change if it misses the
 criteria. The task closes when the worker emits **`state:"completed"`**. Tasks
 are independent — there is no cross-task reduce.
 
-**Sending a handover** (you ran `/swarm:handover`): capture the `task_id`. The
+**Sending a handover** (you ran `/gossip:handover`): capture the `task_id`. The
 worker accepts (`state:"working"`); mark the todo `completed` and **stop
 watching** — the worker runs it on its own. There is nothing to review.
 

@@ -28,7 +28,7 @@ const SKIP: &[&str] = include!(concat!(
 ));
 
 /// The repo dirs `src/cli/setup.rs` embeds, relative to the manifest.
-const EMBED_DIRS: &[&str] = &["claude-code-plugin", "pi-extension", "skills/swarm"];
+const EMBED_DIRS: &[&str] = &["claude-code-plugin", "pi-extension", "skills/gossip"];
 
 fn main() {
     // Embed staging + fingerprint run first so they execute even on the
@@ -74,7 +74,7 @@ fn copy_filtered(src: &Path, dest: &Path) {
 }
 
 /// Hash the (skip-filtered) contents of every embedded dir and publish it as
-/// `AHSW_EMBED_FINGERPRINT`. `setup.rs` reads it via `env!`, so a changed
+/// `AGENT_GOSSIP_EMBED_FINGERPRINT`. `setup.rs` reads it via `env!`, so a changed
 /// fingerprint recompiles that module and re-expands the embeds; the
 /// `rerun-if-changed` lines make this script recompute when a source changes.
 fn emit_embed_fingerprint() {
@@ -84,7 +84,7 @@ fn emit_embed_fingerprint() {
         hash_dir(Path::new(dir), &mut hasher);
     }
     println!(
-        "cargo:rustc-env=AHSW_EMBED_FINGERPRINT={:016x}",
+        "cargo:rustc-env=AGENT_GOSSIP_EMBED_FINGERPRINT={:016x}",
         hasher.finish()
     );
 }

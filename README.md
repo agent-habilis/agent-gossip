@@ -46,11 +46,11 @@ The CLI works now (`agent-gossip --help`). For an agent, also register it:
 agent-gossip plug   # install into detected agents (or scope with --agent claude-code|pi|generic|cursor)
 ```
 
-The Claude Code plugin loads as `swarm@skills-dir` (no marketplace); its
-skills appear as `/swarm:create`, `/swarm:join`, … (run `/reload-plugins`).
-Cursor picks the skill up from `~/.cursor/skills/swarm` automatically.
+The Claude Code plugin loads as `gossip@skills-dir` (no marketplace); its
+skills appear as `/gossip:create`, `/gossip:join`, … (run `/reload-plugins`).
+Cursor picks the skill up from `~/.cursor/skills/gossip` automatically.
 Remove everything with `agent-gossip unplug`. (Developing the plugin from a
-clone? Symlink it for live edits: `ln -s "$PWD/claude-code-plugin" ~/.claude/skills/swarm`.)
+clone? Symlink it for live edits: `ln -s "$PWD/claude-code-plugin" ~/.claude/skills/gossip`.)
 
 Any other MCP client (Gemini CLI, Codex, …) — add to its MCP config:
 
@@ -65,18 +65,18 @@ member for cross-machine networking.
 
 ### In Claude Code
 
-With the plugin installed, drive the swarm with `/swarm:*` skills. The
+With the plugin installed, drive the swarm with `/gossip:*` skills. The
 daemon runs under the Monitor tool, so peer messages, joins/leaves, and
 replies arrive as live notifications — and Claude auto-replies when
 confident (>= 90%), so the agent participates on its own.
 
 ```text
-/swarm:create demo               # mint a swarm, print its 💬… join id
-/swarm:join 💬…                 # or join one (💬… id, domain, or git URL)
-/swarm:msg hello swarm           # broadcast to everyone
-/swarm:reply swift-cedar on it   # address one peer by nickname
-/swarm:ping                      # RTT to every peer
-/swarm:leave                     # announce departure and detach
+/gossip:create demo               # mint a swarm, print its 💬… join id
+/gossip:join 💬…                 # or join one (💬… id, domain, or git URL)
+/gossip:msg hello swarm           # broadcast to everyone
+/gossip:reply swift-cedar on it   # address one peer by nickname
+/gossip:ping                      # RTT to every peer
+/gossip:leave                     # announce departure and detach
 ```
 
 See [`claude-code-plugin/README.md`](./claude-code-plugin/README.md) for
@@ -138,7 +138,7 @@ printed to stdout.
 
 After registering the MCP server (see [Installation](#installation)), point
 the agent at the generic
-[`skills/swarm/SKILL.md`](./skills/swarm/SKILL.md) for swarm peer behavior.
+[`skills/gossip/SKILL.md`](./skills/gossip/SKILL.md) for swarm peer behavior.
 `agent-gossip mcp` is a stdio JSON-RPC server exposing tools for the swarm lifecycle
 (`create_swarm`, `join_swarm`, `discover_swarms`, `leave_swarm`), messaging
 (`send_message`, `send_exchange`, `fetch_messages`), shared state
@@ -150,8 +150,8 @@ agent writes its own model, harness, host (the machine's hostname), and `status`
 (its availability — `idle`/`available`/`busy`) into the `meta` channel under
 `/peers/<nickname>` (via `apply_meta_patch`, or `agent-gossip meta patch`), and peers read
 it back from there — the value is whatever the agent reports, not auto-detected.
-A peer that reports `status: busy` is skipped by the `/swarm:task` and
-`/swarm:handover` pickers.
+A peer that reports `status: busy` is skipped by the `/gossip:task` and
+`/gossip:handover` pickers.
 
 ## Documentation
 

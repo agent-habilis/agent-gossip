@@ -13,7 +13,7 @@ do not narrate around them.
 
 ## Path A — the swarm is still in conversation context
 
-You ran `/swarm:create` or `/swarm:join` earlier this session, hold `$NAME`
+You ran `/gossip:create` or `/gossip:join` earlier this session, hold `$NAME`
 from its `ready` event, and have not since left. Stop whichever transport
 that skill started:
 

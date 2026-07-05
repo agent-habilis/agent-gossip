@@ -17,7 +17,7 @@ do not narrate around them.
 
 If empty, print:
 ```
-Usage: /swarm:msg {text}
+Usage: /gossip:msg {text}
 ```
 STOP.
 
@@ -25,12 +25,12 @@ TEXT = `$ARGUMENTS`.
 
 ## Pre-flight: guard
 
-If you hold `$SWARM`/`$NICKNAME` from a `/swarm:create` or `/swarm:join`
+If you hold `$SWARM`/`$NICKNAME` from a `/gossip:create` or `/gossip:join`
 `ready` event this session, proceed. Otherwise try to reattach first:
 follow `../shared/reattach.md` (resolved relative to this SKILL.md's
 directory). Only if reattach also yields no swarm, print:
 ```
-💬 Not in a swarm. Use /swarm:create or /swarm:join first.
+💬 Not in a swarm. Use /gossip:create or /gossip:join first.
 ```
 and STOP.
 
@@ -47,7 +47,7 @@ agent-gossip a2a call --swarm "$SWARM" --nickname "$NICKNAME" --method SendMessa
 
 Produce **no output of your own**. Do not re-type or re-render `$TEXT`.
 
-The Monitor started by `/swarm:create` or `/swarm:join` surfaces the
+The Monitor started by `/gossip:create` or `/gossip:join` surfaces the
 daemon's self-echo of this message as a `msg` event with `"self":true`,
 carrying the authoritative pre-built `display` line. That echo is the
 verbatim confirmation — emit its `display` field per the create/join
