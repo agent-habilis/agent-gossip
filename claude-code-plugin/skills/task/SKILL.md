@@ -10,7 +10,7 @@ Each task is one **A2A task** on the swarm: a directed `SendMessage` creates
 it (the worker mints the task id and returns the `Task`); the worker **runs the
 work and returns its result** as an `artifact`, and you **approve** it (or ask
 for a change), after which the worker marks it `completed`. That is the
-difference from `/swarm:handover`, which hands a task off and walks away with no
+difference from `/gossip:handover`, which hands a task off and walks away with no
 result.
 
 Every task is **independent**: its own `task_id`, its own worker, its own
@@ -19,7 +19,7 @@ outcome — when a worker finishes, its result prints and that task closes. If
 you later want something done across the results, ask in a normal turn; this
 skill does not encode any cross-task step.
 
-You can send several tasks at once, and you can **re-invoke `/swarm:task`** to
+You can send several tasks at once, and you can **re-invoke `/gossip:task`** to
 add more later — new tasks append to the same to-do list.
 
 ## Silent execution
@@ -43,12 +43,12 @@ narrating the `TodoWrite` is not.
 
 ## Pre-flight: guard
 
-If you hold `$SWARM`/`$NICKNAME` from a `/swarm:create` or `/swarm:join`
+If you hold `$SWARM`/`$NICKNAME` from a `/gossip:create` or `/gossip:join`
 `ready` event this session, proceed. Otherwise try to reattach first:
 follow `../shared/reattach.md` (resolved relative to this SKILL.md's
 directory). Only if reattach also yields no swarm, print:
 ```
-💬 Not in a swarm. Use /swarm:create or /swarm:join first.
+💬 Not in a swarm. Use /gossip:create or /gossip:join first.
 ```
 and STOP.
 
@@ -57,7 +57,7 @@ and STOP.
 Establish *what* is being sent **before** choosing who runs it:
 
 - **If `$ARGUMENTS` is non-empty**, it **is** the task spec. It may describe a
-  single task or several distinct ones (e.g. `/swarm:task review src/net on one
+  single task or several distinct ones (e.g. `/gossip:task review src/net on one
   peer, review src/daemon on another` ⇒ two tasks).
 - **Otherwise**, the task is your current conversation/plan (one task).
 
@@ -186,7 +186,7 @@ below, `activeForm` = `activeForm`) + **`TaskUpdate`** (status
   `failed`/`task_timeout` set it `completed` and note "dropped (failed/timed
   out)" **in the todo content**.
 
-Re-invoking `/swarm:task` appends new todos to this same list.
+Re-invoking `/gossip:task` appends new todos to this same list.
 
 ## Output
 

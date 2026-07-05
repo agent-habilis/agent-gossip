@@ -64,11 +64,11 @@ fn is_http_url(input: &str) -> bool {
             .is_some_and(|prefix| prefix.eq_ignore_ascii_case("https://"))
 }
 
-/// Reduce a forum string to the source for its display name: drop a leading URL
+/// Reduce a topic string to the source for its display name: drop a leading URL
 /// scheme, and — for an **http(s)** URL — also drop the `?query` and `#fragment`
 /// so the name is just host + path. Display-only; the seed still hashes the
 /// full string.
-fn forum_name_source(trimmed: &str) -> &str {
+fn topic_name_source(trimmed: &str) -> &str {
     let source = strip_url_scheme(trimmed);
     if is_http_url(trimmed) {
         let end = source.find(['?', '#']).unwrap_or(source.len());
@@ -78,7 +78,7 @@ fn forum_name_source(trimmed: &str) -> &str {
     }
 }
 
-/// Drop a leading URL scheme (`https://`, `git+ssh://`, …) from a forum string
+/// Drop a leading URL scheme (`https://`, `git+ssh://`, …) from a topic string
 /// so the derived name reads cleanly. Only the `<scheme>://` form is stripped,
 /// where `scheme` is `[A-Za-z][A-Za-z0-9+.-]*`; anything else (e.g. `note:x`,
 /// or a `://` with a non-scheme prefix) is returned unchanged.
@@ -128,7 +128,7 @@ impl SwarmName {
         Self::new(wordlist::random_pair()).expect("wordlist pair is always a valid swarm name")
     }
 
-    /// Derive a `forum` swarm's display name from its shared string. A leading
+    /// Derive a `topic` swarm's display name from its shared string. A leading
     /// URL scheme (`https://`, `git://`, …) is dropped so the name reads
     /// cleanly, and for an http(s) URL the `?query`/`#fragment` are dropped too
     /// (display only — the seed still hashes the full string); then every run of
@@ -136,20 +136,20 @@ impl SwarmName {
     /// whitespace, control, bidi, `< > #`) becomes a single `-`
     /// (leading/trailing suppressed), capped at [`ident::MAX_CHARS`] scalar
     /// values (an over-long name keeps the first `MAX_CHARS - 1` and ends in
-    /// `…`), falling back to `forum` when nothing valid survives. Path
+    /// `…`), falling back to `topic` when nothing valid survives. Path
     /// separators `/ \` and the rest of the URL charset survive verbatim.
     /// Deterministic, so every peer passing the same string derives the same
     /// name.
     ///
     /// # Panics
-    /// Never: the sanitized string (or the `forum` fallback) is always a valid
+    /// Never: the sanitized string (or the `topic` fallback) is always a valid
     /// name — every kept char is non-forbidden, `-` and `…` are allowed, and
     /// the length is bounded.
     #[must_use]
     pub(crate) fn from_topic_string(raw: &str) -> Self {
         let mut out = String::new();
         let mut pending_dash = false;
-        for ch in forum_name_source(raw.trim()).chars() {
+        for ch in topic_name_source(raw.trim()).chars() {
             if ident::is_forbidden_swarm_name(ch) {
                 // Any invalid char (incl. whitespace) → a single `-`; runs
                 // collapse and a leading `-` is suppressed. A trailing run
@@ -178,7 +178,7 @@ impl SwarmName {
             head
         };
 
-        Self::new(name).unwrap_or_else(|_| Self::new("forum").expect("`forum` is a valid name"))
+        Self::new(name).unwrap_or_else(|_| Self::new("topic").expect("`topic` is a valid name"))
     }
 
     #[must_use]
@@ -255,8 +255,8 @@ mod tests {
         assert_eq!(SwarmName::from_topic_string("HTTP://x?y").as_str(), "x");
         // Non-http schemes keep the query (scheme-strip only).
         assert_eq!(SwarmName::from_topic_string("git://x?y").as_str(), "x?y");
-        // Empty after stripping the query ⇒ the `forum` fallback.
-        assert_eq!(SwarmName::from_topic_string("https://?q").as_str(), "forum");
+        // Empty after stripping the query ⇒ the `topic` fallback.
+        assert_eq!(SwarmName::from_topic_string("https://?q").as_str(), "topic");
     }
 
     #[test]
@@ -282,9 +282,9 @@ mod tests {
     }
 
     #[test]
-    fn empty_after_filtering_falls_back_to_forum() {
-        assert_eq!(SwarmName::from_topic_string("###  <>").as_str(), "forum");
-        assert_eq!(SwarmName::from_topic_string("https://").as_str(), "forum");
+    fn empty_after_filtering_falls_back_to_topic() {
+        assert_eq!(SwarmName::from_topic_string("###  <>").as_str(), "topic");
+        assert_eq!(SwarmName::from_topic_string("https://").as_str(), "topic");
     }
 
     #[test]

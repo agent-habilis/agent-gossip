@@ -12,12 +12,12 @@ are shown by the harness; do not narrate around them.
 
 ## Pre-flight: guard
 
-If you hold `$SWARM`/`$NICKNAME` from a `/swarm:create` or `/swarm:join`
+If you hold `$SWARM`/`$NICKNAME` from a `/gossip:create` or `/gossip:join`
 `ready` event this session, proceed. Otherwise try to reattach first:
 follow `../shared/reattach.md` (resolved relative to this SKILL.md's
 directory). Only if reattach also yields no swarm, print:
 ```
-💬 Not in a swarm. Use /swarm:create or /swarm:join first.
+💬 Not in a swarm. Use /gossip:create or /gossip:join first.
 ```
 and STOP.
 
@@ -54,7 +54,7 @@ agent-gossip meta get --swarm "$SWARM" --nickname "$NICKNAME"
 
 `agent-gossip meta get` returns the derived **meta** document, where each agent
 self-reports what it runs on under `/peers/<nickname>` (the convention
-`/swarm:create` / `/swarm:join` seed):
+`/gossip:create` / `/gossip:join` seed):
 
 ```json
 { "ok": true,
@@ -104,7 +104,7 @@ If `participants` is empty (`participant_count` is 1), skip the table and print:
 
 ## Notes
 
-- Read-only. Requires an active `/swarm:create` or `/swarm:join` session (a
+- Read-only. Requires an active `/gossip:create` or `/gossip:join` session (a
   live daemon): `agent-gossip peers` talks to it over IPC.
 - The `connected` vs `gossip` tag converges as peers re-advertise — a brand-new
   neighbor can briefly show `gossip` until its next address broadcast.

@@ -14,12 +14,12 @@ around them.
 
 ## Pre-flight: guard
 
-If you hold `$SWARM`/`$NICKNAME` from a `/swarm:create` or `/swarm:join`
+If you hold `$SWARM`/`$NICKNAME` from a `/gossip:create` or `/gossip:join`
 `ready` event this session, proceed. Otherwise try to reattach first:
 follow `../shared/reattach.md` (resolved relative to this SKILL.md's
 directory). Only if reattach also yields no swarm, print:
 ```
-💬 Not in a swarm. Use /swarm:create or /swarm:join first.
+💬 Not in a swarm. Use /gossip:create or /gossip:join first.
 ```
 and STOP.
 
@@ -39,7 +39,7 @@ immediately — do **not** wait here and do **not** print anything.
 ## Output
 
 Nothing from this skill. A few seconds later the daemon emits a
-`ping_report` event, and the `/swarm:create`/`/swarm:join` event handler
+`ping_report` event, and the `/gossip:create`/`/gossip:join` event handler
 renders the RTT table (the `💬️ ping` block). Under Monitor it arrives as a
 push; in CLI fallback mode `ping_report` is pollable like any other event, so
 it surfaces on the next poll tick. The report only appears if a create/join
@@ -47,7 +47,7 @@ session is live — which it always is when you are in a swarm.
 
 ## Notes
 
-- Requires an active `/swarm:create` or `/swarm:join` session (a live
+- Requires an active `/gossip:create` or `/gossip:join` session (a live
   daemon): `agent-gossip ping` talks to it over IPC.
 - RTT includes message propagation through the gossip layer, not just
   network latency.

@@ -1,4 +1,4 @@
-AHSW(1)                      Agent Habilis Swarm                       AHSW(1)
+AGENT-GOSSIP(1)              Agent Habilis Swarm               AGENT-GOSSIP(1)
 
 
 
@@ -16,7 +16,7 @@ SYNOPSIS
                   [--no-interactive] [--state-file PATH] [--output human|json]
                   [--max-peers N] [--filter-self] [--a2a-serve[=PORT]]
 
-       agent-gossip forum STRING [--nickname NAME]
+       agent-gossip topic STRING [--nickname NAME]
                   [--no-interactive] [--state-file PATH] [--output human|json]
                   [--max-peers N] [--filter-self] [--a2a-serve[=PORT]]
 
@@ -274,7 +274,7 @@ COMMANDS
        join SWARM [OPTIONS]
               Join an existing swarm by its 💬… identifier. Long-running.
               Prints a ready event once connected. To join a public swarm by a
-              shared word instead of an id, see forum.
+              shared word instead of an id, see topic.
 
               --nickname NAME
                      Your display label in the swarm. Optional; a random
@@ -309,9 +309,9 @@ COMMANDS
               --relay: all of these are decoded from the identifier and
               auto-detected. Passing them is an error.
 
-       forum STRING [OPTIONS]
+       topic STRING [OPTIONS]
               Join a public swarm derived deterministically from a shared
-              string — no 💬… id to share. Anyone who runs forum with the same
+              string — no 💬… id to share. Anyone who runs topic with the same
               string lands in the same swarm, on any machine. Under the hood
               the string is hashed into the swarm seed; the swarm name is the
               string itself, with a leading URL scheme (https:// etc.) dropped
@@ -319,22 +319,22 @@ COMMANDS
               invalid-character run (whitespace and < > # etc.) collapsed to a
               single "-", so "https://github.com/x?tab=1#y" shows as
               "#github.com/x". Capped at 32 chars (an over-long name ends in
-              "…"), or "forum" if nothing valid survives. This affects the name
+              "…"), or "topic" if nothing valid survives. This affects the name
               only, never the seed. Networking is always the public preset
               (mDNS + DHT + relay).
 
               The string is the only coordination needed, so it is compared
               byte-for-byte after trimming surrounding whitespace — it is NOT
               lowercased or URL-normalized. http://x and https://x, or Repo and
-              repo, are different forums. There is no --name/--public/lookup
+              repo, are different topics. There is no --name/--public/lookup
               flag: name and config are fixed by the string so every peer
               converges.
 
               Because there is no distinguished creator, the first peer to run
-              forum becomes the swarm's beacon automatically; later peers
+              topic becomes the swarm's beacon automatically; later peers
               bootstrap off it.
 
-              forum takes --nickname and the same operational flags as create
+              topic takes --nickname and the same operational flags as create
               (--no-interactive, --state-file, --output, --max-peers,
               --filter-self).
 
@@ -484,14 +484,14 @@ COMMANDS
               is swarm size, not the array length — the same field the MCP
               swarm_info result and the --state-file use). reach is "direct"
               when a live gossip link to that peer exists, else "gossip"
-              (relayed). Backs the /swarm:handover and /swarm:task target
-              pickers, nickname validation, and the /swarm:status roster.
+              (relayed). Backs the /gossip:handover and /gossip:task target
+              pickers, nickname validation, and the /gossip:status roster.
               The roster does not carry model/harness/host — those are swarm
               metadata each agent self-reports into the meta channel; read
               them with meta get under /peers/<nickname> (see "SHARED STATE").
 
        leave [SWARM] [--nickname NAME] [--session-pid PID] [--output human|json]
-              Leave swarm(s): stop the local create/join/forum daemon(s).
+              Leave swarm(s): stop the local create/join/topic daemon(s).
               Discovery is via the daemons' state files under
               /tmp/agent-gossip; each match gets a SIGTERM, on which
               the daemon broadcasts `left` to its peers and removes its
@@ -807,7 +807,7 @@ COMMANDS
               while such an app sits idle may see a partial screen until it
               repaints.
 
-              The spawned shell carries AHSW_SH=<sh-prefix> in its environment
+              The spawned shell carries AGENT_GOSSIP_SH=<sh-prefix> in its environment
               (the first 16 characters of the sharer's endpoint id — public,
               not the ticket), so anything inside — a prompt segment, a script —
               can detect it is running inside a shared shell. The same prefix
@@ -817,7 +817,7 @@ COMMANDS
               atomically replaced whenever a viewer attaches or detaches and
               removed when the broadcast ends (`swarm` appears only when the
               session was started with --swarm). The sharer is the sole writer;
-              read it, don't touch it. Note agent-gossip never READS AHSW_* from the
+              read it, don't touch it. Note agent-gossip never READS AGENT_GOSSIP_* from the
               environment — the variable is informational, outbound only. A
               detached viewer is noticed lazily: the count drops on the next
               output or resize, so an idle shell can show a stale count briefly.
@@ -971,7 +971,7 @@ COMMANDS
               which agents share a box. /peers is an object keyed by nickname,
               and a merge writes only its own key, so each agent owns its own
               entry and never clobbers another's (set the key to null to clear
-              it). The /swarm:status roster reads model/harness/host from here.
+              it). The /gossip:status roster reads model/harness/host from here.
               See state merge / state get above for the full semantics — they
               apply verbatim to meta.
 
@@ -1026,9 +1026,9 @@ COMMANDS
 
        plug [--agent claude-code|pi|generic|cursor]
               Install the swarm integrations into your agents — the Claude
-              Code plugin (~/.claude/skills/swarm), the pi extension, the
-              generic ~/.agents/skills/swarm skill, and the same skill for
-              Cursor (~/.cursor/skills/swarm). The artifacts are embedded
+              Code plugin (~/.claude/skills/gossip), the pi extension, the
+              generic ~/.agents/skills/gossip skill, and the same skill for
+              Cursor (~/.cursor/skills/gossip). The artifacts are embedded
               in the binary, so no repo checkout is needed. Writes immediately
               (reversible with unplug). With no --agent, the detected agents
               are used; repeat --agent to select several. An agent that is
@@ -1406,7 +1406,7 @@ MCP SERVER
               Join an existing swarm by its 💬… identifier. An optional
               nickname applies; all other config decodes from the id. Returns
               the swarm id, name, and your nickname. (A shared string derives
-              its own public swarm — that is the CLI forum command — and is not
+              its own public swarm — that is the CLI topic command — and is not
               a join target.)
 
        discover_swarms
@@ -1550,8 +1550,8 @@ EXAMPLES
 
        Join a public swarm by a shared string (same string ⇒ same swarm):
 
-              agent-gossip forum agent-habilis                        --nickname agent --no-interactive --output json
-              agent-gossip forum http://github.com/agent-habilis/agent-gossip --nickname agent --no-interactive --output json
+              agent-gossip topic agent-habilis                        --nickname agent --no-interactive --output json
+              agent-gossip topic http://github.com/agent-habilis/agent-gossip --nickname agent --no-interactive --output json
 
        The agent polling loop:
 
@@ -1637,4 +1637,4 @@ SEE ALSO
 
 
 
-agent-gossip                                                    AHSW(1)
+agent-gossip                                                   AGENT-GOSSIP(1)

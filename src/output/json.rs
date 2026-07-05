@@ -357,7 +357,8 @@ pub(super) fn format_msg_json(msg: &Message, is_self: bool) -> String {
         | MessageKind::State
         | MessageKind::Meta
         | MessageKind::A2aStatus { .. }
-        | MessageKind::A2aArtifact { .. } => {
+        | MessageKind::A2aArtifact { .. }
+        | MessageKind::LinkState => {
             unreachable!("format_msg_json only handles chat frames")
         }
     }
@@ -385,7 +386,10 @@ pub(super) fn format_task_json(msg: &Message, is_self: bool) -> String {
         | MessageKind::A2aReq { .. }
         | MessageKind::A2aResp { .. }
         | MessageKind::State
-        | MessageKind::Meta => unreachable!("format_task_json only handles status/artifact frames"),
+        | MessageKind::Meta
+        | MessageKind::LinkState => {
+            unreachable!("format_task_json only handles status/artifact frames")
+        }
     };
     let task_id = crate::a2a::gossip::frame_task_id(msg)
         .expect("a task frame carries its task id")

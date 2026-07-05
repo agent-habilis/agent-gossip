@@ -515,7 +515,8 @@ impl Output {
             | MessageKind::A2aReq { .. }
             | MessageKind::A2aResp { .. }
             | MessageKind::State
-            | MessageKind::Meta => return,
+            | MessageKind::Meta
+            | MessageKind::LinkState => return,
         };
         if is_self && self.filters_self() {
             return;

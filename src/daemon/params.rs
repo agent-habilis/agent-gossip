@@ -59,10 +59,10 @@ impl fmt::Display for PasswordRequired {
 
 impl std::error::Error for PasswordRequired {}
 
-/// The forum intent: a swarm derived deterministically from a shared string,
+/// The topic intent: a swarm derived deterministically from a shared string,
 /// always public. Name + config are derived, not supplied — the string alone
 /// determines the swarm.
-pub(crate) struct ForumParams {
+pub(crate) struct TopicParams {
     pub string: String,
     /// `None` ⇒ a random `word-word` nickname is minted in `resolve`.
     pub nickname: Option<Nickname>,
@@ -129,16 +129,16 @@ impl JoinParams {
     }
 }
 
-/// The canonical [`Swarm`] a forum string derives — always the public preset.
+/// The canonical [`Swarm`] a topic string derives — always the public preset.
 /// The single source of that derivation *and* of the empty/whitespace-string
-/// guard, shared by [`ForumParams::resolve`] and the MCP idempotency check so
+/// guard, shared by [`TopicParams::resolve`] and the MCP idempotency check so
 /// neither can drift — an empty string would otherwise silently derive one
 /// globally-fixed swarm that every empty-string caller lands in. (The clap
-/// `value_parser` on `agent-gossip forum` re-checks emptiness only to surface it as a
+/// `value_parser` on `agent-gossip topic` re-checks emptiness only to surface it as a
 /// parse-time usage error.)
-pub(crate) fn derive_forum_swarm(string: &str) -> Result<Swarm> {
+pub(crate) fn derive_topic_swarm(string: &str) -> Result<Swarm> {
     if string.trim().is_empty() {
-        anyhow::bail!("forum string must not be empty");
+        anyhow::bail!("topic string must not be empty");
     }
     Ok(Swarm::from_topic(
         string,
@@ -149,18 +149,18 @@ pub(crate) fn derive_forum_swarm(string: &str) -> Result<Swarm> {
     ))
 }
 
-impl ForumParams {
+impl TopicParams {
     /// Derive the swarm from the string (always the public preset) and default
-    /// the nickname. A forum never advertises. The empty/whitespace-string
-    /// guard lives in [`derive_forum_swarm`], which every frontend (CLI,
+    /// the nickname. A topic never advertises. The empty/whitespace-string
+    /// guard lives in [`derive_topic_swarm`], which every frontend (CLI,
     /// embed, MCP) funnels through.
     ///
     /// # Errors
     /// Fails if the string is empty or whitespace-only.
     pub(crate) fn resolve(self) -> Result<Resolved> {
-        let swarm = derive_forum_swarm(&self.string)?;
+        let swarm = derive_topic_swarm(&self.string)?;
         Ok(Resolved {
-            kind: SetupKind::Forum { swarm },
+            kind: SetupKind::Topic { swarm },
             author: self.nickname.unwrap_or_else(Nickname::random),
             advertise_directory: None,
         })

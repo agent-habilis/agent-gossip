@@ -1,7 +1,7 @@
 # Reattach — recover the swarm after a lost context
 
-The `/swarm:*` skills normally carry `$SWARM` / `$NAME` / `$NICKNAME` from
-the `ready` event of this session's `/swarm:create` or `/swarm:join`. A
+The `/gossip:*` skills normally carry `$SWARM` / `$NAME` / `$NICKNAME` from
+the `ready` event of this session's `/gossip:create` or `/gossip:join`. A
 context clear or compaction wipes that memory while the daemon keeps
 running — so when those values are missing, recover them from the system
 instead of concluding you are not in a swarm. Do NOT trust TaskList for

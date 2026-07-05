@@ -42,7 +42,7 @@ mod tests {
                 Commands::Discover { opts } => opts.directory,
                 Commands::Create { .. }
                 | Commands::Join { .. }
-                | Commands::Forum { .. }
+                | Commands::Topic { .. }
                 | Commands::Poll { .. }
                 | Commands::Ping { .. }
                 | Commands::Mcp { .. }
@@ -50,6 +50,7 @@ mod tests {
                 | Commands::Peers { .. }
                 | Commands::State { .. }
                 | Commands::Meta { .. }
+                | Commands::Topology { .. }
                 | Commands::A2a { .. }
                 | Commands::Ready { .. }
                 | Commands::Plug { .. }

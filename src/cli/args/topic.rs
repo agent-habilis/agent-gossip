@@ -4,21 +4,21 @@ use crate::protocol::Nickname;
 
 use super::shared::SharedServerOpts;
 
-/// Reject an empty / whitespace-only forum string at parse time — it would
+/// Reject an empty / whitespace-only topic string at parse time — it would
 /// otherwise hash to a real (but useless, un-guessable-on-purpose) swarm.
 fn non_empty_string(raw: &str) -> Result<String, String> {
     if raw.trim().is_empty() {
-        return Err("forum string must not be empty".to_owned());
+        return Err("topic string must not be empty".to_owned());
     }
     Ok(raw.to_owned())
 }
 
 #[derive(Parser, Debug)]
-pub(crate) struct ForumOpts {
+pub(crate) struct TopicOpts {
     /// Any string — hashed into a deterministic **public** swarm. The same
-    /// string always joins the same forum, on any machine, with no id to
+    /// string always joins the same topic, on any machine, with no id to
     /// share. Compared byte-for-byte after trimming surrounding whitespace, so
-    /// `http://…` and `https://…`, or `Repo` and `repo`, are different forums.
+    /// `http://…` and `https://…`, or `Repo` and `repo`, are different topics.
     // allow_hyphen_values: "any string" includes ones starting with `-`
     // (e.g. `-release-2026`); without it clap rejects them as unknown flags.
     #[arg(value_parser = non_empty_string, allow_hyphen_values = true)]
@@ -40,9 +40,9 @@ mod tests {
 
     use crate::cli::args::{Cli, Commands};
 
-    fn forum_opts(args: &[&str]) -> super::ForumOpts {
+    fn topic_opts(args: &[&str]) -> super::TopicOpts {
         match Cli::parse_from(args).command {
-            Commands::Forum { opts } => opts,
+            Commands::Topic { opts } => opts,
             Commands::Create { .. }
             | Commands::Join { .. }
             | Commands::Poll { .. }
@@ -51,6 +51,7 @@ mod tests {
             | Commands::Peers { .. }
             | Commands::State { .. }
             | Commands::Meta { .. }
+            | Commands::Topology { .. }
             | Commands::A2a { .. }
             | Commands::Ready { .. }
             | Commands::Mcp { .. }
@@ -59,13 +60,13 @@ mod tests {
             | Commands::Unplug { .. }
             | Commands::Doctor { .. }
             | Commands::Leave { .. }
-            | Commands::Session { .. } => panic!("expected Forum command"),
+            | Commands::Session { .. } => panic!("expected Topic command"),
         }
     }
 
     #[test]
-    fn forum_parses_string_and_nickname() {
-        let opts = forum_opts(&["agent-gossip", "forum", "agent-habilis", "--nickname", "me"]);
+    fn topic_parses_string_and_nickname() {
+        let opts = topic_opts(&["agent-gossip", "topic", "agent-habilis", "--nickname", "me"]);
         assert_eq!(opts.string, "agent-habilis");
         assert_eq!(
             opts.nickname
@@ -76,18 +77,18 @@ mod tests {
     }
 
     #[test]
-    fn forum_accepts_leading_hyphen_string() {
-        let opts = forum_opts(&["agent-gossip", "forum", "-release-2026"]);
+    fn topic_accepts_leading_hyphen_string() {
+        let opts = topic_opts(&["agent-gossip", "topic", "-release-2026"]);
         assert_eq!(opts.string, "-release-2026");
     }
 
-    // The pi extension builds `forum <flags> -- <string>` so a string that
+    // The pi extension builds `topic <flags> -- <string>` so a string that
     // collides with a known flag still lands in the positional.
     #[test]
-    fn forum_accepts_string_after_end_of_flags() {
-        let opts = forum_opts(&[
+    fn topic_accepts_string_after_end_of_flags() {
+        let opts = topic_opts(&[
             "agent-gossip",
-            "forum",
+            "topic",
             "--nickname",
             "me",
             "--",
@@ -97,15 +98,15 @@ mod tests {
     }
 
     #[test]
-    fn forum_string_is_required() {
-        assert!(Cli::try_parse_from(["agent-gossip", "forum"]).is_err());
+    fn topic_string_is_required() {
+        assert!(Cli::try_parse_from(["agent-gossip", "topic"]).is_err());
     }
 
     #[test]
-    fn forum_rejects_empty_string() {
-        assert!(Cli::try_parse_from(["agent-gossip", "forum", ""]).is_err());
+    fn topic_rejects_empty_string() {
+        assert!(Cli::try_parse_from(["agent-gossip", "topic", ""]).is_err());
         assert!(
-            Cli::try_parse_from(["agent-gossip", "forum", "   "]).is_err(),
+            Cli::try_parse_from(["agent-gossip", "topic", "   "]).is_err(),
             "whitespace-only must reject"
         );
     }

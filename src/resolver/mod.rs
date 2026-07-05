@@ -8,7 +8,7 @@ use crate::protocol::swarm::{Swarm, SwarmIdError};
 use crate::util::consts::SWARM_GLYPH;
 
 /// What `join` accepts: a literal `💬…` swarm id. A shared *string* is not a
-/// join target — it derives its own swarm via `agent-gossip forum`. Classified and
+/// join target — it derives its own swarm via `agent-gossip topic`. Classified and
 /// validated **once**, at the boundary (clap `FromStr` / MCP entry), so
 /// `resolve` matches the variant instead of re-sniffing a `String`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -37,9 +37,9 @@ impl FromStr for JoinTarget {
         match trimmed.parse::<SwarmId>() {
             Ok(id) => Ok(JoinTarget::Swarm(id)),
             // A legacy `ahs…` id is unmistakably a (stale) id — surface the
-            // explanatory message rather than the generic forum hint.
+            // explanatory message rather than the generic topic hint.
             Err(error @ SwarmIdError::LegacyPrefix) => Err(JoinTargetError(error.to_string())),
-            // Anything else isn't a `💬…` id. Point at `forum`, which is what a
+            // Anything else isn't a `💬…` id. Point at `topic`, which is what a
             // plain string is for. The hint is meant to be copy-pasted into a
             // shell, so the string is single-quoted (with embedded `'` escaped
             // POSIX-style) — unquoted, whitespace would split into extra args
@@ -48,7 +48,7 @@ impl FromStr for JoinTarget {
                 let quoted = format!("'{}'", trimmed.replace('\'', "'\\''"));
                 Err(JoinTargetError(format!(
                     "`{trimmed}` is not a swarm id (expected a {SWARM_GLYPH}… token). To join a \
-                     public swarm derived from a shared string, use `agent-gossip forum {quoted}`."
+                     public swarm derived from a shared string, use `agent-gossip topic {quoted}`."
                 )))
             }
         }
@@ -77,29 +77,29 @@ mod tests {
     }
 
     #[test]
-    fn non_id_string_points_at_forum() {
+    fn non_id_string_points_at_topic() {
         let err = "github.com/alice/proj".parse::<JoinTarget>().unwrap_err();
         assert!(
             err.to_string()
-                .contains("agent-gossip forum 'github.com/alice/proj'"),
+                .contains("agent-gossip topic 'github.com/alice/proj'"),
             "got: {err}"
         );
     }
 
     #[test]
-    fn forum_hint_is_shell_safe() {
+    fn topic_hint_is_shell_safe() {
         let whitespace_err = "my secret room".parse::<JoinTarget>().unwrap_err();
         assert!(
             whitespace_err
                 .to_string()
-                .contains("agent-gossip forum 'my secret room'"),
+                .contains("agent-gossip topic 'my secret room'"),
             "got: {whitespace_err}"
         );
         let quote_err = "it's here".parse::<JoinTarget>().unwrap_err();
         assert!(
             quote_err
                 .to_string()
-                .contains(r"agent-gossip forum 'it'\''s here'"),
+                .contains(r"agent-gossip topic 'it'\''s here'"),
             "got: {quote_err}"
         );
     }

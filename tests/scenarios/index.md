@@ -90,17 +90,17 @@ skills. This table is only to help you read what happened.
 
 | capability | pi command | pi tool | Claude Code skill |
 |---|---|---|---|
-| create | `/swarm-create` | `swarm_create` | `/swarm:create` |
-| join | `/swarm-join` | `swarm_join` | `/swarm:join` |
-| discover | `/swarm-discover` | `swarm_discover` | `/swarm:discover` |
-| broadcast | `/swarm-msg` | `swarm_send` | `/swarm:msg` |
-| directed reply | `/swarm-reply` | `swarm_send` (with reply) | `/swarm:reply` |
-| handover | `/swarm-handover` | `swarm_handover` | `/swarm:handover` |
-| task | `/swarm-task` | `swarm_task` | `/swarm:task` |
+| create | `/swarm-create` | `swarm_create` | `/gossip:create` |
+| join | `/swarm-join` | `swarm_join` | `/gossip:join` |
+| discover | `/swarm-discover` | `swarm_discover` | `/gossip:discover` |
+| broadcast | `/swarm-msg` | `swarm_send` | `/gossip:msg` |
+| directed reply | `/swarm-reply` | `swarm_send` (with reply) | `/gossip:reply` |
+| handover | `/swarm-handover` | `swarm_handover` | `/gossip:handover` |
+| task | `/swarm-task` | `swarm_task` | `/gossip:task` |
 | advance a task leg | — | `swarm_advance` | (skill drives the legs) |
-| status / roster | `/swarm-status` | `swarm_status` | `/swarm:status` |
-| ping | `/swarm-ping` | `swarm_ping` | `/swarm:ping` |
+| status / roster | `/swarm-status` | `swarm_status` | `/gossip:status` |
+| ping | `/swarm-ping` | `swarm_ping` | `/gossip:ping` |
 | read state | `/swarm-state` | `swarm_get_state` | `agent-gossip state get` |
 | merge state | `/swarm-state-merge` | `swarm_apply_merge` | `agent-gossip state merge` |
-| leave | `/swarm-leave` | `swarm_leave` | `/swarm:leave` |
-| version / drift | `/swarm-version` | — | `/swarm:version` |
+| leave | `/swarm-leave` | `swarm_leave` | `/gossip:leave` |
+| version / drift | `/swarm-version` | — | `/gossip:version` |

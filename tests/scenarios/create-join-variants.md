@@ -33,7 +33,7 @@ directly**.
 - **Network variants** to create: private (default); public; mDNS-only;
   DHT-only; relay (default ladder, and a custom relay); advertised into a
   directory (public + advertise).
-- **Join forms:** by swarm id (every round); and `agent-gossip forum <string>` — a
+- **Join forms:** by swarm id (every round); and `agent-gossip topic <string>` — a
   public swarm derived from a shared string, where two peers running the same
   string must converge on the same id and mesh.
 - **Version/drift:** the creator runs the version check.
@@ -45,7 +45,7 @@ directly**.
 - [ ] an advertised swarm shows that it is advertised, into the expected directory
 - [ ] public/relay rounds may connect a bit slower than localhost but still join
 - [ ] the swarm id differs per network mode (the mode is encoded in the id)
-- [ ] two peers running `agent-gossip forum <same string>` converge on the same 💬… id
+- [ ] two peers running `agent-gossip topic <same string>` converge on the same 💬… id
       and exchange messages
 - [ ] the version check reports the binary version and whether the integration is
       current; if it is behind, a drift warning is surfaced with its fix intact

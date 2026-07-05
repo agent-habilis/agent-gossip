@@ -252,6 +252,7 @@ pub(crate) async fn ensure(
         endpoint.clone(),
         crate::util::consts::GOSSIP_ACTIVE_VIEW_CAPACITY,
         None,
+        None,
     );
 
     // Register the participant's address so the rendezvous can dial it

@@ -41,11 +41,11 @@ pub(crate) enum SetupKind {
     Join {
         swarm: Swarm,
     },
-    /// A `forum` swarm derived from a shared string. Identical to `Join`
+    /// A `topic` swarm derived from a shared string. Identical to `Join`
     /// except the first peer must beacon: there is no distinguished creator,
     /// so it co-hosts the shared rendezvous eagerly-but-probed
     /// ([`CoHostPolicy::EagerProbed`]) rather than deferring.
-    Forum {
+    Topic {
         swarm: Swarm,
     },
 }
@@ -169,9 +169,12 @@ pub(crate) fn register_rendezvous(endpoint: &Endpoint, params: &RendezvousParams
 fn unicast_inbox() -> (
     mpsc::Receiver<bytes::Bytes>,
     crate::unicast::UnicastAcceptor,
+    mpsc::Sender<bytes::Bytes>,
 ) {
     let (tx, rx) = mpsc::channel::<bytes::Bytes>(crate::util::consts::UNICAST_INBOX_CAP);
-    (rx, crate::unicast::UnicastAcceptor::new(tx))
+    // The relay's terminal delivery shares this inbox, so a relayed frame lands
+    // in the same `gossip::ingest` path as a unicast one.
+    (rx, crate::unicast::UnicastAcceptor::new(tx.clone()), tx)
 }
 
 /// The per-session inputs to [`setup_swarm`] that are independent of the
@@ -207,6 +210,7 @@ struct SetupBuild<'a> {
     max_peers: usize,
     lookups: &'a LookupOpts,
     unicast_acceptor: &'a crate::unicast::UnicastAcceptor,
+    whisper_acceptor: &'a crate::whisper::WhisperAcceptor,
     rung_tx: &'a watch::Sender<Option<RelayUrl>>,
 }
 
@@ -244,7 +248,7 @@ pub(crate) async fn setup_swarm(
     // from the id — one source of truth either way.
     let lookups = match &kind {
         SetupKind::Create { config, .. } => config.lookups.clone(),
-        SetupKind::Join { swarm } | SetupKind::Forum { swarm } => swarm.lookups().clone(),
+        SetupKind::Join { swarm } | SetupKind::Topic { swarm } => swarm.lookups().clone(),
     };
 
     // The off-loop rung channel: the backgrounded startup probe and the
@@ -255,7 +259,22 @@ pub(crate) async fn setup_swarm(
     let ladder = relay_ladder(&lookups.relay);
     let (rung_tx, rung_rx) = watch::channel(ladder.first().cloned());
 
-    let (unicast_rx, unicast_acceptor) = unicast_inbox();
+    let (unicast_rx, unicast_acceptor, inbox_tx) = unicast_inbox();
+
+    // This member's per-author signing identity (also the source of its X25519
+    // seal key, which relays peel circuit onions with). Hoisted above the match
+    // so the relay acceptor can be built before the Router is spawned.
+    let identity = std::sync::Arc::new(crate::protocol::identity::Identity::generate());
+    // The relay acceptor needs the participant endpoint to dial the next hop, but
+    // is registered on the Router *before* that endpoint is bound below; it reads
+    // the endpoint from this cell, filled once the endpoint exists.
+    let whisper_endpoint: std::sync::Arc<std::sync::OnceLock<Endpoint>> =
+        std::sync::Arc::new(std::sync::OnceLock::new());
+    let whisper_acceptor = crate::whisper::WhisperAcceptor::new(
+        inbox_tx,
+        identity.seal_secret(),
+        whisper_endpoint.clone(),
+    );
 
     let build = SetupBuild {
         author: &author,
@@ -265,6 +284,7 @@ pub(crate) async fn setup_swarm(
         max_peers,
         lookups: &lookups,
         unicast_acceptor: &unicast_acceptor,
+        whisper_acceptor: &whisper_acceptor,
         rung_tx: &rung_tx,
     };
     let Assembled {
@@ -283,20 +303,20 @@ pub(crate) async fn setup_swarm(
             advertise,
             password,
         } => setup_create(&build, name, config, advertise, password).await?,
-        kind @ (SetupKind::Join { .. } | SetupKind::Forum { .. }) => {
+        kind @ (SetupKind::Join { .. } | SetupKind::Topic { .. }) => {
             setup_join(&build, kind).await?
         }
     };
+
+    // Now that the endpoint is bound, hand it to the relay acceptor so it can
+    // dial the next hop when forwarding a circuit (`set` is a no-op if the
+    // acceptor was never registered — the beacon/rendezvous path).
+    let _ = whisper_endpoint.set(endpoint.clone());
 
     // Off the critical path: `ready` is already out. Confirm/correct the
     // optimistic rung 0 in the background (covers a joiner, which has no
     // beacon self-monitor of its own).
     spawn_startup_rung_confirmation(ladder, rung_tx);
-
-    // This member's per-author signing identity. In-process / ephemeral:
-    // minted here, held for the process lifetime, never persisted (a
-    // restart is a fresh identity). See `crate::protocol::identity`.
-    let identity = std::sync::Arc::new(crate::protocol::identity::Identity::generate());
 
     Ok(EventLoopConfig {
         topic,
@@ -380,6 +400,7 @@ async fn setup_create(
         endpoint.clone(),
         build.max_peers,
         Some(build.unicast_acceptor.clone()),
+        Some(build.whisper_acceptor.clone()),
     );
     // Creator has no peers yet — bootstrap is empty.
     let topic = gossip.subscribe(topic_id, vec![]).await?;
@@ -399,8 +420,8 @@ async fn setup_create(
     })
 }
 
-/// Attach to an existing swarm. Join and Forum share one attach path;
-/// they differ only in the co-host policy (Forum has no distinguished
+/// Attach to an existing swarm. Join and Topic share one attach path;
+/// they differ only in the co-host policy (Topic has no distinguished
 /// creator, so its first peer must beacon) and the startup verb. Like
 /// `create`, non-blocking: `ready` fires immediately so the joiner is
 /// never invisible while bootstrapping.
@@ -410,7 +431,7 @@ async fn setup_join(build: &SetupBuild<'_>, kind: SetupKind) -> Result<Assembled
 
     let (swarm, cohost, verb) = match kind {
         SetupKind::Join { swarm } => (swarm, CoHostPolicy::Deferred, "joined"),
-        SetupKind::Forum { swarm } => (swarm, CoHostPolicy::EagerProbed, "joined forum"),
+        SetupKind::Topic { swarm } => (swarm, CoHostPolicy::EagerProbed, "joined topic"),
         SetupKind::Create { .. } => unreachable!("outer arm excludes Create"),
     };
     let id_str = swarm.to_string();
@@ -430,12 +451,13 @@ async fn setup_join(build: &SetupBuild<'_>, kind: SetupKind) -> Result<Assembled
         endpoint.clone(),
         build.max_peers,
         Some(build.unicast_acceptor.clone()),
+        Some(build.whisper_acceptor.clone()),
     );
     // We subscribe, background-connect to the rendezvous, and — for a plain
     // join — `daemon::run` defers co-hosting our own (same seed-id) rendezvous
     // until we are meshed, so we never register a duplicate `rendezvous_id` on
     // the shared pinned relay that could capture our own bootstrap dial. A
-    // forum instead claims eagerly (probe-first) so the first peer beacons.
+    // topic instead claims eagerly (probe-first) so the first peer beacons.
     // See `EventLoopConfig::cohost`.
     let topic = gossip.subscribe(topic_id, vec![rdv.id]).await?;
 

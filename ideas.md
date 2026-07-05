@@ -1,6 +1,6 @@
 # Feature ideas
 
-A research catalog for future `agent-gossip` features, in the spirit of `forum`:
+A research catalog for future `agent-gossip` features, in the spirit of `topic`:
 small, composable, obviously useful, fun. Sources: IRC/mIRC/IRCv3/XMPP/
 Matrix/Discord; the 2025–26 agent-interop landscape (A2A, MCP, FIPA, contract
 net, blackboard, consensus); the P2P tooling ecosystem (magic-wormhole, croc,
@@ -26,7 +26,7 @@ Two findings worth keeping in mind:
 
 ---
 
-## Tier 1 — forum-shaped: tiny surface, rides existing primitives
+## Tier 1 — topic-shaped: tiny surface, rides existing primitives
 
 ### notice — no-auto-reply message class *(in progress)*
 Origin: IRC `NOTICE` (RFC 1459). IRC's rule — never auto-respond to a

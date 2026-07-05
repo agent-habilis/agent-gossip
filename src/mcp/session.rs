@@ -10,7 +10,7 @@ use anyhow::Result;
 use crate::a2a::TaskId;
 use crate::daemon::state::RosterSnapshot;
 use crate::embed::{
-    CreateConfig, CreateError, ForumConfig, InProcessSession, JoinConfig, JoinError,
+    CreateConfig, CreateError, InProcessSession, JoinConfig, JoinError, TopicConfig,
 };
 use crate::protocol::swarm::SwarmName;
 use crate::protocol::{Message, MessageBody, MessageId, Nickname, SwarmId};
@@ -43,13 +43,13 @@ impl Session {
         Ok(Self::wrap(InProcessSession::join_poll(cfg).await?))
     }
 
-    /// Join a forum — poll-only, silent — from a [`ForumConfig`]: a public
+    /// Join a topic — poll-only, silent — from a [`TopicConfig`]: a public
     /// swarm derived deterministically from a shared string.
     ///
     /// # Errors
     /// [`JoinError`] on setup failure.
-    pub(super) async fn forum(cfg: ForumConfig) -> Result<Self, JoinError> {
-        Ok(Self::wrap(InProcessSession::forum_poll(cfg).await?))
+    pub(super) async fn topic(cfg: TopicConfig) -> Result<Self, JoinError> {
+        Ok(Self::wrap(InProcessSession::topic_poll(cfg).await?))
     }
 
     fn wrap(inner: InProcessSession) -> Self {

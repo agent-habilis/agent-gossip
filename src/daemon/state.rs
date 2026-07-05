@@ -208,6 +208,17 @@ pub(crate) struct EventLoopState {
     /// Independent of `linked_endpoints` by design (unicast can reach a
     /// non-neighbor). See [`crate::unicast`].
     pub unicast_pool: crate::unicast::UnicastPool,
+    /// Relay routing table: the freshest link-state vector per origin, folded
+    /// into the mesh graph on demand. Populated from received `LinkState`
+    /// frames; read by the relay send path (and the topology view). See
+    /// [`crate::whisper`].
+    pub link_state: crate::whisper::LinkStateStore,
+    /// Monotonic sequence for *our own* emitted link-state vectors, so peers keep
+    /// the freshest and drop reorders.
+    pub link_state_seq: u64,
+    /// Locally-measured per-neighbour telemetry (ping RTT + delivery), keyed by
+    /// endpoint id — the metrics we advertise for *our own* links in link-state.
+    pub whisper_telemetry: HashMap<EndpointId, crate::whisper::NeighborProfile>,
     /// When `Some(deadline)` and not yet elapsed, the event loop runs
     /// a fast `beacon::ensure` burst (event-driven failover). Armed
     /// on `NeighborDown` — the beacon may have just died — so a
@@ -529,6 +540,9 @@ impl EventLoopState {
             announced: false,
             meshed: false,
             unicast_pool: crate::unicast::UnicastPool::disconnected(),
+            link_state: crate::whisper::LinkStateStore::default(),
+            link_state_seq: 0,
+            whisper_telemetry: HashMap::new(),
             reclaim_until: None,
             seen: BoundedIdSet::new(seen_ids_cap()),
             pending_outbound: BoundedQueue::new(PENDING_OUTBOUND_CAP),

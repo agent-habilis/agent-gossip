@@ -54,6 +54,31 @@ any frame remains gossip-carriable and anti-entropy-healable.
 
 State: `unicast_pool` (the per-peer connection pool). See [`src/unicast`].
 
+### whisper
+
+*Layer: transport · keyed by node id (hex).*
+
+The directed, private counterpart of broadcast **gossip** — a *whisper* passed
+quietly ear-to-ear along a chain (cf. Ethereum's Whisper). The multi-hop
+transport a **directed** frame takes when its addressee is *known* but not
+**directly** reachable by **unicast**: the initiator source-routes a **circuit**
+— a telescoping chain of QUIC connections through **peers it is already connected
+to** — over its own ALPN (`agent-gossip/whisper/1`). Each hop peels one
+**onion**-sealed layer (reusing **seal**), learning only its successor, and
+splices the payload straight through; the terminal hop delivers into the *same*
+`gossip::ingest` seam as unicast, so the addressee ingests a whispered frame
+identically. Forwarding peers (**whisperers**) need **not** be publicly reachable
+— this is the serverless, multi-hop counterpart to iroh's own (server-based,
+single-hop) **relay**, and deliberately named apart from it.
+
+Route selection is **proactive link-state**: every node gossips its own measured
+**link-vector** (a `linkstate` frame: its neighbours + per-link `LinkMetric` + its
+X25519 key), so each node holds the whole metric-weighted mesh **graph** and
+computes routes locally with Dijkstra — including up to N **node-disjoint**
+alternates tried best-first before falling back to gossip. Tier order for a
+directed frame: direct **unicast** → **whisper** → gossip. Gated by
+`--no-whisper`. State: `link_state` (`LinkStateStore`). See [`src/whisper`].
+
 ### participant
 
 *Layer: membership · keyed by nickname.*
@@ -84,7 +109,7 @@ itself.
 Code: `protocol::swarm` (`Swarm` / `SwarmConfig`). Byte layout:
 [swarm-hash.md](./swarm-hash.md).
 
-### forum swarm
+### topic swarm
 
 *Layer: identity · keyed by seed.*
 
@@ -92,11 +117,11 @@ A `Swarm` whose `seed` is derived from an arbitrary string —
 `SHA256(TOPIC_DOMAIN ‖ trim(string))` — rather than minted randomly at
 `create`. The name is the string itself sanitized into a `SwarmName` (leading
 URL scheme dropped — plus the `?query`/`#fragment` for an http(s) URL — invalid
-runs → `-`, `/` and URL chars kept, capped at 32 with a trailing `…`, or `forum`
+runs → `-`, `/` and URL chars kept, capped at 32 with a trailing `…`, or `topic`
 if empty; this affects the name only, not the seed), and the config is always
 the public preset — so the
-**string alone** determines the swarm: anyone running `agent-gossip forum <string>`
-converges. Joined via the `forum` command, not `join`.
+**string alone** determines the swarm: anyone running `agent-gossip topic <string>`
+converges. Joined via the `topic` command, not `join`.
 
 Code: `protocol::crypto::topic_seed`, `Swarm::from_topic`,
 `SwarmName::from_topic_string`. See [discovery.md](./discovery.md) §7.
@@ -255,11 +280,11 @@ sender's own echo** — a third party never sees it; a beat is liveness plumbing
 UX flows below distinguish themselves by how the skill uses the task, not a
 marker.
 
-Two skills ride this primitive. `/swarm:task` is the **report-back** flow — the
+Two skills ride this primitive. `/gossip:task` is the **report-back** flow — the
 worker returns a result (`artifact`), the initiator approves, and the worker
 completes; it creates one or more independent tasks (each its own `task_id`,
 worker, and completion criteria) and surfaces each result as it returns, with no
-group-level outcome. `/swarm:handover` is the **walk-away** flow (see below).
+group-level outcome. `/gossip:handover` is the **walk-away** flow (see below).
 
 **Keepalive vs. liveness.** While the ball-owner is silent, its daemon emits a
 `working` keepalive beat so a genuinely-working owner is not falsely timed out.
@@ -277,11 +302,11 @@ Code: `MessageKind::{A2aReq,A2aResp,A2aStatus,A2aArtifact}`,
 
 *Layer: skill behavior on top of **task**.*
 
-A UX behavior on the task primitive, driven entirely by the `/swarm:handover`
+A UX behavior on the task primitive, driven entirely by the `/gossip:handover`
 skill: delegate a task/plan and walk away. The handoff completes the moment the
 worker **accepts** (`state:"working"`); the worker then runs the work **itself**
 and completes on its own — no result flows back (the difference from
-`/swarm:task`, which returns a result the initiator approves). Because the wire
+`/gossip:task`, which returns a result the initiator approves). Because the wire
 has no behavior discriminator, the "walk-away vs report-back" intent lives in how
 the skill uses the task (and the brief's phrasing), not as a wire field. Adds no
 wire type of its own.

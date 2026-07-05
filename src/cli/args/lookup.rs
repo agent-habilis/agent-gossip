@@ -84,7 +84,7 @@ mod tests {
         match Cli::parse_from(args).command {
             Commands::Create { opts } => opts.lookups.to_set().relay,
             Commands::Join { .. }
-            | Commands::Forum { .. }
+            | Commands::Topic { .. }
             | Commands::Poll { .. }
             | Commands::Ping { .. }
             | Commands::Discover { .. }
@@ -93,6 +93,7 @@ mod tests {
             | Commands::Peers { .. }
             | Commands::State { .. }
             | Commands::Meta { .. }
+            | Commands::Topology { .. }
             | Commands::A2a { .. }
             | Commands::Ready { .. }
             | Commands::Plug { .. }
@@ -159,7 +160,7 @@ mod tests {
         let opts = match Cli::parse_from(["agent-gossip", "create", "--mdns"]).command {
             Commands::Create { opts } => opts,
             Commands::Join { .. }
-            | Commands::Forum { .. }
+            | Commands::Topic { .. }
             | Commands::Poll { .. }
             | Commands::Ping { .. }
             | Commands::Discover { .. }
@@ -168,6 +169,7 @@ mod tests {
             | Commands::Peers { .. }
             | Commands::State { .. }
             | Commands::Meta { .. }
+            | Commands::Topology { .. }
             | Commands::A2a { .. }
             | Commands::Ready { .. }
             | Commands::Plug { .. }

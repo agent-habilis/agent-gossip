@@ -12,7 +12,6 @@ mod a2a;
 mod create;
 mod discover;
 mod doctor;
-mod forum;
 mod join;
 mod leave;
 mod lookup;
@@ -25,12 +24,13 @@ mod ready;
 mod session;
 mod shared;
 mod state;
+mod topic;
+mod topology;
 
 pub(crate) use a2a::{A2aAction, A2aOpts};
 pub(crate) use create::CreateOpts;
 pub(crate) use discover::DiscoverOpts;
 pub(crate) use doctor::DoctorOpts;
-pub(crate) use forum::ForumOpts;
 pub(crate) use join::JoinOpts;
 pub(crate) use leave::LeaveOpts;
 pub(crate) use meta::{MetaAction, MetaOpts};
@@ -42,6 +42,8 @@ pub(crate) use ready::ReadyOpts;
 pub(crate) use session::SessionOpts;
 pub(crate) use shared::SharedServerOpts;
 pub(crate) use state::{StateAction, StateOpts};
+pub(crate) use topic::TopicOpts;
+pub(crate) use topology::TopologyOpts;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -88,14 +90,14 @@ pub(crate) enum Commands {
     },
 
     /// Join a public swarm derived from a shared string
-    Forum {
+    Topic {
         #[command(flatten)]
-        opts: ForumOpts,
+        opts: TopicOpts,
     },
 
     /// Leave swarm(s): stop this session's local daemon(s).
     ///
-    /// Finds running create/join/forum daemons through their state files
+    /// Finds running create/join/topic daemons through their state files
     /// and sends each a SIGTERM; a daemon broadcasts `left` to its peers
     /// and removes its state file on the way out. With no SWARM, stops
     /// only the daemons owned by the calling session — those with
@@ -188,6 +190,16 @@ pub(crate) enum Commands {
     Meta {
         #[command(flatten)]
         opts: MetaOpts,
+    },
+
+    /// Print the relay routing topology from a running daemon's point of view.
+    ///
+    /// Emits the metric-weighted mesh graph the daemon has assembled from
+    /// gossiped link-state, as JSON (`{self_id, edges:[{from,to,metric}]}`) —
+    /// the data behind the `/swarm:topology` render.
+    Topology {
+        #[command(flatten)]
+        opts: TopologyOpts,
     },
 
     /// Wait until a swarm daemon is serving, then exit.

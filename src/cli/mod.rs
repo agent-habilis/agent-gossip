@@ -9,7 +9,7 @@ use serde::Deserialize;
 
 use crate::daemon::run as run_event_loop;
 use crate::daemon::setup::{SetupKind, SetupParams, setup_swarm};
-use crate::daemon::{CreateParams, ForumParams, JoinParams, Resolved};
+use crate::daemon::{CreateParams, JoinParams, Resolved, TopicParams};
 use crate::embed::spawn_advertiser;
 use crate::output::{Output, OutputMode};
 use crate::protocol::swarm::{Swarm, SwarmConfig, SwarmName, resolve_lookups};
@@ -29,8 +29,8 @@ mod session;
 
 pub(crate) use args::Cli;
 use args::{
-    A2aAction, Commands, CreateOpts, ForumOpts, MetaAction, MetaOpts, OutputFormat, PeersOpts,
-    PingOpts, PollOpts, ReadyOpts, SharedServerOpts, StateAction, StateOpts,
+    A2aAction, Commands, CreateOpts, MetaAction, MetaOpts, OutputFormat, PeersOpts, PingOpts,
+    PollOpts, ReadyOpts, SharedServerOpts, StateAction, StateOpts, TopicOpts, TopologyOpts,
 };
 
 /// `join` has no `--public`/`--name`: both are encoded in the `💬…`
@@ -82,9 +82,9 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
             crate::util::tuning::init(opts.shared.tuning());
             Box::pin(join(opts.swarm, opts.nickname, opts.password, opts.shared)).await
         }
-        Commands::Forum { opts } => {
+        Commands::Topic { opts } => {
             crate::util::tuning::init(opts.shared.tuning());
-            Box::pin(forum(opts)).await
+            Box::pin(topic(opts)).await
         }
         Commands::Leave { opts } => session::leave(opts).await,
         Commands::Session { opts } => session::session(opts).await,
@@ -97,6 +97,7 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
         // `large_futures` budget.
         Commands::State { opts } => state(opts).await,
         Commands::Meta { opts } => meta(opts).await,
+        Commands::Topology { opts } => topology_cmd(opts).await,
         Commands::Ready { opts } => ready(opts).await,
         Commands::Discover { opts } => {
             crate::util::tuning::init(opts.shared.tuning());
@@ -146,7 +147,7 @@ async fn run_session(resolved: Resolved, shared: SharedServerOpts) -> Result<()>
     // (only `create` advertises, so only `Create` carries them).
     let directory_lookups = match &kind {
         SetupKind::Create { config, .. } => Some(config.lookups.clone()),
-        SetupKind::Join { .. } | SetupKind::Forum { .. } => None,
+        SetupKind::Join { .. } | SetupKind::Topic { .. } => None,
     };
     let out = Output::new(
         shared.output.into(),
@@ -200,6 +201,8 @@ async fn create(opts: CreateOpts) -> Result<()> {
         // The verifier is baked in at setup: its salt is the seed, which is
         // minted there. The flag's presence is all `resolve` needs.
         password: None,
+        // `--no-gossip` is a swarm-wide characteristic baked into the id, so
+        // every joiner inherits it from the ticket alone.
     };
     // `resolve` validates `--advertise` against the config (never a silent
     // no-op) before any setup work.
@@ -249,9 +252,9 @@ async fn join(
 
 /// Join a public swarm derived deterministically from a shared string. The
 /// seed, name, and (always-public) config are all derived from the string, so
-/// the same string joins the same forum on any machine — no id to share.
-async fn forum(opts: ForumOpts) -> Result<()> {
-    let resolved = ForumParams {
+/// the same string joins the same topic on any machine — no id to share.
+async fn topic(opts: TopicOpts) -> Result<()> {
+    let resolved = TopicParams {
         string: opts.string,
         nickname: opts.nickname,
     }
@@ -587,6 +590,19 @@ async fn peers(opts: PeersOpts) -> Result<()> {
     let cmd = IpcCommand::Peers { swarm };
     let resp = ipc::send(&cmd, &nickname).await?;
     println!("{resp}");
+    Ok(())
+}
+
+/// Print the whisper routing topology (assembled mesh graph) from the running
+/// daemon, as JSON. Backs the `/swarm:topology` render.
+async fn topology_cmd(opts: TopologyOpts) -> Result<()> {
+    let cmd = IpcCommand::Topology { swarm: opts.swarm };
+    let resp = ipc::send(&cmd, &opts.nickname).await?;
+    println!("{resp}");
+    let parsed: MsgResponse = serde_json::from_str(&resp)?;
+    if !parsed.ok {
+        std::process::exit(1);
+    }
     Ok(())
 }
 

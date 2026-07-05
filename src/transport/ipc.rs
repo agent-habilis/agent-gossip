@@ -116,6 +116,10 @@ pub(crate) enum IpcCommand {
     /// `meta`-channel counterpart of [`StateGet`](IpcCommand::StateGet).
     #[serde(rename = "meta_get")]
     MetaGet { swarm: SwarmId },
+    /// The relay routing topology from this daemon's point of view: the
+    /// metric-weighted mesh graph it has assembled from gossiped link-state.
+    #[serde(rename = "topology")]
+    Topology { swarm: SwarmId },
     /// A gossip A2A call: send a directed A2A JSON-RPC request to `to` and
     /// return its response (or a timeout error). `to` serves the safe method
     /// set only.
@@ -152,6 +156,7 @@ impl IpcCommand {
             | IpcCommand::StateGet { swarm }
             | IpcCommand::MetaMerge { swarm, .. }
             | IpcCommand::MetaGet { swarm }
+            | IpcCommand::Topology { swarm }
             | IpcCommand::A2aCall { swarm, .. } => Some(swarm),
             IpcCommand::Info => None,
         }
@@ -484,6 +489,7 @@ mod tests {
             | IpcCommand::MetaGet { .. }
             | IpcCommand::StateGet { .. }
             | IpcCommand::A2aCall { .. }
+            | IpcCommand::Topology { .. }
             | IpcCommand::Info => panic!("expected StateMerge"),
         }
     }
@@ -515,6 +521,7 @@ mod tests {
             | IpcCommand::MetaGet { .. }
             | IpcCommand::StateGet { .. }
             | IpcCommand::A2aCall { .. }
+            | IpcCommand::Topology { .. }
             | IpcCommand::Info => panic!("expected Poll"),
         }
     }
@@ -539,6 +546,7 @@ mod tests {
             | IpcCommand::MetaGet { .. }
             | IpcCommand::StateGet { .. }
             | IpcCommand::A2aCall { .. }
+            | IpcCommand::Topology { .. }
             | IpcCommand::Info => panic!("expected Ping"),
         }
     }
@@ -570,6 +578,7 @@ mod tests {
             | IpcCommand::MetaGet { .. }
             | IpcCommand::StateGet { .. }
             | IpcCommand::A2aCall { .. }
+            | IpcCommand::Topology { .. }
             | IpcCommand::Info => panic!("expected A2aStatus"),
         }
     }
@@ -594,6 +603,7 @@ mod tests {
             | IpcCommand::MetaGet { .. }
             | IpcCommand::StateGet { .. }
             | IpcCommand::A2aCall { .. }
+            | IpcCommand::Topology { .. }
             | IpcCommand::Info => panic!("expected Peers"),
         }
     }
@@ -757,6 +767,7 @@ mod tests {
                     | IpcCommand::MetaGet { .. }
                     | IpcCommand::StateGet { .. }
                     | IpcCommand::A2aCall { .. }
+                    | IpcCommand::Topology { .. }
                     | IpcCommand::Info => {
                         let _ = resp_tx.send(json_error("unexpected command"));
                     }
