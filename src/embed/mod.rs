@@ -16,7 +16,7 @@ use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio::task::JoinHandle;
 
 use crate::a2a::TaskId;
-use crate::daemon::setup::{SetupKind, setup_swarm};
+use crate::daemon::setup::{SetupKind, SetupParams, setup_swarm};
 use crate::daemon::state::RosterSnapshot;
 use crate::daemon::{
     CoHostPolicy, CreateParams, DriverMode, EventLoopConfig, ForumParams, JoinParams, Resolved,
@@ -260,8 +260,16 @@ async fn create_setup(
     .resolve()
     .map_err(|_| CreateError::AdvertiseRequiresReachable)?;
     let mut elc = setup_swarm(
-        kind, author, /* interactive */ false, max_peers, None, output, /* drift */ None,
-        /* a2a_serve */ None,
+        kind,
+        SetupParams {
+            author,
+            interactive: false,
+            max_peers,
+            state_file: None,
+            output,
+            drift: None,
+            a2a_serve: None,
+        },
     )
     .await
     .map_err(|error| CreateError::Setup(error.context("setup_swarm failed")))?;
@@ -313,8 +321,16 @@ async fn resolved_setup(
 ) -> Result<EventLoopConfig, JoinError> {
     let Resolved { kind, author, .. } = resolved;
     setup_swarm(
-        kind, author, /* interactive */ false, max_peers, None, output, /* drift */ None,
-        /* a2a_serve */ None,
+        kind,
+        SetupParams {
+            author,
+            interactive: false,
+            max_peers,
+            state_file: None,
+            output,
+            drift: None,
+            a2a_serve: None,
+        },
     )
     .await
     .map_err(|error| JoinError::Setup(error.context("setup_swarm failed")))
@@ -780,13 +796,15 @@ impl SwarmSession {
         let (output, events_rx) = capture();
         let mut elc = setup_swarm(
             SetupKind::Join { swarm },
-            author,
-            /* interactive */ false,
-            GOSSIP_ACTIVE_VIEW_CAPACITY,
-            /* state_file */ None,
-            output,
-            /* drift */ None,
-            /* a2a_serve */ None,
+            SetupParams {
+                author,
+                interactive: false,
+                max_peers: GOSSIP_ACTIVE_VIEW_CAPACITY,
+                state_file: None,
+                output,
+                drift: None,
+                a2a_serve: None,
+            },
         )
         .await?;
         elc.cohost = cohost;

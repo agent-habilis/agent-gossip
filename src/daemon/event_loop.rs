@@ -249,16 +249,13 @@ async fn antientropy_arm(
 /// closed and polling should stop.
 async fn handle_session_arm(
     req: Option<SessionRequest>,
-    swarm: &SwarmId,
-    author: &Nickname,
+    ctx: &HandlerCtx<'_>,
     state: &mut EventLoopState,
-    sender: &GossipSender,
-    output: &output::Output,
 ) -> bool {
     let Some(req) = req else {
         return false;
     };
-    if gossip::handle_session_request(req, swarm, author, state, sender, output).await {
+    if gossip::handle_session_request(req, ctx, state).await {
         state.last_sent_at = Instant::now();
     }
     true
@@ -290,19 +287,11 @@ async fn sweep_arm(
 /// One `--a2a-serve` JSON-RPC request from the HTTP task: execute against
 /// the live loop state and answer on its oneshot. `false` means the channel
 /// closed (the HTTP task is gone — daemon teardown) and polling should stop.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the per-arm dispatch needs the same daemon coordinates as the IPC arm plus the binding's port"
-)]
 async fn handle_a2a_arm(
     req: Option<crate::a2a::rpc::A2aRequest>,
-    swarm: &SwarmId,
-    author: &Nickname,
-    our_pubkey: &str,
+    ctx: &HandlerCtx<'_>,
     a2a_port: Option<u16>,
     state: &mut EventLoopState,
-    sender: &GossipSender,
-    output: &output::Output,
 ) -> bool {
     let Some(crate::a2a::rpc::A2aRequest { op, resp }) = req else {
         return false;
@@ -319,30 +308,18 @@ async fn handle_a2a_arm(
     } = op
     {
         gossip::broadcast_a2a_call(
-            swarm,
-            author,
+            ctx,
             peer,
             "SendMessage",
             serde_json::json!({ "message": message }),
             Duration::from_secs(30),
             crate::daemon::state::A2aResponder::Rpc(resp),
             state,
-            sender,
         )
         .await;
         return true;
     }
-    let outcome = crate::a2a::rpc::handle_op(
-        op,
-        swarm,
-        author,
-        our_pubkey,
-        a2a_port.unwrap_or_default(),
-        state,
-        sender,
-        output,
-    )
-    .await;
+    let outcome = crate::a2a::rpc::handle_op(op, ctx, a2a_port.unwrap_or_default(), state).await;
     let _ = resp.send(outcome);
     true
 }
@@ -439,31 +416,21 @@ fn log_daemon_start(author: &Nickname) {
 /// card is the peer's canonical A2A self-description, architectural rather
 /// than app state). Unmeshed it buffers/backfills like any state event;
 /// agent-side facts (model/harness/host) stay the agent's merge.
-pub(crate) async fn publish_own_card(
-    swarm: &SwarmId,
-    author: &Nickname,
-    our_pubkey: &str,
-    state: &mut EventLoopState,
-    sender: &GossipSender,
-    output: &output::Output,
-    endpoint: &Endpoint,
-) {
+pub(crate) async fn publish_own_card(ctx: &HandlerCtx<'_>, state: &mut EventLoopState) {
     let seal_b58 = bs58::encode(state.identity.seal_public()).into_string();
-    let card = crate::a2a::card::own_card(author, our_pubkey, &seal_b58);
+    let card = crate::a2a::card::own_card(ctx.author, ctx.our_pubkey, &seal_b58);
     // Fold our stable dial hint (EndpointId + home relay) into the card so a peer
     // that has synced the meta doc can dial us without a gossiped `PeerInfo`.
     // Re-publishing with an unchanged address is a no-op (an automerge change
     // with no ops), so this is safe to call repeatedly (e.g. on mesh/relay
     // changes) and only writes when the relay actually moves.
-    let mut merge = crate::a2a::card::publish_merge(author, &card);
-    merge["peers"][author.as_str()]["card"]["endpoint"] = crate::a2a::card::endpoint_hint(endpoint);
+    let mut merge = crate::a2a::card::publish_merge(ctx.author, &card);
+    merge["peers"][ctx.author.as_str()]["card"]["endpoint"] =
+        crate::a2a::card::endpoint_hint(ctx.endpoint);
     if let Err(error) = gossip::broadcast_state_merge(
-        swarm,
-        author,
+        ctx,
         merge,
         state,
-        sender,
-        output,
         crate::protocol::Channel::Meta,
         // Internal plumbing: the agent didn't write this, so don't surface it as
         // a "you changed shared state" event (nor race a fetch long-poll).
@@ -475,10 +442,6 @@ pub(crate) async fn publish_own_card(
     }
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "the daemon's central select! loop: one arm per event source (stdin, ipc, a2a, gossip, the maintenance ticks, quit); each arm delegates to a helper, but the arm list itself is irreducibly long"
-)]
 async fn event_loop(loop_state: EventLoop) -> Result<()> {
     let EventLoop {
         mut sender,
@@ -559,16 +522,7 @@ async fn event_loop(loop_state: EventLoop) -> Result<()> {
     // daemon shuts down rather than pretend to be a live member.
     let mut resubscribe_attempts: u32 = 0;
 
-    publish_own_card(
-        &swarm_str,
-        &author,
-        &our_pubkey,
-        &mut state,
-        &sender,
-        &output,
-        &endpoint,
-    )
-    .await;
+    publish_own_card(&parts.ctx(&sender), &mut state).await;
 
     loop {
         tokio::select! {
@@ -580,12 +534,12 @@ async fn event_loop(loop_state: EventLoop) -> Result<()> {
             () = sleep_until_opt(state.earliest_a2a_deadline()) =>
                 state.expire_a2a_waiters(tokio::time::Instant::now()),
             ipc_msg = recv_opt(&mut ipc_rx) => {
-                if !handle_ipc_arm(ipc_msg, &swarm_str, &swarm_name, &author, &mut state, &sender, &output).await {
+                if !handle_ipc_arm(ipc_msg, &parts.ctx(&sender), &swarm_name, &mut state).await {
                     ipc_rx = None;
                 }
             }
             a2a_req = recv_opt(&mut a2a_rx) => {
-                if !handle_a2a_arm(a2a_req, &swarm_str, &author, &our_pubkey, a2a_port, &mut state, &sender, &output).await {
+                if !handle_a2a_arm(a2a_req, &parts.ctx(&sender), a2a_port, &mut state).await {
                     a2a_rx = None;
                 }
             }
@@ -632,7 +586,7 @@ async fn event_loop(loop_state: EventLoop) -> Result<()> {
                 break;
             }
             req = recv_opt(&mut external_req_rx) => {
-                if !handle_session_arm(req, &swarm_str, &author, &mut state, &sender, &output).await {
+                if !handle_session_arm(req, &parts.ctx(&sender), &mut state).await {
                     external_req_rx = None;
                 }
             }
@@ -1335,19 +1289,14 @@ async fn handle_stdin_arm(
 /// line budget.
 async fn handle_ipc_arm(
     ipc_msg: Option<IpcMessage>,
-    swarm: &SwarmId,
+    ctx: &HandlerCtx<'_>,
     name: &SwarmName,
-    author: &Nickname,
     state: &mut EventLoopState,
-    sender: &GossipSender,
-    output: &output::Output,
 ) -> bool {
     match ipc_msg {
         None => false,
         Some((cmd, resp_tx)) => {
-            if ipc::handle_ipc_command(cmd, resp_tx, swarm, name, author, state, sender, output)
-                .await
-            {
+            if ipc::handle_ipc_command(cmd, resp_tx, ctx, name, state).await {
                 state.last_sent_at = Instant::now();
             }
             true

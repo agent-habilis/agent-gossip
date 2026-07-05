@@ -13,7 +13,7 @@ use serde::Serialize;
 
 use crate::util::consts::SWARM_GLYPH;
 
-use super::OutputEvent;
+use super::{OutputEvent, TaskMessageLeg};
 use crate::protocol::{Message, MessageKind, Nickname, PresenceSubtype};
 
 /// One-shot events (everything except the `"event":"message"` family).
@@ -437,35 +437,22 @@ pub(super) fn format_task_json(msg: &Message, is_self: bool) -> String {
 /// Format an RPC `message/send` task leg (the initiator's brief / answer /
 /// approval, surfaced on the worker; or the created `Task` adopted on the
 /// initiator) as a `{"event":"task","kind":"message",...}` line.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "a message-leg task event carries id/swarm/author/peer/task_id/state/text and the self flag; there is no frame to derive them from (the leg arrived over RPC)"
-)]
-pub(super) fn format_task_message_json(
-    id: &str,
-    swarm: &str,
-    author: &str,
-    peer: &str,
-    task_id: &str,
-    state: Option<crate::a2a::TaskState>,
-    text: &str,
-    is_self: bool,
-) -> String {
+pub(super) fn format_task_message_json(leg: &TaskMessageLeg<'_>) -> String {
     serde_json::to_string(&TaskLine {
         event: "task",
-        id,
-        swarm,
-        author,
+        id: leg.id,
+        swarm: leg.swarm,
+        author: leg.author,
         pubkey: None,
         ts: crate::util::clock::unix_secs(),
-        to: peer,
-        task_id: task_id.to_owned(),
+        to: leg.peer,
+        task_id: leg.task_id.to_owned(),
         kind: "message",
-        state: state.map(crate::a2a::TaskState::as_str),
-        display: task_display(author, peer, "message", state, text),
-        body: text.to_owned(),
+        state: leg.state.map(crate::a2a::TaskState::as_str),
+        display: task_display(leg.author, leg.peer, "message", leg.state, leg.text),
+        body: leg.text.to_owned(),
         payload: None,
-        is_self,
+        is_self: leg.is_self,
     })
     .expect("task event serialization should never fail")
 }
@@ -646,9 +633,16 @@ pub fn event_json(event: &OutputEvent) -> Option<String> {
             text,
             is_self,
         } => {
-            return Some(format_task_message_json(
-                id, swarm, author, peer, task_id, *state, text, *is_self,
-            ));
+            return Some(format_task_message_json(&TaskMessageLeg {
+                id,
+                swarm,
+                author,
+                peer,
+                task_id,
+                state: *state,
+                text,
+                is_self: *is_self,
+            }));
         }
         OutputEvent::TaskTimeout { task_id } => serde_json::to_string(&SimpleEvent::TaskTimeout {
             task_id: task_id.as_str(),

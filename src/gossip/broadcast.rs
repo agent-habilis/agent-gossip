@@ -13,6 +13,7 @@ use iroh::Endpoint;
 use iroh_gossip::api::GossipSender;
 
 use crate::daemon::SessionRequest;
+use crate::daemon::ctx::HandlerCtx;
 use crate::daemon::state::EventLoopState;
 use crate::output;
 use crate::protocol::identity::Identity;
@@ -59,17 +60,10 @@ pub(crate) async fn broadcast_msg(sender: &GossipSender, msg: &Message) {
 /// # Errors
 /// Unrepresentable merge, oversize frame, a rejected foreign-card write, or a
 /// broadcast refusal.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the channel-parameterized state write; every argument is load-bearing"
-)]
 pub(crate) async fn broadcast_state_merge(
-    swarm: &SwarmId,
-    author: &Nickname,
+    ctx: &HandlerCtx<'_>,
     merge: serde_json::Value,
     state: &mut EventLoopState,
-    sender: &GossipSender,
-    output: &output::Output,
     channel: Channel,
     surface: bool,
 ) -> anyhow::Result<()> {
@@ -78,8 +72,8 @@ pub(crate) async fn broadcast_state_merge(
     // 1. Build the change on a fork (no live mutation yet); a no-op merge is a
     //    silent success.
     let built = match channel {
-        Channel::State => state.state_doc.build_change(&merge, author)?,
-        Channel::Meta => state.meta_doc.build_change(&merge, author)?,
+        Channel::State => state.state_doc.build_change(&merge, ctx.author)?,
+        Channel::Meta => state.meta_doc.build_change(&merge, ctx.author)?,
     };
     let Some(change_bytes) = built else {
         return Ok(());
@@ -89,7 +83,8 @@ pub(crate) async fn broadcast_state_merge(
     //    Carry the input merge as the surfaced delta only for agent-visible
     //    writes; the internal card publish stays lean (no delta on the wire).
     let body = crate::daemon::state_doc::change_body(&change_bytes, surface.then_some(&merge))?;
-    let signed = Message::new_channel_event(swarm, author, body, channel).signed(&state.identity);
+    let signed =
+        Message::new_channel_event(ctx.swarm, ctx.author, body, channel).signed(&state.identity);
     let bytes = signed.serialize()?;
     crate::logging::messages::log_out(&signed);
 
@@ -113,10 +108,10 @@ pub(crate) async fn broadcast_state_merge(
     // 4. Surface our own change, and gossip it (or buffer when unmeshed — the
     //    change is safe in the local doc for heads-based anti-entropy).
     if surface {
-        output.state_changed(channel, &signed, &after, true);
+        ctx.output.state_changed(channel, &signed, &after, true);
     }
     if state.meshed {
-        sender
+        ctx.sender
             .broadcast(Bytes::from(bytes))
             .await
             .map_err(|error| anyhow::anyhow!("{error}"))?;
@@ -288,23 +283,26 @@ fn split_body(body: &str, budget: usize) -> Option<Vec<&str>> {
     Some(chunks)
 }
 
+/// One outbound frame's position in the per-author hash chain + DAG: the
+/// `seq`, the `prev` hash link, and the current DAG tips. Bundled so
+/// [`build_msg`] stays within the argument budget.
+struct ChainStamp {
+    seq: u64,
+    prev: Option<String>,
+    parents: Vec<String>,
+}
+
 /// Build, chain-stamp, shard-tag and sign one outbound chat frame (without
 /// serializing — the caller measures or serializes). `id` pins the frame id:
 /// the payload's A2A `messageId` for a single-frame body (`None` keeps the
 /// minted id — shards of a split body keep their own ids; the *group* carries
 /// the A2A id there).
-#[expect(
-    clippy::too_many_arguments,
-    reason = "a chained, shard-tagged chat frame needs the body, pinned id, chain (seq/prev/parents), shard header and signer; the daemon stamps these inline to interleave chain stamping with the shard split"
-)]
 fn build_msg(
     swarm: &SwarmId,
     author: &Nickname,
     body: MessageBody,
     id: Option<MessageId>,
-    seq: u64,
-    prev: Option<String>,
-    parents: Vec<String>,
+    stamp: ChainStamp,
     shard: Option<Shard>,
     signer: &Identity,
 ) -> Message {
@@ -312,8 +310,8 @@ fn build_msg(
     if let Some(id) = id {
         msg = msg.with_id(id);
     }
-    msg.with_chain(seq, prev)
-        .with_parents(parents)
+    msg.with_chain(stamp.seq, stamp.prev)
+        .with_parents(stamp.parents)
         .with_shard(shard)
         .signed(signer)
 }
@@ -395,9 +393,11 @@ pub(crate) async fn broadcast_message(
         author,
         body.clone(),
         Some(payload_id.clone()),
-        state.self_seq,
-        state.self_prev.clone(),
-        state.dag_parents(),
+        ChainStamp {
+            seq: state.self_seq,
+            prev: state.self_prev.clone(),
+            parents: state.dag_parents(),
+        },
         None,
         &signer,
     );
@@ -427,9 +427,11 @@ pub(crate) async fn broadcast_message(
         author,
         MessageBody::new(String::new()).expect("empty body is valid"),
         None,
-        state.self_seq,
-        Some(hash_stub),
-        probe_parents,
+        ChainStamp {
+            seq: state.self_seq,
+            prev: Some(hash_stub),
+            parents: probe_parents,
+        },
         Some(Shard {
             group: group.clone(),
             idx: max_parts - 1,
@@ -464,9 +466,11 @@ pub(crate) async fn broadcast_message(
             author,
             chunk_body,
             None,
-            state.self_seq,
-            state.self_prev.clone(),
-            state.dag_parents(),
+            ChainStamp {
+                seq: state.self_seq,
+                prev: state.self_prev.clone(),
+                parents: state.dag_parents(),
+            },
             Some(shard),
             &signer,
         );
@@ -490,29 +494,22 @@ pub(crate) async fn broadcast_message(
 /// # Errors
 /// Propagates a [`Message::serialize`] failure, a gossip broadcast error, and
 /// a full unmeshed pending-outbound buffer.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "a task-frame emit threads swarm/author identity, the target + task id + payload, and the state/sender/output it broadcasts through"
-)]
 async fn broadcast_task_frame(
-    swarm: &SwarmId,
-    author: &Nickname,
+    ctx: &HandlerCtx<'_>,
     kind: MessageKind,
     payload_body: MessageBody,
     content: bool,
     state: &mut EventLoopState,
-    sender: &GossipSender,
-    out: &output::Output,
 ) -> anyhow::Result<(MessageId, Message)> {
     let signer = state.identity.clone();
     // Fast path: the whole leg in one frame.
-    let single =
-        Message::new_frame(swarm, author, kind.clone(), payload_body.clone()).signed(&signer);
+    let single = Message::new_frame(ctx.swarm, ctx.author, kind.clone(), payload_body.clone())
+        .signed(&signer);
     if single.wire_len() <= MAX_MESSAGE_SIZE {
         let bytes = Bytes::from(single.serialize()?);
         let id = single.id.clone();
-        send_task_leg(state, sender, out, &single, bytes, true, content).await?;
-        ingest_own_leg(state, &single, out);
+        send_task_leg(state, ctx.sender, ctx.output, &single, bytes, true, content).await?;
+        ingest_own_leg(state, &single, ctx.output);
         return Ok((id, single));
     }
     // Only content legs are ever large enough to split; the beat is a tiny
@@ -527,8 +524,8 @@ async fn broadcast_task_frame(
         ShardGroup::from_uuid_str(logical_id.as_str()).expect("a frame id is a valid shard group");
     let max_parts = u32::try_from(MAX_MESSAGE_SHARDS).unwrap_or(u32::MAX);
     let probe = Message::new_frame(
-        swarm,
-        author,
+        ctx.swarm,
+        ctx.author,
         kind.clone(),
         MessageBody::new(String::new()).expect("empty body is valid"),
     )
@@ -558,16 +555,16 @@ async fn broadcast_task_frame(
             total,
         };
         let chunk_body = MessageBody::new(*chunk).expect("a substring of a valid body is valid");
-        let msg = Message::new_frame(swarm, author, kind.clone(), chunk_body)
+        let msg = Message::new_frame(ctx.swarm, ctx.author, kind.clone(), chunk_body)
             .with_shard(Some(shard))
             .signed(&signer);
         let bytes = Bytes::from(msg.serialize()?);
-        send_task_leg(state, sender, out, &msg, bytes, false, content).await?;
+        send_task_leg(state, ctx.sender, ctx.output, &msg, bytes, false, content).await?;
     }
     // Echo + ingest the logical leg once (one content leg toward the cap).
-    let logical = Message::new_frame(swarm, author, kind, payload_body).with_id(logical_id);
-    out.print_task(&logical, true);
-    ingest_own_leg(state, &logical, out);
+    let logical = Message::new_frame(ctx.swarm, ctx.author, kind, payload_body).with_id(logical_id);
+    ctx.output.print_task(&logical, true);
+    ingest_own_leg(state, &logical, ctx.output);
     Ok((logical.id.clone(), logical))
 }
 
@@ -578,28 +575,19 @@ async fn broadcast_task_frame(
 /// # Errors
 /// `unknown task` if we hold no record for `task_id`; otherwise a
 /// serialize/broadcast failure.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "a task-frame emit threads swarm/author identity, the target + task id + payload, and the state/sender/output it broadcasts through"
-)]
 pub(crate) async fn emit_task_status(
-    swarm: &SwarmId,
-    author: &Nickname,
+    ctx: &HandlerCtx<'_>,
     task_id: &crate::a2a::TaskId,
     task_state: crate::a2a::TaskState,
     note: Option<&str>,
     state: &mut EventLoopState,
-    sender: &GossipSender,
-    out: &output::Output,
 ) -> anyhow::Result<Message> {
     let Some(peer) = state.tasks.get(task_id).map(|rec| rec.peer.clone()) else {
         return Err(anyhow::anyhow!("unknown task '{task_id}'"));
     };
-    broadcast_task_status(
-        swarm, author, &peer, task_id, task_state, note, state, sender, out,
-    )
-    .await
-    .map(|(_id, msg)| msg)
+    broadcast_task_status(ctx, &peer, task_id, task_state, note, state)
+        .await
+        .map(|(_id, msg)| msg)
 }
 
 /// Worker-emit a `TaskArtifactUpdate` (the result) for a task we're serving.
@@ -607,28 +595,19 @@ pub(crate) async fn emit_task_status(
 /// # Errors
 /// `unknown task` if we hold no record for `task_id`; otherwise a
 /// serialize/broadcast failure.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "threads swarm/author identity, the task id + result text/file, and the state/sender/output it broadcasts through"
-)]
 pub(crate) async fn emit_task_artifact(
-    swarm: &SwarmId,
-    author: &Nickname,
+    ctx: &HandlerCtx<'_>,
     task_id: &crate::a2a::TaskId,
     text: &str,
     file: Option<crate::blob::FileRef>,
     state: &mut EventLoopState,
-    sender: &GossipSender,
-    out: &output::Output,
 ) -> anyhow::Result<Message> {
     let Some(peer) = state.tasks.get(task_id).map(|rec| rec.peer.clone()) else {
         return Err(anyhow::anyhow!("unknown task '{task_id}'"));
     };
-    broadcast_task_artifact(
-        swarm, author, &peer, task_id, text, file, state, sender, out,
-    )
-    .await
-    .map(|(_id, msg)| msg)
+    broadcast_task_artifact(ctx, &peer, task_id, text, file, state)
+        .await
+        .map(|(_id, msg)| msg)
 }
 
 /// Seal a directed payload `body` to `to`'s published X25519 key. A directed
@@ -654,28 +633,21 @@ pub(crate) fn seal_directed(
 ///
 /// # Errors
 /// Propagates a serialize/broadcast failure.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "a task-frame emit threads swarm/author identity, the target + task id + payload, and the state/sender/output it broadcasts through"
-)]
 pub(crate) async fn broadcast_task_status(
-    swarm: &SwarmId,
-    author: &Nickname,
+    ctx: &HandlerCtx<'_>,
     peer: &Nickname,
     task_id: &crate::a2a::TaskId,
     task_state: crate::a2a::TaskState,
     note: Option<&str>,
     state: &mut EventLoopState,
-    sender: &GossipSender,
-    out: &output::Output,
 ) -> anyhow::Result<(MessageId, Message)> {
-    let update = crate::a2a::gossip::status_update(swarm, task_id, task_state, note, None);
+    let update = crate::a2a::gossip::status_update(ctx.swarm, task_id, task_state, note, None);
     let body = seal_directed(state, peer, &crate::a2a::gossip::payload_body(&update)?)?;
     let kind = MessageKind::A2aStatus {
         to: peer.clone(),
         task_id: task_id.clone(),
     };
-    broadcast_task_frame(swarm, author, kind, body, true, state, sender, out).await
+    broadcast_task_frame(ctx, kind, body, true, state).await
 }
 
 /// A worker-emitted `TaskArtifactUpdate` (`a2a artifact`): compose the A2A
@@ -683,29 +655,22 @@ pub(crate) async fn broadcast_task_status(
 ///
 /// # Errors
 /// Propagates a serialize/broadcast failure.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "a task-frame emit threads swarm/author identity, the target + task id + payload, and the state/sender/output it broadcasts through"
-)]
 pub(crate) async fn broadcast_task_artifact(
-    swarm: &SwarmId,
-    author: &Nickname,
+    ctx: &HandlerCtx<'_>,
     peer: &Nickname,
     task_id: &crate::a2a::TaskId,
     text: &str,
     file: Option<crate::blob::FileRef>,
     state: &mut EventLoopState,
-    sender: &GossipSender,
-    out: &output::Output,
 ) -> anyhow::Result<(MessageId, Message)> {
-    let parts = build_offload_parts(swarm, author, task_id, text, file, state).await?;
-    let update = crate::a2a::gossip::artifact_update_parts(swarm, task_id, parts);
+    let parts = build_offload_parts(ctx.swarm, ctx.author, task_id, text, file, state).await?;
+    let update = crate::a2a::gossip::artifact_update_parts(ctx.swarm, task_id, parts);
     let body = seal_directed(state, peer, &crate::a2a::gossip::payload_body(&update)?)?;
     let kind = MessageKind::A2aArtifact {
         to: peer.clone(),
         task_id: task_id.clone(),
     };
-    broadcast_task_frame(swarm, author, kind, body, true, state, sender, out).await
+    broadcast_task_frame(ctx, kind, body, true, state).await
 }
 
 /// Resolve the parts of a `--file`-bearing leg: with no file, a single text
@@ -814,20 +779,14 @@ fn ingest_own_leg(state: &mut EventLoopState, msg: &Message, out: &output::Outpu
 /// waiter times out via the loop's a2a-deadline arm. Fails fast (through the
 /// responder) when `peer` isn't a current participant or the waiter registry
 /// is full — no silent park.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the client call carries swarm/author identity, the target + RPC method/params/timeout, the transport-specific responder, and the state + sender it parks and broadcasts through"
-)]
 pub(crate) async fn broadcast_a2a_call(
-    swarm: &SwarmId,
-    author: &Nickname,
+    ctx: &HandlerCtx<'_>,
     peer: Nickname,
     method: &str,
     params: serde_json::Value,
     timeout: std::time::Duration,
     responder: crate::daemon::state::A2aResponder,
     state: &mut EventLoopState,
-    sender: &GossipSender,
 ) {
     let rpc_error = |code: i64, message: &str| {
         serde_json::json!({ "error": { "code": code, "message": message } }).to_string()
@@ -861,7 +820,7 @@ pub(crate) async fn broadcast_a2a_call(
         }
     };
     let rpc_id = crate::a2a::A2aRpcId::random();
-    let frame = Message::new_a2a_req(swarm, author, peer.clone(), rpc_id.clone(), body)
+    let frame = Message::new_a2a_req(ctx.swarm, ctx.author, peer.clone(), rpc_id.clone(), body)
         .signed(&state.identity);
     // Clamp before adding to `Instant`: an unclamped client `timeout_secs` would
     // overflow the platform `Instant` and panic the event loop.
@@ -885,7 +844,7 @@ pub(crate) async fn broadcast_a2a_call(
     match frame.serialize() {
         Ok(bytes) => {
             if let Err(error) =
-                crate::unicast::deliver(&frame, Bytes::from(bytes), state, sender).await
+                crate::unicast::deliver(&frame, Bytes::from(bytes), state, ctx.sender).await
             {
                 tracing::warn!(target: "agent_gossip::gossip", %error, "a2a request send failed");
             }
@@ -896,28 +855,46 @@ pub(crate) async fn broadcast_a2a_call(
     }
 }
 
+/// Arm a fresh ping round carrying the responder; the deadline-driven
+/// `finalize_ping_round` delivers the RTT rows through it. Mirrors the IPC
+/// `Ping` handler, which leaves `resp` unset and emits the `ping_report`
+/// event instead.
+async fn session_ping(
+    ctx: &HandlerCtx<'_>,
+    state: &mut EventLoopState,
+    resp: tokio::sync::oneshot::Sender<Vec<output::PingPeer>>,
+) -> bool {
+    let now = tokio::time::Instant::now();
+    state.ping_round = Some(Box::new(crate::daemon::state::PingRound {
+        t1: now,
+        deadline: now + std::time::Duration::from_secs(crate::util::tuning::ping_window_secs()),
+        pongs: std::collections::HashMap::new(),
+        resp: Some(resp),
+    }));
+    broadcast_msg(
+        ctx.sender,
+        &Message::new_ping(ctx.swarm, ctx.author).signed(&state.identity),
+    )
+    .await;
+    true
+}
+
 /// Handle one typed in-process [`SessionRequest`] (embed / MCP). `Send`
 /// broadcasts via the shared helper and echoes the canonical [`Message`]
 /// back on the oneshot; `Poll` returns the join-horizon-filtered buffer.
 /// Returns `true` if anything was broadcast so the caller can refresh
 /// `last_sent_at` (mirrors `handle_ipc_command`).
-#[expect(
-    clippy::too_many_lines,
-    reason = "a dispatch match with one arm per SessionRequest variant (mirrors handle_ipc_command)"
-)]
 pub(crate) async fn handle_session_request(
     req: SessionRequest,
-    swarm: &SwarmId,
-    author: &Nickname,
+    ctx: &HandlerCtx<'_>,
     state: &mut EventLoopState,
-    sender: &GossipSender,
-    output: &output::Output,
 ) -> bool {
     match req {
         SessionRequest::Send { body, resp } => {
-            let outcome = broadcast_message(swarm, author, body, state, sender, output)
-                .await
-                .map(|(_id, msg)| msg);
+            let outcome =
+                broadcast_message(ctx.swarm, ctx.author, body, state, ctx.sender, ctx.output)
+                    .await
+                    .map(|(_id, msg)| msg);
             let sent_ok = outcome.is_ok();
             let _ = resp.send(outcome);
             sent_ok
@@ -940,17 +917,8 @@ pub(crate) async fn handle_session_request(
             note,
             resp,
         } => {
-            let outcome = emit_task_status(
-                swarm,
-                author,
-                &task_id,
-                task_state,
-                note.as_deref(),
-                state,
-                sender,
-                output,
-            )
-            .await;
+            let outcome =
+                emit_task_status(ctx, &task_id, task_state, note.as_deref(), state).await;
             let sent_ok = outcome.is_ok();
             let _ = resp.send(outcome);
             sent_ok
@@ -961,9 +929,7 @@ pub(crate) async fn handle_session_request(
             file,
             resp,
         } => {
-            let outcome =
-                emit_task_artifact(swarm, author, &task_id, &text, file, state, sender, output)
-                    .await;
+            let outcome = emit_task_artifact(ctx, &task_id, &text, file, state).await;
             let sent_ok = outcome.is_ok();
             let _ = resp.send(outcome);
             sent_ok
@@ -973,17 +939,7 @@ pub(crate) async fn handle_session_request(
             false
         }
         SessionRequest::StateMerge { merge, resp } => {
-            let outcome = broadcast_state_merge(
-                swarm,
-                author,
-                merge,
-                state,
-                sender,
-                output,
-                Channel::State,
-                true,
-            )
-            .await;
+            let outcome = broadcast_state_merge(ctx, merge, state, Channel::State, true).await;
             let sent = outcome.is_ok();
             let _ = resp.send(outcome);
             sent
@@ -993,17 +949,7 @@ pub(crate) async fn handle_session_request(
             false
         }
         SessionRequest::MetaMerge { merge, resp } => {
-            let outcome = broadcast_state_merge(
-                swarm,
-                author,
-                merge,
-                state,
-                sender,
-                output,
-                Channel::Meta,
-                true,
-            )
-            .await;
+            let outcome = broadcast_state_merge(ctx, merge, state, Channel::Meta, true).await;
             let sent = outcome.is_ok();
             let _ = resp.send(outcome);
             sent
@@ -1012,26 +958,7 @@ pub(crate) async fn handle_session_request(
             let _ = resp.send(state.meta_doc.to_json());
             false
         }
-        SessionRequest::Ping { resp } => {
-            // Arm a fresh round carrying the responder; the deadline-driven
-            // `finalize_ping_round` delivers the RTT rows through it. Mirrors
-            // the IPC `Ping` handler, which leaves `resp` unset and emits the
-            // `ping_report` event instead.
-            let now = tokio::time::Instant::now();
-            state.ping_round = Some(Box::new(crate::daemon::state::PingRound {
-                t1: now,
-                deadline: now
-                    + std::time::Duration::from_secs(crate::util::tuning::ping_window_secs()),
-                pongs: std::collections::HashMap::new(),
-                resp: Some(resp),
-            }));
-            broadcast_msg(
-                sender,
-                &Message::new_ping(swarm, author).signed(&state.identity),
-            )
-            .await;
-            true
-        }
+        SessionRequest::Ping { resp } => session_ping(ctx, state, resp).await,
         SessionRequest::A2aCall {
             peer,
             method,
@@ -1040,15 +967,13 @@ pub(crate) async fn handle_session_request(
             resp,
         } => {
             broadcast_a2a_call(
-                swarm,
-                author,
+                ctx,
                 peer,
                 &method,
                 params,
                 timeout,
                 crate::daemon::state::A2aResponder::Typed(resp),
                 state,
-                sender,
             )
             .await;
             true
@@ -1057,7 +982,7 @@ pub(crate) async fn handle_session_request(
         // signing or chain stamping — a malicious/crafted message on the wire.
         #[cfg(feature = "adversarial")]
         SessionRequest::InjectRaw { bytes } => {
-            let _ = sender.broadcast(bytes).await;
+            let _ = ctx.sender.broadcast(bytes).await;
             true
         }
         // Index-size snapshot (adversarial only) for the leak regression test.

@@ -8,6 +8,7 @@ use clap::{Parser, Subcommand};
 
 use super::lookup::PublicLookupArgs;
 use super::output::OutputFormat;
+use crate::cli::password::PasswordFlag;
 use crate::protocol::swarm::SwarmName;
 use crate::protocol::{Nickname, SwarmId};
 
@@ -43,24 +44,16 @@ pub(crate) enum A2aAction {
         /// default `global` directory; `--advertise <name>` ⇒ that named
         /// directory (share the name with the peer). The ad carries the full
         /// bearer ticket, so pair it with `--password`.
-        #[arg(long, num_args(0..=1))]
-        #[expect(
-            clippy::option_option,
-            reason = "clap optional-value flag: absent/bare/valued are three distinct directory states (see DirectorySelection)"
-        )]
-        advertise: Option<Option<SwarmName>>,
+        #[arg(long, num_args(0..=1), default_missing_value = "global")]
+        advertise: Option<SwarmName>,
 
         /// Protect the bridge with a password: the ticket alone no longer
         /// redeems — consumers must present the password (so a passworded ticket
         /// is safe to share). Bare `--password` prompts hidden on the terminal;
         /// `--password=<pw>` passes it inline (visible in `ps` — prefer the
         /// prompt when a human types it).
-        #[arg(long, num_args(0..=1), require_equals = true)]
-        #[expect(
-            clippy::option_option,
-            reason = "clap optional-value flag: absent/bare/valued are three distinct password states"
-        )]
-        password: Option<Option<String>>,
+        #[arg(long, num_args(0..=1), require_equals = true, default_missing_value = "\0")]
+        password: Option<PasswordFlag>,
 
         /// Force loopback-only lookups so two agents on one machine bridge
         /// hermetically off the ticket's direct address (no mDNS/DHT/relay).
@@ -91,12 +84,8 @@ pub(crate) enum A2aAction {
         /// Password for a password-protected ticket — required exactly when the
         /// ticket carries the password flag (prompts on a terminal, or inline
         /// via `--password=<pw>`).
-        #[arg(long, num_args(0..=1), require_equals = true)]
-        #[expect(
-            clippy::option_option,
-            reason = "clap optional-value flag: absent/bare/valued are three distinct password states"
-        )]
-        password: Option<Option<String>>,
+        #[arg(long, num_args(0..=1), require_equals = true, default_missing_value = "\0")]
+        password: Option<PasswordFlag>,
 
         /// Output format: human (default) or json (prints the bound URL only).
         #[arg(long, default_value = "human")]
@@ -128,12 +117,8 @@ pub(crate) enum A2aAction {
 
         /// Password for a password-protected pick (🔒 in the picker) — prompts
         /// on pick when omitted.
-        #[arg(long, num_args(0..=1), require_equals = true)]
-        #[expect(
-            clippy::option_option,
-            reason = "clap optional-value flag: absent/bare/valued are three distinct password states"
-        )]
-        password: Option<Option<String>>,
+        #[arg(long, num_args(0..=1), require_equals = true, default_missing_value = "\0")]
+        password: Option<PasswordFlag>,
 
         /// Output format: human (default) — the live picker — or json, one
         /// `ticket_found`/`ticket_lost` line per directory change.

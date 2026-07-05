@@ -2,6 +2,7 @@
 
 use clap::Parser;
 
+use crate::cli::password::PasswordFlag;
 use crate::protocol::Nickname;
 use crate::protocol::swarm::{DirectorySelection, SwarmName};
 
@@ -49,13 +50,10 @@ pub(crate) struct CreateOpts {
     /// Requires `--public` (a directory listing only makes sense for a
     /// cross-machine swarm). Note: advertising broadcasts the full join
     /// token, so the swarm becomes open to anyone discovering that directory.
-    /// Absent ⇒ `None`; bare ⇒ `Some(None)`; valued ⇒ `Some(Some(directory))`.
-    #[arg(long, num_args(0..=1))]
-    #[expect(
-        clippy::option_option,
-        reason = "clap optional-value flag: absent/bare/valued are three distinct directory states (see DirectorySelection)"
-    )]
-    pub advertise: Option<Option<SwarmName>>,
+    /// Absent ⇒ unlisted; bare `--advertise` ⇒ the well-known `global`
+    /// directory (the `default_missing_value`); valued ⇒ that named directory.
+    #[arg(long, num_args(0..=1), default_missing_value = "global")]
+    pub advertise: Option<SwarmName>,
 
     /// Protect the swarm with a password: the id alone no longer admits —
     /// joiners must present the password (so a passworded swarm is safe to
@@ -63,12 +61,8 @@ pub(crate) struct CreateOpts {
     /// password. Bare `--password` prompts hidden on the terminal;
     /// `--password=<pw>` passes it inline (visible in `ps` and shell
     /// history — prefer the prompt when a human types it).
-    #[arg(long, num_args(0..=1), require_equals = true)]
-    #[expect(
-        clippy::option_option,
-        reason = "clap optional-value flag: absent/bare/valued are three distinct password states"
-    )]
-    pub password: Option<Option<String>>,
+    #[arg(long, num_args(0..=1), require_equals = true, default_missing_value = "\0")]
+    pub password: Option<PasswordFlag>,
 }
 
 impl CreateOpts {
@@ -84,6 +78,7 @@ mod tests {
     use clap::Parser;
 
     use crate::cli::args::{Cli, Commands};
+    use crate::cli::password::PasswordFlag;
     use crate::protocol::Nickname;
     use crate::protocol::swarm::{DirectorySelection, SwarmName};
 
@@ -236,8 +231,8 @@ mod tests {
         );
         assert_eq!(
             advertise_of(&["agent-gossip", "create", "--public", "--advertise"]),
-            DirectorySelection::Default,
-            "bare ⇒ Default (global directory)"
+            DirectorySelection::Named(SwarmName::new("global").unwrap()),
+            "bare ⇒ the global directory (default_missing_value)"
         );
         assert_eq!(
             advertise_of(&[
@@ -254,11 +249,7 @@ mod tests {
 
     #[test]
     fn password_flag_absent_bare_and_valued() {
-        #[expect(
-            clippy::option_option,
-            reason = "mirrors the clap optional-value flag under test"
-        )]
-        fn password_of(args: &[&str]) -> Option<Option<String>> {
+        fn password_of(args: &[&str]) -> Option<PasswordFlag> {
             match Cli::parse_from(args).command {
                 Commands::Create { opts } => opts.password,
                 Commands::Join { .. }
@@ -287,12 +278,12 @@ mod tests {
         );
         assert_eq!(
             password_of(&["agent-gossip", "create", "--password"]),
-            Some(None),
+            Some(PasswordFlag::Prompt),
             "bare ⇒ prompt"
         );
         assert_eq!(
             password_of(&["agent-gossip", "create", "--password=hunter2"]),
-            Some(Some("hunter2".to_owned())),
+            Some(PasswordFlag::Inline("hunter2".to_owned())),
             "valued ⇒ inline"
         );
         // require_equals is load-bearing: a space-separated value must NOT

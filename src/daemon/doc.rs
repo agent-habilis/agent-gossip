@@ -473,13 +473,9 @@ mod tests {
 
     /// Author a merge on `doc` (build + ingest, as the daemon does) and return
     /// the signed frame to hand to a peer.
-    #[expect(
-        clippy::needless_pass_by_value,
-        reason = "test helper mirrors the by-value merge surface at the call sites"
-    )]
-    fn author(doc: &mut SwarmDoc, who: &Nickname, merge: Value) -> Message {
+    fn author(doc: &mut SwarmDoc, who: &Nickname, merge: &Value) -> Message {
         let bytes = doc
-            .build_change(&merge, who)
+            .build_change(merge, who)
             .expect("merge applies")
             .expect("merge is not a no-op");
         let carrier = frame(who, &bytes);
@@ -498,8 +494,8 @@ mod tests {
         let mut left = SwarmDoc::new(false);
         let mut right = SwarmDoc::new(false);
 
-        let alice_frame = author(&mut left, &alice, json!({"a": 1}));
-        let bob_frame = author(&mut right, &bob, json!({"b": 2}));
+        let alice_frame = author(&mut left, &alice, &json!({"a": 1}));
+        let bob_frame = author(&mut right, &bob, &json!({"b": 2}));
 
         left.ingest(&bob_frame);
         right.ingest(&alice_frame);
@@ -518,8 +514,8 @@ mod tests {
         let mut left = SwarmDoc::new(true);
         let mut right = SwarmDoc::new(true);
 
-        let alice_frame = author(&mut left, &alice, json!({"peers": {"alice": {"m": 1}}}));
-        let bob_frame = author(&mut right, &bob, json!({"peers": {"bob": {"m": 2}}}));
+        let alice_frame = author(&mut left, &alice, &json!({"peers": {"alice": {"m": 1}}}));
+        let bob_frame = author(&mut right, &bob, &json!({"peers": {"bob": {"m": 2}}}));
 
         left.ingest(&bob_frame);
         right.ingest(&alice_frame);
@@ -536,17 +532,17 @@ mod tests {
         author(
             &mut doc,
             &alice,
-            json!({"peers": {"alice": {"model": "opus", "host": "box"}}}),
+            &json!({"peers": {"alice": {"model": "opus", "host": "box"}}}),
         );
         author(
             &mut doc,
             &alice,
-            json!({"peers": {"alice": {"model": "sonnet"}}}),
+            &json!({"peers": {"alice": {"model": "sonnet"}}}),
         );
         author(
             &mut doc,
             &alice,
-            json!({"peers": {"alice": {"host": null}}}),
+            &json!({"peers": {"alice": {"host": null}}}),
         );
         assert_eq!(
             doc.to_json(),
@@ -558,8 +554,8 @@ mod tests {
     fn out_of_order_change_is_buffered_then_drains() {
         let alice = nick("alice");
         let mut source = SwarmDoc::new(false);
-        let first = author(&mut source, &alice, json!({"a": 1}));
-        let second = author(&mut source, &alice, json!({"b": 2}));
+        let first = author(&mut source, &alice, &json!({"a": 1}));
+        let second = author(&mut source, &alice, &json!({"b": 2}));
 
         // Deliver the second change first: it depends on the first, so it buffers.
         let mut sink = SwarmDoc::new(false);
@@ -576,8 +572,8 @@ mod tests {
         // heads and pulls exactly the frames it lacks, then converges.
         let alice = nick("alice");
         let mut source = SwarmDoc::new(false);
-        author(&mut source, &alice, json!({"a": 1}));
-        author(&mut source, &alice, json!({"b": 2}));
+        author(&mut source, &alice, &json!({"a": 1}));
+        author(&mut source, &alice, &json!({"b": 2}));
 
         let mut joiner = SwarmDoc::new(false);
         let missing = source.changes_since(&joiner.heads(), 100);
@@ -600,12 +596,12 @@ mod tests {
         let bob_card = author(
             &mut attacker,
             &bob,
-            json!({"peers": {"bob": {"card": {"metadata": {"pubkey": "bb"}}}}}),
+            &json!({"peers": {"bob": {"card": {"metadata": {"pubkey": "bb"}}}}}),
         );
         let forged = author(
             &mut attacker,
             &alice,
-            json!({"peers": {"bob": {"card": {"metadata": {"pubkey": "ff"}}}}}),
+            &json!({"peers": {"bob": {"card": {"metadata": {"pubkey": "ff"}}}}}),
         );
 
         // A gated victim accepts Bob's real card, then refuses Alice's forge.

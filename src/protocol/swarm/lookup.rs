@@ -272,6 +272,23 @@ impl RelaySelection {
     }
 }
 
+impl FromStr for RelaySelection {
+    type Err = RelayLadderError;
+
+    /// Parse a `--relay` optional-value flag. The bare form resolves via the
+    /// `"default"` `default_missing_value` (the same token the MCP/embed
+    /// surface uses) to [`RelaySelection::Default`]; any other value is a
+    /// custom ladder. `Unset` comes from the *absent* flag (`Option::None`),
+    /// not from this parser.
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        if text == "default" {
+            Ok(RelaySelection::Default)
+        } else {
+            text.parse::<RelayLadder>().map(RelaySelection::Custom)
+        }
+    }
+}
+
 /// CLI `--advertise` intent: absent / bare / valued — the same
 /// three-state optional-value shape as [`RelaySelection`]. `Unset` ⇒
 /// the swarm is not listed in any directory; `Default` ⇒ the well-known
@@ -295,15 +312,16 @@ impl DirectorySelection {
     /// (absent / bare / valued) — the one converter shared by every
     /// command that advertises (`create`, `pipe listen`, `file send`,
     /// `port listen`).
-    #[expect(
-        clippy::option_option,
-        reason = "clap optional-value flag: absent/bare/valued are three distinct directory states"
-    )]
-    pub(crate) fn from_flag(flag: Option<Option<SwarmName>>) -> Self {
+    /// Resolve a clap `--advertise` optional-value flag into a
+    /// [`DirectorySelection`]. The bare form resolves via the `"global"`
+    /// [`DEFAULT_DIRECTORY`] `default_missing_value`, so it arrives here as
+    /// `Some(global)` — behaviorally identical to [`DirectorySelection::Default`]
+    /// (both advertise into the well-known directory). `Unset` comes from the
+    /// *absent* flag.
+    pub(crate) fn from_flag(flag: Option<SwarmName>) -> Self {
         match flag {
             None => DirectorySelection::Unset,
-            Some(None) => DirectorySelection::Default,
-            Some(Some(directory)) => DirectorySelection::Named(directory),
+            Some(directory) => DirectorySelection::Named(directory),
         }
     }
 

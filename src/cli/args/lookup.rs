@@ -1,6 +1,6 @@
 use clap::Parser;
 
-use crate::protocol::swarm::{LookupSet, RelayLadder, RelaySelection};
+use crate::protocol::swarm::{LookupSet, RelaySelection};
 
 /// The lookup allowlist flags: naming any uses *only* those passed (so
 /// `--mdns` alone disables both dht and the relay); naming none falls
@@ -22,23 +22,15 @@ pub(crate) struct LookupArgs {
     /// <URL>[,<URL>…]` ⇒ a custom ordered ladder (the beacon homes on
     /// the first reachable rung). Omitting it while naming another flag
     /// disables the relay; naming no flag at all falls back to the
-    /// command's default. Absent ⇒ `None`; bare ⇒ `Some(None)`;
-    /// valued ⇒ `Some(Some(ladder))`.
-    #[arg(long, num_args(0..=1))]
-    #[expect(
-        clippy::option_option,
-        reason = "clap optional-value flag: absent/bare/valued are three distinct relay states (see RelaySelection)"
-    )]
-    pub relay: Option<Option<RelayLadder>>,
+    /// command's default. Absent ⇒ `Unset`; bare ⇒ `Default`;
+    /// valued ⇒ `Custom(ladder)`.
+    #[arg(long, num_args(0..=1), default_missing_value = "default")]
+    pub relay: Option<RelaySelection>,
 }
 
 impl LookupArgs {
     pub(crate) fn to_set(&self) -> LookupSet {
-        let relay = match &self.relay {
-            None => RelaySelection::Unset,
-            Some(None) => RelaySelection::Default,
-            Some(Some(ladder)) => RelaySelection::Custom(ladder.clone()),
-        };
+        let relay = self.relay.clone().unwrap_or(RelaySelection::Unset);
         LookupSet {
             mdns: self.mdns,
             dht: self.dht,

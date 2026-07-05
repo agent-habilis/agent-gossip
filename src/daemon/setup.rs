@@ -174,32 +174,67 @@ fn unicast_inbox() -> (
     (rx, crate::unicast::UnicastAcceptor::new(tx))
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the one-shot session assembly: every argument is a distinct per-session input (identity, io, tuning, bindings) with no meaningful grouping"
-)]
-#[expect(
-    clippy::too_many_lines,
-    reason = "the one-shot session assembly: a Create/Join match whose arms each build endpoint + swarm + rendezvous; splitting it would thread a dozen locals through a helper for no clarity gain"
-)]
+/// The per-session inputs to [`setup_swarm`] that are independent of the
+/// [`SetupKind`]: this member's identity/io/tuning and the localhost
+/// binding request. Bundled so the one-shot assembly stays within the
+/// argument budget.
+pub(crate) struct SetupParams<'a> {
+    pub author: Nickname,
+    pub interactive: bool,
+    pub max_peers: usize,
+    pub state_file: Option<PathBuf>,
+    pub output: output::Output,
+    /// Skill-drift warning folded into the `ready` event. Computed by the CLI
+    /// (the real `agent-gossip create`/`join` path) from the on-disk install;
+    /// `None` on the embed/library and MCP paths, which keeps the in-process
+    /// tests hermetic (no dependence on the dev machine's install state).
+    pub drift: Option<&'a str>,
+    /// `--a2a-serve`: bind the localhost JSON-RPC binding on this port
+    /// (`0` = OS-assigned) — bound here, before `ready` fires, so the event
+    /// carries the real port. `None` (embed/MCP and the flag's default)
+    /// serves nothing.
+    pub a2a_serve: Option<u16>,
+}
+
+/// The kind-independent build inputs threaded into [`setup_create`] /
+/// [`setup_join`]: the loop-shared refs both attach paths need to stand up
+/// the endpoint, gossip overlay and rendezvous.
+struct SetupBuild<'a> {
+    author: &'a Nickname,
+    output: &'a output::Output,
+    drift: Option<&'a str>,
+    a2a_port: Option<u16>,
+    max_peers: usize,
+    lookups: &'a LookupOpts,
+    unicast_acceptor: &'a crate::unicast::UnicastAcceptor,
+    rung_tx: &'a watch::Sender<Option<RelayUrl>>,
+}
+
+/// The freshly-assembled swarm handles a [`SetupKind`] arm produces.
+struct Assembled {
+    swarm_id: SwarmId,
+    swarm_name: SwarmName,
+    endpoint: Endpoint,
+    router: iroh::protocol::Router,
+    gossip: iroh_gossip::net::Gossip,
+    topic: iroh_gossip::api::GossipTopic,
+    rdv: RendezvousParams,
+    cohost: CoHostPolicy,
+}
+
 pub(crate) async fn setup_swarm(
     kind: SetupKind,
-    author: Nickname,
-    interactive: bool,
-    max_peers: usize,
-    state_file: Option<PathBuf>,
-    output: output::Output,
-    // Skill-drift warning folded into the `ready` event. Computed by the CLI
-    // (the real `agent-gossip create`/`join` path) from the on-disk install; `None` on
-    // the embed/library and MCP paths, which keeps the in-process tests
-    // hermetic (no dependence on the dev machine's install state).
-    drift: Option<&str>,
-    // `--a2a-serve`: bind the localhost JSON-RPC binding on this port
-    // (`0` = OS-assigned) — bound here, before `ready` fires, so the event
-    // carries the real port. `None` (embed/MCP and the flag's default)
-    // serves nothing.
-    a2a_serve: Option<u16>,
+    params: SetupParams<'_>,
 ) -> Result<EventLoopConfig> {
+    let SetupParams {
+        author,
+        interactive,
+        max_peers,
+        state_file,
+        output,
+        drift,
+        a2a_serve,
+    } = params;
     let a2a = match a2a_serve {
         Some(port) => Some(crate::a2a::http::bind(port).await?),
         None => None,
@@ -222,125 +257,34 @@ pub(crate) async fn setup_swarm(
 
     let (unicast_rx, unicast_acceptor) = unicast_inbox();
 
-    let (swarm_id, swarm_name, endpoint, router, gossip, topic, rdv, cohost) = match kind {
+    let build = SetupBuild {
+        author: &author,
+        output: &output,
+        drift,
+        a2a_port,
+        max_peers,
+        lookups: &lookups,
+        unicast_acceptor: &unicast_acceptor,
+        rung_tx: &rung_tx,
+    };
+    let Assembled {
+        swarm_id,
+        swarm_name,
+        endpoint,
+        router,
+        gossip,
+        topic,
+        rdv,
+        cohost,
+    } = match kind {
         SetupKind::Create {
             name,
             config,
             advertise,
             password,
-        } => {
-            let mut seed = [0u8; 32];
-            rand::rng().fill_bytes(&mut seed);
-
-            let endpoint = build_participant_endpoint(&lookups).await?;
-
-            let swarm = Swarm::new(seed, name.clone(), config);
-            // Bake the verifier into the config BEFORE the id is rendered
-            // (the id must carry it) and before any derivation. The
-            // ~100ms Argon2id stretch runs off the async worker.
-            let swarm = match password {
-                Some(password) => {
-                    tokio::task::spawn_blocking(move || {
-                        let mut swarm = swarm;
-                        swarm.set_password(&password);
-                        swarm
-                    })
-                    .await?
-                }
-                None => swarm,
-            };
-            let id_str = swarm.to_string();
-            let swarm_id = SwarmId::new(id_str.clone())
-                .expect("Swarm::to_string always produces a valid SwarmId");
-
-            output.info(&format!("created #{name} and joined as <{author}>"));
-            if swarm.requires_password() {
-                output.info("password-protected — joiners must present the password");
-            }
-            if let Some(directory) = &advertise {
-                output.info(&format!("advertising on #{directory}"));
-            }
-            output.swarm_id_line(&swarm_id);
-            output.ready(&swarm_id, &name, &author, drift, a2a_port);
-            lifecycle::log_ready(
-                &id_str,
-                name.as_str(),
-                author.as_str(),
-                swarm.network_label(),
-            );
-
-            let topic_id = swarm.topic_id();
-            let (gossip, router) =
-                build_swarm(endpoint.clone(), max_peers, Some(unicast_acceptor.clone()));
-            // Creator has no peers yet — bootstrap is empty.
-            let topic = gossip.subscribe(topic_id, vec![]).await?;
-
-            let rdv = rendezvous_params(&swarm, topic_id, &lookups, rung_tx.clone());
-            register_rendezvous(&endpoint, &rdv);
-
-            // The origin co-hosts the rendezvous immediately: it has
-            // no bootstrap dial to self-collide with, and an otherwise
-            // empty swarm needs a beacon from t=0.
-            (
-                swarm_id,
-                name,
-                endpoint,
-                router,
-                gossip,
-                topic,
-                rdv,
-                CoHostPolicy::Eager,
-            )
-        }
+        } => setup_create(&build, name, config, advertise, password).await?,
         kind @ (SetupKind::Join { .. } | SetupKind::Forum { .. }) => {
-            // Join and Forum share one attach path; they differ only in the
-            // co-host policy (Forum has no distinguished creator, so its first
-            // peer must beacon) and the startup verb.
-            let (swarm, cohost, verb) = match kind {
-                SetupKind::Join { swarm } => (swarm, CoHostPolicy::Deferred, "joined"),
-                SetupKind::Forum { swarm } => (swarm, CoHostPolicy::EagerProbed, "joined forum"),
-                SetupKind::Create { .. } => unreachable!("outer arm excludes Create"),
-            };
-            let id_str = swarm.to_string();
-            let swarm_id = SwarmId::new(id_str.clone())
-                .expect("Swarm::to_string always produces a valid SwarmId");
-            let topic_id = swarm.topic_id();
-
-            let endpoint = build_participant_endpoint(&lookups).await?;
-
-            let rdv = rendezvous_params(&swarm, topic_id, &lookups, rung_tx.clone());
-            // Must precede the join: the participant resolves the
-            // rendezvous id via this registered address — the loopback
-            // port ladder (loopback-only) or the chosen relay rung
-            // (reachable across machines).
-            register_rendezvous(&endpoint, &rdv);
-
-            let (gossip, router) =
-                build_swarm(endpoint.clone(), max_peers, Some(unicast_acceptor.clone()));
-            // Non-blocking, like `create`: `ready` fires immediately so
-            // the joiner is never invisible while bootstrapping, and an
-            // empty swarm (everyone left) is still joinable. We
-            // subscribe, background-connect to the rendezvous, and — for a
-            // plain join — `daemon::run` defers co-hosting our own (same
-            // seed-id) rendezvous until we are meshed, so we never register a
-            // duplicate `rendezvous_id` on the shared pinned relay that could
-            // capture our own bootstrap dial. A forum instead claims eagerly
-            // (probe-first) so the first peer beacons. See
-            // `EventLoopConfig::cohost`.
-            let topic = gossip.subscribe(topic_id, vec![rdv.id]).await?;
-
-            output.ready(&swarm_id, &swarm.name, &author, drift, a2a_port);
-            lifecycle::log_ready(
-                &id_str,
-                swarm.name.as_str(),
-                author.as_str(),
-                swarm.network_label(),
-            );
-            output.info(&format!("{verb} #{} as <{author}>", swarm.name));
-
-            (
-                swarm_id, swarm.name, endpoint, router, gossip, topic, rdv, cohost,
-            )
+            setup_join(&build, kind).await?
         }
     };
 
@@ -378,5 +322,140 @@ pub(crate) async fn setup_swarm(
         // Default to the CLI driver; the MCP / embed sessions
         // overwrite `cfg.driver` before handing it to `daemon::run`.
         driver: DriverMode::Cli,
+    })
+}
+
+/// Mint a new swarm: seed + optional password stretch, then stand up the
+/// endpoint, gossip overlay and rendezvous. The origin co-hosts the
+/// rendezvous immediately ([`CoHostPolicy::Eager`]): it has no bootstrap
+/// dial to self-collide with, and an otherwise empty swarm needs a beacon
+/// from t=0.
+async fn setup_create(
+    build: &SetupBuild<'_>,
+    name: SwarmName,
+    config: SwarmConfig,
+    advertise: Option<SwarmName>,
+    password: Option<Password>,
+) -> Result<Assembled> {
+    let output = build.output;
+    let author = build.author;
+
+    let mut seed = [0u8; 32];
+    rand::rng().fill_bytes(&mut seed);
+
+    let endpoint = build_participant_endpoint(build.lookups).await?;
+
+    let swarm = Swarm::new(seed, name.clone(), config);
+    // Bake the verifier into the config BEFORE the id is rendered
+    // (the id must carry it) and before any derivation. The
+    // ~100ms Argon2id stretch runs off the async worker.
+    let swarm = match password {
+        Some(password) => {
+            tokio::task::spawn_blocking(move || {
+                let mut swarm = swarm;
+                swarm.set_password(&password);
+                swarm
+            })
+            .await?
+        }
+        None => swarm,
+    };
+    let id_str = swarm.to_string();
+    let swarm_id =
+        SwarmId::new(id_str.clone()).expect("Swarm::to_string always produces a valid SwarmId");
+
+    output.info(&format!("created #{name} and joined as <{author}>"));
+    if swarm.requires_password() {
+        output.info("password-protected — joiners must present the password");
+    }
+    if let Some(directory) = &advertise {
+        output.info(&format!("advertising on #{directory}"));
+    }
+    output.swarm_id_line(&swarm_id);
+    output.ready(&swarm_id, &name, author, build.drift, build.a2a_port);
+    lifecycle::log_ready(&id_str, name.as_str(), author.as_str(), swarm.network_label());
+
+    let topic_id = swarm.topic_id();
+    let (gossip, router) = build_swarm(
+        endpoint.clone(),
+        build.max_peers,
+        Some(build.unicast_acceptor.clone()),
+    );
+    // Creator has no peers yet — bootstrap is empty.
+    let topic = gossip.subscribe(topic_id, vec![]).await?;
+
+    let rdv = rendezvous_params(&swarm, topic_id, build.lookups, build.rung_tx.clone());
+    register_rendezvous(&endpoint, &rdv);
+
+    Ok(Assembled {
+        swarm_id,
+        swarm_name: name,
+        endpoint,
+        router,
+        gossip,
+        topic,
+        rdv,
+        cohost: CoHostPolicy::Eager,
+    })
+}
+
+/// Attach to an existing swarm. Join and Forum share one attach path;
+/// they differ only in the co-host policy (Forum has no distinguished
+/// creator, so its first peer must beacon) and the startup verb. Like
+/// `create`, non-blocking: `ready` fires immediately so the joiner is
+/// never invisible while bootstrapping.
+async fn setup_join(build: &SetupBuild<'_>, kind: SetupKind) -> Result<Assembled> {
+    let output = build.output;
+    let author = build.author;
+
+    let (swarm, cohost, verb) = match kind {
+        SetupKind::Join { swarm } => (swarm, CoHostPolicy::Deferred, "joined"),
+        SetupKind::Forum { swarm } => (swarm, CoHostPolicy::EagerProbed, "joined forum"),
+        SetupKind::Create { .. } => unreachable!("outer arm excludes Create"),
+    };
+    let id_str = swarm.to_string();
+    let swarm_id =
+        SwarmId::new(id_str.clone()).expect("Swarm::to_string always produces a valid SwarmId");
+    let topic_id = swarm.topic_id();
+
+    let endpoint = build_participant_endpoint(build.lookups).await?;
+
+    let rdv = rendezvous_params(&swarm, topic_id, build.lookups, build.rung_tx.clone());
+    // Must precede the join: the participant resolves the rendezvous id via
+    // this registered address — the loopback port ladder (loopback-only) or
+    // the chosen relay rung (reachable across machines).
+    register_rendezvous(&endpoint, &rdv);
+
+    let (gossip, router) = build_swarm(
+        endpoint.clone(),
+        build.max_peers,
+        Some(build.unicast_acceptor.clone()),
+    );
+    // We subscribe, background-connect to the rendezvous, and — for a plain
+    // join — `daemon::run` defers co-hosting our own (same seed-id) rendezvous
+    // until we are meshed, so we never register a duplicate `rendezvous_id` on
+    // the shared pinned relay that could capture our own bootstrap dial. A
+    // forum instead claims eagerly (probe-first) so the first peer beacons.
+    // See `EventLoopConfig::cohost`.
+    let topic = gossip.subscribe(topic_id, vec![rdv.id]).await?;
+
+    output.ready(&swarm_id, &swarm.name, author, build.drift, build.a2a_port);
+    lifecycle::log_ready(
+        &id_str,
+        swarm.name.as_str(),
+        author.as_str(),
+        swarm.network_label(),
+    );
+    output.info(&format!("{verb} #{} as <{author}>", swarm.name));
+
+    Ok(Assembled {
+        swarm_id,
+        swarm_name: swarm.name,
+        endpoint,
+        router,
+        gossip,
+        topic,
+        rdv,
+        cohost,
     })
 }

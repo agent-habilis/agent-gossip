@@ -129,6 +129,20 @@ pub enum OutputEvent {
     },
 }
 
+/// An RPC `message/send` task leg with no backing frame — the fields
+/// [`Output::task_message`] and [`json::format_task_message_json`] need,
+/// bundled (they mirror the [`OutputEvent::TaskMessage`] variant's fields).
+pub(crate) struct TaskMessageLeg<'a> {
+    pub id: &'a str,
+    pub swarm: &'a str,
+    pub author: &'a str,
+    pub peer: &'a str,
+    pub task_id: &'a str,
+    pub state: Option<crate::a2a::TaskState>,
+    pub text: &'a str,
+    pub is_self: bool,
+}
+
 /// ANSI styling for the Human-mode `<nick>` / `#swarm` tokens.
 /// Hand-rolled (no color dependency); emission is gated on a TTY +
 /// `NO_COLOR` per stream (see [`stdout_color`] / [`stderr_color`]).
@@ -535,31 +549,19 @@ impl Output {
     /// (on the worker), or the created `Task` (on the initiator). No frame
     /// backs it (the leg arrived over the request/response binding), so the
     /// fields are passed explicitly. Emits a `task` event with `kind:message`.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "a message-leg task event needs id/swarm/author/peer/task_id/state/text and the self flag; there is no frame to derive them from"
-    )]
-    pub(crate) fn task_message(
-        &self,
-        id: &str,
-        swarm: &str,
-        author: &str,
-        peer: &str,
-        task_id: &TaskId,
-        state: Option<crate::a2a::TaskState>,
-        text: &str,
-        is_self: bool,
-    ) {
-        if is_self && self.filters_self() {
+    pub(crate) fn task_message(&self, leg: &TaskMessageLeg<'_>) {
+        if leg.is_self && self.filters_self() {
             return;
         }
+        let state = leg.state;
+        let is_self = leg.is_self;
         let (id, swarm, author, peer, task_id, text) = (
-            id.to_owned(),
-            swarm.to_owned(),
-            author.to_owned(),
-            peer.to_owned(),
-            task_id.as_str().to_owned(),
-            text.to_owned(),
+            leg.id.to_owned(),
+            leg.swarm.to_owned(),
+            leg.author.to_owned(),
+            leg.peer.to_owned(),
+            leg.task_id.to_owned(),
+            leg.text.to_owned(),
         );
         self.dispatch(
             || OutputEvent::TaskMessage {
@@ -578,9 +580,16 @@ impl Output {
                         .map_or_else(|| "message".to_owned(), |state| format!("message {state}"));
                     println!("task {label} <{author}> → <{peer}>: {text}");
                 }
-                OutputMode::Json => emit(&json::format_task_message_json(
-                    &id, &swarm, &author, &peer, &task_id, state, &text, is_self,
-                )),
+                OutputMode::Json => emit(&json::format_task_message_json(&TaskMessageLeg {
+                    id: &id,
+                    swarm: &swarm,
+                    author: &author,
+                    peer: &peer,
+                    task_id: &task_id,
+                    state,
+                    text: &text,
+                    is_self,
+                })),
                 OutputMode::Silent => {}
             },
         );
