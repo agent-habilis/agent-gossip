@@ -1737,8 +1737,7 @@ fn test_sleep_wake_heal_recovery() {
 /// comfortably below that stale-connection timeout. A regression (or an
 /// iroh bump reintroducing the stall) blows the bound. The lenient
 /// `test_sleep_wake_heal_recovery` proves recovery *happens*; this one
-/// proves it is heal-bound, not timeout-bound. See
-/// docs/iroh-ecosystem-research.md.
+/// proves it is heal-bound, not timeout-bound.
 #[test]
 fn test_fixed_id_reconnect_admits_fast() {
     // Serialize against the other timing-sensitive tests (see `serial_guard`).
