@@ -8,9 +8,9 @@
 
 use std::time::Instant;
 
+use crate::transport::SwarmSender;
 use bytes::Bytes;
 use iroh::Endpoint;
-use iroh_gossip::api::GossipSender;
 
 use crate::daemon::SessionRequest;
 use crate::daemon::ctx::HandlerCtx;
@@ -27,7 +27,7 @@ use crate::util::consts::{MAX_MESSAGE_SHARDS, MAX_MESSAGE_SIZE};
 /// failed serialize must not block the daemon. A failed *broadcast* is
 /// logged — it means the gossip actor refused the send (the wedge the
 /// roster-collapse soak hit silently), not a routine empty room.
-pub(crate) async fn broadcast_msg(sender: &GossipSender, msg: &Message) {
+pub(crate) async fn broadcast_msg(sender: &SwarmSender, msg: &Message) {
     crate::logging::messages::log_out(msg);
     if let Ok(bytes) = msg.serialize()
         && let Err(error) = sender.broadcast(Bytes::from(bytes)).await
@@ -129,7 +129,14 @@ pub(crate) async fn broadcast_state_merge(
             .await
             .map_err(|error| anyhow::anyhow!("{error}"))?;
     } else {
-        let _ = state.pending_outbound.push(Bytes::from(bytes));
+        // Unmeshed: buffer for gossip until we mesh, and mirror to the spool
+        // only when the buffer accepted the frame — so we never export a change
+        // we've reported as un-buffered. (The change is already in the local
+        // doc, so heads anti-entropy still reconciles it if the buffer is full.)
+        let frame = Bytes::from(bytes);
+        if state.pending_outbound.push(frame.clone()) {
+            ctx.sender.spool(&frame);
+        }
     }
     Ok(())
 }
@@ -140,7 +147,7 @@ pub(crate) async fn broadcast_state_merge(
 /// re-sending it is invisible to `poll`/`fetch_messages` consumers —
 /// safe to repeat on every new neighbor.
 pub(super) async fn broadcast_peer_info(
-    sender: &GossipSender,
+    sender: &SwarmSender,
     swarm: &SwarmId,
     author: &Nickname,
     identity: &Identity,
@@ -164,7 +171,7 @@ pub(super) async fn broadcast_peer_info(
 /// Called once at the top of the event loop; the caller bumps
 /// `last_sent_at` afterwards.
 pub(super) async fn announce_arrival(
-    sender: &GossipSender,
+    sender: &SwarmSender,
     swarm: &SwarmId,
     author: &Nickname,
     identity: &Identity,
@@ -180,7 +187,7 @@ pub(super) async fn announce_arrival(
 /// oversize/serialize error handling) is identical to the IPC and embed paths.
 pub(crate) async fn handle_stdin_line(
     text: &str,
-    sender: &GossipSender,
+    sender: &SwarmSender,
     swarm: &SwarmId,
     author: &Nickname,
     state: &mut EventLoopState,
@@ -334,7 +341,7 @@ fn build_msg(
 /// of a split body commit silently. Errors if the unmeshed buffer is full.
 async fn send_msg_part(
     state: &mut EventLoopState,
-    sender: &GossipSender,
+    sender: &SwarmSender,
     out: &output::Output,
     msg: &Message,
     bytes: Bytes,
@@ -345,9 +352,15 @@ async fn send_msg_part(
         // Single send decision: a directed message goes point-to-point over
         // unicast when the addressee is dialable, else gossip (see `unicast`).
         crate::unicast::deliver(msg, bytes, state, sender).await?;
-    } else if state.pending_outbound.push(bytes) {
+    } else if state.pending_outbound.push(bytes.clone()) {
+        // Buffered for gossip; mirror to the spool now so a never-meshed spool
+        // daemon still exports it (on a later mesh, flush re-broadcasts and the
+        // spool tee is a no-op — the file already exists).
+        sender.spool(&bytes);
         commit_outbound_part(state, msg, out, echo);
     } else {
+        // Full buffer: the frame reaches no plane, so it must NOT be spooled —
+        // the reported drop has to match reality.
         tracing::warn!("pending outbound buffer full; outbound message dropped");
         return Err(anyhow::anyhow!(
             "pending outbound buffer full; message dropped"
@@ -392,7 +405,7 @@ pub(crate) async fn broadcast_message(
     author: &Nickname,
     text: MessageBody,
     state: &mut EventLoopState,
-    sender: &GossipSender,
+    sender: &SwarmSender,
     out: &output::Output,
 ) -> anyhow::Result<(MessageId, Message)> {
     let signer = state.identity.clone();
@@ -768,7 +781,7 @@ async fn build_offload_parts(
 /// is full.
 async fn send_task_leg(
     state: &mut EventLoopState,
-    sender: &GossipSender,
+    sender: &SwarmSender,
     out: &output::Output,
     msg: &Message,
     bytes: Bytes,
@@ -781,7 +794,10 @@ async fn send_task_leg(
         // the addressee is dialable, else gossip (see `unicast::deliver`).
         retain_leg(state, msg, out, echo, content);
         crate::unicast::deliver(msg, bytes, state, sender).await?;
-    } else if state.pending_outbound.push(bytes) {
+    } else if state.pending_outbound.push(bytes.clone()) {
+        // Buffered for gossip; mirror to the spool only on a successful buffer
+        // so a reported drop matches reality.
+        sender.spool(&bytes);
         retain_leg(state, msg, out, echo, content);
     } else {
         tracing::warn!("pending outbound buffer full; outbound message dropped");

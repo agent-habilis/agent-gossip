@@ -85,6 +85,15 @@ pub(crate) fn antientropy_max_resend() -> usize {
     current().antientropy_max_resend.max(1)
 }
 
+/// Byte budget for one swarm's spool subdir before the writer's GC evicts the
+/// oldest `.frame` files. Default [`crate::util::consts::SPOOL_MAX_BYTES`]
+/// (64 `MiB`); hidden flag `--spool-max-bytes` so the GC test writes past a small
+/// cap instead of a 64 `MiB` fixture. Clamped `>= 1` so a `0` can't wedge the
+/// sweep into deleting everything each pass.
+pub(crate) fn spool_max_bytes() -> u64 {
+    current().spool_max_bytes.max(1)
+}
+
 /// Whether the unicast (point-to-point) transport is attempted for directed
 /// messages. Default on; hidden flag `--no-unicast` turns it off, forcing every
 /// message onto gossip (the pre-unicast behavior). See [`crate::unicast`].
@@ -221,6 +230,7 @@ pub(crate) struct Tuning {
     pub advertise_interval_secs: u64,
     pub directory_expiry_secs: u64,
     pub antientropy_max_resend: usize,
+    pub spool_max_bytes: u64,
     pub directory_private: bool,
     pub unicast_enabled: bool,
     pub gossip_directed_enabled: bool,
@@ -246,6 +256,7 @@ impl Tuning {
         advertise_interval_secs: crate::util::consts::ADVERTISE_INTERVAL_SECS,
         directory_expiry_secs: crate::util::consts::DIRECTORY_EXPIRY_SECS,
         antientropy_max_resend: crate::util::consts::ANTIENTROPY_MAX_RESEND,
+        spool_max_bytes: crate::util::consts::SPOOL_MAX_BYTES,
         directory_private: false,
         unicast_enabled: true,
         gossip_directed_enabled: true,

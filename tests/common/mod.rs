@@ -9,7 +9,7 @@
 //! Shared test infrastructure for integration tests.
 
 use std::fs::{self, File};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -142,6 +142,42 @@ pub(crate) fn tmp_log(tag: &str) -> PathBuf {
         std::process::id(),
         sequence
     ))
+}
+
+/// A fresh, unique scratch directory for a spool test, under the OS temp dir.
+/// Not pre-created — `spool::install` (via `--spool`) makes it.
+pub(crate) fn spool_dir(tag: &str) -> PathBuf {
+    let sequence = COUNTER.fetch_add(1, Ordering::Relaxed);
+    std::env::temp_dir().join(format!(
+        "agent-gossip-spool-{}-{}-{}",
+        tag,
+        std::process::id(),
+        sequence
+    ))
+}
+
+/// The per-swarm subdir a spool writes frames into (`<root>/<swarm-prefix>/`),
+/// mirroring `transport::spool::install`.
+pub(crate) fn spool_swarm_dir(root: &Path, swarm: &str) -> PathBuf {
+    root.join(agent_gossip::swarm_prefix(swarm))
+}
+
+/// Poll until the spool subdir holds at least `min` committed `.frame` files,
+/// or `timeout` elapses. Returns the count seen (so a caller can assert `>=`).
+pub(crate) async fn wait_for_frames(dir: &Path, min: usize, timeout: Duration) -> usize {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let count = fs::read_dir(dir).map_or(0, |entries| {
+            entries
+                .filter_map(Result::ok)
+                .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "frame"))
+                .count()
+        });
+        if count >= min || Instant::now() >= deadline {
+            return count;
+        }
+        tokio::time::sleep(POLL).await;
+    }
 }
 
 pub(crate) fn socket_path(swarm: &str, nickname: &str) -> String {
@@ -501,6 +537,32 @@ impl InProcNode {
         )
     }
 
+    /// Create a swarm that mirrors every frame into `spool` and ingests frames
+    /// other daemons write there (the filesystem spool, `--spool`).
+    pub(crate) async fn create_with_spool(name: &str, nick: &str, spool: &Path) -> Self {
+        let mut cfg = CreateConfig::new(test_swarm_name(name));
+        cfg.nickname = Some(Nickname::new(nick).expect("valid test nickname"));
+        cfg.spool = Some(spool.to_path_buf());
+        Self::from_session(
+            SwarmSession::create(cfg)
+                .await
+                .expect("in-process spool create failed"),
+        )
+    }
+
+    /// Join `swarm` (a `💬…` id), mirroring/ingesting frames through `spool`.
+    pub(crate) async fn join_with_spool(swarm: &str, nick: &str, spool: &Path) -> Self {
+        let target = swarm.parse().expect("valid test join target");
+        let mut cfg = JoinConfig::new(target);
+        cfg.nickname = Some(Nickname::new(nick).expect("valid test nickname"));
+        cfg.spool = Some(spool.to_path_buf());
+        Self::from_session(
+            SwarmSession::join(cfg)
+                .await
+                .expect("in-process spool join failed"),
+        )
+    }
+
     fn from_session(mut session: SwarmSession) -> Self {
         let rx = session.events().expect("events() receiver");
         let swarm = session.swarm_id().to_string();
@@ -748,11 +810,7 @@ impl InProcNode {
     /// Worker-emit a `TaskArtifactUpdate` whose result is a file, offloaded over
     /// the blob channel and referenced by a `Part.url`. Returns the daemon's echo
     /// so a test can read the minted `💬…` reference.
-    pub(crate) async fn task_artifact_file(
-        &self,
-        task_id: &TaskId,
-        path: &std::path::Path,
-    ) -> Message {
+    pub(crate) async fn task_artifact_file(&self, task_id: &TaskId, path: &Path) -> Message {
         self.session
             .task_artifact(
                 task_id.clone(),
@@ -1202,7 +1260,7 @@ impl Node {
         let sock = socket_path(swarm, &self.nickname);
         let deadline = Instant::now() + CONNECT_TIMEOUT;
         while Instant::now() < deadline {
-            if std::path::Path::new(&sock).exists() {
+            if Path::new(&sock).exists() {
                 return true;
             }
             std::thread::sleep(POLL);

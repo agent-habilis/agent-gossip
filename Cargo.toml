@@ -186,6 +186,11 @@ portable-pty = "0.9"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "tracing-log"] }
 interprocess = { version = "2", features = ["tokio"] }
+# Filesystem watcher backing the `--spool` directory transport: FSEvents on
+# macOS, inotify on Linux. No debouncer companion crate — spool filenames are
+# content-addressed (`sha256(frame)`), so re-delivered or coalesced events are
+# idempotent and a periodic rescan covers any the OS drops.
+notify = "8"
 rmcp = { version = "1.5", features = ["server", "transport-io", "macros", "schemars"] }
 nfsserve = "0.11.0"
 async-trait = "0.1.89"

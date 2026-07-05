@@ -25,7 +25,9 @@ use crate::util::bounded_read::{LineRead, read_bounded_line};
 use crate::util::consts::MAX_STDIN_LINE_BYTES;
 use crate::{beacon, gossip, lifecycle, lookup};
 // Bare `ipc` is `daemon::ipc`; transport's socket server is by-item.
+use crate::transport::SwarmSender;
 use crate::transport::ipc::IpcMessage;
+use crate::transport::spool;
 use crate::util::tuning::{
     ALIVE_INTERVAL_SECS, LINKSTATE_INTERVAL_SECS, RECLAIM_INTERVAL_MS, RESUBSCRIBE_MAX_ATTEMPTS,
     STATE_REFRESH_SECS, antientropy_interval_secs, heal_interval_secs, heal_stall_threshold_secs,
@@ -58,6 +60,7 @@ pub(crate) async fn run(cfg: EventLoopConfig) -> Result<()> {
         rung_rx,
         cohost,
         state_file,
+        spool,
         unicast_rx,
         a2a,
         live_count,
@@ -133,7 +136,14 @@ pub(crate) async fn run(cfg: EventLoopConfig) -> Result<()> {
         .await;
     }
 
-    let (sender, receiver) = topic.split();
+    let (gossip_sender, receiver) = topic.split();
+
+    // Install the filesystem spool mirror when `--spool` was given. A bad
+    // directory aborts startup — the frame mirror is a promised side effect,
+    // not best-effort. The watcher guard must outlive the loop below, so it
+    // stays owned in this scope (like `_router`); its scanner + writer tasks
+    // run detached until their channels close on shutdown.
+    let (sender, spool_rx, _spool_watcher) = build_sender(spool, gossip_sender, &swarm_str)?;
 
     let ipc_rx = spawn_ipc_rx(ipc_listener_disabled, &swarm_str, &author, &output);
 
@@ -206,15 +216,43 @@ pub(crate) async fn run(cfg: EventLoopConfig) -> Result<()> {
         a2a_rx,
         a2a_port,
         unicast_rx: Some(unicast_rx),
+        spool_rx,
     }))
     .await
+}
+
+/// The wrapped sender, plus the spool's inbound receiver and watcher guard when
+/// `--spool` is active. Aliased so the return stays under `type_complexity`.
+type SenderSetup = (
+    SwarmSender,
+    Option<mpsc::Receiver<bytes::Bytes>>,
+    Option<notify::RecommendedWatcher>,
+);
+
+/// Wrap the raw gossip sender, installing the `--spool` mirror when a directory
+/// was configured. The returned watcher guard must be held for the loop's whole
+/// lifetime; dropping it stops inbound spool ingestion.
+fn build_sender(
+    spool: Option<std::path::PathBuf>,
+    gossip_sender: GossipSender,
+    swarm_id: &SwarmId,
+) -> Result<SenderSetup> {
+    let Some(dir) = spool else {
+        return Ok((SwarmSender::new(gossip_sender, None), None, None));
+    };
+    let (writer, inbound_rx, watcher) = spool::install(&dir, swarm_id.as_str())?.into_parts();
+    Ok((
+        SwarmSender::new(gossip_sender, Some(writer)),
+        Some(inbound_rx),
+        Some(watcher),
+    ))
 }
 
 /// The alive tick: note the gap, then broadcast the keepalive presence.
 async fn alive_arm(
     anchors: &mut TickAnchors,
     state: &mut EventLoopState,
-    sender: &GossipSender,
+    sender: &SwarmSender,
     swarm: &SwarmId,
     author: &Nickname,
 ) {
@@ -232,7 +270,7 @@ async fn alive_arm(
 async fn antientropy_arm(
     anchors: &mut TickAnchors,
     state: &mut EventLoopState,
-    sender: &GossipSender,
+    sender: &SwarmSender,
     swarm: &SwarmId,
     author: &Nickname,
 ) {
@@ -251,7 +289,7 @@ async fn antientropy_arm(
 /// vector with no links helps no one.
 async fn linkstate_arm(
     state: &mut EventLoopState,
-    sender: &GossipSender,
+    sender: &SwarmSender,
     swarm: &SwarmId,
     author: &Nickname,
     origin: EndpointId,
@@ -304,7 +342,7 @@ async fn handle_session_arm(
 async fn sweep_arm(
     anchors: &mut TickAnchors,
     state: &mut EventLoopState,
-    sender: &GossipSender,
+    sender: &SwarmSender,
     swarm: &SwarmId,
     author: &Nickname,
     output: &output::Output,
@@ -391,7 +429,7 @@ fn spawn_a2a(
 /// `select!` out keeps both functions within the readability budget
 /// (clippy `too_many_lines`) without an `#[allow]`.
 struct EventLoop {
-    sender: GossipSender,
+    sender: SwarmSender,
     receiver: GossipReceiver,
     /// The gossip frontend, kept so the loop can re-subscribe the topic
     /// after the stream terminally ends (see the heal arm) — without it
@@ -429,6 +467,10 @@ struct EventLoop {
     /// `gossip::ingest` (same validation + dedup path as gossip). `Option` so
     /// the `select!` arm can disable itself if the channel ever closes.
     unicast_rx: Option<mpsc::Receiver<bytes::Bytes>>,
+    /// Inbound frames the `--spool` watcher read from the shared directory,
+    /// drained into `gossip::ingest` (same path as gossip/unicast). `None` when
+    /// no spool is active; the arm disables itself if the channel closes.
+    spool_rx: Option<mpsc::Receiver<bytes::Bytes>>,
 }
 
 /// The daemon's `select!` loop. Never returns normally on the CLI
@@ -510,6 +552,7 @@ async fn event_loop(loop_state: EventLoop) -> Result<()> {
         mut a2a_rx,
         a2a_port,
         mut unicast_rx,
+        mut spool_rx,
     } = loop_state;
 
     log_daemon_start(&author);
@@ -591,6 +634,13 @@ async fn event_loop(loop_state: EventLoop) -> Result<()> {
             frame = recv_opt(&mut unicast_rx) => match frame {
                 Some(bytes) => gossip::ingest(bytes, &mut state, &parts.ctx(&sender)).await,
                 None => unicast_rx = None,
+            },
+            // Inbound spool frames (files peers wrote to the shared dir) ride
+            // the same `ingest` path — self-echo + verify + dedup drop our own
+            // mirrored frames and any duplicates.
+            frame = recv_opt(&mut spool_rx) => match frame {
+                Some(bytes) => gossip::ingest(bytes, &mut state, &parts.ctx(&sender)).await,
+                None => spool_rx = None,
             },
             _ = intervals.prune.tick() => timers::tick_prune(&mut state, &output),
             _ = intervals.alive.tick() => {
@@ -708,7 +758,7 @@ fn is_pollable(event: &output::OutputEvent) -> bool {
 /// kill landing during that window can't strand the file with a still-fresh
 /// `last_updated`, leaving a ghost pill on the statusline.
 async fn shutdown(
-    sender: &GossipSender,
+    sender: &SwarmSender,
     swarm: &SwarmId,
     name: &SwarmName,
     author: &Nickname,
@@ -743,7 +793,7 @@ async fn shutdown(
 /// through so `main` unwinds and the profiler drops (safe because profiling runs
 /// use `--no-interactive`, i.e. no blocking stdin thread to hang shutdown).
 async fn announce_and_maybe_exit(
-    sender: &GossipSender,
+    sender: &SwarmSender,
     swarm: &SwarmId,
     name: &SwarmName,
     author: &Nickname,
@@ -757,6 +807,15 @@ async fn announce_and_maybe_exit(
     state.close_poll_waiters();
     state.close_a2a_waiters();
     shutdown(sender, swarm, name, author, state, output).await;
+    // Drain any frames still queued for the spool before we abort the process —
+    // otherwise `process::exit` kills the detached writer mid-flush and a
+    // burst-then-quit loses its tail (a sneakernet hand-off's last messages).
+    // Bounded so a wedged disk can't hang shutdown.
+    let _ = tokio::time::timeout(
+        Duration::from_secs(crate::util::consts::SPOOL_FLUSH_TIMEOUT_SECS),
+        sender.flush(),
+    )
+    .await;
     #[cfg(not(feature = "dhat-heap"))]
     if exit_on_quit {
         std::process::exit(0);
@@ -1169,7 +1228,7 @@ struct CtxParts<'a> {
 }
 
 impl<'a> CtxParts<'a> {
-    fn ctx<'b>(&'b self, sender: &'b GossipSender) -> HandlerCtx<'b>
+    fn ctx<'b>(&'b self, sender: &'b SwarmSender) -> HandlerCtx<'b>
     where
         'a: 'b,
     {
@@ -1216,7 +1275,7 @@ async fn resubscribe_tick(
     params: &beacon::RendezvousParams,
     parts: &CtxParts<'_>,
     state: &mut EventLoopState,
-    sender: &mut GossipSender,
+    sender: &mut SwarmSender,
     receiver: &mut GossipReceiver,
     attempts: &mut u32,
     exit_on_quit: bool,
@@ -1224,7 +1283,9 @@ async fn resubscribe_tick(
     match try_resubscribe(gossip, params, state, attempts, parts.output).await {
         Resubscribe::Restored(new_sender, new_receiver) => {
             let mut dead_receiver = std::mem::replace(receiver, new_receiver);
-            *sender = new_sender;
+            // Swap only the inner gossip sender; the spool writer Arc survives
+            // the resubscribe so a healed daemon keeps mirroring.
+            sender.replace_gossip(new_sender);
             state.gossip_open = true;
             // The dead subscription's link view is void; the fresh one
             // emits its own NeighborUps (and re-arms the probe gate).
@@ -1334,7 +1395,7 @@ fn apply_rung_change(
 /// EOF/error). Split out of `event_loop` for the line budget.
 async fn handle_stdin_arm(
     result: std::io::Result<LineRead>,
-    sender: &GossipSender,
+    sender: &SwarmSender,
     swarm: &SwarmId,
     author: &Nickname,
     state: &mut EventLoopState,

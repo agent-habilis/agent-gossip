@@ -3,3 +3,7 @@
 //! `join` daemon. (The MCP stdio server lives in `crate::mcp`.)
 
 pub(crate) mod ipc;
+pub(crate) mod sender;
+pub(crate) mod spool;
+
+pub(crate) use sender::SwarmSender;

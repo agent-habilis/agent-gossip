@@ -11,8 +11,8 @@
 
 use std::collections::HashSet;
 
+use crate::transport::SwarmSender;
 use bytes::Bytes;
-use iroh_gossip::api::GossipSender;
 use serde::{Deserialize, Serialize};
 
 use crate::daemon::ctx::HandlerCtx;
@@ -88,7 +88,7 @@ struct HeadsBody {
 /// partitioned/asleep/just-joined recovers. Like `PeerInfo`, never logged.
 pub(crate) async fn broadcast_digest(
     state: &mut EventLoopState,
-    sender: &GossipSender,
+    sender: &SwarmSender,
     swarm: &SwarmId,
     author: &Nickname,
 ) {
@@ -194,7 +194,7 @@ pub(crate) async fn handle_digest(message: &Message, state: &EventLoopState, ctx
 /// Sweep both shared-state channels' anti-entropy digests (one tick).
 pub(crate) async fn broadcast_state_digests(
     state: &mut EventLoopState,
-    sender: &GossipSender,
+    sender: &SwarmSender,
     swarm: &SwarmId,
     author: &Nickname,
 ) {
@@ -204,7 +204,7 @@ pub(crate) async fn broadcast_state_digests(
 
 pub(crate) async fn broadcast_state_digest(
     state: &mut EventLoopState,
-    sender: &GossipSender,
+    sender: &SwarmSender,
     swarm: &SwarmId,
     author: &Nickname,
     channel: Channel,

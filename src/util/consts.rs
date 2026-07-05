@@ -285,6 +285,41 @@ pub(crate) const RESIDENT_MEMORY_WARN_MB: u64 = 1024;
 /// reproduce the gossip-churn leak at any node count.
 pub(crate) const GOSSIP_ACTIVE_VIEW_CAPACITY: usize = 64;
 
+// ── Filesystem spool (`--spool`) ──────────────────────────────────
+//
+// The spool mirrors every outbound frame as a content-addressed file into a
+// shared directory and ingests frames other daemons write there. See
+// `crate::transport::spool`.
+
+/// Byte budget for one swarm's spool subdir (`<spool>/<swarm-id>/`). A new
+/// frame that pushes the subdir past this evicts the oldest-mtime `.frame`
+/// files first — a soft cap that trades unbounded disk growth for a bounded
+/// backfill window (anti-entropy re-serves anything a straggler still needs).
+/// Flag: `--spool-max-bytes` (tests lower it so the GC needs no 64 `MiB` fixture).
+pub(crate) const SPOOL_MAX_BYTES: u64 = 64 * 1024 * 1024; // 64 MiB
+
+/// How often the spool writer sweeps its subdir for GC (summing `.frame` sizes
+/// and evicting the oldest past [`SPOOL_MAX_BYTES`]). A pure const — the sweep
+/// is disk work, not a wire contract.
+pub(crate) const SPOOL_SWEEP_INTERVAL_SECS: u64 = 60;
+
+/// How often the spool watcher re-scans the whole subdir, independent of
+/// filesystem events. The safety net for FSEvents/inotify coalescing and
+/// mid-copy (non-atomic) foreign writes the initial event raced.
+pub(crate) const SPOOL_RESCAN_INTERVAL_SECS: u64 = 30;
+
+/// Capacity of the spool writer's outbound queue (frames awaiting mirror to
+/// disk). Bounded so a slow disk can't back-pressure the event loop; over the
+/// cap a frame is dropped with a `warn` and recovered via anti-entropy — the
+/// same lossy contract as gossip.
+pub(crate) const SPOOL_CHANNEL_CAPACITY: usize = 256;
+
+/// How long clean shutdown waits for the spool writer to drain its queue to
+/// disk before `process::exit` (which would abort the detached writer). Bounds
+/// the wait so a wedged disk can't hang shutdown; generous enough to flush a
+/// full queue of small frames on any healthy filesystem.
+pub(crate) const SPOOL_FLUSH_TIMEOUT_SECS: u64 = 3;
+
 // QUIC keep-alive / idle timeout are intentionally left at iroh's
 // holepunch-tuned transport defaults (~1s keep-alive, 15s direct / 30s relay
 // idle); see `lookup::build_endpoint`. A prior override (5s keep-alive, 10s

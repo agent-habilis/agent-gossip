@@ -2,8 +2,8 @@
 
 use std::time::{Duration, Instant};
 
+use crate::transport::SwarmSender;
 use iroh::{Endpoint, EndpointId};
-use iroh_gossip::api::GossipSender;
 
 use crate::daemon::ctx::HandlerCtx;
 use crate::daemon::state::EventLoopState;
@@ -17,7 +17,7 @@ use crate::util::tuning::HEAL_HARD_PROBE_SECS;
 async fn heal(
     endpoint: &Endpoint,
     rendezvous_id: EndpointId,
-    sender: &GossipSender,
+    sender: &SwarmSender,
     probe_secs: u64,
 ) {
     let endpoint = endpoint.clone();
@@ -53,7 +53,7 @@ async fn heal(
 /// `code-review/2026-06-12 … repro-m2-probe-churn`). The long probe
 /// survives where cold re-resolution is genuinely needed:
 /// [`tick_heal_hard`] (resume edge) and the beacon's own probes.
-pub(crate) async fn tick_heal(rendezvous_id: EndpointId, sender: &GossipSender) {
+pub(crate) async fn tick_heal(rendezvous_id: EndpointId, sender: &SwarmSender) {
     tracing::info!(
         target: "agent_gossip::gossip",
         "heal tick: re-graft the rendezvous"
@@ -75,7 +75,7 @@ pub(crate) async fn tick_heal(rendezvous_id: EndpointId, sender: &GossipSender) 
 pub(crate) async fn tick_heal_hard(
     endpoint: &Endpoint,
     rendezvous_id: EndpointId,
-    sender: &GossipSender,
+    sender: &SwarmSender,
 ) {
     heal(endpoint, rendezvous_id, sender, HEAL_HARD_PROBE_SECS).await;
 }
@@ -90,7 +90,7 @@ pub(crate) async fn tick_heal_hard(
 /// iroh reuses the addresses cached when each peer was first linked.
 ///
 /// [`EventLoopState::known_endpoints`]: crate::daemon::state::EventLoopState::known_endpoints
-pub(crate) async fn rebridge_known(sender: &GossipSender, known: &BoundedFifoSet<EndpointId>) {
+pub(crate) async fn rebridge_known(sender: &SwarmSender, known: &BoundedFifoSet<EndpointId>) {
     let peers: Vec<EndpointId> = known.iter().copied().collect();
     // `info`, not `debug`: this fires only on the isolation signal (rare,
     // event-driven), and a re-bridge attempt is part of the always-on

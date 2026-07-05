@@ -4,8 +4,8 @@
 
 use std::time::{Duration, Instant};
 
+use crate::transport::SwarmSender;
 use bytes::Bytes;
-use iroh_gossip::api::GossipSender;
 
 use crate::daemon::state::EventLoopState;
 use crate::output;
@@ -16,7 +16,7 @@ use crate::util::tuning::{ALIVE_INTERVAL_SECS, alive_timeout_secs};
 /// recently. Chatty daemons pay zero heartbeat cost.
 pub(crate) async fn tick_alive(
     state: &mut EventLoopState,
-    sender: &GossipSender,
+    sender: &SwarmSender,
     swarm: &SwarmId,
     author: &Nickname,
 ) {
