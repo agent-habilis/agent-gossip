@@ -46,13 +46,18 @@ use crate::util::tuning::{
 /// relay-direct bootstrap for members on a different iroh version.
 /// `pinned_ladder_matches_iroh_prod` is the tripwire — it fails
 /// on such a move so we review (do these hosts still operate?) before
-/// shipping the bump. See docs/iroh-ecosystem-research.md.
+/// shipping the bump.
+///
+/// Last such move: iroh 1.0.1 retired the `iroh-canary` infix for the
+/// stable `*.relay.n0.iroh.link` hosts. Mixed-ladder swarms (binaries
+/// from before/after that bump) still rendezvous via rung 0, which is
+/// ladder-version-independent; only the rung 1..4 fallback diverges.
 const RENDEZVOUS_RELAY_LADDER: [&str; 5] = [
     "https://swarm-relay.agent-habilis.com./", // ours (rung 0)
-    "https://use1-1.relay.n0.iroh-canary.iroh.link./", // NA-east
-    "https://usw1-1.relay.n0.iroh-canary.iroh.link./", // NA-west
-    "https://euc1-1.relay.n0.iroh-canary.iroh.link./", // EU
-    "https://aps1-1.relay.n0.iroh-canary.iroh.link./", // AP
+    "https://use1-1.relay.n0.iroh.link./",     // NA-east
+    "https://usw1-1.relay.n0.iroh.link./",     // NA-west
+    "https://euc1-1.relay.n0.iroh.link./",     // EU
+    "https://aps1-1.relay.n0.iroh.link./",     // AP
 ];
 
 /// Parsed once; `RelayUrl` clones are `Arc`-backed (cheap).
@@ -366,7 +371,7 @@ mod tests {
         assert_eq!(
             ours, theirs,
             "RENDEZVOUS_RELAY_LADDER drifted from iroh's prod relay set \
-             (sendme #121): review docs/iroh-ecosystem-research.md before bumping iroh"
+             (sendme #121): review the RENDEZVOUS_RELAY_LADDER doc comment before bumping iroh"
         );
     }
 

@@ -133,12 +133,14 @@ anstream = "0.6"
 # merge without a bespoke ordered-log fold. `default-features` stays on (the
 # `storage-v2` on-disk format is unused — we carry changes on the wire).
 automerge = "0.10"
-iroh = { version = "1.0.0-rc.0", features = ["tls-ring"] }
-iroh-gossip = { version = "0.99", features = ["net"] }
+# `unstable-net-report`: 1.0.0 gated `Endpoint::net_report()` behind it, and the
+# capability probe (`lookup::capability`) reads the report directly.
+iroh = { version = "1.0.1", features = ["tls-ring", "unstable-net-report"] }
+iroh-gossip = { version = "0.101", features = ["net"] }
 # mDNS + mainline-DHT address-lookup providers were extracted from iroh core
 # in the 1.0 line; these companion crates restore the `--mdns` / `--dht` legs.
-iroh-mdns-address-lookup = "0.2"
-iroh-mainline-address-lookup = "0.2"
+iroh-mdns-address-lookup = "0.4"
+iroh-mainline-address-lookup = "0.4"
 anyhow = "1"
 uuid = { version = "1", features = ["v4"] }
 sha2 = "0.10"
@@ -294,9 +296,11 @@ allow-branch = ["main"]
 
 # Local, uncommitted patch consuming the leak fixes from our GitHub forks
 # (kept out of `main` until the upstream PRs merge, then dropped for the released
-# versions). iroh-gossip: the connection-churn leak fix. noq: the noq-proto
-# `abandoned_paths` bound — all three noq crates point at the same fork repo+branch
-# because cargo resolves the noq workspace as a unit.
+# versions). iroh-gossip: the connection-churn leak fix. The former noq patch
+# (abandoned_paths bound, #683) is gone — noq v1.0.1 bounds the set upstream
+# via ArrayRangeSet (noq#691); the former netdev patch (CoreWLAN autorelease
+# leak) merged upstream (netdev#165, shipped in 0.44.0, pulled as 0.45.x via
+# netwatch 0.19.1).
 [patch.crates-io]
 # Pinned by `rev`, not `branch`: a branch ref is mutable, so a force-push (or
 # any later commit) on the fork would silently change what the next
@@ -304,23 +308,14 @@ allow-branch = ["main"]
 # time; bumping a fork is an explicit rev edit here.
 #
 # iroh#4294 mapped_addrs eviction (drlukeangel's), from the agent-habilis fork
-# (branch fix/mapped-addrs-eviction). iroh-base/iroh-dns are patched to the
-# SAME repo+rev as `iroh` because the forked `iroh` pulls its workspace-local
-# copies of them — without these the graph carries two `iroh_base`/`iroh_dns`
-# versions (fork vs crates.io) and types from iroh-gossip/lookups clash (E0308).
-iroh = { git = "https://github.com/agent-habilis/iroh", rev = "67cd78c96a8162b58c95306ab06e215bd250c893" }
-iroh-base = { git = "https://github.com/agent-habilis/iroh", rev = "67cd78c96a8162b58c95306ab06e215bd250c893" }
-iroh-dns = { git = "https://github.com/agent-habilis/iroh", rev = "67cd78c96a8162b58c95306ab06e215bd250c893" }
-# Branch fix/superseded-conn-leak: the connection-churn leak fix.
-iroh-gossip = { git = "https://github.com/agent-habilis/iroh-gossip", rev = "f7ddfcc0c32d57683fe03fcffedc8c29b025de0c" }
-# Branch fix/abandoned-path-leak: the abandoned_paths bound (#683, ours) + the
-# Connecting-drop fix (#682, drlukeangel's). All three crates point at the same
-# repo+rev (cargo resolves the noq workspace as a unit).
-noq = { git = "https://github.com/agent-habilis/noq", rev = "7a02ed23af4d5da530b18517918c84f117346814" }
-noq-proto = { git = "https://github.com/agent-habilis/noq", rev = "7a02ed23af4d5da530b18517918c84f117346814" }
-noq-udp = { git = "https://github.com/agent-habilis/noq", rev = "7a02ed23af4d5da530b18517918c84f117346814" }
-# Branch fix/macos-corewlan-autorelease-leak: macOS CoreWLAN autorelease leak in
-# os/macos/wifi.rs (CWWiFiClient queried with no autoreleasepool, via netwatch on
-# every network event) — the full-mesh steady-state RSS leak. Pulled in by
-# netwatch → iroh.
-netdev = { git = "https://github.com/agent-habilis/netdev", rev = "c2561063f4ca3bab09070184842b1ee85efd90e8" }
+# (branch fix/mapped-addrs-eviction-1.0.1, rebased onto v1.0.1). iroh-base/
+# iroh-dns are patched to the SAME repo+rev as `iroh` because the forked `iroh`
+# pulls its workspace-local copies of them — without these the graph carries
+# two `iroh_base`/`iroh_dns` versions (fork vs crates.io) and types from
+# iroh-gossip/lookups clash (E0308).
+iroh = { git = "https://github.com/agent-habilis/iroh", rev = "195cb98d16969da48743e88a0dbb395d118316ed" }
+iroh-base = { git = "https://github.com/agent-habilis/iroh", rev = "195cb98d16969da48743e88a0dbb395d118316ed" }
+iroh-dns = { git = "https://github.com/agent-habilis/iroh", rev = "195cb98d16969da48743e88a0dbb395d118316ed" }
+# Branch fix/superseded-conn-leak-0.101 (rebased onto v0.101.0): the
+# connection-churn leak fix (upstream PR n0-computer/iroh-gossip#147).
+iroh-gossip = { git = "https://github.com/agent-habilis/iroh-gossip", rev = "c779c0661fc9429e86852570be9bdc00fb47fdd9" }
