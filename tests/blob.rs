@@ -22,6 +22,12 @@ async fn a_file_result_is_offloaded_as_a_url_reference() {
     let mut bob = InProcNode::join(&alice.swarm, "t-blob-bob").await;
     alice.send("warmup").await;
     assert!(bob.wait_body("warmup", MSG_TIMEOUT).await, "mesh formed");
+    // Prove the reverse path too: the RPC response rides bob's outbound, and
+    // A2aReq/A2aResp are not loggable (no anti-entropy healing), so a reply
+    // broadcast into a still-converging overlay is lost for good and the call
+    // dies as a 60s waiter timeout — the suite's long-standing flake.
+    bob.send("warmup-back").await;
+    assert!(alice.wait_body("warmup-back", MSG_TIMEOUT).await, "reverse");
 
     // `create_task` waits for bob's card (the directed-seal key) before sending.
     let resp = alice.create_task("t-blob-bob", "render the report").await;

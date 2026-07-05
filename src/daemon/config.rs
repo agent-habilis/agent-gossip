@@ -122,6 +122,13 @@ pub(crate) enum SessionRequest {
     IndexStats {
         resp: oneshot::Sender<(usize, usize, usize)>,
     },
+    /// Snapshot the reassembly store's accounting
+    /// `(groups, total_bytes, max_author_bytes)`. Adversarial-suite only —
+    /// lets it assert crafted shard streams stay inside the byte budgets.
+    #[cfg(feature = "adversarial")]
+    ReassemblyStats {
+        resp: oneshot::Sender<(usize, usize, usize)>,
+    },
     /// Simulate the gossip event stream terminally ending (flips
     /// `gossip_open` off, exactly what the real `None` arm does — the
     /// orphaned receiver is dropped when the heal arm resubscribes).
@@ -263,7 +270,9 @@ pub(crate) struct EventLoopConfig {
     /// drains this into `gossip::ingest` (the same path as gossip), so both
     /// transports share signature-verify + dedup. Built in `setup_swarm`.
     pub unicast_rx: mpsc::Receiver<bytes::Bytes>,
-    /// `--a2a-serve`: the already-bound localhost A2A JSON-RPC binding
+    /// Which transport planes directed sends may use — installed onto
+    /// `EventLoopState` so each in-process session routes independently.
+        /// `--a2a-serve`: the already-bound localhost A2A JSON-RPC binding
     /// (bound in setup so the `ready` event carries the real port; served
     /// once the event loop starts). `None` (the default) serves nothing.
     pub a2a: Option<crate::a2a::http::A2aBinding>,

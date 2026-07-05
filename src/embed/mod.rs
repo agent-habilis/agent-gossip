@@ -30,6 +30,7 @@ use crate::protocol::swarm::{
 };
 use crate::protocol::{Message, MessageBody, Nickname, SwarmId};
 use crate::resolver::JoinTarget;
+use crate::transport::TransportPolicy;
 use crate::util::consts::GOSSIP_ACTIVE_VIEW_CAPACITY;
 use crate::util::tuning::{EMBED_INBOUND_CAP, advertise_interval_secs, directory_expiry_secs};
 
@@ -48,11 +49,12 @@ pub struct JoinConfig {
     /// Password for a password-protected id. Verified locally against the
     /// id's verifier before any network; required iff the id carries one.
     pub password: Option<String>,
+    /// Which transport planes directed sends may use. Default all-on;
+    /// narrowed by tests to pin a message to one lane.
+    pub transport: TransportPolicy,
     /// Mirror frames into this shared directory (and ingest frames peers write
     /// there) — the filesystem spool. `None` disables it.
     pub spool: Option<std::path::PathBuf>,
-    /// Which transports directed messages may use. Defaults to all-enabled.
-    pub transport: crate::transport::TransportPolicy,
 }
 
 impl JoinConfig {
@@ -67,8 +69,8 @@ impl JoinConfig {
             nickname: None,
             max_peers: GOSSIP_ACTIVE_VIEW_CAPACITY,
             password: None,
+            transport: TransportPolicy::default(),
             spool: None,
-            transport: crate::transport::TransportPolicy::DEFAULTS,
         }
     }
 }
@@ -86,11 +88,12 @@ pub struct TopicConfig {
     pub nickname: Option<Nickname>,
     /// Max direct peer connections before gossip relays the rest.
     pub max_peers: usize,
+    /// Which transport planes directed sends may use. Default all-on;
+    /// narrowed by tests to pin a message to one lane.
+    pub transport: TransportPolicy,
     /// Mirror frames into this shared directory (and ingest frames peers write
     /// there) — the filesystem spool. `None` disables it.
     pub spool: Option<std::path::PathBuf>,
-    /// Which transports directed messages may use. Defaults to all-enabled.
-    pub transport: crate::transport::TransportPolicy,
 }
 
 impl TopicConfig {
@@ -101,8 +104,8 @@ impl TopicConfig {
             string,
             nickname: None,
             max_peers: GOSSIP_ACTIVE_VIEW_CAPACITY,
+            transport: TransportPolicy::default(),
             spool: None,
-            transport: crate::transport::TransportPolicy::DEFAULTS,
         }
     }
 }
@@ -140,11 +143,12 @@ pub struct CreateConfig {
     /// minted id (joiners must present the password), and every derivation
     /// switches onto the Argon2id-stretched key.
     pub password: Option<String>,
+    /// Which transport planes directed sends may use. Default all-on;
+    /// narrowed by tests to pin a message to one lane.
+    pub transport: TransportPolicy,
     /// Mirror frames into this shared directory (and ingest frames peers write
     /// there) — the filesystem spool. `None` disables it.
     pub spool: Option<std::path::PathBuf>,
-    /// Which transports directed messages may use. Defaults to all-enabled.
-    pub transport: crate::transport::TransportPolicy,
 }
 
 impl CreateConfig {
@@ -162,8 +166,8 @@ impl CreateConfig {
             directory: None,
             max_peers: GOSSIP_ACTIVE_VIEW_CAPACITY,
             password: None,
+            transport: TransportPolicy::default(),
             spool: None,
-            transport: crate::transport::TransportPolicy::DEFAULTS,
         }
     }
 }
@@ -345,7 +349,7 @@ async fn resolved_setup(
     resolved: Resolved,
     max_peers: usize,
     spool: Option<std::path::PathBuf>,
-    transport: crate::transport::TransportPolicy,
+    transport: TransportPolicy,
     output: Output,
 ) -> Result<EventLoopConfig, JoinError> {
     let Resolved { kind, author, .. } = resolved;
@@ -771,6 +775,20 @@ impl InProcessSession {
             .map_err(|_| anyhow::anyhow!("swarm event loop dropped the response"))
     }
 
+    /// Snapshot the reassembly store's accounting
+    /// `(groups, total_bytes, max_author_bytes)`. Adversarial-suite only.
+    #[cfg(feature = "adversarial")]
+    pub(crate) async fn reassembly_stats(&self) -> anyhow::Result<(usize, usize, usize)> {
+        let (resp_tx, resp_rx) = oneshot::channel();
+        self.req_tx
+            .send(SessionRequest::ReassemblyStats { resp: resp_tx })
+            .await
+            .map_err(|_| anyhow::anyhow!("swarm event loop has stopped"))?;
+        resp_rx
+            .await
+            .map_err(|_| anyhow::anyhow!("swarm event loop dropped the response"))
+    }
+
     /// Clean shutdown: ask the loop to broadcast `Left` and wind down,
     /// waiting up to 3s. On timeout returns `Ok(())` and `Drop` detaches.
     ///
@@ -891,10 +909,10 @@ impl SwarmSession {
                 max_peers: GOSSIP_ACTIVE_VIEW_CAPACITY,
                 state_file: None,
                 spool: None,
-                transport: crate::transport::TransportPolicy::DEFAULTS,
-                output,
+                    output,
                 drift: None,
                 a2a_serve: None,
+                transport: TransportPolicy::default(),
             },
         )
         .await?;
@@ -1157,6 +1175,17 @@ impl SwarmSession {
     #[cfg(feature = "adversarial")]
     pub async fn index_stats(&self) -> anyhow::Result<(usize, usize, usize)> {
         self.core.index_stats().await
+    }
+
+    /// Snapshot the reassembly store's accounting
+    /// `(groups, total_bytes, max_author_bytes)`. Adversarial-suite only —
+    /// lets it assert crafted shard streams stay inside the byte budgets.
+    ///
+    /// # Errors
+    /// Fails if the event loop has stopped.
+    #[cfg(feature = "adversarial")]
+    pub async fn reassembly_stats(&self) -> anyhow::Result<(usize, usize, usize)> {
+        self.core.reassembly_stats().await
     }
 
     /// Clean shutdown: ask the loop to broadcast `Left` and wind down,

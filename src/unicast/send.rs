@@ -111,6 +111,19 @@ fn route(
         // Broadcast / infrastructure kind: gossip is the only transport, always.
         return Route::Gossip;
     };
+    directed_route(nick, state, unicast_on, gossip_on, circuit_on)
+}
+
+/// The message-independent half of [`route`]: every directed kind to the same
+/// addressee routes identically, so this is also what the `peers` roster
+/// surfaces as a peer's `transport` column (via [`lane_for`]).
+fn directed_route(
+    nick: &Nickname,
+    state: &EventLoopState,
+    unicast_on: bool,
+    gossip_on: bool,
+    circuit_on: bool,
+) -> Route {
     if let (true, Some(eid)) = (unicast_on, unicast_endpoint(nick, state)) {
         return if gossip_on {
             Route::UnicastPreferred(eid)
@@ -128,6 +141,34 @@ fn route(
         Route::Gossip
     } else {
         Route::Undeliverable
+    }
+}
+
+/// The lane a directed frame to `nick` would take right now, under the
+/// session's live policy — [`Route`] stripped of its endpoint payloads so the
+/// roster can serialize it. Sharing `directed_route` keeps the surfaced
+/// column from ever drifting from the real send decision.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum Lane {
+    Unicast,
+    Circuit,
+    Gossip,
+    Unreachable,
+}
+
+pub(crate) fn lane_for(nick: &Nickname, state: &EventLoopState) -> Lane {
+    match directed_route(
+        nick,
+        state,
+        state.transport.unicast,
+        state.transport.gossip_directed,
+        state.transport.circuit,
+    ) {
+        Route::UnicastPreferred(_) | Route::UnicastOnly(_) => Lane::Unicast,
+        Route::Circuit(_) => Lane::Circuit,
+        Route::Gossip => Lane::Gossip,
+        Route::Undeliverable => Lane::Unreachable,
     }
 }
 

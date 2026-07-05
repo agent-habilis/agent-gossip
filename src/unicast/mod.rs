@@ -18,7 +18,8 @@ mod send;
 
 pub(crate) use accept::UnicastAcceptor;
 pub(crate) use pool::UnicastPool;
-pub(crate) use send::deliver;
+pub(crate) use send::{Lane, deliver, lane_for};
+
 
 /// ALPN for the unicast channel — a raw bidirectional QUIC stream with its own
 /// protocol identity, distinct from `GOSSIP_ALPN` and the a2a bridge's ALPN.

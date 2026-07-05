@@ -41,10 +41,6 @@ use super::{ipc, setup, timers};
 use crate::a2a::task;
 
 /// Never returns normally — exits the process on ctrl-c / SIGTERM.
-#[expect(
-    clippy::too_many_lines,
-    reason = "linear per-session setup: unpack the config, stand up state/spool/rendezvous/ipc, then hand off to the event loop; each step delegates but the sequence is irreducibly long"
-)]
 pub(crate) async fn run(cfg: EventLoopConfig) -> Result<()> {
     let EventLoopConfig {
         topic,
@@ -116,16 +112,7 @@ pub(crate) async fn run(cfg: EventLoopConfig) -> Result<()> {
     let (a2a_port, a2a_rx) = spawn_a2a(a2a, state_file.as_ref());
     let mut state = EventLoopState::new(state_file, started, identity, swarm_password, swarm_key);
     state.mint_swarm = mint_swarm; // creator-only: backs the `invite` command
-    state.transport = transport; // per-session directed-transport policy (`deliver` reads it)
-    // Replace the detached default pool with one wired to this endpoint, so
-    // directed sends can dial peers over the unicast ALPN.
-    state.unicast_pool = crate::unicast::UnicastPool::new(endpoint.clone());
-    // Advertise path only: the directory re-broadcast task reads the
-    // live count from here. Set before the first write below so the
-    // initial ad carries a real count.
-    state.live_count = live_count;
-    state.rendezvous_id = Some(rendezvous_params.id);
-    state.write_participant_count();
+    wire_session_state(&mut state, &endpoint, transport, live_count, rendezvous_params.id);
 
     // An eager member co-hosts from t=0 so a beacon exists before any
     // joiner subscribes; everyone else defers to the heal gate
@@ -254,6 +241,38 @@ fn build_sender(
     ))
 }
 
+/// The 1-minute housekeeping arm: the memory warn + reassembly sweep, then
+/// ask authors to re-send what our stalled big shard groups are missing —
+/// Wire the just-built state to this session's endpoint + config: the real
+/// unicast pool (the default is detached), the transport policy, the
+/// advertise counter (set before the first write so the initial ad carries a
+/// real count), and the rendezvous id — then publish the initial count.
+fn wire_session_state(
+    state: &mut EventLoopState,
+    endpoint: &Endpoint,
+    transport: crate::transport::TransportPolicy,
+    live_count: Option<std::sync::Arc<std::sync::atomic::AtomicUsize>>,
+    rendezvous_id: EndpointId,
+) {
+    state.unicast_pool = crate::unicast::UnicastPool::new(endpoint.clone());
+    state.transport = transport;
+    state.live_count = live_count;
+    state.rendezvous_id = Some(rendezvous_id);
+    state.write_participant_count();
+}
+
+/// their shards live in no log, so the repair loop is their only heal path.
+async fn prune_arm(
+    state: &mut EventLoopState,
+    output: &output::Output,
+    sender: &SwarmSender,
+    swarm: &SwarmId,
+    author: &Nickname,
+) {
+    timers::tick_prune(state, output);
+    gossip::send_shard_repair_requests(swarm, author, state, sender).await;
+}
+
 /// The alive tick: note the gap, then broadcast the keepalive presence.
 async fn alive_arm(
     anchors: &mut TickAnchors,
@@ -314,6 +333,10 @@ async fn linkstate_arm(
     let Ok(json) = vector.to_json() else {
         return;
     };
+    // Fold our own vector into our own store: gossip never loops a broadcast
+    // back, and without our outbound edges the local graph can't source a
+    // circuit (`circuit_paths(self, …)` would always be empty).
+    state.link_state.ingest(vector);
     let Ok(body) = crate::protocol::MessageBody::new(json) else {
         return;
     };
@@ -648,7 +671,8 @@ async fn event_loop(loop_state: EventLoop) -> Result<()> {
                 Some(bytes) => gossip::ingest(bytes, &mut state, &parts.ctx(&sender)).await,
                 None => spool_rx = None,
             },
-            _ = intervals.prune.tick() => timers::tick_prune(&mut state, &output),
+            _ = intervals.prune.tick() =>
+                prune_arm(&mut state, &output, &sender, &swarm_str, &author).await,
             _ = intervals.alive.tick() => {
                 alive_arm(&mut anchors, &mut state, &sender, &swarm_str, &author).await;
             }

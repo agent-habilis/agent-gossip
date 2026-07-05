@@ -23,11 +23,15 @@ pub(crate) fn seen_ids_cap() -> usize {
     message_log_size().saturating_mul(2)
 }
 
-/// How many outbound user messages are buffered while the node has no
-/// gossip link yet (sent before the first `NeighborUp`). Flushed in
-/// order once connected; oldest dropped past this cap so a node that
-/// spams while offline can't grow memory unbounded.
-pub(crate) const PENDING_OUTBOUND_CAP: usize = 64;
+/// How many outbound frames are buffered while the node has no gossip link
+/// yet (sent before the first `NeighborUp`). Flushed in order once connected;
+/// oldest dropped past this cap so a node that spams while offline can't grow
+/// memory unbounded. Sized in **frames** (≤ `MAX_MESSAGE_SIZE` each, so ~4 `MiB`
+/// worst case): with the shard-count cap gone, a multipart body needs one
+/// slot per shard and is admitted all-or-nothing, so this also bounds the
+/// largest body sendable before the mesh forms (~3.7 MB) — bigger ones are
+/// refused with a retry-after-connect error rather than half-buffered.
+pub(crate) const PENDING_OUTBOUND_CAP: usize = 1024;
 
 /// How many distinct peer endpoint ids we remember for the
 /// rendezvous-independent re-bridge (`gossip::heal::rebridge_known`).

@@ -55,20 +55,125 @@ pub(crate) const LOG_FILE_MAX_BYTES: u64 = 10 * 1024 * 1024; // 10 MiB
 /// iroh-gossip's (so this module pulls in no dependency).
 pub const MAX_MESSAGE_SIZE: usize = 3840;
 
-/// Maximum number of shards a single logical body is split into when it exceeds
-/// [`MAX_MESSAGE_SIZE`]. Each shard is an ordinary message that occupies one
-/// message-log slot, so this also bounds how many slots one body consumes and
-/// caps a crafted peer's reassembly buffering. A body that would need more
-/// shards than this is refused on send.
-pub const MAX_MESSAGE_SHARDS: usize = 16;
+/// Sanity ceiling on a shard header's advertised `total`. **Not** a memory
+/// guard — the reassembly store never allocates by `total` and is bounded by
+/// its byte budgets — just a tripwire that rejects an absurd header at
+/// `Message::parse`. Sized with ~2x headroom over the most shards a
+/// budget-respecting body can need ([`REASSEMBLY_GROUP_MAX_BYTES`] divided by
+/// a worst-case per-shard body budget; pinned by a unit test in
+/// `protocol::message::shard`).
+pub const MAX_SHARD_TOTAL: u32 = 65_536;
+
+/// Largest shard group whose frames still enter the message log (and thus
+/// heal via anti-entropy) — exactly the old 16-shard behavior. A bigger
+/// group's shards skip the log so one huge body can't evict the swarm's whole
+/// anti-entropy history; those transfers are transport-reliable instead
+/// (QUIC streams on unicast/circuit, best-effort on a gossip fallback).
+pub(crate) const LOGGED_SHARD_GROUP_MAX_TOTAL: u32 = 16;
 
 /// Upper bound on a logical (possibly multipart) body the daemon will accept
-/// from a caller — the input ceiling for `msg`/`task`. The send path is the
-/// real gate (it refuses a body that needs more than [`MAX_MESSAGE_SHARDS`]
-/// shards); this is the generous limit the stdin/IPC readers enforce so an
-/// oversize body still reaches the daemon and gets a clear "too large" error
-/// rather than a truncated read.
-pub const MAX_LOGICAL_BODY_BYTES: usize = MAX_MESSAGE_SHARDS * MAX_MESSAGE_SIZE;
+/// from a caller — a **local input + surfacing bound, not a wire bound** (the
+/// wire is bounded by the reassembly byte budgets below). Enforced by the
+/// stdin/IPC readers and the send path; anything larger belongs on the blob
+/// channel ([`MAX_BLOB_BYTES`], disk-streamed). Generous, but a bound: the
+/// daemon buffers a full input line and every peer's surfaced ring holds full
+/// bodies, and a gossip-fallback of one such body already floods
+/// `MAX_LOGICAL_BODY_BYTES / MAX_MESSAGE_SIZE` (~18k) frames to every peer.
+pub const MAX_LOGICAL_BODY_BYTES: usize = 64 * 1024 * 1024; // 64 MiB
+
+/// Ceiling applied to an already-**sealed** directed body (task legs, RPC).
+/// Sealing base58-encodes the payload (~1.37× inflation), so checking a
+/// sealed body against the raw input ceiling would silently shrink the
+/// documented limit to ~46 `MiB` for directed sends only; 1.5× headroom keeps
+/// the caller-facing ceiling uniform at [`MAX_LOGICAL_BODY_BYTES`].
+pub(crate) const MAX_SEALED_BODY_BYTES: usize =
+    MAX_LOGICAL_BODY_BYTES + MAX_LOGICAL_BODY_BYTES / 2;
+
+// ── Shard reassembly budgets ──────────────────────────────────────
+//
+// The reassembly store buffers *partial* multipart bodies until every shard
+// arrives. Its bounds are byte budgets (not shard counts), expressed as
+// multiples of [`MAX_LOGICAL_BODY_BYTES`] so they scale with the input
+// ceiling: sealing (base58) + JSON escaping inflate a body ~1.5×, hence the
+// 2× per-group headroom.
+
+/// Ceiling for one partial group's buffered bytes — a sealed max-size body
+/// fits; anything claiming more is a crafted stream and the group is dropped.
+#[cfg_attr(
+    not(feature = "adversarial"),
+    expect(
+        unreachable_pub,
+        reason = "re-exported by the feature-gated adversarial harness only"
+    )
+)]
+pub const REASSEMBLY_GROUP_MAX_BYTES: usize = 2 * MAX_LOGICAL_BODY_BYTES;
+
+/// Per-author (pubkey) budget across that author's partial groups. A hostile
+/// peer exhausts only its own budget; breaching it evicts that author's
+/// stalest incomplete group rather than anyone else's.
+#[cfg_attr(
+    not(feature = "adversarial"),
+    expect(
+        unreachable_pub,
+        reason = "re-exported by the feature-gated adversarial harness only"
+    )
+)]
+pub const REASSEMBLY_AUTHOR_BUDGET_BYTES: usize = 3 * MAX_LOGICAL_BODY_BYTES;
+
+/// Global backstop across all authors — pubkeys are free (Sybil), so the
+/// per-author budget alone is not a bound. Breaching it drops the incoming
+/// shard's group (fail closed, never balloon).
+#[cfg_attr(
+    not(feature = "adversarial"),
+    expect(
+        unreachable_pub,
+        reason = "re-exported by the feature-gated adversarial harness only"
+    )
+)]
+pub const REASSEMBLY_TOTAL_BUDGET_BYTES: usize = 6 * MAX_LOGICAL_BODY_BYTES;
+
+/// A partial group that gained no **new** shard for this long is reaped
+/// (swept on the 1-minute prune tick). Only progress refreshes the clock —
+/// a duplicate slot does not, so an attacker can't keepalive a dead group
+/// with resends — and a slow-but-live transfer is never reaped mid-flight.
+pub(crate) const REASSEMBLY_STALE_SECS: u64 = 300;
+
+/// Hard ceiling on a partial group's lifetime regardless of activity. The
+/// idle TTL alone lets a hostile stream pin its buffered bytes forever by
+/// trickling one shard per window; this bounds any single group's pin to an
+/// hour (generous — a budget-respecting transfer completes in seconds to
+/// minutes).
+pub(crate) const REASSEMBLY_MAX_GROUP_LIFETIME_SECS: u64 = 3600;
+
+/// Fixed overhead one buffered shard charges on top of its body bytes — the
+/// map nodes, cloned keys, and (for shard 0) the retained envelope clone.
+/// Charging body bytes alone undercounts a tiny-shard flood by an order of
+/// magnitude, letting real memory blow past the budgets the store enforces.
+pub(crate) const REASSEMBLY_SLOT_OVERHEAD_BYTES: usize = 512;
+
+/// Minimum total charge for one buffered shard, so a flood of 1-byte crafted
+/// shards across millions of groups still pays for the ~KB of real state each
+/// one occupies (envelope clone + map/key overhead).
+pub(crate) const REASSEMBLY_SLOT_MIN_CHARGE_BYTES: usize = 2048;
+
+/// How long a big (unlogged) partial group may sit without progress before
+/// the receiver asks the author to re-send its missing shards (`shard/repair`
+/// over the gossip RPC). Checked on the 1-minute prune tick; with the 300s
+/// idle TTL this yields several repair rounds before the group is reaped.
+pub(crate) const REASSEMBLY_REPAIR_IDLE_SECS: u64 = 60;
+
+/// Max missing indexes one repair request names (and the serve side honors) —
+/// bounds both the request body and the resend burst; a wider gap heals over
+/// successive rounds.
+pub(crate) const REASSEMBLY_REPAIR_MAX_IDXS: usize = 64;
+
+/// Byte budget of the sender-side shard cache — the serialized frames of
+/// recent big (unlogged) outbound groups, kept so a receiver's
+/// `shard/repair` request can be served. Big groups skip the message log
+/// (they must not evict the anti-entropy history), so this cache is their
+/// only re-serve source. Whole-group FIFO eviction; sized to hold one
+/// max-size group.
+pub(crate) const SHARD_CACHE_BUDGET_BYTES: usize = REASSEMBLY_GROUP_MAX_BYTES;
 
 /// Largest single file the blob channel will offload. Streamed from disk on
 /// both ends (never buffered whole), so this is a disk-bound per-blob ceiling,
@@ -114,6 +219,14 @@ pub(crate) const POLL_RESPONSE_MAX_MSGS: usize = 1000;
 /// first poll, with the client's cursor advancing past them).
 pub(crate) const SURFACED_EVENTS_CAP: usize = POLL_RESPONSE_MAX_MSGS;
 
+/// Byte budget of the surfaced-events ring, alongside its count cap: with
+/// multipart bodies up to [`MAX_LOGICAL_BODY_BYTES`], a run of large messages
+/// would otherwise hold `SURFACED_EVENTS_CAP × body` in memory. 3× the body
+/// ceiling holds at least **two** max-size bodies plus a tail — two ordinary
+/// back-to-back sends must never evict the first before a normally-paced
+/// poll client reads it; older events oldest-drop exactly like the count cap.
+pub(crate) const SURFACED_RING_BUDGET_BYTES: usize = 3 * MAX_LOGICAL_BODY_BYTES;
+
 /// Max concurrent parked long-poll waiters per daemon. A blocking `poll` /
 /// `fetch_messages` registers a waiter when the buffer is empty; over this cap
 /// the read degrades to an immediate (empty) return rather than parking, so the
@@ -137,18 +250,21 @@ pub(crate) const A2A_CALL_MAX_TIMEOUT_SECS: u64 = 3600;
 pub(crate) const MAX_STDIN_LINE_BYTES: usize = MAX_LOGICAL_BODY_BYTES;
 
 /// Max bytes for one IPC command line: a full logical body in a JSON envelope
-/// (swarm id, nickname, keys). The daemon splits the body across the wire, so
-/// the command carries the whole thing; budget envelope headroom on top.
-pub(crate) const MAX_IPC_COMMAND_BYTES: usize = MAX_LOGICAL_BODY_BYTES + 2 * MAX_MESSAGE_SIZE;
+/// (swarm id, nickname, keys). The body travels JSON-escaped inside the line
+/// — worst case every char doubles (quotes/backslashes/newlines) — so budget
+/// **2×** the raw ceiling plus envelope headroom, or an escape-heavy body
+/// within the documented limit is refused at the socket.
+pub(crate) const MAX_IPC_COMMAND_BYTES: usize = 2 * MAX_LOGICAL_BODY_BYTES + 2 * MAX_MESSAGE_SIZE;
 
-/// Max bytes for one IPC response line: a poll returns at most
-/// [`POLL_RESPONSE_MAX_MSGS`] events. Each rendered event is larger than its
-/// raw body — the `display` field re-renders the body with a markdown prefix
-/// (≈ a second copy of the body) and the JSON envelope (`seq`/`event`/`id`/
-/// `pubkey`/… field names + a `ping_report` peer table) adds more — so budget
-/// **3×** the wire cap per event, not 1×, or a window of large-body messages
-/// overruns this bound and the `poll` client errors ("IPC response too large").
-pub(crate) const MAX_IPC_RESPONSE_BYTES: usize = 3 * POLL_RESPONSE_MAX_MSGS * MAX_MESSAGE_SIZE;
+/// Max bytes for one IPC response line. A rendered event carries the body
+/// **twice** (the raw field plus the `display` re-render), each JSON-escaped
+/// (worst case 2× the raw bytes), so one event can render to ~**4×** its raw
+/// body plus envelope — the response cap must clear that for a max-size body
+/// or the event could never be polled and the client's cursor would wedge on
+/// it forever. `poll` batches byte-aware against this bound
+/// (`EventLoopState::poll_since`), returning the oldest prefix that fits;
+/// the client re-polls for the rest.
+pub(crate) const MAX_IPC_RESPONSE_BYTES: usize = 5 * MAX_LOGICAL_BODY_BYTES;
 
 // ── Password KDF (wire contract) ──────────────────────────────────
 //

@@ -26,6 +26,7 @@ mod shard;
 pub use body::{BodyError, MessageBody};
 pub use id::{IdError, MessageId};
 pub use shard::{Shard, ShardGroup};
+pub(crate) use shard::shard_fits_log;
 
 /// Maximum serialized message size — a network-wide wire contract kept
 /// under iroh-gossip's payload budget so a message we accept always fits
@@ -47,16 +48,19 @@ const _: () = assert!(
 );
 
 /// Protocol version embedded in every message. Bumped to `8.0` for
-/// **password-swarm content encryption**: on a passworded swarm the `state`/
-/// `meta` change bodies and broadcast chat (`A2aMsg`) bodies now travel as a
-/// symmetric `{"k":"enc",…}` envelope instead of cleartext, so a `7.0` peer
-/// (which would silently fail to decode an `enc` body) must NOT interoperate.
-/// (`7.0` was the automerge `state`/`meta` channels — Base58 change bodies +
-/// heads-based digests; `6.0` directed sealing; `5.0` the A2A v1.0 / `ProtoJSON`
-/// migration; `4.0` the native-A2A port; `3.0` the A2A migration; `2.0` the RFC
-/// 6902 → RFC 7386 shared-state change.) The exact-match gate in `parse` drops
-/// cross-version messages loudly rather than letting them silently fold to
-/// no-ops and diverge.
+/// two `8.0` changes landing together: **unbounded multipart bodies** (a
+/// shard header's `total` may exceed the old 16-shard cap, up to
+/// [`crate::util::consts::MAX_SHARD_TOTAL`] — a `7.0` peer would parse-fail
+/// every larger shard *silently*, a delivery black hole) and **password-swarm
+/// content encryption** (on a passworded swarm the `state`/`meta` change
+/// bodies and broadcast chat (`A2aMsg`) bodies travel as a symmetric
+/// `{"k":"enc",…}` envelope instead of cleartext, which a `7.0` peer would
+/// silently fail to decode). (`7.0` was the automerge `state`/`meta` channels
+/// — Base58 change bodies + heads-based digests; `6.0` directed sealing;
+/// `5.0` the A2A v1.0 / `ProtoJSON` migration; `4.0` the native-A2A port;
+/// `3.0` the A2A migration; `2.0` the RFC 6902 → RFC 7386 shared-state
+/// change.) The exact-match gate in `parse` drops cross-version messages
+/// loudly rather than letting them silently fold to no-ops and diverge.
 pub(crate) const VERSION: &str = "8.0";
 
 /// Presence subtype.
@@ -483,7 +487,10 @@ impl Message {
     }
 
     /// A directed A2A JSON-RPC request to `to`, whose `body` is a JSON-RPC
-    /// `{"method","params"}` envelope correlated by `rpc_id`.
+    /// `{"method","params"}` envelope correlated by `rpc_id`. Production
+    /// builds RPC frames through `new_frame` (the shard-splitting flow); this
+    /// stays for routing tests.
+    #[cfg(test)]
     pub(crate) fn new_a2a_req(
         swarm: &SwarmId,
         author: &Nickname,
@@ -492,18 +499,6 @@ impl Message {
         body: MessageBody,
     ) -> Self {
         Self::new(swarm, author, MessageKind::A2aReq { to, rpc_id }, body)
-    }
-
-    /// The reply to an `A2aReq`, addressed to the requester `to`, whose `body`
-    /// is the JSON-RPC response, echoing `rpc_id`.
-    pub(crate) fn new_a2a_resp(
-        swarm: &SwarmId,
-        author: &Nickname,
-        to: Nickname,
-        rpc_id: crate::a2a::A2aRpcId,
-        body: MessageBody,
-    ) -> Self {
-        Self::new(swarm, author, MessageKind::A2aResp { to, rpc_id }, body)
     }
 
     /// Create a `PeerInfo` message. The body carries endpoint address data
@@ -533,9 +528,9 @@ impl Message {
     }
 
     /// A durable state event whose opaque payload is `body`. Routed to the
-    /// un-pruned `daemon::state_log`, not the chat message-log. Test/harness
+    /// un-pruned `daemon::state_log`, not the chat message-log. Harness
     /// constructor; production uses [`new_channel_event`](Self::new_channel_event).
-    #[cfg(any(test, feature = "adversarial"))]
+    #[cfg(feature = "adversarial")]
     pub(crate) fn new_state(swarm: &SwarmId, author: &Nickname, body: MessageBody) -> Self {
         Self::new(swarm, author, MessageKind::State, body)
     }

@@ -461,14 +461,23 @@ One slice of a body too large for a single gossip message. When a body
 exceeds `MAX_MESSAGE_SIZE`, the sender splits it into several ordinary signed
 messages, each carrying a `shard` header — a `group` (a UUID shared by the
 body's shards), an `idx`, and the `total` count. Each shard is a real message
-(own id/seq/signature) retained in the **message log**, so a missing shard
-heals through anti-entropy like any message. The receiver reassembles the
-shards of a `group` (keyed also by author key, so a crafted cross-author shard
-can't inject a slice) into the one logical message it surfaces; the raw shards
-never surface. Capped at `MAX_MESSAGE_SHARDS` per body — a larger body is
-refused on send. The split is invisible to agents: a body sends and arrives
-whole. (Renamed from *part*: the A2A layer owns that word for a message's
-content unit.)
+(own id/seq/signature); shards of a small group (`total <=`
+`LOGGED_SHARD_GROUP_MAX_TOTAL`) are retained in the **message log**, so a
+missing one heals through anti-entropy like any message, while a bigger
+group's shards skip the log on both ends (one huge body must not evict the
+anti-entropy history) and heal through **shard repair**: the sender caches
+its outbound frames and a receiver whose group stalls asks it — the
+`shard/repair` gossip-RPC method — to re-send the missing indexes. The
+receiver buffers shards in the
+dedicated **reassembly store** — bounded by byte budgets (per group, per
+author, global) and a stale-group TTL, never by a shard count — and keyed
+also by author key, so a crafted cross-author shard can't inject a slice.
+The reassembled logical message is the only thing surfaced; the raw shards
+never surface. The one send-side limit is `MAX_LOGICAL_BODY_BYTES` (a local
+input ceiling — bigger payloads belong on the **blob** channel). The split is
+invisible to agents: a body sends and arrives whole, on any transport.
+(Renamed from *part*: the A2A layer owns that word for a message's content
+unit.)
 
 ### seal
 

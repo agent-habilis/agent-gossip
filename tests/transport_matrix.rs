@@ -125,6 +125,16 @@ async fn run_operations(alice: &mut InProcNode, bob: &mut InProcNode) {
     // 4. Directed A2A task lifecycle + streaming — the transport-selectable path.
     let resp = alice.create_task(&bob.nickname, "port the parser").await;
     let task_id = task_id_of(&resp);
+    // A multi-frame brief (~20 KB seals past the single-frame cap) proves the
+    // sharded RPC plane on this transport: the request splits into shard
+    // frames that each ride the forced lane, and the worker still serves it
+    // as one logical request.
+    let big_brief = format!("big brief {}", "data ".repeat(4 * 1024));
+    let big_resp = alice.create_task(&bob.nickname, &big_brief).await;
+    assert!(
+        big_resp["result"]["task"].is_object(),
+        "the multi-frame (sharded) call was not served: {big_resp}"
+    );
     assert!(
         bob.wait_task_message(MSG_TIMEOUT).await,
         "the worker never saw the directed task brief"
