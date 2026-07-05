@@ -62,7 +62,7 @@ pub(crate) mod util;
         reason = "relay graph search / telemetry not yet reachable from production; wired in phases 3-4"
     )
 )]
-pub(crate) mod whisper;
+pub(crate) mod circuit;
 
 pub mod embed;
 

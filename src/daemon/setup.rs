@@ -212,7 +212,7 @@ struct SetupBuild<'a> {
     max_peers: usize,
     lookups: &'a LookupOpts,
     unicast_acceptor: &'a crate::unicast::UnicastAcceptor,
-    whisper_acceptor: &'a crate::whisper::WhisperAcceptor,
+    circuit_acceptor: &'a crate::circuit::CircuitAcceptor,
     rung_tx: &'a watch::Sender<Option<RelayUrl>>,
 }
 
@@ -276,12 +276,12 @@ pub(crate) async fn setup_swarm(
     // The relay acceptor needs the participant endpoint to dial the next hop, but
     // is registered on the Router *before* that endpoint is bound below; it reads
     // the endpoint from this cell, filled once the endpoint exists.
-    let whisper_endpoint: std::sync::Arc<std::sync::OnceLock<Endpoint>> =
+    let circuit_endpoint: std::sync::Arc<std::sync::OnceLock<Endpoint>> =
         std::sync::Arc::new(std::sync::OnceLock::new());
-    let whisper_acceptor = crate::whisper::WhisperAcceptor::new(
+    let circuit_acceptor = crate::circuit::CircuitAcceptor::new(
         inbox_tx,
         identity.seal_secret(),
-        whisper_endpoint.clone(),
+        circuit_endpoint.clone(),
     );
 
     let build = SetupBuild {
@@ -292,7 +292,7 @@ pub(crate) async fn setup_swarm(
         max_peers,
         lookups: &lookups,
         unicast_acceptor: &unicast_acceptor,
-        whisper_acceptor: &whisper_acceptor,
+        circuit_acceptor: &circuit_acceptor,
         rung_tx: &rung_tx,
     };
     let Assembled {
@@ -321,7 +321,7 @@ pub(crate) async fn setup_swarm(
     // Now that the endpoint is bound, hand it to the relay acceptor so it can
     // dial the next hop when forwarding a circuit (`set` is a no-op if the
     // acceptor was never registered — the beacon/rendezvous path).
-    let _ = whisper_endpoint.set(endpoint.clone());
+    let _ = circuit_endpoint.set(endpoint.clone());
 
     // Off the critical path: `ready` is already out. Confirm/correct the
     // optimistic rung 0 in the background (covers a joiner, which has no
@@ -420,7 +420,7 @@ async fn setup_create(
         endpoint.clone(),
         build.max_peers,
         Some(build.unicast_acceptor.clone()),
-        Some(build.whisper_acceptor.clone()),
+        Some(build.circuit_acceptor.clone()),
     );
     // Creator has no peers yet — bootstrap is empty.
     let topic = gossip.subscribe(topic_id, vec![]).await?;
@@ -475,7 +475,7 @@ async fn setup_join(build: &SetupBuild<'_>, kind: SetupKind) -> Result<Assembled
         endpoint.clone(),
         build.max_peers,
         Some(build.unicast_acceptor.clone()),
-        Some(build.whisper_acceptor.clone()),
+        Some(build.circuit_acceptor.clone()),
     );
     // We subscribe, background-connect to the rendezvous, and — for a plain
     // join — `daemon::run` defers co-hosting our own (same seed-id) rendezvous

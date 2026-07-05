@@ -193,7 +193,7 @@ pub(crate) enum Commands {
         opts: MetaOpts,
     },
 
-    /// Print the relay routing topology from a running daemon's point of view.
+    /// Print the circuit routing topology from a running daemon's point of view.
     ///
     /// Emits the metric-weighted mesh graph the daemon has assembled from
     /// gossiped link-state, as JSON (`{self_id, edges:[{from,to,metric}]}`) —

@@ -598,7 +598,7 @@ async fn peers(opts: PeersOpts) -> Result<()> {
     Ok(())
 }
 
-/// Print the whisper routing topology (assembled mesh graph) from the running
+/// Print the circuit routing topology (assembled mesh graph) from the running
 /// daemon, as JSON. Backs the `/swarm:topology` render.
 async fn topology_cmd(opts: TopologyOpts) -> Result<()> {
     let cmd = IpcCommand::Topology { swarm: opts.swarm };

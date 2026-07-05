@@ -132,11 +132,11 @@ pub(crate) struct SharedServerOpts {
     #[arg(long, hide = true, default_value_t = false)]
     pub no_gossip_directed: bool,
 
-    /// Disable the whisper (multi-hop circuit) transport: a directed message with
+    /// Disable the circuit (multi-hop circuit) transport: a directed message with
     /// no direct unicast route falls back to gossip instead of being routed
     /// over a circuit.
     #[arg(long, hide = true, default_value_t = false)]
-    pub no_whisper: bool,
+    pub no_circuit: bool,
 }
 
 impl SharedServerOpts {
@@ -167,7 +167,7 @@ impl SharedServerOpts {
             directory_private: self.directory_private,
             unicast_enabled: !self.no_unicast,
             gossip_directed_enabled: !self.no_gossip_directed,
-            whisper_enabled: !self.no_whisper,
+            circuit_enabled: !self.no_circuit,
         }
     }
 }

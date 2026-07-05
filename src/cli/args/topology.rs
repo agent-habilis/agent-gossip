@@ -1,4 +1,4 @@
-//! `topology` command args: print the relay routing topology (the assembled
+//! `topology` command args: print the circuit routing topology (the assembled
 //! mesh graph) from a running daemon's point of view, as JSON.
 
 use clap::Parser;

@@ -460,11 +460,11 @@ pub(crate) async fn ingest(content: Bytes, state: &mut EventLoopState, ctx: &Han
 /// the last vector we held for that origin. Plumbing like the digests — never
 /// logged or surfaced; a malformed body is dropped.
 fn handle_link_state(message: &Message, state: &mut EventLoopState) {
-    match crate::whisper::LinkVector::from_json(message.body.as_str()) {
+    match crate::circuit::LinkVector::from_json(message.body.as_str()) {
         Ok(vector) => {
             let updated = state.link_state.ingest(vector);
             tracing::debug!(
-                target: crate::whisper::LOG_TARGET,
+                target: crate::circuit::LOG_TARGET,
                 author = %message.author,
                 updated,
                 "relay link-state received"
@@ -472,7 +472,7 @@ fn handle_link_state(message: &Message, state: &mut EventLoopState) {
         }
         Err(error) => {
             tracing::debug!(
-                target: crate::whisper::LOG_TARGET,
+                target: crate::circuit::LOG_TARGET,
                 author = %message.author,
                 %error,
                 "dropping malformed relay link-state"

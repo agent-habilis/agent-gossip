@@ -231,7 +231,7 @@ fn state_merge_response(outcome: anyhow::Result<()>) -> (String, bool) {
     }
 }
 
-/// Serialize this daemon's whisper routing topology (its assembled mesh graph) for
+/// Serialize this daemon's circuit routing topology (its assembled mesh graph) for
 /// the `topology` IPC query. `{"ok":true,"topology":{self_id, edges:[…]}}`.
 fn topology_response(state: &EventLoopState) -> String {
     let Some(endpoint) = state.unicast_pool.endpoint() else {
