@@ -257,6 +257,43 @@ mod tests {
     }
 
     #[test]
+    fn circuit_paths_traces_the_four_node_chain() {
+        // a→b→c→d chain, no shortcut: the sole circuit is the whole chain.
+        let (na, nb, nc, nd) = (eid(1), eid(2), eid(3), eid(4));
+        let mut store = LinkStateStore::default();
+        store.ingest(vector(na, 1, &[(nb, 1)]));
+        store.ingest(vector(nb, 1, &[(nc, 1)]));
+        store.ingest(vector(nc, 1, &[(nd, 1)]));
+        store.ingest(vector(nd, 1, &[]));
+        let paths = store.circuit_paths(na, nd, 3);
+        assert_eq!(
+            paths[0].iter().map(|(hop, _)| *hop).collect::<Vec<_>>(),
+            vec![nb, nc, nd]
+        );
+    }
+
+    #[test]
+    fn circuit_paths_picks_the_cheaper_direct_over_the_chain() {
+        // Chain a→b→c→d (total 3) plus a cheaper direct a→d (cost 1): the shortcut
+        // is chosen. A direct route has no interior hops, so the disjoint search
+        // terminates on it — the chain is *not* returned as an alternate (a one-hop
+        // path can't be made node-disjoint from anything).
+        let (na, nb, nc, nd) = (eid(1), eid(2), eid(3), eid(4));
+        let mut store = LinkStateStore::default();
+        store.ingest(vector(na, 1, &[(nb, 1), (nd, 1)]));
+        store.ingest(vector(nb, 1, &[(nc, 1)]));
+        store.ingest(vector(nc, 1, &[(nd, 1)]));
+        store.ingest(vector(nd, 1, &[]));
+        let paths = store.circuit_paths(na, nd, 3);
+        assert_eq!(paths.len(), 1, "the interior-less direct route ends the search");
+        assert_eq!(
+            paths[0].iter().map(|(hop, _)| *hop).collect::<Vec<_>>(),
+            vec![nd],
+            "the cheaper direct route is chosen"
+        );
+    }
+
+    #[test]
     fn circuit_paths_returns_disjoint_alternates() {
         // Diamond na→{nb,nc}→nd: two node-disjoint circuits for failover.
         let (na, nb, nc, nd) = (eid(1), eid(2), eid(3), eid(4));

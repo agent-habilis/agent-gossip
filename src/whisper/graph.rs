@@ -204,6 +204,47 @@ mod tests {
     }
 
     #[test]
+    fn shortest_path_traces_a_four_node_line() {
+        // a → b → c → d, unit cost per hop: the whole chain is the only route.
+        let (na, nb, nc, nd) = (eid(1), eid(2), eid(3), eid(4));
+        let mut graph = Graph::default();
+        link(&mut graph, na, nb, 1);
+        link(&mut graph, nb, nc, 1);
+        link(&mut graph, nc, nd, 1);
+        let path = graph.shortest_path(na, nd).expect("reachable");
+        assert_eq!(path.hops, vec![nb, nc, nd]);
+        assert_eq!(path.cost, LinkMetric(3));
+    }
+
+    #[test]
+    fn shortest_path_prefers_a_cheaper_direct_over_the_chain() {
+        // Chain a→b→c→d (total 3) plus a direct a→d (cost 1): the shortcut wins.
+        let (na, nb, nc, nd) = (eid(1), eid(2), eid(3), eid(4));
+        let mut graph = Graph::default();
+        link(&mut graph, na, nb, 1);
+        link(&mut graph, nb, nc, 1);
+        link(&mut graph, nc, nd, 1);
+        link(&mut graph, na, nd, 1);
+        let path = graph.shortest_path(na, nd).expect("reachable");
+        assert_eq!(path.hops, vec![nd]);
+        assert_eq!(path.cost, LinkMetric(1));
+    }
+
+    #[test]
+    fn shortest_path_prefers_the_chain_when_the_direct_link_is_costlier() {
+        // Same chain (total 3) but the direct a→d costs 10: the multi-hop wins.
+        let (na, nb, nc, nd) = (eid(1), eid(2), eid(3), eid(4));
+        let mut graph = Graph::default();
+        link(&mut graph, na, nb, 1);
+        link(&mut graph, nb, nc, 1);
+        link(&mut graph, nc, nd, 1);
+        link(&mut graph, na, nd, 10);
+        let path = graph.shortest_path(na, nd).expect("reachable");
+        assert_eq!(path.hops, vec![nb, nc, nd]);
+        assert_eq!(path.cost, LinkMetric(3));
+    }
+
+    #[test]
     fn shortest_path_prefers_lower_total_cost_over_fewer_hops() {
         // Direct na->nb costs 10; the two-hop na->nc->nb costs 2. Cost wins.
         let (na, nb, nc) = (eid(1), eid(2), eid(3));
