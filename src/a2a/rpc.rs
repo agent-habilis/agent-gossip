@@ -201,7 +201,10 @@ pub(crate) async fn handle_op(
 ) -> Result<Value, RpcError> {
     match op {
         A2aOp::SendMessage { to, message } => {
-            send_message(to, message, ctx.swarm, ctx.author, state, ctx.sender, ctx.output).await
+            send_message(
+                to, message, ctx.swarm, ctx.author, state, ctx.sender, ctx.output,
+            )
+            .await
         }
         A2aOp::GetTask { task_id } => state
             .tasks

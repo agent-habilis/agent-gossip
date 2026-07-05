@@ -13,10 +13,10 @@ use crate::a2a::{TaskId, TaskState};
 use crate::protocol::{MessageBody, MessageId, Nickname, SwarmId};
 use crate::util::bounded_read::{LineRead, read_bounded_line};
 use crate::util::consts::{MAX_IPC_COMMAND_BYTES, MAX_IPC_RESPONSE_BYTES, SWARM_GLYPH};
-use crate::util::{ensure_swarm_runtime_dir, runtime_base, swarm_runtime_dir};
 use crate::util::tuning::{
     IPC_ACCEPT_BACKOFF_MAX_SECS, IPC_ACCEPT_BACKOFF_MIN_MS, IPC_IO_TIMEOUT_SECS,
 };
+use crate::util::{ensure_swarm_runtime_dir, runtime_base, swarm_runtime_dir};
 
 /// Returns the IPC endpoint identifier for a specific agent on a swarm —
 /// a filesystem socket path (the project targets Unix only). Lives in the
@@ -225,8 +225,7 @@ pub(crate) fn bind(swarm: &SwarmId, nickname: &Nickname) -> Result<Listener> {
     // users; this is defense in depth against a permissive umask on the socket.
     {
         use std::os::unix::fs::PermissionsExt as _;
-        if let Err(error) =
-            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
+        if let Err(error) = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
         {
             tracing::warn!(?path, %error, "IPC socket: could not restrict to 0600");
         }

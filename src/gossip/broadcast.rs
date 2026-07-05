@@ -922,8 +922,7 @@ pub(crate) async fn handle_session_request(
             note,
             resp,
         } => {
-            let outcome =
-                emit_task_status(ctx, &task_id, task_state, note.as_deref(), state).await;
+            let outcome = emit_task_status(ctx, &task_id, task_state, note.as_deref(), state).await;
             let sent_ok = outcome.is_ok();
             let _ = resp.send(outcome);
             sent_ok

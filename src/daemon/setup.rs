@@ -394,7 +394,12 @@ async fn setup_create(
     output.swarm_id_line(&swarm_id);
     output.ready(&swarm_id, &name, author, build.drift, build.a2a_port);
     let topic_id = swarm.topic_id();
-    lifecycle::log_ready(topic_id, name.as_str(), author.as_str(), swarm.network_label());
+    lifecycle::log_ready(
+        topic_id,
+        name.as_str(),
+        author.as_str(),
+        swarm.network_label(),
+    );
 
     let (gossip, router) = build_swarm(
         endpoint.clone(),

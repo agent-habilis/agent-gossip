@@ -285,7 +285,11 @@ mod tests {
         store.ingest(vector(nc, 1, &[(nd, 1)]));
         store.ingest(vector(nd, 1, &[]));
         let paths = store.circuit_paths(na, nd, 3);
-        assert_eq!(paths.len(), 1, "the interior-less direct route ends the search");
+        assert_eq!(
+            paths.len(),
+            1,
+            "the interior-less direct route ends the search"
+        );
         assert_eq!(
             paths[0].iter().map(|(hop, _)| *hop).collect::<Vec<_>>(),
             vec![nd],

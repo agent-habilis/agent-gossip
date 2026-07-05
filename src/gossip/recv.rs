@@ -113,8 +113,7 @@ pub(crate) async fn handle_gossip_event(
                     // is homed by this point, so the card's endpoint hint gets a
                     // real dial path (the startup publish may have had none). A
                     // no-op if the address is unchanged.
-                    crate::daemon::event_loop::publish_own_card(ctx, state)
-                    .await;
+                    crate::daemon::event_loop::publish_own_card(ctx, state).await;
                 }
             }
         }
