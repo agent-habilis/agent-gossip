@@ -41,6 +41,10 @@ use super::{ipc, setup, timers};
 use crate::a2a::task;
 
 /// Never returns normally — exits the process on ctrl-c / SIGTERM.
+#[expect(
+    clippy::too_many_lines,
+    reason = "linear per-session setup: unpack the config, stand up state/spool/rendezvous/ipc, then hand off to the event loop; each step delegates but the sequence is irreducibly long"
+)]
 pub(crate) async fn run(cfg: EventLoopConfig) -> Result<()> {
     let EventLoopConfig {
         topic,
@@ -61,6 +65,7 @@ pub(crate) async fn run(cfg: EventLoopConfig) -> Result<()> {
         cohost,
         state_file,
         spool,
+        transport,
         unicast_rx,
         a2a,
         live_count,
@@ -109,6 +114,7 @@ pub(crate) async fn run(cfg: EventLoopConfig) -> Result<()> {
         .map(|path| StateFile::new(path, &swarm_str, &author, &swarm_name));
     let (a2a_port, a2a_rx) = spawn_a2a(a2a, state_file.as_ref());
     let mut state = EventLoopState::new(state_file, started, identity, swarm_password, swarm_key);
+    state.transport = transport; // per-session directed-transport policy (`deliver` reads it)
     // Replace the detached default pool with one wired to this endpoint, so
     // directed sends can dial peers over the unicast ALPN.
     state.unicast_pool = crate::unicast::UnicastPool::new(endpoint.clone());
@@ -138,11 +144,9 @@ pub(crate) async fn run(cfg: EventLoopConfig) -> Result<()> {
 
     let (gossip_sender, receiver) = topic.split();
 
-    // Install the filesystem spool mirror when `--spool` was given. A bad
-    // directory aborts startup — the frame mirror is a promised side effect,
-    // not best-effort. The watcher guard must outlive the loop below, so it
-    // stays owned in this scope (like `_router`); its scanner + writer tasks
-    // run detached until their channels close on shutdown.
+    // Wrap the sender, installing the `--spool` mirror when configured. A bad
+    // spool dir aborts startup; the watcher guard must outlive the loop, so it
+    // stays owned here (like `_router`). See `build_sender`.
     let (sender, spool_rx, _spool_watcher) = build_sender(spool, gossip_sender, &swarm_str)?;
 
     let ipc_rx = spawn_ipc_rx(ipc_listener_disabled, &swarm_str, &author, &output);

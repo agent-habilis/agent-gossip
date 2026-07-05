@@ -51,10 +51,6 @@ pub(crate) mod protocol;
 // Graph search + telemetry probes are exercised by unit tests and get wired into
 // the send path in phases 3-4; until then they're dead in a non-test build only,
 // so the expectation is scoped to that build (a test build uses them freely).
-pub(crate) mod resolver;
-pub(crate) mod transport;
-pub(crate) mod unicast;
-pub(crate) mod util;
 #[cfg_attr(
     not(test),
     expect(
@@ -63,6 +59,10 @@ pub(crate) mod util;
     )
 )]
 pub(crate) mod circuit;
+pub(crate) mod resolver;
+pub(crate) mod transport;
+pub(crate) mod unicast;
+pub(crate) mod util;
 
 pub mod embed;
 
@@ -90,6 +90,7 @@ pub use protocol::swarm::{
     SwarmName,
 };
 pub use resolver::{JoinTarget, JoinTargetError};
+pub use transport::TransportPolicy;
 // Wire/runtime constants the external test + bench crates assert against; the
 // rest of `util::consts` stays crate-internal.
 pub use util::consts::{MAX_LOGICAL_BODY_BYTES, MAX_MESSAGE_SHARDS, MAX_MESSAGE_SIZE, SWARM_GLYPH};

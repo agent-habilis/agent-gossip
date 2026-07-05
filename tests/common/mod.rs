@@ -483,7 +483,7 @@ pub(crate) fn cli_channel_merge(
 use agent_gossip::embed::{CreateConfig, JoinConfig, SwarmSession};
 use agent_gossip::{
     Channel, Message, MessageBody, MessageId, MessageKind, Nickname, OutputEvent, PresenceSubtype,
-    SwarmName, TaskId, TaskState,
+    SwarmName, TaskId, TaskState, TransportPolicy,
 };
 use tokio::sync::mpsc::UnboundedReceiver;
 
@@ -560,6 +560,45 @@ impl InProcNode {
             SwarmSession::join(cfg)
                 .await
                 .expect("in-process spool join failed"),
+        )
+    }
+
+    /// Create a swarm under an explicit transport policy + active-view cap — the
+    /// per-node knobs the transport matrix forces (e.g. `no_unicast` + a
+    /// `max_peers = 1` line topology to route directed traffic over a circuit).
+    pub(crate) async fn create_with_transport(
+        name: &str,
+        nick: &str,
+        transport: TransportPolicy,
+        max_peers: usize,
+    ) -> Self {
+        let mut cfg = CreateConfig::new(test_swarm_name(name));
+        cfg.nickname = Some(Nickname::new(nick).expect("valid test nickname"));
+        cfg.transport = transport;
+        cfg.max_peers = max_peers;
+        Self::from_session(
+            SwarmSession::create(cfg)
+                .await
+                .expect("in-process transport create failed"),
+        )
+    }
+
+    /// Join `swarm` under an explicit transport policy + active-view cap.
+    pub(crate) async fn join_with_transport(
+        swarm: &str,
+        nick: &str,
+        transport: TransportPolicy,
+        max_peers: usize,
+    ) -> Self {
+        let target = swarm.parse().expect("valid test join target");
+        let mut cfg = JoinConfig::new(target);
+        cfg.nickname = Some(Nickname::new(nick).expect("valid test nickname"));
+        cfg.transport = transport;
+        cfg.max_peers = max_peers;
+        Self::from_session(
+            SwarmSession::join(cfg)
+                .await
+                .expect("in-process transport join failed"),
         )
     }
 
@@ -1106,6 +1145,42 @@ pub(crate) async fn three_peers(suffix: &str) -> (InProcNode, InProcNode, InProc
     let joiner_a = InProcNode::join(&creator.swarm, &format!("mon-{suffix}-a")).await;
     let joiner_b = InProcNode::join(&creator.swarm, &format!("mon-{suffix}-b")).await;
     (creator, joiner_a, joiner_b)
+}
+
+/// Inject a synthetic 1-hop circuit topology between `alice` and `bob` so
+/// directed frames can route over a circuit (`no_unicast`). A live
+/// rendezvous-bootstrapped mesh never converges usable circuit edges — the
+/// participants bridge through the rendezvous rather than becoming direct gossip
+/// neighbours — so, like `src/circuit`'s own tests, we hand each node the
+/// routing graph directly. Each node gets its own outbound edge to the peer plus
+/// the peer's X25519 key (the terminal onion layer). A `u64::MAX` seq beats any
+/// real (low-seq) emit so the injected topology persists.
+#[cfg(feature = "adversarial")]
+pub(crate) async fn wire_circuit(alice: &InProcNode, bob: &InProcNode) {
+    const SEQ: u64 = u64::MAX;
+    const COST: u32 = 1;
+    let (a_id, a_key) = (alice.session.endpoint_id(), alice.session.circuit_key());
+    let (b_id, b_key) = (bob.session.endpoint_id(), bob.session.circuit_key());
+    // alice's graph: its own edge to bob, plus bob's terminal key.
+    alice
+        .session
+        .inject_link_vector(a_id, SEQ, a_key, vec![(b_id, COST)])
+        .await
+        .expect("inject alice's circuit edge");
+    alice
+        .session
+        .inject_link_vector(b_id, SEQ, b_key, vec![])
+        .await
+        .expect("inject bob's circuit key into alice");
+    // bob's graph: its own edge to alice, plus alice's terminal key.
+    bob.session
+        .inject_link_vector(b_id, SEQ, b_key, vec![(a_id, COST)])
+        .await
+        .expect("inject bob's circuit edge");
+    bob.session
+        .inject_link_vector(a_id, SEQ, a_key, vec![])
+        .await
+        .expect("inject alice's circuit key into bob");
 }
 
 // ── Subprocess harness (real `agent-gossip` processes) ─────

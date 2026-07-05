@@ -951,6 +951,15 @@ async fn session_ping(
 /// back on the oneshot; `Poll` returns the join-horizon-filtered buffer.
 /// Returns `true` if anything was broadcast so the caller can refresh
 /// `last_sent_at` (mirrors `handle_ipc_command`).
+// One arm per `SessionRequest`; the adversarial-only testkit arms push it just
+// over the line under that feature.
+#[cfg_attr(
+    feature = "adversarial",
+    expect(
+        clippy::too_many_lines,
+        reason = "one dispatch arm per SessionRequest variant; the adversarial testkit arms are irreducible"
+    )
+)]
 pub(crate) async fn handle_session_request(
     req: SessionRequest,
     ctx: &HandlerCtx<'_>,
@@ -1050,6 +1059,20 @@ pub(crate) async fn handle_session_request(
         SessionRequest::InjectRaw { bytes } => {
             let _ = ctx.sender.broadcast(bytes).await;
             true
+        }
+        #[cfg(feature = "adversarial")]
+        SessionRequest::InjectLinkVector {
+            origin,
+            seq,
+            seal_key,
+            links,
+        } => {
+            state
+                .link_state
+                .ingest(crate::circuit::LinkVector::from_raw(
+                    origin, seq, seal_key, links,
+                ));
+            false
         }
         // Index-size snapshot (adversarial only) for the leak regression test.
         #[cfg(feature = "adversarial")]

@@ -200,6 +200,10 @@ pub(crate) struct EventLoopState {
     /// user messages are buffered until `meshed`, then flushed, so the
     /// first message after a join can't be a lost one-shot.
     pub meshed: bool,
+    /// Which transports a directed message may use (per-session). `new()`
+    /// defaults to all-enabled; `event_loop::run` sets the configured value.
+    /// Read by `crate::unicast::deliver`.
+    pub transport: crate::transport::TransportPolicy,
     /// The unicast (point-to-point) connection pool: dials + reuses a QUIC
     /// connection to each addressable participant so a directed message goes
     /// p2p instead of flooding the gossip mesh. Interior-mutable (Arc), so the
@@ -566,6 +570,7 @@ impl EventLoopState {
             rendezvous_linked: false,
             announced: false,
             meshed: false,
+            transport: crate::transport::TransportPolicy::DEFAULTS,
             unicast_pool: crate::unicast::UnicastPool::disconnected(),
             link_state: crate::circuit::LinkStateStore::default(),
             link_state_seq: 0,

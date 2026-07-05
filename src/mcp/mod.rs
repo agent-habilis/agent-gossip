@@ -468,6 +468,7 @@ impl AgentSwarmServer {
             // The MCP server is a poll-only consumer; the spool is a CLI-daemon
             // feature, so it never mirrors to a shared directory.
             spool: None,
+            transport: crate::transport::TransportPolicy::DEFAULTS,
         };
         let session = Session::create(cfg).await.map_err(|error| match error {
             CreateError::AdvertiseRequiresReachable => {
@@ -507,6 +508,7 @@ impl AgentSwarmServer {
             max_peers: GOSSIP_ACTIVE_VIEW_CAPACITY,
             password: args.password,
             spool: None,
+            transport: crate::transport::TransportPolicy::DEFAULTS,
         })
         .await
         .map_err(join_error_to_mcp)?;

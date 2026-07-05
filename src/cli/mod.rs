@@ -160,6 +160,9 @@ async fn run_session(resolved: Resolved, shared: SharedServerOpts) -> Result<()>
     let drift = agent::home_dir()
         .ok()
         .and_then(|home| agent::drift_warning(&home));
+    // Read the transport policy before the struct literal moves other `shared`
+    // fields out (a `&shared` borrow can't follow a partial move).
+    let transport = shared.transport_policy();
     let mut cfg = setup_swarm(
         kind,
         SetupParams {
@@ -168,6 +171,7 @@ async fn run_session(resolved: Resolved, shared: SharedServerOpts) -> Result<()>
             max_peers: shared.max_peers,
             state_file: shared.state_file,
             spool: shared.spool,
+            transport,
             output: out,
             drift: drift.as_deref(),
             a2a_serve: shared.a2a_serve,

@@ -94,29 +94,10 @@ pub(crate) fn spool_max_bytes() -> u64 {
     current().spool_max_bytes.max(1)
 }
 
-/// Whether the unicast (point-to-point) transport is attempted for directed
-/// messages. Default on; hidden flag `--no-unicast` turns it off, forcing every
-/// message onto gossip (the pre-unicast behavior). See [`crate::unicast`].
-pub(crate) fn unicast_enabled() -> bool {
-    current().unicast_enabled
-}
-
-/// Whether gossip may carry (or fall back for) a **directed** message. Default
-/// on; hidden flag `--no-gossip-directed` turns it off, making directed messages
-/// unicast-only (a cold peer is dialed inline; failure is an error). Broadcasts
-/// and infrastructure kinds always ride gossip regardless — they have no other
-/// transport.
-pub(crate) fn gossip_directed_enabled() -> bool {
-    current().gossip_directed_enabled
-}
-
-/// Whether the circuit (multi-hop circuit) transport is attempted for a directed
-/// message with no direct unicast route. Default on; hidden flag `--no-circuit`
-/// turns it off, so a directed message with no direct route falls back to
-/// gossip (or is undeliverable under `--no-gossip-directed`).
-pub(crate) fn circuit_enabled() -> bool {
-    current().circuit_enabled
-}
+// The three directed-transport toggles (unicast / gossip-directed / circuit)
+// are **not** here: transport policy is a per-session property, carried in
+// `EventLoopState::transport` (a `crate::transport::TransportPolicy`) and read
+// by `unicast::deliver`. The CLI flags feed the session config, not this global.
 
 /// Capacity of the embed facade's inbound broadcast channel. Bounded
 /// so a slow embedder never backpressures the gossip/membership loop;
@@ -209,10 +190,6 @@ pub(crate) fn ppid_watch_interval_ms() -> u64 {
 /// the flag. Production runs on [`Tuning::DEFAULTS`] (the `crate::util::consts`
 /// values) when [`init`] is never called (the embed / MCP path).
 #[derive(Clone, Copy, Debug)]
-#[expect(
-    clippy::struct_excessive_bools,
-    reason = "independent transport/behavior toggles, each sourced from its own hidden CLI flag"
-)]
 pub(crate) struct Tuning {
     pub alive_timeout_secs: u64,
     pub sweep_interval_secs: u64,
@@ -232,9 +209,6 @@ pub(crate) struct Tuning {
     pub antientropy_max_resend: usize,
     pub spool_max_bytes: u64,
     pub directory_private: bool,
-    pub unicast_enabled: bool,
-    pub gossip_directed_enabled: bool,
-    pub circuit_enabled: bool,
 }
 
 impl Tuning {
@@ -258,9 +232,6 @@ impl Tuning {
         antientropy_max_resend: crate::util::consts::ANTIENTROPY_MAX_RESEND,
         spool_max_bytes: crate::util::consts::SPOOL_MAX_BYTES,
         directory_private: false,
-        unicast_enabled: true,
-        gossip_directed_enabled: true,
-        circuit_enabled: true,
     };
 }
 

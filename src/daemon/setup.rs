@@ -191,6 +191,10 @@ pub(crate) struct SetupParams<'a> {
     /// `--spool DIR`: shared-directory frame mirror. `None` (embed/MCP default)
     /// disables it. Threaded verbatim into [`EventLoopConfig::spool`].
     pub spool: Option<PathBuf>,
+    /// Which transports directed messages may use (per-session). Defaults to
+    /// [`crate::transport::TransportPolicy::DEFAULTS`] (all enabled) on the
+    /// embed/MCP paths; the CLI derives it from `--no-unicast`/`--no-*`.
+    pub transport: crate::transport::TransportPolicy,
     pub output: output::Output,
     /// Skill-drift warning folded into the `ready` event. Computed by the CLI
     /// (the real `agent-gossip create`/`join` path) from the on-disk install;
@@ -247,6 +251,7 @@ pub(crate) async fn setup_swarm(
         max_peers,
         state_file,
         spool,
+        transport,
         output,
         drift,
         a2a_serve,
@@ -351,6 +356,7 @@ pub(crate) async fn setup_swarm(
         cohost,
         state_file,
         spool,
+        transport,
         unicast_rx,
         a2a,
         // Set by the advertise path (cli::create / embed::create) before

@@ -75,6 +75,29 @@ impl LinkVector {
     pub(crate) fn from_json(raw: &str) -> serde_json::Result<Self> {
         serde_json::from_str(raw)
     }
+
+    /// Build a vector from raw `(neighbour, cost)` links — the injection point
+    /// for the testkit `SwarmSession::inject_link_vector`, which stands up a
+    /// synthetic circuit topology over a live mesh (live convergence forms no
+    /// usable edges in a rendezvous-bootstrapped swarm). Keeps [`LinkMetric`]
+    /// crate-internal.
+    #[cfg(feature = "adversarial")]
+    pub(crate) fn from_raw(
+        origin: EndpointId,
+        seq: u64,
+        seal_key: [u8; 32],
+        links: Vec<(EndpointId, u32)>,
+    ) -> Self {
+        Self {
+            origin,
+            seq,
+            seal_key,
+            links: links
+                .into_iter()
+                .map(|(id, cost)| (id, LinkMetric(cost)))
+                .collect(),
+        }
+    }
 }
 
 /// The received link-vectors, kept freshest-per-origin — the routing table's

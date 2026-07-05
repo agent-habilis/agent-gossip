@@ -102,6 +102,18 @@ pub(crate) enum SessionRequest {
     /// the adversarial-gated `SwarmSession::inject_raw`.
     #[cfg(feature = "adversarial")]
     InjectRaw { bytes: bytes::Bytes },
+    /// Ingest a link-state vector straight into the routing graph, standing up a
+    /// synthetic circuit topology over a live mesh — the testkit hook behind the
+    /// adversarial-gated `SwarmSession::inject_link_vector`. Live convergence
+    /// forms no usable circuit edges in a rendezvous-bootstrapped swarm, so the
+    /// transport-matrix circuit row injects the graph instead.
+    #[cfg(feature = "adversarial")]
+    InjectLinkVector {
+        origin: iroh::EndpointId,
+        seq: u64,
+        seal_key: [u8; 32],
+        links: Vec<(iroh::EndpointId, u32)>,
+    },
     /// Snapshot the fork/DAG index sizes `(by_hash, dag_heads, author_seqs)`.
     /// Adversarial-suite only — lets it assert that messages we don't
     /// retain (rate-dropped, or replies addressed to another peer) are never
@@ -239,6 +251,9 @@ pub(crate) struct EventLoopConfig {
     /// spool (`transport::spool::install`), wraps the gossip sender to tee, and
     /// drains the inbound files into `gossip::ingest`. `None` disables it.
     pub spool: Option<PathBuf>,
+    /// Which transports directed messages may use (per-session). `run()` copies
+    /// it into `EventLoopState::transport`, which `unicast::deliver` reads.
+    pub transport: crate::transport::TransportPolicy,
     /// Inbound unicast frames from the `UNICAST_ALPN` acceptor. The event loop
     /// drains this into `gossip::ingest` (the same path as gossip), so both
     /// transports share signature-verify + dedup. Built in `setup_swarm`.
