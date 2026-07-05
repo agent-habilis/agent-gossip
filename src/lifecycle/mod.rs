@@ -22,8 +22,19 @@ use crate::gossip;
 /// Developer log for the swarm-ready milestone. Mirrors the operator
 /// `ready` event but on the lifecycle log target (stderr, opt-in via
 /// `RUST_LOG`); the operator JSON/human event is unchanged.
-pub(crate) fn log_ready(swarm: &str, name: &str, nickname: &str, network: &str) {
-    tracing::info!(swarm, name, nickname, network, "swarm ready");
+///
+/// Logs the derived **`TopicId`** (a one-way hash of the seed), never the full
+/// `💬…` id. The id carries the seed and *is* the bearer credential, and this
+/// log file is written under a shared path — logging the id would leak full
+/// swarm membership to anyone who can read the file. The topic hash is enough
+/// to correlate a run without exposing the secret.
+pub(crate) fn log_ready(
+    topic: iroh_gossip::proto::TopicId,
+    name: &str,
+    nickname: &str,
+    network: &str,
+) {
+    tracing::info!(?topic, name, nickname, network, "swarm ready");
 }
 
 /// Developer log for graceful departure (mirrors the operator `left`).

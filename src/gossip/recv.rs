@@ -113,15 +113,7 @@ pub(crate) async fn handle_gossip_event(
                     // is homed by this point, so the card's endpoint hint gets a
                     // real dial path (the startup publish may have had none). A
                     // no-op if the address is unchanged.
-                    crate::daemon::event_loop::publish_own_card(
-                        ctx.swarm,
-                        ctx.author,
-                        ctx.our_pubkey,
-                        state,
-                        ctx.sender,
-                        ctx.output,
-                        ctx.endpoint,
-                    )
+                    crate::daemon::event_loop::publish_own_card(ctx, state)
                     .await;
                 }
             }
@@ -555,20 +547,9 @@ async fn handle_a2a_req(
             let method = envelope["method"].as_str().unwrap_or_default();
             match crate::a2a::gossip_rpc::classify(method, &envelope["params"], &requester, state) {
                 Served::Op(op) => {
-                    crate::a2a::rpc::handle_op(
-                        op,
-                        ctx.swarm,
-                        ctx.author,
-                        ctx.our_pubkey,
-                        // No local HTTP port on the gossip path; only
-                        // card ops read it, and those aren't in the safe
-                        // set served here.
-                        0,
-                        state,
-                        ctx.sender,
-                        ctx.output,
-                    )
-                    .await
+                    // No local HTTP port on the gossip path; only card ops read
+                    // it, and those aren't in the safe set served here.
+                    crate::a2a::rpc::handle_op(op, ctx, 0, state).await
                 }
                 Served::Ingest(payload) => ingest_remote_message(&payload, &requester, state, ctx),
                 Served::Reject(error) => Err(error),
@@ -655,16 +636,16 @@ fn ingest_remote_message(
     // Surface the incoming message to our skill (a `task` event, kind:message).
     let rec_state = state.tasks.get(&task_id).map(|rec| rec.state);
     let text = crate::a2a::gossip::display_text(payload);
-    ctx.output.task_message(
-        payload.message_id.as_str(),
-        ctx.swarm.as_str(),
-        requester.as_str(),
-        ctx.author.as_str(),
-        &task_id,
-        rec_state,
-        &text,
-        /* is_self */ false,
-    );
+    ctx.output.task_message(&crate::output::TaskMessageLeg {
+        id: payload.message_id.as_str(),
+        swarm: ctx.swarm.as_str(),
+        author: requester.as_str(),
+        peer: ctx.author.as_str(),
+        task_id: task_id.as_str(),
+        state: rec_state,
+        text: &text,
+        is_self: false,
+    });
     // A2A v1.0 `SendMessage` returns a `SendMessageResponse` oneof — creation
     // yields `{"task": <Task>}`.
     state

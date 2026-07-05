@@ -51,7 +51,7 @@ pub(crate) struct SharedServerOpts {
     /// JSON file on every peer-set change and a ~10s heartbeat, and deletes it
     /// on clean shutdown — for external tools (e.g. a shell statusline) to
     /// render live count + liveness without IPC. Defaults to
-    /// `<RUNTIME_DIR>/<swarm-prefix>/<nick>.state.json` (beside the socket +
+    /// `<runtime-base>/<swarm-prefix>/<nick>.state.json` (beside the socket +
     /// log); pass this to write elsewhere instead.
     #[arg(long)]
     pub state_file: Option<std::path::PathBuf>,

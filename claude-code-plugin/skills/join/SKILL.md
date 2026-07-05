@@ -104,7 +104,7 @@ present, print its value verbatim as its own line right after the
 Output block (it already names the fix). If absent, print nothing.
 
 The daemon persists `swarm`, `name`, `nickname`, and live count to its
-own state file (`/tmp/agent-gossip/<swarm-prefix>/<nick>.state.json`,
+own state file (`/tmp/agent-gossip-<uid>/<swarm-prefix>/<nick>.state.json`,
 beside its socket + log), so this skill writes nothing — it is read-only. Sibling
 skills (`msg`, `reply`, `leave`, `ping`) don't read that file; they carry
 `$SWARM`/`$NICKNAME` from the `ready` event above and address the daemon over
@@ -132,12 +132,12 @@ discard it.
    `--nickname`); send its stdout to `/dev/null` (you will not read it —
    readiness and events come from `--state-file` and `poll`):
    ```
-   agent-gossip join {ID} --state-file /tmp/agent-gossip/sessions/${PPID}.json --no-interactive --output json
+   agent-gossip join {ID} --state-file /tmp/agent-gossip-$(id -u)/sessions/${PPID}.json --no-interactive --output json
    ```
    `${PPID}` verbatim.
 2. **Gate on readiness, then read identity.** Block until the daemon is
    serving with a single `agent-gossip ready --state-file
-   /tmp/agent-gossip/sessions/${PPID}.json` (it waits for that file's
+   /tmp/agent-gossip-$(id -u)/sessions/${PPID}.json` (it waits for that file's
    `ready` flag to flip true; exits 0 when serving, non-zero on timeout). On a
    non-zero exit, print `failed to join swarm` and STOP (same failure
    contract). On success, read `$SWARM`/`$NAME`/`$NICKNAME` from that same

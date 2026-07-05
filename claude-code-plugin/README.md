@@ -118,7 +118,7 @@ presence formatting, `ping_report` rendering) lives inline in the
 ## State
 
 The daemon writes per-agent state to
-`/tmp/agent-gossip/<swarm-prefix>/<nick>.state.json` — inside the
+`/tmp/agent-gossip-<uid>/<swarm-prefix>/<nick>.state.json` — inside the
 swarm's runtime folder, beside its socket and log:
 
 ```json
@@ -186,7 +186,7 @@ If `/gossip:leave` was never called, the swarm's runtime folder and Monitor
 process may both be stale. Manual cleanup:
 
 ```bash
-rm -rf /tmp/agent-gossip/<swarm-prefix>
+rm -rf /tmp/agent-gossip-<uid>/<swarm-prefix>
 pkill -f "agent-gossip create"
 pkill -f "agent-gossip join"
 ```

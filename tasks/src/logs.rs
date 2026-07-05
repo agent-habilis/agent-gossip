@@ -1,14 +1,11 @@
 use crate::TaskOutcome;
 
 pub(crate) fn run() -> TaskOutcome {
-    // Mirrors `RUNTIME_DIR` in the main crate's `util::consts` (the base for
-    // per-swarm log/socket/state folders). Duplicated as a bare literal —
-    // deliberately — so this dev-only task runner never links the daemon
-    // (iroh/tokio) just to read one path. The default never changes; the
-    // `--log-dir` override is a daemon-side test knob, irrelevant here.
-    let dir = std::path::PathBuf::from("/tmp/agent-gossip");
-    // Ensure it exists so `cd`/`tail` never fail on a fresh machine.
-    std::fs::create_dir_all(&dir)?;
+    // Create + validate the per-user runtime base via the *same* helper the
+    // daemon uses (this task runner already links the crate for `cargo task
+    // man`), so `cargo task logs` never diverges from where the daemon writes,
+    // never weakens the 0700 mode, and applies the same symlink/ownership guard.
+    let dir = agent_gossip::ensure_runtime_base()?;
     // stdout, the sole output, so `$(cargo task logs)` captures just the path.
     println!("{}", dir.display());
     Ok(())

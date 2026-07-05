@@ -13,7 +13,7 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use common::{
-    CONNECT_TIMEOUT, InProcNode, MSG_TIMEOUT, Msg, Node, POLL, RECOVERY_TIMEOUT, RUNTIME_DIR, bin,
+    CONNECT_TIMEOUT, InProcNode, MSG_TIMEOUT, Msg, Node, POLL, RECOVERY_TIMEOUT, bin,
     chat_text, cli_message, cli_message_raw, cli_peers, cli_ping, cli_poll, cli_poll_long,
     cli_task_create, cli_task_create_raw, ipc_raw, serial_guard, socket_path, tmp_log, trace_log,
     wait_total, wait_until,
@@ -2258,7 +2258,7 @@ fn test_flap_storm_all_rosters_recover() {
 
 /// Spawn a create daemon with `--output json` and block until its `ready`
 /// event appears on stdout, returning the child plus its minted identity.
-/// The default state-file location (under `RUNTIME_DIR`) is what `leave` /
+/// The default state-file location (under the per-user runtime base) is what `leave` /
 /// `session` discover, so no `--state-file` override here.
 #[expect(
     clippy::zombie_processes,
@@ -2313,7 +2313,7 @@ fn default_state_file(swarm: &str, nickname: &str) -> PathBuf {
     // Mirror `util::swarm_prefix`: strip the `://` scheme separator before
     // taking 16 chars, so the path matches where the daemon writes its state.
     let prefix: String = swarm.replace("://", "").chars().take(16).collect();
-    PathBuf::from(RUNTIME_DIR)
+    common::runtime_base()
         .join(prefix)
         .join(format!("{nickname}.state.json"))
 }

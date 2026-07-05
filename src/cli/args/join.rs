@@ -2,6 +2,7 @@
 
 use clap::Parser;
 
+use crate::cli::password::PasswordFlag;
 use crate::protocol::Nickname;
 use crate::resolver::JoinTarget;
 
@@ -35,12 +36,8 @@ pub(crate) struct JoinOpts {
     /// prompts hidden on the terminal (as does omitting the flag entirely
     /// for a protected id); `--password=<pw>` passes it inline (visible in
     /// `ps` and shell history — prefer the prompt when a human types it).
-    #[arg(long, num_args(0..=1), require_equals = true)]
-    #[expect(
-        clippy::option_option,
-        reason = "clap optional-value flag: absent/bare/valued are three distinct password states"
-    )]
-    pub password: Option<Option<String>>,
+    #[arg(long, num_args(0..=1), require_equals = true, default_missing_value = "\0")]
+    pub password: Option<PasswordFlag>,
 
     #[command(flatten)]
     pub shared: SharedServerOpts,

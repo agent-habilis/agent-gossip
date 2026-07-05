@@ -23,15 +23,11 @@ const TICKET_PREVIEW_CHARS: usize = 16;
 ///
 /// # Errors
 /// The directory session cannot be established, or the post-pick connect fails.
-#[expect(
-    clippy::option_option,
-    reason = "the CLI's absent/bare/valued --password flag is threaded through verbatim"
-)]
 pub(super) async fn discover(
     directory: Option<SwarmName>,
     port: Option<u16>,
     lookups: LookupSet,
-    password: Option<Option<String>>,
+    password: Option<super::password::PasswordFlag>,
     json: bool,
 ) -> Result<()> {
     let name = directory.unwrap_or_else(|| {
@@ -82,12 +78,8 @@ pub(super) async fn discover(
 
 /// Resolve the password for a picked ticket: prompt when the ticket needs one
 /// and none was passed, otherwise honor the flag.
-#[expect(
-    clippy::option_option,
-    reason = "the CLI's absent/bare/valued --password flag is threaded through verbatim"
-)]
 fn resolve_pick_password(
-    password: Option<Option<String>>,
+    password: Option<super::password::PasswordFlag>,
     ticket: &str,
 ) -> Result<Option<crate::protocol::crypto::Password>> {
     match password {

@@ -4,14 +4,13 @@
 //! `transport::ipc`) because it needs `EventLoopState` — transport
 //! must not depend on daemon state.
 
-use iroh_gossip::api::GossipSender;
 use tokio::sync::oneshot;
 
 use std::collections::HashMap;
 use std::time::Duration;
 
+use crate::daemon::ctx::HandlerCtx;
 use crate::daemon::state::{EventLoopState, PingRound, PollResponder};
-use crate::output;
 use crate::protocol::swarm::SwarmName;
 use crate::protocol::{Message, Nickname, SwarmId};
 use crate::transport::ipc::{IpcCommand, json_ack, json_error, json_ok_msg};
@@ -23,22 +22,12 @@ use crate::gossip::{
 
 /// Returns `true` if the handler broadcast anything, so the caller
 /// can refresh `last_sent_at` for heartbeat suppression.
-#[expect(
-    clippy::too_many_lines,
-    clippy::too_many_arguments,
-    reason = "a dispatch match with one arm per IpcCommand (the state/meta channel pair \
-              doubles the patch/get arms), plus the daemon's own identity (swarm/name/author), \
-              the live state, gossip sender, and output sink"
-)]
 pub(crate) async fn handle_ipc_command(
     cmd: IpcCommand,
     resp_tx: oneshot::Sender<String>,
-    swarm: &SwarmId,
+    ctx: &HandlerCtx<'_>,
     name: &SwarmName,
-    author: &Nickname,
     state: &mut EventLoopState,
-    sender: &GossipSender,
-    output: &output::Output,
 ) -> bool {
     // The per-swarm socket path already routes a command to the right daemon,
     // but a command carries its own swarm id — validate it matches ours rather
@@ -46,7 +35,7 @@ pub(crate) async fn handle_ipc_command(
     // a symlinked runtime dir would otherwise misroute a signed broadcast). The
     // `Info` probe carries no swarm and is addressed purely by socket path.
     if let Some(cmd_swarm) = cmd.swarm_id()
-        && cmd_swarm != swarm
+        && cmd_swarm != ctx.swarm
     {
         let _ = resp_tx.send(json_error("command swarm id does not match this daemon"));
         return false;
@@ -54,16 +43,11 @@ pub(crate) async fn handle_ipc_command(
     match cmd {
         IpcCommand::Msg { swarm: _, body } => {
             tracing::debug!("IPC msg command received");
-            match broadcast_message(swarm, author, body, state, sender, output).await {
-                Ok((msg_id, msg)) => {
-                    let _ = resp_tx.send(json_ok_msg(&msg_id, &msg));
-                    true
-                }
-                Err(error) => {
-                    let _ = resp_tx.send(json_error(&error.to_string()));
-                    false
-                }
-            }
+            let outcome =
+                broadcast_message(ctx.swarm, ctx.author, body, state, ctx.sender, ctx.output)
+                    .await
+                    .map(|(_id, msg)| msg);
+            respond_msg_result(resp_tx, outcome)
         }
         IpcCommand::Poll {
             swarm: _,
@@ -85,27 +69,7 @@ pub(crate) async fn handle_ipc_command(
             );
             false
         }
-        IpcCommand::Ping { swarm: _ } => {
-            // Arm a fresh round (replacing any in flight) and broadcast
-            // the probe. Pongs are collected by the gossip receive path;
-            // the round's deadline drives the `ping_report` emission.
-            let now = tokio::time::Instant::now();
-            state.ping_round = Some(Box::new(PingRound {
-                t1: now,
-                deadline: now + Duration::from_secs(ping_window_secs()),
-                pongs: HashMap::new(),
-                // CLI/IPC consumes the `ping_report` event, not a channel.
-                resp: None,
-            }));
-            broadcast_msg(
-                sender,
-                &Message::new_ping(swarm, author).signed(&state.identity),
-            )
-            .await;
-            tracing::debug!("IPC ping command received; round armed");
-            let _ = resp_tx.send(json_ack());
-            true
-        }
+        IpcCommand::Ping { swarm: _ } => ipc_ping(ctx, state, resp_tx).await,
         IpcCommand::A2aStatus {
             swarm: _,
             task_id,
@@ -113,27 +77,8 @@ pub(crate) async fn handle_ipc_command(
             note,
         } => {
             tracing::debug!(%task_id, ?task_state, "IPC a2a status command received");
-            match emit_task_status(
-                swarm,
-                author,
-                &task_id,
-                task_state,
-                note.as_deref(),
-                state,
-                sender,
-                output,
-            )
-            .await
-            {
-                Ok(msg) => {
-                    let _ = resp_tx.send(json_ok_msg(&msg.id.clone(), &msg));
-                    true
-                }
-                Err(error) => {
-                    let _ = resp_tx.send(json_error(&error.to_string()));
-                    false
-                }
-            }
+            let outcome = emit_task_status(ctx, &task_id, task_state, note.as_deref(), state).await;
+            respond_msg_result(resp_tx, outcome)
         }
         IpcCommand::A2aArtifact {
             swarm: _,
@@ -149,35 +94,16 @@ pub(crate) async fn handle_ipc_command(
                 name: file_name,
                 mime: file_mime,
             });
-            match emit_task_artifact(swarm, author, &task_id, &text, file, state, sender, output)
-                .await
-            {
-                Ok(msg) => {
-                    let _ = resp_tx.send(json_ok_msg(&msg.id.clone(), &msg));
-                    true
-                }
-                Err(error) => {
-                    let _ = resp_tx.send(json_error(&error.to_string()));
-                    false
-                }
-            }
+            let outcome = emit_task_artifact(ctx, &task_id, &text, file, state).await;
+            respond_msg_result(resp_tx, outcome)
         }
         IpcCommand::Peers { swarm: _ } => {
             let _ = resp_tx.send(peers_response(state));
             false
         }
         IpcCommand::StateMerge { swarm: _, merge } => {
-            let outcome = broadcast_state_merge(
-                swarm,
-                author,
-                merge,
-                state,
-                sender,
-                output,
-                crate::protocol::Channel::State,
-                true,
-            )
-            .await;
+            let outcome =
+                broadcast_state_merge(ctx, merge, state, crate::protocol::Channel::State, true).await;
             let (response, broadcast) = state_merge_response(outcome);
             let _ = resp_tx.send(response);
             broadcast
@@ -187,17 +113,8 @@ pub(crate) async fn handle_ipc_command(
             false
         }
         IpcCommand::MetaMerge { swarm: _, merge } => {
-            let outcome = broadcast_state_merge(
-                swarm,
-                author,
-                merge,
-                state,
-                sender,
-                output,
-                crate::protocol::Channel::Meta,
-                true,
-            )
-            .await;
+            let outcome =
+                broadcast_state_merge(ctx, merge, state, crate::protocol::Channel::Meta, true).await;
             let (response, broadcast) = state_merge_response(outcome);
             let _ = resp_tx.send(response);
             broadcast
@@ -221,24 +138,65 @@ pub(crate) async fn handle_ipc_command(
             // so park `resp_tx` in the waiter — like the long-poll `Poll` arm —
             // and answer nothing now.
             crate::gossip::broadcast_a2a_call(
-                swarm,
-                author,
+                ctx,
                 to,
                 &method,
                 params,
                 Duration::from_secs(timeout_secs),
                 crate::daemon::state::A2aResponder::Ipc(resp_tx),
                 state,
-                sender,
             )
             .await;
             true
         }
         IpcCommand::Info => {
-            let _ = resp_tx.send(info_response(swarm, name, author, state));
+            let _ = resp_tx.send(info_response(ctx.swarm, name, ctx.author, state));
             false
         }
     }
+}
+
+/// Answer a command that emits one authored [`Message`] (`msg` / `a2a status`
+/// / `a2a artifact`): reply with the frame's id+echo on success, the error
+/// text on failure, returning whether anything was broadcast. Shared so the
+/// three arms can't drift in how they encode the reply.
+fn respond_msg_result(resp_tx: oneshot::Sender<String>, outcome: anyhow::Result<Message>) -> bool {
+    match outcome {
+        Ok(msg) => {
+            let _ = resp_tx.send(json_ok_msg(&msg.id, &msg));
+            true
+        }
+        Err(error) => {
+            let _ = resp_tx.send(json_error(&error.to_string()));
+            false
+        }
+    }
+}
+
+/// Arm a fresh ping round (replacing any in flight) and broadcast the probe.
+/// Pongs are collected by the gossip receive path; the round's deadline drives
+/// the `ping_report` emission. CLI/IPC consumes that event, so the round
+/// carries no responder channel (unlike the embed/MCP `Ping`).
+async fn ipc_ping(
+    ctx: &HandlerCtx<'_>,
+    state: &mut EventLoopState,
+    resp_tx: oneshot::Sender<String>,
+) -> bool {
+    let now = tokio::time::Instant::now();
+    state.ping_round = Some(Box::new(PingRound {
+        t1: now,
+        deadline: now + Duration::from_secs(ping_window_secs()),
+        pongs: HashMap::new(),
+        resp: None,
+    }));
+    broadcast_msg(
+        ctx.sender,
+        &Message::new_ping(ctx.swarm, ctx.author).signed(&state.identity),
+    )
+    .await;
+    tracing::debug!("IPC ping command received; round armed");
+    let _ = resp_tx.send(json_ack());
+    true
 }
 
 /// The `doctor` identity probe response: this daemon's own swarm id, human

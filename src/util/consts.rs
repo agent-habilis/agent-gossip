@@ -3,12 +3,11 @@
 //! external test/bench crates assert against are re-exported from the crate
 //! root (see `lib.rs`); the rest stay crate-internal.
 
-/// Runtime base for all per-swarm files. Each swarm gets a folder
-/// `<RUNTIME_DIR>/<swarm-prefix>/` holding its members' `<nick>.tracing.log`,
-/// `<nick>.ipc.sock`, and `<nick>.state.json`. Hardcoded `/tmp` base — short
-/// (avoids the macOS `AF_UNIX` `sun_path` ~104-byte limit).
-/// Per-swarm paths are built via [`crate::util::swarm_runtime_dir`].
-pub const RUNTIME_DIR: &str = "/tmp/agent-gossip";
+// The runtime base for per-swarm files is per-user and computed at runtime —
+// see [`crate::util::runtime_base`] / [`crate::util::ensure_runtime_base`].
+// It used to be a hardcoded shared `/tmp/agent-gossip` const; that let other
+// local users traverse it and read per-member logs, so it moved to a
+// uid-scoped, `0700` directory.
 
 /// The swarm sigil — the single definition of the glyph. It prefixes every
 /// swarm id (`💬://<base58>`) and marks every human/operator output line.

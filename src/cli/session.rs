@@ -4,8 +4,9 @@ use anyhow::Result;
 
 use crate::daemon::state_file::read_session_entry;
 use crate::protocol::Nickname;
-use crate::util::consts::{RUNTIME_DIR, SWARM_GLYPH};
+use crate::util::consts::SWARM_GLYPH;
 use crate::util::process;
+use crate::util::runtime_base;
 
 use super::args::{LeaveOpts, OutputFormat, SessionOpts};
 
@@ -30,7 +31,7 @@ pub(crate) struct Discovery {
     cleaned: usize,
 }
 
-/// Walk every state file under [`RUNTIME_DIR`] and resolve it to a live
+/// Walk every state file under [`runtime_base`] and resolve it to a live
 /// daemon or clean it up. Covers both per-swarm files
 /// (`<prefix>/<nick>.state.json`) and the CLI-fallback location the skills
 /// use (`sessions/<ppid>.json`) — any first-level `*.json`.
@@ -74,7 +75,7 @@ pub(crate) fn swarm_for_nickname(nickname: &str) -> Option<String> {
 }
 
 fn state_file_paths() -> Vec<PathBuf> {
-    let Ok(swarm_dirs) = std::fs::read_dir(RUNTIME_DIR) else {
+    let Ok(swarm_dirs) = std::fs::read_dir(runtime_base()) else {
         return Vec::new();
     };
     swarm_dirs

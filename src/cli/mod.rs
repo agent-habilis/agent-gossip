@@ -8,7 +8,7 @@ use anyhow::Result;
 use serde::Deserialize;
 
 use crate::daemon::run as run_event_loop;
-use crate::daemon::setup::{SetupKind, setup_swarm};
+use crate::daemon::setup::{SetupKind, SetupParams, setup_swarm};
 use crate::daemon::{CreateParams, JoinParams, Resolved, TopicParams};
 use crate::embed::spawn_advertiser;
 use crate::output::{Output, OutputMode};
@@ -162,13 +162,15 @@ async fn run_session(resolved: Resolved, shared: SharedServerOpts) -> Result<()>
         .and_then(|home| agent::drift_warning(&home));
     let mut cfg = setup_swarm(
         kind,
-        author,
-        !shared.no_interactive,
-        shared.max_peers,
-        shared.state_file,
-        out,
-        drift.as_deref(),
-        shared.a2a_serve,
+        SetupParams {
+            author,
+            interactive: !shared.no_interactive,
+            max_peers: shared.max_peers,
+            state_file: shared.state_file,
+            output: out,
+            drift: drift.as_deref(),
+            a2a_serve: shared.a2a_serve,
+        },
     )
     .await?;
     // Advertising (`create --advertise`): start the re-broadcast task. It
@@ -218,14 +220,10 @@ async fn create(opts: CreateOpts) -> Result<()> {
 /// Join an existing swarm by its identifier (💬...), a domain, or a
 /// supported git repo URL. The swarm's config (lookups) is decoded from
 /// the id — `join` takes no lookup flags.
-#[expect(
-    clippy::option_option,
-    reason = "clap optional-value flag: absent/bare/valued are three distinct password states"
-)]
 async fn join(
     target: JoinTarget,
     nickname: Option<Nickname>,
-    password_flag: Option<Option<String>>,
+    password_flag: Option<password::PasswordFlag>,
     shared: SharedServerOpts,
 ) -> Result<()> {
     let no_prompt = shared.no_prompt();
@@ -290,7 +288,7 @@ fn finish_send(resp: &str, what: &str) -> Result<MessageId> {
 /// Post a message to a swarm via the running server's IPC socket.
 #[expect(
     clippy::too_many_lines,
-    reason = "flat dispatch over the a2a subcommand: the tunnel arms (expose/connect/discover) and the messaging arms (call/status/artifact) are each self-contained, so splitting would just scatter the one match"
+    reason = "flat dispatch over the a2a subcommand: the tunnel arms (expose/connect/discover) and the messaging arms (call/status/artifact) are each self-contained, and each carries a 6-8 field clap arg group, so splitting would only scatter the match into many-argument helpers"
 )]
 async fn a2a(action: A2aAction) -> Result<()> {
     match action {
@@ -472,7 +470,12 @@ async fn a2a(action: A2aAction) -> Result<()> {
                                 nick.as_str()
                             )
                         })?;
-                        let dir = crate::util::swarm_runtime_dir(&swarm)
+                        // Validate the private base (fail closed) before the
+                        // receive dir is created under it.
+                        let dir = crate::util::ensure_swarm_runtime_dir(&swarm)
+                            .map_err(|error| {
+                                anyhow::anyhow!("cannot prepare receive dir: {error}")
+                            })?
                             .join(format!("{}.recv", nick.as_str()));
                         tokio::fs::create_dir_all(&dir).await?;
                         Some(dir.join(ticket.sha256_hex()))

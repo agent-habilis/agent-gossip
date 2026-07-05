@@ -117,7 +117,7 @@ impl McpClient {
     /// skipping any notifications that arrive in the meantime.
     #[expect(
         clippy::needless_pass_by_value,
-        reason = "ergonomic test helper; callers pass json! literals by value"
+        reason = "ergonomic test helper; the 50-odd call sites pass json! literals by value, and taking &Value would spray a reference sigil across every one for no gain in test code"
     )]
     fn tool_call(&mut self, id: u64, name: &str, args: serde_json::Value) -> serde_json::Value {
         let req = serde_json::json!({
