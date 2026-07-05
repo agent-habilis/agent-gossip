@@ -40,7 +40,7 @@ const PREFIX: &str = crate::util::consts::SWARM_GLYPH;
 /// (`💬://<base58>`). Optional on input — a legacy bare `💬<base58>` id
 /// still parses. Never appears in a filesystem path (see
 /// [`crate::util::swarm_prefix`]).
-pub(crate) const SEPARATOR: &str = "://";
+pub(crate) const SEPARATOR: &str = crate::util::consts::SWARM_URI_SEPARATOR;
 
 /// Id format version. A single byte reserved so the encoding can evolve;
 /// an unknown version is rejected.

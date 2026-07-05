@@ -493,7 +493,7 @@ COMMANDS
               /peers/<nick>/card on join (A2A v1.0: supportedInterfaces each
               with a protocolVersion, capabilities, declared extensions,
               skills, and the member's Ed25519 identity carried in the gossip
-              interface url, swarm+gossip://<pubkey>). Defaults to your own card;
+              interface url, 🤖://<pubkey>). Defaults to your own card;
               --peer reads another member's. Raw JSON on stdout; exits
               non-zero when no card is published (yet) for the subject.
 

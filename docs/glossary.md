@@ -407,7 +407,7 @@ contradicts its frame is dropped whole.
 A participant's `AgentCard` — its canonical A2A self-description (A2A v1.0:
 `supportedInterfaces[]` each with a `protocolVersion`, capabilities, declared
 extensions, default skills, and its Ed25519 identity carried in the gossip
-`AgentInterface` url, `swarm+gossip://<pubkey>`). Each member's daemon publishes its card
+`AgentInterface` url, `🤖://<pubkey>`). Each member's daemon publishes its card
 into the **meta** channel at `/peers/<nick>/card` on join — the one channel
 write the binary itself makes (see the amended invariant under *shared
 state*) — so peers enumerate each other's cards from the meta document with
@@ -483,11 +483,12 @@ The producer's daemon serves the content — addressed by its SHA-256 — from a
 per-peer spool (`<RUNTIME_DIR>/<swarm-prefix>/<nick>.blobs/<hash>`, hardlinked or
 copied from the source so the original can change freely) over a dedicated,
 lazily-bound endpoint on the `agent-gossip/blob/1` ALPN. The **blob
-reference** — a `💬…` Base58Check *ticket* carrying the producer's address, a
+reference** — a `🎟️…` Base58Check *ticket* carrying the producer's address, a
 bearer secret, the hash, and the size — rides gossip inside a `Part.url`. The
-ticket shares the swarm's `💬` brand with the swarm id and the a2a bridge
-ticket; a *kind* byte inside the framed payload tells the three apart, so a
-wrong-kind token fails cleanly on decode. The consumer decodes it, dials the
+ticket carries its own `🎟️` brand, distinct from the swarm id's `💬`, so a
+swarm id can never be mistaken for a ticket (it fails on the prefix). The `🎟️`
+brand is shared with the a2a bridge ticket; a *kind* byte inside the framed
+payload tells those two apart, so a wrong-kind token fails cleanly on decode. The consumer decodes it, dials the
 producer, presents the secret, and streams the bytes to disk, verifying the
 SHA-256 as they arrive (`agent-gossip a2a fetch` — by default into the session's
 `<nick>.recv/` folder, or to stdout with `--output -`). Symmetric: an input

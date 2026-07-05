@@ -15,6 +15,23 @@
 /// emoji-presentation selector appends `\u{FE0F}` itself (see `crate::output`).
 pub const SWARM_GLYPH: &str = "💬";
 
+/// The peer sigil — brands a participant's address in its A2A card interface
+/// url (`🤖://<pubkey>`). A robot for the AI agent behind the pubkey; distinct
+/// from the swarm `💬` and the ticket `🎟️` so the three token families never
+/// collide. Emoji-presentation by default, so no variation selector.
+pub(crate) const PEER_GLYPH: &str = "🤖";
+
+/// The ticket sigil — brands a bearer capability to dial one live endpoint
+/// (`🎟️://<base58check>`), shared by the a2a-bridge and blob tickets and told
+/// apart by a kind byte in the payload. The base `🎟` (`U+1F39F`) defaults to
+/// *text* presentation, so the canonical form carries the `\u{FE0F}` selector
+/// that makes it render as the colorful emoji users copy; decoders also accept
+/// the bare form.
+pub(crate) const TICKET_GLYPH: &str = "🎟\u{FE0F}";
+
+/// The `://` that follows every token glyph in its canonical form.
+pub(crate) const SWARM_URI_SEPARATOR: &str = "://";
+
 /// Max bytes a per-member log file grows before rotating to `<file>.1`
 /// (active + one backup ⇒ bounded at `2 ×` this). The `--log-max-bytes` flag
 /// overrides; `0` disables rotation. Resolved by
