@@ -197,8 +197,16 @@ mod tests {
             [0u8; 32],
             &[(bob.endpoint.id(), 5), (dave.endpoint.id(), 1)],
         ));
-        store.ingest(vector(bob.endpoint.id(), bob.seal_pub, &[(carol.endpoint.id(), 5)]));
-        store.ingest(vector(carol.endpoint.id(), carol.seal_pub, &[(dave.endpoint.id(), 5)]));
+        store.ingest(vector(
+            bob.endpoint.id(),
+            bob.seal_pub,
+            &[(carol.endpoint.id(), 5)],
+        ));
+        store.ingest(vector(
+            carol.endpoint.id(),
+            carol.seal_pub,
+            &[(dave.endpoint.id(), 5)],
+        ));
         store.ingest(vector(dave.endpoint.id(), dave.seal_pub, &[]));
 
         let paths = store.circuit_paths(alice.id(), dave.endpoint.id(), WHISPER_MAX_PATHS);

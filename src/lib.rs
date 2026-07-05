@@ -92,11 +92,9 @@ pub use protocol::swarm::{
 pub use resolver::{JoinTarget, JoinTargetError};
 // Wire/runtime constants the external test + bench crates assert against; the
 // rest of `util::consts` stays crate-internal.
-pub use util::consts::{
-    MAX_LOGICAL_BODY_BYTES, MAX_MESSAGE_SHARDS, MAX_MESSAGE_SIZE, SWARM_GLYPH,
-};
-pub use util::{ensure_runtime_base, runtime_base, swarm_prefix};
+pub use util::consts::{MAX_LOGICAL_BODY_BYTES, MAX_MESSAGE_SHARDS, MAX_MESSAGE_SIZE, SWARM_GLYPH};
 pub use util::version::VERSION;
+pub use util::{ensure_runtime_base, runtime_base, swarm_prefix};
 
 use anyhow::Result;
 use clap::Parser;

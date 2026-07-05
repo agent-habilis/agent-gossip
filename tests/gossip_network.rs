@@ -13,10 +13,10 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use common::{
-    CONNECT_TIMEOUT, InProcNode, MSG_TIMEOUT, Msg, Node, POLL, RECOVERY_TIMEOUT, bin,
-    chat_text, cli_message, cli_message_raw, cli_peers, cli_ping, cli_poll, cli_poll_long,
-    cli_task_create, cli_task_create_raw, ipc_raw, serial_guard, socket_path, tmp_log, trace_log,
-    wait_total, wait_until,
+    CONNECT_TIMEOUT, InProcNode, MSG_TIMEOUT, Msg, Node, POLL, RECOVERY_TIMEOUT, bin, chat_text,
+    cli_message, cli_message_raw, cli_peers, cli_ping, cli_poll, cli_poll_long, cli_task_create,
+    cli_task_create_raw, ipc_raw, serial_guard, socket_path, tmp_log, trace_log, wait_total,
+    wait_until,
 };
 use serde_json::json;
 

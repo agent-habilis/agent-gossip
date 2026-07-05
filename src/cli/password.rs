@@ -105,13 +105,10 @@ mod tests {
 
     #[test]
     fn inline_value_needs_no_tty() {
-        let password = resolve_password(
-            Some(PasswordFlag::Inline("hunter2".to_owned())),
-            true,
-            true,
-        )
-        .unwrap()
-        .unwrap();
+        let password =
+            resolve_password(Some(PasswordFlag::Inline("hunter2".to_owned())), true, true)
+                .unwrap()
+                .unwrap();
         assert_eq!(password.as_str(), "hunter2");
     }
 
