@@ -202,6 +202,17 @@ pub(crate) struct EventLoopConfig {
     /// shutdown path can print `left #NAME` without re-parsing
     /// the id.
     pub name: SwarmName,
+    /// The raw swarm password, retained for the process lifetime when the
+    /// swarm is password-protected (`None` otherwise). Needed at blob-offload
+    /// time to key blob tickets with the same password — the Argon2id stretch
+    /// takes the raw password string, which cannot be recovered from
+    /// `swarm_key`. `Password`'s `Debug`/`Display` redact to `***`.
+    pub swarm_password: Option<crate::protocol::crypto::Password>,
+    /// The Argon2id-stretched swarm key (`Swarm::stretched_key`), retained to
+    /// derive the per-channel keys that encrypt the `state`/`meta` docs and
+    /// broadcast chat. `None` for a passwordless swarm — those stay plaintext.
+    /// Wiped on drop.
+    pub swarm_key: Option<zeroize::Zeroizing<[u8; 32]>>,
     /// Per-loop output sink. Threaded to every handler so multiple
     /// in-process sessions each have their own and never race a shared
     /// global.
@@ -230,6 +241,11 @@ pub(crate) struct EventLoopConfig {
     pub cohost: CoHostPolicy,
     /// When set, the daemon writes peer count changes to this file.
     pub state_file: Option<PathBuf>,
+    /// `--spool DIR`: mirror every outbound frame into `DIR/<swarm-prefix>/` and
+    /// ingest frames other daemons write there. The event loop installs the
+    /// spool (`transport::spool::install`), wraps the gossip sender to tee, and
+    /// drains the inbound files into `gossip::ingest`. `None` disables it.
+    pub spool: Option<PathBuf>,
     /// Inbound unicast frames from the `UNICAST_ALPN` acceptor. The event loop
     /// drains this into `gossip::ingest` (the same path as gossip), so both
     /// transports share signature-verify + dedup. Built in `setup_swarm`.

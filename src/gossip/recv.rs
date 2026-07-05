@@ -113,8 +113,7 @@ pub(crate) async fn handle_gossip_event(
                     // is homed by this point, so the card's endpoint hint gets a
                     // real dial path (the startup publish may have had none). A
                     // no-op if the address is unchanged.
-                    crate::daemon::event_loop::publish_own_card(ctx, state)
-                    .await;
+                    crate::daemon::event_loop::publish_own_card(ctx, state).await;
                 }
             }
         }
@@ -461,11 +460,11 @@ pub(crate) async fn ingest(content: Bytes, state: &mut EventLoopState, ctx: &Han
 /// the last vector we held for that origin. Plumbing like the digests — never
 /// logged or surfaced; a malformed body is dropped.
 fn handle_link_state(message: &Message, state: &mut EventLoopState) {
-    match crate::whisper::LinkVector::from_json(message.body.as_str()) {
+    match crate::circuit::LinkVector::from_json(message.body.as_str()) {
         Ok(vector) => {
             let updated = state.link_state.ingest(vector);
             tracing::debug!(
-                target: crate::whisper::LOG_TARGET,
+                target: crate::circuit::LOG_TARGET,
                 author = %message.author,
                 updated,
                 "relay link-state received"
@@ -473,7 +472,7 @@ fn handle_link_state(message: &Message, state: &mut EventLoopState) {
         }
         Err(error) => {
             tracing::debug!(
-                target: crate::whisper::LOG_TARGET,
+                target: crate::circuit::LOG_TARGET,
                 author = %message.author,
                 %error,
                 "dropping malformed relay link-state"
@@ -581,7 +580,7 @@ async fn handle_a2a_req(
         }
     };
     // Directed reply over the shared RPC sender: unicast to the requester when
-    // dialable (whisper/gossip otherwise), splitting a large result body
+    // dialable (circuit/gossip otherwise), splitting a large result body
     // transparently — a `tasks/list` over many tasks no longer silently
     // exceeds the frame cap.
     if let Err(error) = crate::gossip::broadcast::send_directed_rpc(
@@ -780,6 +779,15 @@ async fn handle_shard(
             handle_a2a_rpc(&logical, state, ctx).await;
             return;
         }
+        // A broadcast chat reassembles to a sealed body on a passworded swarm;
+        // decrypt it (the retained shards above stay ciphertext) before
+        // validating + surfacing, rejecting an unsealed/unopenable reassembly.
+        if matches!(logical.kind, MessageKind::A2aMsg)
+            && state.broadcast_key.is_some()
+            && decrypt_broadcast(&mut logical, state).is_none()
+        {
+            return;
+        }
         if !chat_payload_valid(&logical) {
             return;
         }
@@ -868,6 +876,23 @@ fn dispatch_channel(
     }
 }
 
+/// A plaintext-bodied view of `message` for surfacing: when `plain` differs from
+/// the wire body (a decrypted `enc` body), a clone with the body replaced; else
+/// the original borrowed unchanged. The output helpers read `event.body` for the
+/// `m` delta, so they must see plaintext.
+fn surface_view(message: &Message, plain: Option<String>) -> std::borrow::Cow<'_, Message> {
+    match plain {
+        Some(text) if text != message.body.as_str() => {
+            let mut clone = message.clone();
+            if let Ok(body) = MessageBody::new(text) {
+                clone.body = body;
+            }
+            std::borrow::Cow::Owned(clone)
+        }
+        _ => std::borrow::Cow::Borrowed(message),
+    }
+}
+
 fn ingest_channel_event(
     channel: Channel,
     doc: &mut crate::daemon::doc::SwarmDoc,
@@ -885,7 +910,12 @@ fn ingest_channel_event(
             changed: true,
             doc: after,
         } if surfaceable => {
-            ctx.output.state_changed(channel, message, &after, false);
+            // On a passworded swarm the received body is ciphertext; surface a
+            // plaintext-bodied view so the human/JSON `m` delta still renders.
+            // The frame retained for re-serve (inside `ingest`) stays ciphertext.
+            let surfaced = surface_view(message, doc.surface_body(message));
+            ctx.output
+                .state_changed(channel, surfaced.as_ref(), &after, false);
         }
         Ingested::Rejected => {
             tracing::warn!(
@@ -972,12 +1002,37 @@ fn gate_and_decrypt(message: &mut Message, state: &EventLoopState, ctx: &Handler
         // or surfaced (the dispatch below is gated to the addressee).
         return Gated::Pass(None);
     }
+    // Broadcast chat on a passworded swarm must arrive sealed with the swarm
+    // key: decrypt in place so validation + surfacing see plaintext, rejecting
+    // an unsealed or unopenable body (cleartext can't slip past the guarantee).
+    // The ciphertext is returned so `ingest` restores it before retention (log +
+    // anti-entropy re-serve the sealed frame). Same shape as the directed path.
+    if matches!(message.kind, MessageKind::A2aMsg) && state.broadcast_key.is_some() {
+        let Some(sealed) = decrypt_broadcast(message, state) else {
+            return Gated::Drop;
+        };
+        if !chat_payload_valid(message) {
+            return Gated::Drop;
+        }
+        return Gated::Pass(Some(sealed));
+    }
     // Broadcast / other logical frames validate in place, as before.
     if chat_payload_valid(message) {
         Gated::Pass(None)
     } else {
         Gated::Drop
     }
+}
+
+/// Decrypt a broadcast chat body sealed under the swarm key, **in place**.
+/// Returns the original (ciphertext) body to restore before retention, or `None`
+/// when there is no key or the body is not a decryptable `enc` envelope (on a
+/// passworded swarm that means an unsealed/tampered body — the caller drops it).
+fn decrypt_broadcast(message: &mut Message, state: &EventLoopState) -> Option<MessageBody> {
+    let key = state.broadcast_key.as_deref()?;
+    let plain = crate::daemon::state_doc::decrypt_body(message.body.as_str(), Some(key))?;
+    let body = MessageBody::new(plain).ok()?;
+    Some(std::mem::replace(&mut message.body, body))
 }
 
 fn decrypt_directed(message: &mut Message, state: &EventLoopState, ctx: &HandlerCtx<'_>) -> bool {

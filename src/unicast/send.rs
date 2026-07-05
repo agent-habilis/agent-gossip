@@ -7,11 +7,11 @@
 use anyhow::Result;
 use bytes::Bytes;
 use iroh::EndpointId;
-use iroh_gossip::api::GossipSender;
 
 use crate::daemon::state::EventLoopState;
 use crate::protocol::message::sole_addressee;
 use crate::protocol::{Message, Nickname};
+use crate::transport::SwarmSender;
 use crate::util::tuning;
 
 /// Route one already-signed, already-serialized message. `bytes` MUST be
@@ -33,7 +33,7 @@ pub(crate) async fn deliver(
     msg: &Message,
     bytes: Bytes,
     state: &EventLoopState,
-    sender: &GossipSender,
+    sender: &SwarmSender,
 ) -> Result<()> {
     // The transport decision is pure (see `route`); this function just runs it.
     match route(
@@ -41,14 +41,16 @@ pub(crate) async fn deliver(
         state,
         state.transport.unicast,
         state.transport.gossip_directed,
-        state.transport.whisper,
+        state.transport.circuit,
     ) {
         Route::Gossip => broadcast(sender, bytes).await,
-        Route::Whisper(target) => deliver_over_whisper(target, bytes, state, sender).await,
+        Route::Circuit(target) => deliver_over_circuit(target, bytes, state, sender).await,
         Route::UnicastPreferred(eid) => {
             let pool = state.unicast_pool.clone();
             if pool.send_if_warm(eid, bytes.clone()).await {
-                // Sent point-to-point; the flood is avoided.
+                // Sent point-to-point; the flood is avoided. This frame skipped
+                // `broadcast`'s tee, so mirror it to the spool explicitly.
+                sender.spool(&bytes);
                 Ok(())
             } else {
                 // Cold: warm for next time, ride gossip now.
@@ -59,11 +61,19 @@ pub(crate) async fn deliver(
         Route::UnicastOnly(eid) => {
             let pool = state.unicast_pool.clone();
             if pool.send_if_warm(eid, bytes.clone()).await {
+                // Sent point-to-point; mirror to the spool (it bypassed
+                // `broadcast`'s tee).
+                sender.spool(&bytes);
                 Ok(())
             } else {
-                // No gossip fallback under this policy — dial inline; a failure
-                // surfaces rather than silently flooding.
-                pool.dial_and_send(eid, bytes).await
+                // No gossip fallback under this policy — dial inline. Mirror to
+                // the spool only if the send succeeded, so a returned error
+                // still means the frame reached no transport.
+                let result = pool.dial_and_send(eid, bytes.clone()).await;
+                if result.is_ok() {
+                    sender.spool(&bytes);
+                }
+                result
             }
         }
         Route::Undeliverable => Err(anyhow::anyhow!(
@@ -84,11 +94,11 @@ enum Route {
     /// Unicast to this endpoint only — no gossip fallback (dial inline if cold).
     UnicastOnly(EndpointId),
     /// A directed message to a peer we know (`EndpointId`) but have no *direct*
-    /// unicast route to: route it over a multi-hop **whisper** circuit. `deliver`
+    /// unicast route to: route it over a multi-hop **circuit** circuit. `deliver`
     /// computes the source-route from the link-state graph and falls back to
     /// gossip if there is no path (or the circuit fails) — unless directed
     /// gossip is disabled, which surfaces the failure instead.
-    Whisper(EndpointId),
+    Circuit(EndpointId),
     /// No transport available: a directed message with no unicast route and
     /// gossip disabled.
     Undeliverable,
@@ -103,13 +113,13 @@ fn route(
     state: &EventLoopState,
     unicast_on: bool,
     gossip_on: bool,
-    relay_on: bool,
+    circuit_on: bool,
 ) -> Route {
     let Some(nick) = sole_addressee(&msg.kind) else {
         // Broadcast / infrastructure kind: gossip is the only transport, always.
         return Route::Gossip;
     };
-    directed_route(nick, state, unicast_on, gossip_on, relay_on)
+    directed_route(nick, state, unicast_on, gossip_on, circuit_on)
 }
 
 /// The message-independent half of [`route`]: every directed kind to the same
@@ -120,7 +130,7 @@ fn directed_route(
     state: &EventLoopState,
     unicast_on: bool,
     gossip_on: bool,
-    relay_on: bool,
+    circuit_on: bool,
 ) -> Route {
     if let (true, Some(eid)) = (unicast_on, unicast_endpoint(nick, state)) {
         return if gossip_on {
@@ -129,11 +139,11 @@ fn directed_route(
             Route::UnicastOnly(eid)
         };
     }
-    // No *direct* unicast route. If we know the peer's endpoint, prefer the relay
+    // No *direct* unicast route. If we know the peer's endpoint, prefer the
     // circuit transport (it can route to a known peer through the mesh); else
     // gossip if allowed; else the message can't be delivered.
-    if relay_on && let Some(target) = target_endpoint(nick, state) {
-        return Route::Whisper(target);
+    if circuit_on && let Some(target) = target_endpoint(nick, state) {
+        return Route::Circuit(target);
     }
     if gossip_on {
         Route::Gossip
@@ -150,7 +160,7 @@ fn directed_route(
 #[serde(rename_all = "lowercase")]
 pub(crate) enum Lane {
     Unicast,
-    Whisper,
+    Circuit,
     Gossip,
     Unreachable,
 }
@@ -161,19 +171,19 @@ pub(crate) fn lane_for(nick: &Nickname, state: &EventLoopState) -> Lane {
         state,
         state.transport.unicast,
         state.transport.gossip_directed,
-        state.transport.whisper,
+        state.transport.circuit,
     ) {
         Route::UnicastPreferred(_) | Route::UnicastOnly(_) => Lane::Unicast,
-        Route::Whisper(_) => Lane::Whisper,
+        Route::Circuit(_) => Lane::Circuit,
         Route::Gossip => Lane::Gossip,
         Route::Undeliverable => Lane::Unreachable,
     }
 }
 
 /// The endpoint we hold for `nick` regardless of whether it is *directly*
-/// dialable — the relay transport can route to a known peer through the mesh
+/// dialable — the circuit transport can route to a known peer through the mesh
 /// even when a direct unicast route is unavailable. Excludes the rendezvous
-/// pseudo-node (never a relay destination).
+/// pseudo-node (never a circuit destination).
 fn target_endpoint(nick: &Nickname, state: &EventLoopState) -> Option<EndpointId> {
     let eid = *state.participant_endpoints.get(nick)?;
     if state.rendezvous_id == Some(eid) {
@@ -197,64 +207,68 @@ fn unicast_endpoint(nick: &Nickname, state: &EventLoopState) -> Option<EndpointI
 }
 
 /// Deliver a directed message to a known-but-not-directly-reachable peer over a
-/// multi-hop relay circuit: compute the source-route from the link-state graph
+/// multi-hop circuit: compute the source-route from the link-state graph
 /// and telescope a circuit to it. When we have no endpoint, no graph path (or a
 /// hop's key is unknown), or every circuit build fails, falls back to gossip —
 /// unless the policy forbids gossip for directed traffic, which surfaces the
-/// failure instead (so a whisper-only run can't silently ride gossip).
-async fn deliver_over_whisper(
+/// failure instead (so a circuit-only run can't silently ride gossip).
+async fn deliver_over_circuit(
     target: EndpointId,
     bytes: Bytes,
     state: &EventLoopState,
-    sender: &GossipSender,
+    sender: &SwarmSender,
 ) -> Result<()> {
     let Some(endpoint) = state.unicast_pool.endpoint() else {
-        return whisper_fallback(sender, bytes, state, "detached unicast pool").await;
+        return circuit_fallback(sender, bytes, state, "detached unicast pool").await;
     };
     // Up to N node-disjoint circuits, best-first — the "up to N tries" budget.
     let paths = state
         .link_state
-        .circuit_paths(endpoint.id(), target, tuning::WHISPER_MAX_PATHS);
+        .circuit_paths(endpoint.id(), target, tuning::CIRCUIT_MAX_PATHS);
     if paths.is_empty() {
         // No route through the mesh yet (or a hop hasn't advertised its key).
-        return whisper_fallback(sender, bytes, state, "no circuit path through the mesh").await;
+        return circuit_fallback(sender, bytes, state, "no circuit path through the mesh").await;
     }
     for path in &paths {
         let circuit_id: u64 = rand::random();
-        match crate::whisper::open_circuit(&endpoint, circuit_id, path, bytes.as_ref()).await {
-            Ok(()) => return Ok(()),
+        match crate::circuit::open_circuit(&endpoint, circuit_id, path, bytes.as_ref()).await {
+            Ok(()) => {
+                // Circuit-delivered — bypassed `broadcast`'s tee, so mirror now.
+                sender.spool(&bytes);
+                return Ok(());
+            }
             Err(error) => tracing::debug!(
-                target: crate::whisper::LOG_TARGET,
+                target: crate::circuit::LOG_TARGET,
                 %error,
-                "relay circuit attempt failed; trying the next disjoint path"
+                "circuit attempt failed; trying the next disjoint path"
             ),
         }
     }
-    whisper_fallback(sender, bytes, state, "all relay circuits failed").await
+    circuit_fallback(sender, bytes, state, "all circuits failed").await
 }
 
-/// The whisper plane could not deliver: ride gossip when the policy allows it,
+/// The circuit plane could not deliver: ride gossip when the policy allows it,
 /// else surface the failure so the caller (and its waiter timeout) sees it.
-async fn whisper_fallback(
-    sender: &GossipSender,
+async fn circuit_fallback(
+    sender: &SwarmSender,
     bytes: Bytes,
     state: &EventLoopState,
     reason: &str,
 ) -> Result<()> {
     if state.transport.gossip_directed {
         tracing::debug!(
-            target: crate::whisper::LOG_TARGET,
+            target: crate::circuit::LOG_TARGET,
             reason,
-            "whisper undeliverable; falling back to gossip"
+            "circuit undeliverable; falling back to gossip"
         );
         return broadcast(sender, bytes).await;
     }
     Err(anyhow::anyhow!(
-        "directed message undeliverable over whisper ({reason}) and gossip is disabled"
+        "directed message undeliverable over circuit ({reason}) and gossip is disabled"
     ))
 }
 
-async fn broadcast(sender: &GossipSender, bytes: Bytes) -> Result<()> {
+async fn broadcast(sender: &SwarmSender, bytes: Bytes) -> Result<()> {
     sender
         .broadcast(bytes)
         .await
@@ -292,7 +306,13 @@ mod tests {
 
     /// A meshed state that knows `bob`'s endpoint — the happy path for unicast.
     fn state_knowing_bob() -> (EventLoopState, EndpointId) {
-        let mut state = EventLoopState::new(None, Instant::now(), Arc::new(Identity::generate()));
+        let mut state = EventLoopState::new(
+            None,
+            Instant::now(),
+            Arc::new(Identity::generate()),
+            None,
+            None,
+        );
         state.meshed = true;
         let bob = endpoint_id(1);
         state.participant_endpoints.insert(nick("bob"), bob);
@@ -304,8 +324,8 @@ mod tests {
         Message::new_pong(&swarm(), &nick("alice"), nick("bob"))
     }
 
-    // Existing cases pin the direct-unicast/gossip behavior with the relay
-    // transport OFF, so they assert the pre-relay routing unchanged.
+    // Existing cases pin the direct-unicast/gossip behavior with the circuit
+    // transport OFF, so they assert the pre-circuit routing unchanged.
 
     // ── the p2p path ──────────────────────────────────────────────────
 
@@ -362,7 +382,13 @@ mod tests {
 
     #[test]
     fn directed_message_with_unknown_endpoint_falls_back_to_gossip() {
-        let mut state = EventLoopState::new(None, Instant::now(), Arc::new(Identity::generate()));
+        let mut state = EventLoopState::new(
+            None,
+            Instant::now(),
+            Arc::new(Identity::generate()),
+            None,
+            None,
+        );
         state.meshed = true; // meshed, but we hold no endpoint for bob
         assert_eq!(
             route(&directed_msg(), &state, true, true, false),
@@ -382,7 +408,13 @@ mod tests {
 
     #[test]
     fn rendezvous_addressee_is_never_a_unicast_target() {
-        let mut state = EventLoopState::new(None, Instant::now(), Arc::new(Identity::generate()));
+        let mut state = EventLoopState::new(
+            None,
+            Instant::now(),
+            Arc::new(Identity::generate()),
+            None,
+            None,
+        );
         state.meshed = true;
         let rendezvous = endpoint_id(9);
         state.rendezvous_id = Some(rendezvous);
@@ -408,7 +440,13 @@ mod tests {
 
     #[test]
     fn unicast_only_with_unknown_endpoint_is_undeliverable() {
-        let mut state = EventLoopState::new(None, Instant::now(), Arc::new(Identity::generate()));
+        let mut state = EventLoopState::new(
+            None,
+            Instant::now(),
+            Arc::new(Identity::generate()),
+            None,
+            None,
+        );
         state.meshed = true; // no endpoint for bob, and gossip forbidden
         assert_eq!(
             route(&directed_msg(), &state, true, false, false),
@@ -434,23 +472,23 @@ mod tests {
         assert_eq!(route(&open, &state, false, false, false), Route::Gossip);
     }
 
-    // ── the relay tier (Phase 1: stub, tier ordering only) ─────────────
+    // ── the circuit tier (Phase 1: stub, tier ordering only) ─────────────
 
     #[test]
-    fn known_peer_without_direct_route_prefers_relay() {
+    fn known_peer_without_direct_route_prefers_circuit() {
         // Bob's endpoint is known but we're unmeshed ⇒ no direct unicast route ⇒
-        // route to him over a relay circuit rather than a gossip flood.
+        // route to him over a circuit rather than a gossip flood.
         let (mut state, bob) = state_knowing_bob();
         state.meshed = false;
         assert_eq!(
             route(&directed_msg(), &state, true, true, true),
-            Route::Whisper(bob)
+            Route::Circuit(bob)
         );
     }
 
     #[test]
-    fn direct_unicast_route_beats_relay() {
-        // A directly-dialable peer still goes unicast — relay is only for the
+    fn direct_unicast_route_beats_circuit() {
+        // A directly-dialable peer still goes unicast — circuit is only for the
         // no-direct-route case.
         let (state, bob) = state_knowing_bob();
         assert_eq!(
@@ -460,10 +498,16 @@ mod tests {
     }
 
     #[test]
-    fn unknown_peer_cannot_relay_and_falls_back_to_gossip() {
+    fn unknown_peer_has_no_circuit_and_falls_back_to_gossip() {
         // No endpoint for the target ⇒ nothing to route a circuit to ⇒ gossip,
-        // even with the relay transport enabled.
-        let mut state = EventLoopState::new(None, Instant::now(), Arc::new(Identity::generate()));
+        // even with the circuit transport enabled.
+        let mut state = EventLoopState::new(
+            None,
+            Instant::now(),
+            Arc::new(Identity::generate()),
+            None,
+            None,
+        );
         state.meshed = true;
         assert_eq!(
             route(&directed_msg(), &state, true, true, true),
@@ -472,8 +516,8 @@ mod tests {
     }
 
     #[test]
-    fn relay_disabled_falls_back_to_gossip() {
-        // `--no-relay` with no direct route ⇒ the gossip fallback.
+    fn circuit_disabled_falls_back_to_gossip() {
+        // `--no-circuit` with no direct route ⇒ the gossip fallback.
         let (mut state, _) = state_knowing_bob();
         state.meshed = false;
         assert_eq!(

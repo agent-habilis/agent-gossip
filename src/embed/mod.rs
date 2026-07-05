@@ -52,6 +52,9 @@ pub struct JoinConfig {
     /// Which transport planes directed sends may use. Default all-on;
     /// narrowed by tests to pin a message to one lane.
     pub transport: TransportPolicy,
+    /// Mirror frames into this shared directory (and ingest frames peers write
+    /// there) — the filesystem spool. `None` disables it.
+    pub spool: Option<std::path::PathBuf>,
 }
 
 impl JoinConfig {
@@ -67,6 +70,7 @@ impl JoinConfig {
             max_peers: GOSSIP_ACTIVE_VIEW_CAPACITY,
             password: None,
             transport: TransportPolicy::default(),
+            spool: None,
         }
     }
 }
@@ -87,6 +91,9 @@ pub struct TopicConfig {
     /// Which transport planes directed sends may use. Default all-on;
     /// narrowed by tests to pin a message to one lane.
     pub transport: TransportPolicy,
+    /// Mirror frames into this shared directory (and ingest frames peers write
+    /// there) — the filesystem spool. `None` disables it.
+    pub spool: Option<std::path::PathBuf>,
 }
 
 impl TopicConfig {
@@ -98,6 +105,7 @@ impl TopicConfig {
             nickname: None,
             max_peers: GOSSIP_ACTIVE_VIEW_CAPACITY,
             transport: TransportPolicy::default(),
+            spool: None,
         }
     }
 }
@@ -138,6 +146,9 @@ pub struct CreateConfig {
     /// Which transport planes directed sends may use. Default all-on;
     /// narrowed by tests to pin a message to one lane.
     pub transport: TransportPolicy,
+    /// Mirror frames into this shared directory (and ingest frames peers write
+    /// there) — the filesystem spool. `None` disables it.
+    pub spool: Option<std::path::PathBuf>,
 }
 
 impl CreateConfig {
@@ -156,6 +167,7 @@ impl CreateConfig {
             max_peers: GOSSIP_ACTIVE_VIEW_CAPACITY,
             password: None,
             transport: TransportPolicy::default(),
+            spool: None,
         }
     }
 }
@@ -279,6 +291,7 @@ async fn create_setup(
             interactive: false,
             max_peers,
             state_file: None,
+            spool: cfg.spool,
             output,
             drift: None,
             a2a_serve: None,
@@ -308,7 +321,7 @@ async fn join_setup(cfg: JoinConfig, output: Output) -> Result<EventLoopConfig, 
     }
     .resolve()
     .map_err(JoinError::Resolve)?;
-    resolved_setup(resolved, cfg.max_peers, cfg.transport, output).await
+    resolved_setup(resolved, cfg.max_peers, cfg.transport, cfg.spool, output).await
 }
 
 /// Resolve + set up a topic (a string-derived public swarm).
@@ -323,7 +336,7 @@ async fn topic_setup(cfg: TopicConfig, output: Output) -> Result<EventLoopConfig
     }
     .resolve()
     .map_err(JoinError::Resolve)?;
-    resolved_setup(resolved, cfg.max_peers, cfg.transport, output).await
+    resolved_setup(resolved, cfg.max_peers, cfg.transport, cfg.spool, output).await
 }
 
 /// The shared tail of [`join_setup`] / [`topic_setup`]: run `setup_swarm` for
@@ -332,6 +345,7 @@ async fn resolved_setup(
     resolved: Resolved,
     max_peers: usize,
     transport: TransportPolicy,
+    spool: Option<std::path::PathBuf>,
     output: Output,
 ) -> Result<EventLoopConfig, JoinError> {
     let Resolved { kind, author, .. } = resolved;
@@ -342,6 +356,7 @@ async fn resolved_setup(
             interactive: false,
             max_peers,
             state_file: None,
+            spool,
             output,
             drift: None,
             a2a_serve: None,
@@ -825,12 +840,18 @@ impl SwarmSession {
         let author = nickname.unwrap_or_else(Nickname::random);
         let (output, events_rx) = capture();
         let mut elc = setup_swarm(
-            SetupKind::Join { swarm },
+            // Directory sessions (advertise/discover) never offload blobs, so no
+            // password needs threading here.
+            SetupKind::Join {
+                swarm,
+                password: None,
+            },
             SetupParams {
                 author,
                 interactive: false,
                 max_peers: GOSSIP_ACTIVE_VIEW_CAPACITY,
                 state_file: None,
+                spool: None,
                 output,
                 drift: None,
                 a2a_serve: None,

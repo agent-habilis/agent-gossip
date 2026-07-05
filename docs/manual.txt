@@ -251,6 +251,34 @@ COMMANDS
                      daemon without consuming its event stream (see
                      "READINESS").
 
+              --spool DIR
+                     Mirror every outbound frame into DIR and ingest frames
+                     other daemons write there — a serverless exchange over a
+                     shared directory. Each frame is a content-addressed
+                     `<hash>.frame` file under DIR/<swarm-prefix>/; a peer
+                     pointed at the same DIR picks it up and anti-entropy
+                     backfills the rest. Two uses: same-machine (a common dir or
+                     a synced folder both daemons watch), and SNEAKERNET — copy
+                     DIR to a USB stick, carry it to an offline machine, point a
+                     daemon there with the same 💬… id, and it recovers the
+                     shared state from the files on disk (no network). Frames
+                     stay signed + swarm-gated + deduped on ingest, so a foreign
+                     or stale file is dropped, not trusted; directed bodies stay
+                     sealed. Only durable content is mirrored (chat, task legs,
+                     shared state) — ephemeral liveness/plumbing is not, so an
+                     old file never resurrects a departed peer. The directory is
+                     bounded by a byte cap (oldest frames evicted first; default
+                     64 MiB), so it self-trims — but that cap also bounds what an
+                     offline joiner can recover: a swarm whose history exceeds it
+                     needs a larger --spool-max-bytes or a live peer to fully
+                     converge. Files and the directory are created owner-only, so
+                     an unpassworded swarm's plaintext frames aren't exposed to
+                     other users on the same machine. It is a mirror plane, not a
+                     routing lane — peers reached only via the spool do not show
+                     as `connected`. Local filesystems only: a network share
+                     degrades the atomic-rename and change-notification
+                     guarantees this relies on.
+
               --output human|json
                      Output format for this daemon's event stream. Use json
                      for agents (see "JSON EVENTS"). Default human.
@@ -299,7 +327,9 @@ COMMANDS
                      Output format. Default human.
 
               join also accepts the same operational flags as create:
-              --state-file PATH, --max-peers N, and --filter-self (see create).
+              --state-file PATH, --spool DIR, --max-peers N, and --filter-self
+              (see create). --spool is how the second half of a sneakernet
+              exchange works: join the carried 💬… id with the copied directory.
 
               As with create, the binary does not take --model/--harness; an
               agent self-reports what it runs on into the meta channel after

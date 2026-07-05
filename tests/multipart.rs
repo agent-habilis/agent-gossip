@@ -127,6 +127,34 @@ async fn shard_repair_reserves_cached_big_group_frames() {
     bob.leave().await;
 }
 
+/// The same multishard round-trip on a **password-protected** swarm: the large
+/// chat body is sealed with the swarm key, then split into shards; the receiver
+/// reassembles the ciphertext envelope and decrypts it once. Exercises the
+/// encrypt-before-shard (send) + reassemble-then-decrypt (receive) paths.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn multishard_message_reassembles_on_a_passworded_swarm() {
+    let alice = InProcNode::create_with_password("mp-pw", "hunter2").await;
+    let mut bob = InProcNode::try_join_with_password(&alice.swarm, "mp-pw-bob", "hunter2")
+        .await
+        .expect("the right password joins");
+
+    let big = "abcd ".repeat(MAX_MESSAGE_SIZE); // ~19 KB, forces sharding
+    alice.send(&big).await;
+
+    assert!(
+        bob.wait_body(&big, MSG_TIMEOUT).await,
+        "the reassembled, decrypted body never arrived on a passworded swarm"
+    );
+    assert_eq!(
+        bob.count_body(&big),
+        1,
+        "the body must surface once, decrypted, not once per shard"
+    );
+
+    alice.leave().await;
+    bob.leave().await;
+}
+
 /// The one remaining size limit is the local input ceiling
 /// (`MAX_LOGICAL_BODY_BYTES`): a body past it is refused on send with a clear
 /// error naming the blob channel, never silently dropped.
@@ -148,7 +176,7 @@ async fn body_past_the_input_ceiling_is_refused() {
     alice.leave().await;
 }
 
-/// A worker's result (`TaskArtifactUpdate`) is fire-and-forget push and, when
+
 /// large, shards like any content leg — the initiator reassembles it once.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn multishard_task_artifact_reassembles_into_one() {

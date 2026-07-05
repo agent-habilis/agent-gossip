@@ -1,4 +1,4 @@
-//! The accept side of the whisper plane: the `ProtocolHandler` for `WHISPER_ALPN`.
+//! The accept side of the circuit plane: the `ProtocolHandler` for `CIRCUIT_ALPN`.
 //! Each accepted stream carries an onion header; this hop peels its own layer
 //! and either **forwards** (dials the next hop, writes the inner header, splices
 //! the payload straight through) or **delivers** (terminal: hands the payload to
@@ -17,14 +17,14 @@ use x25519_dalek::StaticSecret;
 
 use super::cell::peel;
 use super::wire::{MAX_PAYLOAD_BYTES, read_header, write_header};
-use super::{LOG_TARGET, WHISPER_ALPN};
+use super::{LOG_TARGET, CIRCUIT_ALPN};
 
 #[derive(Clone)]
 // `ProtocolHandler` requires `Debug`; hand-rolled so the X25519 secret never
 // reaches a log.
-pub(crate) struct WhisperAcceptor {
+pub(crate) struct CircuitAcceptor {
     /// Terminal delivery funnels here — the *same* inbox as unicast, so the
-    /// destination ingests a whispered frame identically.
+    /// destination ingests a circuited frame identically.
     inbox: mpsc::Sender<Bytes>,
     /// Our X25519 secret, to peel our onion layer.
     secret: Arc<StaticSecret>,
@@ -34,13 +34,13 @@ pub(crate) struct WhisperAcceptor {
     endpoint: Arc<OnceLock<Endpoint>>,
 }
 
-impl std::fmt::Debug for WhisperAcceptor {
+impl std::fmt::Debug for CircuitAcceptor {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("WhisperAcceptor").finish_non_exhaustive()
+        f.debug_struct("CircuitAcceptor").finish_non_exhaustive()
     }
 }
 
-impl WhisperAcceptor {
+impl CircuitAcceptor {
     pub(crate) fn new(
         inbox: mpsc::Sender<Bytes>,
         secret: StaticSecret,
@@ -79,9 +79,9 @@ impl WhisperAcceptor {
         match recv.read_to_end(MAX_PAYLOAD_BYTES).await {
             Ok(payload) => {
                 if self.inbox.try_send(Bytes::from(payload)).is_err() {
-                    tracing::debug!(target: LOG_TARGET, "whisper inbox full/closed; frame dropped");
+                    tracing::debug!(target: LOG_TARGET, "circuit inbox full/closed; frame dropped");
                 } else {
-                    tracing::debug!(target: LOG_TARGET, "whisper circuit delivered a frame");
+                    tracing::debug!(target: LOG_TARGET, "circuit delivered a frame");
                 }
             }
             Err(error) => {
@@ -97,11 +97,11 @@ impl WhisperAcceptor {
             return;
         };
         let Some(endpoint) = self.endpoint.get() else {
-            tracing::debug!(target: LOG_TARGET, "whisper endpoint not yet bound; dropping circuit");
+            tracing::debug!(target: LOG_TARGET, "circuit endpoint not yet bound; dropping circuit");
             return;
         };
         let conn = match endpoint
-            .connect(EndpointAddr::new(next), WHISPER_ALPN)
+            .connect(EndpointAddr::new(next), CIRCUIT_ALPN)
             .await
         {
             Ok(conn) => conn,
@@ -127,7 +127,7 @@ impl WhisperAcceptor {
     }
 }
 
-impl ProtocolHandler for WhisperAcceptor {
+impl ProtocolHandler for CircuitAcceptor {
     async fn accept(&self, conn: Connection) -> Result<(), AcceptError> {
         // Each accepted uni-stream is an independent circuit hop; handle them
         // concurrently so one slow splice doesn't stall the next.

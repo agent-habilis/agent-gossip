@@ -1,4 +1,4 @@
-//! The **whisper** transport: multi-hop directed routing over the existing mesh.
+//! The **circuit** transport: multi-hop directed routing over the existing mesh.
 //!
 //! A directed message whose addressee we cannot reach with a *direct* unicast
 //! dial is carried by a source-routed circuit through peers we are already
@@ -10,23 +10,23 @@
 
 mod accept;
 mod cell;
-mod circuit;
 mod graph;
 mod linkstate;
 mod metric;
+mod open;
 mod telemetry;
 mod wire;
 
-pub(crate) use accept::WhisperAcceptor;
-pub(crate) use circuit::open_circuit;
+pub(crate) use accept::CircuitAcceptor;
+pub(crate) use open::open_circuit;
 pub(crate) use linkstate::{LinkStateStore, LinkVector, self_vector};
 pub(crate) use telemetry::NeighborProfile;
 
-/// ALPN for the whisper circuit channel — a dedicated QUIC protocol, distinct from
+/// ALPN for the circuit channel — a dedicated QUIC protocol, distinct from
 /// `GOSSIP_ALPN` / `UNICAST_ALPN`, over which telescoping circuits are built and
 /// spliced.
-pub(crate) const WHISPER_ALPN: &[u8] = b"agent-gossip/whisper/1";
+pub(crate) const CIRCUIT_ALPN: &[u8] = b"agent-gossip/circuit/1";
 
-/// `tracing` target for the whisper plane (matches the module path so `EnvFilter`
-/// prefix-matching works, e.g. `RUST_LOG=agent_gossip::whisper=debug`).
-pub(crate) const LOG_TARGET: &str = "agent_gossip::whisper";
+/// `tracing` target for the circuit plane (matches the module path so `EnvFilter`
+/// prefix-matching works, e.g. `RUST_LOG=agent_gossip::circuit=debug`).
+pub(crate) const LOG_TARGET: &str = "agent_gossip::circuit";

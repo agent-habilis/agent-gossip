@@ -48,15 +48,19 @@ const _: () = assert!(
 );
 
 /// Protocol version embedded in every message. Bumped to `8.0` for
-/// **unbounded multipart bodies**: a shard header's `total` may now exceed
-/// the old 16-shard cap (up to [`crate::util::consts::MAX_SHARD_TOTAL`]), and
-/// a `7.0` peer would parse-fail every larger shard *silently* — a delivery
-/// black hole — so the versions must not interoperate. (`7.0` was the
-/// automerge `state`/`meta` channels; `6.0` directed sealing; `5.0` the A2A
-/// v1.0 / `ProtoJSON` migration; `4.0` the native-A2A port; `3.0` the A2A
-/// migration; `2.0` the RFC 6902 → RFC 7386 shared-state change.) The
-/// exact-match gate in `parse` drops cross-version messages loudly rather
-/// than letting them silently fold to no-ops and diverge.
+/// two `8.0` changes landing together: **unbounded multipart bodies** (a
+/// shard header's `total` may exceed the old 16-shard cap, up to
+/// [`crate::util::consts::MAX_SHARD_TOTAL`] — a `7.0` peer would parse-fail
+/// every larger shard *silently*, a delivery black hole) and **password-swarm
+/// content encryption** (on a passworded swarm the `state`/`meta` change
+/// bodies and broadcast chat (`A2aMsg`) bodies travel as a symmetric
+/// `{"k":"enc",…}` envelope instead of cleartext, which a `7.0` peer would
+/// silently fail to decode). (`7.0` was the automerge `state`/`meta` channels
+/// — Base58 change bodies + heads-based digests; `6.0` directed sealing;
+/// `5.0` the A2A v1.0 / `ProtoJSON` migration; `4.0` the native-A2A port;
+/// `3.0` the A2A migration; `2.0` the RFC 6902 → RFC 7386 shared-state
+/// change.) The exact-match gate in `parse` drops cross-version messages
+/// loudly rather than letting them silently fold to no-ops and diverge.
 pub(crate) const VERSION: &str = "8.0";
 
 /// Presence subtype.
@@ -212,8 +216,8 @@ pub enum MessageKind {
     /// Anti-entropy digest for the **meta** channel — the meta-channel counterpart
     /// to [`StateDigest`](MessageKind::StateDigest).
     MetaDigest,
-    /// A relay-routing **link-state** advertisement: the author's own measured
-    /// links (`body` is a serialized [`crate::whisper::LinkVector`]). Broadcast
+    /// A circuit-routing **link-state** advertisement: the author's own measured
+    /// links (`body` is a serialized [`crate::circuit::LinkVector`]). Broadcast
     /// plumbing like `Digest`/`Ping` — never logged, never surfaced, never
     /// chain/DAG-folded; every node folds the freshest vector per origin into its
     /// routing graph. Ephemeral (a fresh vector supersedes the old by `seq`), so
@@ -250,6 +254,37 @@ impl Channel {
         match self {
             Channel::State => "state",
             Channel::Meta => "meta",
+        }
+    }
+}
+
+impl MessageKind {
+    /// Whether a frame of this kind is worth mirroring to the filesystem spool
+    /// (`crate::transport::spool`). True for the **durable** content a late or
+    /// offline joiner actually needs — chat, task legs, and the shared
+    /// `state`/`meta` docs — which is exactly the set anti-entropy re-serves.
+    /// **Ephemeral plumbing** is skipped: persisting a `Presence`/`PeerInfo`
+    /// frame would resurrect a departed peer when the file is ingested later
+    /// (sneakernet, hours on), and digests / ping-pong / link-state / directed
+    /// RPC are worthless on disk (they coordinate live peers, not history).
+    /// Exhaustive on purpose — a new kind must classify itself here.
+    pub(crate) fn is_spoolable(&self) -> bool {
+        match self {
+            MessageKind::A2aMsg
+            | MessageKind::A2aStatus { .. }
+            | MessageKind::A2aArtifact { .. }
+            | MessageKind::State
+            | MessageKind::Meta => true,
+            MessageKind::Presence { .. }
+            | MessageKind::PeerInfo
+            | MessageKind::Digest
+            | MessageKind::Ping
+            | MessageKind::Pong { .. }
+            | MessageKind::A2aReq { .. }
+            | MessageKind::A2aResp { .. }
+            | MessageKind::StateDigest
+            | MessageKind::MetaDigest
+            | MessageKind::LinkState => false,
         }
     }
 }
@@ -483,7 +518,7 @@ impl Message {
     }
 
     /// A relay link-state advertisement; `vector_json` is a serialized
-    /// [`crate::whisper::LinkVector`].
+    /// [`crate::circuit::LinkVector`].
     pub(crate) fn new_link_state(
         swarm: &SwarmId,
         author: &Nickname,

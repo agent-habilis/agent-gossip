@@ -103,7 +103,8 @@ pub(crate) async fn handle_ipc_command(
         }
         IpcCommand::StateMerge { swarm: _, merge } => {
             let outcome =
-                broadcast_state_merge(ctx, merge, state, crate::protocol::Channel::State, true).await;
+                broadcast_state_merge(ctx, merge, state, crate::protocol::Channel::State, true)
+                    .await;
             let (response, broadcast) = state_merge_response(outcome);
             let _ = resp_tx.send(response);
             broadcast
@@ -114,7 +115,8 @@ pub(crate) async fn handle_ipc_command(
         }
         IpcCommand::MetaMerge { swarm: _, merge } => {
             let outcome =
-                broadcast_state_merge(ctx, merge, state, crate::protocol::Channel::Meta, true).await;
+                broadcast_state_merge(ctx, merge, state, crate::protocol::Channel::Meta, true)
+                    .await;
             let (response, broadcast) = state_merge_response(outcome);
             let _ = resp_tx.send(response);
             broadcast
@@ -229,7 +231,7 @@ fn state_merge_response(outcome: anyhow::Result<()>) -> (String, bool) {
     }
 }
 
-/// Serialize this daemon's whisper routing topology (its assembled mesh graph) for
+/// Serialize this daemon's circuit routing topology (its assembled mesh graph) for
 /// the `topology` IPC query. `{"ok":true,"topology":{self_id, edges:[…]}}`.
 fn topology_response(state: &EventLoopState) -> String {
     let Some(endpoint) = state.unicast_pool.endpoint() else {

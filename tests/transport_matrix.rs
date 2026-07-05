@@ -1,12 +1,12 @@
 //! Transport-matrix tests: the same user-visible operations — broadcast chat,
 //! directed A2A RPC (request + response), worker status/artifact pushes, task
 //! follow-ups — delivered with the session restricted to a single transport
-//! lane (unicast-only, gossip-only, whisper-only). This pins the transparency
+//! lane (unicast-only, gossip-only, circuit-only). This pins the transparency
 //! invariant: the transport is a routing decision, never a semantic one, so
 //! every operation must survive on any lane.
 //!
 //! A restricted lane may briefly have no route (endpoints arrive via
-//! `PeerInfo`, whisper circuits need link-state convergence on its 15s
+//! `PeerInfo`, circuits need link-state convergence on its 15s
 //! cadence); a directed call then surfaces as an RPC timeout rather than an
 //! error, so the harness retries short-timeout calls until the lane
 //! converges.
@@ -21,19 +21,19 @@ use common::{InProcNode, MSG_TIMEOUT, POLL, RECOVERY_TIMEOUT};
 const UNICAST_ONLY: TransportPolicy = TransportPolicy {
     unicast: true,
     gossip_directed: false,
-    whisper: false,
+    circuit: false,
 };
 
 const GOSSIP_ONLY: TransportPolicy = TransportPolicy {
     unicast: false,
     gossip_directed: true,
-    whisper: false,
+    circuit: false,
 };
 
-const WHISPER_ONLY: TransportPolicy = TransportPolicy {
+const CIRCUIT_ONLY: TransportPolicy = TransportPolicy {
     unicast: false,
     gossip_directed: false,
-    whisper: true,
+    circuit: true,
 };
 
 /// Parse the `Task` id out of a `SendMessage` response.
@@ -181,6 +181,6 @@ async fn gossip_only_lane_carries_all_operations() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn whisper_only_lane_carries_all_operations() {
-    lane_carries_all_operations("whi", WHISPER_ONLY).await;
+async fn circuit_only_lane_carries_all_operations() {
+    lane_carries_all_operations("cir", CIRCUIT_ONLY).await;
 }

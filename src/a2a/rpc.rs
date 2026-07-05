@@ -201,7 +201,10 @@ pub(crate) async fn handle_op(
 ) -> Result<Value, RpcError> {
     match op {
         A2aOp::SendMessage { to, message } => {
-            send_message(to, message, ctx.swarm, ctx.author, state, ctx.sender, ctx.output).await
+            send_message(
+                to, message, ctx.swarm, ctx.author, state, ctx.sender, ctx.output,
+            )
+            .await
         }
         A2aOp::GetTask { task_id } => state
             .tasks
@@ -308,7 +311,7 @@ async fn send_message(
     swarm: &SwarmId,
     author: &Nickname,
     state: &mut EventLoopState,
-    sender: &iroh_gossip::api::GossipSender,
+    sender: &crate::transport::SwarmSender,
     output: &output::Output,
 ) -> Result<Value, RpcError> {
     if to.is_some() {

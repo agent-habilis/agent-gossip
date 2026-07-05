@@ -110,7 +110,10 @@ pub fn ensure_runtime_base() -> std::io::Result<std::path::PathBuf> {
     if !meta.file_type().is_dir() {
         return Err(std::io::Error::new(
             std::io::ErrorKind::AlreadyExists,
-            format!("runtime dir {} is not a directory — remove it", base.display()),
+            format!(
+                "runtime dir {} is not a directory — remove it",
+                base.display()
+            ),
         ));
     }
     if meta.uid() != current_uid() {
@@ -216,9 +219,13 @@ mod tests {
 
     #[test]
     fn is_under_runtime_base_discriminates() {
-        assert!(is_under_runtime_base(&runtime_base().join("💬abc/nick.state.json")));
+        assert!(is_under_runtime_base(
+            &runtime_base().join("💬abc/nick.state.json")
+        ));
         assert!(!is_under_runtime_base(Path::new("/etc/passwd")));
-        assert!(!is_under_runtime_base(Path::new("/tmp/agent-gossip/sessions/x.json")));
+        assert!(!is_under_runtime_base(Path::new(
+            "/tmp/agent-gossip/sessions/x.json"
+        )));
     }
 
     #[test]

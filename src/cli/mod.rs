@@ -168,6 +168,7 @@ async fn run_session(resolved: Resolved, shared: SharedServerOpts) -> Result<()>
             max_peers: shared.max_peers,
             transport: shared.transport(),
             state_file: shared.state_file,
+            spool: shared.spool,
             output: out,
             drift: drift.as_deref(),
             a2a_serve: shared.a2a_serve,
@@ -215,7 +216,10 @@ async fn create(opts: CreateOpts) -> Result<()> {
         password,
     }
     .resolve()?;
-    run_session(resolved, opts.shared).await
+    // Boxed: the session future carries the full `EventLoopConfig` and sits
+    // just over clippy's `large_futures` budget (same reason the event loop
+    // itself is boxed).
+    Box::pin(run_session(resolved, opts.shared)).await
 }
 
 /// Join an existing swarm by its identifier (💬...), a domain, or a
@@ -248,7 +252,7 @@ async fn join(
         password,
     }
     .resolve()?;
-    run_session(resolved, shared).await
+    Box::pin(run_session(resolved, shared)).await
 }
 
 /// Join a public swarm derived deterministically from a shared string. The
@@ -260,7 +264,7 @@ async fn topic(opts: TopicOpts) -> Result<()> {
         nickname: opts.nickname,
     }
     .resolve()?;
-    run_session(resolved, opts.shared).await
+    Box::pin(run_session(resolved, opts.shared)).await
 }
 
 #[derive(Deserialize)]
@@ -599,7 +603,7 @@ async fn peers(opts: PeersOpts) -> Result<()> {
     Ok(())
 }
 
-/// Print the whisper routing topology (assembled mesh graph) from the running
+/// Print the circuit routing topology (assembled mesh graph) from the running
 /// daemon, as JSON. Backs the `/swarm:topology` render.
 async fn topology_cmd(opts: TopologyOpts) -> Result<()> {
     let cmd = IpcCommand::Topology { swarm: opts.swarm };

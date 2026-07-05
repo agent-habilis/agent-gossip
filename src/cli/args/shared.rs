@@ -56,6 +56,16 @@ pub(crate) struct SharedServerOpts {
     #[arg(long)]
     pub state_file: Option<std::path::PathBuf>,
 
+    /// Mirror every frame into DIR and ingest frames other daemons write there —
+    /// same-machine or sneakernet exchange over a shared directory. Each frame
+    /// is a content-addressed `.frame` file under `DIR/<swarm-id>/`; a peer
+    /// pointed at the same DIR (a synced folder, or a USB stick carried between
+    /// machines) picks them up and anti-entropy backfills the rest. Local
+    /// filesystems only — network shares degrade the atomic-rename and
+    /// change-notification guarantees this relies on.
+    #[arg(long, value_name = "DIR")]
+    pub spool: Option<std::path::PathBuf>,
+
     // ── Hidden tuning knobs ───────────────────────────────────────
     // Not in `--help`. Production runs on the `crate::util::consts`
     // defaults below; the subprocess test suite passes these to run with
@@ -68,6 +78,10 @@ pub(crate) struct SharedServerOpts {
     /// How often the sweeper scans for expired peers (seconds).
     #[arg(long, hide = true, default_value_t = consts::SWEEP_INTERVAL_SECS)]
     pub sweep_interval_secs: u64,
+
+    /// Cadence of the unconditional gossip healer (seconds).
+    #[arg(long, hide = true, default_value_t = consts::HEAL_INTERVAL_SECS)]
+    pub heal_interval_secs: u64,
 
     /// Task idle-debounce timeout (seconds).
     #[arg(long, hide = true, default_value_t = consts::TASK_TIMEOUT_SECS)]
@@ -113,9 +127,17 @@ pub(crate) struct SharedServerOpts {
     #[arg(long, hide = true, default_value_t = consts::DIRECTORY_EXPIRY_SECS)]
     pub directory_expiry_secs: u64,
 
+    /// How often a member broadcasts its anti-entropy digest (seconds).
+    #[arg(long, hide = true, default_value_t = consts::ANTIENTROPY_INTERVAL_SECS)]
+    pub antientropy_interval_secs: u64,
+
     /// Max messages re-sent in response to one anti-entropy digest.
     #[arg(long, hide = true, default_value_t = consts::ANTIENTROPY_MAX_RESEND)]
     pub antientropy_max_resend: usize,
+
+    /// Byte budget for a swarm's spool subdir before oldest-first GC (bytes).
+    #[arg(long, hide = true, default_value_t = consts::SPOOL_MAX_BYTES)]
+    pub spool_max_bytes: u64,
 
     /// Use the loopback (private) directory + relax the advertise→public guard.
     #[arg(long, hide = true, default_value_t = false)]
@@ -132,11 +154,11 @@ pub(crate) struct SharedServerOpts {
     #[arg(long, hide = true, default_value_t = false)]
     pub no_gossip_directed: bool,
 
-    /// Disable the whisper (multi-hop circuit) transport: a directed message with
+    /// Disable the circuit (multi-hop circuit) transport: a directed message with
     /// no direct unicast route falls back to gossip instead of being routed
     /// over a circuit.
     #[arg(long, hide = true, default_value_t = false)]
-    pub no_whisper: bool,
+    pub no_circuit: bool,
 }
 
 impl SharedServerOpts {
@@ -152,6 +174,7 @@ impl SharedServerOpts {
         crate::util::tuning::Tuning {
             alive_timeout_secs: self.alive_timeout_secs,
             sweep_interval_secs: self.sweep_interval_secs,
+            heal_interval_secs: self.heal_interval_secs,
             task_timeout_secs: self.task_timeout_secs,
             task_keepalive_secs: self.task_keepalive_secs,
             task_keepalive_max_secs: self.task_keepalive_max_secs,
@@ -163,18 +186,20 @@ impl SharedServerOpts {
             starvation_threshold_secs: self.starvation_threshold_secs,
             advertise_interval_secs: self.advertise_interval_secs,
             directory_expiry_secs: self.directory_expiry_secs,
+            antientropy_interval_secs: self.antientropy_interval_secs,
             antientropy_max_resend: self.antientropy_max_resend,
+            spool_max_bytes: self.spool_max_bytes,
             directory_private: self.directory_private,
         }
     }
 
     /// The per-session transport policy carried by the hidden
-    /// `--no-unicast`/`--no-gossip-directed`/`--no-whisper` flags.
+    /// `--no-unicast`/`--no-gossip-directed`/`--no-circuit` flags.
     pub(crate) fn transport(&self) -> crate::unicast::TransportPolicy {
         crate::unicast::TransportPolicy {
             unicast: !self.no_unicast,
             gossip_directed: !self.no_gossip_directed,
-            whisper: !self.no_whisper,
+            circuit: !self.no_circuit,
         }
     }
 }

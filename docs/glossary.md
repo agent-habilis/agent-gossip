@@ -54,30 +54,64 @@ any frame remains gossip-carriable and anti-entropy-healable.
 
 State: `unicast_pool` (the per-peer connection pool). See [`src/unicast`].
 
-### whisper
+### circuit
 
 *Layer: transport · keyed by node id (hex).*
 
-The directed, private counterpart of broadcast **gossip** — a *whisper* passed
-quietly ear-to-ear along a chain (cf. Ethereum's Whisper). The multi-hop
-transport a **directed** frame takes when its addressee is *known* but not
-**directly** reachable by **unicast**: the initiator source-routes a **circuit**
-— a telescoping chain of QUIC connections through **peers it is already connected
-to** — over its own ALPN (`agent-gossip/whisper/1`). Each hop peels one
-**onion**-sealed layer (reusing **seal**), learning only its successor, and
-splices the payload straight through; the terminal hop delivers into the *same*
-`gossip::ingest` seam as unicast, so the addressee ingests a whispered frame
-identically. Forwarding peers (**whisperers**) need **not** be publicly reachable
-— this is the serverless, multi-hop counterpart to iroh's own (server-based,
-single-hop) **relay**, and deliberately named apart from it.
+The directed, multi-hop counterpart of broadcast **gossip**: the transport a
+**directed** frame takes when its addressee is *known* but not **directly**
+reachable by **unicast**. What distinguishes it is not secrecy — every directed
+frame is **seal**ed to its addressee regardless of transport — but *routing
+through third parties*: the initiator source-routes a **circuit**, a telescoping
+chain of QUIC connections through **peers it is already connected to**, over its
+own ALPN (`agent-gossip/circuit/1`). Each **hop** peels one **onion**-sealed
+layer, learning only its successor, and splices the payload straight through; the
+terminal hop delivers into the *same* `gossip::ingest` seam as unicast, so the
+addressee ingests a circuit-delivered frame identically. Forwarding **hops** need
+**not** be publicly reachable — this is the serverless, multi-hop counterpart to
+iroh's own (server-based, single-hop) **relay**, and deliberately named apart from
+it.
 
 Route selection is **proactive link-state**: every node gossips its own measured
 **link-vector** (a `linkstate` frame: its neighbours + per-link `LinkMetric` + its
 X25519 key), so each node holds the whole metric-weighted mesh **graph** and
 computes routes locally with Dijkstra — including up to N **node-disjoint**
 alternates tried best-first before falling back to gossip. Tier order for a
-directed frame: direct **unicast** → **whisper** → gossip. Gated by
-`--no-whisper`. State: `link_state` (`LinkStateStore`). See [`src/whisper`].
+directed frame: direct **unicast** → **circuit** → gossip. Gated by
+`--no-circuit`. State: `link_state` (`LinkStateStore`). See [`src/circuit`].
+
+### spool
+
+*Layer: transport · keyed by content hash.*
+
+A shared-directory **mirror** of the broadcast **frame** stream, opt-in with
+`--spool DIR`. Every outbound frame is written as a content-addressed file
+(`sha256(frame)[..16].frame`) under `DIR/<swarm-prefix>/`, and a filesystem
+watcher feeds files *other* daemons write there back into the *same*
+`gossip::ingest` seam as gossip and unicast — so signature-verify, swarm-gate,
+self-echo drop, and dedup are identical, and a frame delivered over both planes
+surfaces exactly once. Two daemons pointed at one directory (a synced folder, or
+a USB stick physically carried between machines — **sneakernet**) exchange state
+with no network at all; **anti-entropy** backfills whatever a straggler missed.
+
+Deliberately **not** a directed-routing lane and not a `Route` variant:
+broadcasts already ride gossip, so the spool only *mirrors* the outbound stream
+and *feeds* foreign frames in. The roster's **connected/gossip** `reach` tag
+stays truthful about directed routing — a spool peer is not "connected". Only
+**durable** frames are mirrored (chat, task legs, `state`/`meta` changes — what
+`MessageKind::is_spoolable` marks); ephemeral plumbing (presence, dial hints,
+digests, ping/pong, link-state) is never written, so ingesting a file can't
+resurrect a departed peer. Frames are content-addressed, so a re-copied or
+event-coalesced file ingests at most once, and the writer's temp-file +
+atomic-`rename` keeps a half-written file invisible; files and the directory are
+created owner-only (`0600`/`0700`) so an unpassworded swarm's plaintext frames
+aren't exposed to other local users. A byte-cap GC (oldest-mtime first,
+`SPOOL_MAX_BYTES`, hidden `--spool-max-bytes`) bounds the directory — which also
+**bounds pure-sneakernet recovery**: an offline joiner recovers only the frames
+still on disk, so a swarm whose history exceeds the cap needs a larger
+`--spool-max-bytes` or a live peer to fully converge. Local filesystems only — a
+network share degrades the atomic-rename and change-notification guarantees. See
+[`src/transport/spool`].
 
 ### participant
 
@@ -144,8 +178,23 @@ advertised ads are public, and a verifier there would be an offline grinding
 target; the swarm hash accepts that trade for local verifiability. A
 passworded swarm or ticket is therefore safe to **advertise**.
 
+On a passworded swarm the password also protects the *contents* of every
+shared surface, not just entry:
+
+- **blob** tickets inherit it automatically — a minted ticket carries a public
+  salt and the producer stores the Argon2id stretch as the compare token, so a
+  scraped ticket can't be redeemed without the password (`agent-gossip a2a fetch
+  … --password`). This reuses the ticket machinery above.
+- the **state** and **meta** channel change bodies are encrypted with a
+  symmetric key derived from the stretched swarm key (`derive_secret(key,
+  "state-doc" | "meta-doc")`), so a relay or a captured frame sees only opaque
+  bytes while every member decrypts. Enforced in the doc layer (`enc` envelope),
+  transparent to signing and anti-entropy (see **seal**).
+
 Code: `protocol::crypto` (`stretch_swarm_password`, `password_verifier`,
-`TicketAuth`), `Swarm::{set_password, apply_password}`.
+`TicketAuth`, `derive_secret`), `Swarm::{set_password, apply_password,
+stretched_key}`, `protocol::seal::{seal_symmetric, open_symmetric}`,
+`daemon::state_doc::{encrypt_body, decrypt_body}`.
 
 ### rendezvous
 
@@ -416,9 +465,22 @@ envelope. The recipient decrypts with its static secret; a relay forwards the
 frame and **verifies the Ed25519 signature** (which covers the ciphertext) but
 cannot read the body. Only the body is sealed — routing metadata (`to`,
 `task_id`, author, kind) stays cleartext so relays route and anti-entropy heals.
-**Broadcast (`A2aMsg`) and the `state`/`meta` channels are never sealed** — their
-audience is every member; they stay public and signed. Forward secrecy comes
-from the per-frame ephemeral key; sender authenticity from the frame signature.
+Forward secrecy for a directed frame comes from its per-frame ephemeral key;
+sender authenticity from the frame signature.
+
+On a **passwordless** swarm, broadcast chat (`A2aMsg`) and the `state`/`meta`
+channels travel plaintext (public to every member). On a **password**-protected
+swarm all three are **symmetrically** sealed
+(`seal_symmetric`/`open_symmetric`): a ChaCha20-Poly1305 key derived from the
+stretched swarm key — shared by every member, no ECDH — wraps the whole
+plaintext body into an `enc` envelope (`state`/`meta` change bodies via the
+`state-doc`/`meta-doc` keys; chat via the `broadcast` key, sealed before it is
+sharded). Same signing/relay story: encryption precedes signing so the signature
+covers the ciphertext, the retained re-serve frame stays sealed, dedup / the
+per-author hash-chain / anti-entropy all key on the signed ciphertext frame, and
+only the local content path decrypts — so a member without the key never
+appears, but a relay or captured frame reads nothing. Presence, `PeerInfo`, and
+the anti-entropy digests stay plaintext (plumbing the overlay needs).
 
 ### blob
 

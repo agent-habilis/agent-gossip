@@ -1,17 +1,17 @@
 //! `HandlerCtx`, hoisted here so both `gossip` and `lifecycle` share it.
 
 use iroh::{Endpoint, EndpointId};
-use iroh_gossip::api::GossipSender;
 use tokio::sync::broadcast;
 
 use crate::output;
 use crate::protocol::identity::Identity;
 use crate::protocol::{Message, Nickname, SwarmId};
+use crate::transport::SwarmSender;
 
 /// Immutable loop-level context threaded through every handler.
 /// Bundles the refs a handler may need but never mutates itself.
 pub(crate) struct HandlerCtx<'a> {
-    pub sender: &'a GossipSender,
+    pub sender: &'a SwarmSender,
     pub endpoint: &'a Endpoint,
     pub swarm: &'a SwarmId,
     pub author: &'a Nickname,

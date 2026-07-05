@@ -158,6 +158,8 @@ mod tests {
             None,
             std::time::Instant::now(),
             std::sync::Arc::new(crate::protocol::identity::Identity::generate()),
+            None,
+            None,
         )
     }
 

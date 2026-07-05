@@ -25,10 +25,12 @@ use crate::util::bounded_read::{LineRead, read_bounded_line};
 use crate::util::consts::MAX_STDIN_LINE_BYTES;
 use crate::{beacon, gossip, lifecycle, lookup};
 // Bare `ipc` is `daemon::ipc`; transport's socket server is by-item.
+use crate::transport::SwarmSender;
 use crate::transport::ipc::IpcMessage;
+use crate::transport::spool;
 use crate::util::tuning::{
-    ALIVE_INTERVAL_SECS, ANTIENTROPY_INTERVAL_SECS, HEAL_INTERVAL_SECS, LINKSTATE_INTERVAL_SECS,
-    RECLAIM_INTERVAL_MS, RESUBSCRIBE_MAX_ATTEMPTS, STATE_REFRESH_SECS, heal_stall_threshold_secs,
+    ALIVE_INTERVAL_SECS, LINKSTATE_INTERVAL_SECS, RECLAIM_INTERVAL_MS, RESUBSCRIBE_MAX_ATTEMPTS,
+    STATE_REFRESH_SECS, antientropy_interval_secs, heal_interval_secs, heal_stall_threshold_secs,
     ppid_watch_interval_ms, sweep_interval_secs,
 };
 
@@ -47,6 +49,8 @@ pub(crate) async fn run(cfg: EventLoopConfig) -> Result<()> {
         identity,
         swarm: swarm_str,
         name: swarm_name,
+        swarm_password,
+        swarm_key,
         output,
         interactive,
         endpoint,
@@ -56,6 +60,7 @@ pub(crate) async fn run(cfg: EventLoopConfig) -> Result<()> {
         rung_rx,
         cohost,
         state_file,
+        spool,
         unicast_rx,
         transport,
         a2a,
@@ -104,17 +109,8 @@ pub(crate) async fn run(cfg: EventLoopConfig) -> Result<()> {
         })
         .map(|path| StateFile::new(path, &swarm_str, &author, &swarm_name));
     let (a2a_port, a2a_rx) = spawn_a2a(a2a, state_file.as_ref());
-    let mut state = EventLoopState::new(state_file, started, identity);
-    // Replace the detached default pool with one wired to this endpoint, so
-    // directed sends can dial peers over the unicast ALPN.
-    state.unicast_pool = crate::unicast::UnicastPool::new(endpoint.clone());
-    state.transport = transport;
-    // Advertise path only: the directory re-broadcast task reads the
-    // live count from here. Set before the first write below so the
-    // initial ad carries a real count.
-    state.live_count = live_count;
-    state.rendezvous_id = Some(rendezvous_params.id);
-    state.write_participant_count();
+    let mut state = EventLoopState::new(state_file, started, identity, swarm_password, swarm_key);
+    wire_session_state(&mut state, &endpoint, transport, live_count, rendezvous_params.id);
 
     // An eager member co-hosts from t=0 so a beacon exists before any
     // joiner subscribes; everyone else defers to the heal gate
@@ -133,7 +129,14 @@ pub(crate) async fn run(cfg: EventLoopConfig) -> Result<()> {
         .await;
     }
 
-    let (sender, receiver) = topic.split();
+    let (gossip_sender, receiver) = topic.split();
+
+    // Install the filesystem spool mirror when `--spool` was given. A bad
+    // directory aborts startup — the frame mirror is a promised side effect,
+    // not best-effort. The watcher guard must outlive the loop below, so it
+    // stays owned in this scope (like `_router`); its scanner + writer tasks
+    // run detached until their channels close on shutdown.
+    let (sender, spool_rx, _spool_watcher) = build_sender(spool, gossip_sender, &swarm_str)?;
 
     let ipc_rx = spawn_ipc_rx(ipc_listener_disabled, &swarm_str, &author, &output);
 
@@ -206,15 +209,75 @@ pub(crate) async fn run(cfg: EventLoopConfig) -> Result<()> {
         a2a_rx,
         a2a_port,
         unicast_rx: Some(unicast_rx),
+        spool_rx,
     }))
     .await
+}
+
+/// The wrapped sender, plus the spool's inbound receiver and watcher guard when
+/// `--spool` is active. Aliased so the return stays under `type_complexity`.
+type SenderSetup = (
+    SwarmSender,
+    Option<mpsc::Receiver<bytes::Bytes>>,
+    Option<notify::RecommendedWatcher>,
+);
+
+/// Wrap the raw gossip sender, installing the `--spool` mirror when a directory
+/// was configured. The returned watcher guard must be held for the loop's whole
+/// lifetime; dropping it stops inbound spool ingestion.
+fn build_sender(
+    spool: Option<std::path::PathBuf>,
+    gossip_sender: GossipSender,
+    swarm_id: &SwarmId,
+) -> Result<SenderSetup> {
+    let Some(dir) = spool else {
+        return Ok((SwarmSender::new(gossip_sender, None), None, None));
+    };
+    let (writer, inbound_rx, watcher) = spool::install(&dir, swarm_id.as_str())?.into_parts();
+    Ok((
+        SwarmSender::new(gossip_sender, Some(writer)),
+        Some(inbound_rx),
+        Some(watcher),
+    ))
+}
+
+/// The 1-minute housekeeping arm: the memory warn + reassembly sweep, then
+/// ask authors to re-send what our stalled big shard groups are missing —
+/// Wire the just-built state to this session's endpoint + config: the real
+/// unicast pool (the default is detached), the transport policy, the
+/// advertise counter (set before the first write so the initial ad carries a
+/// real count), and the rendezvous id — then publish the initial count.
+fn wire_session_state(
+    state: &mut EventLoopState,
+    endpoint: &Endpoint,
+    transport: crate::unicast::TransportPolicy,
+    live_count: Option<std::sync::Arc<std::sync::atomic::AtomicUsize>>,
+    rendezvous_id: EndpointId,
+) {
+    state.unicast_pool = crate::unicast::UnicastPool::new(endpoint.clone());
+    state.transport = transport;
+    state.live_count = live_count;
+    state.rendezvous_id = Some(rendezvous_id);
+    state.write_participant_count();
+}
+
+/// their shards live in no log, so the repair loop is their only heal path.
+async fn prune_arm(
+    state: &mut EventLoopState,
+    output: &output::Output,
+    sender: &SwarmSender,
+    swarm: &SwarmId,
+    author: &Nickname,
+) {
+    timers::tick_prune(state, output);
+    gossip::send_shard_repair_requests(swarm, author, state, sender).await;
 }
 
 /// The alive tick: note the gap, then broadcast the keepalive presence.
 async fn alive_arm(
     anchors: &mut TickAnchors,
     state: &mut EventLoopState,
-    sender: &GossipSender,
+    sender: &SwarmSender,
     swarm: &SwarmId,
     author: &Nickname,
 ) {
@@ -232,7 +295,7 @@ async fn alive_arm(
 async fn antientropy_arm(
     anchors: &mut TickAnchors,
     state: &mut EventLoopState,
-    sender: &GossipSender,
+    sender: &SwarmSender,
     swarm: &SwarmId,
     author: &Nickname,
 ) {
@@ -240,7 +303,7 @@ async fn antientropy_arm(
         "antientropy",
         &mut anchors.antientropy,
         &mut anchors.antientropy_wall,
-        Duration::from_secs(ANTIENTROPY_INTERVAL_SECS),
+        Duration::from_secs(antientropy_interval_secs()),
     );
     gossip::antientropy::broadcast_digest(state, sender, swarm, author).await;
     gossip::antientropy::broadcast_state_digests(state, sender, swarm, author).await;
@@ -251,7 +314,7 @@ async fn antientropy_arm(
 /// vector with no links helps no one.
 async fn linkstate_arm(
     state: &mut EventLoopState,
-    sender: &GossipSender,
+    sender: &SwarmSender,
     swarm: &SwarmId,
     author: &Nickname,
     origin: EndpointId,
@@ -260,12 +323,12 @@ async fn linkstate_arm(
         return;
     }
     state.link_state_seq += 1;
-    let vector = crate::whisper::self_vector(
+    let vector = crate::circuit::self_vector(
         origin,
         state.link_state_seq,
         state.identity.seal_public(),
         &state.linked_endpoints,
-        &state.whisper_telemetry,
+        &state.circuit_telemetry,
     );
     let Ok(json) = vector.to_json() else {
         return;
@@ -308,7 +371,7 @@ async fn handle_session_arm(
 async fn sweep_arm(
     anchors: &mut TickAnchors,
     state: &mut EventLoopState,
-    sender: &GossipSender,
+    sender: &SwarmSender,
     swarm: &SwarmId,
     author: &Nickname,
     output: &output::Output,
@@ -395,7 +458,7 @@ fn spawn_a2a(
 /// `select!` out keeps both functions within the readability budget
 /// (clippy `too_many_lines`) without an `#[allow]`.
 struct EventLoop {
-    sender: GossipSender,
+    sender: SwarmSender,
     receiver: GossipReceiver,
     /// The gossip frontend, kept so the loop can re-subscribe the topic
     /// after the stream terminally ends (see the heal arm) — without it
@@ -433,6 +496,10 @@ struct EventLoop {
     /// `gossip::ingest` (same validation + dedup path as gossip). `Option` so
     /// the `select!` arm can disable itself if the channel ever closes.
     unicast_rx: Option<mpsc::Receiver<bytes::Bytes>>,
+    /// Inbound frames the `--spool` watcher read from the shared directory,
+    /// drained into `gossip::ingest` (same path as gossip/unicast). `None` when
+    /// no spool is active; the arm disables itself if the channel closes.
+    spool_rx: Option<mpsc::Receiver<bytes::Bytes>>,
 }
 
 /// The daemon's `select!` loop. Never returns normally on the CLI
@@ -484,7 +551,7 @@ pub(crate) async fn publish_own_card(ctx: &HandlerCtx<'_>, state: &mut EventLoop
 
 #[expect(
     clippy::too_many_lines,
-    reason = "the daemon's central select! loop: one arm per event source (stdin, ipc, a2a, gossip, whisper, the maintenance ticks, quit); each arm delegates to a helper, but the arm list itself is irreducibly long"
+    reason = "the daemon's central select! loop: one arm per event source (stdin, ipc, a2a, gossip, circuit, the maintenance ticks, quit); each arm delegates to a helper, but the arm list itself is irreducibly long"
 )]
 async fn event_loop(loop_state: EventLoop) -> Result<()> {
     let EventLoop {
@@ -514,6 +581,7 @@ async fn event_loop(loop_state: EventLoop) -> Result<()> {
         mut a2a_rx,
         a2a_port,
         mut unicast_rx,
+        mut spool_rx,
     } = loop_state;
 
     log_daemon_start(&author);
@@ -596,13 +664,15 @@ async fn event_loop(loop_state: EventLoop) -> Result<()> {
                 Some(bytes) => gossip::ingest(bytes, &mut state, &parts.ctx(&sender)).await,
                 None => unicast_rx = None,
             },
-            _ = intervals.prune.tick() => {
-                timers::tick_prune(&mut state, &output);
-                // Ask authors to re-send what our stalled big shard groups are
-                // missing — their shards live in no log, so this repair loop
-                // is their only heal path.
-                gossip::send_shard_repair_requests(&swarm_str, &author, &mut state, &sender).await;
-            }
+            // Inbound spool frames (files peers wrote to the shared dir) ride
+            // the same `ingest` path — self-echo + verify + dedup drop our own
+            // mirrored frames and any duplicates.
+            frame = recv_opt(&mut spool_rx) => match frame {
+                Some(bytes) => gossip::ingest(bytes, &mut state, &parts.ctx(&sender)).await,
+                None => spool_rx = None,
+            },
+            _ = intervals.prune.tick() =>
+                prune_arm(&mut state, &output, &sender, &swarm_str, &author).await,
             _ = intervals.alive.tick() => {
                 alive_arm(&mut anchors, &mut state, &sender, &swarm_str, &author).await;
             }
@@ -610,7 +680,7 @@ async fn event_loop(loop_state: EventLoop) -> Result<()> {
                 sweep_arm(&mut anchors, &mut state, &sender, &swarm_str, &author, &output).await;
             }
             _ = intervals.heal.tick() => {
-                let (mono_gap, wall_gap) = timers::note_tick_gap("heal", &mut anchors.heal, &mut anchors.heal_wall, Duration::from_secs(HEAL_INTERVAL_SECS));
+                let (mono_gap, wall_gap) = timers::note_tick_gap("heal", &mut anchors.heal, &mut anchors.heal_wall, Duration::from_secs(heal_interval_secs()));
                 if state.gossip_open {
                     let ctx = parts.ctx(&sender);
                     heal_tick(mono_gap, wall_gap, &mut state, &ctx, &rendezvous_params, cohost, started, &mut rendezvous).await;
@@ -718,7 +788,7 @@ fn is_pollable(event: &output::OutputEvent) -> bool {
 /// kill landing during that window can't strand the file with a still-fresh
 /// `last_updated`, leaving a ghost pill on the statusline.
 async fn shutdown(
-    sender: &GossipSender,
+    sender: &SwarmSender,
     swarm: &SwarmId,
     name: &SwarmName,
     author: &Nickname,
@@ -753,7 +823,7 @@ async fn shutdown(
 /// through so `main` unwinds and the profiler drops (safe because profiling runs
 /// use `--no-interactive`, i.e. no blocking stdin thread to hang shutdown).
 async fn announce_and_maybe_exit(
-    sender: &GossipSender,
+    sender: &SwarmSender,
     swarm: &SwarmId,
     name: &SwarmName,
     author: &Nickname,
@@ -767,6 +837,15 @@ async fn announce_and_maybe_exit(
     state.close_poll_waiters();
     state.close_a2a_waiters();
     shutdown(sender, swarm, name, author, state, output).await;
+    // Drain any frames still queued for the spool before we abort the process —
+    // otherwise `process::exit` kills the detached writer mid-flush and a
+    // burst-then-quit loses its tail (a sneakernet hand-off's last messages).
+    // Bounded so a wedged disk can't hang shutdown.
+    let _ = tokio::time::timeout(
+        Duration::from_secs(crate::util::consts::SPOOL_FLUSH_TIMEOUT_SECS),
+        sender.flush(),
+    )
+    .await;
     #[cfg(not(feature = "dhat-heap"))]
     if exit_on_quit {
         std::process::exit(0);
@@ -930,16 +1009,16 @@ fn finalize_ping_round(state: &mut EventLoopState, output: &output::Output) {
     let Some(round) = state.ping_round.take() else {
         return;
     };
-    // Fold this round's RTT + delivery into per-neighbour whisper telemetry (the
+    // Fold this round's RTT + delivery into per-neighbour circuit telemetry (the
     // metrics we advertise for our own links). Bounded to our **direct
-    // neighbours** — `whisper::self_vector` only advertises those, and the active
+    // neighbours** — `circuit::self_vector` only advertises those, and the active
     // view is capped by `--max-peers` — so the map can't grow over peer churn:
     // prune entries for peers no longer linked, and record only for linked ones.
     // (Collect first to avoid borrowing `participant_endpoints`/`linked_endpoints`
-    // while mutating `whisper_telemetry`.)
+    // while mutating `circuit_telemetry`.)
     let linked = state.linked_endpoints.clone();
     state
-        .whisper_telemetry
+        .circuit_telemetry
         .retain(|endpoint, _| linked.contains(endpoint));
     let neighbors: Vec<(Nickname, EndpointId)> = state
         .participant_endpoints
@@ -948,7 +1027,7 @@ fn finalize_ping_round(state: &mut EventLoopState, output: &output::Output) {
         .map(|(nickname, endpoint)| (nickname.clone(), *endpoint))
         .collect();
     for (nickname, endpoint) in neighbors {
-        let profile = state.whisper_telemetry.entry(endpoint).or_default();
+        let profile = state.circuit_telemetry.entry(endpoint).or_default();
         if let Some(arrival) = round.pongs.get(&nickname) {
             profile.record_rtt(arrival.duration_since(round.t1));
             profile.record_success();
@@ -1179,7 +1258,7 @@ struct CtxParts<'a> {
 }
 
 impl<'a> CtxParts<'a> {
-    fn ctx<'b>(&'b self, sender: &'b GossipSender) -> HandlerCtx<'b>
+    fn ctx<'b>(&'b self, sender: &'b SwarmSender) -> HandlerCtx<'b>
     where
         'a: 'b,
     {
@@ -1226,7 +1305,7 @@ async fn resubscribe_tick(
     params: &beacon::RendezvousParams,
     parts: &CtxParts<'_>,
     state: &mut EventLoopState,
-    sender: &mut GossipSender,
+    sender: &mut SwarmSender,
     receiver: &mut GossipReceiver,
     attempts: &mut u32,
     exit_on_quit: bool,
@@ -1234,7 +1313,9 @@ async fn resubscribe_tick(
     match try_resubscribe(gossip, params, state, attempts, parts.output).await {
         Resubscribe::Restored(new_sender, new_receiver) => {
             let mut dead_receiver = std::mem::replace(receiver, new_receiver);
-            *sender = new_sender;
+            // Swap only the inner gossip sender; the spool writer Arc survives
+            // the resubscribe so a healed daemon keeps mirroring.
+            sender.replace_gossip(new_sender);
             state.gossip_open = true;
             // The dead subscription's link view is void; the fresh one
             // emits its own NeighborUps (and re-arms the probe gate).
@@ -1344,7 +1425,7 @@ fn apply_rung_change(
 /// EOF/error). Split out of `event_loop` for the line budget.
 async fn handle_stdin_arm(
     result: std::io::Result<LineRead>,
-    sender: &GossipSender,
+    sender: &SwarmSender,
     swarm: &SwarmId,
     author: &Nickname,
     state: &mut EventLoopState,
@@ -1462,13 +1543,13 @@ async fn build_maintenance_intervals() -> MaintenanceIntervals {
     let mut sweep = tokio::time::interval(Duration::from_secs(sweep_interval_secs()));
     sweep.set_missed_tick_behavior(Skip);
     sweep.tick().await;
-    let mut heal = tokio::time::interval(Duration::from_secs(HEAL_INTERVAL_SECS));
+    let mut heal = tokio::time::interval(Duration::from_secs(heal_interval_secs()));
     heal.set_missed_tick_behavior(Skip);
     heal.tick().await;
     let mut reclaim = tokio::time::interval(Duration::from_millis(RECLAIM_INTERVAL_MS));
     reclaim.set_missed_tick_behavior(Skip);
     reclaim.tick().await;
-    let mut antientropy = tokio::time::interval(Duration::from_secs(ANTIENTROPY_INTERVAL_SECS));
+    let mut antientropy = tokio::time::interval(Duration::from_secs(antientropy_interval_secs()));
     antientropy.set_missed_tick_behavior(Skip);
     antientropy.tick().await;
     let mut state_refresh = tokio::time::interval(Duration::from_secs(STATE_REFRESH_SECS));

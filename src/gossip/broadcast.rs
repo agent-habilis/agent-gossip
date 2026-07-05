@@ -8,9 +8,9 @@
 
 use std::time::Instant;
 
+use crate::transport::SwarmSender;
 use bytes::Bytes;
 use iroh::Endpoint;
-use iroh_gossip::api::GossipSender;
 
 use crate::daemon::SessionRequest;
 use crate::daemon::ctx::HandlerCtx;
@@ -30,7 +30,7 @@ use crate::util::consts::{
 /// failed serialize must not block the daemon. A failed *broadcast* is
 /// logged — it means the gossip actor refused the send (the wedge the
 /// roster-collapse soak hit silently), not a routine empty room.
-pub(crate) async fn broadcast_msg(sender: &GossipSender, msg: &Message) {
+pub(crate) async fn broadcast_msg(sender: &SwarmSender, msg: &Message) {
     crate::logging::messages::log_out(msg);
     if let Ok(bytes) = msg.serialize()
         && let Err(error) = sender.broadcast(Bytes::from(bytes)).await
@@ -85,9 +85,18 @@ pub(crate) async fn broadcast_state_merge(
     // 2. Compose + sign + size-gate before the change touches the live doc.
     //    Carry the input merge as the surfaced delta only for agent-visible
     //    writes; the internal card publish stays lean (no delta on the wire).
-    let body = crate::daemon::state_doc::change_body(&change_bytes, surface.then_some(&merge))?;
-    let signed =
-        Message::new_channel_event(ctx.swarm, ctx.author, body, channel).signed(&state.identity);
+    //    On a passworded swarm the wire body is sealed under the channel key;
+    //    `plain_body` keeps the plaintext for our own surfacing below.
+    let (wire_body, plain_body) = match channel {
+        Channel::State => state
+            .state_doc
+            .compose_wire_body(&change_bytes, surface.then_some(&merge))?,
+        Channel::Meta => state
+            .meta_doc
+            .compose_wire_body(&change_bytes, surface.then_some(&merge))?,
+    };
+    let signed = Message::new_channel_event(ctx.swarm, ctx.author, wire_body, channel)
+        .signed(&state.identity);
     let bytes = signed.serialize()?;
     crate::logging::messages::log_out(&signed);
 
@@ -111,7 +120,11 @@ pub(crate) async fn broadcast_state_merge(
     // 4. Surface our own change, and gossip it (or buffer when unmeshed — the
     //    change is safe in the local doc for heads-based anti-entropy).
     if surface {
-        ctx.output.state_changed(channel, &signed, &after, true);
+        // Surface our own change from a plaintext-bodied view so the `m` delta
+        // renders even when the wire body we signed is sealed.
+        let mut surfaced = signed.clone();
+        surfaced.body = plain_body;
+        ctx.output.state_changed(channel, &surfaced, &after, true);
     }
     if state.meshed {
         ctx.sender
@@ -119,7 +132,14 @@ pub(crate) async fn broadcast_state_merge(
             .await
             .map_err(|error| anyhow::anyhow!("{error}"))?;
     } else {
-        let _ = state.pending_outbound.push(Bytes::from(bytes));
+        // Unmeshed: buffer for gossip until we mesh, and mirror to the spool
+        // only when the buffer accepted the frame — so we never export a change
+        // we've reported as un-buffered. (The change is already in the local
+        // doc, so heads anti-entropy still reconciles it if the buffer is full.)
+        let frame = Bytes::from(bytes);
+        if state.pending_outbound.push(frame.clone()) {
+            ctx.sender.spool(&frame);
+        }
     }
     Ok(())
 }
@@ -130,7 +150,7 @@ pub(crate) async fn broadcast_state_merge(
 /// re-sending it is invisible to `poll`/`fetch_messages` consumers —
 /// safe to repeat on every new neighbor.
 pub(super) async fn broadcast_peer_info(
-    sender: &GossipSender,
+    sender: &SwarmSender,
     swarm: &SwarmId,
     author: &Nickname,
     identity: &Identity,
@@ -154,7 +174,7 @@ pub(super) async fn broadcast_peer_info(
 /// Called once at the top of the event loop; the caller bumps
 /// `last_sent_at` afterwards.
 pub(super) async fn announce_arrival(
-    sender: &GossipSender,
+    sender: &SwarmSender,
     swarm: &SwarmId,
     author: &Nickname,
     identity: &Identity,
@@ -170,7 +190,7 @@ pub(super) async fn announce_arrival(
 /// oversize/serialize error handling) is identical to the IPC and embed paths.
 pub(crate) async fn handle_stdin_line(
     text: &str,
-    sender: &GossipSender,
+    sender: &SwarmSender,
     swarm: &SwarmId,
     author: &Nickname,
     state: &mut EventLoopState,
@@ -362,7 +382,7 @@ fn build_msg(
 /// of a split body commit silently. Errors if the unmeshed buffer is full.
 async fn send_msg_part(
     state: &mut EventLoopState,
-    sender: &GossipSender,
+    sender: &SwarmSender,
     out: &output::Output,
     msg: &Message,
     bytes: Bytes,
@@ -373,9 +393,15 @@ async fn send_msg_part(
         // Single send decision: a directed message goes point-to-point over
         // unicast when the addressee is dialable, else gossip (see `unicast`).
         crate::unicast::deliver(msg, bytes, state, sender).await?;
-    } else if state.pending_outbound.push(bytes) {
+    } else if state.pending_outbound.push(bytes.clone()) {
+        // Buffered for gossip; mirror to the spool now so a never-meshed spool
+        // daemon still exports it (on a later mesh, flush re-broadcasts and the
+        // spool tee is a no-op — the file already exists).
+        sender.spool(&bytes);
         commit_outbound_part(state, msg, out, echo);
     } else {
+        // Full buffer: the frame reaches no plane, so it must NOT be spooled —
+        // the reported drop has to match reality.
         tracing::warn!("pending outbound buffer full; outbound message dropped");
         return Err(anyhow::anyhow!(
             "pending outbound buffer full; message dropped"
@@ -421,7 +447,7 @@ pub(crate) async fn broadcast_message(
     author: &Nickname,
     text: MessageBody,
     state: &mut EventLoopState,
-    sender: &GossipSender,
+    sender: &SwarmSender,
     out: &output::Output,
 ) -> anyhow::Result<(MessageId, Message)> {
     let signer = state.identity.clone();
@@ -436,11 +462,20 @@ pub(crate) async fn broadcast_message(
     let payload_id =
         MessageId::new(payload.message_id.as_str()).expect("an a2a message id is a valid frame id");
     let body = crate::a2a::gossip::payload_body(&payload)?;
+    // On a passworded swarm, seal the chat body so a relay or a captured frame
+    // can't read it. Everything downstream (dedup, the per-author chain, the
+    // message log, anti-entropy) operates on the sealed frame; only the local
+    // echo + the returned Message carry plaintext.
+    let wire_body = match state.broadcast_key.as_deref() {
+        Some(key) => crate::daemon::state_doc::encrypt_body(&body, key)?,
+        None => body.clone(),
+    };
+    let encrypted = state.broadcast_key.is_some();
     // Fast path: the whole payload in one frame, its id the A2A messageId.
     let single = build_msg(
         swarm,
         author,
-        body.clone(),
+        wire_body.clone(),
         Some(payload_id.clone()),
         Some(ChainStamp {
             seq: state.self_seq,
@@ -453,6 +488,15 @@ pub(crate) async fn broadcast_message(
     if single.wire_len() <= MAX_MESSAGE_SIZE {
         let bytes = Bytes::from(single.serialize()?);
         let id = single.id.clone();
+        if encrypted {
+            // Commit + gossip the sealed frame silently, then echo/return a
+            // plaintext-bodied view so the operator/agent sees the text.
+            send_msg_part(state, sender, out, &single, bytes, false).await?;
+            let mut plain = single.clone();
+            plain.body = body;
+            out.print_message_ex(&plain, true);
+            return Ok((id, plain));
+        }
         send_msg_part(state, sender, out, &single, bytes, true).await?;
         return Ok((id, single));
     }
@@ -479,7 +523,10 @@ pub(crate) async fn broadcast_message(
         &signer,
     );
     let budget = shard_body_budget(&probe);
-    let chunks = split_body(body.as_str(), budget)
+    // Split the *wire* (sealed, when encrypted) body — shards carry chunks of
+    // the ciphertext envelope that reassemble into it; the receiver decrypts the
+    // reassembled body. The echoed/returned logical still carries plaintext.
+    let chunks = split_body(wire_body.as_str(), budget)
         .ok_or_else(|| anyhow::anyhow!("shard body budget is zero; cannot split"))?;
     let total = gate_multipart(&chunks, "message")?;
     // Atomic admission while unmeshed: all shards or none, so a half-buffered body
@@ -751,12 +798,16 @@ async fn build_offload_parts(
     let spool = crate::util::ensure_swarm_runtime_dir(swarm.as_str())
         .map_err(|error| anyhow::anyhow!("cannot prepare blob spool dir: {error}"))?
         .join(format!("{author}.blobs"));
+    // Every offloaded blob inherits the swarm password (if any), so a scraped
+    // ticket can't be redeemed without it.
+    let password = state.swarm_password.clone();
     let part = crate::blob::url_part(
         file,
         &mut state.blob_server,
         &lookups,
         spool,
         task_id.clone(),
+        password,
     )
     .await?;
     let mut parts = vec![part];
@@ -772,7 +823,7 @@ async fn build_offload_parts(
 /// is full.
 async fn send_task_leg(
     state: &mut EventLoopState,
-    sender: &GossipSender,
+    sender: &SwarmSender,
     out: &output::Output,
     msg: &Message,
     bytes: Bytes,
@@ -785,7 +836,10 @@ async fn send_task_leg(
         // the addressee is dialable, else gossip (see `unicast::deliver`).
         retain_leg(state, msg, out, echo, content);
         crate::unicast::deliver(msg, bytes, state, sender).await?;
-    } else if state.pending_outbound.push(bytes) {
+    } else if state.pending_outbound.push(bytes.clone()) {
+        // Buffered for gossip; mirror to the spool only on a successful buffer
+        // so a reported drop matches reality.
+        sender.spool(&bytes);
         retain_leg(state, msg, out, echo, content);
     } else {
         tracing::warn!("pending outbound buffer full; outbound message dropped");
@@ -895,7 +949,7 @@ pub(crate) async fn broadcast_a2a_call(
         unregistered.send_response(&rpc_error(-32603, "too many in-flight a2a calls"));
         return;
     }
-    // Directed request over the shared RPC sender: unicast → whisper → gossip
+    // Directed request over the shared RPC sender: unicast → circuit → gossip
     // per frame, splitting a large sealed body transparently.
     if let Err(error) = send_directed_rpc(ctx.swarm, ctx.author, kind, body, state, ctx.sender).await
     {
@@ -913,7 +967,7 @@ pub(crate) async fn send_shard_repair_requests(
     swarm: &SwarmId,
     author: &Nickname,
     state: &mut EventLoopState,
-    sender: &GossipSender,
+    sender: &SwarmSender,
 ) {
     let tickets = state.reassembly.repair_tickets(Instant::now());
     for ticket in tickets {
@@ -950,7 +1004,7 @@ pub(crate) async fn send_shard_repair_requests(
 
 /// Send one directed RPC frame (`A2aReq`/`A2aResp`), transparently splitting a
 /// sealed body too large for one frame into shard-tagged frames — each an
-/// ordinary directed frame riding the unicast → whisper → gossip cascade, so
+/// ordinary directed frame riding the unicast → circuit → gossip cascade, so
 /// the RPC plane is size-transparent like chat and task legs. RPC frames are
 /// plumbing (never logged), so the shards reassemble only in the receiver's
 /// dedicated store; the group id is a fresh uuid, single-purpose (the `rpc_id`
@@ -965,7 +1019,7 @@ pub(crate) async fn send_directed_rpc(
     kind: MessageKind,
     body: MessageBody,
     state: &mut EventLoopState,
-    sender: &GossipSender,
+    sender: &SwarmSender,
 ) -> anyhow::Result<()> {
     let signer = state.identity.clone();
     let single = Message::new_frame(swarm, author, kind.clone(), body.clone()).signed(&signer);
@@ -1086,8 +1140,7 @@ pub(crate) async fn handle_session_request(
             note,
             resp,
         } => {
-            let outcome =
-                emit_task_status(ctx, &task_id, task_state, note.as_deref(), state).await;
+            let outcome = emit_task_status(ctx, &task_id, task_state, note.as_deref(), state).await;
             let sent_ok = outcome.is_ok();
             let _ = resp.send(outcome);
             sent_ok

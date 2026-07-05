@@ -9,7 +9,7 @@
 //! Shared test infrastructure for integration tests.
 
 use std::fs::{self, File};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -24,19 +24,21 @@ pub(crate) const CONNECT_TIMEOUT: Duration = Duration::from_mins(1);
 /// Steady-state delivery budget: how long a meshed peer may take to surface a
 /// message/presence/task leg. The suite-wide standard for every positive
 /// (adaptive, break-on-success) delivery wait. A meshed in-process round trip
-/// is normally sub-second; the headroom is for a loaded CI host running the
-/// suite in a **debug** build, where crypto is ~10x slower than release and two
+/// is normally sub-second; the headroom is for a loaded CI host where two
 /// concurrent in-process meshes can stall a delivery well past a tighter
-/// budget. `wait_for`/`wait_until` are adaptive, so a healthy run returns
+/// budget (crypto-heavy deps are release-optimized even in dev builds via the
+/// `[profile.dev.package]` overrides, so debug crypto is no longer the
+/// bottleneck). `wait_for`/`wait_until` are adaptive, so a healthy run returns
 /// immediately and only a genuine stall pays the ceiling.
 pub(crate) const MSG_TIMEOUT: Duration = Duration::from_mins(1);
 pub(crate) const POLL: Duration = Duration::from_millis(250);
 
 /// Budget for a delivery asserted **after a disruption** (beacon death,
 /// SIGSTOP freeze, rendezvous migration, creator departure). Re-meshing waits
-/// on the fixed 15s heal cadence, so a recovery that just missed a tick needs
+/// on the heal cadence (production 15s; the reliability tests inject a short
+/// `--heal-interval-secs`), so a recovery that just missed a tick needs
 /// another cycle — the steady-state `MSG_TIMEOUT` (1 min) sits right on that
-/// cliff and flakes on a loaded host. 2 min clears ~8 heal cycles; `wait_until`
+/// cliff and flakes on a loaded host. 2 min clears many cycles; `wait_until`
 /// is adaptive, so a healthy run returns in seconds and only a genuine stall
 /// pays the ceiling. The extra headroom over a bare "few cycles" is for a host
 /// running real swarm daemons alongside the suite (dogfooding) — CPU starvation
@@ -140,6 +142,42 @@ pub(crate) fn tmp_log(tag: &str) -> PathBuf {
         std::process::id(),
         sequence
     ))
+}
+
+/// A fresh, unique scratch directory for a spool test, under the OS temp dir.
+/// Not pre-created — `spool::install` (via `--spool`) makes it.
+pub(crate) fn spool_dir(tag: &str) -> PathBuf {
+    let sequence = COUNTER.fetch_add(1, Ordering::Relaxed);
+    std::env::temp_dir().join(format!(
+        "agent-gossip-spool-{}-{}-{}",
+        tag,
+        std::process::id(),
+        sequence
+    ))
+}
+
+/// The per-swarm subdir a spool writes frames into (`<root>/<swarm-prefix>/`),
+/// mirroring `transport::spool::install`.
+pub(crate) fn spool_swarm_dir(root: &Path, swarm: &str) -> PathBuf {
+    root.join(agent_gossip::swarm_prefix(swarm))
+}
+
+/// Poll until the spool subdir holds at least `min` committed `.frame` files,
+/// or `timeout` elapses. Returns the count seen (so a caller can assert `>=`).
+pub(crate) async fn wait_for_frames(dir: &Path, min: usize, timeout: Duration) -> usize {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let count = fs::read_dir(dir).map_or(0, |entries| {
+            entries
+                .filter_map(Result::ok)
+                .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "frame"))
+                .count()
+        });
+        if count >= min || Instant::now() >= deadline {
+            return count;
+        }
+        tokio::time::sleep(POLL).await;
+    }
 }
 
 pub(crate) fn socket_path(swarm: &str, nickname: &str) -> String {
@@ -533,6 +571,32 @@ impl InProcNode {
         )
     }
 
+    /// Create a swarm that mirrors every frame into `spool` and ingests frames
+    /// other daemons write there (the filesystem spool, `--spool`).
+    pub(crate) async fn create_with_spool(name: &str, nick: &str, spool: &Path) -> Self {
+        let mut cfg = CreateConfig::new(test_swarm_name(name));
+        cfg.nickname = Some(Nickname::new(nick).expect("valid test nickname"));
+        cfg.spool = Some(spool.to_path_buf());
+        Self::from_session(
+            SwarmSession::create(cfg)
+                .await
+                .expect("in-process spool create failed"),
+        )
+    }
+
+    /// Join `swarm` (a `💬…` id), mirroring/ingesting frames through `spool`.
+    pub(crate) async fn join_with_spool(swarm: &str, nick: &str, spool: &Path) -> Self {
+        let target = swarm.parse().expect("valid test join target");
+        let mut cfg = JoinConfig::new(target);
+        cfg.nickname = Some(Nickname::new(nick).expect("valid test nickname"));
+        cfg.spool = Some(spool.to_path_buf());
+        Self::from_session(
+            SwarmSession::join(cfg)
+                .await
+                .expect("in-process spool join failed"),
+        )
+    }
+
     fn from_session(mut session: SwarmSession) -> Self {
         let rx = session.events().expect("events() receiver");
         let swarm = session.swarm_id().to_string();
@@ -780,11 +844,7 @@ impl InProcNode {
     /// Worker-emit a `TaskArtifactUpdate` whose result is a file, offloaded over
     /// the blob channel and referenced by a `Part.url`. Returns the daemon's echo
     /// so a test can read the minted `💬…` reference.
-    pub(crate) async fn task_artifact_file(
-        &self,
-        task_id: &TaskId,
-        path: &std::path::Path,
-    ) -> Message {
+    pub(crate) async fn task_artifact_file(&self, task_id: &TaskId, path: &Path) -> Message {
         self.session
             .task_artifact(
                 task_id.clone(),
@@ -1234,7 +1294,7 @@ impl Node {
         let sock = socket_path(swarm, &self.nickname);
         let deadline = Instant::now() + CONNECT_TIMEOUT;
         while Instant::now() < deadline {
-            if std::path::Path::new(&sock).exists() {
+            if Path::new(&sock).exists() {
                 return true;
             }
             std::thread::sleep(POLL);
@@ -1282,6 +1342,17 @@ impl Node {
     /// if the test didn't.)
     pub(crate) fn kill(&self) {
         self.signal("-KILL");
+    }
+
+    /// Block until the child exits **on its own** (e.g. after
+    /// [`sigint`](Self::sigint)). `Drop` SIGKILLs immediately, which
+    /// truncates a graceful shutdown mid-flight — the daemon never
+    /// finishes its `Left` broadcast + clean QUIC close, leaving peers
+    /// a zombie link that takes iroh's idle timeout to die. Reaping
+    /// here guarantees the shutdown (including socket release) fully
+    /// completed before the test proceeds.
+    pub(crate) fn wait_exit(&mut self) {
+        let _ = self.child.wait();
     }
 
     /// SIGSTOP — suspend the process (simulates sleep / a frozen

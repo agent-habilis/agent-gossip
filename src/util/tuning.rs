@@ -47,8 +47,13 @@ pub(crate) const KNOWN_ENDPOINTS_CAP: usize = 64;
 /// while partitioned/asleep. Short enough that a returning peer
 /// recovers within a couple of cycles; digests are small and a
 /// re-send only happens when there is an actual gap, so steady-state
-/// cost is one tiny message per interval.
-pub(crate) const ANTIENTROPY_INTERVAL_SECS: u64 = 10;
+/// cost is one tiny message per interval. Default
+/// [`crate::util::consts::ANTIENTROPY_INTERVAL_SECS`]; hidden flag
+/// `--antientropy-interval-secs` so the backfill tests reconcile in
+/// seconds. Clamped to `>= 1`.
+pub(crate) fn antientropy_interval_secs() -> u64 {
+    current().antientropy_interval_secs.max(1)
+}
 
 /// How often a node re-broadcasts its relay **link-state** vector (its own
 /// measured links) so every peer keeps a fresh routing graph. Steady-state cost
@@ -56,11 +61,11 @@ pub(crate) const ANTIENTROPY_INTERVAL_SECS: u64 = 10;
 /// is not yet wired, so this cadence bounds convergence time.
 pub(crate) const LINKSTATE_INTERVAL_SECS: u64 = 15;
 
-/// Max node-disjoint relay circuits tried (best-first) for one directed message
+/// Max node-disjoint circuits tried (best-first) for one directed message
 /// before falling back to gossip — the "up to N tries" retry budget. Kept small:
 /// disjoint alternates give diminishing returns and each is a full telescoping
 /// build.
-pub(crate) const WHISPER_MAX_PATHS: usize = 3;
+pub(crate) const CIRCUIT_MAX_PATHS: usize = 3;
 
 /// Max ids advertised per digest **window**. A digest carries up to two
 /// windows: an **open-ended newest** one (`[lo, i64::MAX]`, which drives
@@ -82,6 +87,15 @@ pub(crate) const ANTIENTROPY_DIGEST_WINDOW_IDS: usize = 70;
 /// hidden flag `--antientropy-max-resend` (tests raise it for deep backfill).
 pub(crate) fn antientropy_max_resend() -> usize {
     current().antientropy_max_resend.max(1)
+}
+
+/// Byte budget for one swarm's spool subdir before the writer's GC evicts the
+/// oldest `.frame` files. Default [`crate::util::consts::SPOOL_MAX_BYTES`]
+/// (64 `MiB`); hidden flag `--spool-max-bytes` so the GC test writes past a small
+/// cap instead of a 64 `MiB` fixture. Clamped `>= 1` so a `0` can't wedge the
+/// sweep into deleting everything each pass.
+pub(crate) fn spool_max_bytes() -> u64 {
+    current().spool_max_bytes.max(1)
 }
 
 /// Capacity of the embed facade's inbound broadcast channel. Bounded
@@ -178,6 +192,8 @@ pub(crate) fn ppid_watch_interval_ms() -> u64 {
 pub(crate) struct Tuning {
     pub alive_timeout_secs: u64,
     pub sweep_interval_secs: u64,
+    pub heal_interval_secs: u64,
+    pub antientropy_interval_secs: u64,
     pub task_timeout_secs: u64,
     pub task_keepalive_secs: u64,
     pub task_keepalive_max_secs: u64,
@@ -190,6 +206,7 @@ pub(crate) struct Tuning {
     pub advertise_interval_secs: u64,
     pub directory_expiry_secs: u64,
     pub antientropy_max_resend: usize,
+    pub spool_max_bytes: u64,
     pub directory_private: bool,
 }
 
@@ -198,6 +215,8 @@ impl Tuning {
     pub(crate) const DEFAULTS: Self = Self {
         alive_timeout_secs: crate::util::consts::ALIVE_TIMEOUT_SECS,
         sweep_interval_secs: crate::util::consts::SWEEP_INTERVAL_SECS,
+        heal_interval_secs: crate::util::consts::HEAL_INTERVAL_SECS,
+        antientropy_interval_secs: crate::util::consts::ANTIENTROPY_INTERVAL_SECS,
         task_timeout_secs: crate::util::consts::TASK_TIMEOUT_SECS,
         task_keepalive_secs: crate::util::consts::TASK_KEEPALIVE_SECS,
         task_keepalive_max_secs: crate::util::consts::TASK_KEEPALIVE_MAX_SECS,
@@ -210,6 +229,7 @@ impl Tuning {
         advertise_interval_secs: crate::util::consts::ADVERTISE_INTERVAL_SECS,
         directory_expiry_secs: crate::util::consts::DIRECTORY_EXPIRY_SECS,
         antientropy_max_resend: crate::util::consts::ANTIENTROPY_MAX_RESEND,
+        spool_max_bytes: crate::util::consts::SPOOL_MAX_BYTES,
         directory_private: false,
     };
 }
@@ -243,17 +263,22 @@ fn current() -> Tuning {
 pub(crate) const STATE_REFRESH_SECS: u64 = 10;
 
 /// Cadence of the unconditional gossip healer (`gossip::heal::tick_heal`).
-/// 15s balances fast re-mesh after a partition against steady-state
-/// cost — one detached rendezvous connect-probe plus one HyParView
-/// control message per tick when already healthy.
-pub(crate) const HEAL_INTERVAL_SECS: u64 = 15;
+/// The default balances fast re-mesh after a partition against
+/// steady-state cost — one detached rendezvous connect-probe plus one
+/// HyParView control message per tick when already healthy. Default
+/// [`crate::util::consts::HEAL_INTERVAL_SECS`]; hidden flag
+/// `--heal-interval-secs` so the subprocess reliability tests collapse the
+/// multi-cycle rendezvous-handoff floor to seconds. Clamped to `>= 1`.
+pub(crate) fn heal_interval_secs() -> u64 {
+    current().heal_interval_secs.max(1)
+}
 
 /// Consecutive failed gossip-topic resubscribe attempts (one per heal
 /// tick after the stream terminally ends) before the daemon gives up
 /// and shuts down. A subscribe error means the gossip actor itself is
-/// gone — endpoint closed, unrecoverable — so 8 (~2 min at the heal
-/// cadence) is generosity, not hope; a deaf daemon must not pose as a
-/// live member forever.
+/// gone — endpoint closed, unrecoverable — so 8 (~2 min at the default
+/// heal cadence) is generosity, not hope; a deaf daemon must not pose as
+/// a live member forever.
 pub(crate) const RESUBSCRIBE_MAX_ATTEMPTS: u32 = 8;
 
 /// Backoff bounds between failed IPC `accept`s. An accept error is
@@ -304,8 +329,10 @@ pub(crate) const POLL_LONG_MIN_CYCLE_MS: u64 = 1_000;
 
 /// Upper bound on the healer's detached rendezvous connect-probe.
 /// Generous enough to absorb a public relay/lookup warmup after a
-/// real network change, capped well under `HEAL_INTERVAL_SECS` so at
-/// most one probe task is ever outstanding.
+/// real network change, capped well under the default heal interval so
+/// at most one probe task is ever outstanding (probe sites clamp to
+/// `heal_interval_secs()` to preserve that when tests shorten the
+/// cadence).
 pub(crate) const HEAL_PROBE_SECS: u64 = 5;
 
 /// Probe budget for the resume-edge hard heal. Longer than
@@ -317,9 +344,10 @@ pub(crate) const HEAL_HARD_PROBE_SECS: u64 = 20;
 /// A heal inter-tick gap above this many seconds means the process was
 /// frozen between ticks (App Nap / coalescing / sleep) and must hard
 /// re-bootstrap. Default [`crate::util::consts::HEAL_STALL_THRESHOLD_SECS`]
-/// (60s) — safely above `HEAL_INTERVAL_SECS` (15s) so normal slack never
-/// trips it. Hidden flag `--heal-stall-threshold-secs` so subprocess tests
-/// drive it in seconds.
+/// (60s) — safely above the default heal interval (15s) so normal slack
+/// never trips it. Hidden flag `--heal-stall-threshold-secs` so subprocess
+/// tests drive it in seconds; a test shortening `--heal-interval-secs`
+/// must keep this comfortably above the cadence it injects.
 pub(crate) fn heal_stall_threshold_secs() -> u64 {
     current().heal_stall_threshold_secs
 }
@@ -370,8 +398,8 @@ pub(crate) const QUIET_CAP: usize = 1024;
 /// membership amplifier so a flapping/unstable peer is re-linked at most once
 /// per window instead of once per flap — the fix for the mesh-wide CPU
 /// runaway. `10s`: exceeds the QUIC idle timeout (a truly-gone peer isn't
-/// aggressively re-dialed) and is ≤ `HEAL_INTERVAL_SECS` (15s), so the healer
-/// stays the backstop for legitimate re-bridge. iroh-gossip's own membership
+/// aggressively re-dialed) and is ≤ the default heal interval (15s), so the
+/// healer stays the backstop for legitimate re-bridge. iroh-gossip's own membership
 /// still maintains links independently — this only throttles *our* piling-on.
 pub(crate) const RELINK_COOLDOWN_SECS: u64 = 10;
 

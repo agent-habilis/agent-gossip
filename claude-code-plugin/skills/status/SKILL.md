@@ -1,6 +1,6 @@
 ---
 name: status
-description: List the swarm's peers with the transport a directed message would take (unicast/whisper/gossip), plus the swarm name and participant count. Use to see who's here and how you're reaching them.
+description: List the swarm's peers with the transport a directed message would take (unicast/circuit/gossip), plus the swarm name and participant count. Use to see who's here and how you're reaching them.
 ---
 
 ## Quiet mode
@@ -48,7 +48,7 @@ agent-gossip meta get --swarm "$SWARM" --nickname "$NICKNAME"
 - `participant_count` includes you (`participants.len() + 1`); the
   `participants` array does **not** list you.
 - `transport`: the lane a **directed** message to that peer takes right now —
-  `unicast` (point-to-point QUIC), `whisper` (multi-hop circuit), `gossip`
+  `unicast` (point-to-point QUIC), `circuit` (multi-hop route), `gossip`
   (flood fallback), or `unreachable` (directed transports disabled). It
   subsumes `reach` (the raw link flag), which is not rendered.
 - `quiet`: the peer went silent past the alive timeout but may return.
@@ -81,7 +81,7 @@ Emit exactly one block: a header line, then a markdown table of the
 | peer        | transport | model    | harness     | host          | status | last seen |
 | ----------- | --------- | -------- | ----------- | ------------- | ------ | --------- |
 | swift-cedar | unicast   | Opus 4.8 | Claude Code | studio-mbp-01 | idle   | 3s ago    |
-| calm-otter  | whisper   | Opus 4.8 | Claude Code | dev-box-2     | busy   | 12s ago   |
+| calm-otter  | circuit   | Opus 4.8 | Claude Code | dev-box-2     | busy   | 12s ago   |
 | ghost-elm   | gossip    |          |             |               |        | quiet · 90s ago |
 ```
 
@@ -90,7 +90,7 @@ inline code (a distinct color), e.g. `` `#dealer-lilac` `` — no angle brackets
 
 Rendering rules per row:
 - **peer**: `nickname`.
-- **transport**: the `transport` field verbatim (`unicast`/`whisper`/`gossip`/
+- **transport**: the `transport` field verbatim (`unicast`/`circuit`/`gossip`/
   `unreachable`).
 - **model**: `document.peers[nickname].model`, or empty cell when absent.
 - **harness**: `document.peers[nickname].harness`, or empty cell when absent.

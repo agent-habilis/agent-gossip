@@ -20,7 +20,7 @@ use tokio::sync::Mutex;
 
 use crate::a2a::TaskId;
 use crate::lookup::build_endpoint;
-use crate::protocol::crypto::ct_eq;
+use crate::protocol::crypto::{Password, TicketAuth, ct_eq};
 use crate::protocol::swarm::LookupOpts;
 use crate::util::consts::MAX_BLOB_BYTES;
 
@@ -38,6 +38,10 @@ pub(crate) struct BlobServer {
     endpoint: Endpoint,
     store: Arc<Mutex<BlobStore>>,
     lookups: LookupOpts,
+    /// The swarm password, when the swarm is password-protected. Every minted
+    /// ticket inherits it, so a scraped ticket can't be redeemed without the
+    /// password. `None` ⇒ bare bearer-secret tickets (status quo).
+    password: Option<Password>,
 }
 
 impl BlobServer {
@@ -47,7 +51,11 @@ impl BlobServer {
     ///
     /// # Errors
     /// Endpoint bind or spool-directory creation fails.
-    pub(crate) async fn start(lookups: LookupOpts, spool_dir: PathBuf) -> Result<Self> {
+    pub(crate) async fn start(
+        lookups: LookupOpts,
+        spool_dir: PathBuf,
+        password: Option<Password>,
+    ) -> Result<Self> {
         let endpoint =
             build_endpoint(&lookups, None, None, vec![super::BLOB_ALPN.to_vec()]).await?;
         if !lookups.is_loopback() {
@@ -59,12 +67,16 @@ impl BlobServer {
             endpoint,
             store,
             lookups,
+            password,
         })
     }
 
     /// Offload `path` under `task_id`: stream-hash it off the event loop, snapshot
-    /// it into the spool, mint a per-blob bearer secret, and return the fetch
-    /// ticket to embed in a `Part.url`.
+    /// it into the spool, mint the per-blob capability, and return the fetch
+    /// ticket to embed in a `Part.url`. On a password-protected swarm the ticket
+    /// inherits the password: it carries a public salt, and the producer stores
+    /// the Argon2id stretch (precomputed here, off the event loop) as the compare
+    /// token so serving stays a cheap constant-time equality.
     ///
     /// # Errors
     /// The file is unreadable, exceeds `MAX_BLOB_BYTES`, or snapshotting fails.
@@ -73,21 +85,44 @@ impl BlobServer {
         if size > MAX_BLOB_BYTES {
             bail!("file too large to offload ({size} bytes > {MAX_BLOB_BYTES})");
         }
-        let mut proposed = [0u8; SECRET_LEN];
-        rand::rng().fill_bytes(&mut proposed);
-        let secret = self
-            .store
-            .lock()
-            .await
-            .snapshot(path, sha256, size, proposed, task_id)?;
-        Ok(BlobTicket {
+        let ticket = |registered: super::store::Registered| BlobTicket {
             addr: self.endpoint.addr(),
-            secret,
+            secret: registered.ticket_secret,
             sha256,
             size,
             lookups: self.lookups.clone(),
-            password: false,
-        })
+            password: registered.password,
+        };
+        // Content-addressed dedup: reuse an already-spooled blob's ticket without
+        // paying the ~100ms Argon2 stretch again. (A benign race with a
+        // concurrent offload of the same content is caught by `snapshot`'s own
+        // dedup below.)
+        if let Some(existing) = self.store.lock().await.registered(&sha256) {
+            return Ok(ticket(existing));
+        }
+        let mut salt = [0u8; SECRET_LEN];
+        rand::rng().fill_bytes(&mut salt);
+        let compare = match self.password.clone() {
+            Some(password) => {
+                // ~100ms of Argon2id off the async worker (mirrors swarm join).
+                tokio::task::spawn_blocking(move || TicketAuth::blob(&salt, Some(&password)).token)
+                    .await
+                    .context("blob token stretch task panicked")?
+            }
+            None => salt,
+        };
+        let registered = self.store.lock().await.snapshot(
+            path,
+            sha256,
+            size,
+            &super::store::NewSecret {
+                ticket_secret: salt,
+                compare_secret: compare,
+                password: self.password.is_some(),
+            },
+            task_id,
+        )?;
+        Ok(ticket(registered))
     }
 
     /// Drop every blob owned by `task_id` (the task idle-timeout sweep).

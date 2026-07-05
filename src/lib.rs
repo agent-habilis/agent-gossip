@@ -62,7 +62,7 @@ pub(crate) mod util;
         reason = "relay graph search / telemetry not yet reachable from production; wired in phases 3-4"
     )
 )]
-pub(crate) mod whisper;
+pub(crate) mod circuit;
 
 pub mod embed;
 
@@ -94,8 +94,8 @@ pub use unicast::TransportPolicy;
 // Wire/runtime constants the external test + bench crates assert against; the
 // rest of `util::consts` stays crate-internal.
 pub use util::consts::{MAX_LOGICAL_BODY_BYTES, MAX_MESSAGE_SIZE, MAX_SHARD_TOTAL, SWARM_GLYPH};
-pub use util::{ensure_runtime_base, runtime_base, swarm_prefix};
 pub use util::version::VERSION;
+pub use util::{ensure_runtime_base, runtime_base, swarm_prefix};
 
 use anyhow::Result;
 use clap::Parser;

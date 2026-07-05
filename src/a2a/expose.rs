@@ -107,7 +107,7 @@ pub(super) async fn bind(
     }
     let mut secret = [0u8; SECRET_LEN];
     rand::rng().fill_bytes(&mut secret);
-    let auth = TicketAuth::derive(&secret, password);
+    let auth = TicketAuth::a2a(&secret, password);
     let ticket = A2aTicket {
         addr: endpoint.addr(),
         secret,

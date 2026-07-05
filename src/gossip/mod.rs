@@ -29,8 +29,7 @@ pub(crate) use recv::{drain_dead_receiver, handle_gossip_event, ingest};
 /// link relayed and upgrades to direct after hole-punching, so a label
 /// taken right at `NeighborUp` skews toward `relay`; the periodic
 /// census reading is the representative one. Diagnostics only; other
-/// iroh apps wanted this too (sendme #67/#112, psyche #586). See
-/// docs/iroh-ecosystem-research.md.
+/// iroh apps wanted this too (sendme #67/#112, psyche #586).
 pub(crate) async fn conn_path(
     endpoint: &Endpoint,
     node_id: EndpointId,

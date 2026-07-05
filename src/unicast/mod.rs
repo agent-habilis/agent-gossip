@@ -31,8 +31,8 @@ pub struct TransportPolicy {
     pub unicast: bool,
     /// Let gossip carry (or fall back for) a directed message.
     pub gossip_directed: bool,
-    /// Attempt a multi-hop whisper circuit when there is no direct route.
-    pub whisper: bool,
+    /// Attempt a multi-hop circuit when there is no direct route.
+    pub circuit: bool,
 }
 
 impl Default for TransportPolicy {
@@ -40,7 +40,7 @@ impl Default for TransportPolicy {
         Self {
             unicast: true,
             gossip_directed: true,
-            whisper: true,
+            circuit: true,
         }
     }
 }
