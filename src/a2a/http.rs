@@ -6,7 +6,7 @@ use hyper::{Method, Request, Response, StatusCode};
 use tokio::net::TcpListener;
 use tokio::sync::{mpsc, oneshot};
 
-use crate::protocol::Nickname;
+use agent_habilis_gossip::protocol::Nickname;
 
 use super::rpc::{A2aOp, A2aRequest, RpcError, parse_op};
 

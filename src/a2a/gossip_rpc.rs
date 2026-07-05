@@ -13,8 +13,8 @@
 
 use serde_json::Value;
 
-use crate::daemon::state::EventLoopState;
-use crate::protocol::{Channel, Nickname};
+use crate::a2a::app::A2aApp;
+use agent_habilis_gossip::protocol::{Channel, Nickname};
 
 use super::TaskId;
 use super::rpc::{A2aOp, RpcError};
@@ -37,12 +37,7 @@ pub(crate) enum Served {
 /// Classify one gossip A2A request (`method` + `params`, from `requester`)
 /// into the safe action to run. Pure — reads `state` only for the
 /// `tasks/cancel` party check.
-pub(crate) fn classify(
-    method: &str,
-    params: &Value,
-    requester: &Nickname,
-    state: &EventLoopState,
-) -> Served {
+pub(crate) fn classify(method: &str, params: &Value, requester: &Nickname, app: &A2aApp) -> Served {
     let task_id = || {
         params["id"]
             .as_str()
@@ -69,7 +64,7 @@ pub(crate) fn classify(
             Ok(task_id) => {
                 // Party check: only a task's own peer may cancel it, so the
                 // caller can't cancel work it isn't part of.
-                let is_party = state
+                let is_party = app
                     .tasks
                     .get(&task_id)
                     .is_some_and(|rec| rec.peer == *requester);
@@ -118,18 +113,12 @@ pub(crate) fn classify(
 #[cfg(test)]
 mod tests {
     use super::{Served, classify};
-    use crate::daemon::state::EventLoopState;
-    use crate::protocol::Nickname;
+    use crate::a2a::app::A2aApp;
+    use agent_habilis_gossip::protocol::Nickname;
     use serde_json::json;
 
-    fn state() -> EventLoopState {
-        EventLoopState::new(
-            None,
-            std::time::Instant::now(),
-            std::sync::Arc::new(crate::protocol::identity::Identity::generate()),
-            None,
-            None,
-        )
+    fn state() -> A2aApp {
+        A2aApp::new()
     }
 
     fn is_reject(served: &Served) -> bool {

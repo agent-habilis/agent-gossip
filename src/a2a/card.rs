@@ -1,6 +1,6 @@
 use iroh::{Endpoint, EndpointAddr, EndpointId};
 
-use crate::protocol::nickname::Nickname;
+use agent_habilis_gossip::protocol::nickname::Nickname;
 
 use super::{
     AgentCapabilities, AgentCard, AgentExtension, AgentInterface, AgentSkill, EXT_SWARM_A2A_RPC,
@@ -166,7 +166,7 @@ pub(crate) fn peer_endpoint(
     peer: &Nickname,
 ) -> Option<(EndpointId, EndpointAddr)> {
     let hint = meta_doc.pointer(&format!("/peers/{peer}/card/endpoint"))?;
-    crate::protocol::peer_addr::endpoint_addr_from_json(hint).ok()
+    agent_habilis_gossip::protocol::peer_addr::endpoint_addr_from_json(hint).ok()
 }
 
 /// The RFC 7386 merge that publishes `card` at `/peers/<nick>/card`.
@@ -182,7 +182,7 @@ pub(crate) fn publish_merge(nickname: &Nickname, card: &AgentCard) -> serde_json
 #[cfg(test)]
 mod tests {
     use super::{own_card, publish_merge};
-    use crate::protocol::Nickname;
+    use agent_habilis_gossip::protocol::Nickname;
 
     #[test]
     fn card_declares_the_swarm_extensions_and_identity() {

@@ -9,7 +9,7 @@ use std::process::Command;
 use anyhow::{Context, Result, bail};
 use include_dir::Dir;
 
-use crate::util::output::{status, status_warn, warn};
+use agent_habilis_gossip::util::output::{status, status_warn, warn};
 
 use super::agent::{Agent, CC_PLUGIN, GENERIC_SKILL, PI_EXTENSION, home_dir, skipped};
 

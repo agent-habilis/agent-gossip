@@ -5,7 +5,7 @@
 
 use clap::Parser;
 
-use crate::protocol::SwarmId;
+use agent_habilis_gossip::protocol::SwarmId;
 
 use super::output::OutputFormat;
 

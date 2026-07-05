@@ -20,16 +20,19 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use crate::transport::SwarmSender;
+use agent_habilis_gossip::transport::SwarmSender;
 use bytes::Bytes;
 
-use crate::daemon::state::EventLoopState;
+use crate::a2a::app::A2aApp;
 use crate::output;
-use crate::protocol::{Message, MessageKind, Nickname, SwarmId};
-use crate::util::consts::TASK_CONTENT_CAP;
-use crate::util::tuning::{task_keepalive_max_secs, task_keepalive_secs, task_timeout_secs};
+use agent_habilis_gossip::daemon::state::EventLoopState;
+use agent_habilis_gossip::protocol::{Message, MessageKind, Nickname, SwarmId};
+use agent_habilis_gossip::util::consts::TASK_CONTENT_CAP;
+use agent_habilis_gossip::util::tuning::{
+    task_keepalive_max_secs, task_keepalive_secs, task_timeout_secs,
+};
 
-use super::{META_REASON, TaskId, TaskState, gossip};
+use super::{META_REASON, TaskId, TaskState, gossip, wire};
 
 /// My part in a task: did I open it (client side), or receive the offer
 /// (the worker — the task's A2A server)?
@@ -142,53 +145,48 @@ pub(crate) struct LegInfo<'a> {
 pub(crate) fn ingest(
     tasks: &mut HashMap<TaskId, TaskRecord>,
     frame: &Message,
+    task_id: &TaskId,
     mine: bool,
     now: Instant,
 ) -> bool {
-    let (to, kind, fraction, task_id) = match &frame.kind {
-        MessageKind::A2aStatus { to, task_id } => {
+    // A task leg is a directed status/artifact app frame. `a2a_msg` (broadcast
+    // chat) and every infra kind are never task legs; task `message/send` legs
+    // are applied directly from the RPC path, not through `ingest`. The caller
+    // already holds the `task_id` (8.0 moved it into the body, which is *sealed*
+    // on the sender's own echo — re-parsing it here would fail and silently drop
+    // the leg), so it is threaded in rather than recovered from the body.
+    let MessageKind::App {
+        tag, to: Some(to), ..
+    } = &frame.kind
+    else {
+        return false;
+    };
+    let (kind, fraction) = match tag.as_str() {
+        wire::STATUS => {
+            // A status leg still reads its state from the body. On the sender's
+            // own sealed status echo this parse fails → `return false`, so a
+            // status self-echo stays a no-op (a worker's status is authoritative
+            // once, on the receiver's unsealed leg) — exactly as pre-8.0.
             let Ok(payload) = gossip::status_payload(frame) else {
                 return false;
             };
             if gossip::is_beat(&payload) {
-                (
-                    to,
-                    LegKind::Beat,
-                    gossip::beat_fraction(&payload),
-                    task_id.clone(),
-                )
+                (LegKind::Beat, gossip::beat_fraction(&payload))
             } else {
-                (
-                    to,
-                    LegKind::Status(payload.status.state),
-                    None,
-                    task_id.clone(),
-                )
+                (LegKind::Status(payload.status.state), None)
             }
         }
-        MessageKind::A2aArtifact { to, task_id } => (to, LegKind::Artifact, None, task_id.clone()),
-        // `A2aMsg` is swarm broadcast chat, never a task leg. Task legs arrive
-        // as status/artifact push (above) or are applied directly from the
-        // RPC `message/send` path (`Offer`/`Text`), not through `ingest`.
-        MessageKind::A2aMsg
-        | MessageKind::Presence { .. }
-        | MessageKind::PeerInfo
-        | MessageKind::Digest
-        | MessageKind::StateDigest
-        | MessageKind::MetaDigest
-        | MessageKind::Ping
-        | MessageKind::Pong { .. }
-        | MessageKind::A2aReq { .. }
-        | MessageKind::A2aResp { .. }
-        | MessageKind::State
-        | MessageKind::Meta
-        | MessageKind::LinkState => return false,
+        // The artifact leg needs nothing from the (possibly sealed) body — the
+        // threaded `task_id` is enough to advance the record, so the sender's
+        // own artifact echo reaches `apply` and parks the task for review.
+        wire::ARTIFACT => (LegKind::Artifact, None),
+        _ => return false,
     };
     let peer = if mine { to } else { &frame.author };
     apply(
         tasks,
         &LegInfo {
-            task_id: &task_id,
+            task_id,
             peer,
             kind,
             mine,
@@ -410,9 +408,10 @@ fn advance(rec: &mut TaskRecord, kind: LegKind, mine: bool) {
 /// metadata) so the peer converges; the GC pass keeps `state.tasks` bounded
 /// (a terminal record older than the timeout is past the dedup window — no
 /// further leg for that task will arrive, so it is safe to drop). The task
-/// analogue of [`crate::lifecycle::heartbeat::tick_sweep`].
+/// analogue of [`agent_habilis_gossip::lifecycle::heartbeat::tick_sweep`].
 pub(crate) async fn tick_task_sweep(
     state: &mut EventLoopState,
+    app: &mut A2aApp,
     sender: &SwarmSender,
     swarm: &SwarmId,
     author: &Nickname,
@@ -420,7 +419,7 @@ pub(crate) async fn tick_task_sweep(
 ) {
     let now = Instant::now();
     let timeout = Duration::from_secs(task_timeout_secs());
-    let expired: Vec<(TaskId, Nickname)> = state
+    let expired: Vec<(TaskId, Nickname)> = app
         .tasks
         .iter()
         .filter(|(_, rec)| {
@@ -430,7 +429,7 @@ pub(crate) async fn tick_task_sweep(
         .collect();
 
     for (task_id, peer) in expired {
-        if let Some(rec) = state.tasks.get_mut(&task_id) {
+        if let Some(rec) = app.tasks.get_mut(&task_id) {
             rec.state = TaskState::Canceled;
         }
         out.task_timeout(&task_id);
@@ -449,7 +448,7 @@ pub(crate) async fn tick_task_sweep(
     // bounded over a long-lived daemon-side task churn (the analogue of the
     // heartbeat sweep pruning `quiet_since`). A reaped task's offloaded blobs go
     // with it — unlink their spool files (the review window has long closed).
-    let reaped: Vec<TaskId> = state
+    let reaped: Vec<TaskId> = app
         .tasks
         .iter()
         .filter(|(_, rec)| {
@@ -457,12 +456,16 @@ pub(crate) async fn tick_task_sweep(
         })
         .map(|(task_id, _)| task_id.clone())
         .collect();
-    if let Some(server) = state.blob_server.as_ref() {
+    if let Some(server) = app.blob_server.as_ref() {
         for task_id in &reaped {
-            server.evict_task(task_id).await;
+            server
+                .evict_task(&agent_habilis_gossip::blob::ContentId::new(
+                    task_id.as_str(),
+                ))
+                .await;
         }
     }
-    state.tasks.retain(|_, rec| {
+    app.tasks.retain(|_, rec| {
         !rec.state.is_terminal() || now.duration_since(rec.last_activity) <= timeout
     });
 }
@@ -472,10 +475,11 @@ pub(crate) async fn tick_task_sweep(
 /// has driven a leg recently — so a silent owner (deciding, executing,
 /// reviewing) does not wrongly time out, while a *crashed* skill's task is
 /// no longer covered and the peer's debounce reaps it. The task analogue of
-/// [`crate::lifecycle::heartbeat::tick_alive`]. See
+/// [`agent_habilis_gossip::lifecycle::heartbeat::tick_alive`]. See
 /// [`TaskRecord::should_keepalive`].
 pub(crate) async fn tick_task_keepalive(
     state: &mut EventLoopState,
+    app: &mut A2aApp,
     sender: &SwarmSender,
     swarm: &SwarmId,
     author: &Nickname,
@@ -486,7 +490,7 @@ pub(crate) async fn tick_task_keepalive(
     let now = Instant::now();
     let cadence = Duration::from_secs(task_keepalive_secs());
     let max_silence = Duration::from_secs(task_keepalive_max_secs());
-    let due: Vec<KeepaliveDue> = state
+    let due: Vec<KeepaliveDue> = app
         .tasks
         .iter()
         .filter(|(_, rec)| rec.should_keepalive(now, cadence, max_silence))
@@ -509,7 +513,7 @@ pub(crate) async fn tick_task_keepalive(
             Some(gossip::beat_metadata(fraction)),
         );
         broadcast_status(state, sender, swarm, author, &peer, &task_id, &update).await;
-        if let Some(rec) = state.tasks.get_mut(&task_id) {
+        if let Some(rec) = app.tasks.get_mut(&task_id) {
             rec.last_activity = Instant::now();
         }
     }
@@ -524,7 +528,9 @@ async fn broadcast_status(
     swarm: &SwarmId,
     author: &Nickname,
     peer: &Nickname,
-    task_id: &TaskId,
+    // The task id rides inside the status payload body (8.0); the envelope no
+    // longer carries it, so this is unused here beyond documenting the leg.
+    _task_id: &TaskId,
     update: &super::TaskStatusUpdate,
 ) {
     let Ok(body) = gossip::payload_body(update) else {
@@ -534,11 +540,15 @@ async fn broadcast_status(
     // frame (the receive path always unseals a directed body). If the peer's key
     // isn't known yet, skip this beat/cancel — it is fire-and-forget plumbing and
     // a later one retries.
-    let Ok(body) = crate::gossip::seal_directed(state, peer, &body) else {
+    let Ok(body) = crate::a2a::send::seal_directed(state, peer, &body) else {
         return;
     };
-    let msg = Message::new_a2a_status(swarm, author, peer.clone(), task_id.clone(), body)
-        .signed(&state.identity);
+    let kind = MessageKind::App {
+        tag: agent_habilis_gossip::protocol::AppTag::from(wire::STATUS),
+        to: Some(peer.clone()),
+        corr: None,
+    };
+    let msg = Message::new_frame(swarm, author, kind, body).signed(&state.identity);
     if let Ok(bytes) = msg.serialize() {
         let _ = sender.broadcast(Bytes::from(bytes)).await;
     }
@@ -548,7 +558,7 @@ async fn broadcast_status(
 mod tests {
     use super::{LegInfo, LegKind, TaskRole, TaskState, apply};
     use crate::a2a::TaskId;
-    use crate::protocol::Nickname;
+    use agent_habilis_gossip::protocol::Nickname;
     use std::collections::HashMap;
     use std::time::{Duration, Instant};
 
@@ -602,6 +612,83 @@ mod tests {
             mine,
             fraction: None,
         }
+    }
+
+    /// Regression for findings ① (daemon panic) + ② (state divergence): a
+    /// worker's OWN echoed artifact leg carries a **sealed** body on a
+    /// passworded swarm, so nothing may recover the task id by re-parsing it.
+    /// Threading the id into `ingest` means the self-echo still advances the
+    /// record to `input-required` (not stuck `working`); and the app surfaces
+    /// the *plaintext* logical frame (never the sealed wire body), so its JSON
+    /// render never panics on a missing task id.
+    ///
+    /// Pre-fix, `task::ingest` re-parsed the sealed body for the id → `None` →
+    /// returned before `apply`, leaving the task `working`; and the JSON sink's
+    /// `frame_task_id(msg).expect(...)` would panic on a body that (like
+    /// ciphertext) is not a valid payload.
+    #[test]
+    fn own_sealed_artifact_echo_advances_and_renders_without_panic() {
+        use agent_habilis_gossip::protocol::{AppTag, Message, MessageBody, SwarmId};
+
+        let mut tasks = HashMap::new();
+        let now = Instant::now();
+        let task_id = tid();
+        let swarm = SwarmId::from("💬test");
+
+        // Worker receives the offer (⇒ Receiver) and commits to `working`.
+        apply(&mut tasks, &leg(LegKind::Offer, false), now);
+        apply(
+            &mut tasks,
+            &leg(LegKind::Status(TaskState::Working), true),
+            now,
+        );
+        assert_eq!(tasks[&tid()].state, TaskState::Working);
+
+        // The worker's own echoed artifact leg: directed, body is a sealed
+        // ciphertext stand-in that does not parse as a `TaskArtifactUpdate`.
+        let sealed = Message::new_app(
+            &swarm,
+            &Nickname::from("worker-bot"),
+            AppTag::from(crate::a2a::wire::ARTIFACT),
+            Some(Nickname::from("calm-otter")),
+            None,
+            MessageBody::new("sealed-ciphertext-stand-in").expect("valid body"),
+        );
+        assert!(
+            crate::a2a::gossip::frame_task_id(&sealed).is_none(),
+            "a sealed body yields no parseable task id — the condition under test"
+        );
+
+        // ②: the self-echo still advances the record (id threaded, not parsed).
+        super::ingest(&mut tasks, &sealed, &task_id, true, now);
+        assert_eq!(
+            tasks[&tid()].state,
+            TaskState::InputRequired,
+            "the worker's own artifact echo must park the task for review"
+        );
+        assert!(tasks[&tid()].review);
+
+        // ①: the app surfaces the *plaintext* logical frame it built (the same
+        // `task_id`, unsealed), so rendering that self-echo as JSON must not
+        // panic and must carry the id.
+        let payload = crate::a2a::gossip::artifact_update(&swarm, &task_id, "result text");
+        let plaintext = Message::new_app(
+            &swarm,
+            &Nickname::from("worker-bot"),
+            AppTag::from(crate::a2a::wire::ARTIFACT),
+            Some(Nickname::from("calm-otter")),
+            None,
+            MessageBody::new(serde_json::to_string(&payload).expect("payload serializes"))
+                .expect("valid body"),
+        );
+        let line = crate::output::event_json(&crate::output::OutputEvent::Task {
+            msg: Box::new(plaintext),
+            is_self: true,
+        })
+        .expect("a task event renders a JSON line");
+        let parsed: serde_json::Value = serde_json::from_str(&line).expect("valid JSON");
+        assert_eq!(parsed["task_id"], task_id.as_str());
+        assert_eq!(parsed["self"], true);
     }
 
     /// Drive the happy-path lifecycle from the initiator's view and assert

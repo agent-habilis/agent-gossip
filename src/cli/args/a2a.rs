@@ -9,8 +9,8 @@ use clap::{Parser, Subcommand};
 use super::lookup::PublicLookupArgs;
 use super::output::OutputFormat;
 use crate::cli::password::PasswordFlag;
-use crate::protocol::swarm::SwarmName;
-use crate::protocol::{Nickname, SwarmId};
+use agent_habilis_gossip::protocol::swarm::SwarmName;
+use agent_habilis_gossip::protocol::{Nickname, SwarmId};
 
 #[derive(Parser, Debug)]
 pub(crate) struct A2aOpts {

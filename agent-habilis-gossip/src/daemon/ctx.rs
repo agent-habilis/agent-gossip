@@ -1,0 +1,55 @@
+//! `HandlerCtx`, hoisted here so both `gossip` and `lifecycle` share it.
+
+use iroh::{Endpoint, EndpointId};
+use tokio::sync::broadcast;
+
+use crate::gossip::event::MeshSink;
+use crate::protocol::identity::Identity;
+use crate::protocol::{Message, Nickname, SwarmId};
+use crate::transport::SwarmSender;
+
+/// Immutable loop-level context threaded through every handler.
+/// Bundles the refs a handler may need but never mutates itself.
+pub struct HandlerCtx<'a> {
+    pub sender: &'a SwarmSender,
+    pub endpoint: &'a Endpoint,
+    pub swarm: &'a SwarmId,
+    pub author: &'a Nickname,
+    /// This member's signing identity (Ed25519). Messages we author are
+    /// signed with it before broadcast; see [`Identity`].
+    pub identity: &'a Identity,
+    /// Our own public key as lowercase hex — computed once at loop setup so
+    /// the per-message self-echo check is a string compare, not a fresh
+    /// key-derivation + allocation on every inbound message.
+    pub our_pubkey: &'a str,
+    pub max_peers: usize,
+    /// Well-known rendezvous endpoint id. Its co-hosted pseudo-node
+    /// shows up as a gossip neighbor on participant endpoints; it is
+    /// filtered out of peer accounting everywhere it could leak.
+    pub rendezvous_id: EndpointId,
+    /// Embed facade push channel. `Some` only when a `SwarmSession`
+    /// drives the loop; every inbound message that survives the
+    /// self-author filter is forwarded here before kind routing.
+    /// `None` for CLI/MCP.
+    pub external_msg_tx: Option<&'a broadcast::Sender<Message>>,
+    /// Per-loop generic event sink: the engine emits
+    /// [`MeshEvent`](crate::gossip::event::MeshEvent) through it and never names
+    /// the app's concrete `Output`. Borrowed for the loop's lifetime; handlers
+    /// emit through `ctx.sink`. The app layer reaches its own renderer
+    /// separately (it owns the concrete `Output`).
+    pub sink: &'a dyn MeshSink,
+}
+
+// Manual: `sink` is a `&dyn MeshSink` trait object with no `Debug` bound, so
+// the struct can't derive. The identity fields below are what a log reader cares
+// about; the borrowed handles are elided.
+impl std::fmt::Debug for HandlerCtx<'_> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("HandlerCtx")
+            .field("swarm", &self.swarm)
+            .field("author", &self.author)
+            .field("rendezvous_id", &self.rendezvous_id)
+            .finish_non_exhaustive()
+    }
+}

@@ -5,7 +5,7 @@
 
 use clap::Parser;
 
-use crate::util::consts;
+use agent_habilis_gossip::util::consts;
 
 use super::output::OutputFormat;
 
@@ -67,10 +67,10 @@ pub(crate) struct SharedServerOpts {
     pub spool: Option<std::path::PathBuf>,
 
     // ── Hidden tuning knobs ───────────────────────────────────────
-    // Not in `--help`. Production runs on the `crate::util::consts`
+    // Not in `--help`. Production runs on the `agent_habilis_gossip::util::consts`
     // defaults below; the subprocess test suite passes these to run with
     // short timings. These replace the former env-var overrides — see
-    // `crate::util::tuning`.
+    // `agent_habilis_gossip::util::tuning`.
     /// Peer-eviction silence timeout (seconds).
     #[arg(long, hide = true, default_value_t = consts::ALIVE_TIMEOUT_SECS)]
     pub alive_timeout_secs: u64,
@@ -169,9 +169,9 @@ impl SharedServerOpts {
         self.no_interactive || matches!(self.output, OutputFormat::Json)
     }
 
-    /// The process tuning carried by these flags, for [`crate::util::tuning::init`].
-    pub(crate) fn tuning(&self) -> crate::util::tuning::Tuning {
-        crate::util::tuning::Tuning {
+    /// The process tuning carried by these flags, for [`agent_habilis_gossip::util::tuning::init`].
+    pub(crate) fn tuning(&self) -> agent_habilis_gossip::util::tuning::Tuning {
+        agent_habilis_gossip::util::tuning::Tuning {
             alive_timeout_secs: self.alive_timeout_secs,
             sweep_interval_secs: self.sweep_interval_secs,
             heal_interval_secs: self.heal_interval_secs,

@@ -1,23 +1,18 @@
-//! Stamp the build's git identity into compile-time env vars so the binary
-//! self-identifies its exact commit (see `src/util/version.rs`):
-//! `VERGEN_GIT_SHA` (short hash) and `VERGEN_GIT_DIRTY` ("true"/"false").
+//! Stage the integration artifacts the `agent-gossip setup` installer embeds.
 //!
-//! `idempotent()` keeps a non-git build (released tarball / `cargo install`
-//! from crates.io) compiling — the vars are emitted with a placeholder rather
-//! than failing the build. vergen also sets the right `rerun-if-changed`
-//! (`.git/HEAD` + the active ref) so the stamp never goes stale.
-//!
-//! It also **stages a filtered copy of `pi-extension/`** into `OUT_DIR` so
-//! `src/cli/setup.rs` can `include_dir!` the TS source *without* the 200 MB+
+//! It **stages a filtered copy of `pi-extension/`** into `OUT_DIR` so
+//! `src/cli/agent.rs` can `include_dir!` the TS source *without* the 200 MB+
 //! local `node_modules/` (gitignored, present after `bun install`) being baked
 //! into the binary, and emits an **embed fingerprint** so editing any embedded
 //! artifact forces a rebuild (`include_dir!` is otherwise untracked on stable).
+//!
+//! The git version stamp (`VERGEN_GIT_*`, feeding `util::version::VERSION`)
+//! lives in the engine crate's build script (`agent-habilis-gossip/build.rs`),
+//! since `util::version` is an engine module.
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::path::Path;
-
-use vergen_gitcl::{Emitter, GitclBuilder};
 
 /// Names never staged/embedded — shared verbatim with `src/cli/setup.rs`'s
 /// write-out filter via one `include!`d fragment, so staging and write-out can
@@ -31,18 +26,8 @@ const SKIP: &[&str] = include!(concat!(
 const EMBED_DIRS: &[&str] = &["claude-code-plugin", "pi-extension", "skills/gossip"];
 
 fn main() {
-    // Embed staging + fingerprint run first so they execute even on the
-    // non-git early-return path below — `setup.rs`'s `env!` needs the var.
     stage_pi_extension();
     emit_embed_fingerprint();
-
-    let Ok(gitcl) = GitclBuilder::default().sha(true).dirty(true).build() else {
-        return;
-    };
-    let _ = Emitter::default()
-        .idempotent()
-        .add_instructions(&gitcl)
-        .and_then(|emitter| emitter.emit());
 }
 
 /// Copy `pi-extension/` → `$OUT_DIR/pi-extension/`, skipping [`SKIP`], so

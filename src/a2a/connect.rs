@@ -12,8 +12,8 @@ use tokio::io::AsyncWriteExt;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Mutex;
 
-use crate::lookup::{add_peer_addr, build_participant_endpoint};
-use crate::protocol::crypto::{Password, TicketAuth};
+use agent_habilis_gossip::lookup::{add_peer_addr, build_participant_endpoint};
+use agent_habilis_gossip::protocol::crypto::{Password, TicketAuth};
 
 use super::A2A_ALPN;
 use super::card_rewrite::CardRewriter;

@@ -5,7 +5,7 @@
 
 use clap::{Parser, Subcommand};
 
-use crate::protocol::{Nickname, SwarmId};
+use agent_habilis_gossip::protocol::{Nickname, SwarmId};
 
 #[derive(Parser, Debug)]
 pub(crate) struct StateOpts {

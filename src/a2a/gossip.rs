@@ -1,12 +1,12 @@
 use anyhow::{Context, Result, bail};
 
-use crate::protocol::Message as Frame;
-use crate::protocol::swarm::SwarmId;
-use crate::protocol::{MessageBody, MessageKind};
+use agent_habilis_gossip::protocol::Message as Frame;
+use agent_habilis_gossip::protocol::MessageBody;
+use agent_habilis_gossip::protocol::swarm::SwarmId;
 
 use super::{
     EXT_SWARM_BROADCAST, META_BEAT, META_DONE, META_TOTAL, Message, Part, Role, TaskArtifactUpdate,
-    TaskId, TaskState, TaskStatus, TaskStatusUpdate,
+    TaskId, TaskState, TaskStatus, TaskStatusUpdate, wire,
 };
 
 /// Compose a broadcast chat payload: `role: user` (chat is a client-side
@@ -75,9 +75,9 @@ pub(crate) fn payload_body<T: serde::Serialize>(payload: &T) -> Result<MessageBo
 /// # Errors
 /// A payload that fails to parse or any frame/payload mismatch above.
 pub fn chat_payload(frame: &Frame) -> Result<Message> {
-    let MessageKind::A2aMsg = &frame.kind else {
+    if !frame.kind.is_app(wire::MSG) {
         bail!("not an a2a_msg frame");
-    };
+    }
     let payload: Message =
         serde_json::from_str(frame.body.as_str()).context("invalid a2a message payload")?;
     if payload.message_id.as_str() != frame.id.as_str() {
@@ -104,7 +104,7 @@ pub fn chat_payload(frame: &Frame) -> Result<Message> {
 /// `None` for a non-chat frame or an unparseable payload.
 #[must_use]
 pub fn chat_text(frame: &Frame) -> Option<String> {
-    if !matches!(frame.kind, MessageKind::A2aMsg) {
+    if !frame.kind.is_app(wire::MSG) {
         return None;
     }
     serde_json::from_str::<Message>(frame.body.as_str())
@@ -212,14 +212,11 @@ pub fn artifact_update_parts(
 /// # Errors
 /// A payload that fails to parse or contradicts its frame.
 pub fn status_payload(frame: &Frame) -> Result<TaskStatusUpdate> {
-    let MessageKind::A2aStatus { task_id, .. } = &frame.kind else {
+    if !frame.kind.is_app(wire::STATUS) {
         bail!("not an a2a_status frame");
-    };
+    }
     let payload: TaskStatusUpdate =
         serde_json::from_str(frame.body.as_str()).context("invalid a2a status payload")?;
-    if payload.task_id != *task_id {
-        bail!("a2a status taskId does not match the frame");
-    }
     if payload.context_id != frame.swarm.as_str() {
         bail!("a2a status contextId does not name the frame's swarm");
     }
@@ -231,14 +228,11 @@ pub fn status_payload(frame: &Frame) -> Result<TaskStatusUpdate> {
 /// # Errors
 /// A payload that fails to parse or contradicts its frame.
 pub fn artifact_payload(frame: &Frame) -> Result<TaskArtifactUpdate> {
-    let MessageKind::A2aArtifact { task_id, .. } = &frame.kind else {
+    if !frame.kind.is_app(wire::ARTIFACT) {
         bail!("not an a2a_artifact frame");
-    };
+    }
     let payload: TaskArtifactUpdate =
         serde_json::from_str(frame.body.as_str()).context("invalid a2a artifact payload")?;
-    if payload.task_id != *task_id {
-        bail!("a2a artifact taskId does not match the frame");
-    }
     if payload.context_id != frame.swarm.as_str() {
         bail!("a2a artifact contextId does not name the frame's swarm");
     }
@@ -273,23 +267,16 @@ pub fn beat_fraction(update: &TaskStatusUpdate) -> Option<(u64, u64)> {
 /// (plumbing), so `None` for everything else.
 #[must_use]
 pub fn frame_task_id(frame: &Frame) -> Option<TaskId> {
-    match &frame.kind {
-        MessageKind::A2aStatus { task_id, .. } | MessageKind::A2aArtifact { task_id, .. } => {
-            Some(task_id.clone())
-        }
-        MessageKind::A2aMsg
-        | MessageKind::Presence { .. }
-        | MessageKind::PeerInfo
-        | MessageKind::Digest
-        | MessageKind::StateDigest
-        | MessageKind::MetaDigest
-        | MessageKind::Ping
-        | MessageKind::Pong { .. }
-        | MessageKind::A2aReq { .. }
-        | MessageKind::A2aResp { .. }
-        | MessageKind::State
-        | MessageKind::Meta
-        | MessageKind::LinkState => None,
+    // `task_id` is no longer an envelope field (8.0); it rides inside the body it
+    // was always duplicated into, so we read it from there.
+    match frame.kind.app_tag()?.as_str() {
+        wire::STATUS => serde_json::from_str::<TaskStatusUpdate>(frame.body.as_str())
+            .ok()
+            .map(|payload| payload.task_id),
+        wire::ARTIFACT => serde_json::from_str::<TaskArtifactUpdate>(frame.body.as_str())
+            .ok()
+            .map(|payload| payload.task_id),
+        _ => None,
     }
 }
 
@@ -298,22 +285,10 @@ pub fn frame_task_id(frame: &Frame) -> Option<TaskId> {
 /// `None` for non-task-push kinds.
 #[must_use]
 pub fn task_event_kind(frame: &Frame) -> Option<&'static str> {
-    match &frame.kind {
-        MessageKind::A2aStatus { .. } => Some("status-update"),
-        MessageKind::A2aArtifact { .. } => Some("artifact-update"),
-        MessageKind::A2aMsg
-        | MessageKind::Presence { .. }
-        | MessageKind::PeerInfo
-        | MessageKind::Digest
-        | MessageKind::StateDigest
-        | MessageKind::MetaDigest
-        | MessageKind::Ping
-        | MessageKind::Pong { .. }
-        | MessageKind::A2aReq { .. }
-        | MessageKind::A2aResp { .. }
-        | MessageKind::State
-        | MessageKind::Meta
-        | MessageKind::LinkState => None,
+    match frame.kind.app_tag()?.as_str() {
+        wire::STATUS => Some("status-update"),
+        wire::ARTIFACT => Some("artifact-update"),
+        _ => None,
     }
 }
 
@@ -322,26 +297,12 @@ pub fn task_event_kind(frame: &Frame) -> Option<&'static str> {
 /// non-task-push kinds or an unparseable payload.
 #[must_use]
 pub fn frame_task_state(frame: &Frame) -> Option<TaskState> {
-    match &frame.kind {
-        MessageKind::A2aStatus { .. } => {
-            serde_json::from_str::<TaskStatusUpdate>(frame.body.as_str())
-                .ok()
-                .map(|payload| payload.status.state)
-        }
-        MessageKind::A2aArtifact { .. } => Some(TaskState::InputRequired),
-        MessageKind::A2aMsg
-        | MessageKind::Presence { .. }
-        | MessageKind::PeerInfo
-        | MessageKind::Digest
-        | MessageKind::StateDigest
-        | MessageKind::MetaDigest
-        | MessageKind::Ping
-        | MessageKind::Pong { .. }
-        | MessageKind::A2aReq { .. }
-        | MessageKind::A2aResp { .. }
-        | MessageKind::State
-        | MessageKind::Meta
-        | MessageKind::LinkState => None,
+    match frame.kind.app_tag()?.as_str() {
+        wire::STATUS => serde_json::from_str::<TaskStatusUpdate>(frame.body.as_str())
+            .ok()
+            .map(|payload| payload.status.state),
+        wire::ARTIFACT => Some(TaskState::InputRequired),
+        _ => None,
     }
 }
 
@@ -349,41 +310,29 @@ pub fn frame_task_state(frame: &Frame) -> Option<TaskState> {
 /// or an artifact's parts.
 #[must_use]
 pub fn task_text(frame: &Frame) -> String {
-    match &frame.kind {
-        MessageKind::A2aStatus { .. } => {
-            serde_json::from_str::<TaskStatusUpdate>(frame.body.as_str())
-                .ok()
-                .and_then(|payload| payload.status.message.map(|msg| display_text(&msg)))
-                .unwrap_or_default()
-        }
-        MessageKind::A2aArtifact { .. } => {
-            serde_json::from_str::<TaskArtifactUpdate>(frame.body.as_str())
-                .ok()
-                .map(|payload| parts_text(&payload.artifact.parts))
-                .unwrap_or_default()
-        }
-        MessageKind::A2aMsg
-        | MessageKind::Presence { .. }
-        | MessageKind::PeerInfo
-        | MessageKind::Digest
-        | MessageKind::StateDigest
-        | MessageKind::MetaDigest
-        | MessageKind::Ping
-        | MessageKind::Pong { .. }
-        | MessageKind::A2aReq { .. }
-        | MessageKind::A2aResp { .. }
-        | MessageKind::State
-        | MessageKind::Meta
-        | MessageKind::LinkState => String::new(),
+    match frame
+        .kind
+        .app_tag()
+        .map(agent_habilis_gossip::protocol::AppTag::as_str)
+    {
+        Some(wire::STATUS) => serde_json::from_str::<TaskStatusUpdate>(frame.body.as_str())
+            .ok()
+            .and_then(|payload| payload.status.message.map(|msg| display_text(&msg)))
+            .unwrap_or_default(),
+        Some(wire::ARTIFACT) => serde_json::from_str::<TaskArtifactUpdate>(frame.body.as_str())
+            .ok()
+            .map(|payload| parts_text(&payload.artifact.parts))
+            .unwrap_or_default(),
+        _ => String::new(),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{Frame, chat_message, chat_payload, display_text, payload_body};
-    use crate::protocol::MessageKind;
-    use crate::protocol::message::MessageId;
-    use crate::protocol::swarm::SwarmId;
+    use agent_habilis_gossip::protocol::MessageKind;
+    use agent_habilis_gossip::protocol::message::MessageId;
+    use agent_habilis_gossip::protocol::swarm::SwarmId;
 
     fn swarm() -> SwarmId {
         SwarmId::from("💬test")
@@ -393,7 +342,10 @@ mod tests {
     /// payload's messageId, the invariant `broadcast_message` establishes.
     fn frame_for(payload: &super::Message) -> Frame {
         let body = payload_body(payload).expect("payload serializes");
-        let mut frame = Frame::fixture(MessageKind::A2aMsg, body.as_str());
+        let mut frame = Frame::fixture(
+            MessageKind::app_broadcast(crate::a2a::wire::MSG),
+            body.as_str(),
+        );
         frame.id = MessageId::new(payload.message_id.as_str()).expect("a2a id is a uuid");
         frame
     }
@@ -433,7 +385,10 @@ mod tests {
 
     #[test]
     fn non_json_body_is_rejected() {
-        let frame = Frame::fixture(MessageKind::A2aMsg, "plain text");
+        let frame = Frame::fixture(
+            MessageKind::app_broadcast(crate::a2a::wire::MSG),
+            "plain text",
+        );
         assert!(chat_payload(&frame).is_err());
     }
 }

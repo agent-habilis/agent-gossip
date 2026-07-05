@@ -12,9 +12,9 @@
     reason = "opaque bench-only newtypes; never surfaced or formatted"
 )]
 
-use crate::protocol::crypto;
-use crate::protocol::swarm::{LookupOpts, RelayChoice, Swarm, SwarmConfig};
 use crate::{Message, MessageBody, Nickname, SwarmId, SwarmName};
+use agent_habilis_gossip::protocol::crypto;
+use agent_habilis_gossip::protocol::swarm::{LookupOpts, RelayChoice, Swarm, SwarmConfig};
 
 /// A swarm config built from non-test constructors (the `SwarmConfig`
 /// ctors are `#[cfg(test)]`). `loopback` = no lookups; `public` = the
@@ -114,9 +114,12 @@ impl BenchMessage {
         let swarm = SwarmId::new(swarm_token(&name, &BenchConfig::loopback()))
             .expect("Swarm::to_string is a valid SwarmId");
         let author = Nickname::new("bench-author").expect("valid nickname");
-        Self(Message::new_a2a_msg(
+        Self(Message::new_app(
             &swarm,
             &author,
+            agent_habilis_gossip::protocol::AppTag::from(crate::a2a::wire::MSG),
+            None,
+            None,
             MessageBody::new(body).expect("valid body"),
         ))
     }

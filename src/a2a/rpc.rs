@@ -1,12 +1,14 @@
 use serde_json::Value;
 use tokio::sync::oneshot;
 
-use crate::daemon::ctx::HandlerCtx;
-use crate::daemon::state::EventLoopState;
-use crate::gossip::{broadcast_message, broadcast_state_merge};
+use crate::a2a::app::A2aApp;
+use crate::a2a::send::{broadcast_message, emit_task_status};
 use crate::output;
-use crate::protocol::swarm::SwarmId;
-use crate::protocol::{Channel, MessageBody, Nickname};
+use agent_habilis_gossip::daemon::state::EventLoopState;
+use agent_habilis_gossip::gossip::broadcast_state_merge;
+use agent_habilis_gossip::protocol::swarm::SwarmId;
+use agent_habilis_gossip::protocol::{Channel, MessageBody, Nickname};
+use agent_habilis_gossip::transport::SwarmSender;
 
 use super::{TaskId, task::TaskRecord, task::TaskRole};
 
@@ -193,52 +195,61 @@ pub(crate) fn task_object(task_id: &TaskId, rec: &TaskRecord, swarm: &SwarmId) -
 /// Execute one op against the live loop state — the JSON-RPC binding's
 /// dispatch, sharing the exact broadcast paths the IPC socket uses so the
 /// two bindings cannot drift.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the JSON-RPC op dispatch threads swarm/author identity, our pubkey, the local a2a port, plus the mesh state, app state, gossip sender, and output it executes through"
+)]
 pub(crate) async fn handle_op(
     op: A2aOp,
-    ctx: &HandlerCtx<'_>,
+    swarm: &SwarmId,
+    author: &Nickname,
+    our_pubkey: &str,
     a2a_port: u16,
     state: &mut EventLoopState,
+    app: &mut A2aApp,
+    sender: &SwarmSender,
+    output: &output::Output,
 ) -> Result<Value, RpcError> {
     match op {
         A2aOp::SendMessage { to, message } => {
-            send_message(
-                to, message, ctx.swarm, ctx.author, state, ctx.sender, ctx.output,
-            )
-            .await
+            send_message(to, message, swarm, author, state, sender, output).await
         }
-        A2aOp::GetTask { task_id } => state
+        A2aOp::GetTask { task_id } => app
             .tasks
             .get(&task_id)
-            .map(|rec| task_object(&task_id, rec, ctx.swarm))
+            .map(|rec| task_object(&task_id, rec, swarm))
             .ok_or_else(|| RpcError::task_not_found(&task_id)),
         A2aOp::ListTasks => {
             // Sort by task id so the response order is stable across calls
-            // (`state.tasks` is a HashMap with unspecified iteration order).
-            let mut entries: Vec<(&TaskId, &TaskRecord)> = state.tasks.iter().collect();
+            // (`app.tasks` is a HashMap with unspecified iteration order).
+            let mut entries: Vec<(&TaskId, &TaskRecord)> = app.tasks.iter().collect();
             entries.sort_by(|left, right| left.0.as_str().cmp(right.0.as_str()));
             let tasks: Vec<Value> = entries
                 .into_iter()
-                .map(|(task_id, rec)| task_object(task_id, rec, ctx.swarm))
+                .map(|(task_id, rec)| task_object(task_id, rec, swarm))
                 .collect();
             Ok(serde_json::json!({ "tasks": tasks }))
         }
         A2aOp::CancelTask { task_id } => {
-            if !state.tasks.contains_key(&task_id) {
+            if !app.tasks.contains_key(&task_id) {
                 return Err(RpcError::task_not_found(&task_id));
             }
-            crate::gossip::emit_task_status(
-                ctx,
+            emit_task_status(
+                swarm,
+                author,
                 &task_id,
                 super::TaskState::Canceled,
                 Some("canceled"),
                 state,
+                app,
+                sender,
+                output,
             )
             .await
             .map_err(|error| RpcError::internal(error.to_string()))?;
-            state
-                .tasks
+            app.tasks
                 .get(&task_id)
-                .map(|rec| task_object(&task_id, rec, ctx.swarm))
+                .map(|rec| task_object(&task_id, rec, swarm))
                 .ok_or_else(|| RpcError::task_not_found(&task_id))
         }
         A2aOp::ChannelGet { channel } => {
@@ -249,14 +260,14 @@ pub(crate) async fn handle_op(
             Ok(document)
         }
         A2aOp::ChannelMerge { channel, merge } => {
-            broadcast_state_merge(ctx, merge, state, channel, true)
+            broadcast_state_merge(swarm, author, merge, state, sender, output, channel, true)
                 .await
                 .map_err(|error| RpcError::internal(error.to_string()))?;
             Ok(serde_json::json!({ "ok": true }))
         }
         A2aOp::OwnCard => {
             let seal_b58 = bs58::encode(state.identity.seal_public()).into_string();
-            let mut card = super::card::own_card(ctx.author, ctx.our_pubkey, &seal_b58);
+            let mut card = super::card::own_card(author, our_pubkey, &seal_b58);
             // Served over the localhost binding, so advertise the JSONRPC
             // interface alongside the always-present gossip one.
             card.supported_interfaces.push(super::AgentInterface {
@@ -311,7 +322,7 @@ async fn send_message(
     swarm: &SwarmId,
     author: &Nickname,
     state: &mut EventLoopState,
-    sender: &crate::transport::SwarmSender,
+    sender: &SwarmSender,
     output: &output::Output,
 ) -> Result<Value, RpcError> {
     if to.is_some() {

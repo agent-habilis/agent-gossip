@@ -8,12 +8,12 @@ use std::sync::Mutex;
 use anyhow::Result;
 
 use crate::a2a::TaskId;
-use crate::daemon::state::RosterSnapshot;
 use crate::embed::{
     CreateConfig, CreateError, InProcessSession, JoinConfig, JoinError, TopicConfig,
 };
-use crate::protocol::swarm::SwarmName;
-use crate::protocol::{Message, MessageBody, MessageId, Nickname, SwarmId};
+use agent_habilis_gossip::daemon::state::RosterSnapshot;
+use agent_habilis_gossip::protocol::swarm::SwarmName;
+use agent_habilis_gossip::protocol::{Message, MessageBody, MessageId, Nickname, SwarmId};
 
 /// One active swarm for the MCP server: the shared [`InProcessSession`]
 /// core (poll-only, silent) plus the per-session implicit `after` cursor.
@@ -113,7 +113,7 @@ impl Session {
         file_name: Option<String>,
         file_mime: Option<String>,
     ) -> Result<(MessageId, Message)> {
-        let file = file.map(|path| crate::blob::FileRef {
+        let file = file.map(|path| agent_habilis_gossip::blob::FileRef {
             path,
             name: file_name,
             mime: file_mime,
@@ -202,7 +202,7 @@ impl Session {
         &self,
         after: Option<u64>,
         long: bool,
-    ) -> Result<Vec<crate::daemon::surfaced::SurfacedEvent>> {
+    ) -> Result<Vec<crate::a2a::surfaced::SurfacedEvent>> {
         let events = self.inner.fetch(self.effective_after(after), long).await?;
         if after.is_none()
             && let Some(seq) = events.last().map(|item| item.seq)
@@ -235,8 +235,8 @@ mod tests {
 
     use super::{Message, MessageBody, MessageId, Nickname, Session, SwarmId, SwarmName};
     use crate::embed::{CreateConfig, JoinConfig};
-    use crate::protocol::{MessageKind, PresenceSubtype};
-    use crate::resolver::JoinTarget;
+    use agent_habilis_gossip::protocol::{MessageKind, PresenceSubtype};
+    use agent_habilis_gossip::resolver::JoinTarget;
 
     // All tests use the private network (loopback) so they work on
     // any CI without public iroh DNS / relay access.

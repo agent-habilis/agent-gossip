@@ -4,7 +4,8 @@ use xshell::{Shell, cmd};
 
 #[expect(
     dead_code,
-    reason = "shared cargo-style helpers included from src/cli/output.rs; the task runner uses a subset"
+    unreachable_pub,
+    reason = "shared cargo-style helpers included from the engine's src/util/output.rs; the task runner uses a subset, and the shared source marks them `pub` for the app's cross-crate use"
 )]
 pub(crate) mod output;
 

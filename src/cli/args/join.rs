@@ -3,8 +3,8 @@
 use clap::Parser;
 
 use crate::cli::password::PasswordFlag;
-use crate::protocol::Nickname;
-use crate::resolver::JoinTarget;
+use agent_habilis_gossip::protocol::Nickname;
+use agent_habilis_gossip::resolver::JoinTarget;
 
 use super::shared::SharedServerOpts;
 

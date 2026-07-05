@@ -3,7 +3,7 @@
 
 use clap::Parser;
 
-use crate::protocol::{Nickname, SwarmId};
+use agent_habilis_gossip::protocol::{Nickname, SwarmId};
 
 #[derive(Parser, Debug)]
 pub(crate) struct TopologyOpts {

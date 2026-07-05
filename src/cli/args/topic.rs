@@ -1,6 +1,6 @@
 use clap::Parser;
 
-use crate::protocol::Nickname;
+use agent_habilis_gossip::protocol::Nickname;
 
 use super::shared::SharedServerOpts;
 
@@ -71,7 +71,7 @@ mod tests {
         assert_eq!(
             opts.nickname
                 .as_ref()
-                .map(crate::protocol::Nickname::as_str),
+                .map(agent_habilis_gossip::protocol::Nickname::as_str),
             Some("me")
         );
     }

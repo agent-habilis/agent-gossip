@@ -3,7 +3,7 @@
 
 use clap::Parser;
 
-use crate::protocol::swarm::SwarmName;
+use agent_habilis_gossip::protocol::swarm::SwarmName;
 
 use super::lookup::PublicLookupArgs;
 use super::shared::SharedServerOpts;
@@ -33,7 +33,7 @@ mod tests {
     use clap::Parser;
 
     use crate::cli::args::{Cli, Commands};
-    use crate::protocol::swarm::SwarmName;
+    use agent_habilis_gossip::protocol::swarm::SwarmName;
 
     #[test]
     fn discover_parses_directory() {

@@ -18,7 +18,7 @@ pub(crate) struct ReadyOpts {
     pub state_file: std::path::PathBuf,
 
     /// Max seconds to wait for the daemon to start serving before giving up.
-    #[arg(long, default_value_t = crate::util::tuning::READY_MAX_SECS)]
+    #[arg(long, default_value_t = agent_habilis_gossip::util::tuning::READY_MAX_SECS)]
     pub timeout_secs: u64,
 
     /// Output format. `human` (default) is a silent gate (exit code only);

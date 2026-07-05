@@ -4,11 +4,12 @@ use anstyle::{AnsiColor, Style};
 use anyhow::Result;
 use serde::Serialize;
 
-use crate::lookup::{self, NetworkCapability};
-use crate::protocol::SwarmId;
-use crate::protocol::swarm::{RelayChoice, Swarm};
-use crate::transport::ipc::{self, IpcCommand};
-use crate::util::output;
+use crate::a2a::ipc::IpcCommand;
+use agent_habilis_gossip::lookup::{self, NetworkCapability};
+use agent_habilis_gossip::protocol::SwarmId;
+use agent_habilis_gossip::protocol::swarm::{RelayChoice, Swarm};
+use agent_habilis_gossip::transport::ipc;
+use agent_habilis_gossip::util::output;
 
 use super::agent::{self, AgentState};
 use super::args::{DoctorOpts, OutputFormat};
@@ -139,7 +140,11 @@ async fn machine_report(no_probe: bool) -> Report {
 
 fn environment_section() -> Section {
     let checks = vec![
-        Check::new("agent-gossip", Verdict::Ok, crate::util::version::VERSION),
+        Check::new(
+            "agent-gossip",
+            Verdict::Ok,
+            agent_habilis_gossip::util::version::VERSION,
+        ),
         Check::new(
             "platform",
             Verdict::Ok,
@@ -148,12 +153,12 @@ fn environment_section() -> Section {
         Check::new(
             "log dir",
             Verdict::Ok,
-            output::home_path(&crate::util::logs::log_dir()),
+            output::home_path(&agent_habilis_gossip::util::logs::log_dir()),
         ),
         Check::new(
             "runtime dir",
             Verdict::Ok,
-            output::home_path(&crate::util::runtime_base()),
+            output::home_path(&agent_habilis_gossip::util::runtime_base()),
         ),
     ];
     Section {
@@ -516,7 +521,8 @@ async fn live_reachability_section(swarm: &Swarm) -> Section {
 
             let reached = lookup::probe_connect(&endpoint, addr, RENDEZVOUS_TIMEOUT).await;
             if reached {
-                let (path, relay) = crate::gossip::conn_path(&endpoint, rendezvous_id).await;
+                let (path, relay) =
+                    agent_habilis_gossip::gossip::conn_path(&endpoint, rendezvous_id).await;
                 let detail = match relay {
                     Some(url) => format!("reachable — {path} path (relay {url})"),
                     None => format!("reachable — {path} path"),

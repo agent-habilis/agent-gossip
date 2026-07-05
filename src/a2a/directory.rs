@@ -18,13 +18,13 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinHandle;
 
-use crate::daemon::CoHostPolicy;
-use crate::directory::directory_swarm;
 use crate::embed::{DIRECTORY_ADVERTISER_COHOST, SwarmSession};
-use crate::protocol::swarm::{LookupOpts, LookupSet, SwarmName, resolve_lookups};
-use crate::protocol::{MessageBody, Nickname, SwarmId};
-use crate::util::clock::unix_secs;
-use crate::util::tuning::{
+use agent_habilis_gossip::daemon::CoHostPolicy;
+use agent_habilis_gossip::directory::directory_swarm;
+use agent_habilis_gossip::protocol::swarm::{LookupOpts, LookupSet, SwarmName, resolve_lookups};
+use agent_habilis_gossip::protocol::{MessageBody, Nickname, SwarmId};
+use agent_habilis_gossip::util::clock::unix_secs;
+use agent_habilis_gossip::util::tuning::{
     advertise_interval_secs, directory_expiry_secs, directory_private_for_test,
 };
 
@@ -348,7 +348,7 @@ mod tests {
 
     use super::{TicketAd, TicketChange, TicketListings};
     use crate::a2a::ticket::A2aTicket;
-    use crate::protocol::swarm::LookupOpts;
+    use agent_habilis_gossip::protocol::swarm::LookupOpts;
     use iroh::{EndpointAddr, SecretKey};
 
     fn a2a_ticket(secret: u8, password: bool) -> String {

@@ -16,22 +16,24 @@ use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio::task::JoinHandle;
 
 use crate::a2a::TaskId;
-use crate::daemon::setup::{SetupKind, SetupParams, setup_swarm};
-use crate::daemon::state::RosterSnapshot;
-use crate::daemon::{
-    CoHostPolicy, CreateParams, DriverMode, EventLoopConfig, JoinParams, Resolved, SessionRequest,
-    TopicParams,
-};
-use crate::directory::{self, Listing, ListingChange, Listings, directory_swarm};
+use crate::a2a::session::SessionRequest;
 use crate::output::{Output, OutputEvent};
-use crate::protocol::swarm::{
+use agent_habilis_gossip::daemon::setup::{SetupKind, SetupParams, setup_swarm};
+use agent_habilis_gossip::daemon::state::RosterSnapshot;
+use agent_habilis_gossip::daemon::{
+    CoHostPolicy, CreateParams, DriverMode, EventLoopConfig, JoinParams, Resolved, TopicParams,
+};
+use agent_habilis_gossip::directory::{self, Listing, ListingChange, Listings, directory_swarm};
+use agent_habilis_gossip::protocol::swarm::{
     DEFAULT_DIRECTORY, DirectorySelection, LookupOpts, LookupSet, Swarm, SwarmConfig, SwarmName,
     resolve_lookups,
 };
-use crate::protocol::{Message, MessageBody, Nickname, SwarmId};
-use crate::resolver::JoinTarget;
-use crate::util::consts::GOSSIP_ACTIVE_VIEW_CAPACITY;
-use crate::util::tuning::{EMBED_INBOUND_CAP, advertise_interval_secs, directory_expiry_secs};
+use agent_habilis_gossip::protocol::{Message, MessageBody, Nickname, SwarmId};
+use agent_habilis_gossip::resolver::JoinTarget;
+use agent_habilis_gossip::util::consts::GOSSIP_ACTIVE_VIEW_CAPACITY;
+use agent_habilis_gossip::util::tuning::{
+    EMBED_INBOUND_CAP, advertise_interval_secs, directory_expiry_secs,
+};
 
 /// How to join a swarm.
 #[derive(Debug, Clone)]
@@ -179,7 +181,7 @@ impl fmt::Display for CreateError {
                 write!(
                     formatter,
                     "{}",
-                    crate::protocol::swarm::AdvertiseRequiresReachable
+                    agent_habilis_gossip::protocol::swarm::AdvertiseRequiresReachable
                 )
             }
             CreateError::Setup(error) => write!(formatter, "{error}"),
@@ -242,7 +244,14 @@ fn capture() -> (Output, mpsc::UnboundedReceiver<OutputEvent>) {
 async fn create_setup(
     cfg: CreateConfig,
     output: Output,
-) -> Result<(EventLoopConfig, Option<JoinHandle<()>>), CreateError> {
+) -> Result<
+    (
+        EventLoopConfig,
+        crate::a2a::app::SurfacedIo,
+        Option<JoinHandle<()>>,
+    ),
+    CreateError,
+> {
     let config = SwarmConfig {
         lookups: resolve_lookups(cfg.public, cfg.lookups),
         password: None,
@@ -267,10 +276,14 @@ async fn create_setup(
         nickname: cfg.nickname,
         config,
         advertise,
-        password: cfg.password.map(crate::protocol::crypto::Password::new),
+        password: cfg
+            .password
+            .map(agent_habilis_gossip::protocol::crypto::Password::new),
     }
     .resolve()
     .map_err(|_| CreateError::AdvertiseRequiresReachable)?;
+    let io = crate::a2a::app::SurfacedIo::new(output);
+    let sink = io.sink();
     let mut elc = setup_swarm(
         kind,
         SetupParams {
@@ -279,7 +292,7 @@ async fn create_setup(
             max_peers,
             state_file: None,
             spool: cfg.spool,
-            output,
+            sink,
             drift: None,
             a2a_serve: None,
         },
@@ -291,7 +304,7 @@ async fn create_setup(
     // at-most-once closure, so no clone).
     let advertiser = advertise_directory
         .map(|directory| spawn_advertiser(&mut elc, directory, directory_lookups));
-    Ok((elc, advertiser))
+    Ok((elc, io, advertiser))
 }
 
 /// Resolve + set up a join: the ready [`EventLoopConfig`]. The caller picks
@@ -299,11 +312,16 @@ async fn create_setup(
 ///
 /// # Errors
 /// [`JoinError::Resolve`] / [`JoinError::Setup`].
-async fn join_setup(cfg: JoinConfig, output: Output) -> Result<EventLoopConfig, JoinError> {
+async fn join_setup(
+    cfg: JoinConfig,
+    output: Output,
+) -> Result<(EventLoopConfig, crate::a2a::app::SurfacedIo), JoinError> {
     let resolved = JoinParams {
         target: cfg.target,
         nickname: cfg.nickname,
-        password: cfg.password.map(crate::protocol::crypto::Password::new),
+        password: cfg
+            .password
+            .map(agent_habilis_gossip::protocol::crypto::Password::new),
     }
     .resolve()
     .map_err(JoinError::Resolve)?;
@@ -315,7 +333,10 @@ async fn join_setup(cfg: JoinConfig, output: Output) -> Result<EventLoopConfig, 
 /// # Errors
 /// [`JoinError::Resolve`] if the string is empty/whitespace;
 /// [`JoinError::Setup`] on endpoint/gossip failure.
-async fn topic_setup(cfg: TopicConfig, output: Output) -> Result<EventLoopConfig, JoinError> {
+async fn topic_setup(
+    cfg: TopicConfig,
+    output: Output,
+) -> Result<(EventLoopConfig, crate::a2a::app::SurfacedIo), JoinError> {
     let resolved = TopicParams {
         string: cfg.string,
         nickname: cfg.nickname,
@@ -332,9 +353,11 @@ async fn resolved_setup(
     max_peers: usize,
     spool: Option<std::path::PathBuf>,
     output: Output,
-) -> Result<EventLoopConfig, JoinError> {
+) -> Result<(EventLoopConfig, crate::a2a::app::SurfacedIo), JoinError> {
     let Resolved { kind, author, .. } = resolved;
-    setup_swarm(
+    let io = crate::a2a::app::SurfacedIo::new(output);
+    let sink = io.sink();
+    let elc = setup_swarm(
         kind,
         SetupParams {
             author,
@@ -342,13 +365,14 @@ async fn resolved_setup(
             max_peers,
             state_file: None,
             spool,
-            output,
+            sink,
             drift: None,
             a2a_serve: None,
         },
     )
     .await
-    .map_err(|error| JoinError::Setup(error.context("setup_swarm failed")))
+    .map_err(|error| JoinError::Setup(error.context("setup_swarm failed")))?;
+    Ok((elc, io))
 }
 
 /// The in-process session core shared by the public [`SwarmSession`] (embed
@@ -378,6 +402,7 @@ impl InProcessSession {
     /// living inside a foreground command that owns its own lifetime.
     fn spawn(
         mut elc: EventLoopConfig,
+        io: crate::a2a::app::SurfacedIo,
         advertiser: Option<JoinHandle<()>>,
         push: Option<broadcast::Sender<Message>>,
         handle_signals: bool,
@@ -386,14 +411,23 @@ impl InProcessSession {
         let (quit_tx, quit_rx) = mpsc::channel::<()>(1);
         elc.driver = DriverMode::InProcess {
             msg_tx: push,
-            req_rx,
             quit_rx,
             handle_signals,
         };
+        // The tapped `io` (built in `*_setup`) already backs `elc.sink`: the
+        // engine emits `MeshEvent`s through `io.sink()`, and the app renders the
+        // same tap. Build the app from that same `io` so surfaced events reach
+        // the app-side ring the in-process `Poll` drains.
+        let app = crate::a2a::app::A2aApp::with_io(io);
         let swarm_id = elc.swarm.clone();
         let name = elc.name.clone();
         let nickname = elc.author.clone();
-        let task = tokio::spawn(crate::daemon::run(elc));
+        let task = tokio::spawn(agent_habilis_gossip::daemon::run(
+            elc,
+            app,
+            Some(req_rx),
+            None::<mpsc::Receiver<crate::a2a::rpc::A2aRequest>>,
+        ));
         Self {
             swarm_id,
             name,
@@ -410,8 +444,8 @@ impl InProcessSession {
     /// # Errors
     /// [`CreateError::AdvertiseRequiresReachable`] / [`CreateError::Setup`].
     pub(crate) async fn create_poll(cfg: CreateConfig) -> Result<Self, CreateError> {
-        let (elc, advertiser) = create_setup(cfg, Output::silent()).await?;
-        Ok(Self::spawn(elc, advertiser, None, true))
+        let (elc, io, advertiser) = create_setup(cfg, Output::silent()).await?;
+        Ok(Self::spawn(elc, io, advertiser, None, true))
     }
 
     /// Join an existing swarm as a poll-only, silent core (the MCP server).
@@ -419,8 +453,8 @@ impl InProcessSession {
     /// # Errors
     /// [`JoinError::Resolve`] / [`JoinError::Setup`].
     pub(crate) async fn join_poll(cfg: JoinConfig) -> Result<Self, JoinError> {
-        let elc = join_setup(cfg, Output::silent()).await?;
-        Ok(Self::spawn(elc, None, None, true))
+        let (elc, io) = join_setup(cfg, Output::silent()).await?;
+        Ok(Self::spawn(elc, io, None, None, true))
     }
 
     /// Join a topic (string-derived public swarm) as a poll-only, silent core
@@ -430,8 +464,8 @@ impl InProcessSession {
     /// [`JoinError::Resolve`] on an empty string; [`JoinError::Setup`] on
     /// endpoint/gossip failure.
     pub(crate) async fn topic_poll(cfg: TopicConfig) -> Result<Self, JoinError> {
-        let elc = topic_setup(cfg, Output::silent()).await?;
-        Ok(Self::spawn(elc, None, None, true))
+        let (elc, io) = topic_setup(cfg, Output::silent()).await?;
+        Ok(Self::spawn(elc, io, None, None, true))
     }
 
     pub(crate) fn swarm_id(&self) -> &SwarmId {
@@ -478,7 +512,7 @@ impl InProcessSession {
         &self,
         after: Option<u64>,
         long: bool,
-    ) -> anyhow::Result<Vec<crate::daemon::surfaced::SurfacedEvent>> {
+    ) -> anyhow::Result<Vec<crate::a2a::surfaced::SurfacedEvent>> {
         let (resp_tx, resp_rx) = oneshot::channel();
         self.req_tx
             .send(SessionRequest::Poll {
@@ -528,7 +562,7 @@ impl InProcessSession {
         &self,
         task_id: TaskId,
         text: String,
-        file: Option<crate::blob::FileRef>,
+        file: Option<agent_habilis_gossip::blob::FileRef>,
     ) -> anyhow::Result<Message> {
         let (resp_tx, resp_rx) = oneshot::channel();
         self.req_tx
@@ -599,9 +633,18 @@ impl InProcessSession {
             .send(SessionRequest::Ping { resp: resp_tx })
             .await
             .map_err(|_| anyhow::anyhow!("swarm event loop has stopped"))?;
-        resp_rx
+        let rows = resp_rx
             .await
-            .map_err(|_| anyhow::anyhow!("swarm event loop dropped the response"))
+            .map_err(|_| anyhow::anyhow!("swarm event loop dropped the response"))?;
+        // Map the engine's chat-agnostic RTT rows onto the app's public ping
+        // datum — same fields, distinct layers.
+        Ok(rows
+            .into_iter()
+            .map(|row| crate::output::PingPeer {
+                nickname: row.nickname,
+                rtt_ms: row.rtt_ms,
+            })
+            .collect())
     }
 
     /// Apply an RFC 7386 JSON Merge Patch to the shared state. Any JSON value is a
@@ -764,8 +807,8 @@ impl SwarmSession {
     /// [`JoinError::Setup`] on endpoint/gossip failure.
     pub async fn join(cfg: JoinConfig) -> Result<Self, JoinError> {
         let (output, events_rx) = capture();
-        let elc = join_setup(cfg, output).await?;
-        Ok(Self::with_events(elc, None, events_rx))
+        let (elc, io) = join_setup(cfg, output).await?;
+        Ok(Self::with_events(elc, io, None, events_rx))
     }
 
     /// Join a topic — a public swarm derived deterministically from
@@ -777,8 +820,8 @@ impl SwarmSession {
     /// [`JoinError::Setup`] on endpoint/gossip failure.
     pub async fn topic(cfg: TopicConfig) -> Result<Self, JoinError> {
         let (output, events_rx) = capture();
-        let elc = topic_setup(cfg, output).await?;
-        Ok(Self::with_events(elc, None, events_rx))
+        let (elc, io) = topic_setup(cfg, output).await?;
+        Ok(Self::with_events(elc, io, None, events_rx))
     }
 
     /// Create a new swarm and spawn its event loop in the background.
@@ -789,8 +832,8 @@ impl SwarmSession {
     /// loopback-only swarm; [`CreateError::Setup`] on endpoint/gossip failure.
     pub async fn create(cfg: CreateConfig) -> Result<Self, CreateError> {
         let (output, events_rx) = capture();
-        let (elc, advertiser) = create_setup(cfg, output).await?;
-        Ok(Self::with_events(elc, advertiser, events_rx))
+        let (elc, io, advertiser) = create_setup(cfg, output).await?;
+        Ok(Self::with_events(elc, io, advertiser, events_rx))
     }
 
     /// Join an already-decoded [`Swarm`] with an explicit co-host policy —
@@ -809,6 +852,8 @@ impl SwarmSession {
     ) -> anyhow::Result<Self> {
         let author = nickname.unwrap_or_else(Nickname::random);
         let (output, events_rx) = capture();
+        let io = crate::a2a::app::SurfacedIo::new(output);
+        let sink = io.sink();
         let mut elc = setup_swarm(
             // Directory sessions (advertise/discover) never offload blobs, so no
             // password needs threading here.
@@ -822,14 +867,16 @@ impl SwarmSession {
                 max_peers: GOSSIP_ACTIVE_VIEW_CAPACITY,
                 state_file: None,
                 spool: None,
-                output,
+                sink,
                 drift: None,
                 a2a_serve: None,
             },
         )
         .await?;
         elc.cohost = cohost;
-        Ok(Self::with_events_and_signals(elc, None, events_rx, false))
+        Ok(Self::with_events_and_signals(
+            elc, io, None, events_rx, false,
+        ))
     }
 
     /// The events presentation: a broadcast for inbound traffic plus the
@@ -838,22 +885,25 @@ impl SwarmSession {
     /// signal handlers (the public embed default).
     fn with_events(
         elc: EventLoopConfig,
+        io: crate::a2a::app::SurfacedIo,
         advertiser: Option<JoinHandle<()>>,
         events_rx: mpsc::UnboundedReceiver<OutputEvent>,
     ) -> Self {
-        Self::with_events_and_signals(elc, advertiser, events_rx, true)
+        Self::with_events_and_signals(elc, io, advertiser, events_rx, true)
     }
 
     /// [`Self::with_events`] with the signal registration explicit — the
     /// directory sessions pass `false`.
     fn with_events_and_signals(
         elc: EventLoopConfig,
+        io: crate::a2a::app::SurfacedIo,
         advertiser: Option<JoinHandle<()>>,
         events_rx: mpsc::UnboundedReceiver<OutputEvent>,
         handle_signals: bool,
     ) -> Self {
         let (msg_tx, _initial_rx) = broadcast::channel::<Message>(EMBED_INBOUND_CAP);
-        let core = InProcessSession::spawn(elc, advertiser, Some(msg_tx.clone()), handle_signals);
+        let core =
+            InProcessSession::spawn(elc, io, advertiser, Some(msg_tx.clone()), handle_signals);
         Self {
             core,
             msg_tx,
@@ -961,7 +1011,7 @@ impl SwarmSession {
         &self,
         after: Option<u64>,
         long: bool,
-    ) -> anyhow::Result<Vec<crate::daemon::surfaced::SurfacedEvent>> {
+    ) -> anyhow::Result<Vec<crate::a2a::surfaced::SurfacedEvent>> {
         self.core.fetch(after, long).await
     }
 
@@ -992,7 +1042,7 @@ impl SwarmSession {
         file_name: Option<String>,
         file_mime: Option<String>,
     ) -> anyhow::Result<Message> {
-        let file = file.map(|path| crate::blob::FileRef {
+        let file = file.map(|path| agent_habilis_gossip::blob::FileRef {
             path,
             name: file_name,
             mime: file_mime,
@@ -1062,10 +1112,7 @@ impl SwarmSession {
     }
 }
 
-/// The co-host policy for a directory advertiser: claim the directory's
-/// shared rendezvous from t=0 but probe-first. See
-/// [`CoHostPolicy::EagerProbed`] for why probing matters here.
-pub(crate) const DIRECTORY_ADVERTISER_COHOST: CoHostPolicy = CoHostPolicy::EagerProbed;
+pub(crate) use agent_habilis_gossip::daemon::config::DIRECTORY_ADVERTISER_COHOST;
 
 /// Spawn the directory re-broadcast task for `cfg`'s swarm: wire a fresh
 /// live-participant counter into `cfg.live_count`, then re-send the
@@ -1125,7 +1172,7 @@ pub(crate) fn spawn_advertiser(
 // ── Directory (directory consumer) ─────────────────────────────────────
 
 /// One live directory entry handed to embedders — the public, iroh-free
-/// projection of a `crate::directory::Listing`.
+/// projection of a `agent_habilis_gossip::directory::Listing`.
 #[derive(Debug, Clone)]
 pub struct SwarmListing {
     /// The advertised swarm's id — pass to [`SwarmSession::join`] to join.
@@ -1220,7 +1267,10 @@ impl Directory {
         // Directories are inherently networked, so resolve as if `--public`:
         // no flags ⇒ all-on. The test env forces loopback so the hermetic
         // advertise→discover path runs without the public relay.
-        let resolved = resolve_lookups(!crate::util::tuning::directory_private_for_test(), lookups);
+        let resolved = resolve_lookups(
+            !agent_habilis_gossip::util::tuning::directory_private_for_test(),
+            lookups,
+        );
         let swarm = directory_swarm(&directory_name, resolved);
         // A discoverer is a pure consumer: never co-host the directory's
         // rendezvous (it only dials an advertiser's beacon).
@@ -1350,9 +1400,9 @@ impl Drop for Directory {
 mod topic_tests {
     use std::time::Duration;
 
-    use crate::daemon::CoHostPolicy;
-    use crate::protocol::swarm::{Swarm, SwarmConfig};
-    use crate::protocol::{MessageBody, Nickname};
+    use agent_habilis_gossip::daemon::CoHostPolicy;
+    use agent_habilis_gossip::protocol::swarm::{Swarm, SwarmConfig};
+    use agent_habilis_gossip::protocol::{MessageBody, Nickname};
 
     use super::{JoinError, SwarmSession, TopicConfig};
 

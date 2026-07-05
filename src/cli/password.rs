@@ -1,6 +1,6 @@
 use anyhow::{Context, Result, bail};
 
-use crate::protocol::crypto::Password;
+use agent_habilis_gossip::protocol::crypto::Password;
 
 /// The `default_missing_value` a bare `--password` (no `=value`) resolves to.
 /// A lone NUL can't be typed on a command line — the shell terminates the

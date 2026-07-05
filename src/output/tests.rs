@@ -4,7 +4,7 @@
 
 use super::json::{SimpleEvent, format_msg_json, format_presence_json};
 use super::{Output, OutputMode, style};
-use crate::protocol::{Message, PresenceSubtype};
+use agent_habilis_gossip::protocol::{Message, MessageKind, PresenceSubtype};
 
 fn parse(text: &str) -> serde_json::Value {
     serde_json::from_str(text).unwrap_or_else(|error| panic!("invalid JSON: {error}\n{text}"))
@@ -61,22 +61,30 @@ fn highlight_disabled_is_identity() {
 
 // ── format_msg_json: msg type ──────────────────────────────
 
-fn nick(name: &str) -> crate::protocol::Nickname {
-    crate::protocol::Nickname::from(name)
+fn nick(name: &str) -> agent_habilis_gossip::protocol::Nickname {
+    agent_habilis_gossip::protocol::Nickname::from(name)
 }
 
-fn sid() -> crate::protocol::SwarmId {
-    crate::protocol::SwarmId::from("💬://test")
+fn sid() -> agent_habilis_gossip::protocol::SwarmId {
+    agent_habilis_gossip::protocol::SwarmId::from("💬://test")
 }
 
 /// A chat frame carrying a real A2A payload, its frame id pinned to the
 /// payload's `messageId` — the invariant `broadcast_message` establishes.
 fn chat_frame(author: &str, text: &str) -> Message {
     let payload = crate::a2a::gossip::chat_message(&sid(), text);
-    let frame_id = crate::protocol::MessageId::new(payload.message_id.as_str())
+    let frame_id = agent_habilis_gossip::protocol::MessageId::new(payload.message_id.as_str())
         .expect("an a2a id is a valid frame id");
     let body = crate::a2a::gossip::payload_body(&payload).expect("payload serializes");
-    Message::new_a2a_msg(&sid(), &nick(author), body).with_id(frame_id)
+    Message::new_app(
+        &sid(),
+        &nick(author),
+        agent_habilis_gossip::protocol::AppTag::from(crate::a2a::wire::MSG),
+        None,
+        None,
+        body,
+    )
+    .with_id(frame_id)
 }
 
 #[test]
@@ -106,7 +114,7 @@ fn json_message_has_all_fields() {
 fn json_signed_message_exposes_full_pubkey() {
     // A real (signed) message carries the author's full Ed25519 public key
     // (hex) in the JSON event — the identity behind the display nickname.
-    let identity = crate::protocol::identity::Identity::generate();
+    let identity = agent_habilis_gossip::protocol::identity::Identity::generate();
     let msg = chat_frame("alice", "hi").signed(&identity);
     let parsed = parse(&format_msg_json(&msg, false));
     let pubkey = parsed["pubkey"].as_str().expect("signed event has pubkey");
@@ -120,7 +128,7 @@ fn ready_event_drift_is_present_only_when_stale() {
     let make = |drift: Option<&str>| {
         super::json::event_json(&OutputEvent::Ready {
             swarm: sid(),
-            name: crate::protocol::swarm::SwarmName::new("team").unwrap(),
+            name: agent_habilis_gossip::protocol::swarm::SwarmName::new("team").unwrap(),
             nickname: nick("alice"),
             drift: drift.map(str::to_owned),
             a2a_port: None,
@@ -219,7 +227,8 @@ fn status_frame(
     let tid = crate::a2a::TaskId::from_uuid_str(task_id).expect("valid task id");
     let update = crate::a2a::gossip::status_update(&sid(), &tid, state, note, metadata);
     let body = crate::a2a::gossip::payload_body(&update).expect("payload serializes");
-    Message::new_a2a_status(&sid(), &nick(author), nick(to), tid, body)
+    let kind = MessageKind::app_to(crate::a2a::wire::STATUS, nick(to), None);
+    Message::new_frame(&sid(), &nick(author), kind, body)
 }
 
 #[test]
@@ -377,7 +386,7 @@ fn json_output_is_single_line() {
 
 mod snapshots {
     use super::{format_msg_json, format_presence_json};
-    use crate::protocol::{Message, MessageKind, PresenceSubtype};
+    use agent_habilis_gossip::protocol::{Message, MessageKind, PresenceSubtype};
 
     /// Deterministic task frames for the wire-pinned snapshots: ids fixed,
     /// timestamps from the fixture.
@@ -394,7 +403,7 @@ mod snapshots {
     ) -> String {
         let tid = crate::a2a::TaskId::from(SNAP_TASK_ID);
         let mut update = crate::a2a::gossip::status_update(
-            &crate::protocol::SwarmId::from("💬://test"),
+            &agent_habilis_gossip::protocol::SwarmId::from("💬://test"),
             &tid,
             state,
             note,
@@ -407,10 +416,11 @@ mod snapshots {
         }
         let body = crate::a2a::gossip::payload_body(&update).expect("payload serializes");
         let frame = snap_frame(
-            MessageKind::A2aStatus {
-                to: crate::protocol::Nickname::from("calm-otter"),
-                task_id: tid,
-            },
+            MessageKind::app_to(
+                crate::a2a::wire::STATUS,
+                agent_habilis_gossip::protocol::Nickname::from("calm-otter"),
+                None,
+            ),
             body.as_str(),
         );
         super::super::json::format_task_json(&frame, false)
@@ -438,17 +448,18 @@ mod snapshots {
     fn snap_task_done() {
         let tid = crate::a2a::TaskId::from(SNAP_TASK_ID);
         let mut update = crate::a2a::gossip::artifact_update(
-            &crate::protocol::SwarmId::from("💬://test"),
+            &agent_habilis_gossip::protocol::SwarmId::from("💬://test"),
             &tid,
             "2 findings: missing await in recv; unbounded buffer in flush",
         );
         update.artifact.artifact_id = "00000000-0000-0000-0000-00000000000a".to_string();
         let body = crate::a2a::gossip::payload_body(&update).expect("payload serializes");
         let frame = snap_frame(
-            MessageKind::A2aArtifact {
-                to: crate::protocol::Nickname::from("calm-otter"),
-                task_id: tid,
-            },
+            MessageKind::app_to(
+                crate::a2a::wire::ARTIFACT,
+                agent_habilis_gossip::protocol::Nickname::from("calm-otter"),
+                None,
+            ),
             body.as_str(),
         );
         insta::assert_snapshot!(super::super::json::format_task_json(&frame, false));
@@ -458,11 +469,16 @@ mod snapshots {
     /// `messageId` is pinned to the fixture id so the snapshot is stable and
     /// the frame keeps the id == messageId invariant.
     fn snap_chat_frame(text: &str) -> Message {
-        let mut payload =
-            crate::a2a::gossip::chat_message(&crate::protocol::SwarmId::from("💬://test"), text);
+        let mut payload = crate::a2a::gossip::chat_message(
+            &agent_habilis_gossip::protocol::SwarmId::from("💬://test"),
+            text,
+        );
         payload.message_id = crate::a2a::MessageId::from("00000000-0000-0000-0000-000000000001");
         let body = crate::a2a::gossip::payload_body(&payload).expect("payload serializes");
-        Message::fixture(MessageKind::A2aMsg, body.as_str())
+        Message::fixture(
+            MessageKind::app_broadcast(crate::a2a::wire::MSG),
+            body.as_str(),
+        )
     }
 
     #[test]
@@ -498,7 +514,7 @@ mod snapshots {
     fn snap_state(merge: &str, document: &serde_json::Value, is_self: bool) -> String {
         let body = format!(r#"{{"k":"merge","merge":{merge}}}"#);
         super::super::json::format_state_json(
-            crate::protocol::Channel::State,
+            agent_habilis_gossip::protocol::Channel::State,
             &Message::fixture(MessageKind::State, &body),
             document,
             is_self,
@@ -548,14 +564,15 @@ mod prop {
     };
 
     use super::{PresenceSubtype, format_msg_json, format_presence_json, sid};
-    use crate::protocol::Message;
+    use agent_habilis_gossip::protocol::Message;
 
     fn arb_ascii_body() -> impl Strategy<Value = String> {
         arb_vec(0x20u8..0x7Eu8, 0..200).prop_map(|bytes| String::from_utf8(bytes).unwrap())
     }
 
-    fn arb_nickname() -> impl Strategy<Value = crate::protocol::Nickname> {
-        "[a-z]{3,8}-[a-z]{3,8}".prop_map(|raw| crate::protocol::Nickname::new(raw).unwrap())
+    fn arb_nickname() -> impl Strategy<Value = agent_habilis_gossip::protocol::Nickname> {
+        "[a-z]{3,8}-[a-z]{3,8}"
+            .prop_map(|raw| agent_habilis_gossip::protocol::Nickname::new(raw).unwrap())
     }
 
     proptest! {
@@ -580,7 +597,7 @@ mod prop {
 
         #[test]
         fn prop_presence_json_is_valid(is_join in any::<bool>()) {
-            let test_nick = crate::protocol::Nickname::from("test-nick");
+            let test_nick = agent_habilis_gossip::protocol::Nickname::from("test-nick");
             let (msg, subtype) = if is_join {
                 (Message::new_joined(&sid(), &test_nick), PresenceSubtype::Joined)
             } else {

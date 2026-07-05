@@ -1,8 +1,14 @@
+pub(crate) mod app;
 pub(crate) mod card;
 pub mod gossip;
 pub(crate) mod gossip_rpc;
 pub(crate) mod http;
+pub(crate) mod ipc;
+pub(crate) mod mesh;
 pub(crate) mod rpc;
+pub(crate) mod send;
+pub(crate) mod session;
+pub(crate) mod surfaced;
 pub(crate) mod task;
 
 use std::fmt;
@@ -40,6 +46,23 @@ pub const EXT_SWARM_BLOB: &str = "https://agent-habilis.dev/a2a/ext/swarm-blob/v
 /// `params.x25519` (base58). Relays forward + verify the signature but cannot
 /// read the body. Broadcast stays public.
 pub const EXT_SWARM_SEAL: &str = "https://agent-habilis.dev/a2a/ext/swarm-seal/v1";
+
+/// The a2a layer's [`MessageKind::App`](agent_habilis_gossip::protocol::MessageKind) tag
+/// taxonomy — the wire discriminants for a2a payloads riding the engine's
+/// generic app frame. These are the `tag` values of what used to be dedicated
+/// a2a `MessageKind` variants (`type` values on the 7.0 wire).
+pub(crate) mod wire {
+    /// Swarm-wide broadcast chat (was `a2a_msg`). Broadcast, no addressee.
+    pub(crate) const MSG: &str = "a2a_msg";
+    /// A worker-pushed task status transition or beat (was `a2a_status`). Directed.
+    pub(crate) const STATUS: &str = "a2a_status";
+    /// A worker's task artifact/result (was `a2a_artifact`). Directed.
+    pub(crate) const ARTIFACT: &str = "a2a_artifact";
+    /// A directed JSON-RPC request (was `a2a_req`). Directed, `corr`-correlated.
+    pub(crate) const REQ: &str = "a2a_req";
+    /// A directed JSON-RPC response (was `a2a_resp`). Directed, `corr`-correlated.
+    pub(crate) const RESP: &str = "a2a_resp";
+}
 
 /// Metadata key marking a status update as a **liveness beat** (keepalive /
 /// progress): plumbing, never logged, surfaced only as `task_progress`.

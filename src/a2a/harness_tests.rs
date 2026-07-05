@@ -10,9 +10,9 @@ use iroh::endpoint::ConnectionError;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
-use crate::lookup::{add_peer_addr, build_participant_endpoint};
-use crate::protocol::crypto::{Password, TicketAuth};
-use crate::protocol::swarm::LookupOpts;
+use agent_habilis_gossip::lookup::{add_peer_addr, build_participant_endpoint};
+use agent_habilis_gossip::protocol::crypto::{Password, TicketAuth};
+use agent_habilis_gossip::protocol::swarm::LookupOpts;
 
 use super::A2A_ALPN;
 use super::connect::{SharedConnection, forward_one};

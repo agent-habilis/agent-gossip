@@ -3,14 +3,14 @@
 //! Human + TTY renders a live arrow-key picker that hands off to `join`
 //! on selection; `--no-interactive` / `--output json` streams
 //! `swarm_found`/`swarm_lost` JSON lines for an agent to act on. The pure
-//! directory primitives live in [`crate::directory`]; the live consumer
+//! directory primitives live in [`agent_habilis_gossip::directory`]; the live consumer
 //! in [`crate::embed::Directory`]; the terminal machinery in
 //! [`super::picker`]; this file is just the CLI command + swarm rendering.
 
 use anyhow::Result;
 
 use crate::embed::{Directory, DirectoryEvent, SwarmListing};
-use crate::resolver::JoinTarget;
+use agent_habilis_gossip::resolver::JoinTarget;
 
 use super::args::{DiscoverOpts, OutputFormat};
 use super::join;
@@ -37,7 +37,7 @@ pub(super) async fn discover(opts: DiscoverOpts) -> Result<()> {
     // create/join) so the picker and JSON stream aren't drowned in INFO
     // lines on stderr.
     if let Some((swarm, nickname)) = discoverer.session_identity() {
-        crate::logging::attach(swarm, nickname);
+        agent_habilis_gossip::logging::attach(swarm, nickname);
     }
     let mut events = discoverer
         .events()
@@ -53,7 +53,7 @@ pub(super) async fn discover(opts: DiscoverOpts) -> Result<()> {
                 // Leave the directory's log file behind so `join` opens
                 // the joined swarm's own file (with its setup logs) rather
                 // than appending to the directory session's.
-                crate::logging::detach();
+                agent_habilis_gossip::logging::detach();
                 let target = id
                     .parse::<JoinTarget>()
                     .expect("a discovered swarm id is a valid join target");
@@ -142,7 +142,7 @@ async fn run_swarm_picker(
             listing.name,
             listing.swarm.as_str(),
             listing.peers,
-            crate::util::clock::local_datetime(listing.first_seen_unix),
+            agent_habilis_gossip::util::clock::local_datetime(listing.first_seen_unix),
         )
     };
     picker::run(

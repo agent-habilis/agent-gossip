@@ -4,9 +4,9 @@ use std::sync::LazyLock;
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::a2a::TaskId;
-use crate::protocol::swarm::SwarmName;
-use crate::protocol::{Message, MessageId, MessageKind, Nickname, SwarmId};
-use crate::util::consts::SWARM_GLYPH;
+use agent_habilis_gossip::protocol::swarm::SwarmName;
+use agent_habilis_gossip::protocol::{Message, MessageId, MessageKind, Nickname, SwarmId};
+use agent_habilis_gossip::util::consts::SWARM_GLYPH;
 
 mod json;
 #[cfg(test)]
@@ -122,7 +122,7 @@ pub enum OutputEvent {
     /// whether it was our own write. Drives the reaction hook and the human
     /// `💬 … changed shared state` line.
     StateChanged {
-        channel: crate::protocol::Channel,
+        channel: agent_habilis_gossip::protocol::Channel,
         event: Box<Message>,
         document: serde_json::Value,
         is_self: bool,
@@ -503,17 +503,17 @@ impl Output {
     /// suppressed.
     pub(crate) fn print_task(&self, msg: &Message, is_self: bool) {
         let to = match &msg.kind {
-            MessageKind::A2aStatus { to, .. } | MessageKind::A2aArtifact { to, .. } => to.clone(),
-            MessageKind::A2aMsg
-            | MessageKind::Presence { .. }
+            MessageKind::App { tag, to, .. } => match (tag.as_str(), to) {
+                (crate::a2a::wire::STATUS | crate::a2a::wire::ARTIFACT, Some(to)) => to.clone(),
+                _ => return,
+            },
+            MessageKind::Presence { .. }
             | MessageKind::PeerInfo
             | MessageKind::Digest
             | MessageKind::StateDigest
             | MessageKind::MetaDigest
             | MessageKind::Ping
             | MessageKind::Pong { .. }
-            | MessageKind::A2aReq { .. }
-            | MessageKind::A2aResp { .. }
             | MessageKind::State
             | MessageKind::Meta
             | MessageKind::LinkState => return,
@@ -626,7 +626,7 @@ impl Output {
     /// self-skip is the Monitor's job.
     pub(crate) fn state_changed(
         &self,
-        channel: crate::protocol::Channel,
+        channel: agent_habilis_gossip::protocol::Channel,
         event: &Message,
         document: &serde_json::Value,
         is_self: bool,
@@ -664,7 +664,12 @@ impl Output {
         }
     }
 
-    fn print_state_human(&self, channel: crate::protocol::Channel, event: &Message, is_self: bool) {
+    fn print_state_human(
+        &self,
+        channel: agent_habilis_gossip::protocol::Channel,
+        event: &Message,
+        is_self: bool,
+    ) {
         let what = json::state_change_summary_from_body(event.body.as_str());
         let ch = channel.label();
         if is_self {
@@ -894,6 +899,56 @@ impl Output {
         } = self
         {
             eprint!("\x1b[1A\x1b[2K");
+        }
+    }
+}
+
+/// The app renders the engine's generic
+/// [`MeshEvent`](agent_habilis_gossip::gossip::event::MeshEvent)s by mapping each onto the
+/// existing `Output` method, so stdout / `--output json` / tap forms stay
+/// byte-identical. This seam lets the engine emit surfacings without naming the
+/// concrete `Output`.
+impl agent_habilis_gossip::gossip::event::MeshSink for Output {
+    fn emit(&self, event: agent_habilis_gossip::gossip::event::MeshEvent) {
+        use agent_habilis_gossip::gossip::event::MeshEvent;
+        match event {
+            MeshEvent::Ready {
+                swarm,
+                name,
+                nickname,
+                drift,
+                a2a_port,
+            } => self.ready(&swarm, &name, &nickname, drift.as_deref(), a2a_port),
+            MeshEvent::SwarmId { id } => self.swarm_id_line(&id),
+            MeshEvent::Info(message) => self.info(&message),
+            MeshEvent::Error(message) => self.error(&message),
+            MeshEvent::Fork {
+                nickname,
+                pubkey,
+                seq,
+            } => self.fork(&nickname, &pubkey, seq),
+            MeshEvent::PeerTimeout {
+                nickname,
+                last_seen_secs_ago,
+            } => self.peer_timeout(&nickname, last_seen_secs_ago),
+            MeshEvent::PeerReturn { nickname } => self.peer_return(&nickname),
+            MeshEvent::Presence { msg } => self.print_presence(&msg),
+            MeshEvent::PingReport { peers, known } => self.ping_report(
+                peers
+                    .into_iter()
+                    .map(|peer| PingPeer {
+                        nickname: peer.nickname,
+                        rtt_ms: peer.rtt_ms,
+                    })
+                    .collect(),
+                known,
+            ),
+            MeshEvent::StateChanged {
+                channel,
+                event,
+                document,
+                is_self,
+            } => self.state_changed(channel, &event, &document, is_self),
         }
     }
 }

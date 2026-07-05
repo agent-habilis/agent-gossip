@@ -1,0 +1,5 @@
+---
+source: src/protocol/message/mod.rs
+expression: wire
+---
+{"v":"8.0","id":"00000000-0000-0000-0000-000000000001","type":"app","tag":"a2a_req","to":"addressed-nick","corr":"00000000-0000-0000-0000-0000000000aa","swarm":"💬://test","author":"alice-bot","ts":1700000000,"body":"{\"method\":\"tasks/list\",\"params\":{}}","ext":{}}

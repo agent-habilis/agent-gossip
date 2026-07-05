@@ -3,8 +3,8 @@
 use clap::Parser;
 
 use crate::cli::password::PasswordFlag;
-use crate::protocol::Nickname;
-use crate::protocol::swarm::{DirectorySelection, SwarmName};
+use agent_habilis_gossip::protocol::Nickname;
+use agent_habilis_gossip::protocol::swarm::{DirectorySelection, SwarmName};
 
 use super::lookup::LookupArgs;
 use super::shared::SharedServerOpts;
@@ -79,8 +79,8 @@ mod tests {
 
     use crate::cli::args::{Cli, Commands};
     use crate::cli::password::PasswordFlag;
-    use crate::protocol::Nickname;
-    use crate::protocol::swarm::{DirectorySelection, SwarmName};
+    use agent_habilis_gossip::protocol::Nickname;
+    use agent_habilis_gossip::protocol::swarm::{DirectorySelection, SwarmName};
 
     #[test]
     fn create_opts_with_nickname() {

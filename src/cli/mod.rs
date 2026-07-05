@@ -7,15 +7,16 @@
 use anyhow::Result;
 use serde::Deserialize;
 
-use crate::daemon::run as run_event_loop;
-use crate::daemon::setup::{SetupKind, SetupParams, setup_swarm};
-use crate::daemon::{CreateParams, JoinParams, Resolved, TopicParams};
+use crate::a2a::ipc::IpcCommand;
 use crate::embed::spawn_advertiser;
 use crate::output::{Output, OutputMode};
-use crate::protocol::swarm::{Swarm, SwarmConfig, SwarmName, resolve_lookups};
-use crate::protocol::{MessageId, Nickname};
-use crate::resolver::JoinTarget;
-use crate::transport::ipc::{self, IpcCommand};
+use agent_habilis_gossip::daemon::run as run_event_loop;
+use agent_habilis_gossip::daemon::setup::{SetupKind, SetupParams, setup_swarm};
+use agent_habilis_gossip::daemon::{CreateParams, JoinParams, Resolved, TopicParams};
+use agent_habilis_gossip::protocol::swarm::{Swarm, SwarmConfig, SwarmName, resolve_lookups};
+use agent_habilis_gossip::protocol::{MessageId, Nickname};
+use agent_habilis_gossip::resolver::JoinTarget;
+use agent_habilis_gossip::transport::ipc;
 
 mod a2a_discover;
 pub(crate) mod agent;
@@ -58,7 +59,7 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
     // subcommand resolves its log file (the buffered sink flushes at
     // `logging::attach`, after this). Replaces the old AHS_LOG_DIR /
     // AHS_LOG_MAX_BYTES env reads.
-    crate::util::logs::configure(crate::util::logs::LogConfig {
+    agent_habilis_gossip::util::logs::configure(agent_habilis_gossip::util::logs::LogConfig {
         dir: cli.log_dir,
         max_bytes: cli.log_max_bytes,
         raw: cli.log_raw,
@@ -73,17 +74,17 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
         // clippy's `large_futures` 16 KiB threshold — boxing keeps the dispatch
         // future small and the size off the knife's edge as those types grow.
         Commands::Create { opts } => {
-            crate::util::tuning::init(opts.shared.tuning());
+            agent_habilis_gossip::util::tuning::init(opts.shared.tuning());
             Box::pin(create(opts)).await
         }
         Commands::Join { opts } => {
             reject_id_encoded_flag("--public", opts.public)?;
             reject_id_encoded_flag("--name", opts.name.is_some())?;
-            crate::util::tuning::init(opts.shared.tuning());
+            agent_habilis_gossip::util::tuning::init(opts.shared.tuning());
             Box::pin(join(opts.swarm, opts.nickname, opts.password, opts.shared)).await
         }
         Commands::Topic { opts } => {
-            crate::util::tuning::init(opts.shared.tuning());
+            agent_habilis_gossip::util::tuning::init(opts.shared.tuning());
             Box::pin(topic(opts)).await
         }
         Commands::Leave { opts } => session::leave(opts).await,
@@ -100,7 +101,7 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
         Commands::Topology { opts } => topology_cmd(opts).await,
         Commands::Ready { opts } => ready(opts).await,
         Commands::Discover { opts } => {
-            crate::util::tuning::init(opts.shared.tuning());
+            agent_habilis_gossip::util::tuning::init(opts.shared.tuning());
             Box::pin(discover::discover(opts)).await
         }
         Commands::Mcp {
@@ -111,11 +112,11 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
             // The MCP server holds no `SharedServerOpts`; install just the
             // hidden knobs the suite varies (loopback directory, short ping
             // window, short long-poll park) over the production defaults.
-            crate::util::tuning::init(crate::util::tuning::Tuning {
+            agent_habilis_gossip::util::tuning::init(agent_habilis_gossip::util::tuning::Tuning {
                 ping_window_secs,
                 longpoll_max_ms,
                 directory_private,
-                ..crate::util::tuning::Tuning::DEFAULTS
+                ..agent_habilis_gossip::util::tuning::Tuning::DEFAULTS
             });
             Box::pin(crate::mcp::run()).await
         }
@@ -135,8 +136,8 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
 
 /// Build the output sink, set up the swarm, and run the event loop. The
 /// shared spine of `create` and `join` — `resolved` carries the
-/// already-resolved [`SetupKind`](crate::daemon::setup::SetupKind), author,
-/// and advertise directory (see [`crate::daemon::params`]).
+/// already-resolved [`SetupKind`](agent_habilis_gossip::daemon::setup::SetupKind), author,
+/// and advertise directory (see [`agent_habilis_gossip::daemon::params`]).
 async fn run_session(resolved: Resolved, shared: SharedServerOpts) -> Result<()> {
     let Resolved {
         kind,
@@ -160,6 +161,26 @@ async fn run_session(resolved: Resolved, shared: SharedServerOpts) -> Result<()>
     let drift = agent::home_dir()
         .ok()
         .and_then(|home| agent::drift_warning(&home));
+    // The CLI owns the a2a application state. Tap its output so surfaced events
+    // reach the app-side `poll`/`fetch` ring; the engine emits `MeshEvent`s
+    // through `io.sink()` (`cfg.sink`) and the app's own `Output` render the
+    // same tap.
+    let io = crate::a2a::app::SurfacedIo::new(out);
+    let sink = io.sink();
+    let mut app = crate::a2a::app::A2aApp::with_io(io);
+    // `--a2a-serve`: bind the localhost JSON-RPC binding here (the app owns it)
+    // and hand the app the served request channel. The resolved (possibly
+    // ephemeral-assigned) port is threaded back into setup for the `ready`
+    // event + published card.
+    let (a2a_serve_port, http_rx) = match shared.a2a_serve {
+        Some(port) => {
+            let binding = crate::a2a::http::bind(port).await?;
+            let real_port = binding.port;
+            let http_rx = app.serve_a2a(binding);
+            (Some(real_port), Some(http_rx))
+        }
+        None => (None, None),
+    };
     let mut cfg = setup_swarm(
         kind,
         SetupParams {
@@ -168,9 +189,9 @@ async fn run_session(resolved: Resolved, shared: SharedServerOpts) -> Result<()>
             max_peers: shared.max_peers,
             state_file: shared.state_file,
             spool: shared.spool,
-            output: out,
+            sink,
             drift: drift.as_deref(),
-            a2a_serve: shared.a2a_serve,
+            a2a_serve: a2a_serve_port,
         },
     )
     .await?;
@@ -183,8 +204,8 @@ async fn run_session(resolved: Resolved, shared: SharedServerOpts) -> Result<()>
         .map(|(directory, lookups)| spawn_advertiser(&mut cfg, directory, lookups));
     // First point where swarm id + nickname are known — attach the
     // buffered log sink here (see `logging`).
-    crate::logging::attach(&cfg.swarm, &cfg.author);
-    run_event_loop(cfg).await
+    agent_habilis_gossip::logging::attach(&cfg.swarm, &cfg.author);
+    run_event_loop(cfg, app, None, http_rx).await
 }
 
 /// Create a new swarm, print its identifier, and start listening.
@@ -306,7 +327,8 @@ async fn a2a(action: A2aAction) -> Result<()> {
         } => {
             let json = matches!(output, OutputFormat::Json);
             let password = password::resolve_password(password, /* confirm */ true, json)?;
-            let advertise = crate::protocol::swarm::DirectorySelection::from_flag(advertise);
+            let advertise =
+                agent_habilis_gossip::protocol::swarm::DirectorySelection::from_flag(advertise);
             Box::pin(crate::a2a::expose(
                 &to,
                 lookups.to_set(),
@@ -366,7 +388,7 @@ async fn a2a(action: A2aAction) -> Result<()> {
                 let text = text.ok_or_else(|| {
                     anyhow::anyhow!("broadcast SendMessage needs --text (or a --to peer)")
                 })?;
-                let body = crate::protocol::MessageBody::new(text)
+                let body = agent_habilis_gossip::protocol::MessageBody::new(text)
                     .map_err(|error| anyhow::anyhow!("{error}"))?;
                 let resp = ipc::send(&IpcCommand::Msg { swarm, body }, &nickname).await?;
                 let id = finish_send(&resp, "message")?;
@@ -455,8 +477,8 @@ async fn a2a(action: A2aAction) -> Result<()> {
             output,
             password,
         } => {
-            let ticket = crate::blob::BlobTicket::decode(&ticket)?;
-            let password = password.map(crate::protocol::crypto::Password::new);
+            let ticket = agent_habilis_gossip::blob::BlobTicket::decode(&ticket)?;
+            let password = password.map(agent_habilis_gossip::protocol::crypto::Password::new);
 
             // Where the bytes land, `None` meaning stdout. Precedence:
             //   `--output -`       → stdout
@@ -476,7 +498,7 @@ async fn a2a(action: A2aAction) -> Result<()> {
                         })?;
                         // Validate the private base (fail closed) before the
                         // receive dir is created under it.
-                        let dir = crate::util::ensure_swarm_runtime_dir(&swarm)
+                        let dir = agent_habilis_gossip::util::ensure_swarm_runtime_dir(&swarm)
                             .map_err(|error| {
                                 anyhow::anyhow!("cannot prepare receive dir: {error}")
                             })?
@@ -491,11 +513,13 @@ async fn a2a(action: A2aAction) -> Result<()> {
             match dest {
                 None => {
                     let mut stdout = tokio::io::stdout();
-                    crate::blob::fetch(&ticket, &mut stdout, password).await?;
+                    agent_habilis_gossip::blob::fetch(&ticket, &mut stdout, password).await?;
                 }
                 Some(path) => {
                     let mut file = tokio::fs::File::create(&path).await?;
-                    if let Err(error) = crate::blob::fetch(&ticket, &mut file, password).await {
+                    if let Err(error) =
+                        agent_habilis_gossip::blob::fetch(&ticket, &mut file, password).await
+                    {
                         // fetch verifies the hash as it streams; a partial file
                         // from a failed transfer is meaningless, so drop it.
                         drop(file);
@@ -512,7 +536,7 @@ async fn a2a(action: A2aAction) -> Result<()> {
 
 fn compose_a2a_params(
     method: &str,
-    swarm: &crate::protocol::SwarmId,
+    swarm: &agent_habilis_gossip::protocol::SwarmId,
     text: Option<&str>,
     task_id: Option<&crate::a2a::TaskId>,
 ) -> serde_json::Value {
@@ -561,8 +585,9 @@ async fn poll(opts: PollOpts) -> Result<()> {
         // degrading long reads to immediate empties (waiter registry full)
         // can't spin this loop hot — the unchanged cursor re-reads anything
         // that lands during the sleep.
-        let min_cycle =
-            std::time::Duration::from_millis(crate::util::tuning::POLL_LONG_MIN_CYCLE_MS);
+        let min_cycle = std::time::Duration::from_millis(
+            agent_habilis_gossip::util::tuning::POLL_LONG_MIN_CYCLE_MS,
+        );
         if let Some(remaining) = min_cycle.checked_sub(started.elapsed()) {
             tokio::time::sleep(remaining).await;
         }
@@ -706,7 +731,7 @@ async fn ready(opts: ReadyOpts) -> Result<()> {
     let deadline = now
         .checked_add(std::time::Duration::from_secs(timeout_secs))
         .unwrap_or_else(|| {
-            now + std::time::Duration::from_secs(crate::util::tuning::READY_MAX_SECS)
+            now + std::time::Duration::from_secs(agent_habilis_gossip::util::tuning::READY_MAX_SECS)
         });
     loop {
         // Read off the runtime's blocking pool: a `--state-file` on a hung
@@ -716,9 +741,10 @@ async fn ready(opts: ReadyOpts) -> Result<()> {
         // can't self-heal and just spins to the deadline, so log it so the
         // cause is recoverable.
         let path = state_file.clone();
-        let read =
-            tokio::task::spawn_blocking(move || crate::daemon::state_file::read_snapshot(&path))
-                .await?;
+        let read = tokio::task::spawn_blocking(move || {
+            agent_habilis_gossip::daemon::state_file::read_snapshot(&path)
+        })
+        .await?;
         match read {
             Ok(Some(snapshot)) if snapshot.ready && ready_is_fresh(snapshot.last_updated) => {
                 if matches!(output, OutputFormat::Json) {
@@ -738,7 +764,7 @@ async fn ready(opts: ReadyOpts) -> Result<()> {
             );
         }
         tokio::time::sleep(std::time::Duration::from_millis(
-            crate::util::tuning::READY_POLL_INTERVAL_MS,
+            agent_habilis_gossip::util::tuning::READY_POLL_INTERVAL_MS,
         ))
         .await;
     }
@@ -749,7 +775,7 @@ async fn ready(opts: ReadyOpts) -> Result<()> {
 /// file yields `{}` rather than `{"swarm":null,…}` that a caller might splice
 /// into the next command as the literal string "null".
 fn print_ready_identity(state_file: &std::path::Path) {
-    let identity = crate::daemon::state_file::read_identity(state_file);
+    let identity = agent_habilis_gossip::daemon::state_file::read_identity(state_file);
     let mut obj = serde_json::Map::new();
     for (key, value) in [
         ("swarm", identity.swarm),
@@ -773,9 +799,10 @@ fn print_ready_identity(state_file: &std::path::Path) {
 /// too. `clock::unix_secs` is non-negative, so the `i64` math below cannot
 /// underflow into the past.
 fn ready_is_fresh(last_updated: u64) -> bool {
-    let now = crate::util::clock::unix_secs();
+    let now = agent_habilis_gossip::util::clock::unix_secs();
     let last_updated = i64::try_from(last_updated).unwrap_or(i64::MAX);
     let skew = now - last_updated; // >0: file is in the past; <0: in the future
-    let window = i64::try_from(crate::util::tuning::READY_FRESH_SECS).unwrap_or(i64::MAX);
+    let window =
+        i64::try_from(agent_habilis_gossip::util::tuning::READY_FRESH_SECS).unwrap_or(i64::MAX);
     skew.abs() <= window
 }

@@ -11,10 +11,11 @@
     reason = "opaque test-only types (wrap a non-Debug signing key); never formatted"
 )]
 
-use crate::protocol::identity::{self, Identity};
-use crate::protocol::message::Message;
-use crate::protocol::message::PresenceSubtype;
-use crate::protocol::{MessageBody, MessageKind, Nickname, SwarmId};
+use crate::a2a::wire;
+use agent_habilis_gossip::protocol::identity::{self, Identity};
+use agent_habilis_gossip::protocol::message::Message;
+use agent_habilis_gossip::protocol::message::PresenceSubtype;
+use agent_habilis_gossip::protocol::{AppTag, CorrId, MessageBody, MessageKind, Nickname, SwarmId};
 
 /// An opaque attacker/peer signing key. Wraps the crate-internal `Identity`
 /// so a test can hold one and pass it to the builder/helpers without the
@@ -52,7 +53,7 @@ impl CraftedMsg {
         let author = Nickname::new(author.to_owned()).expect("test author is a valid nickname");
         let body = MessageBody::new(body.to_owned()).expect("test body is valid");
         Self {
-            msg: Message::new_a2a_msg(swarm, &author, body),
+            msg: Message::new_app(swarm, &author, AppTag::from(wire::MSG), None, None, body),
         }
     }
 
@@ -63,7 +64,7 @@ impl CraftedMsg {
     /// Unsigned until [`sign`](CraftedMsg::sign).
     pub fn state_merge(swarm: &SwarmId, author: &str, merge: serde_json::Value) -> Self {
         let author = Nickname::new(author.to_owned()).expect("test author is a valid nickname");
-        let body = crate::daemon::state_doc::merge_body(merge)
+        let body = agent_habilis_gossip::daemon::state_doc::merge_body(merge)
             .expect("state merge envelope composes from any merge value");
         Self {
             msg: Message::new_state(swarm, &author, body),
@@ -87,19 +88,24 @@ impl CraftedMsg {
         let merge = serde_json::json!({ "peers": { victim: { "card": fake_card } } });
         // `build_change` composes the change without the gate (the gate lives in
         // `ingest`), exactly as a malicious peer bypassing our write path would.
-        let change = crate::daemon::doc::SwarmDoc::new(true)
+        let change = agent_habilis_gossip::daemon::doc::SwarmDoc::new(true)
             .build_change(&merge, &author)
             .expect("forge change builds")
             .expect("forge merge is not a no-op");
-        let body =
-            crate::daemon::state_doc::change_body(&change, None).expect("change body composes");
+        let body = agent_habilis_gossip::daemon::state_doc::change_body(&change, None)
+            .expect("change body composes");
         Self {
-            msg: Message::new_channel_event(swarm, &author, body, crate::protocol::Channel::Meta),
+            msg: Message::new_channel_event(
+                swarm,
+                &author,
+                body,
+                agent_habilis_gossip::protocol::Channel::Meta,
+            ),
         }
     }
 
-    /// A crafted `a2a_status` frame whose FRAME correlation field carries
-    /// `frame_task_id` while the PAYLOAD claims `payload_task_id` — the
+    /// A crafted `a2a_status` frame whose FRAME correlation field (`corr`)
+    /// carries `frame_task_id` while the PAYLOAD claims `payload_task_id` — the
     /// cross-validation attack shape a correct client never produces. Both
     /// must be valid UUIDs. Unsigned until [`sign`](CraftedMsg::sign).
     pub fn status_frame(
@@ -124,13 +130,12 @@ impl CraftedMsg {
         );
         let body = crate::a2a::gossip::payload_body(&update).expect("crafted payload serializes");
         Self {
-            msg: Message::new_frame(
+            msg: Message::new_app(
                 swarm,
                 &author,
-                MessageKind::A2aStatus {
-                    to,
-                    task_id: frame_tid,
-                },
+                AppTag::from(wire::STATUS),
+                Some(to),
+                Some(CorrId::from(frame_tid.as_str())),
                 body,
             ),
         }
@@ -157,7 +162,7 @@ impl CraftedMsg {
     /// verbatim and is dropped at the boundary.
     pub fn wrap_a2a(mut self) -> Self {
         assert!(
-            matches!(&self.msg.kind, MessageKind::A2aMsg),
+            self.msg.kind.is_app(wire::MSG),
             "wrap_a2a applies to chat frames only"
         );
         let mut payload = crate::a2a::gossip::chat_message(&self.msg.swarm, self.msg.body.as_str());
@@ -200,20 +205,21 @@ impl CraftedMsg {
     /// signature and the victim must drop it.
     pub fn flip_chat_kind(mut self) -> Self {
         self.msg.kind = match self.msg.kind.clone() {
-            MessageKind::A2aMsg => MessageKind::Presence {
+            MessageKind::App { tag, .. } if tag.as_str() == wire::MSG => MessageKind::Presence {
                 subtype: PresenceSubtype::Alive,
             },
-            MessageKind::Presence { .. } => MessageKind::A2aMsg,
-            MessageKind::PeerInfo
+            MessageKind::Presence { .. } => MessageKind::App {
+                tag: AppTag::from(wire::MSG),
+                to: None,
+                corr: None,
+            },
+            MessageKind::App { .. }
+            | MessageKind::PeerInfo
             | MessageKind::Digest
             | MessageKind::StateDigest
             | MessageKind::MetaDigest
             | MessageKind::Ping
             | MessageKind::Pong { .. }
-            | MessageKind::A2aStatus { .. }
-            | MessageKind::A2aArtifact { .. }
-            | MessageKind::A2aReq { .. }
-            | MessageKind::A2aResp { .. }
             | MessageKind::State
             | MessageKind::Meta
             | MessageKind::LinkState => panic!("flip_chat_kind takes a broadcast chat message"),

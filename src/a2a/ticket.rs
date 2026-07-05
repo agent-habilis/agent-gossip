@@ -15,9 +15,9 @@ use anyhow::{Context, Result, bail};
 use iroh::EndpointAddr;
 use sha2::{Digest, Sha256};
 
-use crate::protocol::peer_addr::{endpoint_addr_from_json, endpoint_addr_to_json};
-use crate::protocol::swarm::LookupOpts;
-use crate::util::consts::SWARM_GLYPH;
+use agent_habilis_gossip::protocol::peer_addr::{endpoint_addr_from_json, endpoint_addr_to_json};
+use agent_habilis_gossip::protocol::swarm::LookupOpts;
+use agent_habilis_gossip::util::consts::SWARM_GLYPH;
 
 use super::SECRET_LEN;
 
@@ -138,7 +138,7 @@ fn base58check_decode(encoded: &str) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::{A2aTicket, PREFIX, SECRET_LEN};
-    use crate::protocol::swarm::LookupOpts;
+    use agent_habilis_gossip::protocol::swarm::LookupOpts;
     use iroh::{EndpointAddr, SecretKey};
 
     fn sample_addr(byte: u8) -> EndpointAddr {
@@ -180,10 +180,10 @@ mod tests {
     fn rejects_a_swarm_token() {
         // A swarm id shares the `💬` brand but its `://` body is not Base58Check,
         // so it fails to decode as an a2a ticket.
-        let swarm = crate::protocol::swarm::Swarm::new(
+        let swarm = agent_habilis_gossip::protocol::swarm::Swarm::new(
             [1u8; 32],
-            crate::protocol::swarm::SwarmName::new("t").unwrap(),
-            crate::protocol::swarm::SwarmConfig::loopback(),
+            agent_habilis_gossip::protocol::swarm::SwarmName::new("t").unwrap(),
+            agent_habilis_gossip::protocol::swarm::SwarmConfig::loopback(),
         )
         .to_string();
         assert!(A2aTicket::decode(&swarm).is_err());
@@ -193,10 +193,10 @@ mod tests {
     fn rejects_a_cross_kind_ticket() {
         // The blob ticket shares the `💬` brand but carries a different kind
         // byte, so it must not decode as an a2a ticket — and vice versa.
-        let blob = crate::blob::BlobTicket {
+        let blob = agent_habilis_gossip::blob::BlobTicket {
             addr: sample_addr(3),
-            secret: [9u8; crate::blob::SECRET_LEN],
-            sha256: [7u8; crate::blob::HASH_LEN],
+            secret: [9u8; agent_habilis_gossip::blob::SECRET_LEN],
+            sha256: [7u8; agent_habilis_gossip::blob::HASH_LEN],
             size: 1_234_567,
             lookups: LookupOpts::public_preset(),
             password: false,
@@ -208,7 +208,7 @@ mod tests {
             password: false,
         };
         assert!(A2aTicket::decode(&blob.encode()).is_err());
-        assert!(crate::blob::BlobTicket::decode(&a2a.encode()).is_err());
+        assert!(agent_habilis_gossip::blob::BlobTicket::decode(&a2a.encode()).is_err());
     }
 
     #[test]

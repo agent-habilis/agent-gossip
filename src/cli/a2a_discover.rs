@@ -9,7 +9,7 @@ use std::future::Future;
 use anyhow::Result;
 
 use crate::a2a::{TicketDirectory, TicketDirectoryEvent, TicketListing};
-use crate::protocol::swarm::{DEFAULT_DIRECTORY, LookupSet, SwarmName};
+use agent_habilis_gossip::protocol::swarm::{DEFAULT_DIRECTORY, LookupSet, SwarmName};
 
 use super::picker::{self, PickerOutcome, PickerText, interrupted, sigterm_stream};
 
@@ -37,7 +37,7 @@ pub(super) async fn discover(
     // Route the directory session's logs to its per-member file so the picker /
     // JSON stream stays clean.
     if let Some((swarm, nickname)) = discoverer.session_identity() {
-        crate::logging::attach(swarm, nickname);
+        agent_habilis_gossip::logging::attach(swarm, nickname);
     }
     let mut events = discoverer
         .events()
@@ -49,7 +49,7 @@ pub(super) async fn discover(
                 let _ = discoverer.close().await;
                 // Leave the directory's log file behind so the connect path logs
                 // under its own identity.
-                crate::logging::detach();
+                agent_habilis_gossip::logging::detach();
                 let password = resolve_pick_password(password, &ticket)?;
                 return interruptible(crate::a2a::connect(&ticket, port, json, password)).await;
             }
@@ -81,7 +81,7 @@ pub(super) async fn discover(
 fn resolve_pick_password(
     password: Option<super::password::PasswordFlag>,
     ticket: &str,
-) -> Result<Option<crate::protocol::crypto::Password>> {
+) -> Result<Option<agent_habilis_gossip::protocol::crypto::Password>> {
     match password {
         None if crate::a2a::ticket_requires_password(ticket) => {
             Ok(Some(super::password::require_password(false, "ticket")?))
@@ -155,7 +155,7 @@ async fn run_ticket_picker(
         let lock = if listing.password { "🔒 " } else { "" };
         format!(
             "{bold}{yellow}{label}{reset}  {lock}{preview}…  {}",
-            crate::util::clock::local_datetime(listing.first_seen_unix),
+            agent_habilis_gossip::util::clock::local_datetime(listing.first_seen_unix),
         )
     };
     picker::run(

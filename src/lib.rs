@@ -29,72 +29,48 @@
 //! # }
 //! ```
 
-// Internal modules stay `pub(crate)`: the curated public surface is
-// the `embed` facade plus the protocol re-exports below. Keeping these
-// crate-private means iroh / internal refactors are never breaking
-// public API changes. `a2a` is public on purpose — it is the
-// agent-communication data model both bindings (gossip, local JSON-RPC)
-// share, and embedders speak it directly.
+// Application-layer modules. The engine modules (protocol, gossip, daemon,
+// …) live in the `agent_habilis_gossip` crate; this crate re-exports the
+// curated public protocol surface from there below. `a2a` is public on
+// purpose — it is the agent-communication data model both bindings (gossip,
+// local JSON-RPC) share, and embedders speak it directly.
 pub mod a2a;
-pub(crate) mod beacon;
-pub(crate) mod blob;
 pub(crate) mod cli;
-pub(crate) mod daemon;
-pub(crate) mod directory;
-pub(crate) mod gossip;
-pub(crate) mod lifecycle;
-pub(crate) mod logging;
-pub(crate) mod lookup;
 pub(crate) mod mcp;
 pub(crate) mod output;
-pub(crate) mod protocol;
-// Graph search + telemetry probes are exercised by unit tests and get wired into
-// the send path in phases 3-4; until then they're dead in a non-test build only,
-// so the expectation is scoped to that build (a test build uses them freely).
-pub(crate) mod resolver;
-pub(crate) mod transport;
-pub(crate) mod unicast;
-pub(crate) mod util;
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "relay graph search / telemetry not yet reachable from production; wired in phases 3-4"
-    )
-)]
-pub(crate) mod circuit;
 
 pub mod embed;
 
-// Not public API. Feature-gated, doc-hidden shims that expose pub(crate)
+// Not public API. Feature-gated, doc-hidden shims that expose the engine's
 // internals to the crate's own bench/adversarial suites. See harness/mod.rs.
 #[cfg(any(feature = "bench", feature = "adversarial"))]
 #[doc(hidden)]
 pub mod harness;
 
-// Curated public protocol surface. These types are `pub` inside their
-// (otherwise `pub(crate)`) modules; re-exporting them from the crate
-// root is what makes them externally reachable and satisfies
-// `unreachable_pub`.
+// Curated public protocol surface. These types live in the engine crate
+// (`agent_habilis_gossip`); re-exporting them from this crate root keeps the
+// externally-visible `agent_gossip::` API stable across the engine split.
+pub use a2a::surfaced::SurfacedEvent;
 pub use a2a::{TaskId, TaskState};
-pub use daemon::surfaced::SurfacedEvent;
-pub use logging::LogSink;
-pub use output::{OutputEvent, event_json, surfaced_event_json};
-pub use protocol::message::{
+pub use agent_habilis_gossip::logging::LogSink;
+pub use agent_habilis_gossip::protocol::message::{
     BodyError, Channel, IdError, Message, MessageBody, MessageId, MessageKind, PresenceSubtype,
     Shard, ShardGroup,
 };
-pub use protocol::nickname::{Nickname, NicknameError};
-pub use protocol::swarm::{
+pub use agent_habilis_gossip::protocol::nickname::{Nickname, NicknameError};
+pub use agent_habilis_gossip::protocol::swarm::{
     LookupSet, NameError, RelayLadder, RelayLadderError, RelaySelection, SwarmId, SwarmIdError,
     SwarmName,
 };
-pub use resolver::{JoinTarget, JoinTargetError};
+pub use agent_habilis_gossip::resolver::{JoinTarget, JoinTargetError};
 // Wire/runtime constants the external test + bench crates assert against; the
-// rest of `util::consts` stays crate-internal.
-pub use util::consts::{MAX_LOGICAL_BODY_BYTES, MAX_MESSAGE_SHARDS, MAX_MESSAGE_SIZE, SWARM_GLYPH};
-pub use util::version::VERSION;
-pub use util::{ensure_runtime_base, runtime_base, swarm_prefix};
+// rest of `util::consts` stays engine-internal.
+pub use agent_habilis_gossip::util::consts::{
+    MAX_LOGICAL_BODY_BYTES, MAX_MESSAGE_SHARDS, MAX_MESSAGE_SIZE, SWARM_GLYPH,
+};
+pub use agent_habilis_gossip::util::version::VERSION;
+pub use agent_habilis_gossip::util::{ensure_runtime_base, runtime_base, swarm_prefix};
+pub use output::{OutputEvent, event_json, surfaced_event_json};
 
 use anyhow::Result;
 use clap::Parser;
@@ -132,7 +108,7 @@ pub fn cli_command() -> clap::Command {
 /// until `cli` resolves the swarm id + nickname (see `logging`).
 #[must_use]
 pub fn install_log_sink() -> LogSink {
-    logging::install()
+    agent_habilis_gossip::logging::install()
 }
 
 /// The default tracing directive filter; pass to
@@ -140,14 +116,14 @@ pub fn install_log_sink() -> LogSink {
 /// it. See `logging`.
 #[must_use]
 pub fn log_filter() -> tracing_subscriber::EnvFilter {
-    logging::log_filter()
+    agent_habilis_gossip::logging::log_filter()
 }
 
 /// Flush buffered logs to stderr if identity was never resolved
 /// (transient command, or startup failed before attach). Call after
 /// `run_cli` returns.
 pub fn flush_log_if_pending() {
-    logging::flush_pending_to_stderr();
+    agent_habilis_gossip::logging::flush_pending_to_stderr();
 }
 
 // Shared config for the crate's `proptest!` blocks. Overrides the default

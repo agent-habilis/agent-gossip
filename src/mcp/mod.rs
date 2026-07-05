@@ -56,13 +56,13 @@ use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 
 use crate::a2a::TaskId;
-use crate::daemon::derive_topic_swarm;
-use crate::daemon::state::RosterEntry;
 use crate::embed::{CreateConfig, CreateError, Directory, JoinConfig, JoinError, TopicConfig};
-use crate::protocol::swarm::{LookupSet, RelayLadder, RelaySelection, SwarmName};
-use crate::protocol::{Message, MessageBody, MessageId, Nickname, SwarmId};
-use crate::resolver::JoinTarget;
-use crate::util::consts::GOSSIP_ACTIVE_VIEW_CAPACITY;
+use agent_habilis_gossip::daemon::derive_topic_swarm;
+use agent_habilis_gossip::daemon::state::RosterEntry;
+use agent_habilis_gossip::protocol::swarm::{LookupSet, RelayLadder, RelaySelection, SwarmName};
+use agent_habilis_gossip::protocol::{Message, MessageBody, MessageId, Nickname, SwarmId};
+use agent_habilis_gossip::resolver::JoinTarget;
+use agent_habilis_gossip::util::consts::GOSSIP_ACTIVE_VIEW_CAPACITY;
 use session::Session;
 
 /// Run the MCP server over stdio. Blocks until the client disconnects.

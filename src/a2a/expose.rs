@@ -14,9 +14,9 @@ use rand::RngCore;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 
-use crate::lookup::build_endpoint;
-use crate::protocol::crypto::{Password, TicketAuth, ct_eq};
-use crate::protocol::swarm::{
+use agent_habilis_gossip::lookup::build_endpoint;
+use agent_habilis_gossip::protocol::crypto::{Password, TicketAuth, ct_eq};
+use agent_habilis_gossip::protocol::swarm::{
     DirectorySelection, LookupOpts, LookupSet, resolve_lookups, validate_advertise,
 };
 
@@ -68,7 +68,10 @@ pub(crate) async fn expose(
                 label: Some(format!("a2a {origin}")),
             };
             if !json {
-                crate::util::output::status("Advertising", &format!("in #{directory} directory"));
+                agent_habilis_gossip::util::output::status(
+                    "Advertising",
+                    &format!("in #{directory} directory"),
+                );
             }
             Some(spawn_ticket_advertiser(directory, lookups, &ad)?)
         }

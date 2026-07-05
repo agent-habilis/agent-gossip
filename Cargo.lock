@@ -71,6 +71,44 @@ dependencies = [
 name = "agent-gossip"
 version = "0.5.0"
 dependencies = [
+ "agent-habilis-gossip",
+ "anstream 0.6.21",
+ "anstyle",
+ "anyhow",
+ "async-trait",
+ "automerge",
+ "bs58",
+ "bytes",
+ "clap",
+ "dhat",
+ "divan",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "include_dir",
+ "insta",
+ "iroh",
+ "libc",
+ "mimalloc",
+ "nfsserve",
+ "portable-pty",
+ "proptest",
+ "rand 0.9.4",
+ "rmcp",
+ "rpassword",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
+name = "agent-habilis-gossip"
+version = "0.5.0"
+dependencies = [
  "anstream 0.6.21",
  "anstyle",
  "anyhow",
@@ -80,15 +118,9 @@ dependencies = [
  "bs58",
  "bytes",
  "chacha20poly1305",
- "clap",
- "dhat",
  "divan",
  "futures-util",
  "governor",
- "http-body-util",
- "hyper",
- "hyper-util",
- "include_dir",
  "insta",
  "interprocess",
  "iroh",
@@ -96,14 +128,9 @@ dependencies = [
  "iroh-mainline-address-lookup",
  "iroh-mdns-address-lookup",
  "libc",
- "mimalloc",
- "nfsserve",
  "notify",
- "portable-pty",
  "proptest",
  "rand 0.9.4",
- "rmcp",
- "rpassword",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -1724,6 +1751,17 @@ dependencies = [
  "log",
  "plain",
  "scroll",
+]
+
+[[package]]
+name = "gossip-pipe"
+version = "0.0.0"
+dependencies = [
+ "agent-habilis-gossip",
+ "anyhow",
+ "base64",
+ "clap",
+ "tokio",
 ]
 
 [[package]]

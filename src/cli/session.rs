@@ -2,11 +2,11 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 
-use crate::daemon::state_file::read_session_entry;
-use crate::protocol::Nickname;
-use crate::util::consts::SWARM_GLYPH;
-use crate::util::process;
-use crate::util::runtime_base;
+use agent_habilis_gossip::daemon::state_file::read_session_entry;
+use agent_habilis_gossip::protocol::Nickname;
+use agent_habilis_gossip::util::consts::SWARM_GLYPH;
+use agent_habilis_gossip::util::process;
+use agent_habilis_gossip::util::runtime_base;
 
 use super::args::{LeaveOpts, OutputFormat, SessionOpts};
 
@@ -134,7 +134,7 @@ fn display_name(target: &Target) -> String {
     let name = target
         .name
         .clone()
-        .unwrap_or_else(|| crate::util::swarm_prefix(&target.swarm));
+        .unwrap_or_else(|| agent_habilis_gossip::util::swarm_prefix(&target.swarm));
     match &target.nickname {
         Some(nickname) => format!("#{name} <{nickname}>"),
         None => format!("#{name}"),

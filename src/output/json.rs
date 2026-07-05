@@ -11,10 +11,10 @@ use std::io::Write;
 
 use serde::Serialize;
 
-use crate::util::consts::SWARM_GLYPH;
+use agent_habilis_gossip::util::consts::SWARM_GLYPH;
 
 use super::{OutputEvent, TaskMessageLeg};
-use crate::protocol::{Message, MessageKind, Nickname, PresenceSubtype};
+use agent_habilis_gossip::protocol::{Message, MessageKind, Nickname, PresenceSubtype};
 
 /// One-shot events (everything except the `"event":"message"` family).
 /// `#[serde(tag = "event")]` inlines the discriminator as the first field.
@@ -324,43 +324,27 @@ pub(super) fn format_presence_json(msg: &Message, subtype: PresenceSubtype) -> S
 /// Format a chat frame as a JSON string. Presence uses
 /// `format_presence_json`; `PeerInfo` is never printed.
 pub(super) fn format_msg_json(msg: &Message, is_self: bool) -> String {
-    match &msg.kind {
-        MessageKind::A2aMsg => {
-            // Inbound frames were validated at the receive boundary and our
-            // own echoes are built by `broadcast_message`, so the parse
-            // succeeds in practice; the fallback keeps a display path from
-            // ever panicking on a crafted body.
-            let payload = serde_json::from_str::<crate::a2a::Message>(msg.body.as_str()).ok();
-            let body = payload.as_ref().map_or_else(
-                || msg.body.as_str().to_owned(),
-                crate::a2a::gossip::display_text,
-            );
-            serde_json::to_string(&MsgLine {
-                header: message_header(msg, "msg"),
-                display: msg_display(msg.author.as_str(), &body, None),
-                body,
-                to: None,
-                message: payload,
-                is_self,
-            })
-            .expect("message event serialization should never fail")
-        }
-        MessageKind::Presence { .. }
-        | MessageKind::PeerInfo
-        | MessageKind::Digest
-        | MessageKind::StateDigest
-        | MessageKind::MetaDigest
-        | MessageKind::Ping
-        | MessageKind::Pong { .. }
-        | MessageKind::A2aReq { .. }
-        | MessageKind::A2aResp { .. }
-        | MessageKind::State
-        | MessageKind::Meta
-        | MessageKind::A2aStatus { .. }
-        | MessageKind::A2aArtifact { .. }
-        | MessageKind::LinkState => {
-            unreachable!("format_msg_json only handles chat frames")
-        }
+    if msg.kind.is_app(crate::a2a::wire::MSG) {
+        // Inbound frames were validated at the receive boundary and our
+        // own echoes are built by `broadcast_message`, so the parse
+        // succeeds in practice; the fallback keeps a display path from
+        // ever panicking on a crafted body.
+        let payload = serde_json::from_str::<crate::a2a::Message>(msg.body.as_str()).ok();
+        let body = payload.as_ref().map_or_else(
+            || msg.body.as_str().to_owned(),
+            crate::a2a::gossip::display_text,
+        );
+        serde_json::to_string(&MsgLine {
+            header: message_header(msg, "msg"),
+            display: msg_display(msg.author.as_str(), &body, None),
+            body,
+            to: None,
+            message: payload,
+            is_self,
+        })
+        .expect("message event serialization should never fail")
+    } else {
+        unreachable!("format_msg_json only handles chat frames")
     }
 }
 
@@ -374,8 +358,18 @@ pub(super) fn print_message_json(msg: &Message, is_self: bool) {
 /// projection as `body`, and the whole A2A payload.
 pub(super) fn format_task_json(msg: &Message, is_self: bool) -> String {
     let to = match &msg.kind {
-        MessageKind::A2aStatus { to, .. } | MessageKind::A2aArtifact { to, .. } => to,
-        MessageKind::A2aMsg
+        MessageKind::App { tag, to, .. }
+            if matches!(
+                tag.as_str(),
+                crate::a2a::wire::STATUS | crate::a2a::wire::ARTIFACT
+            ) =>
+        {
+            match to {
+                Some(to) => to,
+                None => unreachable!("a status/artifact frame is always directed"),
+            }
+        }
+        MessageKind::App { .. }
         | MessageKind::Presence { .. }
         | MessageKind::PeerInfo
         | MessageKind::Digest
@@ -383,8 +377,6 @@ pub(super) fn format_task_json(msg: &Message, is_self: bool) -> String {
         | MessageKind::MetaDigest
         | MessageKind::Ping
         | MessageKind::Pong { .. }
-        | MessageKind::A2aReq { .. }
-        | MessageKind::A2aResp { .. }
         | MessageKind::State
         | MessageKind::Meta
         | MessageKind::LinkState => {
@@ -448,7 +440,7 @@ pub(super) fn format_task_message_json(leg: &TaskMessageLeg<'_>) -> String {
         swarm: leg.swarm,
         author: leg.author,
         pubkey: None,
-        ts: crate::util::clock::unix_secs(),
+        ts: agent_habilis_gossip::util::clock::unix_secs(),
         to: leg.peer,
         task_id: leg.task_id.to_owned(),
         kind: "message",
@@ -557,7 +549,7 @@ fn state_display(author: &str, is_self: bool, what: &str) -> String {
 /// header, the merge delta (pulled out of the `State` body), the freshly-derived
 /// `document`, the `display` line, and `self`.
 pub(super) fn format_state_json(
-    channel: crate::protocol::Channel,
+    channel: agent_habilis_gossip::protocol::Channel,
     event: &Message,
     document: &serde_json::Value,
     is_self: bool,

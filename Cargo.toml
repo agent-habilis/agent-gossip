@@ -1,5 +1,5 @@
 [workspace]
-members = ["tasks"]
+members = ["tasks", "agent-habilis-gossip", "examples/gossip-pipe"]
 
 # Shared package fields. Each crate opts in with `edition.workspace = true`
 # / `rust-version.workspace = true` so the workspace stays in lockstep
@@ -7,6 +7,47 @@ members = ["tasks"]
 [workspace.package]
 edition = "2024"
 rust-version = "1.93"
+
+# Deps shared by the app (`agent-gossip`) and the engine
+# (`agent-habilis-gossip`), pinned once here so versions stay in lockstep.
+# Each crate opts in with `dep.workspace = true` (and may union in extra
+# features). Feature sets here are the union across both crates — cargo
+# unifies features per build anyway.
+[workspace.dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "io-util", "fs", "signal", "net", "process"] }
+serde = { version = "1", features = ["derive"] }
+# `raw_value` lets the MCP `fetch_messages` result embed each event's
+# already-rendered, field-order-pinned JSON verbatim (a `RawValue`) instead of
+# re-parsing to a key-sorted `Value` — keeping MCP byte-identical to the
+# `--output json` stream.
+serde_json = { version = "1", features = ["raw_value"] }
+anyhow = "1"
+bytes = "1"
+# `tracing` is already in the lockfile transitively (iroh depends on
+# it); declaring it directly only lets us emit our own spans/events and
+# adds nothing to the build. Pinned 0.1 (the only line; 0.x is stable).
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "tracing-log"] }
+async-trait = "0.1.89"
+uuid = { version = "1", features = ["v4"] }
+# `unstable-net-report`: 1.0.0 gated `Endpoint::net_report()` behind it, and the
+# capability probe (`lookup::capability`) reads the report directly.
+iroh = { version = "1.0.1", features = ["tls-ring", "unstable-net-report"] }
+iroh-gossip = { version = "0.101", features = ["net"] }
+bs58 = "0.5"
+# The shared `state`/`meta` documents are automerge CRDTs: concurrent edits
+# merge without a bespoke ordered-log fold. `default-features` stays on (the
+# `storage-v2` on-disk format is unused — we carry changes on the wire).
+automerge = "0.10"
+sha2 = "0.10"
+rand = "0.9"
+libc = "0.2"
+anstyle = "1"
+anstream = "0.6"
+# Shared dev-deps (unit + integration tests, benches).
+proptest = "1.6"
+insta = "1"
+divan = "0.1"
 
 # Note: there is NO `rust_2021_idioms` group. `rust_2018_idioms` is the only
 # idioms group and is still correct on edition 2021 (it bundles
@@ -101,53 +142,46 @@ name = "agent-gossip"
 path = "src/main.rs"
 
 [features]
-# Off by default. Exposes `src/harness/bench.rs` so the divan microbenchmark
-# bench can reach `pub(crate)` hot paths; never enabled in a normal or
-# release build, so the public API surface is unchanged.
-bench = []
-# Off by default. Exposes `src/harness/adversarial.rs` + `SwarmSession::inject_raw`
-# so the adversarial integration suite (`tests/adversarial.rs`) can craft and
-# inject malicious wire messages a correct client never would. Never enabled in a
-# normal/release build, so the public surface is unchanged. `cargo task
-# test`/`ci` enable it.
-adversarial = []
+# Off by default. Forwards to the engine's `bench` feature, which exposes its
+# `pub(crate)` hot paths so `benches/hot_paths.rs` (via `harness::bench`) can
+# reach them; never enabled in a normal or release build, so the public API
+# surface is unchanged.
+bench = ["agent-habilis-gossip/bench"]
+# Off by default. Forwards to the engine's `adversarial` feature and exposes
+# `src/harness/adversarial.rs` + `SwarmSession::inject_raw` so the adversarial
+# integration suite (`tests/adversarial.rs`) can craft and inject malicious wire
+# messages a correct client never would. Never enabled in a normal/release
+# build, so the public surface is unchanged. `cargo task test`/`ci` enable it.
+adversarial = ["agent-habilis-gossip/adversarial"]
 # Off by default. Installs dhat's heap-profiling global allocator + a profiler
 # in `main`, and makes the CLI quit path return cleanly (instead of
 # `process::exit`) so the profiler flushes `dhat-heap.json` on shutdown. For
 # localizing the gossip-churn per-connection retention: build with this feature,
 # run a churning daemon (`--active-view-capacity 5 --no-interactive`), SIGTERM
 # it, inspect the profile. Never in a normal build.
-dhat-heap = ["dep:dhat"]
+dhat-heap = ["dep:dhat", "agent-habilis-gossip/dhat-heap"]
 
 [dependencies]
+agent-habilis-gossip = { path = "agent-habilis-gossip" }
 # Optional: only compiled in under the `dhat-heap` feature (heap profiling).
 dhat = { version = "0.3", optional = true }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "io-util", "fs", "signal", "net", "process"] }
+tokio.workspace = true
 clap = { version = "4", features = ["derive"] }
 # Embeds the integration artifacts (Claude Code plugin, pi extension, generic
 # skill) into the binary at compile time so `agent-gossip setup` is self-contained.
 include_dir = "0.7"
-anstyle = "1"
-anstream = "0.6"
+anstyle.workspace = true
+anstream.workspace = true
 # The shared `state`/`meta` documents are automerge CRDTs: concurrent edits
 # merge without a bespoke ordered-log fold. `default-features` stays on (the
 # `storage-v2` on-disk format is unused — we carry changes on the wire).
-automerge = "0.10"
+automerge.workspace = true
 # `unstable-net-report`: 1.0.0 gated `Endpoint::net_report()` behind it, and the
 # capability probe (`lookup::capability`) reads the report directly.
-iroh = { version = "1.0.1", features = ["tls-ring", "unstable-net-report"] }
-iroh-gossip = { version = "0.101", features = ["net"] }
-# mDNS + mainline-DHT address-lookup providers were extracted from iroh core
-# in the 1.0 line; these companion crates restore the `--mdns` / `--dht` legs.
-iroh-mdns-address-lookup = "0.4"
-iroh-mainline-address-lookup = "0.4"
-anyhow = "1"
-uuid = { version = "1", features = ["v4"] }
-sha2 = "0.10"
-# Argon2id password stretching for `--password` (swarm hash verifier + ticket
-# handshake tokens). default-features off: no `password-hash` string format —
-# we only need the raw `hash_password_into` KDF.
-argon2 = { version = "0.5", default-features = false, features = ["alloc"] }
+iroh.workspace = true
+anyhow.workspace = true
+uuid.workspace = true
+sha2.workspace = true
 # Hidden `--password` prompt. Reads from the controlling TTY (/dev/tty), not
 # stdin — `pipe listen`'s stdin is the data source — and avoids a new
 # unsafe termios block. Pinned =7.4.0: it clears ECHO but leaves ICANON on,
@@ -155,45 +189,20 @@ argon2 = { version = "0.5", default-features = false, features = ["alloc"] }
 # password prompt (lock cursor + macOS secure input); 7.5+ switched to raw
 # char-by-char reads (ICANON off) and silently defeats that detection.
 rpassword = "=7.4.0"
-governor = "0.10"
-bytes = "1"
-futures-util = "0.3"
-bs58 = "0.5"
-# End-to-end sealing of directed frames: a NaCl-style sealed box (ephemeral
-# X25519 ECDH → ChaCha20-Poly1305) so only the addressed recipient can read a
-# directed body. The AEAD key is derived from the ECDH secret via the in-tree
-# `crypto::derive_secret` (SHA-256), so no HKDF dep. Both crates are pure-Rust
-# (no `unsafe`, which the workspace denies).
-x25519-dalek = { version = "2", features = ["static_secrets"] }
-chacha20poly1305 = "0.10"
-# Best-effort wiping of retained secrets (the swarm password + derived channel
-# keys) on drop, so they don't linger in process memory / core dumps.
-zeroize = "1"
-serde = { version = "1", features = ["derive"] }
-# `raw_value` lets the MCP `fetch_messages` result embed each event's
-# already-rendered, field-order-pinned JSON verbatim (a `RawValue`) instead of
-# re-parsing to a key-sorted `Value` — keeping MCP byte-identical to the
-# `--output json` stream.
-serde_json = { version = "1", features = ["raw_value"] }
-rand = "0.9"
-libc = "0.2"
+bytes.workspace = true
+bs58.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+rand.workspace = true
+libc.workspace = true
 # PTY spawn + resize for `agent-gossip sh` (broadcast a live shell). Blocking I/O,
 # bridged to tokio via reader/writer threads.
 portable-pty = "0.9"
-# `tracing` is already in the lockfile transitively (iroh depends on
-# it); declaring it directly only lets us emit our own spans/events and
-# adds nothing to the build. Pinned 0.1 (the only line; 0.x is stable).
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "tracing-log"] }
-interprocess = { version = "2", features = ["tokio"] }
-# Filesystem watcher backing the `--spool` directory transport: FSEvents on
-# macOS, inotify on Linux. No debouncer companion crate — spool filenames are
-# content-addressed (`sha256(frame)`), so re-delivered or coalesced events are
-# idempotent and a periodic rescan covers any the OS drops.
-notify = "8"
+tracing.workspace = true
+tracing-subscriber.workspace = true
 rmcp = { version = "1.5", features = ["server", "transport-io", "macros", "schemars"] }
 nfsserve = "0.11.0"
-async-trait = "0.1.89"
+async-trait.workspace = true
 # The flag-gated (`--a2a-serve`) localhost JSON-RPC 2.0 A2A binding. All
 # three are already transitive in the lockfile (via iroh/reqwest), so
 # promoting them to direct deps adds zero new crates to the graph.
@@ -208,22 +217,19 @@ hyper-util = { version = "0.1", features = ["tokio"] }
 mimalloc = { version = "0.1", default-features = false }
 
 [dev-dependencies]
-proptest = "1.6"
-insta = "1"
+# Enable the engine's `test-fixtures` feature for test/bench builds only, so the
+# app's test suites can build the engine's cross-crate test fixtures. Off for a
+# normal `cargo build` (dev-deps don't apply there).
+agent-habilis-gossip = { path = "agent-habilis-gossip", features = ["test-fixtures"] }
+proptest.workspace = true
+insta.workspace = true
 # In-process integration harness (`tests/common::InProcNode`) drives
 # `embed::SwarmSession` async, so the test crates need a runtime + the
 # `#[tokio::test]` macro. Same major as the lib dep — no new dup version.
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }
+tokio.workspace = true
 # Offline microbenchmarks (`benches/hot_paths.rs`). No html/plotting deps;
 # prints a summary table to stdout.
-divan = "0.1"
-
-# Stamps the build's git short hash + dirty flag into the version
-# (`util::version::VERSION`), so every `agent-gossip` self-identifies its commit in
-# `--version`, the `ready` event, and every log line. git-CLI backend — no
-# libgit2/gix; build hosts all have `git`.
-[build-dependencies]
-vergen-gitcl = "1"
+divan.workspace = true
 
 # Offline microbenchmarks of the pure hot paths. Needs `bench` for the
 # `harness::bench` shim that reaches `pub(crate)` internals.
