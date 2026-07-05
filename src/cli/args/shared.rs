@@ -79,6 +79,10 @@ pub(crate) struct SharedServerOpts {
     #[arg(long, hide = true, default_value_t = consts::SWEEP_INTERVAL_SECS)]
     pub sweep_interval_secs: u64,
 
+    /// Cadence of the unconditional gossip healer (seconds).
+    #[arg(long, hide = true, default_value_t = consts::HEAL_INTERVAL_SECS)]
+    pub heal_interval_secs: u64,
+
     /// Task idle-debounce timeout (seconds).
     #[arg(long, hide = true, default_value_t = consts::TASK_TIMEOUT_SECS)]
     pub task_timeout_secs: u64,
@@ -123,6 +127,10 @@ pub(crate) struct SharedServerOpts {
     #[arg(long, hide = true, default_value_t = consts::DIRECTORY_EXPIRY_SECS)]
     pub directory_expiry_secs: u64,
 
+    /// How often a member broadcasts its anti-entropy digest (seconds).
+    #[arg(long, hide = true, default_value_t = consts::ANTIENTROPY_INTERVAL_SECS)]
+    pub antientropy_interval_secs: u64,
+
     /// Max messages re-sent in response to one anti-entropy digest.
     #[arg(long, hide = true, default_value_t = consts::ANTIENTROPY_MAX_RESEND)]
     pub antientropy_max_resend: usize,
@@ -166,6 +174,7 @@ impl SharedServerOpts {
         crate::util::tuning::Tuning {
             alive_timeout_secs: self.alive_timeout_secs,
             sweep_interval_secs: self.sweep_interval_secs,
+            heal_interval_secs: self.heal_interval_secs,
             task_timeout_secs: self.task_timeout_secs,
             task_keepalive_secs: self.task_keepalive_secs,
             task_keepalive_max_secs: self.task_keepalive_max_secs,
@@ -177,6 +186,7 @@ impl SharedServerOpts {
             starvation_threshold_secs: self.starvation_threshold_secs,
             advertise_interval_secs: self.advertise_interval_secs,
             directory_expiry_secs: self.directory_expiry_secs,
+            antientropy_interval_secs: self.antientropy_interval_secs,
             antientropy_max_resend: self.antientropy_max_resend,
             spool_max_bytes: self.spool_max_bytes,
             directory_private: self.directory_private,

@@ -37,7 +37,7 @@ use tokio::task::JoinHandle;
 
 use crate::lookup::{add_peer_addr, build_endpoint, build_swarm, probe_connect};
 use crate::protocol::swarm::{LookupOpts, RelayChoice};
-use crate::util::tuning::{HEAL_PROBE_SECS, RENDEZVOUS_PROBE_SECS};
+use crate::util::tuning::{HEAL_PROBE_SECS, RENDEZVOUS_PROBE_SECS, heal_interval_secs};
 
 /// Everything [`ensure`] needs to (re)build the rendezvous endpoint.
 /// Cheap to clone-hold for the event loop's lifetime.
@@ -170,7 +170,9 @@ async fn build_rendezvous_endpoint(
             && probe_connect(
                 participant,
                 EndpointAddr::new(params.id),
-                Duration::from_secs(HEAL_PROBE_SECS),
+                // Clamped so at most one probe is outstanding per heal tick
+                // even when tests shorten the cadence below the probe cap.
+                Duration::from_secs(HEAL_PROBE_SECS.min(heal_interval_secs())),
             )
             .await
         {
@@ -277,7 +279,7 @@ pub(crate) async fn ensure(
 
         use futures_util::StreamExt as _;
 
-        use crate::util::tuning::{BEACON_MESH_WAIT_SECS, HEAL_INTERVAL_SECS};
+        use crate::util::tuning::BEACON_MESH_WAIT_SECS;
 
         // Keep the gossip frontend + the Router's accept loop alive
         // for the task's lifetime so the rendezvous stays reachable by
@@ -301,7 +303,7 @@ pub(crate) async fn ensure(
             tokio::time::timeout(Duration::from_secs(BEACON_MESH_WAIT_SECS), topic.joined()).await;
 
         let (sender, mut receiver) = topic.split();
-        let mut heal = tokio::time::interval(Duration::from_secs(HEAL_INTERVAL_SECS));
+        let mut heal = tokio::time::interval(Duration::from_secs(heal_interval_secs()));
         heal.tick().await; // eat the immediate first tick
 
         loop {
