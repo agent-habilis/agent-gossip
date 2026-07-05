@@ -98,6 +98,11 @@ pub(crate) fn spool_max_bytes() -> u64 {
     current().spool_max_bytes.max(1)
 }
 
+// The three directed-transport toggles (unicast / gossip-directed / circuit)
+// are **not** here: transport policy is a per-session property, carried in
+// `EventLoopState::transport` (a `crate::transport::TransportPolicy`) and read
+// by `unicast::deliver`. The CLI flags feed the session config, not this global.
+
 /// Capacity of the embed facade's inbound broadcast channel. Bounded
 /// so a slow embedder never backpressures the gossip/membership loop;
 /// under sustained lag the oldest buffered messages are dropped and

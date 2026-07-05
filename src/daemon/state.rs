@@ -203,6 +203,10 @@ pub(crate) struct EventLoopState {
     /// user messages are buffered until `meshed`, then flushed, so the
     /// first message after a join can't be a lost one-shot.
     pub meshed: bool,
+    /// Which transports a directed message may use (per-session). `new()`
+    /// defaults to all-enabled; `event_loop::run` sets the configured value.
+    /// Read by `crate::unicast::deliver`.
+    pub transport: crate::transport::TransportPolicy,
     /// The unicast (point-to-point) connection pool: dials + reuses a QUIC
     /// connection to each addressable participant so a directed message goes
     /// p2p instead of flooding the gossip mesh. Interior-mutable (Arc), so the
@@ -215,8 +219,7 @@ pub(crate) struct EventLoopState {
     /// in-process nodes can each run a different policy (the CLI sources it
     /// from the hidden `--no-unicast`/`--no-gossip-directed`/`--no-circuit`
     /// flags, embed from its config). Read by [`crate::unicast::deliver`].
-    pub transport: crate::unicast::TransportPolicy,
-    /// Circuit routing table: the freshest link-state vector per origin, folded
+        /// Circuit routing table: the freshest link-state vector per origin, folded
     /// into the mesh graph on demand. Populated from received `LinkState`
     /// frames; read by the circuit send path (and the topology view). See
     /// [`crate::circuit`].
@@ -582,8 +585,8 @@ impl EventLoopState {
             rendezvous_linked: false,
             announced: false,
             meshed: false,
+            transport: crate::transport::TransportPolicy::DEFAULTS,
             unicast_pool: crate::unicast::UnicastPool::disconnected(),
-            transport: crate::unicast::TransportPolicy::default(),
             link_state: crate::circuit::LinkStateStore::default(),
             link_state_seq: 0,
             circuit_telemetry: HashMap::new(),

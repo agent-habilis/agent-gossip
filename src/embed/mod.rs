@@ -30,7 +30,7 @@ use crate::protocol::swarm::{
 };
 use crate::protocol::{Message, MessageBody, Nickname, SwarmId};
 use crate::resolver::JoinTarget;
-use crate::unicast::TransportPolicy;
+use crate::transport::TransportPolicy;
 use crate::util::consts::GOSSIP_ACTIVE_VIEW_CAPACITY;
 use crate::util::tuning::{EMBED_INBOUND_CAP, advertise_interval_secs, directory_expiry_secs};
 
@@ -292,10 +292,10 @@ async fn create_setup(
             max_peers,
             state_file: None,
             spool: cfg.spool,
+            transport: cfg.transport,
             output,
             drift: None,
             a2a_serve: None,
-            transport: cfg.transport,
         },
     )
     .await
@@ -321,7 +321,7 @@ async fn join_setup(cfg: JoinConfig, output: Output) -> Result<EventLoopConfig, 
     }
     .resolve()
     .map_err(JoinError::Resolve)?;
-    resolved_setup(resolved, cfg.max_peers, cfg.transport, cfg.spool, output).await
+    resolved_setup(resolved, cfg.max_peers, cfg.spool, cfg.transport, output).await
 }
 
 /// Resolve + set up a topic (a string-derived public swarm).
@@ -336,7 +336,7 @@ async fn topic_setup(cfg: TopicConfig, output: Output) -> Result<EventLoopConfig
     }
     .resolve()
     .map_err(JoinError::Resolve)?;
-    resolved_setup(resolved, cfg.max_peers, cfg.transport, cfg.spool, output).await
+    resolved_setup(resolved, cfg.max_peers, cfg.spool, cfg.transport, output).await
 }
 
 /// The shared tail of [`join_setup`] / [`topic_setup`]: run `setup_swarm` for
@@ -344,8 +344,8 @@ async fn topic_setup(cfg: TopicConfig, output: Output) -> Result<EventLoopConfig
 async fn resolved_setup(
     resolved: Resolved,
     max_peers: usize,
-    transport: TransportPolicy,
     spool: Option<std::path::PathBuf>,
+    transport: TransportPolicy,
     output: Output,
 ) -> Result<EventLoopConfig, JoinError> {
     let Resolved { kind, author, .. } = resolved;
@@ -357,10 +357,10 @@ async fn resolved_setup(
             max_peers,
             state_file: None,
             spool,
+            transport,
             output,
             drift: None,
             a2a_serve: None,
-            transport,
         },
     )
     .await
@@ -378,6 +378,13 @@ pub(crate) struct InProcessSession {
     swarm_id: SwarmId,
     name: SwarmName,
     nickname: Nickname,
+    /// This node's iroh endpoint id + X25519 circuit key, captured for the
+    /// testkit `inject_link_vector` (which needs a peer's id + key to build the
+    /// synthetic link-state vector).
+    #[cfg(feature = "adversarial")]
+    endpoint_id: iroh::EndpointId,
+    #[cfg(feature = "adversarial")]
+    circuit_key: [u8; 32],
     req_tx: mpsc::Sender<SessionRequest>,
     quit_tx: mpsc::Sender<()>,
     task: Option<JoinHandle<anyhow::Result<()>>>,
@@ -409,11 +416,19 @@ impl InProcessSession {
         let swarm_id = elc.swarm.clone();
         let name = elc.name.clone();
         let nickname = elc.author.clone();
+        #[cfg(feature = "adversarial")]
+        let endpoint_id = elc.endpoint.id();
+        #[cfg(feature = "adversarial")]
+        let circuit_key = elc.identity.seal_public();
         let task = tokio::spawn(crate::daemon::run(elc));
         Self {
             swarm_id,
             name,
             nickname,
+            #[cfg(feature = "adversarial")]
+            endpoint_id,
+            #[cfg(feature = "adversarial")]
+            circuit_key,
             req_tx,
             quit_tx,
             task: Some(task),
@@ -688,6 +703,44 @@ impl InProcessSession {
             .map_err(|_| anyhow::anyhow!("swarm event loop has stopped"))
     }
 
+    /// This node's iroh endpoint id (testkit).
+    #[cfg(feature = "adversarial")]
+    pub(crate) fn endpoint_id(&self) -> iroh::EndpointId {
+        self.endpoint_id
+    }
+
+    /// This node's X25519 circuit key (testkit) — a peer needs it to onion-seal
+    /// a circuit terminating here.
+    #[cfg(feature = "adversarial")]
+    pub(crate) fn circuit_key(&self) -> [u8; 32] {
+        self.circuit_key
+    }
+
+    /// Ingest a synthetic link-state vector into this node's routing graph
+    /// (testkit) — stands up a circuit topology a live rendezvous mesh won't
+    /// converge. See [`crate::circuit::LinkStateStore`].
+    ///
+    /// # Errors
+    /// Fails if the event loop has stopped.
+    #[cfg(feature = "adversarial")]
+    pub(crate) async fn inject_link_vector(
+        &self,
+        origin: iroh::EndpointId,
+        seq: u64,
+        seal_key: [u8; 32],
+        links: Vec<(iroh::EndpointId, u32)>,
+    ) -> anyhow::Result<()> {
+        self.req_tx
+            .send(SessionRequest::InjectLinkVector {
+                origin,
+                seq,
+                seal_key,
+                links,
+            })
+            .await
+            .map_err(|_| anyhow::anyhow!("swarm event loop has stopped"))
+    }
+
     /// Simulate the gossip stream terminally ending. Adversarial-suite
     /// only — drives the stream-end resubscribe recovery test.
     ///
@@ -852,7 +905,7 @@ impl SwarmSession {
                 max_peers: GOSSIP_ACTIVE_VIEW_CAPACITY,
                 state_file: None,
                 spool: None,
-                output,
+                    output,
                 drift: None,
                 a2a_serve: None,
                 transport: TransportPolicy::default(),
@@ -1060,6 +1113,43 @@ impl SwarmSession {
     #[cfg(feature = "adversarial")]
     pub async fn inject_raw(&self, bytes: Vec<u8>) -> anyhow::Result<()> {
         self.core.inject_raw(bytes::Bytes::from(bytes)).await
+    }
+
+    /// This node's iroh endpoint id. Test-only (`adversarial`): a peer needs it
+    /// to name this node in an injected circuit topology.
+    #[cfg(feature = "adversarial")]
+    #[must_use]
+    pub fn endpoint_id(&self) -> iroh::EndpointId {
+        self.core.endpoint_id()
+    }
+
+    /// This node's X25519 circuit key. Test-only (`adversarial`): a peer needs
+    /// it to onion-seal a circuit terminating at this node.
+    #[cfg(feature = "adversarial")]
+    #[must_use]
+    pub fn circuit_key(&self) -> [u8; 32] {
+        self.core.circuit_key()
+    }
+
+    /// Ingest a synthetic link-state vector into this node's routing graph so a
+    /// circuit route can be computed over a live mesh that would not otherwise
+    /// converge one. Test-only (`adversarial`); mirrors how `src/circuit`'s own
+    /// tests build controlled topologies. `origin`/`seal_key`/`links` are a
+    /// peer's endpoint id, X25519 key, and `(neighbour, cost)` edges.
+    ///
+    /// # Errors
+    /// Fails if the event loop has stopped.
+    #[cfg(feature = "adversarial")]
+    pub async fn inject_link_vector(
+        &self,
+        origin: iroh::EndpointId,
+        seq: u64,
+        seal_key: [u8; 32],
+        links: Vec<(iroh::EndpointId, u32)>,
+    ) -> anyhow::Result<()> {
+        self.core
+            .inject_link_vector(origin, seq, seal_key, links)
+            .await
     }
 
     /// Simulate the gossip stream terminally ending (the daemon must

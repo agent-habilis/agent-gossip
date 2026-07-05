@@ -1106,6 +1106,17 @@ async fn session_ping(
 /// broadcasts via the shared helper and echoes the canonical [`Message`]
 /// back on the oneshot; `Poll` returns the join-horizon-filtered buffer.
 /// Returns `true` if anything was broadcast so the caller can refresh
+/// Deliver a task-leg outcome on its oneshot and report whether anything hit
+/// the wire (the caller refreshes the heartbeat clock on `true`).
+fn respond_with(
+    resp: tokio::sync::oneshot::Sender<anyhow::Result<Message>>,
+    outcome: anyhow::Result<Message>,
+) -> bool {
+    let sent_ok = outcome.is_ok();
+    let _ = resp.send(outcome);
+    sent_ok
+}
+
 /// `last_sent_at` (mirrors `handle_ipc_command`).
 pub(crate) async fn handle_session_request(
     req: SessionRequest,
@@ -1122,10 +1133,10 @@ pub(crate) async fn handle_session_request(
             let _ = resp.send(outcome);
             sent_ok
         }
+        // Same policy as the CLI/IPC `Poll` arm: respond now if events are
+        // buffered, else (with `long`) park a typed waiter the loop
+        // fulfills/expires. A parked waiter broadcasts nothing → `false`.
         SessionRequest::Poll { after, long, resp } => {
-            // Same policy as the CLI/IPC `Poll` arm: respond now if events are
-            // buffered, else (with `long`) park a typed waiter the loop
-            // fulfills/expires. A parked waiter broadcasts nothing → `false`.
             state.poll_or_register(
                 after,
                 long,
@@ -1139,23 +1150,16 @@ pub(crate) async fn handle_session_request(
             state: task_state,
             note,
             resp,
-        } => {
-            let outcome = emit_task_status(ctx, &task_id, task_state, note.as_deref(), state).await;
-            let sent_ok = outcome.is_ok();
-            let _ = resp.send(outcome);
-            sent_ok
-        }
+        } => respond_with(
+            resp,
+            emit_task_status(ctx, &task_id, task_state, note.as_deref(), state).await,
+        ),
         SessionRequest::TaskArtifact {
             task_id,
             text,
             file,
             resp,
-        } => {
-            let outcome = emit_task_artifact(ctx, &task_id, &text, file, state).await;
-            let sent_ok = outcome.is_ok();
-            let _ = resp.send(outcome);
-            sent_ok
-        }
+        } => respond_with(resp, emit_task_artifact(ctx, &task_id, &text, file, state).await),
         SessionRequest::Peers { resp } => {
             let _ = resp.send(state.roster_snapshot());
             false
@@ -1206,6 +1210,20 @@ pub(crate) async fn handle_session_request(
         SessionRequest::InjectRaw { bytes } => {
             let _ = ctx.sender.broadcast(bytes).await;
             true
+        }
+        #[cfg(feature = "adversarial")]
+        SessionRequest::InjectLinkVector {
+            origin,
+            seq,
+            seal_key,
+            links,
+        } => {
+            state
+                .link_state
+                .ingest(crate::circuit::LinkVector::from_raw(
+                    origin, seq, seal_key, links,
+                ));
+            false
         }
         // Index-size snapshot (adversarial only) for the leak regression test.
         #[cfg(feature = "adversarial")]

@@ -193,10 +193,11 @@ impl SharedServerOpts {
         }
     }
 
-    /// The per-session transport policy carried by the hidden
-    /// `--no-unicast`/`--no-gossip-directed`/`--no-circuit` flags.
-    pub(crate) fn transport(&self) -> crate::unicast::TransportPolicy {
-        crate::unicast::TransportPolicy {
+    /// The per-session transport policy these flags select. Threaded into the
+    /// session config (not the process-global tuning) so it stays a session
+    /// property. See [`crate::transport::TransportPolicy`].
+    pub(crate) fn transport_policy(&self) -> crate::transport::TransportPolicy {
+        crate::transport::TransportPolicy {
             unicast: !self.no_unicast,
             gossip_directed: !self.no_gossip_directed,
             circuit: !self.no_circuit,

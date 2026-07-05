@@ -61,8 +61,8 @@ pub(crate) async fn run(cfg: EventLoopConfig) -> Result<()> {
         cohost,
         state_file,
         spool,
-        unicast_rx,
         transport,
+        unicast_rx,
         a2a,
         live_count,
         driver,
@@ -131,11 +131,9 @@ pub(crate) async fn run(cfg: EventLoopConfig) -> Result<()> {
 
     let (gossip_sender, receiver) = topic.split();
 
-    // Install the filesystem spool mirror when `--spool` was given. A bad
-    // directory aborts startup — the frame mirror is a promised side effect,
-    // not best-effort. The watcher guard must outlive the loop below, so it
-    // stays owned in this scope (like `_router`); its scanner + writer tasks
-    // run detached until their channels close on shutdown.
+    // Wrap the sender, installing the `--spool` mirror when configured. A bad
+    // spool dir aborts startup; the watcher guard must outlive the loop, so it
+    // stays owned here (like `_router`). See `build_sender`.
     let (sender, spool_rx, _spool_watcher) = build_sender(spool, gossip_sender, &swarm_str)?;
 
     let ipc_rx = spawn_ipc_rx(ipc_listener_disabled, &swarm_str, &author, &output);
@@ -250,7 +248,7 @@ fn build_sender(
 fn wire_session_state(
     state: &mut EventLoopState,
     endpoint: &Endpoint,
-    transport: crate::unicast::TransportPolicy,
+    transport: crate::transport::TransportPolicy,
     live_count: Option<std::sync::Arc<std::sync::atomic::AtomicUsize>>,
     rendezvous_id: EndpointId,
 ) {

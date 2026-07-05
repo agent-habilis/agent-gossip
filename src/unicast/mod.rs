@@ -20,30 +20,6 @@ pub(crate) use accept::UnicastAcceptor;
 pub(crate) use pool::UnicastPool;
 pub(crate) use send::{Lane, deliver, lane_for};
 
-/// Which transport planes this session may use for **directed** messages.
-/// Per-session rather than process-global so multiple in-process nodes (embed
-/// tests, MCP) can each run a different policy — e.g. one peer unicast-only
-/// against one gossip-only. Broadcasts always ride gossip regardless: they
-/// have no other transport.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TransportPolicy {
-    /// Attempt the point-to-point QUIC channel for a dialable addressee.
-    pub unicast: bool,
-    /// Let gossip carry (or fall back for) a directed message.
-    pub gossip_directed: bool,
-    /// Attempt a multi-hop circuit when there is no direct route.
-    pub circuit: bool,
-}
-
-impl Default for TransportPolicy {
-    fn default() -> Self {
-        Self {
-            unicast: true,
-            gossip_directed: true,
-            circuit: true,
-        }
-    }
-}
 
 /// ALPN for the unicast channel — a raw bidirectional QUIC stream with its own
 /// protocol identity, distinct from `GOSSIP_ALPN` and the a2a bridge's ALPN.
