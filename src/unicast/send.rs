@@ -39,9 +39,9 @@ pub(crate) async fn deliver(
     match route(
         msg,
         state,
-        tuning::unicast_enabled(),
-        tuning::gossip_directed_enabled(),
-        tuning::whisper_enabled(),
+        state.transport.unicast,
+        state.transport.gossip_directed,
+        state.transport.whisper,
     ) {
         Route::Gossip => broadcast(sender, bytes).await,
         Route::Whisper(target) => deliver_over_whisper(target, bytes, state, sender).await,
@@ -86,7 +86,8 @@ enum Route {
     /// A directed message to a peer we know (`EndpointId`) but have no *direct*
     /// unicast route to: route it over a multi-hop **whisper** circuit. `deliver`
     /// computes the source-route from the link-state graph and falls back to
-    /// gossip if there is no path (or the circuit fails).
+    /// gossip if there is no path (or the circuit fails) — unless directed
+    /// gossip is disabled, which surfaces the failure instead.
     Whisper(EndpointId),
     /// No transport available: a directed message with no unicast route and
     /// gossip disabled.
@@ -108,6 +109,19 @@ fn route(
         // Broadcast / infrastructure kind: gossip is the only transport, always.
         return Route::Gossip;
     };
+    directed_route(nick, state, unicast_on, gossip_on, relay_on)
+}
+
+/// The message-independent half of [`route`]: every directed kind to the same
+/// addressee routes identically, so this is also what the `peers` roster
+/// surfaces as a peer's `transport` column (via [`lane_for`]).
+fn directed_route(
+    nick: &Nickname,
+    state: &EventLoopState,
+    unicast_on: bool,
+    gossip_on: bool,
+    relay_on: bool,
+) -> Route {
     if let (true, Some(eid)) = (unicast_on, unicast_endpoint(nick, state)) {
         return if gossip_on {
             Route::UnicastPreferred(eid)
@@ -125,6 +139,34 @@ fn route(
         Route::Gossip
     } else {
         Route::Undeliverable
+    }
+}
+
+/// The lane a directed frame to `nick` would take right now, under the
+/// session's live policy — [`Route`] stripped of its endpoint payloads so the
+/// roster can serialize it. Sharing `directed_route` keeps the surfaced
+/// column from ever drifting from the real send decision.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum Lane {
+    Unicast,
+    Whisper,
+    Gossip,
+    Unreachable,
+}
+
+pub(crate) fn lane_for(nick: &Nickname, state: &EventLoopState) -> Lane {
+    match directed_route(
+        nick,
+        state,
+        state.transport.unicast,
+        state.transport.gossip_directed,
+        state.transport.whisper,
+    ) {
+        Route::UnicastPreferred(_) | Route::UnicastOnly(_) => Lane::Unicast,
+        Route::Whisper(_) => Lane::Whisper,
+        Route::Gossip => Lane::Gossip,
+        Route::Undeliverable => Lane::Unreachable,
     }
 }
 
@@ -156,8 +198,10 @@ fn unicast_endpoint(nick: &Nickname, state: &EventLoopState) -> Option<EndpointI
 
 /// Deliver a directed message to a known-but-not-directly-reachable peer over a
 /// multi-hop relay circuit: compute the source-route from the link-state graph
-/// and telescope a circuit to it. Falls back to gossip when we have no endpoint,
-/// no graph path (or a hop's key is unknown), or the circuit build fails.
+/// and telescope a circuit to it. When we have no endpoint, no graph path (or a
+/// hop's key is unknown), or every circuit build fails, falls back to gossip —
+/// unless the policy forbids gossip for directed traffic, which surfaces the
+/// failure instead (so a whisper-only run can't silently ride gossip).
 async fn deliver_over_whisper(
     target: EndpointId,
     bytes: Bytes,
@@ -165,7 +209,7 @@ async fn deliver_over_whisper(
     sender: &GossipSender,
 ) -> Result<()> {
     let Some(endpoint) = state.unicast_pool.endpoint() else {
-        return broadcast(sender, bytes).await; // detached pool: gossip
+        return whisper_fallback(sender, bytes, state, "detached unicast pool").await;
     };
     // Up to N node-disjoint circuits, best-first — the "up to N tries" budget.
     let paths = state
@@ -173,7 +217,7 @@ async fn deliver_over_whisper(
         .circuit_paths(endpoint.id(), target, tuning::WHISPER_MAX_PATHS);
     if paths.is_empty() {
         // No route through the mesh yet (or a hop hasn't advertised its key).
-        return broadcast(sender, bytes).await;
+        return whisper_fallback(sender, bytes, state, "no circuit path through the mesh").await;
     }
     for path in &paths {
         let circuit_id: u64 = rand::random();
@@ -186,12 +230,28 @@ async fn deliver_over_whisper(
             ),
         }
     }
-    // Every disjoint circuit failed — fall back to gossip.
-    tracing::debug!(
-        target: crate::whisper::LOG_TARGET,
-        "all relay circuits failed; falling back to gossip"
-    );
-    broadcast(sender, bytes).await
+    whisper_fallback(sender, bytes, state, "all relay circuits failed").await
+}
+
+/// The whisper plane could not deliver: ride gossip when the policy allows it,
+/// else surface the failure so the caller (and its waiter timeout) sees it.
+async fn whisper_fallback(
+    sender: &GossipSender,
+    bytes: Bytes,
+    state: &EventLoopState,
+    reason: &str,
+) -> Result<()> {
+    if state.transport.gossip_directed {
+        tracing::debug!(
+            target: crate::whisper::LOG_TARGET,
+            reason,
+            "whisper undeliverable; falling back to gossip"
+        );
+        return broadcast(sender, bytes).await;
+    }
+    Err(anyhow::anyhow!(
+        "directed message undeliverable over whisper ({reason}) and gossip is disabled"
+    ))
 }
 
 async fn broadcast(sender: &GossipSender, bytes: Bytes) -> Result<()> {

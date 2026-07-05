@@ -16,6 +16,12 @@ use crate::protocol::message::Message;
 use crate::protocol::message::PresenceSubtype;
 use crate::protocol::{MessageBody, MessageKind, Nickname, SwarmId};
 
+// The reassembly byte budgets, so the suite's tripwires assert against the
+// same constants the store enforces.
+pub use crate::util::consts::{
+    REASSEMBLY_AUTHOR_BUDGET_BYTES, REASSEMBLY_GROUP_MAX_BYTES, REASSEMBLY_TOTAL_BUDGET_BYTES,
+};
+
 /// An opaque attacker/peer signing key. Wraps the crate-internal `Identity`
 /// so a test can hold one and pass it to the builder/helpers without the
 /// rest of the `pub(crate)` identity surface leaking.
@@ -165,6 +171,18 @@ impl CraftedMsg {
             .expect("frame id is a valid uuid");
         self.msg.body =
             crate::a2a::gossip::payload_body(&payload).expect("crafted payload serializes");
+        self
+    }
+
+    /// Tag the frame as one shard of a multipart group — the crafted headers
+    /// the reassembly-budget tripwires inject (never-completing groups,
+    /// out-of-range indexes). `group` must be a valid UUID string; `idx`/
+    /// `total` are taken verbatim, valid or not (the receiver's parse gate is
+    /// the thing under test).
+    pub fn shard(mut self, group: &str, idx: u32, total: u32) -> Self {
+        let group =
+            crate::protocol::ShardGroup::from_uuid_str(group).expect("valid shard group uuid");
+        self.msg = self.msg.with_shard(Some(crate::protocol::Shard { group, idx, total }));
         self
     }
 

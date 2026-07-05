@@ -26,16 +26,54 @@ pub struct SurfacedEvent {
 ///
 /// Oldest-drop on overflow: the front (lowest seq) is evicted first, so the
 /// retained window is always the most-recently-surfaced `capacity` events.
+/// Doubly bounded: the count cap sizes the steady state, and a **byte budget**
+/// ([`crate::util::consts::SURFACED_RING_BUDGET_BYTES`]) stops a window of
+/// huge multipart bodies from holding `capacity × body` in memory.
 pub(crate) struct SurfacedEvents {
     capacity: usize,
+    budget_bytes: usize,
+    held_bytes: usize,
     next_seq: u64,
     events: VecDeque<SurfacedEvent>,
 }
 
+/// Cheap estimate of one event's retained size: its variable payload plus a
+/// fixed envelope allowance. Exact accounting doesn't matter — the budget
+/// exists so a run of huge bodies can't multiply into the ring's whole
+/// count-capacity in memory.
+pub(crate) fn approx_event_bytes(event: &OutputEvent) -> usize {
+    const EVENT_OVERHEAD_BYTES: usize = 512;
+    let payload = match event {
+        OutputEvent::Message { msg, .. }
+        | OutputEvent::Presence { msg }
+        | OutputEvent::Task { msg, .. } => msg.body.as_str().len(),
+        OutputEvent::TaskMessage { text, .. } => text.len(),
+        // The change frame's body dominates; the derived document is bounded
+        // by the state channel's own caps.
+        OutputEvent::StateChanged { event, .. } => event.body.as_str().len(),
+        OutputEvent::Info { message } | OutputEvent::Error { message } => message.len(),
+        OutputEvent::PingReport { peers, .. } => peers.len() * 64,
+        OutputEvent::Ready { .. }
+        | OutputEvent::SwarmId { .. }
+        | OutputEvent::PeerTimeout { .. }
+        | OutputEvent::PeerReturn { .. }
+        | OutputEvent::Fork { .. }
+        | OutputEvent::MsgPosted { .. }
+        | OutputEvent::TaskTimeout { .. } => 0,
+    };
+    payload + EVENT_OVERHEAD_BYTES
+}
+
 impl SurfacedEvents {
     pub(crate) fn new(capacity: usize) -> Self {
+        Self::with_budget(capacity, crate::util::consts::SURFACED_RING_BUDGET_BYTES)
+    }
+
+    pub(crate) fn with_budget(capacity: usize, budget_bytes: usize) -> Self {
         SurfacedEvents {
             capacity,
+            budget_bytes,
+            held_bytes: 0,
             // seq 0 is reserved as the "before anything" cursor: the first
             // pushed event is seq 1, so `since(Some(0))` returns the whole
             // buffer without a spurious eviction signal.
@@ -44,14 +82,22 @@ impl SurfacedEvents {
         }
     }
 
-    /// Append an event, assigning it the next seq, evicting the oldest if over
-    /// capacity. Returns the assigned seq.
+    /// Append an event, assigning it the next seq, evicting the oldest while
+    /// over the count cap or the byte budget (the newest event always stays —
+    /// the budget clears one max-size body). Returns the assigned seq.
     pub(crate) fn push(&mut self, event: OutputEvent) -> u64 {
         let seq = self.next_seq;
         self.next_seq += 1;
+        self.held_bytes += approx_event_bytes(&event);
         self.events.push_back(SurfacedEvent { seq, event });
-        while self.events.len() > self.capacity {
-            self.events.pop_front();
+        while self.events.len() > 1
+            && (self.events.len() > self.capacity || self.held_bytes > self.budget_bytes)
+        {
+            if let Some(evicted) = self.events.pop_front() {
+                self.held_bytes = self
+                    .held_bytes
+                    .saturating_sub(approx_event_bytes(&evicted.event));
+            }
         }
         seq
     }
@@ -205,6 +251,29 @@ mod tests {
             3,
             "latest_seq tracks the newest assigned seq, not the retained front"
         );
+    }
+
+    #[test]
+    fn byte_budget_evicts_oldest_and_always_keeps_newest() {
+        let big_info = |len: usize| OutputEvent::Info {
+            message: "x".repeat(len),
+        };
+        // Budget fits roughly two 1000-byte payloads (each charges +512
+        // envelope), far under the count cap — the byte budget is what bites.
+        let mut buf = SurfacedEvents::with_budget(100, 3200);
+        buf.push(big_info(1000));
+        buf.push(big_info(1000));
+        buf.push(big_info(1000));
+        assert_eq!(buf.len(), 2, "third push evicts the oldest by bytes");
+        let (events, _) = buf.since(None);
+        assert_eq!(events[0].seq, 2, "seq 1 was the byte-budget victim");
+
+        // A single event past the whole budget still stays — the newest event
+        // is never evicted, so one max-size body always surfaces.
+        buf.push(big_info(10_000));
+        assert_eq!(buf.len(), 1, "the oversize newcomer is the sole survivor");
+        let (survivors, _) = buf.since(None);
+        assert_eq!(survivors[0].seq, 4);
     }
 
     #[test]

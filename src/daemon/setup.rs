@@ -197,6 +197,8 @@ pub(crate) struct SetupParams<'a> {
     /// carries the real port. `None` (embed/MCP and the flag's default)
     /// serves nothing.
     pub a2a_serve: Option<u16>,
+    /// Which transport planes directed sends may use for this session.
+    pub transport: crate::unicast::TransportPolicy,
 }
 
 /// The kind-independent build inputs threaded into [`setup_create`] /
@@ -238,6 +240,7 @@ pub(crate) async fn setup_swarm(
         output,
         drift,
         a2a_serve,
+        transport,
     } = params;
     let a2a = match a2a_serve {
         Some(port) => Some(crate::a2a::http::bind(port).await?),
@@ -335,6 +338,7 @@ pub(crate) async fn setup_swarm(
         cohost,
         state_file,
         unicast_rx,
+        transport,
         a2a,
         // Set by the advertise path (cli::create / embed::create) before
         // `run`; absent for every non-advertising session.

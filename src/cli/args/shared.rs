@@ -165,9 +165,16 @@ impl SharedServerOpts {
             directory_expiry_secs: self.directory_expiry_secs,
             antientropy_max_resend: self.antientropy_max_resend,
             directory_private: self.directory_private,
-            unicast_enabled: !self.no_unicast,
-            gossip_directed_enabled: !self.no_gossip_directed,
-            whisper_enabled: !self.no_whisper,
+        }
+    }
+
+    /// The per-session transport policy carried by the hidden
+    /// `--no-unicast`/`--no-gossip-directed`/`--no-whisper` flags.
+    pub(crate) fn transport(&self) -> crate::unicast::TransportPolicy {
+        crate::unicast::TransportPolicy {
+            unicast: !self.no_unicast,
+            gossip_directed: !self.no_gossip_directed,
+            whisper: !self.no_whisper,
         }
     }
 }

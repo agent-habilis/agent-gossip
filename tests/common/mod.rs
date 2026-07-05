@@ -445,7 +445,7 @@ pub(crate) fn cli_channel_merge(
 use agent_gossip::embed::{CreateConfig, JoinConfig, SwarmSession};
 use agent_gossip::{
     Channel, Message, MessageBody, MessageId, MessageKind, Nickname, OutputEvent, PresenceSubtype,
-    SwarmName, TaskId, TaskState,
+    SwarmName, TaskId, TaskState, TransportPolicy,
 };
 use tokio::sync::mpsc::UnboundedReceiver;
 
@@ -485,6 +485,40 @@ impl InProcNode {
             SwarmSession::create(cfg)
                 .await
                 .expect("in-process create failed"),
+        )
+    }
+
+    /// Create a new private swarm restricted to the given transport lanes,
+    /// with an explicit nickname — the transport-matrix harness.
+    pub(crate) async fn create_with_transport(
+        name: &str,
+        nick: &str,
+        transport: TransportPolicy,
+    ) -> Self {
+        let mut cfg = CreateConfig::new(test_swarm_name(name));
+        cfg.nickname = Some(Nickname::new(nick).expect("valid test nickname"));
+        cfg.transport = transport;
+        Self::from_session(
+            SwarmSession::create(cfg)
+                .await
+                .expect("in-process create failed"),
+        )
+    }
+
+    /// Join `swarm` restricted to the given transport lanes.
+    pub(crate) async fn join_with_transport(
+        swarm: &str,
+        nickname: &str,
+        transport: TransportPolicy,
+    ) -> Self {
+        let target = swarm.parse().expect("valid test join target");
+        let mut cfg = JoinConfig::new(target);
+        cfg.nickname = Some(Nickname::new(nickname).expect("valid test nickname"));
+        cfg.transport = transport;
+        Self::from_session(
+            SwarmSession::join(cfg)
+                .await
+                .expect("in-process join failed"),
         )
     }
 

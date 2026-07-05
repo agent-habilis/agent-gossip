@@ -59,7 +59,7 @@ pub(super) async fn discover(opts: DiscoverOpts) -> Result<()> {
                     .expect("a discovered swarm id is a valid join target");
                 // No flag on `discover` itself: a passworded pick prompts
                 // in `join` (the picker only ran because a TTY exists).
-                return join(target, None, None, opts.shared).await;
+                return Box::pin(join(target, None, None, opts.shared)).await;
             }
             PickerOutcome::Quit => {
                 let _ = discoverer.close().await;

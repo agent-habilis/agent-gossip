@@ -16,6 +16,17 @@ use crate::util::{resident_memory, tuning};
 /// that rate-limiter pruning — its original co-tenant — is gone.
 pub(crate) fn tick_prune(state: &mut EventLoopState, output: &output::Output) {
     warn_on_high_resident_memory(state, output, tuning::resident_memory_warn_mb());
+    let evicted = state.reassembly.sweep_stale(Instant::now());
+    if evicted > 0 {
+        // A reaped group means a transfer stalled past the TTL — the body is
+        // gone for good (a chat surfaces nothing; an RPC ends as its waiter's
+        // timeout), so make the loss loud.
+        tracing::warn!(
+            target: "agent_gossip::gossip",
+            evicted,
+            "stale partial shard groups evicted from the reassembly store"
+        );
+    }
 }
 
 /// One-shot leak-visibility signal: if resident memory has crossed

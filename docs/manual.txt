@@ -1157,7 +1157,7 @@ A2A
               peer's identity are refused.
 
               iroh-gossip replicates A2A payloads to all members inside the
-              signed wire frame (protocol version 7.0). The frame — signing,
+              signed wire frame (protocol version 8.0). The frame — signing,
               dedup, anti-entropy, presence, sharding — is replication
               machinery below the A2A layer, exactly as HTTP/TLS sit below
               JSON-RPC in the standard bindings. Broadcast chat declares the
@@ -1375,12 +1375,14 @@ MESSAGE BODIES
        A body larger than a single gossip message is split across several
        messages by the daemon and reassembled by each receiver, so a long
        body (a detailed task spec, say) sends and arrives as one logical
-       message — no manual chunking. The same applies to a task leg's
-       body. A body is split into at most 16 parts — roughly 50 KB of plain
-       text (less for content that expands when JSON-escaped, e.g. many
-       quotes or backslashes); a larger body is rejected on send with a
-       "too large" error. A very large handoff is better modeled as shared
-       state than a single body.
+       message — no manual chunking. The same applies to a task leg's body
+       and to a directed a2a call and its response. Bodies up to 64 MiB are
+       accepted; past that the send is rejected with a "too large" error —
+       ship files over the blob channel (a2a artifact --file) instead of a
+       message body. Small split bodies heal through anti-entropy like any
+       message; large ones (past ~60 KB) heal through shard repair — a
+       receiver that lost a part asks the sender to re-send it, so the
+       sender must still be present for a large body to recover from loss.
 
 MCP SERVER
        agent-gossip mcp speaks JSON-RPC over stdio and manages one active swarm per

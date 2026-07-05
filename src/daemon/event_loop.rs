@@ -57,6 +57,7 @@ pub(crate) async fn run(cfg: EventLoopConfig) -> Result<()> {
         cohost,
         state_file,
         unicast_rx,
+        transport,
         a2a,
         live_count,
         driver,
@@ -107,6 +108,7 @@ pub(crate) async fn run(cfg: EventLoopConfig) -> Result<()> {
     // Replace the detached default pool with one wired to this endpoint, so
     // directed sends can dial peers over the unicast ALPN.
     state.unicast_pool = crate::unicast::UnicastPool::new(endpoint.clone());
+    state.transport = transport;
     // Advertise path only: the directory re-broadcast task reads the
     // live count from here. Set before the first write below so the
     // initial ad carries a real count.
@@ -268,6 +270,10 @@ async fn linkstate_arm(
     let Ok(json) = vector.to_json() else {
         return;
     };
+    // Fold our own vector into our own store: gossip never loops a broadcast
+    // back, and without our outbound edges the local graph can't source a
+    // circuit (`circuit_paths(self, …)` would always be empty).
+    state.link_state.ingest(vector);
     let Ok(body) = crate::protocol::MessageBody::new(json) else {
         return;
     };
@@ -590,7 +596,13 @@ async fn event_loop(loop_state: EventLoop) -> Result<()> {
                 Some(bytes) => gossip::ingest(bytes, &mut state, &parts.ctx(&sender)).await,
                 None => unicast_rx = None,
             },
-            _ = intervals.prune.tick() => timers::tick_prune(&mut state, &output),
+            _ = intervals.prune.tick() => {
+                timers::tick_prune(&mut state, &output);
+                // Ask authors to re-send what our stalled big shard groups are
+                // missing — their shards live in no log, so this repair loop
+                // is their only heal path.
+                gossip::send_shard_repair_requests(&swarm_str, &author, &mut state, &sender).await;
+            }
             _ = intervals.alive.tick() => {
                 alive_arm(&mut anchors, &mut state, &sender, &swarm_str, &author).await;
             }

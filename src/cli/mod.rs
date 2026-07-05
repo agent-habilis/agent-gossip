@@ -166,6 +166,7 @@ async fn run_session(resolved: Resolved, shared: SharedServerOpts) -> Result<()>
             author,
             interactive: !shared.no_interactive,
             max_peers: shared.max_peers,
+            transport: shared.transport(),
             state_file: shared.state_file,
             output: out,
             drift: drift.as_deref(),

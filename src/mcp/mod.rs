@@ -465,6 +465,7 @@ impl AgentSwarmServer {
             directory,
             max_peers: GOSSIP_ACTIVE_VIEW_CAPACITY,
             password: args.password,
+            transport: crate::unicast::TransportPolicy::default(),
         };
         let session = Session::create(cfg).await.map_err(|error| match error {
             CreateError::AdvertiseRequiresReachable => {
@@ -503,6 +504,7 @@ impl AgentSwarmServer {
             nickname,
             max_peers: GOSSIP_ACTIVE_VIEW_CAPACITY,
             password: args.password,
+            transport: crate::unicast::TransportPolicy::default(),
         })
         .await
         .map_err(join_error_to_mcp)?;

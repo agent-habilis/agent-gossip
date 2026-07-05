@@ -1,6 +1,6 @@
 ---
 name: status
-description: List the swarm's peers with their connection type (connected/gossip), plus the swarm name and participant count. Use to see who's here and how you're reaching them.
+description: List the swarm's peers with the transport a directed message would take (unicast/whisper/gossip), plus the swarm name and participant count. Use to see who's here and how you're reaching them.
 ---
 
 ## Quiet mode
@@ -40,15 +40,17 @@ agent-gossip meta get --swarm "$SWARM" --nickname "$NICKNAME"
 { "ok": true,
   "participants": [
     { "nickname": "swift-cedar", "last_seen_secs_ago": 3, "quiet": false,
-      "reach": "direct" }
+      "reach": "direct", "transport": "unicast" }
   ],
   "participant_count": 2 }
 ```
 
 - `participant_count` includes you (`participants.len() + 1`); the
   `participants` array does **not** list you.
-- `reach`: `"direct"` ⇒ you hold a live link to that peer (show as
-  **connected**); `"gossip"` ⇒ reachable only via relay.
+- `transport`: the lane a **directed** message to that peer takes right now —
+  `unicast` (point-to-point QUIC), `whisper` (multi-hop circuit), `gossip`
+  (flood fallback), or `unreachable` (directed transports disabled). It
+  subsumes `reach` (the raw link flag), which is not rendered.
 - `quiet`: the peer went silent past the alive timeout but may return.
 - `last_seen_secs_ago`: `null` until the peer's first heartbeat is timed.
 
@@ -76,11 +78,11 @@ Emit exactly one block: a header line, then a markdown table of the
 ```
 💬 `#<$NAME>` · <participant_count> participants
 
-| peer        | connection | model    | harness     | host          | status | last seen |
-| ----------- | ---------- | -------- | ----------- | ------------- | ------ | --------- |
-| swift-cedar | connected  | Opus 4.8 | Claude Code | studio-mbp-01 | idle   | 3s ago    |
-| calm-otter  | gossip     | Opus 4.8 | Claude Code | dev-box-2     | busy   | 12s ago   |
-| ghost-elm   | gossip     |          |             |               |        | quiet · 90s ago |
+| peer        | transport | model    | harness     | host          | status | last seen |
+| ----------- | --------- | -------- | ----------- | ------------- | ------ | --------- |
+| swift-cedar | unicast   | Opus 4.8 | Claude Code | studio-mbp-01 | idle   | 3s ago    |
+| calm-otter  | whisper   | Opus 4.8 | Claude Code | dev-box-2     | busy   | 12s ago   |
+| ghost-elm   | gossip    |          |             |               |        | quiet · 90s ago |
 ```
 
 The swarm name is prefixed with `#` and wrapped in backticks so it renders as
@@ -88,7 +90,8 @@ inline code (a distinct color), e.g. `` `#dealer-lilac` `` — no angle brackets
 
 Rendering rules per row:
 - **peer**: `nickname`.
-- **connection**: `reach == "direct"` → `connected`; else `gossip`.
+- **transport**: the `transport` field verbatim (`unicast`/`whisper`/`gossip`/
+  `unreachable`).
 - **model**: `document.peers[nickname].model`, or empty cell when absent.
 - **harness**: `document.peers[nickname].harness`, or empty cell when absent.
 - **host**: `document.peers[nickname].host`, or empty cell when absent.
@@ -106,5 +109,5 @@ If `participants` is empty (`participant_count` is 1), skip the table and print:
 
 - Read-only. Requires an active `/gossip:create` or `/gossip:join` session (a
   live daemon): `agent-gossip peers` talks to it over IPC.
-- The `connected` vs `gossip` tag converges as peers re-advertise — a brand-new
-  neighbor can briefly show `gossip` until its next address broadcast.
+- The `transport` tag converges as peers re-advertise — a brand-new neighbor
+  can briefly show `gossip` until its next address broadcast lands.

@@ -25,7 +25,7 @@ bindings while preserving the spec's semantics ("functional equivalence").
 
 ## Layering
 
-The wire **frame** (protocol version `7.0`, `src/protocol/message`) is the
+The wire **frame** (protocol version `8.0`, `src/protocol/message`) is the
 binding's transport layer, below A2A — as HTTP/TLS sit below JSON-RPC:
 
 | frame concern | role |

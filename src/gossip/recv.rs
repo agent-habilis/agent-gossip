@@ -351,7 +351,7 @@ pub(crate) async fn ingest(content: Bytes, state: &mut EventLoopState, ctx: &Han
     // A shard of a split body never surfaces as a raw slice — see
     // `handle_shard` for the retain/reassemble/gate/surface sequence.
     if message.shard.is_some() {
-        handle_shard(&message, &canonical, surfaceable, state, ctx);
+        handle_shard(&message, &canonical, surfaceable, state, ctx).await;
         return;
     }
 
@@ -552,6 +552,9 @@ async fn handle_a2a_req(
                     crate::a2a::rpc::handle_op(op, ctx, 0, state).await
                 }
                 Served::Ingest(payload) => ingest_remote_message(&payload, &requester, state, ctx),
+                Served::ShardRepair { group, missing } => {
+                    resend_cached_shards(&group, &missing, &requester, state, ctx).await
+                }
                 Served::Reject(error) => Err(error),
             }
         }
@@ -577,13 +580,63 @@ async fn handle_a2a_req(
             return;
         }
     };
-    let reply = Message::new_a2a_resp(ctx.swarm, ctx.author, requester, rpc_id.clone(), body)
-        .signed(ctx.identity);
-    // Directed reply: unicast to the requester when dialable, else gossip.
-    crate::logging::messages::log_out(&reply);
-    if let Ok(bytes) = reply.serialize() {
-        let _ = crate::unicast::deliver(&reply, Bytes::from(bytes), state, ctx.sender).await;
+    // Directed reply over the shared RPC sender: unicast to the requester when
+    // dialable (whisper/gossip otherwise), splitting a large result body
+    // transparently — a `tasks/list` over many tasks no longer silently
+    // exceeds the frame cap.
+    if let Err(error) = crate::gossip::broadcast::send_directed_rpc(
+        ctx.swarm,
+        ctx.author,
+        MessageKind::A2aResp {
+            to: requester,
+            rpc_id: rpc_id.clone(),
+        },
+        body,
+        state,
+        ctx.sender,
+    )
+    .await
+    {
+        tracing::warn!(%error, "a2a rpc response send failed");
     }
+}
+
+/// Serve a `shard/repair` ask: re-deliver the requested frames of one of our
+/// cached big outbound groups. The frames are our own signed wire bytes, so a
+/// re-delivery is indistinguishable from the original send; the requester's
+/// dedup drops anything it already holds. Directed shards are re-sent only to
+/// their addressee — anyone else gets nothing (the sealed body would be
+/// unreadable to them anyway, but there is no reason to serve a third party).
+async fn resend_cached_shards(
+    group: &crate::protocol::ShardGroup,
+    missing: &[u32],
+    requester: &Nickname,
+    state: &mut EventLoopState,
+    ctx: &HandlerCtx<'_>,
+) -> Result<serde_json::Value, crate::a2a::rpc::RpcError> {
+    let frames = state.shard_cache.frames(group, missing);
+    let mut resent = 0usize;
+    for bytes in frames {
+        let Ok(msg) = Message::parse(&bytes) else {
+            continue; // never: the cache holds frames we serialized ourselves
+        };
+        if let Some(to) = crate::protocol::message::sole_addressee(&msg.kind)
+            && to != requester
+        {
+            continue;
+        }
+        if crate::unicast::deliver(&msg, bytes, state, ctx.sender).await.is_ok() {
+            resent += 1;
+        }
+    }
+    tracing::debug!(
+        target: "agent_gossip::gossip",
+        %group,
+        requested = missing.len(),
+        resent,
+        "served a shard repair request"
+    );
+    Ok(serde_json::json!({ "resent": resent }))
 }
 
 /// A `message/send` directed at us over gossip-RPC — we are the task's A2A
@@ -688,7 +741,7 @@ fn route_content(
 /// heals like any message) and, when its group completes, gate the
 /// reassembled logical message through the A2A boundary and surface it once —
 /// embed-pushed and dispatched exactly like an ordinary inbound message.
-fn handle_shard(
+async fn handle_shard(
     message: &Message,
     canonical: &[u8],
     surfaceable: bool,
@@ -702,11 +755,29 @@ fn handle_shard(
     if !addressed_to_us(message, ctx.author) {
         return;
     }
-    retain_and_index(message.clone(), canonical, state, ctx);
+    // Only a small group's shards enter the message log (anti-entropy heals
+    // them like any message); a big group would evict the swarm's whole
+    // anti-entropy history, so its shards stay out of the log — on the send
+    // side too (`shard_fits_log`) — and the group heals via shard repair.
+    // (RPC shards are plumbing — `retain_and_index` skips them by kind
+    // either way.)
+    if crate::protocol::message::shard_fits_log(message) {
+        retain_and_index(message.clone(), canonical, state, ctx);
+    }
     if let Some(mut logical) = state.reassemble(message) {
         // Only the addressee reaches here (non-addressed directed shards returned
         // above), so decrypt the reassembled directed body before validating it.
         if !decrypt_directed(&mut logical, state, ctx) {
+            return;
+        }
+        // A reassembled RPC frame dispatches to the server/waiter path — RPC
+        // is plumbing, never surfaced (the single-frame path routes it the
+        // same way, just before the surfacing pipeline).
+        if matches!(
+            logical.kind,
+            MessageKind::A2aReq { .. } | MessageKind::A2aResp { .. }
+        ) {
+            handle_a2a_rpc(&logical, state, ctx).await;
             return;
         }
         if !chat_payload_valid(&logical) {

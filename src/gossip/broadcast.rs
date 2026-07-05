@@ -20,7 +20,10 @@ use crate::protocol::identity::Identity;
 use crate::protocol::{
     Channel, Message, MessageBody, MessageId, MessageKind, Nickname, Shard, ShardGroup, SwarmId,
 };
-use crate::util::consts::{MAX_MESSAGE_SHARDS, MAX_MESSAGE_SIZE};
+use crate::util::consts::{
+    LOGGED_SHARD_GROUP_MAX_TOTAL, MAX_LOGICAL_BODY_BYTES, MAX_MESSAGE_SIZE, MAX_SHARD_TOTAL,
+    REASSEMBLY_GROUP_MAX_BYTES,
+};
 
 /// Fire-and-forget gossip broadcast. Serialize errors are swallowed:
 /// this helper is for presence / `PeerInfo` announcements where a
@@ -197,7 +200,14 @@ pub(crate) async fn handle_stdin_line(
 /// Shared by [`commit_outbound_part`] (after chain stamping) and
 /// [`echo_and_retain_task`] (no chain stamping).
 fn retain_outbound(state: &mut EventLoopState, msg: &Message) {
-    if let Some(evicted) = state.message_log.push(msg.clone()) {
+    // Big-group shards stay out of the sender's log exactly as they stay out
+    // of every receiver's (`shard_fits_log`): one huge body must not evict
+    // our anti-entropy history, and logging what receivers refuse to retain
+    // would re-flood those shards on every digest round. Big groups heal via
+    // shard repair (`state.shard_cache`) instead.
+    if crate::protocol::message::shard_fits_log(msg)
+        && let Some(evicted) = state.message_log.push(msg.clone())
+    {
         let evicted_hash = evicted.content_hash_hex();
         state.forget_hash(&evicted_hash);
         if let Some(seq) = evicted.seq {
@@ -220,10 +230,16 @@ fn commit_outbound_part(
     out: &output::Output,
     echo: bool,
 ) {
-    let hash = msg.content_hash_hex();
-    state.self_seq += 1;
-    state.self_prev = Some(hash.clone());
-    state.note_dag(hash, &msg.parents, msg.timestamp);
+    // Only a chained frame advances the chain + DAG. Shards are unchained
+    // (see `build_msg`): folding them in would grow `by_hash`/`dag_heads`
+    // with entries only log eviction prunes — and big-group shards never
+    // enter the log.
+    if msg.seq.is_some() {
+        let hash = msg.content_hash_hex();
+        state.self_seq += 1;
+        state.self_prev = Some(hash.clone());
+        state.note_dag(hash, &msg.parents, msg.timestamp);
+    }
     if echo {
         out.print_message_ex(msg, true);
     }
@@ -251,9 +267,10 @@ fn shard_body_budget(empty_part: &Message) -> usize {
     MAX_MESSAGE_SIZE.saturating_sub(empty_part.wire_len() + PART_BUDGET_MARGIN)
 }
 
-/// Split `body` into the fewest UTF-8-safe chunks whose JSON-escaped length each
-/// fits `budget`. `None` if it would need more than [`MAX_MESSAGE_SHARDS`] shards
-/// (the caller refuses the send) — or `budget` is zero.
+/// Split `body` into the fewest UTF-8-safe chunks whose JSON-escaped length
+/// each fits `budget`. `None` only when `budget` is zero — the shard *count*
+/// is unbounded here; the callers gate on the byte ceilings instead
+/// ([`gate_multipart`]).
 fn split_body(body: &str, budget: usize) -> Option<Vec<&str>> {
     if budget == 0 {
         return None;
@@ -276,11 +293,32 @@ fn split_body(body: &str, budget: usize) -> Option<Vec<&str>> {
         }
         chunks.push(&body[start..end]);
         start = end;
-        if chunks.len() > MAX_MESSAGE_SHARDS {
-            return None;
-        }
     }
     Some(chunks)
+}
+
+/// Sender-side admission for a split body: enforce exactly what receivers
+/// will refuse, so an oversize send fails loudly here instead of silently
+/// dying on every peer. Returns the shard `total`.
+fn gate_multipart(chunks: &[&str], what: &str) -> anyhow::Result<u32> {
+    let total = u32::try_from(chunks.len()).unwrap_or(u32::MAX);
+    if total > MAX_SHARD_TOTAL {
+        return Err(anyhow::anyhow!(
+            "{what} too large: needs {total} shards (max {MAX_SHARD_TOTAL})"
+        ));
+    }
+    // Mirror the reassembly store's per-group byte accounting.
+    let buffered: usize = chunks
+        .iter()
+        .map(|chunk| crate::daemon::reassembly::slot_charge(chunk.len()))
+        .sum();
+    if buffered > REASSEMBLY_GROUP_MAX_BYTES {
+        return Err(anyhow::anyhow!(
+            "{what} too large: {buffered} buffered bytes exceed the receiver's \
+             per-group budget ({REASSEMBLY_GROUP_MAX_BYTES}); use the blob channel for files"
+        ));
+    }
+    Ok(total)
 }
 
 /// One outbound frame's position in the per-author hash chain + DAG: the
@@ -296,13 +334,16 @@ struct ChainStamp {
 /// serializing — the caller measures or serializes). `id` pins the frame id:
 /// the payload's A2A `messageId` for a single-frame body (`None` keeps the
 /// minted id — shards of a split body keep their own ids; the *group* carries
-/// the A2A id there).
+/// the A2A id there). `stamp: None` builds an **unchained** frame — the shape
+/// every shard of a split body takes (like task-leg `a2a_msg` frames): shards
+/// are transport slices, not chain entries, and stamping them would grow the
+/// fork/DAG indexes with entries no log eviction ever prunes.
 fn build_msg(
     swarm: &SwarmId,
     author: &Nickname,
     body: MessageBody,
     id: Option<MessageId>,
-    stamp: ChainStamp,
+    stamp: Option<ChainStamp>,
     shard: Option<Shard>,
     signer: &Identity,
 ) -> Message {
@@ -310,10 +351,10 @@ fn build_msg(
     if let Some(id) = id {
         msg = msg.with_id(id);
     }
-    msg.with_chain(stamp.seq, stamp.prev)
-        .with_parents(stamp.parents)
-        .with_shard(shard)
-        .signed(signer)
+    if let Some(stamp) = stamp {
+        msg = msg.with_chain(stamp.seq, stamp.prev).with_parents(stamp.parents);
+    }
+    msg.with_shard(shard).signed(signer)
 }
 
 /// Broadcast (or buffer, while unmeshed) one fully-built `Msg` and commit it to
@@ -373,7 +414,8 @@ fn synthesize_logical_msg(
 /// # Errors
 /// Propagates a [`Message::serialize`] failure and a gossip broadcast error,
 /// errors if the unmeshed pending-outbound buffer is full, and refuses a body
-/// that would need more than [`MAX_MESSAGE_SHARDS`] shards.
+/// past the local input ceiling ([`MAX_LOGICAL_BODY_BYTES`]) or the
+/// receiver's per-group reassembly budget.
 pub(crate) async fn broadcast_message(
     swarm: &SwarmId,
     author: &Nickname,
@@ -383,6 +425,13 @@ pub(crate) async fn broadcast_message(
     out: &output::Output,
 ) -> anyhow::Result<(MessageId, Message)> {
     let signer = state.identity.clone();
+    if text.as_str().len() > MAX_LOGICAL_BODY_BYTES {
+        return Err(anyhow::anyhow!(
+            "message too large: {} bytes exceeds the {MAX_LOGICAL_BODY_BYTES}-byte input \
+             ceiling; use the blob channel for files",
+            text.as_str().len()
+        ));
+    }
     let payload = crate::a2a::gossip::chat_message(swarm, text.as_str());
     let payload_id =
         MessageId::new(payload.message_id.as_str()).expect("an a2a message id is a valid frame id");
@@ -393,11 +442,11 @@ pub(crate) async fn broadcast_message(
         author,
         body.clone(),
         Some(payload_id.clone()),
-        ChainStamp {
+        Some(ChainStamp {
             seq: state.self_seq,
             prev: state.self_prev.clone(),
             parents: state.dag_parents(),
-        },
+        }),
         None,
         &signer,
     );
@@ -408,74 +457,60 @@ pub(crate) async fn broadcast_message(
         return Ok((id, single));
     }
     // Too big: split the payload across shard-tagged frames. Each shard is an
-    // ordinary chained frame with its own minted id, retained for
-    // anti-entropy; the *group* carries the A2A messageId, so the reassembled
+    // ordinary signed (unchained) frame with its own minted id — small groups
+    // retained for anti-entropy, big groups repair-served from the shard
+    // cache; the *group* carries the A2A messageId, so the reassembled
     // logical frame — the only thing echoed and returned — is named by it.
     let group = ShardGroup::from_uuid_str(payload.message_id.as_str())
         .expect("an a2a message id is a valid shard group");
-    let max_parts = u32::try_from(MAX_MESSAGE_SHARDS).unwrap_or(u32::MAX);
-    // Size the probe against the *largest* shard's envelope, not the first's. Each
-    // later shard chains off the prior, so even from genesis (empty `prev`/`parents`)
-    // every shard after the first carries a 64-char `prev` and one parent hash.
-    // Worst-case both: a full-length `prev` and as many parent hashes as the first
-    // shard could hold (its current tips, never fewer than the one-hash link later
-    // shards carry). A 64-char zero string stands in for any content hash.
-    let hash_stub = "0".repeat(64);
-    let probe_parents = vec![hash_stub.clone(); state.dag_parents().len().max(1)];
+    // Shards are unchained (see `build_msg`), so the probe's envelope only
+    // varies by the shard header — sized worst-case (max idx/total digits).
     let probe = build_msg(
         swarm,
         author,
         MessageBody::new(String::new()).expect("empty body is valid"),
         None,
-        ChainStamp {
-            seq: state.self_seq,
-            prev: Some(hash_stub),
-            parents: probe_parents,
-        },
+        None,
         Some(Shard {
             group: group.clone(),
-            idx: max_parts - 1,
-            total: max_parts,
+            idx: MAX_SHARD_TOTAL - 1,
+            total: MAX_SHARD_TOTAL,
         }),
         &signer,
     );
     let budget = shard_body_budget(&probe);
-    let chunks = split_body(body.as_str(), budget).ok_or_else(|| {
-        anyhow::anyhow!(
-            "message too large: a {}-byte body needs more than {MAX_MESSAGE_SHARDS} shards",
-            body.as_str().len()
-        )
-    })?;
-    let total = u32::try_from(chunks.len()).expect("chunk count is bounded by MAX_MESSAGE_SHARDS");
+    let chunks = split_body(body.as_str(), budget)
+        .ok_or_else(|| anyhow::anyhow!("shard body budget is zero; cannot split"))?;
+    let total = gate_multipart(&chunks, "message")?;
     // Atomic admission while unmeshed: all shards or none, so a half-buffered body
     // (which could never reassemble) never reaches peers.
     if !state.meshed && state.pending_outbound.remaining() < chunks.len() {
         return Err(anyhow::anyhow!(
-            "pending outbound buffer full; multipart message dropped"
+            "swarm still connecting: a {}-shard body exceeds the pre-mesh outbound buffer \
+             ({} slots free); retry once a peer is connected",
+            chunks.len(),
+            state.pending_outbound.remaining()
         ));
     }
+    let mut cache_frames = Vec::new();
     for (idx, chunk) in chunks.iter().enumerate() {
         let shard = Shard {
             group: group.clone(),
-            idx: u32::try_from(idx).expect("idx is bounded by MAX_MESSAGE_SHARDS"),
+            idx: u32::try_from(idx).expect("idx is bounded by the gate above"),
             total,
         };
         let chunk_body = MessageBody::new(*chunk).expect("a substring of a valid body is valid");
-        let msg = build_msg(
-            swarm,
-            author,
-            chunk_body,
-            None,
-            ChainStamp {
-                seq: state.self_seq,
-                prev: state.self_prev.clone(),
-                parents: state.dag_parents(),
-            },
-            Some(shard),
-            &signer,
-        );
+        let msg = build_msg(swarm, author, chunk_body, None, None, Some(shard), &signer);
         let bytes = Bytes::from(msg.serialize()?);
+        if total > LOGGED_SHARD_GROUP_MAX_TOTAL {
+            cache_frames.push(bytes.clone());
+        }
         send_msg_part(state, sender, out, &msg, bytes, false).await?;
+    }
+    // A big group's shards skip every log (see `shard_fits_log`); the cache is
+    // their re-serve source for peers' `shard/repair` requests.
+    if !cache_frames.is_empty() {
+        state.shard_cache.insert(group.clone(), cache_frames);
     }
     let logical = synthesize_logical_msg(swarm, author, body, &group);
     out.print_message_ex(&logical, true);
@@ -522,7 +557,16 @@ async fn broadcast_task_frame(
     // named identically on both ends.
     let group =
         ShardGroup::from_uuid_str(logical_id.as_str()).expect("a frame id is a valid shard group");
-    let max_parts = u32::try_from(MAX_MESSAGE_SHARDS).unwrap_or(u32::MAX);
+    // `payload_body` is already sealed (base58, ~1.37x the input), so gate on
+    // the sealed ceiling — the raw ceiling here would silently shrink the
+    // documented 64 MiB limit for directed sends only.
+    if payload_body.as_str().len() > crate::util::consts::MAX_SEALED_BODY_BYTES {
+        return Err(anyhow::anyhow!(
+            "task leg too large: {} sealed bytes exceeds the input ceiling \
+             ({MAX_LOGICAL_BODY_BYTES} raw bytes); use the blob channel for files",
+            payload_body.as_str().len()
+        ));
+    }
     let probe = Message::new_frame(
         ctx.swarm,
         ctx.author,
@@ -531,27 +575,27 @@ async fn broadcast_task_frame(
     )
     .with_shard(Some(Shard {
         group: group.clone(),
-        idx: max_parts - 1,
-        total: max_parts,
+        idx: MAX_SHARD_TOTAL - 1,
+        total: MAX_SHARD_TOTAL,
     }))
     .signed(&signer);
     let budget = shard_body_budget(&probe);
-    let chunks = split_body(payload_body.as_str(), budget).ok_or_else(|| {
-        anyhow::anyhow!(
-            "task leg too large: a {}-byte body needs more than {MAX_MESSAGE_SHARDS} shards",
-            payload_body.as_str().len()
-        )
-    })?;
-    let total = u32::try_from(chunks.len()).expect("chunk count is bounded by MAX_MESSAGE_SHARDS");
+    let chunks = split_body(payload_body.as_str(), budget)
+        .ok_or_else(|| anyhow::anyhow!("shard body budget is zero; cannot split"))?;
+    let total = gate_multipart(&chunks, "task leg")?;
     if !state.meshed && state.pending_outbound.remaining() < chunks.len() {
         return Err(anyhow::anyhow!(
-            "pending outbound buffer full; multipart task leg dropped"
+            "swarm still connecting: a {}-shard task leg exceeds the pre-mesh outbound buffer \
+             ({} slots free); retry once a peer is connected",
+            chunks.len(),
+            state.pending_outbound.remaining()
         ));
     }
+    let mut cache_frames = Vec::new();
     for (idx, chunk) in chunks.iter().enumerate() {
         let shard = Shard {
             group: group.clone(),
-            idx: u32::try_from(idx).expect("idx is bounded by MAX_MESSAGE_SHARDS"),
+            idx: u32::try_from(idx).expect("idx is bounded by the gate above"),
             total,
         };
         let chunk_body = MessageBody::new(*chunk).expect("a substring of a valid body is valid");
@@ -559,7 +603,13 @@ async fn broadcast_task_frame(
             .with_shard(Some(shard))
             .signed(&signer);
         let bytes = Bytes::from(msg.serialize()?);
+        if total > LOGGED_SHARD_GROUP_MAX_TOTAL {
+            cache_frames.push(bytes.clone());
+        }
         send_task_leg(state, ctx.sender, ctx.output, &msg, bytes, false, content).await?;
+    }
+    if !cache_frames.is_empty() {
+        state.shard_cache.insert(group.clone(), cache_frames);
     }
     // Echo + ingest the logical leg once (one content leg toward the cap).
     let logical = Message::new_frame(ctx.swarm, ctx.author, kind, payload_body).with_id(logical_id);
@@ -825,8 +875,10 @@ pub(crate) async fn broadcast_a2a_call(
         }
     };
     let rpc_id = crate::a2a::A2aRpcId::random();
-    let frame = Message::new_a2a_req(ctx.swarm, ctx.author, peer.clone(), rpc_id.clone(), body)
-        .signed(&state.identity);
+    let kind = MessageKind::A2aReq {
+        to: peer.clone(),
+        rpc_id: rpc_id.clone(),
+    };
     // Clamp before adding to `Instant`: an unclamped client `timeout_secs` would
     // overflow the platform `Instant` and panic the event loop.
     let max_timeout =
@@ -843,21 +895,133 @@ pub(crate) async fn broadcast_a2a_call(
         unregistered.send_response(&rpc_error(-32603, "too many in-flight a2a calls"));
         return;
     }
-    // Directed request: unicast to the peer when dialable, else gossip
-    // (see `unicast::deliver`). Mirrors `broadcast_msg`'s log-then-serialize.
-    crate::logging::messages::log_out(&frame);
-    match frame.serialize() {
-        Ok(bytes) => {
-            if let Err(error) =
-                crate::unicast::deliver(&frame, Bytes::from(bytes), state, ctx.sender).await
-            {
-                tracing::warn!(target: "agent_gossip::gossip", %error, "a2a request send failed");
+    // Directed request over the shared RPC sender: unicast → whisper → gossip
+    // per frame, splitting a large sealed body transparently.
+    if let Err(error) = send_directed_rpc(ctx.swarm, ctx.author, kind, body, state, ctx.sender).await
+    {
+        tracing::warn!(target: "agent_gossip::gossip", %error, "a2a request send failed");
+    }
+}
+
+/// Ask the authors of our stalled big (unlogged) partial groups to re-send
+/// the missing shards — the repair half of big-group reliability (the author
+/// half is `state.shard_cache`). Runs on the prune tick; fire-and-forget:
+/// no waiter is parked, the repair *is* the retry (the next tick asks again
+/// while the group survives its TTL). A missing card (can't seal) or send
+/// failure just waits for the next round.
+pub(crate) async fn send_shard_repair_requests(
+    swarm: &SwarmId,
+    author: &Nickname,
+    state: &mut EventLoopState,
+    sender: &GossipSender,
+) {
+    let tickets = state.reassembly.repair_tickets(Instant::now());
+    for ticket in tickets {
+        let envelope = serde_json::json!({
+            "method": "shard/repair",
+            "params": { "group": ticket.group.as_str(), "missing": ticket.missing },
+        });
+        let Ok(body) = MessageBody::new(envelope.to_string()) else {
+            continue;
+        };
+        let sealed = match seal_directed(state, &ticket.author, &body) {
+            Ok(sealed) => sealed,
+            Err(error) => {
+                tracing::debug!(%error, author = %ticket.author, "cannot seal shard repair request yet");
+                continue;
             }
-        }
-        Err(error) => {
-            tracing::warn!(target: "agent_gossip::gossip", %error, "a2a request serialize failed");
+        };
+        let kind = MessageKind::A2aReq {
+            to: ticket.author.clone(),
+            rpc_id: crate::a2a::A2aRpcId::random(),
+        };
+        tracing::debug!(
+            target: "agent_gossip::gossip",
+            author = %ticket.author,
+            group = %ticket.group,
+            missing = ticket.missing.len(),
+            "requesting shard repair"
+        );
+        if let Err(error) = send_directed_rpc(swarm, author, kind, sealed, state, sender).await {
+            tracing::debug!(%error, "shard repair request send failed; next tick retries");
         }
     }
+}
+
+/// Send one directed RPC frame (`A2aReq`/`A2aResp`), transparently splitting a
+/// sealed body too large for one frame into shard-tagged frames — each an
+/// ordinary directed frame riding the unicast → whisper → gossip cascade, so
+/// the RPC plane is size-transparent like chat and task legs. RPC frames are
+/// plumbing (never logged), so the shards reassemble only in the receiver's
+/// dedicated store; the group id is a fresh uuid, single-purpose (the `rpc_id`
+/// stays the correlation key).
+///
+/// # Errors
+/// Propagates a serialize/deliver failure and refuses a body past the input
+/// ceiling or the receiver's per-group reassembly budget.
+pub(crate) async fn send_directed_rpc(
+    swarm: &SwarmId,
+    author: &Nickname,
+    kind: MessageKind,
+    body: MessageBody,
+    state: &mut EventLoopState,
+    sender: &GossipSender,
+) -> anyhow::Result<()> {
+    let signer = state.identity.clone();
+    let single = Message::new_frame(swarm, author, kind.clone(), body.clone()).signed(&signer);
+    if single.wire_len() <= MAX_MESSAGE_SIZE {
+        crate::logging::messages::log_out(&single);
+        let bytes = Bytes::from(single.serialize()?);
+        return crate::unicast::deliver(&single, bytes, state, sender).await;
+    }
+    // The RPC body is already sealed (base58, ~1.37x the input) — gate on the
+    // sealed ceiling so the caller-facing limit stays MAX_LOGICAL_BODY_BYTES.
+    if body.as_str().len() > crate::util::consts::MAX_SEALED_BODY_BYTES {
+        return Err(anyhow::anyhow!(
+            "rpc body too large: {} sealed bytes exceeds the input ceiling \
+             ({MAX_LOGICAL_BODY_BYTES} raw bytes); use the blob channel for files",
+            body.as_str().len()
+        ));
+    }
+    let group = ShardGroup::from_uuid_str(&uuid::Uuid::new_v4().to_string())
+        .expect("a freshly minted uuid is a valid shard group");
+    let probe = Message::new_frame(
+        swarm,
+        author,
+        kind.clone(),
+        MessageBody::new(String::new()).expect("empty body is valid"),
+    )
+    .with_shard(Some(Shard {
+        group: group.clone(),
+        idx: MAX_SHARD_TOTAL - 1,
+        total: MAX_SHARD_TOTAL,
+    }))
+    .signed(&signer);
+    let budget = shard_body_budget(&probe);
+    let chunks = split_body(body.as_str(), budget)
+        .ok_or_else(|| anyhow::anyhow!("shard body budget is zero; cannot split"))?;
+    let total = gate_multipart(&chunks, "rpc body")?;
+    let mut cache_frames = Vec::new();
+    for (idx, chunk) in chunks.iter().enumerate() {
+        let chunk_body = MessageBody::new(*chunk).expect("a substring of a valid body is valid");
+        let msg = Message::new_frame(swarm, author, kind.clone(), chunk_body)
+            .with_shard(Some(Shard {
+                group: group.clone(),
+                idx: u32::try_from(idx).expect("idx is bounded by the gate above"),
+                total,
+            }))
+            .signed(&signer);
+        crate::logging::messages::log_out(&msg);
+        let bytes = Bytes::from(msg.serialize()?);
+        if total > LOGGED_SHARD_GROUP_MAX_TOTAL {
+            cache_frames.push(bytes.clone());
+        }
+        crate::unicast::deliver(&msg, bytes, state, sender).await?;
+    }
+    if !cache_frames.is_empty() {
+        state.shard_cache.insert(group, cache_frames);
+    }
+    Ok(())
 }
 
 /// Arm a fresh ping round carrying the responder; the deadline-driven
@@ -1000,6 +1164,13 @@ pub(crate) async fn handle_session_request(
             ));
             false
         }
+        // Reassembly accounting snapshot (adversarial only) for the
+        // shard-budget tripwires.
+        #[cfg(feature = "adversarial")]
+        SessionRequest::ReassemblyStats { resp } => {
+            let _ = resp.send(state.reassembly.stats());
+            false
+        }
         // Simulated stream end (adversarial only): indistinguishable from
         // the real `None` arm as far as the event loop is concerned.
         #[cfg(feature = "adversarial")]
@@ -1013,8 +1184,8 @@ pub(crate) async fn handle_session_request(
 
 #[cfg(test)]
 mod split_body_tests {
-    use super::{escaped_char_len, split_body};
-    use crate::util::consts::MAX_MESSAGE_SHARDS;
+    use super::{escaped_char_len, gate_multipart, split_body};
+    use crate::util::consts::{MAX_SHARD_TOTAL, REASSEMBLY_GROUP_MAX_BYTES};
 
     #[test]
     fn escaped_len_counts_json_escapes() {
@@ -1032,9 +1203,8 @@ mod split_body_tests {
     #[test]
     fn chunks_concatenate_back_and_respect_budget() {
         let body = "0123456789".repeat(6); // 60 ASCII bytes
-        let chunks = split_body(&body, 16).expect("60 bytes at budget 16 fits in MAX shards");
+        let chunks = split_body(&body, 16).expect("a positive budget always splits");
         assert!(chunks.len() > 1, "the body must actually split");
-        assert!(chunks.len() <= MAX_MESSAGE_SHARDS);
         assert_eq!(chunks.concat(), body, "chunks reassemble to the original");
         for chunk in &chunks {
             let escaped: usize = chunk.chars().map(escaped_char_len).sum();
@@ -1045,15 +1215,24 @@ mod split_body_tests {
     #[test]
     fn splits_multibyte_on_char_boundaries() {
         let body = "héllo🌍".repeat(8); // 2-byte é and 4-byte emoji
-        let chunks = split_body(&body, 8).expect("fits in MAX shards");
+        let chunks = split_body(&body, 8).expect("a positive budget always splits");
         assert_eq!(chunks.concat(), body, "no char is split mid-codepoint");
         assert!(chunks.iter().all(|chunk| !chunk.is_empty()));
     }
 
     #[test]
-    fn refuses_a_body_needing_too_many_parts() {
+    fn split_has_no_count_cap_but_the_gate_bounds_bytes() {
+        // 1000 one-byte chunks was over the old 16-shard cap; the split is now
+        // unbounded and the gate admits it (well under the byte budgets)…
         let body = "x".repeat(1000);
-        // One byte per shard would need 1000 shards, far over MAX_MESSAGE_SHARDS.
-        assert!(split_body(&body, 1).is_none());
+        let chunks = split_body(&body, 1).expect("no shard-count refusal");
+        assert_eq!(chunks.len(), 1000);
+        assert!(gate_multipart(&chunks, "message").is_ok());
+        // …but the gate refuses what the receiver's budgets would refuse.
+        let too_many: Vec<&str> = vec!["x"; MAX_SHARD_TOTAL as usize + 1];
+        assert!(gate_multipart(&too_many, "message").is_err());
+        let big = "x".repeat(REASSEMBLY_GROUP_MAX_BYTES / 2 + 1);
+        let over_budget: Vec<&str> = vec![&big, &big];
+        assert!(gate_multipart(&over_budget, "message").is_err());
     }
 }

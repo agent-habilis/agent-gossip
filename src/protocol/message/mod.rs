@@ -26,6 +26,7 @@ mod shard;
 pub use body::{BodyError, MessageBody};
 pub use id::{IdError, MessageId};
 pub use shard::{Shard, ShardGroup};
+pub(crate) use shard::shard_fits_log;
 
 /// Maximum serialized message size — a network-wide wire contract kept
 /// under iroh-gossip's payload budget so a message we accept always fits
@@ -46,17 +47,17 @@ const _: () = assert!(
     "MAX_MESSAGE_SIZE leaves too little room under iroh-gossip's DEFAULT_MAX_MESSAGE_SIZE"
 );
 
-/// Protocol version embedded in every message. Bumped to `7.0` for the
-/// **automerge `state`/`meta` channels**: a `State`/`Meta` body now carries one
-/// Base58 automerge change (`{"k":"change",…}`, not the old RFC 7386
-/// `{"k":"merge",…}`), and a `StateDigest`/`MetaDigest` body now carries the
-/// doc's automerge heads, not windowed event ids — so a `6.0` peer and a `7.0`
-/// peer must NOT interoperate on these channels. (`6.0` was directed sealing;
-/// `5.0` the A2A v1.0 / `ProtoJSON` migration; `4.0` the native-A2A port; `3.0`
-/// the A2A migration; `2.0` the RFC 6902 → RFC 7386 shared-state change.) The
-/// exact-match gate in `parse` drops cross-version messages loudly rather than
-/// letting them silently fold to no-ops and diverge.
-pub(crate) const VERSION: &str = "7.0";
+/// Protocol version embedded in every message. Bumped to `8.0` for
+/// **unbounded multipart bodies**: a shard header's `total` may now exceed
+/// the old 16-shard cap (up to [`crate::util::consts::MAX_SHARD_TOTAL`]), and
+/// a `7.0` peer would parse-fail every larger shard *silently* — a delivery
+/// black hole — so the versions must not interoperate. (`7.0` was the
+/// automerge `state`/`meta` channels; `6.0` directed sealing; `5.0` the A2A
+/// v1.0 / `ProtoJSON` migration; `4.0` the native-A2A port; `3.0` the A2A
+/// migration; `2.0` the RFC 6902 → RFC 7386 shared-state change.) The
+/// exact-match gate in `parse` drops cross-version messages loudly rather
+/// than letting them silently fold to no-ops and diverge.
+pub(crate) const VERSION: &str = "8.0";
 
 /// Presence subtype.
 /// `Joined`/`Left` are user-visible; `Alive` is a silent keepalive used
@@ -290,7 +291,7 @@ fn empty_body() -> MessageBody {
 ///
 /// Wire format (compact JSON, one line):
 /// ```json
-/// {"v":"7.0","id":"<uuid>","type":"a2a_msg","swarm":"💬...","author":"word-word","ts":1234567890,"body":"{\"messageId\":\"<uuid>\",\"role\":\"ROLE_USER\",...}","ext":{}}
+/// {"v":"8.0","id":"<uuid>","type":"a2a_msg","swarm":"💬...","author":"word-word","ts":1234567890,"body":"{\"messageId\":\"<uuid>\",\"role\":\"ROLE_USER\",...}","ext":{}}
 /// ```
 ///
 /// `to` (the addressee nickname) is inlined into the JSON for directed `a2a_msg` kinds.
@@ -451,7 +452,10 @@ impl Message {
     }
 
     /// A directed A2A JSON-RPC request to `to`, whose `body` is a JSON-RPC
-    /// `{"method","params"}` envelope correlated by `rpc_id`.
+    /// `{"method","params"}` envelope correlated by `rpc_id`. Production
+    /// builds RPC frames through `new_frame` (the shard-splitting flow); this
+    /// stays for routing tests.
+    #[cfg(test)]
     pub(crate) fn new_a2a_req(
         swarm: &SwarmId,
         author: &Nickname,
@@ -460,18 +464,6 @@ impl Message {
         body: MessageBody,
     ) -> Self {
         Self::new(swarm, author, MessageKind::A2aReq { to, rpc_id }, body)
-    }
-
-    /// The reply to an `A2aReq`, addressed to the requester `to`, whose `body`
-    /// is the JSON-RPC response, echoing `rpc_id`.
-    pub(crate) fn new_a2a_resp(
-        swarm: &SwarmId,
-        author: &Nickname,
-        to: Nickname,
-        rpc_id: crate::a2a::A2aRpcId,
-        body: MessageBody,
-    ) -> Self {
-        Self::new(swarm, author, MessageKind::A2aResp { to, rpc_id }, body)
     }
 
     /// Create a `PeerInfo` message. The body carries endpoint address data
@@ -501,9 +493,9 @@ impl Message {
     }
 
     /// A durable state event whose opaque payload is `body`. Routed to the
-    /// un-pruned `daemon::state_log`, not the chat message-log. Test/harness
+    /// un-pruned `daemon::state_log`, not the chat message-log. Harness
     /// constructor; production uses [`new_channel_event`](Self::new_channel_event).
-    #[cfg(any(test, feature = "adversarial"))]
+    #[cfg(feature = "adversarial")]
     pub(crate) fn new_state(swarm: &SwarmId, author: &Nickname, body: MessageBody) -> Self {
         Self::new(swarm, author, MessageKind::State, body)
     }
@@ -941,7 +933,7 @@ mod tests {
     #[test]
     fn test_unknown_ext_fields_ignored() {
         let json = format!(
-            r#"{{"v":"7.0","id":"{FIXTURE_ID}","type":"a2a_msg","swarm":"💬test","author":"a-b","ts":0,"body":"hi","ext":{{"future_field":"value","another":42}}}}"#
+            r#"{{"v":"8.0","id":"{FIXTURE_ID}","type":"a2a_msg","swarm":"💬test","author":"a-b","ts":0,"body":"hi","ext":{{"future_field":"value","another":42}}}}"#
         );
         let parsed = Message::parse(json.as_bytes()).unwrap();
         assert_eq!(parsed.body.as_str(), "hi");
@@ -951,7 +943,7 @@ mod tests {
     #[test]
     fn test_missing_ext_defaults_to_empty_object() {
         let json = format!(
-            r#"{{"v":"7.0","id":"{FIXTURE_ID}","type":"a2a_msg","swarm":"💬test","author":"a-b","ts":0,"body":"hi"}}"#
+            r#"{{"v":"8.0","id":"{FIXTURE_ID}","type":"a2a_msg","swarm":"💬test","author":"a-b","ts":0,"body":"hi"}}"#
         );
         let parsed = Message::parse(json.as_bytes()).unwrap();
         assert_eq!(parsed.ext, serde_json::json!({}));
@@ -973,14 +965,14 @@ mod tests {
     // escapes / spoof the `<nick>`/`#swarm` conventions (bad body/author).
     #[test]
     fn parse_rejects_non_uuid_id() {
-        let json = r#"{"v":"7.0","id":"not-a-uuid","type":"a2a_msg","swarm":"💬test","author":"a-b","ts":0,"body":"hi","ext":{}}"#;
+        let json = r#"{"v":"8.0","id":"not-a-uuid","type":"a2a_msg","swarm":"💬test","author":"a-b","ts":0,"body":"hi","ext":{}}"#;
         assert!(Message::parse(json.as_bytes()).is_err());
     }
 
     #[test]
     fn parse_rejects_control_char_body() {
         let json = format!(
-            r#"{{"v":"7.0","id":"{FIXTURE_ID}","type":"a2a_msg","swarm":"💬test","author":"a-b","ts":0,"body":"evil\u0000body","ext":{{}}}}"#
+            r#"{{"v":"8.0","id":"{FIXTURE_ID}","type":"a2a_msg","swarm":"💬test","author":"a-b","ts":0,"body":"evil\u0000body","ext":{{}}}}"#
         );
         assert!(Message::parse(json.as_bytes()).is_err());
     }
@@ -988,7 +980,7 @@ mod tests {
     #[test]
     fn parse_rejects_unsafe_author_nickname() {
         let json = format!(
-            r#"{{"v":"7.0","id":"{FIXTURE_ID}","type":"a2a_msg","swarm":"💬test","author":"a#b","ts":0,"body":"hi","ext":{{}}}}"#
+            r#"{{"v":"8.0","id":"{FIXTURE_ID}","type":"a2a_msg","swarm":"💬test","author":"a#b","ts":0,"body":"hi","ext":{{}}}}"#
         );
         assert!(Message::parse(json.as_bytes()).is_err());
     }
@@ -1000,7 +992,7 @@ mod tests {
         // so a crafted value never reaches the fork/DAG indexes or sig verify.
         let base = |extra: &str| {
             format!(
-                r#"{{"v":"7.0","id":"{FIXTURE_ID}","type":"a2a_msg","swarm":"💬test","author":"a-b","ts":0,"body":"hi"{extra},"ext":{{}}}}"#
+                r#"{{"v":"8.0","id":"{FIXTURE_ID}","type":"a2a_msg","swarm":"💬test","author":"a-b","ts":0,"body":"hi"{extra},"ext":{{}}}}"#
             )
         };
         // 3KB garbage pubkey, non-hex / wrong-length variants, and a bad hash.

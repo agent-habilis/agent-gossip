@@ -554,3 +554,126 @@ async fn signed_foreign_card_forgery_is_rejected_on_receipt() {
     victim.leave().await;
     injector.leave().await;
 }
+
+// ── Shard reassembly: crafted headers + byte budgets ────────────────────
+
+/// A crafted shard with an out-of-range header (`idx >= total`, or a `total`
+/// past the sanity tripwire) is rejected at `Message::parse` and never
+/// reaches the reassembly store.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn out_of_range_shard_headers_never_reach_the_store() {
+    const GROUP: &str = "550e8400-e29b-41d4-a716-446655440000";
+    let (mut victim, attacker) = meshed_pair("shard-hdr").await;
+    let key = adversarial::new_key();
+    // idx outside total.
+    let idx_outside = CraftedMsg::new(attacker.session.swarm_id(), "ghost", "slice")
+        .shard(GROUP, 3, 3)
+        .sign(&key)
+        .bytes();
+    attacker.session.inject_raw(idx_outside).await.expect("inject");
+    // total past the header tripwire.
+    let absurd_total = CraftedMsg::new(attacker.session.swarm_id(), "ghost", "slice")
+        .shard(GROUP, 0, agent_gossip::MAX_SHARD_TOTAL + 1)
+        .sign(&key)
+        .bytes();
+    attacker.session.inject_raw(absurd_total).await.expect("inject");
+
+    attacker.send("barrier-shard-hdr").await;
+    assert!(victim.wait_body("barrier-shard-hdr", T).await, "barrier lost");
+    let (groups, bytes, _) = victim
+        .session
+        .reassembly_stats()
+        .await
+        .expect("reassembly stats");
+    assert_eq!(
+        (groups, bytes),
+        (0, 0),
+        "parse-rejected shards must never be buffered"
+    );
+    victim.leave().await;
+    attacker.leave().await;
+}
+
+/// A Sybil stream of never-completing shard groups (many fresh keys, each
+/// buffering slices of a group that can never finish) is bounded by the
+/// store's byte budgets — the crafted stream buffers (proving the shards were
+/// accepted), but the accounting stays inside the per-author and global
+/// ceilings.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn sybil_shard_floods_stay_inside_the_reassembly_budgets() {
+    let (mut victim, attacker) = meshed_pair("shard-sybil").await;
+    let slice = "x".repeat(3000);
+    for author in 0..24u32 {
+        let key = adversarial::new_key();
+        let group = format!("00000000-0000-4000-8000-{author:012x}");
+        // idx 0..4 of a claimed 1000: the group can never complete, so every
+        // accepted slice sits in the store until the TTL sweep.
+        for idx in 0..4u32 {
+            let evil = CraftedMsg::new(
+                attacker.session.swarm_id(),
+                &format!("sybil-{author}"),
+                &slice,
+            )
+            .shard(&group, idx, 1000)
+            .sign(&key)
+            .bytes();
+            attacker.session.inject_raw(evil).await.expect("inject");
+        }
+    }
+
+    attacker.send("barrier-shard-sybil").await;
+    assert!(
+        victim.wait_body("barrier-shard-sybil", T).await,
+        "barrier lost"
+    );
+    let (groups, total_bytes, max_author_bytes) = victim
+        .session
+        .reassembly_stats()
+        .await
+        .expect("reassembly stats");
+    assert!(groups > 0, "the crafted shards were accepted and buffered");
+    assert!(
+        total_bytes <= adversarial::REASSEMBLY_TOTAL_BUDGET_BYTES,
+        "global reassembly budget exceeded: {total_bytes}"
+    );
+    assert!(
+        max_author_bytes <= adversarial::REASSEMBLY_AUTHOR_BUDGET_BYTES,
+        "per-author reassembly budget exceeded: {max_author_bytes}"
+    );
+    victim.leave().await;
+    attacker.leave().await;
+}
+
+/// A crafted shard reusing a *victim-authored* group id forms its own
+/// (attacker-keyed) set: it can never fill the victim's slots, so the genuine
+/// body reassembles intact — the cross-author isolation boundary, end to end.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cross_author_group_reuse_cannot_corrupt_a_genuine_body() {
+    let (mut victim, attacker) = meshed_pair("shard-xauth").await;
+    // The attacker seeds a poisoned slice under a group id it hopes a genuine
+    // multipart send will use — then the sender (attacker node's session,
+    // signing with its real key) sends a genuine multipart body. The poisoned
+    // slice is under a different key, so it cannot enter the genuine set.
+    let key = adversarial::new_key();
+    let poisoned = CraftedMsg::new(attacker.session.swarm_id(), "ghost", "POISON")
+        .shard("00000000-0000-4000-8000-00000000beef", 1, 2)
+        .sign(&key)
+        .bytes();
+    attacker.session.inject_raw(poisoned).await.expect("inject");
+
+    // A genuine multipart body from the attacker's real session (its own
+    // group id — the A2A messageId — differs, but even a collision would be
+    // keyed apart). It must arrive intact, with no poisoned slice.
+    let big = "clean ".repeat(4 * 1024); // ~24 KB, several shards
+    attacker.send(&big).await;
+    assert!(
+        victim.wait_body(&big, T).await,
+        "the genuine multipart body never reassembled"
+    );
+    assert!(
+        !surfaced(&mut victim, "POISON"),
+        "a poisoned cross-author slice must never surface"
+    );
+    victim.leave().await;
+    attacker.leave().await;
+}

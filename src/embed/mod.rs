@@ -30,6 +30,7 @@ use crate::protocol::swarm::{
 };
 use crate::protocol::{Message, MessageBody, Nickname, SwarmId};
 use crate::resolver::JoinTarget;
+use crate::unicast::TransportPolicy;
 use crate::util::consts::GOSSIP_ACTIVE_VIEW_CAPACITY;
 use crate::util::tuning::{EMBED_INBOUND_CAP, advertise_interval_secs, directory_expiry_secs};
 
@@ -48,6 +49,9 @@ pub struct JoinConfig {
     /// Password for a password-protected id. Verified locally against the
     /// id's verifier before any network; required iff the id carries one.
     pub password: Option<String>,
+    /// Which transport planes directed sends may use. Default all-on;
+    /// narrowed by tests to pin a message to one lane.
+    pub transport: TransportPolicy,
 }
 
 impl JoinConfig {
@@ -62,6 +66,7 @@ impl JoinConfig {
             nickname: None,
             max_peers: GOSSIP_ACTIVE_VIEW_CAPACITY,
             password: None,
+            transport: TransportPolicy::default(),
         }
     }
 }
@@ -79,6 +84,9 @@ pub struct TopicConfig {
     pub nickname: Option<Nickname>,
     /// Max direct peer connections before gossip relays the rest.
     pub max_peers: usize,
+    /// Which transport planes directed sends may use. Default all-on;
+    /// narrowed by tests to pin a message to one lane.
+    pub transport: TransportPolicy,
 }
 
 impl TopicConfig {
@@ -89,6 +97,7 @@ impl TopicConfig {
             string,
             nickname: None,
             max_peers: GOSSIP_ACTIVE_VIEW_CAPACITY,
+            transport: TransportPolicy::default(),
         }
     }
 }
@@ -126,6 +135,9 @@ pub struct CreateConfig {
     /// minted id (joiners must present the password), and every derivation
     /// switches onto the Argon2id-stretched key.
     pub password: Option<String>,
+    /// Which transport planes directed sends may use. Default all-on;
+    /// narrowed by tests to pin a message to one lane.
+    pub transport: TransportPolicy,
 }
 
 impl CreateConfig {
@@ -143,6 +155,7 @@ impl CreateConfig {
             directory: None,
             max_peers: GOSSIP_ACTIVE_VIEW_CAPACITY,
             password: None,
+            transport: TransportPolicy::default(),
         }
     }
 }
@@ -269,6 +282,7 @@ async fn create_setup(
             output,
             drift: None,
             a2a_serve: None,
+            transport: cfg.transport,
         },
     )
     .await
@@ -294,7 +308,7 @@ async fn join_setup(cfg: JoinConfig, output: Output) -> Result<EventLoopConfig, 
     }
     .resolve()
     .map_err(JoinError::Resolve)?;
-    resolved_setup(resolved, cfg.max_peers, output).await
+    resolved_setup(resolved, cfg.max_peers, cfg.transport, output).await
 }
 
 /// Resolve + set up a topic (a string-derived public swarm).
@@ -309,7 +323,7 @@ async fn topic_setup(cfg: TopicConfig, output: Output) -> Result<EventLoopConfig
     }
     .resolve()
     .map_err(JoinError::Resolve)?;
-    resolved_setup(resolved, cfg.max_peers, output).await
+    resolved_setup(resolved, cfg.max_peers, cfg.transport, output).await
 }
 
 /// The shared tail of [`join_setup`] / [`topic_setup`]: run `setup_swarm` for
@@ -317,6 +331,7 @@ async fn topic_setup(cfg: TopicConfig, output: Output) -> Result<EventLoopConfig
 async fn resolved_setup(
     resolved: Resolved,
     max_peers: usize,
+    transport: TransportPolicy,
     output: Output,
 ) -> Result<EventLoopConfig, JoinError> {
     let Resolved { kind, author, .. } = resolved;
@@ -330,6 +345,7 @@ async fn resolved_setup(
             output,
             drift: None,
             a2a_serve: None,
+            transport,
         },
     )
     .await
@@ -687,6 +703,20 @@ impl InProcessSession {
             .map_err(|_| anyhow::anyhow!("swarm event loop dropped the response"))
     }
 
+    /// Snapshot the reassembly store's accounting
+    /// `(groups, total_bytes, max_author_bytes)`. Adversarial-suite only.
+    #[cfg(feature = "adversarial")]
+    pub(crate) async fn reassembly_stats(&self) -> anyhow::Result<(usize, usize, usize)> {
+        let (resp_tx, resp_rx) = oneshot::channel();
+        self.req_tx
+            .send(SessionRequest::ReassemblyStats { resp: resp_tx })
+            .await
+            .map_err(|_| anyhow::anyhow!("swarm event loop has stopped"))?;
+        resp_rx
+            .await
+            .map_err(|_| anyhow::anyhow!("swarm event loop dropped the response"))
+    }
+
     /// Clean shutdown: ask the loop to broadcast `Left` and wind down,
     /// waiting up to 3s. On timeout returns `Ok(())` and `Drop` detaches.
     ///
@@ -804,6 +834,7 @@ impl SwarmSession {
                 output,
                 drift: None,
                 a2a_serve: None,
+                transport: TransportPolicy::default(),
             },
         )
         .await?;
@@ -1029,6 +1060,17 @@ impl SwarmSession {
     #[cfg(feature = "adversarial")]
     pub async fn index_stats(&self) -> anyhow::Result<(usize, usize, usize)> {
         self.core.index_stats().await
+    }
+
+    /// Snapshot the reassembly store's accounting
+    /// `(groups, total_bytes, max_author_bytes)`. Adversarial-suite only —
+    /// lets it assert crafted shard streams stay inside the byte budgets.
+    ///
+    /// # Errors
+    /// Fails if the event loop has stopped.
+    #[cfg(feature = "adversarial")]
+    pub async fn reassembly_stats(&self) -> anyhow::Result<(usize, usize, usize)> {
+        self.core.reassembly_stats().await
     }
 
     /// Clean shutdown: ask the loop to broadcast `Left` and wind down,
