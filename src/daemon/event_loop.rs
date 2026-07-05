@@ -47,6 +47,8 @@ pub(crate) async fn run(cfg: EventLoopConfig) -> Result<()> {
         identity,
         swarm: swarm_str,
         name: swarm_name,
+        swarm_password,
+        swarm_key,
         output,
         interactive,
         endpoint,
@@ -103,7 +105,7 @@ pub(crate) async fn run(cfg: EventLoopConfig) -> Result<()> {
         })
         .map(|path| StateFile::new(path, &swarm_str, &author, &swarm_name));
     let (a2a_port, a2a_rx) = spawn_a2a(a2a, state_file.as_ref());
-    let mut state = EventLoopState::new(state_file, started, identity);
+    let mut state = EventLoopState::new(state_file, started, identity, swarm_password, swarm_key);
     // Replace the detached default pool with one wired to this endpoint, so
     // directed sends can dial peers over the unicast ALPN.
     state.unicast_pool = crate::unicast::UnicastPool::new(endpoint.clone());

@@ -144,8 +144,23 @@ advertised ads are public, and a verifier there would be an offline grinding
 target; the swarm hash accepts that trade for local verifiability. A
 passworded swarm or ticket is therefore safe to **advertise**.
 
+On a passworded swarm the password also protects the *contents* of every
+shared surface, not just entry:
+
+- **blob** tickets inherit it automatically — a minted ticket carries a public
+  salt and the producer stores the Argon2id stretch as the compare token, so a
+  scraped ticket can't be redeemed without the password (`agent-gossip a2a fetch
+  … --password`). This reuses the ticket machinery above.
+- the **state** and **meta** channel change bodies are encrypted with a
+  symmetric key derived from the stretched swarm key (`derive_secret(key,
+  "state-doc" | "meta-doc")`), so a relay or a captured frame sees only opaque
+  bytes while every member decrypts. Enforced in the doc layer (`enc` envelope),
+  transparent to signing and anti-entropy (see **seal**).
+
 Code: `protocol::crypto` (`stretch_swarm_password`, `password_verifier`,
-`TicketAuth`), `Swarm::{set_password, apply_password}`.
+`TicketAuth`, `derive_secret`), `Swarm::{set_password, apply_password,
+stretched_key}`, `protocol::seal::{seal_symmetric, open_symmetric}`,
+`daemon::state_doc::{encrypt_body, decrypt_body}`.
 
 ### rendezvous
 
@@ -407,9 +422,22 @@ envelope. The recipient decrypts with its static secret; a relay forwards the
 frame and **verifies the Ed25519 signature** (which covers the ciphertext) but
 cannot read the body. Only the body is sealed — routing metadata (`to`,
 `task_id`, author, kind) stays cleartext so relays route and anti-entropy heals.
-**Broadcast (`A2aMsg`) and the `state`/`meta` channels are never sealed** — their
-audience is every member; they stay public and signed. Forward secrecy comes
-from the per-frame ephemeral key; sender authenticity from the frame signature.
+Forward secrecy for a directed frame comes from its per-frame ephemeral key;
+sender authenticity from the frame signature.
+
+On a **passwordless** swarm, broadcast chat (`A2aMsg`) and the `state`/`meta`
+channels travel plaintext (public to every member). On a **password**-protected
+swarm all three are **symmetrically** sealed
+(`seal_symmetric`/`open_symmetric`): a ChaCha20-Poly1305 key derived from the
+stretched swarm key — shared by every member, no ECDH — wraps the whole
+plaintext body into an `enc` envelope (`state`/`meta` change bodies via the
+`state-doc`/`meta-doc` keys; chat via the `broadcast` key, sealed before it is
+sharded). Same signing/relay story: encryption precedes signing so the signature
+covers the ciphertext, the retained re-serve frame stays sealed, dedup / the
+per-author hash-chain / anti-entropy all key on the signed ciphertext frame, and
+only the local content path decrypts — so a member without the key never
+appears, but a relay or captured frame reads nothing. Presence, `PeerInfo`, and
+the anti-entropy digests stay plaintext (plumbing the overlay needs).
 
 ### blob
 

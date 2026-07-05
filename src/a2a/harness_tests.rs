@@ -111,7 +111,7 @@ async fn bridge_rewrites_the_agent_card_url_to_the_local_base() {
     let origin = spawn_origin(card_response("http://origin.internal:9999/a2a")).await;
     let (exposer, ticket) = spawn_exposer(origin, None).await;
     let (consumer_endpoint, shared) = consumer(&ticket).await;
-    let auth = TicketAuth::derive(&ticket.secret, None);
+    let auth = TicketAuth::a2a(&ticket.secret, None);
 
     let response = drive(
         &shared,
@@ -139,7 +139,7 @@ async fn bridge_forwards_a_non_card_exchange_byte_for_byte() {
     let origin = spawn_origin(response.clone()).await;
     let (exposer, ticket) = spawn_exposer(origin, None).await;
     let (consumer_endpoint, shared) = consumer(&ticket).await;
-    let auth = TicketAuth::derive(&ticket.secret, None);
+    let auth = TicketAuth::a2a(&ticket.secret, None);
 
     let got = drive(
         &shared,
@@ -192,7 +192,7 @@ async fn a_second_consumer_is_refused_while_the_bridge_is_paired() {
     // Consumer A drives a request — that guarantees the exposer accepted and
     // claimed the 1:1 slot. Keeping A's endpoint + connection alive holds it.
     let (endpoint_a, shared_a) = consumer(&ticket).await;
-    let auth = TicketAuth::derive(&ticket.secret, None);
+    let auth = TicketAuth::a2a(&ticket.secret, None);
     let _ = drive(
         &shared_a,
         &auth,

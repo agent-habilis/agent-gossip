@@ -52,9 +52,10 @@ pub(crate) async fn url_part(
     lookups: &LookupOpts,
     spool_dir: PathBuf,
     task_id: TaskId,
+    password: Option<crate::protocol::crypto::Password>,
 ) -> Result<Part> {
     if server.is_none() {
-        *server = Some(BlobServer::start(lookups.clone(), spool_dir).await?);
+        *server = Some(BlobServer::start(lookups.clone(), spool_dir, password).await?);
     }
     let ticket = server
         .as_ref()
@@ -124,7 +125,7 @@ mod tests {
     /// Start a loopback producer serving `payload`, fetch it back over a second
     /// loopback endpoint, and return the fetched bytes.
     async fn round_trip(payload: &[u8]) -> Vec<u8> {
-        let server = BlobServer::start(LookupOpts::loopback(), temp_spool())
+        let server = BlobServer::start(LookupOpts::loopback(), temp_spool(), None)
             .await
             .expect("start producer");
         let src = temp_file(payload);
@@ -151,8 +152,44 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn passworded_blob_requires_the_password() {
+        use crate::protocol::crypto::Password;
+        let password = Password::new("hunter2".to_owned());
+        let server =
+            BlobServer::start(LookupOpts::loopback(), temp_spool(), Some(password.clone()))
+                .await
+                .unwrap();
+        let src = temp_file(b"secret bytes");
+        let ticket = server.register(&src, TaskId::random()).await.unwrap();
+        assert!(ticket.password, "the ticket must be password-protected");
+
+        // Missing password and a wrong password are both refused.
+        let mut out = Vec::new();
+        assert!(
+            fetch(&ticket, &mut out, None).await.is_err(),
+            "a passworded ticket must not redeem without the password"
+        );
+        out.clear();
+        assert!(
+            fetch(&ticket, &mut out, Some(Password::new("wrong".to_owned())))
+                .await
+                .is_err(),
+            "a wrong password must be refused"
+        );
+        // The swarm password fetches byte-for-byte.
+        out.clear();
+        fetch(&ticket, &mut out, Some(password))
+            .await
+            .expect("fetch");
+        assert_eq!(out, b"secret bytes");
+
+        fs::remove_file(&src).ok();
+        server.shutdown().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_bad_secret_is_refused() {
-        let server = BlobServer::start(LookupOpts::loopback(), temp_spool())
+        let server = BlobServer::start(LookupOpts::loopback(), temp_spool(), None)
             .await
             .unwrap();
         let src = temp_file(b"secret payload");
@@ -169,7 +206,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn an_unknown_hash_is_refused() {
-        let server = BlobServer::start(LookupOpts::loopback(), temp_spool())
+        let server = BlobServer::start(LookupOpts::loopback(), temp_spool(), None)
             .await
             .unwrap();
         let src = temp_file(b"real content");
@@ -186,7 +223,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_size_disagreement_is_rejected() {
-        let server = BlobServer::start(LookupOpts::loopback(), temp_spool())
+        let server = BlobServer::start(LookupOpts::loopback(), temp_spool(), None)
             .await
             .unwrap();
         let src = temp_file(b"exactly this many bytes");

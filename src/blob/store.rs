@@ -21,10 +21,35 @@ use super::{HASH_LEN, SECRET_LEN};
 pub(crate) struct BlobEntry {
     pub path: PathBuf,
     pub size: u64,
+    /// The value the producer compares a presented token against
+    /// (constant-time): the raw bearer secret, or — when the blob is
+    /// password-protected — the Argon2id stretch of the ticket's public salt.
     pub secret: [u8; SECRET_LEN],
+    /// The public salt the ticket carries (equal to `secret` when not
+    /// passworded). Retained so a deduped re-registration mints a ticket that
+    /// still matches this entry's compare `secret`.
+    ticket_secret: [u8; SECRET_LEN],
+    /// Whether the minted ticket is password-protected.
+    password: bool,
     task_id: TaskId,
     /// Monotonic insertion order, for oldest-first eviction under disk pressure.
     seq: u64,
+}
+
+/// The capability inputs for a fresh registration: the public salt the ticket
+/// carries, the value the fetch handshake is compared against (equal to the salt
+/// when not passworded, its Argon2id stretch otherwise), and the password flag.
+pub(crate) struct NewSecret {
+    pub ticket_secret: [u8; SECRET_LEN],
+    pub compare_secret: [u8; SECRET_LEN],
+    pub password: bool,
+}
+
+/// What a registration hands back for building the ticket: the public salt the
+/// ticket carries and whether it is password-protected.
+pub(crate) struct Registered {
+    pub ticket_secret: [u8; SECRET_LEN],
+    pub password: bool,
 }
 
 /// One store per peer (per daemon). Holds the blobs this peer offloaded — its
@@ -53,10 +78,13 @@ impl BlobStore {
         })
     }
 
-    /// Snapshot `src` into the spool under `sha256`, owned by `task_id`. Returns
-    /// the bearer secret the ticket must carry: the existing one if this content
+    /// Snapshot `src` into the spool under `sha256`, owned by `task_id`.
+    /// `ticket_secret` is the public salt the ticket will carry; `compare_secret`
+    /// is what the fetch handshake is checked against (equal to `ticket_secret`
+    /// when not passworded, its Argon2id stretch otherwise). Returns the salt +
+    /// password flag to mint the ticket — the existing entry's when this content
     /// is already spooled (content-addressed dedup — first registration wins),
-    /// else `proposed`.
+    /// so a fresh ticket still matches the stored compare secret.
     ///
     /// # Errors
     /// Snapshotting the file into the spool fails.
@@ -65,11 +93,14 @@ impl BlobStore {
         src: &Path,
         sha256: [u8; HASH_LEN],
         size: u64,
-        proposed: [u8; SECRET_LEN],
+        secret: &NewSecret,
         task_id: TaskId,
-    ) -> Result<[u8; SECRET_LEN]> {
+    ) -> Result<Registered> {
         if let Some(entry) = self.map.get(&sha256) {
-            return Ok(entry.secret);
+            return Ok(Registered {
+                ticket_secret: entry.ticket_secret,
+                password: entry.password,
+            });
         }
         let dest = self.spool_dir.join(hex_encode(&sha256));
         snapshot_file(src, &dest)?;
@@ -81,18 +112,33 @@ impl BlobStore {
             BlobEntry {
                 path: dest,
                 size,
-                secret: proposed,
+                secret: secret.compare_secret,
+                ticket_secret: secret.ticket_secret,
+                password: secret.password,
                 task_id,
                 seq,
             },
         );
         self.evict_to_budget();
-        Ok(proposed)
+        Ok(Registered {
+            ticket_secret: secret.ticket_secret,
+            password: secret.password,
+        })
     }
 
     /// The entry for `hash`, if spooled.
     pub(crate) fn get(&self, hash: &[u8; HASH_LEN]) -> Option<&BlobEntry> {
         self.map.get(hash)
+    }
+
+    /// The ticket fields for an already-spooled blob (a content-addressed dedup
+    /// hit), or `None`. Lets the producer skip the ~100ms password stretch when
+    /// re-offloading content it already holds.
+    pub(crate) fn registered(&self, hash: &[u8; HASH_LEN]) -> Option<Registered> {
+        self.map.get(hash).map(|entry| Registered {
+            ticket_secret: entry.ticket_secret,
+            password: entry.password,
+        })
     }
 
     /// Drop every blob owned by `task_id` (called from the task idle-timeout
@@ -174,10 +220,21 @@ mod tests {
     use std::path::PathBuf;
 
     fn temp_dir(tag: &str) -> PathBuf {
-        let path =
-            std::env::temp_dir().join(format!("agent-gossip-blob-{tag}-{}", rand::rng().next_u64()));
+        let path = std::env::temp_dir().join(format!(
+            "agent-gossip-blob-{tag}-{}",
+            rand::rng().next_u64()
+        ));
         fs::create_dir_all(&path).expect("temp dir");
         path
+    }
+
+    /// A passwordless capability: the ticket secret is also the compare secret.
+    fn plain_secret(secret: [u8; SECRET_LEN]) -> super::NewSecret {
+        super::NewSecret {
+            ticket_secret: secret,
+            compare_secret: secret,
+            password: false,
+        }
     }
 
     #[test]
@@ -188,10 +245,17 @@ mod tests {
 
         let mut store = BlobStore::new(temp_dir("spool")).unwrap();
         let hash = [1u8; HASH_LEN];
-        let secret = store
-            .snapshot(&src, hash, 4096, [9u8; SECRET_LEN], TaskId::random())
+        let registered = store
+            .snapshot(
+                &src,
+                hash,
+                4096,
+                &plain_secret([9u8; SECRET_LEN]),
+                TaskId::random(),
+            )
             .unwrap();
-        assert_eq!(secret, [9u8; SECRET_LEN]);
+        assert_eq!(registered.ticket_secret, [9u8; SECRET_LEN]);
+        assert!(!registered.password);
 
         let entry = store.get(&hash).expect("entry present");
         assert_eq!(entry.size, 4096);
@@ -209,14 +273,26 @@ mod tests {
         let mut store = BlobStore::new(temp_dir("spool")).unwrap();
         let hash = [2u8; HASH_LEN];
         let first = store
-            .snapshot(&src, hash, 12, [1u8; SECRET_LEN], TaskId::random())
+            .snapshot(
+                &src,
+                hash,
+                12,
+                &plain_secret([1u8; SECRET_LEN]),
+                TaskId::random(),
+            )
             .unwrap();
         let second = store
-            .snapshot(&src, hash, 12, [2u8; SECRET_LEN], TaskId::random())
+            .snapshot(
+                &src,
+                hash,
+                12,
+                &plain_secret([2u8; SECRET_LEN]),
+                TaskId::random(),
+            )
             .unwrap();
-        assert_eq!(first, [1u8; SECRET_LEN]);
+        assert_eq!(first.ticket_secret, [1u8; SECRET_LEN]);
         assert_eq!(
-            second, first,
+            second.ticket_secret, first.ticket_secret,
             "dedup must return the first registration's secret"
         );
 
@@ -233,7 +309,13 @@ mod tests {
         let hash = [3u8; HASH_LEN];
         let task = TaskId::random();
         store
-            .snapshot(&src, hash, 3, [0u8; SECRET_LEN], task.clone())
+            .snapshot(
+                &src,
+                hash,
+                3,
+                &plain_secret([0u8; SECRET_LEN]),
+                task.clone(),
+            )
             .unwrap();
         let path = store.get(&hash).unwrap().path.clone();
         assert!(path.exists());

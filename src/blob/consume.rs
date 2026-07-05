@@ -110,7 +110,7 @@ where
 /// Argon2id stretch when the ticket is password-protected.
 fn auth_token(ticket: &BlobTicket, password: Option<&Password>) -> Result<[u8; SECRET_LEN]> {
     match (ticket.password, password) {
-        (true, Some(pw)) => Ok(TicketAuth::derive(&ticket.secret, Some(pw)).token),
+        (true, Some(pw)) => Ok(TicketAuth::blob(&ticket.secret, Some(pw)).token),
         (true, None) => bail!("this blob ticket is password-protected — pass --password"),
         (false, Some(_)) => bail!("this blob ticket has no password — drop --password"),
         (false, None) => Ok(ticket.secret),

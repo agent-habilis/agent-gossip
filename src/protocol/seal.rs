@@ -28,6 +28,11 @@ use super::crypto::derive_secret;
 /// the AEAD associated data (bound into the tag).
 const SEAL_LABEL: &[u8] = b"agent-gossip/seal/v1";
 
+/// AEAD associated data (construction tag) for the symmetric channel seal. The
+/// key is already domain-separated by the caller (a `derive_secret` channel
+/// label), so this only pins the construction version.
+const SYM_AAD: &[u8] = b"agent-gossip/sym/v1";
+
 /// Envelope construction tag — bumped only on a breaking crypto change.
 const ENVELOPE_VERSION: &str = "x25519-chacha20poly1305/1";
 
@@ -146,10 +151,90 @@ fn decode_array<const N: usize>(encoded: &str) -> Result<[u8; N]> {
     bytes.try_into().map_err(|_| anyhow!("expected {N} bytes"))
 }
 
+/// Symmetrically seal `plaintext` under a pre-shared 32-byte `key` (a
+/// swarm-password-derived channel key). Layout: `nonce(12) ‖ ct+tag`. Unlike
+/// [`seal_to_body`] there is no ECDH — every holder of `key` can open it, which
+/// is exactly the shared-channel (state/meta) model: membership already gated
+/// the password, and this keeps the payload unreadable to a relay or a captured
+/// frame.
+pub(crate) fn seal_symmetric(key: &[u8; 32], plaintext: &[u8]) -> Vec<u8> {
+    let cipher = ChaCha20Poly1305::new(Key::from_slice(key));
+    let mut nonce = [0u8; 12];
+    rand::rng().fill_bytes(&mut nonce);
+    let ct = cipher
+        .encrypt(
+            Nonce::from_slice(&nonce),
+            Payload {
+                msg: plaintext,
+                aad: SYM_AAD,
+            },
+        )
+        .expect("ChaCha20-Poly1305 encryption cannot fail for a valid key/nonce");
+    let mut out = Vec::with_capacity(nonce.len() + ct.len());
+    out.extend_from_slice(&nonce);
+    out.extend_from_slice(&ct);
+    out
+}
+
+/// Open a [`seal_symmetric`] blob with the same `key`.
+///
+/// # Errors
+/// The blob is too short to carry a nonce, or the AEAD fails to authenticate (a
+/// wrong key or tampered bytes).
+pub(crate) fn open_symmetric(key: &[u8; 32], blob: &[u8]) -> Result<Vec<u8>> {
+    if blob.len() < 12 {
+        return Err(anyhow!("symmetric blob too short for a nonce"));
+    }
+    let (nonce, ct) = blob.split_at(12);
+    let cipher = ChaCha20Poly1305::new(Key::from_slice(key));
+    cipher
+        .decrypt(
+            Nonce::from_slice(nonce),
+            Payload {
+                msg: ct,
+                aad: SYM_AAD,
+            },
+        )
+        .map_err(|_| anyhow!("symmetric open failed: wrong key or tampered ciphertext"))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{seal_to_body, unseal_from_body};
+    use super::{open_symmetric, seal_symmetric, seal_to_body, unseal_from_body};
     use x25519_dalek::{PublicKey, StaticSecret};
+
+    #[test]
+    fn symmetric_round_trips() {
+        let key = [7u8; 32];
+        for plaintext in [b"".as_slice(), b"hello state doc", &[0u8; 5000]] {
+            let blob = seal_symmetric(&key, plaintext);
+            assert_ne!(
+                blob.as_slice(),
+                plaintext,
+                "ciphertext is not the plaintext"
+            );
+            assert_eq!(open_symmetric(&key, &blob).unwrap(), plaintext);
+        }
+    }
+
+    #[test]
+    fn symmetric_wrong_key_or_tamper_fails() {
+        let blob = seal_symmetric(&[1u8; 32], b"the shared state");
+        assert!(
+            open_symmetric(&[2u8; 32], &blob).is_err(),
+            "a wrong key must not open the blob"
+        );
+        let mut tampered = blob.clone();
+        *tampered.last_mut().unwrap() ^= 0x01;
+        assert!(
+            open_symmetric(&[1u8; 32], &tampered).is_err(),
+            "a flipped byte must fail the AEAD tag"
+        );
+        assert!(
+            open_symmetric(&[1u8; 32], &[0u8; 4]).is_err(),
+            "a blob too short for a nonce must fail cleanly"
+        );
+    }
 
     fn keypair(byte: u8) -> (StaticSecret, [u8; 32]) {
         let secret = StaticSecret::from([byte; 32]);

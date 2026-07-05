@@ -112,6 +112,7 @@ dependencies = [
  "uuid",
  "vergen-gitcl 1.0.8",
  "x25519-dalek",
+ "zeroize",
 ]
 
 [[package]]

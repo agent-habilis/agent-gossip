@@ -232,7 +232,13 @@ mod tests {
 
     /// A meshed state that knows `bob`'s endpoint — the happy path for unicast.
     fn state_knowing_bob() -> (EventLoopState, EndpointId) {
-        let mut state = EventLoopState::new(None, Instant::now(), Arc::new(Identity::generate()));
+        let mut state = EventLoopState::new(
+            None,
+            Instant::now(),
+            Arc::new(Identity::generate()),
+            None,
+            None,
+        );
         state.meshed = true;
         let bob = endpoint_id(1);
         state.participant_endpoints.insert(nick("bob"), bob);
@@ -302,7 +308,13 @@ mod tests {
 
     #[test]
     fn directed_message_with_unknown_endpoint_falls_back_to_gossip() {
-        let mut state = EventLoopState::new(None, Instant::now(), Arc::new(Identity::generate()));
+        let mut state = EventLoopState::new(
+            None,
+            Instant::now(),
+            Arc::new(Identity::generate()),
+            None,
+            None,
+        );
         state.meshed = true; // meshed, but we hold no endpoint for bob
         assert_eq!(
             route(&directed_msg(), &state, true, true, false),
@@ -322,7 +334,13 @@ mod tests {
 
     #[test]
     fn rendezvous_addressee_is_never_a_unicast_target() {
-        let mut state = EventLoopState::new(None, Instant::now(), Arc::new(Identity::generate()));
+        let mut state = EventLoopState::new(
+            None,
+            Instant::now(),
+            Arc::new(Identity::generate()),
+            None,
+            None,
+        );
         state.meshed = true;
         let rendezvous = endpoint_id(9);
         state.rendezvous_id = Some(rendezvous);
@@ -348,7 +366,13 @@ mod tests {
 
     #[test]
     fn unicast_only_with_unknown_endpoint_is_undeliverable() {
-        let mut state = EventLoopState::new(None, Instant::now(), Arc::new(Identity::generate()));
+        let mut state = EventLoopState::new(
+            None,
+            Instant::now(),
+            Arc::new(Identity::generate()),
+            None,
+            None,
+        );
         state.meshed = true; // no endpoint for bob, and gossip forbidden
         assert_eq!(
             route(&directed_msg(), &state, true, false, false),
@@ -403,7 +427,13 @@ mod tests {
     fn unknown_peer_cannot_relay_and_falls_back_to_gossip() {
         // No endpoint for the target ⇒ nothing to route a circuit to ⇒ gossip,
         // even with the relay transport enabled.
-        let mut state = EventLoopState::new(None, Instant::now(), Arc::new(Identity::generate()));
+        let mut state = EventLoopState::new(
+            None,
+            Instant::now(),
+            Arc::new(Identity::generate()),
+            None,
+            None,
+        );
         state.meshed = true;
         assert_eq!(
             route(&directed_msg(), &state, true, true, true),

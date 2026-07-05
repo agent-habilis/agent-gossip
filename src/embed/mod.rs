@@ -779,7 +779,12 @@ impl SwarmSession {
         let author = nickname.unwrap_or_else(Nickname::random);
         let (output, events_rx) = capture();
         let mut elc = setup_swarm(
-            SetupKind::Join { swarm },
+            // Directory sessions (advertise/discover) never offload blobs, so no
+            // password needs threading here.
+            SetupKind::Join {
+                swarm,
+                password: None,
+            },
             author,
             /* interactive */ false,
             GOSSIP_ACTIVE_VIEW_CAPACITY,

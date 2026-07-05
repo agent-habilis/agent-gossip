@@ -40,14 +40,16 @@ pub(crate) enum SetupKind {
     },
     Join {
         swarm: Swarm,
+        /// The password the joiner presented (already verified + applied to
+        /// `swarm`), retained so the daemon can key blob-ticket protection with
+        /// it. `None` for a passwordless id.
+        password: Option<Password>,
     },
     /// A `topic` swarm derived from a shared string. Identical to `Join`
     /// except the first peer must beacon: there is no distinguished creator,
     /// so it co-hosts the shared rendezvous eagerly-but-probed
     /// ([`CoHostPolicy::EagerProbed`]) rather than deferring.
-    Topic {
-        swarm: Swarm,
-    },
+    Topic { swarm: Swarm },
 }
 
 /// Build the `RendezvousParams` for a swarm. `id` is the well-known
@@ -212,7 +214,7 @@ pub(crate) async fn setup_swarm(
     // from the id — one source of truth either way.
     let lookups = match &kind {
         SetupKind::Create { config, .. } => config.lookups.clone(),
-        SetupKind::Join { swarm } | SetupKind::Topic { swarm } => swarm.lookups().clone(),
+        SetupKind::Join { swarm, .. } | SetupKind::Topic { swarm } => swarm.lookups().clone(),
     };
 
     // The off-loop rung channel: the backgrounded startup probe and the
@@ -240,7 +242,8 @@ pub(crate) async fn setup_swarm(
         whisper_endpoint.clone(),
     );
 
-    let (swarm_id, swarm_name, endpoint, router, gossip, topic, rdv, cohost) = match kind {
+    #[rustfmt::skip]
+    let (swarm_id, swarm_name, endpoint, router, gossip, topic, rdv, cohost, swarm_password, swarm_key) = match kind {
         SetupKind::Create {
             name,
             config,
@@ -255,18 +258,21 @@ pub(crate) async fn setup_swarm(
             let swarm = Swarm::new(seed, name.clone(), config);
             // Bake the verifier into the config BEFORE the id is rendered
             // (the id must carry it) and before any derivation. The
-            // ~100ms Argon2id stretch runs off the async worker.
-            let swarm = match password {
+            // ~100ms Argon2id stretch runs off the async worker. The password
+            // is returned from the worker (not dropped) so the daemon can key
+            // blob tickets with it.
+            let (swarm, swarm_password) = match password {
                 Some(password) => {
                     tokio::task::spawn_blocking(move || {
                         let mut swarm = swarm;
                         swarm.set_password(&password);
-                        swarm
+                        (swarm, Some(password))
                     })
                     .await?
                 }
-                None => swarm,
+                None => (swarm, None),
             };
+            let swarm_key = swarm.stretched_key().map(zeroize::Zeroizing::new);
             let id_str = swarm.to_string();
             let swarm_id = SwarmId::new(id_str.clone())
                 .expect("Swarm::to_string always produces a valid SwarmId");
@@ -312,17 +318,23 @@ pub(crate) async fn setup_swarm(
                 topic,
                 rdv,
                 CoHostPolicy::Eager,
+                swarm_password,
+                swarm_key,
             )
         }
         kind @ (SetupKind::Join { .. } | SetupKind::Topic { .. }) => {
             // Join and Topic share one attach path; they differ only in the
             // co-host policy (Topic has no distinguished creator, so its first
             // peer must beacon) and the startup verb.
-            let (swarm, cohost, verb) = match kind {
-                SetupKind::Join { swarm } => (swarm, CoHostPolicy::Deferred, "joined"),
-                SetupKind::Topic { swarm } => (swarm, CoHostPolicy::EagerProbed, "joined topic"),
+            let (swarm, swarm_password, cohost, verb) = match kind {
+                SetupKind::Join { swarm, password } => {
+                    (swarm, password, CoHostPolicy::Deferred, "joined")
+                }
+                // A topic swarm is always passwordless.
+                SetupKind::Topic { swarm } => (swarm, None, CoHostPolicy::EagerProbed, "joined topic"),
                 SetupKind::Create { .. } => unreachable!("outer arm excludes Create"),
             };
+            let swarm_key = swarm.stretched_key().map(zeroize::Zeroizing::new);
             let id_str = swarm.to_string();
             let swarm_id = SwarmId::new(id_str.clone())
                 .expect("Swarm::to_string always produces a valid SwarmId");
@@ -365,7 +377,16 @@ pub(crate) async fn setup_swarm(
             output.info(&format!("{verb} #{} as <{author}>", swarm.name));
 
             (
-                swarm_id, swarm.name, endpoint, router, gossip, topic, rdv, cohost,
+                swarm_id,
+                swarm.name,
+                endpoint,
+                router,
+                gossip,
+                topic,
+                rdv,
+                cohost,
+                swarm_password,
+                swarm_key,
             )
         }
     };
@@ -387,6 +408,8 @@ pub(crate) async fn setup_swarm(
         identity,
         swarm: swarm_id,
         name: swarm_name,
+        swarm_password,
+        swarm_key,
         output,
         interactive,
         endpoint,

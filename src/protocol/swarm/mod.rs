@@ -141,6 +141,14 @@ impl Swarm {
         self.config.password.is_some()
     }
 
+    /// The Argon2id-stretched password key, once a password has been applied
+    /// (`set_password`/`apply_password`) — `None` for a passwordless swarm. The
+    /// daemon retains this to key the state/meta channel encryption; it is the
+    /// same value every derivation switches onto ([`Self::effective_seed`]).
+    pub(crate) fn stretched_key(&self) -> Option<[u8; SEED_LEN]> {
+        self.stretched_key
+    }
+
     /// Join-side: stretch `password` (salt = the wire seed), check it
     /// against the verifier the id carries, and switch every derivation
     /// onto the stretched key. ~100ms of Argon2id by design.

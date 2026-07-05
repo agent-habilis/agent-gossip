@@ -164,6 +164,9 @@ bs58 = "0.5"
 # (no `unsafe`, which the workspace denies).
 x25519-dalek = { version = "2", features = ["static_secrets"] }
 chacha20poly1305 = "0.10"
+# Best-effort wiping of retained secrets (the swarm password + derived channel
+# keys) on drop, so they don't linger in process memory / core dumps.
+zeroize = "1"
 serde = { version = "1", features = ["derive"] }
 # `raw_value` lets the MCP `fetch_messages` result embed each event's
 # already-rendered, field-order-pinned JSON verbatim (a `RawValue`) instead of

@@ -88,8 +88,18 @@ pub(crate) async fn broadcast_state_merge(
     // 2. Compose + sign + size-gate before the change touches the live doc.
     //    Carry the input merge as the surfaced delta only for agent-visible
     //    writes; the internal card publish stays lean (no delta on the wire).
-    let body = crate::daemon::state_doc::change_body(&change_bytes, surface.then_some(&merge))?;
-    let signed = Message::new_channel_event(swarm, author, body, channel).signed(&state.identity);
+    //    On a passworded swarm the wire body is sealed under the channel key;
+    //    `plain_body` keeps the plaintext for our own surfacing below.
+    let (wire_body, plain_body) = match channel {
+        Channel::State => state
+            .state_doc
+            .compose_wire_body(&change_bytes, surface.then_some(&merge))?,
+        Channel::Meta => state
+            .meta_doc
+            .compose_wire_body(&change_bytes, surface.then_some(&merge))?,
+    };
+    let signed =
+        Message::new_channel_event(swarm, author, wire_body, channel).signed(&state.identity);
     let bytes = signed.serialize()?;
     crate::logging::messages::log_out(&signed);
 
@@ -113,7 +123,11 @@ pub(crate) async fn broadcast_state_merge(
     // 4. Surface our own change, and gossip it (or buffer when unmeshed — the
     //    change is safe in the local doc for heads-based anti-entropy).
     if surface {
-        output.state_changed(channel, &signed, &after, true);
+        // Surface our own change from a plaintext-bodied view so the `m` delta
+        // renders even when the wire body we signed is sealed.
+        let mut surfaced = signed.clone();
+        surfaced.body = plain_body;
+        output.state_changed(channel, &surfaced, &after, true);
     }
     if state.meshed {
         sender
@@ -389,11 +403,20 @@ pub(crate) async fn broadcast_message(
     let payload_id =
         MessageId::new(payload.message_id.as_str()).expect("an a2a message id is a valid frame id");
     let body = crate::a2a::gossip::payload_body(&payload)?;
+    // On a passworded swarm, seal the chat body so a relay or a captured frame
+    // can't read it. Everything downstream (dedup, the per-author chain, the
+    // message log, anti-entropy) operates on the sealed frame; only the local
+    // echo + the returned Message carry plaintext.
+    let wire_body = match state.broadcast_key.as_deref() {
+        Some(key) => crate::daemon::state_doc::encrypt_body(&body, key)?,
+        None => body.clone(),
+    };
+    let encrypted = state.broadcast_key.is_some();
     // Fast path: the whole payload in one frame, its id the A2A messageId.
     let single = build_msg(
         swarm,
         author,
-        body.clone(),
+        wire_body.clone(),
         Some(payload_id.clone()),
         state.self_seq,
         state.self_prev.clone(),
@@ -404,6 +427,15 @@ pub(crate) async fn broadcast_message(
     if single.wire_len() <= MAX_MESSAGE_SIZE {
         let bytes = Bytes::from(single.serialize()?);
         let id = single.id.clone();
+        if encrypted {
+            // Commit + gossip the sealed frame silently, then echo/return a
+            // plaintext-bodied view so the operator/agent sees the text.
+            send_msg_part(state, sender, out, &single, bytes, false).await?;
+            let mut plain = single.clone();
+            plain.body = body;
+            out.print_message_ex(&plain, true);
+            return Ok((id, plain));
+        }
         send_msg_part(state, sender, out, &single, bytes, true).await?;
         return Ok((id, single));
     }
@@ -438,10 +470,21 @@ pub(crate) async fn broadcast_message(
         &signer,
     );
     let budget = shard_body_budget(&probe);
-    let chunks = split_body(body.as_str(), budget).ok_or_else(|| {
+    // Split the *wire* (sealed, when encrypted) body — shards carry chunks of
+    // the ciphertext envelope that reassemble into it; the receiver decrypts the
+    // reassembled body. The echoed/returned logical still carries plaintext.
+    let chunks = split_body(wire_body.as_str(), budget).ok_or_else(|| {
+        // Report the wire length that is actually being split: when encrypted
+        // it is the ~1.4x-inflated sealed body, which is why a chat that fits
+        // passwordless can exceed the shard cap here.
+        let note = if encrypted {
+            " (sealing inflates the body ~1.4x)"
+        } else {
+            ""
+        };
         anyhow::anyhow!(
-            "message too large: a {}-byte body needs more than {MAX_MESSAGE_SHARDS} shards",
-            body.as_str().len()
+            "message too large: a {}-byte wire body needs more than {MAX_MESSAGE_SHARDS} shards{note}",
+            wire_body.as_str().len()
         )
     })?;
     let total = u32::try_from(chunks.len()).expect("chunk count is bounded by MAX_MESSAGE_SHARDS");
@@ -731,12 +774,16 @@ async fn build_offload_parts(
         .lookups()
         .clone();
     let spool = crate::util::swarm_runtime_dir(swarm.as_str()).join(format!("{author}.blobs"));
+    // Every offloaded blob inherits the swarm password (if any), so a scraped
+    // ticket can't be redeemed without it.
+    let password = state.swarm_password.clone();
     let part = crate::blob::url_part(
         file,
         &mut state.blob_server,
         &lookups,
         spool,
         task_id.clone(),
+        password,
     )
     .await?;
     let mut parts = vec![part];

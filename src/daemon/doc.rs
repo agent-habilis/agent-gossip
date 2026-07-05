@@ -66,6 +66,11 @@ pub(crate) struct SwarmDoc {
     /// Whether this channel gates foreign-card writes (`meta` does; `state`
     /// carries no identity so it does not).
     gate_cards: bool,
+    /// This channel's symmetric encryption key, on a password-protected swarm.
+    /// `Some` ⇒ change bodies are sealed on the wire (`enc` envelope) and
+    /// decrypted here before applying; `None` ⇒ plaintext, exactly as before.
+    /// Wiped on drop.
+    key: Option<zeroize::Zeroizing<[u8; 32]>>,
 }
 
 impl SwarmDoc {
@@ -90,7 +95,58 @@ impl SwarmDoc {
             frames: HashMap::new(),
             pending: HashMap::new(),
             gate_cards,
+            key: None,
         }
+    }
+
+    /// Set this channel's encryption key (the daemon's per-channel
+    /// swarm-password-derived key). `None` leaves the channel in plaintext.
+    #[must_use]
+    pub(crate) fn with_key(mut self, key: Option<zeroize::Zeroizing<[u8; 32]>>) -> Self {
+        self.key = key;
+        self
+    }
+
+    /// The plaintext automerge change bytes carried by `frame`, decrypting an
+    /// `enc` body with this channel's key first. `None` for an opaque/foreign
+    /// body (or, on a passworded swarm, an unsealed or unopenable body) — a
+    /// no-op on the doc.
+    fn change_bytes(&self, frame: &Message) -> Option<Vec<u8>> {
+        match self.key.as_deref() {
+            // Passwordless: parse directly — no decrypt indirection, no clone.
+            None => crate::daemon::state_doc::parse_change_body(frame.body.as_str()),
+            Some(key) => {
+                let plain = crate::daemon::state_doc::decrypt_body(frame.body.as_str(), Some(key))?;
+                crate::daemon::state_doc::parse_change_body(&plain)
+            }
+        }
+    }
+
+    /// Compose the wire body for a locally-built change: the plaintext
+    /// `change`/`merge` envelope, sealed under this channel's key when set.
+    /// Returns `(wire, plain)` — `wire` is signed + gossiped + retained for
+    /// re-serve; `plain` surfaces the author's own human-readable delta locally.
+    ///
+    /// # Errors
+    /// Body serialization/size or the encryption envelope fails.
+    pub(crate) fn compose_wire_body(
+        &self,
+        change: &[u8],
+        merge: Option<&Value>,
+    ) -> anyhow::Result<(crate::protocol::MessageBody, crate::protocol::MessageBody)> {
+        let plain = crate::daemon::state_doc::change_body(change, merge)?;
+        let wire = match self.key.as_deref() {
+            Some(key) => crate::daemon::state_doc::encrypt_body(&plain, key)?,
+            None => plain.clone(),
+        };
+        Ok((wire, plain))
+    }
+
+    /// The plaintext body string to surface for `frame`, decrypting an `enc`
+    /// body so the `m` delta renders. `None` when it can't be opened; the caller
+    /// then surfaces the original (opaque) frame.
+    pub(crate) fn surface_body(&self, frame: &Message) -> Option<String> {
+        crate::daemon::state_doc::decrypt_body(frame.body.as_str(), self.key.as_deref())
     }
 
     /// This channel's automerge heads, Base58-encoded — the compact frontier a
@@ -154,7 +210,7 @@ impl SwarmDoc {
     /// frames, so re-serve and the gate both see the original signed frame). The
     /// frame's signature is verified upstream by `gossip::ingest`.
     pub(crate) fn ingest(&mut self, frame: &Message) -> Ingested {
-        let Some(bytes) = crate::daemon::state_doc::parse_change_body(frame.body.as_str()) else {
+        let Some(bytes) = self.change_bytes(frame) else {
             return Ingested::Ignored;
         };
         let Ok(change) = Change::from_bytes(bytes) else {
@@ -201,7 +257,7 @@ impl SwarmDoc {
                 .pending
                 .iter()
                 .filter_map(|(hash, frame)| {
-                    let bytes = crate::daemon::state_doc::parse_change_body(frame.body.as_str())?;
+                    let bytes = self.change_bytes(frame)?;
                     Change::from_bytes(bytes)
                         .ok()
                         .filter(|change| self.deps_satisfied(change.deps()))
@@ -215,8 +271,7 @@ impl SwarmDoc {
                 let Some(frame) = self.pending.remove(&hash) else {
                     continue;
                 };
-                let Some(bytes) = crate::daemon::state_doc::parse_change_body(frame.body.as_str())
-                else {
+                let Some(bytes) = self.change_bytes(&frame) else {
                     continue;
                 };
                 let Ok(change) = Change::from_bytes(bytes) else {
@@ -588,6 +643,47 @@ mod tests {
         assert_eq!(joiner.to_json(), json!({"a": 1, "b": 2}));
         // Now converged, the source has nothing more to offer.
         assert!(source.changes_since(&joiner.heads(), 100).is_empty());
+    }
+
+    #[test]
+    fn encrypted_change_converges_with_the_key_and_is_opaque_without() {
+        let alice = nick("alice");
+        let key = [42u8; 32];
+        // Author builds the change and seals the wire body, as the daemon does.
+        let merge = json!({"secret": "value"});
+        let author_doc = SwarmDoc::new(false).with_key(Some(zeroize::Zeroizing::new(key)));
+        let bytes = author_doc
+            .build_change(&merge, &alice)
+            .expect("builds")
+            .expect("not a no-op");
+        let (wire, _plain) = author_doc
+            .compose_wire_body(&bytes, Some(&merge))
+            .expect("compose");
+        let carrier =
+            Message::new_channel_event(&SwarmId::from("💬test"), &alice, wire, Channel::State);
+        assert!(
+            !carrier.body.as_str().contains("value"),
+            "the plaintext value must not appear on the wire"
+        );
+
+        // A peer holding the key applies it and converges; surface_body recovers
+        // the plaintext for the delta.
+        let mut with_key = SwarmDoc::new(false).with_key(Some(zeroize::Zeroizing::new(key)));
+        assert!(matches!(
+            with_key.ingest(&carrier),
+            Ingested::Applied { .. }
+        ));
+        assert_eq!(with_key.to_json(), json!({"secret": "value"}));
+        assert!(with_key.surface_body(&carrier).unwrap().contains("secret"));
+
+        // A peer without the key (or with the wrong key) cannot read it — the
+        // body is an opaque no-op, never applied.
+        let mut no_key = SwarmDoc::new(false);
+        assert!(matches!(no_key.ingest(&carrier), Ingested::Ignored));
+        assert_eq!(no_key.to_json(), json!({}));
+        let mut wrong_key = SwarmDoc::new(false).with_key(Some(zeroize::Zeroizing::new([7u8; 32])));
+        assert!(matches!(wrong_key.ingest(&carrier), Ingested::Ignored));
+        assert_eq!(wrong_key.to_json(), json!({}));
     }
 
     #[test]

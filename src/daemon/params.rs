@@ -122,7 +122,12 @@ impl JoinParams {
             (Some(password), _) => swarm.apply_password(password)?,
         }
         Ok(Resolved {
-            kind: SetupKind::Join { swarm },
+            kind: SetupKind::Join {
+                swarm,
+                // Retained so the daemon can key blob-ticket protection with the
+                // same password (`None` for a passwordless id).
+                password: self.password,
+            },
             author: self.nickname.unwrap_or_else(Nickname::random),
             advertise_directory: None,
         })
