@@ -393,9 +393,9 @@ async fn setup_create(
     }
     output.swarm_id_line(&swarm_id);
     output.ready(&swarm_id, &name, author, build.drift, build.a2a_port);
-    lifecycle::log_ready(&id_str, name.as_str(), author.as_str(), swarm.network_label());
-
     let topic_id = swarm.topic_id();
+    lifecycle::log_ready(topic_id, name.as_str(), author.as_str(), swarm.network_label());
+
     let (gossip, router) = build_swarm(
         endpoint.clone(),
         build.max_peers,
@@ -463,7 +463,7 @@ async fn setup_join(build: &SetupBuild<'_>, kind: SetupKind) -> Result<Assembled
 
     output.ready(&swarm_id, &swarm.name, author, build.drift, build.a2a_port);
     lifecycle::log_ready(
-        &id_str,
+        topic_id,
         swarm.name.as_str(),
         author.as_str(),
         swarm.network_label(),

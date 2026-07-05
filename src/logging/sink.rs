@@ -38,6 +38,8 @@ enum State {
 /// `path` truncating. Bounds disk to `2 × max` per member while keeping
 /// the most recent ≥`max` bytes of history.
 fn rotate(path: &Path) -> io::Result<fs::File> {
+    use std::os::unix::fs::OpenOptionsExt as _;
+
     let mut backup = path.as_os_str().to_owned();
     backup.push(".1");
     let _ = fs::rename(path, PathBuf::from(backup));
@@ -45,6 +47,9 @@ fn rotate(path: &Path) -> io::Result<fs::File> {
         .create(true)
         .write(true)
         .truncate(true)
+        // Owner-only: the log records the swarm's nicknames, peers and (with
+        // `--log-raw`) message bodies, so it must not be world-readable.
+        .mode(0o600)
         .open(path)
 }
 
@@ -106,16 +111,21 @@ impl LogSink {
         if !matches!(*state, State::Pending(_)) {
             return;
         }
-        let opened = path
-            .parent()
-            .map_or(Ok(()), fs::create_dir_all)
-            .and_then(|()| {
-                fs::OpenOptions::new()
-                    .create(true)
-                    .write(true)
-                    .truncate(true)
-                    .open(&path)
-            });
+        // Validate the private base and create the log dir, failing closed: if a
+        // squatted/symlinked base is detected, `ensure_parent_private` errors and
+        // we fall through to the stderr path below rather than following the
+        // symlink. A `--log-dir` override outside the base is not gated. (The log
+        // is 0600, but a hijacked dir could still swap the file for an
+        // attacker-owned one under create-truncate.)
+        let opened = crate::util::ensure_parent_private(&path).and_then(|()| {
+            use std::os::unix::fs::OpenOptionsExt as _;
+            fs::OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(true)
+                .mode(0o600)
+                .open(&path)
+        });
         match opened {
             Ok(mut file) => {
                 let mut written = 0u64;

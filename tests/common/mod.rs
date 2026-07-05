@@ -16,9 +16,9 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
 // The single source of truth for the runtime base dir lives in the shared
-// crate (a dev-dependency); re-export it so test code keeps using
-// `common::RUNTIME_DIR` without a divergent copy.
-pub(crate) use agent_gossip::RUNTIME_DIR;
+// crate (a dev-dependency); re-export it so test code resolves the same
+// per-user base the daemon uses without a divergent copy.
+pub(crate) use agent_gossip::runtime_base;
 
 pub(crate) const CONNECT_TIMEOUT: Duration = Duration::from_mins(1);
 /// Steady-state delivery budget: how long a meshed peer may take to surface a
@@ -143,10 +143,11 @@ pub(crate) fn tmp_log(tag: &str) -> PathBuf {
 }
 
 pub(crate) fn socket_path(swarm: &str, nickname: &str) -> String {
-    format!(
-        "{RUNTIME_DIR}/{}/{nickname}.ipc.sock",
-        agent_gossip::swarm_prefix(swarm)
-    )
+    runtime_base()
+        .join(agent_gossip::swarm_prefix(swarm))
+        .join(format!("{nickname}.ipc.sock"))
+        .display()
+        .to_string()
 }
 
 /// A node's tracing-sink log (distinct from its captured stdout/stderr

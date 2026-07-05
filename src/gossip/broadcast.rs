@@ -695,7 +695,12 @@ async fn build_offload_parts(
         .map_err(|error| anyhow::anyhow!("cannot resolve swarm lookups for blob offload: {error}"))?
         .lookups()
         .clone();
-    let spool = crate::util::swarm_runtime_dir(swarm.as_str()).join(format!("{author}.blobs"));
+    // Route through the choke point so the base is validated (0700, ours) before
+    // this attachment payload spool is created — bypassing it could birth the
+    // shared base at a world-traversable 0755.
+    let spool = crate::util::ensure_swarm_runtime_dir(swarm.as_str())
+        .map_err(|error| anyhow::anyhow!("cannot prepare blob spool dir: {error}"))?
+        .join(format!("{author}.blobs"));
     let part = crate::blob::url_part(
         file,
         &mut state.blob_server,

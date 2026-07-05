@@ -42,8 +42,13 @@ export const state: AppState = {
 
 export function stateFilePath(): string | null {
   if (!state.stateFileId) return null;
-  // Under the shared /tmp/agent-gossip/ namespace, next to the
-  // sockets/logs and the Claude Code plugin's PPID-keyed session files,
-  // so a statusline can scan one sessions dir for every member.
-  return `/tmp/agent-gossip/sessions/${state.stateFileId}.json`;
+  // Under the daemon's per-user runtime base `/tmp/agent-gossip-<uid>/` (0700,
+  // owned by us) — the same tree `agent-gossip session`/`leave` scan, and
+  // matching the daemon's `runtime_base()`. Use the *effective* uid to match
+  // the Rust `current_uid()` (`geteuid`) and the skills' `id -u`: under a setuid
+  // context `getuid` (real) would diverge, putting this path outside the base
+  // the daemon validates and the CLI scans. `geteuid` is unix-only, which this
+  // extension already is.
+  const uid = process.geteuid?.() ?? process.getuid?.() ?? 0;
+  return `/tmp/agent-gossip-${uid}/sessions/${state.stateFileId}.json`;
 }

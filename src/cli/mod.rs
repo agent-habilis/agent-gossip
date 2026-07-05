@@ -470,7 +470,12 @@ async fn a2a(action: A2aAction) -> Result<()> {
                                 nick.as_str()
                             )
                         })?;
-                        let dir = crate::util::swarm_runtime_dir(&swarm)
+                        // Validate the private base (fail closed) before the
+                        // receive dir is created under it.
+                        let dir = crate::util::ensure_swarm_runtime_dir(&swarm)
+                            .map_err(|error| {
+                                anyhow::anyhow!("cannot prepare receive dir: {error}")
+                            })?
                             .join(format!("{}.recv", nick.as_str()));
                         tokio::fs::create_dir_all(&dir).await?;
                         Some(dir.join(ticket.sha256_hex()))

@@ -53,8 +53,9 @@ pub(crate) use topology::TopologyOpts;
     after_help = "a tool by agent-habilis █🫈"
 )]
 pub(crate) struct Cli {
-    /// Per-member log directory (default: `crate::util::consts::RUNTIME_DIR`,
-    /// with a per-swarm `<prefix>/` subfolder). Hidden — a test/ops knob.
+    /// Per-member log directory (default: the per-user runtime base, see
+    /// `crate::util::runtime_base`, with a per-swarm `<prefix>/` subfolder).
+    /// Hidden — a test/ops knob.
     /// Global so it applies to any subcommand.
     #[arg(long, global = true, hide = true)]
     pub log_dir: Option<std::path::PathBuf>,

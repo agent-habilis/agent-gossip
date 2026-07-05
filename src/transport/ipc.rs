@@ -12,10 +12,8 @@ use tokio::sync::mpsc;
 use crate::a2a::{TaskId, TaskState};
 use crate::protocol::{MessageBody, MessageId, Nickname, SwarmId};
 use crate::util::bounded_read::{LineRead, read_bounded_line};
-use crate::util::consts::{
-    MAX_IPC_COMMAND_BYTES, MAX_IPC_RESPONSE_BYTES, RUNTIME_DIR, SWARM_GLYPH,
-};
-use crate::util::swarm_runtime_dir;
+use crate::util::consts::{MAX_IPC_COMMAND_BYTES, MAX_IPC_RESPONSE_BYTES, SWARM_GLYPH};
+use crate::util::{ensure_swarm_runtime_dir, runtime_base, swarm_runtime_dir};
 use crate::util::tuning::{
     IPC_ACCEPT_BACKOFF_MAX_SECS, IPC_ACCEPT_BACKOFF_MIN_MS, IPC_IO_TIMEOUT_SECS,
 };
@@ -206,18 +204,33 @@ pub(crate) fn json_error(error: &str) -> String {
 pub(crate) fn bind(swarm: &SwarmId, nickname: &Nickname) -> Result<Listener> {
     let path = socket_path(swarm, nickname);
 
-    // Best-effort cleanup of a stale socket file and (re)create the swarm's
-    // runtime folder (the socket's parent).
+    // The runtime base must exist and be private (0700) before the socket is
+    // created inside it: this control socket has no in-band auth, so the base's
+    // permissions are what keep another local user from reaching it. The choke
+    // point validates the base (fails closed on a squat/symlink) and creates
+    // the swarm folder in one step.
+    ensure_swarm_runtime_dir(swarm.as_str())
+        .map_err(|error| anyhow::anyhow!("failed to prepare runtime dir: {error}"))?;
+    // Best-effort cleanup of a stale socket file.
     let _ = std::fs::remove_file(&path);
-    if let Some(parent) = std::path::Path::new(&path).parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
 
     let name = to_name(&path)?;
     let listener = ListenerOptions::new()
         .name(name)
         .create_tokio()
         .map_err(|error| anyhow::anyhow!("failed to bind IPC socket {path}: {error}"))?;
+    // The socket is a full control plane — inject broadcasts, read and merge
+    // swarm/meta state — with no bearer token (unlike the `--a2a-serve` TCP
+    // binding). Restrict it to the owner. The 0700 base already blocks other
+    // users; this is defense in depth against a permissive umask on the socket.
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        if let Err(error) =
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
+        {
+            tracing::warn!(?path, %error, "IPC socket: could not restrict to 0600");
+        }
+    }
     tracing::info!(?path, "IPC socket listening");
     Ok(listener)
 }
@@ -338,7 +351,7 @@ pub(crate) async fn send(cmd: &IpcCommand, nickname: &Nickname) -> Result<String
 }
 
 /// Client-side: send an IPC command to a specific socket path. `doctor` uses
-/// this to query each live daemon discovered under [`RUNTIME_DIR`] — a
+/// this to query each live daemon discovered under [`runtime_base`] — a
 /// missing/dead socket is a plain `Err` the caller can skip.
 ///
 /// # Errors
@@ -373,11 +386,11 @@ async fn round_trip(stream: Stream, cmd: &IpcCommand) -> Result<String> {
 }
 
 /// Every live daemon's IPC socket on this machine — one `<nick>.ipc.sock`
-/// inside each swarm's folder (`<RUNTIME_DIR>/<swarm-prefix>/`). Best-effort:
-/// a missing [`RUNTIME_DIR`] yields an empty list. Drives `doctor`'s
-/// active-swarm discovery, so it walks the per-swarm subfolders.
+/// inside each swarm's folder (`<runtime_base>/<swarm-prefix>/`). Best-effort:
+/// a missing base yields an empty list. Drives `doctor`'s active-swarm
+/// discovery, so it walks the per-swarm subfolders.
 pub(crate) fn active_socket_paths() -> Vec<std::path::PathBuf> {
-    let Ok(swarm_dirs) = std::fs::read_dir(RUNTIME_DIR) else {
+    let Ok(swarm_dirs) = std::fs::read_dir(runtime_base()) else {
         return Vec::new();
     };
     swarm_dirs
@@ -435,7 +448,8 @@ mod tests {
             &SwarmId::from("💬abcdefghijkmnpqr"),
             &Nickname::from("my-nick"),
         );
-        assert!(path.starts_with("/tmp/agent-gossip/"));
+        let base = crate::util::runtime_base();
+        assert!(path.starts_with(&*base.to_string_lossy()));
         assert!(path.ends_with("/my-nick.ipc.sock"));
         assert!(path.contains("💬abcdefghijkmnpq")); // 16-char swarm folder
     }

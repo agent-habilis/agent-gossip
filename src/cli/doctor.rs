@@ -150,7 +150,11 @@ fn environment_section() -> Section {
             Verdict::Ok,
             output::home_path(&crate::util::logs::log_dir()),
         ),
-        Check::new("runtime dir", Verdict::Ok, crate::util::consts::RUNTIME_DIR),
+        Check::new(
+            "runtime dir",
+            Verdict::Ok,
+            output::home_path(&crate::util::runtime_base()),
+        ),
     ];
     Section {
         title: "Environment".to_owned(),

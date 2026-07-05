@@ -93,9 +93,13 @@ impl StateFile {
     }
 
     fn try_write(&self, participant_count: usize, ready: bool) -> std::io::Result<()> {
-        if let Some(parent) = self.path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
+        // The state file carries the full swarm id (and, with `--a2a-serve`, the
+        // bearer token). It is born 0o600 below, but the enclosing directory must
+        // also be private. `ensure_parent_private` validates the base and fails
+        // closed when the target is under it (the default path, and the plugin's
+        // `--state-file /tmp/agent-gossip-<uid>/sessions/...`), and just creates
+        // the parent for an override that points elsewhere.
+        crate::util::ensure_parent_private(&self.path)?;
         let mut obj = serde_json::Map::new();
         obj.insert("swarm".into(), self.swarm.clone().into());
         obj.insert("name".into(), self.name.clone().into());

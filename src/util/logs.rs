@@ -5,8 +5,8 @@
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
-use crate::util::consts::{LOG_FILE_MAX_BYTES, RUNTIME_DIR};
-use crate::util::swarm_prefix;
+use crate::util::consts::LOG_FILE_MAX_BYTES;
+use crate::util::{runtime_base, swarm_prefix};
 
 /// Log config, installed **once** at startup from the `--log-dir` /
 /// `--log-max-bytes` / `--log-raw` flags. The `cli` layer parses the flags and
@@ -15,7 +15,8 @@ use crate::util::swarm_prefix;
 /// `AHS_LOG_MAX_BYTES` env reads.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct LogConfig {
-    /// `--log-dir` override; `None` ⇒ the per-swarm folder under [`RUNTIME_DIR`].
+    /// `--log-dir` override; `None` ⇒ the per-swarm folder under
+    /// [`runtime_base`].
     pub(crate) dir: Option<PathBuf>,
     /// `--log-max-bytes` override; `None` ⇒ [`LOG_FILE_MAX_BYTES`].
     pub(crate) max_bytes: Option<u64>,
@@ -36,18 +37,18 @@ fn config() -> LogConfig {
     LOG_CONFIG.get().cloned().unwrap_or_default()
 }
 
-/// Log base dir. The `--log-dir` flag overrides; default is [`RUNTIME_DIR`]
-/// (`/tmp/agent-gossip`), the same base sockets + state files use. The
-/// per-swarm subfolder is added by [`log_file_path`].
+/// Log base dir. The `--log-dir` flag overrides; default is [`runtime_base`]
+/// (the per-user, `0700` base sockets + state files also use). The per-swarm
+/// subfolder is added by [`log_file_path`].
 #[must_use]
 pub(crate) fn log_dir() -> PathBuf {
     resolve_log_dir(config().dir)
 }
 
-/// Pure resolver split out of [`log_dir`] so the policy is testable: the
-/// override wins verbatim, else the [`RUNTIME_DIR`] default.
+/// Resolver split out of [`log_dir`] so the policy is testable: the override
+/// wins verbatim, else the [`runtime_base`] default.
 fn resolve_log_dir(override_dir: Option<PathBuf>) -> PathBuf {
-    override_dir.unwrap_or_else(|| PathBuf::from(RUNTIME_DIR))
+    override_dir.unwrap_or_else(runtime_base)
 }
 
 /// Per-member log file — `<swarm_prefix>/<nick>.tracing.log`, inside the
@@ -85,9 +86,9 @@ mod tests {
     use super::resolve_log_dir;
 
     #[test]
-    fn default_is_runtime_dir() {
+    fn default_is_runtime_base() {
         let dir = resolve_log_dir(None);
-        assert_eq!(dir, PathBuf::from("/tmp/agent-gossip"));
+        assert_eq!(dir, crate::util::runtime_base());
     }
 
     #[test]
