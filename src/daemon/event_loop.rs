@@ -47,6 +47,8 @@ pub(crate) async fn run(cfg: EventLoopConfig) -> Result<()> {
         identity,
         swarm: swarm_str,
         name: swarm_name,
+        swarm_password,
+        swarm_key,
         output,
         interactive,
         endpoint,
@@ -103,7 +105,7 @@ pub(crate) async fn run(cfg: EventLoopConfig) -> Result<()> {
         })
         .map(|path| StateFile::new(path, &swarm_str, &author, &swarm_name));
     let (a2a_port, a2a_rx) = spawn_a2a(a2a, state_file.as_ref());
-    let mut state = EventLoopState::new(state_file, started, identity);
+    let mut state = EventLoopState::new(state_file, started, identity, swarm_password, swarm_key);
     // Replace the detached default pool with one wired to this endpoint, so
     // directed sends can dial peers over the unicast ALPN.
     state.unicast_pool = crate::unicast::UnicastPool::new(endpoint.clone());
@@ -258,12 +260,12 @@ async fn linkstate_arm(
         return;
     }
     state.link_state_seq += 1;
-    let vector = crate::whisper::self_vector(
+    let vector = crate::circuit::self_vector(
         origin,
         state.link_state_seq,
         state.identity.seal_public(),
         &state.linked_endpoints,
-        &state.whisper_telemetry,
+        &state.circuit_telemetry,
     );
     let Ok(json) = vector.to_json() else {
         return;
@@ -478,7 +480,7 @@ pub(crate) async fn publish_own_card(ctx: &HandlerCtx<'_>, state: &mut EventLoop
 
 #[expect(
     clippy::too_many_lines,
-    reason = "the daemon's central select! loop: one arm per event source (stdin, ipc, a2a, gossip, whisper, the maintenance ticks, quit); each arm delegates to a helper, but the arm list itself is irreducibly long"
+    reason = "the daemon's central select! loop: one arm per event source (stdin, ipc, a2a, gossip, circuit, the maintenance ticks, quit); each arm delegates to a helper, but the arm list itself is irreducibly long"
 )]
 async fn event_loop(loop_state: EventLoop) -> Result<()> {
     let EventLoop {
@@ -918,16 +920,16 @@ fn finalize_ping_round(state: &mut EventLoopState, output: &output::Output) {
     let Some(round) = state.ping_round.take() else {
         return;
     };
-    // Fold this round's RTT + delivery into per-neighbour whisper telemetry (the
+    // Fold this round's RTT + delivery into per-neighbour circuit telemetry (the
     // metrics we advertise for our own links). Bounded to our **direct
-    // neighbours** — `whisper::self_vector` only advertises those, and the active
+    // neighbours** — `circuit::self_vector` only advertises those, and the active
     // view is capped by `--max-peers` — so the map can't grow over peer churn:
     // prune entries for peers no longer linked, and record only for linked ones.
     // (Collect first to avoid borrowing `participant_endpoints`/`linked_endpoints`
-    // while mutating `whisper_telemetry`.)
+    // while mutating `circuit_telemetry`.)
     let linked = state.linked_endpoints.clone();
     state
-        .whisper_telemetry
+        .circuit_telemetry
         .retain(|endpoint, _| linked.contains(endpoint));
     let neighbors: Vec<(Nickname, EndpointId)> = state
         .participant_endpoints
@@ -936,7 +938,7 @@ fn finalize_ping_round(state: &mut EventLoopState, output: &output::Output) {
         .map(|(nickname, endpoint)| (nickname.clone(), *endpoint))
         .collect();
     for (nickname, endpoint) in neighbors {
-        let profile = state.whisper_telemetry.entry(endpoint).or_default();
+        let profile = state.circuit_telemetry.entry(endpoint).or_default();
         if let Some(arrival) = round.pongs.get(&nickname) {
             profile.record_rtt(arrival.duration_since(round.t1));
             profile.record_success();

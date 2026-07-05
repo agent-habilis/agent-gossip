@@ -208,17 +208,17 @@ pub(crate) struct EventLoopState {
     /// Independent of `linked_endpoints` by design (unicast can reach a
     /// non-neighbor). See [`crate::unicast`].
     pub unicast_pool: crate::unicast::UnicastPool,
-    /// Relay routing table: the freshest link-state vector per origin, folded
+    /// Circuit routing table: the freshest link-state vector per origin, folded
     /// into the mesh graph on demand. Populated from received `LinkState`
-    /// frames; read by the relay send path (and the topology view). See
-    /// [`crate::whisper`].
-    pub link_state: crate::whisper::LinkStateStore,
+    /// frames; read by the circuit send path (and the topology view). See
+    /// [`crate::circuit`].
+    pub link_state: crate::circuit::LinkStateStore,
     /// Monotonic sequence for *our own* emitted link-state vectors, so peers keep
     /// the freshest and drop reorders.
     pub link_state_seq: u64,
     /// Locally-measured per-neighbour telemetry (ping RTT + delivery), keyed by
     /// endpoint id — the metrics we advertise for *our own* links in link-state.
-    pub whisper_telemetry: HashMap<EndpointId, crate::whisper::NeighborProfile>,
+    pub circuit_telemetry: HashMap<EndpointId, crate::circuit::NeighborProfile>,
     /// When `Some(deadline)` and not yet elapsed, the event loop runs
     /// a fast `beacon::ensure` burst (event-driven failover). Armed
     /// on `NeighborDown` — the beacon may have just died — so a
@@ -351,6 +351,15 @@ pub(crate) struct EventLoopState {
     /// and kept for the process lifetime so its address stays stable while we're
     /// alive to serve. `None` until the first offload; closed on shutdown.
     pub blob_server: Option<crate::blob::BlobServer>,
+    /// The raw swarm password when the swarm is password-protected (`None`
+    /// otherwise). Handed to the blob server on its first offload so every
+    /// blob ticket inherits the same password — a scraped ticket then can't be
+    /// redeemed without it. Kept out of logs (`Password` redacts its `Debug`).
+    pub swarm_password: Option<crate::protocol::crypto::Password>,
+    /// Symmetric key for broadcast-chat (`A2aMsg`) bodies on a passworded
+    /// swarm, `derive_secret(swarm_key, "broadcast")` — domain-separated from
+    /// the state/meta doc keys. `None` ⇒ chat stays plaintext. Wiped on drop.
+    pub broadcast_key: Option<zeroize::Zeroizing<[u8; 32]>>,
 }
 
 /// How a fulfilled/expired gossip A2A call's response is delivered, per
@@ -515,11 +524,29 @@ pub(crate) struct PingRound {
 impl EventLoopState {
     /// Build a fresh event-loop state. `now` is passed explicitly so
     /// tests can pin a deterministic instant.
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "swarm_key is taken by value so the stretched key is dropped (zeroized) here once the per-channel keys are derived, rather than lingering in the caller"
+    )]
     pub(crate) fn new(
         state_file: Option<StateFile>,
         now: Instant,
         identity: Arc<Identity>,
+        swarm_password: Option<crate::protocol::crypto::Password>,
+        swarm_key: Option<zeroize::Zeroizing<[u8; 32]>>,
     ) -> Self {
+        // Per-channel encryption keys, domain-separated from each other and from
+        // every other seed-derived secret. `None` (passwordless) ⇒ the docs and
+        // broadcast chat stay plaintext, exactly as before.
+        let state_key = swarm_key.as_deref().map(|key| {
+            zeroize::Zeroizing::new(crate::protocol::crypto::derive_secret(key, b"state-doc"))
+        });
+        let meta_key = swarm_key.as_deref().map(|key| {
+            zeroize::Zeroizing::new(crate::protocol::crypto::derive_secret(key, b"meta-doc"))
+        });
+        let broadcast_key = swarm_key.as_deref().map(|key| {
+            zeroize::Zeroizing::new(crate::protocol::crypto::derive_secret(key, b"broadcast"))
+        });
         Self {
             linked_endpoints: HashSet::new(),
             known_endpoints: BoundedFifoSet::new(KNOWN_ENDPOINTS_CAP),
@@ -540,9 +567,9 @@ impl EventLoopState {
             announced: false,
             meshed: false,
             unicast_pool: crate::unicast::UnicastPool::disconnected(),
-            link_state: crate::whisper::LinkStateStore::default(),
+            link_state: crate::circuit::LinkStateStore::default(),
             link_state_seq: 0,
-            whisper_telemetry: HashMap::new(),
+            circuit_telemetry: HashMap::new(),
             reclaim_until: None,
             seen: BoundedIdSet::new(seen_ids_cap()),
             pending_outbound: BoundedQueue::new(PENDING_OUTBOUND_CAP),
@@ -551,8 +578,8 @@ impl EventLoopState {
             live_count: None,
             message_log: MessageLog::new(message_log_size()),
             reassembled_groups: BoundedFifoSet::new(message_log_size()),
-            state_doc: super::doc::SwarmDoc::new(false),
-            meta_doc: super::doc::SwarmDoc::new(true),
+            state_doc: super::doc::SwarmDoc::new(false).with_key(state_key),
+            meta_doc: super::doc::SwarmDoc::new(true).with_key(meta_key),
             surfaced_events: super::surfaced::SurfacedEvents::new(
                 crate::util::consts::SURFACED_EVENTS_CAP,
             ),
@@ -573,6 +600,8 @@ impl EventLoopState {
             poll_waiters: Vec::new(),
             a2a_waiters: Vec::new(),
             blob_server: None,
+            swarm_password,
+            broadcast_key,
         }
     }
 
@@ -1214,6 +1243,8 @@ mod tests {
             None,
             Instant::now(),
             std::sync::Arc::new(crate::protocol::identity::Identity::generate()),
+            None,
+            None,
         )
     }
 

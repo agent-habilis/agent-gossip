@@ -8,7 +8,7 @@ use anyhow::{Context, Result};
 use iroh::endpoint::Endpoint;
 use iroh::{EndpointAddr, EndpointId};
 
-use super::WHISPER_ALPN;
+use super::CIRCUIT_ALPN;
 use super::cell::{CircuitId, build_onion};
 use super::wire::write_header;
 
@@ -28,9 +28,9 @@ pub(crate) async fn open_circuit(
     let onion = build_onion(circuit_id, path)?;
     let (first_hop, _) = path.first().context("empty circuit path")?;
     let conn = endpoint
-        .connect(EndpointAddr::new(*first_hop), WHISPER_ALPN)
+        .connect(EndpointAddr::new(*first_hop), CIRCUIT_ALPN)
         .await
-        .context("dialing the first whisper hop failed")?;
+        .context("dialing the first circuit hop failed")?;
     let mut send = conn
         .open_uni()
         .await
@@ -58,21 +58,21 @@ mod tests {
     use super::open_circuit;
     use crate::lookup::{add_peer_addr, build_participant_endpoint};
     use crate::protocol::swarm::LookupOpts;
-    use crate::util::tuning::WHISPER_MAX_PATHS;
-    use crate::whisper::WHISPER_ALPN;
-    use crate::whisper::accept::WhisperAcceptor;
-    use crate::whisper::linkstate::{LinkStateStore, LinkVector};
-    use crate::whisper::metric::LinkMetric;
+    use crate::util::tuning::CIRCUIT_MAX_PATHS;
+    use crate::circuit::CIRCUIT_ALPN;
+    use crate::circuit::accept::CircuitAcceptor;
+    use crate::circuit::linkstate::{LinkStateStore, LinkVector};
+    use crate::circuit::metric::LinkMetric;
 
-    /// A hop/terminal node: an endpoint accepting `WHISPER_ALPN`, its X25519
+    /// A hop/terminal node: an endpoint accepting `CIRCUIT_ALPN`, its X25519
     /// public key, and the inbox its terminal delivery lands in.
-    struct WhisperNode {
+    struct CircuitNode {
         endpoint: iroh::Endpoint,
         seal_pub: [u8; 32],
         inbox: mpsc::Receiver<bytes::Bytes>,
     }
 
-    async fn whisper_node(seed: u8) -> (WhisperNode, Router) {
+    async fn circuit_node(seed: u8) -> (CircuitNode, Router) {
         let endpoint = build_participant_endpoint(&LookupOpts::loopback())
             .await
             .expect("bind loopback endpoint");
@@ -80,13 +80,13 @@ mod tests {
         let seal_pub = PublicKey::from(&secret).to_bytes();
         let (tx, inbox) = mpsc::channel(8);
         let cell = Arc::new(OnceLock::new());
-        let acceptor = WhisperAcceptor::new(tx, secret, cell.clone());
+        let acceptor = CircuitAcceptor::new(tx, secret, cell.clone());
         let router = Router::builder(endpoint.clone())
-            .accept(WHISPER_ALPN, acceptor)
+            .accept(CIRCUIT_ALPN, acceptor)
             .spawn();
         let _ = cell.set(endpoint.clone());
         (
-            WhisperNode {
+            CircuitNode {
                 endpoint,
                 seal_pub,
                 inbox,
@@ -96,13 +96,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn circuit_whispers_a_payload_through_an_intermediate_hop() {
-        // A (initiator) → R (whisperer, forwards) → B (terminal, delivers).
+    async fn circuit_routes_a_payload_through_an_intermediate_hop() {
+        // A (initiator) → R (hop, forwards) → B (terminal, delivers).
         let alice = build_participant_endpoint(&LookupOpts::loopback())
             .await
             .expect("bind alice");
-        let (hop, _hop_router) = whisper_node(11).await;
-        let (mut bob, _bob_router) = whisper_node(12).await;
+        let (hop, _hop_router) = circuit_node(11).await;
+        let (mut bob, _bob_router) = circuit_node(12).await;
 
         // Address book: A can dial R, R can dial B.
         add_peer_addr(&alice, hop.endpoint.addr()).expect("register R with A");
@@ -127,14 +127,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn circuit_whispers_a_payload_through_two_intermediate_hops() {
+    async fn circuit_routes_a_payload_through_two_intermediate_hops() {
         // A (initiator) → B (forwards) → C (forwards) → D (terminal, delivers).
         let alice = build_participant_endpoint(&LookupOpts::loopback())
             .await
             .expect("bind alice");
-        let (bob, _bob_router) = whisper_node(21).await;
-        let (carol, _carol_router) = whisper_node(22).await;
-        let (mut dave, _dave_router) = whisper_node(23).await;
+        let (bob, _bob_router) = circuit_node(21).await;
+        let (carol, _carol_router) = circuit_node(22).await;
+        let (mut dave, _dave_router) = circuit_node(23).await;
 
         // Address book along the chain: A→B, B→C, C→D.
         add_peer_addr(&alice, bob.endpoint.addr()).expect("register B with A");
@@ -146,7 +146,7 @@ mod tests {
             (carol.endpoint.id(), carol.seal_pub),
             (dave.endpoint.id(), dave.seal_pub),
         ];
-        let payload = b"a directed frame across two whisperers".to_vec();
+        let payload = b"a directed frame across two hops".to_vec();
         open_circuit(&alice, 9, &path, &payload)
             .await
             .expect("open circuit");
@@ -161,7 +161,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn whisper_delivers_over_the_computed_best_path() {
+    async fn circuit_delivers_over_the_computed_best_path() {
         // Prove the two asks together: compute the optimal route from link-state,
         // then push data over exactly that route. Topology: chain A→B→C→D plus a
         // cheaper direct A→D — so the computed best path is the one-hop shortcut,
@@ -169,9 +169,9 @@ mod tests {
         let alice = build_participant_endpoint(&LookupOpts::loopback())
             .await
             .expect("bind alice");
-        let (bob, _bob_router) = whisper_node(31).await;
-        let (carol, _carol_router) = whisper_node(32).await;
-        let (mut dave, _dave_router) = whisper_node(33).await;
+        let (bob, _bob_router) = circuit_node(31).await;
+        let (carol, _carol_router) = circuit_node(32).await;
+        let (mut dave, _dave_router) = circuit_node(33).await;
 
         // Address book for every dialable edge, so whichever route is chosen dials.
         add_peer_addr(&alice, bob.endpoint.addr()).expect("register B with A");
@@ -209,7 +209,7 @@ mod tests {
         ));
         store.ingest(vector(dave.endpoint.id(), dave.seal_pub, &[]));
 
-        let paths = store.circuit_paths(alice.id(), dave.endpoint.id(), WHISPER_MAX_PATHS);
+        let paths = store.circuit_paths(alice.id(), dave.endpoint.id(), CIRCUIT_MAX_PATHS);
         assert_eq!(
             paths[0].iter().map(|(hop, _)| *hop).collect::<Vec<_>>(),
             vec![dave.endpoint.id()],

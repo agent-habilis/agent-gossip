@@ -114,7 +114,7 @@ pub(crate) enum IpcCommand {
     /// `meta`-channel counterpart of [`StateGet`](IpcCommand::StateGet).
     #[serde(rename = "meta_get")]
     MetaGet { swarm: SwarmId },
-    /// The relay routing topology from this daemon's point of view: the
+    /// The circuit routing topology from this daemon's point of view: the
     /// metric-weighted mesh graph it has assembled from gossiped link-state.
     #[serde(rename = "topology")]
     Topology { swarm: SwarmId },

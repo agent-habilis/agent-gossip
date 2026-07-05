@@ -126,7 +126,9 @@ pub(crate) fn rendezvous_ports(seed: &[u8; 32]) -> [u16; RENDEZVOUS_LADDER] {
 
 /// An operator-supplied password. A newtype so a stray `{:?}` in a
 /// `tracing` call can never leak the value into a log file that is
-/// otherwise safe to share.
+/// otherwise safe to share. Its bytes are wiped on drop (best-effort: any
+/// `String` reallocation or the CLI prompt buffer it was built from is not
+/// tracked), so a retained password does not linger in freed memory.
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) struct Password(String);
 
@@ -137,6 +139,12 @@ impl Password {
 
     pub(crate) fn as_str(&self) -> &str {
         &self.0
+    }
+}
+
+impl Drop for Password {
+    fn drop(&mut self) {
+        zeroize::Zeroize::zeroize(&mut self.0);
     }
 }
 
@@ -212,10 +220,22 @@ pub(crate) struct TicketAuth {
 }
 
 impl TicketAuth {
-    pub(crate) fn derive(secret: &[u8; 32], password: Option<&Password>) -> Self {
+    /// The token for an **a2a bridge** ticket (pipe/port).
+    pub(crate) fn a2a(secret: &[u8; 32], password: Option<&Password>) -> Self {
+        Self::derive(secret, password, b"a2a-ticket")
+    }
+
+    /// The token for a **blob** ticket. Domain-separated from the a2a bridge so
+    /// the two ticket kinds never derive the same passworded token even from a
+    /// shared secret.
+    pub(crate) fn blob(secret: &[u8; 32], password: Option<&Password>) -> Self {
+        Self::derive(secret, password, b"blob-ticket")
+    }
+
+    fn derive(secret: &[u8; 32], password: Option<&Password>, label: &[u8]) -> Self {
         match password {
             Some(password) => Self {
-                token: stretch_password(password, secret, b"a2a-ticket"),
+                token: stretch_password(password, secret, label),
                 password_protected: true,
             },
             None => Self {
@@ -420,6 +440,35 @@ mod password_tests {
         let secret = pw("hunter2");
         assert_eq!(format!("{secret:?}"), "***");
         assert_eq!(format!("{secret}"), "***");
+    }
+
+    #[test]
+    fn channel_keys_are_domain_separated() {
+        // The state/meta/broadcast content keys are all derived from the same
+        // stretched swarm key but must never collide.
+        let swarm_key = stretch_swarm_password(&pw("hunter2"), &SEED_A);
+        let state = derive_secret(&swarm_key, b"state-doc");
+        let meta = derive_secret(&swarm_key, b"meta-doc");
+        let broadcast = derive_secret(&swarm_key, b"broadcast");
+        assert_ne!(state, meta);
+        assert_ne!(state, broadcast);
+        assert_ne!(meta, broadcast);
+    }
+
+    #[test]
+    fn blob_and_a2a_ticket_tokens_are_domain_separated() {
+        use super::TicketAuth;
+        let secret = [3u8; 32];
+        let password = pw("hunter2");
+        let blob = TicketAuth::blob(&secret, Some(&password)).token;
+        let a2a = TicketAuth::a2a(&secret, Some(&password)).token;
+        assert_ne!(
+            blob, a2a,
+            "the same password+secret must yield different tokens per ticket kind"
+        );
+        // Without a password both are the raw secret (no stretch, no label).
+        assert_eq!(TicketAuth::blob(&secret, None).token, secret);
+        assert_eq!(TicketAuth::a2a(&secret, None).token, secret);
     }
 }
 

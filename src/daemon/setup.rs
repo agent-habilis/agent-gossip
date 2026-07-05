@@ -40,14 +40,16 @@ pub(crate) enum SetupKind {
     },
     Join {
         swarm: Swarm,
+        /// The password the joiner presented (already verified + applied to
+        /// `swarm`), retained so the daemon can key blob-ticket protection with
+        /// it. `None` for a passwordless id.
+        password: Option<Password>,
     },
     /// A `topic` swarm derived from a shared string. Identical to `Join`
     /// except the first peer must beacon: there is no distinguished creator,
     /// so it co-hosts the shared rendezvous eagerly-but-probed
     /// ([`CoHostPolicy::EagerProbed`]) rather than deferring.
-    Topic {
-        swarm: Swarm,
-    },
+    Topic { swarm: Swarm },
 }
 
 /// Build the `RendezvousParams` for a swarm. `id` is the well-known
@@ -210,7 +212,7 @@ struct SetupBuild<'a> {
     max_peers: usize,
     lookups: &'a LookupOpts,
     unicast_acceptor: &'a crate::unicast::UnicastAcceptor,
-    whisper_acceptor: &'a crate::whisper::WhisperAcceptor,
+    circuit_acceptor: &'a crate::circuit::CircuitAcceptor,
     rung_tx: &'a watch::Sender<Option<RelayUrl>>,
 }
 
@@ -224,6 +226,12 @@ struct Assembled {
     topic: iroh_gossip::api::GossipTopic,
     rdv: RendezvousParams,
     cohost: CoHostPolicy,
+    /// The raw swarm password (passworded swarm) — retained so the daemon can
+    /// key blob tickets with it. `None` when passwordless.
+    swarm_password: Option<Password>,
+    /// The Argon2id-stretched swarm key — retained to derive the state/meta/
+    /// broadcast content-encryption keys. `None` when passwordless. Wiped on drop.
+    swarm_key: Option<zeroize::Zeroizing<[u8; 32]>>,
 }
 
 pub(crate) async fn setup_swarm(
@@ -248,7 +256,7 @@ pub(crate) async fn setup_swarm(
     // from the id — one source of truth either way.
     let lookups = match &kind {
         SetupKind::Create { config, .. } => config.lookups.clone(),
-        SetupKind::Join { swarm } | SetupKind::Topic { swarm } => swarm.lookups().clone(),
+        SetupKind::Join { swarm, .. } | SetupKind::Topic { swarm } => swarm.lookups().clone(),
     };
 
     // The off-loop rung channel: the backgrounded startup probe and the
@@ -268,12 +276,12 @@ pub(crate) async fn setup_swarm(
     // The relay acceptor needs the participant endpoint to dial the next hop, but
     // is registered on the Router *before* that endpoint is bound below; it reads
     // the endpoint from this cell, filled once the endpoint exists.
-    let whisper_endpoint: std::sync::Arc<std::sync::OnceLock<Endpoint>> =
+    let circuit_endpoint: std::sync::Arc<std::sync::OnceLock<Endpoint>> =
         std::sync::Arc::new(std::sync::OnceLock::new());
-    let whisper_acceptor = crate::whisper::WhisperAcceptor::new(
+    let circuit_acceptor = crate::circuit::CircuitAcceptor::new(
         inbox_tx,
         identity.seal_secret(),
-        whisper_endpoint.clone(),
+        circuit_endpoint.clone(),
     );
 
     let build = SetupBuild {
@@ -284,7 +292,7 @@ pub(crate) async fn setup_swarm(
         max_peers,
         lookups: &lookups,
         unicast_acceptor: &unicast_acceptor,
-        whisper_acceptor: &whisper_acceptor,
+        circuit_acceptor: &circuit_acceptor,
         rung_tx: &rung_tx,
     };
     let Assembled {
@@ -296,6 +304,8 @@ pub(crate) async fn setup_swarm(
         topic,
         rdv,
         cohost,
+        swarm_password,
+        swarm_key,
     } = match kind {
         SetupKind::Create {
             name,
@@ -311,7 +321,7 @@ pub(crate) async fn setup_swarm(
     // Now that the endpoint is bound, hand it to the relay acceptor so it can
     // dial the next hop when forwarding a circuit (`set` is a no-op if the
     // acceptor was never registered — the beacon/rendezvous path).
-    let _ = whisper_endpoint.set(endpoint.clone());
+    let _ = circuit_endpoint.set(endpoint.clone());
 
     // Off the critical path: `ready` is already out. Confirm/correct the
     // optimistic rung 0 in the background (covers a joiner, which has no
@@ -325,6 +335,8 @@ pub(crate) async fn setup_swarm(
         identity,
         swarm: swarm_id,
         name: swarm_name,
+        swarm_password,
+        swarm_key,
         output,
         interactive,
         endpoint,
@@ -368,18 +380,21 @@ async fn setup_create(
     let swarm = Swarm::new(seed, name.clone(), config);
     // Bake the verifier into the config BEFORE the id is rendered
     // (the id must carry it) and before any derivation. The
-    // ~100ms Argon2id stretch runs off the async worker.
-    let swarm = match password {
+    // ~100ms Argon2id stretch runs off the async worker. The password is
+    // returned from the worker (not dropped) so the daemon can key blob
+    // tickets with it.
+    let (swarm, swarm_password) = match password {
         Some(password) => {
             tokio::task::spawn_blocking(move || {
                 let mut swarm = swarm;
                 swarm.set_password(&password);
-                swarm
+                (swarm, Some(password))
             })
             .await?
         }
-        None => swarm,
+        None => (swarm, None),
     };
+    let swarm_key = swarm.stretched_key().map(zeroize::Zeroizing::new);
     let id_str = swarm.to_string();
     let swarm_id =
         SwarmId::new(id_str.clone()).expect("Swarm::to_string always produces a valid SwarmId");
@@ -405,7 +420,7 @@ async fn setup_create(
         endpoint.clone(),
         build.max_peers,
         Some(build.unicast_acceptor.clone()),
-        Some(build.whisper_acceptor.clone()),
+        Some(build.circuit_acceptor.clone()),
     );
     // Creator has no peers yet — bootstrap is empty.
     let topic = gossip.subscribe(topic_id, vec![]).await?;
@@ -422,6 +437,8 @@ async fn setup_create(
         topic,
         rdv,
         cohost: CoHostPolicy::Eager,
+        swarm_password,
+        swarm_key,
     })
 }
 
@@ -434,11 +451,13 @@ async fn setup_join(build: &SetupBuild<'_>, kind: SetupKind) -> Result<Assembled
     let output = build.output;
     let author = build.author;
 
-    let (swarm, cohost, verb) = match kind {
-        SetupKind::Join { swarm } => (swarm, CoHostPolicy::Deferred, "joined"),
-        SetupKind::Topic { swarm } => (swarm, CoHostPolicy::EagerProbed, "joined topic"),
+    let (swarm, swarm_password, cohost, verb) = match kind {
+        SetupKind::Join { swarm, password } => (swarm, password, CoHostPolicy::Deferred, "joined"),
+        // A topic swarm is always passwordless.
+        SetupKind::Topic { swarm } => (swarm, None, CoHostPolicy::EagerProbed, "joined topic"),
         SetupKind::Create { .. } => unreachable!("outer arm excludes Create"),
     };
+    let swarm_key = swarm.stretched_key().map(zeroize::Zeroizing::new);
     let id_str = swarm.to_string();
     let swarm_id =
         SwarmId::new(id_str.clone()).expect("Swarm::to_string always produces a valid SwarmId");
@@ -456,7 +475,7 @@ async fn setup_join(build: &SetupBuild<'_>, kind: SetupKind) -> Result<Assembled
         endpoint.clone(),
         build.max_peers,
         Some(build.unicast_acceptor.clone()),
-        Some(build.whisper_acceptor.clone()),
+        Some(build.circuit_acceptor.clone()),
     );
     // We subscribe, background-connect to the rendezvous, and — for a plain
     // join — `daemon::run` defers co-hosting our own (same seed-id) rendezvous
@@ -484,5 +503,7 @@ async fn setup_join(build: &SetupBuild<'_>, kind: SetupKind) -> Result<Assembled
         topic,
         rdv,
         cohost,
+        swarm_password,
+        swarm_key,
     })
 }

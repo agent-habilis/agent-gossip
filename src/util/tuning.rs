@@ -57,11 +57,11 @@ pub(crate) fn antientropy_interval_secs() -> u64 {
 /// is not yet wired, so this cadence bounds convergence time.
 pub(crate) const LINKSTATE_INTERVAL_SECS: u64 = 15;
 
-/// Max node-disjoint relay circuits tried (best-first) for one directed message
+/// Max node-disjoint circuits tried (best-first) for one directed message
 /// before falling back to gossip — the "up to N tries" retry budget. Kept small:
 /// disjoint alternates give diminishing returns and each is a full telescoping
 /// build.
-pub(crate) const WHISPER_MAX_PATHS: usize = 3;
+pub(crate) const CIRCUIT_MAX_PATHS: usize = 3;
 
 /// Max ids advertised per digest **window**. A digest carries up to two
 /// windows: an **open-ended newest** one (`[lo, i64::MAX]`, which drives
@@ -101,12 +101,12 @@ pub(crate) fn gossip_directed_enabled() -> bool {
     current().gossip_directed_enabled
 }
 
-/// Whether the whisper (multi-hop circuit) transport is attempted for a directed
-/// message with no direct unicast route. Default on; hidden flag `--no-whisper`
+/// Whether the circuit (multi-hop circuit) transport is attempted for a directed
+/// message with no direct unicast route. Default on; hidden flag `--no-circuit`
 /// turns it off, so a directed message with no direct route falls back to
 /// gossip (or is undeliverable under `--no-gossip-directed`).
-pub(crate) fn whisper_enabled() -> bool {
-    current().whisper_enabled
+pub(crate) fn circuit_enabled() -> bool {
+    current().circuit_enabled
 }
 
 /// Capacity of the embed facade's inbound broadcast channel. Bounded
@@ -224,7 +224,7 @@ pub(crate) struct Tuning {
     pub directory_private: bool,
     pub unicast_enabled: bool,
     pub gossip_directed_enabled: bool,
-    pub whisper_enabled: bool,
+    pub circuit_enabled: bool,
 }
 
 impl Tuning {
@@ -249,7 +249,7 @@ impl Tuning {
         directory_private: false,
         unicast_enabled: true,
         gossip_directed_enabled: true,
-        whisper_enabled: true,
+        circuit_enabled: true,
     };
 }
 

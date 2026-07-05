@@ -40,7 +40,7 @@ pub(crate) async fn connect(
     let auth = match (&password, ticket.password) {
         (None, true) => bail!("this ticket is password-protected — pass --password"),
         (Some(_), false) => bail!("this ticket has no password — drop --password"),
-        _ => TicketAuth::derive(&ticket.secret, password.as_ref()),
+        _ => TicketAuth::a2a(&ticket.secret, password.as_ref()),
     };
     let endpoint = build_participant_endpoint(&ticket.lookups).await?;
     add_peer_addr(&endpoint, ticket.addr.clone())?;

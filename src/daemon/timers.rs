@@ -194,7 +194,13 @@ mod tests {
     use crate::protocol::identity::Identity;
 
     fn fresh_state() -> EventLoopState {
-        EventLoopState::new(None, Instant::now(), Arc::new(Identity::generate()))
+        EventLoopState::new(
+            None,
+            Instant::now(),
+            Arc::new(Identity::generate()),
+            None,
+            None,
+        )
     }
 
     // The warn-only resident-memory leak signal: a threshold the live process

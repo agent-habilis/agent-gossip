@@ -46,17 +46,18 @@ const _: () = assert!(
     "MAX_MESSAGE_SIZE leaves too little room under iroh-gossip's DEFAULT_MAX_MESSAGE_SIZE"
 );
 
-/// Protocol version embedded in every message. Bumped to `7.0` for the
-/// **automerge `state`/`meta` channels**: a `State`/`Meta` body now carries one
-/// Base58 automerge change (`{"k":"change",…}`, not the old RFC 7386
-/// `{"k":"merge",…}`), and a `StateDigest`/`MetaDigest` body now carries the
-/// doc's automerge heads, not windowed event ids — so a `6.0` peer and a `7.0`
-/// peer must NOT interoperate on these channels. (`6.0` was directed sealing;
-/// `5.0` the A2A v1.0 / `ProtoJSON` migration; `4.0` the native-A2A port; `3.0`
-/// the A2A migration; `2.0` the RFC 6902 → RFC 7386 shared-state change.) The
-/// exact-match gate in `parse` drops cross-version messages loudly rather than
-/// letting them silently fold to no-ops and diverge.
-pub(crate) const VERSION: &str = "7.0";
+/// Protocol version embedded in every message. Bumped to `8.0` for
+/// **password-swarm content encryption**: on a passworded swarm the `state`/
+/// `meta` change bodies and broadcast chat (`A2aMsg`) bodies now travel as a
+/// symmetric `{"k":"enc",…}` envelope instead of cleartext, so a `7.0` peer
+/// (which would silently fail to decode an `enc` body) must NOT interoperate.
+/// (`7.0` was the automerge `state`/`meta` channels — Base58 change bodies +
+/// heads-based digests; `6.0` directed sealing; `5.0` the A2A v1.0 / `ProtoJSON`
+/// migration; `4.0` the native-A2A port; `3.0` the A2A migration; `2.0` the RFC
+/// 6902 → RFC 7386 shared-state change.) The exact-match gate in `parse` drops
+/// cross-version messages loudly rather than letting them silently fold to
+/// no-ops and diverge.
+pub(crate) const VERSION: &str = "8.0";
 
 /// Presence subtype.
 /// `Joined`/`Left` are user-visible; `Alive` is a silent keepalive used
@@ -211,8 +212,8 @@ pub enum MessageKind {
     /// Anti-entropy digest for the **meta** channel — the meta-channel counterpart
     /// to [`StateDigest`](MessageKind::StateDigest).
     MetaDigest,
-    /// A relay-routing **link-state** advertisement: the author's own measured
-    /// links (`body` is a serialized [`crate::whisper::LinkVector`]). Broadcast
+    /// A circuit-routing **link-state** advertisement: the author's own measured
+    /// links (`body` is a serialized [`crate::circuit::LinkVector`]). Broadcast
     /// plumbing like `Digest`/`Ping` — never logged, never surfaced, never
     /// chain/DAG-folded; every node folds the freshest vector per origin into its
     /// routing graph. Ephemeral (a fresh vector supersedes the old by `seq`), so
@@ -290,7 +291,7 @@ fn empty_body() -> MessageBody {
 ///
 /// Wire format (compact JSON, one line):
 /// ```json
-/// {"v":"7.0","id":"<uuid>","type":"a2a_msg","swarm":"💬...","author":"word-word","ts":1234567890,"body":"{\"messageId\":\"<uuid>\",\"role\":\"ROLE_USER\",...}","ext":{}}
+/// {"v":"8.0","id":"<uuid>","type":"a2a_msg","swarm":"💬...","author":"word-word","ts":1234567890,"body":"{\"messageId\":\"<uuid>\",\"role\":\"ROLE_USER\",...}","ext":{}}
 /// ```
 ///
 /// `to` (the addressee nickname) is inlined into the JSON for directed `a2a_msg` kinds.
@@ -491,7 +492,7 @@ impl Message {
     }
 
     /// A relay link-state advertisement; `vector_json` is a serialized
-    /// [`crate::whisper::LinkVector`].
+    /// [`crate::circuit::LinkVector`].
     pub(crate) fn new_link_state(
         swarm: &SwarmId,
         author: &Nickname,
@@ -941,7 +942,7 @@ mod tests {
     #[test]
     fn test_unknown_ext_fields_ignored() {
         let json = format!(
-            r#"{{"v":"7.0","id":"{FIXTURE_ID}","type":"a2a_msg","swarm":"💬test","author":"a-b","ts":0,"body":"hi","ext":{{"future_field":"value","another":42}}}}"#
+            r#"{{"v":"8.0","id":"{FIXTURE_ID}","type":"a2a_msg","swarm":"💬test","author":"a-b","ts":0,"body":"hi","ext":{{"future_field":"value","another":42}}}}"#
         );
         let parsed = Message::parse(json.as_bytes()).unwrap();
         assert_eq!(parsed.body.as_str(), "hi");
@@ -951,7 +952,7 @@ mod tests {
     #[test]
     fn test_missing_ext_defaults_to_empty_object() {
         let json = format!(
-            r#"{{"v":"7.0","id":"{FIXTURE_ID}","type":"a2a_msg","swarm":"💬test","author":"a-b","ts":0,"body":"hi"}}"#
+            r#"{{"v":"8.0","id":"{FIXTURE_ID}","type":"a2a_msg","swarm":"💬test","author":"a-b","ts":0,"body":"hi"}}"#
         );
         let parsed = Message::parse(json.as_bytes()).unwrap();
         assert_eq!(parsed.ext, serde_json::json!({}));
@@ -973,14 +974,14 @@ mod tests {
     // escapes / spoof the `<nick>`/`#swarm` conventions (bad body/author).
     #[test]
     fn parse_rejects_non_uuid_id() {
-        let json = r#"{"v":"7.0","id":"not-a-uuid","type":"a2a_msg","swarm":"💬test","author":"a-b","ts":0,"body":"hi","ext":{}}"#;
+        let json = r#"{"v":"8.0","id":"not-a-uuid","type":"a2a_msg","swarm":"💬test","author":"a-b","ts":0,"body":"hi","ext":{}}"#;
         assert!(Message::parse(json.as_bytes()).is_err());
     }
 
     #[test]
     fn parse_rejects_control_char_body() {
         let json = format!(
-            r#"{{"v":"7.0","id":"{FIXTURE_ID}","type":"a2a_msg","swarm":"💬test","author":"a-b","ts":0,"body":"evil\u0000body","ext":{{}}}}"#
+            r#"{{"v":"8.0","id":"{FIXTURE_ID}","type":"a2a_msg","swarm":"💬test","author":"a-b","ts":0,"body":"evil\u0000body","ext":{{}}}}"#
         );
         assert!(Message::parse(json.as_bytes()).is_err());
     }
@@ -988,7 +989,7 @@ mod tests {
     #[test]
     fn parse_rejects_unsafe_author_nickname() {
         let json = format!(
-            r#"{{"v":"7.0","id":"{FIXTURE_ID}","type":"a2a_msg","swarm":"💬test","author":"a#b","ts":0,"body":"hi","ext":{{}}}}"#
+            r#"{{"v":"8.0","id":"{FIXTURE_ID}","type":"a2a_msg","swarm":"💬test","author":"a#b","ts":0,"body":"hi","ext":{{}}}}"#
         );
         assert!(Message::parse(json.as_bytes()).is_err());
     }
@@ -1000,7 +1001,7 @@ mod tests {
         // so a crafted value never reaches the fork/DAG indexes or sig verify.
         let base = |extra: &str| {
             format!(
-                r#"{{"v":"7.0","id":"{FIXTURE_ID}","type":"a2a_msg","swarm":"💬test","author":"a-b","ts":0,"body":"hi"{extra},"ext":{{}}}}"#
+                r#"{{"v":"8.0","id":"{FIXTURE_ID}","type":"a2a_msg","swarm":"💬test","author":"a-b","ts":0,"body":"hi"{extra},"ext":{{}}}}"#
             )
         };
         // 3KB garbage pubkey, non-hex / wrong-length variants, and a bad hash.
