@@ -62,11 +62,11 @@ pub(crate) fn own_card(nickname: &Nickname, pubkey_hex: &str, seal_pubkey_b58: &
             extensions: vec![
                 extension(
                     EXT_MESH_BROADCAST,
-                    "mesh-wide broadcast Messages (A2A is point-to-point; a broadcast declares itself)",
+                    "square-wide broadcast Messages (A2A is point-to-point; a broadcast declares itself)",
                 ),
                 extension(
                     EXT_MESH_STATE,
-                    "a shared RFC 7386 JSON document per mesh (state/meta channels)",
+                    "a shared RFC 7386 JSON document per square (state/meta channels)",
                 ),
                 extension(
                     EXT_MESH_A2A_RPC,
@@ -100,7 +100,7 @@ pub(crate) fn own_card(nickname: &Nickname, pubkey_hex: &str, seal_pubkey_b58: &
             AgentSkill {
                 id: "chat".to_string(),
                 name: "chat".to_string(),
-                description: "converse over mesh broadcast messages".to_string(),
+                description: "converse over square broadcast messages".to_string(),
                 tags: vec!["chat".to_string()],
                 examples: Vec::new(),
                 input_modes: Vec::new(),

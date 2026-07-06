@@ -19,7 +19,7 @@ export default function register(pi: ExtensionAPI) {
 
   pi.on("turn_start", (_event, ctx) => {
     state.ctx = ctx;
-    if (state.session?.mesh && state.pendingMessages.length > 0) {
+    if (state.session?.square && state.pendingMessages.length > 0) {
       flushPending(ctx);
     }
   });

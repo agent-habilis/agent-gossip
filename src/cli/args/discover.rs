@@ -1,4 +1,4 @@
-//! `discover` command args: browse meshes advertising in a directory.
+//! `discover` command args: browse squares advertising in a directory.
 //! (The live picker runtime is [`crate::cli::discover`].)
 
 use clap::Parser;

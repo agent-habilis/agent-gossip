@@ -1,12 +1,12 @@
 ---
 name: handover
-description: Hand a task to another peer in the mesh. Use when the user wants to delegate work to another agent. Task-first - $ARGUMENTS is the task to delegate (else the current plan); composes a brief, then picks a worker, then creates the task and hands it off once the worker accepts.
+description: Hand a task to another peer in the square. Use when the user wants to delegate work to another agent. Task-first - $ARGUMENTS is the task to delegate (else the current plan); composes a brief, then picks a worker, then creates the task and hands it off once the worker accepts.
 ---
 
 ## What this does
 
 Hands a task to another participant. A handover is one delegation **flow** of
-the mesh's **A2A task**: a directed `SendMessage` creates it (the worker mints
+the square's **A2A task**: a directed `SendMessage` creates it (the worker mints
 the task id). The flow is **task-first**: establish the task, build a **plan in
 plan mode** (that plan *is* the brief you send), *then* pick the worker, then
 create the task. The handover completes at the **handoff** — the moment the
@@ -19,7 +19,7 @@ surfaced only to the two parties.
 Run the whole skill **silently**. Do NOT narrate steps, echo variables
 (e.g. `$TASK_ID = …`), print commands or their output, or announce what you
 are about to do. The roster read and the `task_id` stay in context, unprinted.
-The **only** things that ever appear are: the not-in-mesh guard line (when
+The **only** things that ever appear are: the not-in-square guard line (when
 it applies), **plan mode** (the drafted plan), the **worker picker**
 `AskUserQuestion`, and the native **`TodoWrite`** to-do list. There are **no**
 printed status or outcome lines — all task status lives in the to-do list.
@@ -37,12 +37,12 @@ screen, period.
 
 ## Pre-flight: guard
 
-If you hold `$MESH`/`$NICKNAME` from a `/square:create` or `/square:join`
+If you hold `$SQUARE`/`$NICKNAME` from a `/square:create` or `/square:join`
 `ready` event this session, proceed. Otherwise try to reattach first:
 follow `../shared/reattach.md` (resolved relative to this SKILL.md's
-directory). Only if reattach also yields no mesh, print:
+directory). Only if reattach also yields no square, print:
 ```
-💬 Not in a mesh. Use /square:create or /square:join first.
+💬 Not in a square. Use /square:create or /square:join first.
 ```
 and STOP.
 
@@ -94,8 +94,8 @@ self-report it there, the binary does not). Read both, silently — don't print
 either:
 
 ```bash
-agent-square peers --mesh "$MESH" --nickname "$NICKNAME"
-agent-square meta get --mesh "$MESH" --nickname "$NICKNAME"
+agent-square peers --square "$SQUARE" --nickname "$NICKNAME"
+agent-square meta get --square "$SQUARE" --nickname "$NICKNAME"
 ```
 
 `peers` returns
@@ -109,7 +109,7 @@ the rest by availability then recency: `idle` ahead of `available` ahead of
 unreported, and within each by `last_seen_secs_ago` ascending (most recently
 active first).
 Show an `AskUserQuestion` — question "Hand `<one-line task>` to which peer?",
-header `mesh:handover`, options = the **top 3** by recency. For each option:
+header `square:handover`, options = the **top 3** by recency. For each option:
 - **label** = the nickname wrapped in angle brackets, e.g. `<cable-spark>`
   (not `cable-spark`).
 - **description** = the peer's `model` / `harness`, the `host` after `@`, then
@@ -133,7 +133,7 @@ worker to take it and run it, not to report a result). The **worker mints the
 task id** and returns the `Task` — capture `result.task.id` as `$TASK_ID`:
 
 ```bash
-agent-square a2a call --mesh "$MESH" --nickname "$NICKNAME" --to "$TARGET" \
+agent-square a2a call --square "$SQUARE" --nickname "$NICKNAME" --to "$TARGET" \
   --method SendMessage --text "$BRIEF"
 ```
 
@@ -176,7 +176,7 @@ todo for this handover and keep it updated as the daemon emits events for this
 
 - Add it on send: a todo whose `content` is **exactly** `💬 handover to
   <$TARGET>` (e.g. `💬 handover to <crystal-azure>`), status `in_progress`.
-  The `💬` prefix labels it as a mesh task (`TodoWrite` has no widget title).
+  The `💬` prefix labels it as a square task (`TodoWrite` has no widget title).
   The companion **`activeForm`** uses the same text without the `💬`, e.g.
   `activeForm: "handover to <crystal-azure>"`. Write the nickname as
   `<$TARGET>` with literal angle brackets and **no backticks** in **both**
@@ -194,7 +194,7 @@ todo for this handover and keep it updated as the daemon emits events for this
 There are **no printed status or outcome lines** — not even a final "task
 handed over" line. The native to-do list (via `TodoWrite`) is the sole status
 surface; its `completed` state is the terminal indication. The only other
-things that may appear are the not-in-mesh guard line, plan mode, and the
+things that may appear are the not-in-square guard line, plan mode, and the
 worker picker. No `💬 tasks` text block, no per-leg lines, no narration.
 
 After marking the todo `completed`, **end silently** — do **not** print a

@@ -1,4 +1,4 @@
-//! `create` command args: mint and join a new mesh.
+//! `create` command args: mint and join a new square.
 
 use clap::Parser;
 
@@ -14,25 +14,25 @@ pub(crate) struct CreateOpts {
     #[command(flatten)]
     pub shared: SharedServerOpts,
 
-    /// Which lookup mechanisms this mesh uses (baked into its id, so
+    /// Which lookup mechanisms this square uses (baked into its id, so
     /// every joiner inherits them). `create`-only: `join` decodes them.
     #[command(flatten)]
     pub lookups: LookupArgs,
 
-    /// Human-readable mesh name. Optional — a random word-word name is
+    /// Human-readable square name. Optional — a random word-word name is
     /// minted if omitted. 1..=32 UTF-8 characters (any script/emoji),
     /// excluding control characters, whitespace, and any of < > # (reserved
-    /// for the `<nick>`/#mesh display conventions). Unlike a nickname, a mesh
+    /// for the `<nick>`/#square display conventions). Unlike a nickname, a square
     /// name may contain `/` (it is never a filename), so it can be a URL. Bound
-    /// cryptographically into the mesh identity so joiners who decode the ID
+    /// cryptographically into the square identity so joiners who decode the ID
     /// see the same name and a forged ID with a fake name fails to find peers.
     #[arg(long)]
     pub name: Option<MeshName>,
 
-    /// Make the mesh reachable across machines — sugar for the all-on
+    /// Make the square reachable across machines — sugar for the all-on
     /// lookup preset (mDNS + DHT + the default relay ladder). Omitted ⇒
     /// loopback only (the default). Refine with the `--mdns`/`--dht`/
-    /// `--relay` flags; all of it is baked into the mesh id.
+    /// `--relay` flags; all of it is baked into the square id.
     #[arg(long, default_value_t = false)]
     pub public: bool,
 
@@ -43,20 +43,20 @@ pub(crate) struct CreateOpts {
     #[arg(long)]
     pub nickname: Option<Nickname>,
 
-    /// List this mesh in a directory so others can find it with
+    /// List this square in a directory so others can find it with
     /// `agent-square discover` — no `💬…` id to share. Optional-value, like
     /// `--relay`: absent ⇒ unlisted; bare `--advertise` ⇒ the default
     /// `global` directory; `--advertise <directory>` ⇒ that named directory.
     /// Requires `--public` (a directory listing only makes sense for a
-    /// cross-machine mesh). Note: advertising broadcasts the full join
-    /// token, so the mesh becomes open to anyone discovering that directory.
+    /// cross-machine square). Note: advertising broadcasts the full join
+    /// token, so the square becomes open to anyone discovering that directory.
     /// Absent ⇒ unlisted; bare `--advertise` ⇒ the well-known `global`
     /// directory (the `default_missing_value`); valued ⇒ that named directory.
     #[arg(long, num_args(0..=1), default_missing_value = "global")]
     pub advertise: Option<MeshName>,
 
-    /// Protect the mesh with a password: the id alone no longer admits —
-    /// joiners must present the password (so a passworded mesh is safe to
+    /// Protect the square with a password: the id alone no longer admits —
+    /// joiners must present the password (so a passworded square is safe to
     /// `--advertise`). The id carries only a one-way verifier, never the
     /// password. Bare `--password` prompts hidden on the terminal;
     /// `--password=<pw>` passes it inline (visible in `ps` and shell
@@ -64,7 +64,7 @@ pub(crate) struct CreateOpts {
     #[arg(long, num_args(0..=1), require_equals = true, default_missing_value = "\0")]
     pub password: Option<PasswordFlag>,
 
-    /// Make the mesh invite-only: the bare `💬…` id can no longer join —
+    /// Make the square invite-only: the bare `💬…` id can no longer join —
     /// only a creator-minted `🎟️` invite can. The id carries the issuer public
     /// key (the mint authority), never the join secret; mint invites with
     /// `agent-square invite`. Combine with `--password` to also password-protect

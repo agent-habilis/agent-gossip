@@ -1,15 +1,15 @@
 import type { ChildProcess } from "node:child_process";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { MeshEvent, Session, TaskRecord } from "../types";
+import type { Session, SquareEvent, TaskRecord } from "../types";
 
 export type AppState = {
   daemon: ChildProcess | null;
   session: Session | null;
-  pendingMessages: MeshEvent[];
+  pendingMessages: SquareEvent[];
   // Events shed from the capped buffers while the UI was unavailable;
   // surfaced as one "(+N dropped)" notice on the next flush.
   droppedPending: number;
-  messageBatch: MeshEvent[];
+  messageBatch: SquareEvent[];
   messageBatchTimer: ReturnType<typeof setTimeout> | null;
   pi: ExtensionAPI | null;
   ctx: ExtensionContext | null;
@@ -19,7 +19,7 @@ export type AppState = {
   // In-flight tasks this node is a party to, keyed by task_id.
   tasks: Map<string, TaskRecord>;
   stateFileId: string | undefined;
-  // The standing reply policy is injected (silently) once per mesh session.
+  // The standing reply policy is injected (silently) once per square session.
   policySent: boolean;
 };
 

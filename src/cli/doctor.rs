@@ -108,7 +108,7 @@ impl Report {
 }
 
 pub(super) async fn run(opts: DoctorOpts) -> Result<()> {
-    let report = match opts.mesh {
+    let report = match opts.square {
         Some(mesh) => mesh_report(&mesh, opts.no_probe).await,
         None => machine_report(opts.no_probe).await,
     };
@@ -330,7 +330,7 @@ async fn active_meshes_section() -> Section {
         };
         let detail = format!(
             "{} · <{}> · {} {}",
-            info.mesh,
+            info.square,
             info.nickname,
             info.participant_count,
             plural(info.participant_count, "member", "members"),
@@ -338,17 +338,17 @@ async fn active_meshes_section() -> Section {
         checks.push(Check::new(format!("#{}", info.name), Verdict::Ok, detail));
     }
     if checks.is_empty() {
-        checks.push(Check::bare("no active meshes on this machine", Verdict::Ok));
+        checks.push(Check::bare("no active squares on this machine", Verdict::Ok));
     }
     Section {
-        title: "Active meshes".to_owned(),
+        title: "Active squares".to_owned(),
         checks,
     }
 }
 
 #[derive(serde::Deserialize)]
 struct InfoResponse {
-    mesh: String,
+    square: String,
     name: String,
     nickname: String,
     participant_count: usize,
@@ -361,14 +361,14 @@ async fn mesh_report(mesh_id: &MeshId, no_probe: bool) -> Report {
         Ok(mesh) => mesh,
         Err(error) => {
             let section = Section {
-                title: "Mesh".to_owned(),
+                title: "Square".to_owned(),
                 checks: vec![Check::new(
                     "decode",
                     Verdict::Fail,
-                    format!("could not decode mesh id: {error}"),
+                    format!("could not decode square id: {error}"),
                 )],
             };
-            return Report::new("mesh", vec![section]);
+            return Report::new("square", vec![section]);
         }
     };
 
@@ -383,7 +383,7 @@ async fn mesh_report(mesh_id: &MeshId, no_probe: bool) -> Report {
     if !no_probe && !mesh.requires_password() && !mesh.requires_invite() {
         sections.push(live_reachability_section(&mesh).await);
     }
-    Report::new("mesh", sections)
+    Report::new("square", sections)
 }
 
 fn mesh_identity_section(mesh: &Mesh) -> Section {
@@ -399,7 +399,7 @@ fn mesh_identity_section(mesh: &Mesh) -> Section {
         ));
     }
     Section {
-        title: "Mesh".to_owned(),
+        title: "Square".to_owned(),
         checks,
     }
 }

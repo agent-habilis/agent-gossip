@@ -19,10 +19,10 @@ export function isValidBody(text: string): boolean {
 
 // Mirrors the Rust MeshName invariant (src/protocol/ident.rs::is_forbidden_mesh_name):
 // 1-32 Unicode scalar values, excluding control characters, whitespace, and
-// any of < > #. The path separators / \ are allowed — a mesh name may be a
+// any of < > #. The path separators / \ are allowed — a square name may be a
 // URL. (The daemon additionally rejects bidi-control scalars; it is the
 // authoritative backstop, so this client check stays simple.)
-export function isValidMeshName(name: string): boolean {
+export function isValidSquareName(name: string): boolean {
   const chars = [...name];
   if (chars.length < 1 || chars.length > 32) return false;
   return !chars.some((ch) => isControlChar(ch) || /\s/u.test(ch) || "<>#".includes(ch));
@@ -45,7 +45,7 @@ export function requireAgentSquare(_ctx: ExtensionContext): boolean {
   return true;
 }
 
-export function runMeshCommand(args: string[]): string {
+export function runSquareCommand(args: string[]): string {
   return execSync(`agent-square ${args.map((arg) => `"${arg}"`).join(" ")}`, {
     encoding: "utf-8",
     timeout: 15_000,

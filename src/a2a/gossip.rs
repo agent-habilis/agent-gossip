@@ -84,7 +84,7 @@ pub fn chat_payload(frame: &Frame) -> Result<Message> {
         bail!("a2a messageId does not match the frame id");
     }
     if payload.context_id.as_deref() != Some(frame.mesh.as_str()) {
-        bail!("a2a contextId does not name the frame's mesh");
+        bail!("a2a contextId does not name the frame's square");
     }
     if !payload
         .extensions
@@ -218,7 +218,7 @@ pub fn status_payload(frame: &Frame) -> Result<TaskStatusUpdate> {
     let payload: TaskStatusUpdate =
         serde_json::from_str(frame.body.as_str()).context("invalid a2a status payload")?;
     if payload.context_id != frame.mesh.as_str() {
-        bail!("a2a status contextId does not name the frame's mesh");
+        bail!("a2a status contextId does not name the frame's square");
     }
     Ok(payload)
 }
@@ -234,7 +234,7 @@ pub fn artifact_payload(frame: &Frame) -> Result<TaskArtifactUpdate> {
     let payload: TaskArtifactUpdate =
         serde_json::from_str(frame.body.as_str()).context("invalid a2a artifact payload")?;
     if payload.context_id != frame.mesh.as_str() {
-        bail!("a2a artifact contextId does not name the frame's mesh");
+        bail!("a2a artifact contextId does not name the frame's square");
     }
     Ok(payload)
 }

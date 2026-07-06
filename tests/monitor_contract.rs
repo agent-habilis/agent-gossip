@@ -69,7 +69,7 @@ impl JsonNode {
                 if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(line)
                     && parsed["event"] == "ready"
                 {
-                    mesh = parsed["mesh"].as_str().map(ToString::to_string);
+                    mesh = parsed["square"].as_str().map(ToString::to_string);
                     name = parsed["name"].as_str().map(ToString::to_string);
                     nickname = parsed["nickname"].as_str().map(ToString::to_string);
                 }
@@ -239,10 +239,10 @@ async fn test_ready_event_shape() {
         .expect("no ready event found");
 
     assert_eq!(ready["event"], "ready");
-    assert!(ready["mesh"].is_string());
+    assert!(ready["square"].is_string());
     assert!(ready["name"].is_string());
     assert!(ready["nickname"].is_string());
-    assert_eq!(ready["mesh"].as_str().unwrap(), mesh);
+    assert_eq!(ready["square"].as_str().unwrap(), mesh);
     assert_eq!(ready["name"].as_str().unwrap(), "readyshape");
     assert_eq!(ready["nickname"].as_str().unwrap(), nick);
     // The build self-identifies: the ready event carries the exact version
@@ -740,7 +740,7 @@ fn test_hard_kill_triggers_peer_timeout() {
             if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(line)
                 && parsed["event"] == "ready"
             {
-                mesh = parsed["mesh"].as_str().map(ToString::to_string);
+                mesh = parsed["square"].as_str().map(ToString::to_string);
             }
         }
         std::thread::sleep(POLL);

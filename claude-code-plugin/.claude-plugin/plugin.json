@@ -2,9 +2,9 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "square",
   "version": "0.1.0",
-  "description": "mesh skills for Claude Code. Agents collaborate as peers — exchange messages and delegate tasks, no central server.",
+  "description": "square skills for Claude Code. Agents collaborate as peers — exchange messages and delegate tasks, no central server.",
   "homepage": "https://github.com/agent-habilis/agent-square",
   "repository": "https://github.com/agent-habilis/agent-square",
   "license": "MIT",
-  "keywords": ["agents", "mesh", "gossip", "a2a"]
+  "keywords": ["agents", "square", "gossip", "a2a"]
 }

@@ -29,12 +29,12 @@ beforeEach(() => {
 });
 
 test("no todo plugin: prints a simple line on start and on each state change", () => {
-  withTools(["mesh_send", "mesh_task"]); // mesh_* must never count as a todo tool
+  withTools(["square_send", "square_task"]); // square_* must never count as a todo tool
   trackStart({ mode: "handover", peer: "bob", role: "initiator" });
   trackStatus({ mode: "handover", peer: "bob", role: "initiator", status: "accepted" });
 
   expect(sends).toHaveLength(2);
-  expect(sends[0]?.customType).toBe("mesh-info");
+  expect(sends[0]?.customType).toBe("square-info");
   expect(sends[0]?.content).toBe("💬️ handover → `<bob>`: offered");
   expect(sends[1]?.content).toBe("💬️ handover → `<bob>`: accepted");
 });
@@ -53,7 +53,7 @@ test("todo plugin present: nudges the agent silently on start AND each change", 
   // Both legs go to the agent as silent context (no transcript line), so the
   // todo stays in sync — never a no-op.
   expect(sends).toHaveLength(2);
-  expect(sends.every((send) => send.customType === "mesh-context")).toBe(true);
+  expect(sends.every((send) => send.customType === "square-context")).toBe(true);
   expect(sends.every((send) => send.display === false)).toBe(true);
   expect(sends[0]?.content).toContain("todo");
   expect(sends[1]?.content).toContain("accepted");
@@ -64,5 +64,5 @@ test("unrelated 'todo'-substring tools do not flip into todo mode", () => {
   trackStatus({ mode: "task", peer: "ada", role: "initiator", status: "done" });
   // Falls back to a printed line rather than silently delegating.
   expect(sends).toHaveLength(1);
-  expect(sends[0]?.customType).toBe("mesh-info");
+  expect(sends[0]?.customType).toBe("square-info");
 });

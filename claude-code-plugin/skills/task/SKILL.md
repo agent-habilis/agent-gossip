@@ -6,7 +6,7 @@ description: Send one or more tasks to peers and get their results back. Use whe
 ## What this does
 
 Sends **one or more tasks** to other participants and collects each result.
-Each task is one **A2A task** on the mesh: a directed `SendMessage` creates
+Each task is one **A2A task** on the square: a directed `SendMessage` creates
 it (the worker mints the task id and returns the `Task`); the worker **runs the
 work and returns its result** as an `artifact`, and you **approve** it (or ask
 for a change), after which the worker marks it `completed`. That is the
@@ -26,7 +26,7 @@ add more later — new tasks append to the same to-do list.
 
 Run the whole skill **silently**. Do NOT narrate steps, echo variables (ids,
 the worker list), print commands or their output, or announce what you are
-about to do. The **only** things that ever appear are: the not-in-mesh guard
+about to do. The **only** things that ever appear are: the not-in-square guard
 line (when it applies), **plan mode** (the drafted tasks), the native
 **`TodoWrite`** to-do list, and **each worker's returned result** when it
 finishes.
@@ -43,12 +43,12 @@ narrating the `TodoWrite` is not.
 
 ## Pre-flight: guard
 
-If you hold `$MESH`/`$NICKNAME` from a `/square:create` or `/square:join`
+If you hold `$SQUARE`/`$NICKNAME` from a `/square:create` or `/square:join`
 `ready` event this session, proceed. Otherwise try to reattach first:
 follow `../shared/reattach.md` (resolved relative to this SKILL.md's
-directory). Only if reattach also yields no mesh, print:
+directory). Only if reattach also yields no square, print:
 ```
-💬 Not in a mesh. Use /square:create or /square:join first.
+💬 Not in a square. Use /square:create or /square:join first.
 ```
 and STOP.
 
@@ -68,8 +68,8 @@ self-reports it runs on — the binary does not carry it) — silently, don't pr
 either:
 
 ```bash
-agent-square peers --mesh "$MESH" --nickname "$NICKNAME"
-agent-square meta get --mesh "$MESH" --nickname "$NICKNAME"
+agent-square peers --square "$SQUARE" --nickname "$NICKNAME"
+agent-square meta get --square "$SQUARE" --nickname "$NICKNAME"
 ```
 
 `peers` returns
@@ -123,7 +123,7 @@ For **each** task, create it on its worker with a directed `SendMessage`. The
 capture `result.task.id` as that task's `task_id` (you do not choose it):
 
 ```bash
-agent-square a2a call --mesh "$MESH" --nickname "$NICKNAME" --to "$WORKER" \
+agent-square a2a call --square "$SQUARE" --nickname "$NICKNAME" --to "$WORKER" \
   --method SendMessage --text "$BRIEF"
 ```
 
@@ -190,7 +190,7 @@ Re-invoking `/square:task` appends new todos to this same list.
 
 ## Output
 
-The only things this skill prints are: the not-in-mesh guard line, plan mode,
+The only things this skill prints are: the not-in-square guard line, plan mode,
 the to-do list, and **each worker's returned result** when its task finishes
 (attributed to the worker). There are **no** per-leg status lines, no `💬 tasks`
 block, and no narration of transitions — the to-do list carries all in-flight

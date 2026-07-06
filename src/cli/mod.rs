@@ -82,7 +82,7 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
             reject_id_encoded_flag("--public", opts.public)?;
             reject_id_encoded_flag("--name", opts.name.is_some())?;
             agent_habilis_mesh::util::tuning::init(opts.shared.tuning());
-            Box::pin(join(opts.mesh, opts.nickname, opts.password, opts.shared)).await
+            Box::pin(join(opts.square, opts.nickname, opts.password, opts.shared)).await
         }
         Commands::Topic { opts } => {
             agent_habilis_mesh::util::tuning::init(opts.shared.tuning());
@@ -274,7 +274,7 @@ async fn join(
                 .as_str()
                 .parse::<Mesh>()
                 .is_ok_and(|mesh| mesh.requires_password())
-                .then_some("mesh"),
+                .then_some("square"),
             JoinTarget::Invite(invite) => invite.requires_password().then_some("invite"),
         };
         if let Some(what) = prompt_for {
@@ -390,7 +390,7 @@ async fn a2a(action: A2aAction) -> Result<()> {
             .await
         }
         A2aAction::Call {
-            mesh,
+            square: mesh,
             nickname,
             to,
             method,
@@ -438,7 +438,7 @@ async fn a2a(action: A2aAction) -> Result<()> {
             Ok(())
         }
         A2aAction::Status {
-            mesh,
+            square: mesh,
             nickname,
             task_id,
             state,
@@ -456,7 +456,7 @@ async fn a2a(action: A2aAction) -> Result<()> {
             Ok(())
         }
         A2aAction::Artifact {
-            mesh,
+            square: mesh,
             nickname,
             task_id,
             text,
@@ -574,7 +574,7 @@ fn compose_a2a_params(
 /// raw IPC JSON (`{ok, participants, participant_count}`), like `poll`.
 async fn poll(opts: PollOpts) -> Result<()> {
     let PollOpts {
-        mesh,
+        square: mesh,
         nickname,
         after,
         long,
@@ -590,7 +590,7 @@ async fn poll(opts: PollOpts) -> Result<()> {
         // Surface it instead of printing a blank line / retrying forever.
         anyhow::ensure!(
             !resp.is_empty(),
-            "mesh daemon closed the connection without a response (shutting down?)"
+            "square daemon closed the connection without a response (shutting down?)"
         );
         if !(long && resp == "[]") {
             println!("{resp}");
@@ -615,7 +615,7 @@ async fn poll(opts: PollOpts) -> Result<()> {
 /// `--output json` stream once the collection window closes.
 async fn ping(opts: PingOpts) -> Result<()> {
     let PingOpts {
-        mesh,
+        square: mesh,
         nickname,
         output: _,
     } = opts;
@@ -633,7 +633,7 @@ async fn ping(opts: PingOpts) -> Result<()> {
 
 async fn peers(opts: PeersOpts) -> Result<()> {
     let PeersOpts {
-        mesh,
+        square: mesh,
         nickname,
         output: _,
     } = opts;
@@ -670,7 +670,7 @@ fn parse_ttl(raw: Option<&str>) -> Result<u64> {
 /// raw `{ok,invite}` line. Exits non-zero on refusal (e.g. not the creator).
 async fn invite(opts: InviteOpts) -> Result<()> {
     let InviteOpts {
-        mesh,
+        square: mesh,
         nickname,
         ttl,
         output,
@@ -703,7 +703,7 @@ async fn invite(opts: InviteOpts) -> Result<()> {
 /// Print the circuit routing topology (assembled mesh graph) from the running
 /// daemon, as JSON. Backs the `/square:topology` render.
 async fn topology_cmd(opts: TopologyOpts) -> Result<()> {
-    let cmd = IpcCommand::Topology { mesh: opts.mesh };
+    let cmd = IpcCommand::Topology { mesh: opts.square };
     let resp = ipc::send(&cmd, &opts.nickname).await?;
     println!("{resp}");
     let parsed: MsgResponse = serde_json::from_str(&resp)?;
@@ -718,7 +718,7 @@ async fn topology_cmd(opts: TopologyOpts) -> Result<()> {
 async fn state(opts: StateOpts) -> Result<()> {
     let (cmd, nickname) = match opts.action {
         StateAction::Merge {
-            mesh,
+            square: mesh,
             nickname,
             merge,
         } => {
@@ -733,7 +733,7 @@ async fn state(opts: StateOpts) -> Result<()> {
                 nickname,
             )
         }
-        StateAction::Get { mesh, nickname } => (IpcCommand::StateGet { mesh }, nickname),
+        StateAction::Get { square: mesh, nickname } => (IpcCommand::StateGet { mesh }, nickname),
     };
     let resp = ipc::send(&cmd, &nickname).await?;
     println!("{resp}");
@@ -754,7 +754,7 @@ async fn state(opts: StateOpts) -> Result<()> {
 async fn meta(opts: MetaOpts) -> Result<()> {
     let (cmd, nickname) = match opts.action {
         MetaAction::Merge {
-            mesh,
+            square: mesh,
             nickname,
             merge,
         } => {
@@ -769,7 +769,7 @@ async fn meta(opts: MetaOpts) -> Result<()> {
                 nickname,
             )
         }
-        MetaAction::Get { mesh, nickname } => (IpcCommand::MetaGet { mesh }, nickname),
+        MetaAction::Get { square: mesh, nickname } => (IpcCommand::MetaGet { mesh }, nickname),
     };
     let resp = ipc::send(&cmd, &nickname).await?;
     println!("{resp}");
@@ -845,13 +845,13 @@ async fn ready(opts: ReadyOpts) -> Result<()> {
 
 /// Print the session identity as a JSON object for `agent-square ready --output json`,
 /// omitting any field the state file lacks — so a degenerate (identity-less)
-/// file yields `{}` rather than `{"mesh":null,…}` that a caller might splice
+/// file yields `{}` rather than `{"square":null,…}` that a caller might splice
 /// into the next command as the literal string "null".
 fn print_ready_identity(state_file: &std::path::Path) {
     let identity = agent_habilis_mesh::daemon::state_file::read_identity(state_file);
     let mut obj = serde_json::Map::new();
     for (key, value) in [
-        ("mesh", identity.mesh),
+        ("square", identity.mesh),
         ("name", identity.name),
         ("nickname", identity.nickname),
     ] {

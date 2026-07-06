@@ -1,7 +1,7 @@
 //! `doctor` command args: the environment + network diagnostic. With no
-//! `--mesh` it reports machine health (environment, integrations, network
-//! capability, active meshes); with `--mesh <💬…>` it analyzes the connection
-//! methods to a specific mesh.
+//! `--square` it reports machine health (environment, integrations, network
+//! capability, active squares); with `--square <💬…>` it analyzes the connection
+//! methods to a specific square.
 
 use clap::Parser;
 
@@ -11,11 +11,11 @@ use super::output::OutputFormat;
 
 #[derive(Parser, Debug)]
 pub(crate) struct DoctorOpts {
-    /// Analyze a specific mesh (💬...): decode its declared connection
+    /// Analyze a specific square (💬...): decode its declared connection
     /// methods and live-probe which actually reach it. Omit for the
     /// machine-health report.
     #[arg(long)]
-    pub mesh: Option<MeshId>,
+    pub square: Option<MeshId>,
 
     /// Skip the live network probes, reporting only what's known without
     /// touching the network (static decode + local state).
@@ -39,7 +39,7 @@ mod tests {
         let Commands::Doctor { opts } = cli.command else {
             panic!("expected Doctor command");
         };
-        assert!(opts.mesh.is_none());
+        assert!(opts.square.is_none());
         assert!(!opts.no_probe);
         assert_eq!(opts.output, OutputFormat::Human);
     }
@@ -49,7 +49,7 @@ mod tests {
         let cli = Cli::parse_from([
             "agent-square",
             "doctor",
-            "--mesh",
+            "--square",
             "💬AbCdEf1234",
             "--no-probe",
             "--output",
@@ -58,7 +58,7 @@ mod tests {
         let Commands::Doctor { opts } = cli.command else {
             panic!("expected Doctor command");
         };
-        assert!(opts.mesh.is_some());
+        assert!(opts.square.is_some());
         assert!(opts.no_probe);
         assert_eq!(opts.output, OutputFormat::Json);
     }

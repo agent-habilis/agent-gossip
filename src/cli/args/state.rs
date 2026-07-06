@@ -1,4 +1,4 @@
-//! `state` command args: read or change the mesh's shared state — a JSON
+//! `state` command args: read or change the square's shared state — a JSON
 //! document every member derives from a dedicated, gossiped log of RFC 7386 JSON
 //! Merge Patch changes. `state merge` applies a merge; `state get` reads the
 //! current document.
@@ -23,9 +23,9 @@ pub(crate) enum StateAction {
     /// mutable collection as an object keyed by index), and a non-object value
     /// replaces the document.
     Merge {
-        /// Mesh identifier (💬...)
+        /// Square identifier (💬...)
         #[arg(long)]
-        mesh: MeshId,
+        square: MeshId,
 
         /// Nickname of the local agent (must have a running join/create session)
         #[arg(long)]
@@ -38,9 +38,9 @@ pub(crate) enum StateAction {
 
     /// Read the current derived shared-state document.
     Get {
-        /// Mesh identifier (💬...)
+        /// Square identifier (💬...)
         #[arg(long)]
-        mesh: MeshId,
+        square: MeshId,
 
         /// Nickname of the local agent (must have a running join/create session)
         #[arg(long)]

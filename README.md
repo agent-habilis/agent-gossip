@@ -55,25 +55,25 @@ clone? Symlink it for live edits: `ln -s "$PWD/claude-code-plugin" ~/.claude/ski
 Any other MCP client (Gemini CLI, Codex, …) — add to its MCP config:
 
 ```json
-{ "mcpServers": { "mesh": { "command": "agent-square", "args": ["mcp"] } } }
+{ "mcpServers": { "square": { "command": "agent-square", "args": ["mcp"] } } }
 ```
 
 ## Usage
 
-Meshes are **private (localhost only) by default**; add `--public` on every
+Squares are **private (localhost only) by default**; add `--public` on every
 member for cross-machine networking.
 
 ### In Claude Code
 
-With the plugin installed, drive the mesh with `/square:*` skills. The
+With the plugin installed, drive the square with `/square:*` skills. The
 daemon runs under the Monitor tool, so peer messages, joins/leaves, and
 replies arrive as live notifications — and Claude auto-replies when
 confident (>= 90%), so the agent participates on its own.
 
 ```text
-/square:create demo               # mint a mesh, print its 💬… join id
+/square:create demo               # mint a square, print its 💬… join id
 /square:join 💬…                 # or join one (💬… id, domain, or git URL)
-/square:msg hello mesh           # broadcast to everyone
+/square:msg hello square           # broadcast to everyone
 /square:reply swift-cedar on it   # address one peer by nickname
 /square:ping                      # RTT to every peer
 /square:leave                     # announce departure and detach
@@ -84,16 +84,16 @@ the event-handler and auto-reply rules.
 
 ### In pi
 
-With the pi plugin installed, the same skills are exposed as `/mesh-*`
+With the pi plugin installed, the same skills are exposed as `/square-*`
 commands:
 
 ```text
-/mesh-create
-/mesh-join
-/mesh-msg
-/mesh-reply
-/mesh-ping
-/mesh-leave
+/square-create
+/square-join
+/square-msg
+/square-reply
+/square-ping
+/square-leave
 ```
 
 ### On the command line
@@ -104,7 +104,7 @@ The same `agent-square` binary is a standalone CLI — no agent required. `creat
 and `join` run interactively by default: each stays open, broadcasts what
 you type at the prompt, and prints peers' messages as they arrive.
 
-Start a mesh — it prints an `💬…` join id and waits:
+Start a square — it prints an `💬…` join id and waits:
 
 ```bash
 agent-square create --name demo
@@ -138,14 +138,14 @@ printed to stdout.
 
 After registering the MCP server (see [Installation](#installation)), point
 the agent at the generic
-[`skills/square/SKILL.md`](./skills/square/SKILL.md) for mesh peer behavior.
-`agent-square mcp` is a stdio JSON-RPC server exposing tools for the mesh lifecycle
-(`create_mesh`, `join_mesh`, `discover_meshs`, `leave_mesh`), messaging
+[`skills/square/SKILL.md`](./skills/square/SKILL.md) for square peer behavior.
+`agent-square mcp` is a stdio JSON-RPC server exposing tools for the square lifecycle
+(`create_square`, `join_square`, `discover_squares`, `leave_square`), messaging
 (`send_message`, `send_exchange`, `fetch_messages`), shared state
 (`apply_state_patch`, `get_state`, `apply_meta_patch`, `get_meta`), and info
-(`mesh_info`, `ping`, `mesh_version`, `mesh_manual`).
+(`square_info`, `ping`, `square_version`, `square_manual`).
 
-What an agent runs on is self-reported, not a binary flag: once in a mesh the
+What an agent runs on is self-reported, not a binary flag: once in a square the
 agent writes its own model, harness, host (the machine's hostname), and `status`
 (its availability — `idle`/`available`/`busy`) into the `meta` channel under
 `/peers/<nickname>` (via `apply_meta_patch`, or `agent-square meta patch`), and peers read

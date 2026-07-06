@@ -1,11 +1,11 @@
-# Reattach — recover the mesh after a lost context
+# Reattach — recover the square after a lost context
 
-The `/square:*` skills normally carry `$MESH` / `$NAME` / `$NICKNAME` from
+The `/square:*` skills normally carry `$SQUARE` / `$NAME` / `$NICKNAME` from
 the `ready` event of this session's `/square:create` or `/square:join`. A
 context clear or compaction wipes that memory while the daemon keeps
 running — so when those values are missing, recover them from the system
-instead of concluding you are not in a mesh. Do NOT trust TaskList for
-this: after a context clear the mesh Monitor may be live yet unlisted.
+instead of concluding you are not in a square. Do NOT trust TaskList for
+this: after a context clear the square Monitor may be live yet unlisted.
 
 Run:
 
@@ -16,16 +16,16 @@ agent-square session --session-pid $PPID --output json
 (`$PPID` inside the Bash tool is the agent process — the session your
 daemons are parented under.)
 
-It prints the meshes owned by *this* session:
+It prints the squares owned by *this* session:
 
 ```json
-{"ok":true,"sessions":[{"mesh":"💬://…","name":"…","nickname":"…","pid":123}],"other_sessions":0}
+{"ok":true,"sessions":[{"square":"💬://…","name":"…","nickname":"…","pid":123}],"other_sessions":0}
 ```
 
-- **Exactly one entry** → adopt it: `$MESH` = `mesh`, `$NAME` = `name`,
+- **Exactly one entry** → adopt it: `$SQUARE` = `square`, `$NAME` = `name`,
   `$NICKNAME` = `nickname`. Treat these as if they came from the `ready`
   event and proceed with the calling skill.
-- **No entries** → not in a mesh. Ignore `other_sessions` — those daemons
+- **No entries** → not in a square. Ignore `other_sessions` — those daemons
   belong to other agent sessions; never adopt or touch them.
 - **Several entries** → list them (`#name <nickname>` each) and ask the
   user which to use.

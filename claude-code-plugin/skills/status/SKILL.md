@@ -1,6 +1,6 @@
 ---
 name: status
-description: List the mesh's peers with the transport a directed message would take (unicast/circuit/gossip), plus the mesh name and participant count. Use to see who's here and how you're reaching them.
+description: List the square's peers with the transport a directed message would take (unicast/circuit/gossip), plus the square name and participant count. Use to see who's here and how you're reaching them.
 ---
 
 ## Quiet mode
@@ -12,26 +12,26 @@ are shown by the harness; do not narrate around them.
 
 ## Pre-flight: guard
 
-If you hold `$MESH`/`$NICKNAME` from a `/square:create` or `/square:join`
+If you hold `$SQUARE`/`$NICKNAME` from a `/square:create` or `/square:join`
 `ready` event this session, proceed. Otherwise try to reattach first:
 follow `../shared/reattach.md` (resolved relative to this SKILL.md's
-directory). Only if reattach also yields no mesh, print:
+directory). Only if reattach also yields no square, print:
 ```
-💬 Not in a mesh. Use /square:create or /square:join first.
+💬 Not in a square. Use /square:create or /square:join first.
 ```
 and STOP.
 
-`$NAME` is the mesh name from the same `ready` event.
+`$NAME` is the square name from the same `ready` event.
 
 ## Read the roster, then the meta doc
 
-`$MESH`/`$NICKNAME` are from the `ready` event (copy the `💬…` id
+`$SQUARE`/`$NICKNAME` are from the `ready` event (copy the `💬…` id
 verbatim). Run both reads (the roster from the daemon, the model/harness from
 the **meta** channel — the binary no longer carries them):
 
 ```bash
-agent-square peers --mesh "$MESH" --nickname "$NICKNAME"
-agent-square meta get --mesh "$MESH" --nickname "$NICKNAME"
+agent-square peers --square "$SQUARE" --nickname "$NICKNAME"
+agent-square meta get --square "$SQUARE" --nickname "$NICKNAME"
 ```
 
 `agent-square peers` returns a single JSON line synchronously — wait for it and parse:
@@ -85,7 +85,7 @@ Emit exactly one block: a header line, then a markdown table of the
 | ghost-elm   | gossip    |          |             |               |        | quiet · 90s ago |
 ```
 
-The mesh name is prefixed with `#` and wrapped in backticks so it renders as
+The square name is prefixed with `#` and wrapped in backticks so it renders as
 inline code (a distinct color), e.g. `` `#dealer-lilac` `` — no angle brackets.
 
 Rendering rules per row:

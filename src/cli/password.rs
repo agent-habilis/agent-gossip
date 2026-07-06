@@ -68,7 +68,7 @@ pub(crate) fn resolve_password(
 
 /// The target (a `💬…` id or `🎟️…` ticket) is password-protected but the flag was
 /// absent: prompt on a TTY, or bail with a crisp instruction. `what` names
-/// the artifact for the error ("mesh", "ticket"). A failed prompt (no
+/// the artifact for the error ("square", "ticket"). A failed prompt (no
 /// controlling TTY — e.g. a scripted run) still names the requirement.
 pub(crate) fn require_password(no_prompt: bool, what: &str) -> Result<Password> {
     if no_prompt {

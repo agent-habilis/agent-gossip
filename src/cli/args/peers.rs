@@ -10,9 +10,9 @@ use super::output::OutputFormat;
 
 #[derive(Parser, Debug)]
 pub(crate) struct PeersOpts {
-    /// Mesh identifier (💬...)
+    /// Square identifier (💬...)
     #[arg(long)]
-    pub mesh: MeshId,
+    pub square: MeshId,
 
     /// Nickname of the local agent (must have a running join/create session)
     #[arg(long)]
@@ -35,7 +35,7 @@ mod tests {
         let cli = Cli::parse_from([
             "agent-square",
             "peers",
-            "--mesh",
+            "--square",
             "💬AbCdEf1234",
             "--nickname",
             "my-nick",
@@ -53,7 +53,7 @@ mod tests {
         let cli = Cli::parse_from([
             "agent-square",
             "peers",
-            "--mesh",
+            "--square",
             "💬AbCdEf1234",
             "--nickname",
             "my-nick",

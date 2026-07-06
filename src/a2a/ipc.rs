@@ -178,7 +178,7 @@ pub(crate) async fn handle_ipc_command(
     if let Some(cmd_mesh) = cmd.mesh_id()
         && cmd_mesh != mesh
     {
-        let _ = resp_tx.send(json_error("command mesh id does not match this daemon"));
+        let _ = resp_tx.send(json_error("command square id does not match this daemon"));
         return false;
     }
     match cmd {
@@ -392,7 +392,7 @@ fn invite_response(state: &EventLoopState, ttl: u64) -> String {
     let Some(mesh) = &state.mint_mesh else {
         return serde_json::json!({
             "ok": false,
-            "error": "invites can only be minted by the creator of an invite-only mesh",
+            "error": "invites can only be minted by the creator of an invite-only square",
         })
         .to_string();
     };
@@ -404,7 +404,7 @@ fn invite_response(state: &EventLoopState, ttl: u64) -> String {
 
 /// The `doctor` identity probe response: this daemon's own mesh id, human
 /// name, nickname, and mesh size. `participant_count` matches the field name
-/// `peers` / the state file / MCP `mesh_info` already use for mesh size
+/// `peers` / the state file / MCP `square_info` already use for mesh size
 /// (roster peers + 1 for self).
 fn info_response(
     mesh: &MeshId,
@@ -414,7 +414,7 @@ fn info_response(
 ) -> String {
     serde_json::json!({
         "ok": true,
-        "mesh": mesh.as_str(),
+        "square": mesh.as_str(),
         "name": name.as_str(),
         "nickname": author.as_str(),
         "participant_count": state.roster_snapshot().count,
@@ -460,7 +460,7 @@ fn state_get_response(
 /// `ok:true` plus the snapshot's `participants` (recency-sorted, peers only)
 /// and `participant_count` (`participants.len() + 1` — the `+1` is self, so
 /// the count is mesh size, not the array length). Matches the field name the
-/// MCP `mesh_info` result and the state file already use for this quantity.
+/// MCP `square_info` result and the state file already use for this quantity.
 fn peers_response(state: &EventLoopState) -> String {
     let snapshot = state.roster_snapshot();
     serde_json::json!({

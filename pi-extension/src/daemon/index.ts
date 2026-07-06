@@ -3,10 +3,10 @@ import * as readline from "node:readline";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { sendTaskLeg } from "../core";
 import { engagementKind, formatDisplay } from "../format";
-import { runMeshCommand } from "../helpers";
+import { runSquareCommand } from "../helpers";
 import { state } from "../state";
 import { trackStart, trackStatus } from "../todo";
-import type { DelegationMode, MeshEvent } from "../types";
+import type { DelegationMode, SquareEvent } from "../types";
 import {
   BEE,
   inject,
@@ -19,7 +19,7 @@ import {
 const BATCH_DELAY_MS = 100;
 
 // Buffer caps: a long session whose UI context is unavailable (reload
-// window, stalled extension host) must not accumulate every mesh event
+// window, stalled extension host) must not accumulate every square event
 // forever. Oldest events are shed first — the recent ones are the
 // relevant ones for a UI — and the shed count is surfaced as one
 // "(+N dropped)" notice on the next successful flush.
@@ -30,9 +30,9 @@ const BATCH_CAP = 128;
 // knows the standing reply policy: answer anything addressed to it, weigh in on
 // a broadcast only when it can help.
 const REPLY_POLICY =
-  "Mesh messages. Reply with mesh_send to any addressed to you (→ you); for a broadcast, reply only when you are ≥90% confident you can help — otherwise take no action. Ping/pong is automatic; never reply to a ping. Replies are plain text, not threaded — do not add the 💬️, the mesh UI adds it.";
+  "Square messages. Reply with square_send to any addressed to you (→ you); for a broadcast, reply only when you are ≥90% confident you can help — otherwise take no action. Ping/pong is automatic; never reply to a ping. Replies are plain text, not threaded — do not add the 💬️, the square UI adds it.";
 
-function pushPending(event: MeshEvent): void {
+function pushPending(event: SquareEvent): void {
   if (state.pendingMessages.length >= PENDING_CAP) {
     state.pendingMessages.shift();
     state.droppedPending += 1;
@@ -40,16 +40,16 @@ function pushPending(event: MeshEvent): void {
   state.pendingMessages.push(event);
 }
 
-function handleAutoPingReply(event: MeshEvent): void {
+function handleAutoPingReply(event: SquareEvent): void {
   if (event.type !== "msg" || event.body !== "ping" || event.reply || !event.author) return;
   const session = state.session;
   if (!session) return;
 
   try {
-    runMeshCommand([
+    runSquareCommand([
       "msg",
-      "--mesh",
-      session.mesh,
+      "--square",
+      session.square,
       "--nickname",
       session.nickname,
       "--text",
@@ -62,7 +62,7 @@ function handleAutoPingReply(event: MeshEvent): void {
   }
 }
 
-function handlePongTracking(event: MeshEvent): boolean {
+function handlePongTracking(event: SquareEvent): boolean {
   if (event.type !== "msg" || event.body !== "pong" || !state.pingPending || !event.author)
     return false;
 
@@ -94,7 +94,7 @@ export function flushMessageBatch(): void {
 \`\`\`json
 ${document}
 \`\`\`
-React per your current task — act only on your turn (check a turn marker in the document), then apply your change with mesh_apply_merge.`;
+React per your current task — act only on your turn (check a turn marker in the document), then apply your change with square_apply_merge.`;
     }
     return engagement === "directed"
       ? `${BEE} \`<${message.author}>\` → you: ${message.body}`
@@ -106,7 +106,7 @@ React per your current task — act only on your turn (check a turn marker in th
 }
 
 export function processDaemonLine(line: string): void {
-  let event: MeshEvent;
+  let event: SquareEvent;
   try {
     event = JSON.parse(line);
   } catch {
@@ -175,7 +175,7 @@ export function parseOfferMarker(body: string | undefined): { mode: DelegationMo
 // An `offer` addressed to us with no task we already track: we are the
 // receiver. Gate entry through the user (Accept/Decline), then hand the brief
 // to the agent.
-async function handleIncomingOffer(event: MeshEvent, taskId: string): Promise<void> {
+async function handleIncomingOffer(event: SquareEvent, taskId: string): Promise<void> {
   const author = event.author ?? "?";
   const { mode, body } = parseOfferMarker(event.body);
   const summary = oneLineSummary(body);
@@ -228,7 +228,7 @@ async function handleIncomingOffer(event: MeshEvent, taskId: string): Promise<vo
   }
 
   trackStart({ mode, peer: author, role: "receiver", task: summary, status: "accepted" });
-  const tool = `the mesh_advance tool (task_id "${taskId}", to "${author}")`;
+  const tool = `the square_advance tool (task_id "${taskId}", to "${author}")`;
   if (mode === "handover") {
     inject(
       `You accepted a handover from \`<${author}>\`. Brief:\n\n${body}\n\n` +
@@ -246,7 +246,7 @@ async function handleIncomingOffer(event: MeshEvent, taskId: string): Promise<vo
 
 // Route a `task` event for a leg addressed to us, given what we already track
 // for its task_id.
-function handleTaskEvent(event: MeshEvent): void {
+function handleTaskEvent(event: SquareEvent): void {
   const taskId = event.task_id;
   if (!taskId) return;
   // Our own echo is informational only — records are created at send time.
@@ -269,7 +269,7 @@ function handleTaskEvent(event: MeshEvent): void {
     case "context":
       inject(
         `Question from \`<${author}>\` on the ${mode} (task ${taskId}): ${event.body ?? ""}\n` +
-          `Answer with the mesh_advance tool phase "context" (task_id "${taskId}", to "${author}").`,
+          `Answer with the square_advance tool phase "context" (task_id "${taskId}", to "${author}").`,
       );
       break;
     case "accept":
@@ -298,7 +298,7 @@ function handleTaskEvent(event: MeshEvent): void {
         // Task result returns here (Phase F drives the confirm/change loop).
         inject(
           `\`<${author}>\` returned the task result (task ${taskId}):\n\n${event.body ?? ""}\n\n` +
-            `If it meets the criteria, send the mesh_advance tool phase "confirm" (task_id "${taskId}", to "${author}"); otherwise phase "change" with feedback.`,
+            `If it meets the criteria, send the square_advance tool phase "confirm" (task_id "${taskId}", to "${author}"); otherwise phase "change" with feedback.`,
         );
       }
       break;
@@ -307,7 +307,7 @@ function handleTaskEvent(event: MeshEvent): void {
       if (existing.role === "receiver" && mode === "task") {
         inject(
           `\`<${author}>\` asked for a revision on the task (task ${taskId}): ${event.body ?? ""}\n` +
-            `Revise and re-send the mesh_advance tool phase "done" (task_id "${taskId}", to "${author}") with the updated result.`,
+            `Revise and re-send the square_advance tool phase "done" (task_id "${taskId}", to "${author}") with the updated result.`,
         );
       }
       break;
@@ -405,7 +405,7 @@ export function clearBatch(): void {
 export function flushPending(_ctx: ExtensionContext): void {
   if (state.droppedPending > 0) {
     notifyWarning(
-      `${state.droppedPending} earlier mesh event(s) were dropped while the UI was unavailable`,
+      `${state.droppedPending} earlier square event(s) were dropped while the UI was unavailable`,
     );
     state.droppedPending = 0;
   }

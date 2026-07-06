@@ -3,7 +3,7 @@
 //! serving, then exit. A gate (exit code only) for the CLI-polling
 //! fallback: launch the daemon backgrounded, `agent-square ready` on the same
 //! `--state-file`, then `poll`. With `--output json` the gate also prints
-//! `{mesh,name,nickname}`, so the caller need not parse the file itself.
+//! `{square,name,nickname}`, so the caller need not parse the file itself.
 
 use clap::Parser;
 
@@ -22,7 +22,7 @@ pub(crate) struct ReadyOpts {
     pub timeout_secs: u64,
 
     /// Output format. `human` (default) is a silent gate (exit code only);
-    /// `json` prints `{mesh,name,nickname}` on success, so the gate doubles
+    /// `json` prints `{square,name,nickname}` on success, so the gate doubles
     /// as the identity read.
     #[arg(long, default_value = "human")]
     pub output: OutputFormat,

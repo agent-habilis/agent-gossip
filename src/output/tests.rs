@@ -94,7 +94,7 @@ fn json_message_has_all_fields() {
     let parsed = parse(&json);
     assert_eq!(parsed["event"], "message");
     assert_eq!(parsed["type"], "msg");
-    assert_eq!(parsed["mesh"], "💬://test");
+    assert_eq!(parsed["square"], "💬://test");
     assert_eq!(parsed["author"], "alice");
     assert_eq!(parsed["body"], "hello");
     assert!(parsed["to"].is_null());
@@ -143,11 +143,11 @@ fn ready_event_drift_is_present_only_when_stale() {
 
     // Stale: the warning rides along verbatim.
     let stale = parse(&make(Some(
-        "⚠️ mesh skill out of date. Run `agent-square plug` to update",
+        "⚠️ square skill out of date. Run `agent-square plug` to update",
     )));
     assert_eq!(
         stale["drift"],
-        "⚠️ mesh skill out of date. Run `agent-square plug` to update"
+        "⚠️ square skill out of date. Run `agent-square plug` to update"
     );
 }
 
@@ -201,7 +201,7 @@ fn json_presence_joined() {
     assert_eq!(parsed["type"], "presence");
     assert_eq!(parsed["subtype"], "joined");
     assert_eq!(parsed["author"], "alice");
-    assert_eq!(parsed["mesh"], "💬://test");
+    assert_eq!(parsed["square"], "💬://test");
     assert_eq!(parsed["display"], "💬️ `<alice>` has joined");
 }
 

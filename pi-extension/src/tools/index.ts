@@ -4,16 +4,16 @@ import { Type } from "typebox";
 import {
   type CreateOptions,
   applyStateMerge,
-  createMesh,
-  discoverMeshes,
-  forumMesh,
-  getMeshStatus,
+  createSquare,
+  discoverSquares,
+  forumSquare,
   getPeers,
+  getSquareStatus,
   getStateDocument,
-  joinMesh,
-  leaveMesh,
+  joinSquare,
+  leaveSquare,
   pingPeers,
-  sendMeshMessage,
+  sendSquareMessage,
   sendTaskLeg,
   setSelfStatus,
   validateCreateOptions,
@@ -34,19 +34,19 @@ function toolError(text: string) {
 
 export function registerTools(pi: ExtensionAPI): void {
   pi.registerTool({
-    name: "mesh_create",
-    label: "Mesh Create",
-    description: "Create and join a new agent mesh",
-    promptSnippet: "Create a new mesh for AI agent collaboration",
+    name: "square_create",
+    label: "Square Create",
+    description: "Create and join a new agent square",
+    promptSnippet: "Create a new square for AI agent collaboration",
     promptGuidelines: [
-      "Use mesh_create when the user asks to start a new mesh or collaborate with other agents",
+      "Use square_create when the user asks to start a new square or collaborate with other agents",
       "Do not reformat or add extra prose after the tool result. The tool output is already the complete response.",
     ],
     parameters: Type.Object({
       name: Type.Optional(
         Type.String({
           description:
-            "Human-readable mesh name. 1-32 UTF-8 chars (any script/emoji), excluding control characters, whitespace, and any of < > # (/ and \\ are allowed, so a name may be a URL). Bound cryptographically into the mesh identity. Omit for a random word-word name.",
+            "Human-readable square name. 1-32 UTF-8 chars (any script/emoji), excluding control characters, whitespace, and any of < > # (/ and \\ are allowed, so a name may be a URL). Bound cryptographically into the square identity. Omit for a random word-word name.",
         }),
       ),
       network: Type.Optional(
@@ -66,7 +66,7 @@ export function registerTools(pi: ExtensionAPI): void {
       advertise: Type.Optional(
         Type.Boolean({
           description:
-            'List this mesh in a directory so others find it with discover. Requires network "public"; makes the mesh open.',
+            'List this square in a directory so others find it with discover. Requires network "public"; makes the square open.',
         }),
       ),
       directory: Type.Optional(
@@ -91,28 +91,28 @@ export function registerTools(pi: ExtensionAPI): void {
       if (invalid) {
         return toolError(invalid);
       }
-      const result = await createMesh(options);
+      const result = await createSquare(options);
       return {
         content: [{ type: "text", text: "ok" }],
-        details: { mesh: result.mesh, name: result.name, nickname: result.nickname },
+        details: { square: result.square, name: result.name, nickname: result.nickname },
       };
     },
   });
 
   pi.registerTool({
-    name: "mesh_join",
-    label: "Mesh Join",
-    description: "Join an existing agent mesh",
-    promptSnippet: "Join an existing agent mesh by its 💬… ID",
+    name: "square_join",
+    label: "Square Join",
+    description: "Join an existing agent square",
+    promptSnippet: "Join an existing agent square by its 💬… ID",
     promptGuidelines: [
-      "Use mesh_join when the user provides a 💬… mesh ID to join",
-      "For a public mesh derived from a shared string (not an ID), use mesh_forum instead",
-      "Use mesh_join when the user says they want to join an existing mesh by id",
+      "Use square_join when the user provides a 💬… square ID to join",
+      "For a public square derived from a shared string (not an ID), use square_forum instead",
+      "Use square_join when the user says they want to join an existing square by id",
       "Do not reformat or add extra prose after the tool result. The tool output is already the complete response.",
     ],
     parameters: Type.Object({
       target: Type.String({
-        description: "Mesh identifier (💬...)",
+        description: "Square identifier (💬...)",
       }),
       nickname: Type.Optional(
         Type.String({ description: "Optional nickname override (auto-generated if omitted)" }),
@@ -122,32 +122,32 @@ export function registerTools(pi: ExtensionAPI): void {
       if (!requireAgentSquare(ctx)) {
         return toolError("agent-square CLI not found on PATH");
       }
-      const result = await joinMesh({
+      const result = await joinSquare({
         target: params.target,
         nickname: params.nickname,
         model: ctx.model?.name,
       });
       return {
         content: [{ type: "text", text: "ok" }],
-        details: { mesh: result.mesh, name: result.name, nickname: result.nickname },
+        details: { square: result.square, name: result.name, nickname: result.nickname },
       };
     },
   });
 
   pi.registerTool({
-    name: "mesh_forum",
-    label: "Mesh Forum",
-    description: "Join a public mesh derived from a shared string",
-    promptSnippet: "Join a public agent mesh keyed by a shared string (no ID needed)",
+    name: "square_forum",
+    label: "Square Forum",
+    description: "Join a public square derived from a shared string",
+    promptSnippet: "Join a public agent square keyed by a shared string (no ID needed)",
     promptGuidelines: [
-      "Use mesh_forum when the user wants to join by a shared word/phrase/URL rather than a 💬… ID",
-      "Everyone passing the same string lands in the same mesh; it is matched byte-for-byte after trimming whitespace",
+      "Use square_forum when the user wants to join by a shared word/phrase/URL rather than a 💬… ID",
+      "Everyone passing the same string lands in the same square; it is matched byte-for-byte after trimming whitespace",
       "Do not reformat or add extra prose after the tool result. The tool output is already the complete response.",
     ],
     parameters: Type.Object({
       string: Type.String({
         description:
-          "Any string; hashed into a deterministic public mesh (same string ⇒ same mesh)",
+          "Any string; hashed into a deterministic public square (same string ⇒ same square)",
       }),
       nickname: Type.Optional(
         Type.String({ description: "Optional nickname override (auto-generated if omitted)" }),
@@ -157,27 +157,27 @@ export function registerTools(pi: ExtensionAPI): void {
       if (!requireAgentSquare(ctx)) {
         return toolError("agent-square CLI not found on PATH");
       }
-      const result = await forumMesh({
+      const result = await forumSquare({
         string: params.string,
         nickname: params.nickname,
         model: ctx.model?.name,
       });
       return {
         content: [{ type: "text", text: "ok" }],
-        details: { mesh: result.mesh, name: result.name, nickname: result.nickname },
+        details: { square: result.square, name: result.name, nickname: result.nickname },
       };
     },
   });
 
   pi.registerTool({
-    name: "mesh_discover",
-    label: "Mesh Discover",
+    name: "square_discover",
+    label: "Square Discover",
     description:
-      "Browse a directory for advertised meshes; returns the list (join one with mesh_join)",
-    promptSnippet: "Find advertised meshes in a directory to join",
+      "Browse a directory for advertised squares; returns the list (join one with square_join)",
+    promptSnippet: "Find advertised squares in a directory to join",
     promptGuidelines: [
-      "Use mesh_discover when the user wants to find a mesh to join but has no mesh id",
-      "After discovering, join a listed mesh with mesh_join using its mesh id",
+      "Use square_discover when the user wants to find a square to join but has no square id",
+      "After discovering, join a listed square with square_join using its square id",
     ],
     parameters: Type.Object({
       directory: Type.Optional(
@@ -189,35 +189,37 @@ export function registerTools(pi: ExtensionAPI): void {
         return toolError("agent-square CLI not found on PATH");
       }
       const directory = params.directory?.trim() || "global";
-      const meshes = await discoverMeshes({
+      const squares = await discoverSquares({
         directory: directory === "global" ? undefined : directory,
       });
       const text =
-        meshes.length === 0
-          ? `no meshes found in #${directory}`
-          : meshes.map((mesh) => `#${mesh.name} · ${mesh.peers} peers · ${mesh.mesh}`).join("\n");
-      return { content: [{ type: "text", text }], details: { directory, meshes } };
+        squares.length === 0
+          ? `no squares found in #${directory}`
+          : squares
+              .map((square) => `#${square.name} · ${square.peers} peers · ${square.square}`)
+              .join("\n");
+      return { content: [{ type: "text", text }], details: { directory, squares } };
     },
   });
 
   pi.registerTool({
-    name: "mesh_send",
-    label: "Mesh Send",
-    description: "Send a message to the agent mesh",
-    promptSnippet: "Broadcast a message to the agent mesh",
+    name: "square_send",
+    label: "Square Send",
+    description: "Send a message to the agent square",
+    promptSnippet: "Broadcast a message to the agent square",
     promptGuidelines: [
-      "Use mesh_send when the user asks to send a message to other agents in the mesh",
-      "Use mesh_send to reply to a peer (set reply to their nickname) or to ask the mesh for help",
+      "Use square_send when the user asks to send a message to other agents in the square",
+      "Use square_send to reply to a peer (set reply to their nickname) or to ask the square for help",
       "Set notice:true for anything informational that must not trigger responses (status reports, CI results, log lines) — peers NEVER auto-reply to a notice",
       "NEVER auto-reply to an incoming notice event yourself — it is informational by contract",
-      "Send plain text — never prefix or append the 💬 emoji; the mesh UI adds it for you",
-      "Do not call mesh_status before sending. Use your memory of whether you joined or created a mesh.",
-      "If not currently in a mesh, inform the user instead of calling mesh_status first.",
+      "Send plain text — never prefix or append the 💬 emoji; the square UI adds it for you",
+      "Do not call square_status before sending. Use your memory of whether you joined or created a square.",
+      "If not currently in a square, inform the user instead of calling square_status first.",
     ],
     parameters: Type.Object({
       text: Type.String({
         description:
-          "Message text to send to the mesh (UTF-8). Plain text — do not include the 💬 marker; the UI adds it.",
+          "Message text to send to the square (UTF-8). Plain text — do not include the 💬 marker; the UI adds it.",
       }),
       reply: Type.Optional(
         Type.String({ description: "Target peer's nickname to address this message to" }),
@@ -233,11 +235,11 @@ export function registerTools(pi: ExtensionAPI): void {
       if (!requireAgentSquare(ctx)) {
         return toolError("agent-square CLI not found on PATH");
       }
-      if (!state.session?.mesh) {
-        return toolError("Not in a mesh. Use mesh_create or mesh_join first.");
+      if (!state.session?.square) {
+        return toolError("Not in a square. Use square_create or square_join first.");
       }
       try {
-        sendMeshMessage({ text: params.text, reply: params.reply, notice: params.notice });
+        sendSquareMessage({ text: params.text, reply: params.reply, notice: params.notice });
         // Show the sent line as the result (plain text — tool results don't
         // render markdown, so no backticks; the daemon filters self anyway).
         const nick = state.session.nickname;
@@ -253,16 +255,16 @@ export function registerTools(pi: ExtensionAPI): void {
   });
 
   pi.registerTool({
-    name: "mesh_advance",
-    label: "Mesh Advance",
+    name: "square_advance",
+    label: "Square Advance",
     description: "Send one leg of an in-flight handover/task delegation to a peer",
     promptSnippet: "Advance a handover or task leg by leg",
     promptGuidelines: [
-      "Use mesh_advance to advance a handover or task you are a party to, reusing the task_id from the offer that started it",
+      "Use square_advance to advance a handover or task you are a party to, reusing the task_id from the offer that started it",
       'Receiving a handover: after accepting, ask anything unclear with phase "context", then send phase "done" when you have what you need; once the initiator confirms, do the work yourself',
       'Receiving a task: after accepting, do the work, then send phase "done" with your result in text',
       'Initiator: answer the receiver\'s "context" questions with phase "context"',
-      'When you accept work, reconsider your availability: if it means you will not take more, call mesh_set_status "busy"; when it closes and you have capacity again, set it back to "idle"/"available" (your judgment — leave it unchanged if it did not change)',
+      'When you accept work, reconsider your availability: if it means you will not take more, call square_set_status "busy"; when it closes and you have capacity again, set it back to "idle"/"available" (your judgment — leave it unchanged if it did not change)',
     ],
     parameters: Type.Object({
       task_id: Type.String({
@@ -283,8 +285,8 @@ export function registerTools(pi: ExtensionAPI): void {
       if (!requireAgentSquare(ctx)) {
         return toolError("agent-square CLI not found on PATH");
       }
-      if (!state.session?.mesh) {
-        return toolError("Not in a mesh. Use mesh_create or mesh_join first.");
+      if (!state.session?.square) {
+        return toolError("Not in a square. Use square_create or square_join first.");
       }
       try {
         sendTaskLeg({
@@ -301,14 +303,14 @@ export function registerTools(pi: ExtensionAPI): void {
   });
 
   pi.registerTool({
-    name: "mesh_handover",
-    label: "Mesh Handover",
+    name: "square_handover",
+    label: "Square Handover",
     description: "Hand a task or plan to a peer (a handover: the receiver runs it on its own)",
     promptSnippet: "Delegate a task to a peer via a handover",
     promptGuidelines: [
-      "Use mesh_handover when the user wants to hand a task or plan to another agent to run",
+      "Use square_handover when the user wants to hand a task or plan to another agent to run",
       "Compose a clear brief in text: what to do, the goal, current state, and constraints",
-      "Pick `to` from the current roster (mesh_status). Skip any peer whose status is `busy` (not accepting work); `idle`/`available`/unreported are eligible",
+      "Pick `to` from the current roster (square_status). Skip any peer whose status is `busy` (not accepting work); `idle`/`available`/unreported are eligible",
       "The handoff closes when the receiver signals done; the extension auto-confirms",
     ],
     parameters: Type.Object({
@@ -323,8 +325,8 @@ export function registerTools(pi: ExtensionAPI): void {
       if (!requireAgentSquare(ctx)) {
         return toolError("agent-square CLI not found on PATH");
       }
-      if (!state.session?.mesh) {
-        return toolError("Not in a mesh. Use mesh_create or mesh_join first.");
+      if (!state.session?.square) {
+        return toolError("Not in a square. Use square_create or square_join first.");
       }
       const taskId = randomUUID();
       const task = params.text
@@ -360,15 +362,15 @@ export function registerTools(pi: ExtensionAPI): void {
   });
 
   pi.registerTool({
-    name: "mesh_task",
-    label: "Mesh Task",
+    name: "square_task",
+    label: "Square Task",
     description: "Send a task to a peer to run and report back (you confirm or revise the result)",
     promptSnippet: "Delegate a task to a peer and get the result back",
     promptGuidelines: [
-      "Use mesh_task when the user wants a peer to run work and return the result",
+      "Use square_task when the user wants a peer to run work and return the result",
       "Include an explicit completion criterion in text so the worker knows when it is done",
-      "Pick `to` from the current roster (mesh_status). Skip any peer whose status is `busy` (not accepting work); `idle`/`available`/unreported are eligible",
-      "The worker returns its result; you confirm it (mesh_advance phase confirm) or ask for a revision (phase change)",
+      "Pick `to` from the current roster (square_status). Skip any peer whose status is `busy` (not accepting work); `idle`/`available`/unreported are eligible",
+      "The worker returns its result; you confirm it (square_advance phase confirm) or ask for a revision (phase change)",
     ],
     parameters: Type.Object({
       to: Type.String({
@@ -383,8 +385,8 @@ export function registerTools(pi: ExtensionAPI): void {
       if (!requireAgentSquare(ctx)) {
         return toolError("agent-square CLI not found on PATH");
       }
-      if (!state.session?.mesh) {
-        return toolError("Not in a mesh. Use mesh_create or mesh_join first.");
+      if (!state.session?.square) {
+        return toolError("Not in a square. Use square_create or square_join first.");
       }
       const taskId = randomUUID();
       const task = params.text
@@ -420,23 +422,23 @@ export function registerTools(pi: ExtensionAPI): void {
   });
 
   pi.registerTool({
-    name: "mesh_status",
-    label: "Mesh Status",
-    description: "Get current mesh connection status and recent activity",
-    promptSnippet: "Check mesh connection status, nickname, and recent activity",
+    name: "square_status",
+    label: "Square Status",
+    description: "Get current square connection status and recent activity",
+    promptSnippet: "Check square connection status, nickname, and recent activity",
     promptGuidelines: [
-      "Use mesh_status when the user asks about mesh status or peers",
-      "Do not use mesh_status to check connectivity before other mesh operations. Rely on memory instead.",
+      "Use square_status when the user asks about square status or peers",
+      "Do not use square_status to check connectivity before other square operations. Rely on memory instead.",
     ],
     parameters: Type.Object({}),
     async execute() {
-      const status = getMeshStatus();
+      const status = getSquareStatus();
       const lines = [
-        `mesh: ${status.mesh ?? "none"}`,
+        `square: ${status.square ?? "none"}`,
         `name: ${status.name ?? "none"}`,
         `nickname: <${status.nickname ?? "none"}>`,
       ];
-      if (!status.mesh || !status.name) {
+      if (!status.square || !status.name) {
         return { content: [{ type: "text", text: lines.join("\n") }], details: status };
       }
       const { count, participants } = getPeers();
@@ -446,10 +448,10 @@ export function registerTools(pi: ExtensionAPI): void {
   });
 
   pi.registerTool({
-    name: "mesh_set_status",
-    label: "Mesh Set Status",
-    description: "Advertise your availability to the mesh (idle / available / busy)",
-    promptSnippet: "Set whether you are accepting mesh work",
+    name: "square_set_status",
+    label: "Square Set Status",
+    description: "Advertise your availability to the square (idle / available / busy)",
+    promptSnippet: "Set whether you are accepting square work",
     promptGuidelines: [
       'Set "busy" when you do not want to receive work — senders skip busy peers; set "idle" (open, not working) or "available" (working but open to more) when you are accepting again',
       "Reconsider at task start and finish: this reflects your willingness to take work, not raw activity. Leave it unchanged when your availability did not change",
@@ -464,8 +466,8 @@ export function registerTools(pi: ExtensionAPI): void {
       if (!requireAgentSquare(ctx)) {
         return toolError("agent-square CLI not found on PATH");
       }
-      if (!state.session?.mesh) {
-        return toolError("Not in a mesh. Use mesh_create or mesh_join first.");
+      if (!state.session?.square) {
+        return toolError("Not in a square. Use square_create or square_join first.");
       }
       try {
         setSelfStatus(params.status);
@@ -482,23 +484,23 @@ export function registerTools(pi: ExtensionAPI): void {
   });
 
   pi.registerTool({
-    name: "mesh_get_state",
-    label: "Mesh Get State",
+    name: "square_get_state",
+    label: "Square Get State",
     description:
-      "Read the mesh's current shared-state document (the JSON every member converges on)",
-    promptSnippet: "Read the mesh's shared-state document",
+      "Read the square's current shared-state document (the JSON every member converges on)",
+    promptSnippet: "Read the square's shared-state document",
     promptGuidelines: [
-      "Use mesh_get_state to read the shared state before deciding your next mesh_apply_merge",
+      "Use square_get_state to read the shared state before deciding your next square_apply_merge",
       "Read the current state from the returned document — never reconstruct it from memory or earlier turns",
-      "On joining a mesh, let the state settle a moment (anti-entropy backfill), then read it once",
+      "On joining a square, let the state settle a moment (anti-entropy backfill), then read it once",
     ],
     parameters: Type.Object({}),
     async execute(_toolCallId, _params, _signal, _onUpdate, ctx: ExtensionContext) {
       if (!requireAgentSquare(ctx)) {
         return toolError("agent-square CLI not found on PATH");
       }
-      if (!state.session?.mesh) {
-        return toolError("Not in a mesh. Use mesh_create or mesh_join first.");
+      if (!state.session?.square) {
+        return toolError("Not in a square. Use square_create or square_join first.");
       }
       try {
         const document = getStateDocument();
@@ -513,12 +515,12 @@ export function registerTools(pi: ExtensionAPI): void {
   });
 
   pi.registerTool({
-    name: "mesh_apply_merge",
-    label: "Mesh Apply Merge",
-    description: "Apply an RFC 7386 JSON Merge Patch to the mesh's shared state",
-    promptSnippet: "Change the mesh's shared state with a JSON Merge Patch",
+    name: "square_apply_merge",
+    label: "Square Apply Merge",
+    description: "Apply an RFC 7386 JSON Merge Patch to the square's shared state",
+    promptSnippet: "Change the square's shared state with a JSON Merge Patch",
     promptGuidelines: [
-      "Use mesh_apply_merge to change the shared state — pass a JSON object merged into the document",
+      "Use square_apply_merge to change the shared state — pass a JSON object merged into the document",
       "Each key is set; a null value deletes that key; nested objects merge recursively; the document root is an object and is never replaced",
       'Arrays are replaced wholesale (RFC 7386 has no element append). Model a mutable collection as an object keyed by index ({"0":…,"1":…}) so each element merges/deletes independently',
       "React to a peer's change (the state event), never your own. Drive each turn read → guard → write: read the document, check a turn marker before merging, act only on your turn, then send one merge",
@@ -537,8 +539,8 @@ export function registerTools(pi: ExtensionAPI): void {
       if (!requireAgentSquare(ctx)) {
         return toolError("agent-square CLI not found on PATH");
       }
-      if (!state.session?.mesh) {
-        return toolError("Not in a mesh. Use mesh_create or mesh_join first.");
+      if (!state.session?.square) {
+        return toolError("Not in a square. Use square_create or square_join first.");
       }
       try {
         const result = applyStateMerge({ merge: JSON.stringify(params.merge) });
@@ -558,34 +560,34 @@ export function registerTools(pi: ExtensionAPI): void {
   });
 
   pi.registerTool({
-    name: "mesh_leave",
-    label: "Mesh Leave",
-    description: "Leave the current agent mesh",
-    promptSnippet: "Leave the current agent mesh",
+    name: "square_leave",
+    label: "Square Leave",
+    description: "Leave the current agent square",
+    promptSnippet: "Leave the current agent square",
     promptGuidelines: [
-      "Use mesh_leave when the user asks to leave the mesh or stop collaborating",
-      "Use mesh_leave when done with mesh operations to clean up",
+      "Use square_leave when the user asks to leave the square or stop collaborating",
+      "Use square_leave when done with square operations to clean up",
     ],
     parameters: Type.Object({}),
     async execute() {
-      leaveMesh();
+      leaveSquare();
       return { content: [{ type: "text", text: "ok" }], details: null };
     },
   });
 
   pi.registerTool({
-    name: "mesh_ping",
-    label: "Mesh Ping",
-    description: "Ping all peers in the mesh and measure round-trip time",
-    promptSnippet: "Ping all peers in the mesh and measure latency",
-    promptGuidelines: ["Use mesh_ping when the user asks to check peer health or connectivity"],
+    name: "square_ping",
+    label: "Square Ping",
+    description: "Ping all peers in the square and measure round-trip time",
+    promptSnippet: "Ping all peers in the square and measure latency",
+    promptGuidelines: ["Use square_ping when the user asks to check peer health or connectivity"],
     parameters: Type.Object({}),
     async execute(_toolCallId, _params, _signal, _onUpdate, ctx: ExtensionContext) {
       if (!requireAgentSquare(ctx)) {
         return toolError("agent-square CLI not found on PATH");
       }
-      if (!state.session?.mesh) {
-        return toolError("Not in a mesh");
+      if (!state.session?.square) {
+        return toolError("Not in a square");
       }
       try {
         const results = await pingPeers();

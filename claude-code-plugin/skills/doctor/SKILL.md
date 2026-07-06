@@ -1,6 +1,6 @@
 ---
 name: doctor
-description: Diagnose the mesh environment and network — binary/OS, which agents have the integration installed (and where), local network capability (UDP, NAT/hole-punch, public address, relay latency), and the meshes running on this machine. Use to check setup after upgrading `agent-square`, or to debug connectivity. Pass a `💬…` id to analyze how to reach a specific mesh.
+description: Diagnose the square environment and network — binary/OS, which agents have the integration installed (and where), local network capability (UDP, NAT/hole-punch, public address, relay latency), and the squares running on this machine. Use to check setup after upgrading `agent-square`, or to debug connectivity. Pass a `💬…` id to analyze how to reach a specific square.
 ---
 
 ## Quiet mode
@@ -23,10 +23,10 @@ A machine-health report in `flutter doctor` style — each line a check with a
   fix (`agent-square plug --agent <agent>`).
 - **Network**: local endpoint bind, UDP reachability, NAT/hole-punch behavior,
   discovered public address, and relay latency.
-- **Active meshes**: each mesh daemon running on this machine, with its id,
+- **Active squares**: each square daemon running on this machine, with its id,
   name, your nickname, and size.
 
-No mesh or running daemon required for the machine report.
+No square or running daemon required for the machine report.
 
 ## Run
 
@@ -36,10 +36,10 @@ Machine health:
 agent-square doctor
 ```
 
-Analyze the connection methods to a specific mesh (decode + live probe):
+Analyze the connection methods to a specific square (decode + live probe):
 
 ```bash
-agent-square doctor --mesh "$MESH"
+agent-square doctor --square "$SQUARE"
 ```
 
 ## Output

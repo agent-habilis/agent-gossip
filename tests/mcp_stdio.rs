@@ -130,28 +130,28 @@ impl McpClient {
         self.recv_until_response(id)
     }
 
-    /// Shorthand for the `create_mesh` + extract-id ritual that
+    /// Shorthand for the `create_square` + extract-id ritual that
     /// opens almost every integration test. Returns
     /// `(mesh_id, nickname)`.
     fn create_and_get_mesh(&mut self, id: u64) -> (String, String) {
         let created = tool_result_json(&self.tool_call(
             id,
-            "create_mesh",
+            "create_square",
             serde_json::json!({ "name": "mcptest" }),
         ))
-        .expect("create_mesh must succeed");
-        let mesh = created["mesh"]
+        .expect("create_square must succeed");
+        let mesh = created["square"]
             .as_str()
-            .expect("create_mesh result must include mesh")
+            .expect("create_square result must include mesh")
             .to_string();
         assert_eq!(
             created["name"].as_str(),
             Some("mcptest"),
-            "create_mesh result must echo back the name"
+            "create_square result must echo back the name"
         );
         let nickname = created["nickname"]
             .as_str()
-            .expect("create_mesh result must include nickname")
+            .expect("create_square result must include nickname")
             .to_string();
         (mesh, nickname)
     }
@@ -220,8 +220,8 @@ fn tool_error(response: &serde_json::Value) -> Option<String> {
 /// Returns `(creator, joiner, mesh_id, creator_nickname)`.
 ///
 /// Id reservations (so tests can't collide with our probes):
-/// - `base_id + 0` — creator's `create_mesh`
-/// - `base_id + 1` — joiner's `join_mesh`
+/// - `base_id + 0` — creator's `create_square`
+/// - `base_id + 1` — joiner's `join_square`
 /// - `base_id + 90_000 .. base_id + 90_050` — linkage-probe `fetch_messages`
 ///   on the creator. Tests must keep their own ids below that offset.
 ///
@@ -239,10 +239,10 @@ fn create_pair_with(base_id: u64, creator_args: &[&str]) -> (McpClient, McpClien
     let (mesh, creator_nick) = creator.create_and_get_mesh(base_id);
     tool_result_json(&joiner.tool_call(
         base_id + 1,
-        "join_mesh",
-        serde_json::json!({ "mesh": mesh.clone() }),
+        "join_square",
+        serde_json::json!({ "square": mesh.clone() }),
     ))
-    .expect("join_mesh must succeed");
+    .expect("join_square must succeed");
 
     // Poll the joiner's buffer until it contains a message authored
     // by the creator — the only unambiguous signal that iroh's
@@ -287,8 +287,8 @@ fn create_pair_with(base_id: u64, creator_args: &[&str]) -> (McpClient, McpClien
 
 // ─── password ────────────────────────────────────────────────────
 
-/// A passworded mesh over MCP: `create_mesh` takes `password`;
-/// `join_mesh` without it (or with the wrong one) is an `invalid_params`
+/// A passworded mesh over MCP: `create_square` takes `password`;
+/// `join_square` without it (or with the wrong one) is an `invalid_params`
 /// error naming the requirement — the server never prompts — and the right
 /// password joins.
 #[test]
@@ -296,17 +296,17 @@ fn join_mesh_requires_the_password() {
     let mut creator = McpClient::spawn();
     let created = tool_result_json(&creator.tool_call(
         7000,
-        "create_mesh",
+        "create_square",
         serde_json::json!({ "name": "mcp-pw", "password": "hunter2" }),
     ))
-    .expect("passworded create_mesh must succeed");
-    let mesh = created["mesh"].as_str().expect("mesh id").to_string();
+    .expect("passworded create_square must succeed");
+    let mesh = created["square"].as_str().expect("mesh id").to_string();
 
     let mut joiner = McpClient::spawn();
     let missing = tool_error(&joiner.tool_call(
         7001,
-        "join_mesh",
-        serde_json::json!({ "mesh": mesh.clone() }),
+        "join_square",
+        serde_json::json!({ "square": mesh.clone() }),
     ))
     .expect("join without password must error");
     assert!(
@@ -316,8 +316,8 @@ fn join_mesh_requires_the_password() {
 
     let wrong = tool_error(&joiner.tool_call(
         7002,
-        "join_mesh",
-        serde_json::json!({ "mesh": mesh.clone(), "password": "hunter3" }),
+        "join_square",
+        serde_json::json!({ "square": mesh.clone(), "password": "hunter3" }),
     ))
     .expect("join with a wrong password must error");
     assert!(
@@ -327,8 +327,8 @@ fn join_mesh_requires_the_password() {
 
     tool_result_json(&joiner.tool_call(
         7003,
-        "join_mesh",
-        serde_json::json!({ "mesh": mesh, "password": "hunter2" }),
+        "join_square",
+        serde_json::json!({ "square": mesh, "password": "hunter2" }),
     ))
     .expect("join with the right password must succeed");
 }
@@ -352,9 +352,9 @@ fn mcp_stdout_is_pure_jsonrpc_through_full_lifecycle() {
         r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"t","version":"0.1"}}}"#,
         r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
         r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#,
-        r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"create_mesh","arguments":{"name":"mcptest"}}}"#,
+        r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"create_square","arguments":{"name":"mcptest"}}}"#,
         r#"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"send_message","arguments":{"text":"sanity"}}}"#,
-        r#"{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"leave_mesh","arguments":{}}}"#,
+        r#"{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"leave_square","arguments":{}}}"#,
     ] {
         writeln!(stdin, "{line}").unwrap();
     }
@@ -393,7 +393,7 @@ fn tools_require_session_and_error_when_absent() {
     for (id, tool) in [
         (10, "send_message"),
         (11, "fetch_messages"),
-        (12, "mesh_info"),
+        (12, "square_info"),
     ] {
         let args = if tool == "send_message" {
             serde_json::json!({ "text": "hi" })
@@ -404,8 +404,8 @@ fn tools_require_session_and_error_when_absent() {
         let err = tool_error(&resp)
             .unwrap_or_else(|| panic!("{tool} without session should error, got: {resp}"));
         assert!(
-            err.contains("not in a mesh"),
-            "{tool}: expected 'not in a mesh' error, got: {err}"
+            err.contains("not in a square"),
+            "{tool}: expected 'not in a square' error, got: {err}"
         );
     }
 }
@@ -414,30 +414,30 @@ fn tools_require_session_and_error_when_absent() {
 fn mesh_version_works_without_a_session() {
     let mut client = McpClient::spawn();
     // Unlike the messaging tools, version is a local check — no mesh needed.
-    let resp = client.tool_call(30, "mesh_version", serde_json::json!({}));
-    let json = tool_result_json(&resp).expect("mesh_version should return a JSON result");
+    let resp = client.tool_call(30, "square_version", serde_json::json!({}));
+    let json = tool_result_json(&resp).expect("square_version should return a JSON result");
     assert!(
         json["version"]
             .as_str()
             .is_some_and(|text| !text.is_empty()),
-        "mesh_version must report a non-empty build string, got: {json}"
+        "square_version must report a non-empty build string, got: {json}"
     );
     // MCP carries no skill of its own, so the version result is version-only —
     // the former skill-drift fields are gone.
     assert!(
         json.get("skill_up_to_date").is_none() && json.get("skill_state").is_none(),
-        "mesh_version must not report skill fields over MCP, got: {json}"
+        "square_version must not report skill fields over MCP, got: {json}"
     );
 }
 
 #[test]
 fn mesh_manual_returns_the_manual_without_a_session() {
     let mut client = McpClient::spawn();
-    let resp = client.tool_call(31, "mesh_manual", serde_json::json!({}));
-    let text = tool_result_text(&resp).expect("mesh_manual should return text content");
+    let resp = client.tool_call(31, "square_manual", serde_json::json!({}));
+    let text = tool_result_text(&resp).expect("square_manual should return text content");
     assert!(
         text.contains("COMMANDS") && text.contains("JSON EVENTS"),
-        "mesh_manual must return the full manual, got {} chars",
+        "square_manual must return the full manual, got {} chars",
         text.len()
     );
 }
@@ -455,24 +455,24 @@ fn initialize_carries_behavioral_instructions() {
         .as_str()
         .expect("initialize result must carry instructions");
     assert!(
-        instructions.contains("fetch_messages") && instructions.contains("mesh_manual"),
-        "instructions must teach the poll loop and point to mesh_manual"
+        instructions.contains("fetch_messages") && instructions.contains("square_manual"),
+        "instructions must teach the poll loop and point to square_manual"
     );
 }
 
 #[test]
 fn create_mesh_twice_errors_cleanly() {
     let mut client = McpClient::spawn();
-    let first = client.tool_call(20, "create_mesh", serde_json::json!({ "name": "twice1" }));
-    let first_json = tool_result_json(&first).expect("first create_mesh should succeed");
-    assert!(first_json["mesh"].as_str().unwrap().starts_with("💬"));
+    let first = client.tool_call(20, "create_square", serde_json::json!({ "name": "twice1" }));
+    let first_json = tool_result_json(&first).expect("first create_square should succeed");
+    assert!(first_json["square"].as_str().unwrap().starts_with("💬"));
     assert_eq!(first_json["name"].as_str(), Some("twice1"));
 
-    let second = client.tool_call(21, "create_mesh", serde_json::json!({ "name": "twice2" }));
-    let err = tool_error(&second).expect("second create_mesh should error, but got success");
+    let second = client.tool_call(21, "create_square", serde_json::json!({ "name": "twice2" }));
+    let err = tool_error(&second).expect("second create_square should error, but got success");
     assert!(
-        err.contains("already in mesh"),
-        "expected 'already in mesh' error, got: {err}"
+        err.contains("already in square"),
+        "expected 'already in square' error, got: {err}"
     );
 }
 
@@ -485,25 +485,25 @@ fn join_mesh_idempotent_for_same_mesh() {
     // nickname → no error, same handle back.
     let rejoin = client.tool_call(
         31,
-        "join_mesh",
-        serde_json::json!({ "mesh": mesh.clone(), "nickname": nickname.clone() }),
+        "join_square",
+        serde_json::json!({ "square": mesh.clone(), "nickname": nickname.clone() }),
     );
     let rejoin_json = tool_result_json(&rejoin).unwrap_or_else(|| {
-        panic!("idempotent join_mesh should succeed, but got error response: {rejoin}")
+        panic!("idempotent join_square should succeed, but got error response: {rejoin}")
     });
-    assert_eq!(rejoin_json["mesh"].as_str(), Some(mesh.as_str()));
+    assert_eq!(rejoin_json["square"].as_str(), Some(mesh.as_str()));
     assert_eq!(rejoin_json["nickname"].as_str(), Some(nickname.as_str()));
 
     // Different nickname on the same mesh → error.
     let conflict = client.tool_call(
         32,
-        "join_mesh",
-        serde_json::json!({ "mesh": mesh, "nickname": "someone-else" }),
+        "join_square",
+        serde_json::json!({ "square": mesh, "nickname": "someone-else" }),
     );
     let err = tool_error(&conflict).expect("different-nick join should error");
     assert!(
-        err.contains("already in mesh"),
-        "expected 'already in mesh' error, got: {err}"
+        err.contains("already in square"),
+        "expected 'already in square' error, got: {err}"
     );
 }
 
@@ -512,8 +512,8 @@ fn join_with_invalid_input_errors_gracefully() {
     let mut client = McpClient::spawn();
     let resp = client.tool_call(
         40,
-        "join_mesh",
-        serde_json::json!({ "mesh": "not-a-mesh-id" }),
+        "join_square",
+        serde_json::json!({ "square": "not-a-mesh-id" }),
     );
     let err = tool_error(&resp).expect("invalid join should error");
     // Exact wording can vary; just confirm we got an error and no
@@ -521,15 +521,15 @@ fn join_with_invalid_input_errors_gracefully() {
     assert!(!err.is_empty(), "error message must not be empty");
 
     // Prove the server is still alive: call a benign tool.
-    let info = client.tool_call(41, "mesh_info", serde_json::json!({}));
-    let err2 = tool_error(&info).expect("mesh_info with no session should error");
-    assert!(err2.contains("not in a mesh"));
+    let info = client.tool_call(41, "square_info", serde_json::json!({}));
+    let err2 = tool_error(&info).expect("square_info with no session should error");
+    assert!(err2.contains("not in a square"));
 }
 
 #[test]
 fn leave_without_session_is_noop() {
     let mut client = McpClient::spawn();
-    let resp = client.tool_call(50, "leave_mesh", serde_json::json!({}));
+    let resp = client.tool_call(50, "leave_square", serde_json::json!({}));
     // Docs say: "no-op if not in one." Must succeed.
     let json = tool_result_json(&resp).expect("leave with no session should succeed");
     assert_eq!(json["ok"], serde_json::json!(true));
@@ -540,22 +540,22 @@ fn leave_then_create_cycle_works_within_one_server() {
     let mut client = McpClient::spawn();
     let first = tool_result_json(&client.tool_call(
         60,
-        "create_mesh",
+        "create_square",
         serde_json::json!({ "name": "cycle1" }),
     ))
     .expect("create");
-    let first_mesh = first["mesh"].as_str().unwrap().to_string();
+    let first_mesh = first["square"].as_str().unwrap().to_string();
 
-    let _ = client.tool_call(61, "leave_mesh", serde_json::json!({}));
+    let _ = client.tool_call(61, "leave_square", serde_json::json!({}));
 
     let second = tool_result_json(&client.tool_call(
         62,
-        "create_mesh",
+        "create_square",
         serde_json::json!({ "name": "cycle2" }),
     ))
     .expect("create after leave");
     assert_ne!(
-        second["mesh"].as_str().unwrap(),
+        second["square"].as_str().unwrap(),
         first_mesh,
         "second create should mint a fresh mesh id"
     );
@@ -566,7 +566,7 @@ fn send_message_without_session_errors() {
     let mut client = McpClient::spawn();
     let resp = client.tool_call(70, "send_message", serde_json::json!({ "text": "orphan" }));
     let err = tool_error(&resp).expect("send_message without session should error");
-    assert!(err.contains("not in a mesh"));
+    assert!(err.contains("not in a square"));
 }
 
 #[test]
@@ -577,12 +577,12 @@ fn create_mesh_with_granular_relay_succeeds() {
     let mut client = McpClient::spawn();
     let resp = client.tool_call(
         80,
-        "create_mesh",
+        "create_square",
         serde_json::json!({ "name": "relayp", "network": "private", "relay": "https://relay.example/" }),
     );
     let result = tool_result_json(&resp).expect("granular relay create should succeed");
     assert!(
-        result["mesh"]
+        result["square"]
             .as_str()
             .unwrap_or_default()
             .starts_with("💬"),
@@ -595,10 +595,10 @@ fn create_mesh_without_name_mints_random() {
     // `name` is optional, mirroring the CLI and the plugin/pi front-ends:
     // omit it and the server mints a random `word-word` name (and nickname).
     let mut client = McpClient::spawn();
-    let resp = client.tool_call(100, "create_mesh", serde_json::json!({}));
+    let resp = client.tool_call(100, "create_square", serde_json::json!({}));
     let result = tool_result_json(&resp).expect("nameless create should succeed");
     assert!(
-        result["mesh"]
+        result["square"]
             .as_str()
             .unwrap_or_default()
             .starts_with("💬"),
@@ -619,7 +619,7 @@ fn create_mesh_with_unknown_network_errors() {
     let mut client = McpClient::spawn();
     let resp = client.tool_call(
         90,
-        "create_mesh",
+        "create_square",
         serde_json::json!({ "name": "bogus1", "network": "bogus" }),
     );
     let err = tool_error(&resp).expect("bogus network should error");
@@ -959,13 +959,13 @@ fn task_creation_to_unknown_participant_errors() {
     );
 }
 
-/// `mesh_info` now reports the participant count and the live roster
+/// `square_info` now reports the participant count and the live roster
 /// (each peer's nickname, recency, quiet flag, reach tag).
 #[test]
 fn mesh_info_reports_participant_roster() {
     let (mut creator, mut joiner, _mesh, _creator_nick) = create_pair(740);
-    let joiner_nick = tool_result_json(&joiner.tool_call(741, "mesh_info", serde_json::json!({})))
-        .expect("joiner mesh_info")["nickname"]
+    let joiner_nick = tool_result_json(&joiner.tool_call(741, "square_info", serde_json::json!({})))
+        .expect("joiner square_info")["nickname"]
         .as_str()
         .expect("nickname")
         .to_string();
@@ -974,8 +974,8 @@ fn mesh_info_reports_participant_roster() {
     let deadline = Instant::now() + MSG_TIMEOUT;
     let mut probe = 742;
     let info = loop {
-        let info = tool_result_json(&creator.tool_call(probe, "mesh_info", serde_json::json!({})))
-            .expect("creator mesh_info");
+        let info = tool_result_json(&creator.tool_call(probe, "square_info", serde_json::json!({})))
+            .expect("creator square_info");
         if info["participant_count"].as_u64() == Some(2) {
             break info;
         }
@@ -1016,7 +1016,7 @@ const DIR_FLAGS: [(&str, &str); 4] = [
     ("--alive-timeout-secs", "5"),
 ];
 
-/// `discover_meshes` finds a mesh advertised into the same directory. A CLI
+/// `discover_squares` finds a mesh advertised into the same directory. A CLI
 /// advertiser lists itself over the loopback ladder; an MCP server (also on
 /// loopback via the hidden `--directory-private`) browses and sees it.
 #[test]
@@ -1048,7 +1048,7 @@ fn discover_meshes_finds_an_advertised_mesh() {
     while Instant::now() < up_deadline
         && !fs::read_to_string(&adv_log)
             .unwrap_or_default()
-            .contains("\"mesh\"")
+            .contains("\"square\"")
     {
         std::thread::sleep(POLL);
     }
@@ -1059,11 +1059,11 @@ fn discover_meshes_finds_an_advertised_mesh() {
     let found = loop {
         let resp = client.tool_call(
             id,
-            "discover_meshes",
+            "discover_squares",
             serde_json::json!({ "directory": "mcdir" }),
         );
-        let json = tool_result_json(&resp).expect("discover_meshes returns a result");
-        let hit = json["meshes"]
+        let json = tool_result_json(&resp).expect("discover_squares returns a result");
+        let hit = json["squares"]
             .as_array()
             .into_iter()
             .flatten()
@@ -1080,7 +1080,7 @@ fn discover_meshes_finds_an_advertised_mesh() {
     let _ = advertiser.kill();
     let _ = advertiser.wait();
     let _ = fs::remove_file(&adv_log);
-    assert!(found, "discover_meshes never found the advertised mesh");
+    assert!(found, "discover_squares never found the advertised square");
 }
 
 /// `ping` reports a round-trip time for a linked peer. The pinger uses a short
@@ -1089,8 +1089,8 @@ fn discover_meshes_finds_an_advertised_mesh() {
 fn ping_reports_rtt_to_a_peer() {
     let (mut creator, mut joiner, _mesh, _creator_nick) =
         create_pair_with(900, &["--ping-window-secs", "2"]);
-    let joiner_nick = tool_result_json(&joiner.tool_call(901, "mesh_info", serde_json::json!({})))
-        .expect("joiner mesh_info")["nickname"]
+    let joiner_nick = tool_result_json(&joiner.tool_call(901, "square_info", serde_json::json!({})))
+        .expect("joiner square_info")["nickname"]
         .as_str()
         .expect("nickname")
         .to_string();

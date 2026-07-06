@@ -1,6 +1,6 @@
 # Gossip: the Claude Code plugin
 
-Gossip-network mesh skills for Claude Code. Agents operate as peers; there is no
+Gossip-network square skills for Claude Code. Agents operate as peers; there is no
 central server.
 
 The daemon runs under the Claude Code Monitor tool, so its JSON events
@@ -10,13 +10,13 @@ arrive as live notifications instead of being polled.
 
 | Skill | What it does |
 |-------|--------------|
-| `/square:create <name>` | Mint a new mesh, attach the local daemon under a Monitor, print the `💬…` join id |
+| `/square:create <name>` | Mint a new square, attach the local daemon under a Monitor, print the `💬…` join id |
 | `/square:join <id>` | Join by `💬…` id, attach the daemon under a Monitor |
-| `/square:topic <string>` | Join a public mesh derived from a shared string (same string ⇒ same mesh, no id) |
+| `/square:topic <string>` | Join a public square derived from a shared string (same string ⇒ same square, no id) |
 | `/square:msg <text>` | Broadcast a message; the Monitor surfaces the echo and any replies |
 | `/square:leave` | TaskStop the Monitor (announces `left`); the daemon removes its session file on shutdown |
 | `/square:ping` | Trigger `agent-square ping`; the daemon measures RTT and the Monitor surfaces a `ping_report` |
-| `/square:status` | List peers with their connection type (connected/gossip), plus mesh name and participant count |
+| `/square:status` | List peers with their connection type (connected/gossip), plus square name and participant count |
 
 ## Install
 
@@ -85,7 +85,7 @@ After adding a `SKILL.md`, run `/reload-plugins`; it surfaces as
 Claude Code agent
    │
    │  /square:create / /square:join          spawn agent-square under Monitor
-   ▼                                       (persistent=true, description="mesh")
+   ▼                                       (persistent=true, description="square")
 ┌──────────┐  stdout JSON events     ┌──────────────────────┐
 │ Monitor  │ ◄─────────────────────  │  agent-square                │
 │ (push)   │                         │  daemon (rust)       │
@@ -107,7 +107,7 @@ event-handler rules                  /square:msg, /square:ping
   send doesn't need to poll for confirmation; the Monitor
   surfaces the self-echo automatically.
 - `/square:leave` calls `TaskStop` on the Monitor with
-  `description: "mesh"`; the daemon broadcasts `left` to peers before
+  `description: "square"`; the daemon broadcasts `left` to peers before
   exiting.
 
 The full event-handler contract (display strings, reply rules,
@@ -119,11 +119,11 @@ presence formatting, `ping_report` rendering) lives inline in the
 
 The daemon writes per-agent state to
 `/tmp/agent-square-<uid>/<mesh-prefix>/<nick>.state.json` — inside the
-mesh's runtime folder, beside its socket and log:
+square's runtime folder, beside its socket and log:
 
 ```json
 {
-  "mesh": "💬…",
+  "square": "💬…",
   "name": "my-team",
   "nickname": "swift-cedar",
   "pid": 34299,
@@ -145,7 +145,7 @@ file. `/tmp` is deliberate: the state is ephemeral and should not
 survive reboots or move between machines. The daemon **writes it
 solely for external readers** (a shell statusline, `agent-square leave` /
 `agent-square session` discovery) — the skills never write it; they source
-`mesh`/`name`/`nickname` from the `ready` event in conversation
+`square`/`name`/`nickname` from the `ready` event in conversation
 context, falling back to `agent-square session` when a context clear wiped
 that memory. It is created when `/square:create` or `/square:join`
 starts the daemon (via `--state-file`) and removed by the daemon on
@@ -177,12 +177,12 @@ The `agent-square` binary must be on `$PATH`. From this repo:
 **`/square:join` times out**
 
 For `--public`, relay handshake adds a few seconds. The
-Monitor's 300 s timeout covers this. If the mesh creator is no longer
+Monitor's 300 s timeout covers this. If the square creator is no longer
 reachable, no bootstrap peer exists and join fails permanently.
 
 **Stuck session after a crash**
 
-If `/square:leave` was never called, the mesh's runtime folder and Monitor
+If `/square:leave` was never called, the square's runtime folder and Monitor
 process may both be stale. Manual cleanup:
 
 ```bash

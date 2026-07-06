@@ -429,7 +429,7 @@ impl Output {
                 if mode == OutputMode::Json {
                     emit_json(&SimpleEvent::Ready {
                         version: crate::VERSION,
-                        mesh: mesh.as_str(),
+                        square: mesh.as_str(),
                         name: name.as_str(),
                         nickname: nickname.as_str(),
                         drift,

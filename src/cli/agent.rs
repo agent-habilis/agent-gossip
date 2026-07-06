@@ -200,11 +200,11 @@ pub(crate) fn states(home: &Path) -> Vec<(Agent, PathBuf, AgentState)> {
 }
 
 /// The one canonical "skill out of date" nag, shared by the `ready`-event
-/// drift warning (below) and the MCP `mesh_version` tool — one source of
+/// drift warning (below) and the MCP `square_version` tool — one source of
 /// truth so the two can't drift apart. `agent-square plug` refreshes every
 /// installed integration, so the message names no specific one.
 pub(crate) const SKILL_DRIFT_MSG: &str =
-    "⚠️ mesh skill out of date. Run `agent-square plug` to update";
+    "⚠️ square skill out of date. Run `agent-square plug` to update";
 
 /// A one-line drift warning if any installed integration has fallen behind the
 /// binary (`OutOfDate`), else `None`. The daemon folds this into its `ready`

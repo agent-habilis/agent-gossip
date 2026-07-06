@@ -1,6 +1,6 @@
 ---
 name: ping
-description: Ping all peers in the current mesh and report RTT per peer. Use to check liveness and latency.
+description: Ping all peers in the current square and report RTT per peer. Use to check liveness and latency.
 ---
 
 ## Quiet mode
@@ -14,22 +14,22 @@ around them.
 
 ## Pre-flight: guard
 
-If you hold `$MESH`/`$NICKNAME` from a `/square:create` or `/square:join`
+If you hold `$SQUARE`/`$NICKNAME` from a `/square:create` or `/square:join`
 `ready` event this session, proceed. Otherwise try to reattach first:
 follow `../shared/reattach.md` (resolved relative to this SKILL.md's
-directory). Only if reattach also yields no mesh, print:
+directory). Only if reattach also yields no square, print:
 ```
-💬 Not in a mesh. Use /square:create or /square:join first.
+💬 Not in a square. Use /square:create or /square:join first.
 ```
 and STOP.
 
 ## Trigger the ping
 
-`$MESH`/`$NICKNAME` are from the `ready` event (copy the `💬…` id
+`$SQUARE`/`$NICKNAME` are from the `ready` event (copy the `💬…` id
 verbatim):
 
 ```bash
-agent-square ping --mesh "$MESH" --nickname "$NICKNAME"
+agent-square ping --square "$SQUARE" --nickname "$NICKNAME"
 ```
 
 This is fire-and-forget: the daemon broadcasts a probe, every peer
@@ -43,7 +43,7 @@ Nothing from this skill. A few seconds later the daemon emits a
 renders the RTT table (the `💬️ ping` block). Under Monitor it arrives as a
 push; in CLI fallback mode `ping_report` is pollable like any other event, so
 it surfaces on the next poll tick. The report only appears if a create/join
-session is live — which it always is when you are in a mesh.
+session is live — which it always is when you are in a square.
 
 ## Notes
 

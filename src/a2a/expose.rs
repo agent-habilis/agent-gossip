@@ -79,7 +79,7 @@ pub(crate) async fn expose(
     };
     super::announce(
         json,
-        &format!("A2A {origin} → mesh"),
+        &format!("A2A {origin} → square"),
         &format!("agent-square a2a connect {}", ticket.encode()),
     );
     let origin = Arc::new(origin);

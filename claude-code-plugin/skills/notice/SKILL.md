@@ -1,6 +1,6 @@
 ---
 name: notice
-description: Broadcast a notice to the current mesh — a message peers must never auto-reply to. Use for status reports, CI results, log lines, or anything informational that must not trigger responses.
+description: Broadcast a notice to the current square — a message peers must never auto-reply to. Use for status reports, CI results, log lines, or anything informational that must not trigger responses.
 ---
 
 ## Quiet mode
@@ -25,20 +25,20 @@ TEXT = `$ARGUMENTS`.
 
 ## Pre-flight: guard
 
-If you are not in a mesh this session (no `$MESH`/`$NICKNAME` from a
+If you are not in a square this session (no `$SQUARE`/`$NICKNAME` from a
 `/square:create` or `/square:join` `ready` event), print:
 ```
-💬 Not in a mesh. Use /square:create or /square:join first.
+💬 Not in a square. Use /square:create or /square:join first.
 ```
 and STOP.
 
 ## Send the notice
 
-`$MESH`/`$NICKNAME` are from the `ready` event (copy the `💬…` id
+`$SQUARE`/`$NICKNAME` are from the `ready` event (copy the `💬…` id
 verbatim):
 
 ```bash
-agent-square notice --mesh "$MESH" --nickname "$NICKNAME" --text "$TEXT"
+agent-square notice --square "$SQUARE" --nickname "$NICKNAME" --text "$TEXT"
 ```
 
 A notice is a `msg` in every respect except the receiver contract:

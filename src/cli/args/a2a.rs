@@ -1,8 +1,8 @@
 //! `a2a` command args. Two families under one subcommand:
 //! - **native A2A messaging** (`a2a call` / `status` / `artifact`) — the
-//!   gossip request/response + worker-push surface for mesh tasks; and
+//!   gossip request/response + worker-push surface for square tasks; and
 //! - **the A2A HTTP tunnel** (`a2a expose` / `connect` / `discover`) — bridge a
-//!   local A2A HTTP server to a peer over the mesh (a `🎟️…` ticket, 1:1).
+//!   local A2A HTTP server to a peer over the square (a `🎟️…` ticket, 1:1).
 
 use clap::{Parser, Subcommand};
 
@@ -70,7 +70,7 @@ pub(crate) enum A2aAction {
     ///
     /// Binds `127.0.0.1:PORT` (an ephemeral port unless `--port` is given) that
     /// an unmodified A2A client/SDK points at; forwards every request to the
-    /// exposer over the mesh and rewrites the Agent Card so the client
+    /// exposer over the square and rewrites the Agent Card so the client
     /// discovers the local bridge, not the unreachable origin.
     Connect {
         /// The `🎟️…` ticket printed by `agent-square a2a expose`.
@@ -136,18 +136,18 @@ pub(crate) enum A2aAction {
     /// Mutating global ops are refused.
     ///
     /// **Without `--to`** and `--method SendMessage`, `--text` is broadcast to
-    /// the whole mesh (A2A is point-to-point, so a mesh-wide message declares
+    /// the whole square (A2A is point-to-point, so a square-wide message declares
     /// itself). Exits non-zero when the response is an error or times out.
     Call {
-        /// Mesh identifier (💬...)
+        /// Square identifier (💬...)
         #[arg(long)]
-        mesh: MeshId,
+        square: MeshId,
 
         /// Nickname of the local agent (must have a running join/create session)
         #[arg(long)]
         nickname: Nickname,
 
-        /// The peer to call. Omit for a mesh broadcast `SendMessage`.
+        /// The peer to call. Omit for a square broadcast `SendMessage`.
         #[arg(long)]
         to: Option<Nickname>,
 
@@ -179,9 +179,9 @@ pub(crate) enum A2aAction {
     /// task you're serving to `working` / `input-required` / `completed` /
     /// `failed`. Pushed fire-and-forget to the other party.
     Status {
-        /// Mesh identifier (💬...)
+        /// Square identifier (💬...)
         #[arg(long)]
-        mesh: MeshId,
+        square: MeshId,
         /// Nickname of the local agent (must have a running join/create session)
         #[arg(long)]
         nickname: Nickname,
@@ -200,9 +200,9 @@ pub(crate) enum A2aAction {
     /// Worker-emit a task `TaskArtifactUpdate` (the result) for a task you're
     /// serving. Parks the task in `input-required` for the initiator's approval.
     Artifact {
-        /// Mesh identifier (💬...)
+        /// Square identifier (💬...)
         #[arg(long)]
-        mesh: MeshId,
+        square: MeshId,
         /// Nickname of the local agent (must have a running join/create session)
         #[arg(long)]
         nickname: Nickname,

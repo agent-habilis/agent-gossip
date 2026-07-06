@@ -23,7 +23,7 @@ use agent_habilis_mesh::protocol::{Message, MessageKind, Nickname, PresenceSubty
 pub(super) enum SimpleEvent<'a> {
     Ready {
         version: &'a str,
-        mesh: &'a str,
+        square: &'a str,
         name: &'a str,
         nickname: &'a str,
         /// Skill-drift warning for a stale install; omitted from the wire when
@@ -87,7 +87,7 @@ struct MessageHeader<'a> {
     pub id: &'a str,
     #[serde(rename = "type")]
     pub ty: &'static str,
-    pub mesh: &'a str,
+    pub square: &'a str,
     pub author: &'a str,
     /// Author's full Ed25519 public key (hex) — the cryptographic identity
     /// behind the display `author`. `Some` on every signed (real) message;
@@ -139,7 +139,7 @@ struct PresenceLine<'a> {
 struct TaskLine<'a> {
     pub event: &'static str,
     pub id: &'a str,
-    pub mesh: &'a str,
+    pub square: &'a str,
     pub author: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pubkey: Option<&'a str>,
@@ -167,7 +167,7 @@ struct TaskLine<'a> {
 struct TaskProgressLine<'a> {
     pub event: &'static str,
     pub id: &'a str,
-    pub mesh: &'a str,
+    pub square: &'a str,
     pub author: &'a str,
     pub ts: i64,
     pub to: &'a str,
@@ -191,7 +191,7 @@ struct StateLine<'a> {
     id: &'a str,
     #[serde(rename = "type")]
     ty: &'static str,
-    mesh: &'a str,
+    square: &'a str,
     author: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pubkey: Option<&'a str>,
@@ -208,7 +208,7 @@ fn message_header<'a>(msg: &'a Message, ty: &'static str) -> MessageHeader<'a> {
         event: "message",
         id: msg.id.as_str(),
         ty,
-        mesh: msg.mesh.as_str(),
+        square: msg.mesh.as_str(),
         author: msg.author.as_str(),
         pubkey: (!msg.pubkey.is_empty()).then_some(msg.pubkey.as_str()),
         ts: msg.timestamp,
@@ -396,7 +396,7 @@ pub(super) fn format_task_json(msg: &Message, is_self: bool) -> String {
         return serde_json::to_string(&TaskProgressLine {
             event: "task_progress",
             id: msg.id.as_str(),
-            mesh: msg.mesh.as_str(),
+            square: msg.mesh.as_str(),
             author: msg.author.as_str(),
             ts: msg.timestamp,
             to: to.as_str(),
@@ -414,7 +414,7 @@ pub(super) fn format_task_json(msg: &Message, is_self: bool) -> String {
     serde_json::to_string(&TaskLine {
         event: "task",
         id: msg.id.as_str(),
-        mesh: msg.mesh.as_str(),
+        square: msg.mesh.as_str(),
         author: msg.author.as_str(),
         pubkey: (!msg.pubkey.is_empty()).then_some(msg.pubkey.as_str()),
         ts: msg.timestamp,
@@ -437,7 +437,7 @@ pub(super) fn format_task_message_json(leg: &TaskMessageLeg<'_>) -> String {
     serde_json::to_string(&TaskLine {
         event: "task",
         id: leg.id,
-        mesh: leg.mesh,
+        square: leg.mesh,
         author: leg.author,
         pubkey: None,
         ts: agent_habilis_mesh::util::clock::unix_secs(),
@@ -563,7 +563,7 @@ pub(super) fn format_state_json(
         event: channel.label(),
         id: event.id.as_str(),
         ty: channel.label(),
-        mesh: event.mesh.as_str(),
+        square: event.mesh.as_str(),
         author: event.author.as_str(),
         pubkey: (!event.pubkey.is_empty()).then_some(event.pubkey.as_str()),
         ts: event.timestamp,
@@ -609,7 +609,7 @@ pub fn event_json(event: &OutputEvent) -> Option<String> {
             a2a_port,
         } => serde_json::to_string(&SimpleEvent::Ready {
             version: crate::VERSION,
-            mesh: mesh.as_str(),
+            square: mesh.as_str(),
             name: name.as_str(),
             nickname: nickname.as_str(),
             drift: drift.as_deref(),

@@ -1,14 +1,14 @@
 export type Session = {
-  mesh: string;
+  square: string;
   name: string;
   nickname: string;
   pid?: number;
   // Set when the `ready` event reports the installed extension has fallen
-  // behind the `agent-square` binary — surfaced once at mesh start.
+  // behind the `agent-square` binary — surfaced once at square start.
   drift?: string;
 };
 
-export type MeshEvent = {
+export type SquareEvent = {
   event: string;
   type?: string;
   subtype?: string;
@@ -17,7 +17,7 @@ export type MeshEvent = {
   id?: string;
   reply?: string | null;
   self?: boolean;
-  mesh?: string;
+  square?: string;
   nickname?: string;
   // On `task` / `task_progress` events.
   task_id?: string;
@@ -53,8 +53,8 @@ export type PingResult = {
   rtt: number;
 };
 
-export type DiscoveredMesh = {
-  mesh: string;
+export type DiscoveredSquare = {
+  square: string;
   name: string;
   peers: number;
   mode: "public" | "private";

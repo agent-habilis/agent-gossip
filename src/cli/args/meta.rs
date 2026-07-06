@@ -1,6 +1,6 @@
-//! `meta` command args: read or change the mesh's `meta` channel — a second
+//! `meta` command args: read or change the square's `meta` channel — a second
 //! shared-state document, identical machinery to `state` but conventionally used
-//! for mesh metadata (peer info, …) rather than the task. `meta merge` applies
+//! for square metadata (peer info, …) rather than the task. `meta merge` applies
 //! an RFC 7386 JSON Merge Patch; `meta get` reads the current document.
 
 use clap::{Parser, Subcommand};
@@ -25,9 +25,9 @@ pub(crate) enum MetaAction {
     /// — merge means your entry never clobbers another peer's. The `meta` and
     /// `state` channels are fully independent.
     Merge {
-        /// Mesh identifier (💬...)
+        /// Square identifier (💬...)
         #[arg(long)]
-        mesh: MeshId,
+        square: MeshId,
 
         /// Nickname of the local agent (must have a running join/create session)
         #[arg(long)]
@@ -40,9 +40,9 @@ pub(crate) enum MetaAction {
 
     /// Read the current derived `meta`-channel document.
     Get {
-        /// Mesh identifier (💬...)
+        /// Square identifier (💬...)
         #[arg(long)]
-        mesh: MeshId,
+        square: MeshId,
 
         /// Nickname of the local agent (must have a running join/create session)
         #[arg(long)]

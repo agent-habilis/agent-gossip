@@ -6,7 +6,7 @@
 //!
 //! The daemon is the **sole writer**: the `/square:*` skills are
 //! read-only and never touch this file. The daemon owns every key —
-//! `mesh`, `name`, `nickname`, `pid`, `ready`, `participant_count`,
+//! `square`, `name`, `nickname`, `pid`, `ready`, `participant_count`,
 //! `last_updated` — and writes a fresh, complete document on each update
 //! (no read-merge: there are no foreign keys to preserve).
 //!
@@ -25,7 +25,7 @@
 //! File shape (keys are serialized in sorted order — `serde_json::Map` is a
 //! `BTreeMap` here, no `preserve_order` feature):
 //! ```json
-//! {"last_updated":1776720604,"name":"cool-team","nickname":"treat-empire","participant_count":3,"pid":34299,"ready":true,"mesh":"💬..."}
+//! {"last_updated":1776720604,"name":"cool-team","nickname":"treat-empire","participant_count":3,"pid":34299,"ready":true,"square":"💬..."}
 //! ```
 //!
 //! Writes are atomic (tempfile + rename on the same filesystem), so a
@@ -75,7 +75,7 @@ impl StateFile {
         *self.a2a.lock().expect("state-file a2a mutex not poisoned") = Some((port, token));
     }
 
-    /// Write a fresh, complete state document — `mesh`, `name`,
+    /// Write a fresh, complete state document — `square`, `name`,
     /// `nickname`, `ready`, `participant_count`, and a fresh
     /// `last_updated` — atomically, fully replacing any existing file.
     /// `ready` is `false` at the early identity write and `true` once the
@@ -99,7 +99,7 @@ impl StateFile {
         // the parent for an override that points elsewhere.
         crate::util::ensure_parent_private(&self.path)?;
         let mut obj = serde_json::Map::new();
-        obj.insert("mesh".into(), self.mesh.clone().into());
+        obj.insert("square".into(), self.mesh.clone().into());
         obj.insert("name".into(), self.name.clone().into());
         obj.insert("nickname".into(), self.nickname.clone().into());
         obj.insert("pid".into(), std::process::id().into());
@@ -199,7 +199,7 @@ pub fn read_identity(path: &Path) -> SessionIdentity {
             .map(str::to_owned)
     };
     SessionIdentity {
-        mesh: field("mesh"),
+        mesh: field("square"),
         name: field("name"),
         nickname: field("nickname"),
     }
@@ -233,7 +233,7 @@ pub fn read_session_entry(path: &Path) -> Option<SessionEntry> {
             .map(str::to_owned)
     };
     Some(SessionEntry {
-        mesh: text("mesh"),
+        mesh: text("square"),
         name: text("name"),
         nickname: text("nickname"),
         pid: parsed
@@ -314,7 +314,7 @@ mod tests {
         state_file.write(3, true);
         let contents = std::fs::read_to_string(&path).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&contents).unwrap();
-        assert_eq!(parsed["mesh"], "💬://abcd");
+        assert_eq!(parsed["square"], "💬://abcd");
         assert_eq!(parsed["name"], "cool-team");
         assert_eq!(parsed["nickname"], "treat-empire");
         assert_eq!(parsed["ready"], true);
@@ -412,7 +412,7 @@ mod tests {
         state_file.write(3, true);
         let parsed: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        assert_eq!(parsed["mesh"], "💬://fresh");
+        assert_eq!(parsed["square"], "💬://fresh");
         assert_eq!(parsed["name"], "cool-team");
         assert_eq!(parsed["nickname"], "swift-cedar");
         assert_eq!(parsed["participant_count"], 3);
@@ -488,7 +488,7 @@ mod tests {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(
             &path,
-            r#"{"last_updated":1,"name":"old","nickname":"n-n","participant_count":1,"ready":true,"mesh":"💬old"}"#,
+            r#"{"last_updated":1,"name":"old","nickname":"n-n","participant_count":1,"ready":true,"square":"💬old"}"#,
         )
         .unwrap();
         let entry = super::read_session_entry(&path).expect("present");
@@ -527,10 +527,10 @@ mod tests {
         std::fs::write(&path, b"not json").unwrap();
         assert!(super::read_snapshot(&path).is_err());
         // JSON object missing the `ready` / `last_updated` fields the gate needs.
-        std::fs::write(&path, r#"{"mesh":"💬x","name":"n"}"#).unwrap();
+        std::fs::write(&path, r#"{"square":"💬x","name":"n"}"#).unwrap();
         assert!(super::read_snapshot(&path).is_err());
         // Has `ready` but still missing `last_updated`.
-        std::fs::write(&path, r#"{"ready":true,"mesh":"💬round"}"#).unwrap();
+        std::fs::write(&path, r#"{"ready":true,"square":"💬round"}"#).unwrap();
         assert!(super::read_snapshot(&path).is_err());
         let _ = std::fs::remove_file(&path);
     }

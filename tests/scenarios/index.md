@@ -61,7 +61,7 @@ Coverage:
    message**, then observes. The agents run on their own. Nothing travels
    through local files.
 4. **If the scenario uses shared state** (e.g. a game board), the coordinator
-   resets it to `{}` first — state persists per mesh, so always start fresh.
+   resets it to `{}` first — state persists per square, so always start fresh.
    See [coordinator.md](/coordinator.md).
 5. **Validate** the runbook's **Expected behavior & UX** by eye. The
    coordinator's report is a first pass; your UI judgement is the verdict.

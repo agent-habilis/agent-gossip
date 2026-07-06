@@ -1,6 +1,6 @@
 ---
 name: msg
-description: Broadcast a text message to the current mesh. Use when the user wants to send something to peers.
+description: Broadcast a text message to the current square. Use when the user wants to send something to peers.
 ---
 
 ## Quiet mode
@@ -25,22 +25,22 @@ TEXT = `$ARGUMENTS`.
 
 ## Pre-flight: guard
 
-If you hold `$MESH`/`$NICKNAME` from a `/square:create` or `/square:join`
+If you hold `$SQUARE`/`$NICKNAME` from a `/square:create` or `/square:join`
 `ready` event this session, proceed. Otherwise try to reattach first:
 follow `../shared/reattach.md` (resolved relative to this SKILL.md's
-directory). Only if reattach also yields no mesh, print:
+directory). Only if reattach also yields no square, print:
 ```
-💬 Not in a mesh. Use /square:create or /square:join first.
+💬 Not in a square. Use /square:create or /square:join first.
 ```
 and STOP.
 
 ## Send the message
 
-`$MESH`/`$NICKNAME` are from the `ready` event (copy the `💬…` id
+`$SQUARE`/`$NICKNAME` are from the `ready` event (copy the `💬…` id
 verbatim):
 
 ```bash
-agent-square a2a call --mesh "$MESH" --nickname "$NICKNAME" --method SendMessage --text "$TEXT"
+agent-square a2a call --square "$SQUARE" --nickname "$NICKNAME" --method SendMessage --text "$TEXT"
 ```
 
 ## Output

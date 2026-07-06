@@ -225,7 +225,7 @@ pub(crate) fn cli_msg_raw(mesh: &str, nickname: &str, body: &str) -> Output {
         .args([
             "a2a",
             "call",
-            "--mesh",
+            "--square",
             mesh,
             "--nickname",
             nickname,
@@ -260,7 +260,7 @@ pub(crate) fn cli_msg_checked(mesh: &str, nickname: &str, body: &str) -> String 
 pub(crate) fn cli_poll(mesh: &str, nickname: &str, after: Option<&str>) -> String {
     let mut args = vec![
         "poll",
-        "--mesh",
+        "--square",
         mesh,
         "--nickname",
         nickname,
@@ -288,7 +288,7 @@ pub(crate) fn cli_poll(mesh: &str, nickname: &str, after: Option<&str>) -> Strin
 pub(crate) fn cli_poll_long(mesh: &str, nickname: &str, after: Option<&str>) -> (String, Duration) {
     let mut args = vec![
         "poll",
-        "--mesh",
+        "--square",
         mesh,
         "--nickname",
         nickname,
@@ -344,7 +344,7 @@ pub(crate) fn cli_task_create_raw(mesh: &str, nickname: &str, to: &str, text: &s
         .args([
             "a2a",
             "call",
-            "--mesh",
+            "--square",
             mesh,
             "--nickname",
             nickname,
@@ -383,7 +383,7 @@ pub(crate) fn cli_task_status(mesh: &str, nickname: &str, task_id: &str, state: 
         .args([
             "a2a",
             "status",
-            "--mesh",
+            "--square",
             mesh,
             "--nickname",
             nickname,
@@ -405,7 +405,7 @@ pub(crate) fn cli_task_status(mesh: &str, nickname: &str, task_id: &str, state: 
 /// raw `{ok, participants, count}` JSON line).
 pub(crate) fn cli_peers(mesh: &str, nickname: &str) -> String {
     let out = test_cmd()
-        .args(["peers", "--mesh", mesh, "--nickname", nickname])
+        .args(["peers", "--square", mesh, "--nickname", nickname])
         .output()
         .expect("peers command failed to spawn");
     assert!(
@@ -420,7 +420,7 @@ pub(crate) fn cli_peers(mesh: &str, nickname: &str) -> String {
 /// report lands on the target daemon's own output stream, not here.
 pub(crate) fn cli_ping(mesh: &str, nickname: &str) {
     let out = test_cmd()
-        .args(["ping", "--mesh", mesh, "--nickname", nickname])
+        .args(["ping", "--square", mesh, "--nickname", nickname])
         .output()
         .expect("ping command failed to spawn");
     assert!(
@@ -445,7 +445,7 @@ pub(crate) fn channel_subcommand(channel: Channel) -> &'static str {
 pub(crate) fn cli_channel_get(channel: Channel, mesh: &str, nickname: &str) -> String {
     let out = test_cmd()
         .args([channel_subcommand(channel), "get"])
-        .args(["--mesh", mesh, "--nickname", nickname])
+        .args(["--square", mesh, "--nickname", nickname])
         .output()
         .expect("channel get failed to spawn");
     assert!(
@@ -469,7 +469,7 @@ pub(crate) fn cli_channel_merge(
 ) -> Output {
     test_cmd()
         .args([channel_subcommand(channel), "merge"])
-        .args(["--mesh", mesh, "--nickname", nickname, "--merge", merge])
+        .args(["--square", mesh, "--nickname", nickname, "--merge", merge])
         .output()
         .expect("channel merge failed to spawn")
 }

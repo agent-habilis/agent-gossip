@@ -86,7 +86,7 @@ fn finish(acted: usize, verb: &str) {
         warn("nothing to do (try --agent claude-code|pi|generic|cursor)");
     } else {
         let noun = if acted == 1 { "agent" } else { "agents" };
-        status("Finished", &format!("{verb} mesh · {acted} {noun}"));
+        status("Finished", &format!("{verb} square · {acted} {noun}"));
     }
 }
 

@@ -271,7 +271,7 @@ The human/TUI rendering is unchanged; only the `--output json` stream gains
 the field. **(Implemented.)**
 
 ```json
-{"event":"message","id":"uuid","type":"msg","mesh":"💬://...","author":"nick","pubkey":"<64-hex>","ts":1234567890,"body":"hello","reply":null,"self":false}
+{"event":"message","id":"uuid","type":"msg","square":"💬://...","author":"nick","pubkey":"<64-hex>","ts":1234567890,"body":"hello","reply":null,"self":false}
 ```
 
 A new `fork` event (Phase 2) is emitted once per offending key when

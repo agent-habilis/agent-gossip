@@ -6,13 +6,13 @@ use super::output::OutputFormat;
 
 #[derive(Parser, Debug)]
 pub(crate) struct LeaveOpts {
-    /// The `💬…` id of the mesh to leave — the full id or a unique prefix
-    /// of it. Omitted: every mesh owned by the calling session.
-    pub mesh: Option<MeshId>,
+    /// The `💬…` id of the square to leave — the full id or a unique prefix
+    /// of it. Omitted: every square owned by the calling session.
+    pub square: Option<MeshId>,
 
     /// Leave only the member with this nickname (when this machine hosts
-    /// several members of one mesh).
-    #[arg(long, requires = "mesh")]
+    /// several members of one square).
+    #[arg(long, requires = "square")]
     pub nickname: Option<Nickname>,
 
     /// The agent-session process that owns the daemons: a daemon is
@@ -44,7 +44,7 @@ mod tests {
         let Commands::Leave { opts } = cli.command else {
             panic!("expected Leave command");
         };
-        assert!(opts.mesh.is_none());
+        assert!(opts.square.is_none());
         assert!(opts.nickname.is_none());
         assert!(opts.session_pid.is_none());
         assert_eq!(opts.confirm_timeout_secs, 5);
@@ -65,7 +65,7 @@ mod tests {
         let Commands::Leave { opts } = cli.command else {
             panic!("expected Leave command");
         };
-        assert_eq!(opts.mesh.unwrap().as_str(), "💬://AbCdEf1234");
+        assert_eq!(opts.square.unwrap().as_str(), "💬://AbCdEf1234");
         assert_eq!(opts.nickname.unwrap().as_str(), "my-nick");
         assert_eq!(opts.output, OutputFormat::Json);
     }

@@ -1,4 +1,4 @@
-//! `invite` command args: mint a `🎟️` invite to an invite-only mesh. Only the
+//! `invite` command args: mint a `🎟️` invite to an invite-only square. Only the
 //! creating session's daemon holds the in-memory issuer key, so only it can
 //! sign one — after its restart, no new invites can be minted.
 
@@ -10,9 +10,9 @@ use super::output::OutputFormat;
 
 #[derive(Parser, Debug)]
 pub(crate) struct InviteOpts {
-    /// The invite-only mesh to mint for (its 💬… id).
+    /// The invite-only square to mint for (its 💬… id).
     #[arg(long)]
-    pub mesh: MeshId,
+    pub square: MeshId,
 
     /// Nickname of the local **creating** session (only its daemon holds the
     /// issuer key that can sign an invite).
@@ -42,7 +42,7 @@ mod tests {
         let cli = Cli::parse_from([
             "agent-square",
             "invite",
-            "--mesh",
+            "--square",
             "💬AbCdEf1234",
             "--nickname",
             "my-nick",
@@ -60,7 +60,7 @@ mod tests {
         let cli = Cli::parse_from([
             "agent-square",
             "invite",
-            "--mesh",
+            "--square",
             "💬AbCdEf1234",
             "--nickname",
             "my-nick",

@@ -2,9 +2,9 @@ import { execFileSync, spawn } from "node:child_process";
 import { hostname } from "node:os";
 import * as readline from "node:readline";
 import { clearBatch, startWatcher, stopWatcher } from "../daemon";
-import { isValidBody, isValidMeshName, runMeshCommand } from "../helpers";
+import { isValidBody, isValidSquareName, runSquareCommand } from "../helpers";
 import { state, stateFilePath } from "../state";
-import type { DiscoveredMesh, Peer, PingResult, Session } from "../types";
+import type { DiscoveredSquare, Peer, PingResult, Session } from "../types";
 
 export function cleanup(): void {
   stopWatcher();
@@ -25,7 +25,7 @@ export type CreateOptions = {
   relay?: string;
   mdns?: boolean;
   dht?: boolean;
-  // List the mesh in a directory; requires network "public".
+  // List the square in a directory; requires network "public".
   advertise?: boolean;
   // Directory to advertise into; omit for the well-known `global`.
   directory?: string;
@@ -34,8 +34,8 @@ export type CreateOptions = {
 };
 
 export type JoinOptions = {
-  // What to join: a `💬…` id. (A shared string derives its own public mesh —
-  // that is `forumMesh` — and is not a join target.)
+  // What to join: a `💬…` id. (A shared string derives its own public square —
+  // that is `forumSquare` — and is not a join target.)
   target: string;
   // Local nickname; omit for the daemon's random `word-word`.
   nickname?: string;
@@ -44,8 +44,8 @@ export type JoinOptions = {
 };
 
 export type ForumOptions = {
-  // The shared string. Hashed into a deterministic public mesh — anyone
-  // passing the same string joins the same mesh.
+  // The shared string. Hashed into a deterministic public square — anyone
+  // passing the same string joins the same square.
   string: string;
   // Local nickname; omit for the daemon's random `word-word`.
   nickname?: string;
@@ -57,11 +57,11 @@ export type ForumOptions = {
 const HARNESS = "pi";
 
 // The semantic contract for create options, shared by every caller (the
-// `/mesh-create` command and the mesh_create tool). Returns an error
+// `/square-create` command and the square_create tool). Returns an error
 // message, or undefined when the options are valid. The daemon stays the
 // authoritative backstop; this is the single client-side source of truth.
 export function validateCreateOptions(options: CreateOptions): string | undefined {
-  if (options.name !== undefined && !isValidMeshName(options.name)) {
+  if (options.name !== undefined && !isValidSquareName(options.name)) {
     return "invalid name — must be 1-32 chars, no whitespace or < > #";
   }
   if (options.advertise && options.network !== "public") {
@@ -70,7 +70,7 @@ export function validateCreateOptions(options: CreateOptions): string | undefine
   return undefined;
 }
 
-// The shared tail of createMesh/joinMesh/forumMesh: spawn the daemon,
+// The shared tail of createSquare/joinSquare/forumSquare: spawn the daemon,
 // wait for its ready event, and build the session. `timeoutMs` differs per
 // caller: create is localhost-only setup, join/forum may cross the relay.
 async function spawnSession({
@@ -96,15 +96,15 @@ async function spawnSession({
   const readyLine = await startWatcher({ child, timeoutMs });
   const ready = JSON.parse(readyLine);
 
-  if (!ready.mesh || !ready.name || !ready.nickname) {
-    throw new Error("invalid ready event: missing mesh, name, or nickname");
+  if (!ready.square || !ready.name || !ready.nickname) {
+    throw new Error("invalid ready event: missing square, name, or nickname");
   }
 
   if (typeof child.pid !== "number") {
     throw new Error("agent-square spawned without a pid");
   }
   const session: Session = {
-    mesh: ready.mesh,
+    square: ready.square,
     name: ready.name,
     nickname: ready.nickname,
     pid: child.pid,
@@ -115,7 +115,7 @@ async function spawnSession({
   return session;
 }
 
-export async function createMesh(options: CreateOptions = {}): Promise<Session> {
+export async function createSquare(options: CreateOptions = {}): Promise<Session> {
   const invalid = validateCreateOptions(options);
   if (invalid) throw new Error(invalid);
 
@@ -134,13 +134,13 @@ export async function createMesh(options: CreateOptions = {}): Promise<Session> 
   return spawnSession({ args, timeoutMs: 30_000, model });
 }
 
-export async function joinMesh({ target, nickname, model }: JoinOptions): Promise<Session> {
+export async function joinSquare({ target, nickname, model }: JoinOptions): Promise<Session> {
   const args = ["join", target, "--no-interactive", "--output", "json", "--filter-self"];
   if (nickname) args.push("--nickname", nickname);
   return spawnSession({ args, timeoutMs: 60_000, model });
 }
 
-export async function forumMesh({ string, nickname, model }: ForumOptions): Promise<Session> {
+export async function forumSquare({ string, nickname, model }: ForumOptions): Promise<Session> {
   const args = ["forum", "--no-interactive", "--output", "json", "--filter-self"];
   if (nickname) args.push("--nickname", nickname);
   // The string is any byte-for-byte value the peers agreed on — it may start
@@ -151,7 +151,7 @@ export async function forumMesh({ string, nickname, model }: ForumOptions): Prom
 
 // `notice: true` sends the no-auto-reply kind (`agent-square notice`) — same flags,
 // different receiver contract.
-export function sendMeshMessage({
+export function sendSquareMessage({
   text,
   reply,
   notice,
@@ -160,15 +160,15 @@ export function sendMeshMessage({
   reply?: string;
   notice?: boolean;
 }): void {
-  if (!state.session?.mesh) throw new Error("Not in a mesh");
+  if (!state.session?.square) throw new Error("Not in a square");
   if (!isValidBody(text)) {
     throw new Error("Message body must not contain control characters other than tab/newline");
   }
 
   const args = [
     notice ? "notice" : "msg",
-    "--mesh",
-    state.session.mesh,
+    "--square",
+    state.session.square,
     "--nickname",
     state.session.nickname,
     "--text",
@@ -176,7 +176,7 @@ export function sendMeshMessage({
   ];
   if (reply) args.push("--reply", reply);
 
-  runMeshCommand(args);
+  runSquareCommand(args);
 }
 
 // Send one leg of a task (`agent-square task`). `text` is required by the CLI but may
@@ -192,11 +192,11 @@ export function sendTaskLeg({
   phase: string;
   text?: string;
 }): void {
-  if (!state.session?.mesh) throw new Error("Not in a mesh");
-  runMeshCommand([
+  if (!state.session?.square) throw new Error("Not in a square");
+  runSquareCommand([
     "task",
-    "--mesh",
-    state.session.mesh,
+    "--square",
+    state.session.square,
     "--nickname",
     state.session.nickname,
     "--to",
@@ -210,27 +210,27 @@ export function sendTaskLeg({
   ]);
 }
 
-export function getMeshStatus(): {
-  mesh: string | null;
+export function getSquareStatus(): {
+  square: string | null;
   name: string | null;
   nickname: string | null;
 } {
   return {
-    mesh: state.session?.mesh ?? null,
+    square: state.session?.square ?? null,
     name: state.session?.name ?? null,
     nickname: state.session?.nickname ?? null,
   };
 }
 
-export function leaveMesh(): void {
+export function leaveSquare(): void {
   cleanup();
 }
 
-// Browse a directory for advertised meshes. Spawns `agent-square discover`, collects
-// mesh_found/mesh_lost lines, then resolves: ~`graceMs` after the first hit
+// Browse a directory for advertised squares. Spawns `agent-square discover`, collects
+// square_found/square_lost lines, then resolves: ~`graceMs` after the first hit
 // (to gather a few more), or at `maxMs` if nothing shows. Discovery joins no
-// mesh — the child is always killed before resolving.
-export function discoverMeshes({
+// square — the child is always killed before resolving.
+export function discoverSquares({
   directory,
   graceMs = 1500,
   maxMs = 8000,
@@ -238,12 +238,12 @@ export function discoverMeshes({
   directory?: string;
   graceMs?: number;
   maxMs?: number;
-}): Promise<DiscoveredMesh[]> {
+}): Promise<DiscoveredSquare[]> {
   return new Promise((resolve) => {
     const args = ["discover", "--no-interactive", "--output", "json"];
     if (directory && directory !== "global") args.push("--directory", directory);
     const child = spawn("agent-square", args, { stdio: ["ignore", "pipe", "pipe"] });
-    const found = new Map<string, DiscoveredMesh>();
+    const found = new Map<string, DiscoveredSquare>();
     let graceTimer: ReturnType<typeof setTimeout> | null = null;
     let settled = false;
 
@@ -270,7 +270,7 @@ export function discoverMeshes({
     lineReader.on("line", (line) => {
       let event: {
         event?: string;
-        mesh?: string;
+        square?: string;
         name?: string;
         peers?: number;
         mode?: string;
@@ -280,29 +280,29 @@ export function discoverMeshes({
       } catch {
         return;
       }
-      if (event.event === "mesh_found" && typeof event.mesh === "string") {
-        found.set(event.mesh, {
-          mesh: event.mesh,
+      if (event.event === "square_found" && typeof event.square === "string") {
+        found.set(event.square, {
+          square: event.square,
           name: event.name ?? "?",
           peers: Number(event.peers ?? 0),
           mode: event.mode === "public" ? "public" : "private",
         });
         if (!graceTimer) graceTimer = setTimeout(settle, graceMs);
-      } else if (event.event === "mesh_lost" && typeof event.mesh === "string") {
-        found.delete(event.mesh);
+      } else if (event.event === "square_lost" && typeof event.square === "string") {
+        found.delete(event.square);
       }
     });
     child.on("error", settle);
   });
 }
 
-// Query the live roster via `agent-square peers`. Throws when not in a mesh.
+// Query the live roster via `agent-square peers`. Throws when not in a square.
 export function getPeers(): { count: number; participants: Peer[] } {
-  if (!state.session?.mesh) throw new Error("Not in a mesh");
-  const raw = runMeshCommand([
+  if (!state.session?.square) throw new Error("Not in a square");
+  const raw = runSquareCommand([
     "peers",
-    "--mesh",
-    state.session.mesh,
+    "--square",
+    state.session.square,
     "--nickname",
     state.session.nickname,
   ]);
@@ -349,13 +349,13 @@ export function getPeers(): { count: number; participants: Peer[] } {
 }
 
 // Read the current derived shared-state document via `agent-square state get`. Throws
-// when not in a mesh. Uses execFileSync (no shell), consistent with
+// when not in a square. Uses execFileSync (no shell), consistent with
 // applyStateMerge — its JSON `--merge` arg must never touch the shell.
 export function getStateDocument(): Record<string, unknown> {
-  if (!state.session?.mesh) throw new Error("Not in a mesh");
+  if (!state.session?.square) throw new Error("Not in a square");
   const raw = execFileSync(
     "agent-square",
-    ["state", "get", "--mesh", state.session.mesh, "--nickname", state.session.nickname],
+    ["state", "get", "--square", state.session.square, "--nickname", state.session.nickname],
     { encoding: "utf-8", timeout: 15_000 },
   ).trim();
   const parsed = JSON.parse(raw) as { ok: boolean; document?: Record<string, unknown> };
@@ -364,13 +364,13 @@ export function getStateDocument(): Record<string, unknown> {
 
 // Apply an RFC 7386 JSON Merge Patch to the shared state via `agent-square state merge`.
 // The outcome is read from the `{ok,…}` JSON on stdout. The JSON `--merge` arg
-// goes through execFileSync (no shell) — `runMeshCommand`'s quoting would mangle
+// goes through execFileSync (no shell) — `runSquareCommand`'s quoting would mangle
 // it.
 export function applyStateMerge({ merge }: { merge: string }): {
   ok: boolean;
   error?: string;
 } {
-  if (!state.session?.mesh) throw new Error("Not in a mesh");
+  if (!state.session?.square) throw new Error("Not in a square");
   let parsed: unknown;
   try {
     parsed = JSON.parse(merge);
@@ -386,8 +386,8 @@ export function applyStateMerge({ merge }: { merge: string }): {
     [
       "state",
       "merge",
-      "--mesh",
-      state.session.mesh,
+      "--square",
+      state.session.square,
       "--nickname",
       state.session.nickname,
       "--merge",
@@ -401,12 +401,12 @@ export function applyStateMerge({ merge }: { merge: string }): {
 
 // Read the derived `meta`-channel document via `agent-square meta get`. The meta
 // channel is byte-for-byte the same machinery as `state`; by convention it
-// holds mesh metadata, e.g. `/peers/<nick> = { model, harness, host }`.
+// holds square metadata, e.g. `/peers/<nick> = { model, harness, host }`.
 export function getMetaDocument(): Record<string, unknown> {
-  if (!state.session?.mesh) throw new Error("Not in a mesh");
+  if (!state.session?.square) throw new Error("Not in a square");
   const raw = execFileSync(
     "agent-square",
-    ["meta", "get", "--mesh", state.session.mesh, "--nickname", state.session.nickname],
+    ["meta", "get", "--square", state.session.square, "--nickname", state.session.nickname],
     { encoding: "utf-8", timeout: 15_000 },
   ).trim();
   const parsed = JSON.parse(raw) as { ok: boolean; document?: Record<string, unknown> };
@@ -417,14 +417,14 @@ export function getMetaDocument(): Record<string, unknown> {
 // the CLI exits non-zero on a rejected `{ok:false}` merge, so execFileSync
 // throws — callers that tolerate rejection wrap it.
 function runMetaMerge(merge: string): void {
-  if (!state.session?.mesh) throw new Error("Not in a mesh");
+  if (!state.session?.square) throw new Error("Not in a square");
   execFileSync(
     "agent-square",
     [
       "meta",
       "merge",
-      "--mesh",
-      state.session.mesh,
+      "--square",
+      state.session.square,
       "--nickname",
       state.session.nickname,
       "--merge",
@@ -435,14 +435,14 @@ function runMetaMerge(merge: string): void {
 }
 
 // Record what this agent runs on into `meta` under `/peers/<nickname>`. The
-// binary no longer self-reports model/harness/host — it is mesh metadata the
+// binary no longer self-reports model/harness/host — it is square metadata the
 // agent owns. Best-effort: a failed report must not break create/join, so errors
 // are swallowed (the roster simply shows no model for us). A merge deep-merges
 // only our own `/peers/<nickname>` key, so it creates `/peers` if absent and
 // never clobbers another peer's entry — no seed, no fallback needed.
 function reportSelfMeta(model?: string): void {
   const session = state.session;
-  if (!session?.mesh) return;
+  if (!session?.square) return;
   // Seed `status: "idle"` — we advertise as accepting work until the agent flips
   // it (via setSelfStatus) when it goes heads-down. Only "busy" makes senders
   // skip us; "idle"/"available"/absent stay eligible.
@@ -465,22 +465,22 @@ function reportSelfMeta(model?: string): void {
 // Throws on a rejected merge so the tool can surface the error to the agent.
 export function setSelfStatus(status: string): void {
   const session = state.session;
-  if (!session?.mesh) throw new Error("Not in a mesh");
+  if (!session?.square) throw new Error("Not in a square");
   runMetaMerge(JSON.stringify({ peers: { [session.nickname]: { status } } }));
 }
 
 export async function pingPeers(): Promise<PingResult[]> {
-  if (!state.session?.mesh) throw new Error("Not in a mesh");
+  if (!state.session?.square) throw new Error("Not in a square");
 
   state.pingPending = true;
   state.pingStartTime = Date.now();
   state.pongMap.clear();
 
   try {
-    runMeshCommand([
+    runSquareCommand([
       "msg",
-      "--mesh",
-      state.session.mesh,
+      "--square",
+      state.session.square,
       "--nickname",
       state.session.nickname,
       "--text",

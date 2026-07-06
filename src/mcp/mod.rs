@@ -4,10 +4,10 @@
 //! Claude Desktop, Claude Code) can spawn as a child process.
 //! Exposes fifteen tools that wrap the existing mesh lifecycle:
 //!
-//! - `create_mesh`
-//! - `join_mesh`
-//! - `discover_meshes`
-//! - `leave_mesh`
+//! - `create_square`
+//! - `join_square`
+//! - `discover_squares`
+//! - `leave_square`
 //! - `send_message`
 //! - `a2a_call`
 //! - `task_status`
@@ -17,10 +17,10 @@
 //! - `get_state`
 //! - `apply_meta_merge`
 //! - `get_meta`
-//! - `mesh_info`
+//! - `square_info`
 //! - `ping`
-//! - `mesh_version`
-//! - `mesh_manual`
+//! - `square_version`
+//! - `square_manual`
 //!
 //! # Polling-only
 //!
@@ -91,7 +91,7 @@ impl AgentSquareServer {
 
 // ── tool argument schemas ────────────────────────────────────────
 
-/// Network reachability for a new mesh. A typed JSON-RPC enum (renders
+/// Network reachability for a new square. A typed JSON-RPC enum (renders
 /// as `"private"` / `"public"` in the tool schema), so an unknown value is
 /// rejected at deserialize rather than by a hand-written string match.
 #[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
@@ -106,15 +106,15 @@ enum NetworkMode {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct CreateMeshArgs {
-    /// Human-readable mesh name. Optional — omit for a random
+    /// Human-readable square name. Optional — omit for a random
     /// `word-word` name (the same style as the nickname). When given:
     /// 1..=32 UTF-8 characters (any script/emoji), excluding control
     /// characters, whitespace, and any of / \ < > #. Bound
-    /// cryptographically into the mesh identity so joiners decode the
+    /// cryptographically into the square identity so joiners decode the
     /// same name and forgery is infeasible.
     #[serde(default)]
     name: Option<String>,
-    /// Network mode. "private" keeps the mesh loopback-only (same
+    /// Network mode. "private" keeps the square loopback-only (same
     /// machine); "public" enables the all-on lookup preset (mDNS + DHT +
     /// default relay). Naming any of `mdns`/`dht`/`relay` below overrides
     /// the preset and uses only those (the same model as the CLI flags).
@@ -135,9 +135,9 @@ struct CreateMeshArgs {
     /// ordered ladder.
     #[serde(default)]
     relay: Option<String>,
-    /// List this mesh in a directory so others can find it with
+    /// List this square in a directory so others can find it with
     /// `agent-square discover` (no id to share). Requires `network: "public"`. Note:
-    /// advertising broadcasts the join token — the mesh becomes open to
+    /// advertising broadcasts the join token — the square becomes open to
     /// anyone discovering the directory.
     #[serde(default)]
     advertise: bool,
@@ -145,7 +145,7 @@ struct CreateMeshArgs {
     /// Omit for the well-known `global` directory.
     #[serde(default)]
     directory: Option<String>,
-    /// Protect the mesh with a password: joiners must present it, and the
+    /// Protect the square with a password: joiners must present it, and the
     /// id alone no longer admits (safe to advertise). Never prompts.
     #[serde(default)]
     password: Option<String>,
@@ -153,13 +153,13 @@ struct CreateMeshArgs {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct JoinMeshArgs {
-    /// Mesh identifier (💬…). A shared string derives its own public
-    /// mesh — use the `topic` command — and is not a valid join target.
-    mesh: String,
+    /// Square identifier (💬…). A shared string derives its own public
+    /// square — use the `topic` command — and is not a valid join target.
+    square: String,
     /// Optional nickname in `word-word` form. Random if omitted.
     #[serde(default)]
     nickname: Option<String>,
-    /// Password for a password-protected mesh id. Never prompts — required
+    /// Password for a password-protected square id. Never prompts — required
     /// exactly when the id is password-protected, rejected otherwise.
     #[serde(default)]
     password: Option<String>,
@@ -167,8 +167,8 @@ struct JoinMeshArgs {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct TopicMeshArgs {
-    /// Any string. Hashed into a deterministic **public** mesh — anyone who
-    /// joins with the same string lands in the same mesh, on any machine.
+    /// Any string. Hashed into a deterministic **public** square — anyone who
+    /// joins with the same string lands in the same square, on any machine.
     /// Compared byte-for-byte after trimming surrounding whitespace (not
     /// lowercased), so `http://x` and `https://x` are different topics.
     string: String,
@@ -180,7 +180,7 @@ struct TopicMeshArgs {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct DiscoverMeshesArgs {
     /// Directory to browse. Omit for the well-known `global` directory.
-    /// Only meshes advertised into this directory over the same (public)
+    /// Only squares advertised into this directory over the same (public)
     /// lookups are visible.
     #[serde(default)]
     directory: Option<String>,
@@ -189,7 +189,7 @@ struct DiscoverMeshesArgs {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct SendMessageArgs {
     /// Message body. UTF-8; newlines/tabs allowed, other control
-    /// characters rejected. Broadcast to the whole mesh (A2A is
+    /// characters rejected. Broadcast to the whole square (A2A is
     /// point-to-point, so directed 1:1 is a task via `a2a_call`, not chat).
     text: String,
 }
@@ -296,7 +296,7 @@ struct ApplyStateMergeArgs {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct ApplyMetaMergeArgs {
-    /// The RFC 7386 JSON Merge Patch for the **meta** channel — mesh metadata,
+    /// The RFC 7386 JSON Merge Patch for the **meta** channel — square metadata,
     /// by convention `/peers/<nickname> = {"model":…,"harness":…,"host":…}`
     /// self-reported by each agent (`host` is the machine's hostname), e.g.
     /// `{"peers":{"swift-cedar":{"model":"Opus 4.8","harness":"Claude Code","host":"studio-mbp-01"}}}`.
@@ -312,7 +312,7 @@ struct NoArgs {}
 
 #[derive(Debug, Serialize)]
 struct MeshRef {
-    mesh: MeshId,
+    square: MeshId,
     name: String,
     nickname: Nickname,
 }
@@ -320,7 +320,7 @@ struct MeshRef {
 impl From<&Session> for MeshRef {
     fn from(session: &Session) -> Self {
         MeshRef {
-            mesh: session.mesh().clone(),
+            square: session.mesh().clone(),
             // `MeshRef` is the serialized tool output; the wire shape
             // keeps `name` a plain string.
             name: session.name().as_str().to_owned(),
@@ -329,7 +329,7 @@ impl From<&Session> for MeshRef {
     }
 }
 
-/// `mesh_info` tool output: the session identity plus the live roster
+/// `square_info` tool output: the session identity plus the live roster
 /// (`participant_count` = participants + 1 for self, and the per-peer
 /// recency list that backs a task sender's target picker).
 #[derive(Debug, Serialize)]
@@ -342,20 +342,20 @@ struct MeshInfoResult {
 
 #[derive(Debug, Serialize)]
 struct DiscoveredMesh {
-    /// The advertised mesh's id — pass to `join_mesh`.
-    mesh: MeshId,
+    /// The advertised square's id — pass to `join_square`.
+    square: MeshId,
     name: String,
     peers: usize,
     /// `true` if advertised on the public network.
     public: bool,
-    /// `true` if password-protected — `join_mesh` needs the password.
+    /// `true` if password-protected — `join_square` needs the password.
     password: bool,
 }
 
 #[derive(Debug, Serialize)]
 struct DiscoverResult {
-    /// Advertised meshes found, most-peers first.
-    meshes: Vec<DiscoveredMesh>,
+    /// Advertised squares found, most-peers first.
+    squares: Vec<DiscoveredMesh>,
 }
 
 #[derive(Debug, Serialize)]
@@ -394,9 +394,9 @@ struct LeaveResult {
     ok: bool,
 }
 
-/// `mesh_version` tool output: the binary build string. MCP carries no
+/// `square_version` tool output: the binary build string. MCP carries no
 /// skill of its own (the behavioral protocol lives in the server's
-/// `instructions` and the `mesh_manual` tool), so there is no skill-drift
+/// `instructions` and the `square_manual` tool), so there is no skill-drift
 /// to report here.
 #[derive(Debug, Serialize)]
 struct VersionResult {
@@ -409,9 +409,9 @@ struct VersionResult {
 #[tool_router]
 impl AgentSquareServer {
     #[tool(
-        description = "Create a new mesh and become its first member. Returns the mesh id (share it so others can join) and the chosen nickname. Poll `fetch_messages` to observe incoming traffic; the server auto-tracks a per-session cursor so repeat cursor-less calls return only new entries."
+        description = "Create a new square and become its first member. Returns the square id (share it so others can join) and the chosen nickname. Poll `fetch_messages` to observe incoming traffic; the server auto-tracks a per-session cursor so repeat cursor-less calls return only new entries."
     )]
-    async fn create_mesh(
+    async fn create_square(
         &self,
         Parameters(args): Parameters<CreateMeshArgs>,
     ) -> Result<CallToolResult, McpError> {
@@ -435,7 +435,7 @@ impl AgentSquareServer {
         let name = match args.name {
             None => MeshName::random(),
             Some(raw) => MeshName::new(raw).map_err(|error| {
-                McpError::invalid_params(format!("invalid mesh name: {error}"), None)
+                McpError::invalid_params(format!("invalid square name: {error}"), None)
             })?,
         };
         let nickname = args
@@ -482,14 +482,14 @@ impl AgentSquareServer {
     }
 
     #[tool(
-        description = "Join an existing mesh by its 💬… identifier. (A shared string derives its own public mesh — that is the `topic` command — and is not a join target.) Idempotent when called for the same mesh id with the same nickname. Poll `fetch_messages` to observe incoming traffic; the server auto-tracks a per-session cursor so repeat cursor-less calls return only new entries."
+        description = "Join an existing square by its 💬… identifier. (A shared string derives its own public square — that is the `topic` command — and is not a join target.) Idempotent when called for the same square id with the same nickname. Poll `fetch_messages` to observe incoming traffic; the server auto-tracks a per-session cursor so repeat cursor-less calls return only new entries."
     )]
-    async fn join_mesh(
+    async fn join_square(
         &self,
         Parameters(args): Parameters<JoinMeshArgs>,
     ) -> Result<CallToolResult, McpError> {
-        let target: JoinTarget = args.mesh.parse().map_err(|error| {
-            McpError::invalid_params(format!("invalid mesh target: {error}"), None)
+        let target: JoinTarget = args.square.parse().map_err(|error| {
+            McpError::invalid_params(format!("invalid square target: {error}"), None)
         })?;
         let mut guard = self.session.lock().await;
         if let Some(existing) = guard.as_ref() {
@@ -518,9 +518,9 @@ impl AgentSquareServer {
     }
 
     #[tool(
-        description = "Join a public mesh derived deterministically from a shared string — no id to share. Anyone who calls topic_mesh with the same string joins the same mesh, on any machine (the string is hashed into the mesh seed; the name is derived and networking is always public). The string is matched byte-for-byte after trimming whitespace, so pick an exact, agreed value. Idempotent when called for the same string with the same nickname. Poll `fetch_messages` to observe traffic."
+        description = "Join a public square derived deterministically from a shared string — no id to share. Anyone who calls topic_square with the same string joins the same square, on any machine (the string is hashed into the square seed; the name is derived and networking is always public). The string is matched byte-for-byte after trimming whitespace, so pick an exact, agreed value. Idempotent when called for the same string with the same nickname. Poll `fetch_messages` to observe traffic."
     )]
-    async fn topic_mesh(
+    async fn topic_square(
         &self,
         Parameters(args): Parameters<TopicMeshArgs>,
     ) -> Result<CallToolResult, McpError> {
@@ -545,8 +545,8 @@ impl AgentSquareServer {
         ok_json(result)
     }
 
-    #[tool(description = "Leave the currently active mesh. No-op if not in one.")]
-    async fn leave_mesh(
+    #[tool(description = "Leave the currently active square. No-op if not in one.")]
+    async fn leave_square(
         &self,
         Parameters(_): Parameters<NoArgs>,
     ) -> Result<CallToolResult, McpError> {
@@ -560,9 +560,9 @@ impl AgentSquareServer {
     }
 
     #[tool(
-        description = "Browse a directory for advertised meshes — no id needed. Returns meshes others published with `create_mesh { advertise: true }`, most peers first; pass a returned `mesh` to `join_mesh`. Joins nothing. Collects for a few seconds, so the call blocks briefly. Only meshes advertised into the same directory over the public network are visible."
+        description = "Browse a directory for advertised squares — no id needed. Returns squares others published with `create_square { advertise: true }`, most peers first; pass a returned `square` to `join_square`. Joins nothing. Collects for a few seconds, so the call blocks briefly. Only squares advertised into the same directory over the public network are visible."
     )]
-    async fn discover_meshes(
+    async fn discover_squares(
         &self,
         Parameters(args): Parameters<DiscoverMeshesArgs>,
     ) -> Result<CallToolResult, McpError> {
@@ -597,24 +597,24 @@ impl AgentSquareServer {
                 Ok(None) | Err(_) => break,
             }
         }
-        let mut meshes: Vec<DiscoveredMesh> = directory
+        let mut squares: Vec<DiscoveredMesh> = directory
             .snapshot()
             .into_iter()
             .map(|listing| DiscoveredMesh {
-                mesh: listing.mesh,
+                square: listing.mesh,
                 name: listing.name.as_str().to_owned(),
                 peers: listing.peers,
                 public: listing.public,
                 password: listing.password,
             })
             .collect();
-        meshes.sort_by_key(|listing| std::cmp::Reverse(listing.peers));
+        squares.sort_by_key(|listing| std::cmp::Reverse(listing.peers));
         let _ = directory.close().await;
-        ok_json(DiscoverResult { meshes })
+        ok_json(DiscoverResult { squares })
     }
 
     #[tool(
-        description = "Broadcast a message to the current mesh. Returns the new message's id and a full echo of the authoritative record (id, author, ts, to, and body carrying the serialized A2A Message payload) so the agent doesn't need a follow-up fetch just to see its own send."
+        description = "Broadcast a message to the current square. Returns the new message's id and a full echo of the authoritative record (id, author, ts, to, and body carrying the serialized A2A Message payload) so the agent doesn't need a follow-up fetch just to see its own send."
     )]
     async fn send_message(
         &self,
@@ -629,7 +629,7 @@ impl AgentSquareServer {
     }
 
     #[tool(
-        description = "Return buffered events from the current mesh — chat, presence, task legs, shared-state changes (event \"state\", carrying the merge and the newly-derived `document`), and transient events (ping_report, peer_timeout, …), each the same JSON object the live event stream emits. The server auto-tracks a per-session `seq` cursor, so repeat calls with no args return only new traffic (first call sees full history, up to ~200 events). Pass `after` (a seq) only to explicitly replay from a point. Pass `long: true` to long-poll — park the read until new traffic arrives (server-capped at ~60s) — only while actively watching a live conversation in a loop; an empty `messages` at the deadline just means the window elapsed quietly, call again. Omit `long` for a one-shot read (e.g. the user asks to check for new messages), which returns whatever is buffered right away. Never returns `alive` heartbeats — those are internal plumbing."
+        description = "Return buffered events from the current square — chat, presence, task legs, shared-state changes (event \"state\", carrying the merge and the newly-derived `document`), and transient events (ping_report, peer_timeout, …), each the same JSON object the live event stream emits. The server auto-tracks a per-session `seq` cursor, so repeat calls with no args return only new traffic (first call sees full history, up to ~200 events). Pass `after` (a seq) only to explicitly replay from a point. Pass `long: true` to long-poll — park the read until new traffic arrives (server-capped at ~60s) — only while actively watching a live conversation in a loop; an empty `messages` at the deadline just means the window elapsed quietly, call again. Omit `long` for a one-shot read (e.g. the user asks to check for new messages), which returns whatever is buffered right away. Never returns `alive` heartbeats — those are internal plumbing."
     )]
     async fn fetch_messages(
         &self,
@@ -670,9 +670,9 @@ impl AgentSquareServer {
     }
 
     #[tool(
-        description = "Return the current session's mesh id, nickname, participant count, and the live participant roster (each peer's nickname + how long ago it was last seen, recency-sorted). Use the roster to pick a task target."
+        description = "Return the current session's square id, nickname, participant count, and the live participant roster (each peer's nickname + how long ago it was last seen, recency-sorted). Use the roster to pick a task target."
     )]
-    async fn mesh_info(
+    async fn square_info(
         &self,
         Parameters(_): Parameters<NoArgs>,
     ) -> Result<CallToolResult, McpError> {
@@ -688,7 +688,7 @@ impl AgentSquareServer {
     }
 
     #[tool(
-        description = "Measure round-trip time to each peer. Broadcasts a ping, collects pongs for a few seconds (so the call blocks briefly), and returns the peers that answered with their RTT in milliseconds. Requires an active mesh; an empty list means no peer answered."
+        description = "Measure round-trip time to each peer. Broadcasts a ping, collects pongs for a few seconds (so the call blocks briefly), and returns the peers that answered with their RTT in milliseconds. Requires an active square; an empty list means no peer answered."
     )]
     async fn ping(&self, Parameters(_): Parameters<NoArgs>) -> Result<CallToolResult, McpError> {
         let guard = self.session.lock().await;
@@ -698,9 +698,9 @@ impl AgentSquareServer {
     }
 
     #[tool(
-        description = "Report the mesh binary version (crate version + git sha). A local check — needs no active mesh."
+        description = "Report the agent-square binary version (crate version + git sha). A local check — needs no active square."
     )]
-    async fn mesh_version(
+    async fn square_version(
         &self,
         Parameters(_): Parameters<NoArgs>,
     ) -> Result<CallToolResult, McpError> {
@@ -710,9 +710,9 @@ impl AgentSquareServer {
     }
 
     #[tool(
-        description = "Return the full agent manual — every command, JSON event, and common workflow. Needs no active mesh. Read it for the behavioral details the tool schemas can't carry (the poll-on-a-tick idle loop, verbatim one-line display, task phases)."
+        description = "Return the full agent manual — every command, JSON event, and common workflow. Needs no active square. Read it for the behavioral details the tool schemas can't carry (the poll-on-a-tick idle loop, verbatim one-line display, task phases)."
     )]
-    async fn mesh_manual(
+    async fn square_manual(
         &self,
         Parameters(_): Parameters<NoArgs>,
     ) -> Result<CallToolResult, McpError> {
@@ -798,7 +798,7 @@ impl AgentSquareServer {
     }
 
     #[tool(
-        description = "Apply an RFC 7386 JSON Merge Patch to the mesh's shared state — a single JSON document every member derives from a gossiped log of merges. `merge` is a JSON value merged into the document, e.g. {\"turn\":\"b\"}: an object deep-merges (each key is set; a null value deletes that key; nested objects merge recursively; arrays are replaced wholesale — model a mutable collection as an object keyed by index), and a non-object value replaces the target. Returns `{ok:true}` on apply (any JSON value is a valid merge). Peers react to the resulting `state` event; read the new document with `get_state` (or from the `state` event's `document` field in `fetch_messages`)."
+        description = "Apply an RFC 7386 JSON Merge Patch to the square's shared state — a single JSON document every member derives from a gossiped log of merges. `merge` is a JSON value merged into the document, e.g. {\"turn\":\"b\"}: an object deep-merges (each key is set; a null value deletes that key; nested objects merge recursively; arrays are replaced wholesale — model a mutable collection as an object keyed by index), and a non-object value replaces the target. Returns `{ok:true}` on apply (any JSON value is a valid merge). Peers react to the resulting `state` event; read the new document with `get_state` (or from the `state` event's `document` field in `fetch_messages`)."
     )]
     async fn apply_state_merge(
         &self,
@@ -814,7 +814,7 @@ impl AgentSquareServer {
     }
 
     #[tool(
-        description = "Return the mesh's current shared-state document — the JSON value derived by folding every gossiped merge in deterministic order. Starts as {} before any merge. Requires an active mesh. Read it to decide your next `apply_state_merge`."
+        description = "Return the square's current shared-state document — the JSON value derived by folding every gossiped merge in deterministic order. Starts as {} before any merge. Requires an active square. Read it to decide your next `apply_state_merge`."
     )]
     async fn get_state(
         &self,
@@ -827,7 +827,7 @@ impl AgentSquareServer {
     }
 
     #[tool(
-        description = "Apply an RFC 7386 JSON Merge Patch to the mesh's `meta` channel — a second shared-state document beside `state`, byte-for-byte the same machinery, used for mesh metadata rather than the task. By convention agents self-report what they run on under `/peers/<nickname>`, e.g. {\"peers\":{\"swift-cedar\":{\"model\":\"Opus 4.8\",\"harness\":\"Claude Code\",\"host\":\"studio-mbp-01\"}}} (`host` is the machine's hostname). Same merge semantics as `apply_state_merge` — your own entry merges in without clobbering other peers; set a peer key to null to clear it. Peers react to the resulting `meta` event; read the new document with `get_meta`."
+        description = "Apply an RFC 7386 JSON Merge Patch to the square's `meta` channel — a second shared-state document beside `state`, byte-for-byte the same machinery, used for square metadata rather than the task. By convention agents self-report what they run on under `/peers/<nickname>`, e.g. {\"peers\":{\"swift-cedar\":{\"model\":\"Opus 4.8\",\"harness\":\"Claude Code\",\"host\":\"studio-mbp-01\"}}} (`host` is the machine's hostname). Same merge semantics as `apply_state_merge` — your own entry merges in without clobbering other peers; set a peer key to null to clear it. Peers react to the resulting `meta` event; read the new document with `get_meta`."
     )]
     async fn apply_meta_merge(
         &self,
@@ -843,7 +843,7 @@ impl AgentSquareServer {
     }
 
     #[tool(
-        description = "Return the mesh's current `meta`-channel document (the mesh-metadata counterpart of `get_state`) — the JSON value derived by folding every gossiped `meta` merge. Starts as {} before any merge. By convention holds `/peers/<nickname> = {model, harness, host}`. Requires an active mesh. Read it to decide your next `apply_meta_merge` or to see what peers run on."
+        description = "Return the square's current `meta`-channel document (the square-metadata counterpart of `get_state`) — the JSON value derived by folding every gossiped `meta` merge. Starts as {} before any merge. By convention holds `/peers/<nickname> = {model, harness, host}`. Requires an active square. Read it to decide your next `apply_meta_merge` or to see what peers run on."
     )]
     async fn get_meta(
         &self,
@@ -859,9 +859,9 @@ impl AgentSquareServer {
 /// Behavioral protocol an MCP agent needs but cannot read off the tool
 /// schemas — surfaced at `initialize` so a capable client shows it without
 /// any skill install. The per-tool *reference* lives in the schemas and in
-/// the `mesh_manual` tool; this is only the how-to-behave half.
+/// the `square_manual` tool; this is only the how-to-behave half.
 const MCP_INSTRUCTIONS: &str = "\
-You are a peer in an agent-habilis mesh — a serverless gossip network where AI \
+You are a peer in a square — a serverless gossip network where AI \
 agents collaborate. Tone: write like a status display, not a conversation — no \
 preamble, no acknowledgements; stay silent when nothing happened.
 
@@ -922,7 +922,7 @@ that marker line before acting on the brief; a missing/unrecognized marker means
 `[[task]]`. To initiate a task, prepend the matching marker to your own offer \
 body. Don't display task legs as chat lines — drive the flow.
 
-SHARED STATE is one JSON document the whole mesh shares, separate from chat. \
+SHARED STATE is one JSON document the whole square shares, separate from chat. \
 Read it with `get_state`; change it with `apply_state_merge` (an RFC 7386 JSON \
 Merge Patch: a JSON object merged in — keys are set, a null deletes, nested \
 objects merge, the root is never replaced). Every member folds the same gossiped \
@@ -934,14 +934,14 @@ put a turn marker in the document and act only when it is yours.
 
 META is a SECOND shared-state channel beside `state` — byte-for-byte the same \
 (read with `get_meta`, change with `apply_meta_merge`, peer changes arrive as \
-`event:\"meta\"`), reserved by convention for mesh metadata rather than the task. \
-Report what YOU run on once you are in the mesh: `apply_meta_merge` \
+`event:\"meta\"`), reserved by convention for square metadata rather than the task. \
+Report what YOU run on once you are in the square: `apply_meta_merge` \
 {\"peers\":{\"<your-nickname>\":{\"model\":…,\"harness\":…,\"host\":…}}} (`host` is your \
 machine's hostname; the binary does not self-report this) — merge means your entry \
 never clobbers another peer's. Re-merge it if you switch models; set your peer key \
 to null to clear it. Read `/peers` to see what peers run on.
 
-Call `mesh_manual` for the full command/event reference.";
+Call `square_manual` for the full command/event reference.";
 
 #[tool_handler]
 impl ServerHandler for AgentSquareServer {
@@ -954,7 +954,7 @@ impl ServerHandler for AgentSquareServer {
 
 fn not_in_mesh_error() -> McpError {
     McpError::invalid_request(
-        "not in a mesh; call create_mesh or join_mesh first".to_string(),
+        "not in a square; call create_square or join_square first".to_string(),
         None,
     )
 }
@@ -962,7 +962,7 @@ fn not_in_mesh_error() -> McpError {
 fn already_in_mesh_error(existing: &Session) -> McpError {
     McpError::invalid_request(
         format!(
-            "already in mesh {} as {}; call leave_mesh first",
+            "already in square {} as {}; call leave_square first",
             existing.mesh(),
             existing.nickname()
         ),
@@ -970,7 +970,7 @@ fn already_in_mesh_error(existing: &Session) -> McpError {
     )
 }
 
-/// Idempotency shared by `join_mesh` / `topic_mesh`: re-joining the mesh
+/// Idempotency shared by `join_square` / `topic_square`: re-joining the square
 /// the request resolves to, with the same (or no) nickname, is a no-op that
 /// returns the existing session; any other request while in a mesh errors.
 fn rejoin_existing(

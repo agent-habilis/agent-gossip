@@ -1,6 +1,6 @@
 ---
 name: state
-description: Print the mesh's state-channel document (full JSON) in a code block. The state channel holds the task; mesh metadata lives in the separate meta channel (/square:meta). Use to inspect the current task state.
+description: Print the square's state-channel document (full JSON) in a code block. The state channel holds the task; square metadata lives in the separate meta channel (/square:meta). Use to inspect the current task state.
 ---
 
 ## Quiet mode
@@ -12,24 +12,24 @@ are shown by the harness; do not narrate around them.
 
 ## Pre-flight: guard
 
-If you hold `$MESH`/`$NICKNAME` from a `/square:create` or `/square:join`
+If you hold `$SQUARE`/`$NICKNAME` from a `/square:create` or `/square:join`
 `ready` event this session, proceed. Otherwise try to reattach first:
 follow `../shared/reattach.md` (resolved relative to this SKILL.md's
-directory). Only if reattach also yields no mesh, print:
+directory). Only if reattach also yields no square, print:
 ```
-💬 Not in a mesh. Use /square:create or /square:join first.
+💬 Not in a square. Use /square:create or /square:join first.
 ```
 and STOP.
 
-`$NAME` is the mesh name from the same `ready` event.
+`$NAME` is the square name from the same `ready` event.
 
 ## Read the state
 
-`$MESH`/`$NICKNAME` are from the `ready` event (copy the `💬…` id
+`$SQUARE`/`$NICKNAME` are from the `ready` event (copy the `💬…` id
 verbatim):
 
 ```bash
-agent-square state get --mesh "$MESH" --nickname "$NICKNAME"
+agent-square state get --square "$SQUARE" --nickname "$NICKNAME"
 ```
 
 This returns a single JSON line synchronously — wait for it and parse it:
@@ -62,7 +62,7 @@ Emit exactly one block: a header line, a blank line, then the pretty-printed
 ````
 
 Rendering rules:
-- The mesh name is prefixed with `#` and wrapped in backticks so it renders as
+- The square name is prefixed with `#` and wrapped in backticks so it renders as
   inline code, e.g. `` `#dealer-lilac` `` — no angle brackets.
 - `document` is pretty-printed with 2-space indentation, keys verbatim.
 - An empty document still gets the code block, containing `{}`.
@@ -72,5 +72,5 @@ Rendering rules:
 - Read-only. Requires an active `/square:create` or `/square:join` session (a
   live daemon): `agent-square state get` talks to it over IPC.
 - To change the state, peers merge it with `agent-square state merge` — this skill only
-  reads. Mesh metadata lives in the separate `meta` channel — read it with
+  reads. Square metadata lives in the separate `meta` channel — read it with
   `/square:meta`.

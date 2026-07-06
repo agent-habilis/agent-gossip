@@ -1,4 +1,4 @@
-//! `poll` command args: retrieve buffered messages from a running mesh
+//! `poll` command args: retrieve buffered messages from a running square
 //! process via IPC.
 
 use clap::Parser;
@@ -9,9 +9,9 @@ use super::output::OutputFormat;
 
 #[derive(Parser, Debug)]
 pub(crate) struct PollOpts {
-    /// Mesh identifier (💬...)
+    /// Square identifier (💬...)
     #[arg(long)]
-    pub mesh: MeshId,
+    pub square: MeshId,
 
     /// Nickname of the local agent (must have a running join/create session)
     #[arg(long)]

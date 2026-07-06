@@ -119,7 +119,7 @@ fn default_session_pid() -> u32 {
 
 fn target_json(target: &Target) -> serde_json::Value {
     let mut obj = serde_json::Map::new();
-    obj.insert("mesh".into(), target.mesh.clone().into());
+    obj.insert("square".into(), target.mesh.clone().into());
     if let Some(name) = &target.name {
         obj.insert("name".into(), name.clone().into());
     }
@@ -143,7 +143,7 @@ fn display_name(target: &Target) -> String {
 
 pub(crate) async fn leave(opts: LeaveOpts) -> Result<()> {
     let LeaveOpts {
-        mesh,
+        square: mesh,
         nickname,
         session_pid,
         confirm_timeout_secs,
@@ -206,10 +206,10 @@ pub(crate) async fn leave(opts: LeaveOpts) -> Result<()> {
         OutputFormat::Human => {
             if confirmed.is_empty() {
                 if other_sessions == 0 {
-                    println!("{MESH_GLYPH} not in a mesh");
+                    println!("{MESH_GLYPH} not in a square");
                 } else {
                     println!(
-                        "{MESH_GLYPH} no mesh owned by this session ({other_sessions} running for other sessions — untouched)"
+                        "{MESH_GLYPH} no square owned by this session ({other_sessions} running for other sessions — untouched)"
                     );
                 }
             }
@@ -248,10 +248,10 @@ pub(crate) async fn session(opts: SessionOpts) -> Result<()> {
         OutputFormat::Human => {
             if owned.is_empty() {
                 if other_sessions == 0 {
-                    println!("{MESH_GLYPH} not in a mesh");
+                    println!("{MESH_GLYPH} not in a square");
                 } else {
                     println!(
-                        "{MESH_GLYPH} no mesh owned by this session ({other_sessions} running for other sessions)"
+                        "{MESH_GLYPH} no square owned by this session ({other_sessions} running for other sessions)"
                     );
                 }
             }

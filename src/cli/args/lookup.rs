@@ -42,14 +42,14 @@ impl LookupArgs {
 /// [`LookupArgs`] plus `--public`, for the commands whose no-flag default
 /// is already the all-on public preset (transfers + directory browsing).
 /// `create` keeps its own `--public` (there it opts *in* from a loopback
-/// default and is baked into the mesh id).
+/// default and is baked into the square id).
 #[derive(Parser, Debug)]
 pub(crate) struct PublicLookupArgs {
     /// Explicitly select the all-on public preset (mDNS + DHT + the
     /// default relay ladder) — already the default when no lookup flag
     /// is named. Conflicts with the granular `--mdns`/`--dht`/`--relay`
     /// flags (they replace the preset) and, on the commands that take
-    /// one, with a `--mesh`/ticket that already carries a discovery
+    /// one, with a `--square`/ticket that already carries a discovery
     /// config.
     #[arg(long, default_value_t = false, conflicts_with_all = ["mdns", "dht", "relay"])]
     pub public: bool,

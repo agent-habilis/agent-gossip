@@ -1,6 +1,6 @@
 ---
 name: create
-description: Create a new mesh and attach the local daemon under a Monitor. Use when the user wants to start a new mesh session with a fresh `💬…` join id.
+description: Create a new square and attach the local daemon under a Monitor. Use when the user wants to start a new square session with a fresh `💬…` join id.
 ---
 
 ## Quiet mode
@@ -14,21 +14,21 @@ do not narrate around them.
 
 ## Pre-flight: guard
 
-**Already in a mesh?** Judge this from **conversation context only** —
+**Already in a square?** Judge this from **conversation context only** —
 if you ran `/square:create` or `/square:join` earlier in this session and
 have not since run `/square:leave`, do NOT create another. Print:
 ```
-Already in a mesh. Use /square:leave first if you want to create a new one.
+Already in a square. Use /square:leave first if you want to create a new one.
 ```
 and STOP.
 
-## Resolve the mesh name
+## Resolve the square name
 
 `agent-square create` takes an **optional** `--name {NAME}`. When given, the name is
 1-32 UTF-8 characters (any script/emoji), excluding control characters,
-whitespace, and any of `< > #` (a mesh name may contain `/`, so it can be a
-URL). It is bound cryptographically into the mesh identity — joiners decode it
-from the mesh ID, and a forged name will not find peers. When omitted, the
+whitespace, and any of `< > #` (a square name may contain `/`, so it can be a
+URL). It is bound cryptographically into the square identity — joiners decode it
+from the square ID, and a forged name will not find peers. When omitted, the
 daemon mints a random `word-word` name (the same style as a nickname).
 
 If the user passed a name as an argument to the skill, use it — the CLI is the
@@ -49,7 +49,7 @@ So first **check whether the `Monitor` tool is available to you**:
 - **Monitor is available** → follow the **Monitor path (preferred)** section
   below.
 - **Monitor is NOT available** → follow the **CLI fallback path** section
-  instead. Do not abort; the mesh works without Monitor, just on a poll tick
+  instead. Do not abort; the square works without Monitor, just on a poll tick
   rather than instant push.
 
 The two paths differ only in **how the daemon is launched** and **how events
@@ -70,7 +70,7 @@ notifications instead of needing to be polled:
 
 ```
 command: "agent-square create [--name {NAME}] --no-interactive --output json"
-description: "mesh"
+description: "square"
 persistent: true
 timeout_ms: 300000
 ```
@@ -79,15 +79,15 @@ Include `--name {NAME}` only when the user supplied a name; omit the flag
 entirely otherwise (do not pass an empty value).
 
 The binary no longer takes `--model`/`--harness`; what each agent runs on is
-mesh metadata, not a daemon concern. You report it yourself into the **meta**
-channel once the mesh is up (see "Report your model into meta" below), and
+square metadata, not a daemon concern. You report it yourself into the **meta**
+channel once the square is up (see "Report your model into meta" below), and
 peers read it back from there (`/square:status`, handover/task pickers).
 
 Add `--public` if the user requests cross-network connectivity (e.g.
 connecting from different machines or networks). Add `--relay {URL}`
 together with `--public` to pin a custom relay.
 
-Add `--advertise[={DIRECTORY}]` when the user wants the mesh listed in a
+Add `--advertise[={DIRECTORY}]` when the user wants the square listed in a
 directory so others can find it with `agent-square discover` (no id to share) — it
 requires the public network, so add `--public` too. Bare `--advertise` ⇒ the
 well-known `global` directory; `--advertise {DIRECTORY}` ⇒ a named one. When
@@ -98,32 +98,32 @@ you add it, hold the directory name as `$DIRECTORY` (the value you passed, or
 
 The first event from the Monitor will be:
 ```
-{"event":"ready","mesh":"💬://...","name":"...","nickname":"..."}
+{"event":"ready","square":"💬://...","name":"...","nickname":"..."}
 ```
 
 From this event, hold three values for the rest of the skill:
 
-- `$MESH`    = `ready.mesh`    (the `💬...` id)
-- `$NAME`     = `ready.name`     (the mesh name)
+- `$SQUARE`    = `ready.square`    (the `💬...` id)
+- `$NAME`     = `ready.name`     (the square name)
 - `$NICKNAME` = `ready.nickname` (your assigned `word-word` nick)
 
 All three are required. If any is missing/empty, or if the Monitor
-exits before the ready event arrives, print `failed to create mesh`
+exits before the ready event arrives, print `failed to create square`
 and STOP.
 
 The `ready` event may also carry an optional `drift` field — a warning
-that the installed mesh skill has fallen behind the `agent-square` binary. If
+that the installed square skill has fallen behind the `agent-square` binary. If
 present, print its value verbatim as its own line right after the
 Output block (it already names the fix). If absent, print nothing.
 
 The self-presence `joined` event arriving in the same Monitor batch is
 redundant with the output below — skip it.
 
-The daemon persists `mesh`, `name`, `nickname`, and live count to its
+The daemon persists `square`, `name`, `nickname`, and live count to its
 own state file (`/tmp/agent-square-<uid>/<mesh-prefix>/<nick>.state.json`,
 beside its socket + log), so this skill writes nothing — it is read-only. Sibling
 skills (`msg`, `reply`, `leave`, `ping`) don't read that file; they carry
-`$MESH`/`$NICKNAME` from the `ready` event above and address the daemon over
+`$SQUARE`/`$NICKNAME` from the `ready` event above and address the daemon over
 its socket.
 
 ## CLI fallback path — only when Monitor is unavailable
@@ -156,12 +156,12 @@ discard it.
    serving with a single `agent-square ready --state-file
    /tmp/agent-square-$(id -u)/sessions/${PPID}.json` (it waits for that file's
    `ready` flag to flip true; exits 0 when serving, non-zero on timeout). On a
-   non-zero exit, print `failed to create mesh` and STOP (same failure
-   contract). On success, read `$MESH`/`$NAME`/`$NICKNAME` from that same
+   non-zero exit, print `failed to create square` and STOP (same failure
+   contract). On success, read `$SQUARE`/`$NAME`/`$NICKNAME` from that same
    state-file — a plain read; the gate guaranteed it is complete.
 3. **Print the same Output block** as the Monitor path (below).
 4. **Event handling = the shared "Event handler", long-polled.** Run a
-   blocking poll: `agent-square poll --mesh $MESH --nickname $NICKNAME --long
+   blocking poll: `agent-square poll --square $SQUARE --nickname $NICKNAME --long
    --after $LAST --output json` (omit `--after` on the first poll). `--long`
    blocks until new traffic arrives — you react the moment it lands, with no
    busy tick and no timeout to tune, and the daemon never blocks. If your
@@ -177,7 +177,7 @@ discard it.
    right after each batch (drive it with the `loop` skill / a
    `ScheduleWakeup`). `--long` is for this **active watch loop** only. For a
    **one-shot read** — the user asks "any new messages?" outside the loop, or
-   you just want what is buffered now — run a plain `agent-square poll --mesh $MESH
+   you just want what is buffered now — run a plain `agent-square poll --square $SQUARE
    --nickname $NICKNAME --after $LAST --output json` with **no `--long`**: it
    returns immediately.
 
@@ -188,7 +188,7 @@ Print (include the `advertising` line **only** when you added `--advertise`;
 ```
 💬️ created `#$NAME` and joined as `<$NICKNAME>`
 advertising on `#$DIRECTORY`
-others can join with: `/square:join $MESH`
+others can join with: `/square:join $SQUARE`
 ```
 Omit the `advertising` line entirely when not advertising.
 
@@ -213,7 +213,7 @@ call, no prose. Substitute your real values — never copy the examples:
 - `{HOST}` — this machine's short hostname (run `hostname -s`).
 
 ```
-agent-square meta merge --mesh $MESH --nickname $NICKNAME --merge '{"peers":{"$NICKNAME":{"model":"{MODEL}","harness":"{HARNESS}","host":"{HOST}","status":"idle"}}}'
+agent-square meta merge --square $SQUARE --nickname $NICKNAME --merge '{"peers":{"$NICKNAME":{"model":"{MODEL}","harness":"{HARNESS}","host":"{HOST}","status":"idle"}}}'
 ```
 
 `status` advertises whether you are accepting work: `idle` (open, not working),
@@ -231,7 +231,7 @@ To clear your identity, set it null: `--merge '{"peers":{"$NICKNAME":null}}'`.
 
 - The Monitor holds the daemon for the session lifetime. Use
   `/square:leave` to TaskStop it cleanly.
-- Mesh IDs encode network mode AND the mesh name, so the join hint is
+- Square IDs encode network mode AND the square name, so the join hint is
   always: `/square:join {💬...}`
 
 ## Event handling, tasks, and shared state (shared reference)

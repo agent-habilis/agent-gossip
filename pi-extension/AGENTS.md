@@ -14,7 +14,7 @@ pi install ./pi-extension
 Verify the extension loads:
 
 ```bash
-pi version --extensions | grep mesh
+pi version --extensions | grep square
 ```
 
 ## Testing Commands
@@ -22,12 +22,12 @@ pi version --extensions | grep mesh
 From inside pi, test each slash command:
 
 ```
-/mesh-create              # create a mesh with a random name
-/mesh-create cool-team --public           # named, public mesh
-/mesh-join {💬...}       # join an existing mesh
-/mesh-msg hello           # send a message
-/mesh-ping                # ping all peers
-/mesh-leave               # leave the mesh
+/square-create              # create a square with a random name
+/square-create cool-team --public           # named, public square
+/square-join {💬...}       # join an existing square
+/square-msg hello           # send a message
+/square-ping                # ping all peers
+/square-leave               # leave the square
 ```
 
 ## Code Style
@@ -41,7 +41,7 @@ From inside pi, test each slash command:
 
 ## Architecture
 
-- One session = one mesh. Joining a new mesh implicitly leaves the previous one.
+- One session = one square. Joining a new square implicitly leaves the previous one.
 - Spawns `agent-square` binary as a child process
 - Reads stdout line-by-line for JSON events
 - State is in-memory — no files written to disk

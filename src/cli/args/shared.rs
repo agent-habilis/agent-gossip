@@ -1,7 +1,7 @@
 //! `SharedServerOpts` — the option group flattened into every
 //! long-running server command (`create`, `join`, `discover`). Holds
 //! only genuinely-local, per-process settings; lookup selection is a
-//! mesh-wide property carried in the id (see `create`'s `LookupArgs`).
+//! square-wide property carried in the id (see `create`'s `LookupArgs`).
 
 use clap::Parser;
 
@@ -29,8 +29,8 @@ pub(crate) struct SharedServerOpts {
     pub filter_self: bool,
 
     /// Cap on live direct connections (the gossip overlay's active-neighbor
-    /// set). The mesh holds at most this many QUIC links and relays to peers
-    /// beyond it; meshes up to this size form a full mesh with no membership
+    /// set). The square holds at most this many QUIC links and relays to peers
+    /// beyond it; squares up to this size form a full mesh with no membership
     /// churn.
     #[arg(long, default_value_t = consts::GOSSIP_ACTIVE_VIEW_CAPACITY)]
     pub max_peers: usize,
@@ -47,7 +47,7 @@ pub(crate) struct SharedServerOpts {
     pub a2a_serve: Option<u16>,
 
     /// Override the session state-file path. The daemon writes
-    /// `{mesh, name, nickname, participant_count, ready, last_updated}` to a
+    /// `{square, name, nickname, participant_count, ready, last_updated}` to a
     /// JSON file on every peer-set change and a ~10s heartbeat, and deletes it
     /// on clean shutdown — for external tools (e.g. a shell statusline) to
     /// render live count + liveness without IPC. Defaults to
@@ -123,7 +123,7 @@ pub(crate) struct SharedServerOpts {
     #[arg(long, hide = true, default_value_t = consts::ADVERTISE_INTERVAL_SECS)]
     pub advertise_interval_secs: u64,
 
-    /// How long a discoverer keeps showing a mesh after its last ad (seconds).
+    /// How long a discoverer keeps showing a square after its last ad (seconds).
     #[arg(long, hide = true, default_value_t = consts::DIRECTORY_EXPIRY_SECS)]
     pub directory_expiry_secs: u64,
 
@@ -135,7 +135,7 @@ pub(crate) struct SharedServerOpts {
     #[arg(long, hide = true, default_value_t = consts::ANTIENTROPY_MAX_RESEND)]
     pub antientropy_max_resend: usize,
 
-    /// Byte budget for a mesh's spool subdir before oldest-first GC (bytes).
+    /// Byte budget for a square's spool subdir before oldest-first GC (bytes).
     #[arg(long, hide = true, default_value_t = consts::SPOOL_MAX_BYTES)]
     pub spool_max_bytes: u64,
 

@@ -7,9 +7,9 @@ use agent_habilis_mesh::protocol::{Nickname, MeshId};
 
 #[derive(Parser, Debug)]
 pub(crate) struct CardOpts {
-    /// Mesh identifier (💬...)
+    /// Square identifier (💬...)
     #[arg(long)]
-    pub mesh: MeshId,
+    pub square: MeshId,
 
     /// Nickname of the local agent (must have a running join/create session)
     #[arg(long)]

@@ -2,7 +2,7 @@
 //!
 //! Human + TTY renders a live arrow-key picker that hands off to `join`
 //! on selection; `--no-interactive` / `--output json` streams
-//! `mesh_found`/`mesh_lost` JSON lines for an agent to act on. The pure
+//! `square_found`/`square_lost` JSON lines for an agent to act on. The pure
 //! directory primitives live in [`agent_habilis_mesh::directory`]; the live consumer
 //! in [`crate::embed::Directory`]; the terminal machinery in
 //! [`super::picker`]; this file is just the CLI command + mesh rendering.
@@ -18,7 +18,7 @@ use super::picker::{self, PickerOutcome, PickerText, interrupted, sigterm_stream
 
 /// Browse a directory. Human mode renders a live picker that
 /// hands off to `join` on selection; `--no-interactive` / `--output
-/// json` streams `mesh_found`/`mesh_lost` JSON lines instead (the
+/// json` streams `square_found`/`square_lost` JSON lines instead (the
 /// agent picks and joins by id itself).
 pub(super) async fn discover(opts: DiscoverOpts) -> Result<()> {
     let directory_label = opts
@@ -88,21 +88,21 @@ pub(super) async fn discover(opts: DiscoverOpts) -> Result<()> {
 }
 
 /// One directory change as a JSON line for `agent-square discover --output json`.
-/// `Found`/`Updated` both surface as `mesh_found` (upsert semantics —
-/// the agent treats a re-ad as a refresh); a departure is `mesh_lost`.
+/// `Found`/`Updated` both surface as `square_found` (upsert semantics —
+/// the agent treats a re-ad as a refresh); a departure is `square_lost`.
 fn discover_event_json(event: &DirectoryEvent) -> String {
     let value = match event {
         DirectoryEvent::Found(listing) | DirectoryEvent::Updated(listing) => serde_json::json!({
-            "event": "mesh_found",
-            "mesh": listing.mesh.as_str(),
+            "event": "square_found",
+            "square": listing.mesh.as_str(),
             "name": listing.name,
             "mode": if listing.public { "public" } else { "private" },
             "password": listing.password,
             "peers": listing.peers,
         }),
         DirectoryEvent::Lost(mesh) => serde_json::json!({
-            "event": "mesh_lost",
-            "mesh": mesh.as_str(),
+            "event": "square_lost",
+            "square": mesh.as_str(),
         }),
     };
     value.to_string()
@@ -127,7 +127,7 @@ async fn run_mesh_picker(
     };
     let text = PickerText {
         header: format!("discovering {yellow}#{directory_label}{reset} directory"),
-        empty: "waiting for meshes".to_owned(),
+        empty: "waiting for squares".to_owned(),
         footer: "↑/↓ move · enter join · q quit".to_owned(),
     };
     let row = |listing: &MeshListing, selected: bool| {

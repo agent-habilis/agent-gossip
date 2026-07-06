@@ -1282,7 +1282,7 @@ pub(crate) fn spawn_advertiser(
                     target: "agent_square::directory",
                     %error,
                     directory = %directory,
-                    "directory advertise: could not join the directory; mesh stays unlisted"
+                    "directory advertise: could not join the directory; square stays unlisted"
                 );
                 return;
             }
