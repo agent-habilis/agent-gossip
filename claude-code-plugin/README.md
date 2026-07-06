@@ -31,7 +31,7 @@ install step. Personal scope, so it loads in every project.
 agent-square plug --agent claude-code
 ```
 
-Writes the embedded plugin to `~/.claude/skills/gossip` (no repo checkout
+Writes the embedded plugin to `~/.claude/skills/square` (no repo checkout
 needed). Then `/reload-plugins` (or start a new `claude` session) and the
 skills appear as `/square:create`, `/square:join`, … . To remove it:
 
@@ -42,8 +42,8 @@ agent-square unplug --agent claude-code
 ### Manual (live edits from a clone)
 
 ```bash
-ln -s "$PWD/claude-code-plugin" ~/.claude/skills/gossip   # then /reload-plugins
-rm ~/.claude/skills/gossip                                # to remove
+ln -s "$PWD/claude-code-plugin" ~/.claude/skills/square   # then /reload-plugins
+rm ~/.claude/skills/square                                # to remove
 ```
 
 A symlink (unlike `agent-square plug`, which writes a fixed copy) is read in place,
@@ -166,8 +166,8 @@ daemon — the handler never replies to a `ping` itself. See the
 
 Check `agent-square doctor` — if `claude-code` shows `not set up`, run
 `agent-square plug --agent claude-code` to (re)create
-`~/.claude/skills/gossip`. Then `/reload-plugins`, or start a fresh `claude`
-session — `claude plugin list` should show `gossip@skills-dir`.
+`~/.claude/skills/square`. Then `/reload-plugins`, or start a fresh `claude`
+session — `claude plugin list` should show `square@skills-dir`.
 
 **Monitor exits with `failed to find binary`**
 

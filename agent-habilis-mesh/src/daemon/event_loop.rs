@@ -690,7 +690,7 @@ async fn announce_and_maybe_exit<A: NodeDriver>(
 /// Every catchable termination signal routes through the graceful
 /// `shutdown()` path so the statusline state file is removed. SIGHUP in
 /// particular is what a closing parent (e.g. the Monitor that hosts the
-/// daemon for a `/gossip:*` session) tends to send; without catching it
+/// daemon for a `/square:*` session) tends to send; without catching it
 /// the default action terminated the daemon without cleanup, stranding a
 /// ghost pill on the statusline. Only SIGKILL stays uncatchable.
 fn spawn_quit_signal_tasks(exit_on_quit: bool) -> mpsc::Receiver<()> {

@@ -23,7 +23,7 @@ const SKIP: &[&str] = include!(concat!(
 ));
 
 /// The repo dirs `src/cli/setup.rs` embeds, relative to the manifest.
-const EMBED_DIRS: &[&str] = &["claude-code-plugin", "pi-extension", "skills/gossip"];
+const EMBED_DIRS: &[&str] = &["claude-code-plugin", "pi-extension", "skills/square"];
 
 fn main() {
     stage_pi_extension();

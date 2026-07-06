@@ -8,14 +8,14 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use include_dir::{Dir, include_dir};
 
-/// The Claude Code plugin — multi-skill, loads as `gossip@skills-dir`.
+/// The Claude Code plugin — multi-skill, loads as `square@skills-dir`.
 pub(crate) static CC_PLUGIN: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/claude-code-plugin");
 /// The pi extension — TS source (peer deps come from the pi runtime). Embedded
 /// from the `build.rs`-staged copy in `OUT_DIR`, which excludes the local
 /// `node_modules`, so it never bloats the binary.
 pub(crate) static PI_EXTENSION: Dir<'_> = include_dir!("$OUT_DIR/pi-extension");
 /// The portable, agent-agnostic MCP skill.
-pub(crate) const GENERIC_SKILL: &str = include_str!("../../skills/gossip/SKILL.md");
+pub(crate) const GENERIC_SKILL: &str = include_str!("../../skills/square/SKILL.md");
 
 /// Ties this module's compilation to the embedded artifacts' content
 /// (fingerprint emitted by `build.rs`), so editing a plugin/skill/extension
@@ -34,14 +34,14 @@ const SKIP: &[&str] = include!("embed_skip.rs");
 /// An agent the mesh integrations can be installed into.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
 pub(crate) enum Agent {
-    /// Claude Code — the plugin at `~/.claude/skills/gossip`.
+    /// Claude Code — the plugin at `~/.claude/skills/square`.
     #[value(name = "claude-code", alias = "claude")]
     ClaudeCode,
     /// pi — the extension installed via `pi install`.
     Pi,
     /// A generic agent following the `~/.agents/skills` convention.
     Generic,
-    /// Cursor — the skill at `~/.cursor/skills/gossip`.
+    /// Cursor — the skill at `~/.cursor/skills/square`.
     Cursor,
 }
 
@@ -105,13 +105,13 @@ impl Agent {
     /// The path this agent's integration lives at once installed.
     pub(crate) fn install_path(self, home: &Path) -> PathBuf {
         match self {
-            Agent::ClaudeCode => home.join(".claude/skills/gossip"),
+            Agent::ClaudeCode => home.join(".claude/skills/square"),
             // pi-package source, materialized then `pi install`ed.
             Agent::Pi => home.join(".agent-square/pi-extension"),
-            Agent::Generic => home.join(".agents/skills/gossip"),
+            Agent::Generic => home.join(".agents/skills/square"),
             // Cursor reads global Agent Skills from `~/.cursor/skills`; it
             // gets the same portable skill the generic target ships.
-            Agent::Cursor => home.join(".cursor/skills/gossip"),
+            Agent::Cursor => home.join(".cursor/skills/square"),
         }
     }
 
@@ -228,7 +228,7 @@ mod tests {
         assert!(CC_PLUGIN.get_file(".claude-plugin/plugin.json").is_some());
         assert!(PI_EXTENSION.get_file("index.ts").is_some());
         assert!(GENERIC_SKILL.starts_with("---"));
-        assert!(GENERIC_SKILL.contains("name: gossip"));
+        assert!(GENERIC_SKILL.contains("name: square"));
     }
 
     #[test]
@@ -237,7 +237,7 @@ mod tests {
         assert!(
             Agent::ClaudeCode
                 .install_path(home)
-                .ends_with(".claude/skills/gossip")
+                .ends_with(".claude/skills/square")
         );
         assert!(
             Agent::Pi
@@ -247,12 +247,12 @@ mod tests {
         assert!(
             Agent::Generic
                 .install_path(home)
-                .ends_with(".agents/skills/gossip")
+                .ends_with(".agents/skills/square")
         );
         assert!(
             Agent::Cursor
                 .install_path(home)
-                .ends_with(".cursor/skills/gossip")
+                .ends_with(".cursor/skills/square")
         );
     }
 

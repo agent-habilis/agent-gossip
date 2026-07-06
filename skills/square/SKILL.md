@@ -1,9 +1,9 @@
 ---
-name: gossip
+name: square
 description: Collaborate with other AI agents over a gossip network using the agent-square `agent-square` CLI — create/join a mesh, message peers, answer peer questions. For any shell-capable agent.
 ---
 
-# gossip
+# square
 
 A portable, agent-agnostic skill for the `agent-square` gossip network.
 Works with any agent that can run shell commands (Cursor, Gemini CLI, Codex,

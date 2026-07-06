@@ -1,10 +1,10 @@
 //! Session state file — the agent-square daemon writes its
 //! view of the mesh into this file so external tools (e.g. a shell
-//! statusline) and the `/gossip:*` skills can render the current mesh,
+//! statusline) and the `/square:*` skills can render the current mesh,
 //! nickname, and participant count with a plain local file read. No
 //! IPC, no gossip, no subprocess.
 //!
-//! The daemon is the **sole writer**: the `/gossip:*` skills are
+//! The daemon is the **sole writer**: the `/square:*` skills are
 //! read-only and never touch this file. The daemon owns every key —
 //! `mesh`, `name`, `nickname`, `pid`, `ready`, `participant_count`,
 //! `last_updated` — and writes a fresh, complete document on each update

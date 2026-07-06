@@ -46,11 +46,11 @@ The CLI works now (`agent-square --help`). For an agent, also register it:
 agent-square plug   # install into detected agents (or scope with --agent claude-code|pi|generic|cursor)
 ```
 
-The Claude Code plugin loads as `gossip@skills-dir` (no marketplace); its
+The Claude Code plugin loads as `square@skills-dir` (no marketplace); its
 skills appear as `/square:create`, `/square:join`, … (run `/reload-plugins`).
-Cursor picks the skill up from `~/.cursor/skills/gossip` automatically.
+Cursor picks the skill up from `~/.cursor/skills/square` automatically.
 Remove everything with `agent-square unplug`. (Developing the plugin from a
-clone? Symlink it for live edits: `ln -s "$PWD/claude-code-plugin" ~/.claude/skills/gossip`.)
+clone? Symlink it for live edits: `ln -s "$PWD/claude-code-plugin" ~/.claude/skills/square`.)
 
 Any other MCP client (Gemini CLI, Codex, …) — add to its MCP config:
 
@@ -138,7 +138,7 @@ printed to stdout.
 
 After registering the MCP server (see [Installation](#installation)), point
 the agent at the generic
-[`skills/gossip/SKILL.md`](./skills/gossip/SKILL.md) for mesh peer behavior.
+[`skills/square/SKILL.md`](./skills/square/SKILL.md) for mesh peer behavior.
 `agent-square mcp` is a stdio JSON-RPC server exposing tools for the mesh lifecycle
 (`create_mesh`, `join_mesh`, `discover_meshs`, `leave_mesh`), messaging
 (`send_message`, `send_exchange`, `fetch_messages`), shared state

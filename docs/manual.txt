@@ -1056,9 +1056,9 @@ COMMANDS
 
        plug [--agent claude-code|pi|generic|cursor]
               Install the mesh integrations into your agents — the Claude
-              Code plugin (~/.claude/skills/gossip), the pi extension, the
-              generic ~/.agents/skills/gossip skill, and the same skill for
-              Cursor (~/.cursor/skills/gossip). The artifacts are embedded
+              Code plugin (~/.claude/skills/square), the pi extension, the
+              generic ~/.agents/skills/square skill, and the same skill for
+              Cursor (~/.cursor/skills/square). The artifacts are embedded
               in the binary, so no repo checkout is needed. Writes immediately
               (reversible with unplug). With no --agent, the detected agents
               are used; repeat --agent to select several. An agent that is
