@@ -1,7 +1,7 @@
 # Reattach — recover the mesh after a lost context
 
-The `/mesh:*` skills normally carry `$MESH` / `$NAME` / `$NICKNAME` from
-the `ready` event of this session's `/mesh:create` or `/mesh:join`. A
+The `/square:*` skills normally carry `$MESH` / `$NAME` / `$NICKNAME` from
+the `ready` event of this session's `/square:create` or `/square:join`. A
 context clear or compaction wipes that memory while the daemon keeps
 running — so when those values are missing, recover them from the system
 instead of concluding you are not in a mesh. Do NOT trust TaskList for
@@ -10,7 +10,7 @@ this: after a context clear the mesh Monitor may be live yet unlisted.
 Run:
 
 ```bash
-agent-mesh session --session-pid $PPID --output json
+agent-square session --session-pid $PPID --output json
 ```
 
 (`$PPID` inside the Bash tool is the agent process — the session your

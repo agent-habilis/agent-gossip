@@ -1,6 +1,6 @@
 //! Integration tests for the gossip network.
 //!
-//! Each test spawns real `agent-mesh` processes, exercises the network,
+//! Each test spawns real `agent-square` processes, exercises the network,
 //! and asserts on what each node actually received. Tests are independent —
 //! each creates its own mesh so IPC sockets never collide.
 //!
@@ -182,7 +182,7 @@ async fn test_passworded_mesh_verifies_locally_and_meshes() {
     // No password: a crisp requirement error, not a silent empty mesh.
     let target = creator.mesh.parse().expect("join target");
     let missing =
-        agent_mesh::embed::MeshSession::join(agent_mesh::embed::JoinConfig::new(target))
+        agent_square::embed::MeshSession::join(agent_square::embed::JoinConfig::new(target))
             .await
             .expect_err("a missing password must be rejected");
     assert!(
@@ -420,7 +420,7 @@ fn test_oversize_body_splits_and_reassembles() {
     // 32x the frame cap needs ~35 shards — over the old 16-shard limit — and
     // the receiver still reassembles it, so it surfaces once as the whole
     // body on each stream: the sender's self-echo and the peer's delivery.
-    let body = "a".repeat(agent_mesh::MAX_MESSAGE_SIZE * 32);
+    let body = "a".repeat(agent_square::MAX_MESSAGE_SIZE * 32);
     cli_message(&mesh, &creator.nickname, &body);
     let total = wait_total(|| creator.messages().len() + joiner.messages().len(), 2);
     assert_eq!(
@@ -716,7 +716,7 @@ fn test_state_file_removed_on_signal() {
         let log = tmp_log(&format!("statefile{signal}"));
         let file = File::create(&log).unwrap();
         let state_file = std::env::temp_dir().join(format!(
-            "agent-mesh-statefile-test-{}-{signal}.json",
+            "agent-square-statefile-test-{}-{signal}.json",
             std::process::id()
         ));
         let _ = fs::remove_file(&state_file);
@@ -762,7 +762,7 @@ fn test_state_file_removed_on_signal() {
     }
 }
 
-/// `agent-mesh ready --state-file PATH` is the CLI-fallback readiness gate: it blocks
+/// `agent-square ready --state-file PATH` is the CLI-fallback readiness gate: it blocks
 /// until the daemon writing PATH flips the file's `ready` flag to true (set
 /// only once the event loop is serving), then exits 0. This covers the gate
 /// against an already-up daemon and asserts the file then carries `ready:true`
@@ -772,7 +772,7 @@ fn test_ready_gate_succeeds_when_serving() {
     let log = tmp_log("ready-before");
     let file = File::create(&log).unwrap();
     let state_file = std::env::temp_dir().join(format!(
-        "agent-mesh-ready-before-{}.json",
+        "agent-square-ready-before-{}.json",
         std::process::id()
     ));
     let _ = fs::remove_file(&state_file);
@@ -793,10 +793,10 @@ fn test_ready_gate_succeeds_when_serving() {
         .arg(&state_file)
         .args(["--timeout-secs", "60"])
         .status()
-        .expect("failed to run agent-mesh ready");
+        .expect("failed to run agent-square ready");
     assert!(
         status.success(),
-        "agent-mesh ready should exit 0 against a serving daemon\nlog:\n{}",
+        "agent-square ready should exit 0 against a serving daemon\nlog:\n{}",
         fs::read_to_string(&log).unwrap_or_default()
     );
 
@@ -821,7 +821,7 @@ fn test_ready_gate_succeeds_when_serving() {
     let _ = fs::remove_file(&state_file);
 }
 
-/// The race the gate exists for: `agent-mesh ready` is started *before* the daemon, so
+/// The race the gate exists for: `agent-square ready` is started *before* the daemon, so
 /// the state file does not exist yet. The gate must block (file-appears, then
 /// ready-flips) and still exit 0 once the daemon comes up and serves.
 #[test]
@@ -829,7 +829,7 @@ fn test_ready_gate_waits_for_a_late_daemon() {
     let log = tmp_log("ready-after");
     let file = File::create(&log).unwrap();
     let state_file = std::env::temp_dir().join(format!(
-        "agent-mesh-ready-after-{}.json",
+        "agent-square-ready-after-{}.json",
         std::process::id()
     ));
     let _ = fs::remove_file(&state_file);
@@ -841,7 +841,7 @@ fn test_ready_gate_waits_for_a_late_daemon() {
         .arg(&state_file)
         .args(["--timeout-secs", "60"])
         .spawn()
-        .expect("failed to spawn agent-mesh ready");
+        .expect("failed to spawn agent-square ready");
 
     // Launch the daemon a beat later, writing the same state file.
     std::thread::sleep(Duration::from_millis(500));
@@ -854,10 +854,10 @@ fn test_ready_gate_waits_for_a_late_daemon() {
         .spawn()
         .expect("failed to spawn create --state-file");
 
-    let status = gate.wait().expect("agent-mesh ready never exited");
+    let status = gate.wait().expect("agent-square ready never exited");
     assert!(
         status.success(),
-        "agent-mesh ready started before the daemon should still exit 0 once it serves\nlog:\n{}",
+        "agent-square ready started before the daemon should still exit 0 once it serves\nlog:\n{}",
         fs::read_to_string(&log).unwrap_or_default()
     );
 
@@ -875,7 +875,7 @@ fn test_ready_gate_waits_for_a_late_daemon() {
 #[test]
 fn test_ready_gate_times_out_without_a_daemon() {
     let state_file = std::env::temp_dir().join(format!(
-        "agent-mesh-ready-timeout-{}-never.json",
+        "agent-square-ready-timeout-{}-never.json",
         std::process::id()
     ));
     let _ = fs::remove_file(&state_file);
@@ -886,10 +886,10 @@ fn test_ready_gate_times_out_without_a_daemon() {
         .arg(&state_file)
         .args(["--timeout-secs", "2"])
         .status()
-        .expect("failed to run agent-mesh ready");
+        .expect("failed to run agent-square ready");
     assert!(
         !status.success(),
-        "agent-mesh ready should exit non-zero when no daemon ever writes the state file"
+        "agent-square ready should exit non-zero when no daemon ever writes the state file"
     );
 }
 
@@ -900,7 +900,7 @@ fn test_ready_gate_times_out_without_a_daemon() {
 #[test]
 fn test_ready_gate_rejects_a_stale_ready_file() {
     let state_file = std::env::temp_dir().join(format!(
-        "agent-mesh-ready-stale-{}.json",
+        "agent-square-ready-stale-{}.json",
         std::process::id()
     ));
     // ready:true but last_updated far in the past (well beyond READY_FRESH_SECS).
@@ -916,22 +916,22 @@ fn test_ready_gate_rejects_a_stale_ready_file() {
         .arg(&state_file)
         .args(["--timeout-secs", "2"])
         .status()
-        .expect("failed to run agent-mesh ready");
+        .expect("failed to run agent-square ready");
     assert!(
         !status.success(),
-        "agent-mesh ready must reject a stale ready:true file (last_updated too old) and time out"
+        "agent-square ready must reject a stale ready:true file (last_updated too old) and time out"
     );
     let _ = fs::remove_file(&state_file);
 }
 
-/// `agent-mesh ready --output json` doubles as the identity read: on a fresh
+/// `agent-square ready --output json` doubles as the identity read: on a fresh
 /// `ready:true` file it prints `{mesh,name,nickname}` and exits 0, so a
 /// fallback caller learns its own identity from the gate without parsing the
 /// state file (or guessing its `${PPID}` name) itself.
 #[test]
 fn test_ready_gate_emits_identity_json_on_success() {
     let state_file = std::env::temp_dir().join(format!(
-        "agent-mesh-ready-json-{}.json",
+        "agent-square-ready-json-{}.json",
         std::process::id()
     ));
     let now = std::time::SystemTime::now()
@@ -952,7 +952,7 @@ fn test_ready_gate_emits_identity_json_on_success() {
         .arg(&state_file)
         .args(["--timeout-secs", "5", "--output", "json"])
         .output()
-        .expect("failed to run agent-mesh ready");
+        .expect("failed to run agent-square ready");
     assert!(
         output.status.success(),
         "a fresh ready:true file should pass the gate"
@@ -1060,7 +1060,7 @@ fn poll_cursor(mesh: &str, nickname: &str) -> Option<String> {
 
 /// The wire single-park contract: a raw `{"command":"poll",...,"long":true}`
 /// with no new traffic is held for ~the daemon's park cap, then returns
-/// exactly `[]`. Sent straight over the Unix socket — the `agent-mesh` client would
+/// exactly `[]`. Sent straight over the Unix socket — the `agent-square` client would
 /// hide the empty return behind its `--long` re-issue loop.
 #[test]
 fn test_ipc_poll_long_park_times_out_empty() {
@@ -1162,7 +1162,7 @@ fn test_poll_long_loops_past_empty_parks() {
     );
 }
 
-/// `agent-mesh ping` is daemon-owned: the transient command arms a round over
+/// `agent-square ping` is daemon-owned: the transient command arms a round over
 /// IPC, the daemon broadcasts a probe, every peer auto-pongs, and the
 /// originator emits a `ping_report` on its own output stream listing
 /// each responder's RTT. The probe/pong never surface as chat. A short
@@ -2051,7 +2051,7 @@ fn test_steady_state_no_resend_churn() {
     // Serialize against the other timing-sensitive tests (see `serial_guard`).
     let _serial = serial_guard();
     let envs = [
-        ("RUST_LOG", "agent_mesh::gossip=debug"),
+        ("RUST_LOG", "agent_square::gossip=debug"),
         ("--log-max-bytes", "0"), // no rotation, so the full log is one file
         ("--antientropy-interval-secs", "2"),
     ];
@@ -2477,7 +2477,7 @@ fn state_file_carries_daemon_pid() {
     let _ = fs::remove_file(&log);
 }
 
-/// `agent-mesh leave <💬id>` (explicit target) stops exactly that mesh's local
+/// `agent-square leave <💬id>` (explicit target) stops exactly that mesh's local
 /// daemon — the state file disappears (proof of the graceful shutdown path)
 /// — and leaves an unrelated daemon untouched.
 #[test]
@@ -2490,7 +2490,7 @@ fn leave_explicit_target_stops_only_that_mesh() {
     let out = common::test_cmd()
         .args(["leave", &victim_mesh, "--output", "json"])
         .output()
-        .expect("failed to run agent-mesh leave");
+        .expect("failed to run agent-square leave");
     assert!(out.status.success(), "leave failed: {out:?}");
     let report: serde_json::Value =
         serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim()).unwrap();
@@ -2517,8 +2517,8 @@ fn leave_explicit_target_stops_only_that_mesh() {
 }
 
 /// Session scope end to end: a daemon spawned under a decoy "agent" shell is
-/// owned by that shell's pid. `agent-mesh session --session-pid <shell>` reports it
-/// without touching it; `agent-mesh leave --session-pid <shell>` stops it. Daemons
+/// owned by that shell's pid. `agent-square session --session-pid <shell>` reports it
+/// without touching it; `agent-square leave --session-pid <shell>` stops it. Daemons
 /// belonging to other tests (children of this test binary, not of the decoy
 /// shell) must never match.
 #[test]
@@ -2556,7 +2556,7 @@ fn leave_session_scope_via_decoy_parent() {
     let out = common::test_cmd()
         .args(["session", "--session-pid", &decoy_pid, "--output", "json"])
         .output()
-        .expect("failed to run agent-mesh session");
+        .expect("failed to run agent-square session");
     assert!(out.status.success(), "session failed: {out:?}");
     let report: serde_json::Value =
         serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim()).unwrap();
@@ -2572,7 +2572,7 @@ fn leave_session_scope_via_decoy_parent() {
     let leave_out = common::test_cmd()
         .args(["leave", "--session-pid", &decoy_pid, "--output", "json"])
         .output()
-        .expect("failed to run agent-mesh leave");
+        .expect("failed to run agent-square leave");
     assert!(leave_out.status.success(), "leave failed: {leave_out:?}");
     let leave_report: serde_json::Value =
         serde_json::from_str(String::from_utf8_lossy(&leave_out.stdout).trim()).unwrap();
@@ -2604,7 +2604,7 @@ fn leave_nothing_owned_is_a_clean_noop() {
             "json",
         ])
         .output()
-        .expect("failed to run agent-mesh leave");
+        .expect("failed to run agent-square leave");
     assert!(out.status.success(), "leave should exit 0 on a no-op");
     let report: serde_json::Value =
         serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim()).unwrap();

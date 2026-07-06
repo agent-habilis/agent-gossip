@@ -22,7 +22,7 @@ use crate::beacon;
 /// carrying them as independent, drift-prone bools.
 #[derive(Debug)]
 pub enum DriverMode {
-    /// The `agent-mesh create` / `join` CLI. Owns the unix-socket IPC listener
+    /// The `agent-square create` / `join` CLI. Owns the unix-socket IPC listener
     /// (for `msg` / `poll`); ctrl-c / SIGTERM `std::process::exit`s.
     Cli,
     /// Fully in-process, shared by the embed facade and the MCP server.

@@ -1,12 +1,12 @@
 # The A2A gossip binding
 
-agent-mesh is an [A2A](https://a2a-protocol.org) network with two
+agent-square is an [A2A](https://a2a-protocol.org) network with two
 protocol bindings sharing one A2A core:
 
 1. a **custom gossip binding** (this document; A2A spec §12) — the
    peer-to-peer plane every member always speaks, and
 2. the standard **JSON-RPC 2.0 binding** on localhost, off by default
-   behind `--a2a-serve` (see `agent-mesh man`, section *A2A*), which relays onto
+   behind `--a2a-serve` (see `agent-square man`, section *A2A*), which relays onto
    the gossip binding.
 
 Peers communicate exclusively through A2A objects: chat, task creation,
@@ -60,7 +60,7 @@ operations become signed frames.
 | `SendMessage` into a task | a request/response `SendMessage` carrying the `taskId` — the initiator's answer / approval / change request; the worker's *skill* interprets it |
 | task status | worker-pushed `a2a_status` frames (the A2A streaming plane): `working` / `input-required` / `completed` / `failed`; `canceled` is open to both (and to the daemon's idle timeout, `metadata:{"mesh:reason":"timeout"}`). The **worker** authors `completed`. |
 | the result | a worker-pushed `a2a_artifact` frame; receiving it parks the task in `input-required` for the initiator's approval |
-| a file on a part | a `Part` may carry a **large file** in either direction (an input `Message.parts`, an output `Artifact.parts`). Instead of inlining bytes, its `url` holds a `🎟️…` blob ticket; the bytes stream point-to-point over a dedicated QUIC ALPN (`mesh-blob`), SHA-256-verified. The receiver fetches with `agent-mesh a2a fetch <🎟️…>`. The bytes never touch gossip — only the small reference does. The ticket's bearer secret blocks *outsiders*; any mesh member who sees the frame can fetch (confidentiality == membership, same as directed messages). On a **password**-protected mesh the ticket inherits the password (it carries a public salt; the producer stores the Argon2id stretch), so a scraped ticket can't be redeemed without it — fetch with `agent-mesh a2a fetch <🎟️…> --password`. Availability lasts only while the producer's daemon is alive. |
+| a file on a part | a `Part` may carry a **large file** in either direction (an input `Message.parts`, an output `Artifact.parts`). Instead of inlining bytes, its `url` holds a `🎟️…` blob ticket; the bytes stream point-to-point over a dedicated QUIC ALPN (`mesh-blob`), SHA-256-verified. The receiver fetches with `agent-square a2a fetch <🎟️…>`. The bytes never touch gossip — only the small reference does. The ticket's bearer secret blocks *outsiders*; any mesh member who sees the frame can fetch (confidentiality == membership, same as directed messages). On a **password**-protected mesh the ticket inherits the password (it carries a public salt; the producer stores the Argon2id stretch), so a scraped ticket can't be redeemed without it — fetch with `agent-square a2a fetch <🎟️…> --password`. Availability lasts only while the producer's daemon is alive. |
 | liveness | a status update with `metadata:{"mesh:beat":true}` (+ optional done/total) — plumbing, never retained |
 | `GetTask` / `ListTasks` | served locally from the replicated task state (or over request/response) |
 | `CancelTask` | a `canceled` status frame |
@@ -98,7 +98,7 @@ socket (a held streaming socket is still deferred).
   like the localhost binding): serving those would let any member make the
   peer author global state, or broadcast, **under the peer's identity** on
   the caller's behalf (identity laundering).
-- **Agent surface.** `agent-mesh a2a call --to <peer> --method <m> --params <json>`,
+- **Agent surface.** `agent-square a2a call --to <peer> --method <m> --params <json>`,
   the embed `MeshSession::a2a_call`, and the MCP `a2a_call` tool. Members
   advertise the capability via the declared `mesh-a2a-rpc` extension in
   their card.
@@ -145,7 +145,7 @@ Declared in every member's card (`capabilities.extensions`):
   also how task delegation works (a directed `SendMessage` creates a task)
 - `https://agent-habilis.dev/a2a/ext/mesh-blob/v1` — a large file on a `Part`
   travels as a `url` reference (a `🎟️…` ticket) whose bytes stream
-  point-to-point over the `agent-mesh/blob/1` ALPN and are
+  point-to-point over the `agent-square/blob/1` ALPN and are
   SHA-256-verified, instead of inlining over gossip. The `🎟️…` in `Part.url` is
   an opaque in-network capability token, not an RFC URL.
 - `https://agent-habilis.dev/a2a/ext/mesh-seal/v1` — **directed frames are

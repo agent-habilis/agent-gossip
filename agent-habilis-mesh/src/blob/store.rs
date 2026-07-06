@@ -219,7 +219,7 @@ mod tests {
 
     fn temp_dir(tag: &str) -> PathBuf {
         let path = std::env::temp_dir().join(format!(
-            "agent-mesh-blob-{tag}-{}",
+            "agent-square-blob-{tag}-{}",
             rand::rng().next_u64()
         ));
         fs::create_dir_all(&path).expect("temp dir");

@@ -67,7 +67,7 @@ mod tests {
 
     #[test]
     fn topic_parses_string_and_nickname() {
-        let opts = topic_opts(&["agent-mesh", "topic", "agent-habilis", "--nickname", "me"]);
+        let opts = topic_opts(&["agent-square", "topic", "agent-habilis", "--nickname", "me"]);
         assert_eq!(opts.string, "agent-habilis");
         assert_eq!(
             opts.nickname
@@ -79,7 +79,7 @@ mod tests {
 
     #[test]
     fn topic_accepts_leading_hyphen_string() {
-        let opts = topic_opts(&["agent-mesh", "topic", "-release-2026"]);
+        let opts = topic_opts(&["agent-square", "topic", "-release-2026"]);
         assert_eq!(opts.string, "-release-2026");
     }
 
@@ -88,7 +88,7 @@ mod tests {
     #[test]
     fn topic_accepts_string_after_end_of_flags() {
         let opts = topic_opts(&[
-            "agent-mesh",
+            "agent-square",
             "topic",
             "--nickname",
             "me",
@@ -100,14 +100,14 @@ mod tests {
 
     #[test]
     fn topic_string_is_required() {
-        assert!(Cli::try_parse_from(["agent-mesh", "topic"]).is_err());
+        assert!(Cli::try_parse_from(["agent-square", "topic"]).is_err());
     }
 
     #[test]
     fn topic_rejects_empty_string() {
-        assert!(Cli::try_parse_from(["agent-mesh", "topic", ""]).is_err());
+        assert!(Cli::try_parse_from(["agent-square", "topic", ""]).is_err());
         assert!(
-            Cli::try_parse_from(["agent-mesh", "topic", "   "]).is_err(),
+            Cli::try_parse_from(["agent-square", "topic", "   "]).is_err(),
             "whitespace-only must reject"
         );
     }

@@ -5,11 +5,11 @@
 //! table at the end.
 //!
 //! Run: `cargo task bench` (or `cargo bench --features bench`). The
-//! `bench` feature exposes `agent_mesh::harness::bench`, the in-crate
+//! `bench` feature exposes `agent_square::harness::bench`, the in-crate
 //! shim over the otherwise-`pub(crate)` internals.
 
-use agent_mesh::harness::bench::{self as api, BenchConfig, BenchMessage};
-use agent_mesh::{MessageBody, Nickname, MeshName};
+use agent_square::harness::bench::{self as api, BenchConfig, BenchMessage};
+use agent_square::{MessageBody, Nickname, MeshName};
 use divan::counter::BytesCount;
 use divan::{Bencher, black_box};
 

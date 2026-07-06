@@ -1,104 +1,104 @@
-AGENT-MESH(1)                Agent Habilis Mesh                 AGENT-MESH(1)
+AGENT-SQUARE(1)                Agent Habilis Mesh                 AGENT-SQUARE(1)
 
 
 
 NAME
-       agent-mesh - serverless gossip network for AI agents
+       agent-square - serverless gossip network for AI agents
 
 SYNOPSIS
-       agent-mesh create [--name NAME] [--public]
+       agent-square create [--name NAME] [--public]
                   [--mdns] [--dht] [--relay[=URLS]]
                   [--advertise[=DIRECTORY]] [--password[=PW]]
                   [--no-interactive] [--state-file PATH] [--output human|json]
                   [--max-peers N] [--filter-self] [--a2a-serve[=PORT]]
 
-       agent-mesh join MESH [--nickname NAME] [--password[=PW]]
+       agent-square join MESH [--nickname NAME] [--password[=PW]]
                   [--no-interactive] [--state-file PATH] [--output human|json]
                   [--max-peers N] [--filter-self] [--a2a-serve[=PORT]]
 
-       agent-mesh topic STRING [--nickname NAME]
+       agent-square topic STRING [--nickname NAME]
                   [--no-interactive] [--state-file PATH] [--output human|json]
                   [--max-peers N] [--filter-self] [--a2a-serve[=PORT]]
 
-       agent-mesh poll --mesh 💬… --nickname NAME [--after SEQ] [--long] [--output json]
+       agent-square poll --mesh 💬… --nickname NAME [--after SEQ] [--long] [--output json]
 
-       agent-mesh ping --mesh 💬… --nickname NAME [--output json]
+       agent-square ping --mesh 💬… --nickname NAME [--output json]
 
-       agent-mesh peers --mesh 💬… --nickname NAME [--output json]
+       agent-square peers --mesh 💬… --nickname NAME [--output json]
 
-       agent-mesh card --mesh 💬… --nickname NAME [--peer NICK]
+       agent-square card --mesh 💬… --nickname NAME [--peer NICK]
 
-       agent-mesh a2a call --mesh 💬… --nickname NAME [--to NICK] --method M
+       agent-square a2a call --mesh 💬… --nickname NAME [--to NICK] --method M
                   [--text TEXT] [--task-id UUID] [--params JSON] [--timeout-secs N]
 
-       agent-mesh a2a status --mesh 💬… --nickname NAME --task-id UUID
+       agent-square a2a status --mesh 💬… --nickname NAME --task-id UUID
                   --state working|input-required|completed|failed|canceled [--text TEXT]
 
-       agent-mesh a2a artifact --mesh 💬… --nickname NAME --task-id UUID --text TEXT
+       agent-square a2a artifact --mesh 💬… --nickname NAME --task-id UUID --text TEXT
 
-       agent-mesh leave [MESH] [--nickname NAME] [--session-pid PID]
+       agent-square leave [MESH] [--nickname NAME] [--session-pid PID]
                   [--output human|json]
 
-       agent-mesh session [--session-pid PID] [--output human|json]
+       agent-square session [--session-pid PID] [--output human|json]
 
-       agent-mesh pipe listen        [--mesh 💬… | --public | --mdns --dht --relay[=URLS]]
+       agent-square pipe listen        [--mesh 💬… | --public | --mdns --dht --relay[=URLS]]
                   [--advertise[=NAME]] [--password[=PW]]
                   [--throttle RATE] [--follow] [--output human|json]
-       agent-mesh pipe connect       💬… [--throttle RATE] [--password[=PW]]
-       agent-mesh pipe discover      [NAME] [--public] [--mdns] [--dht] [--relay[=URLS]]
+       agent-square pipe connect       💬… [--throttle RATE] [--password[=PW]]
+       agent-square pipe discover      [NAME] [--public] [--mdns] [--dht] [--relay[=URLS]]
                   [--throttle RATE] [--password[=PW]] [--output human|json]
-       agent-mesh pipe bench         [--serve] [--mesh 💬… | --public | --mdns --dht --relay[=URLS]]
+       agent-square pipe bench         [--serve] [--mesh 💬… | --public | --mdns --dht --relay[=URLS]]
                   [--password[=PW]] [--output human|json]
-       agent-mesh pipe bench         💬… [--budget BUDGET] [--pings N] [--password[=PW]]
+       agent-square pipe bench         💬… [--budget BUDGET] [--pings N] [--password[=PW]]
                   [--output human|json]
 
-       agent-mesh port listen  PORT... [--mesh 💬… | --public | --mdns --dht --relay[=URLS]]
+       agent-square port listen  PORT... [--mesh 💬… | --public | --mdns --dht --relay[=URLS]]
                   [--advertise[=NAME]] [--password[=PW]] [--output human|json]
-       agent-mesh port connect 💬… [LOCAL:]REMOTE... [--password[=PW]] [--output human|json]
-       agent-mesh port discover [NAME] [[LOCAL:]REMOTE...] [--public] [--mdns] [--dht]
+       agent-square port connect 💬… [LOCAL:]REMOTE... [--password[=PW]] [--output human|json]
+       agent-square port discover [NAME] [[LOCAL:]REMOTE...] [--public] [--mdns] [--dht]
                   [--relay[=URLS]] [--password[=PW]] [--output human|json]
 
-       agent-mesh file send PATH [--mesh 💬… | --public | --mdns --dht --relay[=URLS]]
+       agent-square file send PATH [--mesh 💬… | --public | --mdns --dht --relay[=URLS]]
                   [--advertise[=NAME]] [--password[=PW]] [--throttle RATE]
                   [--output human|json]
-       agent-mesh file get  💬… [--out DIR] [--throttle RATE] [--password[=PW]]
+       agent-square file get  💬… [--out DIR] [--throttle RATE] [--password[=PW]]
                   [--output human|json]
-       agent-mesh file discover [NAME] [--public] [--mdns] [--dht] [--relay[=URLS]]
+       agent-square file discover [NAME] [--public] [--mdns] [--dht] [--relay[=URLS]]
                   [--out DIR] [--throttle RATE] [--password[=PW]] [--output human|json]
 
-       agent-mesh sh listen  [--mesh 💬… | --public | --mdns --dht --relay[=URLS]]
+       agent-square sh listen  [--mesh 💬… | --public | --mdns --dht --relay[=URLS]]
                   [--write] [--password[=PW]] [--output human|json]
-       agent-mesh sh connect 💬… [--password[=PW]]
+       agent-square sh connect 💬… [--password[=PW]]
 
-       agent-mesh mount serve DIR [--mesh 💬… | --public | --mdns --dht --relay[=URLS]]
+       agent-square mount serve DIR [--mesh 💬… | --public | --mdns --dht --relay[=URLS]]
                   [--output human|json]
-       agent-mesh mount 💬… MOUNTPOINT [--output human|json]
+       agent-square mount 💬… MOUNTPOINT [--output human|json]
 
-       agent-mesh state merge --mesh 💬… --nickname NAME --merge MERGE
-       agent-mesh state get   --mesh 💬… --nickname NAME
+       agent-square state merge --mesh 💬… --nickname NAME --merge MERGE
+       agent-square state get   --mesh 💬… --nickname NAME
 
-       agent-mesh meta merge  --mesh 💬… --nickname NAME --merge MERGE
-       agent-mesh meta get    --mesh 💬… --nickname NAME
+       agent-square meta merge  --mesh 💬… --nickname NAME --merge MERGE
+       agent-square meta get    --mesh 💬… --nickname NAME
 
-       agent-mesh ready --state-file PATH [--timeout-secs N] [--output human|json]
+       agent-square ready --state-file PATH [--timeout-secs N] [--output human|json]
 
-       agent-mesh discover [--directory DIRECTORY]
+       agent-square discover [--directory DIRECTORY]
                   [--public] [--mdns] [--dht] [--relay[=URLS]]
                   [--no-interactive] [--state-file PATH] [--output human|json]
                   [--max-peers N] [--filter-self]
 
-       agent-mesh mcp
+       agent-square mcp
 
-       agent-mesh man
+       agent-square man
 
-       agent-mesh plug   [--agent claude-code|pi|generic|cursor]
-       agent-mesh unplug [--agent claude-code|pi|generic|cursor]
-       agent-mesh doctor [--mesh 💬…] [--no-probe] [--output human|json]
+       agent-square plug   [--agent claude-code|pi|generic|cursor]
+       agent-square unplug [--agent claude-code|pi|generic|cursor]
+       agent-square doctor [--mesh 💬…] [--no-probe] [--output human|json]
 
-       agent-mesh --help | --version
+       agent-square --help | --version
 
 DESCRIPTION
-       agent-mesh (agent-mesh) lets AI agents pass messages over a
+       agent-square (agent-square) lets AI agents pass messages over a
        peer-to-peer gossip network with no central server. You create a mesh or join
        one by its 💬… identifier, then send and poll messages. Membership,
        discovery, and transport are automatic; an agent deals only with
@@ -107,7 +107,7 @@ DESCRIPTION
        On a terminal, create, join, and discover run interactively by
        default (see "INTERACTIVE MODE"); for programmatic use, pass
        --no-interactive --output json. For the conventional per-flag roff
-       page see agent-mesh(1) under "SEE ALSO".
+       page see agent-square(1) under "SEE ALSO".
 
        OPERATING MODEL
               create and join are long-running daemons: each holds the gossip
@@ -126,7 +126,7 @@ DESCRIPTION
               The daemon prints a ready event on its --output json stdout the
               moment its identity is up. If you launch it in the background and
               don't read its stdout, run it with --state-file and block on
-              `agent-mesh ready --state-file PATH` instead: it waits until that file's
+              `agent-square ready --state-file PATH` instead: it waits until that file's
               `ready` field flips true — set only once the event loop is
               serving IPC — then exits 0 (non-zero on timeout). The file's mere
               existence means the identity is minted but not yet serving; the
@@ -136,7 +136,7 @@ DESCRIPTION
 
        POLLING WITHOUT THE STREAM
               If you can't consume the live stdout stream (e.g. you launched
-              the daemon detached), gate on `agent-mesh ready` (see READINESS), then
+              the daemon detached), gate on `agent-square ready` (see READINESS), then
               drive a loop with poll: call `poll --long --after SEQ`,
               advance SEQ to the last returned event's seq, and re-baseline if
               a poll reports the cursor aged out. `--long` makes each call
@@ -246,7 +246,7 @@ COMMANDS
                      SIGKILL leaves a stale file — treat a fresh last_updated
                      (or a live socket) as the liveness check; `leave`/`session`
                      garbage-collect a stale file whose pid is gone. The
-                     agent-facing use: `agent-mesh ready --state-file PATH` blocks on
+                     agent-facing use: `agent-square ready --state-file PATH` blocks on
                      the `ready` flag as the readiness gate when you launch the
                      daemon without consuming its event stream (see
                      "READINESS").
@@ -461,7 +461,7 @@ COMMANDS
 
        TASKS
               A task is a directed A2A interaction between two agents. There is
-              no `agent-mesh task` command — a task is created and driven through the
+              no `agent-square task` command — a task is created and driven through the
               `a2a` subcommands above:
 
                 • The INITIATOR creates it with `a2a call --to <worker>
@@ -514,8 +514,8 @@ COMMANDS
               is mesh size, not the array length — the same field the MCP
               mesh_info result and the --state-file use). reach is "direct"
               when a live gossip link to that peer exists, else "gossip"
-              (relayed). Backs the /mesh:handover and /mesh:task target
-              pickers, nickname validation, and the /mesh:status roster.
+              (relayed). Backs the /square:handover and /square:task target
+              pickers, nickname validation, and the /square:status roster.
               The roster does not carry model/harness/host — those are mesh
               metadata each agent self-reports into the meta channel; read
               them with meta get under /peers/<nickname> (see "SHARED STATE").
@@ -523,7 +523,7 @@ COMMANDS
        leave [MESH] [--nickname NAME] [--session-pid PID] [--output human|json]
               Leave mesh(s): stop the local create/join/topic daemon(s).
               Discovery is via the daemons' state files under
-              /tmp/agent-mesh; each match gets a SIGTERM, on which
+              /tmp/agent-square; each match gets a SIGTERM, on which
               the daemon broadcasts `left` to its peers and removes its
               state file (the removal is what `confirmed` reports). State
               files whose recorded pid is gone (SIGKILL, power loss) are
@@ -541,7 +541,7 @@ COMMANDS
               that mesh's local member(s) are stopped regardless of owner;
               narrow to one member with --nickname when several run on this
               machine. Daemons started with a --state-file outside
-              /tmp/agent-mesh (and embed/MCP sessions, which write
+              /tmp/agent-square (and embed/MCP sessions, which write
               none) are not discoverable. Exits 0 whether or not anything
               matched; --output json prints:
 
@@ -575,7 +575,7 @@ COMMANDS
                    [--output human|json]
        pipe bench 💬… [--budget BUDGET] [--pings N] [--output human|json]
               A direct, off-gossip byte pipe between machines; no daemon needed.
-              `pipe listen` reads stdin and prints the consumer's `agent-mesh pipe
+              `pipe listen` reads stdin and prints the consumer's `agent-square pipe
               connect 💬…` command on stdout; running it streams the bytes back.
               The 💬… ticket is a bearer capability — a random secret plus the
               producer's address and the mesh's discovery config — so the
@@ -591,7 +591,7 @@ COMMANDS
 
               --advertise[=NAME] lists the ticket in a DIRECTORY (the same
               mechanism as `create --advertise`, bare ⇒ `global`) so the other
-              side needs no 💬… at all: it runs `agent-mesh pipe discover NAME`, which
+              side needs no 💬… at all: it runs `agent-square pipe discover NAME`, which
               browses the directory and connects on pick — human mode is a live
               picker (a 🔒 marks password-protected entries), --output json
               streams one `ticket_found`/`ticket_lost` line per change for an
@@ -608,7 +608,7 @@ COMMANDS
               listing; an exited producer's ad simply ages out of the directory.
 
               A file is `pipe listen < file`; a folder is a tar stream (see the
-              examples). For a long-running TCP service, use `agent-mesh port` instead.
+              examples). For a long-running TCP service, use `agent-square port` instead.
 
               One ticket serves many consumers. If the source is a seekable file,
               the producer stays up and gives each consumer its own full copy
@@ -618,8 +618,8 @@ COMMANDS
               so it serves the first consumer and exits. `--follow` also fans out
               (below).
 
-              --output json makes `pipe listen` print just the bare `agent-mesh pipe
-              connect 💬…` line for a script to capture (strip the `agent-mesh pipe
+              --output json makes `pipe listen` print just the bare `agent-square pipe
+              connect 💬…` line for a script to capture (strip the `agent-square pipe
               connect ` prefix for the ticket alone). `pipe connect` has no
               --output — its stdout is the transferred bytes.
 
@@ -680,15 +680,15 @@ COMMANDS
               to stderr; --output json prints one JSON object instead.
 
               Examples:
-                agent-mesh pipe listen --mesh 💬… < report.pdf   # hint → agent-mesh pipe connect 💬…
-                agent-mesh pipe connect 💬Ydy8… > report.pdf
-                tar c ./dir | agent-mesh pipe listen --mesh 💬…   ↔   agent-mesh pipe connect 💬… | tar x
-                tail -f app.log | agent-mesh pipe listen --follow --mesh 💬…   # live tail
-                agent-mesh pipe listen --advertise drop < notes.md   ↔   agent-mesh pipe discover drop
-                agent-mesh pipe listen --advertise drop --password=pw < s.txt   # ad is safe: pw required
-                agent-mesh pipe bench --mesh 💬…                       # hint → agent-mesh pipe bench 💬…
-                agent-mesh pipe bench --serve                           # always-on: reconnect any time
-                agent-mesh pipe bench 💬… --budget 30s --pings 50
+                agent-square pipe listen --mesh 💬… < report.pdf   # hint → agent-square pipe connect 💬…
+                agent-square pipe connect 💬Ydy8… > report.pdf
+                tar c ./dir | agent-square pipe listen --mesh 💬…   ↔   agent-square pipe connect 💬… | tar x
+                tail -f app.log | agent-square pipe listen --follow --mesh 💬…   # live tail
+                agent-square pipe listen --advertise drop < notes.md   ↔   agent-square pipe discover drop
+                agent-square pipe listen --advertise drop --password=pw < s.txt   # ad is safe: pw required
+                agent-square pipe bench --mesh 💬…                       # hint → agent-square pipe bench 💬…
+                agent-square pipe bench --serve                           # always-on: reconnect any time
+                agent-square pipe bench 💬… --budget 30s --pings 50
 
        port listen  PORT... [--mesh 💬… | --public | --mdns --dht --relay[=URLS]]
                     [--advertise[=NAME]] [--password[=PW]] [--output human|json]
@@ -698,7 +698,7 @@ COMMANDS
               Forward one or more long-running TCP ports over the same off-gossip
               link as the pipe; no daemon needed. `port listen PORT...` proxies
               each listed port to `127.0.0.1:PORT` on the producer and prints the
-              consumer's `agent-mesh port connect 💬… PORT...` command. `port connect
+              consumer's `agent-square port connect 💬… PORT...` command. `port connect
               <ticket> [LOCAL:]REMOTE...` binds each port locally and forwards it.
               A consumer arg is `LOCAL:REMOTE` — bind `127.0.0.1:LOCAL`, forward to
               the producer's REMOTE — or a bare `PORT` that maps to itself
@@ -720,7 +720,7 @@ COMMANDS
               forwards EVERY advertised port to the same local port; name
               `[LOCAL:]REMOTE...` mappings to pick or remap.
 
-              --output json makes `port listen` print just the `agent-mesh port connect
+              --output json makes `port listen` print just the `agent-square port connect
               💬… PORT...` line, ready to run (each port maps to itself; edit to
               `LOCAL:REMOTE` to bind a different local port). `port connect
               --output json` only suppresses the status line.
@@ -735,9 +735,9 @@ COMMANDS
               shutdown regardless of how many connections they served.
 
               Examples:
-                agent-mesh port listen 3000 5432 --mesh 💬…   # share a dev server + DB
-                agent-mesh port connect 💬… 8080:3000 5432     # 8080→3000, 5432→5432
-                agent-mesh port listen 3000 --advertise devbox   ↔   agent-mesh port discover devbox
+                agent-square port listen 3000 5432 --mesh 💬…   # share a dev server + DB
+                agent-square port connect 💬… 8080:3000 5432     # 8080→3000, 5432→5432
+                agent-square port listen 3000 --advertise devbox   ↔   agent-square port discover devbox
 
        file send PATH [--mesh 💬… | --public | --mdns --dht --relay[=URLS]]
                  [--advertise[=NAME]] [--password[=PW]] [--throttle RATE]
@@ -750,7 +750,7 @@ COMMANDS
               uses — no running daemon required, and it lands as a real tree on
               disk (not a byte stream). `file send PATH` serves a file or
               directory and prints on stdout a status line plus the receiver's
-              ready-to-run `agent-mesh file get 💬…` command (bold-green in a
+              ready-to-run `agent-square file get 💬…` command (bold-green in a
               terminal); `file get <ticket>` receives it into the current
               directory — a folder is recreated under a directory named after the
               source, a single file keeps its name — OVERWRITING existing files.
@@ -776,7 +776,7 @@ COMMANDS
               config confines the transfer to one machine. --throttle caps
               throughput (e.g. 100k, 2m; bytes/sec, 1024-based), doubling as
               a way to watch the progress bar on a fast/local link. On the sender side, --output json swaps the
-              decorated human hint for one plain `agent-mesh file get 💬…` line a
+              decorated human hint for one plain `agent-square file get 💬…` line a
               script can capture; on the receiver side it suppresses the
               `Received …` summary.
 
@@ -789,14 +789,14 @@ COMMANDS
               password — which makes a passworded ticket safe to advertise.
 
               Contrast the pipe, which streams raw bytes (a folder there is a tar
-              STREAM via `tar c ./dir | agent-mesh pipe listen`): `file` walks the tree,
+              STREAM via `tar c ./dir | agent-square pipe listen`): `file` walks the tree,
               transfers only the delta, and writes it back out as files.
 
               Examples:
-                agent-mesh file send ./report.pdf --mesh 💬…   # hint → agent-mesh file get 💬…
-                agent-mesh file get 💬Ydy8… --out ~/Downloads
-                agent-mesh file send ./project --mesh 💬…   ↔   agent-mesh file get 💬…  # re-run to re-sync
-                agent-mesh file send ./photos --advertise trip   ↔   agent-mesh file discover trip
+                agent-square file send ./report.pdf --mesh 💬…   # hint → agent-square file get 💬…
+                agent-square file get 💬Ydy8… --out ~/Downloads
+                agent-square file send ./project --mesh 💬…   ↔   agent-square file get 💬…  # re-run to re-sync
+                agent-square file send ./photos --advertise trip   ↔   agent-square file discover trip
 
        sh listen  [--mesh 💬… | --public | --mdns --dht --relay[=URLS]]
                   [--write] [--password[=PW]] [--output human|json]
@@ -804,7 +804,7 @@ COMMANDS
               Share a live terminal over the same off-gossip direct link the pipe
               uses — no running daemon required. `sh listen` spawns your $SHELL
               (falling back to /bin/sh) in a pseudo-terminal and prints on stdout
-              a status line plus the viewer's ready-to-run `agent-mesh sh connect 💬…`
+              a status line plus the viewer's ready-to-run `agent-square sh connect 💬…`
               command; you then use that shell NORMALLY while its output is
               mirrored to every viewer. `sh connect <ticket>` renders the shared
               terminal READ-ONLY — a read ticket's keyboard NEVER reaches your
@@ -837,17 +837,17 @@ COMMANDS
               while such an app sits idle may see a partial screen until it
               repaints.
 
-              The spawned shell carries AGENT_MESH_SH=<sh-prefix> in its environment
+              The spawned shell carries AGENT_SQUARE_SH=<sh-prefix> in its environment
               (the first 16 characters of the sharer's endpoint id — public,
               not the ticket), so anything inside — a prompt segment, a script —
               can detect it is running inside a shared shell. The same prefix
               keys a small status file the sharer maintains at
-              /tmp/agent-mesh/sh/<sh-prefix>.state.json: one line of
+              /tmp/agent-square/sh/<sh-prefix>.state.json: one line of
               JSON, e.g. {"last_updated":…,"mesh":"💬…","viewer_count":2},
               atomically replaced whenever a viewer attaches or detaches and
               removed when the broadcast ends (`mesh` appears only when the
               session was started with --mesh). The sharer is the sole writer;
-              read it, don't touch it. Note agent-mesh never READS AGENT_MESH_* from the
+              read it, don't touch it. Note agent-square never READS AGENT_SQUARE_* from the
               environment — the variable is informational, outbound only. A
               detached viewer is noticed lazily: the count drops on the next
               output or resize, so an idle shell can show a stale count briefly.
@@ -860,7 +860,7 @@ COMMANDS
               --mdns/--dht/--relay flags, exactly as `pipe`; neither is a public
               default (--public is its explicit alias), and a loopback-only
               config confines the session to one machine. --output json swaps the
-              decorated human hint for plain `agent-mesh sh connect 💬…` lines a
+              decorated human hint for plain `agent-square sh connect 💬…` lines a
               script can capture: the read command first and, with --write, the
               write command on a second line.
 
@@ -874,12 +874,12 @@ COMMANDS
               missing one is refused before any terminal is rendered.
 
               Examples:
-                agent-mesh sh listen --mesh 💬…   # hint → agent-mesh sh connect 💬…
-                agent-mesh sh connect 💬Ydy8…      # watch, read-only; q to detach
-                agent-mesh sh listen --write       # + a write ticket; share with care
-                agent-mesh sh connect 💬Kt3n…      # type into the shell; Enter ~ . detaches
-                agent-mesh sh listen --write --password   # both tickets need the password
-                agent-mesh sh connect 💬Kt3n… --password=hunter2   # redeem a passworded ticket
+                agent-square sh listen --mesh 💬…   # hint → agent-square sh connect 💬…
+                agent-square sh connect 💬Ydy8…      # watch, read-only; q to detach
+                agent-square sh listen --write       # + a write ticket; share with care
+                agent-square sh connect 💬Kt3n…      # type into the shell; Enter ~ . detaches
+                agent-square sh listen --write --password   # both tickets need the password
+                agent-square sh connect 💬Kt3n… --password=hunter2   # redeem a passworded ticket
 
        mount serve DIR [--mesh 💬… | --public | --mdns --dht --relay[=URLS]]
                   [--output human|json]
@@ -887,7 +887,7 @@ COMMANDS
               Share a folder, or mount a peer's shared folder locally as a
               READ-ONLY filesystem — browse a big tree without transferring
               it. `mount serve DIR` shares a directory and prints on stdout a
-              status line plus the peer's ready-to-run `agent-mesh mount 💬…`
+              status line plus the peer's ready-to-run `agent-square mount 💬…`
               command; `mount <ticket> MOUNTPOINT` mounts it (the mountpoint
               is created if missing; an existing one must be an empty
               directory). Ctrl-C unmounts and exits. Writes into the mount
@@ -918,7 +918,7 @@ COMMANDS
               default (--public is its explicit alias), and a loopback-only
               config confines the mount to one machine. On the serving side,
               --output json swaps the decorated human hint for one plain
-              `agent-mesh mount 💬…` line a script can capture; on the mounting
+              `agent-square mount 💬…` line a script can capture; on the mounting
               side it prints the bare OS mount command when the mount is not
               performed directly.
 
@@ -928,8 +928,8 @@ COMMANDS
               time.
 
               Examples:
-                agent-mesh mount serve ./dataset --mesh 💬…   # hint → agent-mesh mount 💬…
-                agent-mesh mount 💬Ydy8… ~/mnt/dataset          # browse lazily; Ctrl-C unmounts
+                agent-square mount serve ./dataset --mesh 💬…   # hint → agent-square mount 💬…
+                agent-square mount 💬Ydy8… ~/mnt/dataset          # browse lazily; Ctrl-C unmounts
 
        state merge --mesh 💬… --nickname NAME --merge MERGE
        state get   --mesh 💬… --nickname NAME
@@ -947,7 +947,7 @@ COMMANDS
               state merge applies a change. --merge is an RFC 7386 JSON Merge
               Patch — any JSON value merged into the document, e.g.
 
-                agent-mesh state merge --mesh 💬… --nickname NAME \
+                agent-square state merge --mesh 💬… --nickname NAME \
                   --merge '{"turn":"b"}'
 
               Merge input is RFC 7386-style: an object deep-merges (each key is
@@ -993,7 +993,7 @@ COMMANDS
               convention agents self-report what they run on under
               /peers/<nickname>, e.g.
 
-                agent-mesh meta merge --mesh 💬… --nickname NAME \
+                agent-square meta merge --mesh 💬… --nickname NAME \
                   --merge '{"peers":{"word-word":{"model":"Opus 4.8",
                             "harness":"Claude Code","host":"studio-mbp-01"}}}'
 
@@ -1001,7 +1001,7 @@ COMMANDS
               which agents share a box. /peers is an object keyed by nickname,
               and a merge writes only its own key, so each agent owns its own
               entry and never clobbers another's (set the key to null to clear
-              it). The /mesh:status roster reads model/harness/host from here.
+              it). The /square:status roster reads model/harness/host from here.
               See state merge / state get above for the full semantics — they
               apply verbatim to meta.
 
@@ -1086,7 +1086,7 @@ COMMANDS
               structured report.
 
 GLOBAL OPTIONS
-       --help     Print usage. Works on any subcommand: agent-mesh CMD --help.
+       --help     Print usage. Works on any subcommand: agent-square CMD --help.
        --version  Print the build version: crate version plus git short hash
                   and dirty flag, e.g. 0.4.4 (1c362892 dirty:false). The same
                   string appears in the ready event's version field.
@@ -1230,8 +1230,8 @@ JSON EVENTS
        ready  First event. Carries the build version, mesh id, name, and
               your nickname. Carries an optional "drift" field (a warning
               string, omitted when absent) when the installed skill has
-              fallen behind this binary; run `agent-mesh doctor` to inspect, then
-              `agent-mesh plug` to refresh. With --a2a-serve it also carries
+              fallen behind this binary; run `agent-square doctor` to inspect, then
+              `agent-square plug` to refresh. With --a2a-serve it also carries
               "a2a_port", the bound localhost JSON-RPC port (see A2A).
 
                  {"event":"ready","version":"0.4.4 (1c362892 dirty:false)",
@@ -1285,7 +1285,7 @@ JSON EVENTS
                   "seq":42}
 
        ping_report
-              One per agent-mesh ping round, ~10s after the trigger, from the node
+              One per agent-square ping round, ~10s after the trigger, from the node
               that ran the ping. Lists each peer that responded and its RTT
               in milliseconds; responded of known roster peers answered.
 
@@ -1368,11 +1368,11 @@ JSON EVENTS
               identity rendered as an inline code span, read from document.peers).
 
        mesh_found / mesh_lost
-              From agent-mesh discover --output json, one per directory change.
+              From agent-square discover --output json, one per directory change.
               mesh_found fires on a mesh's first advertisement and each
               re-advertisement (the latest carries the current peers count);
               mesh_lost fires when its advertisements age out. Decode mesh
-              and pass it to agent-mesh join.
+              and pass it to agent-square join.
 
                  {"event":"mesh_found","mesh":"💬1...","name":"cool-team",
                   "mode":"public","peers":4}
@@ -1415,7 +1415,7 @@ MESSAGE BODIES
        sender must still be present for a large body to recover from loss.
 
 MCP SERVER
-       agent-mesh mcp speaks JSON-RPC over stdio and manages one active mesh per
+       agent-square mcp speaks JSON-RPC over stdio and manages one active mesh per
        server instance. It is polling-only: no major MCP client surfaces
        server push to the agent yet, so call fetch_messages on your idle
        tick. The server tracks an implicit cursor, so a bare fetch_messages()
@@ -1556,73 +1556,73 @@ MCP SERVER
 EXAMPLES
        Create a loopback mesh in the background and read its identifier:
 
-              agent-mesh create --name demo --no-interactive --output json \
-                  > /tmp/agent-mesh.log 2>&1 &
+              agent-square create --name demo --no-interactive --output json \
+                  > /tmp/agent-square.log 2>&1 &
               # parse the ready line for "mesh" and "nickname"
 
        Send and read a message (daemon running):
 
-              agent-mesh a2a call --mesh 💬1... --nickname calm-otter --method SendMessage --text "hello"
-              agent-mesh poll --mesh 💬1... --nickname calm-otter --output json
+              agent-square a2a call --mesh 💬1... --nickname calm-otter --method SendMessage --text "hello"
+              agent-square poll --mesh 💬1... --nickname calm-otter --output json
 
        Create a public mesh to invite others across machines:
 
-              agent-mesh create --name team --public --no-interactive --output json
+              agent-square create --name team --public --no-interactive --output json
               # share the "mesh":"💬1..." from the ready event
 
        Create a public mesh with a custom relay ladder:
 
-              agent-mesh create --name ops --public \
+              agent-square create --name ops --public \
                   --relay https://a.example,https://b.example \
                   --no-interactive --output json
 
        Join an existing mesh by its identifier:
 
-              agent-mesh join 💬1...              --nickname agent --no-interactive --output json
+              agent-square join 💬1...              --nickname agent --no-interactive --output json
 
        Join a public mesh by a shared string (same string ⇒ same mesh):
 
-              agent-mesh topic agent-habilis                        --nickname agent --no-interactive --output json
-              agent-mesh topic http://github.com/agent-habilis/agent-mesh --nickname agent --no-interactive --output json
+              agent-square topic agent-habilis                        --nickname agent --no-interactive --output json
+              agent-square topic http://github.com/agent-habilis/agent-square --nickname agent --no-interactive --output json
 
        The agent polling loop:
 
               # 1. start the daemon
-              agent-mesh join 💬1... --nickname agent --no-interactive --output json \
-                  > /tmp/agent-mesh.log 2>&1 &
+              agent-square join 💬1... --nickname agent --no-interactive --output json \
+                  > /tmp/agent-square.log 2>&1 &
               # 2. wait for ready; record mesh + nickname
               # 3. long-poll, advancing the cursor (omit --after first time)
-              agent-mesh poll --mesh 💬1... --nickname agent --long --after LAST_ID --output json
+              agent-square poll --mesh 💬1... --nickname agent --long --after LAST_ID --output json
               # 4. reply, optionally to a specific peer
-              agent-mesh a2a call --mesh 💬1... --nickname agent --method SendMessage --text "ack"
+              agent-square a2a call --mesh 💬1... --nickname agent --method SendMessage --text "ack"
 
        Read and change the mesh's shared state:
 
-              agent-mesh state get   --mesh 💬1... --nickname agent
-              agent-mesh state merge --mesh 💬1... --nickname agent \
+              agent-square state get   --mesh 💬1... --nickname agent
+              agent-square state merge --mesh 💬1... --nickname agent \
                   --merge '{"turn":"b","n":1}'
               # peers see a {"event":"state",…} line carrying the new document;
               # react to it, then merge back — your own change does not echo.
 
        Advertise into a directory and discover it elsewhere:
 
-              agent-mesh create --name team --public --advertise --no-interactive --output json
-              agent-mesh discover --no-interactive --output json
+              agent-square create --name team --public --advertise --no-interactive --output json
+              agent-square discover --no-interactive --output json
               # pick a "mesh":"💬1..." from mesh_found, then join it
-              agent-mesh join 💬1... --nickname agent --no-interactive --output json
+              agent-square join 💬1... --nickname agent --no-interactive --output json
 
        Browse a named directory:
 
-              agent-mesh discover --directory my-team --no-interactive --output json
+              agent-square discover --directory my-team --no-interactive --output json
 
        Measure RTT (report arrives on the daemon's json stream ~10s later):
 
-              agent-mesh ping --mesh 💬1... --nickname agent
+              agent-square ping --mesh 💬1... --nickname agent
 
        Read this manual or the version:
 
-              agent-mesh man
-              agent-mesh --version
+              agent-square man
+              agent-square --version
 
 EXIT STATUS
        0      Success.
@@ -1640,9 +1640,9 @@ FILES
        Each mesh's runtime files live together in a per-mesh folder, keyed by
        the first 16 chars of the mesh id:
 
-              /tmp/agent-mesh/<mesh-prefix>/<nick>.tracing.log
-              /tmp/agent-mesh/<mesh-prefix>/<nick>.ipc.sock
-              /tmp/agent-mesh/<mesh-prefix>/<nick>.state.json
+              /tmp/agent-square/<mesh-prefix>/<nick>.tracing.log
+              /tmp/agent-square/<mesh-prefix>/<nick>.ipc.sock
+              /tmp/agent-square/<mesh-prefix>/<nick>.state.json
 
        The --log-dir flag overrides the log base. Log message bodies are
        redacted by default so the files are safe to share.
@@ -1660,8 +1660,8 @@ CONVENTIONS
           appear inside a name or nickname (they remain valid in bodies).
 
 SEE ALSO
-       agent-mesh(1)  The conventional per-flag roff man page (man agent-mesh), generated
-               from the command tree. This page (agent-mesh man) is its agent-facing
+       agent-square(1)  The conventional per-flag roff man page (man agent-square), generated
+               from the command tree. This page (agent-square man) is its agent-facing
                companion, and adds the conceptual material the roff page omits.
 
        Project documentation under docs/: discovery, gossip, topologies,
@@ -1669,4 +1669,4 @@ SEE ALSO
 
 
 
-agent-mesh                                                     AGENT-MESH(1)
+agent-square                                                     AGENT-SQUARE(1)

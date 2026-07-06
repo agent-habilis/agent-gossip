@@ -38,13 +38,13 @@ pub(crate) struct CreateOpts {
 
     /// Optional nickname (random word-word if not provided). A custom
     /// nickname is 1..=32 UTF-8 characters, excluding control chars,
-    /// whitespace, and any of / \ < > #. Symmetric with `agent-mesh join
+    /// whitespace, and any of / \ < > #. Symmetric with `agent-square join
     /// --nickname`.
     #[arg(long)]
     pub nickname: Option<Nickname>,
 
     /// List this mesh in a directory so others can find it with
-    /// `agent-mesh discover` — no `💬…` id to share. Optional-value, like
+    /// `agent-square discover` — no `💬…` id to share. Optional-value, like
     /// `--relay`: absent ⇒ unlisted; bare `--advertise` ⇒ the default
     /// `global` directory; `--advertise <directory>` ⇒ that named directory.
     /// Requires `--public` (a directory listing only makes sense for a
@@ -67,7 +67,7 @@ pub(crate) struct CreateOpts {
     /// Make the mesh invite-only: the bare `💬…` id can no longer join —
     /// only a creator-minted `🎟️` invite can. The id carries the issuer public
     /// key (the mint authority), never the join secret; mint invites with
-    /// `agent-mesh invite`. Combine with `--password` to also password-protect
+    /// `agent-square invite`. Combine with `--password` to also password-protect
     /// every minted invite.
     #[arg(long)]
     pub invite_only: bool,
@@ -93,7 +93,7 @@ mod tests {
     #[test]
     fn create_opts_with_nickname() {
         let cli = Cli::parse_from([
-            "agent-mesh",
+            "agent-square",
             "create",
             "--name",
             "team",
@@ -134,7 +134,7 @@ mod tests {
 
     #[test]
     fn create_opts_without_nickname() {
-        let cli = Cli::parse_from(["agent-mesh", "create", "--name", "team"]);
+        let cli = Cli::parse_from(["agent-square", "create", "--name", "team"]);
         match cli.command {
             Commands::Create { opts } => {
                 assert_eq!(opts.name.as_ref().map(MeshName::as_str), Some("team"));
@@ -166,7 +166,7 @@ mod tests {
 
     #[test]
     fn create_opts_name_optional() {
-        let cli = Cli::parse_from(["agent-mesh", "create"]);
+        let cli = Cli::parse_from(["agent-square", "create"]);
         match cli.command {
             Commands::Create { opts } => assert_eq!(opts.name, None),
             Commands::Join { .. }
@@ -195,21 +195,21 @@ mod tests {
 
     #[test]
     fn create_opts_rejects_invalid_name() {
-        assert!(Cli::try_parse_from(["agent-mesh", "create", "--name", ""]).is_err());
+        assert!(Cli::try_parse_from(["agent-square", "create", "--name", ""]).is_err());
         assert!(
-            Cli::try_parse_from(["agent-mesh", "create", "--name", "has space"]).is_err(),
+            Cli::try_parse_from(["agent-square", "create", "--name", "has space"]).is_err(),
             "whitespace must reject"
         );
         assert!(
-            Cli::try_parse_from(["agent-mesh", "create", "--name", "a#b"]).is_err(),
+            Cli::try_parse_from(["agent-square", "create", "--name", "a#b"]).is_err(),
             "the #mesh marker must reject"
         );
         assert!(
-            Cli::try_parse_from(["agent-mesh", "create", "--name", "a/b"]).is_ok(),
+            Cli::try_parse_from(["agent-square", "create", "--name", "a/b"]).is_ok(),
             "a mesh name may contain a path separator (it is never a filename)"
         );
         assert!(
-            Cli::try_parse_from(["agent-mesh", "create", "--name", &"a".repeat(33)]).is_err(),
+            Cli::try_parse_from(["agent-square", "create", "--name", &"a".repeat(33)]).is_err(),
             "33 chars must reject"
         );
     }
@@ -241,18 +241,18 @@ mod tests {
             }
         }
         assert_eq!(
-            advertise_of(&["agent-mesh", "create", "--public"]),
+            advertise_of(&["agent-square", "create", "--public"]),
             DirectorySelection::Unset,
             "absent ⇒ Unset (unlisted)"
         );
         assert_eq!(
-            advertise_of(&["agent-mesh", "create", "--public", "--advertise"]),
+            advertise_of(&["agent-square", "create", "--public", "--advertise"]),
             DirectorySelection::Named(MeshName::new("global").unwrap()),
             "bare ⇒ the global directory (default_missing_value)"
         );
         assert_eq!(
             advertise_of(&[
-                "agent-mesh",
+                "agent-square",
                 "create",
                 "--public",
                 "--advertise",
@@ -290,30 +290,30 @@ mod tests {
             }
         }
         assert_eq!(
-            password_of(&["agent-mesh", "create"]),
+            password_of(&["agent-square", "create"]),
             None,
             "absent ⇒ None"
         );
         assert_eq!(
-            password_of(&["agent-mesh", "create", "--password"]),
+            password_of(&["agent-square", "create", "--password"]),
             Some(PasswordFlag::Prompt),
             "bare ⇒ prompt"
         );
         assert_eq!(
-            password_of(&["agent-mesh", "create", "--password=hunter2"]),
+            password_of(&["agent-square", "create", "--password=hunter2"]),
             Some(PasswordFlag::Inline("hunter2".to_owned())),
             "valued ⇒ inline"
         );
         // require_equals is load-bearing: a space-separated value must NOT
         // be swallowed as the password (it would eat positionals on the
         // connect-style commands).
-        assert!(Cli::try_parse_from(["agent-mesh", "create", "--password", "hunter2"]).is_err());
+        assert!(Cli::try_parse_from(["agent-square", "create", "--password", "hunter2"]).is_err());
     }
 
     #[test]
     fn create_opts_nickname_with_other_flags() {
         let cli = Cli::parse_from([
-            "agent-mesh",
+            "agent-square",
             "create",
             "--name",
             "team",

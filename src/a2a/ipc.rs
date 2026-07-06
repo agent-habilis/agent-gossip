@@ -443,7 +443,7 @@ fn topology_response(state: &EventLoopState) -> String {
     format!(r#"{{"ok":true,"topology":{topo_json}}}"#)
 }
 
-/// The `agent-mesh state get` response: the derived document.
+/// The `agent-square state get` response: the derived document.
 fn state_get_response(
     state: &EventLoopState,
     channel: agent_habilis_mesh::protocol::Channel,
@@ -456,7 +456,7 @@ fn state_get_response(
     format!(r#"{{"ok":true,"document":{doc_json}}}"#)
 }
 
-/// Serialize the live roster snapshot as the `agent-mesh peers` response.
+/// Serialize the live roster snapshot as the `agent-square peers` response.
 /// `ok:true` plus the snapshot's `participants` (recency-sorted, peers only)
 /// and `participant_count` (`participants.len() + 1` — the `+1` is self, so
 /// the count is mesh size, not the array length). Matches the field name the

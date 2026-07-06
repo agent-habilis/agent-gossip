@@ -1,6 +1,6 @@
-//! `agent-mesh` — a mesh for AI agents.
+//! `agent-square` — a mesh for AI agents.
 //!
-//! This crate ships as **both** a binary (the `agent-mesh`
+//! This crate ships as **both** a binary (the `agent-square`
 //! CLI / MCP server) and a library. The binary is a thin shim over
 //! [`run_cli`]; library consumers embed a mesh in-process via the
 //! [`embed`] module.
@@ -14,8 +14,8 @@
 //! an internal detail.
 //!
 //! ```no_run
-//! use agent_mesh::embed::{JoinConfig, MeshSession};
-//! use agent_mesh::MessageBody;
+//! use agent_square::embed::{JoinConfig, MeshSession};
+//! use agent_square::MessageBody;
 //!
 //! # async fn run() -> anyhow::Result<()> {
 //! let session = MeshSession::join(JoinConfig::new("💬...".parse()?)).await?;
@@ -49,7 +49,7 @@ pub mod harness;
 
 // Curated public protocol surface. These types live in the engine crate
 // (`agent_habilis_mesh`); re-exporting them from this crate root keeps the
-// externally-visible `agent_mesh::` API stable across the engine split.
+// externally-visible `agent_square::` API stable across the engine split.
 pub use a2a::surfaced::SurfacedEvent;
 pub use a2a::{TaskId, TaskState};
 pub use agent_habilis_mesh::invite::InviteTicket;
@@ -81,7 +81,7 @@ use cli::Cli;
 
 /// Parse `argv` and run the selected CLI subcommand to completion.
 ///
-/// This is the entire body of the `agent-mesh` binary; it is
+/// This is the entire body of the `agent-square` binary; it is
 /// public so the thin `src/main.rs` shim (which owns only
 /// process-level concerns: tracing init, terminal echo) can call it.
 /// The subcommand dispatch + per-command logic lives in `cli`.
@@ -96,7 +96,7 @@ pub async fn run_cli() -> Result<()> {
     Box::pin(cli::dispatch(Cli::parse())).await
 }
 
-/// The fully-built `agent-mesh` clap command tree, for offline man-page
+/// The fully-built `agent-square` clap command tree, for offline man-page
 /// generation (`cargo task man` walks it in-process through
 /// `clap_mangen`). Arg surface only; no iroh, no runtime state.
 #[must_use]

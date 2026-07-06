@@ -94,9 +94,9 @@ retired `ahs` prefix had.
 ## Examples
 
 ```
-agent-mesh create --public                            # default lookups
-agent-mesh create --public --relay https://r.example  # custom relay ladder, baked in
-agent-mesh create --public --password=pw              # verifier baked in; joiners need pw
-agent-mesh join 💬…                                    # inherits ALL of the above
-agent-mesh join 💬… --password=pw                      # verified locally before any network
+agent-square create --public                            # default lookups
+agent-square create --public --relay https://r.example  # custom relay ladder, baked in
+agent-square create --public --password=pw              # verifier baked in; joiners need pw
+agent-square join 💬…                                    # inherits ALL of the above
+agent-square join 💬… --password=pw                      # verified locally before any network
 ```

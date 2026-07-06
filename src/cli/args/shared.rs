@@ -99,7 +99,7 @@ pub(crate) struct SharedServerOpts {
     #[arg(long, hide = true, default_value_t = consts::BEACON_COHOST_GRACE_SECS)]
     pub beacon_cohost_grace_secs: u64,
 
-    /// How long an `agent-mesh ping` round collects pongs (seconds).
+    /// How long an `agent-square ping` round collects pongs (seconds).
     #[arg(long, hide = true, default_value_t = consts::PING_WINDOW_SECS)]
     pub ping_window_secs: u64,
 

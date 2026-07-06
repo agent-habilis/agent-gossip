@@ -6,7 +6,7 @@
 //! inbound frames into stdout bytes — proving the engine is payload-generic (it
 //! carries a2a tasks and raw bytes over the *same* mesh/discovery/circuit stack,
 //! never inspecting either payload). It depends only on the engine crate, never
-//! on `agent-mesh`.
+//! on `agent-square`.
 //!
 //! `listen` reads stdin, base64s each ≤`--chunk` slice into a `pipe_data` frame,
 //! and emits one `pipe_eof` at EOF. `connect` joins the same mesh and streams
@@ -104,7 +104,7 @@ impl TransportArgs {
 #[derive(Args)]
 #[expect(
     clippy::struct_excessive_bools,
-    reason = "four independent CLI discovery flags (--public/--mdns/--dht/--relay) mirroring the agent-mesh CLI; they are flat clap flags, not a state machine to model as an enum"
+    reason = "four independent CLI discovery flags (--public/--mdns/--dht/--relay) mirroring the agent-square CLI; they are flat clap flags, not a state machine to model as an enum"
 )]
 struct ListenArgs {
     /// Join an existing mesh by its 🐝… id.

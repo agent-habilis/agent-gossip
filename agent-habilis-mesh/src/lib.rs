@@ -1,9 +1,9 @@
 //! `agent-habilis-mesh` — the serverless gossip-network engine.
 //!
 //! This workspace-internal crate holds the transport-and-protocol engine
-//! decoupled from the `agent-mesh` application (the A2A data model, the
+//! decoupled from the `agent-square` application (the A2A data model, the
 //! CLI/MCP bindings, the `embed` facade). It is never published
-//! (`publish = false`); the `agent-mesh` crate depends on it and re-exports
+//! (`publish = false`); the `agent-square` crate depends on it and re-exports
 //! the curated public surface.
 
 pub mod beacon;

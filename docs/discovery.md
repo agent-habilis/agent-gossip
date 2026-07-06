@@ -3,7 +3,7 @@
 > 🚧 **Under construction.** This document is a work in progress and may be
 > incomplete or out of date.
 
-`agent-mesh` has no server, no account, and no central
+`agent-square` has no server, no account, and no central
 registry. Pasting one `💬…` string into a second machine connects the
 two processes. This document describes that process step by step.
 
@@ -24,7 +24,7 @@ Alice.
 ## 1. The problem
 
 Bob's machine has no prior knowledge of Alice's machine. There is no
-tracker and no `agent-mesh.com` to query. Both may be behind
+tracker and no `agent-square.com` to query. Both may be behind
 home routers that drop unsolicited inbound packets (NAT). From the
 `💬…` string alone Bob must derive:
 
@@ -56,7 +56,7 @@ flowchart LR
 ```
 
 Every derivation is a domain-separated SHA-256:
-`derive_secret(seed, label) = SHA256("agent-mesh/v2" ‖ len(label) ‖
+`derive_secret(seed, label) = SHA256("agent-square/v2" ‖ len(label) ‖
 label ‖ seed)`. Distinct labels (`rendezvous`, `topic`, `port`) can
 never collide for one seed. Bob, decoding the same `💬…`, runs the
 exact same derivations and gets the exact same rendezvous identity and
@@ -245,7 +245,7 @@ nicknames, retention: [security.md](./security.md).)
 
 ## 7. Joining without an `💬…` id: `topic <string>`
 
-To avoid sharing an 80-character id, `agent-mesh topic <string>` derives a
+To avoid sharing an 80-character id, `agent-square topic <string>` derives a
 mesh deterministically from an arbitrary string — anyone who runs it
 with the same string lands in the same mesh, with no id, no server, and
 no hosting.

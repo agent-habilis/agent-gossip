@@ -50,13 +50,13 @@ Coverage:
 
 ## How to run
 
-1. **Prerequisites:** the `agent-mesh` binary on `PATH`. For the todo cases, a todo
+1. **Prerequisites:** the `agent-square` binary on `PATH`. For the todo cases, a todo
    plugin installed in the role peers. For [cross-harness](/cross-harness.md),
    one pi and one Claude Code session.
 2. Open **one coordinator session + one per role** (the runbook's `roles:`
    frontmatter). Each is a real, independent mesh member — and may run on a
    **different machine** (create the mesh `--public`, join by id or
-   `agent-mesh discover`).
+   `agent-square discover`).
 3. The coordinator **briefs** each role's goal + the scenario by **mesh
    message**, then observes. The agents run on their own. Nothing travels
    through local files.
@@ -90,17 +90,17 @@ skills. This table is only to help you read what happened.
 
 | capability | pi command | pi tool | Claude Code skill |
 |---|---|---|---|
-| create | `/mesh-create` | `mesh_create` | `/mesh:create` |
-| join | `/mesh-join` | `mesh_join` | `/mesh:join` |
-| discover | `/mesh-discover` | `mesh_discover` | `/mesh:discover` |
-| broadcast | `/mesh-msg` | `mesh_send` | `/mesh:msg` |
-| directed reply | `/mesh-reply` | `mesh_send` (with reply) | `/mesh:reply` |
-| handover | `/mesh-handover` | `mesh_handover` | `/mesh:handover` |
-| task | `/mesh-task` | `mesh_task` | `/mesh:task` |
+| create | `/mesh-create` | `mesh_create` | `/square:create` |
+| join | `/mesh-join` | `mesh_join` | `/square:join` |
+| discover | `/mesh-discover` | `mesh_discover` | `/square:discover` |
+| broadcast | `/mesh-msg` | `mesh_send` | `/square:msg` |
+| directed reply | `/mesh-reply` | `mesh_send` (with reply) | `/square:reply` |
+| handover | `/mesh-handover` | `mesh_handover` | `/square:handover` |
+| task | `/mesh-task` | `mesh_task` | `/square:task` |
 | advance a task leg | — | `mesh_advance` | (skill drives the legs) |
-| status / roster | `/mesh-status` | `mesh_status` | `/mesh:status` |
-| ping | `/mesh-ping` | `mesh_ping` | `/mesh:ping` |
-| read state | `/mesh-state` | `mesh_get_state` | `agent-mesh state get` |
-| merge state | `/mesh-state-merge` | `mesh_apply_merge` | `agent-mesh state merge` |
-| leave | `/mesh-leave` | `mesh_leave` | `/mesh:leave` |
-| version / drift | `/mesh-version` | — | `/mesh:version` |
+| status / roster | `/mesh-status` | `mesh_status` | `/square:status` |
+| ping | `/mesh-ping` | `mesh_ping` | `/square:ping` |
+| read state | `/mesh-state` | `mesh_get_state` | `agent-square state get` |
+| merge state | `/mesh-state-merge` | `mesh_apply_merge` | `agent-square state merge` |
+| leave | `/mesh-leave` | `mesh_leave` | `/square:leave` |
+| version / drift | `/mesh-version` | — | `/square:version` |

@@ -7,7 +7,7 @@
 
 mod common;
 
-use agent_mesh::{MAX_LOGICAL_BODY_BYTES, MAX_MESSAGE_SIZE, MessageBody, TaskId, TaskState};
+use agent_square::{MAX_LOGICAL_BODY_BYTES, MAX_MESSAGE_SIZE, MessageBody, TaskId, TaskState};
 use common::{InProcNode, MSG_TIMEOUT, chat_text};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -211,7 +211,7 @@ async fn multishard_task_artifact_reassembles_into_one() {
     let matching = alice
         .tasks()
         .iter()
-        .filter(|(message, _)| agent_mesh::a2a::gossip::task_text(message) == big)
+        .filter(|(message, _)| agent_square::a2a::gossip::task_text(message) == big)
         .count();
     assert_eq!(
         matching, 1,

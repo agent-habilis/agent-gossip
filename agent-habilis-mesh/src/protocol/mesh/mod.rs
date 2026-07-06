@@ -598,7 +598,7 @@ mod mesh_tests {
             super::crypto::derive_topic_id(mesh.seed(), &mesh.name, &mesh.config_bytes());
         assert_eq!(
             format!("{topic:?}"),
-            "TopicId(9ad072aee552183575807ff0d27f0a027a6c4ea330df528722867d3490befd50)"
+            "TopicId(8c401ccceab4524e1ffaf13bc989172c97e81197bcd0e8c2a2ce8411fb4dddd1)"
         );
     }
 
@@ -612,7 +612,7 @@ mod mesh_tests {
     #[test]
     fn from_topic_name_is_the_sanitized_string() {
         let mesh = Mesh::from_topic(
-            "https://github.com/agent-habilis/agent-mesh",
+            "https://github.com/agent-habilis/agent-square",
             MeshConfig::public_preset(),
         );
         // Scheme stripped, `/`s kept; the 37-char URL exceeds the 32-char cap,

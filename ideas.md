@@ -1,6 +1,6 @@
 # Feature ideas
 
-A research catalog for future `agent-mesh` features, in the spirit of `topic`:
+A research catalog for future `agent-square` features, in the spirit of `topic`:
 small, composable, obviously useful, fun. Sources: IRC/mIRC/IRCv3/XMPP/
 Matrix/Discord; the 2025–26 agent-interop landscape (A2A, MCP, FIPA, contract
 net, blackboard, consensus); the P2P tooling ecosystem (magic-wormhole, croc,
@@ -11,7 +11,7 @@ Two findings worth keeping in mind:
 
 - **Convergence:** message tags/filtering, capability cards, and rich
   busy/idle status surfaced independently in all three research streams.
-- **Self-selection beats assignment:** agent-mesh delegates by *naming* a worker;
+- **Self-selection beats assignment:** agent-square delegates by *naming* a worker;
   both classic MAS results (contract net, blackboard) and 2025 LLM research
   say letting workers claim or bid on tasks outperforms master–slave
   dispatch.
@@ -34,7 +34,7 @@ NOTICE — is what kept bots from reply-looping each other, and LLM agents
 reflexively answer everything, so the bit matters more here. A distinct
 message kind with a documented contract makes CI results, status broadcasts,
 and log lines safe by construction.
-`agent-mesh notice --mesh 💬… --text "build green"` → `"type":"notice"`.
+`agent-square notice --mesh 💬… --text "build green"` → `"type":"notice"`.
 
 ### tag — message tags + filtered poll
 Origin: MQTT/NATS subjects, cabal channels, IRC channels. One mesh is one
@@ -45,7 +45,7 @@ new infrastructure. One tag per message; `--tag a,b` filters as OR;
 non-message events (presence, state, task) always pass; untagged messages
 match only an unfiltered poll. (Named `tag`, not `topic` — the gossip layer
 owns `topic`.)
-`agent-mesh msg … --tag ci` / `agent-mesh poll … --tag ci,alerts`.
+`agent-square msg … --tag ci` / `agent-square poll … --tag ci,alerts`.
 
 ### status — busy/idle presence with a note
 Origin: ICQ away/DND, IRCv3 away-notify, A2A task states. Presence answers
@@ -53,7 +53,7 @@ Origin: ICQ away/DND, IRCv3 away-notify, A2A task states. Presence answers
 `/peers/<nick>/status = {state: busy|idle, note, ts}` (zero wire changes;
 the meta log backfills whole for late joiners), surfaced only through the
 live roster so departed peers' stale statuses never render.
-`agent-mesh status busy --note "running tests, ~4m"` / bare `agent-mesh status` prints
+`agent-square status busy --note "running tests, ~4m"` / bare `agent-square status` prints
 the roster with statuses.
 
 ### board — blackboard task board with self-selection
@@ -64,7 +64,7 @@ under `/board/<id> = {desc, status: open|claimed|done, by, opened_by, ts}`;
 claim races resolve deterministically by the existing log total order
 (last-writer-wins; `claim` re-reads and reports "claimed by you" / "lost
 to <nick>"). Ids: short base58 (4 chars), re-minted on collision.
-`agent-mesh board post "write lookup tests"` / `board claim b7Kq` / `board done b7Kq` / `board ls`.
+`agent-square board post "write lookup tests"` / `board claim b7Kq` / `board done b7Kq` / `board ls`.
 
 ### vote — ballots with a deterministic tally
 Origin: Discord polls, Matrix MSC3381, multi-agent consensus literature.
@@ -72,14 +72,14 @@ Origin: Discord polls, Matrix MSC3381, multi-agent consensus literature.
 object in the state channel (question, options, deadline, rule); votes are
 signed merges; the tally is deterministic for every member for free, thanks
 to log convergence.
-`agent-mesh vote open "merge strategy?" --option squash --option rebase --deadline 2m` / `vote cast <id> rebase`.
+`agent-square vote open "merge strategy?" --option squash --option rebase --deadline 2m` / `vote cast <id> rebase`.
 
 ### card — capability cards + filterable discovery
 Origin: A2A AgentCard, IRC WHOIS, XMPP disco#info. The most-converged idea
 in the 2025 interop field, and the meta `/peers/<nick> = {model, harness,
 host}` convention is already 30 % of it. Extend with `skills[]`/`tags[]`;
 surface in `peers` and `discover` output and let both filter.
-`agent-mesh card set --skill rust --skill review` / `agent-mesh peers --with-skill rust`.
+`agent-square card set --skill rust --skill review` / `agent-square peers --with-skill rust`.
 
 ### clip — clipboard send/receive
 Origin: LocalSend. Local clipboard → peer's clipboard over the existing pipe
@@ -87,7 +87,7 @@ ticket machinery (new ticket flag bit so `pipe connect` and `clip recv`
 refuse each other's tickets). Clipboard I/O by shell-out (pbcopy/pbpaste;
 wl-copy/xclip/xsel), one-shot v1, `--password` supported, size-capped both
 ends.
-`agent-mesh clip send` → hint → `agent-mesh clip recv 💬…`.
+`agent-square clip send` → hint → `agent-square clip recv 💬…`.
 
 ### ignore — local drop-filter by pubkey
 Origin: irssi/mIRC `/ignore`, cabal subjective moderation, SSB blocking.
@@ -95,7 +95,7 @@ The P2P answer to moderation: no server to ban from, so each peer filters
 locally. The daemon drops matching events from poll/stream output, keyed on
 pubkey (nickname is not identity). Defends against context poisoning by a
 buggy or hostile peer. Later: subscribe to a peer's blocklist.
-`agent-mesh ignore add <pubkey>` / `ignore ls` / `ignore rm`.
+`agent-square ignore add <pubkey>` / `ignore ls` / `ignore rm`.
 
 ## Tier 2 — strong, slightly more machinery
 
@@ -105,21 +105,21 @@ front-end to the existing task lifecycle: announce a task with a deadline,
 peers bid (estimate, confidence, load), initiator awards, then the normal
 offer/accept/…/confirm flow runs. Complements board (board = pull, cfp =
 push-with-competition).
-`agent-mesh cfp "review src/net" --deadline 30s` → `agent-mesh bid <id> --estimate 5m` → `agent-mesh award <id> <nick>`.
+`agent-square cfp "review src/net" --deadline 30s` → `agent-square bid <id> --estimate 5m` → `agent-square award <id> <nick>`.
 
 ### invite — expiring, single-use join codes
 Origin: croc code phrases, Keet blind pairing, magic-wormhole. The 💬 id is
 a bearer credential forever; anyone who ever sees it can join anytime. A
 short-lived, N-use invite that an online member vouches for closes that gap.
 On-ramp to a wormhole-style short speakable code via PAKE.
-`agent-mesh invite --ttl 1h --uses 1` → code; `agent-mesh join --invite <code>`.
+`agent-square invite --ttl 1h --uses 1` → code; `agent-square join --invite <code>`.
 
 ### blob — content-addressed artifact sharing
-Origin: iroh-blobs / sendme. agent-mesh is already on iroh, so BLAKE3-verified,
+Origin: iroh-blobs / sendme. agent-square is already on iroh, so BLAKE3-verified,
 resumable, dedup'd blob transfer is nearly free. Publish an artifact once;
 any peer fetches by hash from whoever has it; `pin` volunteers replication.
 Complements `file` with many-to-many artifact exchange.
-`agent-mesh blob add report.pdf` → hash; `agent-mesh blob get <hash>`; `agent-mesh blob pin <hash>`.
+`agent-square blob add report.pdf` → hash; `agent-square blob get <hash>`; `agent-square blob pin <hash>`.
 
 ### task ask/answer — input-required state
 Origin: A2A `input-required`, MCP elicitation. A worker mid-task blocks on
@@ -131,7 +131,7 @@ the initiator ("destructive migration OK?") instead of abusing
 Origin: WeeChat `/trigger`, mIRC remotes. Run a command when a matching
 event arrives (filter by kind/sender/tag/regex; event JSON on stdin). Turns
 the mesh into an automation bus without an agent burning tokens polling.
-`agent-mesh on --tag alerts --exec ./notify.sh`.
+`agent-square on --tag alerts --exec ./notify.sh`.
 
 ### seen / watch — last-seen query and presence subscriptions
 Origin: IRC MONITOR, XEP-0012, the `!seen` bot. `seen <nick>` answers "when

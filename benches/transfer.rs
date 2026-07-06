@@ -25,8 +25,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-use agent_mesh::embed::{CreateConfig, JoinConfig, MeshSession};
-use agent_mesh::{JoinTarget, MessageBody, MeshName};
+use agent_square::embed::{CreateConfig, JoinConfig, MeshSession};
+use agent_square::{JoinTarget, MessageBody, MeshName};
 use tokio::sync::broadcast::error::RecvError;
 
 /// Zero-padded index width in the `"{index:0N}:"` body prefix — one shared
@@ -45,7 +45,7 @@ const ASCII_SPAN: u64 = 94;
 // Tie the chunk size to the live wire cap so shrinking `MAX_MESSAGE_SIZE`
 // fails the build here instead of silently dropping every send.
 const _: () = assert!(
-    CHUNK_BODY_LEN + 512 <= agent_mesh::MAX_MESSAGE_SIZE,
+    CHUNK_BODY_LEN + 512 <= agent_square::MAX_MESSAGE_SIZE,
     "chunk body leaves too little room under MAX_MESSAGE_SIZE for the JSON envelope"
 );
 

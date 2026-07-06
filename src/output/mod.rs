@@ -154,7 +154,7 @@ pub(crate) mod style {
     pub(super) const PEER_NICK: &str = "\x1b[1;36m";
     /// Bold yellow — a mesh name.
     pub(crate) const MESH: &str = "\x1b[1;33m";
-    /// Bold blue — the runnable hint (`agent-mesh join` on create, `agent-mesh pipe connect`
+    /// Bold blue — the runnable hint (`agent-square join` on create, `agent-square pipe connect`
     /// on the pipe producer).
     pub(crate) const BLUE: &str = "\x1b[1;34m";
     /// Bold — the highlighted row in the `discover` picker.
@@ -441,7 +441,7 @@ impl Output {
     }
 
     /// Surface the mesh identifier at startup (stderr). Human mode
-    /// prints the runnable join command (`agent-mesh join <id>`); JSON mode
+    /// prints the runnable join command (`agent-square join <id>`); JSON mode
     /// prints the bare `💬…` id (the integration harness greps this);
     /// Silent suppresses it.
     pub(crate) fn mesh_id_line(&self, id: &MeshId) {
@@ -454,7 +454,7 @@ impl Output {
                     } else {
                         ("", "")
                     };
-                    eprintln!("others can join with: {open}agent-mesh join {id}{close}");
+                    eprintln!("others can join with: {open}agent-square join {id}{close}");
                 }
                 OutputMode::Json => eprintln!("{id}"),
                 OutputMode::Silent => {}
@@ -829,7 +829,7 @@ impl Output {
         self.error(&error.to_string());
     }
 
-    /// Emit the result of an `agent-mesh ping` round: per-peer RTT, plus how
+    /// Emit the result of an `agent-square ping` round: per-peer RTT, plus how
     /// many of the known peers responded (the responder count is just
     /// `peers.len()`). `known` is the current participant roster size.
     pub(crate) fn ping_report(&self, peers: Vec<PingPeer>, known: usize) {

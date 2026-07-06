@@ -318,7 +318,7 @@ impl TaskState {
     }
 
     /// The friendly kebab name for display lines, our `--output json` stream,
-    /// and the `agent-mesh a2a status --state` flag — the agent-facing surface, kept
+    /// and the `agent-square a2a status --state` flag — the agent-facing surface, kept
     /// readable while the A2A wire carries the `ProtoJSON` `TASK_STATE_*` form.
     #[must_use]
     pub fn as_str(self) -> &'static str {
@@ -696,7 +696,7 @@ pub(crate) use expose::expose;
 
 /// ALPN for the a2a bridge — a raw bidirectional QUIC stream with its own
 /// protocol identity, distinct from the gossip protocol's `GOSSIP_ALPN`.
-pub(crate) const A2A_ALPN: &[u8] = b"agent-mesh/a2a/1";
+pub(crate) const A2A_ALPN: &[u8] = b"agent-square/a2a/1";
 
 /// Length of the bearer-capability secret carried in an a2a ticket, and of the
 /// auth token that opens every bi-stream (the raw secret, or its Argon2id

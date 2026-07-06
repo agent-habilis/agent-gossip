@@ -904,7 +904,7 @@ pub(crate) async fn broadcast_a2a_call(
     // Directed request over the shared RPC sender: unicast → circuit → gossip per
     // frame, transparently splitting a large sealed body into shard frames.
     if let Err(error) = send_directed_rpc(mesh, author, kind, body, state, sender).await {
-        tracing::warn!(target: "agent_mesh::gossip", %error, "a2a request send failed");
+        tracing::warn!(target: "agent_square::gossip", %error, "a2a request send failed");
     }
 }
 

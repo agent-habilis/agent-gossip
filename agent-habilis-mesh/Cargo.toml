@@ -4,7 +4,7 @@ version = "0.5.0"
 edition.workspace = true
 rust-version.workspace = true
 authors = ["Caio Gondim <me@caiogondim.com>"]
-description = "serverless gossip-network engine for agent-mesh"
+description = "serverless gossip-network engine for agent-square"
 license = "MIT"
 publish = false
 
@@ -23,7 +23,7 @@ path = "src/lib.rs"
 # `cargo test` and off for a normal/release build.
 test-fixtures = []
 # Off by default. Exposes the engine's `pub(crate)` hot paths so the app's
-# `benches/hot_paths.rs` (via `agent_mesh::harness::bench`) can reach them.
+# `benches/hot_paths.rs` (via `agent_square::harness::bench`) can reach them.
 # Never enabled in a normal/release build.
 bench = ["test-fixtures"]
 # Off by default. Exposes the engine internals (crafted-message + state-doc

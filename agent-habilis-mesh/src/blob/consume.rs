@@ -27,7 +27,7 @@ const CHUNK: usize = 64 * 1024;
 
 /// Fetch the blob named by `ticket`, streaming its bytes to `out` and verifying
 /// the SHA-256 as they arrive. On a hash mismatch this returns an error *after*
-/// bytes have already been written — the caller (e.g. `agent-mesh a2a fetch`) must
+/// bytes have already been written — the caller (e.g. `agent-square a2a fetch`) must
 /// treat a non-zero result as "discard what landed".
 ///
 /// # Errors

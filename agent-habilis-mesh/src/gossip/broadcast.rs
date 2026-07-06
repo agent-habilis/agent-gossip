@@ -91,7 +91,7 @@ pub async fn broadcast_msg(sender: &MeshSender, msg: &Message) {
         && let Err(error) = sender.broadcast(Bytes::from(bytes)).await
     {
         tracing::warn!(
-            target: "agent_mesh::gossip",
+            target: "agent_square::gossip",
             %error,
             "presence/plumbing broadcast failed"
         );

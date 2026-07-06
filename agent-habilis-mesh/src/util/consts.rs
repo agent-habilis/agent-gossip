@@ -5,7 +5,7 @@
 
 // The runtime base for per-mesh files is per-user and computed at runtime —
 // see [`crate::util::runtime_base`] / [`crate::util::ensure_runtime_base`].
-// It used to be a hardcoded shared `/tmp/agent-mesh` const; that let other
+// It used to be a hardcoded shared `/tmp/agent-square` const; that let other
 // local users traverse it and read per-member logs, so it moved to a
 // uid-scoped, `0700` directory.
 
@@ -197,7 +197,7 @@ pub(crate) const MAX_BLOB_STORE_BYTES: u64 = 4 * 1024 * 1024 * 1024; // 4 GiB
 pub(crate) const DEFAULT_MESSAGE_LOG_SIZE: usize = 1000;
 
 /// Max messages a single `poll` / `fetch_messages` returns — a **fixed**
-/// IPC contract (the `agent-mesh poll` client can't know the daemon's configured
+/// IPC contract (the `agent-square poll` client can't know the daemon's configured
 /// log size, so the read cap can't depend on it). At the default log size
 /// this equals the log, so `poll` returns everything; a larger configured
 /// log just means `poll` surfaces the most-recent `POLL_RESPONSE_MAX_MSGS`.
@@ -291,7 +291,7 @@ pub(crate) const PASSWORD_KDF_P_COST: u32 = 1;
 // control, with history), never an ephemeral shell var. Each is the default
 // for the matching hidden CLI flag (`--alive-timeout-secs`, …) that the
 // subprocess test suite passes to run with short timings; production reads the
-// const. See `agent_mesh::util::tuning`.
+// const. See `agent_square::util::tuning`.
 
 /// How long a peer can go unheard before the sweeper evicts it. Must exceed
 /// the alive-keepalive interval comfortably (3× absorbs one or two lost
@@ -336,7 +336,7 @@ pub const TASK_CONTENT_CAP: u32 = 100;
 /// `--beacon-cohost-grace-secs`.
 pub const BEACON_COHOST_GRACE_SECS: u64 = 10;
 
-/// How long an `agent-mesh ping` round collects pongs before the daemon emits its
+/// How long an `agent-square ping` round collects pongs before the daemon emits its
 /// `ping_report`. Flag: `--ping-window-secs`.
 pub const PING_WINDOW_SECS: u64 = 10;
 
@@ -387,7 +387,7 @@ pub const ANTIENTROPY_MAX_RESEND: usize = 64;
 /// before returning an empty batch — the single long-poll park length. Kept
 /// under typical MCP-host per-request timeouts so a held call returns before
 /// the host gives up; the daemon itself never blocks (the waiter parks in a
-/// registry). Infinite waiting is a *client* concern: `agent-mesh poll --long`
+/// registry). Infinite waiting is a *client* concern: `agent-square poll --long`
 /// re-issues the read on each empty return. Flag: `--longpoll-max-ms`
 /// (tests shorten it to force the timeout path).
 pub const LONGPOLL_MAX_MS: u64 = 60_000;

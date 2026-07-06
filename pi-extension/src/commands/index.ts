@@ -20,7 +20,7 @@ import {
   formatPingReport,
   formatRoster,
 } from "../format";
-import { isValidBody, requireAgentMesh, runMeshCommand } from "../helpers";
+import { isValidBody, requireAgentSquare, runMeshCommand } from "../helpers";
 import { state } from "../state";
 import type { DiscoveredMesh, Peer } from "../types";
 import { inject, notify, notifyBlock, notifyError } from "../ui";
@@ -90,7 +90,7 @@ export function registerCommands(pi: ExtensionAPI): void {
 }
 
 // Parse `/mesh-create [name] [flags]`. The first non-flag token is the
-// optional mesh name; recognized flags mirror the `agent-mesh create` CLI.
+// optional mesh name; recognized flags mirror the `agent-square create` CLI.
 function parseCreateArgs(args: string): {
   options: CreateOptions;
   error?: string;
@@ -133,7 +133,7 @@ function parseCreateArgs(args: string): {
 
 async function cmdCreate(args: string, ctx: ExtensionCommandContext): Promise<void> {
   state.ctx = ctx;
-  if (!requireAgentMesh(ctx)) return;
+  if (!requireAgentSquare(ctx)) return;
 
   const { options, error } = parseCreateArgs(args);
   if (error) {
@@ -172,7 +172,7 @@ async function joinAndReport(target: string, ctx: ExtensionCommandContext): Prom
 
 async function cmdJoin(args: string, ctx: ExtensionCommandContext): Promise<void> {
   state.ctx = ctx;
-  if (!requireAgentMesh(ctx)) return;
+  if (!requireAgentSquare(ctx)) return;
 
   const target = args.trim();
   if (!target) {
@@ -185,7 +185,7 @@ async function cmdJoin(args: string, ctx: ExtensionCommandContext): Promise<void
 
 async function cmdForum(args: string, ctx: ExtensionCommandContext): Promise<void> {
   state.ctx = ctx;
-  if (!requireAgentMesh(ctx)) return;
+  if (!requireAgentSquare(ctx)) return;
 
   const string = args.trim();
   if (!string) {
@@ -200,7 +200,7 @@ async function cmdForum(args: string, ctx: ExtensionCommandContext): Promise<voi
 
 async function cmdDiscover(args: string, ctx: ExtensionCommandContext): Promise<void> {
   state.ctx = ctx;
-  if (!requireAgentMesh(ctx)) return;
+  if (!requireAgentSquare(ctx)) return;
 
   const directory = args.trim() || "global";
   notify(`discovering \`#${directory}\` directory`);
@@ -249,7 +249,7 @@ async function cmdDiscover(args: string, ctx: ExtensionCommandContext): Promise<
 
 async function cmdMsg(args: string, ctx: ExtensionCommandContext): Promise<void> {
   state.ctx = ctx;
-  if (!requireAgentMesh(ctx)) return;
+  if (!requireAgentSquare(ctx)) return;
 
   const text = args.trim();
   if (!text) {
@@ -278,7 +278,7 @@ async function cmdMsg(args: string, ctx: ExtensionCommandContext): Promise<void>
 
 async function cmdNotice(args: string, ctx: ExtensionCommandContext): Promise<void> {
   state.ctx = ctx;
-  if (!requireAgentMesh(ctx)) return;
+  if (!requireAgentSquare(ctx)) return;
 
   const text = args.trim();
   if (!text) {
@@ -307,7 +307,7 @@ async function cmdNotice(args: string, ctx: ExtensionCommandContext): Promise<vo
 
 async function cmdReply(args: string, ctx: ExtensionCommandContext): Promise<void> {
   state.ctx = ctx;
-  if (!requireAgentMesh(ctx)) return;
+  if (!requireAgentSquare(ctx)) return;
 
   // First whitespace-delimited token is the target nickname (angle brackets
   // optional); the rest is the message body.
@@ -373,7 +373,7 @@ async function selectWorker(ctx: ExtensionCommandContext, title: string): Promis
 
 async function cmdHandover(args: string, ctx: ExtensionCommandContext): Promise<void> {
   state.ctx = ctx;
-  if (!requireAgentMesh(ctx)) return;
+  if (!requireAgentSquare(ctx)) return;
   if (!state.session) {
     notifyError("not in a mesh");
     return;
@@ -395,7 +395,7 @@ async function cmdHandover(args: string, ctx: ExtensionCommandContext): Promise<
 
 async function cmdTask(args: string, ctx: ExtensionCommandContext): Promise<void> {
   state.ctx = ctx;
-  if (!requireAgentMesh(ctx)) return;
+  if (!requireAgentSquare(ctx)) return;
   if (!state.session) {
     notifyError("not in a mesh");
     return;
@@ -423,7 +423,7 @@ async function cmdLeave(_args: string, ctx: ExtensionCommandContext): Promise<vo
 
 async function cmdStatus(_args: string, ctx: ExtensionCommandContext): Promise<void> {
   state.ctx = ctx;
-  if (!requireAgentMesh(ctx)) return;
+  if (!requireAgentSquare(ctx)) return;
   const session = state.session;
   if (!session) {
     notifyError("not in a mesh");
@@ -439,7 +439,7 @@ async function cmdStatus(_args: string, ctx: ExtensionCommandContext): Promise<v
 
 async function cmdState(_args: string, ctx: ExtensionCommandContext): Promise<void> {
   state.ctx = ctx;
-  if (!requireAgentMesh(ctx)) return;
+  if (!requireAgentSquare(ctx)) return;
   if (!state.session) {
     notifyError("not in a mesh");
     return;
@@ -454,7 +454,7 @@ async function cmdState(_args: string, ctx: ExtensionCommandContext): Promise<vo
 
 async function cmdStateMerge(args: string, ctx: ExtensionCommandContext): Promise<void> {
   state.ctx = ctx;
-  if (!requireAgentMesh(ctx)) return;
+  if (!requireAgentSquare(ctx)) return;
   if (!state.session) {
     notifyError("not in a mesh");
     return;
@@ -480,7 +480,7 @@ async function cmdStateMerge(args: string, ctx: ExtensionCommandContext): Promis
 
 async function cmdPing(_args: string, ctx: ExtensionCommandContext): Promise<void> {
   state.ctx = ctx;
-  if (!requireAgentMesh(ctx)) return;
+  if (!requireAgentSquare(ctx)) return;
 
   if (!state.session?.mesh) {
     notifyError("not in a mesh");
@@ -496,12 +496,12 @@ async function cmdPing(_args: string, ctx: ExtensionCommandContext): Promise<voi
   }
 }
 
-// `agent-mesh status` reports the binary version and whether each installed
+// `agent-square status` reports the binary version and whether each installed
 // integration still matches the binary — the on-demand drift check, the
 // counterpart to the startup warning folded into the `ready` event.
 async function cmdVersion(_args: string, ctx: ExtensionCommandContext): Promise<void> {
   state.ctx = ctx;
-  if (!requireAgentMesh(ctx)) return;
+  if (!requireAgentSquare(ctx)) return;
 
   try {
     notifyBlock(runMeshCommand(["status"]));

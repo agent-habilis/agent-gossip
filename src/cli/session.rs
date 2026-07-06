@@ -24,7 +24,7 @@ pub(crate) struct Target {
 
 pub(crate) struct Discovery {
     live: Vec<Target>,
-    /// State files whose recorded pid is gone (or reused by a non-`agent-mesh`
+    /// State files whose recorded pid is gone (or reused by a non-`agent-square`
     /// process) — leftovers of a SIGKILL/power-loss that the daemon never
     /// got to remove itself. Deleted during discovery so they stop
     /// rendering as ghost sessions (e.g. a statusline pill).
@@ -47,7 +47,7 @@ fn discover() -> Discovery {
             // daemon, so it is neither actionable nor safely removable.
             continue;
         };
-        if process::is_alive(pid) && process::comm_of(pid).as_deref() == Some("agent-mesh") {
+        if process::is_alive(pid) && process::comm_of(pid).as_deref() == Some("agent-square") {
             live.push(Target {
                 path,
                 mesh,
@@ -109,7 +109,7 @@ fn select_explicit(live: Vec<Target>, mesh: &str, nickname: Option<&str>) -> Vec
 }
 
 /// The default ownership anchor when `--session-pid` is not given: this
-/// command's own parent. When an agent's Bash tool runs `agent-mesh leave`
+/// command's own parent. When an agent's Bash tool runs `agent-square leave`
 /// directly (not via a wrapping shell script), that parent *is* the shell
 /// whose parent is the agent — so skills pass `$PPID` explicitly instead of
 /// relying on this.

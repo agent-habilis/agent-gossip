@@ -25,8 +25,8 @@ pub(crate) use send::lane_for;
 
 /// ALPN for the unicast channel — a raw bidirectional QUIC stream with its own
 /// protocol identity, distinct from `GOSSIP_ALPN` and the a2a bridge's ALPN.
-pub(crate) const UNICAST_ALPN: &[u8] = b"agent-mesh/unicast/1";
+pub(crate) const UNICAST_ALPN: &[u8] = b"agent-square/unicast/1";
 
 /// `tracing` target for the unicast plane (matches the module path so
-/// `EnvFilter` prefix-matching works, e.g. `RUST_LOG=agent_mesh::unicast=debug`).
-pub(crate) const LOG_TARGET: &str = "agent_mesh::unicast";
+/// `EnvFilter` prefix-matching works, e.g. `RUST_LOG=agent_square::unicast=debug`).
+pub(crate) const LOG_TARGET: &str = "agent_square::unicast";

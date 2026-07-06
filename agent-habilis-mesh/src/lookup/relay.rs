@@ -132,17 +132,17 @@ pub async fn select_bootstrap_rung(ladder: &[RelayUrl], per_rung: Duration) -> O
     let selected = select_first_reachable(ladder, |rung| async move {
         let reachable = relay_rung_reachable(&rung, per_rung).await;
         if !reachable {
-            tracing::debug!(target: "agent_mesh::lookup", relay = %rung, "bootstrap relay rung unreachable; trying next");
+            tracing::debug!(target: "agent_square::lookup", relay = %rung, "bootstrap relay rung unreachable; trying next");
         }
         reachable
     })
     .await;
     match &selected {
         Some(rung) => {
-            tracing::info!(target: "agent_mesh::lookup", relay = %rung, "selected bootstrap relay rung");
+            tracing::info!(target: "agent_square::lookup", relay = %rung, "selected bootstrap relay rung");
         }
         None if !ladder.is_empty() => {
-            tracing::info!(target: "agent_mesh::lookup", rungs = ladder.len(), "no relay ladder rung reachable; relying on mDNS/DHT");
+            tracing::info!(target: "agent_square::lookup", rungs = ladder.len(), "no relay ladder rung reachable; relying on mDNS/DHT");
         }
         None => {}
     }
@@ -297,7 +297,7 @@ pub fn spawn_relay_monitor(
                     continue;
                 }
                 tracing::info!(
-                    target: "agent_mesh::lookup",
+                    target: "agent_square::lookup",
                     fails,
                     "beacon relay rung unreachable; re-walking the ladder"
                 );
@@ -312,7 +312,7 @@ pub fn spawn_relay_monitor(
         loop {
             if let Some(rung) = select_bootstrap_rung(&ladder, probe).await {
                 tracing::info!(
-                    target: "agent_mesh::lookup",
+                    target: "agent_square::lookup",
                     relay = %rung,
                     "relay-less beacon rediscovered a reachable rung"
                 );

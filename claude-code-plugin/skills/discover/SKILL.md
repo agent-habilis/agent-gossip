@@ -1,6 +1,6 @@
 ---
 name: discover
-description: Browse meshes advertising in a directory and join one. Runs `agent-mesh discover` under a Monitor and shows a refreshable picker; pick a mesh to hand off to `/mesh:join`.
+description: Browse meshes advertising in a directory and join one. Runs `agent-square discover` under a Monitor and shows a refreshable picker; pick a mesh to hand off to `/square:join`.
 ---
 
 ## Quiet mode
@@ -8,10 +8,10 @@ description: Browse meshes advertising in a directory and join one. Runs `agent-
 Produce ZERO agent prose between steps. No status updates, no
 acknowledgements, no narrating what you are about to do or just
 did. The only text output is the `discovering …` screen (below), the
-picker, and whatever `/mesh:join` prints on hand-off. Tool calls are
+picker, and whatever `/square:join` prints on hand-off. Tool calls are
 shown by the harness; do not narrate around them. In particular, do
 **not** announce the hand-off (no "handing off…", "joining…", etc.) —
-invoke `/mesh:join` with nothing printed before it.
+invoke `/square:join` with nothing printed before it.
 
 ## Arguments
 
@@ -24,18 +24,18 @@ well-known `global` directory.
 
 Browsing is **always** allowed — discover joins no mesh, so there is no
 "already in a mesh" guard here. Joining the mesh you pick is gated by
-`/mesh:join` itself; if you are already in a mesh it will tell you to
-`/mesh:leave` first.
+`/square:join` itself; if you are already in a mesh it will tell you to
+`/square:leave` first.
 
 ## Start the Monitor
 
-Launch `agent-mesh discover` under the Monitor tool so its JSON events push as
-notifications, exactly like `/mesh:create` and `/mesh:join`. Use a
-**distinct description** (`mesh-discover`, not `mesh`) so `/mesh:leave`
+Launch `agent-square discover` under the Monitor tool so its JSON events push as
+notifications, exactly like `/square:create` and `/square:join`. Use a
+**distinct description** (`mesh-discover`, not `mesh`) so `/square:leave`
 never stops it and it never collides with a real mesh session.
 
 ```
-command: "agent-mesh discover --directory $DIR --no-interactive --output json"
+command: "agent-square discover --directory $DIR --no-interactive --output json"
 description: "mesh-discover"
 persistent: true
 timeout_ms: 300000
@@ -47,16 +47,16 @@ joins no mesh and writes no session, so there is no `--state-file` /
 path below.
 
 **Fallback when Monitor is unavailable.** `mesh_found`/`mesh_lost` surface
-**only** on `agent-mesh discover`'s live stdout stream — there is no public pull API
+**only** on `agent-square discover`'s live stdout stream — there is no public pull API
 for them (discover joins no mesh, so there is no `poll` and no `--state-file`).
 The other skills' poll fallback therefore does **not** apply, and this skill
 must **not** scrape the daemon's stdout/log (that is a developer stream, not the
-API). So when Monitor is unavailable, `/mesh:discover` cannot run. Print:
+API). So when Monitor is unavailable, `/square:discover` cannot run. Print:
 ```
 💬 Discovery needs the Monitor tool, which isn't available in this session.
-Ask whoever runs the mesh for its `💬…` id and use `/mesh:join <id>` directly.
+Ask whoever runs the mesh for its `💬…` id and use `/square:join <id>` directly.
 ```
-and STOP. (`/mesh:create` and `/mesh:join` still work via their CLI fallback;
+and STOP. (`/square:create` and `/square:join` still work via their CLI fallback;
 only the directory browse does not.)
 
 ## First render — only after the first mesh appears
@@ -121,18 +121,18 @@ When the user picks a mesh (or pastes an id via "Other"), stop
 discovering, then join it:
 
 - TaskStop the `mesh-discover` Monitor.
-- Invoke `/mesh:join <id>` with the chosen `💬…` id — **silently, no
+- Invoke `/square:join <id>` with the chosen `💬…` id — **silently, no
   text before it**. That skill starts the mesh Monitor and writes the
   session; this skill writes no session state and prints nothing here.
 
 ## Always clean up
 
 On **every** exit path — a join hand-off, the user stopping, or any error
-— **TaskStop the `mesh-discover` Monitor** so `agent-mesh discover` never leaks.
+— **TaskStop the `mesh-discover` Monitor** so `agent-square discover` never leaks.
 
 ## Notes
 
 - The picker is not live: `AskUserQuestion` is a one-shot prompt, so the
   redraw is driven by the user picking `🔄 keep looking` — each refresh
   reopens it with whatever the Monitor has pushed since.
-- The browse is read-only; you are not in a mesh until `/mesh:join` runs.
+- The browse is read-only; you are not in a mesh until `/square:join` runs.

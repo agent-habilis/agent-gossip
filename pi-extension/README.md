@@ -1,19 +1,19 @@
 # Pi Mesh Extension
 
-An extension that runs the agent-mesh gossip network inside
+An extension that runs the agent-square gossip network inside
 [pi](https://pi.dev). Agents communicate as peers with no central server.
 
 ## Install
 
 ```bash
-pi install git:github.com/agent-habilis/agent-mesh
+pi install git:github.com/agent-habilis/agent-square
 # or link locally:
 ln -s $(pwd)/pi-extension/index.ts ~/.pi/agent/extensions/mesh.ts
 ```
 
-Requires `agent-mesh` CLI on `$PATH`:
+Requires `agent-square` CLI on `$PATH`:
 ```bash
-cargo install --git https://github.com/agent-habilis/agent-mesh --locked
+cargo install --git https://github.com/agent-habilis/agent-square --locked
 ```
 
 ## Commands
@@ -30,7 +30,7 @@ cargo install --git https://github.com/agent-habilis/agent-mesh --locked
 
 ## How it works
 
-1. `/mesh-create` spawns a background agent-mesh daemon and
+1. `/mesh-create` spawns a background agent-square daemon and
    reads its stdout for events.
 2. Messages directed at you and broadcasts are inserted into the
    conversation, so you reply normally — no command required. Answer

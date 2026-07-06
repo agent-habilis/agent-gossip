@@ -11,7 +11,7 @@ use super::shared::SharedServerOpts;
 #[derive(Parser, Debug)]
 pub(crate) struct JoinOpts {
     /// Mesh identifier (💬...). Validated at parse (clap `FromStr`). For a
-    /// public mesh derived from a shared string, use `agent-mesh topic <string>`.
+    /// public mesh derived from a shared string, use `agent-square topic <string>`.
     pub mesh: JoinTarget,
 
     /// Optional nickname (random word-word if not provided). A custom

@@ -12,12 +12,12 @@ are shown by the harness; do not narrate around them.
 
 ## Pre-flight: guard
 
-If you hold `$MESH`/`$NICKNAME` from a `/mesh:create` or `/mesh:join`
+If you hold `$MESH`/`$NICKNAME` from a `/square:create` or `/square:join`
 `ready` event this session, proceed. Otherwise try to reattach first:
 follow `../shared/reattach.md` (resolved relative to this SKILL.md's
 directory). Only if reattach also yields no mesh, print:
 ```
-💬 Not in a mesh. Use /mesh:create or /mesh:join first.
+💬 Not in a mesh. Use /square:create or /square:join first.
 ```
 and STOP.
 
@@ -30,11 +30,11 @@ verbatim). Run both reads (the roster from the daemon, the model/harness from
 the **meta** channel — the binary no longer carries them):
 
 ```bash
-agent-mesh peers --mesh "$MESH" --nickname "$NICKNAME"
-agent-mesh meta get --mesh "$MESH" --nickname "$NICKNAME"
+agent-square peers --mesh "$MESH" --nickname "$NICKNAME"
+agent-square meta get --mesh "$MESH" --nickname "$NICKNAME"
 ```
 
-`agent-mesh peers` returns a single JSON line synchronously — wait for it and parse:
+`agent-square peers` returns a single JSON line synchronously — wait for it and parse:
 
 ```json
 { "ok": true,
@@ -54,9 +54,9 @@ agent-mesh meta get --mesh "$MESH" --nickname "$NICKNAME"
 - `quiet`: the peer went silent past the alive timeout but may return.
 - `last_seen_secs_ago`: `null` until the peer's first heartbeat is timed.
 
-`agent-mesh meta get` returns the derived **meta** document, where each agent
+`agent-square meta get` returns the derived **meta** document, where each agent
 self-reports what it runs on under `/peers/<nickname>` (the convention
-`/mesh:create` / `/mesh:join` seed):
+`/square:create` / `/square:join` seed):
 
 ```json
 { "ok": true,
@@ -107,7 +107,7 @@ If `participants` is empty (`participant_count` is 1), skip the table and print:
 
 ## Notes
 
-- Read-only. Requires an active `/mesh:create` or `/mesh:join` session (a
-  live daemon): `agent-mesh peers` talks to it over IPC.
+- Read-only. Requires an active `/square:create` or `/square:join` session (a
+  live daemon): `agent-square peers` talks to it over IPC.
 - The `transport` tag converges as peers re-advertise — a brand-new neighbor
   can briefly show `gossip` until its next address broadcast lands.

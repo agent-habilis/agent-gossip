@@ -1,4 +1,4 @@
-//! `agent-mesh plug` / `agent-mesh unplug`: install or remove the mesh integrations
+//! `agent-square plug` / `agent-square unplug`: install or remove the mesh integrations
 //! across agents. Each artifact is embedded at compile time (like the manual),
 //! so a brew/cargo-installed binary carries them with no repo or external
 //! installer. Both act immediately; `plug` is reversible with `unplug`.

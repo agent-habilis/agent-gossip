@@ -143,11 +143,11 @@ fn ready_event_drift_is_present_only_when_stale() {
 
     // Stale: the warning rides along verbatim.
     let stale = parse(&make(Some(
-        "⚠️ mesh skill out of date. Run `agent-mesh plug` to update",
+        "⚠️ mesh skill out of date. Run `agent-square plug` to update",
     )));
     assert_eq!(
         stale["drift"],
-        "⚠️ mesh skill out of date. Run `agent-mesh plug` to update"
+        "⚠️ mesh skill out of date. Run `agent-square plug` to update"
     );
 }
 

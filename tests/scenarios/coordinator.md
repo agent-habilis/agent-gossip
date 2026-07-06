@@ -17,7 +17,7 @@ the agents to run, and the **human validates behavior + UX**.
 Everything is driven over the mesh itself — messages, and shared state only
 where a scenario needs it — never local files, so the coordinator and each role
 session can run on **different machines**. For a cross-machine run, create the
-mesh `--public` (optionally `--advertise` so peers find it via `agent-mesh discover`);
+mesh `--public` (optionally `--advertise` so peers find it via `agent-square discover`);
 peers join by mesh id or discovery.
 
 The coordinator **never plays a scenario role**, and — critically — it **never

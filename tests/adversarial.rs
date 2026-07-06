@@ -22,8 +22,8 @@ mod common;
 
 use std::time::{Duration, Instant};
 
-use agent_mesh::OutputEvent;
-use agent_mesh::harness::adversarial::{self, CraftedMsg};
+use agent_square::OutputEvent;
+use agent_square::harness::adversarial::{self, CraftedMsg};
 use common::{InProcNode, MSG_TIMEOUT, POLL};
 use serde_json::{Value, json};
 
@@ -403,7 +403,7 @@ async fn gap_sybil_identities_are_accepted() {
                     matches!(
                         event,
                         OutputEvent::Message { msg, is_self: false }
-                            if agent_mesh::a2a::gossip::chat_text(msg).as_deref() == Some(&body)
+                            if agent_square::a2a::gossip::chat_text(msg).as_deref() == Some(&body)
                     )
                 })
             })
@@ -573,7 +573,7 @@ async fn out_of_range_shard_headers_never_reach_the_store() {
     attacker.session.inject_raw(idx_outside).await.expect("inject");
     // total past the header tripwire.
     let absurd_total = CraftedMsg::new(attacker.session.mesh_id(), "ghost", "slice")
-        .shard(GROUP, 0, agent_mesh::MAX_SHARD_TOTAL + 1)
+        .shard(GROUP, 0, agent_square::MAX_SHARD_TOTAL + 1)
         .sign(&key)
         .bytes();
     attacker.session.inject_raw(absurd_total).await.expect("inject");

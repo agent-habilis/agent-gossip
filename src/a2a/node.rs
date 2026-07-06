@@ -614,7 +614,7 @@ async fn resend_cached_shards(
         }
     }
     tracing::debug!(
-        target: "agent_mesh::gossip",
+        target: "agent_square::gossip",
         %group,
         requested = missing.len(),
         resent,

@@ -26,8 +26,8 @@ pub(crate) use telemetry::NeighborProfile;
 /// ALPN for the circuit channel — a dedicated QUIC protocol, distinct from
 /// `GOSSIP_ALPN` / `UNICAST_ALPN`, over which telescoping circuits are built and
 /// spliced.
-pub(crate) const CIRCUIT_ALPN: &[u8] = b"agent-mesh/circuit/1";
+pub(crate) const CIRCUIT_ALPN: &[u8] = b"agent-square/circuit/1";
 
 /// `tracing` target for the circuit plane (matches the module path so `EnvFilter`
-/// prefix-matching works, e.g. `RUST_LOG=agent_mesh::circuit=debug`).
-pub(crate) const LOG_TARGET: &str = "agent_mesh::circuit";
+/// prefix-matching works, e.g. `RUST_LOG=agent_square::circuit=debug`).
+pub(crate) const LOG_TARGET: &str = "agent_square::circuit";

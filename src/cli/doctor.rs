@@ -141,7 +141,7 @@ async fn machine_report(no_probe: bool) -> Report {
 fn environment_section() -> Section {
     let checks = vec![
         Check::new(
-            "agent-mesh",
+            "agent-square",
             Verdict::Ok,
             agent_habilis_mesh::util::version::VERSION,
         ),
@@ -180,7 +180,7 @@ fn integrations_section() -> Section {
                 };
                 let base = format!("{} ({})", state.label(), output::home_path(&path));
                 let detail = if state == AgentState::OutOfDate {
-                    format!("{base} — run `agent-mesh plug --agent {}`", agent.label())
+                    format!("{base} — run `agent-square plug --agent {}`", agent.label())
                 } else {
                     base
                 };

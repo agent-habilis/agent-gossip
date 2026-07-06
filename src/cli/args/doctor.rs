@@ -35,7 +35,7 @@ mod tests {
 
     #[test]
     fn doctor_defaults_to_machine_health_human() {
-        let cli = Cli::parse_from(["agent-mesh", "doctor"]);
+        let cli = Cli::parse_from(["agent-square", "doctor"]);
         let Commands::Doctor { opts } = cli.command else {
             panic!("expected Doctor command");
         };
@@ -47,7 +47,7 @@ mod tests {
     #[test]
     fn doctor_accepts_mesh_and_json() {
         let cli = Cli::parse_from([
-            "agent-mesh",
+            "agent-square",
             "doctor",
             "--mesh",
             "💬AbCdEf1234",

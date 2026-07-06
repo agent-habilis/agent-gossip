@@ -23,7 +23,7 @@ use crate::util::consts::{
 };
 use crate::util::tuning::spool_max_bytes;
 
-pub(crate) const LOG_TARGET: &str = "agent_mesh::spool";
+pub(crate) const LOG_TARGET: &str = "agent_square::spool";
 
 /// Extension of a committed frame file. The writer's in-flight temp files use a
 /// leading-dot `.tmp.<pid>` name instead, so the watcher's extension filter

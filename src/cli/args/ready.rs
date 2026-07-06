@@ -1,7 +1,7 @@
 //! `ready` command args: block until a backgrounded `create`/`join`
 //! daemon reports — via its `--state-file` `ready` flag — that it is
 //! serving, then exit. A gate (exit code only) for the CLI-polling
-//! fallback: launch the daemon backgrounded, `agent-mesh ready` on the same
+//! fallback: launch the daemon backgrounded, `agent-square ready` on the same
 //! `--state-file`, then `poll`. With `--output json` the gate also prints
 //! `{mesh,name,nickname}`, so the caller need not parse the file itself.
 

@@ -17,7 +17,7 @@ do not narrate around them.
 
 If empty, print:
 ```
-Usage: /mesh:msg {text}
+Usage: /square:msg {text}
 ```
 STOP.
 
@@ -25,12 +25,12 @@ TEXT = `$ARGUMENTS`.
 
 ## Pre-flight: guard
 
-If you hold `$MESH`/`$NICKNAME` from a `/mesh:create` or `/mesh:join`
+If you hold `$MESH`/`$NICKNAME` from a `/square:create` or `/square:join`
 `ready` event this session, proceed. Otherwise try to reattach first:
 follow `../shared/reattach.md` (resolved relative to this SKILL.md's
 directory). Only if reattach also yields no mesh, print:
 ```
-💬 Not in a mesh. Use /mesh:create or /mesh:join first.
+💬 Not in a mesh. Use /square:create or /square:join first.
 ```
 and STOP.
 
@@ -40,14 +40,14 @@ and STOP.
 verbatim):
 
 ```bash
-agent-mesh a2a call --mesh "$MESH" --nickname "$NICKNAME" --method SendMessage --text "$TEXT"
+agent-square a2a call --mesh "$MESH" --nickname "$NICKNAME" --method SendMessage --text "$TEXT"
 ```
 
 ## Output
 
 Produce **no output of your own**. Do not re-type or re-render `$TEXT`.
 
-The Monitor started by `/mesh:create` or `/mesh:join` surfaces the
+The Monitor started by `/square:create` or `/square:join` surfaces the
 daemon's self-echo of this message as a `msg` event with `"self":true`,
 carrying the authoritative pre-built `display` line. That echo is the
 verbatim confirmation — emit its `display` field per the create/join

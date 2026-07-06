@@ -267,7 +267,7 @@ impl MeshConfig {
             let features = bytes[pos];
             pos += 1;
             if features & !(FEATURE_PASSWORD | FEATURE_INVITE_ONLY) != 0 {
-                bail!("unsupported mesh feature flags {features:#04x} — upgrade agent-mesh");
+                bail!("unsupported mesh feature flags {features:#04x} — upgrade agent-square");
             }
             if features == 0 {
                 // A zero feature byte re-encodes without itself, silently
@@ -735,7 +735,7 @@ mod lookup_tests {
         bytes.extend_from_slice(&[0u8; 16]);
         let error = MeshConfig::from_bytes(&bytes).unwrap_err();
         assert!(
-            error.to_string().contains("upgrade agent-mesh"),
+            error.to_string().contains("upgrade agent-square"),
             "got: {error}"
         );
     }

@@ -1,5 +1,5 @@
 ---
-source: src/protocol/message/mod.rs
+source: agent-habilis-mesh/src/protocol/message/mod.rs
 expression: wire
 ---
-{"v":"9.0","id":"00000000-0000-0000-0000-000000000001","type":"presence","subtype":"joined","mesh":"💬://test","author":"alice-bot","ts":1700000000,"body":"","ext":{}}
+{"v":"10.0","id":"00000000-0000-0000-0000-000000000001","type":"presence","subtype":"joined","mesh":"💬://test","author":"alice-bot","ts":1700000000,"body":"","ext":{}}

@@ -49,7 +49,7 @@ pub(crate) use topology::TopologyOpts;
 
 #[derive(Parser, Debug)]
 #[command(
-    name = "agent-mesh",
+    name = "agent-square",
     about = "mesh network for agents",
     version = agent_habilis_mesh::util::version::VERSION,
     after_help = "a tool by agent-habilis █🫈"
@@ -211,7 +211,7 @@ pub(crate) enum Commands {
     ///
     /// Emits the metric-weighted mesh graph the daemon has assembled from
     /// gossiped link-state, as JSON (`{self_id, edges:[{from,to,metric}]}`) —
-    /// the data behind the `/mesh:topology` render.
+    /// the data behind the `/square:topology` render.
     Topology {
         #[command(flatten)]
         opts: TopologyOpts,
@@ -221,7 +221,7 @@ pub(crate) enum Commands {
     ///
     /// The readiness gate for driving the daemon over the CLI: launch
     /// `create`/`join` in the background with a `--state-file`, then
-    /// `agent-mesh ready --state-file <path>` blocks until that file reports the
+    /// `agent-square ready --state-file <path>` blocks until that file reports the
     /// daemon is serving, exiting 0 (non-zero on timeout). In `human` mode a
     /// silent gate (exit code only); with `--output json` it prints
     /// `{mesh,name,nickname}` on success, so the gate doubles as the

@@ -1279,7 +1279,7 @@ pub(crate) fn spawn_advertiser(
                 Ok(session) => session,
                 Err(error) => {
                     tracing::warn!(
-                        target: "agent_mesh::directory",
+                        target: "agent_square::directory",
                         %error,
                         directory = %directory,
                         "directory advertise: could not join the directory; mesh stays unlisted"
@@ -1296,7 +1296,7 @@ pub(crate) fn spawn_advertiser(
             };
             if let Err(error) = session.send(ad.to_body()).await {
                 tracing::debug!(
-                    target: "agent_mesh::directory",
+                    target: "agent_square::directory",
                     %error,
                     "directory advertise: re-broadcast failed (will retry next tick)"
                 );
@@ -1355,8 +1355,8 @@ fn public_listing(listing: &Listing) -> MeshListing {
 /// (or let it fall out of scope) to leave the directory.
 ///
 /// ```no_run
-/// # use agent_mesh::embed::Directory;
-/// # use agent_mesh::LookupSet;
+/// # use agent_square::embed::Directory;
+/// # use agent_square::LookupSet;
 /// # async fn run() -> anyhow::Result<()> {
 /// // Bare `LookupSet::default()` ⇒ all-on (mDNS + DHT + relay).
 /// let mut directory = Directory::open(Some("demo"), LookupSet::default()).await?;

@@ -1,11 +1,11 @@
 #!/usr/bin/env bun
 // End-to-end a2a bridge test: bridge two vanilla A2A agents over the mesh.
 //
-//   agent A (server) ──▶ agent-mesh a2a expose ──mesh──▶ agent-mesh a2a connect ──▶ agent B (client)
+//   agent A (server) ──▶ agent-square a2a expose ──mesh──▶ agent-square a2a connect ──▶ agent B (client)
 //
 // Agent B discovers agent A purely through the bridge (the Agent Card's
 // rewritten `url`) and exchanges a message with the raw A2A protocol. Both
-// `agent-mesh` sides run with `--loopback`, so the whole thing is hermetic on one
+// `agent-square` sides run with `--loopback`, so the whole thing is hermetic on one
 // machine — the ticket carries the exposer's direct 127.0.0.1 address and no
 // mDNS/DHT/relay is used.
 //
@@ -17,14 +17,14 @@ const REPO_ROOT = dirname(import.meta.dir);
 const AGENT = join(REPO_ROOT, "tools", "a2a-agent", "agent.ts");
 const TEXT = "hello over the mesh";
 
-/** Invoke the agent-mesh binary through cargo — it resolves the debug build itself,
+/** Invoke the agent-square binary through cargo — it resolves the debug build itself,
  * so there is no hardcoded target/ path to keep in sync. */
-const agentMesh = (args: string[]): string[] => [
+const agentSquare = (args: string[]): string[] => [
   "cargo",
   "run",
   "--quiet",
   "--bin",
-  "agent-mesh",
+  "agent-square",
   "--",
   ...args,
 ];
@@ -102,8 +102,8 @@ function run(label: string): void {
 }
 
 async function main(): Promise<void> {
-  run("building agent-mesh");
-  const build = Bun.spawnSync(["cargo", "build", "--quiet", "--bin", "agent-mesh"], {
+  run("building agent-square");
+  const build = Bun.spawnSync(["cargo", "build", "--quiet", "--bin", "agent-square"], {
     cwd: REPO_ROOT,
     stdout: "inherit",
     stderr: "inherit",
@@ -121,18 +121,18 @@ async function main(): Promise<void> {
   children.push(server);
   await waitForUrl(`http://127.0.0.1:${originPort}/.well-known/agent-card.json`);
 
-  run("exposing agent A over the mesh (agent-mesh a2a expose --loopback)");
+  run("exposing agent A over the mesh (agent-square a2a expose --loopback)");
   const expose = Bun.spawn(
-    agentMesh(["a2a", "expose", "--to", `http://127.0.0.1:${originPort}`, "--loopback", "--output", "json"]),
+    agentSquare(["a2a", "expose", "--to", `http://127.0.0.1:${originPort}`, "--loopback", "--output", "json"]),
     { cwd: REPO_ROOT, stdout: "pipe", stderr: "ignore" },
   );
   children.push(expose);
   const ticket = await readTicket(expose.stdout as ReadableStream<Uint8Array>);
   console.log(`    ticket: ${ticket.slice(0, 24)}…`);
 
-  run(`connecting from the other end (agent-mesh a2a connect --port ${localPort})`);
+  run(`connecting from the other end (agent-square a2a connect --port ${localPort})`);
   const connect = Bun.spawn(
-    agentMesh(["a2a", "connect", ticket, "--port", String(localPort), "--output", "json"]),
+    agentSquare(["a2a", "connect", ticket, "--port", String(localPort), "--output", "json"]),
     { cwd: REPO_ROOT, stdout: "ignore", stderr: "ignore" },
   );
   children.push(connect);

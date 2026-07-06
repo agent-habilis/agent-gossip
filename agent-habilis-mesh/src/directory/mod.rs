@@ -2,7 +2,7 @@
 //! down").
 //!
 //! A mesh created with `--advertise[=<name>]` re-broadcasts its own
-//! `💬…` id into a **directory**; `agent-mesh discover` browses it. A directory
+//! `💬…` id into a **directory**; `agent-square discover` browses it. A directory
 //! is not a server — it is itself a well-known public [`Mesh`] derived
 //! deterministically from its name, so a publisher and a discoverer that
 //! name the same directory derive the same mesh and mesh over the
@@ -34,10 +34,10 @@ use crate::protocol::{MessageBody, MeshId};
 /// orphans every existing directory (a wire-incompatible directory change).
 /// The literal must be exactly 32 bytes to fit `[u8; 32]` (the `derive_secret`
 /// seed width) — keep any future rename to that length.
-const DIRECTORY_BASE_SEED: [u8; 32] = *b"agent-mesh/directory/domain/v1.0";
+const DIRECTORY_BASE_SEED: [u8; 32] = *b"agent-square/directory/domain/v1";
 
 /// The well-known [`Mesh`] for a directory, reached over `lookups`. Both
-/// `--advertise <name>` and `agent-mesh discover --directory <name>` call this; the
+/// `--advertise <name>` and `agent-square discover --directory <name>` call this; the
 /// seed + rendezvous are name-derived (so they're identical regardless of
 /// `lookups`), but the **topic** mixes in the config bytes — which include the
 /// lookups — so an advertiser and a discoverer meet only when they pass the
@@ -116,7 +116,7 @@ pub struct Listing {
     /// Local instant of the most recent ad; drives expiry.
     pub last_seen: Instant,
     /// Unix seconds when this mesh was *first* seen in the directory
-    /// (preserved across re-ads). Display-only — the `agent-mesh discover` picker
+    /// (preserved across re-ads). Display-only — the `agent-square discover` picker
     /// renders it as an ISO-8601 timestamp.
     pub first_seen_unix: i64,
 }

@@ -1,6 +1,6 @@
 ---
 name: leave
-description: Leave the mesh - stop this session's daemon (announces `left` to peers). Works even after a context clear, via `agent-mesh leave`.
+description: Leave the mesh - stop this session's daemon (announces `left` to peers). Works even after a context clear, via `agent-square leave`.
 ---
 
 ## Quiet mode
@@ -13,7 +13,7 @@ do not narrate around them.
 
 ## Path A — the mesh is still in conversation context
 
-You ran `/mesh:create` or `/mesh:join` earlier this session, hold `$NAME`
+You ran `/square:create` or `/square:join` earlier this session, hold `$NAME`
 from its `ready` event, and have not since left. Stop whichever transport
 that skill started:
 
@@ -34,7 +34,7 @@ The daemon may still be running even though you have no memory of it, and
 TaskList may not show the Monitor — do NOT trust either. Ask the system:
 
 ```bash
-agent-mesh leave --session-pid $PPID --output json
+agent-square leave --session-pid $PPID --output json
 ```
 
 (`$PPID` inside the Bash tool is the agent process — the session your
@@ -58,7 +58,7 @@ TaskStop it (best-effort — it ends on its own once the daemon is gone).
 ## Output
 
 Print, using the `$NAME` you held (Path A) or each `name` reported by
-`agent-mesh leave` (Path B; omit the `` `#$NAME` `` if you somehow have no name):
+`agent-square leave` (Path B; omit the `` `#$NAME` `` if you somehow have no name):
 ```
 💬️ left `#$NAME`
 ```

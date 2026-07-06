@@ -27,7 +27,7 @@ mod common;
 
 use std::time::{Duration, Instant};
 
-use agent_mesh::Channel;
+use agent_square::Channel;
 use common::{InProcNode, MSG_TIMEOUT, POLL, RECOVERY_TIMEOUT};
 use serde_json::{Value, json};
 
@@ -406,7 +406,7 @@ async fn meta_two_agents_ping_pong_via_shared_state() {
 /// peer's `/peers/<nick>/card` (here, a fake gossip-interface identity url) is
 /// dropped by every recipient before it folds, so the victim's genuine card —
 /// and the identity in it — survives. Without the gate the forgery would win the
-/// last-writer-wins fold and spoof the victim to `agent-mesh card` and `--a2a-serve`.
+/// last-writer-wins fold and spoof the victim to `agent-square card` and `--a2a-serve`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn foreign_card_forgery_is_rejected() {
     let alice = InProcNode::create("ss-forge").await;

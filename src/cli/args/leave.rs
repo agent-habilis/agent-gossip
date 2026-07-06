@@ -40,7 +40,7 @@ mod tests {
 
     #[test]
     fn leave_defaults() {
-        let cli = Cli::parse_from(["agent-mesh", "leave"]);
+        let cli = Cli::parse_from(["agent-square", "leave"]);
         let Commands::Leave { opts } = cli.command else {
             panic!("expected Leave command");
         };
@@ -54,7 +54,7 @@ mod tests {
     #[test]
     fn leave_accepts_explicit_target() {
         let cli = Cli::parse_from([
-            "agent-mesh",
+            "agent-square",
             "leave",
             "💬AbCdEf1234",
             "--nickname",
@@ -72,6 +72,6 @@ mod tests {
 
     #[test]
     fn leave_nickname_requires_mesh() {
-        assert!(Cli::try_parse_from(["agent-mesh", "leave", "--nickname", "my-nick"]).is_err());
+        assert!(Cli::try_parse_from(["agent-square", "leave", "--nickname", "my-nick"]).is_err());
     }
 }

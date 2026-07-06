@@ -89,7 +89,7 @@ async function spawnSession({
   // `-- <string>`, and anything appended after `--` would parse as positional.
   if (filePath) args.splice(1, 0, "--state-file", filePath);
 
-  const child = spawn("agent-mesh", args, { stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn("agent-square", args, { stdio: ["ignore", "pipe", "pipe"] });
   // `startWatcher` attaches the single readline and resolves with the `ready`
   // line; ongoing events (incl. peers already present) flow on from the same
   // reader — no second one to drop the bundled `joined` lines.
@@ -101,7 +101,7 @@ async function spawnSession({
   }
 
   if (typeof child.pid !== "number") {
-    throw new Error("agent-mesh spawned without a pid");
+    throw new Error("agent-square spawned without a pid");
   }
   const session: Session = {
     mesh: ready.mesh,
@@ -149,7 +149,7 @@ export async function forumMesh({ string, nickname, model }: ForumOptions): Prom
   return spawnSession({ args, timeoutMs: 60_000, model });
 }
 
-// `notice: true` sends the no-auto-reply kind (`agent-mesh notice`) — same flags,
+// `notice: true` sends the no-auto-reply kind (`agent-square notice`) — same flags,
 // different receiver contract.
 export function sendMeshMessage({
   text,
@@ -179,7 +179,7 @@ export function sendMeshMessage({
   runMeshCommand(args);
 }
 
-// Send one leg of a task (`agent-mesh task`). `text` is required by the CLI but may
+// Send one leg of a task (`agent-square task`). `text` is required by the CLI but may
 // be empty for legs without a body (accept/confirm/cancel).
 export function sendTaskLeg({
   to,
@@ -226,7 +226,7 @@ export function leaveMesh(): void {
   cleanup();
 }
 
-// Browse a directory for advertised meshes. Spawns `agent-mesh discover`, collects
+// Browse a directory for advertised meshes. Spawns `agent-square discover`, collects
 // mesh_found/mesh_lost lines, then resolves: ~`graceMs` after the first hit
 // (to gather a few more), or at `maxMs` if nothing shows. Discovery joins no
 // mesh — the child is always killed before resolving.
@@ -242,7 +242,7 @@ export function discoverMeshes({
   return new Promise((resolve) => {
     const args = ["discover", "--no-interactive", "--output", "json"];
     if (directory && directory !== "global") args.push("--directory", directory);
-    const child = spawn("agent-mesh", args, { stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn("agent-square", args, { stdio: ["ignore", "pipe", "pipe"] });
     const found = new Map<string, DiscoveredMesh>();
     let graceTimer: ReturnType<typeof setTimeout> | null = null;
     let settled = false;
@@ -296,7 +296,7 @@ export function discoverMeshes({
   });
 }
 
-// Query the live roster via `agent-mesh peers`. Throws when not in a mesh.
+// Query the live roster via `agent-square peers`. Throws when not in a mesh.
 export function getPeers(): { count: number; participants: Peer[] } {
   if (!state.session?.mesh) throw new Error("Not in a mesh");
   const raw = runMeshCommand([
@@ -348,13 +348,13 @@ export function getPeers(): { count: number; participants: Peer[] } {
   };
 }
 
-// Read the current derived shared-state document via `agent-mesh state get`. Throws
+// Read the current derived shared-state document via `agent-square state get`. Throws
 // when not in a mesh. Uses execFileSync (no shell), consistent with
 // applyStateMerge — its JSON `--merge` arg must never touch the shell.
 export function getStateDocument(): Record<string, unknown> {
   if (!state.session?.mesh) throw new Error("Not in a mesh");
   const raw = execFileSync(
-    "agent-mesh",
+    "agent-square",
     ["state", "get", "--mesh", state.session.mesh, "--nickname", state.session.nickname],
     { encoding: "utf-8", timeout: 15_000 },
   ).trim();
@@ -362,7 +362,7 @@ export function getStateDocument(): Record<string, unknown> {
   return parsed.document ?? {};
 }
 
-// Apply an RFC 7386 JSON Merge Patch to the shared state via `agent-mesh state merge`.
+// Apply an RFC 7386 JSON Merge Patch to the shared state via `agent-square state merge`.
 // The outcome is read from the `{ok,…}` JSON on stdout. The JSON `--merge` arg
 // goes through execFileSync (no shell) — `runMeshCommand`'s quoting would mangle
 // it.
@@ -382,7 +382,7 @@ export function applyStateMerge({ merge }: { merge: string }): {
   }
 
   const raw = execFileSync(
-    "agent-mesh",
+    "agent-square",
     [
       "state",
       "merge",
@@ -399,13 +399,13 @@ export function applyStateMerge({ merge }: { merge: string }): {
   return { ok: resp.ok, error: resp.error };
 }
 
-// Read the derived `meta`-channel document via `agent-mesh meta get`. The meta
+// Read the derived `meta`-channel document via `agent-square meta get`. The meta
 // channel is byte-for-byte the same machinery as `state`; by convention it
 // holds mesh metadata, e.g. `/peers/<nick> = { model, harness, host }`.
 export function getMetaDocument(): Record<string, unknown> {
   if (!state.session?.mesh) throw new Error("Not in a mesh");
   const raw = execFileSync(
-    "agent-mesh",
+    "agent-square",
     ["meta", "get", "--mesh", state.session.mesh, "--nickname", state.session.nickname],
     { encoding: "utf-8", timeout: 15_000 },
   ).trim();
@@ -419,7 +419,7 @@ export function getMetaDocument(): Record<string, unknown> {
 function runMetaMerge(merge: string): void {
   if (!state.session?.mesh) throw new Error("Not in a mesh");
   execFileSync(
-    "agent-mesh",
+    "agent-square",
     [
       "meta",
       "merge",

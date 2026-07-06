@@ -143,13 +143,13 @@ pub(crate) fn register_rendezvous(endpoint: &Endpoint, params: &RendezvousParams
         }
         // Explicit target: needs RendezvousParams, so can't live in lookups.
         tracing::info!(
-            target: "agent_mesh::lookup",
+            target: "agent_square::lookup",
             rungs = params.bind_ports.len(),
             "pre-registered rendezvous on the loopback port ladder"
         );
     } else if let Some(relay) = params.bootstrap_relay.clone() {
         tracing::info!(
-            target: "agent_mesh::lookup",
+            target: "agent_square::lookup",
             relay = %relay,
             "pre-registered rendezvous at the relay rung for zero-lookup dial"
         );
@@ -202,7 +202,7 @@ pub struct SetupParams<'a> {
     /// embed/MCP paths; the CLI derives it from `--no-unicast`/`--no-*`.
     pub transport: crate::transport::TransportPolicy,
     /// Skill-drift warning folded into the `ready` event. Computed by the CLI
-    /// (the real `agent-mesh create`/`join` path) from the on-disk install;
+    /// (the real `agent-square create`/`join` path) from the on-disk install;
     /// `None` on the embed/library and MCP paths, which keeps the in-process
     /// tests hermetic (no dependence on the dev machine's install state).
     pub drift: Option<&'a str>,
@@ -443,7 +443,7 @@ async fn setup_create(
     }
     if mesh.requires_invite() {
         sink.emit(NodeEvent::Info(
-            "invite-only — mint a 🎟️ invite with `agent-mesh invite` for joiners".to_owned(),
+            "invite-only — mint a 🎟️ invite with `agent-square invite` for joiners".to_owned(),
         ));
     }
     if let Some(directory) = &advertise {

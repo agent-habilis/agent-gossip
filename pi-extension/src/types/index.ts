@@ -4,7 +4,7 @@ export type Session = {
   nickname: string;
   pid?: number;
   // Set when the `ready` event reports the installed extension has fallen
-  // behind the `agent-mesh` binary — surfaced once at mesh start.
+  // behind the `agent-square` binary — surfaced once at mesh start.
   drift?: string;
 };
 

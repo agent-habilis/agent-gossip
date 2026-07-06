@@ -70,18 +70,18 @@ pub(crate) async fn run() -> Result<()> {
     // stdout belongs to the MCP JSON-RPC transport; each session runs on
     // a silent, poll-only `MeshSession` (`create_silent`/`join_silent`),
     // so nothing prints to stdout and corrupts the stream.
-    let server = AgentMeshServer::new();
+    let server = AgentSquareServer::new();
     let running = server.serve(stdio()).await?;
     running.waiting().await?;
     Ok(())
 }
 
 #[derive(Clone)]
-struct AgentMeshServer {
+struct AgentSquareServer {
     session: Arc<Mutex<Option<Session>>>,
 }
 
-impl AgentMeshServer {
+impl AgentSquareServer {
     fn new() -> Self {
         Self {
             session: Arc::new(Mutex::new(None)),
@@ -136,7 +136,7 @@ struct CreateMeshArgs {
     #[serde(default)]
     relay: Option<String>,
     /// List this mesh in a directory so others can find it with
-    /// `agent-mesh discover` (no id to share). Requires `network: "public"`. Note:
+    /// `agent-square discover` (no id to share). Requires `network: "public"`. Note:
     /// advertising broadcasts the join token — the mesh becomes open to
     /// anyone discovering the directory.
     #[serde(default)]
@@ -407,7 +407,7 @@ struct VersionResult {
 // ── tool impls ───────────────────────────────────────────────────
 
 #[tool_router]
-impl AgentMeshServer {
+impl AgentSquareServer {
     #[tool(
         description = "Create a new mesh and become its first member. Returns the mesh id (share it so others can join) and the chosen nickname. Poll `fetch_messages` to observe incoming traffic; the server auto-tracks a per-session cursor so repeat cursor-less calls return only new entries."
     )]
@@ -944,7 +944,7 @@ to null to clear it. Read `/peers` to see what peers run on.
 Call `mesh_manual` for the full command/event reference.";
 
 #[tool_handler]
-impl ServerHandler for AgentMeshServer {
+impl ServerHandler for AgentSquareServer {
     fn get_info(&self) -> ServerInfo {
         let mut info = ServerInfo::new(ServerCapabilities::builder().enable_tools().build());
         info.instructions = Some(MCP_INSTRUCTIONS.to_string());

@@ -189,7 +189,7 @@ pub(crate) fn spawn_ticket_advertiser(
                 Ok(session) => session,
                 Err(error) => {
                     tracing::warn!(
-                        target: "agent_mesh::directory",
+                        target: "agent_square::directory",
                         %error,
                         directory = %directory,
                         "a2a advertise: could not join the directory; ticket stays unlisted"
@@ -202,7 +202,7 @@ pub(crate) fn spawn_ticket_advertiser(
             ticker.tick().await;
             if let Err(error) = session.send(body.clone()).await {
                 tracing::debug!(
-                    target: "agent_mesh::directory",
+                    target: "agent_square::directory",
                     %error,
                     "a2a advertise: re-broadcast failed (will retry next tick)"
                 );

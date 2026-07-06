@@ -1,4 +1,4 @@
-//! The `agent-mesh` command-line interface: the clap-derived argument shape
+//! The `agent-square` command-line interface: the clap-derived argument shape
 //! lives in [`args`], the live `discover` picker in [`discover`], and the
 //! per-subcommand handlers + [`dispatch`] here. `lib.rs::run_cli` parses
 //! argv and calls `dispatch`; each handler is the thin glue between the
@@ -159,7 +159,7 @@ async fn run_session(resolved: Resolved, shared: SharedServerOpts) -> Result<()>
     );
     // Nag once at startup if an installed integration has fallen behind this
     // binary. CLI-only: the embed/MCP paths pass `None` so in-process tests
-    // stay hermetic. `agent-mesh status` is the on-demand counterpart.
+    // stay hermetic. `agent-square status` is the on-demand counterpart.
     let drift = agent::home_dir()
         .ok()
         .and_then(|home| agent::drift_warning(&home));
@@ -701,7 +701,7 @@ async fn invite(opts: InviteOpts) -> Result<()> {
 }
 
 /// Print the circuit routing topology (assembled mesh graph) from the running
-/// daemon, as JSON. Backs the `/mesh:topology` render.
+/// daemon, as JSON. Backs the `/square:topology` render.
 async fn topology_cmd(opts: TopologyOpts) -> Result<()> {
     let cmd = IpcCommand::Topology { mesh: opts.mesh };
     let resp = ipc::send(&cmd, &opts.nickname).await?;
@@ -827,7 +827,7 @@ async fn ready(opts: ReadyOpts) -> Result<()> {
             }
             Ok(_) => {}
             Err(error) => {
-                tracing::debug!(%error, path = %state_file.display(), "agent-mesh ready: state-file read failed; retrying");
+                tracing::debug!(%error, path = %state_file.display(), "agent-square ready: state-file read failed; retrying");
             }
         }
         if tokio::time::Instant::now() >= deadline {
@@ -843,7 +843,7 @@ async fn ready(opts: ReadyOpts) -> Result<()> {
     }
 }
 
-/// Print the session identity as a JSON object for `agent-mesh ready --output json`,
+/// Print the session identity as a JSON object for `agent-square ready --output json`,
 /// omitting any field the state file lacks — so a degenerate (identity-less)
 /// file yields `{}` rather than `{"mesh":null,…}` that a caller might splice
 /// into the next command as the literal string "null".

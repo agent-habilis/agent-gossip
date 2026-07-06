@@ -40,7 +40,7 @@ mod tests {
     #[test]
     fn invite_parses_mesh_nickname_and_ttl() {
         let cli = Cli::parse_from([
-            "agent-mesh",
+            "agent-square",
             "invite",
             "--mesh",
             "💬AbCdEf1234",
@@ -58,7 +58,7 @@ mod tests {
     #[test]
     fn invite_ttl_is_optional() {
         let cli = Cli::parse_from([
-            "agent-mesh",
+            "agent-square",
             "invite",
             "--mesh",
             "💬AbCdEf1234",

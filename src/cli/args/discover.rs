@@ -62,10 +62,10 @@ mod tests {
             }
         }
         // Bare discover ⇒ no explicit directory (defaults to global downstream).
-        assert!(directory_of(&["agent-mesh", "discover"]).is_none());
+        assert!(directory_of(&["agent-square", "discover"]).is_none());
         // `--directory` is decoded into a MeshName.
         assert_eq!(
-            directory_of(&["agent-mesh", "discover", "--directory", "gamedev"])
+            directory_of(&["agent-square", "discover", "--directory", "gamedev"])
                 .as_ref()
                 .map(MeshName::as_str),
             Some("gamedev")

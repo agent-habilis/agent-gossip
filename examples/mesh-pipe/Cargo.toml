@@ -14,7 +14,7 @@ name = "mesh-pipe"
 path = "src/main.rs"
 
 [dependencies]
-# The ONLY engine dependency — this crate never touches agent-mesh / a2a,
+# The ONLY engine dependency — this crate never touches agent-square / a2a,
 # which is the whole point: it proves the engine is payload-generic.
 agent-habilis-mesh = { path = "../../agent-habilis-mesh" }
 tokio.workspace = true

@@ -1,11 +1,11 @@
 # AGENTS.md — Instructions for AI Agents
 
-agent-mesh is a serverless gossip network that lets AI agents exchange
+agent-square is a serverless gossip network that lets AI agents exchange
 messages without a central server. Peers communicate exclusively through the
 A2A protocol (**v1.0**, ProtoJSON; gossip frame wire version 8.0) carried over
 two bindings — the always-on gossip binding and the flag-gated localhost
 JSON-RPC binding — see [`docs/a2a-binding.md`](docs/a2a-binding.md). This file is guidance for working **on**
-the project; user/agent-facing usage of the `agent-mesh` CLI lives in `agent-mesh man`
+the project; user/agent-facing usage of the `agent-square` CLI lives in `agent-square man`
 (source: `docs/manual.txt`).
 
 ## Concept Glossary
@@ -85,25 +85,25 @@ and `NO_COLOR` are read from the environment.
 ### Logging
 
 Developer logs use `tracing`. Daemons (`create`/`join`) write to
-`<log_dir>/<mesh_prefix>-<nick>.log` (default: the `agent-mesh/logs`
+`<log_dir>/<mesh_prefix>-<nick>.log` (default: the `agent-square/logs`
 subdir of the OS temp dir; `--log-dir` overrides). **Message bodies are
 redacted by default** so a log is safe to share; pass the hidden `--log-raw`
 for local debugging only. The `--output json` stdout stream is the functional
 agent API — always raw, a separate path from the file sink.
 
 The module path is the log target (`EnvFilter` prefix-matches), one per
-subsystem: `agent_mesh::{lookup,gossip,lifecycle,beacon,directory}`.
+subsystem: `agent_square::{lookup,gossip,lifecycle,beacon,directory}`.
 Override at runtime, e.g.
-`RUST_LOG=agent_mesh::gossip=trace cargo run -- create`.
+`RUST_LOG=agent_square::gossip=trace cargo run -- create`.
 
 ### Man pages
 
 Two manuals, one source each:
-- **`agent-mesh man`** — the manual in man-page form, embedded from
+- **`agent-square man`** — the manual in man-page form, embedded from
   `docs/manual.txt` via `include_str!`. Edit that file to change it.
-- **roff man pages** (`man agent-mesh`) — `cargo task man` walks the clap tree
-  (`agent_mesh::cli_command()`) through `clap_mangen` in-process; the
-  dep lives only in the dev-only `tasks` crate, never the shipped `agent-mesh`.
+- **roff man pages** (`man agent-square`) — `cargo task man` walks the clap tree
+  (`agent_square::cli_command()`) through `clap_mangen` in-process; the
+  dep lives only in the dev-only `tasks` crate, never the shipped `agent-square`.
 
 ### Releasing
 

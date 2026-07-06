@@ -8,7 +8,7 @@ members = ["tasks", "agent-habilis-mesh", "examples/mesh-pipe"]
 edition = "2024"
 rust-version = "1.93"
 
-# Deps shared by the app (`agent-mesh`) and the engine
+# Deps shared by the app (`agent-square`) and the engine
 # (`agent-habilis-mesh`), pinned once here so versions stay in lockstep.
 # Each crate opts in with `dep.workspace = true` (and may union in extra
 # features). Feature sets here are the union across both crates — cargo
@@ -100,16 +100,16 @@ module_name_repetitions = "allow"
 multiple_crate_versions = "allow"
 
 [package]
-name = "agent-mesh"
+name = "agent-square"
 version = "0.5.0"
 edition.workspace = true
 rust-version.workspace = true
 authors = ["Caio Gondim <me@caiogondim.com>"]
 description = "mesh network for agents"
-documentation = "https://github.com/agent-habilis/agent-mesh"
+documentation = "https://github.com/agent-habilis/agent-square"
 license = "MIT"
-repository = "https://github.com/agent-habilis/agent-mesh"
-homepage = "https://github.com/agent-habilis/agent-mesh"
+repository = "https://github.com/agent-habilis/agent-square"
+homepage = "https://github.com/agent-habilis/agent-square"
 readme = "README.md"
 keywords = ["agents", "gossip", "communication"]
 categories = ["network-programming"]
@@ -134,11 +134,11 @@ exclude = [
 workspace = true
 
 [lib]
-name = "agent_mesh"
+name = "agent_square"
 path = "src/lib.rs"
 
 [[bin]]
-name = "agent-mesh"
+name = "agent-square"
 path = "src/main.rs"
 
 [features]
@@ -168,7 +168,7 @@ dhat = { version = "0.3", optional = true }
 tokio.workspace = true
 clap = { version = "4", features = ["derive"] }
 # Embeds the integration artifacts (Claude Code plugin, pi extension, generic
-# skill) into the binary at compile time so `agent-mesh setup` is self-contained.
+# skill) into the binary at compile time so `agent-square setup` is self-contained.
 include_dir = "0.7"
 anstyle.workspace = true
 anstream.workspace = true
@@ -195,7 +195,7 @@ serde.workspace = true
 serde_json.workspace = true
 rand.workspace = true
 libc.workspace = true
-# PTY spawn + resize for `agent-mesh sh` (broadcast a live shell). Blocking I/O,
+# PTY spawn + resize for `agent-square sh` (broadcast a live shell). Blocking I/O,
 # bridged to tokio via reader/writer threads.
 portable-pty = "0.9"
 tracing.workspace = true

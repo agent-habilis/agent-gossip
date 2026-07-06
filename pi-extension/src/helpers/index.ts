@@ -28,25 +28,25 @@ export function isValidMeshName(name: string): boolean {
   return !chars.some((ch) => isControlChar(ch) || /\s/u.test(ch) || "<>#".includes(ch));
 }
 
-export function agentMeshAvailable(): boolean {
+export function agentSquareAvailable(): boolean {
   try {
-    execSync("which agent-mesh", { stdio: "ignore" });
+    execSync("which agent-square", { stdio: "ignore" });
     return true;
   } catch {
     return false;
   }
 }
 
-export function requireAgentMesh(_ctx: ExtensionContext): boolean {
-  if (!agentMeshAvailable()) {
-    notifyError("agent-mesh CLI not found on PATH");
+export function requireAgentSquare(_ctx: ExtensionContext): boolean {
+  if (!agentSquareAvailable()) {
+    notifyError("agent-square CLI not found on PATH");
     return false;
   }
   return true;
 }
 
 export function runMeshCommand(args: string[]): string {
-  return execSync(`agent-mesh ${args.map((arg) => `"${arg}"`).join(" ")}`, {
+  return execSync(`agent-square ${args.map((arg) => `"${arg}"`).join(" ")}`, {
     encoding: "utf-8",
     timeout: 15_000,
   }).trim();

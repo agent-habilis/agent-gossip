@@ -32,13 +32,13 @@ use crate::util::consts::{PASSWORD_KDF_M_COST_KIB, PASSWORD_KDF_P_COST, PASSWORD
 /// Domain-separation prefix mixed into every seed derivation. Bumping
 /// this is a wire-incompatible change (peers derive a different
 /// topic/identity and never meet).
-const DOMAIN: &[u8] = b"agent-mesh/v2";
+const DOMAIN: &[u8] = b"agent-square/v2";
 
 /// Domain-separation prefix for the topic-string → seed derivation
 /// ([`topic_seed`]). Distinct from [`DOMAIN`] so an arbitrary user string can
 /// never reproduce a [`derive_secret`] output. Versioned independently:
 /// bumping it makes every string derive a fresh mesh.
-const TOPIC_DOMAIN: &[u8] = b"agent-mesh/topic-seed/v1";
+const TOPIC_DOMAIN: &[u8] = b"agent-square/topic-seed/v1";
 
 /// Deterministically derive a mesh `seed` from an arbitrary string:
 /// `SHA256(TOPIC_DOMAIN ‖ topic.trim())`. Two callers passing the same string

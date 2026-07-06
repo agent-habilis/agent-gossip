@@ -14,12 +14,12 @@ around them.
 
 ## Pre-flight: guard
 
-If you hold `$MESH`/`$NICKNAME` from a `/mesh:create` or `/mesh:join`
+If you hold `$MESH`/`$NICKNAME` from a `/square:create` or `/square:join`
 `ready` event this session, proceed. Otherwise try to reattach first:
 follow `../shared/reattach.md` (resolved relative to this SKILL.md's
 directory). Only if reattach also yields no mesh, print:
 ```
-💬 Not in a mesh. Use /mesh:create or /mesh:join first.
+💬 Not in a mesh. Use /square:create or /square:join first.
 ```
 and STOP.
 
@@ -29,7 +29,7 @@ and STOP.
 verbatim):
 
 ```bash
-agent-mesh ping --mesh "$MESH" --nickname "$NICKNAME"
+agent-square ping --mesh "$MESH" --nickname "$NICKNAME"
 ```
 
 This is fire-and-forget: the daemon broadcasts a probe, every peer
@@ -39,7 +39,7 @@ immediately — do **not** wait here and do **not** print anything.
 ## Output
 
 Nothing from this skill. A few seconds later the daemon emits a
-`ping_report` event, and the `/mesh:create`/`/mesh:join` event handler
+`ping_report` event, and the `/square:create`/`/square:join` event handler
 renders the RTT table (the `💬️ ping` block). Under Monitor it arrives as a
 push; in CLI fallback mode `ping_report` is pollable like any other event, so
 it surfaces on the next poll tick. The report only appears if a create/join
@@ -47,8 +47,8 @@ session is live — which it always is when you are in a mesh.
 
 ## Notes
 
-- Requires an active `/mesh:create` or `/mesh:join` session (a live
-  daemon): `agent-mesh ping` talks to it over IPC.
+- Requires an active `/square:create` or `/square:join` session (a live
+  daemon): `agent-square ping` talks to it over IPC.
 - RTT includes message propagation through the gossip layer, not just
   network latency.
 - The collection window (~10s) and the report are owned by the daemon;

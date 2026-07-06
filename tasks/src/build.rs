@@ -1,5 +1,5 @@
 //! `cargo task build [--target TRIPLE | --arch ARCH] [--release]` — build the
-//! `agent-mesh` binary, cross-compiling for a foreign target through a **project-
+//! `agent-square` binary, cross-compiling for a foreign target through a **project-
 //! pinned** zig + cargo-zigbuild toolchain. zig is vendored into
 //! `target/tooling/` on first use (never the dev's global/brew zig);
 //! cargo-zigbuild is a regular crate dependency driven as a *library*, not a
@@ -36,7 +36,7 @@ pub(crate) fn run(
     let Some(triple) = triple else {
         // Plain host build — no cross toolchain needed.
         let profile: &[&str] = if release { &["--release"] } else { &[] };
-        cmd!(sh, "cargo build {profile...} --bin agent-mesh").run()?;
+        cmd!(sh, "cargo build {profile...} --bin agent-square").run()?;
         return Ok(());
     };
 
@@ -60,7 +60,7 @@ pub(crate) fn run(
 
     output::status(
         "Cross",
-        &format!("agent-mesh → {triple} (pinned zig {ZIG_VERSION})"),
+        &format!("agent-square → {triple} (pinned zig {ZIG_VERSION})"),
     );
 
     // Drive cargo-zigbuild in-process. Its cross-link wrapper re-execs *this*
@@ -72,7 +72,7 @@ pub(crate) fn run(
         "--target".to_owned(),
         triple.clone(),
         "--bin".to_owned(),
-        "agent-mesh".to_owned(),
+        "agent-square".to_owned(),
     ];
     if release {
         args.push("--release".to_owned());
@@ -84,7 +84,7 @@ pub(crate) fn run(
         .map_err(|err| -> Box<dyn std::error::Error> { err.into() })?;
 
     let dir = if release { "release" } else { "debug" };
-    output::status("Built", &format!("target/{triple}/{dir}/agent-mesh"));
+    output::status("Built", &format!("target/{triple}/{dir}/agent-square"));
     Ok(())
 }
 

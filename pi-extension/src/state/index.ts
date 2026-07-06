@@ -42,13 +42,13 @@ export const state: AppState = {
 
 export function stateFilePath(): string | null {
   if (!state.stateFileId) return null;
-  // Under the daemon's per-user runtime base `/tmp/agent-mesh-<uid>/` (0700,
-  // owned by us) — the same tree `agent-mesh session`/`leave` scan, and
+  // Under the daemon's per-user runtime base `/tmp/agent-square-<uid>/` (0700,
+  // owned by us) — the same tree `agent-square session`/`leave` scan, and
   // matching the daemon's `runtime_base()`. Use the *effective* uid to match
   // the Rust `current_uid()` (`geteuid`) and the skills' `id -u`: under a setuid
   // context `getuid` (real) would diverge, putting this path outside the base
   // the daemon validates and the CLI scans. `geteuid` is unix-only, which this
   // extension already is.
   const uid = process.geteuid?.() ?? process.getuid?.() ?? 0;
-  return `/tmp/agent-mesh-${uid}/sessions/${state.stateFileId}.json`;
+  return `/tmp/agent-square-${uid}/sessions/${state.stateFileId}.json`;
 }

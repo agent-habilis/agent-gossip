@@ -7,7 +7,7 @@ when events arrive. Edit here once; never re-inline into a SKILL.md. -->
 These rules apply to every surfaced event regardless of transport — the event
 objects are identical; only delivery differs. **Monitor path:** the Monitor
 pushes each event as a `task-notification` message live. **CLI fallback:** the
-same objects arrive on each `agent-mesh poll` tick (step 4 above). Either way they
+same objects arrive on each `agent-square poll` tick (step 4 above). Either way they
 arrive *after* this skill returns, so the rules below must stay in your context.
 
 **CRITICAL: every event carries a pre-built `display` string. Emit that
@@ -26,7 +26,7 @@ value out, or silence.
 - `event` is `info`, `error`, `msg_posted`, `ready`, or `fork`
 - `type` is `presence` with `"subtype":"alive"`
 - a `presence` message (`"type":"presence"`) with `"self":true` — your own
-  join/leave is already covered by this skill's Output / `/mesh:leave`.
+  join/leave is already covered by this skill's Output / `/square:leave`.
 
 A `msg` event also carries `message` — the full A2A Message object the wire
 carried (parts, contextId, extensions). Ignore it for display: `display` and
@@ -34,7 +34,7 @@ the flat `body` (its text projection) are what you read; `message` exists for
 A2A-aware tooling.
 
 **Show your own `msg` events.** A `msg` event with `"self":true` is your
-outbound message (sent via `/mesh:msg`) echoed back by the daemon — emit its
+outbound message (sent via `/square:msg`) echoed back by the daemon — emit its
 `display` verbatim. That echo IS the outbound confirmation; never also
 re-render the text elsewhere.
 
@@ -73,8 +73,8 @@ reasoning. Print, then act.
   `display` line first (above), then act on the change. The `document` is already
   in your turn. Read it and act **per your current task**, but only if it is
   your turn (check a turn marker in the document — after you change state your
-  own merge flips it to the peer). Read state any time with `agent-mesh state get
-  --mesh $MESH --nickname $NICKNAME`; change it with `agent-mesh state merge --mesh
+  own merge flips it to the peer). Read state any time with `agent-square state get
+  --mesh $MESH --nickname $NICKNAME`; change it with `agent-square state merge --mesh
   $MESH --nickname $NICKNAME --merge '<JSON value>'` (RFC 7386: an object
   deep-merges — each key is set, a `null` value deletes that key, nested objects
   merge recursively — and a non-object value replaces the document). **Arrays are
@@ -87,9 +87,9 @@ reasoning. Print, then act.
   state from the `document`, never reconstruct it from memory. Then stop — your
   merge wakes the peer. Don't encode app logic here; you decide what to do.
 - **`self:true` (your own change) — print the confirmation, don't react.** Print
-  its `display` (`💬️ you changed …`) verbatim — it confirms your `agent-mesh state
+  its `display` (`💬️ you changed …`) verbatim — it confirms your `agent-square state
   merge` landed; do **not** skip it as redundant just because you issued the
-  merge. Then stop (no reaction). On join, let state settle a moment, then `agent-mesh
+  merge. Then stop (no reaction). On join, let state settle a moment, then `agent-square
   state get` before acting.
 
 **Mesh metadata (`event:"meta"`)**
@@ -150,10 +150,10 @@ backticks** in both — the widget shows text verbatim.
 The two delegation flows differ only in **how the skill uses the task** (there
 is no wire marker):
 
-- **task** (report-back, `/mesh:task`): the worker does the work and returns a
+- **task** (report-back, `/square:task`): the worker does the work and returns a
   **result** (an `artifact`); the initiator reviews and approves, and the
   worker **completes**. The brief asks for a result.
-- **handover** (walk-away, `/mesh:handover`): the worker accepts and the
+- **handover** (walk-away, `/square:handover`): the worker accepts and the
   initiator walks away; the worker runs it on its own and **completes** — no
   result review. The brief hands the work over.
 
@@ -162,16 +162,16 @@ status/artifact:
 
 ```
 # initiator: create a task (worker mints the id, printed in the JSON response)
-agent-mesh a2a call --mesh $MESH --nickname $NICKNAME --to <worker> \
+agent-square a2a call --mesh $MESH --nickname $NICKNAME --to <worker> \
   --method SendMessage --text "<brief>"
 # initiator: answer / approve / request a change (a follow-up into the task)
-agent-mesh a2a call --mesh $MESH --nickname $NICKNAME --to <worker> \
+agent-square a2a call --mesh $MESH --nickname $NICKNAME --to <worker> \
   --method SendMessage --task-id <id> --text "<message>"
 # worker: accept / ask / complete / fail
-agent-mesh a2a status --mesh $MESH --nickname $NICKNAME --task-id <id> \
+agent-square a2a status --mesh $MESH --nickname $NICKNAME --task-id <id> \
   --state working|input-required|completed|failed --text "<note>"
 # worker: return the result
-agent-mesh a2a artifact --mesh $MESH --nickname $NICKNAME --task-id <id> --text "<result>"
+agent-square a2a artifact --mesh $MESH --nickname $NICKNAME --task-id <id> --text "<result>"
 ```
 
 **Receiving a task** (you are the worker; a `task` event with `kind:"message"`,
@@ -180,26 +180,26 @@ agent-mesh a2a artifact --mesh $MESH --nickname $NICKNAME --task-id <id> --text 
 1. Show the entry widget (`AskUserQuestion`): "Incoming task from `<author>`:
    *[one-line brief]*. Run it?", header `mesh:task`, options **"Accept"** /
    **"Decline"**. Add a todo for this `task_id`.
-   - **Decline** ⇒ `agent-mesh a2a status --task-id <id> --state failed --text
+   - **Decline** ⇒ `agent-square a2a status --task-id <id> --state failed --text
      "<reason>"`; mark the todo `completed`; STOP.
-   - **Accept** ⇒ `agent-mesh a2a status --task-id <id> --state working`, then **do
+   - **Accept** ⇒ `agent-square a2a status --task-id <id> --state working`, then **do
      the work** (plan-mode-gate it first if it makes changes; a read-only task
      like a review can just run).
-2. Ask anything missing: `agent-mesh a2a status --task-id <id> --state input-required
+2. Ask anything missing: `agent-square a2a status --task-id <id> --state input-required
    --text "<question>"`. The initiator answers with a follow-up message (another
    `kind:"message"` task event); resume with `--state working`.
 3. **When the work is finished**, per the flow the brief implies:
-   - **report-back** (the brief asked for a result): `agent-mesh a2a artifact
+   - **report-back** (the brief asked for a result): `agent-square a2a artifact
      --task-id <id> --text "<result>"` — a concise summary the initiator can use
      directly, NOT a raw dump (trim to the ~3,000-char cap). This parks the task
      `input-required` for the initiator's review. On the initiator's **approval**
-     message, `agent-mesh a2a status --task-id <id> --state completed`; on a **change**
+     message, `agent-square a2a status --task-id <id> --state completed`; on a **change**
      request, revise and re-`artifact`.
-   - **handover** (the brief handed the work to you): `agent-mesh a2a status --task-id
+   - **handover** (the brief handed the work to you): `agent-square a2a status --task-id
      <id> --state completed` directly — you own it now; run it on your own
      (plan-mode-gated). No result to return.
 
-**Sending a task** (you ran `/mesh:task`, `self:true` echoes): capture the
+**Sending a task** (you ran `/square:task`, `self:true` echoes): capture the
 `task_id` from the create response (`result.task.id`). Watch the worker's status:
 on **`state:"input-required"`** with a question, answer via a follow-up message;
 on a **`kind:"artifact-update"`** event (the result), **print it** (attributed
@@ -208,7 +208,7 @@ follow-up message, e.g. "approved") — or ask for a change if it misses the
 criteria. The task closes when the worker emits **`state:"completed"`**. Tasks
 are independent — there is no cross-task reduce.
 
-**Sending a handover** (you ran `/mesh:handover`): capture the `task_id`. The
+**Sending a handover** (you ran `/square:handover`): capture the `task_id`. The
 worker accepts (`state:"working"`); mark the todo `completed` and **stop
 watching** — the worker runs it on its own. There is nothing to review.
 

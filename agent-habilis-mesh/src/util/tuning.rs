@@ -175,7 +175,7 @@ pub(crate) fn cohost_grace_secs() -> u64 {
     current().cohost_grace_secs
 }
 
-/// How long an `agent-mesh ping` round collects pongs before the daemon
+/// How long an `agent-square ping` round collects pongs before the daemon
 /// emits its `ping_report`. Long enough for a relayed round-trip
 /// across the mesh; hidden flag `--ping-window-secs` so tests don't
 /// wait the full window.
@@ -305,7 +305,7 @@ pub(crate) const IPC_ACCEPT_BACKOFF_MAX_SECS: u64 = 5;
 /// real `msg`/`poll` round-trip, so only a hung client ever hits it.
 pub(crate) const IPC_IO_TIMEOUT_SECS: u64 = 10;
 
-/// `agent-mesh ready` gate: how long to wait for the daemon's `--state-file` to
+/// `agent-square ready` gate: how long to wait for the daemon's `--state-file` to
 /// report `ready: true` before giving up (the `--timeout-secs` default),
 /// and the fixed interval between file reads while waiting. 30s covers a
 /// cold daemon start (the file appears sub-second once the process is up).
@@ -330,7 +330,7 @@ pub fn longpoll_max_ms() -> u64 {
     current().longpoll_max_ms
 }
 
-/// Floor on one `agent-mesh poll --long` re-issue cycle. Normally dormant — a parked
+/// Floor on one `agent-square poll --long` re-issue cycle. Normally dormant — a parked
 /// read returns at the ~60s cap, far above it — it only engages when the
 /// daemon degrades a long read to an immediate empty (waiter registry at
 /// `POLL_WAITERS_CAP`), keeping the CLI's re-poll loop from spinning hot.

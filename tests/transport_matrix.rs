@@ -31,7 +31,7 @@ mod common;
 
 use std::time::Instant;
 
-use agent_mesh::{Channel, TaskId, TaskState, TransportPolicy};
+use agent_square::{Channel, TaskId, TaskState, TransportPolicy};
 use common::{InProcNode, MSG_TIMEOUT, POLL, spool_dir, spool_mesh_dir, wait_for_frames};
 use serde_json::{Value, json};
 

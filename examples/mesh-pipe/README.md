@@ -4,14 +4,14 @@ A Unix pipe over the gossip mesh — the **second consumer** of the
 [`agent-habilis-mesh`](../../agent-habilis-mesh) engine, and a deliberately
 **non-a2a** one. It exists to prove the engine is *payload-generic*: the same
 mesh, discovery, and circuit (directed-routing) stack that carries
-`agent-mesh`'s A2A tasks will carry **raw bytes** just as happily, because the
+`agent-square`'s A2A tasks will carry **raw bytes** just as happily, because the
 engine never inspects an `App` frame's payload — it only routes on the frame's
 tag/addressee.
 
 ## What it demonstrates
 
 The engine's application seam is two traits — `NodeApp` (classify + dispatch
-inbound `App` frames) and `NodeDriver` (lifecycle + typed inputs). `agent-mesh`
+inbound `App` frames) and `NodeDriver` (lifecycle + typed inputs). `agent-square`
 is one implementor (its A2A data model). `mesh-pipe` is a completely
 independent second one:
 
@@ -29,10 +29,10 @@ independent second one:
   the engine's payload-agnostic build → sign → route helper.
 - **The generic embedding facade.** It runs the event loop in-process via
   `agent_habilis_mesh::embed::Node<PipeApp>` (the app-agnostic analogue of
-  `agent-mesh`'s `embed::MeshSession`).
+  `agent-square`'s `embed::MeshSession`).
 
 It depends on **only** the engine crate (plus `tokio` / `anyhow` / `clap` /
-`base64`) — never on `agent-mesh` or its a2a layer.
+`base64`) — never on `agent-square` or its a2a layer.
 
 > Bytes ride base64-encoded in the frame body because `MessageBody` is
 > text/JSON-shaped (it rejects control bytes). `send_app` sends a single

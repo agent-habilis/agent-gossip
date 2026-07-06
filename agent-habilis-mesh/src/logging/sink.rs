@@ -243,7 +243,7 @@ mod tests {
     #[test]
     fn detach_reattaches_to_a_fresh_file() {
         let dir =
-            std::env::temp_dir().join(format!("agent-mesh-logswitch-{}", std::process::id()));
+            std::env::temp_dir().join(format!("agent-square-logswitch-{}", std::process::id()));
         let _ = fs::create_dir_all(&dir);
         let path_a = dir.join("a.log");
         let path_b = dir.join("b.log");
@@ -274,7 +274,7 @@ mod tests {
 
     #[test]
     fn attached_file_rotates_at_cap() {
-        let dir = std::env::temp_dir().join(format!("agent-mesh-logsink-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("agent-square-logsink-{}", std::process::id()));
         let _ = fs::create_dir_all(&dir);
         let path = dir.join("rot.log");
         let file = fs::OpenOptions::new()

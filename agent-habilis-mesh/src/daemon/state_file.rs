@@ -1,4 +1,4 @@
-//! Session state file — the agent-mesh daemon writes its
+//! Session state file — the agent-square daemon writes its
 //! view of the mesh into this file so external tools (e.g. a shell
 //! statusline) and the `/gossip:*` skills can render the current mesh,
 //! nickname, and participant count with a plain local file read. No
@@ -11,14 +11,14 @@
 //! (no read-merge: there are no foreign keys to preserve).
 //!
 //! `ready` is `false` at the early identity write and flips to `true`
-//! once the event loop is serving IPC, so a reader (e.g. `agent-mesh ready`)
+//! once the event loop is serving IPC, so a reader (e.g. `agent-square ready`)
 //! can gate on it rather than on the file's mere existence.
 //! `participant_count` is the total number of agents in the mesh,
 //! including self. `last_updated` is a unix timestamp the daemon
 //! refreshes on a fixed heartbeat (see `tuning::STATE_REFRESH_SECS`)
 //! even when membership is unchanged, so a reader can treat a fresh
 //! value as a liveness signal. `pid` is the daemon's own process id —
-//! what lets `agent-mesh leave`/`agent-mesh session` map a state file back to a
+//! what lets `agent-square leave`/`agent-square session` map a state file back to a
 //! running daemon (and, via its ancestry, to the agent session that
 //! spawned it).
 //!
@@ -100,7 +100,7 @@ impl StateFile {
         // bearer token). It is born 0o600 below, but the enclosing directory must
         // also be private. `ensure_parent_private` validates the base and fails
         // closed when the target is under it (the default path, and the plugin's
-        // `--state-file /tmp/agent-mesh-<uid>/sessions/...`), and just creates
+        // `--state-file /tmp/agent-square-<uid>/sessions/...`), and just creates
         // the parent for an override that points elsewhere.
         crate::util::ensure_parent_private(&self.path)?;
         let mut obj = serde_json::Map::new();
@@ -165,7 +165,7 @@ impl Drop for StateFile {
     }
 }
 
-/// What the `agent-mesh ready` gate needs out of a state file on every poll: whether
+/// What the `agent-square ready` gate needs out of a state file on every poll: whether
 /// the daemon is serving (`ready`) and how fresh that claim is (`last_updated`,
 /// unix seconds — the daemon rewrites it on a fixed heartbeat, so a stale
 /// `ready: true` left by a prior daemon killed with SIGKILL is rejected). The
@@ -177,7 +177,7 @@ pub struct ReadySnapshot {
     pub last_updated: u64,
 }
 
-/// Best-effort session identity for `agent-mesh ready --output json`. Each field is
+/// Best-effort session identity for `agent-square ready --output json`. Each field is
 /// `None` when the state file is unreadable, not JSON, or predates that field
 /// — so the JSON the gate prints carries only the keys actually present.
 #[derive(Debug)]
@@ -210,8 +210,8 @@ pub fn read_identity(path: &Path) -> SessionIdentity {
     }
 }
 
-/// One running daemon as seen through its state file — what `agent-mesh leave` /
-/// `agent-mesh session` need to map the file back to a live process and decide
+/// One running daemon as seen through its state file — what `agent-square leave` /
+/// `agent-square session` need to map the file back to a live process and decide
 /// whether the calling session owns it. Every field is `Option`: a file
 /// written by an older binary predates `pid`, and discovery must still be
 /// able to *report* such an entry rather than error on it.
@@ -300,7 +300,7 @@ mod tests {
 
     fn unique_path(tag: &str) -> PathBuf {
         std::env::temp_dir().join(format!(
-            "agent-mesh-state-test-{}-{}-{}.json",
+            "agent-square-state-test-{}-{}-{}.json",
             tag,
             std::process::id(),
             clock::unix_nanos(),
@@ -383,7 +383,7 @@ mod tests {
     fn creates_parent_dir() {
         let mut path = std::env::temp_dir();
         path.push(format!(
-            "agent-mesh-state-test-parent-{}",
+            "agent-square-state-test-parent-{}",
             std::process::id()
         ));
         path.push("sessions");

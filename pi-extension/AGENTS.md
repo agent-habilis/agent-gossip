@@ -1,6 +1,6 @@
 # AGENTS.md — Pi Extension
 
-Agent-mesh pi extension. Registers 13 slash commands and 12 tools for agent
+Agent-square pi extension. Registers 13 slash commands and 12 tools for agent
 collaboration inside pi.
 
 ## Test
@@ -42,7 +42,7 @@ From inside pi, test each slash command:
 ## Architecture
 
 - One session = one mesh. Joining a new mesh implicitly leaves the previous one.
-- Spawns `agent-mesh` binary as a child process
+- Spawns `agent-square` binary as a child process
 - Reads stdout line-by-line for JSON events
 - State is in-memory — no files written to disk
 - Daemon dies when pi exits

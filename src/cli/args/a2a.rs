@@ -40,7 +40,7 @@ pub(crate) enum A2aAction {
         lookups: PublicLookupArgs,
 
         /// Advertise this bridge's ticket in a directory so a peer can find it
-        /// with `agent-mesh a2a discover` — no `🎟️…` to copy. Bare `--advertise` ⇒ the
+        /// with `agent-square a2a discover` — no `🎟️…` to copy. Bare `--advertise` ⇒ the
         /// default `global` directory; `--advertise <name>` ⇒ that named
         /// directory (share the name with the peer). The ad carries the full
         /// bearer ticket, so pair it with `--password`.
@@ -73,7 +73,7 @@ pub(crate) enum A2aAction {
     /// exposer over the mesh and rewrites the Agent Card so the client
     /// discovers the local bridge, not the unreachable origin.
     Connect {
-        /// The `🎟️…` ticket printed by `agent-mesh a2a expose`.
+        /// The `🎟️…` ticket printed by `agent-square a2a expose`.
         ticket: String,
 
         /// Local port to bind the bridge on (default: an ephemeral port — the
@@ -214,7 +214,7 @@ pub(crate) enum A2aAction {
         text: Option<String>,
         /// Attach a file as the result, transferred peer-to-peer over the blob
         /// channel and referenced as a Part.url. For binaries too large to
-        /// inline; the receiver fetches it with `agent-mesh a2a fetch <🎟️…>`.
+        /// inline; the receiver fetches it with `agent-square a2a fetch <🎟️…>`.
         #[arg(long)]
         file: Option<std::path::PathBuf>,
         /// Filename to advertise for --file (defaults to the file's own name).
@@ -229,7 +229,7 @@ pub(crate) enum A2aAction {
     /// file part). A direct peer-to-peer transfer, streamed to disk. With
     /// `--nickname` it lands in that session's `<nick>.recv/` folder (named by
     /// the content hash) and prints the path; otherwise it streams to stdout —
-    /// redirect or pipe, e.g. `agent-mesh a2a fetch 🎟️… > report.pdf`.
+    /// redirect or pipe, e.g. `agent-square a2a fetch 🎟️… > report.pdf`.
     Fetch {
         /// The `🎟️…` blob ticket copied from a received file part's `url`.
         ticket: String,

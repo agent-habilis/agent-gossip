@@ -12,12 +12,12 @@ are shown by the harness; do not narrate around them.
 
 ## Pre-flight: guard
 
-If you hold `$MESH`/`$NICKNAME` from a `/mesh:create` or `/mesh:join`
+If you hold `$MESH`/`$NICKNAME` from a `/square:create` or `/square:join`
 `ready` event this session, proceed. Otherwise try to reattach first:
 follow `../shared/reattach.md` (resolved relative to this SKILL.md's
 directory). Only if reattach also yields no mesh, print:
 ```
-💬 Not in a mesh. Use /mesh:create or /mesh:join first.
+💬 Not in a mesh. Use /square:create or /square:join first.
 ```
 and STOP.
 
@@ -33,7 +33,7 @@ while `state` holds the task. The daemon does not differentiate them.
 `$MESH`/`$NICKNAME` are from the `ready` event (copy the `💬…` id verbatim):
 
 ```bash
-agent-mesh meta get --mesh "$MESH" --nickname "$NICKNAME"
+agent-square meta get --mesh "$MESH" --nickname "$NICKNAME"
 ```
 
 This returns a single JSON line synchronously — wait for it and parse it:
@@ -78,7 +78,7 @@ Rendering rules:
 
 ## Notes
 
-- Read-only. Requires an active `/mesh:create` or `/mesh:join` session (a
-  live daemon): `agent-mesh meta get` talks to it over IPC.
-- To change the meta channel, peers merge it with `agent-mesh meta merge` — this skill
-  only reads. The `state` channel (the task) is read with `/mesh:state`.
+- Read-only. Requires an active `/square:create` or `/square:join` session (a
+  live daemon): `agent-square meta get` talks to it over IPC.
+- To change the meta channel, peers merge it with `agent-square meta merge` — this skill
+  only reads. The `state` channel (the task) is read with `/square:state`.

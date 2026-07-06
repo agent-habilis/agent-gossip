@@ -39,7 +39,7 @@ const PASSWORD_BIT: u8 = 0b0000_0001;
 
 /// Domain-separation prefix on the issuer-signed bytes, so an invite signature
 /// can never be replayed as any other Ed25519 signature in the system.
-const SIG_DOMAIN: &[u8] = b"agent-mesh/invite/v1";
+const SIG_DOMAIN: &[u8] = b"agent-square/invite/v1";
 
 /// A decoded invite ticket. Parsing (`decode`) is structural only — verifying
 /// the issuer signature, checking expiry, and unwrapping the root all happen in

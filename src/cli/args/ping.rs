@@ -33,7 +33,7 @@ mod tests {
     #[test]
     fn ping_accepts_output_flag() {
         let cli = Cli::parse_from([
-            "agent-mesh",
+            "agent-square",
             "ping",
             "--mesh",
             "💬AbCdEf1234",

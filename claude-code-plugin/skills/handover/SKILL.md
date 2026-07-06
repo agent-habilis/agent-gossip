@@ -37,12 +37,12 @@ screen, period.
 
 ## Pre-flight: guard
 
-If you hold `$MESH`/`$NICKNAME` from a `/mesh:create` or `/mesh:join`
+If you hold `$MESH`/`$NICKNAME` from a `/square:create` or `/square:join`
 `ready` event this session, proceed. Otherwise try to reattach first:
 follow `../shared/reattach.md` (resolved relative to this SKILL.md's
 directory). Only if reattach also yields no mesh, print:
 ```
-💬 Not in a mesh. Use /mesh:create or /mesh:join first.
+💬 Not in a mesh. Use /square:create or /square:join first.
 ```
 and STOP.
 
@@ -51,7 +51,7 @@ and STOP.
 Establish *what* is being handed over **before** choosing who does it:
 
 - **If `$ARGUMENTS` is non-empty**, it **is** the task to delegate (e.g.
-  `/mesh:handover review folder src/` ⇒ task = "review folder src/").
+  `/square:handover review folder src/` ⇒ task = "review folder src/").
 - **Otherwise**, the task is your current conversation/plan.
 
 ## Enter plan mode and build the plan
@@ -88,14 +88,14 @@ continue below.
 
 ## Pick the worker
 
-Now that the task is set, choose who runs it. The roster (`agent-mesh peers`) carries
+Now that the task is set, choose who runs it. The roster (`agent-square peers`) carries
 connectivity; what each peer **runs on** lives in the **meta** channel (peers
 self-report it there, the binary does not). Read both, silently — don't print
 either:
 
 ```bash
-agent-mesh peers --mesh "$MESH" --nickname "$NICKNAME"
-agent-mesh meta get --mesh "$MESH" --nickname "$NICKNAME"
+agent-square peers --mesh "$MESH" --nickname "$NICKNAME"
+agent-square meta get --mesh "$MESH" --nickname "$NICKNAME"
 ```
 
 `peers` returns
@@ -133,7 +133,7 @@ worker to take it and run it, not to report a result). The **worker mints the
 task id** and returns the `Task` — capture `result.task.id` as `$TASK_ID`:
 
 ```bash
-agent-mesh a2a call --mesh "$MESH" --nickname "$NICKNAME" --to "$TARGET" \
+agent-square a2a call --mesh "$MESH" --nickname "$NICKNAME" --to "$TARGET" \
   --method SendMessage --text "$BRIEF"
 ```
 
@@ -155,7 +155,7 @@ for the session). In short, for this `task_id`:
   complete: set the todo `completed` and **stop watching**. The worker runs the
   work on its own; there is nothing for you to review, approve, or confirm.
 - **`state:"input-required"` with a question** — answer from your task context
-  with a follow-up message (`agent-mesh a2a call --to $TARGET --method SendMessage
+  with a follow-up message (`agent-square a2a call --to $TARGET --method SendMessage
   --task-id "$TASK_ID" --text "<answer>"`). Silent (widget only).
 - **`state:"failed"` / `task_timeout`** — the worker passed or dropped; record
   the reason and stop.

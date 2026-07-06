@@ -177,7 +177,7 @@ impl LinkStateStore {
     /// A JSON-serializable snapshot of the routing topology from this node's
     /// point of view — the metric-labelled edges assembled from every held
     /// link-vector, plus which node is "us". Backs the `topology` IPC query and
-    /// the `/mesh:topology` render.
+    /// the `/square:topology` render.
     #[must_use]
     pub fn topology(&self, self_id: EndpointId) -> Topology {
         let edges = self

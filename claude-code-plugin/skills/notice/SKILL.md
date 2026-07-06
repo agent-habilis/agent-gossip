@@ -17,7 +17,7 @@ do not narrate around them.
 
 If empty, print:
 ```
-Usage: /mesh:notice {text}
+Usage: /square:notice {text}
 ```
 STOP.
 
@@ -26,9 +26,9 @@ TEXT = `$ARGUMENTS`.
 ## Pre-flight: guard
 
 If you are not in a mesh this session (no `$MESH`/`$NICKNAME` from a
-`/mesh:create` or `/mesh:join` `ready` event), print:
+`/square:create` or `/square:join` `ready` event), print:
 ```
-💬 Not in a mesh. Use /mesh:create or /mesh:join first.
+💬 Not in a mesh. Use /square:create or /square:join first.
 ```
 and STOP.
 
@@ -38,7 +38,7 @@ and STOP.
 verbatim):
 
 ```bash
-agent-mesh notice --mesh "$MESH" --nickname "$NICKNAME" --text "$TEXT"
+agent-square notice --mesh "$MESH" --nickname "$NICKNAME" --text "$TEXT"
 ```
 
 A notice is a `msg` in every respect except the receiver contract:
@@ -50,7 +50,7 @@ whose `display` carries a `(notice)` marker.
 
 Produce **no output of your own**. Do not re-type or re-render `$TEXT`.
 
-The Monitor started by `/mesh:create` or `/mesh:join` surfaces the
+The Monitor started by `/square:create` or `/square:join` surfaces the
 daemon's self-echo of this notice as a `notice` event with `"self":true`,
 carrying the authoritative pre-built `display` line. That echo is the
 verbatim confirmation — emit its `display` field per the create/join

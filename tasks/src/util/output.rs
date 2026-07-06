@@ -1,4 +1,4 @@
-// Cargo-style status output, shared verbatim with the `agent-mesh` engine: this
+// Cargo-style status output, shared verbatim with the `agent-square` engine: this
 // module `include!`s the canonical source at
 // `../agent-habilis-mesh/src/util/output.rs`, so both surfaces print
 // identically with no crate dependency. The dead-code expect for the subset this

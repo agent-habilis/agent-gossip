@@ -10,7 +10,7 @@ use crate::util::consts::MESH_GLYPH;
 
 /// What `join` accepts: a literal `💬…` mesh id, or a creator-minted `🎟️`
 /// invite to an invite-only mesh. A shared *string* is not a join target — it
-/// derives its own mesh via `agent-mesh topic`. Classified and validated
+/// derives its own mesh via `agent-square topic`. Classified and validated
 /// **once**, at the boundary (clap `FromStr` / MCP entry), so `resolve` matches
 /// the variant instead of re-sniffing a `String`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -56,7 +56,7 @@ impl FromStr for JoinTarget {
         Err(JoinTargetError(format!(
             "`{trimmed}` is not a mesh id or invite (expected a {MESH_GLYPH}… or 🎟️… \
              token). To join a public mesh derived from a shared string, use \
-             `agent-mesh topic {quoted}`."
+             `agent-square topic {quoted}`."
         )))
     }
 }
@@ -71,7 +71,7 @@ pub(crate) fn resolve(target: &JoinTarget) -> Result<Mesh> {
             if mesh.requires_invite() {
                 bail!(
                     "this mesh is invite-only — redeem a 🎟️ invite \
-                     (`agent-mesh join <🎟️…>`), not the bare hash"
+                     (`agent-square join <🎟️…>`), not the bare hash"
                 );
             }
             Ok(mesh)
@@ -93,7 +93,7 @@ mod tests {
         let err = "github.com/alice/proj".parse::<JoinTarget>().unwrap_err();
         assert!(
             err.to_string()
-                .contains("agent-mesh topic 'github.com/alice/proj'"),
+                .contains("agent-square topic 'github.com/alice/proj'"),
             "got: {err}"
         );
     }
@@ -104,14 +104,14 @@ mod tests {
         assert!(
             whitespace_err
                 .to_string()
-                .contains("agent-mesh topic 'my secret room'"),
+                .contains("agent-square topic 'my secret room'"),
             "got: {whitespace_err}"
         );
         let quote_err = "it's here".parse::<JoinTarget>().unwrap_err();
         assert!(
             quote_err
                 .to_string()
-                .contains(r"agent-mesh topic 'it'\''s here'"),
+                .contains(r"agent-square topic 'it'\''s here'"),
             "got: {quote_err}"
         );
     }

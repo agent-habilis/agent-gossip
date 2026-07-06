@@ -1,6 +1,6 @@
 # Documentation
 
-In-depth docs for agent-mesh.
+In-depth docs for agent-square.
 
 - [Concept glossary](./glossary.md) — the one-word-per-concept vocabulary, the
   layering, and the invariants that follow from it.

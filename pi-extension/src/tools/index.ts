@@ -19,7 +19,7 @@ import {
   validateCreateOptions,
 } from "../core";
 import { formatPingReport, formatRoster } from "../format";
-import { requireAgentMesh } from "../helpers";
+import { requireAgentSquare } from "../helpers";
 import { state } from "../state";
 import { trackStart } from "../todo";
 import { BEE } from "../ui";
@@ -74,8 +74,8 @@ export function registerTools(pi: ExtensionAPI): void {
       ),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx: ExtensionContext) {
-      if (!requireAgentMesh(ctx)) {
-        return toolError("agent-mesh CLI not found on PATH");
+      if (!requireAgentSquare(ctx)) {
+        return toolError("agent-square CLI not found on PATH");
       }
       const options: CreateOptions = {
         name: params.name,
@@ -119,8 +119,8 @@ export function registerTools(pi: ExtensionAPI): void {
       ),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx: ExtensionContext) {
-      if (!requireAgentMesh(ctx)) {
-        return toolError("agent-mesh CLI not found on PATH");
+      if (!requireAgentSquare(ctx)) {
+        return toolError("agent-square CLI not found on PATH");
       }
       const result = await joinMesh({
         target: params.target,
@@ -154,8 +154,8 @@ export function registerTools(pi: ExtensionAPI): void {
       ),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx: ExtensionContext) {
-      if (!requireAgentMesh(ctx)) {
-        return toolError("agent-mesh CLI not found on PATH");
+      if (!requireAgentSquare(ctx)) {
+        return toolError("agent-square CLI not found on PATH");
       }
       const result = await forumMesh({
         string: params.string,
@@ -185,8 +185,8 @@ export function registerTools(pi: ExtensionAPI): void {
       ),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx: ExtensionContext) {
-      if (!requireAgentMesh(ctx)) {
-        return toolError("agent-mesh CLI not found on PATH");
+      if (!requireAgentSquare(ctx)) {
+        return toolError("agent-square CLI not found on PATH");
       }
       const directory = params.directory?.trim() || "global";
       const meshes = await discoverMeshes({
@@ -230,8 +230,8 @@ export function registerTools(pi: ExtensionAPI): void {
       ),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx: ExtensionContext) {
-      if (!requireAgentMesh(ctx)) {
-        return toolError("agent-mesh CLI not found on PATH");
+      if (!requireAgentSquare(ctx)) {
+        return toolError("agent-square CLI not found on PATH");
       }
       if (!state.session?.mesh) {
         return toolError("Not in a mesh. Use mesh_create or mesh_join first.");
@@ -280,8 +280,8 @@ export function registerTools(pi: ExtensionAPI): void {
       ),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx: ExtensionContext) {
-      if (!requireAgentMesh(ctx)) {
-        return toolError("agent-mesh CLI not found on PATH");
+      if (!requireAgentSquare(ctx)) {
+        return toolError("agent-square CLI not found on PATH");
       }
       if (!state.session?.mesh) {
         return toolError("Not in a mesh. Use mesh_create or mesh_join first.");
@@ -320,8 +320,8 @@ export function registerTools(pi: ExtensionAPI): void {
       }),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx: ExtensionContext) {
-      if (!requireAgentMesh(ctx)) {
-        return toolError("agent-mesh CLI not found on PATH");
+      if (!requireAgentSquare(ctx)) {
+        return toolError("agent-square CLI not found on PATH");
       }
       if (!state.session?.mesh) {
         return toolError("Not in a mesh. Use mesh_create or mesh_join first.");
@@ -380,8 +380,8 @@ export function registerTools(pi: ExtensionAPI): void {
       }),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx: ExtensionContext) {
-      if (!requireAgentMesh(ctx)) {
-        return toolError("agent-mesh CLI not found on PATH");
+      if (!requireAgentSquare(ctx)) {
+        return toolError("agent-square CLI not found on PATH");
       }
       if (!state.session?.mesh) {
         return toolError("Not in a mesh. Use mesh_create or mesh_join first.");
@@ -461,8 +461,8 @@ export function registerTools(pi: ExtensionAPI): void {
       }),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx: ExtensionContext) {
-      if (!requireAgentMesh(ctx)) {
-        return toolError("agent-mesh CLI not found on PATH");
+      if (!requireAgentSquare(ctx)) {
+        return toolError("agent-square CLI not found on PATH");
       }
       if (!state.session?.mesh) {
         return toolError("Not in a mesh. Use mesh_create or mesh_join first.");
@@ -494,8 +494,8 @@ export function registerTools(pi: ExtensionAPI): void {
     ],
     parameters: Type.Object({}),
     async execute(_toolCallId, _params, _signal, _onUpdate, ctx: ExtensionContext) {
-      if (!requireAgentMesh(ctx)) {
-        return toolError("agent-mesh CLI not found on PATH");
+      if (!requireAgentSquare(ctx)) {
+        return toolError("agent-square CLI not found on PATH");
       }
       if (!state.session?.mesh) {
         return toolError("Not in a mesh. Use mesh_create or mesh_join first.");
@@ -534,8 +534,8 @@ export function registerTools(pi: ExtensionAPI): void {
       ),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx: ExtensionContext) {
-      if (!requireAgentMesh(ctx)) {
-        return toolError("agent-mesh CLI not found on PATH");
+      if (!requireAgentSquare(ctx)) {
+        return toolError("agent-square CLI not found on PATH");
       }
       if (!state.session?.mesh) {
         return toolError("Not in a mesh. Use mesh_create or mesh_join first.");
@@ -581,8 +581,8 @@ export function registerTools(pi: ExtensionAPI): void {
     promptGuidelines: ["Use mesh_ping when the user asks to check peer health or connectivity"],
     parameters: Type.Object({}),
     async execute(_toolCallId, _params, _signal, _onUpdate, ctx: ExtensionContext) {
-      if (!requireAgentMesh(ctx)) {
-        return toolError("agent-mesh CLI not found on PATH");
+      if (!requireAgentSquare(ctx)) {
+        return toolError("agent-square CLI not found on PATH");
       }
       if (!state.session?.mesh) {
         return toolError("Not in a mesh");

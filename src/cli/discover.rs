@@ -87,7 +87,7 @@ pub(super) async fn discover(opts: DiscoverOpts) -> Result<()> {
     Ok(())
 }
 
-/// One directory change as a JSON line for `agent-mesh discover --output json`.
+/// One directory change as a JSON line for `agent-square discover --output json`.
 /// `Found`/`Updated` both surface as `mesh_found` (upsert semantics —
 /// the agent treats a re-ad as a refresh); a departure is `mesh_lost`.
 fn discover_event_json(event: &DirectoryEvent) -> String {

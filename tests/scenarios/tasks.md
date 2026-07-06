@@ -7,7 +7,7 @@ timestamp: 2026-06-28T00:00:00Z
 roles: [initiator, worker]
 coordinator: dedicated
 harness: any
-prereqs: [agent-mesh, todo-plugin]
+prereqs: [agent-square, todo-plugin]
 network: private
 ---
 

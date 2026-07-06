@@ -14,7 +14,7 @@ mod common;
 
 use std::time::Duration;
 
-use agent_mesh::OutputEvent;
+use agent_square::OutputEvent;
 use common::InProcNode;
 
 /// How long the steady-state test holds the mesh quiet before asserting

@@ -33,7 +33,7 @@ mod tests {
     #[test]
     fn peers_accepts_output_flag() {
         let cli = Cli::parse_from([
-            "agent-mesh",
+            "agent-square",
             "peers",
             "--mesh",
             "💬AbCdEf1234",
@@ -51,7 +51,7 @@ mod tests {
     #[test]
     fn peers_output_defaults_to_human() {
         let cli = Cli::parse_from([
-            "agent-mesh",
+            "agent-square",
             "peers",
             "--mesh",
             "💬AbCdEf1234",
