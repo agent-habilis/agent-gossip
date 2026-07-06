@@ -256,11 +256,7 @@ pub(crate) async fn session(opts: SessionOpts) -> Result<()> {
                 }
             }
             for target in &owned {
-                println!(
-                    "{MESH_GLYPH} {} (pid {})",
-                    display_name(target),
-                    target.pid
-                );
+                println!("{MESH_GLYPH} {} (pid {})", display_name(target), target.pid);
             }
         }
     }

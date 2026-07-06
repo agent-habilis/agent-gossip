@@ -9,7 +9,7 @@
 //! shim over the otherwise-`pub(crate)` internals.
 
 use agent_square::harness::bench::{self as api, BenchConfig, BenchMessage};
-use agent_square::{MessageBody, Nickname, MeshName};
+use agent_square::{MeshName, MessageBody, Nickname};
 use divan::counter::BytesCount;
 use divan::{Bencher, black_box};
 
@@ -23,7 +23,7 @@ const SHORT_NAME: &str = "ab";
 const MAX_NAME: &str = "abcdefghijklmnopqrstuvwxyz012345";
 
 mod crypto {
-    use super::{BenchConfig, Bencher, SEED, MeshName, api, black_box};
+    use super::{BenchConfig, Bencher, MeshName, SEED, api, black_box};
 
     #[divan::bench]
     fn derive_secret() -> [u8; 32] {
@@ -58,7 +58,7 @@ mod crypto {
 }
 
 mod token {
-    use super::{BenchConfig, Bencher, MAX_NAME, SHORT_NAME, MeshName, api, black_box};
+    use super::{BenchConfig, Bencher, MAX_NAME, MeshName, SHORT_NAME, api, black_box};
 
     fn bench_encode(bencher: Bencher<'_, '_>, raw: &str) {
         let name = MeshName::new(raw).unwrap();
@@ -97,7 +97,7 @@ mod token {
 }
 
 mod parsing {
-    use super::{Bencher, MAX_NAME, Nickname, MeshName, api, black_box};
+    use super::{Bencher, MAX_NAME, MeshName, Nickname, api, black_box};
 
     // A valid `💬…` token to exercise the accept path of `MeshId::new`.
     fn valid_token() -> String {

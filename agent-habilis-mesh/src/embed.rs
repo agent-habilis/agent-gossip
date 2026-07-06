@@ -7,7 +7,7 @@ use tokio::task::JoinHandle;
 use crate::daemon::app::NodeDriver;
 use crate::daemon::config::{DriverMode, EventLoopConfig};
 use crate::protocol::mesh::MeshName;
-use crate::protocol::{Message, Nickname, MeshId};
+use crate::protocol::{MeshId, Message, Nickname};
 use crate::util::tuning::EMBED_INBOUND_CAP;
 
 /// Depth of the typed session-request channel the driver drains.

@@ -54,15 +54,15 @@ pub use a2a::surfaced::SurfacedEvent;
 pub use a2a::{TaskId, TaskState};
 pub use agent_habilis_mesh::invite::InviteTicket;
 pub use agent_habilis_mesh::logging::LogSink;
+pub use agent_habilis_mesh::protocol::mesh::{
+    LookupSet, MeshId, MeshIdError, MeshName, NameError, RelayLadder, RelayLadderError,
+    RelaySelection,
+};
 pub use agent_habilis_mesh::protocol::message::{
     BodyError, Channel, IdError, Message, MessageBody, MessageId, MessageKind, PresenceSubtype,
     Shard, ShardGroup,
 };
 pub use agent_habilis_mesh::protocol::nickname::{Nickname, NicknameError};
-pub use agent_habilis_mesh::protocol::mesh::{
-    LookupSet, NameError, RelayLadder, RelayLadderError, RelaySelection, MeshId, MeshIdError,
-    MeshName,
-};
 pub use agent_habilis_mesh::resolver::{JoinTarget, JoinTargetError};
 pub use agent_habilis_mesh::transport::TransportPolicy;
 // Wire/runtime constants the external test + bench crates assert against; the
@@ -71,7 +71,7 @@ pub use agent_habilis_mesh::util::consts::{
     MAX_LOGICAL_BODY_BYTES, MAX_MESSAGE_SIZE, MAX_SHARD_TOTAL, MESH_GLYPH,
 };
 pub use agent_habilis_mesh::util::version::VERSION;
-pub use agent_habilis_mesh::util::{ensure_runtime_base, runtime_base, mesh_prefix};
+pub use agent_habilis_mesh::util::{ensure_runtime_base, mesh_prefix, runtime_base};
 pub use output::{OutputEvent, event_json, surfaced_event_json};
 
 use anyhow::Result;

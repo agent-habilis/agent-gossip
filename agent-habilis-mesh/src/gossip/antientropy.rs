@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use crate::daemon::ctx::HandlerCtx;
 use crate::daemon::message_log::DigestWindow;
 use crate::daemon::state::EventLoopState;
-use crate::protocol::{Channel, Message, MessageBody, Nickname, MeshId};
+use crate::protocol::{Channel, MeshId, Message, MessageBody, Nickname};
 use crate::util::tuning::{ANTIENTROPY_DIGEST_WINDOW_IDS, antientropy_max_resend};
 
 use super::broadcast_msg;
@@ -268,7 +268,7 @@ mod tests {
 
     use super::{ANTIENTROPY_DIGEST_WINDOW_IDS, DigestBody, HeadsBody, WireWindow};
     use crate::daemon::message_log::{DigestWindow, MessageLog};
-    use crate::protocol::{Message, MessageBody, Nickname, MeshId};
+    use crate::protocol::{MeshId, Message, MessageBody, Nickname};
 
     /// A full two-window digest must serialize within the gossip message
     /// cap — the regression guard for the former overflow (200 UUID

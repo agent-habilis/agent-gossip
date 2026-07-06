@@ -26,7 +26,7 @@ use bytes::Bytes;
 use crate::a2a::app::A2aApp;
 use crate::output;
 use agent_habilis_mesh::daemon::state::EventLoopState;
-use agent_habilis_mesh::protocol::{Message, MessageKind, Nickname, MeshId};
+use agent_habilis_mesh::protocol::{MeshId, Message, MessageKind, Nickname};
 use agent_habilis_mesh::util::consts::TASK_CONTENT_CAP;
 use agent_habilis_mesh::util::tuning::{
     task_keepalive_max_secs, task_keepalive_secs, task_timeout_secs,
@@ -459,9 +459,7 @@ pub(crate) async fn tick_task_sweep(
     if let Some(server) = app.blob_server.as_ref() {
         for task_id in &reaped {
             server
-                .evict_task(&agent_habilis_mesh::blob::ContentId::new(
-                    task_id.as_str(),
-                ))
+                .evict_task(&agent_habilis_mesh::blob::ContentId::new(task_id.as_str()))
                 .await;
         }
     }
@@ -628,7 +626,7 @@ mod tests {
     /// ciphertext) is not a valid payload.
     #[test]
     fn own_sealed_artifact_echo_advances_and_renders_without_panic() {
-        use agent_habilis_mesh::protocol::{AppTag, Message, MessageBody, MeshId};
+        use agent_habilis_mesh::protocol::{AppTag, MeshId, Message, MessageBody};
 
         let mut tasks = HashMap::new();
         let now = Instant::now();

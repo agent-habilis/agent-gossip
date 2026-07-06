@@ -11,7 +11,7 @@ use crate::a2a::{TaskId, TaskState};
 use crate::output;
 use agent_habilis_mesh::daemon::state::{EventLoopState, PingRound};
 use agent_habilis_mesh::protocol::mesh::MeshName;
-use agent_habilis_mesh::protocol::{Message, MessageBody, Nickname, MeshId};
+use agent_habilis_mesh::protocol::{MeshId, Message, MessageBody, Nickname};
 use agent_habilis_mesh::transport::ipc::{Addressed, json_ack, json_error, json_ok_msg};
 use agent_habilis_mesh::util::tuning::ping_window_secs;
 
@@ -473,7 +473,7 @@ fn peers_response(state: &EventLoopState) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{IpcCommand, MessageBody, Nickname, MeshId, TaskId, TaskState};
+    use super::{IpcCommand, MeshId, MessageBody, Nickname, TaskId, TaskState};
     use agent_habilis_mesh::transport::ipc::Addressed;
 
     // ── IpcCommand serialization ───────────────────────────────────
@@ -680,7 +680,7 @@ mod tests {
         use proptest::collection::vec as arb_vec;
         use proptest::{prop_assert, prop_assert_eq, proptest, strategy::Strategy};
 
-        use super::{MessageBody, Nickname, MeshId};
+        use super::{MeshId, MessageBody, Nickname};
 
         fn arb_ascii_body() -> impl Strategy<Value = String> {
             arb_vec(0x20u8..0x7Eu8, 0..200).prop_map(|bytes| String::from_utf8(bytes).unwrap())

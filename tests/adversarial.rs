@@ -488,8 +488,8 @@ async fn unsigned_state_merge_is_dropped() {
     let (victim, attacker) = meshed_pair("state-unsigned").await;
     // A well-formed state merge, but UNSIGNED — must be dropped before it can
     // touch the state log (same authenticity gate as chat).
-    let evil = CraftedMsg::state_merge(attacker.session.mesh_id(), "ghost", json!({"evil": true}))
-        .bytes();
+    let evil =
+        CraftedMsg::state_merge(attacker.session.mesh_id(), "ghost", json!({"evil": true})).bytes();
     attacker.session.inject_raw(evil).await.expect("inject");
     // Barrier: a real signed merge from the attacker's own identity.
     attacker.state_merge(json!({"ok": 1})).await;
@@ -570,16 +570,27 @@ async fn out_of_range_shard_headers_never_reach_the_store() {
         .shard(GROUP, 3, 3)
         .sign(&key)
         .bytes();
-    attacker.session.inject_raw(idx_outside).await.expect("inject");
+    attacker
+        .session
+        .inject_raw(idx_outside)
+        .await
+        .expect("inject");
     // total past the header tripwire.
     let absurd_total = CraftedMsg::new(attacker.session.mesh_id(), "ghost", "slice")
         .shard(GROUP, 0, agent_square::MAX_SHARD_TOTAL + 1)
         .sign(&key)
         .bytes();
-    attacker.session.inject_raw(absurd_total).await.expect("inject");
+    attacker
+        .session
+        .inject_raw(absurd_total)
+        .await
+        .expect("inject");
 
     attacker.send("barrier-shard-hdr").await;
-    assert!(victim.wait_body("barrier-shard-hdr", T).await, "barrier lost");
+    assert!(
+        victim.wait_body("barrier-shard-hdr", T).await,
+        "barrier lost"
+    );
     let (groups, bytes, _) = victim
         .session
         .reassembly_stats()

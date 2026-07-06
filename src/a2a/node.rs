@@ -15,8 +15,8 @@ use agent_habilis_mesh::daemon::state::EventLoopState;
 use agent_habilis_mesh::daemon::state_file::StateFile;
 use agent_habilis_mesh::gossip::app::{AppClass, NodeApp};
 use agent_habilis_mesh::lookup::add_peer_addr;
-use agent_habilis_mesh::protocol::message::MessageBody;
 use agent_habilis_mesh::protocol::mesh::MeshName;
+use agent_habilis_mesh::protocol::message::MessageBody;
 use agent_habilis_mesh::protocol::{AppTag, Channel, Message, MessageKind, Nickname};
 
 #[async_trait::async_trait]
@@ -718,7 +718,7 @@ mod classify_tests {
     use super::classify;
     use crate::a2a::wire;
     use agent_habilis_mesh::protocol::{
-        AppTag, Message, MessageBody, MessageId, MessageKind, Nickname, MeshId,
+        AppTag, MeshId, Message, MessageBody, MessageId, MessageKind, Nickname,
     };
 
     fn mesh() -> MeshId {
@@ -758,8 +758,13 @@ mod classify_tests {
     fn status_frame(to: Option<Nickname>) -> Message {
         let sw = mesh();
         let task_id = crate::a2a::TaskId::random();
-        let status =
-            crate::a2a::gossip::status_update(&sw, &task_id, crate::a2a::TaskState::Working, None, None);
+        let status = crate::a2a::gossip::status_update(
+            &sw,
+            &task_id,
+            crate::a2a::TaskState::Working,
+            None,
+            None,
+        );
         let body = crate::a2a::gossip::payload_body(&status).unwrap();
         Message::new_app(
             &sw,

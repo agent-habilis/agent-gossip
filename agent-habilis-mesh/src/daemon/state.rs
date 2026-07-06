@@ -214,7 +214,7 @@ pub struct EventLoopState {
     /// in-process nodes can each run a different policy (the CLI sources it
     /// from the hidden `--no-unicast`/`--no-gossip-directed`/`--no-circuit`
     /// flags, embed from its config). Read by [`crate::unicast::deliver`].
-        /// Circuit routing table: the freshest link-state vector per origin, folded
+    /// Circuit routing table: the freshest link-state vector per origin, folded
     /// into the routing graph on demand. Populated from received `LinkState`
     /// frames; read by the circuit send path (and the topology view). See
     /// [`crate::circuit`].
@@ -580,8 +580,7 @@ impl EventLoopState {
                 self.reassembled_groups.insert(shard.group.clone());
                 Some(*logical)
             }
-            super::reassembly::ShardIngest::Buffered
-            | super::reassembly::ShardIngest::Dropped => {
+            super::reassembly::ShardIngest::Buffered | super::reassembly::ShardIngest::Dropped => {
                 let logical = self.reassemble_from_log(trigger)?;
                 // The store may still hold a partial buffer for this group
                 // (e.g. just the trigger, post-TTL) — release its budget.
@@ -614,7 +613,11 @@ impl EventLoopState {
         // chars), but fail closed rather than surface a malformed body.
         let body = crate::protocol::MessageBody::new(body).ok()?;
         let envelope = slots[0].expect("shard 0 present").clone();
-        Some(super::reassembly::synthesize_from(envelope, body, &shard.group))
+        Some(super::reassembly::synthesize_from(
+            envelope,
+            body,
+            &shard.group,
+        ))
     }
 
     /// Mark the mesh degraded: a fault path (starvation recovery, hard
@@ -766,7 +769,7 @@ mod tests {
         Duration, EndpointId, EventLoopState, Instant, KNOWN_ENDPOINTS_CAP, Message, Nickname,
         QUIET_CAP, RELINK_COOLDOWN_SECS, Reach,
     };
-    use crate::protocol::{MessageBody, MessageId, MeshId};
+    use crate::protocol::{MeshId, MessageBody, MessageId};
 
     fn nick(name: &str) -> Nickname {
         Nickname::new(name.to_owned()).expect("valid test nickname")

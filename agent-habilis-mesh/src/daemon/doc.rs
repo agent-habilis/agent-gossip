@@ -511,7 +511,7 @@ fn put_number(
 mod tests {
     use super::{Ingested, MeshDoc};
     use crate::daemon::state_doc::change_body;
-    use crate::protocol::{Channel, Message, Nickname, MeshId};
+    use crate::protocol::{Channel, MeshId, Message, Nickname};
     use serde_json::{Value, json};
 
     fn nick(name: &str) -> Nickname {

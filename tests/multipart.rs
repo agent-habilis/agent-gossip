@@ -176,7 +176,6 @@ async fn body_past_the_input_ceiling_is_refused() {
     alice.leave().await;
 }
 
-
 /// large, shards like any content leg — the initiator reassembles it once.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn multishard_task_artifact_reassembles_into_one() {

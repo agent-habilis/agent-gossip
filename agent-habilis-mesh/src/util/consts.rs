@@ -86,8 +86,7 @@ pub const MAX_LOGICAL_BODY_BYTES: usize = 64 * 1024 * 1024; // 64 MiB
 /// sealed body against the raw input ceiling would silently shrink the
 /// documented limit to ~46 `MiB` for directed sends only; 1.5× headroom keeps
 /// the caller-facing ceiling uniform at [`MAX_LOGICAL_BODY_BYTES`].
-pub const MAX_SEALED_BODY_BYTES: usize =
-    MAX_LOGICAL_BODY_BYTES + MAX_LOGICAL_BODY_BYTES / 2;
+pub const MAX_SEALED_BODY_BYTES: usize = MAX_LOGICAL_BODY_BYTES + MAX_LOGICAL_BODY_BYTES / 2;
 
 // ── Shard reassembly budgets ──────────────────────────────────────
 //
@@ -99,37 +98,16 @@ pub const MAX_SEALED_BODY_BYTES: usize =
 
 /// Ceiling for one partial group's buffered bytes — a sealed max-size body
 /// fits; anything claiming more is a crafted stream and the group is dropped.
-#[cfg_attr(
-    not(feature = "adversarial"),
-    expect(
-        unreachable_pub,
-        reason = "re-exported by the feature-gated adversarial harness only"
-    )
-)]
 pub const REASSEMBLY_GROUP_MAX_BYTES: usize = 2 * MAX_LOGICAL_BODY_BYTES;
 
 /// Per-author (pubkey) budget across that author's partial groups. A hostile
 /// peer exhausts only its own budget; breaching it evicts that author's
 /// stalest incomplete group rather than anyone else's.
-#[cfg_attr(
-    not(feature = "adversarial"),
-    expect(
-        unreachable_pub,
-        reason = "re-exported by the feature-gated adversarial harness only"
-    )
-)]
 pub const REASSEMBLY_AUTHOR_BUDGET_BYTES: usize = 3 * MAX_LOGICAL_BODY_BYTES;
 
 /// Global backstop across all authors — pubkeys are free (Sybil), so the
 /// per-author budget alone is not a bound. Breaching it drops the incoming
 /// shard's group (fail closed, never balloon).
-#[cfg_attr(
-    not(feature = "adversarial"),
-    expect(
-        unreachable_pub,
-        reason = "re-exported by the feature-gated adversarial harness only"
-    )
-)]
 pub const REASSEMBLY_TOTAL_BUDGET_BYTES: usize = 6 * MAX_LOGICAL_BODY_BYTES;
 
 /// A partial group that gained no **new** shard for this long is reaped

@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::util::logs::log_file_path;
 
-use crate::protocol::{Nickname, MeshId};
+use crate::protocol::{MeshId, Nickname};
 
 /// Pending-buffer ceiling. `create`/`join` attach within sub-second (a
 /// few KB); a long non-attaching process (`mcp`) hits this and flips

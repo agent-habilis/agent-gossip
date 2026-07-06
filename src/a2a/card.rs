@@ -2,7 +2,7 @@ use iroh::{Endpoint, EndpointAddr, EndpointId};
 
 use agent_habilis_mesh::protocol::nickname::Nickname;
 
-use agent_habilis_mesh::util::consts::{PEER_GLYPH, MESH_URI_SEPARATOR};
+use agent_habilis_mesh::util::consts::{MESH_URI_SEPARATOR, PEER_GLYPH};
 
 use super::{
     AgentCapabilities, AgentCard, AgentExtension, AgentInterface, AgentSkill, EXT_MESH_A2A_RPC,

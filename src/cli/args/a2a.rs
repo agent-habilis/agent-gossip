@@ -10,7 +10,7 @@ use super::lookup::PublicLookupArgs;
 use super::output::OutputFormat;
 use crate::cli::password::PasswordFlag;
 use agent_habilis_mesh::protocol::mesh::MeshName;
-use agent_habilis_mesh::protocol::{Nickname, MeshId};
+use agent_habilis_mesh::protocol::{MeshId, Nickname};
 
 #[derive(Parser, Debug)]
 pub(crate) struct A2aOpts {

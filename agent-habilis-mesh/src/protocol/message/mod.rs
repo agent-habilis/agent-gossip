@@ -16,8 +16,8 @@ use serde::{Deserialize, Serialize};
 use crate::util::clock;
 
 use super::identity::{self, Identity};
-use super::nickname::Nickname;
 use super::mesh::MeshId;
+use super::nickname::Nickname;
 
 mod body;
 mod id;
@@ -25,8 +25,8 @@ mod shard;
 
 pub use body::{BodyError, MessageBody};
 pub use id::{IdError, MessageId};
-pub use shard::{Shard, ShardGroup};
 pub(crate) use shard::shard_fits_log;
+pub use shard::{Shard, ShardGroup};
 
 /// Maximum serialized message size — a network-wide wire contract kept
 /// under iroh-gossip's payload budget so a message we accept always fits
@@ -954,7 +954,7 @@ impl Message {
 #[cfg(test)]
 mod tests {
     use super::{
-        AppTag, ChainCtx, Message, MessageBody, MessageKind, Nickname, PresenceSubtype, MeshId,
+        AppTag, ChainCtx, MeshId, Message, MessageBody, MessageKind, Nickname, PresenceSubtype,
         build_msg_bytes,
     };
 

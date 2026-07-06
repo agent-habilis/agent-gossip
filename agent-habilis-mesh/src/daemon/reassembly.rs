@@ -253,9 +253,9 @@ impl ReassemblyStore {
                 continue;
             }
             let idle = now.duration_since(group.last_seen).as_secs();
-            let asked_recently = group.last_repair.is_some_and(|at| {
-                now.duration_since(at).as_secs() < REASSEMBLY_REPAIR_IDLE_SECS
-            });
+            let asked_recently = group
+                .last_repair
+                .is_some_and(|at| now.duration_since(at).as_secs() < REASSEMBLY_REPAIR_IDLE_SECS);
             if idle < REASSEMBLY_REPAIR_IDLE_SECS || asked_recently {
                 continue;
             }
@@ -365,8 +365,7 @@ pub(crate) fn synthesize_from(
     body: MessageBody,
     group_id: &ShardGroup,
 ) -> Message {
-    envelope.id =
-        MessageId::new(group_id.as_str()).expect("a shard group is a valid message id");
+    envelope.id = MessageId::new(group_id.as_str()).expect("a shard group is a valid message id");
     envelope.body = body;
     envelope.shard = None;
     envelope.seq = None;
@@ -380,7 +379,7 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use super::{ReassemblyStore, ShardIngest};
-    use crate::protocol::{Message, MessageBody, Nickname, Shard, ShardGroup, MeshId};
+    use crate::protocol::{MeshId, Message, MessageBody, Nickname, Shard, ShardGroup};
     use crate::util::consts::{
         REASSEMBLY_AUTHOR_BUDGET_BYTES, REASSEMBLY_GROUP_MAX_BYTES, REASSEMBLY_STALE_SECS,
         REASSEMBLY_TOTAL_BUDGET_BYTES,
@@ -425,20 +424,30 @@ mod tests {
         let now = Instant::now();
         let mut store = ReassemblyStore::default();
         assert!(matches!(
-            ingest(&mut store, &shard_msg("alice-0", "alice", &group_a(), 0, 2), now),
+            ingest(
+                &mut store,
+                &shard_msg("alice-0", "alice", &group_a(), 0, 2),
+                now
+            ),
             ShardIngest::Buffered
         ));
         assert!(
             matches!(
-                ingest(&mut store, &shard_msg("mallory-1", "mallory", &group_a(), 1, 2), now),
+                ingest(
+                    &mut store,
+                    &shard_msg("mallory-1", "mallory", &group_a(), 1, 2),
+                    now
+                ),
                 ShardIngest::Buffered
             ),
             "mallory's same-group shard forms a separate set, never completes alice's"
         );
         // Alice's own second shard completes with alice's bodies only.
-        let ShardIngest::Complete(logical) =
-            ingest(&mut store, &shard_msg("alice-1", "alice", &group_a(), 1, 2), now)
-        else {
+        let ShardIngest::Complete(logical) = ingest(
+            &mut store,
+            &shard_msg("alice-1", "alice", &group_a(), 1, 2),
+            now,
+        ) else {
             panic!("alice's set completes");
         };
         assert_eq!(logical.body.as_str(), "alice-0alice-1");
@@ -455,11 +464,7 @@ mod tests {
         else {
             panic!("third shard completes the group");
         };
-        assert_eq!(
-            logical.body.as_str(),
-            "abc",
-            "slotted by idx, not arrival"
-        );
+        assert_eq!(logical.body.as_str(), "abc", "slotted by idx, not arrival");
         assert_eq!(logical.id.as_str(), group_a().as_str(), "id is the group");
         assert!(logical.shard.is_none(), "the view carries no shard header");
     }
@@ -621,7 +626,11 @@ mod tests {
         let mut at = start;
         let mut idx = 0u32;
         while at.duration_since(start).as_secs() < REASSEMBLY_MAX_GROUP_LIFETIME_SECS {
-            ingest(&mut store, &shard_msg("x", "a", &group_a(), idx % total, total), at);
+            ingest(
+                &mut store,
+                &shard_msg("x", "a", &group_a(), idx % total, total),
+                at,
+            );
             idx += 1;
             at += Duration::from_secs(REASSEMBLY_STALE_SECS - 1);
         }

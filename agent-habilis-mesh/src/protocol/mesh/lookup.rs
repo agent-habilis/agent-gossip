@@ -232,7 +232,8 @@ impl MeshConfig {
     /// the topic derivation mixes in, so it must be deterministic — the
     /// feature byte is emitted only when nonzero (a passwordless config
     /// stays byte-for-byte what it was before features existed).
-    pub(crate) fn to_bytes(&self) -> Vec<u8> {
+    #[must_use]
+    pub fn to_bytes(&self) -> Vec<u8> {
         let mut buf = Vec::with_capacity(2);
         self.lookups.encode_into(&mut buf);
         let mut features = 0u8;
@@ -258,7 +259,10 @@ impl MeshConfig {
 
     /// Decode a config region, requiring it to consume `bytes` exactly
     /// (no trailing slack within the length-delimited region we were given).
-    pub(crate) fn from_bytes(bytes: &[u8]) -> Result<Self> {
+    ///
+    /// # Errors
+    /// The bytes are malformed or do not decode to a valid config region.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
         let mut pos = 0;
         let lookups = LookupOpts::decode_from(bytes, &mut pos)?;
         let (password, issuer_pubkey) = if pos == bytes.len() {
@@ -571,7 +575,7 @@ impl fmt::Display for RelayLadder {
 #[cfg(test)]
 mod lookup_tests {
     use super::{
-        LookupOpts, LookupSet, RelayChoice, RelayLadder, RelaySelection, MeshConfig,
+        LookupOpts, LookupSet, MeshConfig, RelayChoice, RelayLadder, RelaySelection,
         resolve_lookups,
     };
 

@@ -13,7 +13,7 @@ use crate::embed::{
 };
 use agent_habilis_mesh::daemon::state::RosterSnapshot;
 use agent_habilis_mesh::protocol::mesh::MeshName;
-use agent_habilis_mesh::protocol::{Message, MessageBody, MessageId, Nickname, MeshId};
+use agent_habilis_mesh::protocol::{MeshId, Message, MessageBody, MessageId, Nickname};
 
 /// One active mesh for the MCP server: the shared [`InProcessSession`]
 /// core (poll-only, silent) plus the per-session implicit `after` cursor.
@@ -233,7 +233,7 @@ mod tests {
 
     use serde_json::json;
 
-    use super::{Message, MessageBody, MessageId, Nickname, Session, MeshId, MeshName};
+    use super::{MeshId, MeshName, Message, MessageBody, MessageId, Nickname, Session};
     use crate::embed::{CreateConfig, JoinConfig};
     use agent_habilis_mesh::protocol::{MessageKind, PresenceSubtype};
     use agent_habilis_mesh::resolver::JoinTarget;

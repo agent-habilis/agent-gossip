@@ -29,11 +29,11 @@ mod name;
 
 pub use id::{MeshId, MeshIdError};
 pub use lookup::{
-    AdvertiseRequiresReachable, DEFAULT_DIRECTORY, DirectorySelection, LookupOpts, RelayChoice,
-    MeshConfig, resolve_lookups, validate_advertise,
+    AdvertiseRequiresReachable, DEFAULT_DIRECTORY, DirectorySelection, LookupOpts, MeshConfig,
+    RelayChoice, resolve_lookups, validate_advertise,
 };
 pub use lookup::{LookupSet, RelayLadder, RelayLadderError, RelaySelection};
-pub use name::{NameError, MeshName};
+pub use name::{MeshName, NameError};
 
 const PREFIX: &str = crate::util::consts::MESH_GLYPH;
 
@@ -440,7 +440,7 @@ impl FromStr for Mesh {
 
 #[cfg(test)]
 mod mesh_tests {
-    use super::{LookupOpts, RelayChoice, SEED_LEN, Mesh, MeshConfig, MeshName};
+    use super::{LookupOpts, Mesh, MeshConfig, MeshName, RelayChoice, SEED_LEN};
 
     fn dummy_seed() -> [u8; SEED_LEN] {
         [7u8; SEED_LEN]
@@ -594,8 +594,7 @@ mod mesh_tests {
             mesh.to_string(),
             "💬://2UXAThUkdBAbiJNXvCt4YeMGQ9myFg7gJJZSr3pG3MAGzUwWmmV7D2NgrWBn1"
         );
-        let topic =
-            super::crypto::derive_topic_id(mesh.seed(), &mesh.name, &mesh.config_bytes());
+        let topic = super::crypto::derive_topic_id(mesh.seed(), &mesh.name, &mesh.config_bytes());
         assert_eq!(
             format!("{topic:?}"),
             "TopicId(8c401ccceab4524e1ffaf13bc989172c97e81197bcd0e8c2a2ce8411fb4dddd1)"
@@ -705,7 +704,7 @@ mod mesh_tests {
             strategy::Strategy,
         };
 
-        use super::{SEED_LEN, Mesh, MeshConfig, MeshName};
+        use super::{Mesh, MeshConfig, MeshName, SEED_LEN};
 
         fn arb_seed() -> impl Strategy<Value = [u8; SEED_LEN]> {
             uniform32(0u8..)

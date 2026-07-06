@@ -9,7 +9,7 @@ use bytes::Bytes;
 
 use crate::daemon::state::EventLoopState;
 use crate::gossip::event::{NodeEvent, NodeSink};
-use crate::protocol::{Message, Nickname, MeshId};
+use crate::protocol::{MeshId, Message, Nickname};
 use crate::util::tuning::{ALIVE_INTERVAL_SECS, alive_timeout_secs};
 
 /// Emit an `Alive` keepalive if we haven't broadcast anything

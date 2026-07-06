@@ -331,8 +331,8 @@ pub fn task_text(frame: &Frame) -> String {
 mod tests {
     use super::{Frame, chat_message, chat_payload, display_text, payload_body};
     use agent_habilis_mesh::protocol::MessageKind;
-    use agent_habilis_mesh::protocol::message::MessageId;
     use agent_habilis_mesh::protocol::mesh::MeshId;
+    use agent_habilis_mesh::protocol::message::MessageId;
 
     fn mesh() -> MeshId {
         MeshId::from("💬test")
