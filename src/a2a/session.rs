@@ -102,4 +102,20 @@ pub(crate) enum SessionRequest {
     /// without needing to kill the gossip actor from outside.
     #[cfg(feature = "adversarial")]
     SeverGossip,
+    /// Inject a synthetic link-state vector so a circuit route can converge in
+    /// a test (a live rendezvous-bootstrapped mesh never converges usable
+    /// circuit edges). Adversarial-suite / testkit only.
+    #[cfg(feature = "adversarial")]
+    InjectLinkVector {
+        origin: iroh::EndpointId,
+        seq: u64,
+        seal_key: [u8; 32],
+        links: Vec<(iroh::EndpointId, u32)>,
+    },
+    /// Snapshot the reassembly store's accounting
+    /// `(groups, total_bytes, max_author_bytes)`. Adversarial-suite only.
+    #[cfg(feature = "adversarial")]
+    ReassemblyStats {
+        resp: oneshot::Sender<(usize, usize, usize)>,
+    },
 }

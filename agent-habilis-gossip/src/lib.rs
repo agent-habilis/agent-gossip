@@ -12,6 +12,10 @@ pub mod daemon;
 pub mod directory;
 pub mod embed;
 pub mod gossip;
+// Creator-minted invites to an invite-only swarm. Engine-level: the redeem +
+// decode primitives back `resolver::JoinTarget::Invite`, and `mint` is `pub`
+// for the application layer's `invite` command.
+pub mod invite;
 pub mod lifecycle;
 pub mod logging;
 pub mod lookup;

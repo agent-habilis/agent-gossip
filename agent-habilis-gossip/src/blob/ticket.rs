@@ -1,16 +1,17 @@
-//! The blob ticket — a `💬` token carrying everything a consumer needs to fetch
+//! The blob ticket — a `🎟️` token carrying everything a consumer needs to fetch
 //! one content-addressed blob from its producer: the bearer secret, the content
 //! hash + size, the swarm's discovery config, and the producer's blob-endpoint
 //! address. Payload layout: `secret(32) ‖ flags(1) ‖ sha256(32) ‖ size(8, LE) ‖
 //! lookups ‖ address-json` (lookups is self-delimiting, so the address occupies
 //! the remainder). Bit 0 of the flags byte marks a password-protected ticket.
 //!
-//! Wire: the shared `💬` brand + Base58Check(`version ‖ kind ‖ payload`) with a
-//! `SHA256d` checksum — the emoji is the brand, the remainder ASCII Base58. The
-//! `💬` glyph is shared with the swarm id and the a2a bridge ticket, so it no
-//! longer disambiguates on its own: the `kind` byte marks this as a *blob*
-//! ticket and makes a wrong-kind token (e.g. an a2a ticket) fail cleanly on
-//! decode. Mirrors the a2a bridge ticket.
+//! Wire: the `🎟️` ticket brand + Base58Check(`version ‖ kind ‖ payload`) with a
+//! `SHA256d` checksum — the emoji is the brand, the remainder after `://` ASCII
+//! Base58. The `🎟️` glyph is distinct from the swarm id's `💬`, so a swarm id
+//! fails ticket decode on the prefix alone. The brand *is* shared with the a2a
+//! bridge ticket, so the `kind` byte marks this as a *blob* ticket and makes a
+//! wrong-kind token (an a2a ticket) fail cleanly on decode. Mirrors the a2a
+//! bridge ticket.
 
 use anyhow::{Context, Result, bail};
 use iroh::EndpointAddr;
@@ -18,14 +19,14 @@ use sha2::{Digest, Sha256};
 
 use crate::protocol::peer_addr::{endpoint_addr_from_json, endpoint_addr_to_json};
 use crate::protocol::swarm::LookupOpts;
-use crate::util::consts::SWARM_GLYPH;
+use crate::util::consts::{SWARM_URI_SEPARATOR, TICKET_GLYPH};
 
 use super::{HASH_LEN, SECRET_LEN};
 
-/// Branding prefix on every ticket — the shared swarm glyph (4 UTF-8 bytes); the
-/// remainder of the string is ASCII Base58Check. Blob and a2a tickets share this
-/// brand and are told apart by [`KIND`].
-pub(crate) const PREFIX: &str = SWARM_GLYPH;
+/// Branding prefix on every ticket — the `🎟️` ticket glyph; the remainder of the
+/// string is ASCII Base58Check. Blob and a2a tickets share this brand and are
+/// told apart by [`KIND`]; the swarm id's `💬` is a different glyph entirely.
+pub(crate) const PREFIX: &str = TICKET_GLYPH;
 
 /// Framing version. Bumped only on a breaking framing change; an unknown
 /// version is rejected on decode.
@@ -33,7 +34,7 @@ const VERSION: u8 = 1;
 
 /// Ticket-kind discriminant, framed after [`VERSION`]. Distinct from the a2a
 /// bridge ticket's kind so a token of the wrong kind is rejected on decode now
-/// that both share the `💬` brand.
+/// that both share the `🎟️` brand.
 const KIND: u8 = 1;
 
 /// Bit 0 of the flags byte: the password flag.
@@ -54,7 +55,7 @@ pub struct BlobTicket {
 }
 
 impl BlobTicket {
-    /// Encode as a `💬` blob token.
+    /// Encode as a `🎟️` blob token.
     #[must_use]
     /// # Panics
     /// Panics if an internal invariant is violated.
@@ -72,7 +73,7 @@ impl BlobTicket {
         framed.push(VERSION);
         framed.push(KIND);
         framed.extend_from_slice(&payload);
-        format!("{PREFIX}{}", base58check_encode(&framed))
+        format!("{PREFIX}{SWARM_URI_SEPARATOR}{}", base58check_encode(&framed))
     }
 
     /// The blob's content hash as lowercase hex — the content-addressed name to
@@ -88,15 +89,13 @@ impl BlobTicket {
         out
     }
 
-    /// Decode a `💬` blob ticket.
+    /// Decode a `🎟️` blob ticket.
     ///
     /// # Errors
-    /// Not a `💬` token, the wrong ticket kind, a bad checksum/version, or a
+    /// Not a `🎟️` token, the wrong ticket kind, a bad checksum/version, or a
     /// malformed payload.
     pub fn decode(ticket: &str) -> Result<Self> {
-        let body = ticket
-            .trim()
-            .strip_prefix(PREFIX)
+        let body = strip_ticket_prefix(ticket.trim())
             .with_context(|| format!("not a blob ticket: must start with {PREFIX}"))?;
         let framed = base58check_decode(body)?;
         let version = *framed.first().context("ticket too short")?;
@@ -141,6 +140,17 @@ fn take_array<const N: usize>(bytes: &[u8], pos: &mut usize) -> Option<[u8; N]> 
     out.copy_from_slice(slice);
     *pos += N;
     Some(out)
+}
+
+/// Strip the ticket brand and optional `://` off a token, returning the
+/// Base58Check body. Accepts the canonical `🎟️://` and, defensively, a paste
+/// that dropped the VS-16 (`🎟://`) or the separator. Mirrors the a2a bridge
+/// ticket. `None` if the token doesn't carry the ticket glyph.
+fn strip_ticket_prefix(token: &str) -> Option<&str> {
+    let base = TICKET_GLYPH.strip_suffix('\u{FE0F}').unwrap_or(TICKET_GLYPH);
+    let rest = token.strip_prefix(base)?;
+    let rest = rest.strip_prefix('\u{FE0F}').unwrap_or(rest);
+    Some(rest.strip_prefix(SWARM_URI_SEPARATOR).unwrap_or(rest))
 }
 
 fn checksum(bytes: &[u8]) -> [u8; 4] {
@@ -215,6 +225,16 @@ mod tests {
     }
 
     #[test]
+    fn decode_tolerates_missing_variation_selector() {
+        // A paste may drop the VS-16 that follows the base `🎟` glyph; the
+        // VS-stripped form must still decode.
+        let encoded = sample(false).encode();
+        let bare = encoded.replacen('\u{FE0F}', "", 1);
+        assert_ne!(bare, encoded, "encode should emit the VS-16");
+        assert!(BlobTicket::decode(&bare).is_ok());
+    }
+
+    #[test]
     fn sha256_hex_is_the_lowercase_content_hash() {
         // The receiver lands the fetched bytes under this name, so it must equal
         // the producer's spool filename (lowercase hex of the SHA-256).
@@ -224,8 +244,8 @@ mod tests {
 
     #[test]
     fn rejects_a_swarm_token() {
-        // A swarm id shares the `💬` brand but its `://` body is not Base58Check,
-        // so it fails to decode as a blob ticket.
+        // A swarm id carries the `💬` glyph, not the ticket's `🎟️`, so it fails
+        // to decode as a blob ticket on the prefix alone.
         let swarm = crate::protocol::swarm::Swarm::new(
             [1u8; 32],
             crate::protocol::swarm::SwarmName::new("t").unwrap(),

@@ -465,6 +465,7 @@ impl AgentSwarmServer {
             directory,
             max_peers: GOSSIP_ACTIVE_VIEW_CAPACITY,
             password: args.password,
+            transport: agent_habilis_gossip::transport::TransportPolicy::default(),
             // The MCP server is a poll-only consumer; the spool is a CLI-daemon
             // feature, so it never mirrors to a shared directory.
             spool: None,
@@ -506,6 +507,7 @@ impl AgentSwarmServer {
             nickname,
             max_peers: GOSSIP_ACTIVE_VIEW_CAPACITY,
             password: args.password,
+            transport: agent_habilis_gossip::transport::TransportPolicy::default(),
             spool: None,
         })
         .await

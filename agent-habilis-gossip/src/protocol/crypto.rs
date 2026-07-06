@@ -193,6 +193,19 @@ pub(crate) fn stretch_swarm_password(password: &Password, seed: &[u8; 32]) -> [u
     stretch_password(password, seed, b"password")
 }
 
+/// The 32-byte key that wraps an invite ticket's root secret when the swarm's
+/// creator minted it with a password. Argon2id-stretched from the password,
+/// salted by the swarm's public identity salt (the wire seed of an invite-only
+/// swarm — public, in the hash, so both minter and redeemer derive the same key
+/// without already holding the root). Domain-separated from the swarm-password
+/// and ticket labels so no stretch is shared. The wrapped root is
+/// `seal_symmetric`ed under this key, so a redeemer without the password can't
+/// recover it — bullet: a leaked invite still needs the password.
+#[must_use]
+pub(crate) fn invite_wrap_key(password: &Password, salt: &[u8; 32]) -> [u8; 32] {
+    stretch_password(password, salt, b"invite-ticket")
+}
+
 /// Length of the password verifier carried in a passworded swarm hash.
 /// 16 bytes: only guess-checking matters (collisions are irrelevant), and
 /// every extra byte grows the shared `💬…` string.

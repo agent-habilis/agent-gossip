@@ -493,7 +493,7 @@ COMMANDS
               /peers/<nick>/card on join (A2A v1.0: supportedInterfaces each
               with a protocolVersion, capabilities, declared extensions,
               skills, and the member's Ed25519 identity carried in the gossip
-              interface url, swarm+gossip://<pubkey>). Defaults to your own card;
+              interface url, 🤖://<pubkey>). Defaults to your own card;
               --peer reads another member's. Raw JSON on stdout; exits
               non-zero when no card is published (yet) for the subject.
 
@@ -1405,12 +1405,14 @@ MESSAGE BODIES
        A body larger than a single gossip message is split across several
        messages by the daemon and reassembled by each receiver, so a long
        body (a detailed task spec, say) sends and arrives as one logical
-       message — no manual chunking. The same applies to a task leg's
-       body. A body is split into at most 16 parts — roughly 50 KB of plain
-       text (less for content that expands when JSON-escaped, e.g. many
-       quotes or backslashes); a larger body is rejected on send with a
-       "too large" error. A very large handoff is better modeled as shared
-       state than a single body.
+       message — no manual chunking. The same applies to a task leg's body
+       and to a directed a2a call and its response. Bodies up to 64 MiB are
+       accepted; past that the send is rejected with a "too large" error —
+       ship files over the blob channel (a2a artifact --file) instead of a
+       message body. Small split bodies heal through anti-entropy like any
+       message; large ones (past ~60 KB) heal through shard repair — a
+       receiver that lost a part asks the sender to re-send it, so the
+       sender must still be present for a large body to recover from loss.
 
 MCP SERVER
        agent-gossip mcp speaks JSON-RPC over stdio and manages one active swarm per

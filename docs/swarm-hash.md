@@ -54,18 +54,25 @@ peers. `join` is therefore *just the hash*.
 [2] config_len
   [1] lookup-flags
   [if custom relay] [1] url_count ( [2] len [url] )*
-  [if password] [1] feature-flags [16] password verifier
+  [if password or invite-only] [1] feature-flags
+    [if password]     [16] password verifier
+    [if invite-only]  [32] issuer pubkey
 ```
 
 The `lookup-flags` byte: bit0 `mdns`, bit1 `dht`, bit2 `relay-enabled`, bit3
 `relay-custom` (a custom ladder follows). The `feature-flags` byte (bit0
-`password`) is **appended**, never a spare lookup-flags bit: decoders ignore
-unknown lookup-flag bits but hard-error on trailing config bytes, so an old
-binary handed a passworded id fails its decode with a crisp error instead of
-silently deriving a different topic and sitting in an empty swarm. A
-passwordless config encodes byte-for-byte as before the feature byte existed
-(the config bytes feed the topic derivation, so the encoding is canonical: a
-zero feature byte is rejected). Base58Check-encoded with a 4-byte SHA256d
+`password`, bit1 `invite-only`) is **appended**, never a spare lookup-flags bit:
+decoders ignore unknown lookup-flag bits but hard-error on trailing config
+bytes, so an old binary handed a featured id fails its decode with a crisp error
+instead of silently deriving a different topic and sitting in an empty swarm.
+One feature byte gates both; their fields follow in a fixed order (password
+verifier, then issuer pubkey). For an **invite-only** swarm the `seed` slot is a
+public identity salt, not the derivation secret — that secret (the invite root)
+lives only in creator-minted `🎟️` invites, and the id carries the Ed25519
+**issuer pubkey** so a redeemer can verify each invite's signature. A featureless
+config encodes byte-for-byte as before the feature byte existed (the config
+bytes feed the topic derivation, so the encoding is canonical: a zero feature
+byte is rejected). Base58Check-encoded with a 4-byte SHA256d
 checksum, and rendered as **`💬://<base58>`** — the `💬` sigil, a `://`
 separator, then the payload. The version byte is reserved for future format
 evolution; an unknown version is rejected. (Derivations — topic, rendezvous

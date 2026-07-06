@@ -50,7 +50,7 @@ pub(crate) fn self_vector(
 /// One peer's advertised view of its **own** outbound links — the gossiped
 /// payload. `seq` orders successive vectors from the same `origin`.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub(crate) struct LinkVector {
+pub struct LinkVector {
     pub(crate) origin: EndpointId,
     pub(crate) seq: u64,
     /// The origin's X25519 public key — so an initiator can onion-seal a circuit
@@ -74,6 +74,30 @@ impl LinkVector {
     /// Fails on malformed JSON or a shape mismatch.
     pub(crate) fn from_json(raw: &str) -> serde_json::Result<Self> {
         serde_json::from_str(raw)
+    }
+
+    /// Build a vector from raw `(neighbour, cost)` links — the injection point
+    /// for the testkit `SwarmSession::inject_link_vector`, which stands up a
+    /// synthetic circuit topology over a live mesh (live convergence forms no
+    /// usable edges in a rendezvous-bootstrapped swarm). Keeps [`LinkMetric`]
+    /// crate-internal.
+    #[cfg(feature = "adversarial")]
+    #[must_use]
+    pub fn from_raw(
+        origin: EndpointId,
+        seq: u64,
+        seal_key: [u8; 32],
+        links: Vec<(EndpointId, u32)>,
+    ) -> Self {
+        Self {
+            origin,
+            seq,
+            seal_key,
+            links: links
+                .into_iter()
+                .map(|(id, cost)| (id, LinkMetric(cost)))
+                .collect(),
+        }
     }
 }
 
@@ -104,7 +128,7 @@ impl LinkStateStore {
     /// Ingest a received vector, keeping it only if it is newer (`seq`) than what
     /// we already hold for that origin. Returns whether the store changed, so the
     /// caller knows when to rebuild the graph.
-    pub(crate) fn ingest(&mut self, vector: LinkVector) -> bool {
+    pub fn ingest(&mut self, vector: LinkVector) -> bool {
         match self.vectors.get(&vector.origin) {
             Some(existing) if existing.seq >= vector.seq => false,
             _ => {
@@ -154,6 +178,7 @@ impl LinkStateStore {
     /// point of view — the metric-labelled edges assembled from every held
     /// link-vector, plus which node is "us". Backs the `topology` IPC query and
     /// the `/swarm:topology` render.
+    #[must_use]
     pub fn topology(&self, self_id: EndpointId) -> Topology {
         let edges = self
             .vectors

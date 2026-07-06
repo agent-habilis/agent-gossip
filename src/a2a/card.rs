@@ -2,19 +2,21 @@ use iroh::{Endpoint, EndpointAddr, EndpointId};
 
 use agent_habilis_gossip::protocol::nickname::Nickname;
 
+use agent_habilis_gossip::util::consts::{PEER_GLYPH, SWARM_URI_SEPARATOR};
+
 use super::{
     AgentCapabilities, AgentCard, AgentExtension, AgentInterface, AgentSkill, EXT_SWARM_A2A_RPC,
     EXT_SWARM_BLOB, EXT_SWARM_BROADCAST, EXT_SWARM_SEAL, EXT_SWARM_STATE, GOSSIP_BINDING,
     PROTOCOL_VERSION,
 };
 
-/// The `swarm+gossip://` URL scheme that carries a member's Ed25519 identity in
-/// its `AgentInterface`. A2A v1.0 requires every card to declare ≥1 reachable
-/// interface with a `url`; a mesh peer has no HTTP endpoint, so its gossip
-/// interface is addressed by public key.
+/// The `🤖://<pubkey>` peer-address scheme that carries a member's Ed25519
+/// identity in its `AgentInterface`. A2A v1.0 requires every card to declare
+/// ≥1 reachable interface with a `url`; a mesh peer has no HTTP endpoint, so
+/// its gossip interface is addressed by public key.
 #[must_use]
-pub(crate) fn gossip_url(pubkey_hex: &str) -> String {
-    format!("swarm+gossip://{pubkey_hex}")
+pub(crate) fn peer_url(pubkey_hex: &str) -> String {
+    format!("{PEER_GLYPH}{SWARM_URI_SEPARATOR}{pubkey_hex}")
 }
 
 /// This participant's `AgentCard` — the canonical A2A self-description every
@@ -25,7 +27,7 @@ pub(crate) fn gossip_url(pubkey_hex: &str) -> String {
 /// extra `JSONRPC` interface).
 ///
 /// The identity is the Ed25519 **public key**, carried in the gossip
-/// `AgentInterface.url` (`swarm+gossip://<pubkey>`), not the display nickname;
+/// `AgentInterface.url` (`🤖://<pubkey>`), not the display nickname;
 /// `capabilities.extensions` declares the swarm's protocol extensions so a
 /// strict A2A client can gate on them. Agent-side facts the daemon cannot know
 /// (model, harness, host, extra skills) are merged by the agent as sibling keys
@@ -46,7 +48,7 @@ pub(crate) fn own_card(nickname: &Nickname, pubkey_hex: &str, seal_pubkey_b58: &
              swarm's A2A gossip binding"
         ),
         supported_interfaces: vec![AgentInterface {
-            url: gossip_url(pubkey_hex),
+            url: peer_url(pubkey_hex),
             protocol_binding: GOSSIP_BINDING.to_string(),
             tenant: None,
             protocol_version: PROTOCOL_VERSION.to_string(),
@@ -221,7 +223,7 @@ mod tests {
         assert_eq!(card.supported_interfaces.len(), 1);
         assert_eq!(
             card.supported_interfaces[0].url,
-            format!("swarm+gossip://{}", "ab".repeat(32)),
+            format!("🤖://{}", "ab".repeat(32)),
         );
     }
 

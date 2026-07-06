@@ -2,16 +2,34 @@
 //! wire cap ([`MAX_MESSAGE_SIZE`](crate::util::consts::MAX_MESSAGE_SIZE)) is
 //! split by the sender into several ordinary signed messages, each carrying a
 //! [`Shard`] header. The receiver reassembles them; the split is invisible to
-//! agents on both ends. Each shard is a real message (own id/seq/signature) and
-//! lives in the message log like any other, so anti-entropy heals a missing
-//! shard exactly as it heals a missing message.
+//! agents on both ends. Each shard is a real message (own id/seq/signature);
+//! shards of a small group (`total <=`
+//! [`LOGGED_SHARD_GROUP_MAX_TOTAL`](crate::util::consts::LOGGED_SHARD_GROUP_MAX_TOTAL))
+//! also live in the message log, so anti-entropy heals them exactly as it
+//! heals a missing message; a bigger group skips the log on both ends (one
+//! huge body must not evict the swarm's anti-entropy history) and heals via
+//! **shard repair** — the sender caches its outbound frames
+//! (`daemon::reassembly::ShardCache`) and a stalled receiver asks for the
+//! missing indexes over the `shard/repair` gossip RPC.
 
 use std::fmt;
 
 use serde::{Deserialize, Deserializer, Serialize};
 use uuid::Uuid;
 
-use crate::util::consts::MAX_MESSAGE_SHARDS;
+use crate::util::consts::MAX_SHARD_TOTAL;
+
+/// Whether a frame belongs in the message log as far as sharding is
+/// concerned: unsharded frames and shards of a small group do; a big group's
+/// shards stay out on **both** ends. The gate must be two-sided — a sender
+/// that logs what receivers refuse to retain makes every anti-entropy digest
+/// advertise those shards as missing, and the sender re-floods them every
+/// round while the resend budget starves real gaps.
+pub(crate) fn shard_fits_log(msg: &super::Message) -> bool {
+    msg.shard
+        .as_ref()
+        .is_none_or(|shard| shard.total <= crate::util::consts::LOGGED_SHARD_GROUP_MAX_TOTAL)
+}
 
 /// The correlation id shared by every shard of one logical body — a UUID v4
 /// string form, minted once by the sender when it splits a body. Like
@@ -57,8 +75,9 @@ impl fmt::Display for ShardGroup {
 /// [`group`](Shard::group), 0-based index, and the total shard count. Present
 /// only on the messages of a multipart body; ordinary messages carry no
 /// `shard`. Deserialization is **validating** — `total` must be `2..=`
-/// [`MAX_MESSAGE_SHARDS`] and `idx < total` — so a crafted shard that would over-
-/// allocate or never complete is rejected at `Message::parse`.
+/// [`MAX_SHARD_TOTAL`] and `idx < total` — an absurd-header tripwire, not a
+/// memory guard: the reassembly store is byte-budgeted and never allocates by
+/// `total`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Shard {
     pub group: ShardGroup,
@@ -80,9 +99,8 @@ impl<'de> Deserialize<'de> for Shard {
         let raw = Raw::deserialize(deserializer)?;
         // A single message never carries `shard` (the sender only splits when a
         // body won't fit), so the smallest real `total` is 2; the upper bound
-        // caps reassembly buffering at a crafted peer's whim.
-        let max = u32::try_from(MAX_MESSAGE_SHARDS).unwrap_or(u32::MAX);
-        if raw.total < 2 || raw.total > max {
+        // rejects a header no budget-respecting sender can produce.
+        if raw.total < 2 || raw.total > MAX_SHARD_TOTAL {
             return Err(serde::de::Error::custom("shard total out of range"));
         }
         if raw.idx >= raw.total {
@@ -117,10 +135,18 @@ mod shard_tests {
             serde_json::from_str::<Shard>(&format!(r#"{{"group":"{group}","idx":0,"total":1}}"#))
                 .is_err()
         );
-        // total over the cap would over-allocate the reassembly window.
+        // A large-but-sane total is fine (the store is byte-budgeted)...
         assert!(
             serde_json::from_str::<Shard>(&format!(
                 r#"{{"group":"{group}","idx":0,"total":9999}}"#
+            ))
+            .is_ok()
+        );
+        // ...but an absurd header past the tripwire is rejected.
+        assert!(
+            serde_json::from_str::<Shard>(&format!(
+                r#"{{"group":"{group}","idx":0,"total":{}}}"#,
+                u64::from(super::MAX_SHARD_TOTAL) + 1
             ))
             .is_err()
         );
@@ -128,6 +154,19 @@ mod shard_tests {
         assert!(
             serde_json::from_str::<Shard>(&format!(r#"{{"group":"{group}","idx":3,"total":3}}"#))
                 .is_err()
+        );
+    }
+
+    #[test]
+    fn shard_total_tripwire_clears_the_reassembly_budget() {
+        // The tripwire must never reject a body the byte budgets allow: even
+        // at a pessimistic ~2 KiB of body per shard, a group at the byte
+        // ceiling needs fewer shards than the header bound admits.
+        let worst_case_shards = crate::util::consts::REASSEMBLY_GROUP_MAX_BYTES.div_ceil(2048);
+        assert!(
+            worst_case_shards <= super::MAX_SHARD_TOTAL as usize,
+            "MAX_SHARD_TOTAL ({}) must clear REASSEMBLY_GROUP_MAX_BYTES / 2KiB ({worst_case_shards})",
+            super::MAX_SHARD_TOTAL
         );
     }
 

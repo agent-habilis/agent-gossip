@@ -11,7 +11,7 @@ use iroh_gossip::api::GossipTopic;
 use tokio::sync::{broadcast, mpsc, watch};
 
 use crate::gossip::event::MeshSink;
-use crate::protocol::swarm::SwarmName;
+use crate::protocol::swarm::{Swarm, SwarmName};
 use crate::protocol::{Message, Nickname, SwarmId};
 
 use crate::beacon;
@@ -115,6 +115,11 @@ pub struct EventLoopConfig {
     /// to every handler, so multiple in-process sessions each have their own and
     /// never race a shared global.
     pub sink: std::sync::Arc<dyn MeshSink>,
+    /// The invite-only **creator's** swarm, retained (in-memory, secrets and
+    /// all) so the `invite` command can mint from its issuer key + root. `Some`
+    /// only on the creator of an invite-only swarm; `None` everywhere else (a
+    /// joiner holds no issuer key, so it could never mint).
+    pub mint_swarm: Option<Swarm>,
     pub interactive: bool,
     pub endpoint: Endpoint,
     /// iroh router whose accept loop routes inbound gossip
@@ -144,6 +149,9 @@ pub struct EventLoopConfig {
     /// spool (`transport::spool::install`), wraps the gossip sender to tee, and
     /// drains the inbound files into `gossip::ingest`. `None` disables it.
     pub spool: Option<PathBuf>,
+    /// Which transports directed messages may use (per-session). `run()` copies
+    /// it into `EventLoopState::transport`, which `unicast::deliver` reads.
+    pub transport: crate::transport::TransportPolicy,
     /// Inbound unicast frames from the `UNICAST_ALPN` acceptor. The event loop
     /// drains this into `gossip::ingest` (the same path as gossip), so both
     /// transports share signature-verify + dedup. Built in `setup_swarm`.

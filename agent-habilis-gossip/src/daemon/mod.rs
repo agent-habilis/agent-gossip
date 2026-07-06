@@ -26,6 +26,9 @@ pub mod ctx;
 pub mod doc;
 pub(crate) mod message_log;
 pub(crate) mod params;
+// Dedicated, byte-budgeted buffer for partial multipart bodies — reassembly
+// no longer reads the message log, so log eviction can't break it.
+pub mod reassembly;
 pub mod setup;
 pub mod state;
 pub mod state_doc;

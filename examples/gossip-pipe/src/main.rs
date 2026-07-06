@@ -30,8 +30,8 @@ use agent_habilis_gossip::protocol::swarm::{
 };
 use agent_habilis_gossip::protocol::{AppTag, Message, MessageBody, Nickname};
 use agent_habilis_gossip::resolver::JoinTarget;
+use agent_habilis_gossip::transport::TransportPolicy;
 use agent_habilis_gossip::util::consts::{GOSSIP_ACTIVE_VIEW_CAPACITY, MAX_MESSAGE_SIZE};
-use agent_habilis_gossip::util::tuning::{self, Tuning};
 
 use anyhow::{Context, Result};
 use base64::Engine as _;
@@ -90,15 +90,14 @@ struct TransportArgs {
 }
 
 impl TransportArgs {
-    /// Install this policy as the process-global tuning. The circuit stays on so
-    /// a directed frame with no unicast/gossip path still routes multi-hop.
-    fn install(self) {
-        tuning::init(Tuning {
-            unicast_enabled: !self.no_unicast,
-            gossip_directed_enabled: !self.no_gossip_directed,
-            circuit_enabled: true,
-            ..Tuning::DEFAULTS
-        });
+    /// The per-session transport policy these flags select. The circuit stays on
+    /// so a directed frame with no unicast/gossip path still routes multi-hop.
+    fn policy(&self) -> TransportPolicy {
+        TransportPolicy {
+            unicast: !self.no_unicast,
+            gossip_directed: !self.no_gossip_directed,
+            circuit: true,
+        }
     }
 }
 
@@ -301,6 +300,7 @@ impl Select {
                 let config = SwarmConfig {
                     lookups: resolve_lookups(public, lookups),
                     password: None,
+                    issuer_pubkey: None,
                 };
                 let name = SwarmName::new("gossip-pipe").expect("valid swarm name");
                 let Resolved { kind, author, .. } = CreateParams {
@@ -309,6 +309,7 @@ impl Select {
                     config,
                     advertise: DirectorySelection::Unset,
                     password: None,
+                    invite_only: false,
                 }
                 .resolve()
                 .map_err(|error| anyhow::anyhow!("{error}"))?;
@@ -351,6 +352,7 @@ async fn spawn_node(
     nickname: Option<Nickname>,
     app: PipeApp,
     max_peers: usize,
+    transport: TransportPolicy,
 ) -> Result<MeshNode<PipeApp>> {
     let (kind, author, is_create) = select.resolve(nickname)?;
     let elc = setup_swarm(
@@ -362,6 +364,7 @@ async fn spawn_node(
             state_file: None,
             spool: None,
             sink: std::sync::Arc::new(SilentSink),
+            transport,
             drift: None,
             a2a_serve: None,
         },
@@ -405,7 +408,14 @@ async fn run_listen(args: ListenArgs) -> Result<()> {
         .filter(|value| *value > 0)
         .unwrap_or_else(default_chunk);
 
-    let node = spawn_node(select, nickname, PipeApp::sender(), args.transport.max_peers).await?;
+    let node = spawn_node(
+        select,
+        nickname,
+        PipeApp::sender(),
+        args.transport.max_peers,
+        args.transport.policy(),
+    )
+    .await?;
 
     let mut stdin = tokio::io::stdin();
     let mut buf = vec![0u8; chunk];
@@ -457,6 +467,7 @@ async fn run_connect(args: ConnectArgs) -> Result<()> {
         nickname,
         PipeApp::receiver(done_tx),
         args.transport.max_peers,
+        args.transport.policy(),
     )
     .await?;
 
@@ -469,11 +480,6 @@ async fn run_connect(args: ConnectArgs) -> Result<()> {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
-    // Install the process-global transport policy once, before any swarm setup.
-    match &cli.command {
-        Command::Listen(args) => args.transport.install(),
-        Command::Connect(args) => args.transport.install(),
-    }
     match cli.command {
         Command::Listen(args) => run_listen(args).await,
         Command::Connect(args) => run_connect(args).await,

@@ -66,7 +66,7 @@ pub(crate) fn resolve_password(
     }
 }
 
-/// The target (a `💬…` id or ticket) is password-protected but the flag was
+/// The target (a `💬…` id or `🎟️…` ticket) is password-protected but the flag was
 /// absent: prompt on a TTY, or bail with a crisp instruction. `what` names
 /// the artifact for the error ("swarm", "ticket"). A failed prompt (no
 /// controlling TTY — e.g. a scripted run) still names the requirement.

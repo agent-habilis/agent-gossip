@@ -26,6 +26,7 @@ mod shard;
 pub use body::{BodyError, MessageBody};
 pub use id::{IdError, MessageId};
 pub use shard::{Shard, ShardGroup};
+pub(crate) use shard::shard_fits_log;
 
 /// Maximum serialized message size — a network-wide wire contract kept
 /// under iroh-gossip's payload budget so a message we accept always fits
@@ -46,8 +47,8 @@ const _: () = assert!(
     "MAX_MESSAGE_SIZE leaves too little room under iroh-gossip's DEFAULT_MAX_MESSAGE_SIZE"
 );
 
-/// Protocol version embedded in every message. Bumped to `8.0` for two
-/// `8.0`-era wire changes, either of which alone breaks interop with a `7.0`
+/// Protocol version embedded in every message. Bumped to `8.0` for three
+/// `8.0`-era wire changes, any of which alone breaks interop with a `7.0`
 /// peer:
 ///
 /// - the **payload-generic envelope**: the five app-specific kinds (`a2a_msg`,
@@ -56,6 +57,10 @@ const _: () = assert!(
 ///   addressee `to`, and a generic correlation id `corr` (the former `rpc_id`).
 ///   A frame's `task_id` is no longer an envelope field — it rides inside the
 ///   body it was always duplicated into.
+/// - **unbounded multipart bodies**: a shard header's `total` may exceed the
+///   old 16-shard cap, up to [`crate::util::consts::MAX_SHARD_TOTAL`] (`64 MiB`
+///   of reassembled body) — a `7.0` peer would parse-fail every larger shard
+///   *silently*, a delivery black hole.
 /// - **password-swarm content encryption**: on a passworded swarm the `state`/
 ///   `meta` change bodies and broadcast chat (`app`/`a2a_msg`) bodies now travel
 ///   as a symmetric `{"k":"enc",…}` envelope instead of cleartext, so a `7.0`
@@ -101,7 +106,7 @@ impl fmt::Display for PresenceSubtype {
 /// question and treats `Pong` as broadcast-visible, whereas routing wants the
 /// `Pong`'s addressee too. Merging them would change the surface/relay filter.
 #[must_use]
-pub(crate) fn sole_addressee(kind: &MessageKind) -> Option<&Nickname> {
+pub fn sole_addressee(kind: &MessageKind) -> Option<&Nickname> {
     match kind {
         MessageKind::Pong { to } => Some(to),
         MessageKind::App { to, .. } => to.as_ref(),
@@ -625,7 +630,7 @@ impl Message {
     }
 
     /// A durable state event whose opaque payload is `body`. Routed to the
-    /// un-pruned `daemon::state_log`, not the chat message-log. Test/harness
+    /// un-pruned `daemon::state_log`, not the chat message-log. Harness
     /// constructor; production uses [`new_channel_event`](Self::new_channel_event).
     #[cfg(any(test, feature = "adversarial"))]
     #[must_use]

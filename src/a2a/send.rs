@@ -17,7 +17,10 @@ use agent_habilis_gossip::protocol::{
     ShardGroup, SwarmId,
 };
 use agent_habilis_gossip::transport::SwarmSender;
-use agent_habilis_gossip::util::consts::{MAX_MESSAGE_SHARDS, MAX_MESSAGE_SIZE};
+use agent_habilis_gossip::util::consts::{
+    LOGGED_SHARD_GROUP_MAX_TOTAL, MAX_LOGICAL_BODY_BYTES, MAX_MESSAGE_SIZE, MAX_SEALED_BODY_BYTES,
+    MAX_SHARD_TOTAL,
+};
 
 /// Process one line of interactive stdin as a swarm broadcast (A2A is
 /// point-to-point, so directed 1:1 is a task, not a chat line) — validate the
@@ -106,7 +109,7 @@ fn shard_body_budget(empty_part: &Message) -> usize {
 }
 
 /// Split `body` into the fewest UTF-8-safe chunks whose JSON-escaped length each
-/// fits `budget`. `None` if it would need more than [`MAX_MESSAGE_SHARDS`] shards
+/// fits `budget`. `None` if it would need more than [`MAX_SHARD_TOTAL`] shards
 /// (the caller refuses the send) — or `budget` is zero.
 fn split_body(body: &str, budget: usize) -> Option<Vec<&str>> {
     if budget == 0 {
@@ -130,7 +133,7 @@ fn split_body(body: &str, budget: usize) -> Option<Vec<&str>> {
         }
         chunks.push(&body[start..end]);
         start = end;
-        if chunks.len() > MAX_MESSAGE_SHARDS {
+        if chunks.len() > MAX_SHARD_TOTAL as usize {
             return None;
         }
     }
@@ -233,7 +236,7 @@ fn synthesize_logical_msg(
 /// # Errors
 /// Propagates a [`Message::serialize`] failure and a gossip broadcast error,
 /// errors if the unmeshed pending-outbound buffer is full, and refuses a body
-/// that would need more than [`MAX_MESSAGE_SHARDS`] shards.
+/// that would need more than [`MAX_SHARD_TOTAL`] shards.
 pub(crate) async fn broadcast_message(
     swarm: &SwarmId,
     author: &Nickname,
@@ -291,7 +294,7 @@ pub(crate) async fn broadcast_message(
     // logical frame — the only thing echoed and returned — is named by it.
     let group = ShardGroup::from_uuid_str(payload.message_id.as_str())
         .expect("an a2a message id is a valid shard group");
-    let max_parts = u32::try_from(MAX_MESSAGE_SHARDS).unwrap_or(u32::MAX);
+    let max_parts = MAX_SHARD_TOTAL;
     // Size the probe against the *largest* shard's envelope, not the first's. Each
     // later shard chains off the prior, so even from genesis (empty `prev`/`parents`)
     // every shard after the first carries a 64-char `prev` and one parent hash.
@@ -331,11 +334,11 @@ pub(crate) async fn broadcast_message(
             ""
         };
         anyhow::anyhow!(
-            "message too large: a {}-byte wire body needs more than {MAX_MESSAGE_SHARDS} shards{note}",
+            "message too large: a {}-byte wire body needs more than {MAX_SHARD_TOTAL} shards{note}",
             wire_body.as_str().len()
         )
     })?;
-    let total = u32::try_from(chunks.len()).expect("chunk count is bounded by MAX_MESSAGE_SHARDS");
+    let total = u32::try_from(chunks.len()).expect("chunk count is bounded by MAX_SHARD_TOTAL");
     // Atomic admission while unmeshed: all shards or none, so a half-buffered body
     // (which could never reassemble) never reaches peers.
     if !state.meshed && state.pending_outbound.remaining() < chunks.len() {
@@ -343,10 +346,14 @@ pub(crate) async fn broadcast_message(
             "pending outbound buffer full; multipart message dropped"
         ));
     }
+    // A big group's shards skip the message log (`shard_fits_log`), so peers
+    // can only heal a lost shard via the `shard/repair` RPC — served from this
+    // sender-side frame cache. Small groups heal through anti-entropy instead.
+    let mut cache_frames = Vec::new();
     for (idx, chunk) in chunks.iter().enumerate() {
         let shard = Shard {
             group: group.clone(),
-            idx: u32::try_from(idx).expect("idx is bounded by MAX_MESSAGE_SHARDS"),
+            idx: u32::try_from(idx).expect("idx is bounded by MAX_SHARD_TOTAL"),
             total,
         };
         let chunk_body = MessageBody::new(*chunk).expect("a substring of a valid body is valid");
@@ -364,7 +371,13 @@ pub(crate) async fn broadcast_message(
             &signer,
         );
         let bytes = Bytes::from(msg.serialize()?);
+        if total > LOGGED_SHARD_GROUP_MAX_TOTAL {
+            cache_frames.push(bytes.clone());
+        }
         send_msg_part(state, sender, out, &msg, bytes, false).await?;
+    }
+    if !cache_frames.is_empty() {
+        state.shard_cache.insert(group.clone(), cache_frames);
     }
     let logical = synthesize_logical_msg(swarm, author, body, &group);
     out.print_message_ex(&logical, true);
@@ -418,7 +431,7 @@ async fn broadcast_task_frame(
     // named identically on both ends.
     let group =
         ShardGroup::from_uuid_str(logical_id.as_str()).expect("a frame id is a valid shard group");
-    let max_parts = u32::try_from(MAX_MESSAGE_SHARDS).unwrap_or(u32::MAX);
+    let max_parts = MAX_SHARD_TOTAL;
     let probe = Message::new_frame(
         swarm,
         author,
@@ -434,20 +447,23 @@ async fn broadcast_task_frame(
     let budget = shard_body_budget(&probe);
     let chunks = split_body(payload_body.as_str(), budget).ok_or_else(|| {
         anyhow::anyhow!(
-            "task leg too large: a {}-byte body needs more than {MAX_MESSAGE_SHARDS} shards",
+            "task leg too large: a {}-byte body needs more than {MAX_SHARD_TOTAL} shards",
             payload_body.as_str().len()
         )
     })?;
-    let total = u32::try_from(chunks.len()).expect("chunk count is bounded by MAX_MESSAGE_SHARDS");
+    let total = u32::try_from(chunks.len()).expect("chunk count is bounded by MAX_SHARD_TOTAL");
     if !state.meshed && state.pending_outbound.remaining() < chunks.len() {
         return Err(anyhow::anyhow!(
             "pending outbound buffer full; multipart task leg dropped"
         ));
     }
+    // A big group's shards skip the message log, so peers heal a lost shard via
+    // the `shard/repair` RPC — served from this sender-side frame cache.
+    let mut cache_frames = Vec::new();
     for (idx, chunk) in chunks.iter().enumerate() {
         let shard = Shard {
             group: group.clone(),
-            idx: u32::try_from(idx).expect("idx is bounded by MAX_MESSAGE_SHARDS"),
+            idx: u32::try_from(idx).expect("idx is bounded by MAX_SHARD_TOTAL"),
             total,
         };
         let chunk_body = MessageBody::new(*chunk).expect("a substring of a valid body is valid");
@@ -455,7 +471,13 @@ async fn broadcast_task_frame(
             .with_shard(Some(shard))
             .signed(&signer);
         let bytes = Bytes::from(msg.serialize()?);
+        if total > LOGGED_SHARD_GROUP_MAX_TOTAL {
+            cache_frames.push(bytes.clone());
+        }
         send_task_leg(state, sender, out, &msg, bytes, false, content).await?;
+    }
+    if !cache_frames.is_empty() {
+        state.shard_cache.insert(group.clone(), cache_frames);
     }
     // Echo + ingest the logical leg once (one content leg toward the cap).
     let logical = Message::new_frame(swarm, author, kind, payload_body).with_id(logical_id);
@@ -746,6 +768,64 @@ fn ingest_own_leg(
 /// `A2aReq` directed at `peer` carrying the JSON-RPC `{method, params}`. The
 /// peer serves the safe method set and replies with an `A2aResp` that the
 /// receive path routes into the waiter (`app.fulfill_a2a_waiter`); the
+/// Ask the authors of our stalled big (unlogged) partial groups to re-send the
+/// missing shards — the repair half of big-group reliability (the author half is
+/// `state.shard_cache`, served by `resend_cached_shards`). Runs on the app tick;
+/// fire-and-forget: no waiter is parked, the repair *is* the retry (the next
+/// tick asks again while the group survives its TTL). A group that can't be
+/// sealed yet (peer card still propagating) or whose send fails just waits for
+/// the next round.
+pub(crate) async fn send_shard_repair_requests(
+    swarm: &SwarmId,
+    author: &Nickname,
+    state: &mut EventLoopState,
+    sender: &SwarmSender,
+) {
+    let tickets = state.reassembly.repair_tickets(Instant::now());
+    for ticket in tickets {
+        let envelope = serde_json::json!({
+            "method": "shard/repair",
+            "params": { "group": ticket.group.as_str(), "missing": ticket.missing },
+        });
+        let Ok(body) = MessageBody::new(envelope.to_string()) else {
+            continue;
+        };
+        let sealed = match seal_directed(state, &ticket.author, &body) {
+            Ok(sealed) => sealed,
+            Err(error) => {
+                tracing::debug!(%error, author = %ticket.author, "cannot seal shard repair request yet");
+                continue;
+            }
+        };
+        let corr = CorrId::from(crate::a2a::A2aRpcId::random().as_str());
+        let frame = Message::new_app(
+            swarm,
+            author,
+            AppTag::from(wire::REQ),
+            Some(ticket.author.clone()),
+            Some(corr),
+            sealed,
+        )
+        .signed(&state.identity);
+        agent_habilis_gossip::logging::messages::log_out(&frame);
+        match frame.serialize() {
+            Ok(bytes) => {
+                if let Err(error) = agent_habilis_gossip::unicast::deliver(
+                    &frame,
+                    Bytes::from(bytes),
+                    state,
+                    sender,
+                )
+                .await
+                {
+                    tracing::debug!(%error, "shard repair request send failed; next tick retries");
+                }
+            }
+            Err(error) => tracing::debug!(%error, "shard repair request serialize failed"),
+        }
+    }
+}
+
 /// waiter times out via the loop's a2a-deadline arm. Fails fast (through the
 /// responder) when `peer` isn't a current participant or the waiter registry
 /// is full — no silent park.
@@ -799,15 +879,11 @@ pub(crate) async fn broadcast_a2a_call(
     // The a2a layer mints a UUID rpc id; the engine correlates on the generic
     // `CorrId` carried by the app frame.
     let corr = CorrId::from(crate::a2a::A2aRpcId::random().as_str());
-    let frame = Message::new_app(
-        swarm,
-        author,
-        AppTag::from(wire::REQ),
-        Some(peer.clone()),
-        Some(corr.clone()),
-        body,
-    )
-    .signed(&state.identity);
+    let kind = MessageKind::App {
+        tag: AppTag::from(wire::REQ),
+        to: Some(peer.clone()),
+        corr: Some(corr.clone()),
+    };
     // Clamp before adding to `Instant`: an unclamped client `timeout_secs` would
     // overflow the platform `Instant` and panic the event loop.
     let max_timeout = std::time::Duration::from_secs(
@@ -825,22 +901,94 @@ pub(crate) async fn broadcast_a2a_call(
         unregistered.send_response(&rpc_error(-32603, "too many in-flight a2a calls"));
         return;
     }
-    // Directed request: unicast to the peer when dialable, else gossip
-    // (see `unicast::deliver`). Mirrors `broadcast_msg`'s log-then-serialize.
-    agent_habilis_gossip::logging::messages::log_out(&frame);
-    match frame.serialize() {
-        Ok(bytes) => {
-            if let Err(error) =
-                agent_habilis_gossip::unicast::deliver(&frame, Bytes::from(bytes), state, sender)
-                    .await
-            {
-                tracing::warn!(target: "agent_gossip::gossip", %error, "a2a request send failed");
-            }
-        }
-        Err(error) => {
-            tracing::warn!(target: "agent_gossip::gossip", %error, "a2a request serialize failed");
-        }
+    // Directed request over the shared RPC sender: unicast → circuit → gossip per
+    // frame, transparently splitting a large sealed body into shard frames.
+    if let Err(error) = send_directed_rpc(swarm, author, kind, body, state, sender).await {
+        tracing::warn!(target: "agent_gossip::gossip", %error, "a2a request send failed");
     }
+}
+
+/// Send one directed RPC frame (an `App` request/response), transparently
+/// splitting a sealed body too large for one frame into shard-tagged frames —
+/// each an ordinary directed frame riding the unicast → circuit → gossip
+/// cascade, so the RPC plane is size-transparent like chat and task legs. RPC
+/// frames are plumbing (never logged for anti-entropy); the shards reassemble
+/// only in the receiver's dedicated store, and a big group is served from the
+/// sender-side [`ShardCache`](agent_habilis_gossip::daemon::reassembly::ShardCache)
+/// through the `shard/repair` RPC.
+///
+/// # Errors
+/// Propagates a serialize/deliver failure and refuses a body past the input
+/// ceiling or the receiver's per-group reassembly budget.
+pub(crate) async fn send_directed_rpc(
+    swarm: &SwarmId,
+    author: &Nickname,
+    kind: MessageKind,
+    body: MessageBody,
+    state: &mut EventLoopState,
+    sender: &SwarmSender,
+) -> anyhow::Result<()> {
+    let signer = state.identity.clone();
+    let single = Message::new_frame(swarm, author, kind.clone(), body.clone()).signed(&signer);
+    if single.wire_len() <= MAX_MESSAGE_SIZE {
+        agent_habilis_gossip::logging::messages::log_out(&single);
+        let bytes = Bytes::from(single.serialize()?);
+        return agent_habilis_gossip::unicast::deliver(&single, bytes, state, sender).await;
+    }
+    // The RPC body is already sealed (base58, ~1.37x the input) — gate on the
+    // sealed ceiling so the caller-facing limit stays `MAX_LOGICAL_BODY_BYTES`.
+    if body.as_str().len() > MAX_SEALED_BODY_BYTES {
+        return Err(anyhow::anyhow!(
+            "rpc body too large: {} sealed bytes exceeds the input ceiling \
+             ({MAX_LOGICAL_BODY_BYTES} raw bytes); use the blob channel for files",
+            body.as_str().len()
+        ));
+    }
+    let group = ShardGroup::from_uuid_str(crate::a2a::A2aRpcId::random().as_str())
+        .expect("a freshly minted uuid is a valid shard group");
+    let probe = Message::new_frame(
+        swarm,
+        author,
+        kind.clone(),
+        MessageBody::new(String::new()).expect("empty body is valid"),
+    )
+    .with_shard(Some(Shard {
+        group: group.clone(),
+        idx: MAX_SHARD_TOTAL - 1,
+        total: MAX_SHARD_TOTAL,
+    }))
+    .signed(&signer);
+    let budget = shard_body_budget(&probe);
+    let chunks = split_body(body.as_str(), budget).ok_or_else(|| {
+        anyhow::anyhow!("rpc body too large: needs more than {MAX_SHARD_TOTAL} shards")
+    })?;
+    let total = u32::try_from(chunks.len()).expect("chunk count is bounded by MAX_SHARD_TOTAL");
+    if !state.meshed && state.pending_outbound.remaining() < chunks.len() {
+        return Err(anyhow::anyhow!(
+            "pending outbound buffer full; multipart rpc dropped"
+        ));
+    }
+    let mut cache_frames = Vec::new();
+    for (idx, chunk) in chunks.iter().enumerate() {
+        let chunk_body = MessageBody::new(*chunk).expect("a substring of a valid body is valid");
+        let msg = Message::new_frame(swarm, author, kind.clone(), chunk_body)
+            .with_shard(Some(Shard {
+                group: group.clone(),
+                idx: u32::try_from(idx).expect("idx is bounded by MAX_SHARD_TOTAL"),
+                total,
+            }))
+            .signed(&signer);
+        agent_habilis_gossip::logging::messages::log_out(&msg);
+        let bytes = Bytes::from(msg.serialize()?);
+        if total > LOGGED_SHARD_GROUP_MAX_TOTAL {
+            cache_frames.push(bytes.clone());
+        }
+        agent_habilis_gossip::unicast::deliver(&msg, bytes, state, sender).await?;
+    }
+    if !cache_frames.is_empty() {
+        state.shard_cache.insert(group, cache_frames);
+    }
+    Ok(())
 }
 
 /// Arm a fresh ping round carrying the responder; the deadline-driven
@@ -1037,13 +1185,37 @@ pub(crate) async fn handle_session_request(
             tracing::warn!("gossip stream severed (adversarial); heal arm will resubscribe");
             false
         }
+        // Inject a synthetic link-state vector (adversarial/testkit only) so a
+        // circuit route can converge — a live mesh never converges usable
+        // circuit edges for the transport matrix / linear-circuit tests.
+        #[cfg(feature = "adversarial")]
+        SessionRequest::InjectLinkVector {
+            origin,
+            seq,
+            seal_key,
+            links,
+        } => {
+            state
+                .link_state
+                .ingest(agent_habilis_gossip::circuit::LinkVector::from_raw(
+                    origin, seq, seal_key, links,
+                ));
+            false
+        }
+        // Reassembly accounting snapshot (adversarial only) for the
+        // shard-budget tripwires.
+        #[cfg(feature = "adversarial")]
+        SessionRequest::ReassemblyStats { resp } => {
+            let _ = resp.send(state.reassembly.stats());
+            false
+        }
     }
 }
 
 #[cfg(test)]
 mod split_body_tests {
     use super::{escaped_char_len, split_body};
-    use agent_habilis_gossip::util::consts::MAX_MESSAGE_SHARDS;
+    use agent_habilis_gossip::util::consts::MAX_SHARD_TOTAL;
 
     #[test]
     fn escaped_len_counts_json_escapes() {
@@ -1063,7 +1235,7 @@ mod split_body_tests {
         let body = "0123456789".repeat(6); // 60 ASCII bytes
         let chunks = split_body(&body, 16).expect("60 bytes at budget 16 fits in MAX shards");
         assert!(chunks.len() > 1, "the body must actually split");
-        assert!(chunks.len() <= MAX_MESSAGE_SHARDS);
+        assert!(chunks.len() <= MAX_SHARD_TOTAL as usize);
         assert_eq!(chunks.concat(), body, "chunks reassemble to the original");
         for chunk in &chunks {
             let escaped: usize = chunk.chars().map(escaped_char_len).sum();
@@ -1081,8 +1253,9 @@ mod split_body_tests {
 
     #[test]
     fn refuses_a_body_needing_too_many_parts() {
-        let body = "x".repeat(1000);
-        // One byte per shard would need 1000 shards, far over MAX_MESSAGE_SHARDS.
+        // One byte per shard would need one shard per byte; a body one byte past
+        // `MAX_SHARD_TOTAL` therefore needs more than the cap and is refused.
+        let body = "x".repeat(MAX_SHARD_TOTAL as usize + 1);
         assert!(split_body(&body, 1).is_none());
     }
 }

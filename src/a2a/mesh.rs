@@ -1,6 +1,5 @@
 use std::time::{Duration, Instant};
 
-use bytes::Bytes;
 use tokio::sync::oneshot;
 use tokio::time::Instant as TokioInstant;
 
@@ -89,6 +88,9 @@ impl MeshDriver for A2aApp {
         crate::a2a::task::tick_task_sweep(state, self, ctx.sender, ctx.swarm, ctx.author, &out)
             .await;
         crate::a2a::task::tick_task_keepalive(state, self, ctx.sender, ctx.swarm, ctx.author).await;
+        // Chase down any stalled big (unlogged) shard groups: ask their authors
+        // to re-send the missing shards from their sender-side cache.
+        crate::a2a::send::send_shard_repair_requests(ctx.swarm, ctx.author, state, ctx.sender).await;
     }
 
     async fn on_shutdown(&mut self, _state: &mut EventLoopState) {
@@ -539,6 +541,9 @@ async fn handle_a2a_req(
                     .await
                 }
                 Served::Ingest(payload) => ingest_remote_message(&payload, &requester, app, ctx),
+                Served::ShardRepair { group, missing } => {
+                    resend_cached_shards(&group, &missing, &requester, state, ctx).await
+                }
                 Served::Reject(error) => Err(error),
             }
         }
@@ -564,22 +569,58 @@ async fn handle_a2a_req(
             return;
         }
     };
-    let reply = Message::new_app(
-        ctx.swarm,
-        ctx.author,
-        AppTag::from(wire::RESP),
-        Some(requester),
-        Some(corr.clone()),
-        body,
-    )
-    .signed(ctx.identity);
-    // Directed reply: unicast to the requester when dialable, else gossip.
-    agent_habilis_gossip::logging::messages::log_out(&reply);
-    if let Ok(bytes) = reply.serialize() {
-        let _ =
-            agent_habilis_gossip::unicast::deliver(&reply, Bytes::from(bytes), state, ctx.sender)
-                .await;
+    let kind = MessageKind::App {
+        tag: AppTag::from(wire::RESP),
+        to: Some(requester),
+        corr: Some(corr.clone()),
+    };
+    // Directed reply over the shared RPC sender: unicast → circuit → gossip,
+    // transparently splitting a large sealed response into shard frames.
+    if let Err(error) =
+        crate::a2a::send::send_directed_rpc(ctx.swarm, ctx.author, kind, body, state, ctx.sender)
+            .await
+    {
+        tracing::warn!(%error, "a2a rpc response send failed");
     }
+}
+
+/// Serve a `shard/repair` ask: re-deliver the named cached frames of one of our
+/// big (unlogged) outbound groups to the requester. The frames are the raw,
+/// already-signed shards we cached at send time (`state.shard_cache`), so they
+/// reassemble on the requester exactly as the original send would have.
+async fn resend_cached_shards(
+    group: &agent_habilis_gossip::protocol::ShardGroup,
+    missing: &[u32],
+    requester: &Nickname,
+    state: &mut EventLoopState,
+    ctx: &HandlerCtx<'_>,
+) -> Result<serde_json::Value, crate::a2a::rpc::RpcError> {
+    let frames = state.shard_cache.frames(group, missing);
+    let mut resent = 0usize;
+    for bytes in frames {
+        let Ok(msg) = Message::parse(&bytes) else {
+            continue; // never: the cache holds frames we serialized ourselves
+        };
+        if let Some(to) = agent_habilis_gossip::protocol::message::sole_addressee(&msg.kind)
+            && to != requester
+        {
+            continue;
+        }
+        if agent_habilis_gossip::unicast::deliver(&msg, bytes, state, ctx.sender)
+            .await
+            .is_ok()
+        {
+            resent += 1;
+        }
+    }
+    tracing::debug!(
+        target: "agent_gossip::gossip",
+        %group,
+        requested = missing.len(),
+        resent,
+        "served a shard repair request"
+    );
+    Ok(serde_json::json!({ "resent": resent }))
 }
 
 /// A `message/send` directed at us over gossip-RPC — we are the task's A2A

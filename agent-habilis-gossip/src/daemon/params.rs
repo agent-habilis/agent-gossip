@@ -11,7 +11,7 @@
 
 use std::fmt;
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 
 use crate::protocol::Nickname;
 use crate::protocol::crypto::Password;
@@ -35,6 +35,9 @@ pub struct CreateParams {
     /// Password to protect the swarm with; the verifier is baked into the
     /// id at setup (the salt is the seed, minted there).
     pub password: Option<Password>,
+    /// `--invite-only`: the swarm's issuer keypair + invite root are minted at
+    /// setup and only creator-signed `🎟️` invites can join.
+    pub invite_only: bool,
 }
 
 /// The join intent, before resolution.
@@ -97,6 +100,7 @@ impl CreateParams {
                 config: self.config,
                 advertise: advertise_directory.clone(),
                 password: self.password,
+                invite_only: self.invite_only,
             },
             author: self.nickname.unwrap_or_else(Nickname::random),
             advertise_directory,
@@ -117,19 +121,38 @@ impl JoinParams {
     ///
     /// [`Swarm`]: crate::protocol::swarm::Swarm
     pub fn resolve(self) -> Result<Resolved> {
-        let mut swarm = resolver::resolve(&self.target)?;
-        match (&self.password, swarm.requires_password()) {
-            (None, true) => return Err(PasswordRequired.into()),
-            (None, false) => {}
-            // ~100ms of Argon2id, accepted synchronously: this runs once
-            // per join, before the daemon exists.
-            (Some(password), _) => swarm.apply_password(password)?,
-        }
+        let swarm = match &self.target {
+            JoinTarget::Swarm(_) => {
+                let mut swarm = resolver::resolve(&self.target)?;
+                match (&self.password, swarm.requires_password()) {
+                    (None, true) => return Err(PasswordRequired.into()),
+                    (None, false) => {}
+                    // ~100ms of Argon2id, accepted synchronously: this runs once
+                    // per join, before the daemon exists.
+                    (Some(password), _) => swarm.apply_password(password)?,
+                }
+                swarm
+            }
+            // Redeem the invite: verify the creator's signature + expiry and
+            // unwrap the join root. An invite-only swarm carries no id-level
+            // password verifier — the invite's own `password` flag drives the
+            // prompt, and `redeem` unwraps the root with it.
+            JoinTarget::Invite(invite) => {
+                match (&self.password, invite.requires_password()) {
+                    (None, true) => return Err(PasswordRequired.into()),
+                    (Some(_), false) => {
+                        bail!("this invite has no password — drop --password")
+                    }
+                    _ => {}
+                }
+                invite.redeem(self.password.as_ref())?
+            }
+        };
         Ok(Resolved {
             kind: SetupKind::Join {
                 swarm,
                 // Retained so the daemon can key blob-ticket protection with the
-                // same password (`None` for a passwordless id).
+                // same password (`None` for a passwordless id/invite).
                 password: self.password,
             },
             author: self.nickname.unwrap_or_else(Nickname::random),
@@ -156,6 +179,7 @@ pub fn derive_topic_swarm(string: &str) -> Result<Swarm> {
         SwarmConfig {
             lookups: LookupOpts::public_preset(),
             password: None,
+            issuer_pubkey: None,
         },
     ))
 }

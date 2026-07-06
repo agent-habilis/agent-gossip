@@ -16,10 +16,16 @@ const RPC_TIMEOUT: Duration = MSG_TIMEOUT;
 /// A `tasks/list` call to a peer returns *that peer's* task view over gossip.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn rpc_tasks_list_reaches_the_peer() {
-    let alice = InProcNode::create("rpc-list").await;
+    let mut alice = InProcNode::create("rpc-list").await;
     let mut bob = InProcNode::join(&alice.swarm, "rpc-bob").await;
     alice.send("link").await;
     assert!(bob.wait_body("link", MSG_TIMEOUT).await, "bob meshed");
+    // Prove the reverse path too: the RPC response rides bob's outbound, and
+    // A2aReq/A2aResp are not loggable (no anti-entropy healing), so a reply
+    // broadcast into a still-converging overlay is lost for good and the call
+    // dies as a 60s waiter timeout — the suite's long-standing flake.
+    bob.send("link-back").await;
+    assert!(alice.wait_body("link-back", MSG_TIMEOUT).await, "alice meshed");
 
     let response = alice
         .session
@@ -46,10 +52,16 @@ async fn rpc_tasks_list_reaches_the_peer() {
 /// deterministic id, no `swarm-task` marker.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn rpc_message_send_opens_task_and_returns_it() {
-    let alice = InProcNode::create("rpc-send").await;
+    let mut alice = InProcNode::create("rpc-send").await;
     let mut bob = InProcNode::join(&alice.swarm, "rpc-send-bob").await;
     alice.send("link").await;
     assert!(bob.wait_body("link", MSG_TIMEOUT).await, "bob meshed");
+    // Prove the reverse path too: the RPC response rides bob's outbound, and
+    // A2aReq/A2aResp are not loggable (no anti-entropy healing), so a reply
+    // broadcast into a still-converging overlay is lost for good and the call
+    // dies as a 60s waiter timeout — the suite's long-standing flake.
+    bob.send("link-back").await;
+    assert!(alice.wait_body("link-back", MSG_TIMEOUT).await, "alice meshed");
 
     let our_message_id = "550e8400-e29b-41d4-a716-446655440000";
     let create = json!({ "message": {
@@ -89,10 +101,16 @@ async fn rpc_message_send_opens_task_and_returns_it() {
 /// peer never authors global state on the caller's behalf.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn rpc_state_merge_is_refused() {
-    let alice = InProcNode::create("rpc-merge").await;
+    let mut alice = InProcNode::create("rpc-merge").await;
     let mut bob = InProcNode::join(&alice.swarm, "rpc-merge-bob").await;
     alice.send("link").await;
     assert!(bob.wait_body("link", MSG_TIMEOUT).await, "bob meshed");
+    // Prove the reverse path too: the RPC response rides bob's outbound, and
+    // A2aReq/A2aResp are not loggable (no anti-entropy healing), so a reply
+    // broadcast into a still-converging overlay is lost for good and the call
+    // dies as a 60s waiter timeout — the suite's long-standing flake.
+    bob.send("link-back").await;
+    assert!(alice.wait_body("link-back", MSG_TIMEOUT).await, "alice meshed");
 
     let response = alice
         .session

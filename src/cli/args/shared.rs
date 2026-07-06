@@ -190,9 +190,17 @@ impl SharedServerOpts {
             antientropy_max_resend: self.antientropy_max_resend,
             spool_max_bytes: self.spool_max_bytes,
             directory_private: self.directory_private,
-            unicast_enabled: !self.no_unicast,
-            gossip_directed_enabled: !self.no_gossip_directed,
-            circuit_enabled: !self.no_circuit,
+        }
+    }
+
+    /// The per-session transport policy these flags select. Threaded into the
+    /// session config (not the process-global tuning) so it stays a session
+    /// property. See [`agent_habilis_gossip::transport::TransportPolicy`].
+    pub(crate) fn transport_policy(&self) -> agent_habilis_gossip::transport::TransportPolicy {
+        agent_habilis_gossip::transport::TransportPolicy {
+            unicast: !self.no_unicast,
+            gossip_directed: !self.no_gossip_directed,
+            circuit: !self.no_circuit,
         }
     }
 }

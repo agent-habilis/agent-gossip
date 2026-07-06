@@ -52,6 +52,7 @@ pub mod harness;
 // externally-visible `agent_gossip::` API stable across the engine split.
 pub use a2a::surfaced::SurfacedEvent;
 pub use a2a::{TaskId, TaskState};
+pub use agent_habilis_gossip::invite::InviteTicket;
 pub use agent_habilis_gossip::logging::LogSink;
 pub use agent_habilis_gossip::protocol::message::{
     BodyError, Channel, IdError, Message, MessageBody, MessageId, MessageKind, PresenceSubtype,
@@ -63,10 +64,11 @@ pub use agent_habilis_gossip::protocol::swarm::{
     SwarmName,
 };
 pub use agent_habilis_gossip::resolver::{JoinTarget, JoinTargetError};
+pub use agent_habilis_gossip::transport::TransportPolicy;
 // Wire/runtime constants the external test + bench crates assert against; the
 // rest of `util::consts` stays engine-internal.
 pub use agent_habilis_gossip::util::consts::{
-    MAX_LOGICAL_BODY_BYTES, MAX_MESSAGE_SHARDS, MAX_MESSAGE_SIZE, SWARM_GLYPH,
+    MAX_LOGICAL_BODY_BYTES, MAX_MESSAGE_SIZE, MAX_SHARD_TOTAL, SWARM_GLYPH,
 };
 pub use agent_habilis_gossip::util::version::VERSION;
 pub use agent_habilis_gossip::util::{ensure_runtime_base, runtime_base, swarm_prefix};

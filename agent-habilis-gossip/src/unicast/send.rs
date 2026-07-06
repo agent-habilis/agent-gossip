@@ -27,59 +27,52 @@ use crate::util::tuning;
 ///
 /// # Errors
 /// Propagates a gossip broadcast failure, an inline unicast dial/send failure
-/// (unicast-only policy), or reports a directed message undeliverable when both
-/// transports are disabled.
+/// (unicast-only policy), or reports the directed message undeliverable when its
+/// chosen transport fell through and the policy forbids a gossip fallback.
 pub async fn deliver(
     msg: &Message,
     bytes: Bytes,
     state: &EventLoopState,
     sender: &SwarmSender,
 ) -> Result<()> {
-    // The transport decision is pure (see `route`); this function just runs it.
-    match route(
+    // Per-session transport policy drives the pure `route` decision; this
+    // function runs the chosen directed transport, then applies the **one**
+    // gossip fallback (no arm falls back on its own — Part B of the refactor).
+    let policy = state.transport;
+    let attempt = match route(
         msg,
         state,
-        tuning::unicast_enabled(),
-        tuning::gossip_directed_enabled(),
-        tuning::circuit_enabled(),
+        policy.unicast,
+        policy.gossip_directed,
+        policy.circuit,
     ) {
-        Route::Gossip => broadcast(sender, bytes).await,
-        Route::Circuit(target) => deliver_over_circuit(target, bytes, state, sender).await,
-        Route::UnicastPreferred(eid) => {
-            let pool = state.unicast_pool.clone();
-            if pool.send_if_warm(eid, bytes.clone()).await {
-                // Sent point-to-point; the flood is avoided. This frame skipped
-                // `broadcast`'s tee, so mirror it to the spool explicitly.
-                sender.spool(&bytes);
-                Ok(())
-            } else {
-                // Cold: warm for next time, ride gossip now.
-                pool.warm(eid);
-                broadcast(sender, bytes).await
-            }
+        // Gossip is the transport itself here, not a fallback.
+        Route::Gossip => return broadcast(sender, bytes).await,
+        Route::Undeliverable => {
+            return Err(anyhow::anyhow!(
+                "directed message undeliverable: no unicast route and gossip is disabled"
+            ));
         }
-        Route::UnicastOnly(eid) => {
-            let pool = state.unicast_pool.clone();
-            if pool.send_if_warm(eid, bytes.clone()).await {
-                // Sent point-to-point; mirror to the spool (it bypassed
-                // `broadcast`'s tee).
-                sender.spool(&bytes);
-                Ok(())
-            } else {
-                // No gossip fallback under this policy — dial inline. Mirror to
-                // the spool only if the send succeeded, so a returned error
-                // still means the frame reached no transport.
-                let result = pool.dial_and_send(eid, bytes.clone()).await;
-                if result.is_ok() {
-                    sender.spool(&bytes);
-                }
-                result
-            }
-        }
-        Route::Undeliverable => Err(anyhow::anyhow!(
-            "directed message undeliverable: no unicast route and gossip is disabled"
+        Route::UnicastPreferred(eid) => try_unicast_warm(eid, &bytes, state, sender).await,
+        Route::UnicastOnly(eid) => try_unicast_only(eid, &bytes, state, sender).await,
+        Route::Circuit(target) => try_circuit(target, &bytes, state, sender).await,
+    };
+    match attempt {
+        Attempt::Delivered => Ok(()),
+        // The single, central fallback: ride gossip iff the policy permits
+        // gossip for directed traffic; otherwise the frame is undeliverable.
+        Attempt::FellThrough if policy.gossip_directed => broadcast(sender, bytes).await,
+        Attempt::FellThrough => Err(anyhow::anyhow!(
+            "directed message undeliverable: the directed transport failed and gossip is disabled"
         )),
     }
+}
+
+/// Outcome of one directed-transport attempt. A helper never falls back itself —
+/// `FellThrough` hands the decision to [`deliver`]'s single gossip fallback.
+enum Attempt {
+    Delivered,
+    FellThrough,
 }
 
 /// The chosen transport for a message, given the policy — a **pure** decision so
@@ -118,6 +111,19 @@ fn route(
         // Broadcast / infrastructure kind: gossip is the only transport, always.
         return Route::Gossip;
     };
+    directed_route(nick, state, unicast_on, gossip_on, circuit_on)
+}
+
+/// The message-independent half of [`route`]: every directed kind to the same
+/// addressee routes identically, so this is also what the `peers` roster
+/// surfaces as a peer's `transport` column (via [`lane_for`]).
+fn directed_route(
+    nick: &Nickname,
+    state: &EventLoopState,
+    unicast_on: bool,
+    gossip_on: bool,
+    circuit_on: bool,
+) -> Route {
     if let (true, Some(eid)) = (unicast_on, unicast_endpoint(nick, state)) {
         return if gossip_on {
             Route::UnicastPreferred(eid)
@@ -135,6 +141,34 @@ fn route(
         Route::Gossip
     } else {
         Route::Undeliverable
+    }
+}
+
+/// The lane a directed frame to `nick` would take right now, under the
+/// session's live policy — [`Route`] stripped of its endpoint payloads so the
+/// roster can serialize it. Sharing `directed_route` keeps the surfaced
+/// column from ever drifting from the real send decision.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Lane {
+    Unicast,
+    Circuit,
+    Gossip,
+    Unreachable,
+}
+
+pub(crate) fn lane_for(nick: &Nickname, state: &EventLoopState) -> Lane {
+    match directed_route(
+        nick,
+        state,
+        state.transport.unicast,
+        state.transport.gossip_directed,
+        state.transport.circuit,
+    ) {
+        Route::UnicastPreferred(_) | Route::UnicastOnly(_) => Lane::Unicast,
+        Route::Circuit(_) => Lane::Circuit,
+        Route::Gossip => Lane::Gossip,
+        Route::Undeliverable => Lane::Unreachable,
     }
 }
 
@@ -164,34 +198,75 @@ fn unicast_endpoint(nick: &Nickname, state: &EventLoopState) -> Option<EndpointI
     Some(eid)
 }
 
-/// Deliver a directed message to a known-but-not-directly-reachable peer over a
-/// multi-hop circuit: compute the source-route from the link-state graph
-/// and telescope a circuit to it. Falls back to gossip when we have no endpoint,
-/// no graph path (or a hop's key is unknown), or the circuit build fails.
-async fn deliver_over_circuit(
-    target: EndpointId,
-    bytes: Bytes,
+/// Warm-preferred unicast: send point-to-point when the connection is already
+/// warm, else warm it in the background and fall through (never blocking on a
+/// cold dial). Mirrors to the spool on its own success — it bypassed
+/// `broadcast`'s tee.
+async fn try_unicast_warm(
+    eid: EndpointId,
+    bytes: &Bytes,
     state: &EventLoopState,
     sender: &SwarmSender,
-) -> Result<()> {
+) -> Attempt {
+    let pool = state.unicast_pool.clone();
+    if pool.send_if_warm(eid, bytes.clone()).await {
+        sender.spool(bytes);
+        Attempt::Delivered
+    } else {
+        pool.warm(eid);
+        Attempt::FellThrough
+    }
+}
+
+/// Unicast-only: send if warm, else dial inline (this policy has no gossip
+/// fallback, so a cold peer is reached synchronously). A dial failure falls
+/// through — [`deliver`]'s central rule turns that into an undeliverable error,
+/// not a silent gossip.
+async fn try_unicast_only(
+    eid: EndpointId,
+    bytes: &Bytes,
+    state: &EventLoopState,
+    sender: &SwarmSender,
+) -> Attempt {
+    let pool = state.unicast_pool.clone();
+    if pool.send_if_warm(eid, bytes.clone()).await {
+        sender.spool(bytes);
+        return Attempt::Delivered;
+    }
+    if pool.dial_and_send(eid, bytes.clone()).await.is_ok() {
+        sender.spool(bytes);
+        Attempt::Delivered
+    } else {
+        Attempt::FellThrough
+    }
+}
+
+/// Multi-hop circuit: telescope up to N node-disjoint circuits (best-first) to a
+/// known-but-not-directly-reachable peer, computing the source-route from the
+/// link-state graph. Falls through when there is no endpoint, no graph path (or
+/// a hop's key is unknown), or every build fails — [`deliver`] decides whether
+/// to then ride gossip.
+async fn try_circuit(
+    target: EndpointId,
+    bytes: &Bytes,
+    state: &EventLoopState,
+    sender: &SwarmSender,
+) -> Attempt {
     let Some(endpoint) = state.unicast_pool.endpoint() else {
-        return broadcast(sender, bytes).await; // detached pool: gossip
+        return Attempt::FellThrough; // detached pool
     };
-    // Up to N node-disjoint circuits, best-first — the "up to N tries" budget.
     let paths = state
         .link_state
         .circuit_paths(endpoint.id(), target, tuning::CIRCUIT_MAX_PATHS);
     if paths.is_empty() {
-        // No route through the mesh yet (or a hop hasn't advertised its key).
-        return broadcast(sender, bytes).await;
+        return Attempt::FellThrough; // no route through the mesh yet
     }
     for path in &paths {
         let circuit_id: u64 = rand::random();
         match crate::circuit::open_circuit(&endpoint, circuit_id, path, bytes.as_ref()).await {
             Ok(()) => {
-                // Circuit-delivered — bypassed `broadcast`'s tee, so mirror now.
-                sender.spool(&bytes);
-                return Ok(());
+                sender.spool(bytes);
+                return Attempt::Delivered;
             }
             Err(error) => tracing::debug!(
                 target: crate::circuit::LOG_TARGET,
@@ -200,12 +275,7 @@ async fn deliver_over_circuit(
             ),
         }
     }
-    // Every disjoint circuit failed — fall back to gossip.
-    tracing::debug!(
-        target: crate::circuit::LOG_TARGET,
-        "all circuits failed; falling back to gossip"
-    );
-    broadcast(sender, bytes).await
+    Attempt::FellThrough
 }
 
 async fn broadcast(sender: &SwarmSender, bytes: Bytes) -> Result<()> {

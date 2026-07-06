@@ -60,6 +60,7 @@ mod tests {
             | Commands::Unplug { .. }
             | Commands::Doctor { .. }
             | Commands::Leave { .. }
+            | Commands::Invite { .. }
             | Commands::Session { .. } => panic!("expected Topic command"),
         }
     }

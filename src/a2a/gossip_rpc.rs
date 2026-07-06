@@ -29,6 +29,12 @@ pub(crate) enum Served {
     /// offer opens a task; chat surfaces) and the resulting task/ack returned.
     /// The peer is the terminal recipient and never re-broadcasts.
     Ingest(super::Message),
+    /// A `shard/repair` ask: re-deliver the named cached shard frames of one
+    /// of our big outbound groups (see `daemon::reassembly::ShardCache`).
+    ShardRepair {
+        group: agent_habilis_gossip::protocol::ShardGroup,
+        missing: Vec<u32>,
+    },
     /// Not permitted over gossip (unknown method, or one that would author on
     /// the caller's behalf).
     Reject(RpcError),
@@ -103,6 +109,31 @@ pub(crate) fn classify(method: &str, params: &Value, requester: &Nickname, app: 
                 ));
             }
             Served::Ingest(message)
+        }
+        // A receiver of one of our big (unlogged) multipart bodies asking for
+        // the shards it lost — served from the outbound shard cache, which
+        // only ever holds frames we authored and signed ourselves, so there
+        // is nothing to launder. The addressee gate on directed frames is
+        // enforced at the resend site.
+        "shard/repair" => {
+            let group = params["group"]
+                .as_str()
+                .and_then(agent_habilis_gossip::protocol::ShardGroup::from_uuid_str);
+            let missing: Vec<u32> = params["missing"]
+                .as_array()
+                .map(|idxs| {
+                    idxs.iter()
+                        .filter_map(|idx| idx.as_u64().and_then(|idx| u32::try_from(idx).ok()))
+                        .take(agent_habilis_gossip::util::consts::REASSEMBLY_REPAIR_MAX_IDXS)
+                        .collect()
+                })
+                .unwrap_or_default();
+            match group {
+                Some(group) if !missing.is_empty() => Served::ShardRepair { group, missing },
+                _ => Served::Reject(RpcError::invalid_params(
+                    "shard/repair needs params.group (uuid) and a non-empty params.missing",
+                )),
+            }
         }
         // Authoring global state on the caller's behalf, or anything else.
         "swarm/state.merge" | "swarm/meta.merge" => Served::Reject(RpcError::not_permitted(method)),
@@ -227,6 +258,34 @@ mod tests {
         assert!(is_reject(&classify(
             "CancelTask",
             &json!({"id": "550e8400-e29b-41d4-a716-446655440000"}),
+            &caller,
+            &st
+        )));
+    }
+
+    #[test]
+    fn shard_repair_is_classified_and_validated() {
+        let caller = Nickname::from("alice");
+        let st = state();
+        assert!(matches!(
+            classify(
+                "shard/repair",
+                &json!({"group": "550e8400-e29b-41d4-a716-446655440000", "missing": [0, 3, 7]}),
+                &caller,
+                &st
+            ),
+            Served::ShardRepair { missing, .. } if missing == vec![0, 3, 7]
+        ));
+        // A non-uuid group or an empty missing list is malformed.
+        assert!(is_reject(&classify(
+            "shard/repair",
+            &json!({"group": "nope", "missing": [0]}),
+            &caller,
+            &st
+        )));
+        assert!(is_reject(&classify(
+            "shard/repair",
+            &json!({"group": "550e8400-e29b-41d4-a716-446655440000", "missing": []}),
             &caller,
             &st
         )));

@@ -66,6 +66,7 @@ pub async fn run<A: MeshDriver>(
         swarm_password,
         swarm_key,
         sink,
+        mint_swarm,
         interactive,
         endpoint,
         router: _router,
@@ -75,6 +76,7 @@ pub async fn run<A: MeshDriver>(
         cohost,
         state_file,
         spool,
+        transport,
         unicast_rx,
         live_count,
         driver,
@@ -113,15 +115,8 @@ pub async fn run<A: MeshDriver>(
     // from this mode-600 file.
     app.init_state_file(state_file.as_ref());
     let mut state = EventLoopState::new(state_file, started, identity, swarm_password, swarm_key);
-    // Replace the detached default pool with one wired to this endpoint, so
-    // directed sends can dial peers over the unicast ALPN.
-    state.unicast_pool = crate::unicast::UnicastPool::new(endpoint.clone());
-    // Advertise path only: the directory re-broadcast task reads the
-    // live count from here. Set before the first write below so the
-    // initial ad carries a real count.
-    state.live_count = live_count;
-    state.rendezvous_id = Some(rendezvous_params.id);
-    state.write_participant_count();
+    state.mint_swarm = mint_swarm; // creator-only: backs the `invite` command
+    wire_session_state(&mut state, &endpoint, transport, live_count, rendezvous_params.id);
 
     // An eager member co-hosts from t=0 so a beacon exists before any
     // joiner subscribes; everyone else defers to the heal gate
@@ -142,11 +137,9 @@ pub async fn run<A: MeshDriver>(
 
     let (gossip_sender, receiver) = topic.split();
 
-    // Install the filesystem spool mirror when `--spool` was given. A bad
-    // directory aborts startup — the frame mirror is a promised side effect,
-    // not best-effort. The watcher guard must outlive the loop below, so it
-    // stays owned in this scope (like `_router`); its scanner + writer tasks
-    // run detached until their channels close on shutdown.
+    // Wrap the sender, installing the `--spool` mirror when configured. A bad
+    // spool dir aborts startup; the watcher guard must outlive the loop, so it
+    // stays owned here (like `_router`). See `build_sender`.
     let (sender, spool_rx, _spool_watcher) = build_sender(spool, gossip_sender, &swarm_str)?;
 
     let ipc_rx = spawn_ipc_rx::<A::Ipc>(ipc_listener_disabled, &swarm_str, &author, &sink);
@@ -252,6 +245,26 @@ fn build_sender(
     ))
 }
 
+/// The 1-minute housekeeping arm: the memory warn + reassembly sweep, then
+/// ask authors to re-send what our stalled big shard groups are missing —
+/// Wire the just-built state to this session's endpoint + config: the real
+/// unicast pool (the default is detached), the transport policy, the
+/// advertise counter (set before the first write so the initial ad carries a
+/// real count), and the rendezvous id — then publish the initial count.
+fn wire_session_state(
+    state: &mut EventLoopState,
+    endpoint: &Endpoint,
+    transport: crate::transport::TransportPolicy,
+    live_count: Option<std::sync::Arc<std::sync::atomic::AtomicUsize>>,
+    rendezvous_id: EndpointId,
+) {
+    state.unicast_pool = crate::unicast::UnicastPool::new(endpoint.clone());
+    state.transport = transport;
+    state.live_count = live_count;
+    state.rendezvous_id = Some(rendezvous_id);
+    state.write_participant_count();
+}
+
 /// The alive tick: note the gap, then broadcast the keepalive presence.
 async fn alive_arm(
     anchors: &mut TickAnchors,
@@ -312,6 +325,10 @@ async fn linkstate_arm(
     let Ok(json) = vector.to_json() else {
         return;
     };
+    // Fold our own vector into our own store: gossip never loops a broadcast
+    // back, and without our outbound edges the local graph can't source a
+    // circuit (`circuit_paths(self, …)` would always be empty).
+    state.link_state.ingest(vector);
     let Ok(body) = crate::protocol::MessageBody::new(json) else {
         return;
     };

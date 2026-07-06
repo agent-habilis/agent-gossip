@@ -303,7 +303,7 @@ pub(crate) async fn ingest(
     // A shard of a split body never surfaces as a raw slice — see
     // `handle_shard` for the retain/reassemble/gate/surface sequence.
     if message.shard.is_some() {
-        handle_shard(&message, &canonical, surfaceable, state, app, ctx);
+        handle_shard(&message, &canonical, surfaceable, state, app, ctx).await;
         return;
     }
 
@@ -441,7 +441,7 @@ fn handle_link_state(message: &Message, state: &mut EventLoopState) {
 /// heals like any message) and, when its group completes, gate the
 /// reassembled logical message through the A2A boundary and surface it once —
 /// embed-pushed and dispatched exactly like an ordinary inbound message.
-fn handle_shard(
+async fn handle_shard(
     message: &Message,
     canonical: &[u8],
     surfaceable: bool,
@@ -459,7 +459,15 @@ fn handle_shard(
     // The raw shard's own per-tag policy (loggability/chain) — computed from its
     // fragment body, matching the pre-thread behavior of the internal classify.
     let shard_class = message.kind.app_tag().map(|_| app.classify(message));
-    retain_and_index(message.clone(), canonical, state, ctx, shard_class.as_ref());
+    // Only a small group's shards enter the message log (anti-entropy heals
+    // them like any message); a big group would evict the swarm's whole
+    // anti-entropy history, so its shards stay out of the log — on the send
+    // side too (`shard_fits_log`) — and the group heals via shard repair.
+    // (RPC shards are plumbing — `retain_and_index` skips them by kind
+    // either way.)
+    if crate::protocol::message::shard_fits_log(message) {
+        retain_and_index(message.clone(), canonical, state, ctx, shard_class.as_ref());
+    }
     if let Some(mut logical) = state.reassemble(message) {
         // Only the addressee reaches here (non-addressed directed shards returned
         // above), so decrypt the reassembled directed body before validating it —
@@ -487,7 +495,11 @@ fn handle_shard(
             return;
         }
         maybe_push_embed(ctx, &logical, surfaceable, logical_class.as_ref());
-        app.surface_logical(&logical, surfaceable, ctx);
+        // Dispatch the reassembled logical frame exactly like a single-frame one:
+        // a directed RPC request/response (both shard now) reaches its handler,
+        // and content surfaces. The shards were already retained above, so the
+        // retain decision `on_app_frame` returns is ignored here.
+        let _ = app.on_app_frame(&logical, surfaceable, state, ctx).await;
     }
 }
 

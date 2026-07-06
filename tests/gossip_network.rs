@@ -406,19 +406,21 @@ fn test_no_server_error() {
     );
 }
 
-/// A body over the single-message cap is transparently split and delivered;
-/// only a body too large for even `MAX_MESSAGE_SHARDS` shards is refused.
+/// A body over the single-message cap is transparently split and delivered —
+/// including past the old 16-shard ceiling, which no longer exists. (The
+/// too-large refusal now sits at `MAX_LOGICAL_BODY_BYTES` (64 `MiB`), beyond
+/// what an OS argv can carry, so it is covered in-process in `multipart.rs`.)
 #[test]
-fn test_oversize_body_splits_then_refuses_past_the_shard_cap() {
+fn test_oversize_body_splits_and_reassembles() {
     let (creator, swarm) = Node::create();
     let joiner = Node::join(&swarm, "joiner-mp");
     assert!(creator.wait_ready(&swarm), "creator socket never appeared");
     assert!(joiner.wait_ready(&swarm), "joiner socket never appeared");
 
-    // Over the single-message cap: the daemon splits it into shards and the
-    // receiver reassembles, so it surfaces once as the whole body on each
-    // stream — the sender's self-echo and the peer's delivery.
-    let body = "a".repeat(agent_gossip::MAX_MESSAGE_SIZE * 2);
+    // 32x the frame cap needs ~35 shards — over the old 16-shard limit — and
+    // the receiver still reassembles it, so it surfaces once as the whole
+    // body on each stream: the sender's self-echo and the peer's delivery.
+    let body = "a".repeat(agent_gossip::MAX_MESSAGE_SIZE * 32);
     cli_message(&swarm, &creator.nickname, &body);
     let total = wait_total(|| creator.messages().len() + joiner.messages().len(), 2);
     assert_eq!(
@@ -433,19 +435,6 @@ fn test_oversize_body_splits_then_refuses_past_the_shard_cap() {
     for msg in &got {
         assert_eq!(msg.body, body, "the reassembled body matches the original");
     }
-
-    // Too large for the shard cap: refused on the sender with a clear error.
-    let huge = "a".repeat(agent_gossip::MAX_LOGICAL_BODY_BYTES);
-    let out = cli_message_raw(&swarm, &creator.nickname, &huge);
-    assert!(
-        !out.status.success(),
-        "a body past the shard cap must be refused"
-    );
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        stderr.contains("too large"),
-        "expected a too-large error in stderr, got: {stderr}"
-    );
 }
 
 /// UTF-8 message bodies (accents, emoji, CJK) are accepted and delivered verbatim.

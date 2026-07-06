@@ -13,7 +13,8 @@ use super::bounded_id_set::BoundedIdSet;
 use super::message_log::MessageLog;
 use crate::daemon::state_file::StateFile;
 use crate::protocol::identity::Identity;
-use crate::protocol::{Message, MessageBody, MessageId, Nickname, ShardGroup};
+use crate::protocol::swarm::Swarm;
+use crate::protocol::{Message, Nickname, ShardGroup};
 use crate::util::bounded_fifo_set::BoundedFifoSet;
 use crate::util::bounded_queue::BoundedQueue;
 use crate::util::cooldown::Cooldown;
@@ -41,15 +42,18 @@ pub enum Reach {
 /// One participant in a [`RosterSnapshot`]. `last_seen_secs_ago` is
 /// `None` until the peer's first heartbeat is timed; `quiet` marks a
 /// peer heartbeat-evicted past `ALIVE_TIMEOUT_SECS` (still returnable);
-/// `reach` is `direct` only while we hold a live link to it.
-/// Serialized directly into the `agent-gossip peers` response and the MCP
-/// `swarm_info` roster.
+/// `reach` is `direct` only while we hold a live link to it; `transport`
+/// is the lane a directed frame to this peer would take right now (the
+/// live [`crate::unicast`] send decision — distinct from `reach`, which
+/// is a gossip-overlay link fact). Serialized directly into the
+/// `agent-gossip peers` response and the MCP `swarm_info` roster.
 #[derive(Debug, Clone, Serialize)]
 pub struct RosterEntry {
     pub nickname: Nickname,
     pub last_seen_secs_ago: Option<u64>,
     pub quiet: bool,
     pub reach: Reach,
+    pub transport: crate::unicast::Lane,
 }
 
 /// Live participant roster: every known peer (active + quiet) sorted
@@ -194,6 +198,10 @@ pub struct EventLoopState {
     /// user messages are buffered until `meshed`, then flushed, so the
     /// first message after a join can't be a lost one-shot.
     pub meshed: bool,
+    /// Which transports a directed message may use (per-session). `new()`
+    /// defaults to all-enabled; `event_loop::run` sets the configured value.
+    /// Read by `crate::unicast::deliver`.
+    pub transport: crate::transport::TransportPolicy,
     /// The unicast (point-to-point) connection pool: dials + reuses a QUIC
     /// connection to each addressable participant so a directed message goes
     /// p2p instead of flooding the gossip mesh. Interior-mutable (Arc), so the
@@ -202,7 +210,11 @@ pub struct EventLoopState {
     /// Independent of `linked_endpoints` by design (unicast can reach a
     /// non-neighbor). See [`crate::unicast`].
     pub unicast_pool: crate::unicast::UnicastPool,
-    /// Circuit routing table: the freshest link-state vector per origin, folded
+    /// Which transport planes directed sends may use — per-session, so
+    /// in-process nodes can each run a different policy (the CLI sources it
+    /// from the hidden `--no-unicast`/`--no-gossip-directed`/`--no-circuit`
+    /// flags, embed from its config). Read by [`crate::unicast::deliver`].
+        /// Circuit routing table: the freshest link-state vector per origin, folded
     /// into the mesh graph on demand. Populated from received `LinkState`
     /// frames; read by the circuit send path (and the topology view). See
     /// [`crate::circuit`].
@@ -248,6 +260,14 @@ pub struct EventLoopState {
     /// once even if a shard is re-fetched (via anti-entropy) after its id aged
     /// out of [`seen`](Self::seen). Bounded — groups are rare and short-lived.
     pub reassembled_groups: BoundedFifoSet<ShardGroup>,
+    /// Partial multipart bodies buffering toward reassembly — dedicated and
+    /// byte-budgeted, decoupled from the message log so log eviction can
+    /// never break reassembly. Swept for stale groups on the prune tick.
+    pub reassembly: super::reassembly::ReassemblyStore,
+    /// Serialized frames of our recent big (unlogged) outbound shard groups —
+    /// the re-serve source for peers' `shard/repair` requests (big groups
+    /// skip the message log, so anti-entropy can't heal them).
+    pub shard_cache: super::reassembly::ShardCache,
     /// The `state` channel: an automerge CRDT plus the signed change frames that
     /// carried it (the re-serve store). Convergence and card authorization live
     /// in [`super::doc`]; reconciliation is heads-based anti-entropy. This is the
@@ -325,6 +345,11 @@ pub struct EventLoopState {
     /// blob ticket inherits the same password — a scraped ticket then can't be
     /// redeemed without it. Kept out of logs (`Password` redacts its `Debug`).
     pub swarm_password: Option<crate::protocol::crypto::Password>,
+    /// The invite-only **creator's** swarm (secrets and all), retained so the
+    /// `invite` IPC command can mint. `Some` only on the creator; set from
+    /// [`EventLoopConfig`] after construction, so `new` defaults it to `None`
+    /// and the many test call sites need no new argument.
+    pub mint_swarm: Option<Swarm>,
     /// Symmetric key for broadcast-chat (`A2aMsg`) bodies on a passworded
     /// swarm, `derive_secret(swarm_key, "broadcast")` — domain-separated from
     /// the state/meta doc keys. `None` ⇒ chat stays plaintext. Wiped on drop.
@@ -390,6 +415,7 @@ impl EventLoopState {
             rendezvous_linked: false,
             announced: false,
             meshed: false,
+            transport: crate::transport::TransportPolicy::DEFAULTS,
             unicast_pool: crate::unicast::UnicastPool::disconnected(),
             link_state: crate::circuit::LinkStateStore::default(),
             link_state_seq: 0,
@@ -402,6 +428,8 @@ impl EventLoopState {
             live_count: None,
             message_log: MessageLog::new(message_log_size()),
             reassembled_groups: BoundedFifoSet::new(message_log_size()),
+            reassembly: super::reassembly::ReassemblyStore::default(),
+            shard_cache: super::reassembly::ShardCache::default(),
             state_doc: super::doc::SwarmDoc::new(false).with_key(state_key),
             meta_doc: super::doc::SwarmDoc::new(true).with_key(meta_key),
             digest_cursor: 0,
@@ -419,6 +447,7 @@ impl EventLoopState {
             resident_memory_warned: false,
             ping_round: None,
             swarm_password,
+            mint_swarm: None,
             broadcast_key,
         }
     }
@@ -453,6 +482,7 @@ impl EventLoopState {
                 last_seen_secs_ago: self.last_seen.get(nick).map(secs_since),
                 quiet: false,
                 reach: self.reach_of(nick),
+                transport: crate::unicast::lane_for(nick, self),
             })
             .chain(self.quiet.iter().map(|nick| RosterEntry {
                 nickname: nick.clone(),
@@ -462,6 +492,7 @@ impl EventLoopState {
                 last_seen_secs_ago: self.quiet_since.get(nick).map(secs_since),
                 quiet: true,
                 reach: Reach::Gossip,
+                transport: crate::unicast::lane_for(nick, self),
             }))
             .collect();
         // Most-recently-seen first; unknown recency (no heartbeat yet) sorts last.
@@ -527,15 +558,46 @@ impl EventLoopState {
         self.seen.mark(message.dedup_key())
     }
 
-    /// Try to reassemble the sharded body the just-retained `trigger` shard
-    /// belongs to. Returns the synthesized logical [`Message`] once every shard of
-    /// the group (this author's, slotted by `idx`) is present and the group has
-    /// not been surfaced before; `None` while incomplete or already surfaced. The
-    /// shards stay in the log for anti-entropy; the returned message is a surfacing
-    /// view whose `id` is the group, so sender and receivers name it alike.
+    /// Try to reassemble the sharded body the `trigger` shard belongs to:
+    /// buffer it in the dedicated [`reassembly`](Self::reassembly) store and,
+    /// when it completes its group (and the group has not been surfaced
+    /// before), return the synthesized logical [`Message`] — a surfacing view
+    /// whose `id` is the group, so sender and receivers name it alike.
+    ///
+    /// Small (logged) groups get a second completion path off the message
+    /// log: their shards are all retained there, so a shard healed by
+    /// anti-entropy *after* the store's stale-group TTL reaped the partial
+    /// buffer still completes the body — dedup (`seen`) means the healed
+    /// shard is the only one re-ingested, and the store alone would sit on
+    /// 1-of-N forever.
     pub(crate) fn reassemble(&mut self, trigger: &Message) -> Option<Message> {
         let shard = trigger.shard.as_ref()?;
         if self.reassembled_groups.contains(&shard.group) {
+            return None;
+        }
+        match self.reassembly.ingest(trigger, Instant::now()) {
+            super::reassembly::ShardIngest::Complete(logical) => {
+                self.reassembled_groups.insert(shard.group.clone());
+                Some(*logical)
+            }
+            super::reassembly::ShardIngest::Buffered
+            | super::reassembly::ShardIngest::Dropped => {
+                let logical = self.reassemble_from_log(trigger)?;
+                // The store may still hold a partial buffer for this group
+                // (e.g. just the trigger, post-TTL) — release its budget.
+                self.reassembly.forget(&trigger.pubkey, &shard.group);
+                self.reassembled_groups.insert(shard.group.clone());
+                Some(logical)
+            }
+        }
+    }
+
+    /// The log-backed completion path for a **small** (logged) group: scan
+    /// the message log for this author's shards and synthesize when every
+    /// slot is present. Mirrors the store's synthesis exactly.
+    fn reassemble_from_log(&self, trigger: &Message) -> Option<Message> {
+        let shard = trigger.shard.as_ref()?;
+        if !crate::protocol::message::shard_fits_log(trigger) {
             return None;
         }
         let slots = self
@@ -550,26 +612,9 @@ impl EventLoopState {
         }
         // The concatenation of valid bodies is itself valid (no new control
         // chars), but fail closed rather than surface a malformed body.
-        let body = MessageBody::new(body).ok()?;
-        let logical =
-            Self::synthesize_logical(slots[0].expect("shard 0 present"), body, &shard.group);
-        self.reassembled_groups.insert(shard.group.clone());
-        Some(logical)
-    }
-
-    /// Build the logical-message surfacing view from a body's shards: shard 0's
-    /// envelope (kind/author/pubkey/swarm/ts), the concatenated `body`, the group
-    /// as `id`, and no `shard`/chain (the view is neither a wire message nor a
-    /// chain entry — the shards are).
-    fn synthesize_logical(first: &Message, body: MessageBody, group: &ShardGroup) -> Message {
-        let mut msg = first.clone();
-        msg.id = MessageId::new(group.as_str()).expect("a shard group is a valid message id");
-        msg.body = body;
-        msg.shard = None;
-        msg.seq = None;
-        msg.prev = None;
-        msg.parents = Vec::new();
-        msg
+        let body = crate::protocol::MessageBody::new(body).ok()?;
+        let envelope = slots[0].expect("shard 0 present").clone();
+        Some(super::reassembly::synthesize_from(envelope, body, &shard.group))
     }
 
     /// Mark the mesh degraded: a fault path (starvation recovery, hard
@@ -718,10 +763,10 @@ const MAX_DAG_PARENTS: usize = 16;
 #[cfg(test)]
 mod tests {
     use super::{
-        Duration, EndpointId, EventLoopState, Instant, KNOWN_ENDPOINTS_CAP, Message, MessageBody,
-        MessageId, Nickname, QUIET_CAP, RELINK_COOLDOWN_SECS, Reach,
+        Duration, EndpointId, EventLoopState, Instant, KNOWN_ENDPOINTS_CAP, Message, Nickname,
+        QUIET_CAP, RELINK_COOLDOWN_SECS, Reach,
     };
-    use crate::protocol::SwarmId;
+    use crate::protocol::{MessageBody, MessageId, SwarmId};
 
     fn nick(name: &str) -> Nickname {
         Nickname::new(name.to_owned()).expect("valid test nickname")
@@ -947,6 +992,43 @@ mod tests {
 
         state.rendezvous_linked = false;
         assert_eq!(reach(&state), Reach::Gossip, "rendezvous down → gossip");
+    }
+
+    #[test]
+    fn roster_transport_mirrors_the_send_decision() {
+        use crate::unicast::Lane;
+        let mut state = fresh_state();
+        state.meshed = true;
+        // Known endpoint while meshed → unicast (the send path would dial it).
+        state.participants.insert(nick("dialable"));
+        state
+            .participant_endpoints
+            .insert(nick("dialable"), endpoint_id(1));
+        // No PeerInfo yet → nothing to dial or route a circuit to → gossip.
+        state.participants.insert(nick("unknown"));
+
+        let lane = |current: &EventLoopState, name: &str| {
+            current
+                .roster_snapshot()
+                .participants
+                .iter()
+                .find(|entry| entry.nickname.as_str() == name)
+                .unwrap_or_else(|| panic!("{name} missing from roster"))
+                .transport
+        };
+        assert_eq!(lane(&state, "dialable"), Lane::Unicast);
+        assert_eq!(lane(&state, "unknown"), Lane::Gossip);
+
+        // Unmeshed: the known endpoint is no longer a unicast route, so the
+        // circuit plane picks it up.
+        state.meshed = false;
+        assert_eq!(lane(&state, "dialable"), Lane::Circuit);
+
+        // Policy narrows the column exactly like it narrows `deliver`.
+        state.transport.circuit = false;
+        assert_eq!(lane(&state, "dialable"), Lane::Gossip);
+        state.transport.gossip_directed = false;
+        assert_eq!(lane(&state, "dialable"), Lane::Unreachable);
     }
 
     #[test]

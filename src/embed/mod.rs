@@ -30,6 +30,7 @@ use agent_habilis_gossip::protocol::swarm::{
 };
 use agent_habilis_gossip::protocol::{Message, MessageBody, Nickname, SwarmId};
 use agent_habilis_gossip::resolver::JoinTarget;
+use agent_habilis_gossip::transport::TransportPolicy;
 use agent_habilis_gossip::util::consts::GOSSIP_ACTIVE_VIEW_CAPACITY;
 use agent_habilis_gossip::util::tuning::{
     EMBED_INBOUND_CAP, advertise_interval_secs, directory_expiry_secs,
@@ -50,6 +51,9 @@ pub struct JoinConfig {
     /// Password for a password-protected id. Verified locally against the
     /// id's verifier before any network; required iff the id carries one.
     pub password: Option<String>,
+    /// Which transport planes directed sends may use. Default all-on;
+    /// narrowed by tests to pin a message to one lane.
+    pub transport: TransportPolicy,
     /// Mirror frames into this shared directory (and ingest frames peers write
     /// there) — the filesystem spool. `None` disables it.
     pub spool: Option<std::path::PathBuf>,
@@ -67,6 +71,7 @@ impl JoinConfig {
             nickname: None,
             max_peers: GOSSIP_ACTIVE_VIEW_CAPACITY,
             password: None,
+            transport: TransportPolicy::default(),
             spool: None,
         }
     }
@@ -85,6 +90,9 @@ pub struct TopicConfig {
     pub nickname: Option<Nickname>,
     /// Max direct peer connections before gossip relays the rest.
     pub max_peers: usize,
+    /// Which transport planes directed sends may use. Default all-on;
+    /// narrowed by tests to pin a message to one lane.
+    pub transport: TransportPolicy,
     /// Mirror frames into this shared directory (and ingest frames peers write
     /// there) — the filesystem spool. `None` disables it.
     pub spool: Option<std::path::PathBuf>,
@@ -98,6 +106,7 @@ impl TopicConfig {
             string,
             nickname: None,
             max_peers: GOSSIP_ACTIVE_VIEW_CAPACITY,
+            transport: TransportPolicy::default(),
             spool: None,
         }
     }
@@ -136,6 +145,9 @@ pub struct CreateConfig {
     /// minted id (joiners must present the password), and every derivation
     /// switches onto the Argon2id-stretched key.
     pub password: Option<String>,
+    /// Which transport planes directed sends may use. Default all-on;
+    /// narrowed by tests to pin a message to one lane.
+    pub transport: TransportPolicy,
     /// Mirror frames into this shared directory (and ingest frames peers write
     /// there) — the filesystem spool. `None` disables it.
     pub spool: Option<std::path::PathBuf>,
@@ -156,6 +168,7 @@ impl CreateConfig {
             directory: None,
             max_peers: GOSSIP_ACTIVE_VIEW_CAPACITY,
             password: None,
+            transport: TransportPolicy::default(),
             spool: None,
         }
     }
@@ -255,6 +268,7 @@ async fn create_setup(
     let config = SwarmConfig {
         lookups: resolve_lookups(cfg.public, cfg.lookups),
         password: None,
+        issuer_pubkey: None,
     };
     // The advertiser reaches the directory over this swarm's own lookups.
     let directory_lookups = config.lookups.clone();
@@ -279,6 +293,9 @@ async fn create_setup(
         password: cfg
             .password
             .map(agent_habilis_gossip::protocol::crypto::Password::new),
+        // Invite-only is a CLI-driven feature; the embed facade does not expose
+        // it yet (a documented follow-up).
+        invite_only: false,
     }
     .resolve()
     .map_err(|_| CreateError::AdvertiseRequiresReachable)?;
@@ -293,6 +310,7 @@ async fn create_setup(
             state_file: None,
             spool: cfg.spool,
             sink,
+            transport: cfg.transport,
             drift: None,
             a2a_serve: None,
         },
@@ -325,7 +343,7 @@ async fn join_setup(
     }
     .resolve()
     .map_err(JoinError::Resolve)?;
-    resolved_setup(resolved, cfg.max_peers, cfg.spool, output).await
+    resolved_setup(resolved, cfg.max_peers, cfg.spool, cfg.transport, output).await
 }
 
 /// Resolve + set up a topic (a string-derived public swarm).
@@ -343,7 +361,7 @@ async fn topic_setup(
     }
     .resolve()
     .map_err(JoinError::Resolve)?;
-    resolved_setup(resolved, cfg.max_peers, cfg.spool, output).await
+    resolved_setup(resolved, cfg.max_peers, cfg.spool, cfg.transport, output).await
 }
 
 /// The shared tail of [`join_setup`] / [`topic_setup`]: run `setup_swarm` for
@@ -352,6 +370,7 @@ async fn resolved_setup(
     resolved: Resolved,
     max_peers: usize,
     spool: Option<std::path::PathBuf>,
+    transport: TransportPolicy,
     output: Output,
 ) -> Result<(EventLoopConfig, crate::a2a::app::SurfacedIo), JoinError> {
     let Resolved { kind, author, .. } = resolved;
@@ -366,6 +385,7 @@ async fn resolved_setup(
             state_file: None,
             spool,
             sink,
+            transport,
             drift: None,
             a2a_serve: None,
         },
@@ -386,6 +406,13 @@ pub(crate) struct InProcessSession {
     swarm_id: SwarmId,
     name: SwarmName,
     nickname: Nickname,
+    /// This node's iroh endpoint id + X25519 circuit key, captured for the
+    /// testkit `inject_link_vector` (which needs a peer's id + key to build the
+    /// synthetic link-state vector).
+    #[cfg(feature = "adversarial")]
+    endpoint_id: iroh::EndpointId,
+    #[cfg(feature = "adversarial")]
+    circuit_key: [u8; 32],
     req_tx: mpsc::Sender<SessionRequest>,
     quit_tx: mpsc::Sender<()>,
     task: Option<JoinHandle<anyhow::Result<()>>>,
@@ -422,6 +449,10 @@ impl InProcessSession {
         let swarm_id = elc.swarm.clone();
         let name = elc.name.clone();
         let nickname = elc.author.clone();
+        #[cfg(feature = "adversarial")]
+        let endpoint_id = elc.endpoint.id();
+        #[cfg(feature = "adversarial")]
+        let circuit_key = elc.identity.seal_public();
         let task = tokio::spawn(agent_habilis_gossip::daemon::run(
             elc,
             app,
@@ -432,6 +463,10 @@ impl InProcessSession {
             swarm_id,
             name,
             nickname,
+            #[cfg(feature = "adversarial")]
+            endpoint_id,
+            #[cfg(feature = "adversarial")]
+            circuit_key,
             req_tx,
             quit_tx,
             task: Some(task),
@@ -715,6 +750,44 @@ impl InProcessSession {
             .map_err(|_| anyhow::anyhow!("swarm event loop has stopped"))
     }
 
+    /// This node's iroh endpoint id (testkit).
+    #[cfg(feature = "adversarial")]
+    pub(crate) fn endpoint_id(&self) -> iroh::EndpointId {
+        self.endpoint_id
+    }
+
+    /// This node's X25519 circuit key (testkit) — a peer needs it to onion-seal
+    /// a circuit terminating here.
+    #[cfg(feature = "adversarial")]
+    pub(crate) fn circuit_key(&self) -> [u8; 32] {
+        self.circuit_key
+    }
+
+    /// Ingest a synthetic link-state vector into this node's routing graph
+    /// (testkit) — stands up a circuit topology a live rendezvous mesh won't
+    /// converge. See [`agent_habilis_gossip::circuit::LinkStateStore`].
+    ///
+    /// # Errors
+    /// Fails if the event loop has stopped.
+    #[cfg(feature = "adversarial")]
+    pub(crate) async fn inject_link_vector(
+        &self,
+        origin: iroh::EndpointId,
+        seq: u64,
+        seal_key: [u8; 32],
+        links: Vec<(iroh::EndpointId, u32)>,
+    ) -> anyhow::Result<()> {
+        self.req_tx
+            .send(SessionRequest::InjectLinkVector {
+                origin,
+                seq,
+                seal_key,
+                links,
+            })
+            .await
+            .map_err(|_| anyhow::anyhow!("swarm event loop has stopped"))
+    }
+
     /// Simulate the gossip stream terminally ending. Adversarial-suite
     /// only — drives the stream-end resubscribe recovery test.
     ///
@@ -738,6 +811,20 @@ impl InProcessSession {
         let (resp_tx, resp_rx) = oneshot::channel();
         self.req_tx
             .send(SessionRequest::IndexStats { resp: resp_tx })
+            .await
+            .map_err(|_| anyhow::anyhow!("swarm event loop has stopped"))?;
+        resp_rx
+            .await
+            .map_err(|_| anyhow::anyhow!("swarm event loop dropped the response"))
+    }
+
+    /// Snapshot the reassembly store's accounting
+    /// `(groups, total_bytes, max_author_bytes)`. Adversarial-suite only.
+    #[cfg(feature = "adversarial")]
+    pub(crate) async fn reassembly_stats(&self) -> anyhow::Result<(usize, usize, usize)> {
+        let (resp_tx, resp_rx) = oneshot::channel();
+        self.req_tx
+            .send(SessionRequest::ReassemblyStats { resp: resp_tx })
             .await
             .map_err(|_| anyhow::anyhow!("swarm event loop has stopped"))?;
         resp_rx
@@ -870,6 +957,7 @@ impl SwarmSession {
                 sink,
                 drift: None,
                 a2a_serve: None,
+                transport: TransportPolicy::default(),
             },
         )
         .await?;
@@ -1081,6 +1169,43 @@ impl SwarmSession {
         self.core.inject_raw(bytes::Bytes::from(bytes)).await
     }
 
+    /// This node's iroh endpoint id. Test-only (`adversarial`): a peer needs it
+    /// to name this node in an injected circuit topology.
+    #[cfg(feature = "adversarial")]
+    #[must_use]
+    pub fn endpoint_id(&self) -> iroh::EndpointId {
+        self.core.endpoint_id()
+    }
+
+    /// This node's X25519 circuit key. Test-only (`adversarial`): a peer needs
+    /// it to onion-seal a circuit terminating at this node.
+    #[cfg(feature = "adversarial")]
+    #[must_use]
+    pub fn circuit_key(&self) -> [u8; 32] {
+        self.core.circuit_key()
+    }
+
+    /// Ingest a synthetic link-state vector into this node's routing graph so a
+    /// circuit route can be computed over a live mesh that would not otherwise
+    /// converge one. Test-only (`adversarial`); mirrors how `src/circuit`'s own
+    /// tests build controlled topologies. `origin`/`seal_key`/`links` are a
+    /// peer's endpoint id, X25519 key, and `(neighbour, cost)` edges.
+    ///
+    /// # Errors
+    /// Fails if the event loop has stopped.
+    #[cfg(feature = "adversarial")]
+    pub async fn inject_link_vector(
+        &self,
+        origin: iroh::EndpointId,
+        seq: u64,
+        seal_key: [u8; 32],
+        links: Vec<(iroh::EndpointId, u32)>,
+    ) -> anyhow::Result<()> {
+        self.core
+            .inject_link_vector(origin, seq, seal_key, links)
+            .await
+    }
+
     /// Simulate the gossip stream terminally ending (the daemon must
     /// resubscribe and recover on its own). Adversarial-suite only.
     ///
@@ -1100,6 +1225,17 @@ impl SwarmSession {
     #[cfg(feature = "adversarial")]
     pub async fn index_stats(&self) -> anyhow::Result<(usize, usize, usize)> {
         self.core.index_stats().await
+    }
+
+    /// Snapshot the reassembly store's accounting
+    /// `(groups, total_bytes, max_author_bytes)`. Adversarial-suite only —
+    /// lets it assert crafted shard streams stay inside the byte budgets.
+    ///
+    /// # Errors
+    /// Fails if the event loop has stopped.
+    #[cfg(feature = "adversarial")]
+    pub async fn reassembly_stats(&self) -> anyhow::Result<(usize, usize, usize)> {
+        self.core.reassembly_stats().await
     }
 
     /// Clean shutdown: ask the loop to broadcast `Left` and wind down,

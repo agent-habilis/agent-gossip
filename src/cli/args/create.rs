@@ -63,6 +63,14 @@ pub(crate) struct CreateOpts {
     /// history — prefer the prompt when a human types it).
     #[arg(long, num_args(0..=1), require_equals = true, default_missing_value = "\0")]
     pub password: Option<PasswordFlag>,
+
+    /// Make the swarm invite-only: the bare `💬…` id can no longer join —
+    /// only a creator-minted `🎟️` invite can. The id carries the issuer public
+    /// key (the mint authority), never the join secret; mint invites with
+    /// `agent-gossip invite`. Combine with `--password` to also password-protect
+    /// every minted invite.
+    #[arg(long)]
+    pub invite_only: bool,
 }
 
 impl CreateOpts {
@@ -117,6 +125,7 @@ mod tests {
             | Commands::Unplug { .. }
             | Commands::Doctor { .. }
             | Commands::Leave { .. }
+            | Commands::Invite { .. }
             | Commands::Session { .. } => {
                 panic!("expected Create command")
             }
@@ -148,6 +157,7 @@ mod tests {
             | Commands::Unplug { .. }
             | Commands::Doctor { .. }
             | Commands::Leave { .. }
+            | Commands::Invite { .. }
             | Commands::Session { .. } => {
                 panic!("expected Create command")
             }
@@ -176,6 +186,7 @@ mod tests {
             | Commands::Unplug { .. }
             | Commands::Doctor { .. }
             | Commands::Leave { .. }
+            | Commands::Invite { .. }
             | Commands::Session { .. } => {
                 panic!("expected Create command")
             }
@@ -225,6 +236,7 @@ mod tests {
                 | Commands::Unplug { .. }
                 | Commands::Doctor { .. }
                 | Commands::Leave { .. }
+                | Commands::Invite { .. }
                 | Commands::Session { .. } => panic!("expected Create"),
             }
         }
@@ -273,6 +285,7 @@ mod tests {
                 | Commands::Unplug { .. }
                 | Commands::Doctor { .. }
                 | Commands::Leave { .. }
+                | Commands::Invite { .. }
                 | Commands::Session { .. } => panic!("expected Create"),
             }
         }
@@ -336,6 +349,7 @@ mod tests {
             | Commands::Unplug { .. }
             | Commands::Doctor { .. }
             | Commands::Leave { .. }
+            | Commands::Invite { .. }
             | Commands::Session { .. } => {
                 panic!("expected Create command")
             }

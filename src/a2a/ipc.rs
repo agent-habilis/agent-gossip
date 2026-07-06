@@ -119,6 +119,11 @@ pub(crate) enum IpcCommand {
     /// addresses the daemon by socket path, not by id.
     #[serde(rename = "info")]
     Info,
+    /// Mint a `🎟️` invite for the swarm this socket serves — creator-only
+    /// (the daemon holds the issuer key in `state.mint_swarm`). `ttl` is the
+    /// invite lifetime in seconds (`0` ⇒ no expiry).
+    #[serde(rename = "invite")]
+    Invite { swarm: SwarmId, ttl: u64 },
 }
 
 impl Addressed for IpcCommand {
@@ -138,6 +143,7 @@ impl Addressed for IpcCommand {
             | IpcCommand::MetaMerge { swarm, .. }
             | IpcCommand::MetaGet { swarm }
             | IpcCommand::Topology { swarm }
+            | IpcCommand::Invite { swarm, .. }
             | IpcCommand::A2aCall { swarm, .. } => Some(swarm),
             IpcCommand::Info => None,
         }
@@ -372,6 +378,27 @@ pub(crate) async fn handle_ipc_command(
             let _ = resp_tx.send(info_response(swarm, name, author, state));
             false
         }
+        IpcCommand::Invite { swarm: _, ttl } => {
+            let _ = resp_tx.send(invite_response(state, ttl));
+            false
+        }
+    }
+}
+
+/// Mint a `🎟️` invite for the swarm this daemon serves — creator-only. The
+/// issuer key lives in `state.mint_swarm` (populated only on the creator of an
+/// invite-only swarm); every other session refuses.
+fn invite_response(state: &EventLoopState, ttl: u64) -> String {
+    let Some(swarm) = &state.mint_swarm else {
+        return serde_json::json!({
+            "ok": false,
+            "error": "invites can only be minted by the creator of an invite-only swarm",
+        })
+        .to_string();
+    };
+    match agent_habilis_gossip::invite::mint(swarm, Some(ttl), state.swarm_password.as_ref()) {
+        Ok(token) => serde_json::json!({ "ok": true, "invite": token }).to_string(),
+        Err(error) => serde_json::json!({ "ok": false, "error": error.to_string() }).to_string(),
     }
 }
 
@@ -503,6 +530,7 @@ mod tests {
             | IpcCommand::StateGet { .. }
             | IpcCommand::A2aCall { .. }
             | IpcCommand::Topology { .. }
+            | IpcCommand::Invite { .. }
             | IpcCommand::Info => panic!("expected StateMerge"),
         }
     }
@@ -535,6 +563,7 @@ mod tests {
             | IpcCommand::StateGet { .. }
             | IpcCommand::A2aCall { .. }
             | IpcCommand::Topology { .. }
+            | IpcCommand::Invite { .. }
             | IpcCommand::Info => panic!("expected Poll"),
         }
     }
@@ -560,6 +589,7 @@ mod tests {
             | IpcCommand::StateGet { .. }
             | IpcCommand::A2aCall { .. }
             | IpcCommand::Topology { .. }
+            | IpcCommand::Invite { .. }
             | IpcCommand::Info => panic!("expected Ping"),
         }
     }
@@ -592,6 +622,7 @@ mod tests {
             | IpcCommand::StateGet { .. }
             | IpcCommand::A2aCall { .. }
             | IpcCommand::Topology { .. }
+            | IpcCommand::Invite { .. }
             | IpcCommand::Info => panic!("expected A2aStatus"),
         }
     }
@@ -617,6 +648,7 @@ mod tests {
             | IpcCommand::StateGet { .. }
             | IpcCommand::A2aCall { .. }
             | IpcCommand::Topology { .. }
+            | IpcCommand::Invite { .. }
             | IpcCommand::Info => panic!("expected Peers"),
         }
     }

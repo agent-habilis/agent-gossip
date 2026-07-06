@@ -196,6 +196,36 @@ Code: `protocol::crypto` (`stretch_swarm_password`, `password_verifier`,
 stretched_key}`, `protocol::seal::{seal_symmetric, open_symmetric}`,
 `daemon::state_doc::{encrypt_body, decrypt_body}`.
 
+### invite
+
+*Layer: identity · optional, per swarm.*
+
+An **invite-only** swarm (`create --invite-only`) withholds its derivation
+secret from the published hash: the bare `💬…` id reaches nothing (the topic is
+gated by a random **invite root** the same way a password's stretched key gates
+a passworded swarm — see the `effective_seed` mechanism). Joining needs a
+creator-minted **invite**: a `🎟️` bearer ticket carrying the swarm hash, the
+invite root, an **expiry** (TTL), and the creator's **Ed25519 signature** over
+those fields. A redeemer verifies the signature against the **issuer pubkey** the
+id carries, checks the expiry against its local clock, and derives the topic;
+`agent-gossip join <🎟️…>` does this. If the swarm has a password, the invite's
+root is `seal_symmetric`-wrapped under a password-derived key, so a scraped
+invite still needs the password.
+
+**Only the creator can mint.** The issuer *private* key is held in-memory by the
+creating session alone, so a member who holds the root (having redeemed) can
+package the bytes but not a *valid* (issuer-signed) invite. Consequences, all
+deliberate and documented: after the creator's daemon restarts the issuer key is
+gone and **no new invites can be minted** (already-issued ones still redeem, the
+swarm keeps running); TTL is a *redemption window* (a bearer who already redeemed
+keeps the key — revoking one invitee means re-keying the swarm); and a rogue
+member could still leak the raw root out-of-band (unpreventable in a bearer
+system, same class as TTL).
+
+Code: `Swarm::{set_invite, apply_invite, requires_invite, issuer_secret,
+invite_key}`, `crypto::invite_wrap_key`, `invite::{mint, InviteTicket}`,
+`resolver::JoinTarget::Invite`, the `invite` CLI + `IpcCommand::Invite`.
+
 ### rendezvous
 
 *Layer: identity · keyed by seed.*
@@ -407,7 +437,7 @@ contradicts its frame is dropped whole.
 A participant's `AgentCard` — its canonical A2A self-description (A2A v1.0:
 `supportedInterfaces[]` each with a `protocolVersion`, capabilities, declared
 extensions, default skills, and its Ed25519 identity carried in the gossip
-`AgentInterface` url, `swarm+gossip://<pubkey>`). Each member's daemon publishes its card
+`AgentInterface` url, `🤖://<pubkey>`). Each member's daemon publishes its card
 into the **meta** channel at `/peers/<nick>/card` on join — the one channel
 write the binary itself makes (see the amended invariant under *shared
 state*) — so peers enumerate each other's cards from the meta document with
@@ -431,14 +461,23 @@ One slice of a body too large for a single gossip message. When a body
 exceeds `MAX_MESSAGE_SIZE`, the sender splits it into several ordinary signed
 messages, each carrying a `shard` header — a `group` (a UUID shared by the
 body's shards), an `idx`, and the `total` count. Each shard is a real message
-(own id/seq/signature) retained in the **message log**, so a missing shard
-heals through anti-entropy like any message. The receiver reassembles the
-shards of a `group` (keyed also by author key, so a crafted cross-author shard
-can't inject a slice) into the one logical message it surfaces; the raw shards
-never surface. Capped at `MAX_MESSAGE_SHARDS` per body — a larger body is
-refused on send. The split is invisible to agents: a body sends and arrives
-whole. (Renamed from *part*: the A2A layer owns that word for a message's
-content unit.)
+(own id/seq/signature); shards of a small group (`total <=`
+`LOGGED_SHARD_GROUP_MAX_TOTAL`) are retained in the **message log**, so a
+missing one heals through anti-entropy like any message, while a bigger
+group's shards skip the log on both ends (one huge body must not evict the
+anti-entropy history) and heal through **shard repair**: the sender caches
+its outbound frames and a receiver whose group stalls asks it — the
+`shard/repair` gossip-RPC method — to re-send the missing indexes. The
+receiver buffers shards in the
+dedicated **reassembly store** — bounded by byte budgets (per group, per
+author, global) and a stale-group TTL, never by a shard count — and keyed
+also by author key, so a crafted cross-author shard can't inject a slice.
+The reassembled logical message is the only thing surfaced; the raw shards
+never surface. The one send-side limit is `MAX_LOGICAL_BODY_BYTES` (a local
+input ceiling — bigger payloads belong on the **blob** channel). The split is
+invisible to agents: a body sends and arrives whole, on any transport.
+(Renamed from *part*: the A2A layer owns that word for a message's content
+unit.)
 
 ### seal
 
@@ -483,11 +522,12 @@ The producer's daemon serves the content — addressed by its SHA-256 — from a
 per-peer spool (`<RUNTIME_DIR>/<swarm-prefix>/<nick>.blobs/<hash>`, hardlinked or
 copied from the source so the original can change freely) over a dedicated,
 lazily-bound endpoint on the `agent-gossip/blob/1` ALPN. The **blob
-reference** — a `💬…` Base58Check *ticket* carrying the producer's address, a
+reference** — a `🎟️…` Base58Check *ticket* carrying the producer's address, a
 bearer secret, the hash, and the size — rides gossip inside a `Part.url`. The
-ticket shares the swarm's `💬` brand with the swarm id and the a2a bridge
-ticket; a *kind* byte inside the framed payload tells the three apart, so a
-wrong-kind token fails cleanly on decode. The consumer decodes it, dials the
+ticket carries its own `🎟️` brand, distinct from the swarm id's `💬`, so a
+swarm id can never be mistaken for a ticket (it fails on the prefix). The `🎟️`
+brand is shared with the a2a bridge ticket; a *kind* byte inside the framed
+payload tells those two apart, so a wrong-kind token fails cleanly on decode. The consumer decodes it, dials the
 producer, presents the secret, and streams the bytes to disk, verifying the
 SHA-256 as they arrive (`agent-gossip a2a fetch` — by default into the session's
 `<nick>.recv/` folder, or to stdout with `--output -`). Symmetric: an input

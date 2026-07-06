@@ -437,7 +437,7 @@ async fn foreign_card_forgery_is_rejected() {
     // source (an honest daemon cannot author it) — the receive-side gate against
     // a *malicious* peer that bypasses this path is exercised by the adversarial
     // suite injecting crafted frames. A legit self-write is the delivery barrier.
-    let fake_url = format!("swarm+gossip://{}", "ff".repeat(32));
+    let fake_url = format!("🤖://{}", "ff".repeat(32));
     let forged = alice
         .try_meta_merge(
             json!({"peers": {&bob_nick: {"card": {"supportedInterfaces": [
@@ -495,11 +495,11 @@ async fn agent_cards_publish_to_meta_on_join() {
                     .as_array()
                     .is_some_and(|exts| !exts.is_empty())
                 // v1.0: the protocol version + the Ed25519 identity ride the
-                // gossip `AgentInterface` (`swarm+gossip://<pubkey>`).
+                // gossip `AgentInterface` (`🤖://<pubkey>`).
                 && card["supportedInterfaces"][0]["protocolVersion"].is_string()
                 && card["supportedInterfaces"][0]["url"]
                     .as_str()
-                    .and_then(|url| url.strip_prefix("swarm+gossip://"))
+                    .and_then(|url| url.strip_prefix("🤖://"))
                     .is_some_and(|key| key.len() == 64)
                 // The stable dial hint (EndpointId + home relay) rides inside the
                 // card, so a synced peer can dial without a gossiped PeerInfo.
