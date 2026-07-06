@@ -22,8 +22,8 @@ mod common;
 
 use std::time::{Duration, Instant};
 
-use agent_gossip::OutputEvent;
-use agent_gossip::harness::adversarial::{self, CraftedMsg};
+use agent_mesh::OutputEvent;
+use agent_mesh::harness::adversarial::{self, CraftedMsg};
 use common::{InProcNode, MSG_TIMEOUT, POLL};
 use serde_json::{Value, json};
 
@@ -34,12 +34,12 @@ use serde_json::{Value, json};
 // loaded debug-build host needs — see that constant's note.
 const T: Duration = MSG_TIMEOUT;
 
-/// A victim + attacker pair on a fresh loopback swarm, **meshed** (a warmup
+/// A victim + attacker pair on a fresh loopback mesh, **meshed** (a warmup
 /// from the attacker is observed by the victim) so injected bytes are
 /// actually delivered. The victim is the observer.
 async fn meshed_pair(tag: &str) -> (InProcNode, InProcNode) {
     let mut victim = InProcNode::create(&format!("adv-{tag}")).await;
-    let attacker = InProcNode::join(&victim.swarm, &format!("adv-{tag}-atk")).await;
+    let attacker = InProcNode::join(&victim.mesh, &format!("adv-{tag}-atk")).await;
     attacker.send("warmup").await;
     assert!(
         victim.wait_body("warmup", T).await,
@@ -59,7 +59,7 @@ fn surfaced(victim: &mut InProcNode, body: &str) -> bool {
 async fn unsigned_message_is_dropped() {
     let (mut victim, attacker) = meshed_pair("unsigned").await;
     // No `.sign(..)` → empty signature. The victim must reject it.
-    let evil = CraftedMsg::new(attacker.session.swarm_id(), "ghost", "evil-unsigned").bytes();
+    let evil = CraftedMsg::new(attacker.session.mesh_id(), "ghost", "evil-unsigned").bytes();
     attacker.session.inject_raw(evil).await.expect("inject");
     // Barrier: a real signed message from the same sender, sent *after* the
     // injection. When it arrives, the unsigned one (sent first) had its turn.
@@ -81,7 +81,7 @@ async fn tampered_message_is_dropped() {
     let (mut victim, attacker) = meshed_pair("tampered").await;
     let key = adversarial::new_key();
     // Sign "honest", then mutate the body → signature no longer matches.
-    let evil = CraftedMsg::new(attacker.session.swarm_id(), "ghost", "honest")
+    let evil = CraftedMsg::new(attacker.session.mesh_id(), "ghost", "honest")
         .sign(&key)
         .tamper_body("tampered-after-sign")
         .bytes();
@@ -107,7 +107,7 @@ async fn tampered_message_is_dropped() {
 async fn kind_flipped_after_signing_is_dropped() {
     let (mut victim, attacker) = meshed_pair("kindflip").await;
     let key = adversarial::new_key();
-    let evil = CraftedMsg::new(attacker.session.swarm_id(), "ghost", "flip-me")
+    let evil = CraftedMsg::new(attacker.session.mesh_id(), "ghost", "flip-me")
         .sign(&key)
         .flip_chat_kind()
         .bytes();
@@ -129,15 +129,15 @@ async fn kind_flipped_after_signing_is_dropped() {
 async fn equivocation_surfaces_a_fork() {
     let (mut victim, attacker) = meshed_pair("fork").await;
     let key = adversarial::new_key();
-    let swarm = attacker.session.swarm_id();
+    let mesh = attacker.session.mesh_id();
     // Same key, same seq, two different bodies → two valid but conflicting
     // signed messages: cryptographic proof of equivocation.
-    let first = CraftedMsg::new(swarm, "two-face", "fork-a")
+    let first = CraftedMsg::new(mesh, "two-face", "fork-a")
         .wrap_a2a()
         .chain(7, None)
         .sign(&key)
         .bytes();
-    let second = CraftedMsg::new(swarm, "two-face", "fork-b")
+    let second = CraftedMsg::new(mesh, "two-face", "fork-b")
         .wrap_a2a()
         .chain(7, None)
         .sign(&key)
@@ -166,12 +166,12 @@ async fn forged_message_does_not_suppress_genuine_with_replayed_id() {
     // genuine signed copy that shares that id.
     let (mut victim, attacker) = meshed_pair("dedup-order").await;
     let key = adversarial::new_key();
-    let swarm = attacker.session.swarm_id();
+    let mesh = attacker.session.mesh_id();
     let shared_id = "550e8400-e29b-41d4-a716-446655440000";
 
     // 1) An UNSIGNED message with a chosen id — dropped at the signature gate,
     //    and (post-fix) never recorded as "seen".
-    let forged = CraftedMsg::new(swarm, "ghost", "forged")
+    let forged = CraftedMsg::new(mesh, "ghost", "forged")
         .id(shared_id)
         .bytes();
     attacker
@@ -185,7 +185,7 @@ async fn forged_message_does_not_suppress_genuine_with_replayed_id() {
     assert!(victim.wait_body("after-forged", T).await, "barrier lost");
 
     // 2) A genuine SIGNED message reusing that id must still be delivered.
-    let genuine = CraftedMsg::new(swarm, "ghost", "genuine")
+    let genuine = CraftedMsg::new(mesh, "ghost", "genuine")
         .id(shared_id)
         .wrap_a2a()
         .sign(&key)
@@ -213,11 +213,11 @@ async fn signed_forgery_with_replayed_id_does_not_suppress_victim() {
     let (mut receiver, injector) = meshed_pair("dedup-key").await;
     let victim_key = adversarial::new_key();
     let attacker_key = adversarial::new_key();
-    let swarm = injector.session.swarm_id();
+    let mesh = injector.session.mesh_id();
     let shared_id = "550e8400-e29b-41d4-a716-446655440000";
 
     // 1) A validly SIGNED forgery under the attacker's key, reusing the id.
-    let forged = CraftedMsg::new(swarm, "attacker", "forged")
+    let forged = CraftedMsg::new(mesh, "attacker", "forged")
         .id(shared_id)
         .sign(&attacker_key)
         .bytes();
@@ -231,7 +231,7 @@ async fn signed_forgery_with_replayed_id_does_not_suppress_victim() {
 
     // 2) The victim's genuine message reusing that id must still be delivered —
     //    the forgery's dedup key differs, so it never marked the id "seen".
-    let genuine = CraftedMsg::new(swarm, "victim", "genuine")
+    let genuine = CraftedMsg::new(mesh, "victim", "genuine")
         .id(shared_id)
         .wrap_a2a()
         .sign(&victim_key)
@@ -254,7 +254,7 @@ async fn junk_payload_chat_is_dropped() {
     let (mut victim, attacker) = meshed_pair("junk-payload").await;
     let key = adversarial::new_key();
     // Validly signed, but the body is raw text, not a serialized A2A Message.
-    let evil = CraftedMsg::new(attacker.session.swarm_id(), "ghost", "raw-not-a2a")
+    let evil = CraftedMsg::new(attacker.session.mesh_id(), "ghost", "raw-not-a2a")
         .sign(&key)
         .bytes();
     attacker.session.inject_raw(evil).await.expect("inject");
@@ -275,7 +275,7 @@ async fn payload_frame_id_mismatch_is_dropped() {
     // Wrap a valid payload first, then re-id the FRAME — the payload's
     // messageId no longer names the frame, a mismatch only a crafted client
     // produces.
-    let evil = CraftedMsg::new(attacker.session.swarm_id(), "ghost", "id-mismatch-body")
+    let evil = CraftedMsg::new(attacker.session.mesh_id(), "ghost", "id-mismatch-body")
         .wrap_a2a()
         .id("00000000-0000-0000-0000-00000000beef")
         .sign(&key)
@@ -303,7 +303,7 @@ async fn status_task_id_mismatch_is_dropped() {
     let key = adversarial::new_key();
     let victim_nick = victim.nickname.clone();
     let evil = CraftedMsg::status_frame(
-        attacker.session.swarm_id(),
+        attacker.session.mesh_id(),
         "ghost",
         &victim_nick,
         "550e8400-e29b-41d4-a716-446655440000", // frame correlation
@@ -340,7 +340,7 @@ async fn gap_future_timestamp_is_accepted() {
     // parents there is no check, and there is no absolute-time sanity bound.
     let (mut victim, attacker) = meshed_pair("future-ts").await;
     let key = adversarial::new_key();
-    let evil = CraftedMsg::new(attacker.session.swarm_id(), "time-lord", "from-the-future")
+    let evil = CraftedMsg::new(attacker.session.mesh_id(), "time-lord", "from-the-future")
         .wrap_a2a()
         .timestamp(4_102_444_800) // 2100-01-01
         .sign(&key)
@@ -365,7 +365,7 @@ async fn gap_nickname_impersonation_is_accepted() {
     let (mut victim, attacker) = meshed_pair("imposter").await;
     let victim_nick = victim.nickname.clone();
     let key = adversarial::new_key(); // NOT the victim's key
-    let evil = CraftedMsg::new(attacker.session.swarm_id(), &victim_nick, "i-am-you")
+    let evil = CraftedMsg::new(attacker.session.mesh_id(), &victim_nick, "i-am-you")
         .wrap_a2a()
         .sign(&key)
         .bytes();
@@ -386,10 +386,10 @@ async fn gap_sybil_identities_are_accepted() {
     // and no cross-identity limit, so all are accepted — a sybil can mint
     // unlimited valid identities.
     let (mut victim, attacker) = meshed_pair("sybil").await;
-    let swarm = attacker.session.swarm_id();
+    let mesh = attacker.session.mesh_id();
     for index in 0..5u32 {
         let key = adversarial::new_key();
-        let bytes = CraftedMsg::new(swarm, &format!("sybil-{index}"), &format!("flood-{index}"))
+        let bytes = CraftedMsg::new(mesh, &format!("sybil-{index}"), &format!("flood-{index}"))
             .wrap_a2a()
             .sign(&key)
             .bytes();
@@ -403,7 +403,7 @@ async fn gap_sybil_identities_are_accepted() {
                     matches!(
                         event,
                         OutputEvent::Message { msg, is_self: false }
-                            if agent_gossip::a2a::gossip::chat_text(msg).as_deref() == Some(&body)
+                            if agent_mesh::a2a::gossip::chat_text(msg).as_deref() == Some(&body)
                     )
                 })
             })
@@ -488,7 +488,7 @@ async fn unsigned_state_merge_is_dropped() {
     let (victim, attacker) = meshed_pair("state-unsigned").await;
     // A well-formed state merge, but UNSIGNED — must be dropped before it can
     // touch the state log (same authenticity gate as chat).
-    let evil = CraftedMsg::state_merge(attacker.session.swarm_id(), "ghost", json!({"evil": true}))
+    let evil = CraftedMsg::state_merge(attacker.session.mesh_id(), "ghost", json!({"evil": true}))
         .bytes();
     attacker.session.inject_raw(evil).await.expect("inject");
     // Barrier: a real signed merge from the attacker's own identity.
@@ -513,12 +513,12 @@ async fn signed_foreign_card_forgery_is_rejected_on_receipt() {
     // must reject it before it folds, so the forgery converges nowhere.
     let (victim, injector) = meshed_pair("card-forge").await;
     let attacker_key = adversarial::new_key();
-    let swarm = injector.session.swarm_id();
+    let mesh = injector.session.mesh_id();
     let victim_nick = victim.nickname.as_str().to_owned();
     let fake = "ff00beefff00beef"; // distinctive marker for the forged identity
 
     let forged = CraftedMsg::meta_forge_card(
-        swarm,
+        mesh,
         "attacker",
         &victim_nick,
         &json!({"metadata": {"pubkey": fake}}),
@@ -566,14 +566,14 @@ async fn out_of_range_shard_headers_never_reach_the_store() {
     let (mut victim, attacker) = meshed_pair("shard-hdr").await;
     let key = adversarial::new_key();
     // idx outside total.
-    let idx_outside = CraftedMsg::new(attacker.session.swarm_id(), "ghost", "slice")
+    let idx_outside = CraftedMsg::new(attacker.session.mesh_id(), "ghost", "slice")
         .shard(GROUP, 3, 3)
         .sign(&key)
         .bytes();
     attacker.session.inject_raw(idx_outside).await.expect("inject");
     // total past the header tripwire.
-    let absurd_total = CraftedMsg::new(attacker.session.swarm_id(), "ghost", "slice")
-        .shard(GROUP, 0, agent_gossip::MAX_SHARD_TOTAL + 1)
+    let absurd_total = CraftedMsg::new(attacker.session.mesh_id(), "ghost", "slice")
+        .shard(GROUP, 0, agent_mesh::MAX_SHARD_TOTAL + 1)
         .sign(&key)
         .bytes();
     attacker.session.inject_raw(absurd_total).await.expect("inject");
@@ -610,7 +610,7 @@ async fn sybil_shard_floods_stay_inside_the_reassembly_budgets() {
         // accepted slice sits in the store until the TTL sweep.
         for idx in 0..4u32 {
             let evil = CraftedMsg::new(
-                attacker.session.swarm_id(),
+                attacker.session.mesh_id(),
                 &format!("sybil-{author}"),
                 &slice,
             )
@@ -655,7 +655,7 @@ async fn cross_author_group_reuse_cannot_corrupt_a_genuine_body() {
     // signing with its real key) sends a genuine multipart body. The poisoned
     // slice is under a different key, so it cannot enter the genuine set.
     let key = adversarial::new_key();
-    let poisoned = CraftedMsg::new(attacker.session.swarm_id(), "ghost", "POISON")
+    let poisoned = CraftedMsg::new(attacker.session.mesh_id(), "ghost", "POISON")
         .shard("00000000-0000-4000-8000-00000000beef", 1, 2)
         .sign(&key)
         .bytes();

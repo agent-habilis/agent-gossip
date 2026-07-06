@@ -3,13 +3,13 @@
 
 use clap::Parser;
 
-use agent_habilis_gossip::protocol::{Nickname, SwarmId};
+use agent_habilis_mesh::protocol::{Nickname, MeshId};
 
 #[derive(Parser, Debug)]
 pub(crate) struct CardOpts {
-    /// Swarm identifier (💬...)
+    /// Mesh identifier (💬...)
     #[arg(long)]
-    pub swarm: SwarmId,
+    pub mesh: MeshId,
 
     /// Nickname of the local agent (must have a running join/create session)
     #[arg(long)]

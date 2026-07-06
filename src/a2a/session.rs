@@ -2,15 +2,15 @@ use anyhow::Result;
 use tokio::sync::oneshot;
 
 use crate::a2a::TaskId;
-use agent_habilis_gossip::daemon::state::RosterSnapshot;
-use agent_habilis_gossip::protocol::{Message, MessageBody, Nickname};
+use agent_habilis_mesh::daemon::state::RosterSnapshot;
+use agent_habilis_mesh::protocol::{Message, MessageBody, Nickname};
 
 /// A typed in-process request from an embed/MCP session to the event
 /// loop — the shared alternative to the CLI's `IpcCommand`-over-socket
 /// (which must serialize). `Send` broadcasts a message and echoes back the
 /// canonical [`Message`]; `Poll` reads the buffered history after a cursor.
 pub(crate) enum SessionRequest {
-    /// Broadcast a swarm chat message; echoes back the canonical [`Message`].
+    /// Broadcast a mesh chat message; echoes back the canonical [`Message`].
     Send {
         body: MessageBody,
         resp: oneshot::Sender<Result<Message>>,
@@ -35,7 +35,7 @@ pub(crate) enum SessionRequest {
     TaskArtifact {
         task_id: TaskId,
         text: String,
-        file: Option<agent_habilis_gossip::blob::FileRef>,
+        file: Option<agent_habilis_mesh::blob::FileRef>,
         resp: oneshot::Sender<Result<Message>>,
     },
     /// Snapshot the live participant roster (active + quiet, recency-sorted).
@@ -46,7 +46,7 @@ pub(crate) enum SessionRequest {
     /// then deliver the per-peer RTT rows. The response arrives only when the
     /// round finalizes (after the window), not immediately.
     Ping {
-        resp: oneshot::Sender<Vec<agent_habilis_gossip::gossip::event::PingRtt>>,
+        resp: oneshot::Sender<Vec<agent_habilis_mesh::gossip::event::PingRtt>>,
     },
     /// Apply an RFC 7386 JSON Merge Patch to the shared state: compose the body,
     /// then sign + gossip. `Err` carries a transport/serialize failure only — a
@@ -84,7 +84,7 @@ pub(crate) enum SessionRequest {
     /// crafted/malicious messages (bad signature, equivocation, backdating)
     /// that a correct client would never produce, so the adversarial test
     /// suite can prove receivers reject/flag them. Reachable only through
-    /// the adversarial-gated `SwarmSession::inject_raw`.
+    /// the adversarial-gated `MeshSession::inject_raw`.
     #[cfg(feature = "adversarial")]
     InjectRaw { bytes: bytes::Bytes },
     /// Snapshot the fork/DAG index sizes `(by_hash, dag_heads, author_seqs)`.

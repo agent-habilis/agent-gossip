@@ -1,9 +1,9 @@
-//! Local-stability hardening: a healthy quiet swarm should *stay* healthy.
+//! Local-stability hardening: a healthy quiet mesh should *stay* healthy.
 //!
 //! The reliability suite in `gossip_network.rs` covers recovery from
 //! disruption (SIGKILL beacon migration, SIGSTOP sleep/wake heal,
 //! anti-entropy backfill). This file covers the **negative-space**
-//! assertions — that *nothing goes wrong* in a quiet, healthy swarm —
+//! assertions — that *nothing goes wrong* in a quiet, healthy mesh —
 //! which is exactly the class of regression a future iroh / gossip
 //! change could silently introduce.
 //!
@@ -14,10 +14,10 @@ mod common;
 
 use std::time::Duration;
 
-use agent_gossip::OutputEvent;
+use agent_mesh::OutputEvent;
 use common::InProcNode;
 
-/// How long the steady-state test holds the swarm quiet before asserting
+/// How long the steady-state test holds the mesh quiet before asserting
 /// nothing spurious happened. Long enough to outlive a fresh-mesh
 /// settling burst; short enough to keep CI fast.
 const STEADY_HOLD: Duration = Duration::from_secs(30);
@@ -29,7 +29,7 @@ const FANOUT_WAIT: Duration = Duration::from_secs(10);
 /// presence events). Generous so a slow CI box doesn't flake.
 const ROSTER_TIMEOUT: Duration = Duration::from_secs(15);
 
-/// **Steady-state hold (the most valuable test).** A 3-node swarm meshes,
+/// **Steady-state hold (the most valuable test).** A 3-node mesh meshes,
 /// then sits idle for 30s. Asserts no spurious `peer_timeout` or
 /// `presence:left` surfaced anywhere (all nodes were alive throughout)
 /// **and** a fresh broadcast at the end still fans out to every member —
@@ -38,9 +38,9 @@ const ROSTER_TIMEOUT: Duration = Duration::from_secs(15);
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn mesh_stays_meshed_no_spurious_flaps() {
     let mut creator = InProcNode::create("stab-steady").await;
-    let swarm = creator.swarm.clone();
-    let mut joiner_a = InProcNode::join(&swarm, "stab-a").await;
-    let mut joiner_b = InProcNode::join(&swarm, "stab-b").await;
+    let mesh = creator.mesh.clone();
+    let mut joiner_a = InProcNode::join(&mesh, "stab-a").await;
+    let mut joiner_b = InProcNode::join(&mesh, "stab-b").await;
 
     // Each node converges on the full roster.
     assert!(
@@ -99,16 +99,16 @@ async fn mesh_stays_meshed_no_spurious_flaps() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn concurrent_joins_all_mesh_and_receive() {
     let mut creator = InProcNode::create("stab-concurrent").await;
-    let swarm = creator.swarm.clone();
+    let mesh = creator.mesh.clone();
     // tokio::join! polls these 5 join futures cooperatively in one task,
     // so they race for the rendezvous together rather than each waiting
     // for the previous to finish.
     let (n1, n2, n3, n4, n5) = tokio::join!(
-        InProcNode::join(&swarm, "cn1"),
-        InProcNode::join(&swarm, "cn2"),
-        InProcNode::join(&swarm, "cn3"),
-        InProcNode::join(&swarm, "cn4"),
-        InProcNode::join(&swarm, "cn5"),
+        InProcNode::join(&mesh, "cn1"),
+        InProcNode::join(&mesh, "cn2"),
+        InProcNode::join(&mesh, "cn3"),
+        InProcNode::join(&mesh, "cn4"),
+        InProcNode::join(&mesh, "cn5"),
     );
     let mut joiners = [n1, n2, n3, n4, n5];
 
@@ -127,17 +127,17 @@ async fn concurrent_joins_all_mesh_and_receive() {
     }
 }
 
-/// **Fan-out completeness from every origin.** In a 4-node swarm, *every*
+/// **Fan-out completeness from every origin.** In a 4-node mesh, *every*
 /// node broadcasts a unique body and *every other* node receives all the
 /// others' broadcasts. A single-origin test would miss asymmetric overlay
 /// defects (e.g. only the creator can reach all peers).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn fanout_complete_from_each_origin() {
     let mut creator = InProcNode::create("stab-fanout").await;
-    let swarm = creator.swarm.clone();
-    let mut j1 = InProcNode::join(&swarm, "fo-j1").await;
-    let mut j2 = InProcNode::join(&swarm, "fo-j2").await;
-    let mut j3 = InProcNode::join(&swarm, "fo-j3").await;
+    let mesh = creator.mesh.clone();
+    let mut j1 = InProcNode::join(&mesh, "fo-j1").await;
+    let mut j2 = InProcNode::join(&mesh, "fo-j2").await;
+    let mut j3 = InProcNode::join(&mesh, "fo-j3").await;
 
     for (label, node) in [
         ("creator", &mut creator),
@@ -178,10 +178,10 @@ async fn fanout_complete_from_each_origin() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn roster_converges_to_4() {
     let mut creator = InProcNode::create("stab-roster").await;
-    let swarm = creator.swarm.clone();
-    let mut j1 = InProcNode::join(&swarm, "ro-j1").await;
-    let mut j2 = InProcNode::join(&swarm, "ro-j2").await;
-    let mut j3 = InProcNode::join(&swarm, "ro-j3").await;
+    let mesh = creator.mesh.clone();
+    let mut j1 = InProcNode::join(&mesh, "ro-j1").await;
+    let mut j2 = InProcNode::join(&mesh, "ro-j2").await;
+    let mut j3 = InProcNode::join(&mesh, "ro-j3").await;
 
     for (label, node) in [
         ("creator", &mut creator),
@@ -196,7 +196,7 @@ async fn roster_converges_to_4() {
     }
 }
 
-/// **Above-the-old-cap full mesh stays churn-free.** An 8-node swarm exceeds
+/// **Above-the-old-cap full mesh stays churn-free.** An 8-node mesh exceeds
 /// iroh-gossip's default active-view capacity of 5 — pre-fix this size formed a
 /// *partial* mesh and churned (the membership-maintenance leak driver). With the
 /// raised `GOSSIP_ACTIVE_VIEW_CAPACITY` (64) it forms a **full mesh** instead, so
@@ -205,13 +205,13 @@ async fn roster_converges_to_4() {
 /// regression guard that the active-view raise took effect: revert the const to
 /// 5 and this test churns/fails.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn above_old_cap_swarm_stays_full_mesh() {
+async fn above_old_cap_mesh_stays_full_mesh() {
     const JOINERS: usize = 7; // 8 nodes total — > old cap (5), ≤ new cap (64)
     let mut creator = InProcNode::create("stab-cap").await;
-    let swarm = creator.swarm.clone();
+    let mesh = creator.mesh.clone();
     let mut joiners = Vec::with_capacity(JOINERS);
     for index in 0..JOINERS {
-        joiners.push(InProcNode::join(&swarm, &format!("cap-j{index}")).await);
+        joiners.push(InProcNode::join(&mesh, &format!("cap-j{index}")).await);
     }
 
     // All 8 nodes converge on the full roster (7 peers each).

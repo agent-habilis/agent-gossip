@@ -2,7 +2,7 @@ import { type ExtensionAPI, type Theme, getMarkdownTheme } from "@earendil-works
 import { Markdown, Text } from "@earendil-works/pi-tui";
 import { state } from "../state";
 
-// Every swarm line is prefixed with this, applied once in `send()` — call
+// Every mesh line is prefixed with this, applied once in `send()` — call
 // sites never write it themselves. Exported for `flushMessageBatch`, which
 // builds one bee per peer line.
 export const BEE = "💬️";
@@ -21,28 +21,28 @@ export const BEE = "💬️";
 //     exactly as a typed message would.
 //
 // `notify`/`inject` render as markdown so backticked identifiers (`<nick>`,
-// `#swarm`) read as inline code; `notifyBlock` renders plain for preformatted,
+// `#mesh`) read as inline code; `notifyBlock` renders plain for preformatted,
 // column-aligned output (rosters, status dumps) that markdown reflow would break.
 export function notify(text: string): void {
-  send("swarm-info", text, false);
+  send("mesh-info", text, false);
 }
 
 export function notifyBlock(text: string): void {
-  send("swarm-block", text, false);
+  send("mesh-block", text, false);
 }
 
 export function notifyWarning(text: string): void {
-  send("swarm-warning", text, false);
+  send("mesh-warning", text, false);
 }
 
 export function notifyError(text: string): void {
-  send("swarm-error", text, false);
+  send("mesh-error", text, false);
 }
 
 // Returns false when the message couldn't be delivered (no session, or the
 // send threw) so a caller can re-queue — see `flushMessageBatch`.
 export function inject(text: string): boolean {
-  return send("swarm-inject", text, true);
+  return send("mesh-inject", text, true);
 }
 
 // Add to the model's context without rendering it or forcing a turn — for
@@ -56,7 +56,7 @@ export function injectSilent(text: string): boolean {
   const idle = state.ctx?.isIdle?.() ?? true;
   try {
     pi.sendMessage(
-      { customType: "swarm-context", content: text, display: false },
+      { customType: "mesh-context", content: text, display: false },
       idle ? {} : { deliverAs: "nextTurn" },
     );
     return true;
@@ -95,23 +95,23 @@ export function registerMessageRenderers(pi: ExtensionAPI): void {
       color: (text) => theme.fg("customMessageText", text),
     });
 
-  pi.registerMessageRenderer("swarm-info", (message, _options, theme) => {
+  pi.registerMessageRenderer("mesh-info", (message, _options, theme) => {
     const content = typeof message.content === "string" ? message.content : "";
     return renderMarkdown(content, theme);
   });
-  pi.registerMessageRenderer("swarm-inject", (message, _options, theme) => {
+  pi.registerMessageRenderer("mesh-inject", (message, _options, theme) => {
     const content = typeof message.content === "string" ? message.content : "";
     return renderMarkdown(content, theme);
   });
-  pi.registerMessageRenderer("swarm-block", (message) => {
+  pi.registerMessageRenderer("mesh-block", (message) => {
     const content = typeof message.content === "string" ? message.content : "";
     return new Text(content, 0, 0);
   });
-  pi.registerMessageRenderer("swarm-warning", (message, _options, theme) => {
+  pi.registerMessageRenderer("mesh-warning", (message, _options, theme) => {
     const content = typeof message.content === "string" ? message.content : "";
     return new Text(theme.fg("warning", content), 0, 0);
   });
-  pi.registerMessageRenderer("swarm-error", (message, _options, theme) => {
+  pi.registerMessageRenderer("mesh-error", (message, _options, theme) => {
     const content = typeof message.content === "string" ? message.content : "";
     return new Text(theme.fg("error", content), 0, 0);
   });

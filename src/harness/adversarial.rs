@@ -3,7 +3,7 @@
 //! inject** wire messages a correct client would never produce — unsigned /
 //! bad-signature, equivocating (two messages at one `seq`), tampered, or
 //! backdated — to prove receivers reject or flag them. Pairs with
-//! [`crate::embed::SwarmSession::inject_raw`]. Never compiled into a
+//! [`crate::embed::MeshSession::inject_raw`]. Never compiled into a
 //! normal/release build, so the curated public surface is unchanged.
 #![allow(missing_docs, reason = "internal test shim, doc-hidden")]
 #![allow(
@@ -12,14 +12,14 @@
 )]
 
 use crate::a2a::wire;
-use agent_habilis_gossip::protocol::identity::{self, Identity};
-use agent_habilis_gossip::protocol::message::Message;
-use agent_habilis_gossip::protocol::message::PresenceSubtype;
-use agent_habilis_gossip::protocol::{AppTag, CorrId, MessageBody, MessageKind, Nickname, SwarmId};
+use agent_habilis_mesh::protocol::identity::{self, Identity};
+use agent_habilis_mesh::protocol::message::Message;
+use agent_habilis_mesh::protocol::message::PresenceSubtype;
+use agent_habilis_mesh::protocol::{AppTag, CorrId, MessageBody, MessageKind, Nickname, MeshId};
 
 // The reassembly byte budgets, so the suite's tripwires assert against the
 // same constants the store enforces.
-pub use agent_habilis_gossip::util::consts::{
+pub use agent_habilis_mesh::util::consts::{
     REASSEMBLY_AUTHOR_BUDGET_BYTES, REASSEMBLY_GROUP_MAX_BYTES, REASSEMBLY_TOTAL_BUDGET_BYTES,
 };
 
@@ -51,15 +51,15 @@ pub struct CraftedMsg {
 }
 
 impl CraftedMsg {
-    /// An open chat frame from `author` on `swarm` carrying `body` verbatim
+    /// An open chat frame from `author` on `mesh` carrying `body` verbatim
     /// (NOT wrapped as an A2A payload — the attacker controls the raw body;
     /// use a serialized payload for a frame meant to pass the boundary). Unsigned
     /// until [`sign`](CraftedMsg::sign).
-    pub fn new(swarm: &SwarmId, author: &str, body: &str) -> Self {
+    pub fn new(mesh: &MeshId, author: &str, body: &str) -> Self {
         let author = Nickname::new(author.to_owned()).expect("test author is a valid nickname");
         let body = MessageBody::new(body.to_owned()).expect("test body is valid");
         Self {
-            msg: Message::new_app(swarm, &author, AppTag::from(wire::MSG), None, None, body),
+            msg: Message::new_app(mesh, &author, AppTag::from(wire::MSG), None, None, body),
         }
     }
 
@@ -68,12 +68,12 @@ impl CraftedMsg {
     /// engine no longer folds this shape (it is a deterministic no-op), so a test
     /// can assert the receiver never applies it — never a panic, never a change.
     /// Unsigned until [`sign`](CraftedMsg::sign).
-    pub fn state_merge(swarm: &SwarmId, author: &str, merge: serde_json::Value) -> Self {
+    pub fn state_merge(mesh: &MeshId, author: &str, merge: serde_json::Value) -> Self {
         let author = Nickname::new(author.to_owned()).expect("test author is a valid nickname");
-        let body = agent_habilis_gossip::daemon::state_doc::merge_body(merge)
+        let body = agent_habilis_mesh::daemon::state_doc::merge_body(merge)
             .expect("state merge envelope composes from any merge value");
         Self {
-            msg: Message::new_state(swarm, &author, body),
+            msg: Message::new_state(mesh, &author, body),
         }
     }
 
@@ -85,7 +85,7 @@ impl CraftedMsg {
     /// forgery gate (rather than being harmlessly buffered for missing deps).
     /// Unsigned until [`sign`](CraftedMsg::sign).
     pub fn meta_forge_card(
-        swarm: &SwarmId,
+        mesh: &MeshId,
         author: &str,
         victim: &str,
         fake_card: &serde_json::Value,
@@ -94,18 +94,18 @@ impl CraftedMsg {
         let merge = serde_json::json!({ "peers": { victim: { "card": fake_card } } });
         // `build_change` composes the change without the gate (the gate lives in
         // `ingest`), exactly as a malicious peer bypassing our write path would.
-        let change = agent_habilis_gossip::daemon::doc::SwarmDoc::new(true)
+        let change = agent_habilis_mesh::daemon::doc::MeshDoc::new(true)
             .build_change(&merge, &author)
             .expect("forge change builds")
             .expect("forge merge is not a no-op");
-        let body = agent_habilis_gossip::daemon::state_doc::change_body(&change, None)
+        let body = agent_habilis_mesh::daemon::state_doc::change_body(&change, None)
             .expect("change body composes");
         Self {
             msg: Message::new_channel_event(
-                swarm,
+                mesh,
                 &author,
                 body,
-                agent_habilis_gossip::protocol::Channel::Meta,
+                agent_habilis_mesh::protocol::Channel::Meta,
             ),
         }
     }
@@ -115,7 +115,7 @@ impl CraftedMsg {
     /// cross-validation attack shape a correct client never produces. Both
     /// must be valid UUIDs. Unsigned until [`sign`](CraftedMsg::sign).
     pub fn status_frame(
-        swarm: &SwarmId,
+        mesh: &MeshId,
         author: &str,
         to: &str,
         frame_task_id: &str,
@@ -128,7 +128,7 @@ impl CraftedMsg {
         let payload_tid =
             crate::a2a::TaskId::from_uuid_str(payload_task_id).expect("valid payload task id");
         let update = crate::a2a::gossip::status_update(
-            swarm,
+            mesh,
             &payload_tid,
             crate::a2a::TaskState::Working,
             None,
@@ -137,7 +137,7 @@ impl CraftedMsg {
         let body = crate::a2a::gossip::payload_body(&update).expect("crafted payload serializes");
         Self {
             msg: Message::new_app(
-                swarm,
+                mesh,
                 &author,
                 AppTag::from(wire::STATUS),
                 Some(to),
@@ -161,7 +161,7 @@ impl CraftedMsg {
     }
 
     /// Wrap the current raw body into a **valid** A2A broadcast chat payload
-    /// consistent with the frame's current id / swarm, so the frame passes the
+    /// consistent with the frame's current id / mesh, so the frame passes the
     /// receiver's A2A boundary gate. Call after any `id` mutation and before
     /// `sign` — the attack under test is then something *other* than a
     /// malformed payload. A frame built without this carries its raw body
@@ -171,7 +171,7 @@ impl CraftedMsg {
             self.msg.kind.is_app(wire::MSG),
             "wrap_a2a applies to chat frames only"
         );
-        let mut payload = crate::a2a::gossip::chat_message(&self.msg.swarm, self.msg.body.as_str());
+        let mut payload = crate::a2a::gossip::chat_message(&self.msg.mesh, self.msg.body.as_str());
         payload.message_id = crate::a2a::MessageId::from_uuid_str(self.msg.id.as_str())
             .expect("frame id is a valid uuid");
         self.msg.body =
@@ -186,8 +186,8 @@ impl CraftedMsg {
     /// the thing under test).
     pub fn shard(mut self, group: &str, idx: u32, total: u32) -> Self {
         let group =
-            agent_habilis_gossip::protocol::ShardGroup::from_uuid_str(group).expect("valid shard group uuid");
-        self.msg = self.msg.with_shard(Some(agent_habilis_gossip::protocol::Shard { group, idx, total }));
+            agent_habilis_mesh::protocol::ShardGroup::from_uuid_str(group).expect("valid shard group uuid");
+        self.msg = self.msg.with_shard(Some(agent_habilis_mesh::protocol::Shard { group, idx, total }));
         self
     }
 
@@ -251,7 +251,7 @@ impl CraftedMsg {
         self.msg.content_hash_hex()
     }
 
-    /// The serialized wire bytes to hand to `SwarmSession::inject_raw`.
+    /// The serialized wire bytes to hand to `MeshSession::inject_raw`.
     #[must_use]
     pub fn bytes(&self) -> Vec<u8> {
         self.msg.serialize().expect("crafted message serializes")

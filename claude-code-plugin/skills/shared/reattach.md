@@ -1,31 +1,31 @@
-# Reattach — recover the swarm after a lost context
+# Reattach — recover the mesh after a lost context
 
-The `/gossip:*` skills normally carry `$SWARM` / `$NAME` / `$NICKNAME` from
-the `ready` event of this session's `/gossip:create` or `/gossip:join`. A
+The `/mesh:*` skills normally carry `$MESH` / `$NAME` / `$NICKNAME` from
+the `ready` event of this session's `/mesh:create` or `/mesh:join`. A
 context clear or compaction wipes that memory while the daemon keeps
 running — so when those values are missing, recover them from the system
-instead of concluding you are not in a swarm. Do NOT trust TaskList for
-this: after a context clear the swarm Monitor may be live yet unlisted.
+instead of concluding you are not in a mesh. Do NOT trust TaskList for
+this: after a context clear the mesh Monitor may be live yet unlisted.
 
 Run:
 
 ```bash
-agent-gossip session --session-pid $PPID --output json
+agent-mesh session --session-pid $PPID --output json
 ```
 
 (`$PPID` inside the Bash tool is the agent process — the session your
 daemons are parented under.)
 
-It prints the swarms owned by *this* session:
+It prints the meshes owned by *this* session:
 
 ```json
-{"ok":true,"sessions":[{"swarm":"💬://…","name":"…","nickname":"…","pid":123}],"other_sessions":0}
+{"ok":true,"sessions":[{"mesh":"💬://…","name":"…","nickname":"…","pid":123}],"other_sessions":0}
 ```
 
-- **Exactly one entry** → adopt it: `$SWARM` = `swarm`, `$NAME` = `name`,
+- **Exactly one entry** → adopt it: `$MESH` = `mesh`, `$NAME` = `name`,
   `$NICKNAME` = `nickname`. Treat these as if they came from the `ready`
   event and proceed with the calling skill.
-- **No entries** → not in a swarm. Ignore `other_sessions` — those daemons
+- **No entries** → not in a mesh. Ignore `other_sessions` — those daemons
   belong to other agent sessions; never adopt or touch them.
 - **Several entries** → list them (`#name <nickname>` each) and ask the
   user which to use.

@@ -1,11 +1,11 @@
-//! `state` command args: read or change the swarm's shared state — a JSON
+//! `state` command args: read or change the mesh's shared state — a JSON
 //! document every member derives from a dedicated, gossiped log of RFC 7386 JSON
 //! Merge Patch changes. `state merge` applies a merge; `state get` reads the
 //! current document.
 
 use clap::{Parser, Subcommand};
 
-use agent_habilis_gossip::protocol::{Nickname, SwarmId};
+use agent_habilis_mesh::protocol::{Nickname, MeshId};
 
 #[derive(Parser, Debug)]
 pub(crate) struct StateOpts {
@@ -23,9 +23,9 @@ pub(crate) enum StateAction {
     /// mutable collection as an object keyed by index), and a non-object value
     /// replaces the document.
     Merge {
-        /// Swarm identifier (💬...)
+        /// Mesh identifier (💬...)
         #[arg(long)]
-        swarm: SwarmId,
+        mesh: MeshId,
 
         /// Nickname of the local agent (must have a running join/create session)
         #[arg(long)]
@@ -38,9 +38,9 @@ pub(crate) enum StateAction {
 
     /// Read the current derived shared-state document.
     Get {
-        /// Swarm identifier (💬...)
+        /// Mesh identifier (💬...)
         #[arg(long)]
-        swarm: SwarmId,
+        mesh: MeshId,
 
         /// Nickname of the local agent (must have a running join/create session)
         #[arg(long)]

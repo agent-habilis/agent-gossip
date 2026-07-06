@@ -16,8 +16,8 @@ use common::{InProcNode, MSG_TIMEOUT};
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn directed_frames_are_private_to_the_recipient_broadcast_stays_public() {
     let alice = InProcNode::create("seal").await;
-    let mut bob = InProcNode::join(&alice.swarm, "seal-bob").await;
-    let mut carol = InProcNode::join(&alice.swarm, "seal-carol").await;
+    let mut bob = InProcNode::join(&alice.mesh, "seal-bob").await;
+    let mut carol = InProcNode::join(&alice.mesh, "seal-carol").await;
 
     // Warm the mesh; a broadcast reaches everyone (proves C is a live relay).
     alice.send("warmup").await;

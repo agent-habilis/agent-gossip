@@ -1,6 +1,6 @@
 //! The shared live arrow-key picker: raw-mode terminal handling, key
 //! parsing, and the in-place redraw loop, generic over the listed row type.
-//! `discover` (swarms) and the ticket `discover` subcommand (file)
+//! `discover` (meshes) and the ticket `discover` subcommand (file)
 //! each supply their own header/row rendering and pick extraction;
 //! everything terminal-shaped lives here once.
 

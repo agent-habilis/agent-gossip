@@ -7,13 +7,13 @@
 
 mod common;
 
-use agent_gossip::{MAX_LOGICAL_BODY_BYTES, MAX_MESSAGE_SIZE, MessageBody, TaskId, TaskState};
+use agent_mesh::{MAX_LOGICAL_BODY_BYTES, MAX_MESSAGE_SIZE, MessageBody, TaskId, TaskState};
 use common::{InProcNode, MSG_TIMEOUT, chat_text};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn multishard_message_reassembles_into_one() {
     let alice = InProcNode::create("mp-msg").await;
-    let mut bob = InProcNode::join(&alice.swarm, "mp-msg-bob").await;
+    let mut bob = InProcNode::join(&alice.mesh, "mp-msg-bob").await;
 
     // Several times the single-message cap, so the daemon must split it.
     let big = "abcd ".repeat(MAX_MESSAGE_SIZE); // ~19 KB
@@ -49,7 +49,7 @@ async fn multishard_message_reassembles_into_one() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn multishard_message_past_the_old_cap_reassembles() {
     let mut alice = InProcNode::create("mp-big").await;
-    let mut bob = InProcNode::join(&alice.swarm, "mp-big-bob").await;
+    let mut bob = InProcNode::join(&alice.mesh, "mp-big-bob").await;
     // Mesh first: an unmeshed multipart send buffers whole in the (64-slot)
     // pending-outbound queue, and ~55 shards would overflow it.
     alice.send("warmup").await;
@@ -83,7 +83,7 @@ async fn multishard_message_past_the_old_cap_reassembles() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn shard_repair_reserves_cached_big_group_frames() {
     let mut alice = InProcNode::create("mp-rep").await;
-    let mut bob = InProcNode::join(&alice.swarm, "mp-rep-bob").await;
+    let mut bob = InProcNode::join(&alice.mesh, "mp-rep-bob").await;
     alice.send("warmup").await;
     assert!(bob.wait_body("warmup", MSG_TIMEOUT).await, "mesh formed");
     bob.send("warmup-back").await;
@@ -127,14 +127,14 @@ async fn shard_repair_reserves_cached_big_group_frames() {
     bob.leave().await;
 }
 
-/// The same multishard round-trip on a **password-protected** swarm: the large
-/// chat body is sealed with the swarm key, then split into shards; the receiver
+/// The same multishard round-trip on a **password-protected** mesh: the large
+/// chat body is sealed with the mesh key, then split into shards; the receiver
 /// reassembles the ciphertext envelope and decrypts it once. Exercises the
 /// encrypt-before-shard (send) + reassemble-then-decrypt (receive) paths.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn multishard_message_reassembles_on_a_passworded_swarm() {
+async fn multishard_message_reassembles_on_a_passworded_mesh() {
     let alice = InProcNode::create_with_password("mp-pw", "hunter2").await;
-    let mut bob = InProcNode::try_join_with_password(&alice.swarm, "mp-pw-bob", "hunter2")
+    let mut bob = InProcNode::try_join_with_password(&alice.mesh, "mp-pw-bob", "hunter2")
         .await
         .expect("the right password joins");
 
@@ -143,7 +143,7 @@ async fn multishard_message_reassembles_on_a_passworded_swarm() {
 
     assert!(
         bob.wait_body(&big, MSG_TIMEOUT).await,
-        "the reassembled, decrypted body never arrived on a passworded swarm"
+        "the reassembled, decrypted body never arrived on a passworded mesh"
     );
     assert_eq!(
         bob.count_body(&big),
@@ -181,7 +181,7 @@ async fn body_past_the_input_ceiling_is_refused() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn multishard_task_artifact_reassembles_into_one() {
     let mut alice = InProcNode::create("mp-ex").await;
-    let mut bob = InProcNode::join(&alice.swarm, "mp-ex-bob").await;
+    let mut bob = InProcNode::join(&alice.mesh, "mp-ex-bob").await;
     // Mesh first so the RPC + push are actually delivered.
     alice.send("warmup").await;
     assert!(
@@ -211,7 +211,7 @@ async fn multishard_task_artifact_reassembles_into_one() {
     let matching = alice
         .tasks()
         .iter()
-        .filter(|(message, _)| agent_gossip::a2a::gossip::task_text(message) == big)
+        .filter(|(message, _)| agent_mesh::a2a::gossip::task_text(message) == big)
         .count();
     assert_eq!(
         matching, 1,

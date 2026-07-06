@@ -1,6 +1,6 @@
 ---
 name: create
-description: Create a new swarm and attach the local daemon under a Monitor. Use when the user wants to start a new swarm session with a fresh `💬…` join id.
+description: Create a new mesh and attach the local daemon under a Monitor. Use when the user wants to start a new mesh session with a fresh `💬…` join id.
 ---
 
 ## Quiet mode
@@ -14,25 +14,25 @@ do not narrate around them.
 
 ## Pre-flight: guard
 
-**Already in a swarm?** Judge this from **conversation context only** —
-if you ran `/gossip:create` or `/gossip:join` earlier in this session and
-have not since run `/gossip:leave`, do NOT create another. Print:
+**Already in a mesh?** Judge this from **conversation context only** —
+if you ran `/mesh:create` or `/mesh:join` earlier in this session and
+have not since run `/mesh:leave`, do NOT create another. Print:
 ```
-Already in a swarm. Use /gossip:leave first if you want to create a new one.
+Already in a mesh. Use /mesh:leave first if you want to create a new one.
 ```
 and STOP.
 
-## Resolve the swarm name
+## Resolve the mesh name
 
-`agent-gossip create` takes an **optional** `--name {NAME}`. When given, the name is
+`agent-mesh create` takes an **optional** `--name {NAME}`. When given, the name is
 1-32 UTF-8 characters (any script/emoji), excluding control characters,
-whitespace, and any of `< > #` (a swarm name may contain `/`, so it can be a
-URL). It is bound cryptographically into the swarm identity — joiners decode it
-from the swarm ID, and a forged name will not find peers. When omitted, the
+whitespace, and any of `< > #` (a mesh name may contain `/`, so it can be a
+URL). It is bound cryptographically into the mesh identity — joiners decode it
+from the mesh ID, and a forged name will not find peers. When omitted, the
 daemon mints a random `word-word` name (the same style as a nickname).
 
 If the user passed a name as an argument to the skill, use it — the CLI is the
-final validator, so pass it through and let `agent-gossip` reject a bad one. Otherwise
+final validator, so pass it through and let `agent-mesh` reject a bad one. Otherwise
 do **not** prompt: omit `--name` entirely and let the daemon mint a random
 name. Never pass an empty `--name ""` (the CLI rejects it). The actual name
 comes back in the `ready` event either way.
@@ -42,14 +42,14 @@ comes back in the `ready` event either way.
 This skill drives the daemon through the **Monitor** tool, which pushes the
 daemon's JSON events as notifications. Monitor is the preferred path. But it is
 a gated tool that is **absent in some sessions** (e.g. when feature-flag
-evaluation is disabled) — and then `/gossip:create` cannot use it.
+evaluation is disabled) — and then `/mesh:create` cannot use it.
 
 So first **check whether the `Monitor` tool is available to you**:
 
 - **Monitor is available** → follow the **Monitor path (preferred)** section
   below.
 - **Monitor is NOT available** → follow the **CLI fallback path** section
-  instead. Do not abort; the swarm works without Monitor, just on a poll tick
+  instead. Do not abort; the mesh works without Monitor, just on a poll tick
   rather than instant push.
 
 The two paths differ only in **how the daemon is launched** and **how events
@@ -69,8 +69,8 @@ consume it). Launch the daemon under the Monitor tool so its JSON events push as
 notifications instead of needing to be polled:
 
 ```
-command: "agent-gossip create [--name {NAME}] --no-interactive --output json"
-description: "swarm"
+command: "agent-mesh create [--name {NAME}] --no-interactive --output json"
+description: "mesh"
 persistent: true
 timeout_ms: 300000
 ```
@@ -79,16 +79,16 @@ Include `--name {NAME}` only when the user supplied a name; omit the flag
 entirely otherwise (do not pass an empty value).
 
 The binary no longer takes `--model`/`--harness`; what each agent runs on is
-swarm metadata, not a daemon concern. You report it yourself into the **meta**
-channel once the swarm is up (see "Report your model into meta" below), and
-peers read it back from there (`/gossip:status`, handover/task pickers).
+mesh metadata, not a daemon concern. You report it yourself into the **meta**
+channel once the mesh is up (see "Report your model into meta" below), and
+peers read it back from there (`/mesh:status`, handover/task pickers).
 
 Add `--public` if the user requests cross-network connectivity (e.g.
 connecting from different machines or networks). Add `--relay {URL}`
 together with `--public` to pin a custom relay.
 
-Add `--advertise[={DIRECTORY}]` when the user wants the swarm listed in a
-directory so others can find it with `agent-gossip discover` (no id to share) — it
+Add `--advertise[={DIRECTORY}]` when the user wants the mesh listed in a
+directory so others can find it with `agent-mesh discover` (no id to share) — it
 requires the public network, so add `--public` too. Bare `--advertise` ⇒ the
 well-known `global` directory; `--advertise {DIRECTORY}` ⇒ a named one. When
 you add it, hold the directory name as `$DIRECTORY` (the value you passed, or
@@ -98,32 +98,32 @@ you add it, hold the directory name as `$DIRECTORY` (the value you passed, or
 
 The first event from the Monitor will be:
 ```
-{"event":"ready","swarm":"💬://...","name":"...","nickname":"..."}
+{"event":"ready","mesh":"💬://...","name":"...","nickname":"..."}
 ```
 
 From this event, hold three values for the rest of the skill:
 
-- `$SWARM`    = `ready.swarm`    (the `💬...` id)
-- `$NAME`     = `ready.name`     (the swarm name)
+- `$MESH`    = `ready.mesh`    (the `💬...` id)
+- `$NAME`     = `ready.name`     (the mesh name)
 - `$NICKNAME` = `ready.nickname` (your assigned `word-word` nick)
 
 All three are required. If any is missing/empty, or if the Monitor
-exits before the ready event arrives, print `failed to create swarm`
+exits before the ready event arrives, print `failed to create mesh`
 and STOP.
 
 The `ready` event may also carry an optional `drift` field — a warning
-that the installed swarm skill has fallen behind the `agent-gossip` binary. If
+that the installed mesh skill has fallen behind the `agent-mesh` binary. If
 present, print its value verbatim as its own line right after the
 Output block (it already names the fix). If absent, print nothing.
 
 The self-presence `joined` event arriving in the same Monitor batch is
 redundant with the output below — skip it.
 
-The daemon persists `swarm`, `name`, `nickname`, and live count to its
-own state file (`/tmp/agent-gossip-<uid>/<swarm-prefix>/<nick>.state.json`,
+The daemon persists `mesh`, `name`, `nickname`, and live count to its
+own state file (`/tmp/agent-mesh-<uid>/<mesh-prefix>/<nick>.state.json`,
 beside its socket + log), so this skill writes nothing — it is read-only. Sibling
 skills (`msg`, `reply`, `leave`, `ping`) don't read that file; they carry
-`$SWARM`/`$NICKNAME` from the `ready` event above and address the daemon over
+`$MESH`/`$NICKNAME` from the `ready` event above and address the daemon over
 its socket.
 
 ## CLI fallback path — only when Monitor is unavailable
@@ -131,13 +131,13 @@ its socket.
 Take this path **only** when the `Monitor` tool is not available (see "Pick the
 transport"). It runs the same daemon and surfaces the same events; it just
 launches via a background shell and pulls events with `poll` instead of
-receiving pushes. Before driving it, run `agent-gossip man` once and read its **COMMANDS**
+receiving pushes. Before driving it, run `agent-mesh man` once and read its **COMMANDS**
 and **JSON EVENTS** sections — that is the authoritative contract; the notes
 here are only the deltas from the Monitor path.
 
 **Use only the public CLI surface — never read the daemon's stdout/log.**
-Readiness comes from `agent-gossip ready` (which gates on the `--state-file`); identity
-and events come from the `--state-file` and `agent-gossip poll`. The daemon's own stdout
+Readiness comes from `agent-mesh ready` (which gates on the `--state-file`); identity
+and events come from the `--state-file` and `agent-mesh poll`. The daemon's own stdout
 stream is NOT to be parsed by this skill (it is a developer log, not the API);
 discard it.
 
@@ -148,20 +148,20 @@ discard it.
    stdout to `/dev/null` (you will not read it — readiness and events come from
    `--state-file` and `poll`):
    ```
-   agent-gossip create [--name {NAME}] --state-file /tmp/agent-gossip-$(id -u)/sessions/${PPID}.json --no-interactive --output json
+   agent-mesh create [--name {NAME}] --state-file /tmp/agent-mesh-$(id -u)/sessions/${PPID}.json --no-interactive --output json
    ```
    Same flag rules as above (`--name`/`--public`/`--advertise`/`--relay`,
    `${PPID}` verbatim).
 2. **Gate on readiness, then read identity.** Block until the daemon is
-   serving with a single `agent-gossip ready --state-file
-   /tmp/agent-gossip-$(id -u)/sessions/${PPID}.json` (it waits for that file's
+   serving with a single `agent-mesh ready --state-file
+   /tmp/agent-mesh-$(id -u)/sessions/${PPID}.json` (it waits for that file's
    `ready` flag to flip true; exits 0 when serving, non-zero on timeout). On a
-   non-zero exit, print `failed to create swarm` and STOP (same failure
-   contract). On success, read `$SWARM`/`$NAME`/`$NICKNAME` from that same
+   non-zero exit, print `failed to create mesh` and STOP (same failure
+   contract). On success, read `$MESH`/`$NAME`/`$NICKNAME` from that same
    state-file — a plain read; the gate guaranteed it is complete.
 3. **Print the same Output block** as the Monitor path (below).
 4. **Event handling = the shared "Event handler", long-polled.** Run a
-   blocking poll: `agent-gossip poll --swarm $SWARM --nickname $NICKNAME --long
+   blocking poll: `agent-mesh poll --mesh $MESH --nickname $NICKNAME --long
    --after $LAST --output json` (omit `--after` on the first poll). `--long`
    blocks until new traffic arrives — you react the moment it lands, with no
    busy tick and no timeout to tune, and the daemon never blocks. If your
@@ -177,7 +177,7 @@ discard it.
    right after each batch (drive it with the `loop` skill / a
    `ScheduleWakeup`). `--long` is for this **active watch loop** only. For a
    **one-shot read** — the user asks "any new messages?" outside the loop, or
-   you just want what is buffered now — run a plain `agent-gossip poll --swarm $SWARM
+   you just want what is buffered now — run a plain `agent-mesh poll --mesh $MESH
    --nickname $NICKNAME --after $LAST --output json` with **no `--long`**: it
    returns immediately.
 
@@ -188,7 +188,7 @@ Print (include the `advertising` line **only** when you added `--advertise`;
 ```
 💬️ created `#$NAME` and joined as `<$NICKNAME>`
 advertising on `#$DIRECTORY`
-others can join with: `/gossip:join $SWARM`
+others can join with: `/mesh:join $MESH`
 ```
 Omit the `advertising` line entirely when not advertising.
 
@@ -196,7 +196,7 @@ Omit the `advertising` line entirely when not advertising.
 
 The binary does not know what you run on — you do. Right after the Output
 block, record it once into the **meta** channel so peers can show it
-(`/gossip:status`, the handover/task pickers) with an RFC 7386 JSON Merge Patch.
+(`/mesh:status`, the handover/task pickers) with an RFC 7386 JSON Merge Patch.
 The merge deep-merges only your own `/peers/$NICKNAME` key, so it creates the
 `/peers` map if absent and **never clobbers another peer's entry**. One Bash
 call, no prose. Substitute your real values — never copy the examples:
@@ -213,7 +213,7 @@ call, no prose. Substitute your real values — never copy the examples:
 - `{HOST}` — this machine's short hostname (run `hostname -s`).
 
 ```
-agent-gossip meta merge --swarm $SWARM --nickname $NICKNAME --merge '{"peers":{"$NICKNAME":{"model":"{MODEL}","harness":"{HARNESS}","host":"{HOST}","status":"idle"}}}'
+agent-mesh meta merge --mesh $MESH --nickname $NICKNAME --merge '{"peers":{"$NICKNAME":{"model":"{MODEL}","harness":"{HARNESS}","host":"{HOST}","status":"idle"}}}'
 ```
 
 `status` advertises whether you are accepting work: `idle` (open, not working),
@@ -230,9 +230,9 @@ To clear your identity, set it null: `--merge '{"peers":{"$NICKNAME":null}}'`.
 ## Notes
 
 - The Monitor holds the daemon for the session lifetime. Use
-  `/gossip:leave` to TaskStop it cleanly.
-- Swarm IDs encode network mode AND the swarm name, so the join hint is
-  always: `/gossip:join {💬...}`
+  `/mesh:leave` to TaskStop it cleanly.
+- Mesh IDs encode network mode AND the mesh name, so the join hint is
+  always: `/mesh:join {💬...}`
 
 ## Event handling, tasks, and shared state (shared reference)
 

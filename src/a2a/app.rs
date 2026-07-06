@@ -1,5 +1,5 @@
 //! A2A-application state owned by the event loop, kept distinct from the
-//! generic mesh state in [`agent_habilis_gossip::daemon::state::EventLoopState`]. Holds the
+//! generic mesh state in [`agent_habilis_mesh::daemon::state::EventLoopState`]. Holds the
 //! in-flight task registry, the outstanding gossip A2A-call waiters, and the
 //! lazily-bound blob server — the pieces that belong to the a2a layer, not the
 //! transport/membership engine. Threaded alongside `EventLoopState` as its own
@@ -14,7 +14,7 @@ use tokio::time::Instant as TokioInstant;
 use crate::a2a::TaskId;
 use crate::a2a::surfaced::SurfacedState;
 use crate::output::{Output, OutputEvent};
-use agent_habilis_gossip::protocol::Nickname;
+use agent_habilis_mesh::protocol::Nickname;
 
 /// The tapped `Output` plus its surfaced-event receiver — the app's slice of the
 /// daemon's surfacing plumbing, assembled by the caller (CLI / embed / MCP) from
@@ -35,10 +35,10 @@ impl SurfacedIo {
     }
 
     /// The engine sink for this tapped `Output`: a clone shared with the app's
-    /// renderer, wrapped as a [`MeshSink`] so the engine emits `MeshEvent`s
+    /// renderer, wrapped as a [`NodeSink`] so the engine emits `NodeEvent`s
     /// through the *same* tap the app's own `Output` writes to. Both feed the
     /// surfaced-events ring in surfacing order.
-    pub(crate) fn sink(&self) -> std::sync::Arc<dyn agent_habilis_gossip::gossip::event::MeshSink> {
+    pub(crate) fn sink(&self) -> std::sync::Arc<dyn agent_habilis_mesh::gossip::event::NodeSink> {
         std::sync::Arc::new(self.output.clone())
     }
 }
@@ -54,13 +54,13 @@ pub(crate) struct A2aApp {
     /// Outstanding gossip A2A RPC calls: an `A2aReq` was broadcast toward a
     /// peer and we're waiting for its `A2aResp` (matched by `rpc_id`) or the
     /// call's deadline. Fulfilled directly by the matching response frame.
-    /// Bounded by [`POLL_WAITERS_CAP`](agent_habilis_gossip::util::consts::POLL_WAITERS_CAP).
+    /// Bounded by [`POLL_WAITERS_CAP`](agent_habilis_mesh::util::consts::POLL_WAITERS_CAP).
     pub a2a_waiters: Vec<A2aWaiter>,
     /// The blob channel's serving endpoint + content-addressed store, bound
     /// lazily on the first large-file offload (an `a2a artifact`/`call --file`)
     /// and kept for the process lifetime so its address stays stable while we're
     /// alive to serve. `None` until the first offload; closed on shutdown.
-    pub blob_server: Option<agent_habilis_gossip::blob::BlobServer>,
+    pub blob_server: Option<agent_habilis_mesh::blob::BlobServer>,
     /// The localhost A2A JSON-RPC binding's bound port + bearer token, set by
     /// [`serve_a2a`](Self::serve_a2a) when `--a2a-serve` is on. `None` (the
     /// default) means no local binding; the fields are written to the session
@@ -69,7 +69,7 @@ pub(crate) struct A2aApp {
     a2a_token: Option<String>,
     /// The a2a layer's concrete render sink (the tapped `Output`). Used for
     /// a2a-specific surfacings (`print_task` / `task_message` / `print_message`
-    /// / `task_timeout`) the engine's generic `MeshSink` doesn't cover; generic
+    /// / `task_timeout`) the engine's generic `NodeSink` doesn't cover; generic
     /// events reach the same tap through `ctx.sink`.
     pub(crate) output: Output,
     /// The surfaced-events ring + long-poll waiters (the `poll`/`fetch`
@@ -133,7 +133,7 @@ impl A2aApp {
             }
         }
         for event in drained {
-            if crate::a2a::mesh::is_pollable(&event) {
+            if crate::a2a::node::is_pollable(&event) {
                 self.surfaced.push(event);
             }
         }
@@ -174,12 +174,12 @@ impl A2aApp {
     #[must_use]
     pub(crate) fn register_a2a_waiter(
         &mut self,
-        corr: agent_habilis_gossip::protocol::CorrId,
+        corr: agent_habilis_mesh::protocol::CorrId,
         peer: Nickname,
         deadline: TokioInstant,
         responder: A2aResponder,
     ) -> Option<A2aResponder> {
-        if self.a2a_waiters.len() >= agent_habilis_gossip::util::consts::POLL_WAITERS_CAP {
+        if self.a2a_waiters.len() >= agent_habilis_mesh::util::consts::POLL_WAITERS_CAP {
             return Some(responder);
         }
         self.a2a_waiters.push(A2aWaiter {
@@ -197,7 +197,7 @@ impl A2aApp {
     /// *different* peer (a forged reply with a guessed `corr`), is a no-op.
     pub(crate) fn fulfill_a2a_waiter(
         &mut self,
-        corr: &agent_habilis_gossip::protocol::CorrId,
+        corr: &agent_habilis_mesh::protocol::CorrId,
         from: &Nickname,
         body: &str,
     ) {
@@ -215,7 +215,7 @@ impl A2aApp {
     /// — the gate that keeps an unsolicited/forged response from being acted on.
     pub(crate) fn has_a2a_waiter(
         &self,
-        corr: &agent_habilis_gossip::protocol::CorrId,
+        corr: &agent_habilis_mesh::protocol::CorrId,
         peer: &Nickname,
     ) -> bool {
         self.a2a_waiters
@@ -368,7 +368,7 @@ fn rpc_result_from_body(body: &str) -> Result<serde_json::Value, crate::a2a::rpc
 /// An outstanding gossip A2A call, waiting for a response frame with a matching
 /// correlation id `corr` from `peer`, or for `deadline` to elapse.
 pub(crate) struct A2aWaiter {
-    corr: agent_habilis_gossip::protocol::CorrId,
+    corr: agent_habilis_mesh::protocol::CorrId,
     peer: Nickname,
     deadline: TokioInstant,
     responder: A2aResponder,

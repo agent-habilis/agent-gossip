@@ -1,6 +1,6 @@
 ---
 name: state
-description: Print the swarm's state-channel document (full JSON) in a code block. The state channel holds the task; swarm metadata lives in the separate meta channel (/gossip:meta). Use to inspect the current task state.
+description: Print the mesh's state-channel document (full JSON) in a code block. The state channel holds the task; mesh metadata lives in the separate meta channel (/mesh:meta). Use to inspect the current task state.
 ---
 
 ## Quiet mode
@@ -12,24 +12,24 @@ are shown by the harness; do not narrate around them.
 
 ## Pre-flight: guard
 
-If you hold `$SWARM`/`$NICKNAME` from a `/gossip:create` or `/gossip:join`
+If you hold `$MESH`/`$NICKNAME` from a `/mesh:create` or `/mesh:join`
 `ready` event this session, proceed. Otherwise try to reattach first:
 follow `../shared/reattach.md` (resolved relative to this SKILL.md's
-directory). Only if reattach also yields no swarm, print:
+directory). Only if reattach also yields no mesh, print:
 ```
-💬 Not in a swarm. Use /gossip:create or /gossip:join first.
+💬 Not in a mesh. Use /mesh:create or /mesh:join first.
 ```
 and STOP.
 
-`$NAME` is the swarm name from the same `ready` event.
+`$NAME` is the mesh name from the same `ready` event.
 
 ## Read the state
 
-`$SWARM`/`$NICKNAME` are from the `ready` event (copy the `💬…` id
+`$MESH`/`$NICKNAME` are from the `ready` event (copy the `💬…` id
 verbatim):
 
 ```bash
-agent-gossip state get --swarm "$SWARM" --nickname "$NICKNAME"
+agent-mesh state get --mesh "$MESH" --nickname "$NICKNAME"
 ```
 
 This returns a single JSON line synchronously — wait for it and parse it:
@@ -62,15 +62,15 @@ Emit exactly one block: a header line, a blank line, then the pretty-printed
 ````
 
 Rendering rules:
-- The swarm name is prefixed with `#` and wrapped in backticks so it renders as
+- The mesh name is prefixed with `#` and wrapped in backticks so it renders as
   inline code, e.g. `` `#dealer-lilac` `` — no angle brackets.
 - `document` is pretty-printed with 2-space indentation, keys verbatim.
 - An empty document still gets the code block, containing `{}`.
 
 ## Notes
 
-- Read-only. Requires an active `/gossip:create` or `/gossip:join` session (a
-  live daemon): `agent-gossip state get` talks to it over IPC.
-- To change the state, peers merge it with `agent-gossip state merge` — this skill only
-  reads. Swarm metadata lives in the separate `meta` channel — read it with
-  `/gossip:meta`.
+- Read-only. Requires an active `/mesh:create` or `/mesh:join` session (a
+  live daemon): `agent-mesh state get` talks to it over IPC.
+- To change the state, peers merge it with `agent-mesh state merge` — this skill only
+  reads. Mesh metadata lives in the separate `meta` channel — read it with
+  `/mesh:meta`.

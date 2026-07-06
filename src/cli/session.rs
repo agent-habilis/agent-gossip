@@ -2,21 +2,21 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 
-use agent_habilis_gossip::daemon::state_file::read_session_entry;
-use agent_habilis_gossip::protocol::Nickname;
-use agent_habilis_gossip::util::consts::SWARM_GLYPH;
-use agent_habilis_gossip::util::process;
-use agent_habilis_gossip::util::runtime_base;
+use agent_habilis_mesh::daemon::state_file::read_session_entry;
+use agent_habilis_mesh::protocol::Nickname;
+use agent_habilis_mesh::util::consts::MESH_GLYPH;
+use agent_habilis_mesh::util::process;
+use agent_habilis_mesh::util::runtime_base;
 
 use super::args::{LeaveOpts, OutputFormat, SessionOpts};
 
-/// One live daemon on this machine, resolved from its state file. `swarm`
+/// One live daemon on this machine, resolved from its state file. `mesh`
 /// and `pid` are required to act on an entry; `name`/`nickname` are carried
 /// for reporting only.
 #[derive(Debug, Clone)]
 pub(crate) struct Target {
     path: PathBuf,
-    swarm: String,
+    mesh: String,
     name: Option<String>,
     nickname: Option<String>,
     pid: u32,
@@ -24,7 +24,7 @@ pub(crate) struct Target {
 
 pub(crate) struct Discovery {
     live: Vec<Target>,
-    /// State files whose recorded pid is gone (or reused by a non-`agent-gossip`
+    /// State files whose recorded pid is gone (or reused by a non-`agent-mesh`
     /// process) — leftovers of a SIGKILL/power-loss that the daemon never
     /// got to remove itself. Deleted during discovery so they stop
     /// rendering as ghost sessions (e.g. a statusline pill).
@@ -32,7 +32,7 @@ pub(crate) struct Discovery {
 }
 
 /// Walk every state file under [`runtime_base`] and resolve it to a live
-/// daemon or clean it up. Covers both per-swarm files
+/// daemon or clean it up. Covers both per-mesh files
 /// (`<prefix>/<nick>.state.json`) and the CLI-fallback location the skills
 /// use (`sessions/<ppid>.json`) — any first-level `*.json`.
 fn discover() -> Discovery {
@@ -42,15 +42,15 @@ fn discover() -> Discovery {
         let Some(entry) = read_session_entry(&path) else {
             continue;
         };
-        let (Some(swarm), Some(pid)) = (entry.swarm, entry.pid) else {
+        let (Some(mesh), Some(pid)) = (entry.mesh, entry.pid) else {
             // A pre-`pid` (old-binary) file: no way to verify or signal its
             // daemon, so it is neither actionable nor safely removable.
             continue;
         };
-        if process::is_alive(pid) && process::comm_of(pid).as_deref() == Some("agent-gossip") {
+        if process::is_alive(pid) && process::comm_of(pid).as_deref() == Some("agent-mesh") {
             live.push(Target {
                 path,
-                swarm,
+                mesh,
                 name: entry.name,
                 nickname: entry.nickname,
                 pid,
@@ -63,22 +63,22 @@ fn discover() -> Discovery {
     Discovery { live, cleaned }
 }
 
-/// Resolve a live session's swarm id from its nickname — for commands that need
-/// the session's runtime dir without retyping the swarm id (e.g. `a2a fetch`
+/// Resolve a live session's mesh id from its nickname — for commands that need
+/// the session's runtime dir without retyping the mesh id (e.g. `a2a fetch`
 /// landing a blob under `<nick>.recv`). `None` if no live session claims it.
-pub(crate) fn swarm_for_nickname(nickname: &str) -> Option<String> {
+pub(crate) fn mesh_for_nickname(nickname: &str) -> Option<String> {
     discover()
         .live
         .into_iter()
         .find(|target| target.nickname.as_deref() == Some(nickname))
-        .map(|target| target.swarm)
+        .map(|target| target.mesh)
 }
 
 fn state_file_paths() -> Vec<PathBuf> {
-    let Ok(swarm_dirs) = std::fs::read_dir(runtime_base()) else {
+    let Ok(mesh_dirs) = std::fs::read_dir(runtime_base()) else {
         return Vec::new();
     };
-    swarm_dirs
+    mesh_dirs
         .flatten()
         .map(|dir_entry| dir_entry.path())
         .filter(|path| path.is_dir())
@@ -99,17 +99,17 @@ fn split_owned(live: Vec<Target>, is_owned: impl Fn(u32) -> bool) -> (Vec<Target
     (owned, other_sessions)
 }
 
-/// Select by explicit swarm id (full or prefix) and optional nickname — no
-/// ownership check: naming the swarm is the intent.
-fn select_explicit(live: Vec<Target>, swarm: &str, nickname: Option<&str>) -> Vec<Target> {
+/// Select by explicit mesh id (full or prefix) and optional nickname — no
+/// ownership check: naming the mesh is the intent.
+fn select_explicit(live: Vec<Target>, mesh: &str, nickname: Option<&str>) -> Vec<Target> {
     live.into_iter()
-        .filter(|target| target.swarm.starts_with(swarm))
+        .filter(|target| target.mesh.starts_with(mesh))
         .filter(|target| nickname.is_none_or(|wanted| target.nickname.as_deref() == Some(wanted)))
         .collect()
 }
 
 /// The default ownership anchor when `--session-pid` is not given: this
-/// command's own parent. When an agent's Bash tool runs `agent-gossip leave`
+/// command's own parent. When an agent's Bash tool runs `agent-mesh leave`
 /// directly (not via a wrapping shell script), that parent *is* the shell
 /// whose parent is the agent — so skills pass `$PPID` explicitly instead of
 /// relying on this.
@@ -119,7 +119,7 @@ fn default_session_pid() -> u32 {
 
 fn target_json(target: &Target) -> serde_json::Value {
     let mut obj = serde_json::Map::new();
-    obj.insert("swarm".into(), target.swarm.clone().into());
+    obj.insert("mesh".into(), target.mesh.clone().into());
     if let Some(name) = &target.name {
         obj.insert("name".into(), name.clone().into());
     }
@@ -134,7 +134,7 @@ fn display_name(target: &Target) -> String {
     let name = target
         .name
         .clone()
-        .unwrap_or_else(|| agent_habilis_gossip::util::swarm_prefix(&target.swarm));
+        .unwrap_or_else(|| agent_habilis_mesh::util::mesh_prefix(&target.mesh));
     match &target.nickname {
         Some(nickname) => format!("#{name} <{nickname}>"),
         None => format!("#{name}"),
@@ -143,18 +143,18 @@ fn display_name(target: &Target) -> String {
 
 pub(crate) async fn leave(opts: LeaveOpts) -> Result<()> {
     let LeaveOpts {
-        swarm,
+        mesh,
         nickname,
         session_pid,
         confirm_timeout_secs,
         output,
     } = opts;
     let Discovery { live, cleaned } = discover();
-    let (matched, other_sessions) = if let Some(swarm_id) = &swarm {
+    let (matched, other_sessions) = if let Some(mesh_id) = &mesh {
         (
             select_explicit(
                 live,
-                swarm_id.as_str(),
+                mesh_id.as_str(),
                 nickname.as_ref().map(Nickname::as_str),
             ),
             0,
@@ -206,16 +206,16 @@ pub(crate) async fn leave(opts: LeaveOpts) -> Result<()> {
         OutputFormat::Human => {
             if confirmed.is_empty() {
                 if other_sessions == 0 {
-                    println!("{SWARM_GLYPH} not in a swarm");
+                    println!("{MESH_GLYPH} not in a mesh");
                 } else {
                     println!(
-                        "{SWARM_GLYPH} no swarm owned by this session ({other_sessions} running for other sessions — untouched)"
+                        "{MESH_GLYPH} no mesh owned by this session ({other_sessions} running for other sessions — untouched)"
                     );
                 }
             }
             for (target, gone) in &confirmed {
                 let suffix = if *gone { "" } else { " (unconfirmed)" };
-                println!("{SWARM_GLYPH} left {}{suffix}", display_name(target));
+                println!("{MESH_GLYPH} left {}{suffix}", display_name(target));
             }
         }
     }
@@ -248,16 +248,16 @@ pub(crate) async fn session(opts: SessionOpts) -> Result<()> {
         OutputFormat::Human => {
             if owned.is_empty() {
                 if other_sessions == 0 {
-                    println!("{SWARM_GLYPH} not in a swarm");
+                    println!("{MESH_GLYPH} not in a mesh");
                 } else {
                     println!(
-                        "{SWARM_GLYPH} no swarm owned by this session ({other_sessions} running for other sessions)"
+                        "{MESH_GLYPH} no mesh owned by this session ({other_sessions} running for other sessions)"
                     );
                 }
             }
             for target in &owned {
                 println!(
-                    "{SWARM_GLYPH} {} (pid {})",
+                    "{MESH_GLYPH} {} (pid {})",
                     display_name(target),
                     target.pid
                 );
@@ -271,10 +271,10 @@ pub(crate) async fn session(opts: SessionOpts) -> Result<()> {
 mod tests {
     use super::{Target, select_explicit, split_owned};
 
-    fn target(swarm: &str, nickname: &str, pid: u32) -> Target {
+    fn target(mesh: &str, nickname: &str, pid: u32) -> Target {
         Target {
             path: std::path::PathBuf::from("/nonexistent"),
-            swarm: swarm.to_owned(),
+            mesh: mesh.to_owned(),
             name: Some("cool-team".to_owned()),
             nickname: Some(nickname.to_owned()),
             pid,

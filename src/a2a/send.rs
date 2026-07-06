@@ -10,26 +10,26 @@ use crate::a2a::app::A2aApp;
 use crate::a2a::session::SessionRequest;
 use crate::a2a::wire;
 use crate::output;
-use agent_habilis_gossip::daemon::state::EventLoopState;
-use agent_habilis_gossip::protocol::identity::Identity;
-use agent_habilis_gossip::protocol::{
+use agent_habilis_mesh::daemon::state::EventLoopState;
+use agent_habilis_mesh::protocol::identity::Identity;
+use agent_habilis_mesh::protocol::{
     AppTag, Channel, CorrId, Message, MessageBody, MessageId, MessageKind, Nickname, Shard,
-    ShardGroup, SwarmId,
+    ShardGroup, MeshId,
 };
-use agent_habilis_gossip::transport::SwarmSender;
-use agent_habilis_gossip::util::consts::{
+use agent_habilis_mesh::transport::MeshSender;
+use agent_habilis_mesh::util::consts::{
     LOGGED_SHARD_GROUP_MAX_TOTAL, MAX_LOGICAL_BODY_BYTES, MAX_MESSAGE_SIZE, MAX_SEALED_BODY_BYTES,
     MAX_SHARD_TOTAL,
 };
 
-/// Process one line of interactive stdin as a swarm broadcast (A2A is
+/// Process one line of interactive stdin as a mesh broadcast (A2A is
 /// point-to-point, so directed 1:1 is a task, not a chat line) — validate the
 /// body, then delegate to `broadcast_message` so the send (and its
 /// oversize/serialize error handling) is identical to the IPC and embed paths.
 pub(crate) async fn handle_stdin_line(
     text: &str,
-    sender: &SwarmSender,
-    swarm: &SwarmId,
+    sender: &MeshSender,
+    mesh: &MeshId,
     author: &Nickname,
     state: &mut EventLoopState,
     out: &output::Output,
@@ -45,7 +45,7 @@ pub(crate) async fn handle_stdin_line(
             return;
         }
     };
-    match broadcast_message(swarm, author, body, state, sender, out).await {
+    match broadcast_message(mesh, author, body, state, sender, out).await {
         Ok(_) => state.last_sent_at = Instant::now(),
         Err(error) => out.report_error(&error),
     }
@@ -63,7 +63,7 @@ fn retain_outbound(state: &mut EventLoopState, msg: &Message) {
             state.forget_msg_seq(&evicted.pubkey, seq, &evicted_hash);
         }
     }
-    agent_habilis_gossip::logging::messages::log_out(msg);
+    agent_habilis_mesh::logging::messages::log_out(msg);
 }
 
 /// Commit a just-built outbound `Msg` into local state: advance the per-author
@@ -155,7 +155,7 @@ struct ChainStamp {
 /// minted id — shards of a split body keep their own ids; the *group* carries
 /// the A2A id there).
 fn build_msg(
-    swarm: &SwarmId,
+    mesh: &MeshId,
     author: &Nickname,
     body: MessageBody,
     id: Option<MessageId>,
@@ -163,7 +163,7 @@ fn build_msg(
     shard: Option<Shard>,
     signer: &Identity,
 ) -> Message {
-    let mut msg = Message::new_app(swarm, author, AppTag::from(wire::MSG), None, None, body);
+    let mut msg = Message::new_app(mesh, author, AppTag::from(wire::MSG), None, None, body);
     if let Some(id) = id {
         msg = msg.with_id(id);
     }
@@ -178,7 +178,7 @@ fn build_msg(
 /// of a split body commit silently. Errors if the unmeshed buffer is full.
 async fn send_msg_part(
     state: &mut EventLoopState,
-    sender: &SwarmSender,
+    sender: &MeshSender,
     out: &output::Output,
     msg: &Message,
     bytes: Bytes,
@@ -188,7 +188,7 @@ async fn send_msg_part(
         commit_outbound_part(state, msg, out, echo);
         // Single send decision: a directed message goes point-to-point over
         // unicast when the addressee is dialable, else gossip (see `unicast`).
-        agent_habilis_gossip::unicast::deliver(msg, bytes, state, sender).await?;
+        agent_habilis_mesh::unicast::deliver(msg, bytes, state, sender).await?;
     } else if state.pending_outbound.push(bytes.clone()) {
         // Buffered for gossip; mirror to the spool now so a never-meshed spool
         // daemon still exports it (on a later mesh, flush re-broadcasts and the
@@ -212,12 +212,12 @@ async fn send_msg_part(
 /// body identically. Unsigned / unchained — a local view, not a wire message
 /// (the shards carry the wire bytes and the chain entries).
 fn synthesize_logical_msg(
-    swarm: &SwarmId,
+    mesh: &MeshId,
     author: &Nickname,
     body: MessageBody,
     group: &ShardGroup,
 ) -> Message {
-    let mut msg = Message::new_app(swarm, author, AppTag::from(wire::MSG), None, None, body);
+    let mut msg = Message::new_app(mesh, author, AppTag::from(wire::MSG), None, None, body);
     msg.id = MessageId::new(group.as_str()).expect("a shard group is a valid message id");
     msg
 }
@@ -238,30 +238,30 @@ fn synthesize_logical_msg(
 /// errors if the unmeshed pending-outbound buffer is full, and refuses a body
 /// that would need more than [`MAX_SHARD_TOTAL`] shards.
 pub(crate) async fn broadcast_message(
-    swarm: &SwarmId,
+    mesh: &MeshId,
     author: &Nickname,
     text: MessageBody,
     state: &mut EventLoopState,
-    sender: &SwarmSender,
+    sender: &MeshSender,
     out: &output::Output,
 ) -> anyhow::Result<(MessageId, Message)> {
     let signer = state.identity.clone();
-    let payload = crate::a2a::gossip::chat_message(swarm, text.as_str());
+    let payload = crate::a2a::gossip::chat_message(mesh, text.as_str());
     let payload_id =
         MessageId::new(payload.message_id.as_str()).expect("an a2a message id is a valid frame id");
     let body = crate::a2a::gossip::payload_body(&payload)?;
-    // On a passworded swarm, seal the chat body so a relay or a captured frame
+    // On a passworded mesh, seal the chat body so a relay or a captured frame
     // can't read it. Everything downstream (dedup, the per-author chain, the
     // message log, anti-entropy) operates on the sealed frame; only the local
     // echo + the returned Message carry plaintext.
     let wire_body = match state.broadcast_key.as_deref() {
-        Some(key) => agent_habilis_gossip::daemon::state_doc::encrypt_body(&body, key)?,
+        Some(key) => agent_habilis_mesh::daemon::state_doc::encrypt_body(&body, key)?,
         None => body.clone(),
     };
     let encrypted = state.broadcast_key.is_some();
     // Fast path: the whole payload in one frame, its id the A2A messageId.
     let single = build_msg(
-        swarm,
+        mesh,
         author,
         wire_body.clone(),
         Some(payload_id.clone()),
@@ -304,7 +304,7 @@ pub(crate) async fn broadcast_message(
     let hash_stub = "0".repeat(64);
     let probe_parents = vec![hash_stub.clone(); state.dag_parents().len().max(1)];
     let probe = build_msg(
-        swarm,
+        mesh,
         author,
         MessageBody::new(String::new()).expect("empty body is valid"),
         None,
@@ -358,7 +358,7 @@ pub(crate) async fn broadcast_message(
         };
         let chunk_body = MessageBody::new(*chunk).expect("a substring of a valid body is valid");
         let msg = build_msg(
-            swarm,
+            mesh,
             author,
             chunk_body,
             None,
@@ -379,7 +379,7 @@ pub(crate) async fn broadcast_message(
     if !cache_frames.is_empty() {
         state.shard_cache.insert(group.clone(), cache_frames);
     }
-    let logical = synthesize_logical_msg(swarm, author, body, &group);
+    let logical = synthesize_logical_msg(mesh, author, body, &group);
     out.print_message_ex(&logical, true);
     Ok((logical.id.clone(), logical))
 }
@@ -396,10 +396,10 @@ pub(crate) async fn broadcast_message(
 /// a full unmeshed pending-outbound buffer.
 #[expect(
     clippy::too_many_arguments,
-    reason = "a task-frame emit threads swarm/author identity, the target + task id + payload, and the state/app/sender/output it broadcasts through"
+    reason = "a task-frame emit threads mesh/author identity, the target + task id + payload, and the state/app/sender/output it broadcasts through"
 )]
 async fn broadcast_task_frame(
-    swarm: &SwarmId,
+    mesh: &MeshId,
     author: &Nickname,
     task_id: &crate::a2a::TaskId,
     kind: MessageKind,
@@ -407,13 +407,13 @@ async fn broadcast_task_frame(
     content: bool,
     state: &mut EventLoopState,
     app: &mut A2aApp,
-    sender: &SwarmSender,
+    sender: &MeshSender,
     out: &output::Output,
 ) -> anyhow::Result<(MessageId, Message)> {
     let signer = state.identity.clone();
     // Fast path: the whole leg in one frame.
     let single =
-        Message::new_frame(swarm, author, kind.clone(), payload_body.clone()).signed(&signer);
+        Message::new_frame(mesh, author, kind.clone(), payload_body.clone()).signed(&signer);
     if single.wire_len() <= MAX_MESSAGE_SIZE {
         let bytes = Bytes::from(single.serialize()?);
         let id = single.id.clone();
@@ -433,7 +433,7 @@ async fn broadcast_task_frame(
         ShardGroup::from_uuid_str(logical_id.as_str()).expect("a frame id is a valid shard group");
     let max_parts = MAX_SHARD_TOTAL;
     let probe = Message::new_frame(
-        swarm,
+        mesh,
         author,
         kind.clone(),
         MessageBody::new(String::new()).expect("empty body is valid"),
@@ -467,7 +467,7 @@ async fn broadcast_task_frame(
             total,
         };
         let chunk_body = MessageBody::new(*chunk).expect("a substring of a valid body is valid");
-        let msg = Message::new_frame(swarm, author, kind.clone(), chunk_body)
+        let msg = Message::new_frame(mesh, author, kind.clone(), chunk_body)
             .with_shard(Some(shard))
             .signed(&signer);
         let bytes = Bytes::from(msg.serialize()?);
@@ -480,7 +480,7 @@ async fn broadcast_task_frame(
         state.shard_cache.insert(group.clone(), cache_frames);
     }
     // Echo + ingest the logical leg once (one content leg toward the cap).
-    let logical = Message::new_frame(swarm, author, kind, payload_body).with_id(logical_id);
+    let logical = Message::new_frame(mesh, author, kind, payload_body).with_id(logical_id);
     out.print_task(&logical, true);
     ingest_own_leg(app, &logical, task_id, out);
     Ok((logical.id.clone(), logical))
@@ -495,24 +495,24 @@ async fn broadcast_task_frame(
 /// serialize/broadcast failure.
 #[expect(
     clippy::too_many_arguments,
-    reason = "a task-frame emit threads swarm/author identity, the target + task id + payload, and the state/app/sender/output it broadcasts through"
+    reason = "a task-frame emit threads mesh/author identity, the target + task id + payload, and the state/app/sender/output it broadcasts through"
 )]
 pub(crate) async fn emit_task_status(
-    swarm: &SwarmId,
+    mesh: &MeshId,
     author: &Nickname,
     task_id: &crate::a2a::TaskId,
     task_state: crate::a2a::TaskState,
     note: Option<&str>,
     state: &mut EventLoopState,
     app: &mut A2aApp,
-    sender: &SwarmSender,
+    sender: &MeshSender,
     out: &output::Output,
 ) -> anyhow::Result<Message> {
     let Some(peer) = app.tasks.get(task_id).map(|rec| rec.peer.clone()) else {
         return Err(anyhow::anyhow!("unknown task '{task_id}'"));
     };
     broadcast_task_status(
-        swarm, author, &peer, task_id, task_state, note, state, app, sender, out,
+        mesh, author, &peer, task_id, task_state, note, state, app, sender, out,
     )
     .await
     .map(|(_id, msg)| msg)
@@ -525,24 +525,24 @@ pub(crate) async fn emit_task_status(
 /// serialize/broadcast failure.
 #[expect(
     clippy::too_many_arguments,
-    reason = "threads swarm/author identity, the task id + result text/file, and the state/app/sender/output it broadcasts through"
+    reason = "threads mesh/author identity, the task id + result text/file, and the state/app/sender/output it broadcasts through"
 )]
 pub(crate) async fn emit_task_artifact(
-    swarm: &SwarmId,
+    mesh: &MeshId,
     author: &Nickname,
     task_id: &crate::a2a::TaskId,
     text: &str,
-    file: Option<agent_habilis_gossip::blob::FileRef>,
+    file: Option<agent_habilis_mesh::blob::FileRef>,
     state: &mut EventLoopState,
     app: &mut A2aApp,
-    sender: &SwarmSender,
+    sender: &MeshSender,
     out: &output::Output,
 ) -> anyhow::Result<Message> {
     let Some(peer) = app.tasks.get(task_id).map(|rec| rec.peer.clone()) else {
         return Err(anyhow::anyhow!("unknown task '{task_id}'"));
     };
     broadcast_task_artifact(
-        swarm, author, &peer, task_id, text, file, state, app, sender, out,
+        mesh, author, &peer, task_id, text, file, state, app, sender, out,
     )
     .await
     .map(|(_id, msg)| msg)
@@ -567,7 +567,7 @@ pub(crate) fn seal_directed(
             "cannot seal to '{to}': its encryption key is not known yet (cards still propagating)"
         )
     })?;
-    agent_habilis_gossip::protocol::seal::seal_to_body(&key, body.as_str())
+    agent_habilis_mesh::protocol::seal::seal_to_body(&key, body.as_str())
 }
 
 /// A worker-emitted `TaskStatusUpdate` (`a2a status`): compose the A2A status
@@ -577,10 +577,10 @@ pub(crate) fn seal_directed(
 /// Propagates a serialize/broadcast failure.
 #[expect(
     clippy::too_many_arguments,
-    reason = "a task-frame emit threads swarm/author identity, the target + task id + payload, and the state/app/sender/output it broadcasts through"
+    reason = "a task-frame emit threads mesh/author identity, the target + task id + payload, and the state/app/sender/output it broadcasts through"
 )]
 pub(crate) async fn broadcast_task_status(
-    swarm: &SwarmId,
+    mesh: &MeshId,
     author: &Nickname,
     peer: &Nickname,
     task_id: &crate::a2a::TaskId,
@@ -588,10 +588,10 @@ pub(crate) async fn broadcast_task_status(
     note: Option<&str>,
     state: &mut EventLoopState,
     app: &mut A2aApp,
-    sender: &SwarmSender,
+    sender: &MeshSender,
     out: &output::Output,
 ) -> anyhow::Result<(MessageId, Message)> {
-    let update = crate::a2a::gossip::status_update(swarm, task_id, task_state, note, None);
+    let update = crate::a2a::gossip::status_update(mesh, task_id, task_state, note, None);
     let body = seal_directed(state, peer, &crate::a2a::gossip::payload_body(&update)?)?;
     let kind = MessageKind::App {
         tag: AppTag::from(wire::STATUS),
@@ -599,7 +599,7 @@ pub(crate) async fn broadcast_task_status(
         corr: None,
     };
     broadcast_task_frame(
-        swarm, author, task_id, kind, body, true, state, app, sender, out,
+        mesh, author, task_id, kind, body, true, state, app, sender, out,
     )
     .await
 }
@@ -611,22 +611,22 @@ pub(crate) async fn broadcast_task_status(
 /// Propagates a serialize/broadcast failure.
 #[expect(
     clippy::too_many_arguments,
-    reason = "a task-frame emit threads swarm/author identity, the target + task id + payload, and the state/app/sender/output it broadcasts through"
+    reason = "a task-frame emit threads mesh/author identity, the target + task id + payload, and the state/app/sender/output it broadcasts through"
 )]
 pub(crate) async fn broadcast_task_artifact(
-    swarm: &SwarmId,
+    mesh: &MeshId,
     author: &Nickname,
     peer: &Nickname,
     task_id: &crate::a2a::TaskId,
     text: &str,
-    file: Option<agent_habilis_gossip::blob::FileRef>,
+    file: Option<agent_habilis_mesh::blob::FileRef>,
     state: &mut EventLoopState,
     app: &mut A2aApp,
-    sender: &SwarmSender,
+    sender: &MeshSender,
     out: &output::Output,
 ) -> anyhow::Result<(MessageId, Message)> {
-    let parts = build_offload_parts(swarm, author, task_id, text, file, state, app).await?;
-    let update = crate::a2a::gossip::artifact_update_parts(swarm, task_id, parts);
+    let parts = build_offload_parts(mesh, author, task_id, text, file, state, app).await?;
+    let update = crate::a2a::gossip::artifact_update_parts(mesh, task_id, parts);
     let body = seal_directed(state, peer, &crate::a2a::gossip::payload_body(&update)?)?;
     let kind = MessageKind::App {
         tag: AppTag::from(wire::ARTIFACT),
@@ -634,7 +634,7 @@ pub(crate) async fn broadcast_task_artifact(
         corr: None,
     };
     broadcast_task_frame(
-        swarm, author, task_id, kind, body, true, state, app, sender, out,
+        mesh, author, task_id, kind, body, true, state, app, sender, out,
     )
     .await
 }
@@ -645,38 +645,38 @@ pub(crate) async fn broadcast_task_artifact(
 /// peer's blob server on the first offload. The heavy read+hash runs off the
 /// event loop inside `blob::url_part`.
 async fn build_offload_parts(
-    swarm: &SwarmId,
+    mesh: &MeshId,
     author: &Nickname,
     task_id: &crate::a2a::TaskId,
     text: &str,
-    file: Option<agent_habilis_gossip::blob::FileRef>,
+    file: Option<agent_habilis_mesh::blob::FileRef>,
     state: &EventLoopState,
     app: &mut A2aApp,
 ) -> anyhow::Result<Vec<crate::a2a::Part>> {
     let Some(file) = file else {
         return Ok(vec![crate::a2a::Part::text(text)]);
     };
-    let lookups = swarm
+    let lookups = mesh
         .as_str()
-        .parse::<agent_habilis_gossip::protocol::swarm::Swarm>()
-        .map_err(|error| anyhow::anyhow!("cannot resolve swarm lookups for blob offload: {error}"))?
+        .parse::<agent_habilis_mesh::protocol::mesh::Mesh>()
+        .map_err(|error| anyhow::anyhow!("cannot resolve mesh lookups for blob offload: {error}"))?
         .lookups()
         .clone();
     // Route through the choke point so the base is validated (0700, ours) before
     // this attachment payload spool is created — bypassing it could birth the
     // shared base at a world-traversable 0755.
-    let spool = agent_habilis_gossip::util::ensure_swarm_runtime_dir(swarm.as_str())
+    let spool = agent_habilis_mesh::util::ensure_mesh_runtime_dir(mesh.as_str())
         .map_err(|error| anyhow::anyhow!("cannot prepare blob spool dir: {error}"))?
         .join(format!("{author}.blobs"));
-    // Every offloaded blob inherits the swarm password (if any), so a scraped
+    // Every offloaded blob inherits the mesh password (if any), so a scraped
     // ticket can't be redeemed without it.
-    let password = state.swarm_password.clone();
-    let offload = agent_habilis_gossip::blob::url_part(
+    let password = state.mesh_password.clone();
+    let offload = agent_habilis_mesh::blob::url_part(
         file,
         &mut app.blob_server,
         &lookups,
         spool,
-        agent_habilis_gossip::blob::ContentId::new(task_id.as_str()),
+        agent_habilis_mesh::blob::ContentId::new(task_id.as_str()),
         password,
     )
     .await?;
@@ -699,7 +699,7 @@ async fn build_offload_parts(
 /// is full.
 async fn send_task_leg(
     state: &mut EventLoopState,
-    sender: &SwarmSender,
+    sender: &MeshSender,
     out: &output::Output,
     msg: &Message,
     bytes: Bytes,
@@ -711,7 +711,7 @@ async fn send_task_leg(
         // still leaves a content leg in our log for anti-entropy). Unicast when
         // the addressee is dialable, else gossip (see `unicast::deliver`).
         retain_leg(state, msg, out, echo, content);
-        agent_habilis_gossip::unicast::deliver(msg, bytes, state, sender).await?;
+        agent_habilis_mesh::unicast::deliver(msg, bytes, state, sender).await?;
     } else if state.pending_outbound.push(bytes.clone()) {
         // Buffered for gossip; mirror to the spool only on a successful buffer
         // so a reported drop matches reality.
@@ -757,7 +757,7 @@ fn ingest_own_leg(
     if crate::a2a::task::ingest(&mut app.tasks, msg, task_id, true, Instant::now()) {
         out.info(&format!(
             "task exceeded {} messages; wrap it up",
-            agent_habilis_gossip::util::consts::TASK_CONTENT_CAP
+            agent_habilis_mesh::util::consts::TASK_CONTENT_CAP
         ));
         tracing::warn!("task content cap exceeded");
     }
@@ -776,10 +776,10 @@ fn ingest_own_leg(
 /// sealed yet (peer card still propagating) or whose send fails just waits for
 /// the next round.
 pub(crate) async fn send_shard_repair_requests(
-    swarm: &SwarmId,
+    mesh: &MeshId,
     author: &Nickname,
     state: &mut EventLoopState,
-    sender: &SwarmSender,
+    sender: &MeshSender,
 ) {
     let tickets = state.reassembly.repair_tickets(Instant::now());
     for ticket in tickets {
@@ -799,7 +799,7 @@ pub(crate) async fn send_shard_repair_requests(
         };
         let corr = CorrId::from(crate::a2a::A2aRpcId::random().as_str());
         let frame = Message::new_app(
-            swarm,
+            mesh,
             author,
             AppTag::from(wire::REQ),
             Some(ticket.author.clone()),
@@ -807,10 +807,10 @@ pub(crate) async fn send_shard_repair_requests(
             sealed,
         )
         .signed(&state.identity);
-        agent_habilis_gossip::logging::messages::log_out(&frame);
+        agent_habilis_mesh::logging::messages::log_out(&frame);
         match frame.serialize() {
             Ok(bytes) => {
-                if let Err(error) = agent_habilis_gossip::unicast::deliver(
+                if let Err(error) = agent_habilis_mesh::unicast::deliver(
                     &frame,
                     Bytes::from(bytes),
                     state,
@@ -831,10 +831,10 @@ pub(crate) async fn send_shard_repair_requests(
 /// is full — no silent park.
 #[expect(
     clippy::too_many_arguments,
-    reason = "the client call carries swarm/author identity, the target + RPC method/params/timeout, the transport-specific responder, and the state + app + sender it parks and broadcasts through"
+    reason = "the client call carries mesh/author identity, the target + RPC method/params/timeout, the transport-specific responder, and the state + app + sender it parks and broadcasts through"
 )]
 pub(crate) async fn broadcast_a2a_call(
-    swarm: &SwarmId,
+    mesh: &MeshId,
     author: &Nickname,
     peer: Nickname,
     method: &str,
@@ -843,7 +843,7 @@ pub(crate) async fn broadcast_a2a_call(
     responder: crate::a2a::app::A2aResponder,
     state: &mut EventLoopState,
     app: &mut A2aApp,
-    sender: &SwarmSender,
+    sender: &MeshSender,
 ) {
     let rpc_error = |code: i64, message: &str| {
         serde_json::json!({ "error": { "code": code, "message": message } }).to_string()
@@ -887,12 +887,12 @@ pub(crate) async fn broadcast_a2a_call(
     // Clamp before adding to `Instant`: an unclamped client `timeout_secs` would
     // overflow the platform `Instant` and panic the event loop.
     let max_timeout = std::time::Duration::from_secs(
-        agent_habilis_gossip::util::consts::A2A_CALL_MAX_TIMEOUT_SECS,
+        agent_habilis_mesh::util::consts::A2A_CALL_MAX_TIMEOUT_SECS,
     );
     if timeout > max_timeout {
         tracing::warn!(
             requested_secs = timeout.as_secs(),
-            capped_secs = agent_habilis_gossip::util::consts::A2A_CALL_MAX_TIMEOUT_SECS,
+            capped_secs = agent_habilis_mesh::util::consts::A2A_CALL_MAX_TIMEOUT_SECS,
             "a2a call timeout clamped to the maximum"
         );
     }
@@ -903,8 +903,8 @@ pub(crate) async fn broadcast_a2a_call(
     }
     // Directed request over the shared RPC sender: unicast → circuit → gossip per
     // frame, transparently splitting a large sealed body into shard frames.
-    if let Err(error) = send_directed_rpc(swarm, author, kind, body, state, sender).await {
-        tracing::warn!(target: "agent_gossip::gossip", %error, "a2a request send failed");
+    if let Err(error) = send_directed_rpc(mesh, author, kind, body, state, sender).await {
+        tracing::warn!(target: "agent_mesh::gossip", %error, "a2a request send failed");
     }
 }
 
@@ -914,26 +914,26 @@ pub(crate) async fn broadcast_a2a_call(
 /// cascade, so the RPC plane is size-transparent like chat and task legs. RPC
 /// frames are plumbing (never logged for anti-entropy); the shards reassemble
 /// only in the receiver's dedicated store, and a big group is served from the
-/// sender-side [`ShardCache`](agent_habilis_gossip::daemon::reassembly::ShardCache)
+/// sender-side [`ShardCache`](agent_habilis_mesh::daemon::reassembly::ShardCache)
 /// through the `shard/repair` RPC.
 ///
 /// # Errors
 /// Propagates a serialize/deliver failure and refuses a body past the input
 /// ceiling or the receiver's per-group reassembly budget.
 pub(crate) async fn send_directed_rpc(
-    swarm: &SwarmId,
+    mesh: &MeshId,
     author: &Nickname,
     kind: MessageKind,
     body: MessageBody,
     state: &mut EventLoopState,
-    sender: &SwarmSender,
+    sender: &MeshSender,
 ) -> anyhow::Result<()> {
     let signer = state.identity.clone();
-    let single = Message::new_frame(swarm, author, kind.clone(), body.clone()).signed(&signer);
+    let single = Message::new_frame(mesh, author, kind.clone(), body.clone()).signed(&signer);
     if single.wire_len() <= MAX_MESSAGE_SIZE {
-        agent_habilis_gossip::logging::messages::log_out(&single);
+        agent_habilis_mesh::logging::messages::log_out(&single);
         let bytes = Bytes::from(single.serialize()?);
-        return agent_habilis_gossip::unicast::deliver(&single, bytes, state, sender).await;
+        return agent_habilis_mesh::unicast::deliver(&single, bytes, state, sender).await;
     }
     // The RPC body is already sealed (base58, ~1.37x the input) — gate on the
     // sealed ceiling so the caller-facing limit stays `MAX_LOGICAL_BODY_BYTES`.
@@ -947,7 +947,7 @@ pub(crate) async fn send_directed_rpc(
     let group = ShardGroup::from_uuid_str(crate::a2a::A2aRpcId::random().as_str())
         .expect("a freshly minted uuid is a valid shard group");
     let probe = Message::new_frame(
-        swarm,
+        mesh,
         author,
         kind.clone(),
         MessageBody::new(String::new()).expect("empty body is valid"),
@@ -971,19 +971,19 @@ pub(crate) async fn send_directed_rpc(
     let mut cache_frames = Vec::new();
     for (idx, chunk) in chunks.iter().enumerate() {
         let chunk_body = MessageBody::new(*chunk).expect("a substring of a valid body is valid");
-        let msg = Message::new_frame(swarm, author, kind.clone(), chunk_body)
+        let msg = Message::new_frame(mesh, author, kind.clone(), chunk_body)
             .with_shard(Some(Shard {
                 group: group.clone(),
                 idx: u32::try_from(idx).expect("idx is bounded by MAX_SHARD_TOTAL"),
                 total,
             }))
             .signed(&signer);
-        agent_habilis_gossip::logging::messages::log_out(&msg);
+        agent_habilis_mesh::logging::messages::log_out(&msg);
         let bytes = Bytes::from(msg.serialize()?);
         if total > LOGGED_SHARD_GROUP_MAX_TOTAL {
             cache_frames.push(bytes.clone());
         }
-        agent_habilis_gossip::unicast::deliver(&msg, bytes, state, sender).await?;
+        agent_habilis_mesh::unicast::deliver(&msg, bytes, state, sender).await?;
     }
     if !cache_frames.is_empty() {
         state.shard_cache.insert(group, cache_frames);
@@ -996,23 +996,23 @@ pub(crate) async fn send_directed_rpc(
 /// `Ping` handler, which leaves `resp` unset and emits the `ping_report`
 /// event instead.
 async fn session_ping(
-    swarm: &SwarmId,
+    mesh: &MeshId,
     author: &Nickname,
     state: &mut EventLoopState,
-    sender: &SwarmSender,
-    resp: tokio::sync::oneshot::Sender<Vec<agent_habilis_gossip::gossip::event::PingRtt>>,
+    sender: &MeshSender,
+    resp: tokio::sync::oneshot::Sender<Vec<agent_habilis_mesh::gossip::event::PingRtt>>,
 ) -> bool {
     let now = tokio::time::Instant::now();
-    state.ping_round = Some(Box::new(agent_habilis_gossip::daemon::state::PingRound {
+    state.ping_round = Some(Box::new(agent_habilis_mesh::daemon::state::PingRound {
         t1: now,
         deadline: now
-            + std::time::Duration::from_secs(agent_habilis_gossip::util::tuning::ping_window_secs()),
+            + std::time::Duration::from_secs(agent_habilis_mesh::util::tuning::ping_window_secs()),
         pongs: std::collections::HashMap::new(),
         resp: Some(resp),
     }));
-    agent_habilis_gossip::gossip::broadcast_msg(
+    agent_habilis_mesh::gossip::broadcast_msg(
         sender,
-        &Message::new_ping(swarm, author).signed(&state.identity),
+        &Message::new_ping(mesh, author).signed(&state.identity),
     )
     .await;
     true
@@ -1029,16 +1029,16 @@ async fn session_ping(
 )]
 pub(crate) async fn handle_session_request(
     req: SessionRequest,
-    swarm: &SwarmId,
+    mesh: &MeshId,
     author: &Nickname,
     state: &mut EventLoopState,
     app: &mut A2aApp,
-    sender: &SwarmSender,
+    sender: &MeshSender,
     output: &output::Output,
 ) -> bool {
     match req {
         SessionRequest::Send { body, resp } => {
-            let outcome = broadcast_message(swarm, author, body, state, sender, output)
+            let outcome = broadcast_message(mesh, author, body, state, sender, output)
                 .await
                 .map(|(_id, msg)| msg);
             let sent_ok = outcome.is_ok();
@@ -1064,7 +1064,7 @@ pub(crate) async fn handle_session_request(
             resp,
         } => {
             let outcome = emit_task_status(
-                swarm,
+                mesh,
                 author,
                 &task_id,
                 task_state,
@@ -1086,7 +1086,7 @@ pub(crate) async fn handle_session_request(
             resp,
         } => {
             let outcome = emit_task_artifact(
-                swarm, author, &task_id, &text, file, state, app, sender, output,
+                mesh, author, &task_id, &text, file, state, app, sender, output,
             )
             .await;
             let sent_ok = outcome.is_ok();
@@ -1098,8 +1098,8 @@ pub(crate) async fn handle_session_request(
             false
         }
         SessionRequest::StateMerge { merge, resp } => {
-            let outcome = agent_habilis_gossip::gossip::broadcast_state_merge(
-                swarm,
+            let outcome = agent_habilis_mesh::gossip::broadcast_state_merge(
+                mesh,
                 author,
                 merge,
                 state,
@@ -1118,8 +1118,8 @@ pub(crate) async fn handle_session_request(
             false
         }
         SessionRequest::MetaMerge { merge, resp } => {
-            let outcome = agent_habilis_gossip::gossip::broadcast_state_merge(
-                swarm,
+            let outcome = agent_habilis_mesh::gossip::broadcast_state_merge(
+                mesh,
                 author,
                 merge,
                 state,
@@ -1137,7 +1137,7 @@ pub(crate) async fn handle_session_request(
             let _ = resp.send(state.meta_doc.to_json());
             false
         }
-        SessionRequest::Ping { resp } => session_ping(swarm, author, state, sender, resp).await,
+        SessionRequest::Ping { resp } => session_ping(mesh, author, state, sender, resp).await,
         SessionRequest::A2aCall {
             peer,
             method,
@@ -1146,7 +1146,7 @@ pub(crate) async fn handle_session_request(
             resp,
         } => {
             broadcast_a2a_call(
-                swarm,
+                mesh,
                 author,
                 peer,
                 &method,
@@ -1197,7 +1197,7 @@ pub(crate) async fn handle_session_request(
         } => {
             state
                 .link_state
-                .ingest(agent_habilis_gossip::circuit::LinkVector::from_raw(
+                .ingest(agent_habilis_mesh::circuit::LinkVector::from_raw(
                     origin, seq, seal_key, links,
                 ));
             false
@@ -1215,7 +1215,7 @@ pub(crate) async fn handle_session_request(
 #[cfg(test)]
 mod split_body_tests {
     use super::{escaped_char_len, split_body};
-    use agent_habilis_gossip::util::consts::MAX_SHARD_TOTAL;
+    use agent_habilis_mesh::util::consts::MAX_SHARD_TOTAL;
 
     #[test]
     fn escaped_len_counts_json_escapes() {

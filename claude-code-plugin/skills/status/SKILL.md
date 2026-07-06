@@ -1,6 +1,6 @@
 ---
 name: status
-description: List the swarm's peers with the transport a directed message would take (unicast/circuit/gossip), plus the swarm name and participant count. Use to see who's here and how you're reaching them.
+description: List the mesh's peers with the transport a directed message would take (unicast/circuit/gossip), plus the mesh name and participant count. Use to see who's here and how you're reaching them.
 ---
 
 ## Quiet mode
@@ -12,29 +12,29 @@ are shown by the harness; do not narrate around them.
 
 ## Pre-flight: guard
 
-If you hold `$SWARM`/`$NICKNAME` from a `/gossip:create` or `/gossip:join`
+If you hold `$MESH`/`$NICKNAME` from a `/mesh:create` or `/mesh:join`
 `ready` event this session, proceed. Otherwise try to reattach first:
 follow `../shared/reattach.md` (resolved relative to this SKILL.md's
-directory). Only if reattach also yields no swarm, print:
+directory). Only if reattach also yields no mesh, print:
 ```
-💬 Not in a swarm. Use /gossip:create or /gossip:join first.
+💬 Not in a mesh. Use /mesh:create or /mesh:join first.
 ```
 and STOP.
 
-`$NAME` is the swarm name from the same `ready` event.
+`$NAME` is the mesh name from the same `ready` event.
 
 ## Read the roster, then the meta doc
 
-`$SWARM`/`$NICKNAME` are from the `ready` event (copy the `💬…` id
+`$MESH`/`$NICKNAME` are from the `ready` event (copy the `💬…` id
 verbatim). Run both reads (the roster from the daemon, the model/harness from
 the **meta** channel — the binary no longer carries them):
 
 ```bash
-agent-gossip peers --swarm "$SWARM" --nickname "$NICKNAME"
-agent-gossip meta get --swarm "$SWARM" --nickname "$NICKNAME"
+agent-mesh peers --mesh "$MESH" --nickname "$NICKNAME"
+agent-mesh meta get --mesh "$MESH" --nickname "$NICKNAME"
 ```
 
-`agent-gossip peers` returns a single JSON line synchronously — wait for it and parse:
+`agent-mesh peers` returns a single JSON line synchronously — wait for it and parse:
 
 ```json
 { "ok": true,
@@ -54,9 +54,9 @@ agent-gossip meta get --swarm "$SWARM" --nickname "$NICKNAME"
 - `quiet`: the peer went silent past the alive timeout but may return.
 - `last_seen_secs_ago`: `null` until the peer's first heartbeat is timed.
 
-`agent-gossip meta get` returns the derived **meta** document, where each agent
+`agent-mesh meta get` returns the derived **meta** document, where each agent
 self-reports what it runs on under `/peers/<nickname>` (the convention
-`/gossip:create` / `/gossip:join` seed):
+`/mesh:create` / `/mesh:join` seed):
 
 ```json
 { "ok": true,
@@ -85,7 +85,7 @@ Emit exactly one block: a header line, then a markdown table of the
 | ghost-elm   | gossip    |          |             |               |        | quiet · 90s ago |
 ```
 
-The swarm name is prefixed with `#` and wrapped in backticks so it renders as
+The mesh name is prefixed with `#` and wrapped in backticks so it renders as
 inline code (a distinct color), e.g. `` `#dealer-lilac` `` — no angle brackets.
 
 Rendering rules per row:
@@ -107,7 +107,7 @@ If `participants` is empty (`participant_count` is 1), skip the table and print:
 
 ## Notes
 
-- Read-only. Requires an active `/gossip:create` or `/gossip:join` session (a
-  live daemon): `agent-gossip peers` talks to it over IPC.
+- Read-only. Requires an active `/mesh:create` or `/mesh:join` session (a
+  live daemon): `agent-mesh peers` talks to it over IPC.
 - The `transport` tag converges as peers re-advertise — a brand-new neighbor
   can briefly show `gossip` until its next address broadcast lands.

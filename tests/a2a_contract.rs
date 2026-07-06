@@ -6,7 +6,7 @@
 //! conformant + reachable peer card, directed `message/send` (native task
 //! creation, routed through the gossip request/response waiter — an
 //! off-the-shelf client can delegate a task), `tasks/get`/`tasks/list`, the
-//! `swarm-state` extension methods, and the cross-binding property: a JSON-RPC
+//! `mesh-state` extension methods, and the cross-binding property: a JSON-RPC
 //! send on one node surfaces on a plain gossip peer.
 
 mod common;
@@ -102,7 +102,7 @@ fn wait_a2a(state_file: &std::path::Path) -> (u16, String) {
 /// The whole binding contract against one live pair (amortizes the daemon
 /// startup): discovery → card → auth → chat send (cross-binding delivery to
 /// a plain gossip peer) → peer card → task creation → tasks/get + tasks/list →
-/// the swarm-state extension.
+/// the mesh-state extension.
 #[expect(
     clippy::too_many_lines,
     reason = "one end-to-end binding-contract test; spawning a daemon pair is expensive, so every localhost-binding assertion shares the one live pair"
@@ -110,15 +110,15 @@ fn wait_a2a(state_file: &std::path::Path) -> (u16, String) {
 #[test]
 fn a2a_binding_serves_card_rpc_and_tasks() {
     let state_file = std::env::temp_dir().join(format!(
-        "agent-gossip-a2a-contract-{}.state.json",
+        "agent-mesh-a2a-contract-{}.state.json",
         std::process::id()
     ));
     let state_str = state_file.to_string_lossy().to_string();
-    let (host, swarm) =
+    let (host, mesh) =
         Node::create_args("a2atest", &["--a2a-serve", "--state-file", &state_str], &[]);
-    let joiner = Node::join(&swarm, "a2a-peer");
-    assert!(host.wait_ready(&swarm), "host socket never appeared");
-    assert!(joiner.wait_ready(&swarm), "joiner socket never appeared");
+    let joiner = Node::join(&mesh, "a2a-peer");
+    assert!(host.wait_ready(&mesh), "host socket never appeared");
+    assert!(joiner.wait_ready(&mesh), "joiner socket never appeared");
     let (port, token) = wait_a2a(&state_file);
 
     // The card is served unauthenticated and self-describes the binding.
@@ -147,17 +147,17 @@ fn a2a_binding_serves_card_rpc_and_tasks() {
     // Every RPC requires the bearer token.
     let (unauth_status, _) = post(
         port,
-        "/swarm",
+        "/mesh",
         "not-the-token",
         &serde_json::json!({ "jsonrpc": "2.0", "id": 1, "method": "ListTasks", "params": {} }),
     );
     assert_eq!(unauth_status, 401, "a wrong bearer token must be rejected");
 
-    // message/send on the swarm endpoint broadcasts; the echo is the
+    // message/send on the mesh endpoint broadcasts; the echo is the
     // daemon-authored A2A Message.
     let echo = rpc(
         port,
-        "/swarm",
+        "/mesh",
         &token,
         "SendMessage",
         &serde_json::json!({ "message": {
@@ -224,13 +224,13 @@ fn a2a_binding_serves_card_rpc_and_tasks() {
     // The initiator (this host) adopted the task; tasks/get + tasks/list see it.
     let fetched = rpc(
         port,
-        "/swarm",
+        "/mesh",
         &token,
         "GetTask",
         &serde_json::json!({ "id": task_id }),
     );
     assert_eq!(fetched["id"].as_str(), Some(task_id.as_str()));
-    let listed = rpc(port, "/swarm", &token, "ListTasks", &serde_json::json!({}));
+    let listed = rpc(port, "/mesh", &token, "ListTasks", &serde_json::json!({}));
     assert!(
         listed["tasks"]
             .as_array()
@@ -238,25 +238,25 @@ fn a2a_binding_serves_card_rpc_and_tasks() {
         "tasks/list must include the created task: {listed}"
     );
 
-    // The swarm-state extension methods mirror `agent-gossip state merge/get`.
+    // The mesh-state extension methods mirror `agent-mesh state merge/get`.
     rpc(
         port,
-        "/swarm",
+        "/mesh",
         &token,
-        "swarm/state.merge",
+        "mesh/state.merge",
         &serde_json::json!({ "merge": { "turn": "a2a" } }),
     );
     let doc = rpc(
         port,
-        "/swarm",
+        "/mesh",
         &token,
-        "swarm/state.get",
+        "mesh/state.get",
         &serde_json::json!({}),
     );
     assert_eq!(doc["turn"], "a2a");
 
     // GetExtendedAgentCard (authenticated) returns the full v1.0 card.
-    let extended = rpc(port, "/swarm", &token, "GetExtendedAgentCard", &Value::Null);
+    let extended = rpc(port, "/mesh", &token, "GetExtendedAgentCard", &Value::Null);
     assert!(
         extended["supportedInterfaces"].is_array(),
         "extended card is a v1.0 AgentCard: {extended}"
@@ -269,7 +269,7 @@ fn a2a_binding_serves_card_rpc_and_tasks() {
     assert_eq!(card["capabilities"]["pushNotifications"], false);
     let (push_status, push_response) = post(
         port,
-        "/swarm",
+        "/mesh",
         &token,
         &serde_json::json!({ "jsonrpc": "2.0", "id": 9, "method": "CreateTaskPushNotificationConfig", "params": {} }),
     );
@@ -284,12 +284,12 @@ fn a2a_binding_serves_card_rpc_and_tasks() {
 #[test]
 fn a2a_binding_is_off_by_default() {
     let state_file = std::env::temp_dir().join(format!(
-        "agent-gossip-a2a-default-{}.state.json",
+        "agent-mesh-a2a-default-{}.state.json",
         std::process::id()
     ));
     let state_str = state_file.to_string_lossy().to_string();
-    let (host, swarm) = Node::create_args("a2aoff", &["--state-file", &state_str], &[]);
-    assert!(host.wait_ready(&swarm), "host socket never appeared");
+    let (host, mesh) = Node::create_args("a2aoff", &["--state-file", &state_str], &[]);
+    assert!(host.wait_ready(&mesh), "host socket never appeared");
     let deadline = Instant::now() + CONNECT_TIMEOUT;
     let parsed = loop {
         if let Ok(raw) = std::fs::read_to_string(&state_file)

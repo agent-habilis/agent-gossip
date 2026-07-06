@@ -7,7 +7,7 @@ timestamp: 2026-06-28T00:00:00Z
 roles: [initiator, receiver]
 coordinator: dedicated
 harness: any
-prereqs: [agent-gossip, todo-plugin]
+prereqs: [agent-mesh, todo-plugin]
 network: private
 ---
 
@@ -35,7 +35,7 @@ A todo plugin should be installed for both.
 
 ## Briefing
 
-- swarm: `scenario-task-edges`
+- mesh: `scenario-task-edges`
 - the four tasks (any small tasks; the point is the outcome):
   - **decline:** an offer the receiver is expected to turn down.
   - **cancel:** an offer the initiator withdraws before it completes.

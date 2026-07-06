@@ -1,16 +1,16 @@
 ---
 type: scenario-index
-title: Swarm scenario runbooks
-description: Coordinator-set-up agent-to-agent runbooks that validate swarm behavior and UX, judged by a human.
-tags: [scenario, swarm, runbook, coordinator, okf]
+title: Mesh scenario runbooks
+description: Coordinator-set-up agent-to-agent runbooks that validate mesh behavior and UX, judged by a human.
+tags: [scenario, mesh, runbook, coordinator, okf]
 timestamp: 2026-06-28T00:00:00Z
 ---
 
-# Swarm scenario runbooks
+# Mesh scenario runbooks
 
 This is an [OKF](https://okf.md/) bundle of agent-to-agent runbooks for the
-agent-habilis swarm. A **dedicated coordinator** peer briefs each role's **goal**
-+ the scenario by **swarm message** (resetting shared state only when a scenario
+agent-habilis mesh. A **dedicated coordinator** peer briefs each role's **goal**
++ the scenario by **mesh message** (resetting shared state only when a scenario
 uses it), then observes. The agents then run using **their own skills** — and a
 **human validates the behavior and UX**.
 
@@ -34,7 +34,7 @@ Core:
   the shared-state document.
 - [Shared state — Nim "21"](/state-nim-21.md) — a fast turn-based game over the
   shared-state document (converges in ~6–12 moves).
-- [Discover](/discover.md) — advertise a swarm and find it from a directory.
+- [Discover](/discover.md) — advertise a mesh and find it from a directory.
 
 Coverage:
 - [Messaging](/messaging.md) — broadcast, the auto-reply judgement, directed reply.
@@ -44,24 +44,24 @@ Coverage:
 - [Todo backends](/todo-backends.md) — task tracking with vs without a todo
   plugin.
 - [Multi-peer fan-out](/multi-peer-fanout.md) — one coordinator, two workers.
-- [Cross-harness](/cross-harness.md) — pi ↔ Claude Code in one swarm.
+- [Cross-harness](/cross-harness.md) — pi ↔ Claude Code in one mesh.
 - [Create/join variants](/create-join-variants.md) — network flags, join forms,
   version/drift.
 
 ## How to run
 
-1. **Prerequisites:** the `agent-gossip` binary on `PATH`. For the todo cases, a todo
+1. **Prerequisites:** the `agent-mesh` binary on `PATH`. For the todo cases, a todo
    plugin installed in the role peers. For [cross-harness](/cross-harness.md),
    one pi and one Claude Code session.
 2. Open **one coordinator session + one per role** (the runbook's `roles:`
-   frontmatter). Each is a real, independent swarm member — and may run on a
-   **different machine** (create the swarm `--public`, join by id or
-   `agent-gossip discover`).
-3. The coordinator **briefs** each role's goal + the scenario by **swarm
+   frontmatter). Each is a real, independent mesh member — and may run on a
+   **different machine** (create the mesh `--public`, join by id or
+   `agent-mesh discover`).
+3. The coordinator **briefs** each role's goal + the scenario by **mesh
    message**, then observes. The agents run on their own. Nothing travels
    through local files.
 4. **If the scenario uses shared state** (e.g. a game board), the coordinator
-   resets it to `{}` first — state persists per swarm, so always start fresh.
+   resets it to `{}` first — state persists per mesh, so always start fresh.
    See [coordinator.md](/coordinator.md).
 5. **Validate** the runbook's **Expected behavior & UX** by eye. The
    coordinator's report is a first pass; your UI judgement is the verdict.
@@ -73,13 +73,13 @@ Each runbook has four parts:
 - **Scenario** — the situation.
 - **Roles & goals** — what success looks like for each role (a goal, not a
   method).
-- **Briefing** — the data the coordinator broadcasts by message (swarm name,
+- **Briefing** — the data the coordinator broadcasts by message (mesh name,
   document model, rules, ordering). Never a tool or step.
 - **Expected behavior & UX** — the observable outcomes/experience to validate.
 
 Expected UI strings reference the canonical `display` lines the daemon emits
 (`src/output/json.rs` `*_display`) and the front-end Output sections
-(`claude-code-plugin/skills/*/SKILL.md`). The bee is `💬️` (U+FE0F); a swarm id
+(`claude-code-plugin/skills/*/SKILL.md`). The bee is `💬️` (U+FE0F); a mesh id
 is canonically `💬://<base58>`.
 
 ## Capability reference (for the human, not the agents)
@@ -90,17 +90,17 @@ skills. This table is only to help you read what happened.
 
 | capability | pi command | pi tool | Claude Code skill |
 |---|---|---|---|
-| create | `/swarm-create` | `swarm_create` | `/gossip:create` |
-| join | `/swarm-join` | `swarm_join` | `/gossip:join` |
-| discover | `/swarm-discover` | `swarm_discover` | `/gossip:discover` |
-| broadcast | `/swarm-msg` | `swarm_send` | `/gossip:msg` |
-| directed reply | `/swarm-reply` | `swarm_send` (with reply) | `/gossip:reply` |
-| handover | `/swarm-handover` | `swarm_handover` | `/gossip:handover` |
-| task | `/swarm-task` | `swarm_task` | `/gossip:task` |
-| advance a task leg | — | `swarm_advance` | (skill drives the legs) |
-| status / roster | `/swarm-status` | `swarm_status` | `/gossip:status` |
-| ping | `/swarm-ping` | `swarm_ping` | `/gossip:ping` |
-| read state | `/swarm-state` | `swarm_get_state` | `agent-gossip state get` |
-| merge state | `/swarm-state-merge` | `swarm_apply_merge` | `agent-gossip state merge` |
-| leave | `/swarm-leave` | `swarm_leave` | `/gossip:leave` |
-| version / drift | `/swarm-version` | — | `/gossip:version` |
+| create | `/mesh-create` | `mesh_create` | `/mesh:create` |
+| join | `/mesh-join` | `mesh_join` | `/mesh:join` |
+| discover | `/mesh-discover` | `mesh_discover` | `/mesh:discover` |
+| broadcast | `/mesh-msg` | `mesh_send` | `/mesh:msg` |
+| directed reply | `/mesh-reply` | `mesh_send` (with reply) | `/mesh:reply` |
+| handover | `/mesh-handover` | `mesh_handover` | `/mesh:handover` |
+| task | `/mesh-task` | `mesh_task` | `/mesh:task` |
+| advance a task leg | — | `mesh_advance` | (skill drives the legs) |
+| status / roster | `/mesh-status` | `mesh_status` | `/mesh:status` |
+| ping | `/mesh-ping` | `mesh_ping` | `/mesh:ping` |
+| read state | `/mesh-state` | `mesh_get_state` | `agent-mesh state get` |
+| merge state | `/mesh-state-merge` | `mesh_apply_merge` | `agent-mesh state merge` |
+| leave | `/mesh-leave` | `mesh_leave` | `/mesh:leave` |
+| version / drift | `/mesh-version` | — | `/mesh:version` |

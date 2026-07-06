@@ -7,7 +7,7 @@ timestamp: 2026-06-28T00:00:00Z
 roles: [player-a, player-b]
 coordinator: dedicated
 harness: any
-prereqs: [agent-gossip]
+prereqs: [agent-mesh]
 network: private
 ---
 
@@ -15,10 +15,10 @@ network: private
 
 ## Scenario
 
-Two players play a full game of Connect Four over the swarm's shared-state
+Two players play a full game of Connect Four over the mesh's shared-state
 document — longer than tic-tac-toe, shorter than checkers. Set up per the
 [coordinator protocol](/coordinator.md): the coordinator broadcasts the briefing
-below by message; the live game data lives in the swarm's shared-state document,
+below by message; the live game data lives in the mesh's shared-state document,
 which the players create and mutate.
 
 ## Roles & goals
@@ -29,7 +29,7 @@ which the players create and mutate.
 
 ## Briefing
 
-- swarm: `scenario-connect-four`
+- mesh: `scenario-connect-four`
 - **Document model** the players share:
   ```json
   {

@@ -6,11 +6,11 @@ description: Send one or more tasks to peers and get their results back. Use whe
 ## What this does
 
 Sends **one or more tasks** to other participants and collects each result.
-Each task is one **A2A task** on the swarm: a directed `SendMessage` creates
+Each task is one **A2A task** on the mesh: a directed `SendMessage` creates
 it (the worker mints the task id and returns the `Task`); the worker **runs the
 work and returns its result** as an `artifact`, and you **approve** it (or ask
 for a change), after which the worker marks it `completed`. That is the
-difference from `/gossip:handover`, which hands a task off and walks away with no
+difference from `/mesh:handover`, which hands a task off and walks away with no
 result.
 
 Every task is **independent**: its own `task_id`, its own worker, its own
@@ -19,14 +19,14 @@ outcome — when a worker finishes, its result prints and that task closes. If
 you later want something done across the results, ask in a normal turn; this
 skill does not encode any cross-task step.
 
-You can send several tasks at once, and you can **re-invoke `/gossip:task`** to
+You can send several tasks at once, and you can **re-invoke `/mesh:task`** to
 add more later — new tasks append to the same to-do list.
 
 ## Silent execution
 
 Run the whole skill **silently**. Do NOT narrate steps, echo variables (ids,
 the worker list), print commands or their output, or announce what you are
-about to do. The **only** things that ever appear are: the not-in-swarm guard
+about to do. The **only** things that ever appear are: the not-in-mesh guard
 line (when it applies), **plan mode** (the drafted tasks), the native
 **`TodoWrite`** to-do list, and **each worker's returned result** when it
 finishes.
@@ -43,12 +43,12 @@ narrating the `TodoWrite` is not.
 
 ## Pre-flight: guard
 
-If you hold `$SWARM`/`$NICKNAME` from a `/gossip:create` or `/gossip:join`
+If you hold `$MESH`/`$NICKNAME` from a `/mesh:create` or `/mesh:join`
 `ready` event this session, proceed. Otherwise try to reattach first:
 follow `../shared/reattach.md` (resolved relative to this SKILL.md's
-directory). Only if reattach also yields no swarm, print:
+directory). Only if reattach also yields no mesh, print:
 ```
-💬 Not in a swarm. Use /gossip:create or /gossip:join first.
+💬 Not in a mesh. Use /mesh:create or /mesh:join first.
 ```
 and STOP.
 
@@ -57,7 +57,7 @@ and STOP.
 Establish *what* is being sent **before** choosing who runs it:
 
 - **If `$ARGUMENTS` is non-empty**, it **is** the task spec. It may describe a
-  single task or several distinct ones (e.g. `/gossip:task review src/net on one
+  single task or several distinct ones (e.g. `/mesh:task review src/net on one
   peer, review src/daemon on another` ⇒ two tasks).
 - **Otherwise**, the task is your current conversation/plan (one task).
 
@@ -68,8 +68,8 @@ self-reports it runs on — the binary does not carry it) — silently, don't pr
 either:
 
 ```bash
-agent-gossip peers --swarm "$SWARM" --nickname "$NICKNAME"
-agent-gossip meta get --swarm "$SWARM" --nickname "$NICKNAME"
+agent-mesh peers --mesh "$MESH" --nickname "$NICKNAME"
+agent-mesh meta get --mesh "$MESH" --nickname "$NICKNAME"
 ```
 
 `peers` returns
@@ -123,7 +123,7 @@ For **each** task, create it on its worker with a directed `SendMessage`. The
 capture `result.task.id` as that task's `task_id` (you do not choose it):
 
 ```bash
-agent-gossip a2a call --swarm "$SWARM" --nickname "$NICKNAME" --to "$WORKER" \
+agent-mesh a2a call --mesh "$MESH" --nickname "$NICKNAME" --to "$WORKER" \
   --method SendMessage --text "$BRIEF"
 ```
 
@@ -142,7 +142,7 @@ the worker's status/artifact legs arrive on the poll tick, not instantly — sam
 handling, slightly later.) For **each** task's `task_id`:
 
 - **`state:"input-required"` with a question** — the worker needs input; answer
-  from your task context with a follow-up message (`agent-gossip a2a call --to $WORKER
+  from your task context with a follow-up message (`agent-mesh a2a call --to $WORKER
   --method SendMessage --task-id "$TASK_ID" --text "<answer>"`). Silent (todo
   only).
 - **`task_progress`** — a liveness/percent beat; refresh that task's todo, never
@@ -186,11 +186,11 @@ below, `activeForm` = `activeForm`) + **`TaskUpdate`** (status
   `failed`/`task_timeout` set it `completed` and note "dropped (failed/timed
   out)" **in the todo content**.
 
-Re-invoking `/gossip:task` appends new todos to this same list.
+Re-invoking `/mesh:task` appends new todos to this same list.
 
 ## Output
 
-The only things this skill prints are: the not-in-swarm guard line, plan mode,
+The only things this skill prints are: the not-in-mesh guard line, plan mode,
 the to-do list, and **each worker's returned result** when its task finishes
 (attributed to the worker). There are **no** per-leg status lines, no `💬 tasks`
 block, and no narration of transitions — the to-do list carries all in-flight

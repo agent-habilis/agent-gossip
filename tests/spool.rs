@@ -18,7 +18,7 @@ mod common;
 
 use std::time::Instant;
 
-use common::{InProcNode, MSG_TIMEOUT, POLL, spool_dir, spool_swarm_dir, wait_for_frames};
+use common::{InProcNode, MSG_TIMEOUT, POLL, spool_dir, spool_mesh_dir, wait_for_frames};
 use serde_json::Value;
 
 /// Live mirror: two meshed peers sharing one spool dir converge as usual, and
@@ -28,7 +28,7 @@ use serde_json::Value;
 async fn live_mirror_writes_frames_and_stays_transparent() {
     let dir = spool_dir("live");
     let creator = InProcNode::create_with_spool("spool-live", "creator", &dir).await;
-    let mut joiner = InProcNode::join_with_spool(&creator.swarm, "joiner", &dir).await;
+    let mut joiner = InProcNode::join_with_spool(&creator.mesh, "joiner", &dir).await;
 
     creator.send("mirrored over the wire").await;
     creator
@@ -59,7 +59,7 @@ async fn live_mirror_writes_frames_and_stays_transparent() {
     }
 
     // The tee wrote content-addressed frames, and they are real wire JSON.
-    let frame_dir = spool_swarm_dir(&dir, &creator.swarm);
+    let frame_dir = spool_mesh_dir(&dir, &creator.mesh);
     let seen = wait_for_frames(&frame_dir, 1, MSG_TIMEOUT).await;
     assert!(
         seen >= 1,
@@ -88,7 +88,7 @@ async fn live_mirror_writes_frames_and_stays_transparent() {
 #[tokio::test]
 async fn sneakernet_catch_up_recovers_state_from_files() {
     let dir = spool_dir("net");
-    let swarm = {
+    let mesh = {
         let creator = InProcNode::create_with_spool("spool-net", "sender", &dir).await;
         creator
             .state_merge(serde_json::json!({ "topic": "sneakernet" }))
@@ -98,17 +98,17 @@ async fn sneakernet_catch_up_recovers_state_from_files() {
         // Ensure the frames are durably on disk before the sender exits — the
         // writer task mirrors asynchronously, so a race here would let the
         // joiner start against an empty directory.
-        let frame_dir = spool_swarm_dir(&dir, &creator.swarm);
+        let frame_dir = spool_mesh_dir(&dir, &creator.mesh);
         let seen = wait_for_frames(&frame_dir, 1, MSG_TIMEOUT).await;
         assert!(seen >= 1, "sender wrote no frames to spool before leaving");
 
-        let swarm = creator.swarm.clone();
+        let mesh = creator.mesh.clone();
         creator.leave().await; // clean shutdown; the .frame files persist
-        swarm
+        mesh
     };
 
     // No overlap: the sender is gone. Only the files can carry the state.
-    let joiner = InProcNode::join_with_spool(&swarm, "receiver", &dir).await;
+    let joiner = InProcNode::join_with_spool(&mesh, "receiver", &dir).await;
     let deadline = Instant::now() + MSG_TIMEOUT;
     loop {
         let doc = joiner.state_get().await;
@@ -141,7 +141,7 @@ async fn own_spooled_frames_are_not_resurfaced() {
 
     // Wait until the watcher has had the frames to re-read (≥3 committed), then
     // give it a beat to re-ingest so a broken self-drop would double-count.
-    let frame_dir = spool_swarm_dir(&dir, &node.swarm);
+    let frame_dir = spool_mesh_dir(&dir, &node.mesh);
     let seen = wait_for_frames(&frame_dir, 3, MSG_TIMEOUT).await;
     assert!(
         seen >= 3,

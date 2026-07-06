@@ -1,33 +1,33 @@
 use anyhow::{Context, Result, bail};
 
-use agent_habilis_gossip::protocol::Message as Frame;
-use agent_habilis_gossip::protocol::MessageBody;
-use agent_habilis_gossip::protocol::swarm::SwarmId;
+use agent_habilis_mesh::protocol::Message as Frame;
+use agent_habilis_mesh::protocol::MessageBody;
+use agent_habilis_mesh::protocol::mesh::MeshId;
 
 use super::{
-    EXT_SWARM_BROADCAST, META_BEAT, META_DONE, META_TOTAL, Message, Part, Role, TaskArtifactUpdate,
+    EXT_MESH_BROADCAST, META_BEAT, META_DONE, META_TOTAL, Message, Part, Role, TaskArtifactUpdate,
     TaskId, TaskState, TaskStatus, TaskStatusUpdate, wire,
 };
 
 /// Compose a broadcast chat payload: `role: user` (chat is a client-side
-/// submission), `contextId` = the swarm (the swarm *is* the conversation
-/// context), and the `swarm-broadcast` extension — A2A messaging is
-/// point-to-point, so a swarm-wide message declares itself.
+/// submission), `contextId` = the mesh (the mesh *is* the conversation
+/// context), and the `mesh-broadcast` extension — A2A messaging is
+/// point-to-point, so a mesh-wide message declares itself.
 #[must_use]
-pub fn chat_message(swarm: &SwarmId, text: &str) -> Message {
+pub fn chat_message(mesh: &MeshId, text: &str) -> Message {
     let mut message = Message::text(Role::User, text);
-    message.context_id = Some(swarm.as_str().to_string());
-    message.extensions = vec![EXT_SWARM_BROADCAST.to_string()];
+    message.context_id = Some(mesh.as_str().to_string());
+    message.extensions = vec![EXT_MESH_BROADCAST.to_string()];
     message
 }
 
 /// Compose the A2A `Message` a directed `message/send` carries — the
 /// task-creating brief (no `taskId`) or a follow-up into an existing task
 /// (`taskId` set). `role: user` (a client submission), `contextId` = the
-/// swarm; **no** broadcast extension (it is point-to-point).
+/// mesh; **no** broadcast extension (it is point-to-point).
 #[must_use]
-pub fn send_message_payload(swarm: &SwarmId, task_id: Option<&TaskId>, text: &str) -> Message {
-    send_message_payload_parts(swarm, task_id, vec![Part::text(text)])
+pub fn send_message_payload(mesh: &MeshId, task_id: Option<&TaskId>, text: &str) -> Message {
+    send_message_payload_parts(mesh, task_id, vec![Part::text(text)])
 }
 
 /// As [`send_message_payload`] but carrying arbitrary parts — used when the
@@ -36,13 +36,13 @@ pub fn send_message_payload(swarm: &SwarmId, task_id: Option<&TaskId>, text: &st
 /// an `Artifact` (the A2A request has no artifact slot).
 #[must_use]
 pub fn send_message_payload_parts(
-    swarm: &SwarmId,
+    mesh: &MeshId,
     task_id: Option<&TaskId>,
     parts: Vec<Part>,
 ) -> Message {
     let mut message = Message::text(Role::User, "");
     message.parts = parts;
-    message.context_id = Some(swarm.as_str().to_string());
+    message.context_id = Some(mesh.as_str().to_string());
     message.task_id = task_id.cloned();
     message
 }
@@ -61,14 +61,14 @@ pub(crate) fn payload_body<T: serde::Serialize>(payload: &T) -> Result<MessageBo
 
 /// Parse + validate the chat payload of a **logical** `A2aMsg` frame (a single
 /// wire message, or the reassembled view of a sharded body — never a raw
-/// shard). `A2aMsg` is swarm broadcast chat; the frame is transport, the
+/// shard). `A2aMsg` is mesh broadcast chat; the frame is transport, the
 /// payload is the A2A layer, and a mismatch is a crafted message:
 ///
 /// - `messageId` must equal the frame's logical id, so the id every consumer
 ///   sees (dedup, poll cursor, echo) *is* the A2A id.
-/// - `contextId` must name the frame's swarm (the receive path already gates
-///   the frame's swarm against ours).
-/// - it must declare the `swarm-broadcast` extension (every `A2aMsg` is
+/// - `contextId` must name the frame's mesh (the receive path already gates
+///   the frame's mesh against ours).
+/// - it must declare the `mesh-broadcast` extension (every `A2aMsg` is
 ///   broadcast).
 /// - chat is `role: user` by construction (see [`chat_message`]).
 ///
@@ -83,15 +83,15 @@ pub fn chat_payload(frame: &Frame) -> Result<Message> {
     if payload.message_id.as_str() != frame.id.as_str() {
         bail!("a2a messageId does not match the frame id");
     }
-    if payload.context_id.as_deref() != Some(frame.swarm.as_str()) {
-        bail!("a2a contextId does not name the frame's swarm");
+    if payload.context_id.as_deref() != Some(frame.mesh.as_str()) {
+        bail!("a2a contextId does not name the frame's mesh");
     }
     if !payload
         .extensions
         .iter()
-        .any(|uri| uri == EXT_SWARM_BROADCAST)
+        .any(|uri| uri == EXT_MESH_BROADCAST)
     {
-        bail!("a2a_msg without the swarm-broadcast extension");
+        bail!("a2a_msg without the mesh-broadcast extension");
     }
     if payload.role != Role::User {
         bail!("chat carries role user; got agent");
@@ -137,7 +137,7 @@ pub fn parts_text(parts: &[Part]) -> String {
 /// itself the stream-close signal.
 #[must_use]
 pub fn status_update(
-    swarm: &SwarmId,
+    mesh: &MeshId,
     task_id: &TaskId,
     state: TaskState,
     note: Option<&str>,
@@ -145,13 +145,13 @@ pub fn status_update(
 ) -> TaskStatusUpdate {
     let message = note.map(|text| {
         let mut msg = Message::text(Role::Agent, text);
-        msg.context_id = Some(swarm.as_str().to_string());
+        msg.context_id = Some(mesh.as_str().to_string());
         msg.task_id = Some(task_id.clone());
         Box::new(msg)
     });
     TaskStatusUpdate {
         task_id: task_id.clone(),
-        context_id: swarm.as_str().to_string(),
+        context_id: mesh.as_str().to_string(),
         status: TaskStatus {
             state,
             message,
@@ -177,21 +177,21 @@ pub fn beat_metadata(fraction: Option<(u64, u64)>) -> serde_json::Value {
 /// Compose a task artifact update (the worker's result): one artifact whose
 /// parts carry the result text.
 #[must_use]
-pub fn artifact_update(swarm: &SwarmId, task_id: &TaskId, text: &str) -> TaskArtifactUpdate {
-    artifact_update_parts(swarm, task_id, vec![Part::text(text)])
+pub fn artifact_update(mesh: &MeshId, task_id: &TaskId, text: &str) -> TaskArtifactUpdate {
+    artifact_update_parts(mesh, task_id, vec![Part::text(text)])
 }
 
 /// As [`artifact_update`] but carrying arbitrary parts — used when the result
 /// attaches a file (a `Part` with a blob `url`) alongside or instead of text.
 #[must_use]
 pub fn artifact_update_parts(
-    swarm: &SwarmId,
+    mesh: &MeshId,
     task_id: &TaskId,
     parts: Vec<Part>,
 ) -> TaskArtifactUpdate {
     TaskArtifactUpdate {
         task_id: task_id.clone(),
-        context_id: swarm.as_str().to_string(),
+        context_id: mesh.as_str().to_string(),
         artifact: super::Artifact {
             artifact_id: uuid::Uuid::new_v4().to_string(),
             parts,
@@ -217,8 +217,8 @@ pub fn status_payload(frame: &Frame) -> Result<TaskStatusUpdate> {
     }
     let payload: TaskStatusUpdate =
         serde_json::from_str(frame.body.as_str()).context("invalid a2a status payload")?;
-    if payload.context_id != frame.swarm.as_str() {
-        bail!("a2a status contextId does not name the frame's swarm");
+    if payload.context_id != frame.mesh.as_str() {
+        bail!("a2a status contextId does not name the frame's mesh");
     }
     Ok(payload)
 }
@@ -233,14 +233,14 @@ pub fn artifact_payload(frame: &Frame) -> Result<TaskArtifactUpdate> {
     }
     let payload: TaskArtifactUpdate =
         serde_json::from_str(frame.body.as_str()).context("invalid a2a artifact payload")?;
-    if payload.context_id != frame.swarm.as_str() {
-        bail!("a2a artifact contextId does not name the frame's swarm");
+    if payload.context_id != frame.mesh.as_str() {
+        bail!("a2a artifact contextId does not name the frame's mesh");
     }
     Ok(payload)
 }
 
 /// Is this status update a liveness **beat** (keepalive/progress plumbing)
-/// rather than a state transition? Wire-static: the `swarm:beat` marker.
+/// rather than a state transition? Wire-static: the `mesh:beat` marker.
 #[must_use]
 pub fn is_beat(update: &TaskStatusUpdate) -> bool {
     update
@@ -313,7 +313,7 @@ pub fn task_text(frame: &Frame) -> String {
     match frame
         .kind
         .app_tag()
-        .map(agent_habilis_gossip::protocol::AppTag::as_str)
+        .map(agent_habilis_mesh::protocol::AppTag::as_str)
     {
         Some(wire::STATUS) => serde_json::from_str::<TaskStatusUpdate>(frame.body.as_str())
             .ok()
@@ -330,12 +330,12 @@ pub fn task_text(frame: &Frame) -> String {
 #[cfg(test)]
 mod tests {
     use super::{Frame, chat_message, chat_payload, display_text, payload_body};
-    use agent_habilis_gossip::protocol::MessageKind;
-    use agent_habilis_gossip::protocol::message::MessageId;
-    use agent_habilis_gossip::protocol::swarm::SwarmId;
+    use agent_habilis_mesh::protocol::MessageKind;
+    use agent_habilis_mesh::protocol::message::MessageId;
+    use agent_habilis_mesh::protocol::mesh::MeshId;
 
-    fn swarm() -> SwarmId {
-        SwarmId::from("💬test")
+    fn mesh() -> MeshId {
+        MeshId::from("💬test")
     }
 
     /// A logical broadcast frame carrying `payload` — id already aligned to the
@@ -352,7 +352,7 @@ mod tests {
 
     #[test]
     fn broadcast_round_trips() {
-        let payload = chat_message(&swarm(), "What is Rust?");
+        let payload = chat_message(&mesh(), "What is Rust?");
         let frame = frame_for(&payload);
         let parsed = chat_payload(&frame).expect("valid broadcast payload");
         assert_eq!(parsed, payload);
@@ -361,7 +361,7 @@ mod tests {
 
     #[test]
     fn frame_id_mismatch_is_rejected() {
-        let payload = chat_message(&swarm(), "hi");
+        let payload = chat_message(&mesh(), "hi");
         let mut frame = frame_for(&payload);
         frame.id = "00000000-0000-0000-0000-0000000000ff".into();
         assert!(chat_payload(&frame).is_err());
@@ -369,7 +369,7 @@ mod tests {
 
     #[test]
     fn foreign_context_is_rejected() {
-        let mut payload = chat_message(&swarm(), "hi");
+        let mut payload = chat_message(&mesh(), "hi");
         payload.context_id = Some("💬other".to_string());
         let frame = frame_for(&payload);
         assert!(chat_payload(&frame).is_err());
@@ -377,7 +377,7 @@ mod tests {
 
     #[test]
     fn missing_broadcast_extension_is_rejected() {
-        let mut payload = chat_message(&swarm(), "hi");
+        let mut payload = chat_message(&mesh(), "hi");
         payload.extensions.clear();
         let frame = frame_for(&payload);
         assert!(chat_payload(&frame).is_err());

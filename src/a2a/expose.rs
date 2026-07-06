@@ -1,5 +1,5 @@
 //! The a2a exposer: bind an endpoint next to a local A2A server, print the
-//! consumer's `agent-gossip a2a connect` command, and raw-proxy each authenticated
+//! consumer's `agent-mesh a2a connect` command, and raw-proxy each authenticated
 //! bi-stream to the origin. Strictly 1:1 — one consumer connection is served at
 //! a time; a second is refused until the first disconnects.
 
@@ -14,9 +14,9 @@ use rand::RngCore;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 
-use agent_habilis_gossip::lookup::build_endpoint;
-use agent_habilis_gossip::protocol::crypto::{Password, TicketAuth, ct_eq};
-use agent_habilis_gossip::protocol::swarm::{
+use agent_habilis_mesh::lookup::build_endpoint;
+use agent_habilis_mesh::protocol::crypto::{Password, TicketAuth, ct_eq};
+use agent_habilis_mesh::protocol::mesh::{
     DirectorySelection, LookupOpts, LookupSet, resolve_lookups, validate_advertise,
 };
 
@@ -33,7 +33,7 @@ const WRONG_PASSWORD: u32 = 3;
 const BAD_SECRET: u32 = 1;
 
 /// Exposer: forward a local `http://` A2A origin to a single peer over the
-/// swarm. Prints the consumer's `agent-gossip a2a connect` command on stdout.
+/// mesh. Prints the consumer's `agent-mesh a2a connect` command on stdout.
 ///
 /// `loopback` (a hidden test flag) forces loopback-only lookups so two agents
 /// on one machine bridge hermetically off the ticket's direct address, with no
@@ -68,7 +68,7 @@ pub(crate) async fn expose(
                 label: Some(format!("a2a {origin}")),
             };
             if !json {
-                agent_habilis_gossip::util::output::status(
+                agent_habilis_mesh::util::output::status(
                     "Advertising",
                     &format!("in #{directory} directory"),
                 );
@@ -79,8 +79,8 @@ pub(crate) async fn expose(
     };
     super::announce(
         json,
-        &format!("A2A {origin} → swarm"),
-        &format!("agent-gossip a2a connect {}", ticket.encode()),
+        &format!("A2A {origin} → mesh"),
+        &format!("agent-mesh a2a connect {}", ticket.encode()),
     );
     let origin = Arc::new(origin);
     let paired = Arc::new(AtomicBool::new(false));

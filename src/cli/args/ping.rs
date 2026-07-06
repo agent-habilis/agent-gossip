@@ -4,15 +4,15 @@
 
 use clap::Parser;
 
-use agent_habilis_gossip::protocol::{Nickname, SwarmId};
+use agent_habilis_mesh::protocol::{Nickname, MeshId};
 
 use super::output::OutputFormat;
 
 #[derive(Parser, Debug)]
 pub(crate) struct PingOpts {
-    /// Swarm identifier (💬...)
+    /// Mesh identifier (💬...)
     #[arg(long)]
-    pub swarm: SwarmId,
+    pub mesh: MeshId,
 
     /// Nickname of the local agent (must have a running join/create session)
     #[arg(long)]
@@ -33,9 +33,9 @@ mod tests {
     #[test]
     fn ping_accepts_output_flag() {
         let cli = Cli::parse_from([
-            "agent-gossip",
+            "agent-mesh",
             "ping",
-            "--swarm",
+            "--mesh",
             "💬AbCdEf1234",
             "--nickname",
             "my-nick",

@@ -4,7 +4,7 @@ pub mod gossip;
 pub(crate) mod gossip_rpc;
 pub(crate) mod http;
 pub(crate) mod ipc;
-pub(crate) mod mesh;
+pub(crate) mod node;
 pub(crate) mod rpc;
 pub(crate) mod send;
 pub(crate) mod session;
@@ -21,38 +21,38 @@ use uuid::Uuid;
 /// object as `ProtoJSON` (`SCREAMING_SNAKE` enums, no inline `kind` tags).
 pub const PROTOCOL_VERSION: &str = "1.0";
 
-/// Custom `protocolBinding` URI for the always-on gossip binding — the swarm's
+/// Custom `protocolBinding` URI for the always-on gossip binding — the mesh's
 /// serverless A2A transport, declared in every card's `supportedInterfaces`.
 pub const GOSSIP_BINDING: &str = "https://agent-habilis.dev/a2a/binding/gossip/v1";
 
 /// Extension URI declared on broadcast chat: A2A messaging is point-to-point,
-/// so a swarm-wide message marks itself rather than pretending to be directed.
-pub const EXT_SWARM_BROADCAST: &str = "https://agent-habilis.dev/a2a/ext/swarm-broadcast/v1";
-/// Extension URI for the shared-state channels (`swarm/state.get|merge`).
-pub const EXT_SWARM_STATE: &str = "https://agent-habilis.dev/a2a/ext/swarm-state/v1";
+/// so a mesh-wide message marks itself rather than pretending to be directed.
+pub const EXT_MESH_BROADCAST: &str = "https://agent-habilis.dev/a2a/ext/mesh-broadcast/v1";
+/// Extension URI for the shared-state channels (`mesh/state.get|merge`).
+pub const EXT_MESH_STATE: &str = "https://agent-habilis.dev/a2a/ext/mesh-state/v1";
 /// Extension URI advertising that a member serves A2A **over gossip**
 /// (`A2aReq`/`A2aResp`, request/response and request/stream) for a safe method
 /// subset — so a peer knows it can call this member without the localhost HTTP
 /// binding. This is also how task delegation and streaming work: a directed
 /// `SendMessage` creates a task the worker mints and returns; `SubscribeToTask`
 /// opens a stream the worker propagates over gossip.
-pub const EXT_SWARM_A2A_RPC: &str = "https://agent-habilis.dev/a2a/ext/swarm-a2a-rpc/v1";
+pub const EXT_MESH_A2A_RPC: &str = "https://agent-habilis.dev/a2a/ext/mesh-a2a-rpc/v1";
 /// Extension URI advertising the blob channel: a large file on a `Part` travels
 /// as a `url` reference (a `💬…` ticket) and its bytes stream point-to-point over
 /// a dedicated QUIC ALPN, SHA-256-verified — instead of inlining over gossip.
-pub const EXT_SWARM_BLOB: &str = "https://agent-habilis.dev/a2a/ext/swarm-blob/v1";
+pub const EXT_MESH_BLOB: &str = "https://agent-habilis.dev/a2a/ext/mesh-blob/v1";
 /// Extension URI advertising end-to-end sealing: directed frames (those with a
 /// `to`) are encrypted to the recipient's X25519 key, carried in this extension's
 /// `params.x25519` (base58). Relays forward + verify the signature but cannot
 /// read the body. Broadcast stays public.
-pub const EXT_SWARM_SEAL: &str = "https://agent-habilis.dev/a2a/ext/swarm-seal/v1";
+pub const EXT_MESH_SEAL: &str = "https://agent-habilis.dev/a2a/ext/mesh-seal/v1";
 
-/// The a2a layer's [`MessageKind::App`](agent_habilis_gossip::protocol::MessageKind) tag
+/// The a2a layer's [`MessageKind::App`](agent_habilis_mesh::protocol::MessageKind) tag
 /// taxonomy — the wire discriminants for a2a payloads riding the engine's
 /// generic app frame. These are the `tag` values of what used to be dedicated
 /// a2a `MessageKind` variants (`type` values on the 7.0 wire).
 pub(crate) mod wire {
-    /// Swarm-wide broadcast chat (was `a2a_msg`). Broadcast, no addressee.
+    /// Mesh-wide broadcast chat (was `a2a_msg`). Broadcast, no addressee.
     pub(crate) const MSG: &str = "a2a_msg";
     /// A worker-pushed task status transition or beat (was `a2a_status`). Directed.
     pub(crate) const STATUS: &str = "a2a_status";
@@ -66,14 +66,14 @@ pub(crate) mod wire {
 
 /// Metadata key marking a status update as a **liveness beat** (keepalive /
 /// progress): plumbing, never logged, surfaced only as `task_progress`.
-pub const META_BEAT: &str = "swarm:beat";
+pub const META_BEAT: &str = "mesh:beat";
 /// Metadata keys carrying a progress fraction on a beat.
-pub const META_DONE: &str = "swarm:done";
+pub const META_DONE: &str = "mesh:done";
 /// See [`META_DONE`].
-pub const META_TOTAL: &str = "swarm:total";
+pub const META_TOTAL: &str = "mesh:total";
 /// Metadata key naming why a terminal status was emitted by the daemon
 /// itself (e.g. `"timeout"` on the idle-debounce cancel).
-pub const META_REASON: &str = "swarm:reason";
+pub const META_REASON: &str = "mesh:reason";
 
 /// A UUID-string id newtype with validating deserialize, so a crafted
 /// non-UUID id is rejected at parse. One macro, three ids: the sender-minted
@@ -318,7 +318,7 @@ impl TaskState {
     }
 
     /// The friendly kebab name for display lines, our `--output json` stream,
-    /// and the `agent-gossip a2a status --state` flag — the agent-facing surface, kept
+    /// and the `agent-mesh a2a status --state` flag — the agent-facing surface, kept
     /// readable while the A2A wire carries the `ProtoJSON` `TASK_STATE_*` form.
     #[must_use]
     pub fn as_str(self) -> &'static str {
@@ -550,7 +550,7 @@ mod tests {
             context_id: Some("💬test".to_string()),
             task_id: None,
             reference_task_ids: Vec::new(),
-            extensions: vec![super::EXT_SWARM_BROADCAST.to_string()],
+            extensions: vec![super::EXT_MESH_BROADCAST.to_string()],
             metadata: None,
         }
     }
@@ -649,7 +649,7 @@ mod tests {
                     message: None,
                     timestamp: None,
                 },
-                metadata: Some(serde_json::json!({"swarm:review": true})),
+                metadata: Some(serde_json::json!({"mesh:review": true})),
             };
             insta::assert_snapshot!(serde_json::to_string(&update).unwrap());
         }
@@ -676,7 +676,7 @@ mod tests {
     }
 }
 
-// ── A2A HTTP tunnel (origin: bridge an external A2A server over the swarm) ──
+// ── A2A HTTP tunnel (origin: bridge an external A2A server over the mesh) ──
 use std::time::Duration;
 
 use iroh::Endpoint;
@@ -696,7 +696,7 @@ pub(crate) use expose::expose;
 
 /// ALPN for the a2a bridge — a raw bidirectional QUIC stream with its own
 /// protocol identity, distinct from the gossip protocol's `GOSSIP_ALPN`.
-pub(crate) const A2A_ALPN: &[u8] = b"agent-gossip/a2a/1";
+pub(crate) const A2A_ALPN: &[u8] = b"agent-mesh/a2a/1";
 
 /// Length of the bearer-capability secret carried in an a2a ticket, and of the
 /// auth token that opens every bi-stream (the raw secret, or its Argon2id

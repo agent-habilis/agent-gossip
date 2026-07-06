@@ -1,0 +1,28 @@
+[package]
+name = "mesh-pipe"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+description = "A Unix pipe over the gossip mesh — the second (non-a2a) consumer of the agent-habilis-mesh engine"
+publish = false
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "mesh-pipe"
+path = "src/main.rs"
+
+[dependencies]
+# The ONLY engine dependency — this crate never touches agent-mesh / a2a,
+# which is the whole point: it proves the engine is payload-generic.
+agent-habilis-mesh = { path = "../../agent-habilis-mesh" }
+tokio.workspace = true
+anyhow.workspace = true
+clap = { version = "4", features = ["derive"] }
+base64 = "0.22"
+
+[dev-dependencies]
+# The roundtrip smoke test spawns the built binary twice and pipes bytes
+# through it, so it needs the async process + io helpers.
+tokio.workspace = true

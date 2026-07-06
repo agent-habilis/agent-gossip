@@ -27,11 +27,11 @@ mod common;
 
 use std::time::{Duration, Instant};
 
-use agent_gossip::Channel;
+use agent_mesh::Channel;
 use common::{InProcNode, MSG_TIMEOUT, POLL, RECOVERY_TIMEOUT};
 use serde_json::{Value, json};
 
-/// `state` / `meta`, for naming swarms and assert messages (the crate's
+/// `state` / `meta`, for naming meshes and assert messages (the crate's
 /// `Channel::label` is `pub(crate)`, not reachable from this test crate).
 fn label(channel: Channel) -> &'static str {
     match channel {
@@ -40,9 +40,9 @@ fn label(channel: Channel) -> &'static str {
     }
 }
 
-/// A per-channel swarm name so the `state` and `meta` variants of one behavior
+/// A per-channel mesh name so the `state` and `meta` variants of one behavior
 /// never share a name when they run concurrently.
-fn swarm_name(channel: Channel, base: &str) -> String {
+fn mesh_name(channel: Channel, base: &str) -> String {
     format!("{base}-{}", label(channel))
 }
 
@@ -104,7 +104,7 @@ async fn wait_doc(
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn meta_and_state_channels_are_independent() {
     let alice = InProcNode::create("ch-indep").await;
-    let mut bob = InProcNode::join(&alice.swarm, "ch-bob").await;
+    let mut bob = InProcNode::join(&alice.mesh, "ch-bob").await;
     alice.send("link").await;
     assert!(bob.wait_body("link", MSG_TIMEOUT).await, "bob meshed");
 
@@ -157,9 +157,9 @@ async fn meta_and_state_channels_are_independent() {
 /// every peer folds the same event *set* into the byte-identical document. Proves
 /// the reducer is set-deterministic for disjoint keys (the convergence property).
 async fn patches_converge_for(channel: Channel) {
-    let alice = InProcNode::create(&swarm_name(channel, "ss-conv")).await;
-    let mut bob = InProcNode::join(&alice.swarm, "conv-bob").await;
-    let mut carol = InProcNode::join(&alice.swarm, "conv-carol").await;
+    let alice = InProcNode::create(&mesh_name(channel, "ss-conv")).await;
+    let mut bob = InProcNode::join(&alice.mesh, "conv-bob").await;
+    let mut carol = InProcNode::join(&alice.mesh, "conv-carol").await;
 
     // Mesh first (a delivered message proves the links).
     alice.send("link").await;
@@ -201,8 +201,8 @@ async fn meta_patches_converge_to_identical_documents() {
 /// agent on its `events()` channel carrying the freshly-derived document, while
 /// the author is **not** woken on its own channel for its own merge.
 async fn peer_change_wakes_for(channel: Channel) {
-    let mut alice = InProcNode::create(&swarm_name(channel, "ss-wake")).await;
-    let mut bob = InProcNode::join(&alice.swarm, "wake-bob").await;
+    let mut alice = InProcNode::create(&mesh_name(channel, "ss-wake")).await;
+    let mut bob = InProcNode::join(&alice.mesh, "wake-bob").await;
 
     alice.send("link").await;
     assert!(bob.wait_body("link", MSG_TIMEOUT).await, "bob meshed");
@@ -256,8 +256,8 @@ async fn late_joiner_backfills_for(channel: Channel) {
     // is 70), so the rolling older-window cursor is genuinely exercised.
     const PATCHES: usize = 160;
 
-    let alice = InProcNode::create(&swarm_name(channel, "ss-backfill")).await;
-    let early = InProcNode::join(&alice.swarm, "bf-early").await;
+    let alice = InProcNode::create(&mesh_name(channel, "ss-backfill")).await;
+    let early = InProcNode::join(&alice.mesh, "bf-early").await;
     // Mesh so the appends go out live (the creator's outbound buffer stays
     // empty) — the late joiner can then only be served by anti-entropy.
     alice.send("link").await;
@@ -287,7 +287,7 @@ async fn late_joiner_backfills_for(channel: Channel) {
 
     // The late joiner arrives after all traffic — windowed anti-entropy, across
     // multiple rounds, must reconstruct the full log.
-    let late = InProcNode::join(&alice.swarm, "bf-late").await;
+    let late = InProcNode::join(&alice.mesh, "bf-late").await;
     assert!(
         wait_doc(&late, channel, Duration::from_secs(150), |doc| app_view(
             doc
@@ -333,8 +333,8 @@ async fn ping_pong_for(channel: Channel) {
     // Total moves across both agents (each wake must fire for the loop to finish).
     const MOVES: usize = 6;
 
-    let mut alice = InProcNode::create(&swarm_name(channel, "ss-pp")).await;
-    let mut bob = InProcNode::join(&alice.swarm, "pp-bob").await;
+    let mut alice = InProcNode::create(&mesh_name(channel, "ss-pp")).await;
+    let mut bob = InProcNode::join(&alice.mesh, "pp-bob").await;
 
     alice.send("link").await;
     assert!(bob.wait_body("link", MSG_TIMEOUT).await, "bob meshed");
@@ -406,11 +406,11 @@ async fn meta_two_agents_ping_pong_via_shared_state() {
 /// peer's `/peers/<nick>/card` (here, a fake gossip-interface identity url) is
 /// dropped by every recipient before it folds, so the victim's genuine card —
 /// and the identity in it — survives. Without the gate the forgery would win the
-/// last-writer-wins fold and spoof the victim to `agent-gossip card` and `--a2a-serve`.
+/// last-writer-wins fold and spoof the victim to `agent-mesh card` and `--a2a-serve`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn foreign_card_forgery_is_rejected() {
     let alice = InProcNode::create("ss-forge").await;
-    let mut bob = InProcNode::join(&alice.swarm, "forge-bob").await;
+    let mut bob = InProcNode::join(&alice.mesh, "forge-bob").await;
     alice.send("link").await;
     assert!(bob.wait_body("link", MSG_TIMEOUT).await, "bob meshed");
 
@@ -478,12 +478,12 @@ async fn foreign_card_forgery_is_rejected() {
 /// Every member's daemon publishes its `AgentCard` at meta `/peers/<nick>/card`
 /// on join — the mesh-native discovery path (no HTTP anywhere). Both sides
 /// derive each other's card from the meta document, and the card carries the
-/// A2A protocol version, the declared swarm extensions, and the member's
+/// A2A protocol version, the declared mesh extensions, and the member's
 /// Ed25519 identity.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn agent_cards_publish_to_meta_on_join() {
     let alice = InProcNode::create("ss-cards").await;
-    let mut bob = InProcNode::join(&alice.swarm, "cards-bob").await;
+    let mut bob = InProcNode::join(&alice.mesh, "cards-bob").await;
     alice.send("link").await;
     assert!(bob.wait_body("link", MSG_TIMEOUT).await, "bob meshed");
 

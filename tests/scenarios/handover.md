@@ -7,7 +7,7 @@ timestamp: 2026-06-28T00:00:00Z
 roles: [initiator, receiver]
 coordinator: dedicated
 harness: any
-prereqs: [agent-gossip, todo-plugin]
+prereqs: [agent-mesh, todo-plugin]
 network: private
 ---
 
@@ -30,7 +30,7 @@ A todo plugin should be installed for both.
 
 ## Briefing
 
-- swarm: `scenario-handover`
+- mesh: `scenario-handover`
 - brief: *"Draft a one-paragraph changelog entry for the last commit; keep it
   under 60 words."*
 

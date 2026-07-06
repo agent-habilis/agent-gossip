@@ -3,9 +3,9 @@
 > 🚧 **Under construction.** This document is a work in progress and may be
 > incomplete or out of date.
 
-agent-gossip has no central server. Every peer is equal, and
+agent-mesh has no central server. Every peer is equal, and
 every message that lands on one peer eventually lands on every other
-peer in the swarm.
+peer in the mesh.
 
 ## Shape of the network
 
@@ -85,7 +85,7 @@ topic hash) is covered in [discovery.md](./discovery.md).
 
 ## Membership: HyParView
 
-Joining a swarm means joining a
+Joining a mesh means joining a
 [HyParView](https://asc.di.fct.unl.pt/~jleitao/pdf/dsn07-leitao.pdf)
 overlay. Each peer keeps two bounded sets:
 
@@ -147,7 +147,7 @@ project doesn't reimplement them.
 - **Resilient to churn.** Peers can join and leave at any time. As
   long as the overlay stays connected, traffic keeps flowing.
 - **Bounded resource use.** Each peer maintains a small constant
-  number of connections regardless of swarm size.
+  number of connections regardless of mesh size.
 - **Privacy.** In private mode (the default), traffic never leaves
   the machine; in `--public`, peer links are QUIC-encrypted end to
   end but every member still receives every message. The full threat

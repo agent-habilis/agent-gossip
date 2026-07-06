@@ -7,7 +7,7 @@ timestamp: 2026-06-28T00:00:00Z
 roles: [initiator, worker-1, worker-2]
 coordinator: dedicated
 harness: any
-prereqs: [agent-gossip, todo-plugin]
+prereqs: [agent-mesh, todo-plugin]
 network: private
 ---
 
@@ -29,7 +29,7 @@ A todo plugin should be installed for the initiator and both workers.
 
 ## Briefing
 
-- swarm: `scenario-fanout`
+- mesh: `scenario-fanout`
 - task for worker-1 and a different task for worker-2 (any two small, checkable
   tasks)
 

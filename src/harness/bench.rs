@@ -4,7 +4,7 @@
 //!
 //! Only **non-test** constructors are used here: the `bench` feature is
 //! not `cfg(test)`, so `#[cfg(test)]` helpers (`Nickname::from`,
-//! `SwarmConfig::loopback()`) are unavailable — we build the equivalents
+//! `MeshConfig::loopback()`) are unavailable — we build the equivalents
 //! from the public/`pub(crate)` non-test items instead.
 #![allow(missing_docs, reason = "internal bench shim, doc-hidden")]
 #![allow(
@@ -12,14 +12,14 @@
     reason = "opaque bench-only newtypes; never surfaced or formatted"
 )]
 
-use crate::{Message, MessageBody, Nickname, SwarmId, SwarmName};
-use agent_habilis_gossip::protocol::crypto;
-use agent_habilis_gossip::protocol::swarm::{LookupOpts, RelayChoice, Swarm, SwarmConfig};
+use crate::{Message, MessageBody, Nickname, MeshId, MeshName};
+use agent_habilis_mesh::protocol::crypto;
+use agent_habilis_mesh::protocol::mesh::{LookupOpts, RelayChoice, Mesh, MeshConfig};
 
-/// A swarm config built from non-test constructors (the `SwarmConfig`
+/// A mesh config built from non-test constructors (the `MeshConfig`
 /// ctors are `#[cfg(test)]`). `loopback` = no lookups; `public` = the
 /// all-on preset; `custom_relay` exercises the relay-URL codec.
-pub struct BenchConfig(SwarmConfig);
+pub struct BenchConfig(MeshConfig);
 
 impl BenchConfig {
     #[must_use]
@@ -48,8 +48,8 @@ impl BenchConfig {
     }
 }
 
-fn cfg(lookups: LookupOpts) -> SwarmConfig {
-    SwarmConfig {
+fn cfg(lookups: LookupOpts) -> MeshConfig {
+    MeshConfig {
         lookups,
         password: None,
         issuer_pubkey: None,
@@ -74,34 +74,34 @@ pub fn rendezvous_id(seed: &[u8; 32]) {
     let _ = crypto::rendezvous_id(seed);
 }
 
-pub fn derive_topic_id(seed: &[u8; 32], name: &SwarmName, config: &BenchConfig) {
+pub fn derive_topic_id(seed: &[u8; 32], name: &MeshName, config: &BenchConfig) {
     let _ = crypto::derive_topic_id(seed, name, &config.0.to_bytes());
 }
 
-// ── swarm id (token) round-trip — config is part of the id ──────────
+// ── mesh id (token) round-trip — config is part of the id ──────────
 
 #[must_use]
-pub fn swarm_token(name: &SwarmName, config: &BenchConfig) -> String {
-    Swarm::new([7u8; 32], name.clone(), config.0.clone()).to_string()
+pub fn mesh_token(name: &MeshName, config: &BenchConfig) -> String {
+    Mesh::new([7u8; 32], name.clone(), config.0.clone()).to_string()
 }
 
-pub fn swarm_decode(token: &str) {
-    let _ = token.parse::<Swarm>();
+pub fn mesh_decode(token: &str) {
+    let _ = token.parse::<Mesh>();
 }
 
 /// Encode then decode the config region — exercises the lookup-flags +
 /// relay-URL byte codec in isolation.
 pub fn config_round_trip(config: &BenchConfig) {
-    let _ = SwarmConfig::from_bytes(&config.0.to_bytes());
+    let _ = MeshConfig::from_bytes(&config.0.to_bytes());
 }
 
 // ── parsing / validation ────────────────────────────────────────────
-// `SwarmName::new` / `Nickname::new` / `MessageBody::new` are public and
-// benched directly; only `SwarmId::new` is `pub(crate)`.
+// `MeshName::new` / `Nickname::new` / `MessageBody::new` are public and
+// benched directly; only `MeshId::new` is `pub(crate)`.
 
 #[must_use]
-pub fn swarm_id_validate(value: &str) -> bool {
-    SwarmId::new(value).is_ok()
+pub fn mesh_id_validate(value: &str) -> bool {
+    MeshId::new(value).is_ok()
 }
 
 // ── message serialize / deserialize ─────────────────────────────────
@@ -111,14 +111,14 @@ pub struct BenchMessage(Message);
 impl BenchMessage {
     #[must_use]
     pub fn sample(body: &str) -> Self {
-        let name = SwarmName::new("bench").expect("valid swarm name");
-        let swarm = SwarmId::new(swarm_token(&name, &BenchConfig::loopback()))
-            .expect("Swarm::to_string is a valid SwarmId");
+        let name = MeshName::new("bench").expect("valid mesh name");
+        let mesh = MeshId::new(mesh_token(&name, &BenchConfig::loopback()))
+            .expect("Mesh::to_string is a valid MeshId");
         let author = Nickname::new("bench-author").expect("valid nickname");
         Self(Message::new_app(
-            &swarm,
+            &mesh,
             &author,
-            agent_habilis_gossip::protocol::AppTag::from(crate::a2a::wire::MSG),
+            agent_habilis_mesh::protocol::AppTag::from(crate::a2a::wire::MSG),
             None,
             None,
             MessageBody::new(body).expect("valid body"),

@@ -53,7 +53,7 @@ const sends: RecordedSend[] = [];
 
 beforeEach(() => {
   sends.length = 0;
-  state.session = { swarm: "💬-test", name: "test", nickname: "me" };
+  state.session = { mesh: "💬-test", name: "test", nickname: "me" };
   state.ctx = { isIdle: () => true } as unknown as ExtensionContext;
   state.pi = {
     sendMessage: (
@@ -83,7 +83,7 @@ test("a message directed to us wakes the agent", () => {
   feed({ event: "message", type: "msg", author: "ada", body: "you around?", reply: "me" });
   flushMessageBatch();
   expect(sends).toHaveLength(1);
-  expect(sends[0]?.customType).toBe("swarm-inject");
+  expect(sends[0]?.customType).toBe("mesh-inject");
   expect(sends[0]?.options.triggerTurn).toBe(true);
 });
 
@@ -91,7 +91,7 @@ test("a broadcast wakes the agent", () => {
   feed({ event: "message", type: "msg", author: "ada", body: "anyone know x?", reply: null });
   flushMessageBatch();
   expect(sends).toHaveLength(1);
-  expect(sends[0]?.customType).toBe("swarm-inject");
+  expect(sends[0]?.customType).toBe("mesh-inject");
   expect(sends[0]?.options.triggerTurn).toBe(true);
 });
 
@@ -99,7 +99,7 @@ test("a reply aimed at another peer is a pure print, no turn", () => {
   feed({ event: "message", type: "msg", author: "ada", body: "hi", reply: "bob" });
   flushMessageBatch();
   expect(sends).toHaveLength(1);
-  expect(sends[0]?.customType).toBe("swarm-info");
+  expect(sends[0]?.customType).toBe("mesh-info");
   expect(sends[0]?.options.triggerTurn).toBeUndefined();
   expect(sends[0]?.options.deliverAs).toBeUndefined();
 });
@@ -108,7 +108,7 @@ test("a presence line is a pure print, no turn", () => {
   feed({ event: "presence", type: "presence", subtype: "joined", author: "ada" });
   flushMessageBatch();
   expect(sends).toHaveLength(1);
-  expect(sends[0]?.customType).toBe("swarm-info");
+  expect(sends[0]?.customType).toBe("mesh-info");
   expect(sends[0]?.options.triggerTurn).toBeUndefined();
 });
 
@@ -123,7 +123,7 @@ test("a peer's state change wakes the agent with the document", () => {
   });
   flushMessageBatch();
   expect(sends).toHaveLength(1);
-  expect(sends[0]?.customType).toBe("swarm-inject");
+  expect(sends[0]?.customType).toBe("mesh-inject");
   expect(sends[0]?.options.triggerTurn).toBe(true);
   // The derived document rides in the wake text so the agent reacts in one go.
   expect(sends[0]?.content).toContain('"turn": "me"');
@@ -143,12 +143,12 @@ test("our own state change neither wakes nor prints", () => {
 });
 
 test("ping/pong never wakes the agent", () => {
-  // Session nulled so the auto-pong path doesn't shell out to `agent-gossip` in a unit
+  // Session nulled so the auto-pong path doesn't shell out to `agent-mesh` in a unit
   // test; we only assert ping is not treated as an engageable message.
   state.session = null;
   feed({ event: "message", type: "msg", author: "ada", body: "ping", reply: null });
   flushMessageBatch();
-  expect(sends.every((send) => send.customType !== "swarm-inject")).toBe(true);
+  expect(sends.every((send) => send.customType !== "mesh-inject")).toBe(true);
 });
 
 test("the reply policy is injected once, silently, then never again", () => {
@@ -156,12 +156,12 @@ test("the reply policy is injected once, silently, then never again", () => {
   feed({ event: "message", type: "msg", author: "ada", body: "hi", reply: "me" });
   flushMessageBatch();
 
-  const policy = sends.find((send) => send.customType === "swarm-context");
+  const policy = sends.find((send) => send.customType === "mesh-context");
   expect(policy).toBeDefined();
   expect(policy?.display).toBe(false); // never rendered in the UI
   expect(policy?.options.triggerTurn).toBeUndefined(); // context, not an action
   // The peer message still wakes the agent, and it is displayed.
-  const message = sends.find((send) => send.customType === "swarm-inject");
+  const message = sends.find((send) => send.customType === "mesh-inject");
   expect(message?.display).toBe(true);
   expect(message?.options.triggerTurn).toBe(true);
 
@@ -169,5 +169,5 @@ test("the reply policy is injected once, silently, then never again", () => {
   sends.length = 0;
   feed({ event: "message", type: "msg", author: "ada", body: "again", reply: "me" });
   flushMessageBatch();
-  expect(sends.some((send) => send.customType === "swarm-context")).toBe(false);
+  expect(sends.some((send) => send.customType === "mesh-context")).toBe(false);
 });

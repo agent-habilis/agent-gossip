@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import type { SwarmEvent } from "../types";
+import type { MeshEvent } from "../types";
 import {
   engagementKind,
   formatDisplay,
@@ -11,7 +11,7 @@ import {
   formatState,
 } from "./index";
 
-const ev = (over: Partial<SwarmEvent>): SwarmEvent => ({ event: "message", type: "msg", ...over });
+const ev = (over: Partial<MeshEvent>): MeshEvent => ({ event: "message", type: "msg", ...over });
 
 test("engagementKind: a reply addressed to us is directed", () => {
   expect(engagementKind(ev({ author: "a", body: "hi", reply: "me" }), "me")).toBe("directed");
@@ -84,7 +84,7 @@ test("formatState renders a peer state change; formatDisplay drops our own", () 
 
 const ident = { model: "Opus 4.8", harness: "Claude Code", host: "studio-mbp-01" };
 
-const metaEv = (over: Partial<SwarmEvent>): SwarmEvent =>
+const metaEv = (over: Partial<MeshEvent>): MeshEvent =>
   ev({ event: "meta", type: "meta", author: "bark-vivid", ...over });
 
 test("formatPeerIdent joins model / harness @ host, omitting absent parts", () => {

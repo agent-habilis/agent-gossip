@@ -1,6 +1,6 @@
 use anyhow::{Context, Result, bail};
 
-use agent_habilis_gossip::protocol::crypto::Password;
+use agent_habilis_mesh::protocol::crypto::Password;
 
 /// The `default_missing_value` a bare `--password` (no `=value`) resolves to.
 /// A lone NUL can't be typed on a command line — the shell terminates the
@@ -38,7 +38,7 @@ impl std::str::FromStr for PasswordFlag {
 /// into a [`Password`]. Bare ⇒ a hidden prompt on the controlling TTY —
 /// `/dev/tty`, never stdin/stdout, so it never collides with a command's
 /// stdout/stdin data stream. `confirm` re-prompts and compares (creation
-/// paths: a typo would mint an unjoinable swarm or an unredeemable ticket).
+/// paths: a typo would mint an unjoinable mesh or an unredeemable ticket).
 ///
 /// `no_prompt` (non-interactive / `--output json` frontends) makes a bare
 /// flag a hard error instead of a hang waiting on a TTY an agent doesn't have.
@@ -68,7 +68,7 @@ pub(crate) fn resolve_password(
 
 /// The target (a `💬…` id or `🎟️…` ticket) is password-protected but the flag was
 /// absent: prompt on a TTY, or bail with a crisp instruction. `what` names
-/// the artifact for the error ("swarm", "ticket"). A failed prompt (no
+/// the artifact for the error ("mesh", "ticket"). A failed prompt (no
 /// controlling TTY — e.g. a scripted run) still names the requirement.
 pub(crate) fn require_password(no_prompt: bool, what: &str) -> Result<Password> {
     if no_prompt {

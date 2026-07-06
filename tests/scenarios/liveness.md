@@ -7,7 +7,7 @@ timestamp: 2026-06-28T00:00:00Z
 roles: [observer, peer]
 coordinator: dedicated
 harness: any
-prereqs: [agent-gossip]
+prereqs: [agent-mesh]
 network: private
 ---
 
@@ -15,7 +15,7 @@ network: private
 
 ## Scenario
 
-An observer checks who is in the swarm and how reachable they are, and watches a
+An observer checks who is in the mesh and how reachable they are, and watches a
 peer arrive and leave. Optionally, the peer is suspended and resumed so the
 observer can notice it go quiet and come back. Set up per the
 [coordinator protocol](/coordinator.md).
@@ -28,7 +28,7 @@ observer can notice it go quiet and come back. Set up per the
 
 ## Briefing
 
-- swarm: `scenario-liveness`
+- mesh: `scenario-liveness`
 - optional (human-performed, for the quiet/return check): suspend the peer's
   daemon process, wait past its alive window, then resume it.
 

@@ -4,9 +4,9 @@
 //! Unlike the localhost JSON-RPC binding (`--a2a-serve`), which is
 //! bearer-authenticated and exposes the full [`handle_op`](super::rpc::handle_op)
 //! surface to a trusted local client, a gossip request is only
-//! swarm-member-signed. So the gate here refuses anything that would make the
+//! mesh-member-signed. So the gate here refuses anything that would make the
 //! **serving** peer author state under its own identity on the caller's behalf
-//! (identity laundering): no `swarm/state.merge`, no `swarm/meta.merge`, no
+//! (identity laundering): no `mesh/state.merge`, no `mesh/meta.merge`, no
 //! **broadcast** `message/send`. It serves only reads, a party-checked
 //! `tasks/cancel`, and a `message/send` **directed at the serving peer** (the
 //! caller asks the peer to take work; the peer ingests it and answers).
@@ -14,7 +14,7 @@
 use serde_json::Value;
 
 use crate::a2a::app::A2aApp;
-use agent_habilis_gossip::protocol::{Channel, Nickname};
+use agent_habilis_mesh::protocol::{Channel, Nickname};
 
 use super::TaskId;
 use super::rpc::{A2aOp, RpcError};
@@ -32,7 +32,7 @@ pub(crate) enum Served {
     /// A `shard/repair` ask: re-deliver the named cached shard frames of one
     /// of our big outbound groups (see `daemon::reassembly::ShardCache`).
     ShardRepair {
-        group: agent_habilis_gossip::protocol::ShardGroup,
+        group: agent_habilis_mesh::protocol::ShardGroup,
         missing: Vec<u32>,
     },
     /// Not permitted over gossip (unknown method, or one that would author on
@@ -60,10 +60,10 @@ pub(crate) fn classify(method: &str, params: &Value, requester: &Nickname, app: 
             Err(error) => Served::Reject(error),
         },
         "ListTasks" => Served::Op(A2aOp::ListTasks),
-        "swarm/state.get" => Served::Op(A2aOp::ChannelGet {
+        "mesh/state.get" => Served::Op(A2aOp::ChannelGet {
             channel: Channel::State,
         }),
-        "swarm/meta.get" => Served::Op(A2aOp::ChannelGet {
+        "mesh/meta.get" => Served::Op(A2aOp::ChannelGet {
             channel: Channel::Meta,
         }),
         "CancelTask" => match task_id() {
@@ -102,7 +102,7 @@ pub(crate) fn classify(method: &str, params: &Value, requester: &Nickname, app: 
             if message
                 .extensions
                 .iter()
-                .any(|uri| uri == super::EXT_SWARM_BROADCAST)
+                .any(|uri| uri == super::EXT_MESH_BROADCAST)
             {
                 return Served::Reject(RpcError::invalid_params(
                     "not permitted: broadcast message/send over gossip",
@@ -118,13 +118,13 @@ pub(crate) fn classify(method: &str, params: &Value, requester: &Nickname, app: 
         "shard/repair" => {
             let group = params["group"]
                 .as_str()
-                .and_then(agent_habilis_gossip::protocol::ShardGroup::from_uuid_str);
+                .and_then(agent_habilis_mesh::protocol::ShardGroup::from_uuid_str);
             let missing: Vec<u32> = params["missing"]
                 .as_array()
                 .map(|idxs| {
                     idxs.iter()
                         .filter_map(|idx| idx.as_u64().and_then(|idx| u32::try_from(idx).ok()))
-                        .take(agent_habilis_gossip::util::consts::REASSEMBLY_REPAIR_MAX_IDXS)
+                        .take(agent_habilis_mesh::util::consts::REASSEMBLY_REPAIR_MAX_IDXS)
                         .collect()
                 })
                 .unwrap_or_default();
@@ -136,7 +136,7 @@ pub(crate) fn classify(method: &str, params: &Value, requester: &Nickname, app: 
             }
         }
         // Authoring global state on the caller's behalf, or anything else.
-        "swarm/state.merge" | "swarm/meta.merge" => Served::Reject(RpcError::not_permitted(method)),
+        "mesh/state.merge" | "mesh/meta.merge" => Served::Reject(RpcError::not_permitted(method)),
         other => Served::Reject(RpcError::method_not_found(other)),
     }
 }
@@ -145,7 +145,7 @@ pub(crate) fn classify(method: &str, params: &Value, requester: &Nickname, app: 
 mod tests {
     use super::{Served, classify};
     use crate::a2a::app::A2aApp;
-    use agent_habilis_gossip::protocol::Nickname;
+    use agent_habilis_mesh::protocol::Nickname;
     use serde_json::json;
 
     fn state() -> A2aApp {
@@ -174,7 +174,7 @@ mod tests {
             Served::Op(_)
         ));
         assert!(matches!(
-            classify("swarm/state.get", &json!({}), &caller, &st),
+            classify("mesh/state.get", &json!({}), &caller, &st),
             Served::Op(_)
         ));
         // Streaming ops are served: SubscribeToTask returns a snapshot op,
@@ -208,24 +208,24 @@ mod tests {
         let caller = Nickname::from("alice");
         let st = state();
         assert!(is_reject(&classify(
-            "swarm/state.merge",
+            "mesh/state.merge",
             &json!({"merge": {"x": 1}}),
             &caller,
             &st
         )));
         assert!(is_reject(&classify(
-            "swarm/meta.merge",
+            "mesh/meta.merge",
             &json!({"merge": {"x": 1}}),
             &caller,
             &st
         )));
-        // A broadcast message/send (declares the swarm-broadcast extension) is
+        // A broadcast message/send (declares the mesh-broadcast extension) is
         // refused — the peer must not re-author it under its own identity.
         let broadcast = json!({"message": {
             "messageId": "550e8400-e29b-41d4-a716-446655440000",
             "role": "ROLE_USER",
             "parts": [{"text": "hi"}],
-            "extensions": [super::super::EXT_SWARM_BROADCAST],
+            "extensions": [super::super::EXT_MESH_BROADCAST],
         }});
         assert!(is_reject(&classify(
             "SendMessage",

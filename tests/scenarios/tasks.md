@@ -7,7 +7,7 @@ timestamp: 2026-06-28T00:00:00Z
 roles: [initiator, worker]
 coordinator: dedicated
 harness: any
-prereqs: [agent-gossip, todo-plugin]
+prereqs: [agent-mesh, todo-plugin]
 network: private
 ---
 
@@ -31,7 +31,7 @@ without one is [todo-backends](/todo-backends.md)).
 
 ## Briefing
 
-- swarm: `scenario-tasks`
+- mesh: `scenario-tasks`
 - task: *"Sum the integers from 1 to 100 inclusive; reply with the single
   integer."* (small, self-contained, verifiable = 5050; no local files, so it
   holds across machines)

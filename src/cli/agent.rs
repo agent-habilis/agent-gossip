@@ -23,7 +23,7 @@ pub(crate) const GENERIC_SKILL: &str = include_str!("../../skills/gossip/SKILL.m
 /// embeds above — `include_dir!` is otherwise untracked on stable. Anonymous
 /// `const _` so it's evaluated (the `env!` is the load-bearing part) but never
 /// flagged as unused.
-const _: &str = env!("AGENT_GOSSIP_EMBED_FINGERPRINT");
+const _: &str = env!("AGENT_MESH_EMBED_FINGERPRINT");
 
 /// Directory/file names never materialized — build cruft and pi's local deps.
 /// The exact same fragment `build.rs` uses to filter staging + the fingerprint,
@@ -31,7 +31,7 @@ const _: &str = env!("AGENT_GOSSIP_EMBED_FINGERPRINT");
 /// disagree.
 const SKIP: &[&str] = include!("embed_skip.rs");
 
-/// An agent the swarm integrations can be installed into.
+/// An agent the mesh integrations can be installed into.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
 pub(crate) enum Agent {
     /// Claude Code — the plugin at `~/.claude/skills/gossip`.
@@ -45,7 +45,7 @@ pub(crate) enum Agent {
     Cursor,
 }
 
-/// Whether the swarm integration is set up for an agent, as `doctor` reports.
+/// Whether the mesh integration is set up for an agent, as `doctor` reports.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum AgentState {
     /// Set up, and the installed copy matches the one embedded in this binary.
@@ -107,7 +107,7 @@ impl Agent {
         match self {
             Agent::ClaudeCode => home.join(".claude/skills/gossip"),
             // pi-package source, materialized then `pi install`ed.
-            Agent::Pi => home.join(".agent-gossip/pi-extension"),
+            Agent::Pi => home.join(".agent-mesh/pi-extension"),
             Agent::Generic => home.join(".agents/skills/gossip"),
             // Cursor reads global Agent Skills from `~/.cursor/skills`; it
             // gets the same portable skill the generic target ships.
@@ -191,7 +191,7 @@ pub(crate) fn home_dir() -> Result<PathBuf> {
 }
 
 /// Each agent, its install path, and its state — in display order. Drives
-/// `agent-gossip doctor`'s Integrations section.
+/// `agent-mesh doctor`'s Integrations section.
 pub(crate) fn states(home: &Path) -> Vec<(Agent, PathBuf, AgentState)> {
     Agent::ALL
         .into_iter()
@@ -200,15 +200,15 @@ pub(crate) fn states(home: &Path) -> Vec<(Agent, PathBuf, AgentState)> {
 }
 
 /// The one canonical "skill out of date" nag, shared by the `ready`-event
-/// drift warning (below) and the MCP `swarm_version` tool — one source of
-/// truth so the two can't drift apart. `agent-gossip plug` refreshes every
+/// drift warning (below) and the MCP `mesh_version` tool — one source of
+/// truth so the two can't drift apart. `agent-mesh plug` refreshes every
 /// installed integration, so the message names no specific one.
 pub(crate) const SKILL_DRIFT_MSG: &str =
-    "⚠️ swarm skill out of date. Run `agent-gossip plug` to update";
+    "⚠️ mesh skill out of date. Run `agent-mesh plug` to update";
 
 /// A one-line drift warning if any installed integration has fallen behind the
 /// binary (`OutOfDate`), else `None`. The daemon folds this into its `ready`
-/// event so a stale skill nags the agent at swarm start; `agent-gossip doctor` is the
+/// event so a stale skill nags the agent at mesh start; `agent-mesh doctor` is the
 /// on-demand counterpart.
 pub(crate) fn drift_warning(home: &Path) -> Option<String> {
     let any_stale = states(home)
@@ -242,7 +242,7 @@ mod tests {
         assert!(
             Agent::Pi
                 .install_path(home)
-                .ends_with(".agent-gossip/pi-extension")
+                .ends_with(".agent-mesh/pi-extension")
         );
         assert!(
             Agent::Generic
@@ -258,7 +258,7 @@ mod tests {
 
     #[test]
     fn generic_in_sync_only_when_skill_matches_embedded() {
-        let home = std::env::temp_dir().join(format!("agent-gossip-insync-{}", std::process::id()));
+        let home = std::env::temp_dir().join(format!("agent-mesh-insync-{}", std::process::id()));
         let dir = Agent::Generic.install_path(&home);
         std::fs::create_dir_all(&dir).unwrap();
 
@@ -279,7 +279,7 @@ mod tests {
     #[test]
     fn cursor_in_sync_only_when_skill_matches_embedded() {
         let home =
-            std::env::temp_dir().join(format!("agent-gossip-cursor-insync-{}", std::process::id()));
+            std::env::temp_dir().join(format!("agent-mesh-cursor-insync-{}", std::process::id()));
         let dir = Agent::Cursor.install_path(&home);
         std::fs::create_dir_all(&dir).unwrap();
 
@@ -300,7 +300,7 @@ mod tests {
 
     #[test]
     fn drift_warning_fires_only_for_a_diverged_install() {
-        let home = std::env::temp_dir().join(format!("agent-gossip-drift-{}", std::process::id()));
+        let home = std::env::temp_dir().join(format!("agent-mesh-drift-{}", std::process::id()));
         let dir = Agent::Generic.install_path(&home);
         std::fs::create_dir_all(&dir).unwrap();
         let file = dir.join("SKILL.md");
@@ -314,7 +314,7 @@ mod tests {
         let warning = super::drift_warning(&home).expect("diverged install warns");
         assert_eq!(warning, super::SKILL_DRIFT_MSG);
         assert!(warning.contains("out of date"));
-        assert!(warning.contains("agent-gossip plug"));
+        assert!(warning.contains("agent-mesh plug"));
 
         std::fs::remove_dir_all(&home).unwrap();
     }

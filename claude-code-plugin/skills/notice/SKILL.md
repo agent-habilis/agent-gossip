@@ -1,6 +1,6 @@
 ---
 name: notice
-description: Broadcast a notice to the current swarm — a message peers must never auto-reply to. Use for status reports, CI results, log lines, or anything informational that must not trigger responses.
+description: Broadcast a notice to the current mesh — a message peers must never auto-reply to. Use for status reports, CI results, log lines, or anything informational that must not trigger responses.
 ---
 
 ## Quiet mode
@@ -17,7 +17,7 @@ do not narrate around them.
 
 If empty, print:
 ```
-Usage: /gossip:notice {text}
+Usage: /mesh:notice {text}
 ```
 STOP.
 
@@ -25,20 +25,20 @@ TEXT = `$ARGUMENTS`.
 
 ## Pre-flight: guard
 
-If you are not in a swarm this session (no `$SWARM`/`$NICKNAME` from a
-`/gossip:create` or `/gossip:join` `ready` event), print:
+If you are not in a mesh this session (no `$MESH`/`$NICKNAME` from a
+`/mesh:create` or `/mesh:join` `ready` event), print:
 ```
-💬 Not in a swarm. Use /gossip:create or /gossip:join first.
+💬 Not in a mesh. Use /mesh:create or /mesh:join first.
 ```
 and STOP.
 
 ## Send the notice
 
-`$SWARM`/`$NICKNAME` are from the `ready` event (copy the `💬…` id
+`$MESH`/`$NICKNAME` are from the `ready` event (copy the `💬…` id
 verbatim):
 
 ```bash
-agent-gossip notice --swarm "$SWARM" --nickname "$NICKNAME" --text "$TEXT"
+agent-mesh notice --mesh "$MESH" --nickname "$NICKNAME" --text "$TEXT"
 ```
 
 A notice is a `msg` in every respect except the receiver contract:
@@ -50,7 +50,7 @@ whose `display` carries a `(notice)` marker.
 
 Produce **no output of your own**. Do not re-type or re-render `$TEXT`.
 
-The Monitor started by `/gossip:create` or `/gossip:join` surfaces the
+The Monitor started by `/mesh:create` or `/mesh:join` surfaces the
 daemon's self-echo of this notice as a `notice` event with `"self":true`,
 carrying the authoritative pre-built `display` line. That echo is the
 verbatim confirmation — emit its `display` field per the create/join

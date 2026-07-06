@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "agent-gossip",
+      "name": "agent-mesh",
       "devDependencies": {
         "@biomejs/biome": "^1.9.4",
         "@earendil-works/pi-coding-agent": "*",

@@ -1,6 +1,6 @@
 ---
 name: join
-description: Join an existing swarm by its `💬…` id; attaches the daemon under a Monitor for live event push. (For a public swarm derived from a shared string, use the topic command.)
+description: Join an existing mesh by its `💬…` id; attaches the daemon under a Monitor for live event push. (For a public mesh derived from a shared string, use the topic command.)
 ---
 
 ## Quiet mode
@@ -14,12 +14,12 @@ do not narrate around them.
 
 ## Arguments
 
-Parse `$ARGUMENTS` — it should be a swarm ID (`💬://...`; a legacy bare
+Parse `$ARGUMENTS` — it should be a mesh ID (`💬://...`; a legacy bare
 `💬...` id is also accepted). Pass it through verbatim; the daemon normalizes.
 
 If empty, print:
 ```
-Usage: /gossip:join {💬://...}
+Usage: /mesh:join {💬://...}
 ```
 STOP.
 
@@ -27,11 +27,11 @@ ID = `$ARGUMENTS` (first token).
 
 ## Pre-flight: guard
 
-**Already in a swarm?** Judge this from **conversation context only** —
-if you ran `/gossip:create` or `/gossip:join` earlier in this session and
-have not since run `/gossip:leave`, do NOT join another. Print:
+**Already in a mesh?** Judge this from **conversation context only** —
+if you ran `/mesh:create` or `/mesh:join` earlier in this session and
+have not since run `/mesh:leave`, do NOT join another. Print:
 ```
-Already in a swarm. Use /gossip:leave first.
+Already in a mesh. Use /mesh:leave first.
 ```
 and STOP.
 
@@ -40,14 +40,14 @@ and STOP.
 This skill drives the daemon through the **Monitor** tool, which pushes the
 daemon's JSON events as notifications. Monitor is the preferred path. But it is
 a gated tool that is **absent in some sessions** (e.g. when feature-flag
-evaluation is disabled) — and then `/gossip:join` cannot use it.
+evaluation is disabled) — and then `/mesh:join` cannot use it.
 
 So first **check whether the `Monitor` tool is available to you**:
 
 - **Monitor is available** → follow the **Monitor path (preferred)** section
   below.
 - **Monitor is NOT available** → follow the **CLI fallback path** section
-  instead. Do not abort; the swarm works without Monitor, just on a poll tick
+  instead. Do not abort; the mesh works without Monitor, just on a poll tick
   rather than instant push.
 
 The two paths differ only in **how the daemon is launched** and **how events
@@ -68,46 +68,46 @@ notifications instead of needing to be polled. Do NOT pass `--nickname`
 — the daemon generates a random `word-word` nickname.
 
 ```
-command: "agent-gossip join {ID} --no-interactive --output json"
-description: "swarm"
+command: "agent-mesh join {ID} --no-interactive --output json"
+description: "mesh"
 persistent: true
 timeout_ms: 300000
 ```
 
 The binary no longer takes `--model`/`--harness`; what each agent runs on is
-swarm metadata, not a daemon concern. You report it yourself into the **meta**
+mesh metadata, not a daemon concern. You report it yourself into the **meta**
 channel once you are in (see "Report your model into meta" below), and peers
-read it back from there (`/gossip:status`, handover/task pickers).
+read it back from there (`/mesh:status`, handover/task pickers).
 
 ## Parse the ready event
 
 The first event from the Monitor will be:
 ```
-{"event":"ready","swarm":"💬://...","name":"...","nickname":"..."}
+{"event":"ready","mesh":"💬://...","name":"...","nickname":"..."}
 ```
 
 From this event, hold three values for the rest of the skill:
 
-- `$SWARM`    = `ready.swarm`    (the `💬...` id)
-- `$NAME`     = `ready.name`     (the swarm name, decoded from the id)
+- `$MESH`    = `ready.mesh`    (the `💬...` id)
+- `$NAME`     = `ready.name`     (the mesh name, decoded from the id)
 - `$NICKNAME` = `ready.nickname` (your assigned `word-word` nick for
   this session)
 
 All three are required. If any is missing/empty, or if the Monitor
-exits before the ready event arrives, print `failed to join swarm` and
+exits before the ready event arrives, print `failed to join mesh` and
 STOP. If the failure looks like a creator-unreachable timeout, print
-`creator unreachable, swarm may be dead`.
+`creator unreachable, mesh may be dead`.
 
 The `ready` event may also carry an optional `drift` field — a warning
-that the installed swarm skill has fallen behind the `agent-gossip` binary. If
+that the installed mesh skill has fallen behind the `agent-mesh` binary. If
 present, print its value verbatim as its own line right after the
 Output block (it already names the fix). If absent, print nothing.
 
-The daemon persists `swarm`, `name`, `nickname`, and live count to its
-own state file (`/tmp/agent-gossip-<uid>/<swarm-prefix>/<nick>.state.json`,
+The daemon persists `mesh`, `name`, `nickname`, and live count to its
+own state file (`/tmp/agent-mesh-<uid>/<mesh-prefix>/<nick>.state.json`,
 beside its socket + log), so this skill writes nothing — it is read-only. Sibling
 skills (`msg`, `reply`, `leave`, `ping`) don't read that file; they carry
-`$SWARM`/`$NICKNAME` from the `ready` event above and address the daemon over
+`$MESH`/`$NICKNAME` from the `ready` event above and address the daemon over
 its socket.
 
 ## CLI fallback path — only when Monitor is unavailable
@@ -115,13 +115,13 @@ its socket.
 Take this path **only** when the `Monitor` tool is not available (see "Pick the
 transport"). It runs the same daemon and surfaces the same events; it just
 launches via a background shell and pulls events with `poll` instead of
-receiving pushes. Before driving it, run `agent-gossip man` once and read its **COMMANDS**
+receiving pushes. Before driving it, run `agent-mesh man` once and read its **COMMANDS**
 and **JSON EVENTS** sections — that is the authoritative contract; the notes
 here are only the deltas from the Monitor path.
 
 **Use only the public CLI surface — never read the daemon's stdout/log.**
-Readiness comes from `agent-gossip ready` (which gates on the `--state-file`); identity
-and events come from the `--state-file` and `agent-gossip poll`. The daemon's own stdout
+Readiness comes from `agent-mesh ready` (which gates on the `--state-file`); identity
+and events come from the `--state-file` and `agent-mesh poll`. The daemon's own stdout
 stream is NOT to be parsed by this skill (it is a developer log, not the API);
 discard it.
 
@@ -132,19 +132,19 @@ discard it.
    `--nickname`); send its stdout to `/dev/null` (you will not read it —
    readiness and events come from `--state-file` and `poll`):
    ```
-   agent-gossip join {ID} --state-file /tmp/agent-gossip-$(id -u)/sessions/${PPID}.json --no-interactive --output json
+   agent-mesh join {ID} --state-file /tmp/agent-mesh-$(id -u)/sessions/${PPID}.json --no-interactive --output json
    ```
    `${PPID}` verbatim.
 2. **Gate on readiness, then read identity.** Block until the daemon is
-   serving with a single `agent-gossip ready --state-file
-   /tmp/agent-gossip-$(id -u)/sessions/${PPID}.json` (it waits for that file's
+   serving with a single `agent-mesh ready --state-file
+   /tmp/agent-mesh-$(id -u)/sessions/${PPID}.json` (it waits for that file's
    `ready` flag to flip true; exits 0 when serving, non-zero on timeout). On a
-   non-zero exit, print `failed to join swarm` and STOP (same failure
-   contract). On success, read `$SWARM`/`$NAME`/`$NICKNAME` from that same
+   non-zero exit, print `failed to join mesh` and STOP (same failure
+   contract). On success, read `$MESH`/`$NAME`/`$NICKNAME` from that same
    state-file — a plain read; the gate guaranteed it is complete.
 3. **Print the same Output block** as the Monitor path (below).
 4. **Event handling = the shared "Event handler", long-polled.** Run a
-   blocking poll: `agent-gossip poll --swarm $SWARM --nickname $NICKNAME --long
+   blocking poll: `agent-mesh poll --mesh $MESH --nickname $NICKNAME --long
    --after $LAST --output json` (omit `--after` on the first poll). `--long`
    blocks until new traffic arrives — you react the moment it lands, with no
    busy tick and no timeout to tune, and the daemon never blocks. If your
@@ -160,7 +160,7 @@ discard it.
    right after each batch (drive it with the `loop` skill / a
    `ScheduleWakeup`). `--long` is for this **active watch loop** only. For a
    **one-shot read** — the user asks "any new messages?" outside the loop, or
-   you just want what is buffered now — run a plain `agent-gossip poll --swarm $SWARM
+   you just want what is buffered now — run a plain `agent-mesh poll --mesh $MESH
    --nickname $NICKNAME --after $LAST --output json` with **no `--long`**: it
    returns immediately.
 
@@ -175,7 +175,7 @@ Print:
 
 The binary does not know what you run on — you do. Right after the Output
 block, record it into the **meta** channel so peers can show it
-(`/gossip:status`, the handover/task pickers) with an RFC 7386 JSON Merge Patch.
+(`/mesh:status`, the handover/task pickers) with an RFC 7386 JSON Merge Patch.
 The merge deep-merges only your own `/peers/$NICKNAME` key, so it creates the
 `/peers` map if absent and **never clobbers another peer's entry** — no seed, no
 fallback, no propagation race. One Bash call, no prose. Substitute your real
@@ -193,7 +193,7 @@ values — never copy the examples:
 - `{HOST}` — this machine's short hostname (run `hostname -s`).
 
 ```
-agent-gossip meta merge --swarm $SWARM --nickname $NICKNAME --merge '{"peers":{"$NICKNAME":{"model":"{MODEL}","harness":"{HARNESS}","host":"{HOST}","status":"idle"}}}'
+agent-mesh meta merge --mesh $MESH --nickname $NICKNAME --merge '{"peers":{"$NICKNAME":{"model":"{MODEL}","harness":"{HARNESS}","host":"{HOST}","status":"idle"}}}'
 ```
 
 `status` advertises whether you are accepting work: `idle` (open, not working),
@@ -208,10 +208,10 @@ status). To clear your identity, set it null: `--merge '{"peers":{"$NICKNAME":nu
 
 ## Notes
 
-- Relay connection to a cross-machine swarm can take a few seconds
+- Relay connection to a cross-machine mesh can take a few seconds
   longer than localhost. The 300s Monitor timeout accounts for this.
 - `join` only accepts a `💬…` id. A shared string derives its own public
-  swarm — that is the `topic` command — and is not a valid join target.
+  mesh — that is the `topic` command — and is not a valid join target.
 
 ## Event handling, tasks, and shared state (shared reference)
 

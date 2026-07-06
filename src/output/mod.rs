@@ -4,9 +4,9 @@ use std::sync::LazyLock;
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::a2a::TaskId;
-use agent_habilis_gossip::protocol::swarm::SwarmName;
-use agent_habilis_gossip::protocol::{Message, MessageId, MessageKind, Nickname, SwarmId};
-use agent_habilis_gossip::util::consts::SWARM_GLYPH;
+use agent_habilis_mesh::protocol::mesh::MeshName;
+use agent_habilis_mesh::protocol::{Message, MessageId, MessageKind, Nickname, MeshId};
+use agent_habilis_mesh::util::consts::MESH_GLYPH;
 
 mod json;
 #[cfg(test)]
@@ -32,7 +32,7 @@ pub(crate) enum OutputMode {
 }
 
 /// Owned, structured form of every line the daemon would print.
-/// In-process consumers ([`crate::embed::SwarmSession::events`],
+/// In-process consumers ([`crate::embed::MeshSession::events`],
 /// tests) receive these over a channel instead of scraping stdout;
 /// the `Stream` sink renders the *same* data through `events.rs`, so
 /// the wire format stays byte-identical.
@@ -43,8 +43,8 @@ pub(crate) enum OutputMode {
 #[non_exhaustive]
 pub enum OutputEvent {
     Ready {
-        swarm: SwarmId,
-        name: SwarmName,
+        mesh: MeshId,
+        name: MeshName,
         nickname: Nickname,
         /// One-line skill-drift warning when the installed integration has
         /// fallen behind this binary (see `cli::agent::drift_warning`), else
@@ -54,8 +54,8 @@ pub enum OutputEvent {
         /// (the default), keeping the common event unchanged.
         a2a_port: Option<u16>,
     },
-    SwarmId {
-        id: SwarmId,
+    MeshId {
+        id: MeshId,
     },
     Message {
         msg: Box<Message>,
@@ -105,7 +105,7 @@ pub enum OutputEvent {
     /// request/response binding. Renders as a `task` event, `kind:message`.
     TaskMessage {
         id: String,
-        swarm: String,
+        mesh: String,
         author: String,
         peer: String,
         task_id: String,
@@ -122,7 +122,7 @@ pub enum OutputEvent {
     /// whether it was our own write. Drives the reaction hook and the human
     /// `💬 … changed shared state` line.
     StateChanged {
-        channel: agent_habilis_gossip::protocol::Channel,
+        channel: agent_habilis_mesh::protocol::Channel,
         event: Box<Message>,
         document: serde_json::Value,
         is_self: bool,
@@ -134,7 +134,7 @@ pub enum OutputEvent {
 /// bundled (they mirror the [`OutputEvent::TaskMessage`] variant's fields).
 pub(crate) struct TaskMessageLeg<'a> {
     pub id: &'a str,
-    pub swarm: &'a str,
+    pub mesh: &'a str,
     pub author: &'a str,
     pub peer: &'a str,
     pub task_id: &'a str,
@@ -143,7 +143,7 @@ pub(crate) struct TaskMessageLeg<'a> {
     pub is_self: bool,
 }
 
-/// ANSI styling for the Human-mode `<nick>` / `#swarm` tokens.
+/// ANSI styling for the Human-mode `<nick>` / `#mesh` tokens.
 /// Hand-rolled (no color dependency); emission is gated on a TTY +
 /// `NO_COLOR` per stream (see [`stdout_color`] / [`stderr_color`]).
 pub(crate) mod style {
@@ -152,9 +152,9 @@ pub(crate) mod style {
     pub(super) const SELF_NICK: &str = "\x1b[1;32m";
     /// Bold cyan — a peer's nickname.
     pub(super) const PEER_NICK: &str = "\x1b[1;36m";
-    /// Bold yellow — a swarm name.
-    pub(crate) const SWARM: &str = "\x1b[1;33m";
-    /// Bold blue — the runnable hint (`agent-gossip join` on create, `agent-gossip pipe connect`
+    /// Bold yellow — a mesh name.
+    pub(crate) const MESH: &str = "\x1b[1;33m";
+    /// Bold blue — the runnable hint (`agent-mesh join` on create, `agent-mesh pipe connect`
     /// on the pipe producer).
     pub(crate) const BLUE: &str = "\x1b[1;34m";
     /// Bold — the highlighted row in the `discover` picker.
@@ -168,7 +168,7 @@ fn color_enabled(stream_is_terminal: bool) -> bool {
 
 /// Whether stdout should carry ANSI color. Cached — neither the TTY
 /// status nor the env var changes at runtime, and piped/non-TTY output
-/// (tests, the `/swarm` skill) auto-disables.
+/// (tests, the `/mesh` skill) auto-disables.
 pub(crate) fn stdout_color() -> bool {
     static ENABLED: LazyLock<bool> =
         LazyLock::new(|| color_enabled(std::io::stdout().is_terminal()));
@@ -182,11 +182,11 @@ fn stderr_color() -> bool {
     *ENABLED
 }
 
-/// The ANSI `(prefix, suffix)` wrapping a `#swarm` token — empty when
+/// The ANSI `(prefix, suffix)` wrapping a `#mesh` token — empty when
 /// disabled, so callers interpolate inline with no allocation either way.
-fn swarm_ansi(enabled: bool) -> (&'static str, &'static str) {
+fn mesh_ansi(enabled: bool) -> (&'static str, &'static str) {
     if enabled {
-        (style::SWARM, style::RESET)
+        (style::MESH, style::RESET)
     } else {
         ("", "")
     }
@@ -306,8 +306,8 @@ impl Output {
         (color, style::RESET)
     }
 
-    /// Colorize `<nick>` / `#swarm` tokens in a pre-composed `info`
-    /// string. Safe because nicknames/swarm names exclude `< > #` and
+    /// Colorize `<nick>` / `#mesh` tokens in a pre-composed `info`
+    /// string. Safe because nicknames/mesh names exclude `< > #` and
     /// whitespace, so the markers are unambiguous delimiters and the
     /// string never carries free-form message-body text.
     fn highlight(&self, text: &str, enabled: bool) -> String {
@@ -353,7 +353,7 @@ impl Output {
                     if name.is_empty() {
                         out.push('#');
                     } else {
-                        let (open, close) = swarm_ansi(true);
+                        let (open, close) = mesh_ansi(true);
                         out.push_str(open);
                         out.push('#');
                         out.push_str(&name);
@@ -410,15 +410,15 @@ impl Output {
 
     pub(crate) fn ready(
         &self,
-        swarm: &SwarmId,
-        name: &SwarmName,
+        mesh: &MeshId,
+        name: &MeshName,
         nickname: &Nickname,
         drift: Option<&str>,
         a2a_port: Option<u16>,
     ) {
         self.dispatch(
             || OutputEvent::Ready {
-                swarm: swarm.clone(),
+                mesh: mesh.clone(),
                 name: name.clone(),
                 nickname: nickname.clone(),
                 drift: drift.map(str::to_owned),
@@ -429,7 +429,7 @@ impl Output {
                 if mode == OutputMode::Json {
                     emit_json(&SimpleEvent::Ready {
                         version: crate::VERSION,
-                        swarm: swarm.as_str(),
+                        mesh: mesh.as_str(),
                         name: name.as_str(),
                         nickname: nickname.as_str(),
                         drift,
@@ -440,13 +440,13 @@ impl Output {
         );
     }
 
-    /// Surface the swarm identifier at startup (stderr). Human mode
-    /// prints the runnable join command (`agent-gossip join <id>`); JSON mode
+    /// Surface the mesh identifier at startup (stderr). Human mode
+    /// prints the runnable join command (`agent-mesh join <id>`); JSON mode
     /// prints the bare `💬…` id (the integration harness greps this);
     /// Silent suppresses it.
-    pub(crate) fn swarm_id_line(&self, id: &SwarmId) {
+    pub(crate) fn mesh_id_line(&self, id: &MeshId) {
         self.dispatch(
-            || OutputEvent::SwarmId { id: id.clone() },
+            || OutputEvent::MeshId { id: id.clone() },
             |mode| match mode {
                 OutputMode::Human => {
                     let (open, close) = if stderr_color() {
@@ -454,7 +454,7 @@ impl Output {
                     } else {
                         ("", "")
                     };
-                    eprintln!("others can join with: {open}agent-gossip join {id}{close}");
+                    eprintln!("others can join with: {open}agent-mesh join {id}{close}");
                 }
                 OutputMode::Json => eprintln!("{id}"),
                 OutputMode::Silent => {}
@@ -556,9 +556,9 @@ impl Output {
         }
         let state = leg.state;
         let is_self = leg.is_self;
-        let (id, swarm, author, peer, task_id, text) = (
+        let (id, mesh, author, peer, task_id, text) = (
             leg.id.to_owned(),
-            leg.swarm.to_owned(),
+            leg.mesh.to_owned(),
             leg.author.to_owned(),
             leg.peer.to_owned(),
             leg.task_id.to_owned(),
@@ -567,7 +567,7 @@ impl Output {
         self.dispatch(
             || OutputEvent::TaskMessage {
                 id: id.clone(),
-                swarm: swarm.clone(),
+                mesh: mesh.clone(),
                 author: author.clone(),
                 peer: peer.clone(),
                 task_id: task_id.clone(),
@@ -583,7 +583,7 @@ impl Output {
                 }
                 OutputMode::Json => emit(&json::format_task_message_json(&TaskMessageLeg {
                     id: &id,
-                    swarm: &swarm,
+                    mesh: &mesh,
                     author: &author,
                     peer: &peer,
                     task_id: &task_id,
@@ -626,7 +626,7 @@ impl Output {
     /// self-skip is the Monitor's job.
     pub(crate) fn state_changed(
         &self,
-        channel: agent_habilis_gossip::protocol::Channel,
+        channel: agent_habilis_mesh::protocol::Channel,
         event: &Message,
         document: &serde_json::Value,
         is_self: bool,
@@ -666,18 +666,18 @@ impl Output {
 
     fn print_state_human(
         &self,
-        channel: agent_habilis_gossip::protocol::Channel,
+        channel: agent_habilis_mesh::protocol::Channel,
         event: &Message,
         is_self: bool,
     ) {
         let what = json::state_change_summary_from_body(event.body.as_str());
         let ch = channel.label();
         if is_self {
-            eprintln!("{SWARM_GLYPH}\u{FE0F} you changed {what} ({ch})");
+            eprintln!("{MESH_GLYPH}\u{FE0F} you changed {what} ({ch})");
         } else {
             let (open, close) = self.nick_ansi(event.author.as_str(), stderr_color());
             eprintln!(
-                "{SWARM_GLYPH}\u{FE0F} {open}<{}>{close} changed {what} ({ch})",
+                "{MESH_GLYPH}\u{FE0F} {open}<{}>{close} changed {what} ({ch})",
                 event.author
             );
         }
@@ -829,7 +829,7 @@ impl Output {
         self.error(&error.to_string());
     }
 
-    /// Emit the result of an `agent-gossip ping` round: per-peer RTT, plus how
+    /// Emit the result of an `agent-mesh ping` round: per-peer RTT, plus how
     /// many of the known peers responded (the responder count is just
     /// `peers.len()`). `known` is the current participant roster size.
     pub(crate) fn ping_report(&self, peers: Vec<PingPeer>, known: usize) {
@@ -904,36 +904,36 @@ impl Output {
 }
 
 /// The app renders the engine's generic
-/// [`MeshEvent`](agent_habilis_gossip::gossip::event::MeshEvent)s by mapping each onto the
+/// [`NodeEvent`](agent_habilis_mesh::gossip::event::NodeEvent)s by mapping each onto the
 /// existing `Output` method, so stdout / `--output json` / tap forms stay
 /// byte-identical. This seam lets the engine emit surfacings without naming the
 /// concrete `Output`.
-impl agent_habilis_gossip::gossip::event::MeshSink for Output {
-    fn emit(&self, event: agent_habilis_gossip::gossip::event::MeshEvent) {
-        use agent_habilis_gossip::gossip::event::MeshEvent;
+impl agent_habilis_mesh::gossip::event::NodeSink for Output {
+    fn emit(&self, event: agent_habilis_mesh::gossip::event::NodeEvent) {
+        use agent_habilis_mesh::gossip::event::NodeEvent;
         match event {
-            MeshEvent::Ready {
-                swarm,
+            NodeEvent::Ready {
+                mesh,
                 name,
                 nickname,
                 drift,
                 a2a_port,
-            } => self.ready(&swarm, &name, &nickname, drift.as_deref(), a2a_port),
-            MeshEvent::SwarmId { id } => self.swarm_id_line(&id),
-            MeshEvent::Info(message) => self.info(&message),
-            MeshEvent::Error(message) => self.error(&message),
-            MeshEvent::Fork {
+            } => self.ready(&mesh, &name, &nickname, drift.as_deref(), a2a_port),
+            NodeEvent::MeshId { id } => self.mesh_id_line(&id),
+            NodeEvent::Info(message) => self.info(&message),
+            NodeEvent::Error(message) => self.error(&message),
+            NodeEvent::Fork {
                 nickname,
                 pubkey,
                 seq,
             } => self.fork(&nickname, &pubkey, seq),
-            MeshEvent::PeerTimeout {
+            NodeEvent::PeerTimeout {
                 nickname,
                 last_seen_secs_ago,
             } => self.peer_timeout(&nickname, last_seen_secs_ago),
-            MeshEvent::PeerReturn { nickname } => self.peer_return(&nickname),
-            MeshEvent::Presence { msg } => self.print_presence(&msg),
-            MeshEvent::PingReport { peers, known } => self.ping_report(
+            NodeEvent::PeerReturn { nickname } => self.peer_return(&nickname),
+            NodeEvent::Presence { msg } => self.print_presence(&msg),
+            NodeEvent::PingReport { peers, known } => self.ping_report(
                 peers
                     .into_iter()
                     .map(|peer| PingPeer {
@@ -943,7 +943,7 @@ impl agent_habilis_gossip::gossip::event::MeshSink for Output {
                     .collect(),
                 known,
             ),
-            MeshEvent::StateChanged {
+            NodeEvent::StateChanged {
                 channel,
                 event,
                 document,

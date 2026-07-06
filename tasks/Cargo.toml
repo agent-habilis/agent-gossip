@@ -18,7 +18,7 @@ cargo-zigbuild = "0.23"
 # `cargo task man` generates roff pages in-process: it walks the swarm
 # crate's clap tree (`cli_command`) through `clap_mangen`. This makes the
 # swarm lib a build dependency of the task runner.
-agent-gossip = { path = ".." }
+agent-mesh = { path = ".." }
 clap_mangen = "0.2"
 # Cargo-style status output, shared with the binary by `include!`ing its
 # canonical source (`../src/cli/output.rs`) — see `src/output.rs`. anstyle

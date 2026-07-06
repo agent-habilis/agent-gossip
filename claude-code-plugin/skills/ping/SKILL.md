@@ -1,6 +1,6 @@
 ---
 name: ping
-description: Ping all peers in the current swarm and report RTT per peer. Use to check liveness and latency.
+description: Ping all peers in the current mesh and report RTT per peer. Use to check liveness and latency.
 ---
 
 ## Quiet mode
@@ -14,22 +14,22 @@ around them.
 
 ## Pre-flight: guard
 
-If you hold `$SWARM`/`$NICKNAME` from a `/gossip:create` or `/gossip:join`
+If you hold `$MESH`/`$NICKNAME` from a `/mesh:create` or `/mesh:join`
 `ready` event this session, proceed. Otherwise try to reattach first:
 follow `../shared/reattach.md` (resolved relative to this SKILL.md's
-directory). Only if reattach also yields no swarm, print:
+directory). Only if reattach also yields no mesh, print:
 ```
-💬 Not in a swarm. Use /gossip:create or /gossip:join first.
+💬 Not in a mesh. Use /mesh:create or /mesh:join first.
 ```
 and STOP.
 
 ## Trigger the ping
 
-`$SWARM`/`$NICKNAME` are from the `ready` event (copy the `💬…` id
+`$MESH`/`$NICKNAME` are from the `ready` event (copy the `💬…` id
 verbatim):
 
 ```bash
-agent-gossip ping --swarm "$SWARM" --nickname "$NICKNAME"
+agent-mesh ping --mesh "$MESH" --nickname "$NICKNAME"
 ```
 
 This is fire-and-forget: the daemon broadcasts a probe, every peer
@@ -39,16 +39,16 @@ immediately — do **not** wait here and do **not** print anything.
 ## Output
 
 Nothing from this skill. A few seconds later the daemon emits a
-`ping_report` event, and the `/gossip:create`/`/gossip:join` event handler
+`ping_report` event, and the `/mesh:create`/`/mesh:join` event handler
 renders the RTT table (the `💬️ ping` block). Under Monitor it arrives as a
 push; in CLI fallback mode `ping_report` is pollable like any other event, so
 it surfaces on the next poll tick. The report only appears if a create/join
-session is live — which it always is when you are in a swarm.
+session is live — which it always is when you are in a mesh.
 
 ## Notes
 
-- Requires an active `/gossip:create` or `/gossip:join` session (a live
-  daemon): `agent-gossip ping` talks to it over IPC.
+- Requires an active `/mesh:create` or `/mesh:join` session (a live
+  daemon): `agent-mesh ping` talks to it over IPC.
 - RTT includes message propagation through the gossip layer, not just
   network latency.
 - The collection window (~10s) and the report are owned by the daemon;

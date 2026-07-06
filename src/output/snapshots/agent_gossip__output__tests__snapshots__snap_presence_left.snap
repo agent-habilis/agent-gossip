@@ -1,5 +1,0 @@
----
-source: src/output/tests.rs
-expression: "format_presence_json(&msg, PresenceSubtype::Left)"
----
-{"event":"message","id":"00000000-0000-0000-0000-000000000001","type":"presence","swarm":"💬://test","author":"alice-bot","ts":1700000000,"subtype":"left","display":"💬️ `<alice-bot>` has left"}

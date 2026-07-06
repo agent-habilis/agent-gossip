@@ -1,23 +1,23 @@
-import type { Peer, PingResult, SwarmEvent } from "../types";
+import type { MeshEvent, Peer, PingResult } from "../types";
 
-export function formatPresence(event: SwarmEvent): string | null {
+export function formatPresence(event: MeshEvent): string | null {
   if (event.subtype === "alive") return null;
   if (event.subtype === "joined") {
     // Presence carries no metadata: the daemon never ships model/harness/host on
     // the join event — they live in the `meta` channel and only after the joiner
     // self-reports (which happens just *after* it joins). The roster
-    // (`/swarm-status`, the handover/task pickers) is where that surfaces.
+    // (`/mesh-status`, the handover/task pickers) is where that surfaces.
     return `\`<${event.author}>\` has joined`;
   }
   if (event.subtype === "left") return `\`<${event.author}>\` has left`;
   return null;
 }
 
-export function formatMessage(event: SwarmEvent): string | null {
+export function formatMessage(event: MeshEvent): string | null {
   if (!event.body) return null;
 
   // Ambient ping/pong is handled silently (the daemon/extension auto-pongs and
-  // RTT is tracked for /swarm-ping) — never surfaced, matching the Claude Code
+  // RTT is tracked for /mesh-ping) — never surfaced, matching the Claude Code
   // plugin which leaves ping/pong entirely to the daemon.
   if (event.body === "ping" && !event.reply) return null;
   if (event.body === "pong") return null;
@@ -37,7 +37,7 @@ export function formatOutbound(nick: string, text: string, reply?: string): stri
 
 // A notice line carries a `(notice)` marker after the nick(s) so a reader
 // sees the no-auto-reply contract without parsing the `type` field.
-export function formatNotice(event: SwarmEvent): string | null {
+export function formatNotice(event: MeshEvent): string | null {
   if (!event.body) return null;
   if (event.reply) {
     return `\`<${event.author}>\` → \`<${event.reply}>\` (notice): ${event.body}`;
@@ -51,11 +51,11 @@ export function formatOutboundNotice(nick: string, text: string): string {
 
 // A peer's shared-state change, terse like the other formatters (the document
 // itself rides on the wake text in `flushMessageBatch`, not here).
-export function formatState(event: SwarmEvent): string {
+export function formatState(event: MeshEvent): string {
   return `\`<${event.author}>\` changed shared state`;
 }
 
-export function formatPeerLifecycle(event: SwarmEvent): string | null {
+export function formatPeerLifecycle(event: MeshEvent): string | null {
   if (event.event === "peer_timeout") {
     return `\`<${event.nickname}>\` went quiet`;
   }
@@ -66,7 +66,7 @@ export function formatPeerLifecycle(event: SwarmEvent): string | null {
 }
 
 // What a peer runs on, as one line: `model / harness @ host`, omitting absent
-// parts. Shared by the `/swarm` roster picker and `formatMeta` so every surface
+// parts. Shared by the `/mesh` roster picker and `formatMeta` so every surface
 // renders identity identically.
 export function formatPeerIdent(peer: { model?: string; harness?: string; host?: string }): string {
   const stack = [peer.model, peer.harness].filter(Boolean).join(" / ");
@@ -85,7 +85,7 @@ export function formatPeerIdent(peer: { model?: string; harness?: string; host?:
 // before-state, and a partial merge — e.g. a model-only switch — is
 // indistinguishable from an incomplete first report, so a single verb avoids
 // mislabeling either.)
-export function formatMeta(event: SwarmEvent): string | null {
+export function formatMeta(event: MeshEvent): string | null {
   const peersDoc = (event.document?.peers ?? {}) as Record<
     string,
     { model?: string; harness?: string; host?: string; status?: string }
@@ -95,7 +95,7 @@ export function formatMeta(event: SwarmEvent): string | null {
   // A meta change that doesn't touch `/peers` (some other convention) — fall
   // back to the daemon's value-blind path summary so it still surfaces.
   if (touched.length === 0) {
-    return event.display ?? `\`<${event.author}>\` changed swarm metadata`;
+    return event.display ?? `\`<${event.author}>\` changed mesh metadata`;
   }
   const isSelf = Boolean(event.self);
   const lines = touched.map((nick) => {
@@ -123,7 +123,7 @@ export function formatMeta(event: SwarmEvent): string | null {
   return [...new Set(lines)].join("\n");
 }
 
-export function formatDisplay(event: SwarmEvent): string | null {
+export function formatDisplay(event: MeshEvent): string | null {
   if (event.event === "info" || event.event === "error") return null;
   // Meta is handled before the self-drop below: unlike other events, a peer's
   // *own* identity report is worth showing (`you reported …`), mirroring how the
@@ -177,7 +177,7 @@ export function formatRoster({
   return [header, "", line(headings), separator, ...rows.map(line)].join("\n");
 }
 
-// Shared RTT report for /swarm-ping and the swarm_ping tool — one source so the
+// Shared RTT report for /mesh-ping and the mesh_ping tool — one source so the
 // two never drift. No bee prefix (the UI/agent adds it). The footer counts
 // responders only; pi has no reliable known-peer total at this point (a peer
 // can pong yet be absent from a post-wait roster), so it deliberately omits a
@@ -194,12 +194,12 @@ export type EngagementKind = "directed" | "broadcast" | "state";
 
 // Whether an incoming peer event should wake the agent, and how. "directed"
 // when a message is addressed to us (reply === our nick) — always answer;
-// "broadcast" when it went to the whole swarm — answer only if we can help;
+// "broadcast" when it went to the whole mesh — answer only if we can help;
 // "state" when a peer changed the shared state — react per the current task.
 // null means no engagement: our own echo, ping/pong, a reply aimed at another
 // peer, or a non-message (presence/lifecycle) — those are display-only.
 export function engagementKind(
-  event: SwarmEvent,
+  event: MeshEvent,
   myNick: string | undefined,
 ): EngagementKind | null {
   // A peer's shared-state change wakes us so we can react to the new document;

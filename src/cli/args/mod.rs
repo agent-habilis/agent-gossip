@@ -49,21 +49,21 @@ pub(crate) use topology::TopologyOpts;
 
 #[derive(Parser, Debug)]
 #[command(
-    name = "agent-gossip",
-    about = "swarm network for agents",
-    version = agent_habilis_gossip::util::version::VERSION,
+    name = "agent-mesh",
+    about = "mesh network for agents",
+    version = agent_habilis_mesh::util::version::VERSION,
     after_help = "a tool by agent-habilis █🫈"
 )]
 pub(crate) struct Cli {
     /// Per-member log directory (default: the per-user runtime base, see
-    /// `agent_habilis_gossip::util::runtime_base`, with a per-swarm `<prefix>/` subfolder).
+    /// `agent_habilis_mesh::util::runtime_base`, with a per-mesh `<prefix>/` subfolder).
     /// Hidden — a test/ops knob.
     /// Global so it applies to any subcommand.
     #[arg(long, global = true, hide = true)]
     pub log_dir: Option<std::path::PathBuf>,
 
     /// Max log-file bytes before rotating to `<file>.1` (`0` disables).
-    /// Hidden test/ops knob; default `agent_habilis_gossip::util::consts::LOG_FILE_MAX_BYTES`.
+    /// Hidden test/ops knob; default `agent_habilis_mesh::util::consts::LOG_FILE_MAX_BYTES`.
     #[arg(long, global = true, hide = true)]
     pub log_max_bytes: Option<u64>,
 
@@ -80,32 +80,32 @@ pub(crate) struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub(crate) enum Commands {
-    /// Create and join a new swarm
+    /// Create and join a new mesh
     Create {
         #[command(flatten)]
         opts: CreateOpts,
     },
 
-    /// Join an existing swarm
+    /// Join an existing mesh
     Join {
         #[command(flatten)]
         opts: JoinOpts,
     },
 
-    /// Join a public swarm derived from a shared string
+    /// Join a public mesh derived from a shared string
     Topic {
         #[command(flatten)]
         opts: TopicOpts,
     },
 
-    /// Leave swarm(s): stop this session's local daemon(s).
+    /// Leave mesh(s): stop this session's local daemon(s).
     ///
     /// Finds running create/join/topic daemons through their state files
     /// and sends each a SIGTERM; a daemon broadcasts `left` to its peers
-    /// and removes its state file on the way out. With no SWARM, stops
+    /// and removes its state file on the way out. With no MESH, stops
     /// only the daemons owned by the calling session — those with
     /// `--session-pid` among their process ancestors — and never touches
-    /// other sessions'. An explicit SWARM targets that swarm's local
+    /// other sessions'. An explicit MESH targets that mesh's local
     /// member(s) regardless of owner. State files whose daemon is gone
     /// (SIGKILL, power loss) are cleaned up along the way.
     Leave {
@@ -113,19 +113,19 @@ pub(crate) enum Commands {
         opts: LeaveOpts,
     },
 
-    /// Report the swarm(s) this session is joined to.
+    /// Report the mesh(s) this session is joined to.
     ///
     /// The read-only sibling of `leave`: discovers running daemons through
     /// their state files and prints the ones owned by the calling session
     /// (see `--session-pid`). This is how an agent that lost its
     /// conversation context (e.g. after a context clear) re-learns the
-    /// swarm id and nickname of a session it is still joined to.
+    /// mesh id and nickname of a session it is still joined to.
     Session {
         #[command(flatten)]
         opts: SessionOpts,
     },
 
-    /// Check for new messages in a swarm
+    /// Check for new messages in a mesh
     Poll {
         #[command(flatten)]
         opts: PollOpts,
@@ -139,18 +139,18 @@ pub(crate) enum Commands {
         opts: PingOpts,
     },
 
-    /// Browse swarms advertising themselves in a directory.
+    /// Browse meshes advertising themselves in a directory.
     ///
-    /// Joins the directory and shows a live list of swarms
+    /// Joins the directory and shows a live list of meshes
     /// created with `--advertise`. Interactive (default): pick a number
     /// to join. `--no-interactive` / `--output json`: stream
-    /// `swarm_found` / `swarm_lost` JSON lines for an agent to act on.
+    /// `mesh_found` / `mesh_lost` JSON lines for an agent to act on.
     Discover {
         #[command(flatten)]
         opts: DiscoverOpts,
     },
 
-    /// Bridge an A2A (agent-to-agent) HTTP server to a peer over the swarm.
+    /// Bridge an A2A (agent-to-agent) HTTP server to a peer over the mesh.
     ///
     /// `a2a expose --to http://127.0.0.1:PORT` runs next to a local A2A server
     /// and prints a `🎟️…` ticket; `a2a connect <ticket>` binds a local endpoint
@@ -162,7 +162,7 @@ pub(crate) enum Commands {
         opts: A2aOpts,
     },
 
-    /// List the live participant roster of a swarm.
+    /// List the live participant roster of a mesh.
     ///
     /// Queries the running daemon for current participants (nicknames +
     /// how long ago each was last seen), recency-sorted. Backs the
@@ -173,19 +173,19 @@ pub(crate) enum Commands {
         opts: PeersOpts,
     },
 
-    /// Mint a 🎟️ invite to an invite-only swarm (creator only).
+    /// Mint a 🎟️ invite to an invite-only mesh (creator only).
     ///
     /// The creating session's daemon signs the invite with its in-memory issuer
     /// key and prints the `🎟️…` token — share it so a peer can `join` with it.
     /// After the creator's daemon restarts the issuer key is gone, so no new
     /// invites can be minted (already-issued ones still redeem). Password: an
-    /// invite inherits the swarm's password, so a scraped invite still needs it.
+    /// invite inherits the mesh's password, so a scraped invite still needs it.
     Invite {
         #[command(flatten)]
         opts: InviteOpts,
     },
 
-    /// Read or change the swarm's shared state.
+    /// Read or change the mesh's shared state.
     ///
     /// Shared state is a JSON document every member derives from a dedicated,
     /// gossiped log of RFC 7386 JSON Merge Patch changes. `state merge` applies a
@@ -196,10 +196,10 @@ pub(crate) enum Commands {
         opts: StateOpts,
     },
 
-    /// Read or change the swarm's `meta` channel.
+    /// Read or change the mesh's `meta` channel.
     ///
     /// A second shared-state document beside `state`, identical machinery but
-    /// conventionally holding swarm metadata (peer info, …) rather than the task.
+    /// conventionally holding mesh metadata (peer info, …) rather than the task.
     /// `meta merge` applies an RFC 7386 JSON Merge Patch; `meta get` prints the
     /// current document. The two channels are fully independent.
     Meta {
@@ -211,20 +211,20 @@ pub(crate) enum Commands {
     ///
     /// Emits the metric-weighted mesh graph the daemon has assembled from
     /// gossiped link-state, as JSON (`{self_id, edges:[{from,to,metric}]}`) —
-    /// the data behind the `/swarm:topology` render.
+    /// the data behind the `/mesh:topology` render.
     Topology {
         #[command(flatten)]
         opts: TopologyOpts,
     },
 
-    /// Wait until a swarm daemon is serving, then exit.
+    /// Wait until a mesh daemon is serving, then exit.
     ///
     /// The readiness gate for driving the daemon over the CLI: launch
     /// `create`/`join` in the background with a `--state-file`, then
-    /// `agent-gossip ready --state-file <path>` blocks until that file reports the
+    /// `agent-mesh ready --state-file <path>` blocks until that file reports the
     /// daemon is serving, exiting 0 (non-zero on timeout). In `human` mode a
     /// silent gate (exit code only); with `--output json` it prints
-    /// `{swarm,name,nickname}` on success, so the gate doubles as the
+    /// `{mesh,name,nickname}` on success, so the gate doubles as the
     /// identity read.
     Ready {
         #[command(flatten)]
@@ -233,7 +233,7 @@ pub(crate) enum Commands {
 
     /// Run as a Model Context Protocol server over stdio.
     ///
-    /// Exposes swarm lifecycle + messaging as MCP tools for AI clients
+    /// Exposes mesh lifecycle + messaging as MCP tools for AI clients
     /// (Codex, Cursor, Claude Desktop, Claude Code). Reads JSON-RPC from
     /// stdin, writes to stdout; the caller is expected to be an MCP client
     /// that manages this process's lifetime.
@@ -246,12 +246,12 @@ pub(crate) enum Commands {
 
         /// How long `ping` collects pongs (seconds). Hidden; tests shorten it
         /// so a `ping` round-trip doesn't wait the full window.
-        #[arg(long, hide = true, default_value_t = agent_habilis_gossip::util::consts::PING_WINDOW_SECS)]
+        #[arg(long, hide = true, default_value_t = agent_habilis_mesh::util::consts::PING_WINDOW_SECS)]
         ping_window_secs: u64,
 
         /// How long a `long: true` fetch parks before returning empty (millis).
         /// Hidden; tests shorten it to hit the timeout path quickly.
-        #[arg(long, hide = true, default_value_t = agent_habilis_gossip::util::consts::LONGPOLL_MAX_MS)]
+        #[arg(long, hide = true, default_value_t = agent_habilis_mesh::util::consts::LONGPOLL_MAX_MS)]
         longpoll_max_ms: u64,
     },
 
@@ -262,7 +262,7 @@ pub(crate) enum Commands {
     /// checkout.
     Man,
 
-    /// Plug the swarm integrations into your agents.
+    /// Plug the mesh integrations into your agents.
     ///
     /// Targets Claude Code (the plugin), pi (the extension), Cursor
     /// (`~/.cursor/skills`), and a generic `~/.agents/skills` agent. The
@@ -275,7 +275,7 @@ pub(crate) enum Commands {
         agents: Vec<super::agent::Agent>,
     },
 
-    /// Unplug the swarm integrations from your agents (symmetric to `plug`).
+    /// Unplug the mesh integrations from your agents (symmetric to `plug`).
     ///
     /// With no `--agent`, the agents that have it are used.
     Unplug {
@@ -285,13 +285,13 @@ pub(crate) enum Commands {
         agents: Vec<super::agent::Agent>,
     },
 
-    /// Diagnose the swarm environment and network.
+    /// Diagnose the mesh environment and network.
     ///
-    /// With no `--swarm`: a machine-health report — binary/OS, which agents
+    /// With no `--mesh`: a machine-health report — binary/OS, which agents
     /// have the integration installed (and where), the local network
     /// capability (UDP, NAT/hole-punch behavior, public address, relay
-    /// latency), and the swarms running on this machine. With `--swarm <💬…>`:
-    /// decode that swarm's declared connection methods and live-probe which
+    /// latency), and the meshes running on this machine. With `--mesh <💬…>`:
+    /// decode that mesh's declared connection methods and live-probe which
     /// reach it (down to direct-vs-relay path per peer). `--output json` for
     /// the machine form.
     Doctor {

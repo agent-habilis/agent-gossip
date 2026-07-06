@@ -1,18 +1,18 @@
 use clap::Parser;
 
-use agent_habilis_gossip::protocol::{Nickname, SwarmId};
+use agent_habilis_mesh::protocol::{Nickname, MeshId};
 
 use super::output::OutputFormat;
 
 #[derive(Parser, Debug)]
 pub(crate) struct LeaveOpts {
-    /// The `💬…` id of the swarm to leave — the full id or a unique prefix
-    /// of it. Omitted: every swarm owned by the calling session.
-    pub swarm: Option<SwarmId>,
+    /// The `💬…` id of the mesh to leave — the full id or a unique prefix
+    /// of it. Omitted: every mesh owned by the calling session.
+    pub mesh: Option<MeshId>,
 
     /// Leave only the member with this nickname (when this machine hosts
-    /// several members of one swarm).
-    #[arg(long, requires = "swarm")]
+    /// several members of one mesh).
+    #[arg(long, requires = "mesh")]
     pub nickname: Option<Nickname>,
 
     /// The agent-session process that owns the daemons: a daemon is
@@ -40,11 +40,11 @@ mod tests {
 
     #[test]
     fn leave_defaults() {
-        let cli = Cli::parse_from(["agent-gossip", "leave"]);
+        let cli = Cli::parse_from(["agent-mesh", "leave"]);
         let Commands::Leave { opts } = cli.command else {
             panic!("expected Leave command");
         };
-        assert!(opts.swarm.is_none());
+        assert!(opts.mesh.is_none());
         assert!(opts.nickname.is_none());
         assert!(opts.session_pid.is_none());
         assert_eq!(opts.confirm_timeout_secs, 5);
@@ -54,7 +54,7 @@ mod tests {
     #[test]
     fn leave_accepts_explicit_target() {
         let cli = Cli::parse_from([
-            "agent-gossip",
+            "agent-mesh",
             "leave",
             "💬AbCdEf1234",
             "--nickname",
@@ -65,13 +65,13 @@ mod tests {
         let Commands::Leave { opts } = cli.command else {
             panic!("expected Leave command");
         };
-        assert_eq!(opts.swarm.unwrap().as_str(), "💬://AbCdEf1234");
+        assert_eq!(opts.mesh.unwrap().as_str(), "💬://AbCdEf1234");
         assert_eq!(opts.nickname.unwrap().as_str(), "my-nick");
         assert_eq!(opts.output, OutputFormat::Json);
     }
 
     #[test]
-    fn leave_nickname_requires_swarm() {
-        assert!(Cli::try_parse_from(["agent-gossip", "leave", "--nickname", "my-nick"]).is_err());
+    fn leave_nickname_requires_mesh() {
+        assert!(Cli::try_parse_from(["agent-mesh", "leave", "--nickname", "my-nick"]).is_err());
     }
 }

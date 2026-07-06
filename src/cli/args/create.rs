@@ -1,10 +1,10 @@
-//! `create` command args: mint and join a new swarm.
+//! `create` command args: mint and join a new mesh.
 
 use clap::Parser;
 
 use crate::cli::password::PasswordFlag;
-use agent_habilis_gossip::protocol::Nickname;
-use agent_habilis_gossip::protocol::swarm::{DirectorySelection, SwarmName};
+use agent_habilis_mesh::protocol::Nickname;
+use agent_habilis_mesh::protocol::mesh::{DirectorySelection, MeshName};
 
 use super::lookup::LookupArgs;
 use super::shared::SharedServerOpts;
@@ -14,49 +14,49 @@ pub(crate) struct CreateOpts {
     #[command(flatten)]
     pub shared: SharedServerOpts,
 
-    /// Which lookup mechanisms this swarm uses (baked into its id, so
+    /// Which lookup mechanisms this mesh uses (baked into its id, so
     /// every joiner inherits them). `create`-only: `join` decodes them.
     #[command(flatten)]
     pub lookups: LookupArgs,
 
-    /// Human-readable swarm name. Optional — a random word-word name is
+    /// Human-readable mesh name. Optional — a random word-word name is
     /// minted if omitted. 1..=32 UTF-8 characters (any script/emoji),
     /// excluding control characters, whitespace, and any of < > # (reserved
-    /// for the `<nick>`/#swarm display conventions). Unlike a nickname, a swarm
+    /// for the `<nick>`/#mesh display conventions). Unlike a nickname, a mesh
     /// name may contain `/` (it is never a filename), so it can be a URL. Bound
-    /// cryptographically into the swarm identity so joiners who decode the ID
+    /// cryptographically into the mesh identity so joiners who decode the ID
     /// see the same name and a forged ID with a fake name fails to find peers.
     #[arg(long)]
-    pub name: Option<SwarmName>,
+    pub name: Option<MeshName>,
 
-    /// Make the swarm reachable across machines — sugar for the all-on
+    /// Make the mesh reachable across machines — sugar for the all-on
     /// lookup preset (mDNS + DHT + the default relay ladder). Omitted ⇒
     /// loopback only (the default). Refine with the `--mdns`/`--dht`/
-    /// `--relay` flags; all of it is baked into the swarm id.
+    /// `--relay` flags; all of it is baked into the mesh id.
     #[arg(long, default_value_t = false)]
     pub public: bool,
 
     /// Optional nickname (random word-word if not provided). A custom
     /// nickname is 1..=32 UTF-8 characters, excluding control chars,
-    /// whitespace, and any of / \ < > #. Symmetric with `agent-gossip join
+    /// whitespace, and any of / \ < > #. Symmetric with `agent-mesh join
     /// --nickname`.
     #[arg(long)]
     pub nickname: Option<Nickname>,
 
-    /// List this swarm in a directory so others can find it with
-    /// `agent-gossip discover` — no `💬…` id to share. Optional-value, like
+    /// List this mesh in a directory so others can find it with
+    /// `agent-mesh discover` — no `💬…` id to share. Optional-value, like
     /// `--relay`: absent ⇒ unlisted; bare `--advertise` ⇒ the default
     /// `global` directory; `--advertise <directory>` ⇒ that named directory.
     /// Requires `--public` (a directory listing only makes sense for a
-    /// cross-machine swarm). Note: advertising broadcasts the full join
-    /// token, so the swarm becomes open to anyone discovering that directory.
+    /// cross-machine mesh). Note: advertising broadcasts the full join
+    /// token, so the mesh becomes open to anyone discovering that directory.
     /// Absent ⇒ unlisted; bare `--advertise` ⇒ the well-known `global`
     /// directory (the `default_missing_value`); valued ⇒ that named directory.
     #[arg(long, num_args(0..=1), default_missing_value = "global")]
-    pub advertise: Option<SwarmName>,
+    pub advertise: Option<MeshName>,
 
-    /// Protect the swarm with a password: the id alone no longer admits —
-    /// joiners must present the password (so a passworded swarm is safe to
+    /// Protect the mesh with a password: the id alone no longer admits —
+    /// joiners must present the password (so a passworded mesh is safe to
     /// `--advertise`). The id carries only a one-way verifier, never the
     /// password. Bare `--password` prompts hidden on the terminal;
     /// `--password=<pw>` passes it inline (visible in `ps` and shell
@@ -64,10 +64,10 @@ pub(crate) struct CreateOpts {
     #[arg(long, num_args(0..=1), require_equals = true, default_missing_value = "\0")]
     pub password: Option<PasswordFlag>,
 
-    /// Make the swarm invite-only: the bare `💬…` id can no longer join —
+    /// Make the mesh invite-only: the bare `💬…` id can no longer join —
     /// only a creator-minted `🎟️` invite can. The id carries the issuer public
     /// key (the mint authority), never the join secret; mint invites with
-    /// `agent-gossip invite`. Combine with `--password` to also password-protect
+    /// `agent-mesh invite`. Combine with `--password` to also password-protect
     /// every minted invite.
     #[arg(long)]
     pub invite_only: bool,
@@ -87,13 +87,13 @@ mod tests {
 
     use crate::cli::args::{Cli, Commands};
     use crate::cli::password::PasswordFlag;
-    use agent_habilis_gossip::protocol::Nickname;
-    use agent_habilis_gossip::protocol::swarm::{DirectorySelection, SwarmName};
+    use agent_habilis_mesh::protocol::Nickname;
+    use agent_habilis_mesh::protocol::mesh::{DirectorySelection, MeshName};
 
     #[test]
     fn create_opts_with_nickname() {
         let cli = Cli::parse_from([
-            "agent-gossip",
+            "agent-mesh",
             "create",
             "--name",
             "team",
@@ -102,7 +102,7 @@ mod tests {
         ]);
         match cli.command {
             Commands::Create { opts } => {
-                assert_eq!(opts.name.as_ref().map(SwarmName::as_str), Some("team"));
+                assert_eq!(opts.name.as_ref().map(MeshName::as_str), Some("team"));
                 assert_eq!(
                     opts.nickname.as_ref().map(Nickname::as_str),
                     Some("my-nick")
@@ -134,10 +134,10 @@ mod tests {
 
     #[test]
     fn create_opts_without_nickname() {
-        let cli = Cli::parse_from(["agent-gossip", "create", "--name", "team"]);
+        let cli = Cli::parse_from(["agent-mesh", "create", "--name", "team"]);
         match cli.command {
             Commands::Create { opts } => {
-                assert_eq!(opts.name.as_ref().map(SwarmName::as_str), Some("team"));
+                assert_eq!(opts.name.as_ref().map(MeshName::as_str), Some("team"));
                 assert_eq!(opts.nickname, None);
             }
             Commands::Join { .. }
@@ -166,7 +166,7 @@ mod tests {
 
     #[test]
     fn create_opts_name_optional() {
-        let cli = Cli::parse_from(["agent-gossip", "create"]);
+        let cli = Cli::parse_from(["agent-mesh", "create"]);
         match cli.command {
             Commands::Create { opts } => assert_eq!(opts.name, None),
             Commands::Join { .. }
@@ -195,21 +195,21 @@ mod tests {
 
     #[test]
     fn create_opts_rejects_invalid_name() {
-        assert!(Cli::try_parse_from(["agent-gossip", "create", "--name", ""]).is_err());
+        assert!(Cli::try_parse_from(["agent-mesh", "create", "--name", ""]).is_err());
         assert!(
-            Cli::try_parse_from(["agent-gossip", "create", "--name", "has space"]).is_err(),
+            Cli::try_parse_from(["agent-mesh", "create", "--name", "has space"]).is_err(),
             "whitespace must reject"
         );
         assert!(
-            Cli::try_parse_from(["agent-gossip", "create", "--name", "a#b"]).is_err(),
-            "the #swarm marker must reject"
+            Cli::try_parse_from(["agent-mesh", "create", "--name", "a#b"]).is_err(),
+            "the #mesh marker must reject"
         );
         assert!(
-            Cli::try_parse_from(["agent-gossip", "create", "--name", "a/b"]).is_ok(),
-            "a swarm name may contain a path separator (it is never a filename)"
+            Cli::try_parse_from(["agent-mesh", "create", "--name", "a/b"]).is_ok(),
+            "a mesh name may contain a path separator (it is never a filename)"
         );
         assert!(
-            Cli::try_parse_from(["agent-gossip", "create", "--name", &"a".repeat(33)]).is_err(),
+            Cli::try_parse_from(["agent-mesh", "create", "--name", &"a".repeat(33)]).is_err(),
             "33 chars must reject"
         );
     }
@@ -241,24 +241,24 @@ mod tests {
             }
         }
         assert_eq!(
-            advertise_of(&["agent-gossip", "create", "--public"]),
+            advertise_of(&["agent-mesh", "create", "--public"]),
             DirectorySelection::Unset,
             "absent ⇒ Unset (unlisted)"
         );
         assert_eq!(
-            advertise_of(&["agent-gossip", "create", "--public", "--advertise"]),
-            DirectorySelection::Named(SwarmName::new("global").unwrap()),
+            advertise_of(&["agent-mesh", "create", "--public", "--advertise"]),
+            DirectorySelection::Named(MeshName::new("global").unwrap()),
             "bare ⇒ the global directory (default_missing_value)"
         );
         assert_eq!(
             advertise_of(&[
-                "agent-gossip",
+                "agent-mesh",
                 "create",
                 "--public",
                 "--advertise",
                 "gamedev"
             ]),
-            DirectorySelection::Named(SwarmName::new("gamedev").unwrap()),
+            DirectorySelection::Named(MeshName::new("gamedev").unwrap()),
             "valued ⇒ Named directory"
         );
     }
@@ -290,30 +290,30 @@ mod tests {
             }
         }
         assert_eq!(
-            password_of(&["agent-gossip", "create"]),
+            password_of(&["agent-mesh", "create"]),
             None,
             "absent ⇒ None"
         );
         assert_eq!(
-            password_of(&["agent-gossip", "create", "--password"]),
+            password_of(&["agent-mesh", "create", "--password"]),
             Some(PasswordFlag::Prompt),
             "bare ⇒ prompt"
         );
         assert_eq!(
-            password_of(&["agent-gossip", "create", "--password=hunter2"]),
+            password_of(&["agent-mesh", "create", "--password=hunter2"]),
             Some(PasswordFlag::Inline("hunter2".to_owned())),
             "valued ⇒ inline"
         );
         // require_equals is load-bearing: a space-separated value must NOT
         // be swallowed as the password (it would eat positionals on the
         // connect-style commands).
-        assert!(Cli::try_parse_from(["agent-gossip", "create", "--password", "hunter2"]).is_err());
+        assert!(Cli::try_parse_from(["agent-mesh", "create", "--password", "hunter2"]).is_err());
     }
 
     #[test]
     fn create_opts_nickname_with_other_flags() {
         let cli = Cli::parse_from([
-            "agent-gossip",
+            "agent-mesh",
             "create",
             "--name",
             "team",
@@ -324,7 +324,7 @@ mod tests {
         ]);
         match cli.command {
             Commands::Create { opts } => {
-                assert_eq!(opts.name.as_ref().map(SwarmName::as_str), Some("team"));
+                assert_eq!(opts.name.as_ref().map(MeshName::as_str), Some("team"));
                 assert_eq!(
                     opts.nickname.as_ref().map(Nickname::as_str),
                     Some("custom-name")

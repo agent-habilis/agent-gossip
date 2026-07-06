@@ -4,22 +4,22 @@ import { Type } from "typebox";
 import {
   type CreateOptions,
   applyStateMerge,
-  createSwarm,
-  discoverSwarms,
-  forumSwarm,
+  createMesh,
+  discoverMeshes,
+  forumMesh,
+  getMeshStatus,
   getPeers,
   getStateDocument,
-  getSwarmStatus,
-  joinSwarm,
-  leaveSwarm,
+  joinMesh,
+  leaveMesh,
   pingPeers,
-  sendSwarmMessage,
+  sendMeshMessage,
   sendTaskLeg,
   setSelfStatus,
   validateCreateOptions,
 } from "../core";
 import { formatPingReport, formatRoster } from "../format";
-import { requireAgentSwarm } from "../helpers";
+import { requireAgentMesh } from "../helpers";
 import { state } from "../state";
 import { trackStart } from "../todo";
 import { BEE } from "../ui";
@@ -34,19 +34,19 @@ function toolError(text: string) {
 
 export function registerTools(pi: ExtensionAPI): void {
   pi.registerTool({
-    name: "swarm_create",
-    label: "Swarm Create",
-    description: "Create and join a new agent swarm",
-    promptSnippet: "Create a new swarm for AI agent collaboration",
+    name: "mesh_create",
+    label: "Mesh Create",
+    description: "Create and join a new agent mesh",
+    promptSnippet: "Create a new mesh for AI agent collaboration",
     promptGuidelines: [
-      "Use swarm_create when the user asks to start a new swarm or collaborate with other agents",
+      "Use mesh_create when the user asks to start a new mesh or collaborate with other agents",
       "Do not reformat or add extra prose after the tool result. The tool output is already the complete response.",
     ],
     parameters: Type.Object({
       name: Type.Optional(
         Type.String({
           description:
-            "Human-readable swarm name. 1-32 UTF-8 chars (any script/emoji), excluding control characters, whitespace, and any of < > # (/ and \\ are allowed, so a name may be a URL). Bound cryptographically into the swarm identity. Omit for a random word-word name.",
+            "Human-readable mesh name. 1-32 UTF-8 chars (any script/emoji), excluding control characters, whitespace, and any of < > # (/ and \\ are allowed, so a name may be a URL). Bound cryptographically into the mesh identity. Omit for a random word-word name.",
         }),
       ),
       network: Type.Optional(
@@ -66,7 +66,7 @@ export function registerTools(pi: ExtensionAPI): void {
       advertise: Type.Optional(
         Type.Boolean({
           description:
-            'List this swarm in a directory so others find it with discover. Requires network "public"; makes the swarm open.',
+            'List this mesh in a directory so others find it with discover. Requires network "public"; makes the mesh open.',
         }),
       ),
       directory: Type.Optional(
@@ -74,8 +74,8 @@ export function registerTools(pi: ExtensionAPI): void {
       ),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx: ExtensionContext) {
-      if (!requireAgentSwarm(ctx)) {
-        return toolError("agent-gossip CLI not found on PATH");
+      if (!requireAgentMesh(ctx)) {
+        return toolError("agent-mesh CLI not found on PATH");
       }
       const options: CreateOptions = {
         name: params.name,
@@ -91,93 +91,93 @@ export function registerTools(pi: ExtensionAPI): void {
       if (invalid) {
         return toolError(invalid);
       }
-      const result = await createSwarm(options);
+      const result = await createMesh(options);
       return {
         content: [{ type: "text", text: "ok" }],
-        details: { swarm: result.swarm, name: result.name, nickname: result.nickname },
+        details: { mesh: result.mesh, name: result.name, nickname: result.nickname },
       };
     },
   });
 
   pi.registerTool({
-    name: "swarm_join",
-    label: "Swarm Join",
-    description: "Join an existing agent swarm",
-    promptSnippet: "Join an existing agent swarm by its 💬… ID",
+    name: "mesh_join",
+    label: "Mesh Join",
+    description: "Join an existing agent mesh",
+    promptSnippet: "Join an existing agent mesh by its 💬… ID",
     promptGuidelines: [
-      "Use swarm_join when the user provides a 💬… swarm ID to join",
-      "For a public swarm derived from a shared string (not an ID), use swarm_forum instead",
-      "Use swarm_join when the user says they want to join an existing swarm by id",
+      "Use mesh_join when the user provides a 💬… mesh ID to join",
+      "For a public mesh derived from a shared string (not an ID), use mesh_forum instead",
+      "Use mesh_join when the user says they want to join an existing mesh by id",
       "Do not reformat or add extra prose after the tool result. The tool output is already the complete response.",
     ],
     parameters: Type.Object({
       target: Type.String({
-        description: "Swarm identifier (💬...)",
+        description: "Mesh identifier (💬...)",
       }),
       nickname: Type.Optional(
         Type.String({ description: "Optional nickname override (auto-generated if omitted)" }),
       ),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx: ExtensionContext) {
-      if (!requireAgentSwarm(ctx)) {
-        return toolError("agent-gossip CLI not found on PATH");
+      if (!requireAgentMesh(ctx)) {
+        return toolError("agent-mesh CLI not found on PATH");
       }
-      const result = await joinSwarm({
+      const result = await joinMesh({
         target: params.target,
         nickname: params.nickname,
         model: ctx.model?.name,
       });
       return {
         content: [{ type: "text", text: "ok" }],
-        details: { swarm: result.swarm, name: result.name, nickname: result.nickname },
+        details: { mesh: result.mesh, name: result.name, nickname: result.nickname },
       };
     },
   });
 
   pi.registerTool({
-    name: "swarm_forum",
-    label: "Swarm Forum",
-    description: "Join a public swarm derived from a shared string",
-    promptSnippet: "Join a public agent swarm keyed by a shared string (no ID needed)",
+    name: "mesh_forum",
+    label: "Mesh Forum",
+    description: "Join a public mesh derived from a shared string",
+    promptSnippet: "Join a public agent mesh keyed by a shared string (no ID needed)",
     promptGuidelines: [
-      "Use swarm_forum when the user wants to join by a shared word/phrase/URL rather than a 💬… ID",
-      "Everyone passing the same string lands in the same swarm; it is matched byte-for-byte after trimming whitespace",
+      "Use mesh_forum when the user wants to join by a shared word/phrase/URL rather than a 💬… ID",
+      "Everyone passing the same string lands in the same mesh; it is matched byte-for-byte after trimming whitespace",
       "Do not reformat or add extra prose after the tool result. The tool output is already the complete response.",
     ],
     parameters: Type.Object({
       string: Type.String({
         description:
-          "Any string; hashed into a deterministic public swarm (same string ⇒ same swarm)",
+          "Any string; hashed into a deterministic public mesh (same string ⇒ same mesh)",
       }),
       nickname: Type.Optional(
         Type.String({ description: "Optional nickname override (auto-generated if omitted)" }),
       ),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx: ExtensionContext) {
-      if (!requireAgentSwarm(ctx)) {
-        return toolError("agent-gossip CLI not found on PATH");
+      if (!requireAgentMesh(ctx)) {
+        return toolError("agent-mesh CLI not found on PATH");
       }
-      const result = await forumSwarm({
+      const result = await forumMesh({
         string: params.string,
         nickname: params.nickname,
         model: ctx.model?.name,
       });
       return {
         content: [{ type: "text", text: "ok" }],
-        details: { swarm: result.swarm, name: result.name, nickname: result.nickname },
+        details: { mesh: result.mesh, name: result.name, nickname: result.nickname },
       };
     },
   });
 
   pi.registerTool({
-    name: "swarm_discover",
-    label: "Swarm Discover",
+    name: "mesh_discover",
+    label: "Mesh Discover",
     description:
-      "Browse a directory for advertised swarms; returns the list (join one with swarm_join)",
-    promptSnippet: "Find advertised swarms in a directory to join",
+      "Browse a directory for advertised meshes; returns the list (join one with mesh_join)",
+    promptSnippet: "Find advertised meshes in a directory to join",
     promptGuidelines: [
-      "Use swarm_discover when the user wants to find a swarm to join but has no swarm id",
-      "After discovering, join a listed swarm with swarm_join using its swarm id",
+      "Use mesh_discover when the user wants to find a mesh to join but has no mesh id",
+      "After discovering, join a listed mesh with mesh_join using its mesh id",
     ],
     parameters: Type.Object({
       directory: Type.Optional(
@@ -185,41 +185,39 @@ export function registerTools(pi: ExtensionAPI): void {
       ),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx: ExtensionContext) {
-      if (!requireAgentSwarm(ctx)) {
-        return toolError("agent-gossip CLI not found on PATH");
+      if (!requireAgentMesh(ctx)) {
+        return toolError("agent-mesh CLI not found on PATH");
       }
       const directory = params.directory?.trim() || "global";
-      const swarms = await discoverSwarms({
+      const meshes = await discoverMeshes({
         directory: directory === "global" ? undefined : directory,
       });
       const text =
-        swarms.length === 0
-          ? `no swarms found in #${directory}`
-          : swarms
-              .map((swarm) => `#${swarm.name} · ${swarm.peers} peers · ${swarm.swarm}`)
-              .join("\n");
-      return { content: [{ type: "text", text }], details: { directory, swarms } };
+        meshes.length === 0
+          ? `no meshes found in #${directory}`
+          : meshes.map((mesh) => `#${mesh.name} · ${mesh.peers} peers · ${mesh.mesh}`).join("\n");
+      return { content: [{ type: "text", text }], details: { directory, meshes } };
     },
   });
 
   pi.registerTool({
-    name: "swarm_send",
-    label: "Swarm Send",
-    description: "Send a message to the agent swarm",
-    promptSnippet: "Broadcast a message to the agent swarm",
+    name: "mesh_send",
+    label: "Mesh Send",
+    description: "Send a message to the agent mesh",
+    promptSnippet: "Broadcast a message to the agent mesh",
     promptGuidelines: [
-      "Use swarm_send when the user asks to send a message to other agents in the swarm",
-      "Use swarm_send to reply to a peer (set reply to their nickname) or to ask the swarm for help",
+      "Use mesh_send when the user asks to send a message to other agents in the mesh",
+      "Use mesh_send to reply to a peer (set reply to their nickname) or to ask the mesh for help",
       "Set notice:true for anything informational that must not trigger responses (status reports, CI results, log lines) — peers NEVER auto-reply to a notice",
       "NEVER auto-reply to an incoming notice event yourself — it is informational by contract",
-      "Send plain text — never prefix or append the 💬 emoji; the swarm UI adds it for you",
-      "Do not call swarm_status before sending. Use your memory of whether you joined or created a swarm.",
-      "If not currently in a swarm, inform the user instead of calling swarm_status first.",
+      "Send plain text — never prefix or append the 💬 emoji; the mesh UI adds it for you",
+      "Do not call mesh_status before sending. Use your memory of whether you joined or created a mesh.",
+      "If not currently in a mesh, inform the user instead of calling mesh_status first.",
     ],
     parameters: Type.Object({
       text: Type.String({
         description:
-          "Message text to send to the swarm (UTF-8). Plain text — do not include the 💬 marker; the UI adds it.",
+          "Message text to send to the mesh (UTF-8). Plain text — do not include the 💬 marker; the UI adds it.",
       }),
       reply: Type.Optional(
         Type.String({ description: "Target peer's nickname to address this message to" }),
@@ -232,14 +230,14 @@ export function registerTools(pi: ExtensionAPI): void {
       ),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx: ExtensionContext) {
-      if (!requireAgentSwarm(ctx)) {
-        return toolError("agent-gossip CLI not found on PATH");
+      if (!requireAgentMesh(ctx)) {
+        return toolError("agent-mesh CLI not found on PATH");
       }
-      if (!state.session?.swarm) {
-        return toolError("Not in a swarm. Use swarm_create or swarm_join first.");
+      if (!state.session?.mesh) {
+        return toolError("Not in a mesh. Use mesh_create or mesh_join first.");
       }
       try {
-        sendSwarmMessage({ text: params.text, reply: params.reply, notice: params.notice });
+        sendMeshMessage({ text: params.text, reply: params.reply, notice: params.notice });
         // Show the sent line as the result (plain text — tool results don't
         // render markdown, so no backticks; the daemon filters self anyway).
         const nick = state.session.nickname;
@@ -255,16 +253,16 @@ export function registerTools(pi: ExtensionAPI): void {
   });
 
   pi.registerTool({
-    name: "swarm_advance",
-    label: "Swarm Advance",
+    name: "mesh_advance",
+    label: "Mesh Advance",
     description: "Send one leg of an in-flight handover/task delegation to a peer",
     promptSnippet: "Advance a handover or task leg by leg",
     promptGuidelines: [
-      "Use swarm_advance to advance a handover or task you are a party to, reusing the task_id from the offer that started it",
+      "Use mesh_advance to advance a handover or task you are a party to, reusing the task_id from the offer that started it",
       'Receiving a handover: after accepting, ask anything unclear with phase "context", then send phase "done" when you have what you need; once the initiator confirms, do the work yourself',
       'Receiving a task: after accepting, do the work, then send phase "done" with your result in text',
       'Initiator: answer the receiver\'s "context" questions with phase "context"',
-      'When you accept work, reconsider your availability: if it means you will not take more, call swarm_set_status "busy"; when it closes and you have capacity again, set it back to "idle"/"available" (your judgment — leave it unchanged if it did not change)',
+      'When you accept work, reconsider your availability: if it means you will not take more, call mesh_set_status "busy"; when it closes and you have capacity again, set it back to "idle"/"available" (your judgment — leave it unchanged if it did not change)',
     ],
     parameters: Type.Object({
       task_id: Type.String({
@@ -282,11 +280,11 @@ export function registerTools(pi: ExtensionAPI): void {
       ),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx: ExtensionContext) {
-      if (!requireAgentSwarm(ctx)) {
-        return toolError("agent-gossip CLI not found on PATH");
+      if (!requireAgentMesh(ctx)) {
+        return toolError("agent-mesh CLI not found on PATH");
       }
-      if (!state.session?.swarm) {
-        return toolError("Not in a swarm. Use swarm_create or swarm_join first.");
+      if (!state.session?.mesh) {
+        return toolError("Not in a mesh. Use mesh_create or mesh_join first.");
       }
       try {
         sendTaskLeg({
@@ -303,14 +301,14 @@ export function registerTools(pi: ExtensionAPI): void {
   });
 
   pi.registerTool({
-    name: "swarm_handover",
-    label: "Swarm Handover",
+    name: "mesh_handover",
+    label: "Mesh Handover",
     description: "Hand a task or plan to a peer (a handover: the receiver runs it on its own)",
     promptSnippet: "Delegate a task to a peer via a handover",
     promptGuidelines: [
-      "Use swarm_handover when the user wants to hand a task or plan to another agent to run",
+      "Use mesh_handover when the user wants to hand a task or plan to another agent to run",
       "Compose a clear brief in text: what to do, the goal, current state, and constraints",
-      "Pick `to` from the current roster (swarm_status). Skip any peer whose status is `busy` (not accepting work); `idle`/`available`/unreported are eligible",
+      "Pick `to` from the current roster (mesh_status). Skip any peer whose status is `busy` (not accepting work); `idle`/`available`/unreported are eligible",
       "The handoff closes when the receiver signals done; the extension auto-confirms",
     ],
     parameters: Type.Object({
@@ -322,11 +320,11 @@ export function registerTools(pi: ExtensionAPI): void {
       }),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx: ExtensionContext) {
-      if (!requireAgentSwarm(ctx)) {
-        return toolError("agent-gossip CLI not found on PATH");
+      if (!requireAgentMesh(ctx)) {
+        return toolError("agent-mesh CLI not found on PATH");
       }
-      if (!state.session?.swarm) {
-        return toolError("Not in a swarm. Use swarm_create or swarm_join first.");
+      if (!state.session?.mesh) {
+        return toolError("Not in a mesh. Use mesh_create or mesh_join first.");
       }
       const taskId = randomUUID();
       const task = params.text
@@ -362,15 +360,15 @@ export function registerTools(pi: ExtensionAPI): void {
   });
 
   pi.registerTool({
-    name: "swarm_task",
-    label: "Swarm Task",
+    name: "mesh_task",
+    label: "Mesh Task",
     description: "Send a task to a peer to run and report back (you confirm or revise the result)",
     promptSnippet: "Delegate a task to a peer and get the result back",
     promptGuidelines: [
-      "Use swarm_task when the user wants a peer to run work and return the result",
+      "Use mesh_task when the user wants a peer to run work and return the result",
       "Include an explicit completion criterion in text so the worker knows when it is done",
-      "Pick `to` from the current roster (swarm_status). Skip any peer whose status is `busy` (not accepting work); `idle`/`available`/unreported are eligible",
-      "The worker returns its result; you confirm it (swarm_advance phase confirm) or ask for a revision (phase change)",
+      "Pick `to` from the current roster (mesh_status). Skip any peer whose status is `busy` (not accepting work); `idle`/`available`/unreported are eligible",
+      "The worker returns its result; you confirm it (mesh_advance phase confirm) or ask for a revision (phase change)",
     ],
     parameters: Type.Object({
       to: Type.String({
@@ -382,11 +380,11 @@ export function registerTools(pi: ExtensionAPI): void {
       }),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx: ExtensionContext) {
-      if (!requireAgentSwarm(ctx)) {
-        return toolError("agent-gossip CLI not found on PATH");
+      if (!requireAgentMesh(ctx)) {
+        return toolError("agent-mesh CLI not found on PATH");
       }
-      if (!state.session?.swarm) {
-        return toolError("Not in a swarm. Use swarm_create or swarm_join first.");
+      if (!state.session?.mesh) {
+        return toolError("Not in a mesh. Use mesh_create or mesh_join first.");
       }
       const taskId = randomUUID();
       const task = params.text
@@ -422,23 +420,23 @@ export function registerTools(pi: ExtensionAPI): void {
   });
 
   pi.registerTool({
-    name: "swarm_status",
-    label: "Swarm Status",
-    description: "Get current swarm connection status and recent activity",
-    promptSnippet: "Check swarm connection status, nickname, and recent activity",
+    name: "mesh_status",
+    label: "Mesh Status",
+    description: "Get current mesh connection status and recent activity",
+    promptSnippet: "Check mesh connection status, nickname, and recent activity",
     promptGuidelines: [
-      "Use swarm_status when the user asks about swarm status or peers",
-      "Do not use swarm_status to check connectivity before other swarm operations. Rely on memory instead.",
+      "Use mesh_status when the user asks about mesh status or peers",
+      "Do not use mesh_status to check connectivity before other mesh operations. Rely on memory instead.",
     ],
     parameters: Type.Object({}),
     async execute() {
-      const status = getSwarmStatus();
+      const status = getMeshStatus();
       const lines = [
-        `swarm: ${status.swarm ?? "none"}`,
+        `mesh: ${status.mesh ?? "none"}`,
         `name: ${status.name ?? "none"}`,
         `nickname: <${status.nickname ?? "none"}>`,
       ];
-      if (!status.swarm || !status.name) {
+      if (!status.mesh || !status.name) {
         return { content: [{ type: "text", text: lines.join("\n") }], details: status };
       }
       const { count, participants } = getPeers();
@@ -448,10 +446,10 @@ export function registerTools(pi: ExtensionAPI): void {
   });
 
   pi.registerTool({
-    name: "swarm_set_status",
-    label: "Swarm Set Status",
-    description: "Advertise your availability to the swarm (idle / available / busy)",
-    promptSnippet: "Set whether you are accepting swarm work",
+    name: "mesh_set_status",
+    label: "Mesh Set Status",
+    description: "Advertise your availability to the mesh (idle / available / busy)",
+    promptSnippet: "Set whether you are accepting mesh work",
     promptGuidelines: [
       'Set "busy" when you do not want to receive work — senders skip busy peers; set "idle" (open, not working) or "available" (working but open to more) when you are accepting again',
       "Reconsider at task start and finish: this reflects your willingness to take work, not raw activity. Leave it unchanged when your availability did not change",
@@ -463,11 +461,11 @@ export function registerTools(pi: ExtensionAPI): void {
       }),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx: ExtensionContext) {
-      if (!requireAgentSwarm(ctx)) {
-        return toolError("agent-gossip CLI not found on PATH");
+      if (!requireAgentMesh(ctx)) {
+        return toolError("agent-mesh CLI not found on PATH");
       }
-      if (!state.session?.swarm) {
-        return toolError("Not in a swarm. Use swarm_create or swarm_join first.");
+      if (!state.session?.mesh) {
+        return toolError("Not in a mesh. Use mesh_create or mesh_join first.");
       }
       try {
         setSelfStatus(params.status);
@@ -484,23 +482,23 @@ export function registerTools(pi: ExtensionAPI): void {
   });
 
   pi.registerTool({
-    name: "swarm_get_state",
-    label: "Swarm Get State",
+    name: "mesh_get_state",
+    label: "Mesh Get State",
     description:
-      "Read the swarm's current shared-state document (the JSON every member converges on)",
-    promptSnippet: "Read the swarm's shared-state document",
+      "Read the mesh's current shared-state document (the JSON every member converges on)",
+    promptSnippet: "Read the mesh's shared-state document",
     promptGuidelines: [
-      "Use swarm_get_state to read the shared state before deciding your next swarm_apply_merge",
+      "Use mesh_get_state to read the shared state before deciding your next mesh_apply_merge",
       "Read the current state from the returned document — never reconstruct it from memory or earlier turns",
-      "On joining a swarm, let the state settle a moment (anti-entropy backfill), then read it once",
+      "On joining a mesh, let the state settle a moment (anti-entropy backfill), then read it once",
     ],
     parameters: Type.Object({}),
     async execute(_toolCallId, _params, _signal, _onUpdate, ctx: ExtensionContext) {
-      if (!requireAgentSwarm(ctx)) {
-        return toolError("agent-gossip CLI not found on PATH");
+      if (!requireAgentMesh(ctx)) {
+        return toolError("agent-mesh CLI not found on PATH");
       }
-      if (!state.session?.swarm) {
-        return toolError("Not in a swarm. Use swarm_create or swarm_join first.");
+      if (!state.session?.mesh) {
+        return toolError("Not in a mesh. Use mesh_create or mesh_join first.");
       }
       try {
         const document = getStateDocument();
@@ -515,12 +513,12 @@ export function registerTools(pi: ExtensionAPI): void {
   });
 
   pi.registerTool({
-    name: "swarm_apply_merge",
-    label: "Swarm Apply Merge",
-    description: "Apply an RFC 7386 JSON Merge Patch to the swarm's shared state",
-    promptSnippet: "Change the swarm's shared state with a JSON Merge Patch",
+    name: "mesh_apply_merge",
+    label: "Mesh Apply Merge",
+    description: "Apply an RFC 7386 JSON Merge Patch to the mesh's shared state",
+    promptSnippet: "Change the mesh's shared state with a JSON Merge Patch",
     promptGuidelines: [
-      "Use swarm_apply_merge to change the shared state — pass a JSON object merged into the document",
+      "Use mesh_apply_merge to change the shared state — pass a JSON object merged into the document",
       "Each key is set; a null value deletes that key; nested objects merge recursively; the document root is an object and is never replaced",
       'Arrays are replaced wholesale (RFC 7386 has no element append). Model a mutable collection as an object keyed by index ({"0":…,"1":…}) so each element merges/deletes independently',
       "React to a peer's change (the state event), never your own. Drive each turn read → guard → write: read the document, check a turn marker before merging, act only on your turn, then send one merge",
@@ -536,11 +534,11 @@ export function registerTools(pi: ExtensionAPI): void {
       ),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx: ExtensionContext) {
-      if (!requireAgentSwarm(ctx)) {
-        return toolError("agent-gossip CLI not found on PATH");
+      if (!requireAgentMesh(ctx)) {
+        return toolError("agent-mesh CLI not found on PATH");
       }
-      if (!state.session?.swarm) {
-        return toolError("Not in a swarm. Use swarm_create or swarm_join first.");
+      if (!state.session?.mesh) {
+        return toolError("Not in a mesh. Use mesh_create or mesh_join first.");
       }
       try {
         const result = applyStateMerge({ merge: JSON.stringify(params.merge) });
@@ -560,34 +558,34 @@ export function registerTools(pi: ExtensionAPI): void {
   });
 
   pi.registerTool({
-    name: "swarm_leave",
-    label: "Swarm Leave",
-    description: "Leave the current agent swarm",
-    promptSnippet: "Leave the current agent swarm",
+    name: "mesh_leave",
+    label: "Mesh Leave",
+    description: "Leave the current agent mesh",
+    promptSnippet: "Leave the current agent mesh",
     promptGuidelines: [
-      "Use swarm_leave when the user asks to leave the swarm or stop collaborating",
-      "Use swarm_leave when done with swarm operations to clean up",
+      "Use mesh_leave when the user asks to leave the mesh or stop collaborating",
+      "Use mesh_leave when done with mesh operations to clean up",
     ],
     parameters: Type.Object({}),
     async execute() {
-      leaveSwarm();
+      leaveMesh();
       return { content: [{ type: "text", text: "ok" }], details: null };
     },
   });
 
   pi.registerTool({
-    name: "swarm_ping",
-    label: "Swarm Ping",
-    description: "Ping all peers in the swarm and measure round-trip time",
-    promptSnippet: "Ping all peers in the swarm and measure latency",
-    promptGuidelines: ["Use swarm_ping when the user asks to check peer health or connectivity"],
+    name: "mesh_ping",
+    label: "Mesh Ping",
+    description: "Ping all peers in the mesh and measure round-trip time",
+    promptSnippet: "Ping all peers in the mesh and measure latency",
+    promptGuidelines: ["Use mesh_ping when the user asks to check peer health or connectivity"],
     parameters: Type.Object({}),
     async execute(_toolCallId, _params, _signal, _onUpdate, ctx: ExtensionContext) {
-      if (!requireAgentSwarm(ctx)) {
-        return toolError("agent-gossip CLI not found on PATH");
+      if (!requireAgentMesh(ctx)) {
+        return toolError("agent-mesh CLI not found on PATH");
       }
-      if (!state.session?.swarm) {
-        return toolError("Not in a swarm");
+      if (!state.session?.mesh) {
+        return toolError("Not in a mesh");
       }
       try {
         const results = await pingPeers();

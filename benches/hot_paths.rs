@@ -5,11 +5,11 @@
 //! table at the end.
 //!
 //! Run: `cargo task bench` (or `cargo bench --features bench`). The
-//! `bench` feature exposes `agent_gossip::harness::bench`, the in-crate
+//! `bench` feature exposes `agent_mesh::harness::bench`, the in-crate
 //! shim over the otherwise-`pub(crate)` internals.
 
-use agent_gossip::harness::bench::{self as api, BenchConfig, BenchMessage};
-use agent_gossip::{MessageBody, Nickname, SwarmName};
+use agent_mesh::harness::bench::{self as api, BenchConfig, BenchMessage};
+use agent_mesh::{MessageBody, Nickname, MeshName};
 use divan::counter::BytesCount;
 use divan::{Bencher, black_box};
 
@@ -19,11 +19,11 @@ fn main() {
 
 const SEED: [u8; 32] = [7u8; 32];
 const SHORT_NAME: &str = "ab";
-/// 32 chars — the `SwarmName` length cap, so this is the encode worst case.
+/// 32 chars — the `MeshName` length cap, so this is the encode worst case.
 const MAX_NAME: &str = "abcdefghijklmnopqrstuvwxyz012345";
 
 mod crypto {
-    use super::{BenchConfig, Bencher, SEED, SwarmName, api, black_box};
+    use super::{BenchConfig, Bencher, SEED, MeshName, api, black_box};
 
     #[divan::bench]
     fn derive_secret() -> [u8; 32] {
@@ -41,7 +41,7 @@ mod crypto {
     }
 
     fn bench_topic(bencher: Bencher<'_, '_>, config: &BenchConfig) {
-        let name = SwarmName::new("bench-team").unwrap();
+        let name = MeshName::new("bench-team").unwrap();
         bencher
             .bench(|| api::derive_topic_id(black_box(&SEED), black_box(&name), black_box(config)));
     }
@@ -58,12 +58,12 @@ mod crypto {
 }
 
 mod token {
-    use super::{BenchConfig, Bencher, MAX_NAME, SHORT_NAME, SwarmName, api, black_box};
+    use super::{BenchConfig, Bencher, MAX_NAME, SHORT_NAME, MeshName, api, black_box};
 
     fn bench_encode(bencher: Bencher<'_, '_>, raw: &str) {
-        let name = SwarmName::new(raw).unwrap();
+        let name = MeshName::new(raw).unwrap();
         let config = BenchConfig::public();
-        bencher.bench(|| api::swarm_token(black_box(&name), black_box(&config)));
+        bencher.bench(|| api::mesh_token(black_box(&name), black_box(&config)));
     }
 
     #[divan::bench]
@@ -78,9 +78,9 @@ mod token {
 
     #[divan::bench]
     fn decode(bencher: Bencher<'_, '_>) {
-        let name = SwarmName::new(MAX_NAME).unwrap();
-        let token = api::swarm_token(&name, &BenchConfig::public());
-        bencher.bench(|| api::swarm_decode(black_box(&token)));
+        let name = MeshName::new(MAX_NAME).unwrap();
+        let token = api::mesh_token(&name, &BenchConfig::public());
+        bencher.bench(|| api::mesh_decode(black_box(&token)));
     }
 
     #[divan::bench]
@@ -97,35 +97,35 @@ mod token {
 }
 
 mod parsing {
-    use super::{Bencher, MAX_NAME, Nickname, SwarmName, api, black_box};
+    use super::{Bencher, MAX_NAME, Nickname, MeshName, api, black_box};
 
-    // A valid `💬…` token to exercise the accept path of `SwarmId::new`.
+    // A valid `💬…` token to exercise the accept path of `MeshId::new`.
     fn valid_token() -> String {
-        api::swarm_token(
-            &SwarmName::new("bench").unwrap(),
+        api::mesh_token(
+            &MeshName::new("bench").unwrap(),
             &super::BenchConfig::loopback(),
         )
     }
 
     #[divan::bench]
-    fn swarm_id_valid(bencher: Bencher<'_, '_>) {
+    fn mesh_id_valid(bencher: Bencher<'_, '_>) {
         let token = valid_token();
-        bencher.bench(|| api::swarm_id_validate(black_box(&token)));
+        bencher.bench(|| api::mesh_id_validate(black_box(&token)));
     }
 
     #[divan::bench]
-    fn swarm_id_invalid(bencher: Bencher<'_, '_>) {
-        bencher.bench(|| api::swarm_id_validate(black_box("not-an-ahs-id")));
+    fn mesh_id_invalid(bencher: Bencher<'_, '_>) {
+        bencher.bench(|| api::mesh_id_validate(black_box("not-an-ahs-id")));
     }
 
     #[divan::bench]
-    fn swarm_name_valid() -> bool {
-        SwarmName::new(black_box(MAX_NAME)).is_ok()
+    fn mesh_name_valid() -> bool {
+        MeshName::new(black_box(MAX_NAME)).is_ok()
     }
 
     #[divan::bench]
-    fn swarm_name_invalid() -> bool {
-        SwarmName::new(black_box("has space / slash")).is_ok()
+    fn mesh_name_invalid() -> bool {
+        MeshName::new(black_box("has space / slash")).is_ok()
     }
 
     #[divan::bench]

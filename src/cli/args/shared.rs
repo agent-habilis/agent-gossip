@@ -1,11 +1,11 @@
 //! `SharedServerOpts` — the option group flattened into every
 //! long-running server command (`create`, `join`, `discover`). Holds
 //! only genuinely-local, per-process settings; lookup selection is a
-//! swarm-wide property carried in the id (see `create`'s `LookupArgs`).
+//! mesh-wide property carried in the id (see `create`'s `LookupArgs`).
 
 use clap::Parser;
 
-use agent_habilis_gossip::util::consts;
+use agent_habilis_mesh::util::consts;
 
 use super::output::OutputFormat;
 
@@ -30,7 +30,7 @@ pub(crate) struct SharedServerOpts {
 
     /// Cap on live direct connections (the gossip overlay's active-neighbor
     /// set). The mesh holds at most this many QUIC links and relays to peers
-    /// beyond it; swarms up to this size form a full mesh with no membership
+    /// beyond it; meshes up to this size form a full mesh with no membership
     /// churn.
     #[arg(long, default_value_t = consts::GOSSIP_ACTIVE_VIEW_CAPACITY)]
     pub max_peers: usize,
@@ -47,18 +47,18 @@ pub(crate) struct SharedServerOpts {
     pub a2a_serve: Option<u16>,
 
     /// Override the session state-file path. The daemon writes
-    /// `{swarm, name, nickname, participant_count, ready, last_updated}` to a
+    /// `{mesh, name, nickname, participant_count, ready, last_updated}` to a
     /// JSON file on every peer-set change and a ~10s heartbeat, and deletes it
     /// on clean shutdown — for external tools (e.g. a shell statusline) to
     /// render live count + liveness without IPC. Defaults to
-    /// `<runtime-base>/<swarm-prefix>/<nick>.state.json` (beside the socket +
+    /// `<runtime-base>/<mesh-prefix>/<nick>.state.json` (beside the socket +
     /// log); pass this to write elsewhere instead.
     #[arg(long)]
     pub state_file: Option<std::path::PathBuf>,
 
     /// Mirror every frame into DIR and ingest frames other daemons write there —
     /// same-machine or sneakernet exchange over a shared directory. Each frame
-    /// is a content-addressed `.frame` file under `DIR/<swarm-id>/`; a peer
+    /// is a content-addressed `.frame` file under `DIR/<mesh-id>/`; a peer
     /// pointed at the same DIR (a synced folder, or a USB stick carried between
     /// machines) picks them up and anti-entropy backfills the rest. Local
     /// filesystems only — network shares degrade the atomic-rename and
@@ -67,10 +67,10 @@ pub(crate) struct SharedServerOpts {
     pub spool: Option<std::path::PathBuf>,
 
     // ── Hidden tuning knobs ───────────────────────────────────────
-    // Not in `--help`. Production runs on the `agent_habilis_gossip::util::consts`
+    // Not in `--help`. Production runs on the `agent_habilis_mesh::util::consts`
     // defaults below; the subprocess test suite passes these to run with
     // short timings. These replace the former env-var overrides — see
-    // `agent_habilis_gossip::util::tuning`.
+    // `agent_habilis_mesh::util::tuning`.
     /// Peer-eviction silence timeout (seconds).
     #[arg(long, hide = true, default_value_t = consts::ALIVE_TIMEOUT_SECS)]
     pub alive_timeout_secs: u64,
@@ -99,7 +99,7 @@ pub(crate) struct SharedServerOpts {
     #[arg(long, hide = true, default_value_t = consts::BEACON_COHOST_GRACE_SECS)]
     pub beacon_cohost_grace_secs: u64,
 
-    /// How long an `agent-gossip ping` round collects pongs (seconds).
+    /// How long an `agent-mesh ping` round collects pongs (seconds).
     #[arg(long, hide = true, default_value_t = consts::PING_WINDOW_SECS)]
     pub ping_window_secs: u64,
 
@@ -123,7 +123,7 @@ pub(crate) struct SharedServerOpts {
     #[arg(long, hide = true, default_value_t = consts::ADVERTISE_INTERVAL_SECS)]
     pub advertise_interval_secs: u64,
 
-    /// How long a discoverer keeps showing a swarm after its last ad (seconds).
+    /// How long a discoverer keeps showing a mesh after its last ad (seconds).
     #[arg(long, hide = true, default_value_t = consts::DIRECTORY_EXPIRY_SECS)]
     pub directory_expiry_secs: u64,
 
@@ -135,7 +135,7 @@ pub(crate) struct SharedServerOpts {
     #[arg(long, hide = true, default_value_t = consts::ANTIENTROPY_MAX_RESEND)]
     pub antientropy_max_resend: usize,
 
-    /// Byte budget for a swarm's spool subdir before oldest-first GC (bytes).
+    /// Byte budget for a mesh's spool subdir before oldest-first GC (bytes).
     #[arg(long, hide = true, default_value_t = consts::SPOOL_MAX_BYTES)]
     pub spool_max_bytes: u64,
 
@@ -169,9 +169,9 @@ impl SharedServerOpts {
         self.no_interactive || matches!(self.output, OutputFormat::Json)
     }
 
-    /// The process tuning carried by these flags, for [`agent_habilis_gossip::util::tuning::init`].
-    pub(crate) fn tuning(&self) -> agent_habilis_gossip::util::tuning::Tuning {
-        agent_habilis_gossip::util::tuning::Tuning {
+    /// The process tuning carried by these flags, for [`agent_habilis_mesh::util::tuning::init`].
+    pub(crate) fn tuning(&self) -> agent_habilis_mesh::util::tuning::Tuning {
+        agent_habilis_mesh::util::tuning::Tuning {
             alive_timeout_secs: self.alive_timeout_secs,
             sweep_interval_secs: self.sweep_interval_secs,
             heal_interval_secs: self.heal_interval_secs,
@@ -195,9 +195,9 @@ impl SharedServerOpts {
 
     /// The per-session transport policy these flags select. Threaded into the
     /// session config (not the process-global tuning) so it stays a session
-    /// property. See [`agent_habilis_gossip::transport::TransportPolicy`].
-    pub(crate) fn transport_policy(&self) -> agent_habilis_gossip::transport::TransportPolicy {
-        agent_habilis_gossip::transport::TransportPolicy {
+    /// property. See [`agent_habilis_mesh::transport::TransportPolicy`].
+    pub(crate) fn transport_policy(&self) -> agent_habilis_mesh::transport::TransportPolicy {
+        agent_habilis_mesh::transport::TransportPolicy {
             unicast: !self.no_unicast,
             gossip_directed: !self.no_gossip_directed,
             circuit: !self.no_circuit,

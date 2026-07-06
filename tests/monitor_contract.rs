@@ -16,7 +16,7 @@ use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use agent_gossip::Channel;
+use agent_mesh::Channel;
 use common::{
     CONNECT_TIMEOUT, InProcNode, MSG_TIMEOUT, POLL, RECOVERY_TIMEOUT, serial_guard, socket_path,
     tmp_log, wait_until,
@@ -30,8 +30,8 @@ struct JsonNode {
 }
 
 impl JsonNode {
-    /// Spawn `agent-gossip create --no-interactive --output json`, wait for the
-    /// `ready` event, and return the node + swarm identifier.
+    /// Spawn `agent-mesh create --no-interactive --output json`, wait for the
+    /// `ready` event, and return the node + mesh identifier.
     fn create() -> (Self, String) {
         Self::create_with_flags(&[])
     }
@@ -58,28 +58,28 @@ impl JsonNode {
             .expect("failed to spawn create");
 
         let deadline = Instant::now() + CONNECT_TIMEOUT;
-        let mut swarm = None;
+        let mut mesh = None;
         let mut name = None;
         let mut nickname = None;
 
-        while Instant::now() < deadline && (swarm.is_none() || nickname.is_none() || name.is_none())
+        while Instant::now() < deadline && (mesh.is_none() || nickname.is_none() || name.is_none())
         {
             let content = fs::read_to_string(&log).unwrap_or_default();
             for line in content.lines() {
                 if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(line)
                     && parsed["event"] == "ready"
                 {
-                    swarm = parsed["swarm"].as_str().map(ToString::to_string);
+                    mesh = parsed["mesh"].as_str().map(ToString::to_string);
                     name = parsed["name"].as_str().map(ToString::to_string);
                     nickname = parsed["nickname"].as_str().map(ToString::to_string);
                 }
             }
-            if swarm.is_none() || nickname.is_none() || name.is_none() {
+            if mesh.is_none() || nickname.is_none() || name.is_none() {
                 std::thread::sleep(POLL);
             }
         }
 
-        let swarm_id = swarm.expect("timed out waiting for ready event with swarm");
+        let mesh_id = mesh.expect("timed out waiting for ready event with mesh");
         let name = name.expect("timed out waiting for ready event with name");
         let nick = nickname.expect("timed out waiting for ready event with nickname");
         assert_eq!(name, "jtest", "ready event must surface the create --name");
@@ -89,24 +89,24 @@ impl JsonNode {
                 log,
                 nickname: nick,
             },
-            swarm_id,
+            mesh_id,
         )
     }
 
-    /// Spawn `agent-gossip join <swarm> --nickname <nickname> --no-interactive --output json`.
-    fn join(swarm: &str, nickname: &str) -> Self {
-        Self::join_with_flags(swarm, nickname, &[])
+    /// Spawn `agent-mesh join <mesh> --nickname <nickname> --no-interactive --output json`.
+    fn join(mesh: &str, nickname: &str) -> Self {
+        Self::join_with_flags(mesh, nickname, &[])
     }
 
     /// Like [`join`](Self::join) but passes extra hidden tuning flags to the
     /// spawned daemon as `(flag, value)` pairs.
-    fn join_with_flags(swarm: &str, nickname: &str, flags: &[(&str, &str)]) -> Self {
+    fn join_with_flags(mesh: &str, nickname: &str, flags: &[(&str, &str)]) -> Self {
         let log = tmp_log(&format!("json-{nickname}"));
         let file = fs::File::create(&log).unwrap();
         let child = common::test_cmd()
             .args([
                 "join",
-                swarm,
+                mesh,
                 "--nickname",
                 nickname,
                 "--no-interactive",
@@ -125,8 +125,8 @@ impl JsonNode {
         }
     }
 
-    fn wait_ready(&self, swarm: &str) -> bool {
-        let sock = socket_path(swarm, &self.nickname);
+    fn wait_ready(&self, mesh: &str) -> bool {
+        let sock = socket_path(mesh, &self.nickname);
         let deadline = Instant::now() + CONNECT_TIMEOUT;
         while Instant::now() < deadline {
             if std::path::Path::new(&sock).exists() {
@@ -199,37 +199,37 @@ impl Drop for JsonNode {
 // Thin shims over `common::cli_*`. Monitor tests send via IPC to an
 // already-running daemon; success is asserted.
 
-fn cli_send(swarm: &str, nickname: &str, body: &str) -> String {
-    common::cli_msg_checked(swarm, nickname, body)
+fn cli_send(mesh: &str, nickname: &str, body: &str) -> String {
+    common::cli_msg_checked(mesh, nickname, body)
 }
 
 // ── test fixtures ──────────────────────────────────────────────────────────
 
-/// Spawn a 3-peer swarm (1 creator + 2 joiners) and wait for overlay to stabilise.
+/// Spawn a 3-peer mesh (1 creator + 2 joiners) and wait for overlay to stabilise.
 fn three_peers(suffix: &str) -> (JsonNode, JsonNode, JsonNode, String) {
-    let (creator, swarm) = JsonNode::create();
-    let joiner_a = JsonNode::join(&swarm, &format!("mon-{suffix}-a"));
-    let joiner_b = JsonNode::join(&swarm, &format!("mon-{suffix}-b"));
+    let (creator, mesh) = JsonNode::create();
+    let joiner_a = JsonNode::join(&mesh, &format!("mon-{suffix}-a"));
+    let joiner_b = JsonNode::join(&mesh, &format!("mon-{suffix}-b"));
 
-    assert!(creator.wait_ready(&swarm));
-    assert!(joiner_a.wait_ready(&swarm));
-    assert!(joiner_b.wait_ready(&swarm));
+    assert!(creator.wait_ready(&mesh));
+    assert!(joiner_a.wait_ready(&mesh));
+    assert!(joiner_b.wait_ready(&mesh));
 
     std::thread::sleep(Duration::from_secs(3));
 
-    (creator, joiner_a, joiner_b, swarm)
+    (creator, joiner_a, joiner_b, mesh)
 }
 
 // ── tests ───────────────────────────────────────────────────────────────────
 
-/// The `ready` event has the expected JSON shape with `swarm`, `name`,
+/// The `ready` event has the expected JSON shape with `mesh`, `name`,
 /// and `nickname`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_ready_event_shape() {
     let mut creator = InProcNode::create("readyshape").await;
-    let swarm = creator.swarm.clone();
+    let mesh = creator.mesh.clone();
     let nick = creator.nickname.clone();
-    assert!(swarm.starts_with("💬"));
+    assert!(mesh.starts_with("💬"));
     assert!(!nick.is_empty());
 
     let events = creator.json_events();
@@ -239,15 +239,15 @@ async fn test_ready_event_shape() {
         .expect("no ready event found");
 
     assert_eq!(ready["event"], "ready");
-    assert!(ready["swarm"].is_string());
+    assert!(ready["mesh"].is_string());
     assert!(ready["name"].is_string());
     assert!(ready["nickname"].is_string());
-    assert_eq!(ready["swarm"].as_str().unwrap(), swarm);
+    assert_eq!(ready["mesh"].as_str().unwrap(), mesh);
     assert_eq!(ready["name"].as_str().unwrap(), "readyshape");
     assert_eq!(ready["nickname"].as_str().unwrap(), nick);
     // The build self-identifies: the ready event carries the exact version
     // string (crate version + git sha + dirty flag).
-    assert_eq!(ready["version"].as_str().unwrap(), agent_gossip::VERSION);
+    assert_eq!(ready["version"].as_str().unwrap(), agent_mesh::VERSION);
 }
 
 /// Three peers: creator surfaces a membership `joined` presence for
@@ -329,7 +329,7 @@ async fn test_bidirectional_multi_peer() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_self_echo_suppression() {
     let mut creator = InProcNode::create("monecho").await;
-    let mut joiner = InProcNode::join(&creator.swarm, "mon-echo").await;
+    let mut joiner = InProcNode::join(&creator.mesh, "mon-echo").await;
 
     joiner.send("echo test").await;
 
@@ -373,7 +373,7 @@ fn test_peer_departure_event() {
     // tests so concurrent SIGINTs don't starve each other's heal cycles (the
     // same gate gossip_network's reliability tests use).
     let _serial = serial_guard();
-    let (creator, joiner_a, _joiner_b, _swarm) = three_peers("depart");
+    let (creator, joiner_a, _joiner_b, _mesh) = three_peers("depart");
 
     joiner_a.sigint();
 
@@ -407,7 +407,7 @@ fn test_peer_departure_event() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_presence_joined_event_shape() {
     let mut creator = InProcNode::create("monjshape").await;
-    let _joiner = InProcNode::join(&creator.swarm, "mon-joined-shape").await;
+    let _joiner = InProcNode::join(&creator.mesh, "mon-joined-shape").await;
 
     assert!(
         creator
@@ -459,7 +459,7 @@ async fn test_info_event_shape() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_all_lines_are_valid_json() {
     let mut creator = InProcNode::create("monvalid").await;
-    let joiner = InProcNode::join(&creator.swarm, "mon-valid-json").await;
+    let joiner = InProcNode::join(&creator.mesh, "mon-valid-json").await;
 
     joiner.send("json validity test").await;
     assert!(
@@ -468,9 +468,9 @@ async fn test_all_lines_are_valid_json() {
     );
 
     // Every event the daemon would write in `--output json` mode must
-    // render to valid JSON (SwarmId is the bare stderr line → None).
+    // render to valid JSON (MeshId is the bare stderr line → None).
     for event in creator.events() {
-        if let Some(line) = agent_gossip::event_json(event) {
+        if let Some(line) = agent_mesh::event_json(event) {
             assert!(
                 serde_json::from_str::<serde_json::Value>(&line).is_ok(),
                 "rendered line is not valid JSON: {line:?}"
@@ -483,7 +483,7 @@ async fn test_all_lines_are_valid_json() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_message_event_has_all_required_fields() {
     let mut creator = InProcNode::create("monfields").await;
-    let joiner = InProcNode::join(&creator.swarm, "mon-fields").await;
+    let joiner = InProcNode::join(&creator.mesh, "mon-fields").await;
 
     joiner.send("field check").await;
     assert!(
@@ -516,13 +516,13 @@ fn test_creator_departure_peers_survive() {
     // Disruption/recovery test — serialize so concurrent SIGINTs don't starve
     // each other's heal cycles (see `serial_guard`).
     let _serial = serial_guard();
-    let (creator, swarm) = JsonNode::create();
-    let mut joiner_a = JsonNode::join(&swarm, "survive-alpha");
-    let mut joiner_b = JsonNode::join(&swarm, "survive-beta");
+    let (creator, mesh) = JsonNode::create();
+    let mut joiner_a = JsonNode::join(&mesh, "survive-alpha");
+    let mut joiner_b = JsonNode::join(&mesh, "survive-beta");
 
-    assert!(creator.wait_ready(&swarm));
-    assert!(joiner_a.wait_ready(&swarm));
-    assert!(joiner_b.wait_ready(&swarm));
+    assert!(creator.wait_ready(&mesh));
+    assert!(joiner_a.wait_ready(&mesh));
+    assert!(joiner_b.wait_ready(&mesh));
 
     // Wait for gossip overlay to stabilise.
     let count = wait_until(
@@ -550,7 +550,7 @@ fn test_creator_departure_peers_survive() {
     // post-disruption delivery: the creator may have been the relay hub
     // between the two joiners, so re-meshing waits on the heal cadence —
     // budget it with `RECOVERY_TIMEOUT`, not the steady-state `MSG_TIMEOUT`.
-    cli_send(&swarm, "survive-alpha", "still-here");
+    cli_send(&mesh, "survive-alpha", "still-here");
     let delivered = wait_until(|| joiner_b.msg_events().len(), 1, RECOVERY_TIMEOUT);
     assert!(
         delivered >= 1,
@@ -565,11 +565,11 @@ fn test_creator_departure_peers_survive() {
 /// When the creator is hard-killed, joiners should stay alive.
 #[test]
 fn test_creator_hard_kill_peers_survive() {
-    let (mut creator, swarm) = JsonNode::create();
-    let mut joiner_a = JsonNode::join(&swarm, "hk-alpha");
+    let (mut creator, mesh) = JsonNode::create();
+    let mut joiner_a = JsonNode::join(&mesh, "hk-alpha");
 
-    assert!(creator.wait_ready(&swarm));
-    assert!(joiner_a.wait_ready(&swarm));
+    assert!(creator.wait_ready(&mesh));
+    assert!(joiner_a.wait_ready(&mesh));
 
     let count = wait_until(
         || {
@@ -602,15 +602,15 @@ fn test_creator_departure_four_peers_survive() {
     // Disruption/recovery test — serialize so concurrent SIGINTs don't starve
     // each other's heal cycles (see `serial_guard`).
     let _serial = serial_guard();
-    let (creator, swarm) = JsonNode::create();
-    let mut joiner_a = JsonNode::join(&swarm, "four-alpha");
-    let mut joiner_b = JsonNode::join(&swarm, "four-beta");
-    let mut joiner_c = JsonNode::join(&swarm, "four-gamma");
+    let (creator, mesh) = JsonNode::create();
+    let mut joiner_a = JsonNode::join(&mesh, "four-alpha");
+    let mut joiner_b = JsonNode::join(&mesh, "four-beta");
+    let mut joiner_c = JsonNode::join(&mesh, "four-gamma");
 
-    assert!(creator.wait_ready(&swarm));
-    assert!(joiner_a.wait_ready(&swarm));
-    assert!(joiner_b.wait_ready(&swarm));
-    assert!(joiner_c.wait_ready(&swarm));
+    assert!(creator.wait_ready(&mesh));
+    assert!(joiner_a.wait_ready(&mesh));
+    assert!(joiner_b.wait_ready(&mesh));
+    assert!(joiner_c.wait_ready(&mesh));
 
     let count = wait_until(
         || {
@@ -626,7 +626,7 @@ fn test_creator_departure_four_peers_survive() {
     assert!(count >= 3, "creator did not see all 3 joiners");
 
     // Verify cross-joiner messaging works before killing creator.
-    cli_send(&swarm, "four-alpha", "mesh-check");
+    cli_send(&mesh, "four-alpha", "mesh-check");
     let mesh_count = wait_until(
         || {
             joiner_c
@@ -655,14 +655,14 @@ fn test_creator_departure_four_peers_survive() {
     // Verify cross-peer messaging still works. Post-disruption deliveries
     // (the creator just left) re-mesh on the heal cadence, so they get
     // `RECOVERY_TIMEOUT` rather than the steady-state `MSG_TIMEOUT`.
-    cli_send(&swarm, "four-alpha", "post-creator-msg");
+    cli_send(&mesh, "four-alpha", "post-creator-msg");
     let post_count = wait_until(|| joiner_b.msg_events().len(), 1, RECOVERY_TIMEOUT);
     assert!(
         post_count >= 1,
         "joiner_b did not receive message after creator left"
     );
 
-    cli_send(&swarm, "four-beta", "post-creator-relay");
+    cli_send(&mesh, "four-beta", "post-creator-relay");
     let relay_count = wait_until(
         || {
             joiner_c
@@ -688,7 +688,7 @@ fn test_creator_departure_four_peers_survive() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_alive_presence_is_silent_in_json() {
     let mut creator = InProcNode::create("monsilent").await;
-    let mut joiner = InProcNode::join(&creator.swarm, "silent-alpha").await;
+    let mut joiner = InProcNode::join(&creator.mesh, "silent-alpha").await;
 
     // Let connection + any early `joined` chatter + alive ticks settle.
     tokio::time::sleep(Duration::from_secs(3)).await;
@@ -733,23 +733,23 @@ fn test_hard_kill_triggers_peer_timeout() {
 
     // Wait for creator ready.
     let deadline = Instant::now() + CONNECT_TIMEOUT;
-    let mut swarm = None;
-    while Instant::now() < deadline && swarm.is_none() {
+    let mut mesh = None;
+    while Instant::now() < deadline && mesh.is_none() {
         let content = fs::read_to_string(&log).unwrap_or_default();
         for line in content.lines() {
             if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(line)
                 && parsed["event"] == "ready"
             {
-                swarm = parsed["swarm"].as_str().map(ToString::to_string);
+                mesh = parsed["mesh"].as_str().map(ToString::to_string);
             }
         }
         std::thread::sleep(POLL);
     }
-    let swarm = swarm.expect("creator never emitted ready");
+    let mesh = mesh.expect("creator never emitted ready");
 
     // Spawn a joiner we can kill.
-    let mut victim = JsonNode::join(&swarm, "victim-alpha");
-    assert!(victim.wait_ready(&swarm));
+    let mut victim = JsonNode::join(&mesh, "victim-alpha");
+    assert!(victim.wait_ready(&mesh));
 
     // Confirm survivor sees participant_count = 2 in state file.
     let count_deadline = Instant::now() + MSG_TIMEOUT;
@@ -831,15 +831,15 @@ fn test_pre_join_ghost_peer_never_surfaces() {
         ("--sweep-interval-secs", "1"),
     ];
 
-    let (creator, swarm) = JsonNode::create_with_flags(&short_evict);
-    assert!(creator.wait_ready(&swarm), "creator never ready");
+    let (creator, mesh) = JsonNode::create_with_flags(&short_evict);
+    assert!(creator.wait_ready(&mesh), "creator never ready");
 
     // A peer joins, talks, then is hard-killed — all before the late
     // joiner exists. The creator logs its `joined` + `msg`, so
     // anti-entropy will later relay both to the late joiner.
-    let mut ghost = JsonNode::join(&swarm, "jh-ghost");
-    assert!(ghost.wait_ready(&swarm), "ghost never ready");
-    let _ = cli_send(&swarm, &ghost.nickname, "ghost-hist");
+    let mut ghost = JsonNode::join(&mesh, "jh-ghost");
+    assert!(ghost.wait_ready(&mesh), "ghost never ready");
+    let _ = cli_send(&mesh, &ghost.nickname, "ghost-hist");
     assert!(
         wait_until(
             || creator
@@ -860,13 +860,13 @@ fn test_pre_join_ghost_peer_never_surfaces() {
     // earlier second than the late join (off the 1s boundary).
     std::thread::sleep(Duration::from_secs(2));
 
-    let late = JsonNode::join_with_flags(&swarm, "jh-late", &short_evict);
-    assert!(late.wait_ready(&swarm), "late joiner never ready");
+    let late = JsonNode::join_with_flags(&mesh, "jh-late", &short_evict);
+    assert!(late.wait_ready(&mesh), "late joiner never ready");
 
     // Positive control: the still-present creator must surface, proving
     // the late joiner is meshed and the horizon — not connectivity — is
     // what hides the ghost.
-    let _ = cli_send(&swarm, &creator.nickname, "live-after");
+    let _ = cli_send(&mesh, &creator.nickname, "live-after");
     assert!(
         wait_until(
             || late
@@ -980,10 +980,10 @@ async fn create_without_nickname_uses_random_name() {
 /// peer's stream (delivered for relay, never surfaced to a bystander).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_task_event_wire_contract() {
-    let (creator, joiner_a, joiner_b, swarm) = three_peers("ho");
+    let (creator, joiner_a, joiner_b, mesh) = three_peers("ho");
     let worker = joiner_a.nickname.clone();
 
-    let task_id = common::cli_task_create(&swarm, &creator.nickname, &worker, "## Task\nport it");
+    let task_id = common::cli_task_create(&mesh, &creator.nickname, &worker, "## Task\nport it");
 
     // The worker surfaces the incoming `message/send` as a task event.
     let deadline = Instant::now() + MSG_TIMEOUT;
@@ -1030,9 +1030,9 @@ async fn test_task_event_wire_contract() {
 /// current participant exits non-zero with an `unknown participant` error.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_task_unknown_participant_errors() {
-    let (creator, _joiner_a, _joiner_b, swarm) = three_peers("ho-unknown");
+    let (creator, _joiner_a, _joiner_b, mesh) = three_peers("ho-unknown");
 
-    let out = common::cli_task_create_raw(&swarm, &creator.nickname, "ghost-peer", "brief");
+    let out = common::cli_task_create_raw(&mesh, &creator.nickname, "ghost-peer", "brief");
     assert!(
         !out.status.success(),
         "task creation to an unknown participant must exit non-zero"
@@ -1059,10 +1059,10 @@ async fn test_task_idle_timeout_after_owner_dies() {
         ("--task-keepalive-secs", "1"),
         ("--sweep-interval-secs", "1"),
     ];
-    let (creator, swarm) = JsonNode::create_with_flags(timers);
-    let mut joiner = JsonNode::join_with_flags(&swarm, "tk-bob", timers);
-    assert!(creator.wait_ready(&swarm));
-    assert!(joiner.wait_ready(&swarm));
+    let (creator, mesh) = JsonNode::create_with_flags(timers);
+    let mut joiner = JsonNode::join_with_flags(&mesh, "tk-bob", timers);
+    assert!(creator.wait_ready(&mesh));
+    assert!(joiner.wait_ready(&mesh));
 
     // The creator must see the joiner before it can offer.
     let saw_join = wait_until(
@@ -1079,7 +1079,7 @@ async fn test_task_idle_timeout_after_owner_dies() {
     assert!(saw_join >= 1, "creator never saw the joiner join");
 
     // Creator creates the task; the worker (joiner) holds the ball and accepts.
-    let tid = common::cli_task_create(&swarm, &creator.nickname, "tk-bob", "port it");
+    let tid = common::cli_task_create(&mesh, &creator.nickname, "tk-bob", "port it");
     let saw_offer = wait_until(
         || {
             joiner
@@ -1092,7 +1092,7 @@ async fn test_task_idle_timeout_after_owner_dies() {
         MSG_TIMEOUT,
     );
     assert!(saw_offer >= 1, "joiner never surfaced the task message");
-    common::cli_task_status(&swarm, "tk-bob", &tid, "working");
+    common::cli_task_status(&mesh, "tk-bob", &tid, "working");
 
     // Both alive well past the 3s timeout: the joiner's keepalive must keep
     // the task alive — no spurious `task_timeout` on the creator.
@@ -1139,10 +1139,10 @@ async fn test_task_times_out_when_skill_goes_silent() {
         ("--task-keepalive-max-secs", "2"),
         ("--sweep-interval-secs", "1"),
     ];
-    let (creator, swarm) = JsonNode::create_with_flags(timers);
-    let mut joiner = JsonNode::join_with_flags(&swarm, "tk-silent", timers);
-    assert!(creator.wait_ready(&swarm));
-    assert!(joiner.wait_ready(&swarm));
+    let (creator, mesh) = JsonNode::create_with_flags(timers);
+    let mut joiner = JsonNode::join_with_flags(&mesh, "tk-silent", timers);
+    assert!(creator.wait_ready(&mesh));
+    assert!(joiner.wait_ready(&mesh));
 
     let saw_join = wait_until(
         || {
@@ -1160,7 +1160,7 @@ async fn test_task_times_out_when_skill_goes_silent() {
     // Creator creates; the worker (joiner) holds the ball and accepts, then its
     // skill sends nothing more (simulating a crash/abandon while the daemon
     // process keeps running).
-    let tid = common::cli_task_create(&swarm, &creator.nickname, "tk-silent", "port it");
+    let tid = common::cli_task_create(&mesh, &creator.nickname, "tk-silent", "port it");
     let saw_offer = wait_until(
         || {
             joiner
@@ -1173,7 +1173,7 @@ async fn test_task_times_out_when_skill_goes_silent() {
         MSG_TIMEOUT,
     );
     assert!(saw_offer >= 1, "joiner never surfaced the task message");
-    common::cli_task_status(&swarm, "tk-silent", &tid, "working");
+    common::cli_task_status(&mesh, "tk-silent", &tid, "working");
 
     // The ball-owner's daemon is still alive, but its skill is silent past the
     // keepalive-max window, so the keepalive stops and the task is reaped. The
@@ -1205,12 +1205,12 @@ async fn test_task_times_out_when_skill_goes_silent() {
     );
 }
 
-/// `agent-gossip peers` returns the live roster: `ok`, a `count` (participants + 1
+/// `agent-mesh peers` returns the live roster: `ok`, a `count` (participants + 1
 /// for self), and a `participants` array carrying nickname + recency +
 /// quiet flag + reach (direct/gossip) for each known peer.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_peers_roster_shape() {
-    let (creator, joiner_a, joiner_b, swarm) = three_peers("peers");
+    let (creator, joiner_a, joiner_b, mesh) = three_peers("peers");
 
     let reach_values = |roster: &serde_json::Value| -> Vec<String> {
         roster["participants"]
@@ -1227,7 +1227,7 @@ async fn test_peers_roster_shape() {
     let deadline = Instant::now() + MSG_TIMEOUT;
     let mut roster = serde_json::Value::Null;
     while Instant::now() < deadline {
-        roster = serde_json::from_str(&common::cli_peers(&swarm, &creator.nickname))
+        roster = serde_json::from_str(&common::cli_peers(&mesh, &creator.nickname))
             .expect("peers response is JSON");
         if roster["participant_count"].as_u64() == Some(3)
             && reach_values(&roster).iter().any(|reach| reach == "direct")
@@ -1280,7 +1280,7 @@ async fn test_peers_roster_shape() {
     let mut joiner_reach = None;
     while Instant::now() < joiner_deadline {
         let joiner_roster: serde_json::Value =
-            serde_json::from_str(&common::cli_peers(&swarm, &joiner_a.nickname))
+            serde_json::from_str(&common::cli_peers(&mesh, &joiner_a.nickname))
                 .expect("peers response is JSON");
         joiner_reach = creator_reach_from_joiner(&joiner_roster);
         if joiner_reach.as_deref() == Some("direct") {
@@ -1295,21 +1295,21 @@ async fn test_peers_roster_shape() {
     );
 }
 
-/// Poll/stream parity: a `msg` returned by `agent-gossip poll --output json` is the
+/// Poll/stream parity: a `msg` returned by `agent-mesh poll --output json` is the
 /// **byte-identical** object the live `--output json` stream emitted for the
 /// same message — except for the leading `seq` the poll record adds as its
 /// cursor. This is the contract a Monitor-less fallback relies on: parse one
 /// shape, emit `display` verbatim, whether reading the stream or polling.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_poll_record_matches_stream_line() {
-    let (creator, swarm) = JsonNode::create();
-    let joiner = JsonNode::join(&swarm, "parity-joiner");
-    assert!(creator.wait_ready(&swarm));
-    assert!(joiner.wait_ready(&swarm));
+    let (creator, mesh) = JsonNode::create();
+    let joiner = JsonNode::join(&mesh, "parity-joiner");
+    assert!(creator.wait_ready(&mesh));
+    assert!(joiner.wait_ready(&mesh));
     std::thread::sleep(Duration::from_secs(3));
 
     // Joiner sends; the creator surfaces it on its stream and can poll it.
-    cli_send(&swarm, &joiner.nickname, "parity body");
+    cli_send(&mesh, &joiner.nickname, "parity body");
 
     // Find the creator's stream line for this message.
     let deadline = Instant::now() + MSG_TIMEOUT;
@@ -1327,7 +1327,7 @@ async fn test_poll_record_matches_stream_line() {
     let stream_msg = stream_msg.expect("creator stream should surface the message");
 
     // Poll the creator and find the same message.
-    let poll_json = common::cli_poll(&swarm, &creator.nickname, None);
+    let poll_json = common::cli_poll(&mesh, &creator.nickname, None);
     let polled: Vec<serde_json::Value> =
         serde_json::from_str(&poll_json).expect("poll JSON parses");
     let mut poll_msg = polled
@@ -1355,19 +1355,19 @@ async fn test_poll_record_matches_stream_line() {
 /// *and* in its poll buffer.
 #[test]
 fn test_ping_report_is_pollable() {
-    let (creator, swarm) = JsonNode::create_with_flags(&[("--ping-window-secs", "2")]);
-    let joiner = JsonNode::join_with_flags(&swarm, "ping-pollee", &[]);
-    assert!(creator.wait_ready(&swarm));
-    assert!(joiner.wait_ready(&swarm));
+    let (creator, mesh) = JsonNode::create_with_flags(&[("--ping-window-secs", "2")]);
+    let joiner = JsonNode::join_with_flags(&mesh, "ping-pollee", &[]);
+    assert!(creator.wait_ready(&mesh));
+    assert!(joiner.wait_ready(&mesh));
     std::thread::sleep(Duration::from_secs(3));
 
     // Creator arms a ping; the report lands ~2s later on its stream and ring.
-    common::cli_ping(&swarm, &creator.nickname);
+    common::cli_ping(&mesh, &creator.nickname);
 
     let deadline = Instant::now() + MSG_TIMEOUT;
     let mut report = None;
     while Instant::now() < deadline {
-        let poll_json = common::cli_poll(&swarm, &creator.nickname, None);
+        let poll_json = common::cli_poll(&mesh, &creator.nickname, None);
         if let Ok(polled) = serde_json::from_str::<Vec<serde_json::Value>>(&poll_json) {
             report = polled
                 .into_iter()
@@ -1394,23 +1394,23 @@ fn test_ping_report_is_pollable() {
 }
 
 /// Shared-state wire contract over the REAL path the in-process harness bypasses:
-/// `agent-gossip <channel> merge` on one daemon → the change gossips → the peer's
+/// `agent-mesh <channel> merge` on one daemon → the change gossips → the peer's
 /// `--output json` stream carries a `{"event":"<chan>","type":"<chan>",...}`
-/// record with the merge + derived document, and `agent-gossip <channel> get` on the peer
+/// record with the merge + derived document, and `agent-mesh <channel> get` on the peer
 /// reflects it. Run for both channels (`state`, `meta`) to prove parity end to
 /// end.
 fn channel_wire_contract(channel: Channel) {
     let label = common::channel_subcommand(channel);
-    let (creator, swarm) = JsonNode::create();
-    let joiner = JsonNode::join(&swarm, &format!("wc-{label}-joiner"));
-    assert!(creator.wait_ready(&swarm), "creator never served");
-    assert!(joiner.wait_ready(&swarm), "joiner never served");
+    let (creator, mesh) = JsonNode::create();
+    let joiner = JsonNode::join(&mesh, &format!("wc-{label}-joiner"));
+    assert!(creator.wait_ready(&mesh), "creator never served");
+    assert!(joiner.wait_ready(&mesh), "joiner never served");
     // Let the two daemons mesh so the merge gossips live to the joiner.
     std::thread::sleep(Duration::from_secs(3));
 
     // Merge on the creator via the real CLI → Unix socket → daemon path.
     let merge = r#"{"k":"v"}"#;
-    let out = common::cli_channel_merge(channel, &swarm, &creator.nickname, merge);
+    let out = common::cli_channel_merge(channel, &mesh, &creator.nickname, merge);
     assert!(
         out.status.success(),
         "{label} merge should exit 0: {}",
@@ -1426,7 +1426,7 @@ fn channel_wire_contract(channel: Channel) {
     let deadline = Instant::now() + MSG_TIMEOUT;
     let mut event = None;
     while Instant::now() < deadline {
-        let poll = common::cli_poll(&swarm, &joiner.nickname, None);
+        let poll = common::cli_poll(&mesh, &joiner.nickname, None);
         let records: Vec<serde_json::Value> =
             serde_json::from_str(&poll).expect("poll JSON parses");
         // Select OUR merge's event: on the meta channel the daemons' own
@@ -1458,7 +1458,7 @@ fn channel_wire_contract(channel: Channel) {
 
     // The `<chan> get` command on the joiner returns the same document
     // (cards masked on meta, as above).
-    let got = common::cli_channel_get(channel, &swarm, &joiner.nickname);
+    let got = common::cli_channel_get(channel, &mesh, &joiner.nickname);
     let got: serde_json::Value = serde_json::from_str(&got).expect("get stdout is JSON");
     assert_eq!(got["ok"], true);
     let mut got_doc = got["document"].clone();

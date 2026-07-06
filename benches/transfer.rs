@@ -25,8 +25,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-use agent_gossip::embed::{CreateConfig, JoinConfig, SwarmSession};
-use agent_gossip::{JoinTarget, MessageBody, SwarmName};
+use agent_mesh::embed::{CreateConfig, JoinConfig, MeshSession};
+use agent_mesh::{JoinTarget, MessageBody, MeshName};
 use tokio::sync::broadcast::error::RecvError;
 
 /// Zero-padded index width in the `"{index:0N}:"` body prefix — one shared
@@ -45,7 +45,7 @@ const ASCII_SPAN: u64 = 94;
 // Tie the chunk size to the live wire cap so shrinking `MAX_MESSAGE_SIZE`
 // fails the build here instead of silently dropping every send.
 const _: () = assert!(
-    CHUNK_BODY_LEN + 512 <= agent_gossip::MAX_MESSAGE_SIZE,
+    CHUNK_BODY_LEN + 512 <= agent_mesh::MAX_MESSAGE_SIZE,
     "chunk body leaves too little room under MAX_MESSAGE_SIZE for the JSON envelope"
 );
 
@@ -105,16 +105,16 @@ async fn main() {
 
     eprintln!("transfer bench: {target_mb} MB → {chunk_count} chunks of {CHUNK_BODY_LEN} B");
 
-    // Node A creates a loopback swarm.
-    let create_cfg = CreateConfig::new(SwarmName::new("bench").expect("valid name"));
-    let node_a = SwarmSession::create(create_cfg).await.expect("create");
+    // Node A creates a loopback mesh.
+    let create_cfg = CreateConfig::new(MeshName::new("bench").expect("valid name"));
+    let node_a = MeshSession::create(create_cfg).await.expect("create");
 
     let target: JoinTarget = node_a
-        .swarm_id()
+        .mesh_id()
         .as_str()
         .parse()
         .expect("a freshly minted 💬 id parses");
-    let node_b = SwarmSession::join(JoinConfig::new(target))
+    let node_b = MeshSession::join(JoinConfig::new(target))
         .await
         .expect("join");
 

@@ -1,16 +1,16 @@
 //! `a2a` command args. Two families under one subcommand:
 //! - **native A2A messaging** (`a2a call` / `status` / `artifact`) — the
-//!   gossip request/response + worker-push surface for swarm tasks; and
+//!   gossip request/response + worker-push surface for mesh tasks; and
 //! - **the A2A HTTP tunnel** (`a2a expose` / `connect` / `discover`) — bridge a
-//!   local A2A HTTP server to a peer over the swarm (a `🎟️…` ticket, 1:1).
+//!   local A2A HTTP server to a peer over the mesh (a `🎟️…` ticket, 1:1).
 
 use clap::{Parser, Subcommand};
 
 use super::lookup::PublicLookupArgs;
 use super::output::OutputFormat;
 use crate::cli::password::PasswordFlag;
-use agent_habilis_gossip::protocol::swarm::SwarmName;
-use agent_habilis_gossip::protocol::{Nickname, SwarmId};
+use agent_habilis_mesh::protocol::mesh::MeshName;
+use agent_habilis_mesh::protocol::{Nickname, MeshId};
 
 #[derive(Parser, Debug)]
 pub(crate) struct A2aOpts {
@@ -40,12 +40,12 @@ pub(crate) enum A2aAction {
         lookups: PublicLookupArgs,
 
         /// Advertise this bridge's ticket in a directory so a peer can find it
-        /// with `agent-gossip a2a discover` — no `🎟️…` to copy. Bare `--advertise` ⇒ the
+        /// with `agent-mesh a2a discover` — no `🎟️…` to copy. Bare `--advertise` ⇒ the
         /// default `global` directory; `--advertise <name>` ⇒ that named
         /// directory (share the name with the peer). The ad carries the full
         /// bearer ticket, so pair it with `--password`.
         #[arg(long, num_args(0..=1), default_missing_value = "global")]
-        advertise: Option<SwarmName>,
+        advertise: Option<MeshName>,
 
         /// Protect the bridge with a password: the ticket alone no longer
         /// redeems — consumers must present the password (so a passworded ticket
@@ -70,10 +70,10 @@ pub(crate) enum A2aAction {
     ///
     /// Binds `127.0.0.1:PORT` (an ephemeral port unless `--port` is given) that
     /// an unmodified A2A client/SDK points at; forwards every request to the
-    /// exposer over the swarm and rewrites the Agent Card so the client
+    /// exposer over the mesh and rewrites the Agent Card so the client
     /// discovers the local bridge, not the unreachable origin.
     Connect {
-        /// The `🎟️…` ticket printed by `agent-gossip a2a expose`.
+        /// The `🎟️…` ticket printed by `agent-mesh a2a expose`.
         ticket: String,
 
         /// Local port to bind the bridge on (default: an ephemeral port — the
@@ -102,7 +102,7 @@ pub(crate) enum A2aAction {
         /// The directory to browse — the name the exposer passed to
         /// `--advertise` (omit for the default `global` directory).
         #[arg(long)]
-        directory: Option<SwarmName>,
+        directory: Option<MeshName>,
 
         /// Local port to bind the bridge on when a bridge is picked (default: an
         /// ephemeral port).
@@ -130,24 +130,24 @@ pub(crate) enum A2aAction {
     ///
     /// With `--to <peer>` this is a directed request/response over gossip: the
     /// peer serves a **safe method subset** — `GetTask`, `ListTasks`,
-    /// `CancelTask` (a task you're a party to), `swarm/state.get`,
-    /// `swarm/meta.get`, and `SendMessage` (task creation: no `--task-id`
+    /// `CancelTask` (a task you're a party to), `mesh/state.get`,
+    /// `mesh/meta.get`, and `SendMessage` (task creation: no `--task-id`
     /// opens a task the peer mints and returns; `--task-id` is a follow-up).
     /// Mutating global ops are refused.
     ///
     /// **Without `--to`** and `--method SendMessage`, `--text` is broadcast to
-    /// the whole swarm (A2A is point-to-point, so a swarm-wide message declares
+    /// the whole mesh (A2A is point-to-point, so a mesh-wide message declares
     /// itself). Exits non-zero when the response is an error or times out.
     Call {
-        /// Swarm identifier (💬...)
+        /// Mesh identifier (💬...)
         #[arg(long)]
-        swarm: SwarmId,
+        mesh: MeshId,
 
         /// Nickname of the local agent (must have a running join/create session)
         #[arg(long)]
         nickname: Nickname,
 
-        /// The peer to call. Omit for a swarm broadcast `SendMessage`.
+        /// The peer to call. Omit for a mesh broadcast `SendMessage`.
         #[arg(long)]
         to: Option<Nickname>,
 
@@ -179,9 +179,9 @@ pub(crate) enum A2aAction {
     /// task you're serving to `working` / `input-required` / `completed` /
     /// `failed`. Pushed fire-and-forget to the other party.
     Status {
-        /// Swarm identifier (💬...)
+        /// Mesh identifier (💬...)
         #[arg(long)]
-        swarm: SwarmId,
+        mesh: MeshId,
         /// Nickname of the local agent (must have a running join/create session)
         #[arg(long)]
         nickname: Nickname,
@@ -200,9 +200,9 @@ pub(crate) enum A2aAction {
     /// Worker-emit a task `TaskArtifactUpdate` (the result) for a task you're
     /// serving. Parks the task in `input-required` for the initiator's approval.
     Artifact {
-        /// Swarm identifier (💬...)
+        /// Mesh identifier (💬...)
         #[arg(long)]
-        swarm: SwarmId,
+        mesh: MeshId,
         /// Nickname of the local agent (must have a running join/create session)
         #[arg(long)]
         nickname: Nickname,
@@ -214,7 +214,7 @@ pub(crate) enum A2aAction {
         text: Option<String>,
         /// Attach a file as the result, transferred peer-to-peer over the blob
         /// channel and referenced as a Part.url. For binaries too large to
-        /// inline; the receiver fetches it with `agent-gossip a2a fetch <🎟️…>`.
+        /// inline; the receiver fetches it with `agent-mesh a2a fetch <🎟️…>`.
         #[arg(long)]
         file: Option<std::path::PathBuf>,
         /// Filename to advertise for --file (defaults to the file's own name).
@@ -229,7 +229,7 @@ pub(crate) enum A2aAction {
     /// file part). A direct peer-to-peer transfer, streamed to disk. With
     /// `--nickname` it lands in that session's `<nick>.recv/` folder (named by
     /// the content hash) and prints the path; otherwise it streams to stdout —
-    /// redirect or pipe, e.g. `agent-gossip a2a fetch 🎟️… > report.pdf`.
+    /// redirect or pipe, e.g. `agent-mesh a2a fetch 🎟️… > report.pdf`.
     Fetch {
         /// The `🎟️…` blob ticket copied from a received file part's `url`.
         ticket: String,

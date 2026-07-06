@@ -1,4 +1,4 @@
-//! `agent-gossip a2a discover`: open a named directory, collect advertised a2a bridge
+//! `agent-mesh a2a discover`: open a named directory, collect advertised a2a bridge
 //! tickets, and either run the live picker (binding a local endpoint on the
 //! chosen bridge) or stream `ticket_found`/`ticket_lost` JSON for an agent. The
 //! collector lives in [`crate::a2a::TicketDirectory`]; the terminal machinery in
@@ -9,7 +9,7 @@ use std::future::Future;
 use anyhow::Result;
 
 use crate::a2a::{TicketDirectory, TicketDirectoryEvent, TicketListing};
-use agent_habilis_gossip::protocol::swarm::{DEFAULT_DIRECTORY, LookupSet, SwarmName};
+use agent_habilis_mesh::protocol::mesh::{DEFAULT_DIRECTORY, LookupSet, MeshName};
 
 use super::picker::{self, PickerOutcome, PickerText, interrupted, sigterm_stream};
 
@@ -17,27 +17,27 @@ use super::picker::{self, PickerOutcome, PickerText, interrupted, sigterm_stream
 /// whole multi-hundred-char token (the pick carries the full one).
 const TICKET_PREVIEW_CHARS: usize = 16;
 
-/// Run `agent-gossip a2a discover`: browse `directory` for advertised bridges. Human +
+/// Run `agent-mesh a2a discover`: browse `directory` for advertised bridges. Human +
 /// TTY runs the picker and, on a pick, binds the local bridge (`a2a connect`);
 /// `json` (or no TTY) streams directory changes and returns.
 ///
 /// # Errors
 /// The directory session cannot be established, or the post-pick connect fails.
 pub(super) async fn discover(
-    directory: Option<SwarmName>,
+    directory: Option<MeshName>,
     port: Option<u16>,
     lookups: LookupSet,
     password: Option<super::password::PasswordFlag>,
     json: bool,
 ) -> Result<()> {
     let name = directory.unwrap_or_else(|| {
-        SwarmName::new(DEFAULT_DIRECTORY).expect("the default directory name is valid")
+        MeshName::new(DEFAULT_DIRECTORY).expect("the default directory name is valid")
     });
     let mut discoverer = TicketDirectory::open(name.clone(), lookups).await?;
     // Route the directory session's logs to its per-member file so the picker /
     // JSON stream stays clean.
-    if let Some((swarm, nickname)) = discoverer.session_identity() {
-        agent_habilis_gossip::logging::attach(swarm, nickname);
+    if let Some((mesh, nickname)) = discoverer.session_identity() {
+        agent_habilis_mesh::logging::attach(mesh, nickname);
     }
     let mut events = discoverer
         .events()
@@ -49,7 +49,7 @@ pub(super) async fn discover(
                 let _ = discoverer.close().await;
                 // Leave the directory's log file behind so the connect path logs
                 // under its own identity.
-                agent_habilis_gossip::logging::detach();
+                agent_habilis_mesh::logging::detach();
                 let password = resolve_pick_password(password, &ticket)?;
                 return interruptible(crate::a2a::connect(&ticket, port, json, password)).await;
             }
@@ -81,7 +81,7 @@ pub(super) async fn discover(
 fn resolve_pick_password(
     password: Option<super::password::PasswordFlag>,
     ticket: &str,
-) -> Result<Option<agent_habilis_gossip::protocol::crypto::Password>> {
+) -> Result<Option<agent_habilis_mesh::protocol::crypto::Password>> {
     match password {
         None if crate::a2a::ticket_requires_password(ticket) => {
             Ok(Some(super::password::require_password(false, "ticket")?))
@@ -135,7 +135,7 @@ async fn run_ticket_picker(
     use crate::output::style;
 
     let (yellow, reset) = if crate::output::stdout_color() {
-        (style::SWARM, style::RESET)
+        (style::MESH, style::RESET)
     } else {
         ("", "")
     };
@@ -155,7 +155,7 @@ async fn run_ticket_picker(
         let lock = if listing.password { "🔒 " } else { "" };
         format!(
             "{bold}{yellow}{label}{reset}  {lock}{preview}…  {}",
-            agent_habilis_gossip::util::clock::local_datetime(listing.first_seen_unix),
+            agent_habilis_mesh::util::clock::local_datetime(listing.first_seen_unix),
         )
     };
     picker::run(

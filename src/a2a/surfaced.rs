@@ -17,7 +17,7 @@ pub struct SurfacedEvent {
 /// A bounded, seq-ordered record of everything the daemon **surfaced** to the
 /// operator/agent — the history `poll` / `fetch_messages` drain.
 ///
-/// Deliberately distinct from [`agent_habilis_gossip::daemon::message_log::MessageLog`]: that is
+/// Deliberately distinct from [`agent_habilis_mesh::daemon::message_log::MessageLog`]: that is
 /// the cross-node anti-entropy buffer, whose retention is a deterministic
 /// function of the message *set* (`eviction_key`) so every node agrees on what
 /// survives. This buffer is **local**: a single monotonic `seq` records
@@ -173,7 +173,7 @@ pub(crate) struct SurfacedState {
     surfaced_events: SurfacedEvents,
     /// Parked long-poll waiters: blocking `poll` / `fetch_messages` calls that
     /// found the buffer empty and are waiting for a new surfaced event or their
-    /// deadline. Bounded by [`POLL_WAITERS_CAP`](agent_habilis_gossip::util::consts::POLL_WAITERS_CAP);
+    /// deadline. Bounded by [`POLL_WAITERS_CAP`](agent_habilis_mesh::util::consts::POLL_WAITERS_CAP);
     /// fulfilled right after a drain, expired by the loop's poll-deadline arm.
     poll_waiters: Vec<PollWaiter>,
 }
@@ -182,7 +182,7 @@ impl SurfacedState {
     pub(crate) fn new() -> Self {
         Self {
             surfaced_events: SurfacedEvents::new(
-                agent_habilis_gossip::util::consts::SURFACED_EVENTS_CAP,
+                agent_habilis_mesh::util::consts::SURFACED_EVENTS_CAP,
             ),
             poll_waiters: Vec::new(),
         }
@@ -216,9 +216,9 @@ impl SurfacedState {
         // Cap the response to the fixed IPC window. The ring is sized to match
         // the window (see `SURFACED_EVENTS_CAP`), so in the steady state this is
         // a no-op; it only trims if a future ring grows past the window.
-        if events.len() > agent_habilis_gossip::util::consts::POLL_RESPONSE_MAX_MSGS {
+        if events.len() > agent_habilis_mesh::util::consts::POLL_RESPONSE_MAX_MSGS {
             let drop_count =
-                events.len() - agent_habilis_gossip::util::consts::POLL_RESPONSE_MAX_MSGS;
+                events.len() - agent_habilis_mesh::util::consts::POLL_RESPONSE_MAX_MSGS;
             events.drain(0..drop_count);
             tracing::debug!(dropped = drop_count, "poll: response capped to the window");
         }
@@ -241,7 +241,7 @@ impl SurfacedState {
         deadline: TokioInstant,
         responder: PollResponder,
     ) -> Option<PollResponder> {
-        if self.poll_waiters.len() >= agent_habilis_gossip::util::consts::POLL_WAITERS_CAP {
+        if self.poll_waiters.len() >= agent_habilis_mesh::util::consts::POLL_WAITERS_CAP {
             return Some(responder);
         }
         let wait_from = after.unwrap_or_else(|| self.surfaced_events.latest_seq());
@@ -280,7 +280,7 @@ impl SurfacedState {
             return;
         }
         let deadline =
-            now + Duration::from_millis(agent_habilis_gossip::util::tuning::longpoll_max_ms());
+            now + Duration::from_millis(agent_habilis_mesh::util::tuning::longpoll_max_ms());
         if let Some(unregistered) = self.register_poll_waiter(after, deadline, responder) {
             unregistered.send_empty(); // registry full → degrade to immediate
         }
@@ -357,7 +357,7 @@ impl SurfacedState {
 mod tests {
     use super::{PollResponder, SurfacedEvents, SurfacedState};
     use crate::output::OutputEvent;
-    use agent_habilis_gossip::protocol::Nickname;
+    use agent_habilis_mesh::protocol::Nickname;
     use std::time::Duration;
     use tokio::time::Instant as TokioInstant;
 
@@ -522,7 +522,7 @@ mod tests {
         let mut surfaced = SurfacedState::new();
         let deadline = TokioInstant::now() + Duration::from_secs(30);
         // Fill the registry to the cap with throwaway waiters.
-        for _ in 0..agent_habilis_gossip::util::consts::POLL_WAITERS_CAP {
+        for _ in 0..agent_habilis_mesh::util::consts::POLL_WAITERS_CAP {
             let (tx, _rx) = tokio::sync::oneshot::channel::<String>();
             assert!(
                 surfaced
@@ -540,7 +540,7 @@ mod tests {
         );
         assert_eq!(
             surfaced.poll_waiters.len(),
-            agent_habilis_gossip::util::consts::POLL_WAITERS_CAP
+            agent_habilis_mesh::util::consts::POLL_WAITERS_CAP
         );
     }
 
@@ -574,7 +574,7 @@ mod tests {
         // Empty buffer, long → parked with deadline now + longpoll_max_ms().
         surfaced.poll_or_register(None, true, now, PollResponder::Json(tx));
         assert_eq!(surfaced.poll_waiters.len(), 1, "parked");
-        let cap = Duration::from_millis(agent_habilis_gossip::util::tuning::longpoll_max_ms());
+        let cap = Duration::from_millis(agent_habilis_mesh::util::tuning::longpoll_max_ms());
         surfaced.expire_poll_waiters(now + cap - Duration::from_millis(1));
         assert_eq!(
             surfaced.poll_waiters.len(),

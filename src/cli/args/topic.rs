@@ -1,11 +1,11 @@
 use clap::Parser;
 
-use agent_habilis_gossip::protocol::Nickname;
+use agent_habilis_mesh::protocol::Nickname;
 
 use super::shared::SharedServerOpts;
 
 /// Reject an empty / whitespace-only topic string at parse time — it would
-/// otherwise hash to a real (but useless, un-guessable-on-purpose) swarm.
+/// otherwise hash to a real (but useless, un-guessable-on-purpose) mesh.
 fn non_empty_string(raw: &str) -> Result<String, String> {
     if raw.trim().is_empty() {
         return Err("topic string must not be empty".to_owned());
@@ -15,7 +15,7 @@ fn non_empty_string(raw: &str) -> Result<String, String> {
 
 #[derive(Parser, Debug)]
 pub(crate) struct TopicOpts {
-    /// Any string — hashed into a deterministic **public** swarm. The same
+    /// Any string — hashed into a deterministic **public** mesh. The same
     /// string always joins the same topic, on any machine, with no id to
     /// share. Compared byte-for-byte after trimming surrounding whitespace, so
     /// `http://…` and `https://…`, or `Repo` and `repo`, are different topics.
@@ -67,19 +67,19 @@ mod tests {
 
     #[test]
     fn topic_parses_string_and_nickname() {
-        let opts = topic_opts(&["agent-gossip", "topic", "agent-habilis", "--nickname", "me"]);
+        let opts = topic_opts(&["agent-mesh", "topic", "agent-habilis", "--nickname", "me"]);
         assert_eq!(opts.string, "agent-habilis");
         assert_eq!(
             opts.nickname
                 .as_ref()
-                .map(agent_habilis_gossip::protocol::Nickname::as_str),
+                .map(agent_habilis_mesh::protocol::Nickname::as_str),
             Some("me")
         );
     }
 
     #[test]
     fn topic_accepts_leading_hyphen_string() {
-        let opts = topic_opts(&["agent-gossip", "topic", "-release-2026"]);
+        let opts = topic_opts(&["agent-mesh", "topic", "-release-2026"]);
         assert_eq!(opts.string, "-release-2026");
     }
 
@@ -88,7 +88,7 @@ mod tests {
     #[test]
     fn topic_accepts_string_after_end_of_flags() {
         let opts = topic_opts(&[
-            "agent-gossip",
+            "agent-mesh",
             "topic",
             "--nickname",
             "me",
@@ -100,14 +100,14 @@ mod tests {
 
     #[test]
     fn topic_string_is_required() {
-        assert!(Cli::try_parse_from(["agent-gossip", "topic"]).is_err());
+        assert!(Cli::try_parse_from(["agent-mesh", "topic"]).is_err());
     }
 
     #[test]
     fn topic_rejects_empty_string() {
-        assert!(Cli::try_parse_from(["agent-gossip", "topic", ""]).is_err());
+        assert!(Cli::try_parse_from(["agent-mesh", "topic", ""]).is_err());
         assert!(
-            Cli::try_parse_from(["agent-gossip", "topic", "   "]).is_err(),
+            Cli::try_parse_from(["agent-mesh", "topic", "   "]).is_err(),
             "whitespace-only must reject"
         );
     }

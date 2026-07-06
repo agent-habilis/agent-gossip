@@ -1,4 +1,4 @@
-//! Stage the integration artifacts the `agent-gossip setup` installer embeds.
+//! Stage the integration artifacts the `agent-mesh setup` installer embeds.
 //!
 //! It **stages a filtered copy of `pi-extension/`** into `OUT_DIR` so
 //! `src/cli/agent.rs` can `include_dir!` the TS source *without* the 200 MB+
@@ -7,7 +7,7 @@
 //! artifact forces a rebuild (`include_dir!` is otherwise untracked on stable).
 //!
 //! The git version stamp (`VERGEN_GIT_*`, feeding `util::version::VERSION`)
-//! lives in the engine crate's build script (`agent-habilis-gossip/build.rs`),
+//! lives in the engine crate's build script (`agent-habilis-mesh/build.rs`),
 //! since `util::version` is an engine module.
 
 use std::collections::hash_map::DefaultHasher;
@@ -59,7 +59,7 @@ fn copy_filtered(src: &Path, dest: &Path) {
 }
 
 /// Hash the (skip-filtered) contents of every embedded dir and publish it as
-/// `AGENT_GOSSIP_EMBED_FINGERPRINT`. `setup.rs` reads it via `env!`, so a changed
+/// `AGENT_MESH_EMBED_FINGERPRINT`. `setup.rs` reads it via `env!`, so a changed
 /// fingerprint recompiles that module and re-expands the embeds; the
 /// `rerun-if-changed` lines make this script recompute when a source changes.
 fn emit_embed_fingerprint() {
@@ -69,7 +69,7 @@ fn emit_embed_fingerprint() {
         hash_dir(Path::new(dir), &mut hasher);
     }
     println!(
-        "cargo:rustc-env=AGENT_GOSSIP_EMBED_FINGERPRINT={:016x}",
+        "cargo:rustc-env=AGENT_MESH_EMBED_FINGERPRINT={:016x}",
         hasher.finish()
     );
 }

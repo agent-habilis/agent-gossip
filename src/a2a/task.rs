@@ -20,15 +20,15 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use agent_habilis_gossip::transport::SwarmSender;
+use agent_habilis_mesh::transport::MeshSender;
 use bytes::Bytes;
 
 use crate::a2a::app::A2aApp;
 use crate::output;
-use agent_habilis_gossip::daemon::state::EventLoopState;
-use agent_habilis_gossip::protocol::{Message, MessageKind, Nickname, SwarmId};
-use agent_habilis_gossip::util::consts::TASK_CONTENT_CAP;
-use agent_habilis_gossip::util::tuning::{
+use agent_habilis_mesh::daemon::state::EventLoopState;
+use agent_habilis_mesh::protocol::{Message, MessageKind, Nickname, MeshId};
+use agent_habilis_mesh::util::consts::TASK_CONTENT_CAP;
+use agent_habilis_mesh::util::tuning::{
     task_keepalive_max_secs, task_keepalive_secs, task_timeout_secs,
 };
 
@@ -408,12 +408,12 @@ fn advance(rec: &mut TaskRecord, kind: LegKind, mine: bool) {
 /// metadata) so the peer converges; the GC pass keeps `state.tasks` bounded
 /// (a terminal record older than the timeout is past the dedup window — no
 /// further leg for that task will arrive, so it is safe to drop). The task
-/// analogue of [`agent_habilis_gossip::lifecycle::heartbeat::tick_sweep`].
+/// analogue of [`agent_habilis_mesh::lifecycle::heartbeat::tick_sweep`].
 pub(crate) async fn tick_task_sweep(
     state: &mut EventLoopState,
     app: &mut A2aApp,
-    sender: &SwarmSender,
-    swarm: &SwarmId,
+    sender: &MeshSender,
+    mesh: &MeshId,
     author: &Nickname,
     out: &output::Output,
 ) {
@@ -435,13 +435,13 @@ pub(crate) async fn tick_task_sweep(
         out.task_timeout(&task_id);
         tracing::debug!(%task_id, %peer, "task evicted (idle-debounce timeout)");
         let update = gossip::status_update(
-            swarm,
+            mesh,
             &task_id,
             TaskState::Canceled,
             None,
             Some(serde_json::json!({ META_REASON: "timeout" })),
         );
-        broadcast_status(state, sender, swarm, author, &peer, &task_id, &update).await;
+        broadcast_status(state, sender, mesh, author, &peer, &task_id, &update).await;
     }
 
     // GC: drop terminal records past the dedup window so the registry stays
@@ -459,7 +459,7 @@ pub(crate) async fn tick_task_sweep(
     if let Some(server) = app.blob_server.as_ref() {
         for task_id in &reaped {
             server
-                .evict_task(&agent_habilis_gossip::blob::ContentId::new(
+                .evict_task(&agent_habilis_mesh::blob::ContentId::new(
                     task_id.as_str(),
                 ))
                 .await;
@@ -475,13 +475,13 @@ pub(crate) async fn tick_task_sweep(
 /// has driven a leg recently — so a silent owner (deciding, executing,
 /// reviewing) does not wrongly time out, while a *crashed* skill's task is
 /// no longer covered and the peer's debounce reaps it. The task analogue of
-/// [`agent_habilis_gossip::lifecycle::heartbeat::tick_alive`]. See
+/// [`agent_habilis_mesh::lifecycle::heartbeat::tick_alive`]. See
 /// [`TaskRecord::should_keepalive`].
 pub(crate) async fn tick_task_keepalive(
     state: &mut EventLoopState,
     app: &mut A2aApp,
-    sender: &SwarmSender,
-    swarm: &SwarmId,
+    sender: &MeshSender,
+    mesh: &MeshId,
     author: &Nickname,
 ) {
     /// `(task_id, peer, state, last_fraction)` for one keepalive-due task.
@@ -506,13 +506,13 @@ pub(crate) async fn tick_task_keepalive(
 
     for (task_id, peer, task_state, fraction) in due {
         let update = gossip::status_update(
-            swarm,
+            mesh,
             &task_id,
             task_state,
             None,
             Some(gossip::beat_metadata(fraction)),
         );
-        broadcast_status(state, sender, swarm, author, &peer, &task_id, &update).await;
+        broadcast_status(state, sender, mesh, author, &peer, &task_id, &update).await;
         if let Some(rec) = app.tasks.get_mut(&task_id) {
             rec.last_activity = Instant::now();
         }
@@ -524,8 +524,8 @@ pub(crate) async fn tick_task_keepalive(
 /// like any other plumbing broadcast — the payloads are small literals.
 async fn broadcast_status(
     state: &EventLoopState,
-    sender: &SwarmSender,
-    swarm: &SwarmId,
+    sender: &MeshSender,
+    mesh: &MeshId,
     author: &Nickname,
     peer: &Nickname,
     // The task id rides inside the status payload body (8.0); the envelope no
@@ -544,11 +544,11 @@ async fn broadcast_status(
         return;
     };
     let kind = MessageKind::App {
-        tag: agent_habilis_gossip::protocol::AppTag::from(wire::STATUS),
+        tag: agent_habilis_mesh::protocol::AppTag::from(wire::STATUS),
         to: Some(peer.clone()),
         corr: None,
     };
-    let msg = Message::new_frame(swarm, author, kind, body).signed(&state.identity);
+    let msg = Message::new_frame(mesh, author, kind, body).signed(&state.identity);
     if let Ok(bytes) = msg.serialize() {
         let _ = sender.broadcast(Bytes::from(bytes)).await;
     }
@@ -558,7 +558,7 @@ async fn broadcast_status(
 mod tests {
     use super::{LegInfo, LegKind, TaskRole, TaskState, apply};
     use crate::a2a::TaskId;
-    use agent_habilis_gossip::protocol::Nickname;
+    use agent_habilis_mesh::protocol::Nickname;
     use std::collections::HashMap;
     use std::time::{Duration, Instant};
 
@@ -616,7 +616,7 @@ mod tests {
 
     /// Regression for findings ① (daemon panic) + ② (state divergence): a
     /// worker's OWN echoed artifact leg carries a **sealed** body on a
-    /// passworded swarm, so nothing may recover the task id by re-parsing it.
+    /// passworded mesh, so nothing may recover the task id by re-parsing it.
     /// Threading the id into `ingest` means the self-echo still advances the
     /// record to `input-required` (not stuck `working`); and the app surfaces
     /// the *plaintext* logical frame (never the sealed wire body), so its JSON
@@ -628,12 +628,12 @@ mod tests {
     /// ciphertext) is not a valid payload.
     #[test]
     fn own_sealed_artifact_echo_advances_and_renders_without_panic() {
-        use agent_habilis_gossip::protocol::{AppTag, Message, MessageBody, SwarmId};
+        use agent_habilis_mesh::protocol::{AppTag, Message, MessageBody, MeshId};
 
         let mut tasks = HashMap::new();
         let now = Instant::now();
         let task_id = tid();
-        let swarm = SwarmId::from("💬test");
+        let mesh = MeshId::from("💬test");
 
         // Worker receives the offer (⇒ Receiver) and commits to `working`.
         apply(&mut tasks, &leg(LegKind::Offer, false), now);
@@ -647,7 +647,7 @@ mod tests {
         // The worker's own echoed artifact leg: directed, body is a sealed
         // ciphertext stand-in that does not parse as a `TaskArtifactUpdate`.
         let sealed = Message::new_app(
-            &swarm,
+            &mesh,
             &Nickname::from("worker-bot"),
             AppTag::from(crate::a2a::wire::ARTIFACT),
             Some(Nickname::from("calm-otter")),
@@ -671,9 +671,9 @@ mod tests {
         // ①: the app surfaces the *plaintext* logical frame it built (the same
         // `task_id`, unsealed), so rendering that self-echo as JSON must not
         // panic and must carry the id.
-        let payload = crate::a2a::gossip::artifact_update(&swarm, &task_id, "result text");
+        let payload = crate::a2a::gossip::artifact_update(&mesh, &task_id, "result text");
         let plaintext = Message::new_app(
-            &swarm,
+            &mesh,
             &Nickname::from("worker-bot"),
             AppTag::from(crate::a2a::wire::ARTIFACT),
             Some(Nickname::from("calm-otter")),

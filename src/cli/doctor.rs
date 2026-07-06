@@ -5,20 +5,20 @@ use anyhow::Result;
 use serde::Serialize;
 
 use crate::a2a::ipc::IpcCommand;
-use agent_habilis_gossip::lookup::{self, NetworkCapability};
-use agent_habilis_gossip::protocol::SwarmId;
-use agent_habilis_gossip::protocol::swarm::{RelayChoice, Swarm};
-use agent_habilis_gossip::transport::ipc;
-use agent_habilis_gossip::util::output;
+use agent_habilis_mesh::lookup::{self, NetworkCapability};
+use agent_habilis_mesh::protocol::MeshId;
+use agent_habilis_mesh::protocol::mesh::{RelayChoice, Mesh};
+use agent_habilis_mesh::transport::ipc;
+use agent_habilis_mesh::util::output;
 
 use super::agent::{self, AgentState};
 use super::args::{DoctorOpts, OutputFormat};
 
 /// Budget for the machine net-report (build endpoint + first completed report).
 const CAPABILITY_TIMEOUT: Duration = Duration::from_secs(6);
-/// Per-rung relay reachability budget for `--swarm` ladder probing.
+/// Per-rung relay reachability budget for `--mesh` ladder probing.
 const RUNG_TIMEOUT: Duration = Duration::from_secs(2);
-/// Budget for the `--swarm` rendezvous connect-probe.
+/// Budget for the `--mesh` rendezvous connect-probe.
 const RENDEZVOUS_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -108,8 +108,8 @@ impl Report {
 }
 
 pub(super) async fn run(opts: DoctorOpts) -> Result<()> {
-    let report = match opts.swarm {
-        Some(swarm) => swarm_report(&swarm, opts.no_probe).await,
+    let report = match opts.mesh {
+        Some(mesh) => mesh_report(&mesh, opts.no_probe).await,
         None => machine_report(opts.no_probe).await,
     };
 
@@ -134,16 +134,16 @@ pub(super) async fn run(opts: DoctorOpts) -> Result<()> {
 async fn machine_report(no_probe: bool) -> Report {
     let mut sections = vec![environment_section(), integrations_section()];
     sections.push(network_section(no_probe).await);
-    sections.push(active_swarms_section().await);
+    sections.push(active_meshes_section().await);
     Report::new("machine", sections)
 }
 
 fn environment_section() -> Section {
     let checks = vec![
         Check::new(
-            "agent-gossip",
+            "agent-mesh",
             Verdict::Ok,
-            agent_habilis_gossip::util::version::VERSION,
+            agent_habilis_mesh::util::version::VERSION,
         ),
         Check::new(
             "platform",
@@ -153,12 +153,12 @@ fn environment_section() -> Section {
         Check::new(
             "log dir",
             Verdict::Ok,
-            output::home_path(&agent_habilis_gossip::util::logs::log_dir()),
+            output::home_path(&agent_habilis_mesh::util::logs::log_dir()),
         ),
         Check::new(
             "runtime dir",
             Verdict::Ok,
-            output::home_path(&agent_habilis_gossip::util::runtime_base()),
+            output::home_path(&agent_habilis_mesh::util::runtime_base()),
         ),
     ];
     Section {
@@ -180,7 +180,7 @@ fn integrations_section() -> Section {
                 };
                 let base = format!("{} ({})", state.label(), output::home_path(&path));
                 let detail = if state == AgentState::OutOfDate {
-                    format!("{base} — run `agent-gossip plug --agent {}`", agent.label())
+                    format!("{base} — run `agent-mesh plug --agent {}`", agent.label())
                 } else {
                     base
                 };
@@ -317,10 +317,10 @@ fn capability_checks(capability: &NetworkCapability) -> Vec<Check> {
     checks
 }
 
-async fn active_swarms_section() -> Section {
+async fn active_meshes_section() -> Section {
     let mut checks = Vec::new();
     for path in ipc::active_socket_paths() {
-        // `Info` carries no swarm — the daemon answers with its own identity.
+        // `Info` carries no mesh — the daemon answers with its own identity.
         // A dead/stale socket errors and is skipped.
         let Ok(response) = ipc::send_to_path(&path, &IpcCommand::Info).await else {
             continue;
@@ -330,7 +330,7 @@ async fn active_swarms_section() -> Section {
         };
         let detail = format!(
             "{} · <{}> · {} {}",
-            info.swarm,
+            info.mesh,
             info.nickname,
             info.participant_count,
             plural(info.participant_count, "member", "members"),
@@ -338,60 +338,60 @@ async fn active_swarms_section() -> Section {
         checks.push(Check::new(format!("#{}", info.name), Verdict::Ok, detail));
     }
     if checks.is_empty() {
-        checks.push(Check::bare("no active swarms on this machine", Verdict::Ok));
+        checks.push(Check::bare("no active meshes on this machine", Verdict::Ok));
     }
     Section {
-        title: "Active swarms".to_owned(),
+        title: "Active meshes".to_owned(),
         checks,
     }
 }
 
 #[derive(serde::Deserialize)]
 struct InfoResponse {
-    swarm: String,
+    mesh: String,
     name: String,
     nickname: String,
     participant_count: usize,
 }
 
-// ---- Mode 2: per-swarm connection analysis ---------------------------------
+// ---- Mode 2: per-mesh connection analysis ---------------------------------
 
-async fn swarm_report(swarm_id: &SwarmId, no_probe: bool) -> Report {
-    let swarm = match swarm_id.as_str().parse::<Swarm>() {
-        Ok(swarm) => swarm,
+async fn mesh_report(mesh_id: &MeshId, no_probe: bool) -> Report {
+    let mesh = match mesh_id.as_str().parse::<Mesh>() {
+        Ok(mesh) => mesh,
         Err(error) => {
             let section = Section {
-                title: "Swarm".to_owned(),
+                title: "Mesh".to_owned(),
                 checks: vec![Check::new(
                     "decode",
                     Verdict::Fail,
-                    format!("could not decode swarm id: {error}"),
+                    format!("could not decode mesh id: {error}"),
                 )],
             };
-            return Report::new("swarm", vec![section]);
+            return Report::new("mesh", vec![section]);
         }
     };
 
     let mut sections = vec![
-        swarm_identity_section(&swarm),
-        declared_methods_section(&swarm),
+        mesh_identity_section(&mesh),
+        declared_methods_section(&mesh),
     ];
     // The rendezvous identity and port ladder of a passworded *or* invite-only
-    // swarm derive from a secret the bare hash withholds (the stretched key /
+    // mesh derive from a secret the bare hash withholds (the stretched key /
     // the invite root), which doctor doesn't hold — probing those derivations
-    // would analyze a swarm that doesn't exist (and panic in `effective_seed`).
-    if !no_probe && !swarm.requires_password() && !swarm.requires_invite() {
-        sections.push(live_reachability_section(&swarm).await);
+    // would analyze a mesh that doesn't exist (and panic in `effective_seed`).
+    if !no_probe && !mesh.requires_password() && !mesh.requires_invite() {
+        sections.push(live_reachability_section(&mesh).await);
     }
-    Report::new("swarm", sections)
+    Report::new("mesh", sections)
 }
 
-fn swarm_identity_section(swarm: &Swarm) -> Section {
+fn mesh_identity_section(mesh: &Mesh) -> Section {
     let mut checks = vec![
-        Check::new("name", Verdict::Ok, format!("#{}", swarm.name.as_str())),
-        Check::new("network", Verdict::Ok, swarm.network_label()),
+        Check::new("name", Verdict::Ok, format!("#{}", mesh.name.as_str())),
+        Check::new("network", Verdict::Ok, mesh.network_label()),
     ];
-    if swarm.requires_password() {
+    if mesh.requires_password() {
         checks.push(Check::new(
             "password",
             Verdict::Ok,
@@ -399,13 +399,13 @@ fn swarm_identity_section(swarm: &Swarm) -> Section {
         ));
     }
     Section {
-        title: "Swarm".to_owned(),
+        title: "Mesh".to_owned(),
         checks,
     }
 }
 
-fn declared_methods_section(swarm: &Swarm) -> Section {
-    let lookups = swarm.lookups();
+fn declared_methods_section(mesh: &Mesh) -> Section {
+    let lookups = mesh.lookups();
     let mut checks = Vec::new();
 
     match &lookups.relay {
@@ -449,24 +449,24 @@ fn declared_methods_section(swarm: &Swarm) -> Section {
         if lookups.dht { "enabled" } else { "disabled" },
     ));
 
-    if swarm.is_loopback() {
+    if mesh.is_loopback() {
         // The ladder derives from the effective seed, which a passworded or
-        // invite-only swarm withholds from the bare hash — deriving it here
+        // invite-only mesh withholds from the bare hash — deriving it here
         // would panic in `effective_seed`, so report why instead.
-        if swarm.requires_invite() {
+        if mesh.requires_invite() {
             checks.push(Check::new(
                 "loopback ports",
                 Verdict::Ok,
                 "invite-derived — need a 🎟️ invite to compute",
             ));
-        } else if swarm.requires_password() {
+        } else if mesh.requires_password() {
             checks.push(Check::new(
                 "loopback ports",
                 Verdict::Ok,
                 "password-derived — need --password to compute",
             ));
         } else {
-            let ports = swarm
+            let ports = mesh
                 .rendezvous_ports()
                 .iter()
                 .map(ToString::to_string)
@@ -486,8 +486,8 @@ fn declared_methods_section(swarm: &Swarm) -> Section {
     }
 }
 
-async fn live_reachability_section(swarm: &Swarm) -> Section {
-    let lookups = swarm.lookups();
+async fn live_reachability_section(mesh: &Mesh) -> Section {
+    let lookups = mesh.lookups();
     let mut checks = Vec::new();
 
     // Relay rungs — show the whole ladder's health, not just the first pick.
@@ -514,10 +514,10 @@ async fn live_reachability_section(swarm: &Swarm) -> Section {
     // Rendezvous reachability + the resulting path type (direct vs relay).
     match lookup::build_participant_endpoint(lookups).await {
         Ok(endpoint) => {
-            let rendezvous_id = swarm.rendezvous_id();
+            let rendezvous_id = mesh.rendezvous_id();
             let mut addr = iroh::EndpointAddr::new(rendezvous_id);
-            if swarm.is_loopback() {
-                for port in swarm.rendezvous_ports() {
+            if mesh.is_loopback() {
+                for port in mesh.rendezvous_ports() {
                     addr = addr.with_ip_addr(std::net::SocketAddr::from((
                         std::net::Ipv4Addr::LOCALHOST,
                         port,
@@ -530,7 +530,7 @@ async fn live_reachability_section(swarm: &Swarm) -> Section {
             let reached = lookup::probe_connect(&endpoint, addr, RENDEZVOUS_TIMEOUT).await;
             if reached {
                 let (path, relay) =
-                    agent_habilis_gossip::gossip::conn_path(&endpoint, rendezvous_id).await;
+                    agent_habilis_mesh::gossip::conn_path(&endpoint, rendezvous_id).await;
                 let detail = match relay {
                     Some(url) => format!("reachable — {path} path (relay {url})"),
                     None => format!("reachable — {path} path"),
@@ -601,17 +601,17 @@ fn plural(count: usize, singular: &'static str, plural: &'static str) -> &'stati
 #[cfg(test)]
 mod tests {
     use super::declared_methods_section;
-    use agent_habilis_gossip::protocol::swarm::{Swarm, SwarmConfig, SwarmName};
+    use agent_habilis_mesh::protocol::mesh::{Mesh, MeshConfig, MeshName};
 
     #[test]
-    fn declared_methods_does_not_derive_ports_for_an_invite_only_swarm() {
-        // Regression: an invite-only swarm withholds its derivation secret from
+    fn declared_methods_does_not_derive_ports_for_an_invite_only_mesh() {
+        // Regression: an invite-only mesh withholds its derivation secret from
         // the bare hash, so deriving the loopback ladder used to panic in
         // `effective_seed`. `doctor` must report the reason instead of crashing.
-        let mut swarm =
-            Swarm::new([1u8; 32], SwarmName::new("t").unwrap(), SwarmConfig::loopback());
-        swarm.set_invite();
-        let section = declared_methods_section(&swarm);
+        let mut mesh =
+            Mesh::new([1u8; 32], MeshName::new("t").unwrap(), MeshConfig::loopback());
+        mesh.set_invite();
+        let section = declared_methods_section(&mesh);
         let ports = section
             .checks
             .iter()

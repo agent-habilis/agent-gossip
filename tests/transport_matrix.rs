@@ -31,8 +31,8 @@ mod common;
 
 use std::time::Instant;
 
-use agent_gossip::{Channel, TaskId, TaskState, TransportPolicy};
-use common::{InProcNode, MSG_TIMEOUT, POLL, spool_dir, spool_swarm_dir, wait_for_frames};
+use agent_mesh::{Channel, TaskId, TaskState, TransportPolicy};
+use common::{InProcNode, MSG_TIMEOUT, POLL, spool_dir, spool_mesh_dir, wait_for_frames};
 use serde_json::{Value, json};
 
 /// Active-view cap for the (2-node) rows that want a full mesh.
@@ -175,7 +175,7 @@ async fn matrix_default() {
     )
     .await;
     let mut bob = InProcNode::join_with_transport(
-        &alice.swarm,
+        &alice.mesh,
         "tm-def-b",
         TransportPolicy::DEFAULTS,
         FULL_MESH,
@@ -191,7 +191,7 @@ async fn matrix_unicast() {
     let mut alice =
         InProcNode::create_with_transport("tm-unicast", "tm-uni-a", UNICAST_ONLY, FULL_MESH).await;
     let mut bob =
-        InProcNode::join_with_transport(&alice.swarm, "tm-uni-b", UNICAST_ONLY, FULL_MESH).await;
+        InProcNode::join_with_transport(&alice.mesh, "tm-uni-b", UNICAST_ONLY, FULL_MESH).await;
     run_operations(&mut alice, &mut bob).await;
     alice.leave().await;
     bob.leave().await;
@@ -202,7 +202,7 @@ async fn matrix_gossip() {
     let mut alice =
         InProcNode::create_with_transport("tm-gossip", "tm-gos-a", GOSSIP_ONLY, FULL_MESH).await;
     let mut bob =
-        InProcNode::join_with_transport(&alice.swarm, "tm-gos-b", GOSSIP_ONLY, FULL_MESH).await;
+        InProcNode::join_with_transport(&alice.mesh, "tm-gos-b", GOSSIP_ONLY, FULL_MESH).await;
     run_operations(&mut alice, &mut bob).await;
     alice.leave().await;
     bob.leave().await;
@@ -223,7 +223,7 @@ async fn matrix_circuit() {
     let mut alice =
         InProcNode::create_with_transport("tm-circuit", "tm-cir-a", CIRCUIT_ONLY, FULL_MESH).await;
     let mut bob =
-        InProcNode::join_with_transport(&alice.swarm, "tm-cir-b", CIRCUIT_ONLY, FULL_MESH).await;
+        InProcNode::join_with_transport(&alice.mesh, "tm-cir-b", CIRCUIT_ONLY, FULL_MESH).await;
 
     // Stand up the synthetic circuit topology; the graph persists (max-seq) so
     // the daemon's own link-state ticks can't clobber it.
@@ -239,12 +239,12 @@ async fn matrix_circuit() {
 async fn matrix_spool() {
     let dir = spool_dir("matrix");
     let mut alice = InProcNode::create_with_spool("tm-spool", "tm-spl-a", &dir).await;
-    let mut bob = InProcNode::join_with_spool(&alice.swarm, "tm-spl-b", &dir).await;
+    let mut bob = InProcNode::join_with_spool(&alice.mesh, "tm-spl-b", &dir).await;
 
     run_operations(&mut alice, &mut bob).await;
 
     // The durable operations were additionally mirrored to the shared directory.
-    let frame_dir = spool_swarm_dir(&dir, &alice.swarm);
+    let frame_dir = spool_mesh_dir(&dir, &alice.mesh);
     assert!(
         wait_for_frames(&frame_dir, 1, MSG_TIMEOUT).await >= 1,
         "no .frame files mirrored under {}",

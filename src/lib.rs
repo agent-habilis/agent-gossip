@@ -1,24 +1,24 @@
-//! `agent-gossip` — a mesh for AI agents.
+//! `agent-mesh` — a mesh for AI agents.
 //!
-//! This crate ships as **both** a binary (the `agent-gossip`
+//! This crate ships as **both** a binary (the `agent-mesh`
 //! CLI / MCP server) and a library. The binary is a thin shim over
-//! [`run_cli`]; library consumers embed a swarm in-process via the
+//! [`run_cli`]; library consumers embed a mesh in-process via the
 //! [`embed`] module.
 //!
 //! ## Embedding
 //!
 //! The public surface is deliberately tiny and **iroh-free**: the
-//! [`embed::SwarmSession`] facade owns the event loop as an in-process
+//! [`embed::MeshSession`] facade owns the event loop as an in-process
 //! `tokio` task (no subprocess, no Unix-socket IPC) and hands back only
 //! the protocol value types re-exported below. iroh version bumps stay
 //! an internal detail.
 //!
 //! ```no_run
-//! use agent_gossip::embed::{JoinConfig, SwarmSession};
-//! use agent_gossip::MessageBody;
+//! use agent_mesh::embed::{JoinConfig, MeshSession};
+//! use agent_mesh::MessageBody;
 //!
 //! # async fn run() -> anyhow::Result<()> {
-//! let session = SwarmSession::join(JoinConfig::new("💬...".parse()?)).await?;
+//! let session = MeshSession::join(JoinConfig::new("💬...".parse()?)).await?;
 //! let mut rx = session.messages();
 //! session.send(MessageBody::new("hello")?).await?;
 //! while let Ok(msg) = rx.recv().await {
@@ -30,7 +30,7 @@
 //! ```
 
 // Application-layer modules. The engine modules (protocol, gossip, daemon,
-// …) live in the `agent_habilis_gossip` crate; this crate re-exports the
+// …) live in the `agent_habilis_mesh` crate; this crate re-exports the
 // curated public protocol surface from there below. `a2a` is public on
 // purpose — it is the agent-communication data model both bindings (gossip,
 // local JSON-RPC) share, and embedders speak it directly.
@@ -48,30 +48,30 @@ pub mod embed;
 pub mod harness;
 
 // Curated public protocol surface. These types live in the engine crate
-// (`agent_habilis_gossip`); re-exporting them from this crate root keeps the
-// externally-visible `agent_gossip::` API stable across the engine split.
+// (`agent_habilis_mesh`); re-exporting them from this crate root keeps the
+// externally-visible `agent_mesh::` API stable across the engine split.
 pub use a2a::surfaced::SurfacedEvent;
 pub use a2a::{TaskId, TaskState};
-pub use agent_habilis_gossip::invite::InviteTicket;
-pub use agent_habilis_gossip::logging::LogSink;
-pub use agent_habilis_gossip::protocol::message::{
+pub use agent_habilis_mesh::invite::InviteTicket;
+pub use agent_habilis_mesh::logging::LogSink;
+pub use agent_habilis_mesh::protocol::message::{
     BodyError, Channel, IdError, Message, MessageBody, MessageId, MessageKind, PresenceSubtype,
     Shard, ShardGroup,
 };
-pub use agent_habilis_gossip::protocol::nickname::{Nickname, NicknameError};
-pub use agent_habilis_gossip::protocol::swarm::{
-    LookupSet, NameError, RelayLadder, RelayLadderError, RelaySelection, SwarmId, SwarmIdError,
-    SwarmName,
+pub use agent_habilis_mesh::protocol::nickname::{Nickname, NicknameError};
+pub use agent_habilis_mesh::protocol::mesh::{
+    LookupSet, NameError, RelayLadder, RelayLadderError, RelaySelection, MeshId, MeshIdError,
+    MeshName,
 };
-pub use agent_habilis_gossip::resolver::{JoinTarget, JoinTargetError};
-pub use agent_habilis_gossip::transport::TransportPolicy;
+pub use agent_habilis_mesh::resolver::{JoinTarget, JoinTargetError};
+pub use agent_habilis_mesh::transport::TransportPolicy;
 // Wire/runtime constants the external test + bench crates assert against; the
 // rest of `util::consts` stays engine-internal.
-pub use agent_habilis_gossip::util::consts::{
-    MAX_LOGICAL_BODY_BYTES, MAX_MESSAGE_SIZE, MAX_SHARD_TOTAL, SWARM_GLYPH,
+pub use agent_habilis_mesh::util::consts::{
+    MAX_LOGICAL_BODY_BYTES, MAX_MESSAGE_SIZE, MAX_SHARD_TOTAL, MESH_GLYPH,
 };
-pub use agent_habilis_gossip::util::version::VERSION;
-pub use agent_habilis_gossip::util::{ensure_runtime_base, runtime_base, swarm_prefix};
+pub use agent_habilis_mesh::util::version::VERSION;
+pub use agent_habilis_mesh::util::{ensure_runtime_base, runtime_base, mesh_prefix};
 pub use output::{OutputEvent, event_json, surfaced_event_json};
 
 use anyhow::Result;
@@ -81,14 +81,14 @@ use cli::Cli;
 
 /// Parse `argv` and run the selected CLI subcommand to completion.
 ///
-/// This is the entire body of the `agent-gossip` binary; it is
+/// This is the entire body of the `agent-mesh` binary; it is
 /// public so the thin `src/main.rs` shim (which owns only
 /// process-level concerns: tracing init, terminal echo) can call it.
 /// The subcommand dispatch + per-command logic lives in `cli`.
 ///
 /// # Errors
-/// Propagates any error from the selected subcommand — swarm setup
-/// failure, join timeout, IPC errors, invalid swarm-mode flags, etc.
+/// Propagates any error from the selected subcommand — mesh setup
+/// failure, join timeout, IPC errors, invalid mesh-mode flags, etc.
 pub async fn run_cli() -> Result<()> {
     // Box the single large await so it lives on the heap, not this frame —
     // the same lever the event loop uses (see `daemon::event_loop`); the
@@ -96,7 +96,7 @@ pub async fn run_cli() -> Result<()> {
     Box::pin(cli::dispatch(Cli::parse())).await
 }
 
-/// The fully-built `agent-gossip` clap command tree, for offline man-page
+/// The fully-built `agent-mesh` clap command tree, for offline man-page
 /// generation (`cargo task man` walks it in-process through
 /// `clap_mangen`). Arg surface only; no iroh, no runtime state.
 #[must_use]
@@ -107,10 +107,10 @@ pub fn cli_command() -> clap::Command {
 /// Build the deferred log sink and register it process-globally.
 /// Call once in `main` before subscriber init; pass the returned
 /// value to `tracing_subscriber::fmt().with_writer(..)`. Logs buffer
-/// until `cli` resolves the swarm id + nickname (see `logging`).
+/// until `cli` resolves the mesh id + nickname (see `logging`).
 #[must_use]
 pub fn install_log_sink() -> LogSink {
-    agent_habilis_gossip::logging::install()
+    agent_habilis_mesh::logging::install()
 }
 
 /// The default tracing directive filter; pass to
@@ -118,14 +118,14 @@ pub fn install_log_sink() -> LogSink {
 /// it. See `logging`.
 #[must_use]
 pub fn log_filter() -> tracing_subscriber::EnvFilter {
-    agent_habilis_gossip::logging::log_filter()
+    agent_habilis_mesh::logging::log_filter()
 }
 
 /// Flush buffered logs to stderr if identity was never resolved
 /// (transient command, or startup failed before attach). Call after
 /// `run_cli` returns.
 pub fn flush_log_if_pending() {
-    agent_habilis_gossip::logging::flush_pending_to_stderr();
+    agent_habilis_mesh::logging::flush_pending_to_stderr();
 }
 
 // Shared config for the crate's `proptest!` blocks. Overrides the default

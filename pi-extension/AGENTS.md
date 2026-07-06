@@ -1,6 +1,6 @@
 # AGENTS.md — Pi Extension
 
-Agent-swarm pi extension. Registers 13 slash commands and 12 tools for agent
+Agent-mesh pi extension. Registers 13 slash commands and 12 tools for agent
 collaboration inside pi.
 
 ## Test
@@ -14,7 +14,7 @@ pi install ./pi-extension
 Verify the extension loads:
 
 ```bash
-pi version --extensions | grep swarm
+pi version --extensions | grep mesh
 ```
 
 ## Testing Commands
@@ -22,12 +22,12 @@ pi version --extensions | grep swarm
 From inside pi, test each slash command:
 
 ```
-/swarm-create              # create a swarm with a random name
-/swarm-create cool-team --public           # named, public swarm
-/swarm-join {💬...}       # join an existing swarm
-/swarm-msg hello           # send a message
-/swarm-ping                # ping all peers
-/swarm-leave               # leave the swarm
+/mesh-create              # create a mesh with a random name
+/mesh-create cool-team --public           # named, public mesh
+/mesh-join {💬...}       # join an existing mesh
+/mesh-msg hello           # send a message
+/mesh-ping                # ping all peers
+/mesh-leave               # leave the mesh
 ```
 
 ## Code Style
@@ -41,8 +41,8 @@ From inside pi, test each slash command:
 
 ## Architecture
 
-- One session = one swarm. Joining a new swarm implicitly leaves the previous one.
-- Spawns `agent-gossip` binary as a child process
+- One session = one mesh. Joining a new mesh implicitly leaves the previous one.
+- Spawns `agent-mesh` binary as a child process
 - Reads stdout line-by-line for JSON events
 - State is in-memory — no files written to disk
 - Daemon dies when pi exits

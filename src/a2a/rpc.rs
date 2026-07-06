@@ -4,11 +4,11 @@ use tokio::sync::oneshot;
 use crate::a2a::app::A2aApp;
 use crate::a2a::send::{broadcast_message, emit_task_status};
 use crate::output;
-use agent_habilis_gossip::daemon::state::EventLoopState;
-use agent_habilis_gossip::gossip::broadcast_state_merge;
-use agent_habilis_gossip::protocol::swarm::SwarmId;
-use agent_habilis_gossip::protocol::{Channel, MessageBody, Nickname};
-use agent_habilis_gossip::transport::SwarmSender;
+use agent_habilis_mesh::daemon::state::EventLoopState;
+use agent_habilis_mesh::gossip::broadcast_state_merge;
+use agent_habilis_mesh::protocol::mesh::MeshId;
+use agent_habilis_mesh::protocol::{Channel, MessageBody, Nickname};
+use agent_habilis_mesh::transport::MeshSender;
 
 use super::{TaskId, task::TaskRecord, task::TaskRole};
 
@@ -61,7 +61,7 @@ impl RpcError {
 }
 
 /// One A2A operation the HTTP binding hands to the event loop. The URL names
-/// the target agent (`to: None` = the swarm-collective broadcast endpoint,
+/// the target agent (`to: None` = the mesh-collective broadcast endpoint,
 /// `Some(nick)` = that participant), per the A2A rule that the endpoint
 /// identifies the agent.
 pub(crate) enum A2aOp {
@@ -76,7 +76,7 @@ pub(crate) enum A2aOp {
     CancelTask {
         task_id: TaskId,
     },
-    /// The `swarm-state` extension methods (`swarm/state.get` etc.).
+    /// The `mesh-state` extension methods (`mesh/state.get` etc.).
     ChannelGet {
         channel: Channel,
     },
@@ -140,14 +140,14 @@ pub(crate) fn parse_op(
         // The authenticated extended card. We have nothing extra to gate behind
         // auth, so it returns the same full card `own_card` builds.
         "GetExtendedAgentCard" => Ok(A2aOp::OwnCard),
-        "swarm/state.get" => Ok(A2aOp::ChannelGet {
+        "mesh/state.get" => Ok(A2aOp::ChannelGet {
             channel: Channel::State,
         }),
-        "swarm/meta.get" => Ok(A2aOp::ChannelGet {
+        "mesh/meta.get" => Ok(A2aOp::ChannelGet {
             channel: Channel::Meta,
         }),
-        "swarm/state.merge" | "swarm/meta.merge" => {
-            let channel = if method == "swarm/state.merge" {
+        "mesh/state.merge" | "mesh/meta.merge" => {
+            let channel = if method == "mesh/state.merge" {
                 Channel::State
             } else {
                 Channel::Meta
@@ -173,21 +173,21 @@ pub(crate) fn parse_op(
 /// The A2A `Task` object for a live record — what `tasks/get`/`tasks/list`
 /// return and what a task-creating `message/send` echoes. History/artifact
 /// accumulation is not stored daemon-side (the event stream carries them);
-/// swarm-specific coordinates ride `metadata`.
-pub(crate) fn task_object(task_id: &TaskId, rec: &TaskRecord, swarm: &SwarmId) -> Value {
+/// mesh-specific coordinates ride `metadata`.
+pub(crate) fn task_object(task_id: &TaskId, rec: &TaskRecord, mesh: &MeshId) -> Value {
     let role = |value: TaskRole| match value {
         TaskRole::Initiator => "initiator",
         TaskRole::Receiver => "worker",
     };
     serde_json::json!({
         "id": task_id.as_str(),
-        "contextId": swarm.as_str(),
+        "contextId": mesh.as_str(),
         "status": { "state": rec.state },
         "metadata": {
-            "swarm:peer": rec.peer.as_str(),
-            "swarm:role": role(rec.role),
-            "swarm:ball": role(rec.ball),
-            "swarm:review": rec.review,
+            "mesh:peer": rec.peer.as_str(),
+            "mesh:role": role(rec.role),
+            "mesh:ball": role(rec.ball),
+            "mesh:review": rec.review,
         },
     })
 }
@@ -197,27 +197,27 @@ pub(crate) fn task_object(task_id: &TaskId, rec: &TaskRecord, swarm: &SwarmId) -
 /// two bindings cannot drift.
 #[expect(
     clippy::too_many_arguments,
-    reason = "the JSON-RPC op dispatch threads swarm/author identity, our pubkey, the local a2a port, plus the mesh state, app state, gossip sender, and output it executes through"
+    reason = "the JSON-RPC op dispatch threads mesh/author identity, our pubkey, the local a2a port, plus the mesh state, app state, gossip sender, and output it executes through"
 )]
 pub(crate) async fn handle_op(
     op: A2aOp,
-    swarm: &SwarmId,
+    mesh: &MeshId,
     author: &Nickname,
     our_pubkey: &str,
     a2a_port: u16,
     state: &mut EventLoopState,
     app: &mut A2aApp,
-    sender: &SwarmSender,
+    sender: &MeshSender,
     output: &output::Output,
 ) -> Result<Value, RpcError> {
     match op {
         A2aOp::SendMessage { to, message } => {
-            send_message(to, message, swarm, author, state, sender, output).await
+            send_message(to, message, mesh, author, state, sender, output).await
         }
         A2aOp::GetTask { task_id } => app
             .tasks
             .get(&task_id)
-            .map(|rec| task_object(&task_id, rec, swarm))
+            .map(|rec| task_object(&task_id, rec, mesh))
             .ok_or_else(|| RpcError::task_not_found(&task_id)),
         A2aOp::ListTasks => {
             // Sort by task id so the response order is stable across calls
@@ -226,7 +226,7 @@ pub(crate) async fn handle_op(
             entries.sort_by(|left, right| left.0.as_str().cmp(right.0.as_str()));
             let tasks: Vec<Value> = entries
                 .into_iter()
-                .map(|(task_id, rec)| task_object(task_id, rec, swarm))
+                .map(|(task_id, rec)| task_object(task_id, rec, mesh))
                 .collect();
             Ok(serde_json::json!({ "tasks": tasks }))
         }
@@ -235,7 +235,7 @@ pub(crate) async fn handle_op(
                 return Err(RpcError::task_not_found(&task_id));
             }
             emit_task_status(
-                swarm,
+                mesh,
                 author,
                 &task_id,
                 super::TaskState::Canceled,
@@ -249,7 +249,7 @@ pub(crate) async fn handle_op(
             .map_err(|error| RpcError::internal(error.to_string()))?;
             app.tasks
                 .get(&task_id)
-                .map(|rec| task_object(&task_id, rec, swarm))
+                .map(|rec| task_object(&task_id, rec, mesh))
                 .ok_or_else(|| RpcError::task_not_found(&task_id))
         }
         A2aOp::ChannelGet { channel } => {
@@ -260,7 +260,7 @@ pub(crate) async fn handle_op(
             Ok(document)
         }
         A2aOp::ChannelMerge { channel, merge } => {
-            broadcast_state_merge(swarm, author, merge, state, sender, output, channel, true)
+            broadcast_state_merge(mesh, author, merge, state, sender, output, channel, true)
                 .await
                 .map_err(|error| RpcError::internal(error.to_string()))?;
             Ok(serde_json::json!({ "ok": true }))
@@ -319,10 +319,10 @@ pub(crate) async fn handle_op(
 async fn send_message(
     to: Option<Nickname>,
     message: super::Message,
-    swarm: &SwarmId,
+    mesh: &MeshId,
     author: &Nickname,
     state: &mut EventLoopState,
-    sender: &SwarmSender,
+    sender: &MeshSender,
     output: &output::Output,
 ) -> Result<Value, RpcError> {
     if to.is_some() {
@@ -333,7 +333,7 @@ async fn send_message(
     let text = super::gossip::display_text(&message);
     let body = MessageBody::new(text)
         .map_err(|error| RpcError::invalid_params(format!("message text: {error}")))?;
-    let (_id, frame) = broadcast_message(swarm, author, body, state, sender, output)
+    let (_id, frame) = broadcast_message(mesh, author, body, state, sender, output)
         .await
         .map_err(|error| RpcError::internal(error.to_string()))?;
     // A2A v1.0 `SendMessage` returns a `SendMessageResponse` oneof; a broadcast

@@ -1,6 +1,6 @@
 use clap::Parser;
 
-use agent_habilis_gossip::protocol::swarm::{LookupSet, RelaySelection};
+use agent_habilis_mesh::protocol::mesh::{LookupSet, RelaySelection};
 
 /// The lookup allowlist flags: naming any uses *only* those passed (so
 /// `--mdns` alone disables both dht and the relay); naming none falls
@@ -42,14 +42,14 @@ impl LookupArgs {
 /// [`LookupArgs`] plus `--public`, for the commands whose no-flag default
 /// is already the all-on public preset (transfers + directory browsing).
 /// `create` keeps its own `--public` (there it opts *in* from a loopback
-/// default and is baked into the swarm id).
+/// default and is baked into the mesh id).
 #[derive(Parser, Debug)]
 pub(crate) struct PublicLookupArgs {
     /// Explicitly select the all-on public preset (mDNS + DHT + the
     /// default relay ladder) — already the default when no lookup flag
     /// is named. Conflicts with the granular `--mdns`/`--dht`/`--relay`
     /// flags (they replace the preset) and, on the commands that take
-    /// one, with a `--swarm`/ticket that already carries a discovery
+    /// one, with a `--mesh`/ticket that already carries a discovery
     /// config.
     #[arg(long, default_value_t = false, conflicts_with_all = ["mdns", "dht", "relay"])]
     pub public: bool,
@@ -75,9 +75,9 @@ mod tests {
     use clap::Parser;
 
     use crate::cli::args::{Cli, Commands};
-    use agent_habilis_gossip::protocol::swarm::RelaySelection;
+    use agent_habilis_mesh::protocol::mesh::RelaySelection;
 
-    /// Parse `agent-gossip create …` and read the resolved relay selection — the
+    /// Parse `agent-mesh create …` and read the resolved relay selection — the
     /// `--relay` allowlist flag lives in [`LookupArgs`], exercised here
     /// through the create command.
     fn relay_of(args: &[&str]) -> RelaySelection {
@@ -108,18 +108,18 @@ mod tests {
     #[test]
     fn relay_flag_absent_bare_and_valued() {
         assert_eq!(
-            relay_of(&["agent-gossip", "create", "--public"]),
+            relay_of(&["agent-mesh", "create", "--public"]),
             RelaySelection::Unset,
             "absent ⇒ Unset"
         );
         assert_eq!(
-            relay_of(&["agent-gossip", "create", "--public", "--relay"]),
+            relay_of(&["agent-mesh", "create", "--public", "--relay"]),
             RelaySelection::Default,
             "bare ⇒ Default (pinned)"
         );
         assert_eq!(
             relay_of(&[
-                "agent-gossip",
+                "agent-mesh",
                 "create",
                 "--public",
                 "--relay",
@@ -130,7 +130,7 @@ mod tests {
         );
         assert_eq!(
             relay_of(&[
-                "agent-gossip",
+                "agent-mesh",
                 "create",
                 "--public",
                 "--relay",
@@ -144,7 +144,7 @@ mod tests {
     #[test]
     fn relay_flag_rejects_empty_ladder_entry() {
         let parsed = Cli::try_parse_from([
-            "agent-gossip",
+            "agent-mesh",
             "create",
             "--public",
             "--relay",
@@ -155,10 +155,10 @@ mod tests {
 
     #[test]
     fn create_mdns_resolves_to_mdns_only_lookups() {
-        use agent_habilis_gossip::protocol::swarm::{RelayChoice, resolve_lookups};
-        // `agent-gossip create --mdns` ⇒ the swarm's id encodes mDNS only (naming a
+        use agent_habilis_mesh::protocol::mesh::{RelayChoice, resolve_lookups};
+        // `agent-mesh create --mdns` ⇒ the mesh's id encodes mDNS only (naming a
         // lookup flag opts into exactly those; relay and dht stay off).
-        let opts = match Cli::parse_from(["agent-gossip", "create", "--mdns"]).command {
+        let opts = match Cli::parse_from(["agent-mesh", "create", "--mdns"]).command {
             Commands::Create { opts } => opts,
             Commands::Join { .. }
             | Commands::Topic { .. }

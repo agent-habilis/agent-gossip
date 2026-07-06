@@ -1,5 +1,5 @@
-//! The MCP server's swarm handle — a thin wrapper over the in-process
-//! [`crate::embed::SwarmSession`] that adds the implicit `fetch` cursor. The rmcp
+//! The MCP server's mesh handle — a thin wrapper over the in-process
+//! [`crate::embed::MeshSession`] that adds the implicit `fetch` cursor. The rmcp
 //! server, tool handlers, and arg/result types live in [`super`]; only the
 //! session plumbing lives here, reused from `embed` rather than duplicated.
 
@@ -11,11 +11,11 @@ use crate::a2a::TaskId;
 use crate::embed::{
     CreateConfig, CreateError, InProcessSession, JoinConfig, JoinError, TopicConfig,
 };
-use agent_habilis_gossip::daemon::state::RosterSnapshot;
-use agent_habilis_gossip::protocol::swarm::SwarmName;
-use agent_habilis_gossip::protocol::{Message, MessageBody, MessageId, Nickname, SwarmId};
+use agent_habilis_mesh::daemon::state::RosterSnapshot;
+use agent_habilis_mesh::protocol::mesh::MeshName;
+use agent_habilis_mesh::protocol::{Message, MessageBody, MessageId, Nickname, MeshId};
 
-/// One active swarm for the MCP server: the shared [`InProcessSession`]
+/// One active mesh for the MCP server: the shared [`InProcessSession`]
 /// core (poll-only, silent) plus the per-session implicit `after` cursor.
 /// Dropping it winds the loop down via the core's own `Drop`.
 pub(super) struct Session {
@@ -25,7 +25,7 @@ pub(super) struct Session {
 }
 
 impl Session {
-    /// Start a new swarm — poll-only, silent — from an embed [`CreateConfig`].
+    /// Start a new mesh — poll-only, silent — from an embed [`CreateConfig`].
     ///
     /// # Errors
     /// Propagates [`CreateError`] so the tool layer can classify
@@ -34,7 +34,7 @@ impl Session {
         Ok(Self::wrap(InProcessSession::create_poll(cfg).await?))
     }
 
-    /// Join an existing swarm — poll-only, silent — from a [`JoinConfig`]
+    /// Join an existing mesh — poll-only, silent — from a [`JoinConfig`]
     /// (decodes the `💬…` id target internally).
     ///
     /// # Errors
@@ -44,7 +44,7 @@ impl Session {
     }
 
     /// Join a topic — poll-only, silent — from a [`TopicConfig`]: a public
-    /// swarm derived deterministically from a shared string.
+    /// mesh derived deterministically from a shared string.
     ///
     /// # Errors
     /// [`JoinError`] on setup failure.
@@ -59,13 +59,13 @@ impl Session {
         }
     }
 
-    /// The resolved swarm id.
-    pub(super) fn swarm(&self) -> &SwarmId {
-        self.inner.swarm_id()
+    /// The resolved mesh id.
+    pub(super) fn mesh(&self) -> &MeshId {
+        self.inner.mesh_id()
     }
 
-    /// The decoded swarm name.
-    pub(super) fn name(&self) -> &SwarmName {
+    /// The decoded mesh name.
+    pub(super) fn name(&self) -> &MeshName {
         self.inner.name()
     }
 
@@ -113,7 +113,7 @@ impl Session {
         file_name: Option<String>,
         file_mime: Option<String>,
     ) -> Result<(MessageId, Message)> {
-        let file = file.map(|path| agent_habilis_gossip::blob::FileRef {
+        let file = file.map(|path| agent_habilis_mesh::blob::FileRef {
             path,
             name: file_name,
             mime: file_mime,
@@ -233,24 +233,24 @@ mod tests {
 
     use serde_json::json;
 
-    use super::{Message, MessageBody, MessageId, Nickname, Session, SwarmId, SwarmName};
+    use super::{Message, MessageBody, MessageId, Nickname, Session, MeshId, MeshName};
     use crate::embed::{CreateConfig, JoinConfig};
-    use agent_habilis_gossip::protocol::{MessageKind, PresenceSubtype};
-    use agent_habilis_gossip::resolver::JoinTarget;
+    use agent_habilis_mesh::protocol::{MessageKind, PresenceSubtype};
+    use agent_habilis_mesh::resolver::JoinTarget;
 
     // All tests use the private network (loopback) so they work on
     // any CI without public iroh DNS / relay access.
 
     /// A loopback create config with an explicit nickname, no advertising.
     fn create_cfg(name: &str, nick: &str) -> CreateConfig {
-        let mut cfg = CreateConfig::new(SwarmName::new(name).unwrap());
+        let mut cfg = CreateConfig::new(MeshName::new(name).unwrap());
         cfg.nickname = Some(Nickname::from(nick));
         cfg
     }
 
-    /// A join config for an existing swarm id with an explicit nickname.
-    fn join_cfg(swarm: &SwarmId, nick: &str) -> JoinConfig {
-        let mut cfg = JoinConfig::new(JoinTarget::Swarm(swarm.clone()));
+    /// A join config for an existing mesh id with an explicit nickname.
+    fn join_cfg(mesh: &MeshId, nick: &str) -> JoinConfig {
+        let mut cfg = JoinConfig::new(JoinTarget::Mesh(mesh.clone()));
         cfg.nickname = Some(Nickname::from(nick));
         cfg
     }
@@ -264,7 +264,7 @@ mod tests {
             | OutputEvent::Presence { msg }
             | OutputEvent::Task { msg, .. } => Some(msg),
             OutputEvent::Ready { .. }
-            | OutputEvent::SwarmId { .. }
+            | OutputEvent::MeshId { .. }
             | OutputEvent::PeerTimeout { .. }
             | OutputEvent::PeerReturn { .. }
             | OutputEvent::Fork { .. }
@@ -305,24 +305,24 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn create_session_yields_valid_swarm_and_nickname() {
+    async fn create_session_yields_valid_mesh_and_nickname() {
         let session = Session::create(create_cfg("test1", "alice-test"))
             .await
             .expect("create");
-        assert!(session.swarm().as_str().starts_with("💬"));
+        assert!(session.mesh().as_str().starts_with("💬"));
         assert_eq!(session.name().as_str(), "test1");
         assert_eq!(session.nickname().as_str(), "alice-test");
         session.leave().await;
     }
 
     #[tokio::test]
-    async fn two_sessions_same_swarm_task_messages() {
+    async fn two_sessions_same_mesh_task_messages() {
         let creator = Session::create(create_cfg("two", "alice-two"))
             .await
             .expect("create");
-        let swarm = creator.swarm().clone();
+        let mesh = creator.mesh().clone();
 
-        let joiner = Session::join(join_cfg(&swarm, "bob-two"))
+        let joiner = Session::join(join_cfg(&mesh, "bob-two"))
             .await
             .expect("join");
         assert_eq!(joiner.name().as_str(), "two");
@@ -357,8 +357,8 @@ mod tests {
         let creator = Session::create(create_cfg("lp", "alice-lp"))
             .await
             .expect("create");
-        let swarm = creator.swarm().clone();
-        let joiner = Session::join(join_cfg(&swarm, "bob-lp"))
+        let mesh = creator.mesh().clone();
+        let joiner = Session::join(join_cfg(&mesh, "bob-lp"))
             .await
             .expect("join");
 
@@ -494,8 +494,8 @@ mod tests {
         let alice = Session::create(create_cfg("cursor", "alice-cursor"))
             .await
             .expect("create");
-        let swarm = alice.swarm().clone();
-        let bob = Session::join(join_cfg(&swarm, "bob-cursor"))
+        let mesh = alice.mesh().clone();
+        let bob = Session::join(join_cfg(&mesh, "bob-cursor"))
             .await
             .expect("join");
 
@@ -602,17 +602,17 @@ mod tests {
         let first = Session::create(create_cfg("cy-a", "cycler-a"))
             .await
             .expect("first create");
-        let first_swarm = first.swarm().clone();
+        let first_mesh = first.mesh().clone();
         first.leave().await;
 
-        // Second cycle — new session, new swarm.
+        // Second cycle — new session, new mesh.
         let second = Session::create(create_cfg("cy-b", "cycler-b"))
             .await
             .expect("second create after first was left");
         assert_ne!(
-            second.swarm(),
-            &first_swarm,
-            "second create should mint a fresh swarm id"
+            second.mesh(),
+            &first_mesh,
+            "second create should mint a fresh mesh id"
         );
         assert_eq!(second.nickname().as_str(), "cycler-b");
         second.leave().await;

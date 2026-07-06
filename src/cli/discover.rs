@@ -1,16 +1,16 @@
-//! The `discover` subcommand: browse a directory's live swarms.
+//! The `discover` subcommand: browse a directory's live meshes.
 //!
 //! Human + TTY renders a live arrow-key picker that hands off to `join`
 //! on selection; `--no-interactive` / `--output json` streams
-//! `swarm_found`/`swarm_lost` JSON lines for an agent to act on. The pure
-//! directory primitives live in [`agent_habilis_gossip::directory`]; the live consumer
+//! `mesh_found`/`mesh_lost` JSON lines for an agent to act on. The pure
+//! directory primitives live in [`agent_habilis_mesh::directory`]; the live consumer
 //! in [`crate::embed::Directory`]; the terminal machinery in
-//! [`super::picker`]; this file is just the CLI command + swarm rendering.
+//! [`super::picker`]; this file is just the CLI command + mesh rendering.
 
 use anyhow::Result;
 
-use crate::embed::{Directory, DirectoryEvent, SwarmListing};
-use agent_habilis_gossip::resolver::JoinTarget;
+use crate::embed::{Directory, DirectoryEvent, MeshListing};
+use agent_habilis_mesh::resolver::JoinTarget;
 
 use super::args::{DiscoverOpts, OutputFormat};
 use super::join;
@@ -18,7 +18,7 @@ use super::picker::{self, PickerOutcome, PickerText, interrupted, sigterm_stream
 
 /// Browse a directory. Human mode renders a live picker that
 /// hands off to `join` on selection; `--no-interactive` / `--output
-/// json` streams `swarm_found`/`swarm_lost` JSON lines instead (the
+/// json` streams `mesh_found`/`mesh_lost` JSON lines instead (the
 /// agent picks and joins by id itself).
 pub(super) async fn discover(opts: DiscoverOpts) -> Result<()> {
     let directory_label = opts
@@ -36,8 +36,8 @@ pub(super) async fn discover(opts: DiscoverOpts) -> Result<()> {
     // Route the directory session's logs to its per-member file (same as
     // create/join) so the picker and JSON stream aren't drowned in INFO
     // lines on stderr.
-    if let Some((swarm, nickname)) = discoverer.session_identity() {
-        agent_habilis_gossip::logging::attach(swarm, nickname);
+    if let Some((mesh, nickname)) = discoverer.session_identity() {
+        agent_habilis_mesh::logging::attach(mesh, nickname);
     }
     let mut events = discoverer
         .events()
@@ -47,16 +47,16 @@ pub(super) async fn discover(opts: DiscoverOpts) -> Result<()> {
     // (agent / piped) stream JSON changes.
     let want_picker = !opts.shared.no_interactive && opts.shared.output == OutputFormat::Human;
     if want_picker {
-        match run_swarm_picker(&directory_label, &discoverer, &mut events).await {
+        match run_mesh_picker(&directory_label, &discoverer, &mut events).await {
             PickerOutcome::Selected(id) => {
                 let _ = discoverer.close().await;
                 // Leave the directory's log file behind so `join` opens
-                // the joined swarm's own file (with its setup logs) rather
+                // the joined mesh's own file (with its setup logs) rather
                 // than appending to the directory session's.
-                agent_habilis_gossip::logging::detach();
+                agent_habilis_mesh::logging::detach();
                 let target = id
                     .parse::<JoinTarget>()
-                    .expect("a discovered swarm id is a valid join target");
+                    .expect("a discovered mesh id is a valid join target");
                 // No flag on `discover` itself: a passworded pick prompts
                 // in `join` (the picker only ran because a TTY exists). Boxed
                 // to keep this future under the `large_futures` threshold.
@@ -87,50 +87,50 @@ pub(super) async fn discover(opts: DiscoverOpts) -> Result<()> {
     Ok(())
 }
 
-/// One directory change as a JSON line for `agent-gossip discover --output json`.
-/// `Found`/`Updated` both surface as `swarm_found` (upsert semantics —
-/// the agent treats a re-ad as a refresh); a departure is `swarm_lost`.
+/// One directory change as a JSON line for `agent-mesh discover --output json`.
+/// `Found`/`Updated` both surface as `mesh_found` (upsert semantics —
+/// the agent treats a re-ad as a refresh); a departure is `mesh_lost`.
 fn discover_event_json(event: &DirectoryEvent) -> String {
     let value = match event {
         DirectoryEvent::Found(listing) | DirectoryEvent::Updated(listing) => serde_json::json!({
-            "event": "swarm_found",
-            "swarm": listing.swarm.as_str(),
+            "event": "mesh_found",
+            "mesh": listing.mesh.as_str(),
             "name": listing.name,
             "mode": if listing.public { "public" } else { "private" },
             "password": listing.password,
             "peers": listing.peers,
         }),
-        DirectoryEvent::Lost(swarm) => serde_json::json!({
-            "event": "swarm_lost",
-            "swarm": swarm.as_str(),
+        DirectoryEvent::Lost(mesh) => serde_json::json!({
+            "event": "mesh_lost",
+            "mesh": mesh.as_str(),
         }),
     };
     value.to_string()
 }
 
-/// Drive the shared picker with swarm rendering: the directory + each
-/// swarm name in yellow, the full `💬…` id, peer count, and a local
-/// first-seen timestamp; `enter` joins the highlighted swarm.
-async fn run_swarm_picker(
+/// Drive the shared picker with mesh rendering: the directory + each
+/// mesh name in yellow, the full `💬…` id, peer count, and a local
+/// first-seen timestamp; `enter` joins the highlighted mesh.
+async fn run_mesh_picker(
     directory_label: &str,
     discoverer: &Directory,
     events: &mut tokio::sync::mpsc::UnboundedReceiver<DirectoryEvent>,
 ) -> PickerOutcome {
     use crate::output::style;
 
-    // Reuse the shared swarm-name color, gated on a TTY + `NO_COLOR`
+    // Reuse the shared mesh-name color, gated on a TTY + `NO_COLOR`
     // like every other colored path. Empty strings when off.
     let (yellow, reset) = if crate::output::stdout_color() {
-        (style::SWARM, style::RESET)
+        (style::MESH, style::RESET)
     } else {
         ("", "")
     };
     let text = PickerText {
         header: format!("discovering {yellow}#{directory_label}{reset} directory"),
-        empty: "waiting for swarms".to_owned(),
+        empty: "waiting for meshes".to_owned(),
         footer: "↑/↓ move · enter join · q quit".to_owned(),
     };
-    let row = |listing: &SwarmListing, selected: bool| {
+    let row = |listing: &MeshListing, selected: bool| {
         let bold = if selected && !yellow.is_empty() {
             style::BOLD
         } else {
@@ -140,16 +140,16 @@ async fn run_swarm_picker(
         format!(
             "{bold}{yellow}#{}{reset}  {lock}{}  {}  {}",
             listing.name,
-            listing.swarm.as_str(),
+            listing.mesh.as_str(),
             listing.peers,
-            agent_habilis_gossip::util::clock::local_datetime(listing.first_seen_unix),
+            agent_habilis_mesh::util::clock::local_datetime(listing.first_seen_unix),
         )
     };
     picker::run(
         &text,
         || discoverer.snapshot(),
         row,
-        |listing| listing.swarm.as_str().to_owned(),
+        |listing| listing.mesh.as_str().to_owned(),
         events,
     )
     .await

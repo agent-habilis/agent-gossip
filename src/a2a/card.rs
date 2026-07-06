@@ -1,12 +1,12 @@
 use iroh::{Endpoint, EndpointAddr, EndpointId};
 
-use agent_habilis_gossip::protocol::nickname::Nickname;
+use agent_habilis_mesh::protocol::nickname::Nickname;
 
-use agent_habilis_gossip::util::consts::{PEER_GLYPH, SWARM_URI_SEPARATOR};
+use agent_habilis_mesh::util::consts::{PEER_GLYPH, MESH_URI_SEPARATOR};
 
 use super::{
-    AgentCapabilities, AgentCard, AgentExtension, AgentInterface, AgentSkill, EXT_SWARM_A2A_RPC,
-    EXT_SWARM_BLOB, EXT_SWARM_BROADCAST, EXT_SWARM_SEAL, EXT_SWARM_STATE, GOSSIP_BINDING,
+    AgentCapabilities, AgentCard, AgentExtension, AgentInterface, AgentSkill, EXT_MESH_A2A_RPC,
+    EXT_MESH_BLOB, EXT_MESH_BROADCAST, EXT_MESH_SEAL, EXT_MESH_STATE, GOSSIP_BINDING,
     PROTOCOL_VERSION,
 };
 
@@ -16,7 +16,7 @@ use super::{
 /// its gossip interface is addressed by public key.
 #[must_use]
 pub(crate) fn peer_url(pubkey_hex: &str) -> String {
-    format!("{PEER_GLYPH}{SWARM_URI_SEPARATOR}{pubkey_hex}")
+    format!("{PEER_GLYPH}{MESH_URI_SEPARATOR}{pubkey_hex}")
 }
 
 /// This participant's `AgentCard` — the canonical A2A self-description every
@@ -28,7 +28,7 @@ pub(crate) fn peer_url(pubkey_hex: &str) -> String {
 ///
 /// The identity is the Ed25519 **public key**, carried in the gossip
 /// `AgentInterface.url` (`🤖://<pubkey>`), not the display nickname;
-/// `capabilities.extensions` declares the swarm's protocol extensions so a
+/// `capabilities.extensions` declares the mesh's protocol extensions so a
 /// strict A2A client can gate on them. Agent-side facts the daemon cannot know
 /// (model, harness, host, extra skills) are merged by the agent as sibling keys
 /// under `/peers/<nick>` — the card is the daemon's contribution, not the whole
@@ -44,8 +44,8 @@ pub(crate) fn own_card(nickname: &Nickname, pubkey_hex: &str, seal_pubkey_b58: &
     AgentCard {
         name: nickname.as_str().to_string(),
         description: format!(
-            "agent-gossip participant `{nickname}` — an AI agent reachable over the \
-             swarm's A2A gossip binding"
+            "agent-mesh participant `{nickname}` — an AI agent reachable over the \
+             mesh's A2A gossip binding"
         ),
         supported_interfaces: vec![AgentInterface {
             url: peer_url(pubkey_hex),
@@ -61,23 +61,23 @@ pub(crate) fn own_card(nickname: &Nickname, pubkey_hex: &str, seal_pubkey_b58: &
             extended_agent_card: Some(true),
             extensions: vec![
                 extension(
-                    EXT_SWARM_BROADCAST,
-                    "swarm-wide broadcast Messages (A2A is point-to-point; a broadcast declares itself)",
+                    EXT_MESH_BROADCAST,
+                    "mesh-wide broadcast Messages (A2A is point-to-point; a broadcast declares itself)",
                 ),
                 extension(
-                    EXT_SWARM_STATE,
-                    "a shared RFC 7386 JSON document per swarm (state/meta channels)",
+                    EXT_MESH_STATE,
+                    "a shared RFC 7386 JSON document per mesh (state/meta channels)",
                 ),
                 extension(
-                    EXT_SWARM_A2A_RPC,
+                    EXT_MESH_A2A_RPC,
                     "serves A2A over gossip (request/response and request/stream): reads, task cancel, task creation, and streaming subscriptions directed at this member",
                 ),
                 extension(
-                    EXT_SWARM_BLOB,
+                    EXT_MESH_BLOB,
                     "large files on a Part travel as a url reference (a 💬 ticket), fetched point-to-point over a dedicated QUIC channel and SHA-256-verified, instead of inlining over gossip",
                 ),
                 AgentExtension {
-                    uri: EXT_SWARM_SEAL.to_string(),
+                    uri: EXT_MESH_SEAL.to_string(),
                     description: Some(
                         "directed frames (those addressed with a `to`) are sealed to this X25519 key; relays forward + verify the signature but cannot read the body. Broadcast stays public.".to_string(),
                     ),
@@ -100,7 +100,7 @@ pub(crate) fn own_card(nickname: &Nickname, pubkey_hex: &str, seal_pubkey_b58: &
             AgentSkill {
                 id: "chat".to_string(),
                 name: "chat".to_string(),
-                description: "converse over swarm broadcast messages".to_string(),
+                description: "converse over mesh broadcast messages".to_string(),
                 tags: vec!["chat".to_string()],
                 examples: Vec::new(),
                 input_modes: Vec::new(),
@@ -122,7 +122,7 @@ pub(crate) fn own_card(nickname: &Nickname, pubkey_hex: &str, seal_pubkey_b58: &
 }
 
 /// Read peer `<nick>`'s published X25519 sealing key from the derived meta
-/// document — the `swarm-seal` extension's `params.x25519` (base58). `None` if
+/// document — the `mesh-seal` extension's `params.x25519` (base58). `None` if
 /// the peer's card or key hasn't replicated yet. The card is bound to its author
 /// (foreign-card merges are dropped), so this key is authenticated by the same
 /// forgery protection as the rest of the card.
@@ -135,7 +135,7 @@ pub(crate) fn peer_seal_key(meta_doc: &serde_json::Value, peer: &Nickname) -> Op
         .find(|ext| {
             ext.get("uri")
                 .and_then(serde_json::Value::as_str)
-                .is_some_and(|uri| uri.contains("swarm-seal"))
+                .is_some_and(|uri| uri.contains("mesh-seal"))
         })?
         .pointer("/params/x25519")?
         .as_str()?;
@@ -168,7 +168,7 @@ pub(crate) fn peer_endpoint(
     peer: &Nickname,
 ) -> Option<(EndpointId, EndpointAddr)> {
     let hint = meta_doc.pointer(&format!("/peers/{peer}/card/endpoint"))?;
-    agent_habilis_gossip::protocol::peer_addr::endpoint_addr_from_json(hint).ok()
+    agent_habilis_mesh::protocol::peer_addr::endpoint_addr_from_json(hint).ok()
 }
 
 /// The RFC 7386 merge that publishes `card` at `/peers/<nick>/card`.
@@ -184,10 +184,10 @@ pub(crate) fn publish_merge(nickname: &Nickname, card: &AgentCard) -> serde_json
 #[cfg(test)]
 mod tests {
     use super::{own_card, publish_merge};
-    use agent_habilis_gossip::protocol::Nickname;
+    use agent_habilis_mesh::protocol::Nickname;
 
     #[test]
-    fn card_declares_the_swarm_extensions_and_identity() {
+    fn card_declares_the_mesh_extensions_and_identity() {
         let seal_b58 = bs58::encode([7u8; 32]).into_string();
         let card = own_card(&Nickname::from("calm-otter"), &"ab".repeat(32), &seal_b58);
         assert_eq!(card.name, "calm-otter");
@@ -199,11 +199,11 @@ mod tests {
             .map(|ext| ext.uri.as_str())
             .collect();
         for needle in [
-            "swarm-broadcast",
-            "swarm-state",
-            "swarm-a2a-rpc",
-            "swarm-blob",
-            "swarm-seal",
+            "mesh-broadcast",
+            "mesh-state",
+            "mesh-a2a-rpc",
+            "mesh-blob",
+            "mesh-seal",
         ] {
             assert!(
                 uris.iter().any(|uri| uri.contains(needle)),
@@ -215,8 +215,8 @@ mod tests {
             .capabilities
             .extensions
             .iter()
-            .find(|ext| ext.uri.contains("swarm-seal"))
-            .expect("swarm-seal extension present");
+            .find(|ext| ext.uri.contains("mesh-seal"))
+            .expect("mesh-seal extension present");
         assert_eq!(seal_ext.params.as_ref().unwrap()["x25519"], seal_b58);
         // The mesh card's only interface is the gossip binding, whose url
         // carries the cryptographic identity (no HTTP url).

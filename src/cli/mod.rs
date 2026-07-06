@@ -1,4 +1,4 @@
-//! The `agent-gossip` command-line interface: the clap-derived argument shape
+//! The `agent-mesh` command-line interface: the clap-derived argument shape
 //! lives in [`args`], the live `discover` picker in [`discover`], and the
 //! per-subcommand handlers + [`dispatch`] here. `lib.rs::run_cli` parses
 //! argv and calls `dispatch`; each handler is the thin glue between the
@@ -10,13 +10,13 @@ use serde::Deserialize;
 use crate::a2a::ipc::IpcCommand;
 use crate::embed::spawn_advertiser;
 use crate::output::{Output, OutputMode};
-use agent_habilis_gossip::daemon::run as run_event_loop;
-use agent_habilis_gossip::daemon::setup::{SetupKind, SetupParams, setup_swarm};
-use agent_habilis_gossip::daemon::{CreateParams, JoinParams, Resolved, TopicParams};
-use agent_habilis_gossip::protocol::swarm::{Swarm, SwarmConfig, SwarmName, resolve_lookups};
-use agent_habilis_gossip::protocol::{MessageId, Nickname};
-use agent_habilis_gossip::resolver::JoinTarget;
-use agent_habilis_gossip::transport::ipc;
+use agent_habilis_mesh::daemon::run as run_event_loop;
+use agent_habilis_mesh::daemon::setup::{SetupKind, SetupParams, setup_mesh};
+use agent_habilis_mesh::daemon::{CreateParams, JoinParams, Resolved, TopicParams};
+use agent_habilis_mesh::protocol::mesh::{Mesh, MeshConfig, MeshName, resolve_lookups};
+use agent_habilis_mesh::protocol::{MessageId, Nickname};
+use agent_habilis_mesh::resolver::JoinTarget;
+use agent_habilis_mesh::transport::ipc;
 
 mod a2a_discover;
 pub(crate) mod agent;
@@ -42,8 +42,8 @@ use args::{
 fn reject_id_encoded_flag(flag: &str, present: bool) -> Result<()> {
     if present {
         anyhow::bail!(
-            "`{flag}` is not valid for `join`: the swarm's network mode \
-             and name are encoded in the swarm id and auto-detected. \
+            "`{flag}` is not valid for `join`: the mesh's network mode \
+             and name are encoded in the mesh id and auto-detected. \
              Drop `{flag}` — `join` takes only the id and `--nickname`."
         );
     }
@@ -53,14 +53,14 @@ fn reject_id_encoded_flag(flag: &str, present: bool) -> Result<()> {
 /// Run the selected subcommand to completion.
 ///
 /// # Errors
-/// Propagates any error from the selected subcommand — swarm setup
-/// failure, join timeout, IPC errors, invalid swarm-mode flags, etc.
+/// Propagates any error from the selected subcommand — mesh setup
+/// failure, join timeout, IPC errors, invalid mesh-mode flags, etc.
 pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
     // Install the log-path config from the global flags before any
     // subcommand resolves its log file (the buffered sink flushes at
     // `logging::attach`, after this). Replaces the old AHS_LOG_DIR /
     // AHS_LOG_MAX_BYTES env reads.
-    agent_habilis_gossip::util::logs::configure(agent_habilis_gossip::util::logs::LogConfig {
+    agent_habilis_mesh::util::logs::configure(agent_habilis_mesh::util::logs::LogConfig {
         dir: cli.log_dir,
         max_bytes: cli.log_max_bytes,
         raw: cli.log_raw,
@@ -75,17 +75,17 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
         // clippy's `large_futures` 16 KiB threshold — boxing keeps the dispatch
         // future small and the size off the knife's edge as those types grow.
         Commands::Create { opts } => {
-            agent_habilis_gossip::util::tuning::init(opts.shared.tuning());
+            agent_habilis_mesh::util::tuning::init(opts.shared.tuning());
             Box::pin(create(opts)).await
         }
         Commands::Join { opts } => {
             reject_id_encoded_flag("--public", opts.public)?;
             reject_id_encoded_flag("--name", opts.name.is_some())?;
-            agent_habilis_gossip::util::tuning::init(opts.shared.tuning());
-            Box::pin(join(opts.swarm, opts.nickname, opts.password, opts.shared)).await
+            agent_habilis_mesh::util::tuning::init(opts.shared.tuning());
+            Box::pin(join(opts.mesh, opts.nickname, opts.password, opts.shared)).await
         }
         Commands::Topic { opts } => {
-            agent_habilis_gossip::util::tuning::init(opts.shared.tuning());
+            agent_habilis_mesh::util::tuning::init(opts.shared.tuning());
             Box::pin(topic(opts)).await
         }
         Commands::Leave { opts } => session::leave(opts).await,
@@ -103,7 +103,7 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
         Commands::Topology { opts } => topology_cmd(opts).await,
         Commands::Ready { opts } => ready(opts).await,
         Commands::Discover { opts } => {
-            agent_habilis_gossip::util::tuning::init(opts.shared.tuning());
+            agent_habilis_mesh::util::tuning::init(opts.shared.tuning());
             Box::pin(discover::discover(opts)).await
         }
         Commands::Mcp {
@@ -114,11 +114,11 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
             // The MCP server holds no `SharedServerOpts`; install just the
             // hidden knobs the suite varies (loopback directory, short ping
             // window, short long-poll park) over the production defaults.
-            agent_habilis_gossip::util::tuning::init(agent_habilis_gossip::util::tuning::Tuning {
+            agent_habilis_mesh::util::tuning::init(agent_habilis_mesh::util::tuning::Tuning {
                 ping_window_secs,
                 longpoll_max_ms,
                 directory_private,
-                ..agent_habilis_gossip::util::tuning::Tuning::DEFAULTS
+                ..agent_habilis_mesh::util::tuning::Tuning::DEFAULTS
             });
             Box::pin(crate::mcp::run()).await
         }
@@ -136,17 +136,17 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
     }
 }
 
-/// Build the output sink, set up the swarm, and run the event loop. The
+/// Build the output sink, set up the mesh, and run the event loop. The
 /// shared spine of `create` and `join` — `resolved` carries the
-/// already-resolved [`SetupKind`](agent_habilis_gossip::daemon::setup::SetupKind), author,
-/// and advertise directory (see [`agent_habilis_gossip::daemon::params`]).
+/// already-resolved [`SetupKind`](agent_habilis_mesh::daemon::setup::SetupKind), author,
+/// and advertise directory (see [`agent_habilis_mesh::daemon::params`]).
 async fn run_session(resolved: Resolved, shared: SharedServerOpts) -> Result<()> {
     let Resolved {
         kind,
         author,
         advertise_directory,
     } = resolved;
-    // The advertiser reaches the directory over this swarm's own lookups
+    // The advertiser reaches the directory over this mesh's own lookups
     // (only `create` advertises, so only `Create` carries them).
     let directory_lookups = match &kind {
         SetupKind::Create { config, .. } => Some(config.lookups.clone()),
@@ -159,12 +159,12 @@ async fn run_session(resolved: Resolved, shared: SharedServerOpts) -> Result<()>
     );
     // Nag once at startup if an installed integration has fallen behind this
     // binary. CLI-only: the embed/MCP paths pass `None` so in-process tests
-    // stay hermetic. `agent-gossip status` is the on-demand counterpart.
+    // stay hermetic. `agent-mesh status` is the on-demand counterpart.
     let drift = agent::home_dir()
         .ok()
         .and_then(|home| agent::drift_warning(&home));
     // The CLI owns the a2a application state. Tap its output so surfaced events
-    // reach the app-side `poll`/`fetch` ring; the engine emits `MeshEvent`s
+    // reach the app-side `poll`/`fetch` ring; the engine emits `NodeEvent`s
     // through `io.sink()` (`cfg.sink`) and the app's own `Output` render the
     // same tap.
     let io = crate::a2a::app::SurfacedIo::new(out);
@@ -186,7 +186,7 @@ async fn run_session(resolved: Resolved, shared: SharedServerOpts) -> Result<()>
     // Read the transport policy before the struct literal moves other `shared`
     // fields out (a `&shared` borrow can't follow a partial move).
     let transport = shared.transport_policy();
-    let mut cfg = setup_swarm(
+    let mut cfg = setup_mesh(
         kind,
         SetupParams {
             author,
@@ -202,19 +202,19 @@ async fn run_session(resolved: Resolved, shared: SharedServerOpts) -> Result<()>
     )
     .await?;
     // Advertising (`create --advertise`): start the re-broadcast task. It
-    // reaches the directory over this swarm's own lookups. The handle is
+    // reaches the directory over this mesh's own lookups. The handle is
     // held for the session's lifetime — on the CLI the process exits (via
     // signal) before it would drop, which tears the task down.
     let _advertiser = advertise_directory
         .zip(directory_lookups)
         .map(|(directory, lookups)| spawn_advertiser(&mut cfg, directory, lookups));
-    // First point where swarm id + nickname are known — attach the
+    // First point where mesh id + nickname are known — attach the
     // buffered log sink here (see `logging`).
-    agent_habilis_gossip::logging::attach(&cfg.swarm, &cfg.author);
+    agent_habilis_mesh::logging::attach(&cfg.mesh, &cfg.author);
     run_event_loop(cfg, app, None, http_rx).await
 }
 
-/// Create a new swarm, print its identifier, and start listening.
+/// Create a new mesh, print its identifier, and start listening.
 async fn create(opts: CreateOpts) -> Result<()> {
     // Borrow-then-move: resolve the lookups and advertise selection (which
     // borrow `opts`) before moving `opts.name`/`opts.nickname` out.
@@ -224,7 +224,7 @@ async fn create(opts: CreateOpts) -> Result<()> {
         /* confirm */ true,
         opts.shared.no_prompt(),
     )?;
-    let config = SwarmConfig {
+    let config = MeshConfig {
         lookups: resolve_lookups(opts.public, opts.lookups.to_set()),
         // The verifier is baked in at setup: its salt is the seed, which is
         // minted there. The flag's presence is all `resolve` needs.
@@ -232,13 +232,13 @@ async fn create(opts: CreateOpts) -> Result<()> {
         // Likewise the issuer pubkey: `set_invite` mints the keypair at setup
         // and bakes the pubkey; the `--invite-only` flag rides `CreateParams`.
         issuer_pubkey: None,
-        // `--no-gossip` is a swarm-wide characteristic baked into the id, so
+        // `--no-gossip` is a mesh-wide characteristic baked into the id, so
         // every joiner inherits it from the ticket alone.
     };
     // `resolve` validates `--advertise` against the config (never a silent
     // no-op) before any setup work.
     let resolved = CreateParams {
-        name: opts.name.unwrap_or_else(SwarmName::random),
+        name: opts.name.unwrap_or_else(MeshName::random),
         nickname: opts.nickname,
         config,
         advertise,
@@ -252,8 +252,8 @@ async fn create(opts: CreateOpts) -> Result<()> {
     Box::pin(run_session(resolved, opts.shared)).await
 }
 
-/// Join an existing swarm by its identifier (💬...), a domain, or a
-/// supported git repo URL. The swarm's config (lookups) is decoded from
+/// Join an existing mesh by its identifier (💬...), a domain, or a
+/// supported git repo URL. The mesh's config (lookups) is decoded from
 /// the id — `join` takes no lookup flags.
 async fn join(
     target: JoinTarget,
@@ -270,11 +270,11 @@ async fn join(
     // invite), so classify either before prompting.
     if password.is_none() {
         let prompt_for = match &target {
-            JoinTarget::Swarm(id) => id
+            JoinTarget::Mesh(id) => id
                 .as_str()
-                .parse::<Swarm>()
-                .is_ok_and(|swarm| swarm.requires_password())
-                .then_some("swarm"),
+                .parse::<Mesh>()
+                .is_ok_and(|mesh| mesh.requires_password())
+                .then_some("mesh"),
             JoinTarget::Invite(invite) => invite.requires_password().then_some("invite"),
         };
         if let Some(what) = prompt_for {
@@ -291,7 +291,7 @@ async fn join(
     Box::pin(run_session(resolved, shared)).await
 }
 
-/// Join a public swarm derived deterministically from a shared string. The
+/// Join a public mesh derived deterministically from a shared string. The
 /// seed, name, and (always-public) config are all derived from the string, so
 /// the same string joins the same topic on any machine — no id to share.
 async fn topic(opts: TopicOpts) -> Result<()> {
@@ -326,7 +326,7 @@ fn finish_send(resp: &str, what: &str) -> Result<MessageId> {
         .ok_or_else(|| anyhow::anyhow!("{what} response missing id"))
 }
 
-/// Post a message to a swarm via the running server's IPC socket.
+/// Post a message to a mesh via the running server's IPC socket.
 #[expect(
     clippy::too_many_lines,
     reason = "flat dispatch over the a2a subcommand: the tunnel arms (expose/connect/discover) and the messaging arms (call/status/artifact) are each self-contained, and each carries a 6-8 field clap arg group, so splitting would only scatter the match into many-argument helpers"
@@ -344,7 +344,7 @@ async fn a2a(action: A2aAction) -> Result<()> {
             let json = matches!(output, OutputFormat::Json);
             let password = password::resolve_password(password, /* confirm */ true, json)?;
             let advertise =
-                agent_habilis_gossip::protocol::swarm::DirectorySelection::from_flag(advertise);
+                agent_habilis_mesh::protocol::mesh::DirectorySelection::from_flag(advertise);
             Box::pin(crate::a2a::expose(
                 &to,
                 lookups.to_set(),
@@ -363,7 +363,7 @@ async fn a2a(action: A2aAction) -> Result<()> {
         } => {
             let json = matches!(output, OutputFormat::Json);
             // Prompt when the ticket needs a password and none was passed
-            // (mirrors the swarm-join UX); otherwise resolve the given flag.
+            // (mirrors the mesh-join UX); otherwise resolve the given flag.
             let password = match password {
                 None if crate::a2a::ticket_requires_password(&ticket) => {
                     Some(password::require_password(json, "ticket")?)
@@ -390,7 +390,7 @@ async fn a2a(action: A2aAction) -> Result<()> {
             .await
         }
         A2aAction::Call {
-            swarm,
+            mesh,
             nickname,
             to,
             method,
@@ -399,14 +399,14 @@ async fn a2a(action: A2aAction) -> Result<()> {
             params,
             timeout_secs,
         } => {
-            // No peer + SendMessage = swarm broadcast chat (fire-and-forget).
+            // No peer + SendMessage = mesh broadcast chat (fire-and-forget).
             if to.is_none() && method == "SendMessage" {
                 let text = text.ok_or_else(|| {
                     anyhow::anyhow!("broadcast SendMessage needs --text (or a --to peer)")
                 })?;
-                let body = agent_habilis_gossip::protocol::MessageBody::new(text)
+                let body = agent_habilis_mesh::protocol::MessageBody::new(text)
                     .map_err(|error| anyhow::anyhow!("{error}"))?;
-                let resp = ipc::send(&IpcCommand::Msg { swarm, body }, &nickname).await?;
+                let resp = ipc::send(&IpcCommand::Msg { mesh, body }, &nickname).await?;
                 let id = finish_send(&resp, "message")?;
                 Output::new(OutputMode::Human, false, None).msg_posted(&id);
                 return Ok(());
@@ -420,10 +420,10 @@ async fn a2a(action: A2aAction) -> Result<()> {
             let params: serde_json::Value = match params {
                 Some(raw) => serde_json::from_str(&raw)
                     .map_err(|error| anyhow::anyhow!("--params must be valid JSON: {error}"))?,
-                None => compose_a2a_params(&method, &swarm, text.as_deref(), task_id.as_ref()),
+                None => compose_a2a_params(&method, &mesh, text.as_deref(), task_id.as_ref()),
             };
             let cmd = IpcCommand::A2aCall {
-                swarm,
+                mesh,
                 to,
                 method,
                 params,
@@ -438,14 +438,14 @@ async fn a2a(action: A2aAction) -> Result<()> {
             Ok(())
         }
         A2aAction::Status {
-            swarm,
+            mesh,
             nickname,
             task_id,
             state,
             note,
         } => {
             let cmd = IpcCommand::A2aStatus {
-                swarm,
+                mesh,
                 task_id,
                 state,
                 note,
@@ -456,7 +456,7 @@ async fn a2a(action: A2aAction) -> Result<()> {
             Ok(())
         }
         A2aAction::Artifact {
-            swarm,
+            mesh,
             nickname,
             task_id,
             text,
@@ -475,7 +475,7 @@ async fn a2a(action: A2aAction) -> Result<()> {
                     .map(str::to_owned)
             });
             let cmd = IpcCommand::A2aArtifact {
-                swarm,
+                mesh,
                 task_id,
                 text: text.unwrap_or_default(),
                 file,
@@ -493,8 +493,8 @@ async fn a2a(action: A2aAction) -> Result<()> {
             output,
             password,
         } => {
-            let ticket = agent_habilis_gossip::blob::BlobTicket::decode(&ticket)?;
-            let password = password.map(agent_habilis_gossip::protocol::crypto::Password::new);
+            let ticket = agent_habilis_mesh::blob::BlobTicket::decode(&ticket)?;
+            let password = password.map(agent_habilis_mesh::protocol::crypto::Password::new);
 
             // Where the bytes land, `None` meaning stdout. Precedence:
             //   `--output -`       → stdout
@@ -506,7 +506,7 @@ async fn a2a(action: A2aAction) -> Result<()> {
                 Some(path) => Some(path),
                 None => match &nickname {
                     Some(nick) => {
-                        let swarm = session::swarm_for_nickname(nick.as_str()).ok_or_else(|| {
+                        let mesh = session::mesh_for_nickname(nick.as_str()).ok_or_else(|| {
                             anyhow::anyhow!(
                                 "no live session for nickname '{}' — start one, or pass --output",
                                 nick.as_str()
@@ -514,7 +514,7 @@ async fn a2a(action: A2aAction) -> Result<()> {
                         })?;
                         // Validate the private base (fail closed) before the
                         // receive dir is created under it.
-                        let dir = agent_habilis_gossip::util::ensure_swarm_runtime_dir(&swarm)
+                        let dir = agent_habilis_mesh::util::ensure_mesh_runtime_dir(&mesh)
                             .map_err(|error| {
                                 anyhow::anyhow!("cannot prepare receive dir: {error}")
                             })?
@@ -529,12 +529,12 @@ async fn a2a(action: A2aAction) -> Result<()> {
             match dest {
                 None => {
                     let mut stdout = tokio::io::stdout();
-                    agent_habilis_gossip::blob::fetch(&ticket, &mut stdout, password).await?;
+                    agent_habilis_mesh::blob::fetch(&ticket, &mut stdout, password).await?;
                 }
                 Some(path) => {
                     let mut file = tokio::fs::File::create(&path).await?;
                     if let Err(error) =
-                        agent_habilis_gossip::blob::fetch(&ticket, &mut file, password).await
+                        agent_habilis_mesh::blob::fetch(&ticket, &mut file, password).await
                     {
                         // fetch verifies the hash as it streams; a partial file
                         // from a failed transfer is meaningless, so drop it.
@@ -552,14 +552,14 @@ async fn a2a(action: A2aAction) -> Result<()> {
 
 fn compose_a2a_params(
     method: &str,
-    swarm: &agent_habilis_gossip::protocol::SwarmId,
+    mesh: &agent_habilis_mesh::protocol::MeshId,
     text: Option<&str>,
     task_id: Option<&crate::a2a::TaskId>,
 ) -> serde_json::Value {
     match method {
         "SendMessage" | "SendStreamingMessage" => {
             let message =
-                crate::a2a::gossip::send_message_payload(swarm, task_id, text.unwrap_or_default());
+                crate::a2a::gossip::send_message_payload(mesh, task_id, text.unwrap_or_default());
             serde_json::json!({ "message": message })
         }
         "GetTask" | "CancelTask" | "SubscribeToTask" => task_id.map_or_else(
@@ -574,13 +574,13 @@ fn compose_a2a_params(
 /// raw IPC JSON (`{ok, participants, participant_count}`), like `poll`.
 async fn poll(opts: PollOpts) -> Result<()> {
     let PollOpts {
-        swarm,
+        mesh,
         nickname,
         after,
         long,
         output: _,
     } = opts;
-    let cmd = IpcCommand::Poll { swarm, after, long };
+    let cmd = IpcCommand::Poll { mesh, after, long };
 
     loop {
         let started = tokio::time::Instant::now();
@@ -590,7 +590,7 @@ async fn poll(opts: PollOpts) -> Result<()> {
         // Surface it instead of printing a blank line / retrying forever.
         anyhow::ensure!(
             !resp.is_empty(),
-            "swarm daemon closed the connection without a response (shutting down?)"
+            "mesh daemon closed the connection without a response (shutting down?)"
         );
         if !(long && resp == "[]") {
             println!("{resp}");
@@ -602,7 +602,7 @@ async fn poll(opts: PollOpts) -> Result<()> {
         // can't spin this loop hot — the unchanged cursor re-reads anything
         // that lands during the sleep.
         let min_cycle = std::time::Duration::from_millis(
-            agent_habilis_gossip::util::tuning::POLL_LONG_MIN_CYCLE_MS,
+            agent_habilis_mesh::util::tuning::POLL_LONG_MIN_CYCLE_MS,
         );
         if let Some(remaining) = min_cycle.checked_sub(started.elapsed()) {
             tokio::time::sleep(remaining).await;
@@ -615,11 +615,11 @@ async fn poll(opts: PollOpts) -> Result<()> {
 /// `--output json` stream once the collection window closes.
 async fn ping(opts: PingOpts) -> Result<()> {
     let PingOpts {
-        swarm,
+        mesh,
         nickname,
         output: _,
     } = opts;
-    let cmd = IpcCommand::Ping { swarm };
+    let cmd = IpcCommand::Ping { mesh };
     let resp = ipc::send(&cmd, &nickname).await?;
     let parsed: MsgResponse = serde_json::from_str(&resp)?;
     if !parsed.ok {
@@ -633,11 +633,11 @@ async fn ping(opts: PingOpts) -> Result<()> {
 
 async fn peers(opts: PeersOpts) -> Result<()> {
     let PeersOpts {
-        swarm,
+        mesh,
         nickname,
         output: _,
     } = opts;
-    let cmd = IpcCommand::Peers { swarm };
+    let cmd = IpcCommand::Peers { mesh };
     let resp = ipc::send(&cmd, &nickname).await?;
     println!("{resp}");
     Ok(())
@@ -647,7 +647,7 @@ async fn peers(opts: PeersOpts) -> Result<()> {
 /// suffixed duration, or `none`/`0` for no expiry. Absent ⇒ the 24h default.
 fn parse_ttl(raw: Option<&str>) -> Result<u64> {
     let Some(raw) = raw.map(str::trim) else {
-        return Ok(agent_habilis_gossip::util::consts::INVITE_DEFAULT_TTL_SECS);
+        return Ok(agent_habilis_mesh::util::consts::INVITE_DEFAULT_TTL_SECS);
     };
     if raw.eq_ignore_ascii_case("none") {
         return Ok(0);
@@ -670,13 +670,13 @@ fn parse_ttl(raw: Option<&str>) -> Result<u64> {
 /// raw `{ok,invite}` line. Exits non-zero on refusal (e.g. not the creator).
 async fn invite(opts: InviteOpts) -> Result<()> {
     let InviteOpts {
-        swarm,
+        mesh,
         nickname,
         ttl,
         output,
     } = opts;
     let ttl = parse_ttl(ttl.as_deref())?;
-    let cmd = IpcCommand::Invite { swarm, ttl };
+    let cmd = IpcCommand::Invite { mesh, ttl };
     let resp = ipc::send(&cmd, &nickname).await?;
     if matches!(output, OutputFormat::Json) {
         println!("{resp}");
@@ -701,9 +701,9 @@ async fn invite(opts: InviteOpts) -> Result<()> {
 }
 
 /// Print the circuit routing topology (assembled mesh graph) from the running
-/// daemon, as JSON. Backs the `/swarm:topology` render.
+/// daemon, as JSON. Backs the `/mesh:topology` render.
 async fn topology_cmd(opts: TopologyOpts) -> Result<()> {
-    let cmd = IpcCommand::Topology { swarm: opts.swarm };
+    let cmd = IpcCommand::Topology { mesh: opts.mesh };
     let resp = ipc::send(&cmd, &opts.nickname).await?;
     println!("{resp}");
     let parsed: MsgResponse = serde_json::from_str(&resp)?;
@@ -713,12 +713,12 @@ async fn topology_cmd(opts: TopologyOpts) -> Result<()> {
     Ok(())
 }
 
-/// Read or change the swarm's shared state via the running daemon. Emits the
+/// Read or change the mesh's shared state via the running daemon. Emits the
 /// raw IPC JSON response — `{ok,...}` for `merge`, `{ok,document}` for `get`.
 async fn state(opts: StateOpts) -> Result<()> {
     let (cmd, nickname) = match opts.action {
         StateAction::Merge {
-            swarm,
+            mesh,
             nickname,
             merge,
         } => {
@@ -727,13 +727,13 @@ async fn state(opts: StateOpts) -> Result<()> {
             })?;
             (
                 IpcCommand::StateMerge {
-                    swarm,
+                    mesh,
                     merge: merge_doc,
                 },
                 nickname,
             )
         }
-        StateAction::Get { swarm, nickname } => (IpcCommand::StateGet { swarm }, nickname),
+        StateAction::Get { mesh, nickname } => (IpcCommand::StateGet { mesh }, nickname),
     };
     let resp = ipc::send(&cmd, &nickname).await?;
     println!("{resp}");
@@ -749,12 +749,12 @@ async fn state(opts: StateOpts) -> Result<()> {
     Ok(())
 }
 
-/// Read or change the swarm's `meta` channel via the running daemon — the
+/// Read or change the mesh's `meta` channel via the running daemon — the
 /// independent counterpart of [`state`]. Same raw-JSON + exit-code contract.
 async fn meta(opts: MetaOpts) -> Result<()> {
     let (cmd, nickname) = match opts.action {
         MetaAction::Merge {
-            swarm,
+            mesh,
             nickname,
             merge,
         } => {
@@ -763,13 +763,13 @@ async fn meta(opts: MetaOpts) -> Result<()> {
             })?;
             (
                 IpcCommand::MetaMerge {
-                    swarm,
+                    mesh,
                     merge: merge_doc,
                 },
                 nickname,
             )
         }
-        MetaAction::Get { swarm, nickname } => (IpcCommand::MetaGet { swarm }, nickname),
+        MetaAction::Get { mesh, nickname } => (IpcCommand::MetaGet { mesh }, nickname),
     };
     let resp = ipc::send(&cmd, &nickname).await?;
     println!("{resp}");
@@ -783,7 +783,7 @@ async fn meta(opts: MetaOpts) -> Result<()> {
 /// Block until the daemon's `--state-file` reports it is *freshly* serving
 /// (the `ready` flag is `true` and `last_updated` is recent), then exit 0.
 /// In `human` mode a pure gate — prints nothing; with `--output json` it
-/// prints `{swarm,name,nickname}` on success, so the gate doubles as the
+/// prints `{mesh,name,nickname}` on success, so the gate doubles as the
 /// identity read instead of the caller parsing the file. Times out non-zero.
 ///
 /// Robustness: a missing, unreadable, malformed, or stale-but-not-yet-ready
@@ -804,7 +804,7 @@ async fn ready(opts: ReadyOpts) -> Result<()> {
     let deadline = now
         .checked_add(std::time::Duration::from_secs(timeout_secs))
         .unwrap_or_else(|| {
-            now + std::time::Duration::from_secs(agent_habilis_gossip::util::tuning::READY_MAX_SECS)
+            now + std::time::Duration::from_secs(agent_habilis_mesh::util::tuning::READY_MAX_SECS)
         });
     loop {
         // Read off the runtime's blocking pool: a `--state-file` on a hung
@@ -815,7 +815,7 @@ async fn ready(opts: ReadyOpts) -> Result<()> {
         // cause is recoverable.
         let path = state_file.clone();
         let read = tokio::task::spawn_blocking(move || {
-            agent_habilis_gossip::daemon::state_file::read_snapshot(&path)
+            agent_habilis_mesh::daemon::state_file::read_snapshot(&path)
         })
         .await?;
         match read {
@@ -827,7 +827,7 @@ async fn ready(opts: ReadyOpts) -> Result<()> {
             }
             Ok(_) => {}
             Err(error) => {
-                tracing::debug!(%error, path = %state_file.display(), "agent-gossip ready: state-file read failed; retrying");
+                tracing::debug!(%error, path = %state_file.display(), "agent-mesh ready: state-file read failed; retrying");
             }
         }
         if tokio::time::Instant::now() >= deadline {
@@ -837,21 +837,21 @@ async fn ready(opts: ReadyOpts) -> Result<()> {
             );
         }
         tokio::time::sleep(std::time::Duration::from_millis(
-            agent_habilis_gossip::util::tuning::READY_POLL_INTERVAL_MS,
+            agent_habilis_mesh::util::tuning::READY_POLL_INTERVAL_MS,
         ))
         .await;
     }
 }
 
-/// Print the session identity as a JSON object for `agent-gossip ready --output json`,
+/// Print the session identity as a JSON object for `agent-mesh ready --output json`,
 /// omitting any field the state file lacks — so a degenerate (identity-less)
-/// file yields `{}` rather than `{"swarm":null,…}` that a caller might splice
+/// file yields `{}` rather than `{"mesh":null,…}` that a caller might splice
 /// into the next command as the literal string "null".
 fn print_ready_identity(state_file: &std::path::Path) {
-    let identity = agent_habilis_gossip::daemon::state_file::read_identity(state_file);
+    let identity = agent_habilis_mesh::daemon::state_file::read_identity(state_file);
     let mut obj = serde_json::Map::new();
     for (key, value) in [
-        ("swarm", identity.swarm),
+        ("mesh", identity.mesh),
         ("name", identity.name),
         ("nickname", identity.nickname),
     ] {
@@ -872,10 +872,10 @@ fn print_ready_identity(state_file: &std::path::Path) {
 /// too. `clock::unix_secs` is non-negative, so the `i64` math below cannot
 /// underflow into the past.
 fn ready_is_fresh(last_updated: u64) -> bool {
-    let now = agent_habilis_gossip::util::clock::unix_secs();
+    let now = agent_habilis_mesh::util::clock::unix_secs();
     let last_updated = i64::try_from(last_updated).unwrap_or(i64::MAX);
     let skew = now - last_updated; // >0: file is in the past; <0: in the future
     let window =
-        i64::try_from(agent_habilis_gossip::util::tuning::READY_FRESH_SECS).unwrap_or(i64::MAX);
+        i64::try_from(agent_habilis_mesh::util::tuning::READY_FRESH_SECS).unwrap_or(i64::MAX);
     skew.abs() <= window
 }

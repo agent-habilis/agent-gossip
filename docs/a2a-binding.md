@@ -1,12 +1,12 @@
 # The A2A gossip binding
 
-agent-gossip is an [A2A](https://a2a-protocol.org) network with two
+agent-mesh is an [A2A](https://a2a-protocol.org) network with two
 protocol bindings sharing one A2A core:
 
 1. a **custom gossip binding** (this document; A2A spec §12) — the
    peer-to-peer plane every member always speaks, and
 2. the standard **JSON-RPC 2.0 binding** on localhost, off by default
-   behind `--a2a-serve` (see `agent-gossip man`, section *A2A*), which relays onto
+   behind `--a2a-serve` (see `agent-mesh man`, section *A2A*), which relays onto
    the gossip binding.
 
 Peers communicate exclusively through A2A objects: chat, task creation,
@@ -43,7 +43,7 @@ JSON), discriminated by the frame kind: `a2a_msg` (a `Message`),
 
 Receive-side, every logical frame passes an **A2A boundary gate**
 (`a2a::gossip`): the payload must parse and agree with its frame — the
-payload `messageId` is the frame id, `contextId` names the frame's swarm,
+payload `messageId` is the frame id, `contextId` names the frame's mesh,
 correlation ids match, addressing agrees with the declared extensions — or
 the frame is dropped whole.
 
@@ -55,13 +55,13 @@ operations become signed frames.
 
 | A2A operation | gossip binding |
 |---|---|
-| `SendMessage` (broadcast chat) | an `a2a_msg` frame declaring the `swarm-broadcast` extension (A2A is point-to-point, so a swarm-wide message marks itself). Fire-and-forget, no addressee. |
+| `SendMessage` (broadcast chat) | an `a2a_msg` frame declaring the `mesh-broadcast` extension (A2A is point-to-point, so a mesh-wide message marks itself). Fire-and-forget, no addressee. |
 | `SendMessage` to a peer (task-creating) | a **request/response** call (below): a directed `Message` with **no `taskId`**; the peer (the A2A server) **mints the task id** and returns the `submitted` `Task` synchronously |
 | `SendMessage` into a task | a request/response `SendMessage` carrying the `taskId` — the initiator's answer / approval / change request; the worker's *skill* interprets it |
-| task status | worker-pushed `a2a_status` frames (the A2A streaming plane): `working` / `input-required` / `completed` / `failed`; `canceled` is open to both (and to the daemon's idle timeout, `metadata:{"swarm:reason":"timeout"}`). The **worker** authors `completed`. |
+| task status | worker-pushed `a2a_status` frames (the A2A streaming plane): `working` / `input-required` / `completed` / `failed`; `canceled` is open to both (and to the daemon's idle timeout, `metadata:{"mesh:reason":"timeout"}`). The **worker** authors `completed`. |
 | the result | a worker-pushed `a2a_artifact` frame; receiving it parks the task in `input-required` for the initiator's approval |
-| a file on a part | a `Part` may carry a **large file** in either direction (an input `Message.parts`, an output `Artifact.parts`). Instead of inlining bytes, its `url` holds a `🎟️…` blob ticket; the bytes stream point-to-point over a dedicated QUIC ALPN (`swarm-blob`), SHA-256-verified. The receiver fetches with `agent-gossip a2a fetch <🎟️…>`. The bytes never touch gossip — only the small reference does. The ticket's bearer secret blocks *outsiders*; any swarm member who sees the frame can fetch (confidentiality == membership, same as directed messages). On a **password**-protected swarm the ticket inherits the password (it carries a public salt; the producer stores the Argon2id stretch), so a scraped ticket can't be redeemed without it — fetch with `agent-gossip a2a fetch <🎟️…> --password`. Availability lasts only while the producer's daemon is alive. |
-| liveness | a status update with `metadata:{"swarm:beat":true}` (+ optional done/total) — plumbing, never retained |
+| a file on a part | a `Part` may carry a **large file** in either direction (an input `Message.parts`, an output `Artifact.parts`). Instead of inlining bytes, its `url` holds a `🎟️…` blob ticket; the bytes stream point-to-point over a dedicated QUIC ALPN (`mesh-blob`), SHA-256-verified. The receiver fetches with `agent-mesh a2a fetch <🎟️…>`. The bytes never touch gossip — only the small reference does. The ticket's bearer secret blocks *outsiders*; any mesh member who sees the frame can fetch (confidentiality == membership, same as directed messages). On a **password**-protected mesh the ticket inherits the password (it carries a public salt; the producer stores the Argon2id stretch), so a scraped ticket can't be redeemed without it — fetch with `agent-mesh a2a fetch <🎟️…> --password`. Availability lasts only while the producer's daemon is alive. |
+| liveness | a status update with `metadata:{"mesh:beat":true}` (+ optional done/total) — plumbing, never retained |
 | `GetTask` / `ListTasks` | served locally from the replicated task state (or over request/response) |
 | `CancelTask` | a `canceled` status frame |
 | `SubscribeToTask` / `SendStreamingMessage` | the worker's `a2a_status` / `a2a_artifact` frames already flood + heal to the task's parties — **the push plane IS the stream**. Subscribe returns the current snapshot; the party keeps receiving the pushed frames (connectionless, no held socket). Over the localhost binding the daemon re-encodes those frames as SSE `text/event-stream`. |
@@ -72,7 +72,7 @@ operations become signed frames.
 
 On top of the fire-and-forget plane, a peer can call another peer's A2A
 server and await its response — so any member is an A2A server, not just a
-localhost one. This is what makes the swarm feel client-server without a held
+localhost one. This is what makes the mesh feel client-server without a held
 socket (a held streaming socket is still deferred).
 
 - **Wire.** Two directed, presence-like frame kinds: `a2a_req` (body = a
@@ -89,18 +89,18 @@ socket (a held streaming socket is still deferred).
 - **Server (`src/a2a/gossip_rpc.rs`).** The receiving peer serves a **safe
   method subset**, distinct from the localhost binding's full surface:
   `GetTask`, `ListTasks`, `CancelTask` (only for a task the caller is a
-  party to), `swarm/state.get`, `swarm/meta.get`, and `SendMessage`
+  party to), `mesh/state.get`, `mesh/meta.get`, and `SendMessage`
   **directed at that peer** — task creation: a message with no `taskId` opens
   a task (the peer mints the id), one with a `taskId` is a follow-up; either
   way it returns the authoritative `Task`. It **refuses**
-  `swarm/state.merge`, `swarm/meta.merge`, and broadcast `SendMessage`,
-  because a gossip request is only swarm-member-signed (not bearer-authed
+  `mesh/state.merge`, `mesh/meta.merge`, and broadcast `SendMessage`,
+  because a gossip request is only mesh-member-signed (not bearer-authed
   like the localhost binding): serving those would let any member make the
   peer author global state, or broadcast, **under the peer's identity** on
   the caller's behalf (identity laundering).
-- **Agent surface.** `agent-gossip a2a call --to <peer> --method <m> --params <json>`,
-  the embed `SwarmSession::a2a_call`, and the MCP `a2a_call` tool. Members
-  advertise the capability via the declared `swarm-a2a-rpc` extension in
+- **Agent surface.** `agent-mesh a2a call --to <peer> --method <m> --params <json>`,
+  the embed `MeshSession::a2a_call`, and the MCP `a2a_call` tool. Members
+  advertise the capability via the declared `mesh-a2a-rpc` extension in
   their card.
 
 ## Deviations (documented, semantics-preserving)
@@ -115,7 +115,7 @@ socket (a held streaming socket is still deferred).
   **times out** and the worker's response lands after, the initiator treats the
   creation as failed and does not track it — set a generous `--timeout-secs`
   for a slow link.
-- **Broadcast.** Pure A2A has no swarm-wide message; the `swarm-broadcast`
+- **Broadcast.** Pure A2A has no mesh-wide message; the `mesh-broadcast`
   extension (declared in every card) marks one. This is the one remaining
   deliberate deviation — A2A is otherwise point-to-point (a directed
   `SendMessage` is task creation, not chat).
@@ -130,7 +130,7 @@ socket (a held streaming socket is still deferred).
   `/peers/<nick>`, or to the `url` on a peer's served card) is routed through
   the gossip request/response waiter — the peer mints the task id and the Task
   comes back synchronously to the HTTP client. Broadcast `SendMessage` (POST
-  to `/` or `/swarm`) is the swarm-chat path. A peer's card served over this
+  to `/` or `/mesh`) is the mesh-chat path. A peer's card served over this
   binding advertises `url = http://127.0.0.1:<port>/peers/<nick>` — our daemon
   relays JSON-RPC to that gossip-only peer, so the card stays A2A-conformant
   and reachable.
@@ -139,16 +139,16 @@ socket (a held streaming socket is still deferred).
 
 Declared in every member's card (`capabilities.extensions`):
 
-- `https://agent-habilis.dev/a2a/ext/swarm-broadcast/v1`
-- `https://agent-habilis.dev/a2a/ext/swarm-a2a-rpc/v1` — the member serves
+- `https://agent-habilis.dev/a2a/ext/mesh-broadcast/v1`
+- `https://agent-habilis.dev/a2a/ext/mesh-a2a-rpc/v1` — the member serves
   A2A over gossip (request/response) for the safe method subset above; this is
   also how task delegation works (a directed `SendMessage` creates a task)
-- `https://agent-habilis.dev/a2a/ext/swarm-blob/v1` — a large file on a `Part`
+- `https://agent-habilis.dev/a2a/ext/mesh-blob/v1` — a large file on a `Part`
   travels as a `url` reference (a `🎟️…` ticket) whose bytes stream
-  point-to-point over the `agent-gossip/blob/1` ALPN and are
+  point-to-point over the `agent-mesh/blob/1` ALPN and are
   SHA-256-verified, instead of inlining over gossip. The `🎟️…` in `Part.url` is
   an opaque in-network capability token, not an RFC URL.
-- `https://agent-habilis.dev/a2a/ext/swarm-seal/v1` — **directed frames are
+- `https://agent-habilis.dev/a2a/ext/mesh-seal/v1` — **directed frames are
   end-to-end sealed.** A frame addressed to a peer (`A2aStatus`, `A2aArtifact`,
   `A2aReq`, `A2aResp` — anything with a `to`) carries a body encrypted to that
   peer's X25519 key (a NaCl-style sealed box: ephemeral X25519 → ChaCha20-Poly1305,
@@ -161,9 +161,9 @@ Declared in every member's card (`capabilities.extensions`):
   every member, so there is nothing to seal 1:1; they remain signed + verifiable.
   Only the body is sealed; routing metadata (`to`, `task_id`, `author`, kind,
   timestamp) stays cleartext so relays can route and anti-entropy can heal.
-- `https://agent-habilis.dev/a2a/ext/swarm-state/v1` — the shared automerge CRDT
-  document per swarm (`state`/`meta` channels), exposed over JSON-RPC as
-  `swarm/state.get|merge` and `swarm/meta.get|merge`. The channels
+- `https://agent-habilis.dev/a2a/ext/mesh-state/v1` — the shared automerge CRDT
+  document per mesh (`state`/`meta` channels), exposed over JSON-RPC as
+  `mesh/state.get|merge` and `mesh/meta.get|merge`. The channels
   themselves are replication substrate below the A2A layer (their
   convergence contract — a `(timestamp, id)` fold over pre-join history —
   is not conversational), which is why they are an extension rather than

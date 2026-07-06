@@ -15,10 +15,10 @@ subprocess/reliability suite all pass.
 - **Merged the two `a2a` subcommand trees**: origin's HTTP tunnel
   (`expose`/`connect`/`discover`) and native messaging (`call`/`status`/
   `artifact`) under one `A2aAction`.
-- **Kept origin's features**: the A2A HTTP tunnel, the `💬://` swarm-id URI
-  form, the swarm-relay rung, and the pipe/file/port/sh/mount removals.
-- **Fixed the format-drift fallout**: swarm-id literals and the state-file path
-  helper now use the `💬://` form + `swarm_prefix` scheme-strip; the
+- **Kept origin's features**: the A2A HTTP tunnel, the `💬://` mesh-id URI
+  form, the mesh-relay rung, and the pipe/file/port/sh/mount removals.
+- **Fixed the format-drift fallout**: mesh-id literals and the state-file path
+  helper now use the `💬://` form + `mesh_prefix` scheme-strip; the
   adversarial kind-tamper attack retargeted to `A2aMsg`↔`Presence`.
 
 ## Deferred (one clean follow-up)

@@ -10,15 +10,15 @@ timestamp: 2026-06-28T00:00:00Z
 
 Every runbook in this [bundle](/index.md) is set up by **one dedicated
 coordinator peer**. The coordinator does three things and nothing more: **brief**
-each role's goal and the scenario by **swarm message**, **observe**, and — only
+each role's goal and the scenario by **mesh message**, **observe**, and — only
 when the scenario uses shared state — **reset** that state first. It then leaves
 the agents to run, and the **human validates behavior + UX**.
 
-Everything is driven over the swarm itself — messages, and shared state only
+Everything is driven over the mesh itself — messages, and shared state only
 where a scenario needs it — never local files, so the coordinator and each role
 session can run on **different machines**. For a cross-machine run, create the
-swarm `--public` (optionally `--advertise` so peers find it via `agent-gossip discover`);
-peers join by swarm id or discovery.
+mesh `--public` (optionally `--advertise` so peers find it via `agent-mesh discover`);
+peers join by mesh id or discovery.
 
 The coordinator **never plays a scenario role**, and — critically — it **never
 tells an agent *how* to behave**. Each agent derives its behavior from its own
@@ -30,24 +30,24 @@ test measures. Prescribing the method (which tool to call, push vs. poll,
 
 Most scenarios are driven entirely by messages and need no shared state. When a
 scenario *does* use shared state (e.g. a game board the players mutate), it
-persists per swarm and accumulates stale keys across runs, so the coordinator
+persists per mesh and accumulates stale keys across runs, so the coordinator
 wipes it first: read the document and set every top-level key to `null` in one
 merge so it starts from `{}`. This is **harness setup**, not agent behavior.
 Always reset before briefing a new stateful scenario.
 
 ## 2. Brief the *what* — by message
 
-The coordinator briefs the scenario over **swarm messages**: it announces each
+The coordinator briefs the scenario over **mesh messages**: it announces each
 role's **goal** and the scenario's **data** (the runbook's *Briefing* section) so
 every agent learns its assignment and all are aligned on the same scenario. A
 broadcast for the shared rules, a directed message per role for "you are
 player-a" — whatever the coordinator judges; the point is the briefing travels
-over the swarm as messages, not through a file or a pre-seeded state key.
+over the mesh as messages, not through a file or a pre-seeded state key.
 
 - **roles** — map the joined nicks to the runbook's roles (in join order, or any
   order the runbook fixes), announced by message.
 - **goals** — **what success looks like** for each role; never how to do it.
-- **data** — what the agents need (a game's document model, a win rule, a swarm
+- **data** — what the agents need (a game's document model, a win rule, a mesh
   name, an ordering constraint). No tool names, no transport, no steps.
 
 The coordinator sends this briefing and does not hand-hold after. Any live
@@ -56,20 +56,20 @@ scenario data the agents themselves create lives in **shared state** (e.g.
 
 ## 3. Observe
 
-The coordinator is a swarm member, so it sees the same events the peers do. It
+The coordinator is a mesh member, so it sees the same events the peers do. It
 watches the run and reports what it observed. It does **not** sequence phases,
 require acks, or nudge the agents — the scenario runs on its own from the goals.
 The **human validates behavior + UX**.
 
-## Single-swarm assumption & briefing-only scenarios
+## Single-mesh assumption & briefing-only scenarios
 
-A session is a member of one swarm at a time, so scenarios that need a peer to
-create or join a *different* swarm can't be observed from the control swarm.
+A session is a member of one mesh at a time, so scenarios that need a peer to
+create or join a *different* mesh can't be observed from the control mesh.
 Those are marked `coordinator: briefing-only`: the coordinator briefs the goals
 by message, then stops — the peers run autonomously and the
 **human validates directly**. Only [discover](/discover.md) and
 [create-join-variants](/create-join-variants.md) are briefing-only; everything
-else is fully observed in the one swarm (including
+else is fully observed in the one mesh (including
 [cross-harness](/cross-harness.md), where the harness mix is the only
 difference).
 

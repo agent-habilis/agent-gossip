@@ -1,21 +1,21 @@
 //! `doctor` command args: the environment + network diagnostic. With no
-//! `--swarm` it reports machine health (environment, integrations, network
-//! capability, active swarms); with `--swarm <💬…>` it analyzes the connection
-//! methods to a specific swarm.
+//! `--mesh` it reports machine health (environment, integrations, network
+//! capability, active meshes); with `--mesh <💬…>` it analyzes the connection
+//! methods to a specific mesh.
 
 use clap::Parser;
 
-use agent_habilis_gossip::protocol::SwarmId;
+use agent_habilis_mesh::protocol::MeshId;
 
 use super::output::OutputFormat;
 
 #[derive(Parser, Debug)]
 pub(crate) struct DoctorOpts {
-    /// Analyze a specific swarm (💬...): decode its declared connection
+    /// Analyze a specific mesh (💬...): decode its declared connection
     /// methods and live-probe which actually reach it. Omit for the
     /// machine-health report.
     #[arg(long)]
-    pub swarm: Option<SwarmId>,
+    pub mesh: Option<MeshId>,
 
     /// Skip the live network probes, reporting only what's known without
     /// touching the network (static decode + local state).
@@ -35,21 +35,21 @@ mod tests {
 
     #[test]
     fn doctor_defaults_to_machine_health_human() {
-        let cli = Cli::parse_from(["agent-gossip", "doctor"]);
+        let cli = Cli::parse_from(["agent-mesh", "doctor"]);
         let Commands::Doctor { opts } = cli.command else {
             panic!("expected Doctor command");
         };
-        assert!(opts.swarm.is_none());
+        assert!(opts.mesh.is_none());
         assert!(!opts.no_probe);
         assert_eq!(opts.output, OutputFormat::Human);
     }
 
     #[test]
-    fn doctor_accepts_swarm_and_json() {
+    fn doctor_accepts_mesh_and_json() {
         let cli = Cli::parse_from([
-            "agent-gossip",
+            "agent-mesh",
             "doctor",
-            "--swarm",
+            "--mesh",
             "💬AbCdEf1234",
             "--no-probe",
             "--output",
@@ -58,7 +58,7 @@ mod tests {
         let Commands::Doctor { opts } = cli.command else {
             panic!("expected Doctor command");
         };
-        assert!(opts.swarm.is_some());
+        assert!(opts.mesh.is_some());
         assert!(opts.no_probe);
         assert_eq!(opts.output, OutputFormat::Json);
     }

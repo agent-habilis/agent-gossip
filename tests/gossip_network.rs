@@ -1,8 +1,8 @@
 //! Integration tests for the gossip network.
 //!
-//! Each test spawns real `agent-gossip` processes, exercises the network,
+//! Each test spawns real `agent-mesh` processes, exercises the network,
 //! and asserts on what each node actually received. Tests are independent —
-//! each creates its own swarm so IPC sockets never collide.
+//! each creates its own mesh so IPC sockets never collide.
 //!
 //! Crypto-heavy deps are optimized even in dev builds (see the
 //! `[profile.dev.package]` overrides in `Cargo.toml`), so debug `cargo test`
@@ -74,8 +74,8 @@ const RENDEZVOUS_HANDOFF: Duration = Duration::from_secs(36);
 /// exited** (graceful `sigint` + `wait_exit`, or SIGKILL): the OS then
 /// has released its sockets, so a joiner's rung-walk cannot dial a
 /// dead-but-bound rung — the historical first-message-lost flake.
-fn survivor_serves_rendezvous(swarm: &str, nick: &str) -> bool {
-    let trace = trace_log(swarm, nick);
+fn survivor_serves_rendezvous(mesh: &str, nick: &str) -> bool {
+    let trace = trace_log(mesh, nick);
     let rendezvous_links = |direction: &str| {
         trace
             .lines()
@@ -89,12 +89,12 @@ fn survivor_serves_rendezvous(swarm: &str, nick: &str) -> bool {
 /// Poll until any survivor serves the rendezvous (see
 /// [`survivor_serves_rendezvous`]). Returns whether that landed within
 /// [`handoff_budget`].
-fn wait_rendezvous_served(swarm: &str, survivors: &[&str]) -> bool {
+fn wait_rendezvous_served(mesh: &str, survivors: &[&str]) -> bool {
     wait_until(
         || {
             survivors
                 .iter()
-                .filter(|nick| survivor_serves_rendezvous(swarm, nick))
+                .filter(|nick| survivor_serves_rendezvous(mesh, nick))
                 .count()
         },
         1,
@@ -104,17 +104,17 @@ fn wait_rendezvous_served(swarm: &str, survivors: &[&str]) -> bool {
 
 // ── tests ─────────────────────────────────────────────────────────────────────
 
-/// Wire contract for the `info` IPC + `doctor` active-swarms scan: a live
+/// Wire contract for the `info` IPC + `doctor` active-meshes scan: a live
 /// daemon answers `info` over its socket with its own identity, so
-/// `doctor --output json` lists it under "Active swarms" with the full swarm
+/// `doctor --output json` lists it under "Active meshes" with the full mesh
 /// id and name. `--no-probe` keeps this to the fast local-socket scan (no
 /// net-report), so the test stays offline-safe.
 #[test]
-fn doctor_lists_active_swarm_as_json() {
+fn doctor_lists_active_mesh_as_json() {
     let _serial = serial_guard();
 
-    let (node, swarm) = Node::create_named("itest-doctor");
-    assert!(node.wait_ready(&swarm), "daemon never ready");
+    let (node, mesh) = Node::create_named("itest-doctor");
+    assert!(node.wait_ready(&mesh), "daemon never ready");
 
     let out = common::test_cmd()
         .args(["doctor", "--no-probe", "--output", "json"])
@@ -131,16 +131,16 @@ fn doctor_lists_active_swarm_as_json() {
         "doctor json shape:\n{stdout}"
     );
     assert!(
-        stdout.contains("Active swarms"),
-        "no Active swarms section:\n{stdout}"
+        stdout.contains("Active meshes"),
+        "no Active meshes section:\n{stdout}"
     );
     assert!(
-        stdout.contains(swarm.as_str()),
-        "active swarm {swarm} not listed:\n{stdout}"
+        stdout.contains(mesh.as_str()),
+        "active mesh {mesh} not listed:\n{stdout}"
     );
     assert!(
         stdout.contains("itest-doctor"),
-        "swarm name not listed:\n{stdout}"
+        "mesh name not listed:\n{stdout}"
     );
 }
 
@@ -150,7 +150,7 @@ fn doctor_lists_active_swarm_as_json() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_two_node_message_delivery() {
     let creator = InProcNode::create("net2node").await;
-    let mut joiner = InProcNode::join(&creator.swarm, "joiner-2node").await;
+    let mut joiner = InProcNode::join(&creator.mesh, "joiner-2node").await;
 
     creator.send("hello from the network").await;
 
@@ -163,26 +163,26 @@ async fn test_two_node_message_delivery() {
     assert_eq!(chat_text(received[0]), "hello from the network");
 }
 
-/// A passworded swarm: the right password joins and messages flow; a wrong
+/// A passworded mesh: the right password joins and messages flow; a wrong
 /// password fails locally against the id's verifier ("wrong password"), and
 /// no password at all is a typed "password-protected" error — both before
 /// any network traffic.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn test_passworded_swarm_verifies_locally_and_meshes() {
+async fn test_passworded_mesh_verifies_locally_and_meshes() {
     let creator = InProcNode::create_with_password("netpw", "hunter2").await;
 
     // Wrong password: rejected by the verifier carried in the id.
     let Err(wrong) =
-        InProcNode::try_join_with_password(&creator.swarm, "joiner-bad", "hunter3").await
+        InProcNode::try_join_with_password(&creator.mesh, "joiner-bad", "hunter3").await
     else {
         panic!("a wrong password must be rejected");
     };
     assert!(wrong.to_string().contains("wrong password"), "got: {wrong}");
 
-    // No password: a crisp requirement error, not a silent empty swarm.
-    let target = creator.swarm.parse().expect("join target");
+    // No password: a crisp requirement error, not a silent empty mesh.
+    let target = creator.mesh.parse().expect("join target");
     let missing =
-        agent_gossip::embed::SwarmSession::join(agent_gossip::embed::JoinConfig::new(target))
+        agent_mesh::embed::MeshSession::join(agent_mesh::embed::JoinConfig::new(target))
             .await
             .expect_err("a missing password must be rejected");
     assert!(
@@ -191,7 +191,7 @@ async fn test_passworded_swarm_verifies_locally_and_meshes() {
     );
 
     // The right password lands on the same topic and messages flow.
-    let mut joiner = InProcNode::try_join_with_password(&creator.swarm, "joiner-good", "hunter2")
+    let mut joiner = InProcNode::try_join_with_password(&creator.mesh, "joiner-good", "hunter2")
         .await
         .expect("the right password joins");
     creator.send("hello behind the password").await;
@@ -208,12 +208,12 @@ async fn test_passworded_swarm_verifies_locally_and_meshes() {
 /// non-zero with "wrong password", and `join --password=pw` meshes.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_password_flag_wire_contract() {
-    let (creator, swarm_id) = Node::create_args("pwwire", &["--password=hunter2"], &[]);
-    assert!(creator.wait_ready(&swarm_id), "creator never became ready");
+    let (creator, mesh_id) = Node::create_args("pwwire", &["--password=hunter2"], &[]);
+    assert!(creator.wait_ready(&mesh_id), "creator never became ready");
 
     // Missing password, non-interactive: crisp requirement error.
     let missing = common::test_cmd()
-        .args(["join", &swarm_id, "--no-interactive"])
+        .args(["join", &mesh_id, "--no-interactive"])
         .output()
         .expect("spawn join without password");
     assert!(
@@ -228,7 +228,7 @@ async fn test_password_flag_wire_contract() {
 
     // Wrong password: rejected locally against the id's verifier.
     let wrong = common::test_cmd()
-        .args(["join", &swarm_id, "--no-interactive", "--password=hunter3"])
+        .args(["join", &mesh_id, "--no-interactive", "--password=hunter3"])
         .output()
         .expect("spawn join with wrong password");
     assert!(!wrong.status.success(), "wrong password must exit non-zero");
@@ -239,9 +239,9 @@ async fn test_password_flag_wire_contract() {
     );
 
     // The right password joins and meshes (the join's ready socket appears).
-    let joiner = Node::join_args(&swarm_id, "pw-joiner", &["--password=hunter2"], &[]);
+    let joiner = Node::join_args(&mesh_id, "pw-joiner", &["--password=hunter2"], &[]);
     assert!(
-        joiner.wait_ready(&swarm_id),
+        joiner.wait_ready(&mesh_id),
         "passworded joiner never became ready: {}",
         joiner.log_tail(20)
     );
@@ -255,7 +255,7 @@ async fn test_password_flag_wire_contract() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_state_log_propagates_to_a_peer() {
     let creator = InProcNode::create("netstate").await;
-    let joiner = InProcNode::join(&creator.swarm, "joiner-state").await;
+    let joiner = InProcNode::join(&creator.mesh, "joiner-state").await;
 
     // Mesh first (a delivered message proves the link), so the state events
     // broadcast onto a live overlay rather than the unmeshed buffer.
@@ -287,7 +287,7 @@ async fn test_state_log_propagates_to_a_peer() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_state_log_backfills_a_late_joiner() {
     let creator = InProcNode::create("netstatelate").await;
-    let early = InProcNode::join(&creator.swarm, "early-state").await;
+    let early = InProcNode::join(&creator.mesh, "early-state").await;
     // Mesh so appends go out live, leaving the creator's outbound buffer empty.
     creator.send("link").await;
 
@@ -306,7 +306,7 @@ async fn test_state_log_backfills_a_late_joiner() {
 
     // The late joiner arrives after all state traffic; only anti-entropy can
     // backfill it (within an antientropy interval once it advertises its set).
-    let late = InProcNode::join(&creator.swarm, "late-state").await;
+    let late = InProcNode::join(&creator.mesh, "late-state").await;
     let late_deadline = Instant::now() + RECOVERY_TIMEOUT;
     let mut late_got = late.state_get().await;
     while late_got != want && Instant::now() < late_deadline {
@@ -325,8 +325,8 @@ async fn test_state_log_backfills_a_late_joiner() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_three_node_full_delivery() {
     let alpha = InProcNode::create("net3node").await;
-    let mut beta = InProcNode::join(&alpha.swarm, "beta-3node").await;
-    let mut gamma = InProcNode::join(&alpha.swarm, "gamma-3node").await;
+    let mut beta = InProcNode::join(&alpha.mesh, "beta-3node").await;
+    let mut gamma = InProcNode::join(&alpha.mesh, "gamma-3node").await;
 
     alpha.send("broadcast to all three nodes").await;
 
@@ -345,7 +345,7 @@ async fn test_three_node_full_delivery() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_bidirectional_messaging() {
     let mut creator = InProcNode::create("netbidir").await;
-    let mut joiner = InProcNode::join(&creator.swarm, "joiner-bidir").await;
+    let mut joiner = InProcNode::join(&creator.mesh, "joiner-bidir").await;
 
     // Each side posts as itself — creator receives joiner's message
     // and vice versa.
@@ -364,17 +364,17 @@ async fn test_bidirectional_messaging() {
 
 /// Verify that unit-level JSON wire format tests pass.
 /// The ext field and version checks are covered in `protocol::message::tests`.
-/// This integration test confirms the CLI sends parseable SWARM 1.0 blocks.
+/// This integration test confirms the CLI sends parseable MESH 1.0 blocks.
 /// One send surfaces twice: the sender's own stream echoes it (stream
 /// self-parity) and the peer receives it.
 #[test]
 fn test_stdout_format_parseable() {
-    let (creator, swarm) = Node::create();
-    let joiner = Node::join(&swarm, "joiner-fmt");
-    assert!(creator.wait_ready(&swarm), "creator socket never appeared");
-    assert!(joiner.wait_ready(&swarm), "joiner socket never appeared");
+    let (creator, mesh) = Node::create();
+    let joiner = Node::join(&mesh, "joiner-fmt");
+    assert!(creator.wait_ready(&mesh), "creator socket never appeared");
+    assert!(joiner.wait_ready(&mesh), "joiner socket never appeared");
 
-    cli_message(&swarm, &creator.nickname, "format check message");
+    cli_message(&mesh, &creator.nickname, "format check message");
 
     let total = wait_total(|| creator.messages().len() + joiner.messages().len(), 2);
     assert_eq!(total, 2, "one parseable self-echo + one parseable delivery");
@@ -392,17 +392,17 @@ fn test_stdout_format_parseable() {
 /// `ask` with no running server exits non-zero with a clear error message.
 #[test]
 fn test_no_server_error() {
-    // All-`1` Base58 payload — valid charset, can't match a real swarm.
-    let fake_swarm = "💬1111111111111111111111111111111111111111111111111111111111111";
-    let out = cli_message_raw(fake_swarm, "ghost-nick", "hello");
+    // All-`1` Base58 payload — valid charset, can't match a real mesh.
+    let fake_mesh = "💬1111111111111111111111111111111111111111111111111111111111111";
+    let out = cli_message_raw(fake_mesh, "ghost-nick", "hello");
     assert!(
         !out.status.success(),
         "expected non-zero exit when no server is running"
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stderr.contains("No active swarm server"),
-        "expected 'No active swarm server' in stderr, got: {stderr}"
+        stderr.contains("No active mesh server"),
+        "expected 'No active mesh server' in stderr, got: {stderr}"
     );
 }
 
@@ -412,16 +412,16 @@ fn test_no_server_error() {
 /// what an OS argv can carry, so it is covered in-process in `multipart.rs`.)
 #[test]
 fn test_oversize_body_splits_and_reassembles() {
-    let (creator, swarm) = Node::create();
-    let joiner = Node::join(&swarm, "joiner-mp");
-    assert!(creator.wait_ready(&swarm), "creator socket never appeared");
-    assert!(joiner.wait_ready(&swarm), "joiner socket never appeared");
+    let (creator, mesh) = Node::create();
+    let joiner = Node::join(&mesh, "joiner-mp");
+    assert!(creator.wait_ready(&mesh), "creator socket never appeared");
+    assert!(joiner.wait_ready(&mesh), "joiner socket never appeared");
 
     // 32x the frame cap needs ~35 shards — over the old 16-shard limit — and
     // the receiver still reassembles it, so it surfaces once as the whole
     // body on each stream: the sender's self-echo and the peer's delivery.
-    let body = "a".repeat(agent_gossip::MAX_MESSAGE_SIZE * 32);
-    cli_message(&swarm, &creator.nickname, &body);
+    let body = "a".repeat(agent_mesh::MAX_MESSAGE_SIZE * 32);
+    cli_message(&mesh, &creator.nickname, &body);
     let total = wait_total(|| creator.messages().len() + joiner.messages().len(), 2);
     assert_eq!(
         total, 2,
@@ -440,13 +440,13 @@ fn test_oversize_body_splits_and_reassembles() {
 /// UTF-8 message bodies (accents, emoji, CJK) are accepted and delivered verbatim.
 #[test]
 fn test_utf8_body_round_trip() {
-    let (creator, swarm) = Node::create();
-    let joiner = Node::join(&swarm, "joiner-utf8");
-    assert!(creator.wait_ready(&swarm), "creator socket never appeared");
-    assert!(joiner.wait_ready(&swarm), "joiner socket never appeared");
+    let (creator, mesh) = Node::create();
+    let joiner = Node::join(&mesh, "joiner-utf8");
+    assert!(creator.wait_ready(&mesh), "creator socket never appeared");
+    assert!(joiner.wait_ready(&mesh), "joiner socket never appeared");
 
     let body = "héllo 💬 日本語";
-    cli_message(&swarm, &creator.nickname, body);
+    cli_message(&mesh, &creator.nickname, body);
 
     // One send surfaces twice: the sender's self-echo + the peer's delivery.
     let total = wait_total(|| creator.messages().len() + joiner.messages().len(), 2);
@@ -464,10 +464,10 @@ fn test_utf8_body_round_trip() {
 /// Control characters (other than tab/newline) in a body are rejected.
 #[test]
 fn test_control_char_body_rejected() {
-    let (creator, swarm) = Node::create();
-    assert!(creator.wait_ready(&swarm), "creator socket never appeared");
+    let (creator, mesh) = Node::create();
+    assert!(creator.wait_ready(&mesh), "creator socket never appeared");
 
-    let out = cli_message_raw(&swarm, &creator.nickname, "bad\u{7}bell");
+    let out = cli_message_raw(&mesh, &creator.nickname, "bad\u{7}bell");
     assert!(
         !out.status.success(),
         "expected non-zero exit for control-char body"
@@ -479,11 +479,11 @@ fn test_control_char_body_rejected() {
     );
 }
 
-/// When a peer joins, the other node receives a SWARM 1.0 'joined' presence block.
+/// When a peer joins, the other node receives a MESH 1.0 'joined' presence block.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_presence_block_delivery() {
     let mut creator = InProcNode::create("netpresence").await;
-    let _joiner = InProcNode::join(&creator.swarm, "joiner-presence").await;
+    let _joiner = InProcNode::join(&creator.mesh, "joiner-presence").await;
 
     // The joiner broadcasts a `joined` presence on connect; the
     // creator must surface it.
@@ -500,7 +500,7 @@ async fn test_presence_block_delivery() {
 async fn test_concurrent_asks() {
     const ASK_COUNT: usize = 5;
     let mut creator = InProcNode::create("netconc").await;
-    let joiner = InProcNode::join(&creator.swarm, "joiner-concurrent").await;
+    let joiner = InProcNode::join(&creator.mesh, "joiner-concurrent").await;
 
     let mut ids = std::collections::HashSet::new();
     for index in 0..ASK_COUNT {
@@ -523,16 +523,16 @@ async fn test_concurrent_asks() {
     );
 }
 
-/// With three agents on the same swarm, `ask --nickname <n>` must post as the
+/// With three agents on the same mesh, `ask --nickname <n>` must post as the
 /// specified agent. Without `--nickname`, `find_socket` picks whichever socket
 /// `read_dir` returns first — non-deterministic when multiple sockets share the
-/// same swarm prefix. This test documents that bug and will pass once `ask`
+/// same mesh prefix. This test documents that bug and will pass once `ask`
 /// accepts `--nickname`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_ask_targets_specific_agent_three_peers() {
     let alpha = InProcNode::create("netpick3").await;
-    let mut beta = InProcNode::join(&alpha.swarm, "beta-pick3").await;
-    let mut gamma = InProcNode::join(&alpha.swarm, "gamma-pick3").await;
+    let mut beta = InProcNode::join(&alpha.mesh, "beta-pick3").await;
+    let mut gamma = InProcNode::join(&alpha.mesh, "gamma-pick3").await;
 
     // Each node posts a uniquely-tagged message as itself; the other
     // two must receive it with the *correct* author (each in-process
@@ -584,7 +584,7 @@ async fn test_ask_targets_specific_agent_three_peers() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_graceful_shutdown_handler_fires() {
     let mut creator = InProcNode::create("netshutdown").await;
-    let joiner = InProcNode::join(&creator.swarm, "joiner-shutdown").await;
+    let joiner = InProcNode::join(&creator.mesh, "joiner-shutdown").await;
 
     // Let the mesh form so the `Left` broadcast has a live link.
     assert!(
@@ -617,13 +617,13 @@ async fn test_graceful_shutdown_handler_fires() {
 async fn test_interleaved_join_leave_order() {
     let mut observer = InProcNode::create("netorder").await;
 
-    let alpha = InProcNode::join(&observer.swarm, "alpha-order").await;
+    let alpha = InProcNode::join(&observer.mesh, "alpha-order").await;
     assert!(
         observer.wait_presence_count(true, 1, MSG_TIMEOUT).await,
         "alpha joined not received"
     );
 
-    let beta = InProcNode::join(&observer.swarm, "beta-order").await;
+    let beta = InProcNode::join(&observer.mesh, "beta-order").await;
     assert!(
         observer.wait_presence_count(true, 2, MSG_TIMEOUT).await,
         "beta joined not received"
@@ -635,7 +635,7 @@ async fn test_interleaved_join_leave_order() {
         "alpha left not received"
     );
 
-    let gamma = InProcNode::join(&observer.swarm, "gamma-order").await;
+    let gamma = InProcNode::join(&observer.mesh, "gamma-order").await;
     assert!(
         observer.wait_presence_count(true, 3, MSG_TIMEOUT).await,
         "gamma joined not received"
@@ -716,7 +716,7 @@ fn test_state_file_removed_on_signal() {
         let log = tmp_log(&format!("statefile{signal}"));
         let file = File::create(&log).unwrap();
         let state_file = std::env::temp_dir().join(format!(
-            "agent-gossip-statefile-test-{}-{signal}.json",
+            "agent-mesh-statefile-test-{}-{signal}.json",
             std::process::id()
         ));
         let _ = fs::remove_file(&state_file);
@@ -762,7 +762,7 @@ fn test_state_file_removed_on_signal() {
     }
 }
 
-/// `agent-gossip ready --state-file PATH` is the CLI-fallback readiness gate: it blocks
+/// `agent-mesh ready --state-file PATH` is the CLI-fallback readiness gate: it blocks
 /// until the daemon writing PATH flips the file's `ready` flag to true (set
 /// only once the event loop is serving), then exits 0. This covers the gate
 /// against an already-up daemon and asserts the file then carries `ready:true`
@@ -772,7 +772,7 @@ fn test_ready_gate_succeeds_when_serving() {
     let log = tmp_log("ready-before");
     let file = File::create(&log).unwrap();
     let state_file = std::env::temp_dir().join(format!(
-        "agent-gossip-ready-before-{}.json",
+        "agent-mesh-ready-before-{}.json",
         std::process::id()
     ));
     let _ = fs::remove_file(&state_file);
@@ -793,10 +793,10 @@ fn test_ready_gate_succeeds_when_serving() {
         .arg(&state_file)
         .args(["--timeout-secs", "60"])
         .status()
-        .expect("failed to run agent-gossip ready");
+        .expect("failed to run agent-mesh ready");
     assert!(
         status.success(),
-        "agent-gossip ready should exit 0 against a serving daemon\nlog:\n{}",
+        "agent-mesh ready should exit 0 against a serving daemon\nlog:\n{}",
         fs::read_to_string(&log).unwrap_or_default()
     );
 
@@ -807,9 +807,9 @@ fn test_ready_gate_succeeds_when_serving() {
     assert_eq!(parsed["ready"], true, "gate returned but ready is not true");
     assert_eq!(parsed["name"], "ready-test");
     assert!(
-        parsed["swarm"]
+        parsed["mesh"]
             .as_str()
-            .is_some_and(|swarm| swarm.starts_with("💬"))
+            .is_some_and(|mesh| mesh.starts_with("💬"))
     );
     assert!(parsed["nickname"].as_str().is_some());
 
@@ -821,7 +821,7 @@ fn test_ready_gate_succeeds_when_serving() {
     let _ = fs::remove_file(&state_file);
 }
 
-/// The race the gate exists for: `agent-gossip ready` is started *before* the daemon, so
+/// The race the gate exists for: `agent-mesh ready` is started *before* the daemon, so
 /// the state file does not exist yet. The gate must block (file-appears, then
 /// ready-flips) and still exit 0 once the daemon comes up and serves.
 #[test]
@@ -829,7 +829,7 @@ fn test_ready_gate_waits_for_a_late_daemon() {
     let log = tmp_log("ready-after");
     let file = File::create(&log).unwrap();
     let state_file = std::env::temp_dir().join(format!(
-        "agent-gossip-ready-after-{}.json",
+        "agent-mesh-ready-after-{}.json",
         std::process::id()
     ));
     let _ = fs::remove_file(&state_file);
@@ -841,7 +841,7 @@ fn test_ready_gate_waits_for_a_late_daemon() {
         .arg(&state_file)
         .args(["--timeout-secs", "60"])
         .spawn()
-        .expect("failed to spawn agent-gossip ready");
+        .expect("failed to spawn agent-mesh ready");
 
     // Launch the daemon a beat later, writing the same state file.
     std::thread::sleep(Duration::from_millis(500));
@@ -854,10 +854,10 @@ fn test_ready_gate_waits_for_a_late_daemon() {
         .spawn()
         .expect("failed to spawn create --state-file");
 
-    let status = gate.wait().expect("agent-gossip ready never exited");
+    let status = gate.wait().expect("agent-mesh ready never exited");
     assert!(
         status.success(),
-        "agent-gossip ready started before the daemon should still exit 0 once it serves\nlog:\n{}",
+        "agent-mesh ready started before the daemon should still exit 0 once it serves\nlog:\n{}",
         fs::read_to_string(&log).unwrap_or_default()
     );
 
@@ -870,12 +870,12 @@ fn test_ready_gate_waits_for_a_late_daemon() {
 }
 
 /// With no daemon ever writing the file, the gate must give up at the timeout
-/// and exit non-zero (the `failed to {create,join} swarm` contract the skills
+/// and exit non-zero (the `failed to {create,join} mesh` contract the skills
 /// rely on).
 #[test]
 fn test_ready_gate_times_out_without_a_daemon() {
     let state_file = std::env::temp_dir().join(format!(
-        "agent-gossip-ready-timeout-{}-never.json",
+        "agent-mesh-ready-timeout-{}-never.json",
         std::process::id()
     ));
     let _ = fs::remove_file(&state_file);
@@ -886,10 +886,10 @@ fn test_ready_gate_times_out_without_a_daemon() {
         .arg(&state_file)
         .args(["--timeout-secs", "2"])
         .status()
-        .expect("failed to run agent-gossip ready");
+        .expect("failed to run agent-mesh ready");
     assert!(
         !status.success(),
-        "agent-gossip ready should exit non-zero when no daemon ever writes the state file"
+        "agent-mesh ready should exit non-zero when no daemon ever writes the state file"
     );
 }
 
@@ -900,13 +900,13 @@ fn test_ready_gate_times_out_without_a_daemon() {
 #[test]
 fn test_ready_gate_rejects_a_stale_ready_file() {
     let state_file = std::env::temp_dir().join(format!(
-        "agent-gossip-ready-stale-{}.json",
+        "agent-mesh-ready-stale-{}.json",
         std::process::id()
     ));
     // ready:true but last_updated far in the past (well beyond READY_FRESH_SECS).
     fs::write(
         &state_file,
-        r#"{"last_updated":1000000000,"name":"stale","nickname":"old-nick","participant_count":1,"ready":true,"swarm":"💬deadbeef"}"#,
+        r#"{"last_updated":1000000000,"name":"stale","nickname":"old-nick","participant_count":1,"ready":true,"mesh":"💬deadbeef"}"#,
     )
     .unwrap();
 
@@ -916,22 +916,22 @@ fn test_ready_gate_rejects_a_stale_ready_file() {
         .arg(&state_file)
         .args(["--timeout-secs", "2"])
         .status()
-        .expect("failed to run agent-gossip ready");
+        .expect("failed to run agent-mesh ready");
     assert!(
         !status.success(),
-        "agent-gossip ready must reject a stale ready:true file (last_updated too old) and time out"
+        "agent-mesh ready must reject a stale ready:true file (last_updated too old) and time out"
     );
     let _ = fs::remove_file(&state_file);
 }
 
-/// `agent-gossip ready --output json` doubles as the identity read: on a fresh
-/// `ready:true` file it prints `{swarm,name,nickname}` and exits 0, so a
+/// `agent-mesh ready --output json` doubles as the identity read: on a fresh
+/// `ready:true` file it prints `{mesh,name,nickname}` and exits 0, so a
 /// fallback caller learns its own identity from the gate without parsing the
 /// state file (or guessing its `${PPID}` name) itself.
 #[test]
 fn test_ready_gate_emits_identity_json_on_success() {
     let state_file = std::env::temp_dir().join(format!(
-        "agent-gossip-ready-json-{}.json",
+        "agent-mesh-ready-json-{}.json",
         std::process::id()
     ));
     let now = std::time::SystemTime::now()
@@ -941,7 +941,7 @@ fn test_ready_gate_emits_identity_json_on_success() {
     fs::write(
         &state_file,
         format!(
-            r#"{{"last_updated":{now},"name":"cool-team","nickname":"calm-otter","participant_count":1,"ready":true,"swarm":"💬deadbeef"}}"#
+            r#"{{"last_updated":{now},"name":"cool-team","nickname":"calm-otter","participant_count":1,"ready":true,"mesh":"💬deadbeef"}}"#
         ),
     )
     .unwrap();
@@ -952,42 +952,42 @@ fn test_ready_gate_emits_identity_json_on_success() {
         .arg(&state_file)
         .args(["--timeout-secs", "5", "--output", "json"])
         .output()
-        .expect("failed to run agent-gossip ready");
+        .expect("failed to run agent-mesh ready");
     assert!(
         output.status.success(),
         "a fresh ready:true file should pass the gate"
     );
     let parsed: serde_json::Value =
         serde_json::from_slice(&output.stdout).expect("ready --output json prints a JSON object");
-    assert_eq!(parsed["swarm"], "💬deadbeef");
+    assert_eq!(parsed["mesh"], "💬deadbeef");
     assert_eq!(parsed["name"], "cool-team");
     assert_eq!(parsed["nickname"], "calm-otter");
     let _ = fs::remove_file(&state_file);
 }
 
-/// The poll command retrieves buffered events from a running swarm process,
+/// The poll command retrieves buffered events from a running mesh process,
 /// each carrying its surfacing `seq`. Calling poll with `--after <seq>` returns
 /// only events surfaced after that seq. The records are the same shape the live
 /// `--output json` stream emits (`event`/`type`/`display`/`self`), so a fallback
 /// agent parses one shape whether it reads the stream or polls.
 #[test]
 fn test_poll_returns_messages() {
-    let (creator, swarm) = Node::create();
-    let joiner = Node::join(&swarm, "joiner-poll");
-    assert!(creator.wait_ready(&swarm), "creator socket never appeared");
-    assert!(joiner.wait_ready(&swarm), "joiner socket never appeared");
+    let (creator, mesh) = Node::create();
+    let joiner = Node::join(&mesh, "joiner-poll");
+    assert!(creator.wait_ready(&mesh), "creator socket never appeared");
+    assert!(joiner.wait_ready(&mesh), "joiner socket never appeared");
 
     // Wait for presence to settle.
     std::thread::sleep(Duration::from_secs(2));
 
     // Send two messages via joiner's IPC.
-    cli_message(&swarm, &joiner.nickname, "hello from poll test");
+    cli_message(&mesh, &joiner.nickname, "hello from poll test");
     std::thread::sleep(Duration::from_millis(500));
-    cli_message(&swarm, &joiner.nickname, "second message");
+    cli_message(&mesh, &joiner.nickname, "second message");
     std::thread::sleep(Duration::from_millis(500));
 
     // Poll all events from joiner's process.
-    let all_json = cli_poll(&swarm, &joiner.nickname, None);
+    let all_json = cli_poll(&mesh, &joiner.nickname, None);
     let all: Vec<serde_json::Value> = serde_json::from_str(&all_json)
         .unwrap_or_else(|error| panic!("failed to parse poll JSON: {error}\nraw: {all_json}"));
 
@@ -1021,7 +1021,7 @@ fn test_poll_returns_messages() {
     // Poll with `--after <seq>` of the first message → excludes it, keeps the
     // second (the unified seq cursor).
     let first_seq = first["seq"].as_u64().expect("seq is u64");
-    let after_json = cli_poll(&swarm, &joiner.nickname, Some(&first_seq.to_string()));
+    let after_json = cli_poll(&mesh, &joiner.nickname, Some(&first_seq.to_string()));
     let after: Vec<serde_json::Value> = serde_json::from_str(&after_json).unwrap_or_else(|error| {
         panic!("failed to parse after-poll JSON: {error}\nraw: {after_json}")
     });
@@ -1048,8 +1048,8 @@ fn test_poll_returns_messages() {
 
 /// Baseline a node's poll cursor to "now": a first full poll, then advance
 /// past its newest seq — so a long-poll after it sees only new events.
-fn poll_cursor(swarm: &str, nickname: &str) -> Option<String> {
-    let baseline = cli_poll(swarm, nickname, None);
+fn poll_cursor(mesh: &str, nickname: &str) -> Option<String> {
+    let baseline = cli_poll(mesh, nickname, None);
     let baseline: Vec<serde_json::Value> = serde_json::from_str(&baseline).unwrap();
     baseline
         .iter()
@@ -1060,19 +1060,19 @@ fn poll_cursor(swarm: &str, nickname: &str) -> Option<String> {
 
 /// The wire single-park contract: a raw `{"command":"poll",...,"long":true}`
 /// with no new traffic is held for ~the daemon's park cap, then returns
-/// exactly `[]`. Sent straight over the Unix socket — the `agent-gossip` client would
+/// exactly `[]`. Sent straight over the Unix socket — the `agent-mesh` client would
 /// hide the empty return behind its `--long` re-issue loop.
 #[test]
 fn test_ipc_poll_long_park_times_out_empty() {
-    let (creator, swarm) = Node::create_flags("itest", &[("--longpoll-max-ms", "1000")]);
-    assert!(creator.wait_ready(&swarm), "creator socket never appeared");
+    let (creator, mesh) = Node::create_flags("itest", &[("--longpoll-max-ms", "1000")]);
+    assert!(creator.wait_ready(&mesh), "creator socket never appeared");
     std::thread::sleep(Duration::from_secs(2)); // presence settles
 
-    let after = poll_cursor(&swarm, &creator.nickname);
+    let after = poll_cursor(&mesh, &creator.nickname);
     let cursor = after.map_or(String::new(), |seq| format!("\"after\":{seq},"));
-    let line = format!("{{\"command\":\"poll\",\"swarm\":\"{swarm}\",{cursor}\"long\":true}}");
+    let line = format!("{{\"command\":\"poll\",\"mesh\":\"{mesh}\",{cursor}\"long\":true}}");
     let started = Instant::now();
-    let resp = ipc_raw(&swarm, &creator.nickname, &line);
+    let resp = ipc_raw(&mesh, &creator.nickname, &line);
     let elapsed = started.elapsed();
     assert_eq!(resp, "[]", "park elapsed quietly → empty array");
     assert!(
@@ -1089,24 +1089,24 @@ fn test_ipc_poll_long_park_times_out_empty() {
 /// read wakes on the event landing, not on any timeout.
 #[test]
 fn test_poll_long_resolves_on_traffic() {
-    let (creator, swarm) = Node::create();
-    let joiner = Node::join(&swarm, "joiner-long");
-    assert!(creator.wait_ready(&swarm), "creator socket never appeared");
-    assert!(joiner.wait_ready(&swarm), "joiner socket never appeared");
+    let (creator, mesh) = Node::create();
+    let joiner = Node::join(&mesh, "joiner-long");
+    assert!(creator.wait_ready(&mesh), "creator socket never appeared");
+    assert!(joiner.wait_ready(&mesh), "joiner socket never appeared");
     std::thread::sleep(Duration::from_secs(2)); // presence settles
 
-    let after = poll_cursor(&swarm, &joiner.nickname);
+    let after = poll_cursor(&mesh, &joiner.nickname);
 
     // Have the creator send ~400ms into the blocking poll; it must return the
     // message well under the daemon's 60s park cap — proving it woke on
     // traffic rather than spinning to an empty timeout.
-    let swarm_for_send = swarm.clone();
+    let mesh_for_send = mesh.clone();
     let creator_nick = creator.nickname.clone();
     let sender = std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(400));
-        cli_message(&swarm_for_send, &creator_nick, "via long-poll");
+        cli_message(&mesh_for_send, &creator_nick, "via long-poll");
     });
-    let (got, resolve_elapsed) = cli_poll_long(&swarm, &joiner.nickname, after.as_deref());
+    let (got, resolve_elapsed) = cli_poll_long(&mesh, &joiner.nickname, after.as_deref());
     sender.join().unwrap();
     let events: Vec<serde_json::Value> = serde_json::from_str(&got)
         .unwrap_or_else(|error| panic!("parse long-poll JSON: {error}\nraw: {got}"));
@@ -1128,21 +1128,21 @@ fn test_poll_long_resolves_on_traffic() {
 /// still delivers it.
 #[test]
 fn test_poll_long_loops_past_empty_parks() {
-    let (creator, swarm) = Node::create_flags("itest", &[("--longpoll-max-ms", "1000")]);
-    let joiner = Node::join_flags(&swarm, "joiner-loop", &[("--longpoll-max-ms", "1000")]);
-    assert!(creator.wait_ready(&swarm), "creator socket never appeared");
-    assert!(joiner.wait_ready(&swarm), "joiner socket never appeared");
+    let (creator, mesh) = Node::create_flags("itest", &[("--longpoll-max-ms", "1000")]);
+    let joiner = Node::join_flags(&mesh, "joiner-loop", &[("--longpoll-max-ms", "1000")]);
+    assert!(creator.wait_ready(&mesh), "creator socket never appeared");
+    assert!(joiner.wait_ready(&mesh), "joiner socket never appeared");
     std::thread::sleep(Duration::from_secs(2)); // presence settles
 
-    let after = poll_cursor(&swarm, &joiner.nickname);
+    let after = poll_cursor(&mesh, &joiner.nickname);
 
-    let swarm_for_send = swarm.clone();
+    let mesh_for_send = mesh.clone();
     let creator_nick = creator.nickname.clone();
     let sender = std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(2500));
-        cli_message(&swarm_for_send, &creator_nick, "past the parks");
+        cli_message(&mesh_for_send, &creator_nick, "past the parks");
     });
-    let (got, elapsed) = cli_poll_long(&swarm, &joiner.nickname, after.as_deref());
+    let (got, elapsed) = cli_poll_long(&mesh, &joiner.nickname, after.as_deref());
     sender.join().unwrap();
     let events: Vec<serde_json::Value> = serde_json::from_str(&got)
         .unwrap_or_else(|error| panic!("parse long-poll JSON: {error}\nraw: {got}"));
@@ -1162,24 +1162,24 @@ fn test_poll_long_loops_past_empty_parks() {
     );
 }
 
-/// `agent-gossip ping` is daemon-owned: the transient command arms a round over
+/// `agent-mesh ping` is daemon-owned: the transient command arms a round over
 /// IPC, the daemon broadcasts a probe, every peer auto-pongs, and the
 /// originator emits a `ping_report` on its own output stream listing
 /// each responder's RTT. The probe/pong never surface as chat. A short
 /// `PING_WINDOW_SECS` keeps the round fast.
 #[test]
 fn test_ping_reports_peer_rtt() {
-    let (creator, swarm) = Node::create_flags("itest", &[("--ping-window-secs", "2")]);
-    let joiner = Node::join(&swarm, "ping-joiner");
-    assert!(creator.wait_ready(&swarm), "creator socket never appeared");
-    assert!(joiner.wait_ready(&swarm), "joiner socket never appeared");
+    let (creator, mesh) = Node::create_flags("itest", &[("--ping-window-secs", "2")]);
+    let joiner = Node::join(&mesh, "ping-joiner");
+    assert!(creator.wait_ready(&mesh), "creator socket never appeared");
+    assert!(joiner.wait_ready(&mesh), "joiner socket never appeared");
 
     // Let the mesh + presence settle so the probe reaches the joiner.
     std::thread::sleep(Duration::from_secs(3));
 
     // Arm the round on the creator; its report lands on the creator's
     // own stream once the 2s window closes.
-    cli_ping(&swarm, &creator.nickname);
+    cli_ping(&mesh, &creator.nickname);
 
     // Poll the creator's captured output for the report (window + margin).
     let deadline = Instant::now() + Duration::from_secs(8);
@@ -1220,52 +1220,52 @@ fn test_ping_reports_peer_rtt() {
     );
 }
 
-/// An empty swarm (every member, including the creator, has left) is
+/// An empty mesh (every member, including the creator, has left) is
 /// **not** dead: joining it must still succeed. The joiner becomes the
 /// rendezvous via `ensure`, and peers that arrive later connect to it.
 #[test]
-fn test_join_empty_swarm_succeeds_and_reseeds() {
+fn test_join_empty_mesh_succeeds_and_reseeds() {
     // Serialize against the other timing-sensitive tests (see `serial_guard`).
     let _serial = serial_guard();
-    // Create a swarm, then kill its only member — the swarm is empty.
-    let (creator, swarm) = Node::create();
-    assert!(creator.wait_ready(&swarm), "creator socket never appeared");
+    // Create a mesh, then kill its only member — the mesh is empty.
+    let (creator, mesh) = Node::create();
+    assert!(creator.wait_ready(&mesh), "creator socket never appeared");
     creator.sigint();
     drop(creator);
     std::thread::sleep(Duration::from_secs(2));
 
-    // Joining the empty swarm must succeed (previously this hung until
+    // Joining the empty mesh must succeed (previously this hung until
     // a 30s timeout and exited non-zero).
-    let first = Node::join(&swarm, "empty-joiner");
+    let first = Node::join(&mesh, "empty-joiner");
     assert!(
-        first.wait_ready(&swarm),
-        "joining an empty swarm should succeed, not hang\nlog tail:\n{}",
+        first.wait_ready(&mesh),
+        "joining an empty mesh should succeed, not hang\nlog tail:\n{}",
         first.log_tail(15),
     );
 
     // A peer arriving later must be able to connect to that joiner,
     // which is now the rendezvous.
-    let second = Node::join(&swarm, "later-peer");
+    let second = Node::join(&mesh, "later-peer");
     assert!(
-        second.wait_ready(&swarm),
-        "later peer could not connect to the re-seeded swarm\nfirst log:\n{}\nsecond log:\n{}",
+        second.wait_ready(&mesh),
+        "later peer could not connect to the re-seeded mesh\nfirst log:\n{}\nsecond log:\n{}",
         first.log_tail(15),
         second.log_tail(15),
     );
 
     // And messages flow across the re-seeded mesh.
-    let id = cli_message(&swarm, &first.nickname, "re-seeded hello");
+    let id = cli_message(&mesh, &first.nickname, "re-seeded hello");
     assert!(!id.is_empty(), "msg returned empty id");
     let total = wait_total(|| first.messages().len() + second.messages().len(), 1);
     assert!(
         total >= 1,
-        "no message crossed the re-seeded swarm\nfirst: {:?}\nsecond: {:?}",
+        "no message crossed the re-seeded mesh\nfirst: {:?}\nsecond: {:?}",
         first.messages(),
         second.messages(),
     );
 }
 
-/// The headline resilience guarantee: a swarm survives its creator's death
+/// The headline resilience guarantee: a mesh survives its creator's death
 /// as long as any member is still up. Creator + bystander form a mesh; the
 /// creator is hard-killed; a brand-new joiner must still bootstrap — proof
 /// that the bystander took over the seed-derived rendezvous (private mode:
@@ -1277,16 +1277,16 @@ fn test_join_after_creator_departed_with_surviving_member() {
     // 1. Creator + a bystander that will outlive it. Heal-only profile:
     //    the handoff is heal-gated, and production evict windows keep the
     //    test's membership semantics unchanged.
-    let (mut creator, swarm) = Node::create_flags("itest", &FAST_HEAL);
-    let bystander = Node::join_flags(&swarm, "bystander", &FAST_HEAL);
-    assert!(creator.wait_ready(&swarm), "creator socket never appeared");
+    let (mut creator, mesh) = Node::create_flags("itest", &FAST_HEAL);
+    let bystander = Node::join_flags(&mesh, "bystander", &FAST_HEAL);
+    assert!(creator.wait_ready(&mesh), "creator socket never appeared");
     assert!(
-        bystander.wait_ready(&swarm),
+        bystander.wait_ready(&mesh),
         "bystander socket never appeared"
     );
 
     // Confirm the mesh is actually live before we kill the creator.
-    let pre_id = cli_message(&swarm, &creator.nickname, "pre-death ping");
+    let pre_id = cli_message(&mesh, &creator.nickname, "pre-death ping");
     assert!(!pre_id.is_empty(), "msg returned empty id");
     let delivered = wait_total(|| creator.messages().len() + bystander.messages().len(), 1);
     assert!(delivered >= 1, "creator/bystander never meshed pre-death");
@@ -1300,7 +1300,7 @@ fn test_join_after_creator_departed_with_surviving_member() {
     creator.wait_exit();
     drop(creator);
     assert!(
-        wait_rendezvous_served(&swarm, &[&bystander.nickname]),
+        wait_rendezvous_served(&mesh, &[&bystander.nickname]),
         "bystander never served the rendezvous after creator exit\nbystander log tail:\n{}",
         bystander.log_tail(15),
     );
@@ -1308,9 +1308,9 @@ fn test_join_after_creator_departed_with_surviving_member() {
     // 3. A brand-new joiner that never saw the creator. Its only
     //    bootstrap target is the seed-derived rendezvous id; reaching
     //    `ready` proves the bystander is now serving it.
-    let latecomer = Node::join_flags(&swarm, "latecomer", &FAST_HEAL);
+    let latecomer = Node::join_flags(&mesh, "latecomer", &FAST_HEAL);
     assert!(
-        latecomer.wait_ready(&swarm),
+        latecomer.wait_ready(&mesh),
         "latecomer could not join after creator death — rendezvous failover broke\nbystander log tail:\n{}\nlatecomer log tail:\n{}",
         bystander.log_tail(15),
         latecomer.log_tail(15),
@@ -1318,7 +1318,7 @@ fn test_join_after_creator_departed_with_surviving_member() {
 
     // 4. And the mesh genuinely works end-to-end across the failover:
     //    a message from the latecomer reaches the bystander.
-    let post_id = cli_message(&swarm, &latecomer.nickname, "post-death hello");
+    let post_id = cli_message(&mesh, &latecomer.nickname, "post-death hello");
     assert!(!post_id.is_empty(), "latecomer msg returned empty id");
     let total = wait_total(
         || bystander.messages().len() + latecomer.messages().len(),
@@ -1345,15 +1345,15 @@ fn test_first_message_after_post_departure_join_is_delivered() {
     let _serial = serial_guard();
     // Production heal cadence — see `RENDEZVOUS_HANDOFF` for why this
     // test must not inject a short one.
-    let (creator, swarm) = Node::create();
-    let bystander = Node::join(&swarm, "fm-bystander");
-    assert!(creator.wait_ready(&swarm), "creator socket never appeared");
+    let (creator, mesh) = Node::create();
+    let bystander = Node::join(&mesh, "fm-bystander");
+    assert!(creator.wait_ready(&mesh), "creator socket never appeared");
     assert!(
-        bystander.wait_ready(&swarm),
+        bystander.wait_ready(&mesh),
         "bystander socket never appeared"
     );
     // Confirm the mesh is live before killing the creator.
-    let _ = cli_message(&swarm, &creator.nickname, "warmup");
+    let _ = cli_message(&mesh, &creator.nickname, "warmup");
     assert!(
         wait_total(|| creator.messages().len() + bystander.messages().len(), 1) >= 1,
         "creator/bystander never meshed pre-death"
@@ -1372,9 +1372,9 @@ fn test_first_message_after_post_departure_join_is_delivered() {
     drop(creator);
     std::thread::sleep(RENDEZVOUS_HANDOFF);
 
-    let joiner = Node::join(&swarm, "fm-joiner");
+    let joiner = Node::join(&mesh, "fm-joiner");
     assert!(
-        joiner.wait_ready(&swarm),
+        joiner.wait_ready(&mesh),
         "joiner could not join after creator death\nbystander:\n{}\njoiner:\n{}",
         bystander.log_tail(15),
         joiner.log_tail(15),
@@ -1386,7 +1386,7 @@ fn test_first_message_after_post_departure_join_is_delivered() {
     // joiner's first message waits on its `NeighborUp` re-announce, which is
     // gated by the heal cadence, so a join that just missed a heal tick
     // legitimately needs another cycle.
-    let j2b_id = cli_message(&swarm, &joiner.nickname, "j2b first");
+    let j2b_id = cli_message(&mesh, &joiner.nickname, "j2b first");
     assert!(!j2b_id.is_empty(), "joiner msg returned empty id");
     assert!(
         wait_until(
@@ -1401,7 +1401,7 @@ fn test_first_message_after_post_departure_join_is_delivered() {
     // Reverse direction: existing peer -> joiner. Fails if the joiner
     // was never integrated into the mesh (lost first PeerInfo, no
     // re-announce).
-    let b2j_id = cli_message(&swarm, &bystander.nickname, "b2j first");
+    let b2j_id = cli_message(&mesh, &bystander.nickname, "b2j first");
     assert!(!b2j_id.is_empty(), "bystander msg returned empty id");
     assert!(
         wait_until(
@@ -1416,7 +1416,7 @@ fn test_first_message_after_post_departure_join_is_delivered() {
 
 /// Join horizon: a peer that joins after history was taskd must
 /// **not surface** that pre-join history (anti-entropy still relays it
-/// at the wire for swarm-wide resilience — that is intentionally not
+/// at the wire for mesh-wide resilience — that is intentionally not
 /// observable here; only the view is filtered). A message sent *after*
 /// it joined must still arrive, proving the node is meshed and only
 /// the horizon, not connectivity, hides the old messages.
@@ -1427,14 +1427,14 @@ fn test_first_message_after_post_departure_join_is_delivered() {
 /// defaults).
 #[test]
 fn test_join_horizon_hides_pre_join_history() {
-    let (creator, swarm) = Node::create_flags("nethorizon", &FAST_AE);
-    let early = Node::join_flags(&swarm, "jh-early", &FAST_AE);
-    assert!(creator.wait_ready(&swarm), "creator never ready");
-    assert!(early.wait_ready(&swarm), "early peer never ready");
+    let (creator, mesh) = Node::create_flags("nethorizon", &FAST_AE);
+    let early = Node::join_flags(&mesh, "jh-early", &FAST_AE);
+    assert!(creator.wait_ready(&mesh), "creator never ready");
+    assert!(early.wait_ready(&mesh), "early peer never ready");
 
     // History taskd *before* the late peer exists.
     for tag in ["hist-1", "hist-2", "hist-3"] {
-        let _ = cli_message(&swarm, &creator.nickname, tag);
+        let _ = cli_message(&mesh, &creator.nickname, tag);
         assert!(
             wait_until(|| early.count_from(&creator.nickname, tag), 1, MSG_TIMEOUT) >= 1,
             "history not delivered to the existing peer before the late join: {tag}"
@@ -1446,8 +1446,8 @@ fn test_join_horizon_hides_pre_join_history() {
     // case is seconds-to-minutes old).
     std::thread::sleep(Duration::from_secs(2));
 
-    let late = Node::join_flags(&swarm, "jh-late", &FAST_AE);
-    assert!(late.wait_ready(&swarm), "late peer never ready");
+    let late = Node::join_flags(&mesh, "jh-late", &FAST_AE);
+    assert!(late.wait_ready(&mesh), "late peer never ready");
 
     // Well over an anti-entropy cycle (at the injected cadence) so a
     // later "still zero" means the horizon suppressed the backfill, not
@@ -1463,7 +1463,7 @@ fn test_join_horizon_hides_pre_join_history() {
     }
 
     // But it IS meshed: a message sent after it joined must surface.
-    let _ = cli_message(&swarm, &creator.nickname, "post-join-live");
+    let _ = cli_message(&mesh, &creator.nickname, "post-join-live");
     assert!(
         wait_until(
             || late.count_from(&creator.nickname, "post-join-live"),
@@ -1533,34 +1533,34 @@ fn test_creator_sigkill_independence() {
 
     // `EVICT_ONLY`, not `SHORT_EVICT`: this migration must run at the
     // production heal cadence — see `RENDEZVOUS_HANDOFF`.
-    let (creator, swarm) = Node::create_flags("itest", &EVICT_ONLY);
-    let alpha = Node::join_flags(&swarm, "ck-alpha", &EVICT_ONLY);
-    let bravo = Node::join_flags(&swarm, "ck-bravo", &EVICT_ONLY);
-    assert!(creator.wait_ready(&swarm), "creator never ready");
-    assert!(alpha.wait_ready(&swarm), "alpha never ready");
-    assert!(bravo.wait_ready(&swarm), "bravo never ready");
-    let _ = cli_message(&swarm, &creator.nickname, "ck-base");
+    let (creator, mesh) = Node::create_flags("itest", &EVICT_ONLY);
+    let alpha = Node::join_flags(&mesh, "ck-alpha", &EVICT_ONLY);
+    let bravo = Node::join_flags(&mesh, "ck-bravo", &EVICT_ONLY);
+    assert!(creator.wait_ready(&mesh), "creator never ready");
+    assert!(alpha.wait_ready(&mesh), "alpha never ready");
+    assert!(bravo.wait_ready(&mesh), "bravo never ready");
+    let _ = cli_message(&mesh, &creator.nickname, "ck-base");
     assert_received(&alpha, &creator.nickname, "ck-base", MSG_TIMEOUT);
     assert_received(&bravo, &creator.nickname, "ck-base", MSG_TIMEOUT);
 
     // Silent vanish: peers learn only via the alive-timeout path.
     creator.kill();
     drop(creator);
-    let _ = cli_message(&swarm, &alpha.nickname, "ck-survive");
+    let _ = cli_message(&mesh, &alpha.nickname, "ck-survive");
     assert_received(&bravo, &alpha.nickname, "ck-survive", RECOVERY_TIMEOUT);
 
-    // A brand-new joiner can only reach the swarm if a survivor now
+    // A brand-new joiner can only reach the mesh if a survivor now
     // serves the seed-derived rendezvous. Blind migration wait — see
     // `RENDEZVOUS_HANDOFF` for why this cannot be a marker poll.
     std::thread::sleep(RENDEZVOUS_HANDOFF);
-    let charlie = Node::join_flags(&swarm, "ck-charlie", &EVICT_ONLY);
+    let charlie = Node::join_flags(&mesh, "ck-charlie", &EVICT_ONLY);
     assert!(
-        charlie.wait_ready(&swarm),
+        charlie.wait_ready(&mesh),
         "fresh joiner could not bootstrap after creator SIGKILL\nalpha:\n{}\ncharlie:\n{}",
         alpha.log_tail(15),
         charlie.log_tail(20),
     );
-    let _ = cli_message(&swarm, &charlie.nickname, "ck-newcomer");
+    let _ = cli_message(&mesh, &charlie.nickname, "ck-newcomer");
     assert_received(&alpha, &charlie.nickname, "ck-newcomer", RECOVERY_TIMEOUT);
 }
 
@@ -1576,7 +1576,7 @@ impl Drop for KillOnDrop {
 
 /// Orphan self-termination: when the agent that spawned the daemon is
 /// hard-killed, the daemon is reparented (not killed) and would otherwise
-/// linger in the swarm forever. The `getppid` watcher must notice the
+/// linger in the mesh forever. The `getppid` watcher must notice the
 /// reparent and exit through the graceful `left`-broadcasting path.
 ///
 /// To orphan the daemon without killing the test, we launch it under a
@@ -1587,8 +1587,8 @@ impl Drop for KillOnDrop {
 fn test_orphaned_daemon_self_terminates() {
     let _serial = serial_guard();
 
-    let (observer, swarm) = Node::create_named("itest-orphan");
-    assert!(observer.wait_ready(&swarm), "observer never ready");
+    let (observer, mesh) = Node::create_named("itest-orphan");
+    assert!(observer.wait_ready(&mesh), "observer never ready");
 
     // Background the joiner under a shell, record its pid, then `exec sleep`
     // so the shell's pid *is* the joiner's parent for the rest of its life.
@@ -1596,12 +1596,12 @@ fn test_orphaned_daemon_self_terminates() {
     let pid_file = tmp_log("orphan-pid");
     let joiner_log = tmp_log("orphan-joiner-out");
     let script = format!(
-        "'{bin}' --log-dir '{dir}' join {swarm} --nickname orphan-joiner \
+        "'{bin}' --log-dir '{dir}' join {mesh} --nickname orphan-joiner \
             --ppid-watch-interval-ms 200 --output json >'{out}' 2>&1 & \
          echo $! >'{pid}'; exec sleep 600",
         bin = bin().display(),
         dir = common::test_log_dir(),
-        swarm = swarm,
+        mesh = mesh,
         out = joiner_log.display(),
         pid = pid_file.display(),
     );
@@ -1618,16 +1618,16 @@ fn test_orphaned_daemon_self_terminates() {
 
     // Wait until the joiner is meshed: its socket exists and the observer's
     // roster lists it. Only then does its graceful `left` have a live link.
-    let joiner_sock = socket_path(&swarm, "orphan-joiner");
+    let joiner_sock = socket_path(&mesh, "orphan-joiner");
     let deadline = Instant::now() + CONNECT_TIMEOUT;
     while Instant::now() < deadline
         && !(std::path::Path::new(&joiner_sock).exists()
-            && cli_peers(&swarm, &observer.nickname).contains("orphan-joiner"))
+            && cli_peers(&mesh, &observer.nickname).contains("orphan-joiner"))
     {
         std::thread::sleep(POLL);
     }
     assert!(
-        cli_peers(&swarm, &observer.nickname).contains("orphan-joiner"),
+        cli_peers(&mesh, &observer.nickname).contains("orphan-joiner"),
         "joiner never meshed with the observer\nobserver:\n{}",
         observer.log_tail(15),
     );
@@ -1666,12 +1666,12 @@ fn test_orphaned_daemon_self_terminates() {
     // this window — so a quick drop proves the `left` broadcast was received.
     let drop_deadline = Instant::now() + Duration::from_secs(15);
     while Instant::now() < drop_deadline
-        && cli_peers(&swarm, &observer.nickname).contains("orphan-joiner")
+        && cli_peers(&mesh, &observer.nickname).contains("orphan-joiner")
     {
         std::thread::sleep(POLL);
     }
     assert!(
-        !cli_peers(&swarm, &observer.nickname).contains("orphan-joiner"),
+        !cli_peers(&mesh, &observer.nickname).contains("orphan-joiner"),
         "observer never received the orphaned daemon's graceful 'left'\nobserver:\n{}",
         observer.log_tail(15),
     );
@@ -1681,7 +1681,7 @@ fn test_orphaned_daemon_self_terminates() {
 }
 
 /// Sleep/wake: `SIGSTOP` a peer past the (shortened) alive-timeout so
-/// the swarm evicts it, then `SIGCONT` and assert the heal primitive
+/// the mesh evicts it, then `SIGCONT` and assert the heal primitive
 /// re-meshes it and traffic resumes.
 #[test]
 fn test_sleep_wake_heal_recovery() {
@@ -1691,11 +1691,11 @@ fn test_sleep_wake_heal_recovery() {
     // ceiling is slack for a loaded host, not paid time.
     let evict_bound = Duration::from_secs(12);
 
-    let (creator, swarm) = Node::create_flags("itest", &SHORT_EVICT);
-    let sleeper = Node::join_flags(&swarm, "sw-sleeper", &SHORT_EVICT);
-    assert!(creator.wait_ready(&swarm), "creator never ready");
-    assert!(sleeper.wait_ready(&swarm), "sleeper never ready");
-    let _ = cli_message(&swarm, &creator.nickname, "sw-pre");
+    let (creator, mesh) = Node::create_flags("itest", &SHORT_EVICT);
+    let sleeper = Node::join_flags(&mesh, "sw-sleeper", &SHORT_EVICT);
+    assert!(creator.wait_ready(&mesh), "creator never ready");
+    assert!(sleeper.wait_ready(&mesh), "sleeper never ready");
+    let _ = cli_message(&mesh, &creator.nickname, "sw-pre");
     assert_received(&sleeper, &creator.nickname, "sw-pre", MSG_TIMEOUT);
 
     sleeper.stop();
@@ -1712,7 +1712,7 @@ fn test_sleep_wake_heal_recovery() {
     // Send immediately on wake: re-mesh (heal cadence) plus anti-entropy
     // backfill deliver it; `assert_received` returns the moment it lands.
     sleeper.cont();
-    let _ = cli_message(&swarm, &creator.nickname, "sw-post");
+    let _ = cli_message(&mesh, &creator.nickname, "sw-post");
     assert_received(&sleeper, &creator.nickname, "sw-post", RECOVERY_TIMEOUT);
 }
 
@@ -1740,11 +1740,11 @@ fn test_fixed_id_reconnect_admits_fast() {
     // admission is heal-bound.
     let admit_bound = Duration::from_secs((5 * TEST_HEAL_SECS + 10).max(15));
 
-    let (creator, swarm) = Node::create_flags("itest", &SHORT_EVICT);
-    let sleeper = Node::join_flags(&swarm, "fr-sleeper", &SHORT_EVICT);
-    assert!(creator.wait_ready(&swarm), "creator never ready");
-    assert!(sleeper.wait_ready(&swarm), "sleeper never ready");
-    let _ = cli_message(&swarm, &creator.nickname, "fr-pre");
+    let (creator, mesh) = Node::create_flags("itest", &SHORT_EVICT);
+    let sleeper = Node::join_flags(&mesh, "fr-sleeper", &SHORT_EVICT);
+    assert!(creator.wait_ready(&mesh), "creator never ready");
+    assert!(sleeper.wait_ready(&mesh), "sleeper never ready");
+    let _ = cli_message(&mesh, &creator.nickname, "fr-pre");
     assert_received(&sleeper, &creator.nickname, "fr-pre", MSG_TIMEOUT);
 
     sleeper.stop();
@@ -1762,7 +1762,7 @@ fn test_fixed_id_reconnect_admits_fast() {
     // peer is reconnecting with its original id. Receipt within the
     // bound proves fast re-admission, not a stale-connection stall.
     sleeper.cont();
-    let _ = cli_message(&swarm, &creator.nickname, "fr-post");
+    let _ = cli_message(&mesh, &creator.nickname, "fr-post");
     assert_received(&sleeper, &creator.nickname, "fr-post", admit_bound);
 }
 
@@ -1795,11 +1795,11 @@ fn test_resume_triggers_hard_rebootstrap() {
     // hard path to run and log its markers (adaptive — polled below).
     let wake_settle = Duration::from_secs(4 * TEST_HEAL_SECS + 8);
 
-    let (creator, swarm) = Node::create_flags("itest", &STALL_EVICT);
-    let sleeper = Node::join_flags(&swarm, "rb-sleeper", &STALL_EVICT);
-    assert!(creator.wait_ready(&swarm), "creator never ready");
-    assert!(sleeper.wait_ready(&swarm), "sleeper never ready");
-    let _ = cli_message(&swarm, &creator.nickname, "rb-pre");
+    let (creator, mesh) = Node::create_flags("itest", &STALL_EVICT);
+    let sleeper = Node::join_flags(&mesh, "rb-sleeper", &STALL_EVICT);
+    assert!(creator.wait_ready(&mesh), "creator never ready");
+    assert!(sleeper.wait_ready(&mesh), "sleeper never ready");
+    let _ = cli_message(&mesh, &creator.nickname, "rb-pre");
     assert_received(&sleeper, &creator.nickname, "rb-pre", MSG_TIMEOUT);
 
     sleeper.stop();
@@ -1813,7 +1813,7 @@ fn test_resume_triggers_hard_rebootstrap() {
     // known peers directly rather than relying solely on a rendezvous
     // graft that a stale connection (iroh-gossip#10) could stall.
     let both_markers = || {
-        let trace = trace_log(&swarm, &sleeper.nickname);
+        let trace = trace_log(&mesh, &sleeper.nickname);
         usize::from(
             trace.contains("hard re-bootstrap edge")
                 && trace.contains("rendezvous-independent re-bridge"),
@@ -1822,14 +1822,14 @@ fn test_resume_triggers_hard_rebootstrap() {
     assert!(
         wait_until(both_markers, 1, wake_settle) >= 1,
         "woken peer never took the hard re-bootstrap path (or skipped the re-bridge)\nsink tail:\n{}",
-        trace_log(&swarm, &sleeper.nickname)
+        trace_log(&mesh, &sleeper.nickname)
             .lines()
             .rev()
             .take(30)
             .collect::<Vec<_>>()
             .join("\n"),
     );
-    let _ = cli_message(&swarm, &creator.nickname, "rb-post");
+    let _ = cli_message(&mesh, &creator.nickname, "rb-post");
     assert_received(&sleeper, &creator.nickname, "rb-post", RECOVERY_TIMEOUT);
 }
 
@@ -1853,16 +1853,16 @@ fn test_anti_entropy_set_convergence() {
     // needed.
     let reconcile = Duration::from_secs(10 * TEST_AE_SECS + 6 * TEST_HEAL_SECS);
 
-    let (creator, swarm) = Node::create_flags("itest", &FAST_AE);
-    let alpha = Node::join_flags(&swarm, "ae-alpha", &FAST_AE);
-    let bravo = Node::join_flags(&swarm, "ae-bravo", &FAST_AE);
-    assert!(creator.wait_ready(&swarm), "creator never ready");
-    assert!(alpha.wait_ready(&swarm), "alpha never ready");
-    assert!(bravo.wait_ready(&swarm), "bravo never ready");
+    let (creator, mesh) = Node::create_flags("itest", &FAST_AE);
+    let alpha = Node::join_flags(&mesh, "ae-alpha", &FAST_AE);
+    let bravo = Node::join_flags(&mesh, "ae-bravo", &FAST_AE);
+    assert!(creator.wait_ready(&mesh), "creator never ready");
+    assert!(alpha.wait_ready(&mesh), "alpha never ready");
+    assert!(bravo.wait_ready(&mesh), "bravo never ready");
 
     // alpha misses this; bravo gets it. alpha stays a member.
     alpha.stop();
-    let _ = cli_message(&swarm, &creator.nickname, "ae-gap");
+    let _ = cli_message(&mesh, &creator.nickname, "ae-gap");
     assert_received(&bravo, &creator.nickname, "ae-gap", MSG_TIMEOUT);
     std::thread::sleep(gap);
     alpha.cont();
@@ -1899,18 +1899,18 @@ fn test_large_gap_reconnect_replication() {
         ("--antientropy-interval-secs", "2"),
     ];
 
-    let (creator, swarm) = Node::create_args("itest", &[], &envs);
-    let alpha = Node::join_flags(&swarm, "lg-alpha", &envs);
-    let bravo = Node::join_flags(&swarm, "lg-bravo", &envs);
-    assert!(creator.wait_ready(&swarm), "creator never ready");
-    assert!(alpha.wait_ready(&swarm), "alpha never ready");
-    assert!(bravo.wait_ready(&swarm), "bravo never ready");
+    let (creator, mesh) = Node::create_args("itest", &[], &envs);
+    let alpha = Node::join_flags(&mesh, "lg-alpha", &envs);
+    let bravo = Node::join_flags(&mesh, "lg-bravo", &envs);
+    assert!(creator.wait_ready(&mesh), "creator never ready");
+    assert!(alpha.wait_ready(&mesh), "alpha never ready");
+    assert!(bravo.wait_ready(&mesh), "bravo never ready");
 
     let author = creator.nickname.clone();
 
     // Build a shared history past the overflow point; alpha gets it live.
     for index in 0..PRELUDE {
-        let _ = cli_message_raw(&swarm, &creator.nickname, &format!("lg-{index}"));
+        let _ = cli_message_raw(&mesh, &creator.nickname, &format!("lg-{index}"));
     }
     let live = wait_until(
         || alpha.count_distinct_from(&author, "lg-"),
@@ -1923,7 +1923,7 @@ fn test_large_gap_reconnect_replication() {
     alpha.stop();
     std::thread::sleep(Duration::from_secs(2));
     for index in PRELUDE..TOTAL {
-        let _ = cli_message_raw(&swarm, &creator.nickname, &format!("lg-{index}"));
+        let _ = cli_message_raw(&mesh, &creator.nickname, &format!("lg-{index}"));
     }
     // bravo (live) gets everything — confirms the burst actually went out
     // while alpha was frozen.
@@ -1974,11 +1974,11 @@ fn test_interior_gap_recovered_via_rolling_window() {
         ("--antientropy-interval-secs", "2"),
     ];
 
-    let (creator, swarm) = Node::create_args("itest", &[], &envs);
-    let alpha = Node::join_flags(&swarm, "ig-alpha", &envs);
-    let bravo = Node::join_flags(&swarm, "ig-bravo", &envs);
+    let (creator, mesh) = Node::create_args("itest", &[], &envs);
+    let alpha = Node::join_flags(&mesh, "ig-alpha", &envs);
+    let bravo = Node::join_flags(&mesh, "ig-bravo", &envs);
     assert!(
-        creator.wait_ready(&swarm) && alpha.wait_ready(&swarm) && bravo.wait_ready(&swarm),
+        creator.wait_ready(&mesh) && alpha.wait_ready(&mesh) && bravo.wait_ready(&mesh),
         "nodes never ready"
     );
     let author = creator.nickname.clone();
@@ -1986,7 +1986,7 @@ fn test_interior_gap_recovered_via_rolling_window() {
     let mut idx = 0usize;
     // OLD: shared older history; alpha gets it live.
     for _ in 0..OLD {
-        let _ = cli_message_raw(&swarm, &creator.nickname, &format!("ig-{idx}"));
+        let _ = cli_message_raw(&mesh, &creator.nickname, &format!("ig-{idx}"));
         idx += 1;
     }
     assert_eq!(
@@ -2001,7 +2001,7 @@ fn test_interior_gap_recovered_via_rolling_window() {
     // Freeze alpha, send the GAP — the interior slice alpha never sees live.
     alpha.stop();
     for _ in 0..GAP {
-        let _ = cli_message_raw(&swarm, &creator.nickname, &format!("ig-{idx}"));
+        let _ = cli_message_raw(&mesh, &creator.nickname, &format!("ig-{idx}"));
         idx += 1;
     }
     assert_eq!(
@@ -2022,7 +2022,7 @@ fn test_interior_gap_recovered_via_rolling_window() {
     // only via the rolling older window.
     alpha.cont();
     for _ in 0..TAIL {
-        let _ = cli_message_raw(&swarm, &creator.nickname, &format!("ig-{idx}"));
+        let _ = cli_message_raw(&mesh, &creator.nickname, &format!("ig-{idx}"));
         idx += 1;
     }
     // The rolling older window needs several cycles to sweep across the
@@ -2040,7 +2040,7 @@ fn test_interior_gap_recovered_via_rolling_window() {
     );
 }
 
-/// Steady-state churn-free: once a swarm with a buffer larger than one
+/// Steady-state churn-free: once a mesh with a buffer larger than one
 /// digest window is fully converged, anti-entropy must go quiet — no peer
 /// keeps re-sending. A naive sub-window digest (advertising less than it
 /// holds) would make peers perpetually re-send the remainder; the `[lo,hi]`
@@ -2051,21 +2051,21 @@ fn test_steady_state_no_resend_churn() {
     // Serialize against the other timing-sensitive tests (see `serial_guard`).
     let _serial = serial_guard();
     let envs = [
-        ("RUST_LOG", "agent_gossip::gossip=debug"),
+        ("RUST_LOG", "agent_mesh::gossip=debug"),
         ("--log-max-bytes", "0"), // no rotation, so the full log is one file
         ("--antientropy-interval-secs", "2"),
     ];
 
-    let (creator, swarm) = Node::create_args("itest", &[], &envs);
-    let alpha = Node::join_flags(&swarm, "cf-alpha", &envs);
-    let bravo = Node::join_flags(&swarm, "cf-bravo", &envs);
+    let (creator, mesh) = Node::create_args("itest", &[], &envs);
+    let alpha = Node::join_flags(&mesh, "cf-alpha", &envs);
+    let bravo = Node::join_flags(&mesh, "cf-bravo", &envs);
     assert!(
-        creator.wait_ready(&swarm) && alpha.wait_ready(&swarm) && bravo.wait_ready(&swarm),
+        creator.wait_ready(&mesh) && alpha.wait_ready(&mesh) && bravo.wait_ready(&mesh),
         "nodes never ready"
     );
     let author = creator.nickname.clone();
     for index in 0..COUNT {
-        let _ = cli_message_raw(&swarm, &creator.nickname, &format!("cf-{index}"));
+        let _ = cli_message_raw(&mesh, &creator.nickname, &format!("cf-{index}"));
     }
     assert_eq!(
         wait_until(
@@ -2096,7 +2096,7 @@ fn test_steady_state_no_resend_churn() {
             .sum()
     };
     // Settle past the convergence-era resends, then observe ≥2 more
-    // anti-entropy cycles in a now-converged swarm. Inherent blind waits
+    // anti-entropy cycles in a now-converged mesh. Inherent blind waits
     // (negative assertion), derived from the injected cadence.
     std::thread::sleep(Duration::from_secs(4 * TEST_AE_SECS));
     let before = resends();
@@ -2104,7 +2104,7 @@ fn test_steady_state_no_resend_churn() {
     let after = resends();
     assert_eq!(
         before, after,
-        "a converged swarm kept re-sending (churn): {before} -> {after}"
+        "a converged mesh kept re-sending (churn): {before} -> {after}"
     );
 }
 
@@ -2123,11 +2123,11 @@ fn test_multi_round_throttled_backfill() {
         ("--antientropy-interval-secs", "2"),
     ];
 
-    let (creator, swarm) = Node::create_args("itest", &[], &envs);
-    let alpha = Node::join_flags(&swarm, "mr-alpha", &envs);
-    let bravo = Node::join_flags(&swarm, "mr-bravo", &envs);
+    let (creator, mesh) = Node::create_args("itest", &[], &envs);
+    let alpha = Node::join_flags(&mesh, "mr-alpha", &envs);
+    let bravo = Node::join_flags(&mesh, "mr-bravo", &envs);
     assert!(
-        creator.wait_ready(&swarm) && alpha.wait_ready(&swarm) && bravo.wait_ready(&swarm),
+        creator.wait_ready(&mesh) && alpha.wait_ready(&mesh) && bravo.wait_ready(&mesh),
         "nodes never ready"
     );
     let author = creator.nickname.clone();
@@ -2135,7 +2135,7 @@ fn test_multi_round_throttled_backfill() {
     alpha.stop();
     std::thread::sleep(Duration::from_secs(2));
     for index in 0..GAP {
-        let _ = cli_message_raw(&swarm, &creator.nickname, &format!("mr-{index}"));
+        let _ = cli_message_raw(&mesh, &creator.nickname, &format!("mr-{index}"));
     }
     let _ = wait_until(
         || bravo.count_distinct_from(&author, "mr-"),
@@ -2171,7 +2171,7 @@ fn test_multi_round_throttled_backfill() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn same_nickname_peers_communicate() {
     let mut alpha = InProcNode::create_with_nick("samenick", "dup").await;
-    let mut beta = InProcNode::join(&alpha.swarm, "dup").await;
+    let mut beta = InProcNode::join(&alpha.mesh, "dup").await;
 
     alpha.send("from-alpha").await;
     assert!(
@@ -2207,7 +2207,7 @@ async fn same_nickname_peers_communicate() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn message_event_carries_full_pubkey() {
     let alpha = InProcNode::create("pubkeyjson").await;
-    let mut beta = InProcNode::join(&alpha.swarm, "pk-beta").await;
+    let mut beta = InProcNode::join(&alpha.mesh, "pk-beta").await;
 
     alpha.send("hi").await;
     assert!(
@@ -2235,7 +2235,7 @@ async fn message_event_carries_full_pubkey() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn nickname_reusable_after_peer_leaves() {
     let mut observer = InProcNode::create("reuse").await;
-    let first = InProcNode::join(&observer.swarm, "ditto").await;
+    let first = InProcNode::join(&observer.mesh, "ditto").await;
 
     first.send("first-here").await;
     assert!(
@@ -2245,7 +2245,7 @@ async fn nickname_reusable_after_peer_leaves() {
     first.leave().await;
 
     // A brand-new member reuses the departed nickname.
-    let second = InProcNode::join(&observer.swarm, "ditto").await;
+    let second = InProcNode::join(&observer.mesh, "ditto").await;
     second.send("second-here").await;
     assert!(
         observer.wait_body("second-here", MSG_TIMEOUT).await,
@@ -2282,11 +2282,11 @@ fn test_starvation_watchdog_recovers_loudly() {
     // margin. Adaptive — ceiling only.
     let detect = Duration::from_secs(6 + 2 * TEST_HEAL_SECS + 8);
 
-    let (creator, swarm) = Node::create_flags("itest", &STARVE_EVICT);
-    let survivor = Node::join_flags(&swarm, "sv-alpha", &STARVE_EVICT);
-    assert!(creator.wait_ready(&swarm), "creator never ready");
-    assert!(survivor.wait_ready(&swarm), "survivor never ready");
-    let _ = cli_message(&swarm, &creator.nickname, "sv-base");
+    let (creator, mesh) = Node::create_flags("itest", &STARVE_EVICT);
+    let survivor = Node::join_flags(&mesh, "sv-alpha", &STARVE_EVICT);
+    assert!(creator.wait_ready(&mesh), "creator never ready");
+    assert!(survivor.wait_ready(&mesh), "survivor never ready");
+    let _ = cli_message(&mesh, &creator.nickname, "sv-base");
     assert_received(&survivor, &creator.nickname, "sv-base", MSG_TIMEOUT);
 
     // Silent vanish: keepalives stop, the survivor's inbound goes quiet.
@@ -2303,7 +2303,7 @@ fn test_starvation_watchdog_recovers_loudly() {
     );
     // Degraded, not broken: the IPC plane still accepts a send (it is
     // buffered until traffic proves the mesh again).
-    let _ = common::cli_msg_checked(&swarm, &survivor.nickname, "sv-after");
+    let _ = common::cli_msg_checked(&mesh, &survivor.nickname, "sv-after");
 }
 
 /// False-positive guard: a lone creator is alone by construction — it
@@ -2314,8 +2314,8 @@ fn test_starvation_watchdog_recovers_loudly() {
 fn test_lone_creator_never_trips_starvation() {
     // Serialize against the other timing-sensitive tests (see `serial_guard`).
     let _serial = serial_guard();
-    let (creator, swarm) = Node::create_flags("itest", &STARVE_EVICT);
-    assert!(creator.wait_ready(&swarm), "creator never ready");
+    let (creator, mesh) = Node::create_flags("itest", &STARVE_EVICT);
+    assert!(creator.wait_ready(&mesh), "creator never ready");
     // Threshold (6s) + several heal ticks of opportunity to misfire —
     // an inherent blind wait (negative assertion), derived from the
     // injected cadence.
@@ -2327,7 +2327,7 @@ fn test_lone_creator_never_trips_starvation() {
     );
 }
 
-/// The 2026-05-31 roster-collapse, mechanized: a 5-node swarm at
+/// The 2026-05-31 roster-collapse, mechanized: a 5-node mesh at
 /// `--max-peers 2` (the partial-mesh churn regime) put through
 /// SIGSTOP/SIGCONT flap rounds. Pre-fix, a node could end up
 /// with an empty roster and phantom links forever — silent message
@@ -2353,20 +2353,20 @@ fn test_flap_storm_all_rosters_recover() {
     // for re-bridge/re-announce to propagate, plus margin.
     let recover = RECOVERY_TIMEOUT;
 
-    let (creator, swarm) = Node::create_flags("itest", &CAP2_STARVE);
+    let (creator, mesh) = Node::create_flags("itest", &CAP2_STARVE);
     let joiners: Vec<Node> = (0..4)
-        .map(|index| Node::join_flags(&swarm, &format!("fs-{index}"), &CAP2_STARVE))
+        .map(|index| Node::join_flags(&mesh, &format!("fs-{index}"), &CAP2_STARVE))
         .collect();
-    assert!(creator.wait_ready(&swarm), "creator never ready");
+    assert!(creator.wait_ready(&mesh), "creator never ready");
     for joiner in &joiners {
-        assert!(joiner.wait_ready(&swarm), "{} never ready", joiner.nickname);
+        assert!(joiner.wait_ready(&mesh), "{} never ready", joiner.nickname);
     }
     // Baseline delivery gets the same generous bound as the post-storm
     // probe: at cap 2 even a healthy broadcast is partial-mesh-routed
     // (multi-hop, convergence-dependent), so the standard 30s message
     // timeout is occasionally short here. Adaptive — healthy runs pass
     // in seconds.
-    let _ = cli_message(&swarm, &creator.nickname, "fs-base");
+    let _ = cli_message(&mesh, &creator.nickname, "fs-base");
     for joiner in &joiners {
         assert_received(joiner, &creator.nickname, "fs-base", recover);
     }
@@ -2389,7 +2389,7 @@ fn test_flap_storm_all_rosters_recover() {
     // Settle a couple of heal ticks, then the invariant: a fresh
     // broadcast reaches EVERY node.
     std::thread::sleep(Duration::from_secs(2 * TEST_HEAL_SECS));
-    let _ = cli_message(&swarm, &creator.nickname, "fs-probe");
+    let _ = cli_message(&mesh, &creator.nickname, "fs-probe");
     for joiner in &joiners {
         assert_received(joiner, &creator.nickname, "fs-probe", recover);
     }
@@ -2423,8 +2423,8 @@ fn spawn_discoverable_daemon(name: &str) -> (std::process::Child, PathBuf, Strin
         .expect("failed to spawn create");
     let deadline = Instant::now() + CONNECT_TIMEOUT;
     loop {
-        if let Some((swarm, nickname)) = ready_identity(&log) {
-            return (child, log, swarm, nickname);
+        if let Some((mesh, nickname)) = ready_identity(&log) {
+            return (child, log, mesh, nickname);
         }
         if Instant::now() >= deadline {
             let _ = child.kill();
@@ -2445,15 +2445,15 @@ fn ready_identity(log: &std::path::Path) -> Option<(String, String)> {
         .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
         .find(|event| event["event"] == "ready")?;
     Some((
-        ready["swarm"].as_str()?.to_owned(),
+        ready["mesh"].as_str()?.to_owned(),
         ready["nickname"].as_str()?.to_owned(),
     ))
 }
 
-fn default_state_file(swarm: &str, nickname: &str) -> PathBuf {
-    // Mirror `util::swarm_prefix`: strip the `://` scheme separator before
+fn default_state_file(mesh: &str, nickname: &str) -> PathBuf {
+    // Mirror `util::mesh_prefix`: strip the `://` scheme separator before
     // taking 16 chars, so the path matches where the daemon writes its state.
-    let prefix: String = swarm.replace("://", "").chars().take(16).collect();
+    let prefix: String = mesh.replace("://", "").chars().take(16).collect();
     common::runtime_base()
         .join(prefix)
         .join(format!("{nickname}.state.json"))
@@ -2464,8 +2464,8 @@ fn default_state_file(swarm: &str, nickname: &str) -> PathBuf {
 /// that spawned it.
 #[test]
 fn state_file_carries_daemon_pid() {
-    let (mut child, log, swarm, nickname) = spawn_discoverable_daemon("leave-pid");
-    let state_file = default_state_file(&swarm, &nickname);
+    let (mut child, log, mesh, nickname) = spawn_discoverable_daemon("leave-pid");
+    let state_file = default_state_file(&mesh, &nickname);
     let parsed: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&state_file).unwrap()).unwrap();
     assert_eq!(parsed["pid"], child.id());
@@ -2477,33 +2477,33 @@ fn state_file_carries_daemon_pid() {
     let _ = fs::remove_file(&log);
 }
 
-/// `agent-gossip leave <💬id>` (explicit target) stops exactly that swarm's local
+/// `agent-mesh leave <💬id>` (explicit target) stops exactly that mesh's local
 /// daemon — the state file disappears (proof of the graceful shutdown path)
 /// — and leaves an unrelated daemon untouched.
 #[test]
-fn leave_explicit_target_stops_only_that_swarm() {
-    let (mut victim, victim_log, victim_swarm, victim_nick) =
+fn leave_explicit_target_stops_only_that_mesh() {
+    let (mut victim, victim_log, victim_mesh, victim_nick) =
         spawn_discoverable_daemon("leave-victim");
-    let (mut bystander, bystander_log, bystander_swarm, bystander_nick) =
+    let (mut bystander, bystander_log, bystander_mesh, bystander_nick) =
         spawn_discoverable_daemon("leave-bystander");
 
     let out = common::test_cmd()
-        .args(["leave", &victim_swarm, "--output", "json"])
+        .args(["leave", &victim_mesh, "--output", "json"])
         .output()
-        .expect("failed to run agent-gossip leave");
+        .expect("failed to run agent-mesh leave");
     assert!(out.status.success(), "leave failed: {out:?}");
     let report: serde_json::Value =
         serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim()).unwrap();
     let left = report["left"].as_array().unwrap();
     assert_eq!(left.len(), 1, "expected exactly the victim: {report}");
-    assert_eq!(left[0]["swarm"], victim_swarm.as_str());
+    assert_eq!(left[0]["mesh"], victim_mesh.as_str());
     assert_eq!(left[0]["confirmed"], true);
     assert!(
-        !default_state_file(&victim_swarm, &victim_nick).exists(),
+        !default_state_file(&victim_mesh, &victim_nick).exists(),
         "victim state file survived leave"
     );
     assert!(
-        default_state_file(&bystander_swarm, &bystander_nick).exists(),
+        default_state_file(&bystander_mesh, &bystander_nick).exists(),
         "bystander state file vanished — leave over-matched"
     );
 
@@ -2517,8 +2517,8 @@ fn leave_explicit_target_stops_only_that_swarm() {
 }
 
 /// Session scope end to end: a daemon spawned under a decoy "agent" shell is
-/// owned by that shell's pid. `agent-gossip session --session-pid <shell>` reports it
-/// without touching it; `agent-gossip leave --session-pid <shell>` stops it. Daemons
+/// owned by that shell's pid. `agent-mesh session --session-pid <shell>` reports it
+/// without touching it; `agent-mesh leave --session-pid <shell>` stops it. Daemons
 /// belonging to other tests (children of this test binary, not of the decoy
 /// shell) must never match.
 #[test]
@@ -2550,37 +2550,37 @@ fn leave_session_scope_via_decoy_parent() {
         );
         std::thread::sleep(POLL);
     }
-    let (swarm, nickname) = ready_identity(&log).unwrap();
+    let (mesh, nickname) = ready_identity(&log).unwrap();
 
     // Read-only probe: reports the decoy's daemon, does not stop it.
     let out = common::test_cmd()
         .args(["session", "--session-pid", &decoy_pid, "--output", "json"])
         .output()
-        .expect("failed to run agent-gossip session");
+        .expect("failed to run agent-mesh session");
     assert!(out.status.success(), "session failed: {out:?}");
     let report: serde_json::Value =
         serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim()).unwrap();
     let sessions = report["sessions"].as_array().unwrap();
     assert_eq!(sessions.len(), 1, "expected exactly the decoy: {report}");
-    assert_eq!(sessions[0]["swarm"], swarm.as_str());
+    assert_eq!(sessions[0]["mesh"], mesh.as_str());
     assert_eq!(sessions[0]["nickname"], nickname.as_str());
     assert!(
-        default_state_file(&swarm, &nickname).exists(),
+        default_state_file(&mesh, &nickname).exists(),
         "session (read-only) stopped the daemon"
     );
 
     let leave_out = common::test_cmd()
         .args(["leave", "--session-pid", &decoy_pid, "--output", "json"])
         .output()
-        .expect("failed to run agent-gossip leave");
+        .expect("failed to run agent-mesh leave");
     assert!(leave_out.status.success(), "leave failed: {leave_out:?}");
     let leave_report: serde_json::Value =
         serde_json::from_str(String::from_utf8_lossy(&leave_out.stdout).trim()).unwrap();
     let left = leave_report["left"].as_array().unwrap();
     assert_eq!(left.len(), 1, "expected exactly the decoy: {leave_report}");
-    assert_eq!(left[0]["swarm"], swarm.as_str());
+    assert_eq!(left[0]["mesh"], mesh.as_str());
     assert_eq!(left[0]["confirmed"], true);
-    assert!(!default_state_file(&swarm, &nickname).exists());
+    assert!(!default_state_file(&mesh, &nickname).exists());
 
     let _ = decoy.wait();
     let _ = fs::remove_file(&log);
@@ -2604,7 +2604,7 @@ fn leave_nothing_owned_is_a_clean_noop() {
             "json",
         ])
         .output()
-        .expect("failed to run agent-gossip leave");
+        .expect("failed to run agent-mesh leave");
     assert!(out.status.success(), "leave should exit 0 on a no-op");
     let report: serde_json::Value =
         serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim()).unwrap();
@@ -2622,13 +2622,13 @@ fn leave_nothing_owned_is_a_clean_noop() {
 /// daemons and exchanges the `PeerInfo` the sender's unicast dial resolves on.
 #[test]
 fn unicast_only_delivers_directed_task() {
-    let (creator, swarm) = Node::create_flags("uni-only", &[("--no-gossip-directed", "")]);
-    let joiner = Node::join_flags(&swarm, "uni-only-b", &[("--no-gossip-directed", "")]);
-    assert!(creator.wait_ready(&swarm), "creator never ready");
-    assert!(joiner.wait_ready(&swarm), "joiner never ready");
+    let (creator, mesh) = Node::create_flags("uni-only", &[("--no-gossip-directed", "")]);
+    let joiner = Node::join_flags(&mesh, "uni-only-b", &[("--no-gossip-directed", "")]);
+    assert!(creator.wait_ready(&mesh), "creator never ready");
+    assert!(joiner.wait_ready(&mesh), "joiner never ready");
 
     // Warmup broadcast (always gossip) meshes them + exchanges addresses.
-    cli_message(&swarm, &creator.nickname, "warmup");
+    cli_message(&mesh, &creator.nickname, "warmup");
     assert!(
         wait_until(
             || joiner.count_from(&creator.nickname, "warmup"),
@@ -2645,7 +2645,7 @@ fn unicast_only_delivers_directed_task() {
     // lands — a success proves unicast delivered both legs.
     let deadline = Instant::now() + MSG_TIMEOUT;
     loop {
-        let out = cli_task_create_raw(&swarm, &creator.nickname, &joiner.nickname, "uni hello");
+        let out = cli_task_create_raw(&mesh, &creator.nickname, &joiner.nickname, "uni hello");
         if out.status.success()
             && let Ok(parsed) = serde_json::from_str::<serde_json::Value>(
                 String::from_utf8_lossy(&out.stdout).trim(),
@@ -2667,12 +2667,12 @@ fn unicast_only_delivers_directed_task() {
 /// still round-trip — the safety-switch parity check.
 #[test]
 fn gossip_only_delivers_directed_task() {
-    let (creator, swarm) = Node::create_flags("gos-only", &[("--no-unicast", "")]);
-    let joiner = Node::join_flags(&swarm, "gos-only-b", &[("--no-unicast", "")]);
-    assert!(creator.wait_ready(&swarm), "creator never ready");
-    assert!(joiner.wait_ready(&swarm), "joiner never ready");
+    let (creator, mesh) = Node::create_flags("gos-only", &[("--no-unicast", "")]);
+    let joiner = Node::join_flags(&mesh, "gos-only-b", &[("--no-unicast", "")]);
+    assert!(creator.wait_ready(&mesh), "creator never ready");
+    assert!(joiner.wait_ready(&mesh), "joiner never ready");
 
-    cli_message(&swarm, &creator.nickname, "warmup");
+    cli_message(&mesh, &creator.nickname, "warmup");
     assert!(
         wait_until(
             || joiner.count_from(&creator.nickname, "warmup"),
@@ -2682,7 +2682,7 @@ fn gossip_only_delivers_directed_task() {
         "warmup never reached the joiner"
     );
 
-    let id = cli_task_create(&swarm, &creator.nickname, &joiner.nickname, "gossip hello");
+    let id = cli_task_create(&mesh, &creator.nickname, &joiner.nickname, "gossip hello");
     assert!(
         !id.is_empty(),
         "directed task returned no id under gossip-only"

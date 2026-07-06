@@ -1,5 +1,0 @@
----
-source: src/a2a/mod.rs
-expression: "serde_json::to_string(&update).unwrap()"
----
-{"taskId":"550e8400-e29b-41d4-a716-446655440000","contextId":"💬test","status":{"state":"TASK_STATE_INPUT_REQUIRED"},"metadata":{"swarm:review":true}}

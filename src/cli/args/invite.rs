@@ -1,18 +1,18 @@
-//! `invite` command args: mint a `🎟️` invite to an invite-only swarm. Only the
+//! `invite` command args: mint a `🎟️` invite to an invite-only mesh. Only the
 //! creating session's daemon holds the in-memory issuer key, so only it can
 //! sign one — after its restart, no new invites can be minted.
 
 use clap::Parser;
 
-use agent_habilis_gossip::protocol::{Nickname, SwarmId};
+use agent_habilis_mesh::protocol::{Nickname, MeshId};
 
 use super::output::OutputFormat;
 
 #[derive(Parser, Debug)]
 pub(crate) struct InviteOpts {
-    /// The invite-only swarm to mint for (its 💬… id).
+    /// The invite-only mesh to mint for (its 💬… id).
     #[arg(long)]
-    pub swarm: SwarmId,
+    pub mesh: MeshId,
 
     /// Nickname of the local **creating** session (only its daemon holds the
     /// issuer key that can sign an invite).
@@ -38,11 +38,11 @@ mod tests {
     use crate::cli::args::{Cli, Commands};
 
     #[test]
-    fn invite_parses_swarm_nickname_and_ttl() {
+    fn invite_parses_mesh_nickname_and_ttl() {
         let cli = Cli::parse_from([
-            "agent-gossip",
+            "agent-mesh",
             "invite",
-            "--swarm",
+            "--mesh",
             "💬AbCdEf1234",
             "--nickname",
             "my-nick",
@@ -58,9 +58,9 @@ mod tests {
     #[test]
     fn invite_ttl_is_optional() {
         let cli = Cli::parse_from([
-            "agent-gossip",
+            "agent-mesh",
             "invite",
-            "--swarm",
+            "--mesh",
             "💬AbCdEf1234",
             "--nickname",
             "my-nick",

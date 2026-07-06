@@ -3,7 +3,7 @@
 > 🚧 **Under construction.** This document is a work in progress and may be
 > incomplete or out of date.
 
-`agent-gossip` has no server, no account, and no central
+`agent-mesh` has no server, no account, and no central
 registry. Pasting one `💬…` string into a second machine connects the
 two processes. This document describes that process step by step.
 
@@ -15,7 +15,7 @@ when the network drops.
 
 Two participants are used throughout: **Alice** runs `create`; **Bob**
 runs `join`. Note up front: nothing below makes Alice special. The
-swarm is **creator-independent** — Alice can quit and the swarm keeps
+mesh is **creator-independent** — Alice can quit and the mesh keeps
 working, because identity is derived from a shared seed, not from
 Alice.
 
@@ -24,15 +24,15 @@ Alice.
 ## 1. The problem
 
 Bob's machine has no prior knowledge of Alice's machine. There is no
-tracker and no `agent-gossip.com` to query. Both may be behind
+tracker and no `agent-mesh.com` to query. Both may be behind
 home routers that drop unsolicited inbound packets (NAT). From the
 `💬…` string alone Bob must derive:
 
 1. **Who** to look for — a stable cryptographic identity, not an IP
    that changes every reconnect, and not tied to whoever happens to
-   have created the swarm.
+   have created the mesh.
 2. **How to reach** it — a path through NAT, or a fallback.
-3. **Which conversation** to join, so two unrelated swarms never mix.
+3. **Which conversation** to join, so two unrelated meshes never mix.
 
 The `💬…` id encodes none of those directly. It encodes a single
 **random seed**; everything else is *derived* from it locally, the
@@ -43,7 +43,7 @@ same way, on every machine.
 ## 2. The `💬…` id is a seed, not an address
 
 When Alice runs `create`, her daemon generates **32 random bytes** —
-the `seed` — and packs them with the swarm name and config (lookups).
+the `seed` — and packs them with the mesh name and config (lookups).
 It does **not** put any address or key in the id.
 
 ```mermaid
@@ -56,7 +56,7 @@ flowchart LR
 ```
 
 Every derivation is a domain-separated SHA-256:
-`derive_secret(seed, label) = SHA256("agent-gossip/v2" ‖ len(label) ‖
+`derive_secret(seed, label) = SHA256("agent-mesh/v2" ‖ len(label) ‖
 label ‖ seed)`. Distinct labels (`rendezvous`, `topic`, `port`) can
 never collide for one seed. Bob, decoding the same `💬…`, runs the
 exact same derivations and gets the exact same rendezvous identity and
@@ -73,25 +73,25 @@ today still works in a year, as long as any member is online.
 
 ## 3. Anatomy of an `💬…` id
 
-The id carries a random `seed`, the swarm `name`, and the swarm's
+The id carries a random `seed`, the mesh `name`, and the mesh's
 config (the `mdns`/`dht`/`relay` lookups) — no key, no IP.
 There is **no peer address stored anywhere**, and a forged id with any
 tampered field hashes to a *different* topic (see §6) and simply finds
 no peers.
 
 The full byte layout, the config encoding, and the Base58Check framing
-live in **[`docs/swarm-hash.md`](swarm-hash.md)** — the single source of
+live in **[`docs/mesh-hash.md`](mesh-hash.md)** — the single source of
 truth for the id format. This doc covers what happens *after* an id is
 decoded.
 
-(`src/protocol/swarm/mod.rs`: `Swarm::encode_bytes`/`decode_bytes`,
+(`src/protocol/mesh/mod.rs`: `Mesh::encode_bytes`/`decode_bytes`,
 `base58check_encode`.)
 
 ---
 
 ## 4. Bob decodes, then derives — no network yet
 
-`join 💬…` parses the string and locally derives the swarm's
+`join 💬…` parses the string and locally derives the mesh's
 identity. Still zero packets sent:
 
 ```mermaid
@@ -114,7 +114,7 @@ known to home on, §5) and registers it. iroh now has a concrete path
 to the rendezvous before any discovery query runs — a creator-independent
 bootstrap with zero address-lookup wait.
 
-(`src/protocol/swarm/mod.rs` decode; `register_rendezvous` +
+(`src/protocol/mesh/mod.rs` decode; `register_rendezvous` +
 `add_peer_addr` in `src/daemon/setup.rs` / `src/lookup/mod.rs`.)
 
 ---
@@ -127,7 +127,7 @@ currently holds it bridges Bob into the mesh; if that member dies,
 another already co-hosts the same identity. This co-host role is the
 **beacon** (`src/beacon/mod.rs`).
 
-How the rendezvous is reached depends entirely on the swarm's
+How the rendezvous is reached depends entirely on the mesh's
 **lookups**, which the id carries (so every member agrees):
 
 ### Loopback only — no lookups
@@ -138,7 +138,7 @@ packets**. The rendezvous has no DNS/relay to resolve, so instead the
 seed derives a deterministic **loopback port ladder**
 (`derive_secret(seed,"port")`, 8 rungs). Exactly one member is the beacon: it
 binds the first free rung; `AddrInUse` triggers an identity probe
-distinguishing *our* beacon (stay a participant) from an unrelated swarm
+distinguishing *our* beacon (stay a participant) from an unrelated mesh
 that derived the same port (skip to the next rung). Only other processes
 on the machine can join. (`src/lookup/mod.rs` loopback branch;
 `src/beacon/mod.rs` claim-if-free.)
@@ -181,10 +181,10 @@ inherits them (no flags on `join`). On `create`, `--relay {URL}`
 overrides the pinned default and `--mdns` / `--dht` are a presence
 allowlist: naming none with `--public` enables all three; naming any
 restricts to those. Because the lookups are mixed into the topic
-(see §6), every member of a swarm necessarily uses the same set. See
-[`swarm-hash.md`](swarm-hash.md).
+(see §6), every member of a mesh necessarily uses the same set. See
+[`mesh-hash.md`](mesh-hash.md).
 
-(`src/lookup/mod.rs` `build_endpoint`; `src/protocol/swarm/lookup.rs`
+(`src/lookup/mod.rs` `build_endpoint`; `src/protocol/mesh/lookup.rs`
 `resolve_lookups`.)
 
 A relayed hop is still end-to-end QUIC-encrypted — the relay forwards
@@ -196,8 +196,8 @@ Privacy details: [security.md](./security.md).
 
 ## 6. The topic, and "breaking" it
 
-A relay (and the DHT) carry many unrelated swarms, so Bob must join
-*this* conversation. Every swarm has a 32-byte **TopicId**, derived —
+A relay (and the DHT) carry many unrelated meshes, so Bob must join
+*this* conversation. Every mesh has a 32-byte **TopicId**, derived —
 not random:
 
 ```
@@ -208,7 +208,7 @@ Both Alice (`create`) and Bob (`join`) compute it independently from
 the seed, name, and config in the id. Identical inputs → identical topic
 → same conversation. Because the config (lookups) is mixed
 in, two members meet only if their entire config matches — so it cannot
-diverge across a swarm. The seed runs through the domain-separated `derive_secret` first,
+diverge across a mesh. The seed runs through the domain-separated `derive_secret` first,
 so the same 32 bytes can never be both the topic and the rendezvous
 key. (`derive_topic_id` in `src/protocol/crypto.rs`.)
 
@@ -216,22 +216,22 @@ key. (`derive_topic_id` in `src/protocol/crypto.rs`.)
 and recompute the Base58 checksum (trivial). It decodes — but the name
 is hashed into the topic, so a different name yields a different
 `TopicId`: the attacker lands in an empty topic with no peers. The
-name is **cryptographically bound** to the swarm. (Pinned by
+name is **cryptographically bound** to the mesh. (Pinned by
 `different_names_produce_different_topics` /
 `name_is_case_sensitive` in `src/protocol/crypto.rs`.)
 
-**Attack B: guess the topic.** Reaching a swarm without its id means
+**Attack B: guess the topic.** Reaching a mesh without its id means
 computing the topic directly — a SHA-256 pre-image over a 256-bit
 random seed. Not brute-forceable.
 
 **What it does not do:** the `💬…` id is a **bearer capability** —
 anyone who has the string can join. The hash binds the name to the
-seed so the id cannot be tampered into a *different* swarm; it is not
+seed so the id cannot be tampered into a *different* mesh; it is not
 access control and not message encryption. Treat the id as a secret
-if the swarm is meant to be private to a group. The practical risk is
+if the mesh is meant to be private to a group. The practical risk is
 id leakage, not breaking SHA-256.
 
-The exception is a **password-protected** swarm (`create --password`): the
+The exception is a **password-protected** mesh (`create --password`): the
 Argon2id-stretched password replaces the seed in every derivation above —
 topic, rendezvous keypair, port ladder — so the id alone computes nothing
 reachable, and the id carries a one-way verifier so `join` rejects a wrong
@@ -245,9 +245,9 @@ nicknames, retention: [security.md](./security.md).)
 
 ## 7. Joining without an `💬…` id: `topic <string>`
 
-To avoid sharing an 80-character id, `agent-gossip topic <string>` derives a
-swarm deterministically from an arbitrary string — anyone who runs it
-with the same string lands in the same swarm, with no id, no server, and
+To avoid sharing an 80-character id, `agent-mesh topic <string>` derives a
+mesh deterministically from an arbitrary string — anyone who runs it
+with the same string lands in the same mesh, with no id, no server, and
 no hosting.
 
 ```mermaid
@@ -255,7 +255,7 @@ flowchart TB
     S["topic string"]
     S --> H["seed = SHA256(TOPIC_DOMAIN ‖ trim(string))"]
     S --> N["name = sanitize(string): drop scheme (+ http query/fragment), invalid runs→'-', keep '/', cap 32 with '…'"]
-    H --> Sw["Swarm { seed, name, config }"]
+    H --> Sw["Mesh { seed, name, config }"]
     N --> Sw
     C["config = public preset (mDNS + DHT + relay)"] --> Sw
     Sw --> T["derive topic + rendezvous (§4–§6) and mesh (§8)"]
@@ -264,7 +264,7 @@ flowchart TB
 The seed is `SHA256(TOPIC_DOMAIN ‖ string)` after trimming surrounding
 whitespace only — no lowercasing or URL-normalization, so the string is
 matched byte-for-byte. The name is the string itself sanitized into a
-`SwarmName` (`SwarmName::from_topic_string`: a leading URL scheme like
+`MeshName` (`MeshName::from_topic_string`: a leading URL scheme like
 `https://` is dropped — plus the `?query`/`#fragment` for an http(s) URL —
 then each run of invalid chars — whitespace, `< > #`, control, bidi — collapses
 to one `-` while `/` and the rest of the URL charset survive, capped at 32
@@ -275,7 +275,7 @@ the string, every peer converges with zero coordination; there is no
 `--name`/`--public`/lookup flag. There is no distinguished creator, so the
 first peer to run `topic` beacons (`CoHostPolicy::EagerProbed`, §8) and later
 peers bootstrap off it. (`src/protocol/crypto.rs::topic_seed`,
-`Swarm::from_topic`.) Per §6, the string is a bearer capability: anyone who
+`Mesh::from_topic`.) Per §6, the string is a bearer capability: anyone who
 knows or guesses it joins.
 
 ---
@@ -286,7 +286,7 @@ Bob has a path to the rendezvous and the right topic. The final step
 is **non-blocking** by design:
 
 - On `create`, Alice subscribes to the topic with no bootstrap peers
-  and co-hosts the rendezvous from `t=0` — an empty swarm must still
+  and co-hosts the rendezvous from `t=0` — an empty mesh must still
   be joinable.
 - On `join`, Bob calls `subscribe(topic, bootstrap=[rendezvous_id])`
   and **`ready` fires immediately** — he is never invisible while
@@ -294,7 +294,7 @@ is **non-blocking** by design:
   member's beacon bridges Bob into HyParView, where he picks up a few
   **active** neighbours and a larger **passive** set.
 - Bob defers co-hosting the rendezvous himself until he is **meshed**
-  (or, for a genuinely empty swarm, after a short grace). A
+  (or, for a genuinely empty mesh, after a short grace). A
   short-lived joiner that leaves before meshing therefore never
   registers a duplicate rendezvous identity and never pollutes
   discovery for later joiners.
@@ -372,8 +372,8 @@ sequenceDiagram
 ```
 
 Summary: **possession of the `💬…` string is possession of the
-swarm.** It carries only a seed; the rendezvous identity, topic, and
-recovery anchor are all derived from it locally, so the swarm has no
+mesh.** It carries only a seed; the rendezvous identity, topic, and
+recovery anchor are all derived from it locally, so the mesh has no
 creator dependency, no stored address, and a deterministic way back
 in after the network blips. Confidentiality and trust:
 [security.md](./security.md). The overlay itself:

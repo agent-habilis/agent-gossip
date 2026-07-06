@@ -1,12 +1,12 @@
 //! The a2a bridge ticket — a `🎟️` token carrying everything a consumer needs
-//! to dial the exposer: the bearer secret, the swarm's discovery config, and
+//! to dial the exposer: the bearer secret, the mesh's discovery config, and
 //! the exposer's address. Payload layout: `secret(32) ‖ flags(1) ‖ lookups ‖
 //! address-json` (lookups is self-delimiting, so the address occupies the
 //! remainder). Bit 0 of the flags byte marks a password-protected ticket.
 //!
 //! Wire: the `🎟️` ticket brand + Base58Check(`version ‖ kind ‖ payload`) with a
 //! `SHA256d` checksum; the emoji is the brand, everything after the `://` ASCII
-//! Base58. The `🎟️` glyph is distinct from the swarm id's `💬`, so a swarm id
+//! Base58. The `🎟️` glyph is distinct from the mesh id's `💬`, so a mesh id
 //! fails ticket decode on the prefix alone. The brand *is* shared with the blob
 //! ticket, so the `kind` byte marks this as an *a2a bridge* ticket and makes a
 //! wrong-kind token (a blob ticket) fail cleanly on decode.
@@ -15,15 +15,15 @@ use anyhow::{Context, Result, bail};
 use iroh::EndpointAddr;
 use sha2::{Digest, Sha256};
 
-use agent_habilis_gossip::protocol::peer_addr::{endpoint_addr_from_json, endpoint_addr_to_json};
-use agent_habilis_gossip::protocol::swarm::LookupOpts;
-use agent_habilis_gossip::util::consts::{SWARM_URI_SEPARATOR, TICKET_GLYPH};
+use agent_habilis_mesh::protocol::peer_addr::{endpoint_addr_from_json, endpoint_addr_to_json};
+use agent_habilis_mesh::protocol::mesh::LookupOpts;
+use agent_habilis_mesh::util::consts::{MESH_URI_SEPARATOR, TICKET_GLYPH};
 
 use super::SECRET_LEN;
 
 /// Branding prefix on every ticket — the `🎟️` ticket glyph; the remainder of the
 /// string is ASCII Base58Check. Blob and a2a tickets share this brand and are
-/// told apart by [`KIND`]; the swarm id's `💬` is a different glyph entirely.
+/// told apart by [`KIND`]; the mesh id's `💬` is a different glyph entirely.
 pub(crate) const PREFIX: &str = TICKET_GLYPH;
 
 /// Framing version. Bumped only on a breaking framing change; an unknown
@@ -64,7 +64,7 @@ impl A2aTicket {
         framed.push(VERSION);
         framed.push(KIND);
         framed.extend_from_slice(&payload);
-        format!("{PREFIX}{SWARM_URI_SEPARATOR}{}", base58check_encode(&framed))
+        format!("{PREFIX}{MESH_URI_SEPARATOR}{}", base58check_encode(&framed))
     }
 
     /// Decode a `🎟️` a2a ticket.
@@ -107,13 +107,13 @@ impl A2aTicket {
 
 /// Strip the ticket brand and optional `://` off a token, returning the
 /// Base58Check body. Accepts the canonical `🎟️://` and, defensively, a paste
-/// that dropped the VS-16 (`🎟://`) or the separator — mirroring the swarm id's
+/// that dropped the VS-16 (`🎟://`) or the separator — mirroring the mesh id's
 /// optional-`://` tolerance. `None` if the token doesn't carry the ticket glyph.
 fn strip_ticket_prefix(token: &str) -> Option<&str> {
     let base = TICKET_GLYPH.strip_suffix('\u{FE0F}').unwrap_or(TICKET_GLYPH);
     let rest = token.strip_prefix(base)?;
     let rest = rest.strip_prefix('\u{FE0F}').unwrap_or(rest);
-    Some(rest.strip_prefix(SWARM_URI_SEPARATOR).unwrap_or(rest))
+    Some(rest.strip_prefix(MESH_URI_SEPARATOR).unwrap_or(rest))
 }
 
 fn checksum(bytes: &[u8]) -> [u8; 4] {
@@ -147,7 +147,7 @@ fn base58check_decode(encoded: &str) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::{A2aTicket, PREFIX, SECRET_LEN};
-    use agent_habilis_gossip::protocol::swarm::LookupOpts;
+    use agent_habilis_mesh::protocol::mesh::LookupOpts;
     use iroh::{EndpointAddr, SecretKey};
 
     fn sample_addr(byte: u8) -> EndpointAddr {
@@ -202,26 +202,26 @@ mod tests {
     }
 
     #[test]
-    fn rejects_a_swarm_token() {
-        // A swarm id carries the `💬` glyph, not the ticket's `🎟️`, so it fails
+    fn rejects_a_mesh_token() {
+        // A mesh id carries the `💬` glyph, not the ticket's `🎟️`, so it fails
         // to decode as an a2a ticket on the prefix alone.
-        let swarm = agent_habilis_gossip::protocol::swarm::Swarm::new(
+        let mesh = agent_habilis_mesh::protocol::mesh::Mesh::new(
             [1u8; 32],
-            agent_habilis_gossip::protocol::swarm::SwarmName::new("t").unwrap(),
-            agent_habilis_gossip::protocol::swarm::SwarmConfig::loopback(),
+            agent_habilis_mesh::protocol::mesh::MeshName::new("t").unwrap(),
+            agent_habilis_mesh::protocol::mesh::MeshConfig::loopback(),
         )
         .to_string();
-        assert!(A2aTicket::decode(&swarm).is_err());
+        assert!(A2aTicket::decode(&mesh).is_err());
     }
 
     #[test]
     fn rejects_a_cross_kind_ticket() {
         // The blob ticket shares the `🎟️` brand but carries a different kind
         // byte, so it must not decode as an a2a ticket — and vice versa.
-        let blob = agent_habilis_gossip::blob::BlobTicket {
+        let blob = agent_habilis_mesh::blob::BlobTicket {
             addr: sample_addr(3),
-            secret: [9u8; agent_habilis_gossip::blob::SECRET_LEN],
-            sha256: [7u8; agent_habilis_gossip::blob::HASH_LEN],
+            secret: [9u8; agent_habilis_mesh::blob::SECRET_LEN],
+            sha256: [7u8; agent_habilis_mesh::blob::HASH_LEN],
             size: 1_234_567,
             lookups: LookupOpts::public_preset(),
             password: false,
@@ -233,7 +233,7 @@ mod tests {
             password: false,
         };
         assert!(A2aTicket::decode(&blob.encode()).is_err());
-        assert!(agent_habilis_gossip::blob::BlobTicket::decode(&a2a.encode()).is_err());
+        assert!(agent_habilis_mesh::blob::BlobTicket::decode(&a2a.encode()).is_err());
     }
 
     #[test]

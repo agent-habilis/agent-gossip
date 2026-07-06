@@ -2,9 +2,9 @@ import { execFileSync, spawn } from "node:child_process";
 import { hostname } from "node:os";
 import * as readline from "node:readline";
 import { clearBatch, startWatcher, stopWatcher } from "../daemon";
-import { isValidBody, isValidSwarmName, runSwarmCommand } from "../helpers";
+import { isValidBody, isValidMeshName, runMeshCommand } from "../helpers";
 import { state, stateFilePath } from "../state";
-import type { DiscoveredSwarm, Peer, PingResult, Session } from "../types";
+import type { DiscoveredMesh, Peer, PingResult, Session } from "../types";
 
 export function cleanup(): void {
   stopWatcher();
@@ -25,7 +25,7 @@ export type CreateOptions = {
   relay?: string;
   mdns?: boolean;
   dht?: boolean;
-  // List the swarm in a directory; requires network "public".
+  // List the mesh in a directory; requires network "public".
   advertise?: boolean;
   // Directory to advertise into; omit for the well-known `global`.
   directory?: string;
@@ -34,8 +34,8 @@ export type CreateOptions = {
 };
 
 export type JoinOptions = {
-  // What to join: a `💬…` id. (A shared string derives its own public swarm —
-  // that is `forumSwarm` — and is not a join target.)
+  // What to join: a `💬…` id. (A shared string derives its own public mesh —
+  // that is `forumMesh` — and is not a join target.)
   target: string;
   // Local nickname; omit for the daemon's random `word-word`.
   nickname?: string;
@@ -44,8 +44,8 @@ export type JoinOptions = {
 };
 
 export type ForumOptions = {
-  // The shared string. Hashed into a deterministic public swarm — anyone
-  // passing the same string joins the same swarm.
+  // The shared string. Hashed into a deterministic public mesh — anyone
+  // passing the same string joins the same mesh.
   string: string;
   // Local nickname; omit for the daemon's random `word-word`.
   nickname?: string;
@@ -57,11 +57,11 @@ export type ForumOptions = {
 const HARNESS = "pi";
 
 // The semantic contract for create options, shared by every caller (the
-// `/swarm-create` command and the swarm_create tool). Returns an error
+// `/mesh-create` command and the mesh_create tool). Returns an error
 // message, or undefined when the options are valid. The daemon stays the
 // authoritative backstop; this is the single client-side source of truth.
 export function validateCreateOptions(options: CreateOptions): string | undefined {
-  if (options.name !== undefined && !isValidSwarmName(options.name)) {
+  if (options.name !== undefined && !isValidMeshName(options.name)) {
     return "invalid name — must be 1-32 chars, no whitespace or < > #";
   }
   if (options.advertise && options.network !== "public") {
@@ -70,7 +70,7 @@ export function validateCreateOptions(options: CreateOptions): string | undefine
   return undefined;
 }
 
-// The shared tail of createSwarm/joinSwarm/forumSwarm: spawn the daemon,
+// The shared tail of createMesh/joinMesh/forumMesh: spawn the daemon,
 // wait for its ready event, and build the session. `timeoutMs` differs per
 // caller: create is localhost-only setup, join/forum may cross the relay.
 async function spawnSession({
@@ -89,22 +89,22 @@ async function spawnSession({
   // `-- <string>`, and anything appended after `--` would parse as positional.
   if (filePath) args.splice(1, 0, "--state-file", filePath);
 
-  const child = spawn("agent-gossip", args, { stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn("agent-mesh", args, { stdio: ["ignore", "pipe", "pipe"] });
   // `startWatcher` attaches the single readline and resolves with the `ready`
   // line; ongoing events (incl. peers already present) flow on from the same
   // reader — no second one to drop the bundled `joined` lines.
   const readyLine = await startWatcher({ child, timeoutMs });
   const ready = JSON.parse(readyLine);
 
-  if (!ready.swarm || !ready.name || !ready.nickname) {
-    throw new Error("invalid ready event: missing swarm, name, or nickname");
+  if (!ready.mesh || !ready.name || !ready.nickname) {
+    throw new Error("invalid ready event: missing mesh, name, or nickname");
   }
 
   if (typeof child.pid !== "number") {
-    throw new Error("agent-gossip spawned without a pid");
+    throw new Error("agent-mesh spawned without a pid");
   }
   const session: Session = {
-    swarm: ready.swarm,
+    mesh: ready.mesh,
     name: ready.name,
     nickname: ready.nickname,
     pid: child.pid,
@@ -115,7 +115,7 @@ async function spawnSession({
   return session;
 }
 
-export async function createSwarm(options: CreateOptions = {}): Promise<Session> {
+export async function createMesh(options: CreateOptions = {}): Promise<Session> {
   const invalid = validateCreateOptions(options);
   if (invalid) throw new Error(invalid);
 
@@ -134,13 +134,13 @@ export async function createSwarm(options: CreateOptions = {}): Promise<Session>
   return spawnSession({ args, timeoutMs: 30_000, model });
 }
 
-export async function joinSwarm({ target, nickname, model }: JoinOptions): Promise<Session> {
+export async function joinMesh({ target, nickname, model }: JoinOptions): Promise<Session> {
   const args = ["join", target, "--no-interactive", "--output", "json", "--filter-self"];
   if (nickname) args.push("--nickname", nickname);
   return spawnSession({ args, timeoutMs: 60_000, model });
 }
 
-export async function forumSwarm({ string, nickname, model }: ForumOptions): Promise<Session> {
+export async function forumMesh({ string, nickname, model }: ForumOptions): Promise<Session> {
   const args = ["forum", "--no-interactive", "--output", "json", "--filter-self"];
   if (nickname) args.push("--nickname", nickname);
   // The string is any byte-for-byte value the peers agreed on — it may start
@@ -149,9 +149,9 @@ export async function forumSwarm({ string, nickname, model }: ForumOptions): Pro
   return spawnSession({ args, timeoutMs: 60_000, model });
 }
 
-// `notice: true` sends the no-auto-reply kind (`agent-gossip notice`) — same flags,
+// `notice: true` sends the no-auto-reply kind (`agent-mesh notice`) — same flags,
 // different receiver contract.
-export function sendSwarmMessage({
+export function sendMeshMessage({
   text,
   reply,
   notice,
@@ -160,15 +160,15 @@ export function sendSwarmMessage({
   reply?: string;
   notice?: boolean;
 }): void {
-  if (!state.session?.swarm) throw new Error("Not in a swarm");
+  if (!state.session?.mesh) throw new Error("Not in a mesh");
   if (!isValidBody(text)) {
     throw new Error("Message body must not contain control characters other than tab/newline");
   }
 
   const args = [
     notice ? "notice" : "msg",
-    "--swarm",
-    state.session.swarm,
+    "--mesh",
+    state.session.mesh,
     "--nickname",
     state.session.nickname,
     "--text",
@@ -176,10 +176,10 @@ export function sendSwarmMessage({
   ];
   if (reply) args.push("--reply", reply);
 
-  runSwarmCommand(args);
+  runMeshCommand(args);
 }
 
-// Send one leg of a task (`agent-gossip task`). `text` is required by the CLI but may
+// Send one leg of a task (`agent-mesh task`). `text` is required by the CLI but may
 // be empty for legs without a body (accept/confirm/cancel).
 export function sendTaskLeg({
   to,
@@ -192,11 +192,11 @@ export function sendTaskLeg({
   phase: string;
   text?: string;
 }): void {
-  if (!state.session?.swarm) throw new Error("Not in a swarm");
-  runSwarmCommand([
+  if (!state.session?.mesh) throw new Error("Not in a mesh");
+  runMeshCommand([
     "task",
-    "--swarm",
-    state.session.swarm,
+    "--mesh",
+    state.session.mesh,
     "--nickname",
     state.session.nickname,
     "--to",
@@ -210,27 +210,27 @@ export function sendTaskLeg({
   ]);
 }
 
-export function getSwarmStatus(): {
-  swarm: string | null;
+export function getMeshStatus(): {
+  mesh: string | null;
   name: string | null;
   nickname: string | null;
 } {
   return {
-    swarm: state.session?.swarm ?? null,
+    mesh: state.session?.mesh ?? null,
     name: state.session?.name ?? null,
     nickname: state.session?.nickname ?? null,
   };
 }
 
-export function leaveSwarm(): void {
+export function leaveMesh(): void {
   cleanup();
 }
 
-// Browse a directory for advertised swarms. Spawns `agent-gossip discover`, collects
-// swarm_found/swarm_lost lines, then resolves: ~`graceMs` after the first hit
+// Browse a directory for advertised meshes. Spawns `agent-mesh discover`, collects
+// mesh_found/mesh_lost lines, then resolves: ~`graceMs` after the first hit
 // (to gather a few more), or at `maxMs` if nothing shows. Discovery joins no
-// swarm — the child is always killed before resolving.
-export function discoverSwarms({
+// mesh — the child is always killed before resolving.
+export function discoverMeshes({
   directory,
   graceMs = 1500,
   maxMs = 8000,
@@ -238,12 +238,12 @@ export function discoverSwarms({
   directory?: string;
   graceMs?: number;
   maxMs?: number;
-}): Promise<DiscoveredSwarm[]> {
+}): Promise<DiscoveredMesh[]> {
   return new Promise((resolve) => {
     const args = ["discover", "--no-interactive", "--output", "json"];
     if (directory && directory !== "global") args.push("--directory", directory);
-    const child = spawn("agent-gossip", args, { stdio: ["ignore", "pipe", "pipe"] });
-    const found = new Map<string, DiscoveredSwarm>();
+    const child = spawn("agent-mesh", args, { stdio: ["ignore", "pipe", "pipe"] });
+    const found = new Map<string, DiscoveredMesh>();
     let graceTimer: ReturnType<typeof setTimeout> | null = null;
     let settled = false;
 
@@ -270,7 +270,7 @@ export function discoverSwarms({
     lineReader.on("line", (line) => {
       let event: {
         event?: string;
-        swarm?: string;
+        mesh?: string;
         name?: string;
         peers?: number;
         mode?: string;
@@ -280,29 +280,29 @@ export function discoverSwarms({
       } catch {
         return;
       }
-      if (event.event === "swarm_found" && typeof event.swarm === "string") {
-        found.set(event.swarm, {
-          swarm: event.swarm,
+      if (event.event === "mesh_found" && typeof event.mesh === "string") {
+        found.set(event.mesh, {
+          mesh: event.mesh,
           name: event.name ?? "?",
           peers: Number(event.peers ?? 0),
           mode: event.mode === "public" ? "public" : "private",
         });
         if (!graceTimer) graceTimer = setTimeout(settle, graceMs);
-      } else if (event.event === "swarm_lost" && typeof event.swarm === "string") {
-        found.delete(event.swarm);
+      } else if (event.event === "mesh_lost" && typeof event.mesh === "string") {
+        found.delete(event.mesh);
       }
     });
     child.on("error", settle);
   });
 }
 
-// Query the live roster via `agent-gossip peers`. Throws when not in a swarm.
+// Query the live roster via `agent-mesh peers`. Throws when not in a mesh.
 export function getPeers(): { count: number; participants: Peer[] } {
-  if (!state.session?.swarm) throw new Error("Not in a swarm");
-  const raw = runSwarmCommand([
+  if (!state.session?.mesh) throw new Error("Not in a mesh");
+  const raw = runMeshCommand([
     "peers",
-    "--swarm",
-    state.session.swarm,
+    "--mesh",
+    state.session.mesh,
     "--nickname",
     state.session.nickname,
   ]);
@@ -348,29 +348,29 @@ export function getPeers(): { count: number; participants: Peer[] } {
   };
 }
 
-// Read the current derived shared-state document via `agent-gossip state get`. Throws
-// when not in a swarm. Uses execFileSync (no shell), consistent with
+// Read the current derived shared-state document via `agent-mesh state get`. Throws
+// when not in a mesh. Uses execFileSync (no shell), consistent with
 // applyStateMerge — its JSON `--merge` arg must never touch the shell.
 export function getStateDocument(): Record<string, unknown> {
-  if (!state.session?.swarm) throw new Error("Not in a swarm");
+  if (!state.session?.mesh) throw new Error("Not in a mesh");
   const raw = execFileSync(
-    "agent-gossip",
-    ["state", "get", "--swarm", state.session.swarm, "--nickname", state.session.nickname],
+    "agent-mesh",
+    ["state", "get", "--mesh", state.session.mesh, "--nickname", state.session.nickname],
     { encoding: "utf-8", timeout: 15_000 },
   ).trim();
   const parsed = JSON.parse(raw) as { ok: boolean; document?: Record<string, unknown> };
   return parsed.document ?? {};
 }
 
-// Apply an RFC 7386 JSON Merge Patch to the shared state via `agent-gossip state merge`.
+// Apply an RFC 7386 JSON Merge Patch to the shared state via `agent-mesh state merge`.
 // The outcome is read from the `{ok,…}` JSON on stdout. The JSON `--merge` arg
-// goes through execFileSync (no shell) — `runSwarmCommand`'s quoting would mangle
+// goes through execFileSync (no shell) — `runMeshCommand`'s quoting would mangle
 // it.
 export function applyStateMerge({ merge }: { merge: string }): {
   ok: boolean;
   error?: string;
 } {
-  if (!state.session?.swarm) throw new Error("Not in a swarm");
+  if (!state.session?.mesh) throw new Error("Not in a mesh");
   let parsed: unknown;
   try {
     parsed = JSON.parse(merge);
@@ -382,12 +382,12 @@ export function applyStateMerge({ merge }: { merge: string }): {
   }
 
   const raw = execFileSync(
-    "agent-gossip",
+    "agent-mesh",
     [
       "state",
       "merge",
-      "--swarm",
-      state.session.swarm,
+      "--mesh",
+      state.session.mesh,
       "--nickname",
       state.session.nickname,
       "--merge",
@@ -399,14 +399,14 @@ export function applyStateMerge({ merge }: { merge: string }): {
   return { ok: resp.ok, error: resp.error };
 }
 
-// Read the derived `meta`-channel document via `agent-gossip meta get`. The meta
+// Read the derived `meta`-channel document via `agent-mesh meta get`. The meta
 // channel is byte-for-byte the same machinery as `state`; by convention it
-// holds swarm metadata, e.g. `/peers/<nick> = { model, harness, host }`.
+// holds mesh metadata, e.g. `/peers/<nick> = { model, harness, host }`.
 export function getMetaDocument(): Record<string, unknown> {
-  if (!state.session?.swarm) throw new Error("Not in a swarm");
+  if (!state.session?.mesh) throw new Error("Not in a mesh");
   const raw = execFileSync(
-    "agent-gossip",
-    ["meta", "get", "--swarm", state.session.swarm, "--nickname", state.session.nickname],
+    "agent-mesh",
+    ["meta", "get", "--mesh", state.session.mesh, "--nickname", state.session.nickname],
     { encoding: "utf-8", timeout: 15_000 },
   ).trim();
   const parsed = JSON.parse(raw) as { ok: boolean; document?: Record<string, unknown> };
@@ -417,14 +417,14 @@ export function getMetaDocument(): Record<string, unknown> {
 // the CLI exits non-zero on a rejected `{ok:false}` merge, so execFileSync
 // throws — callers that tolerate rejection wrap it.
 function runMetaMerge(merge: string): void {
-  if (!state.session?.swarm) throw new Error("Not in a swarm");
+  if (!state.session?.mesh) throw new Error("Not in a mesh");
   execFileSync(
-    "agent-gossip",
+    "agent-mesh",
     [
       "meta",
       "merge",
-      "--swarm",
-      state.session.swarm,
+      "--mesh",
+      state.session.mesh,
       "--nickname",
       state.session.nickname,
       "--merge",
@@ -435,14 +435,14 @@ function runMetaMerge(merge: string): void {
 }
 
 // Record what this agent runs on into `meta` under `/peers/<nickname>`. The
-// binary no longer self-reports model/harness/host — it is swarm metadata the
+// binary no longer self-reports model/harness/host — it is mesh metadata the
 // agent owns. Best-effort: a failed report must not break create/join, so errors
 // are swallowed (the roster simply shows no model for us). A merge deep-merges
 // only our own `/peers/<nickname>` key, so it creates `/peers` if absent and
 // never clobbers another peer's entry — no seed, no fallback needed.
 function reportSelfMeta(model?: string): void {
   const session = state.session;
-  if (!session?.swarm) return;
+  if (!session?.mesh) return;
   // Seed `status: "idle"` — we advertise as accepting work until the agent flips
   // it (via setSelfStatus) when it goes heads-down. Only "busy" makes senders
   // skip us; "idle"/"available"/absent stay eligible.
@@ -465,22 +465,22 @@ function reportSelfMeta(model?: string): void {
 // Throws on a rejected merge so the tool can surface the error to the agent.
 export function setSelfStatus(status: string): void {
   const session = state.session;
-  if (!session?.swarm) throw new Error("Not in a swarm");
+  if (!session?.mesh) throw new Error("Not in a mesh");
   runMetaMerge(JSON.stringify({ peers: { [session.nickname]: { status } } }));
 }
 
 export async function pingPeers(): Promise<PingResult[]> {
-  if (!state.session?.swarm) throw new Error("Not in a swarm");
+  if (!state.session?.mesh) throw new Error("Not in a mesh");
 
   state.pingPending = true;
   state.pingStartTime = Date.now();
   state.pongMap.clear();
 
   try {
-    runSwarmCommand([
+    runMeshCommand([
       "msg",
-      "--swarm",
-      state.session.swarm,
+      "--mesh",
+      state.session.mesh,
       "--nickname",
       state.session.nickname,
       "--text",

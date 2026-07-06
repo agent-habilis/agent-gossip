@@ -1,14 +1,14 @@
 export type Session = {
-  swarm: string;
+  mesh: string;
   name: string;
   nickname: string;
   pid?: number;
   // Set when the `ready` event reports the installed extension has fallen
-  // behind the `agent-gossip` binary — surfaced once at swarm start.
+  // behind the `agent-mesh` binary — surfaced once at mesh start.
   drift?: string;
 };
 
-export type SwarmEvent = {
+export type MeshEvent = {
   event: string;
   type?: string;
   subtype?: string;
@@ -17,7 +17,7 @@ export type SwarmEvent = {
   id?: string;
   reply?: string | null;
   self?: boolean;
-  swarm?: string;
+  mesh?: string;
   nickname?: string;
   // On `task` / `task_progress` events.
   task_id?: string;
@@ -53,8 +53,8 @@ export type PingResult = {
   rtt: number;
 };
 
-export type DiscoveredSwarm = {
-  swarm: string;
+export type DiscoveredMesh = {
+  mesh: string;
   name: string;
   peers: number;
   mode: "public" | "private";

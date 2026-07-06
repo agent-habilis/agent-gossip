@@ -17,36 +17,36 @@ export function isValidBody(text: string): boolean {
   return true;
 }
 
-// Mirrors the Rust SwarmName invariant (src/protocol/ident.rs::is_forbidden_swarm_name):
+// Mirrors the Rust MeshName invariant (src/protocol/ident.rs::is_forbidden_mesh_name):
 // 1-32 Unicode scalar values, excluding control characters, whitespace, and
-// any of < > #. The path separators / \ are allowed — a swarm name may be a
+// any of < > #. The path separators / \ are allowed — a mesh name may be a
 // URL. (The daemon additionally rejects bidi-control scalars; it is the
 // authoritative backstop, so this client check stays simple.)
-export function isValidSwarmName(name: string): boolean {
+export function isValidMeshName(name: string): boolean {
   const chars = [...name];
   if (chars.length < 1 || chars.length > 32) return false;
   return !chars.some((ch) => isControlChar(ch) || /\s/u.test(ch) || "<>#".includes(ch));
 }
 
-export function agentSwarmAvailable(): boolean {
+export function agentMeshAvailable(): boolean {
   try {
-    execSync("which agent-gossip", { stdio: "ignore" });
+    execSync("which agent-mesh", { stdio: "ignore" });
     return true;
   } catch {
     return false;
   }
 }
 
-export function requireAgentSwarm(_ctx: ExtensionContext): boolean {
-  if (!agentSwarmAvailable()) {
-    notifyError("agent-gossip CLI not found on PATH");
+export function requireAgentMesh(_ctx: ExtensionContext): boolean {
+  if (!agentMeshAvailable()) {
+    notifyError("agent-mesh CLI not found on PATH");
     return false;
   }
   return true;
 }
 
-export function runSwarmCommand(args: string[]): string {
-  return execSync(`agent-gossip ${args.map((arg) => `"${arg}"`).join(" ")}`, {
+export function runMeshCommand(args: string[]): string {
+  return execSync(`agent-mesh ${args.map((arg) => `"${arg}"`).join(" ")}`, {
     encoding: "utf-8",
     timeout: 15_000,
   }).trim();

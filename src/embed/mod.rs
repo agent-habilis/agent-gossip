@@ -1,6 +1,6 @@
 //! In-process embedding facade.
 //!
-//! [`SwarmSession`] runs the swarm event loop as a background `tokio`
+//! [`MeshSession`] runs the mesh event loop as a background `tokio`
 //! task **inside the caller's process** — no subprocess, no Unix-socket
 //! IPC. Inbound traffic is pushed over a bounded broadcast channel;
 //! outbound sends go through a dedicated channel into the same shared
@@ -18,31 +18,31 @@ use tokio::task::JoinHandle;
 use crate::a2a::TaskId;
 use crate::a2a::session::SessionRequest;
 use crate::output::{Output, OutputEvent};
-use agent_habilis_gossip::daemon::setup::{SetupKind, SetupParams, setup_swarm};
-use agent_habilis_gossip::daemon::state::RosterSnapshot;
-use agent_habilis_gossip::daemon::{
+use agent_habilis_mesh::daemon::setup::{SetupKind, SetupParams, setup_mesh};
+use agent_habilis_mesh::daemon::state::RosterSnapshot;
+use agent_habilis_mesh::daemon::{
     CoHostPolicy, CreateParams, DriverMode, EventLoopConfig, JoinParams, Resolved, TopicParams,
 };
-use agent_habilis_gossip::directory::{self, Listing, ListingChange, Listings, directory_swarm};
-use agent_habilis_gossip::protocol::swarm::{
-    DEFAULT_DIRECTORY, DirectorySelection, LookupOpts, LookupSet, Swarm, SwarmConfig, SwarmName,
+use agent_habilis_mesh::directory::{self, Listing, ListingChange, Listings, directory_mesh};
+use agent_habilis_mesh::protocol::mesh::{
+    DEFAULT_DIRECTORY, DirectorySelection, LookupOpts, LookupSet, Mesh, MeshConfig, MeshName,
     resolve_lookups,
 };
-use agent_habilis_gossip::protocol::{Message, MessageBody, Nickname, SwarmId};
-use agent_habilis_gossip::resolver::JoinTarget;
-use agent_habilis_gossip::transport::TransportPolicy;
-use agent_habilis_gossip::util::consts::GOSSIP_ACTIVE_VIEW_CAPACITY;
-use agent_habilis_gossip::util::tuning::{
+use agent_habilis_mesh::protocol::{Message, MessageBody, Nickname, MeshId};
+use agent_habilis_mesh::resolver::JoinTarget;
+use agent_habilis_mesh::transport::TransportPolicy;
+use agent_habilis_mesh::util::consts::GOSSIP_ACTIVE_VIEW_CAPACITY;
+use agent_habilis_mesh::util::tuning::{
     EMBED_INBOUND_CAP, advertise_interval_secs, directory_expiry_secs,
 };
 
-/// How to join a swarm.
+/// How to join a mesh.
 #[derive(Debug, Clone)]
 pub struct JoinConfig {
     /// What to join: an `💬…` id, classified into a [`JoinTarget`] at the
     /// boundary (parse a string with [`str::parse`]). The network mode and
     /// name are decoded from the id. (A shared *string* derives its own
-    /// swarm — see the `topic` command — and is not a join target.)
+    /// mesh — see the `topic` command — and is not a join target.)
     pub target: JoinTarget,
     /// Local nickname. `None` mints a random `word-word` one.
     pub nickname: Option<Nickname>,
@@ -77,13 +77,13 @@ impl JoinConfig {
     }
 }
 
-/// How to join a **topic**: a public swarm derived deterministically from a
+/// How to join a **topic**: a public mesh derived deterministically from a
 /// shared string. The name and (always-public) config are derived from the
 /// string, so it is the only input — anyone passing the same string converges
-/// on the same swarm.
+/// on the same mesh.
 #[derive(Debug, Clone)]
 pub struct TopicConfig {
-    /// The shared string. Hashed into the swarm seed after trimming
+    /// The shared string. Hashed into the mesh seed after trimming
     /// surrounding whitespace (never case-folded).
     pub string: String,
     /// Local nickname. `None` mints a random `word-word` one.
@@ -112,16 +112,16 @@ impl TopicConfig {
     }
 }
 
-/// How to create a new swarm. Built from validated domain types
-/// ([`SwarmName`], [`Nickname`], [`LookupSet`]); the iroh `RelayUrl`
+/// How to create a new mesh. Built from validated domain types
+/// ([`MeshName`], [`Nickname`], [`LookupSet`]); the iroh `RelayUrl`
 /// stays hidden behind [`RelayLadder`](crate::RelayLadder) inside the
 /// lookups, so the surface is iroh-free.
 #[derive(Debug, Clone)]
 pub struct CreateConfig {
-    /// The swarm name (validated): 1..=32 UTF-8 characters (any
+    /// The mesh name (validated): 1..=32 UTF-8 characters (any
     /// script/emoji), excluding control characters, whitespace, and any
     /// of `/ \ < > #`.
-    pub name: SwarmName,
+    pub name: MeshName,
     /// Local nickname. `None` mints a random `word-word` one.
     pub nickname: Option<Nickname>,
     /// `true` ⇒ the all-on lookup preset (mDNS + DHT + default relay
@@ -133,15 +133,15 @@ pub struct CreateConfig {
     /// `public`. Default [`LookupSet::default`] (all off). Mirrors the
     /// CLI `--mdns`/`--dht`/`--relay` flags.
     pub lookups: LookupSet,
-    /// List this swarm in a directory so discoverers can find it
+    /// List this mesh in a directory so discoverers can find it
     /// without its `💬…` id. Requires `public`. Default `false`.
     pub advertise: bool,
     /// The directory to advertise into when `advertise` is set.
     /// `None` ⇒ the well-known `global` directory.
-    pub directory: Option<SwarmName>,
+    pub directory: Option<MeshName>,
     /// Max direct peer connections before gossip relays the rest.
     pub max_peers: usize,
-    /// Protect the swarm with a password: its verifier is baked into the
+    /// Protect the mesh with a password: its verifier is baked into the
     /// minted id (joiners must present the password), and every derivation
     /// switches onto the Argon2id-stretched key.
     pub password: Option<String>,
@@ -154,11 +154,11 @@ pub struct CreateConfig {
 }
 
 impl CreateConfig {
-    /// A private-network config for swarm `name` with a random
+    /// A private-network config for mesh `name` with a random
     /// nickname and the default peer cap. Set the other fields
     /// afterwards to override.
     #[must_use]
-    pub fn new(name: SwarmName) -> Self {
+    pub fn new(name: MeshName) -> Self {
         Self {
             name,
             nickname: None,
@@ -174,13 +174,13 @@ impl CreateConfig {
     }
 }
 
-/// Why [`SwarmSession::create`] failed, classified so callers can react:
+/// Why [`MeshSession::create`] failed, classified so callers can react:
 /// the MCP server maps [`CreateError::AdvertiseRequiresReachable`] to an
 /// `invalid_params` error and [`CreateError::Setup`] to an internal one.
 #[derive(Debug)]
 pub enum CreateError {
-    /// `advertise` was requested on a loopback-only swarm — a directory
-    /// listing requires a swarm reachable across machines.
+    /// `advertise` was requested on a loopback-only mesh — a directory
+    /// listing requires a mesh reachable across machines.
     AdvertiseRequiresReachable,
     /// Endpoint / gossip / setup failure.
     Setup(anyhow::Error),
@@ -194,7 +194,7 @@ impl fmt::Display for CreateError {
                 write!(
                     formatter,
                     "{}",
-                    agent_habilis_gossip::protocol::swarm::AdvertiseRequiresReachable
+                    agent_habilis_mesh::protocol::mesh::AdvertiseRequiresReachable
                 )
             }
             CreateError::Setup(error) => write!(formatter, "{error}"),
@@ -214,12 +214,12 @@ impl std::error::Error for CreateError {
     }
 }
 
-/// Why [`SwarmSession::join`] failed — the symmetric counterpart to
+/// Why [`MeshSession::join`] failed — the symmetric counterpart to
 /// [`CreateError`]. `Resolve` is a malformed `💬…` id; `Setup` is an
 /// endpoint/gossip failure. The MCP server maps both to an internal error.
 #[derive(Debug)]
 pub enum JoinError {
-    /// The target could not be resolved into a swarm.
+    /// The target could not be resolved into a mesh.
     Resolve(anyhow::Error),
     /// Endpoint / gossip / setup failure.
     Setup(anyhow::Error),
@@ -242,7 +242,7 @@ impl std::error::Error for JoinError {
 }
 
 /// The captured-output sink plus its single-consumer receiver — the embed
-/// facade's [`SwarmSession::events`] stream.
+/// facade's [`MeshSession::events`] stream.
 fn capture() -> (Output, mpsc::UnboundedReceiver<OutputEvent>) {
     let (events_tx, events_rx) = mpsc::unbounded_channel();
     (Output::capture(events_tx), events_rx)
@@ -250,7 +250,7 @@ fn capture() -> (Output, mpsc::UnboundedReceiver<OutputEvent>) {
 
 /// Resolve + set up a create: the ready [`EventLoopConfig`] plus the spawned
 /// directory advertiser task (if `advertise` was requested). The caller picks
-/// the `output` sink (captured for [`SwarmSession`], silent for the MCP core).
+/// the `output` sink (captured for [`MeshSession`], silent for the MCP core).
 ///
 /// # Errors
 /// [`CreateError::AdvertiseRequiresReachable`] / [`CreateError::Setup`].
@@ -265,12 +265,12 @@ async fn create_setup(
     ),
     CreateError,
 > {
-    let config = SwarmConfig {
+    let config = MeshConfig {
         lookups: resolve_lookups(cfg.public, cfg.lookups),
         password: None,
         issuer_pubkey: None,
     };
-    // The advertiser reaches the directory over this swarm's own lookups.
+    // The advertiser reaches the directory over this mesh's own lookups.
     let directory_lookups = config.lookups.clone();
     // Map embed's `advertise: bool` + `directory` onto the shared
     // `DirectorySelection`; `resolve` validates it against the config
@@ -292,7 +292,7 @@ async fn create_setup(
         advertise,
         password: cfg
             .password
-            .map(agent_habilis_gossip::protocol::crypto::Password::new),
+            .map(agent_habilis_mesh::protocol::crypto::Password::new),
         // Invite-only is a CLI-driven feature; the embed facade does not expose
         // it yet (a documented follow-up).
         invite_only: false,
@@ -301,7 +301,7 @@ async fn create_setup(
     .map_err(|_| CreateError::AdvertiseRequiresReachable)?;
     let io = crate::a2a::app::SurfacedIo::new(output);
     let sink = io.sink();
-    let mut elc = setup_swarm(
+    let mut elc = setup_mesh(
         kind,
         SetupParams {
             author,
@@ -316,9 +316,9 @@ async fn create_setup(
         },
     )
     .await
-    .map_err(|error| CreateError::Setup(error.context("setup_swarm failed")))?;
+    .map_err(|error| CreateError::Setup(error.context("setup_mesh failed")))?;
     // When advertising, start the re-broadcast task (tied to this session);
-    // it reaches the directory over this swarm's own lookups (moved into the
+    // it reaches the directory over this mesh's own lookups (moved into the
     // at-most-once closure, so no clone).
     let advertiser = advertise_directory
         .map(|directory| spawn_advertiser(&mut elc, directory, directory_lookups));
@@ -339,14 +339,14 @@ async fn join_setup(
         nickname: cfg.nickname,
         password: cfg
             .password
-            .map(agent_habilis_gossip::protocol::crypto::Password::new),
+            .map(agent_habilis_mesh::protocol::crypto::Password::new),
     }
     .resolve()
     .map_err(JoinError::Resolve)?;
     resolved_setup(resolved, cfg.max_peers, cfg.spool, cfg.transport, output).await
 }
 
-/// Resolve + set up a topic (a string-derived public swarm).
+/// Resolve + set up a topic (a string-derived public mesh).
 ///
 /// # Errors
 /// [`JoinError::Resolve`] if the string is empty/whitespace;
@@ -364,7 +364,7 @@ async fn topic_setup(
     resolved_setup(resolved, cfg.max_peers, cfg.spool, cfg.transport, output).await
 }
 
-/// The shared tail of [`join_setup`] / [`topic_setup`]: run `setup_swarm` for
+/// The shared tail of [`join_setup`] / [`topic_setup`]: run `setup_mesh` for
 /// an already-resolved join-flavored setup.
 async fn resolved_setup(
     resolved: Resolved,
@@ -376,7 +376,7 @@ async fn resolved_setup(
     let Resolved { kind, author, .. } = resolved;
     let io = crate::a2a::app::SurfacedIo::new(output);
     let sink = io.sink();
-    let elc = setup_swarm(
+    let elc = setup_mesh(
         kind,
         SetupParams {
             author,
@@ -391,20 +391,20 @@ async fn resolved_setup(
         },
     )
     .await
-    .map_err(|error| JoinError::Setup(error.context("setup_swarm failed")))?;
+    .map_err(|error| JoinError::Setup(error.context("setup_mesh failed")))?;
     Ok((elc, io))
 }
 
-/// The in-process session core shared by the public [`SwarmSession`] (embed
+/// The in-process session core shared by the public [`MeshSession`] (embed
 /// facade) and the MCP server. Owns the typed request channel, the quit
 /// signal, the event-loop task, and the optional advertiser, and drives
 /// `send`/`fetch`/`leave`. The two frontends differ only in *presentation*:
-/// `SwarmSession` adds the inbound broadcast + captured-event stream; the
+/// `MeshSession` adds the inbound broadcast + captured-event stream; the
 /// MCP server wraps this core directly (poll-only, silent output).
 #[derive(Debug)]
 pub(crate) struct InProcessSession {
-    swarm_id: SwarmId,
-    name: SwarmName,
+    mesh_id: MeshId,
+    name: MeshName,
     nickname: Nickname,
     /// This node's iroh endpoint id + X25519 circuit key, captured for the
     /// testkit `inject_link_vector` (which needs a peer's id + key to build the
@@ -417,14 +417,14 @@ pub(crate) struct InProcessSession {
     quit_tx: mpsc::Sender<()>,
     task: Option<JoinHandle<anyhow::Result<()>>>,
     /// Directory re-broadcast task (when created with `advertise`); aborted
-    /// on `leave`/drop so we stop advertising a swarm we left.
+    /// on `leave`/drop so we stop advertising a mesh we left.
     advertiser: Option<JoinHandle<()>>,
 }
 
 impl InProcessSession {
     /// Wire the typed channels into `elc`, spawn the event loop, and build
     /// the core. `push` is `Some` to fan inbound traffic out to a broadcast
-    /// ([`SwarmSession::messages`]), `None` for a poll-only consumer (MCP).
+    /// ([`MeshSession::messages`]), `None` for a poll-only consumer (MCP).
     /// `handle_signals`: see [`DriverMode::InProcess`] — `false` for sessions
     /// living inside a foreground command that owns its own lifetime.
     fn spawn(
@@ -442,25 +442,25 @@ impl InProcessSession {
             handle_signals,
         };
         // The tapped `io` (built in `*_setup`) already backs `elc.sink`: the
-        // engine emits `MeshEvent`s through `io.sink()`, and the app renders the
+        // engine emits `NodeEvent`s through `io.sink()`, and the app renders the
         // same tap. Build the app from that same `io` so surfaced events reach
         // the app-side ring the in-process `Poll` drains.
         let app = crate::a2a::app::A2aApp::with_io(io);
-        let swarm_id = elc.swarm.clone();
+        let mesh_id = elc.mesh.clone();
         let name = elc.name.clone();
         let nickname = elc.author.clone();
         #[cfg(feature = "adversarial")]
         let endpoint_id = elc.endpoint.id();
         #[cfg(feature = "adversarial")]
         let circuit_key = elc.identity.seal_public();
-        let task = tokio::spawn(agent_habilis_gossip::daemon::run(
+        let task = tokio::spawn(agent_habilis_mesh::daemon::run(
             elc,
             app,
             Some(req_rx),
             None::<mpsc::Receiver<crate::a2a::rpc::A2aRequest>>,
         ));
         Self {
-            swarm_id,
+            mesh_id,
             name,
             nickname,
             #[cfg(feature = "adversarial")]
@@ -474,7 +474,7 @@ impl InProcessSession {
         }
     }
 
-    /// Create a new swarm as a poll-only, silent core (the MCP server).
+    /// Create a new mesh as a poll-only, silent core (the MCP server).
     ///
     /// # Errors
     /// [`CreateError::AdvertiseRequiresReachable`] / [`CreateError::Setup`].
@@ -483,7 +483,7 @@ impl InProcessSession {
         Ok(Self::spawn(elc, io, advertiser, None, true))
     }
 
-    /// Join an existing swarm as a poll-only, silent core (the MCP server).
+    /// Join an existing mesh as a poll-only, silent core (the MCP server).
     ///
     /// # Errors
     /// [`JoinError::Resolve`] / [`JoinError::Setup`].
@@ -492,7 +492,7 @@ impl InProcessSession {
         Ok(Self::spawn(elc, io, None, None, true))
     }
 
-    /// Join a topic (string-derived public swarm) as a poll-only, silent core
+    /// Join a topic (string-derived public mesh) as a poll-only, silent core
     /// (the MCP server).
     ///
     /// # Errors
@@ -503,11 +503,11 @@ impl InProcessSession {
         Ok(Self::spawn(elc, io, None, None, true))
     }
 
-    pub(crate) fn swarm_id(&self) -> &SwarmId {
-        &self.swarm_id
+    pub(crate) fn mesh_id(&self) -> &MeshId {
+        &self.mesh_id
     }
 
-    pub(crate) fn name(&self) -> &SwarmName {
+    pub(crate) fn name(&self) -> &MeshName {
         &self.name
     }
 
@@ -529,10 +529,10 @@ impl InProcessSession {
                 resp: resp_tx,
             })
             .await
-            .map_err(|_| anyhow::anyhow!("swarm event loop has stopped"))?;
+            .map_err(|_| anyhow::anyhow!("mesh event loop has stopped"))?;
         match resp_rx.await {
             Ok(result) => result,
-            Err(_) => Err(anyhow::anyhow!("swarm event loop dropped the response")),
+            Err(_) => Err(anyhow::anyhow!("mesh event loop dropped the response")),
         }
     }
 
@@ -556,10 +556,10 @@ impl InProcessSession {
                 resp: resp_tx,
             })
             .await
-            .map_err(|_| anyhow::anyhow!("swarm event loop has stopped"))?;
+            .map_err(|_| anyhow::anyhow!("mesh event loop has stopped"))?;
         resp_rx
             .await
-            .map_err(|_| anyhow::anyhow!("swarm event loop dropped the response"))
+            .map_err(|_| anyhow::anyhow!("mesh event loop dropped the response"))
     }
 
     /// Worker-emit a `TaskStatusUpdate` on a task we're serving; returns the
@@ -582,10 +582,10 @@ impl InProcessSession {
                 resp: resp_tx,
             })
             .await
-            .map_err(|_| anyhow::anyhow!("swarm event loop has stopped"))?;
+            .map_err(|_| anyhow::anyhow!("mesh event loop has stopped"))?;
         match resp_rx.await {
             Ok(result) => result,
-            Err(_) => Err(anyhow::anyhow!("swarm event loop dropped the response")),
+            Err(_) => Err(anyhow::anyhow!("mesh event loop dropped the response")),
         }
     }
 
@@ -597,7 +597,7 @@ impl InProcessSession {
         &self,
         task_id: TaskId,
         text: String,
-        file: Option<agent_habilis_gossip::blob::FileRef>,
+        file: Option<agent_habilis_mesh::blob::FileRef>,
     ) -> anyhow::Result<Message> {
         let (resp_tx, resp_rx) = oneshot::channel();
         self.req_tx
@@ -608,10 +608,10 @@ impl InProcessSession {
                 resp: resp_tx,
             })
             .await
-            .map_err(|_| anyhow::anyhow!("swarm event loop has stopped"))?;
+            .map_err(|_| anyhow::anyhow!("mesh event loop has stopped"))?;
         match resp_rx.await {
             Ok(result) => result,
-            Err(_) => Err(anyhow::anyhow!("swarm event loop dropped the response")),
+            Err(_) => Err(anyhow::anyhow!("mesh event loop dropped the response")),
         }
     }
 
@@ -638,10 +638,10 @@ impl InProcessSession {
                 resp: resp_tx,
             })
             .await
-            .map_err(|_| anyhow::anyhow!("swarm event loop has stopped"))?;
+            .map_err(|_| anyhow::anyhow!("mesh event loop has stopped"))?;
         resp_rx
             .await
-            .map_err(|_| anyhow::anyhow!("swarm event loop dropped the response"))
+            .map_err(|_| anyhow::anyhow!("mesh event loop dropped the response"))
     }
 
     /// Snapshot the live participant roster (active + quiet, recency-sorted).
@@ -653,24 +653,24 @@ impl InProcessSession {
         self.req_tx
             .send(SessionRequest::Peers { resp: resp_tx })
             .await
-            .map_err(|_| anyhow::anyhow!("swarm event loop has stopped"))?;
+            .map_err(|_| anyhow::anyhow!("mesh event loop has stopped"))?;
         resp_rx
             .await
-            .map_err(|_| anyhow::anyhow!("swarm event loop dropped the response"))
+            .map_err(|_| anyhow::anyhow!("mesh event loop dropped the response"))
     }
 
     /// Run an RTT round and return the per-peer round-trip rows. Blocks for
-    /// the ping window (the round finalizes on its deadline), so a quiet swarm
+    /// the ping window (the round finalizes on its deadline), so a quiet mesh
     /// returns an empty list after that delay.
     pub(crate) async fn ping(&self) -> anyhow::Result<Vec<crate::output::PingPeer>> {
         let (resp_tx, resp_rx) = oneshot::channel();
         self.req_tx
             .send(SessionRequest::Ping { resp: resp_tx })
             .await
-            .map_err(|_| anyhow::anyhow!("swarm event loop has stopped"))?;
+            .map_err(|_| anyhow::anyhow!("mesh event loop has stopped"))?;
         let rows = resp_rx
             .await
-            .map_err(|_| anyhow::anyhow!("swarm event loop dropped the response"))?;
+            .map_err(|_| anyhow::anyhow!("mesh event loop dropped the response"))?;
         // Map the engine's chat-agnostic RTT rows onto the app's public ping
         // datum — same fields, distinct layers.
         Ok(rows
@@ -692,10 +692,10 @@ impl InProcessSession {
                 resp: resp_tx,
             })
             .await
-            .map_err(|_| anyhow::anyhow!("swarm event loop has stopped"))?;
+            .map_err(|_| anyhow::anyhow!("mesh event loop has stopped"))?;
         resp_rx
             .await
-            .map_err(|_| anyhow::anyhow!("swarm event loop dropped the response"))?
+            .map_err(|_| anyhow::anyhow!("mesh event loop dropped the response"))?
     }
 
     /// The current derived shared-state document (the merge fold).
@@ -704,10 +704,10 @@ impl InProcessSession {
         self.req_tx
             .send(SessionRequest::StateGet { resp: resp_tx })
             .await
-            .map_err(|_| anyhow::anyhow!("swarm event loop has stopped"))?;
+            .map_err(|_| anyhow::anyhow!("mesh event loop has stopped"))?;
         resp_rx
             .await
-            .map_err(|_| anyhow::anyhow!("swarm event loop dropped the response"))
+            .map_err(|_| anyhow::anyhow!("mesh event loop dropped the response"))
     }
 
     /// `meta`-channel counterpart of [`state_merge`](Self::state_merge).
@@ -719,10 +719,10 @@ impl InProcessSession {
                 resp: resp_tx,
             })
             .await
-            .map_err(|_| anyhow::anyhow!("swarm event loop has stopped"))?;
+            .map_err(|_| anyhow::anyhow!("mesh event loop has stopped"))?;
         resp_rx
             .await
-            .map_err(|_| anyhow::anyhow!("swarm event loop dropped the response"))?
+            .map_err(|_| anyhow::anyhow!("mesh event loop dropped the response"))?
     }
 
     /// `meta`-channel counterpart of [`state_get`](Self::state_get).
@@ -731,10 +731,10 @@ impl InProcessSession {
         self.req_tx
             .send(SessionRequest::MetaGet { resp: resp_tx })
             .await
-            .map_err(|_| anyhow::anyhow!("swarm event loop has stopped"))?;
+            .map_err(|_| anyhow::anyhow!("mesh event loop has stopped"))?;
         resp_rx
             .await
-            .map_err(|_| anyhow::anyhow!("swarm event loop dropped the response"))
+            .map_err(|_| anyhow::anyhow!("mesh event loop dropped the response"))
     }
 
     /// Broadcast pre-built wire bytes verbatim (no signing/chain). Testkit
@@ -747,7 +747,7 @@ impl InProcessSession {
         self.req_tx
             .send(SessionRequest::InjectRaw { bytes })
             .await
-            .map_err(|_| anyhow::anyhow!("swarm event loop has stopped"))
+            .map_err(|_| anyhow::anyhow!("mesh event loop has stopped"))
     }
 
     /// This node's iroh endpoint id (testkit).
@@ -765,7 +765,7 @@ impl InProcessSession {
 
     /// Ingest a synthetic link-state vector into this node's routing graph
     /// (testkit) — stands up a circuit topology a live rendezvous mesh won't
-    /// converge. See [`agent_habilis_gossip::circuit::LinkStateStore`].
+    /// converge. See [`agent_habilis_mesh::circuit::LinkStateStore`].
     ///
     /// # Errors
     /// Fails if the event loop has stopped.
@@ -785,7 +785,7 @@ impl InProcessSession {
                 links,
             })
             .await
-            .map_err(|_| anyhow::anyhow!("swarm event loop has stopped"))
+            .map_err(|_| anyhow::anyhow!("mesh event loop has stopped"))
     }
 
     /// Simulate the gossip stream terminally ending. Adversarial-suite
@@ -798,7 +798,7 @@ impl InProcessSession {
         self.req_tx
             .send(SessionRequest::SeverGossip)
             .await
-            .map_err(|_| anyhow::anyhow!("swarm event loop has stopped"))
+            .map_err(|_| anyhow::anyhow!("mesh event loop has stopped"))
     }
 
     /// Snapshot the fork/DAG index sizes `(by_hash, dag_heads, author_seqs)`.
@@ -812,10 +812,10 @@ impl InProcessSession {
         self.req_tx
             .send(SessionRequest::IndexStats { resp: resp_tx })
             .await
-            .map_err(|_| anyhow::anyhow!("swarm event loop has stopped"))?;
+            .map_err(|_| anyhow::anyhow!("mesh event loop has stopped"))?;
         resp_rx
             .await
-            .map_err(|_| anyhow::anyhow!("swarm event loop dropped the response"))
+            .map_err(|_| anyhow::anyhow!("mesh event loop dropped the response"))
     }
 
     /// Snapshot the reassembly store's accounting
@@ -826,10 +826,10 @@ impl InProcessSession {
         self.req_tx
             .send(SessionRequest::ReassemblyStats { resp: resp_tx })
             .await
-            .map_err(|_| anyhow::anyhow!("swarm event loop has stopped"))?;
+            .map_err(|_| anyhow::anyhow!("mesh event loop has stopped"))?;
         resp_rx
             .await
-            .map_err(|_| anyhow::anyhow!("swarm event loop dropped the response"))
+            .map_err(|_| anyhow::anyhow!("mesh event loop dropped the response"))
     }
 
     /// Clean shutdown: ask the loop to broadcast `Left` and wind down,
@@ -849,8 +849,8 @@ impl InProcessSession {
             tokio::select! {
                 joined = task => {
                     joined
-                        .map_err(|error| anyhow::anyhow!("swarm task panicked: {error}"))?
-                        .map_err(|error| anyhow::anyhow!("swarm loop error: {error}"))?;
+                        .map_err(|error| anyhow::anyhow!("mesh task panicked: {error}"))?
+                        .map_err(|error| anyhow::anyhow!("mesh loop error: {error}"))?;
                 }
                 () = timeout => {}
             }
@@ -872,11 +872,11 @@ impl Drop for InProcessSession {
     }
 }
 
-/// A live swarm membership (the public embed facade): the shared
+/// A live mesh membership (the public embed facade): the shared
 /// `InProcessSession` plus the inbound broadcast and captured-event
-/// stream. Dropping it (or [`SwarmSession::leave`]) winds the loop down.
+/// stream. Dropping it (or [`MeshSession::leave`]) winds the loop down.
 #[derive(Debug)]
-pub struct SwarmSession {
+pub struct MeshSession {
     core: InProcessSession,
     msg_tx: broadcast::Sender<Message>,
     /// Captured structured output events. Single-consumer (mpsc), so
@@ -884,10 +884,10 @@ pub struct SwarmSession {
     events_rx: Option<mpsc::UnboundedReceiver<OutputEvent>>,
 }
 
-impl SwarmSession {
-    /// Resolve `cfg.target`, join the swarm, and spawn the event loop in the
+impl MeshSession {
+    /// Resolve `cfg.target`, join the mesh, and spawn the event loop in the
     /// background. Output is captured per-session into
-    /// [`SwarmSession::events`] (the embedder owns stdout/stderr).
+    /// [`MeshSession::events`] (the embedder owns stdout/stderr).
     ///
     /// # Errors
     /// [`JoinError::Resolve`] if the target can't be resolved;
@@ -898,9 +898,9 @@ impl SwarmSession {
         Ok(Self::with_events(elc, io, None, events_rx))
     }
 
-    /// Join a topic — a public swarm derived deterministically from
+    /// Join a topic — a public mesh derived deterministically from
     /// `cfg.string` — and spawn its event loop in the background. Output is
-    /// captured per-session into [`SwarmSession::events`].
+    /// captured per-session into [`MeshSession::events`].
     ///
     /// # Errors
     /// [`JoinError::Resolve`] if `cfg.string` is empty/whitespace;
@@ -911,21 +911,21 @@ impl SwarmSession {
         Ok(Self::with_events(elc, io, None, events_rx))
     }
 
-    /// Create a new swarm and spawn its event loop in the background.
+    /// Create a new mesh and spawn its event loop in the background.
     /// `cfg.lookups` is resolved the same granular way the CLI uses.
     ///
     /// # Errors
     /// [`CreateError::AdvertiseRequiresReachable`] if `advertise` is set on a
-    /// loopback-only swarm; [`CreateError::Setup`] on endpoint/gossip failure.
+    /// loopback-only mesh; [`CreateError::Setup`] on endpoint/gossip failure.
     pub async fn create(cfg: CreateConfig) -> Result<Self, CreateError> {
         let (output, events_rx) = capture();
         let (elc, io, advertiser) = create_setup(cfg, output).await?;
         Ok(Self::with_events(elc, io, advertiser, events_rx))
     }
 
-    /// Join an already-decoded [`Swarm`] with an explicit co-host policy —
+    /// Join an already-decoded [`Mesh`] with an explicit co-host policy —
     /// the internal directory-session path (the advertiser eager-cohosts; the
-    /// discover consumer never cohosts). `pub(crate)`: keeps `Swarm` off the
+    /// discover consumer never cohosts). `pub(crate)`: keeps `Mesh` off the
     /// iroh-free surface. Directory sessions never register process signal
     /// handlers (see [`DriverMode::InProcess`]) — the hosting command owns
     /// its own lifetime, and hijacking ctrl-c would keep it alive.
@@ -933,7 +933,7 @@ impl SwarmSession {
     /// # Errors
     /// Fails if endpoint/gossip setup fails.
     pub(crate) async fn join_decoded(
-        swarm: Swarm,
+        mesh: Mesh,
         nickname: Option<Nickname>,
         cohost: CoHostPolicy,
     ) -> anyhow::Result<Self> {
@@ -941,11 +941,11 @@ impl SwarmSession {
         let (output, events_rx) = capture();
         let io = crate::a2a::app::SurfacedIo::new(output);
         let sink = io.sink();
-        let mut elc = setup_swarm(
+        let mut elc = setup_mesh(
             // Directory sessions (advertise/discover) never offload blobs, so no
             // password needs threading here.
             SetupKind::Join {
-                swarm,
+                mesh,
                 password: None,
             },
             SetupParams {
@@ -1006,19 +1006,19 @@ impl SwarmSession {
         self.events_rx.take()
     }
 
-    /// The resolved swarm identifier.
+    /// The resolved mesh identifier.
     #[must_use]
-    pub fn swarm_id(&self) -> &SwarmId {
-        self.core.swarm_id()
+    pub fn mesh_id(&self) -> &MeshId {
+        self.core.mesh_id()
     }
 
-    /// The swarm's human-readable name (decoded from the id).
+    /// The mesh's human-readable name (decoded from the id).
     #[must_use]
-    pub fn name(&self) -> &SwarmName {
+    pub fn name(&self) -> &MeshName {
         self.core.name()
     }
 
-    /// Our effective nickname in this swarm.
+    /// Our effective nickname in this mesh.
     #[must_use]
     pub fn nickname(&self) -> &Nickname {
         self.core.nickname()
@@ -1036,7 +1036,7 @@ impl SwarmSession {
         self.msg_tx.subscribe()
     }
 
-    /// Build, sign and gossip-broadcast a swarm chat message. Returns the
+    /// Build, sign and gossip-broadcast a mesh chat message. Returns the
     /// canonical [`Message`] the loop built (read `.id` for the new id).
     ///
     /// # Errors
@@ -1065,7 +1065,7 @@ impl SwarmSession {
     }
 
     /// Apply an RFC 7386 JSON Merge Patch to the **meta** channel (the
-    /// swarm-metadata counterpart of [`state_merge`](Self::state_merge)).
+    /// mesh-metadata counterpart of [`state_merge`](Self::state_merge)).
     ///
     /// # Errors
     /// As [`state_merge`](Self::state_merge).
@@ -1083,7 +1083,7 @@ impl SwarmSession {
 
     /// Poll the surfaced-event history after the `after` seq cursor (`None`
     /// for the full buffered window). Join-horizon filtered. A pull
-    /// alternative to the [`SwarmSession::messages`] live subscription that
+    /// alternative to the [`MeshSession::messages`] live subscription that
     /// surfaces *every* event kind (chat, presence, task legs, and the
     /// transient `ping_report` / `peer_timeout` / … events), each tagged with
     /// its surfacing `seq` — pass the last returned `seq` as the next `after`.
@@ -1130,7 +1130,7 @@ impl SwarmSession {
         file_name: Option<String>,
         file_mime: Option<String>,
     ) -> anyhow::Result<Message> {
-        let file = file.map(|path| agent_habilis_gossip::blob::FileRef {
+        let file = file.map(|path| agent_habilis_mesh::blob::FileRef {
             path,
             name: file_name,
             mime: file_mime,
@@ -1156,7 +1156,7 @@ impl SwarmSession {
         self.core.a2a_call(peer, method, params, timeout).await
     }
 
-    /// Broadcast pre-built wire bytes **verbatim** into the swarm — no
+    /// Broadcast pre-built wire bytes **verbatim** into the mesh — no
     /// signing, no chain stamping. Test-only escape hatch (the `adversarial`
     /// feature) for injecting crafted/malicious messages a correct client
     /// would never produce, so the adversarial suite can prove receivers
@@ -1248,41 +1248,41 @@ impl SwarmSession {
     }
 }
 
-pub(crate) use agent_habilis_gossip::daemon::config::DIRECTORY_ADVERTISER_COHOST;
+pub(crate) use agent_habilis_mesh::daemon::config::DIRECTORY_ADVERTISER_COHOST;
 
-/// Spawn the directory re-broadcast task for `cfg`'s swarm: wire a fresh
+/// Spawn the directory re-broadcast task for `cfg`'s mesh: wire a fresh
 /// live-participant counter into `cfg.live_count`, then re-send the
-/// swarm's `💬…` id (with that count) into `directory` every
-/// `ADVERTISE_INTERVAL_SECS` over the swarm's own `lookups`. Returns the
+/// mesh's `💬…` id (with that count) into `directory` every
+/// `ADVERTISE_INTERVAL_SECS` over the mesh's own `lookups`. Returns the
 /// task handle so the owner can abort it (the inner directory session is
 /// dropped with the task, closing that membership). A directory-join
-/// failure logs and ends the task — the swarm is unaffected, just unlisted.
+/// failure logs and ends the task — the mesh is unaffected, just unlisted.
 pub(crate) fn spawn_advertiser(
     cfg: &mut EventLoopConfig,
-    directory: SwarmName,
+    directory: MeshName,
     lookups: LookupOpts,
 ) -> JoinHandle<()> {
     let live_count = Arc::new(AtomicUsize::new(1));
     cfg.live_count = Some(live_count.clone());
-    let swarm_id = cfg.swarm.clone();
+    let mesh_id = cfg.mesh.clone();
     tokio::spawn(async move {
-        // Reach the directory over the advertised swarm's own lookups, so an
-        // mDNS-only swarm advertises over mDNS only (no DHT/relay touched) and
+        // Reach the directory over the advertised mesh's own lookups, so an
+        // mDNS-only mesh advertises over mDNS only (no DHT/relay touched) and
         // discoverers must use the same lookups to meet.
-        let swarm = directory_swarm(&directory, lookups);
+        let mesh = directory_mesh(&directory, lookups);
         // Co-host the directory rendezvous from t=0 so a beacon exists
         // before any discoverer subscribes (a `Deferred` advertiser would
         // only beacon at the first heal tick, after discoverers already
         // failed their first graft). Probe-first; see DIRECTORY_ADVERTISER_COHOST.
         let session =
-            match SwarmSession::join_decoded(swarm, None, DIRECTORY_ADVERTISER_COHOST).await {
+            match MeshSession::join_decoded(mesh, None, DIRECTORY_ADVERTISER_COHOST).await {
                 Ok(session) => session,
                 Err(error) => {
                     tracing::warn!(
-                        target: "agent_gossip::directory",
+                        target: "agent_mesh::directory",
                         %error,
                         directory = %directory,
-                        "directory advertise: could not join the directory; swarm stays unlisted"
+                        "directory advertise: could not join the directory; mesh stays unlisted"
                     );
                     return;
                 }
@@ -1291,12 +1291,12 @@ pub(crate) fn spawn_advertiser(
         loop {
             ticker.tick().await;
             let ad = directory::Ad {
-                id: swarm_id.clone(),
+                id: mesh_id.clone(),
                 peers: live_count.load(Ordering::Relaxed),
             };
             if let Err(error) = session.send(ad.to_body()).await {
                 tracing::debug!(
-                    target: "agent_gossip::directory",
+                    target: "agent_mesh::directory",
                     %error,
                     "directory advertise: re-broadcast failed (will retry next tick)"
                 );
@@ -1308,21 +1308,21 @@ pub(crate) fn spawn_advertiser(
 // ── Directory (directory consumer) ─────────────────────────────────────
 
 /// One live directory entry handed to embedders — the public, iroh-free
-/// projection of a `agent_habilis_gossip::directory::Listing`.
+/// projection of a `agent_habilis_mesh::directory::Listing`.
 #[derive(Debug, Clone)]
-pub struct SwarmListing {
-    /// The advertised swarm's id — pass to [`SwarmSession::join`] to join.
-    pub swarm: SwarmId,
-    /// Human-readable swarm name (decoded from the id).
-    pub name: SwarmName,
-    /// `true` if the swarm is on the public network.
+pub struct MeshListing {
+    /// The advertised mesh's id — pass to [`MeshSession::join`] to join.
+    pub mesh: MeshId,
+    /// Human-readable mesh name (decoded from the id).
+    pub name: MeshName,
+    /// `true` if the mesh is on the public network.
     pub public: bool,
-    /// `true` if the swarm id carries a password verifier — joining needs
+    /// `true` if the mesh id carries a password verifier — joining needs
     /// the password, so the listing alone does not admit.
     pub password: bool,
     /// Live participant count from the most recent ad.
     pub peers: usize,
-    /// Unix seconds when this swarm was first seen in the directory
+    /// Unix seconds when this mesh was first seen in the directory
     /// (stable across re-ads).
     pub first_seen_unix: i64,
 }
@@ -1330,17 +1330,17 @@ pub struct SwarmListing {
 /// A directory change observed by a [`Directory`].
 #[derive(Debug, Clone)]
 pub enum DirectoryEvent {
-    /// A swarm appeared in the directory.
-    Found(SwarmListing),
-    /// An already-listed swarm re-advertised (refreshed count/freshness).
-    Updated(SwarmListing),
-    /// A swarm's ads stopped and its listing aged out.
-    Lost(SwarmId),
+    /// A mesh appeared in the directory.
+    Found(MeshListing),
+    /// An already-listed mesh re-advertised (refreshed count/freshness).
+    Updated(MeshListing),
+    /// A mesh's ads stopped and its listing aged out.
+    Lost(MeshId),
 }
 
-fn public_listing(listing: &Listing) -> SwarmListing {
-    SwarmListing {
-        swarm: listing.swarm.clone(),
+fn public_listing(listing: &Listing) -> MeshListing {
+    MeshListing {
+        mesh: listing.mesh.clone(),
         name: listing.name.clone(),
         public: listing.public,
         password: listing.password,
@@ -1349,26 +1349,26 @@ fn public_listing(listing: &Listing) -> SwarmListing {
     }
 }
 
-/// A live view of a directory. Joins the directory's swarm as an
-/// ordinary [`SwarmSession`] and collects advertisements into
-/// `Listings`, aging out swarms whose publishers went silent. Drop
+/// A live view of a directory. Joins the directory's mesh as an
+/// ordinary [`MeshSession`] and collects advertisements into
+/// `Listings`, aging out meshes whose publishers went silent. Drop
 /// (or let it fall out of scope) to leave the directory.
 ///
 /// ```no_run
-/// # use agent_gossip::embed::Directory;
-/// # use agent_gossip::LookupSet;
+/// # use agent_mesh::embed::Directory;
+/// # use agent_mesh::LookupSet;
 /// # async fn run() -> anyhow::Result<()> {
 /// // Bare `LookupSet::default()` ⇒ all-on (mDNS + DHT + relay).
 /// let mut directory = Directory::open(Some("demo"), LookupSet::default()).await?;
 /// for listing in directory.snapshot() {
-///     println!("#{} — {} peers — {}", listing.name, listing.peers, listing.swarm.as_str());
+///     println!("#{} — {} peers — {}", listing.name, listing.peers, listing.mesh.as_str());
 /// }
 /// # Ok(())
 /// # }
 /// ```
 #[derive(Debug)]
 pub struct Directory {
-    session: Option<SwarmSession>,
+    session: Option<MeshSession>,
     listings: Arc<Mutex<Listings>>,
     events_rx: Option<mpsc::UnboundedReceiver<DirectoryEvent>>,
     task: Option<JoinHandle<()>>,
@@ -1394,23 +1394,23 @@ impl Directory {
     /// panic in the background task — not reachable in normal use.
     pub async fn open(name: Option<impl Into<String>>, lookups: LookupSet) -> anyhow::Result<Self> {
         let directory_name = match name {
-            Some(value) => SwarmName::new(value.into())
+            Some(value) => MeshName::new(value.into())
                 .map_err(|error| anyhow::anyhow!("invalid directory name: {error}"))?,
             None => {
-                SwarmName::new(DEFAULT_DIRECTORY).expect("DEFAULT_DIRECTORY is a valid swarm name")
+                MeshName::new(DEFAULT_DIRECTORY).expect("DEFAULT_DIRECTORY is a valid mesh name")
             }
         };
         // Directories are inherently networked, so resolve as if `--public`:
         // no flags ⇒ all-on. The test env forces loopback so the hermetic
         // advertise→discover path runs without the public relay.
         let resolved = resolve_lookups(
-            !agent_habilis_gossip::util::tuning::directory_private_for_test(),
+            !agent_habilis_mesh::util::tuning::directory_private_for_test(),
             lookups,
         );
-        let swarm = directory_swarm(&directory_name, resolved);
+        let mesh = directory_mesh(&directory_name, resolved);
         // A discoverer is a pure consumer: never co-host the directory's
         // rendezvous (it only dials an advertiser's beacon).
-        let session = SwarmSession::join_decoded(swarm, None, CoHostPolicy::Never).await?;
+        let session = MeshSession::join_decoded(mesh, None, CoHostPolicy::Never).await?;
         let mut inbound = session.messages();
         let listings = Arc::new(Mutex::new(Listings::new()));
         let (events_tx, events_rx) = mpsc::unbounded_channel();
@@ -1480,7 +1480,7 @@ impl Directory {
     /// Panics only if the internal collector mutex was poisoned by a
     /// prior panic in the background task — not reachable in normal use.
     #[must_use]
-    pub fn snapshot(&self) -> Vec<SwarmListing> {
+    pub fn snapshot(&self) -> Vec<MeshListing> {
         self.listings
             .lock()
             .expect("directory mutex not poisoned")
@@ -1497,20 +1497,20 @@ impl Directory {
         self.events_rx.take()
     }
 
-    /// The directory session's `(swarm id, nickname)` while it is open —
+    /// The directory session's `(mesh id, nickname)` while it is open —
     /// used by the CLI to route its logs to the per-member file via
     /// `logging::attach` (so the picker / JSON stream stays clean).
-    pub(crate) fn session_identity(&self) -> Option<(&SwarmId, &Nickname)> {
+    pub(crate) fn session_identity(&self) -> Option<(&MeshId, &Nickname)> {
         self.session
             .as_ref()
-            .map(|session| (session.swarm_id(), session.nickname()))
+            .map(|session| (session.mesh_id(), session.nickname()))
     }
 
     /// Leave the directory and stop collecting.
     ///
     /// # Errors
     /// Propagates a clean-shutdown error from the underlying directory
-    /// [`SwarmSession::leave`] (event-loop task panic / loop error).
+    /// [`MeshSession::leave`] (event-loop task panic / loop error).
     pub async fn close(mut self) -> anyhow::Result<()> {
         if let Some(task) = self.task.take() {
             task.abort();
@@ -1527,7 +1527,7 @@ impl Drop for Directory {
         if let Some(task) = self.task.take() {
             task.abort();
         }
-        // The directory `SwarmSession` (if not already taken by `close`)
+        // The directory `MeshSession` (if not already taken by `close`)
         // drops here, winding down its own loop.
     }
 }
@@ -1536,19 +1536,19 @@ impl Drop for Directory {
 mod topic_tests {
     use std::time::Duration;
 
-    use agent_habilis_gossip::daemon::CoHostPolicy;
-    use agent_habilis_gossip::protocol::swarm::{Swarm, SwarmConfig};
-    use agent_habilis_gossip::protocol::{MessageBody, Nickname};
+    use agent_habilis_mesh::daemon::CoHostPolicy;
+    use agent_habilis_mesh::protocol::mesh::{Mesh, MeshConfig};
+    use agent_habilis_mesh::protocol::{MessageBody, Nickname};
 
-    use super::{JoinError, SwarmSession, TopicConfig};
+    use super::{JoinError, MeshSession, TopicConfig};
 
     /// The empty/whitespace-string guard is centralized in `TopicParams::resolve`,
     /// so it holds for the public embed API too (not just the CLI/MCP edges) —
-    /// an empty string would otherwise join one globally-fixed swarm.
+    /// an empty string would otherwise join one globally-fixed mesh.
     #[tokio::test]
     async fn topic_rejects_empty_string() {
         for raw in ["", "   "] {
-            let result = SwarmSession::topic(TopicConfig::new(raw.to_owned())).await;
+            let result = MeshSession::topic(TopicConfig::new(raw.to_owned())).await;
             assert!(
                 matches!(result, Err(JoinError::Resolve(_))),
                 "empty topic string must be rejected, got {:?}",
@@ -1558,35 +1558,35 @@ mod topic_tests {
     }
 
     /// End-to-end convergence: two peers deriving from the *same string* land
-    /// in the same swarm and mesh. Loopback keeps the test hermetic; the seed +
+    /// in the same mesh and mesh. Loopback keeps the test hermetic; the seed +
     /// name derivation and the `EagerProbed` first-peer beaconing are identical
     /// to a real (public) `topic` — only the transport differs.
     #[tokio::test]
     async fn topic_peers_from_same_string_converge_and_exchange() {
         let topic = "agent-habilis";
-        let first = Swarm::from_topic(topic, SwarmConfig::loopback());
-        let second = Swarm::from_topic(topic, SwarmConfig::loopback());
+        let first = Mesh::from_topic(topic, MeshConfig::loopback());
+        let second = Mesh::from_topic(topic, MeshConfig::loopback());
         assert_eq!(
             first.to_string(),
             second.to_string(),
-            "same string ⇒ same swarm id"
+            "same string ⇒ same mesh id"
         );
 
-        let alice = SwarmSession::join_decoded(
+        let alice = MeshSession::join_decoded(
             first,
             Some(Nickname::new("alice-topic").unwrap()),
             CoHostPolicy::EagerProbed,
         )
         .await
         .expect("alice topic session");
-        let bob = SwarmSession::join_decoded(
+        let bob = MeshSession::join_decoded(
             second,
             Some(Nickname::new("bob-topic").unwrap()),
             CoHostPolicy::EagerProbed,
         )
         .await
         .expect("bob topic session");
-        assert_eq!(alice.swarm_id(), bob.swarm_id(), "both derived the same id");
+        assert_eq!(alice.mesh_id(), bob.mesh_id(), "both derived the same id");
 
         let mut bob_rx = bob.messages();
         // Re-send until the loopback mesh forms; break the instant bob sees it.
@@ -1617,7 +1617,7 @@ mod topic_tests {
         }
         assert!(
             received,
-            "bob should receive alice's message over the topic swarm"
+            "bob should receive alice's message over the topic mesh"
         );
 
         bob.leave().await.ok();

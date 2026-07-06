@@ -10,7 +10,7 @@ being mistaken for an identity. When reading or changing code, hold the
 following meanings.
 
 For the mechanisms behind these terms, see the companion docs:
-[swarm-hash.md](./swarm-hash.md) (the `💬…` token),
+[mesh-hash.md](./mesh-hash.md) (the `💬…` token),
 [discovery.md](./discovery.md) (rendezvous, beacon, lookups, directories),
 [gossip.md](./gossip.md) (message fan-out),
 [topologies.md](./topologies.md) (network shapes), and
@@ -25,7 +25,7 @@ For the mechanisms behind these terms, see the companion docs:
 An iroh `EndpointId` and the gossip neighbor link to it. This is pure
 plumbing — the node id itself is never surfaced to operators or agents. The
 one thing derived from it is the per-participant **connected vs gossip** tag
-(`agent-gossip peers` / `swarm_info` `reach`): `participant_endpoints` maps a nickname
+(`agent-mesh peers` / `mesh_info` `reach`): `participant_endpoints` maps a nickname
 to its self-advertised endpoint, so the roster can mark a peer as a live link
 or a relayed one — a boolean, never the node id.
 
@@ -37,7 +37,7 @@ State: `linked_endpoints` (the links), `participant_endpoints` (the bridge).
 
 The point-to-point QUIC channel a **directed** frame (one addressee) takes when
 its addressee is dialable — a real client/server link this node opens to one
-participant's endpoint, on its own ALPN (`agent-gossip/unicast/1`), off
+participant's endpoint, on its own ALPN (`agent-mesh/unicast/1`), off
 the gossip flood. Gossip stays the transport for broadcasts and the fallback
 for a directed frame whose addressee can't be reached by unicast. Without it,
 a directed frame (`a2a_req`/`a2a_resp`, a task push leg, a `pong`) floods every
@@ -64,7 +64,7 @@ reachable by **unicast**. What distinguishes it is not secrecy — every directe
 frame is **seal**ed to its addressee regardless of transport — but *routing
 through third parties*: the initiator source-routes a **circuit**, a telescoping
 chain of QUIC connections through **peers it is already connected to**, over its
-own ALPN (`agent-gossip/circuit/1`). Each **hop** peels one **onion**-sealed
+own ALPN (`agent-mesh/circuit/1`). Each **hop** peels one **onion**-sealed
 layer, learning only its successor, and splices the payload straight through; the
 terminal hop delivers into the *same* `gossip::ingest` seam as unicast, so the
 addressee ingests a circuit-delivered frame identically. Forwarding **hops** need
@@ -74,7 +74,7 @@ it.
 
 Route selection is **proactive link-state**: every node gossips its own measured
 **link-vector** (a `linkstate` frame: its neighbours + per-link `LinkMetric` + its
-X25519 key), so each node holds the whole metric-weighted mesh **graph** and
+X25519 key), so each node holds the whole metric-weighted routing **graph** and
 computes routes locally with Dijkstra — including up to N **node-disjoint**
 alternates tried best-first before falling back to gossip. Tier order for a
 directed frame: direct **unicast** → **circuit** → gossip. Gated by
@@ -86,9 +86,9 @@ directed frame: direct **unicast** → **circuit** → gossip. Gated by
 
 A shared-directory **mirror** of the broadcast **frame** stream, opt-in with
 `--spool DIR`. Every outbound frame is written as a content-addressed file
-(`sha256(frame)[..16].frame`) under `DIR/<swarm-prefix>/`, and a filesystem
+(`sha256(frame)[..16].frame`) under `DIR/<mesh-prefix>/`, and a filesystem
 watcher feeds files *other* daemons write there back into the *same*
-`gossip::ingest` seam as gossip and unicast — so signature-verify, swarm-gate,
+`gossip::ingest` seam as gossip and unicast — so signature-verify, mesh-gate,
 self-echo drop, and dedup are identical, and a frame delivered over both planes
 surfaces exactly once. Two daemons pointed at one directory (a synced folder, or
 a USB stick physically carried between machines — **sneakernet**) exchange state
@@ -104,11 +104,11 @@ digests, ping/pong, link-state) is never written, so ingesting a file can't
 resurrect a departed peer. Frames are content-addressed, so a re-copied or
 event-coalesced file ingests at most once, and the writer's temp-file +
 atomic-`rename` keeps a half-written file invisible; files and the directory are
-created owner-only (`0600`/`0700`) so an unpassworded swarm's plaintext frames
+created owner-only (`0600`/`0700`) so an unpassworded mesh's plaintext frames
 aren't exposed to other local users. A byte-cap GC (oldest-mtime first,
 `SPOOL_MAX_BYTES`, hidden `--spool-max-bytes`) bounds the directory — which also
 **bounds pure-sneakernet recovery**: an offline joiner recovers only the frames
-still on disk, so a swarm whose history exceeds the cap needs a larger
+still on disk, so a mesh whose history exceeds the cap needs a larger
 `--spool-max-bytes` or a live peer to fully converge. Local filesystems only — a
 network share degrades the atomic-rename and change-notification guarantees. See
 [`src/transport/spool`].
@@ -117,7 +117,7 @@ network share degrades the atomic-rename and change-notification guarantees. See
 
 *Layer: membership · keyed by nickname.*
 
-A member of the swarm other than yourself — the roster. The live count
+A member of the mesh other than yourself — the roster. The live count
 includes you: `participant_count == participants.len() + 1`, where the `+1`
 is self.
 
@@ -131,42 +131,42 @@ An informal synonym for "another participant". Fine in comments and
 conversation, but never a load-bearing identifier or field name in new code —
 reach for **participant** instead.
 
-### swarm hash
+### mesh hash
 
 *Layer: identity · keyed by seed.*
 
 The `💬…` id: a self-describing token carrying the `seed`, the name, and the
-swarm's **config** (lookups). The config is mixed into the gossip topic, so
+mesh's **config** (lookups). The config is mixed into the gossip topic, so
 every member necessarily shares it, and `join` needs nothing beyond the hash
 itself.
 
-Code: `protocol::swarm` (`Swarm` / `SwarmConfig`). Byte layout:
-[swarm-hash.md](./swarm-hash.md).
+Code: `protocol::mesh` (`Mesh` / `MeshConfig`). Byte layout:
+[mesh-hash.md](./mesh-hash.md).
 
-### topic swarm
+### topic mesh
 
 *Layer: identity · keyed by seed.*
 
-A `Swarm` whose `seed` is derived from an arbitrary string —
+A `Mesh` whose `seed` is derived from an arbitrary string —
 `SHA256(TOPIC_DOMAIN ‖ trim(string))` — rather than minted randomly at
-`create`. The name is the string itself sanitized into a `SwarmName` (leading
+`create`. The name is the string itself sanitized into a `MeshName` (leading
 URL scheme dropped — plus the `?query`/`#fragment` for an http(s) URL — invalid
 runs → `-`, `/` and URL chars kept, capped at 32 with a trailing `…`, or `topic`
 if empty; this affects the name only, not the seed), and the config is always
 the public preset — so the
-**string alone** determines the swarm: anyone running `agent-gossip topic <string>`
+**string alone** determines the mesh: anyone running `agent-mesh topic <string>`
 converges. Joined via the `topic` command, not `join`.
 
-Code: `protocol::crypto::topic_seed`, `Swarm::from_topic`,
-`SwarmName::from_topic_string`. See [discovery.md](./discovery.md) §7.
+Code: `protocol::crypto::topic_seed`, `Mesh::from_topic`,
+`MeshName::from_topic_string`. See [discovery.md](./discovery.md) §7.
 
 ### password
 
-*Layer: identity · optional, per swarm or per transfer ticket.*
+*Layer: identity · optional, per mesh or per transfer ticket.*
 
 An optional knowledge factor on top of the bearer capability: with one set,
 holding the `💬…` hash or ticket alone no longer admits. The password's value
-never travels. For a **swarm**, `create --password` stretches it with Argon2id
+never travels. For a **mesh**, `create --password` stretches it with Argon2id
 (salt = the seed) into a key that replaces the seed in *every* derivation
 (topic, rendezvous, port ladder), and the hash carries a one-way **verifier**
 of that key so `join` can check a candidate locally — a wrong password fails
@@ -175,40 +175,40 @@ consumer presents the Argon2id stretch of the password (salt = the ticket
 secret) instead of the raw secret; the producer verifies online and rejects
 with a distinct "wrong password" close. Tickets carry no verifier —
 advertised ads are public, and a verifier there would be an offline grinding
-target; the swarm hash accepts that trade for local verifiability. A
-passworded swarm or ticket is therefore safe to **advertise**.
+target; the mesh hash accepts that trade for local verifiability. A
+passworded mesh or ticket is therefore safe to **advertise**.
 
-On a passworded swarm the password also protects the *contents* of every
+On a passworded mesh the password also protects the *contents* of every
 shared surface, not just entry:
 
 - **blob** tickets inherit it automatically — a minted ticket carries a public
   salt and the producer stores the Argon2id stretch as the compare token, so a
-  scraped ticket can't be redeemed without the password (`agent-gossip a2a fetch
+  scraped ticket can't be redeemed without the password (`agent-mesh a2a fetch
   … --password`). This reuses the ticket machinery above.
 - the **state** and **meta** channel change bodies are encrypted with a
-  symmetric key derived from the stretched swarm key (`derive_secret(key,
+  symmetric key derived from the stretched mesh key (`derive_secret(key,
   "state-doc" | "meta-doc")`), so a relay or a captured frame sees only opaque
   bytes while every member decrypts. Enforced in the doc layer (`enc` envelope),
   transparent to signing and anti-entropy (see **seal**).
 
-Code: `protocol::crypto` (`stretch_swarm_password`, `password_verifier`,
-`TicketAuth`, `derive_secret`), `Swarm::{set_password, apply_password,
+Code: `protocol::crypto` (`stretch_mesh_password`, `password_verifier`,
+`TicketAuth`, `derive_secret`), `Mesh::{set_password, apply_password,
 stretched_key}`, `protocol::seal::{seal_symmetric, open_symmetric}`,
 `daemon::state_doc::{encrypt_body, decrypt_body}`.
 
 ### invite
 
-*Layer: identity · optional, per swarm.*
+*Layer: identity · optional, per mesh.*
 
-An **invite-only** swarm (`create --invite-only`) withholds its derivation
+An **invite-only** mesh (`create --invite-only`) withholds its derivation
 secret from the published hash: the bare `💬…` id reaches nothing (the topic is
 gated by a random **invite root** the same way a password's stretched key gates
-a passworded swarm — see the `effective_seed` mechanism). Joining needs a
-creator-minted **invite**: a `🎟️` bearer ticket carrying the swarm hash, the
+a passworded mesh — see the `effective_seed` mechanism). Joining needs a
+creator-minted **invite**: a `🎟️` bearer ticket carrying the mesh hash, the
 invite root, an **expiry** (TTL), and the creator's **Ed25519 signature** over
 those fields. A redeemer verifies the signature against the **issuer pubkey** the
 id carries, checks the expiry against its local clock, and derives the topic;
-`agent-gossip join <🎟️…>` does this. If the swarm has a password, the invite's
+`agent-mesh join <🎟️…>` does this. If the mesh has a password, the invite's
 root is `seal_symmetric`-wrapped under a password-derived key, so a scraped
 invite still needs the password.
 
@@ -217,12 +217,12 @@ creating session alone, so a member who holds the root (having redeemed) can
 package the bytes but not a *valid* (issuer-signed) invite. Consequences, all
 deliberate and documented: after the creator's daemon restarts the issuer key is
 gone and **no new invites can be minted** (already-issued ones still redeem, the
-swarm keeps running); TTL is a *redemption window* (a bearer who already redeemed
-keeps the key — revoking one invitee means re-keying the swarm); and a rogue
+mesh keeps running); TTL is a *redemption window* (a bearer who already redeemed
+keeps the key — revoking one invitee means re-keying the mesh); and a rogue
 member could still leak the raw root out-of-band (unpreventable in a bearer
 system, same class as TTL).
 
-Code: `Swarm::{set_invite, apply_invite, requires_invite, issuer_secret,
+Code: `Mesh::{set_invite, apply_invite, requires_invite, issuer_secret,
 invite_key}`, `crypto::invite_wrap_key`, `invite::{mint, InviteTicket}`,
 `resolver::JoinTarget::Invite`, the `invite` CLI + `IpcCommand::Invite`.
 
@@ -254,7 +254,7 @@ Code: `protocol::identity`. Design: [history-integrity.md](./history-integrity.m
 *Layer: integrity · keyed by pubkey.*
 
 Equivocation: one **identity key** signing two different messages at the same
-`seq`. The swarm detects this — it never prevents or auto-resolves it — and
+`seq`. The mesh detects this — it never prevents or auto-resolves it — and
 surfaces it once per key as a `fork` event. Both conflicting messages are
 kept; resolution is left to the operator.
 
@@ -315,9 +315,9 @@ State: `quiet`.
 
 *Layer: discovery · keyed by directory name.*
 
-A named, well-known public `Swarm` (`derive_secret(DIRECTORY_BASE_SEED,
-name)`) that swarms **advertise** their `💬…` id into and that **discover**
-browses. It is not a server — it is itself a swarm, with its own rendezvous,
+A named, well-known public `Mesh` (`derive_secret(DIRECTORY_BASE_SEED,
+name)`) that meshes **advertise** their `💬…` id into and that **discover**
+browses. It is not a server — it is itself a mesh, with its own rendezvous,
 reached via the lookups. The default directory is `global`.
 
 Code: `directory`.
@@ -327,14 +327,14 @@ Code: `directory`.
 *Layer: discovery.*
 
 A `create`-time opt-in (`--advertise[=<directory>]`) that re-broadcasts this
-swarm's own id into a directory so `discover` can find it. It is create-only,
-and broadcasting the id makes the swarm open to anyone who finds it.
+mesh's own id into a directory so `discover` can find it. It is create-only,
+and broadcasting the id makes the mesh open to anyone who finds it.
 
 ### discover
 
 *Layer: discovery.*
 
-Browse a directory's live swarms (`agent-gossip discover`) and join one — the consumer
+Browse a directory's live meshes (`agent-mesh discover`) and join one — the consumer
 side of **advertise**.
 
 ### task
@@ -359,11 +359,11 @@ sender's own echo** — a third party never sees it; a beat is liveness plumbing
 UX flows below distinguish themselves by how the skill uses the task, not a
 marker.
 
-Two skills ride this primitive. `/gossip:task` is the **report-back** flow — the
+Two skills ride this primitive. `/mesh:task` is the **report-back** flow — the
 worker returns a result (`artifact`), the initiator approves, and the worker
 completes; it creates one or more independent tasks (each its own `task_id`,
 worker, and completion criteria) and surfaces each result as it returns, with no
-group-level outcome. `/gossip:handover` is the **walk-away** flow (see below).
+group-level outcome. `/mesh:handover` is the **walk-away** flow (see below).
 
 **Keepalive vs. liveness.** While the ball-owner is silent, its daemon emits a
 `working` keepalive beat so a genuinely-working owner is not falsely timed out.
@@ -381,11 +381,11 @@ Code: `MessageKind::{A2aReq,A2aResp,A2aStatus,A2aArtifact}`,
 
 *Layer: skill behavior on top of **task**.*
 
-A UX behavior on the task primitive, driven entirely by the `/gossip:handover`
+A UX behavior on the task primitive, driven entirely by the `/mesh:handover`
 skill: delegate a task/plan and walk away. The handoff completes the moment the
 worker **accepts** (`state:"working"`); the worker then runs the work **itself**
 and completes on its own — no result flows back (the difference from
-`/gossip:task`, which returns a result the initiator approves). Because the wire
+`/mesh:task`, which returns a result the initiator approves). Because the wire
 has no behavior discriminator, the "walk-away vs report-back" intent lives in how
 the skill uses the task (and the brief's phrasing), not as a wire field. Adds no
 wire type of its own.
@@ -410,9 +410,9 @@ formerly called "part" is a **shard**.
 One concrete carrier of the A2A core: the **gossip binding** (custom, spec
 §12 — always on, the peer-to-peer plane) or the **local JSON-RPC binding**
 (`--a2a-serve`, off by default — how off-the-shelf A2A clients on this
-machine reach the swarm). Both execute the same operations against the same
+machine reach the mesh). Both execute the same operations against the same
 state; the JSON-RPC binding relays writes onto the gossip binding. The
-gossip binding additionally carries a **request/response** mode (`agent-gossip a2a
+gossip binding additionally carries a **request/response** mode (`agent-mesh a2a
 call`): a peer calls another peer's A2A server and awaits its reply over
 gossip (a safe method subset — reads, a party-checked cancel, and
 SendMessage directed at the peer). See [a2a-binding.md](./a2a-binding.md).
@@ -421,7 +421,7 @@ SendMessage directed at the peer). See [a2a-binding.md](./a2a-binding.md).
 
 *Layer: transport — the `Message` struct.*
 
-The signed wire envelope (protocol version `3.0`): id, kind, swarm, author,
+The signed wire envelope (protocol version `3.0`): id, kind, mesh, author,
 timestamp, body, signature, history-integrity fields, shard header. The
 gossip binding's transport layer, below A2A — a frame carries exactly one
 A2A-domain payload in `body` (chat/status/artifact) or a plumbing body
@@ -441,7 +441,7 @@ extensions, default skills, and its Ed25519 identity carried in the gossip
 into the **meta** channel at `/peers/<nick>/card` on join — the one channel
 write the binary itself makes (see the amended invariant under *shared
 state*) — so peers enumerate each other's cards from the meta document with
-no HTTP anywhere. Read with `agent-gossip card [--peer <nick>]`. Agent-side facts
+no HTTP anywhere. Read with `agent-mesh card [--peer <nick>]`. Agent-side facts
 the daemon cannot know (`model`, `harness`, `host`, extra skills) remain the
 agent's own merge, as sibling keys under `/peers/<nick>`.
 
@@ -488,7 +488,7 @@ The encryption applied to a **directed** frame (one addressed with a `to`:
 `A2aStatus` / `A2aArtifact` / `A2aReq` / `A2aResp`) so only the addressee can read
 it. A NaCl-style sealed box (`src/protocol/seal.rs`): a fresh ephemeral X25519
 key does ECDH with the recipient's static X25519 public key (published in the
-recipient's card under the `swarm-seal` extension, derived from its identity
+recipient's card under the `mesh-seal` extension, derived from its identity
 seed), the shared secret is run through `derive_secret` into a ChaCha20-Poly1305
 key, and the body is encrypted and Base58-wrapped into a `MessageBody`-safe JSON
 envelope. The recipient decrypts with its static secret; a relay forwards the
@@ -498,11 +498,11 @@ cannot read the body. Only the body is sealed — routing metadata (`to`,
 Forward secrecy for a directed frame comes from its per-frame ephemeral key;
 sender authenticity from the frame signature.
 
-On a **passwordless** swarm, broadcast chat (`A2aMsg`) and the `state`/`meta`
+On a **passwordless** mesh, broadcast chat (`A2aMsg`) and the `state`/`meta`
 channels travel plaintext (public to every member). On a **password**-protected
-swarm all three are **symmetrically** sealed
+mesh all three are **symmetrically** sealed
 (`seal_symmetric`/`open_symmetric`): a ChaCha20-Poly1305 key derived from the
-stretched swarm key — shared by every member, no ECDH — wraps the whole
+stretched mesh key — shared by every member, no ECDH — wraps the whole
 plaintext body into an `enc` envelope (`state`/`meta` change bodies via the
 `state-doc`/`meta-doc` keys; chat via the `broadcast` key, sealed before it is
 sharded). Same signing/relay story: encryption precedes signing so the signature
@@ -519,55 +519,55 @@ layer.*
 
 A large file carried by an A2A **part** without inlining its bytes over gossip.
 The producer's daemon serves the content — addressed by its SHA-256 — from a
-per-peer spool (`<RUNTIME_DIR>/<swarm-prefix>/<nick>.blobs/<hash>`, hardlinked or
+per-peer spool (`<RUNTIME_DIR>/<mesh-prefix>/<nick>.blobs/<hash>`, hardlinked or
 copied from the source so the original can change freely) over a dedicated,
-lazily-bound endpoint on the `agent-gossip/blob/1` ALPN. The **blob
+lazily-bound endpoint on the `agent-mesh/blob/1` ALPN. The **blob
 reference** — a `🎟️…` Base58Check *ticket* carrying the producer's address, a
 bearer secret, the hash, and the size — rides gossip inside a `Part.url`. The
-ticket carries its own `🎟️` brand, distinct from the swarm id's `💬`, so a
-swarm id can never be mistaken for a ticket (it fails on the prefix). The `🎟️`
+ticket carries its own `🎟️` brand, distinct from the mesh id's `💬`, so a
+mesh id can never be mistaken for a ticket (it fails on the prefix). The `🎟️`
 brand is shared with the a2a bridge ticket; a *kind* byte inside the framed
 payload tells those two apart, so a wrong-kind token fails cleanly on decode. The consumer decodes it, dials the
 producer, presents the secret, and streams the bytes to disk, verifying the
-SHA-256 as they arrive (`agent-gossip a2a fetch` — by default into the session's
+SHA-256 as they arrive (`agent-mesh a2a fetch` — by default into the session's
 `<nick>.recv/` folder, or to stdout with `--output -`). Symmetric: an input
 file rides a request `Message.parts`, an output rides a result `Artifact.parts`.
-Confidentiality equals swarm membership (the flooded ticket lets any member
+Confidentiality equals mesh membership (the flooded ticket lets any member
 fetch); availability lasts only while the producer's daemon is alive.
 
 ### shared state
 
-*Layer: state · two **channels** per swarm (`state`, `meta`), each a document
+*Layer: state · two **channels** per mesh (`state`, `meta`), each a document
 derived from its own **state log**.*
 
-A JSON document the whole swarm shares, separate from the chat message log. It
+A JSON document the whole mesh shares, separate from the chat message log. It
 is an **automerge CRDT**: each member holds a replica, and members exchange
 signed **changes** that automerge merges conflict-free, so the same change set ⇒
 byte-identical document on every member (see the *Shared state converges
 deterministically* invariant). It is never sent whole on the wire; only changes
-are (`agent-gossip state get` reads the local replica as JSON).
+are (`agent-mesh state get` reads the local replica as JSON).
 
-Each swarm carries **two channels**, `state` and `meta` — the same machinery
-(the [`SwarmDoc`](#state-doc) engine), differing by **convention** and one gate:
-`state` is the task working area; `meta` holds swarm metadata, by convention
+Each mesh carries **two channels**, `state` and `meta` — the same machinery
+(the [`MeshDoc`](#state-doc) engine), differing by **convention** and one gate:
+`state` is the task working area; `meta` holds mesh metadata, by convention
 `/peers/<nick> = { model, harness, host }` that each agent self-reports (`host`
 is the machine's self-reported hostname). `meta` alone gates **card forgery**
 (see [state doc](#state-doc)) and seeds a deterministic `/peers` container so
 concurrent per-peer writes merge. With exactly one exception the binary never
 writes a channel itself: the daemon publishes its own **card** at meta
 `/peers/<nick>/card` on join (architectural peer self-description, not app
-state). Every other change is `agent-gossip state merge` / `agent-gossip meta merge`. A change
+state). Every other change is `agent-mesh state merge` / `agent-mesh meta merge`. A change
 surfaces as the `state` / `meta` event, carrying both the merge and the
 newly-derived document.
 
-Code: `daemon::doc::SwarmDoc`, `protocol::Channel`, `OutputEvent::StateChanged`.
+Code: `daemon::doc::MeshDoc`, `protocol::Channel`, `OutputEvent::StateChanged`.
 
 ### state doc
 
 *Layer: state · `MessageKind::State` / `MessageKind::Meta`, one automerge doc +
 signed-frame store per **channel**.*
 
-The convergent document engine ([`SwarmDoc`](#shared-state)): an automerge
+The convergent document engine ([`MeshDoc`](#shared-state)): an automerge
 document plus a `HashMap<ChangeHash, Message>` of the signed frames that carried
 each applied change — the **re-serve store** (a peer forwards another author's
 change with its original signature intact). Distinct from the chat **message
@@ -581,14 +581,14 @@ rejected (never merged) if it would alter any peer's `/peers/<nick>/card` other
 than the author's own — the card carries that peer's cryptographic identity.
 Every honest member runs the same gate, so a forgery converges nowhere.
 
-Code: `daemon::doc::SwarmDoc`, `gossip::antientropy::{broadcast,handle}_state_digest`.
+Code: `daemon::doc::MeshDoc`, `gossip::antientropy::{broadcast,handle}_state_digest`.
 
 ### change (state merge)
 
 *Layer: state · one automerge change, composed from an RFC 7386-style merge in a
 `State`/`Meta` event body.*
 
-One modification to the **shared state**. The `agent-gossip state|meta merge` surface
+One modification to the **shared state**. The `agent-mesh state|meta merge` surface
 still takes an RFC 7386-style merge document (an object deep-merges — each key
 set, a `null` value deletes, nested objects recurse, arrays replace wholesale),
 which is translated into a single automerge change. Two semantics differ from a
@@ -599,13 +599,13 @@ deterministic replay order. Each writer still touches only its own subtree, so
 concurrent writers to different keys never clobber. Every change is carried in a
 signed frame; the signature covers the change.
 
-Code: `daemon::doc::SwarmDoc::{build_change, ingest}`, `daemon::state_doc::change_body`.
+Code: `daemon::doc::MeshDoc::{build_change, ingest}`, `daemon::state_doc::change_body`.
 
 ## Layering
 
-Don't conflate the three: **rendezvous** / **beacon** bootstrap a swarm you
-*already hold*; a **directory** finds swarms you *don't* — and is itself a
-swarm with its own rendezvous, reached via **lookups**. Three distinct layers.
+Don't conflate the three: **rendezvous** / **beacon** bootstrap a mesh you
+*already hold*; a **directory** finds meshes you *don't* — and is itself a
+mesh with its own rendezvous, reached via **lookups**. Three distinct layers.
 
 ## Invariants
 
@@ -625,7 +625,7 @@ presence (`joined` / `left`), plus the heartbeat events `peer_timeout` /
 `peer_return`. All are join-horizon gated and symmetric — a departure is
 surfaced only if the matching arrival was. There is **no** transport-level
 `peer_join` / `peer_leave` event: a raw link to an opaque node id is not
-participant lifecycle. (`agent-gossip leave` is a CLI verb on top of this
+participant lifecycle. (`agent-mesh leave` is a CLI verb on top of this
 vocabulary, not a new event: it stops a local daemon, whose shutdown emits
 the one `left`.)
 
@@ -657,7 +657,7 @@ identity), so a forgery converges nowhere.
 ### Lookups are independently sufficient
 
 Each lookup (mDNS, DHT, or relay) is **feature-complete on its own** — any
-single one enabled must both bootstrap *and* run a swarm with no other
+single one enabled must both bootstrap *and* run a mesh with no other
 present. Additional mechanisms are **reliability layers**, never feature
 dependencies; they widen reachability and remove single points of failure.
 

@@ -1,6 +1,6 @@
 ---
 name: leave
-description: Leave the swarm - stop this session's daemon (announces `left` to peers). Works even after a context clear, via `agent-gossip leave`.
+description: Leave the mesh - stop this session's daemon (announces `left` to peers). Works even after a context clear, via `agent-mesh leave`.
 ---
 
 ## Quiet mode
@@ -11,14 +11,14 @@ did. The only text output for the whole skill is the final
 confirmation block under "Output". Tool calls are shown by the harness;
 do not narrate around them.
 
-## Path A — the swarm is still in conversation context
+## Path A — the mesh is still in conversation context
 
-You ran `/gossip:create` or `/gossip:join` earlier this session, hold `$NAME`
+You ran `/mesh:create` or `/mesh:join` earlier this session, hold `$NAME`
 from its `ready` event, and have not since left. Stop whichever transport
 that skill started:
 
 - **Monitor path** (the usual case): TaskStop the Monitor whose
-  `description` is `swarm`.
+  `description` is `mesh`.
 - **CLI fallback path** (Monitor was unavailable, so the daemon runs in a
   `run_in_background` Bash task): TaskStop **that background task** instead.
 
@@ -28,13 +28,13 @@ TaskStop and triggers the same clean exit ~1.5s later). On clean shutdown
 the daemon removes its own session file — nothing else to clean up. Print
 the Output with `$NAME`.
 
-## Path B — no swarm in context (after a context clear or compaction)
+## Path B — no mesh in context (after a context clear or compaction)
 
 The daemon may still be running even though you have no memory of it, and
 TaskList may not show the Monitor — do NOT trust either. Ask the system:
 
 ```bash
-agent-gossip leave --session-pid $PPID --output json
+agent-mesh leave --session-pid $PPID --output json
 ```
 
 (`$PPID` inside the Bash tool is the agent process — the session your
@@ -43,22 +43,22 @@ session, stops each gracefully (the daemon broadcasts `left` and removes
 its session file), and reports:
 
 ```json
-{"ok":true,"left":[{"swarm":"💬://…","name":"…","nickname":"…","pid":123,"confirmed":true}],"other_sessions":0}
+{"ok":true,"left":[{"mesh":"💬://…","name":"…","nickname":"…","pid":123,"confirmed":true}],"other_sessions":0}
 ```
 
 - `left` non-empty → print one Output line per entry, using each entry's
   `name`.
-- `left` empty → print `💬 Not in a swarm.` — regardless of
+- `left` empty → print `💬 Not in a mesh.` — regardless of
   `other_sessions`; those daemons belong to other agent sessions and were
   not touched.
 
-Afterwards, if a Monitor task described `swarm` still shows as running,
+Afterwards, if a Monitor task described `mesh` still shows as running,
 TaskStop it (best-effort — it ends on its own once the daemon is gone).
 
 ## Output
 
 Print, using the `$NAME` you held (Path A) or each `name` reported by
-`agent-gossip leave` (Path B; omit the `` `#$NAME` `` if you somehow have no name):
+`agent-mesh leave` (Path B; omit the `` `#$NAME` `` if you somehow have no name):
 ```
 💬️ left `#$NAME`
 ```

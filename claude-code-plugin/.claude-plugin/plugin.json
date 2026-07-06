@@ -1,10 +1,10 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
-  "name": "gossip",
+  "name": "mesh",
   "version": "0.1.0",
   "description": "mesh skills for Claude Code. Agents collaborate as peers — exchange messages and delegate tasks, no central server.",
-  "homepage": "https://github.com/agent-habilis/agent-gossip",
-  "repository": "https://github.com/agent-habilis/agent-gossip",
+  "homepage": "https://github.com/agent-habilis/agent-mesh",
+  "repository": "https://github.com/agent-habilis/agent-mesh",
   "license": "MIT",
-  "keywords": ["agents", "gossip", "swarm", "mesh"]
+  "keywords": ["agents", "mesh", "gossip", "a2a"]
 }

@@ -2,15 +2,15 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-c
 import {
   type CreateOptions,
   applyStateMerge,
-  createSwarm,
-  discoverSwarms,
-  forumSwarm,
+  createMesh,
+  discoverMeshes,
+  forumMesh,
   getPeers,
   getStateDocument,
-  joinSwarm,
-  leaveSwarm,
+  joinMesh,
+  leaveMesh,
   pingPeers,
-  sendSwarmMessage,
+  sendMeshMessage,
   validateCreateOptions,
 } from "../core";
 import {
@@ -20,77 +20,77 @@ import {
   formatPingReport,
   formatRoster,
 } from "../format";
-import { isValidBody, requireAgentSwarm, runSwarmCommand } from "../helpers";
+import { isValidBody, requireAgentMesh, runMeshCommand } from "../helpers";
 import { state } from "../state";
-import type { DiscoveredSwarm, Peer } from "../types";
+import type { DiscoveredMesh, Peer } from "../types";
 import { inject, notify, notifyBlock, notifyError } from "../ui";
 
 export function registerCommands(pi: ExtensionAPI): void {
-  pi.registerCommand("swarm-create", {
-    description: "Create and join a new swarm for AI agent collaboration",
+  pi.registerCommand("mesh-create", {
+    description: "Create and join a new mesh for AI agent collaboration",
     handler: cmdCreate,
   });
-  pi.registerCommand("swarm-join", {
-    description: "Join an existing swarm by its 💬… ID",
+  pi.registerCommand("mesh-join", {
+    description: "Join an existing mesh by its 💬… ID",
     handler: cmdJoin,
   });
-  pi.registerCommand("swarm-forum", {
-    description: "Join a public swarm derived from a shared string (/swarm-forum {string})",
+  pi.registerCommand("mesh-forum", {
+    description: "Join a public mesh derived from a shared string (/mesh-forum {string})",
     handler: cmdForum,
   });
-  pi.registerCommand("swarm-discover", {
-    description: "Browse a directory for advertised swarms and join one",
+  pi.registerCommand("mesh-discover", {
+    description: "Browse a directory for advertised meshes and join one",
     handler: cmdDiscover,
   });
-  pi.registerCommand("swarm-msg", {
-    description: "Send a message to the current swarm",
+  pi.registerCommand("mesh-msg", {
+    description: "Send a message to the current mesh",
     handler: cmdMsg,
   });
-  pi.registerCommand("swarm-notice", {
-    description: "Send a notice — a message peers never auto-reply to (/swarm-notice {text})",
+  pi.registerCommand("mesh-notice", {
+    description: "Send a notice — a message peers never auto-reply to (/mesh-notice {text})",
     handler: cmdNotice,
   });
-  pi.registerCommand("swarm-reply", {
-    description: "Send a message addressed to a specific peer (/swarm-reply {nick} {text})",
+  pi.registerCommand("mesh-reply", {
+    description: "Send a message addressed to a specific peer (/mesh-reply {nick} {text})",
     handler: cmdReply,
   });
-  pi.registerCommand("swarm-handover", {
-    description: "Hand a task off to a peer (/swarm-handover {task})",
+  pi.registerCommand("mesh-handover", {
+    description: "Hand a task off to a peer (/mesh-handover {task})",
     handler: cmdHandover,
   });
-  pi.registerCommand("swarm-task", {
-    description: "Send a task to a peer and get the result back (/swarm-task {task})",
+  pi.registerCommand("mesh-task", {
+    description: "Send a task to a peer and get the result back (/mesh-task {task})",
     handler: cmdTask,
   });
-  pi.registerCommand("swarm-leave", {
-    description: "Leave the current swarm",
+  pi.registerCommand("mesh-leave", {
+    description: "Leave the current mesh",
     handler: cmdLeave,
   });
-  pi.registerCommand("swarm-status", {
-    description: "List swarm peers with connection type, model, and harness",
+  pi.registerCommand("mesh-status", {
+    description: "List mesh peers with connection type, model, and harness",
     handler: cmdStatus,
   });
-  pi.registerCommand("swarm-state", {
-    description: "Print the swarm's current shared-state document",
+  pi.registerCommand("mesh-state", {
+    description: "Print the mesh's current shared-state document",
     handler: cmdState,
   });
-  pi.registerCommand("swarm-state-merge", {
+  pi.registerCommand("mesh-state-merge", {
     description:
-      "Apply an RFC 7386 JSON Merge Patch to shared state (/swarm-state-merge {merge-json})",
+      "Apply an RFC 7386 JSON Merge Patch to shared state (/mesh-state-merge {merge-json})",
     handler: cmdStateMerge,
   });
-  pi.registerCommand("swarm-ping", {
-    description: "Ping all peers in the swarm and measure round-trip time",
+  pi.registerCommand("mesh-ping", {
+    description: "Ping all peers in the mesh and measure round-trip time",
     handler: cmdPing,
   });
-  pi.registerCommand("swarm-version", {
-    description: "Show the swarm binary version and whether the installed extension is up to date",
+  pi.registerCommand("mesh-version", {
+    description: "Show the mesh binary version and whether the installed extension is up to date",
     handler: cmdVersion,
   });
 }
 
-// Parse `/swarm-create [name] [flags]`. The first non-flag token is the
-// optional swarm name; recognized flags mirror the `agent-gossip create` CLI.
+// Parse `/mesh-create [name] [flags]`. The first non-flag token is the
+// optional mesh name; recognized flags mirror the `agent-mesh create` CLI.
 function parseCreateArgs(args: string): {
   options: CreateOptions;
   error?: string;
@@ -133,12 +133,12 @@ function parseCreateArgs(args: string): {
 
 async function cmdCreate(args: string, ctx: ExtensionCommandContext): Promise<void> {
   state.ctx = ctx;
-  if (!requireAgentSwarm(ctx)) return;
+  if (!requireAgentMesh(ctx)) return;
 
   const { options, error } = parseCreateArgs(args);
   if (error) {
     notifyError(
-      `${error}\nusage: /swarm-create [name] [--public] [--mdns] [--dht] [--relay[=urls]] [--advertise[=dir]]`,
+      `${error}\nusage: /mesh-create [name] [--public] [--mdns] [--dht] [--relay[=urls]] [--advertise[=dir]]`,
     );
     return;
   }
@@ -149,34 +149,34 @@ async function cmdCreate(args: string, ctx: ExtensionCommandContext): Promise<vo
   }
 
   options.model = ctx.model?.name;
-  const result = await createSwarm(options);
+  const result = await createMesh(options);
   // One notify so the confirmation renders as a single block — the bee prefix
   // is added once (in `send`), not per line, matching the Claude Code plugin.
   notify(
     [
       `created \`#${result.name}\` and joined as \`<${result.nickname}>\``,
       ...(options.advertise ? [`advertising on \`#${options.directory ?? "global"}\``] : []),
-      `others can join with: \`/swarm-join ${result.swarm}\``,
+      `others can join with: \`/mesh-join ${result.mesh}\``,
     ].join("\n"),
   );
   if (result.drift) notify(result.drift);
 }
 
-// Join a swarm and print the standard confirmation — shared by /swarm-join and
+// Join a mesh and print the standard confirmation — shared by /mesh-join and
 // discover-initiated joins so the wording and drift handling stay in one place.
 async function joinAndReport(target: string, ctx: ExtensionCommandContext): Promise<void> {
-  const result = await joinSwarm({ target, model: ctx.model?.name });
+  const result = await joinMesh({ target, model: ctx.model?.name });
   notify(`joined \`#${result.name}\` as \`<${result.nickname}>\``);
   if (result.drift) notify(result.drift);
 }
 
 async function cmdJoin(args: string, ctx: ExtensionCommandContext): Promise<void> {
   state.ctx = ctx;
-  if (!requireAgentSwarm(ctx)) return;
+  if (!requireAgentMesh(ctx)) return;
 
   const target = args.trim();
   if (!target) {
-    notifyError("usage: /swarm-join {💬...}");
+    notifyError("usage: /mesh-join {💬...}");
     return;
   }
 
@@ -185,55 +185,55 @@ async function cmdJoin(args: string, ctx: ExtensionCommandContext): Promise<void
 
 async function cmdForum(args: string, ctx: ExtensionCommandContext): Promise<void> {
   state.ctx = ctx;
-  if (!requireAgentSwarm(ctx)) return;
+  if (!requireAgentMesh(ctx)) return;
 
   const string = args.trim();
   if (!string) {
-    notifyError("usage: /swarm-forum {string}");
+    notifyError("usage: /mesh-forum {string}");
     return;
   }
 
-  const result = await forumSwarm({ string, model: ctx.model?.name });
+  const result = await forumMesh({ string, model: ctx.model?.name });
   notify(`joined forum \`#${result.name}\` as \`<${result.nickname}>\``);
   if (result.drift) notify(result.drift);
 }
 
 async function cmdDiscover(args: string, ctx: ExtensionCommandContext): Promise<void> {
   state.ctx = ctx;
-  if (!requireAgentSwarm(ctx)) return;
+  if (!requireAgentMesh(ctx)) return;
 
   const directory = args.trim() || "global";
   notify(`discovering \`#${directory}\` directory`);
-  notify("waiting for swarms…");
+  notify("waiting for meshes…");
 
   // Sentinel option that re-polls the directory — mirrors the Claude Code
   // discover skill's refreshable picker.
   const KEEP_LOOKING = "🔄 keep looking";
 
   for (let first = true; ; first = false) {
-    const swarms = await discoverSwarms({
+    const meshes = await discoverMeshes({
       directory: directory === "global" ? undefined : directory,
       // A re-poll on an idle directory shouldn't block the full discovery
       // window again — only the first sweep waits the default.
       ...(first ? {} : { maxMs: 3000 }),
     });
 
-    if (swarms.length === 0) {
-      notify(`no swarms in \`#${directory}\` yet`);
+    if (meshes.length === 0) {
+      notify(`no meshes in \`#${directory}\` yet`);
       const again = await ctx.ui.select(`Discover #${directory}`, [KEEP_LOOKING]);
       if (again === KEEP_LOOKING) continue;
       return;
     }
 
-    // Option label carries name + peers + a short id so distinct swarms never
+    // Option label carries name + peers + a short id so distinct meshes never
     // collide; map it back to the full `💬…` id for the join.
     const byOption = new Map(
-      swarms.map((swarm): [string, DiscoveredSwarm] => [
-        `#${swarm.name} · ${swarm.peers} peers · ${swarm.swarm.slice(0, 14)}…`,
-        swarm,
+      meshes.map((mesh): [string, DiscoveredMesh] => [
+        `#${mesh.name} · ${mesh.peers} peers · ${mesh.mesh.slice(0, 14)}…`,
+        mesh,
       ]),
     );
-    const choice = await ctx.ui.select(`Swarms in #${directory}`, [
+    const choice = await ctx.ui.select(`Meshes in #${directory}`, [
       ...byOption.keys(),
       KEEP_LOOKING,
     ]);
@@ -242,18 +242,18 @@ async function cmdDiscover(args: string, ctx: ExtensionCommandContext): Promise<
     const picked = byOption.get(choice);
     if (!picked) return;
 
-    await joinAndReport(picked.swarm, ctx);
+    await joinAndReport(picked.mesh, ctx);
     return;
   }
 }
 
 async function cmdMsg(args: string, ctx: ExtensionCommandContext): Promise<void> {
   state.ctx = ctx;
-  if (!requireAgentSwarm(ctx)) return;
+  if (!requireAgentMesh(ctx)) return;
 
   const text = args.trim();
   if (!text) {
-    notifyError("usage: /swarm-msg {text}");
+    notifyError("usage: /mesh-msg {text}");
     return;
   }
 
@@ -264,12 +264,12 @@ async function cmdMsg(args: string, ctx: ExtensionCommandContext): Promise<void>
 
   const session = state.session;
   if (!session) {
-    notifyError("not in a swarm");
+    notifyError("not in a mesh");
     return;
   }
 
   try {
-    sendSwarmMessage({ text });
+    sendMeshMessage({ text });
     notify(formatOutbound(session.nickname, text));
   } catch (error) {
     notifyError(`send failed: ${error instanceof Error ? error.message : "unknown"}`);
@@ -278,11 +278,11 @@ async function cmdMsg(args: string, ctx: ExtensionCommandContext): Promise<void>
 
 async function cmdNotice(args: string, ctx: ExtensionCommandContext): Promise<void> {
   state.ctx = ctx;
-  if (!requireAgentSwarm(ctx)) return;
+  if (!requireAgentMesh(ctx)) return;
 
   const text = args.trim();
   if (!text) {
-    notifyError("usage: /swarm-notice {text}");
+    notifyError("usage: /mesh-notice {text}");
     return;
   }
 
@@ -293,12 +293,12 @@ async function cmdNotice(args: string, ctx: ExtensionCommandContext): Promise<vo
 
   const session = state.session;
   if (!session) {
-    notifyError("not in a swarm");
+    notifyError("not in a mesh");
     return;
   }
 
   try {
-    sendSwarmMessage({ text, notice: true });
+    sendMeshMessage({ text, notice: true });
     notify(formatOutboundNotice(session.nickname, text));
   } catch (error) {
     notifyError(`notice failed: ${error instanceof Error ? error.message : "unknown"}`);
@@ -307,13 +307,13 @@ async function cmdNotice(args: string, ctx: ExtensionCommandContext): Promise<vo
 
 async function cmdReply(args: string, ctx: ExtensionCommandContext): Promise<void> {
   state.ctx = ctx;
-  if (!requireAgentSwarm(ctx)) return;
+  if (!requireAgentMesh(ctx)) return;
 
   // First whitespace-delimited token is the target nickname (angle brackets
   // optional); the rest is the message body.
   const match = args.trim().match(/^(\S+)\s+([\s\S]+)$/u);
   if (!match) {
-    notifyError("usage: /swarm-reply {nick} {text}");
+    notifyError("usage: /mesh-reply {nick} {text}");
     return;
   }
   const target = match[1].replace(/^<|>$/gu, "");
@@ -326,12 +326,12 @@ async function cmdReply(args: string, ctx: ExtensionCommandContext): Promise<voi
 
   const session = state.session;
   if (!session) {
-    notifyError("not in a swarm");
+    notifyError("not in a mesh");
     return;
   }
 
   try {
-    sendSwarmMessage({ text, reply: target });
+    sendMeshMessage({ text, reply: target });
     notify(formatOutbound(session.nickname, text, target));
   } catch (error) {
     notifyError(`reply failed: ${error instanceof Error ? error.message : "unknown"}`);
@@ -373,60 +373,60 @@ async function selectWorker(ctx: ExtensionCommandContext, title: string): Promis
 
 async function cmdHandover(args: string, ctx: ExtensionCommandContext): Promise<void> {
   state.ctx = ctx;
-  if (!requireAgentSwarm(ctx)) return;
+  if (!requireAgentMesh(ctx)) return;
   if (!state.session) {
-    notifyError("not in a swarm");
+    notifyError("not in a mesh");
     return;
   }
   const task = args.trim();
   if (!task) {
-    notifyError("usage: /swarm-handover {task}");
+    notifyError("usage: /mesh-handover {task}");
     return;
   }
   const worker = await selectWorker(ctx, `Hand "${task.slice(0, 60)}" to which peer?`);
   if (!worker) return;
 
-  // The agent composes the brief and sends it via swarm_handover (mirrors the
+  // The agent composes the brief and sends it via mesh_handover (mirrors the
   // Claude Code plan-as-brief flow, agent-driven).
   inject(
-    `Compose a concise handover brief (what to do, the goal, current state, constraints) for this task and send it to \`<${worker.nickname}>\` with the swarm_handover tool (to "${worker.nickname}"):\n\n${task}`,
+    `Compose a concise handover brief (what to do, the goal, current state, constraints) for this task and send it to \`<${worker.nickname}>\` with the mesh_handover tool (to "${worker.nickname}"):\n\n${task}`,
   );
 }
 
 async function cmdTask(args: string, ctx: ExtensionCommandContext): Promise<void> {
   state.ctx = ctx;
-  if (!requireAgentSwarm(ctx)) return;
+  if (!requireAgentMesh(ctx)) return;
   if (!state.session) {
-    notifyError("not in a swarm");
+    notifyError("not in a mesh");
     return;
   }
   const task = args.trim();
   if (!task) {
-    notifyError("usage: /swarm-task {task}");
+    notifyError("usage: /mesh-task {task}");
     return;
   }
   const worker = await selectWorker(ctx, `Send "${task.slice(0, 60)}" to which peer?`);
   if (!worker) return;
 
-  // The agent composes the task brief and sends it via swarm_task; the worker
+  // The agent composes the task brief and sends it via mesh_task; the worker
   // runs it and returns a result the agent then confirms or revises.
   inject(
-    `Compose a task brief with an explicit completion criterion for this task and send it to \`<${worker.nickname}>\` with the swarm_task tool (to "${worker.nickname}"):\n\n${task}`,
+    `Compose a task brief with an explicit completion criterion for this task and send it to \`<${worker.nickname}>\` with the mesh_task tool (to "${worker.nickname}"):\n\n${task}`,
   );
 }
 
 async function cmdLeave(_args: string, ctx: ExtensionCommandContext): Promise<void> {
   const name = state.session?.name;
-  leaveSwarm();
+  leaveMesh();
   notify(name ? `left \`#${name}\`` : "left");
 }
 
 async function cmdStatus(_args: string, ctx: ExtensionCommandContext): Promise<void> {
   state.ctx = ctx;
-  if (!requireAgentSwarm(ctx)) return;
+  if (!requireAgentMesh(ctx)) return;
   const session = state.session;
   if (!session) {
-    notifyError("not in a swarm");
+    notifyError("not in a mesh");
     return;
   }
   try {
@@ -439,9 +439,9 @@ async function cmdStatus(_args: string, ctx: ExtensionCommandContext): Promise<v
 
 async function cmdState(_args: string, ctx: ExtensionCommandContext): Promise<void> {
   state.ctx = ctx;
-  if (!requireAgentSwarm(ctx)) return;
+  if (!requireAgentMesh(ctx)) return;
   if (!state.session) {
-    notifyError("not in a swarm");
+    notifyError("not in a mesh");
     return;
   }
   try {
@@ -454,19 +454,19 @@ async function cmdState(_args: string, ctx: ExtensionCommandContext): Promise<vo
 
 async function cmdStateMerge(args: string, ctx: ExtensionCommandContext): Promise<void> {
   state.ctx = ctx;
-  if (!requireAgentSwarm(ctx)) return;
+  if (!requireAgentMesh(ctx)) return;
   if (!state.session) {
-    notifyError("not in a swarm");
+    notifyError("not in a mesh");
     return;
   }
   const merge = args.trim();
   if (!merge) {
-    notifyError('usage: /swarm-state-merge {merge-json}  e.g. {"turn":"b"}');
+    notifyError('usage: /mesh-state-merge {merge-json}  e.g. {"turn":"b"}');
     return;
   }
   try {
     // The incoming self `state` event isn't displayed, so confirm here at send
-    // time (mirrors how /swarm-msg confirms an outbound message).
+    // time (mirrors how /mesh-msg confirms an outbound message).
     const result = applyStateMerge({ merge });
     if (result.ok) {
       notify("you changed shared state");
@@ -480,10 +480,10 @@ async function cmdStateMerge(args: string, ctx: ExtensionCommandContext): Promis
 
 async function cmdPing(_args: string, ctx: ExtensionCommandContext): Promise<void> {
   state.ctx = ctx;
-  if (!requireAgentSwarm(ctx)) return;
+  if (!requireAgentMesh(ctx)) return;
 
-  if (!state.session?.swarm) {
-    notifyError("not in a swarm");
+  if (!state.session?.mesh) {
+    notifyError("not in a mesh");
     return;
   }
 
@@ -496,15 +496,15 @@ async function cmdPing(_args: string, ctx: ExtensionCommandContext): Promise<voi
   }
 }
 
-// `agent-gossip status` reports the binary version and whether each installed
+// `agent-mesh status` reports the binary version and whether each installed
 // integration still matches the binary — the on-demand drift check, the
 // counterpart to the startup warning folded into the `ready` event.
 async function cmdVersion(_args: string, ctx: ExtensionCommandContext): Promise<void> {
   state.ctx = ctx;
-  if (!requireAgentSwarm(ctx)) return;
+  if (!requireAgentMesh(ctx)) return;
 
   try {
-    notifyBlock(runSwarmCommand(["status"]));
+    notifyBlock(runMeshCommand(["status"]));
   } catch (error) {
     notifyError(`version check failed: ${error instanceof Error ? error.message : "unknown"}`);
   }

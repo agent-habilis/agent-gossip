@@ -1,11 +1,11 @@
 #!/usr/bin/env bun
-// End-to-end a2a bridge test: bridge two vanilla A2A agents over the swarm.
+// End-to-end a2a bridge test: bridge two vanilla A2A agents over the mesh.
 //
-//   agent A (server) ──▶ agent-gossip a2a expose ──swarm──▶ agent-gossip a2a connect ──▶ agent B (client)
+//   agent A (server) ──▶ agent-mesh a2a expose ──mesh──▶ agent-mesh a2a connect ──▶ agent B (client)
 //
 // Agent B discovers agent A purely through the bridge (the Agent Card's
 // rewritten `url`) and exchanges a message with the raw A2A protocol. Both
-// `agent-gossip` sides run with `--loopback`, so the whole thing is hermetic on one
+// `agent-mesh` sides run with `--loopback`, so the whole thing is hermetic on one
 // machine — the ticket carries the exposer's direct 127.0.0.1 address and no
 // mDNS/DHT/relay is used.
 //
@@ -15,16 +15,16 @@ import { dirname, join } from "node:path";
 
 const REPO_ROOT = dirname(import.meta.dir);
 const AGENT = join(REPO_ROOT, "tools", "a2a-agent", "agent.ts");
-const TEXT = "hello over the swarm";
+const TEXT = "hello over the mesh";
 
-/** Invoke the agent-gossip binary through cargo — it resolves the debug build itself,
+/** Invoke the agent-mesh binary through cargo — it resolves the debug build itself,
  * so there is no hardcoded target/ path to keep in sync. */
-const agent-gossip = (args: string[]): string[] => [
+const agentMesh = (args: string[]): string[] => [
   "cargo",
   "run",
   "--quiet",
   "--bin",
-  "agent-gossip",
+  "agent-mesh",
   "--",
   ...args,
 ];
@@ -102,8 +102,8 @@ function run(label: string): void {
 }
 
 async function main(): Promise<void> {
-  run("building agent-gossip");
-  const build = Bun.spawnSync(["cargo", "build", "--quiet", "--bin", "agent-gossip"], {
+  run("building agent-mesh");
+  const build = Bun.spawnSync(["cargo", "build", "--quiet", "--bin", "agent-mesh"], {
     cwd: REPO_ROOT,
     stdout: "inherit",
     stderr: "inherit",
@@ -121,18 +121,18 @@ async function main(): Promise<void> {
   children.push(server);
   await waitForUrl(`http://127.0.0.1:${originPort}/.well-known/agent-card.json`);
 
-  run("exposing agent A over the swarm (agent-gossip a2a expose --loopback)");
+  run("exposing agent A over the mesh (agent-mesh a2a expose --loopback)");
   const expose = Bun.spawn(
-    agent-gossip(["a2a", "expose", "--to", `http://127.0.0.1:${originPort}`, "--loopback", "--output", "json"]),
+    agentMesh(["a2a", "expose", "--to", `http://127.0.0.1:${originPort}`, "--loopback", "--output", "json"]),
     { cwd: REPO_ROOT, stdout: "pipe", stderr: "ignore" },
   );
   children.push(expose);
   const ticket = await readTicket(expose.stdout as ReadableStream<Uint8Array>);
   console.log(`    ticket: ${ticket.slice(0, 24)}…`);
 
-  run(`connecting from the other end (agent-gossip a2a connect --port ${localPort})`);
+  run(`connecting from the other end (agent-mesh a2a connect --port ${localPort})`);
   const connect = Bun.spawn(
-    agent-gossip(["a2a", "connect", ticket, "--port", String(localPort), "--output", "json"]),
+    agentMesh(["a2a", "connect", ticket, "--port", String(localPort), "--output", "json"]),
     { cwd: REPO_ROOT, stdout: "ignore", stderr: "ignore" },
   );
   children.push(connect);
@@ -155,7 +155,7 @@ async function main(): Promise<void> {
     throw new Error(`the A2A round-trip did not succeed\n${client.stderr.toString()}`);
   }
 
-  run("PASS: two vanilla A2A agents communicated over the swarm bridge");
+  run("PASS: two vanilla A2A agents communicated over the mesh bridge");
 }
 
 try {

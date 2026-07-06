@@ -38,7 +38,7 @@ struct Cli {
 enum Task {
     /// Run unit tests.
     Test,
-    /// Build the `agent-gossip` binary. Cross-compile with `--target <triple>` or the
+    /// Build the `agent-mesh` binary. Cross-compile with `--target <triple>` or the
     /// `--arch <arch>` shorthand (static-musl Linux, for the Pi fleet) through a
     /// project-pinned zig + cargo-zigbuild toolchain — self-contained, never the
     /// global zig or a global `cargo install`.
@@ -69,7 +69,7 @@ enum Task {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
-    /// Run the binary (`cargo run`). Extra args go to `agent-gossip`
+    /// Run the binary (`cargo run`). Extra args go to `agent-mesh`
     /// (e.g. `cargo task run create`).
     Run {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]

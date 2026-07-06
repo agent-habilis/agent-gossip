@@ -17,7 +17,7 @@ const RPC_TIMEOUT: Duration = MSG_TIMEOUT;
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn rpc_tasks_list_reaches_the_peer() {
     let mut alice = InProcNode::create("rpc-list").await;
-    let mut bob = InProcNode::join(&alice.swarm, "rpc-bob").await;
+    let mut bob = InProcNode::join(&alice.mesh, "rpc-bob").await;
     alice.send("link").await;
     assert!(bob.wait_body("link", MSG_TIMEOUT).await, "bob meshed");
     // Prove the reverse path too: the RPC response rides bob's outbound, and
@@ -49,11 +49,11 @@ async fn rpc_tasks_list_reaches_the_peer() {
 /// A directed `message/send` (no `taskId`) over gossip creates a task: the
 /// peer (the A2A server) **mints a fresh server id**, opens the task, and
 /// returns the authoritative `submitted` `Task` synchronously. No
-/// deterministic id, no `swarm-task` marker.
+/// deterministic id, no `mesh-task` marker.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn rpc_message_send_opens_task_and_returns_it() {
     let mut alice = InProcNode::create("rpc-send").await;
-    let mut bob = InProcNode::join(&alice.swarm, "rpc-send-bob").await;
+    let mut bob = InProcNode::join(&alice.mesh, "rpc-send-bob").await;
     alice.send("link").await;
     assert!(bob.wait_body("link", MSG_TIMEOUT).await, "bob meshed");
     // Prove the reverse path too: the RPC response rides bob's outbound, and
@@ -68,7 +68,7 @@ async fn rpc_message_send_opens_task_and_returns_it() {
         "messageId": our_message_id,
         "role": "ROLE_USER",
         "parts": [{ "text": "review src/net" }],
-        "contextId": alice.swarm,
+        "contextId": alice.mesh,
     }});
     let response = alice
         .session
@@ -97,12 +97,12 @@ async fn rpc_message_send_opens_task_and_returns_it() {
     bob.leave().await;
 }
 
-/// A mutating op (`swarm/state.merge`) is refused by the safe-set gate — a
+/// A mutating op (`mesh/state.merge`) is refused by the safe-set gate — a
 /// peer never authors global state on the caller's behalf.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn rpc_state_merge_is_refused() {
     let mut alice = InProcNode::create("rpc-merge").await;
-    let mut bob = InProcNode::join(&alice.swarm, "rpc-merge-bob").await;
+    let mut bob = InProcNode::join(&alice.mesh, "rpc-merge-bob").await;
     alice.send("link").await;
     assert!(bob.wait_body("link", MSG_TIMEOUT).await, "bob meshed");
     // Prove the reverse path too: the RPC response rides bob's outbound, and
@@ -116,7 +116,7 @@ async fn rpc_state_merge_is_refused() {
         .session
         .a2a_call(
             "rpc-merge-bob".parse().unwrap(),
-            "swarm/state.merge".to_string(),
+            "mesh/state.merge".to_string(),
             json!({ "merge": { "x": 1 } }),
             RPC_TIMEOUT,
         )

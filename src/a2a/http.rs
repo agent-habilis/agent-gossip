@@ -6,7 +6,7 @@ use hyper::{Method, Request, Response, StatusCode};
 use tokio::net::TcpListener;
 use tokio::sync::{mpsc, oneshot};
 
-use agent_habilis_gossip::protocol::Nickname;
+use agent_habilis_mesh::protocol::Nickname;
 
 use super::rpc::{A2aOp, A2aRequest, RpcError, parse_op};
 
@@ -117,8 +117,8 @@ fn rpc_error_response(id: &serde_json::Value, error: &RpcError) -> Response<Full
     )
 }
 
-/// Route one request. The URL names the target agent: `/` and `/swarm` are
-/// the swarm-collective endpoint (broadcast), `/peers/<nick>` a participant.
+/// Route one request. The URL names the target agent: `/` and `/mesh` are
+/// the mesh-collective endpoint (broadcast), `/peers/<nick>` a participant.
 /// Cards are served unauthenticated (they are public on the mesh already);
 /// every JSON-RPC call requires the bearer token.
 async fn handle(
@@ -193,7 +193,7 @@ async fn rpc(
         );
     }
     let target = match request.uri().path() {
-        "/" | "/swarm" => None,
+        "/" | "/mesh" => None,
         path => match path.strip_prefix("/peers/").map(Nickname::new) {
             Some(Ok(nick)) => Some(nick),
             Some(Err(_)) | None => return not_found(),

@@ -7,7 +7,7 @@ timestamp: 2026-06-28T00:00:00Z
 roles: [initiator, worker]
 coordinator: dedicated
 harness: pi
-prereqs: [agent-gossip]
+prereqs: [agent-mesh]
 network: private
 ---
 
@@ -30,7 +30,7 @@ pi (where the todo integration lives). Set up per the
 
 ## Briefing
 
-- swarm: `scenario-todo`
+- mesh: `scenario-todo`
 - a small, checkable task (any)
 - todo plugin: present or absent — the runner's choice; the brief is the same.
 

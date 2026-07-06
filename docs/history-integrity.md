@@ -3,11 +3,11 @@
 > 🚧 **Under construction.** This document is a work in progress and may be
 > incomplete or out of date.
 
-How `agent-gossip` makes its message history **authentic and
+How `agent-mesh` makes its message history **authentic and
 tamper-evident** without a server, a blockchain, or consensus.
 
 This is the mechanism companion to [`security.md`](./security.md) (the
-threat-model summary), [`swarm-hash.md`](./swarm-hash.md) (the `💬…` token),
+threat-model summary), [`mesh-hash.md`](./mesh-hash.md) (the `💬…` token),
 and [`gossip.md`](./gossip.md) (why every member receives every message).
 
 > **Status:** implemented. The message envelope carries the fields below; an
@@ -58,7 +58,7 @@ proof-of-work and consensus latency — and a single chain would orphan the
 
 ## Identity
 
-Each participant holds a per-swarm **Ed25519 keypair**, separate from the
+Each participant holds a per-mesh **Ed25519 keypair**, separate from the
 transport `EndpointId` and the shared seed-derived rendezvous key (the first
 *per-author* credential in the system).
 
@@ -67,7 +67,7 @@ transport `EndpointId` and the shared seed-derived rendezvous key (the first
   lifetime, not written to disk. A process *restart* therefore mints a new
   key — a new identity / fingerprint — though it may reuse the same display
   nickname freely (names are never claimed). **Persistence** (a stable
-  on-disk key keyed by `(swarm_prefix, nickname)`, outside the wiped `/tmp`)
+  on-disk key keyed by `(mesh_prefix, nickname)`, outside the wiped `/tmp`)
   is a follow-up that makes a reconnect re-present the *same* identity
   instead of a new one.
 - **Identity = the public key** (its short **fingerprint** — a prefix/hash
@@ -112,7 +112,7 @@ random-UUID `id` is **kept** as the dedup/cursor key, so the IPC contract
 ### Canonical bytes
 
 Signing and the content hash use a **deterministic, length-prefixed
-concatenation** of the signed fields — `version, id, kind, swarm, author, ts,
+concatenation** of the signed fields — `version, id, kind, mesh, author, ts,
 body, pubkey, seq, prev, ext` (everything except `sig`) — not `serde_json`
 (which is not canonical), domain-separated like `crypto::derive_secret`.
 `content_hash = SHA-256(canonical_bytes)`; `sig =
@@ -152,7 +152,7 @@ non-unique display labels that are never claimed — see [Identity](#identity).
 ### Bounding the identity maps
 
 `author_seqs` and `forked` are keyed by **identity**, not by message, so they
-are *not* bounded by the log — and this is an **open** swarm, where an attacker
+are *not* bounded by the log — and this is an **open** mesh, where an attacker
 can mint unlimited fresh keypairs and send one signed message each (a sybil /
 memory-DoS flood). Signatures do not help: each fake key is "valid," just
 worthless. **Bound implemented — tied to the log window:**
@@ -271,7 +271,7 @@ The human/TUI rendering is unchanged; only the `--output json` stream gains
 the field. **(Implemented.)**
 
 ```json
-{"event":"message","id":"uuid","type":"msg","swarm":"💬://...","author":"nick","pubkey":"<64-hex>","ts":1234567890,"body":"hello","reply":null,"self":false}
+{"event":"message","id":"uuid","type":"msg","mesh":"💬://...","author":"nick","pubkey":"<64-hex>","ts":1234567890,"body":"hello","reply":null,"self":false}
 ```
 
 A new `fork` event (Phase 2) is emitted once per offending key when

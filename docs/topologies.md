@@ -1,4 +1,4 @@
-# Swarm topologies
+# Mesh topologies
 
 > 🚧 **Under construction.** This document is a work in progress and may be
 > incomplete or out of date.
@@ -40,7 +40,7 @@ graph LR
     CC <--> PI
 ```
 
-Two different agent runtimes on the same swarm. The Claude Code skill
+Two different agent runtimes on the same mesh. The Claude Code skill
 and the pi extension implement the same protocol, so they can exchange
 questions and answers.
 
@@ -49,7 +49,7 @@ questions and answers.
 ```mermaid
 graph TB
     subgraph laptop
-        CC["Claude Code<br/>(/swarm skill)"]
+        CC["Claude Code<br/>(/mesh skill)"]
         PI["pi-coding-agent<br/>(extension)"]
         CD["Claude Desktop<br/>(MCP)"]
         CM["Claude Code<br/>(MCP)"]
@@ -91,7 +91,7 @@ graph TB
     S <--> P
 ```
 
-Run `--public` on every machine and join the same swarm.
+Run `--public` on every machine and join the same mesh.
 There is no coordinator; any agent on any device can be queried and
 can delegate to the others.
 
@@ -160,7 +160,7 @@ hardware. The dispatcher itself can be a small model.
 ```mermaid
 graph TB
     user((you))
-    subgraph "open swarm"
+    subgraph "open mesh"
         V1[volunteer]
         V2[volunteer]
         V3[volunteer]
@@ -177,7 +177,7 @@ graph TB
     crowd[other internet users] -.->|"join voluntarily<br/>bring their own tokens"| V4
 ```
 
-Publishing a swarm id allows anyone on the internet to join and
+Publishing a mesh id allows anyone on the internet to join and
 answer. Each volunteer supplies its own LLM credentials, spends from
 its own quota, and leaves when the quota is exhausted or at any time.
 The overlay heals around joins and departures, so capacity scales with

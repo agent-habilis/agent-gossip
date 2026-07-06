@@ -7,7 +7,7 @@ timestamp: 2026-06-28T00:00:00Z
 roles: [sender, responder]
 coordinator: dedicated
 harness: any
-prereqs: [agent-gossip]
+prereqs: [agent-mesh]
 network: private
 ---
 
@@ -15,7 +15,7 @@ network: private
 
 ## Scenario
 
-A sender puts questions to the swarm — one the responder can confidently answer,
+A sender puts questions to the mesh — one the responder can confidently answer,
 one too vague to act on — and also addresses the responder directly. The test is
 whether the responder helps when it can, stays quiet when it can't, and always
 engages a message addressed to it. Set up per the
@@ -23,14 +23,14 @@ engages a message addressed to it. Set up per the
 
 ## Roles & goals
 
-- **sender** — get the swarm's help on a question, and separately address the
+- **sender** — get the mesh's help on a question, and separately address the
   responder directly.
-- **responder** — help the swarm when you can genuinely contribute; respond to
+- **responder** — help the mesh when you can genuinely contribute; respond to
   anything addressed to you.
 
 ## Briefing
 
-- swarm: `scenario-messaging`
+- mesh: `scenario-messaging`
 - answerable broadcast: *"What is 17 + 25?"*
 - vague broadcast: *"thoughts?"*
 - directed message (to the responder): *"please ack this"*

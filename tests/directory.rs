@@ -1,10 +1,10 @@
 //! Live advertise → discover, end to end, over the loopback ladder.
 //!
-//! The directory swarm is hardcoded public in normal operation, so this
+//! The directory mesh is hardcoded public in normal operation, so this
 //! path can't run against the public relay in CI. The `--directory-private`
 //! flag flips the directory to private (loopback ladder) and relaxes the
 //! `--advertise` requires-`--public` guard, so the whole pipeline —
-//! advertiser → directory mesh → discoverer → `swarm_found`/`swarm_lost`
+//! advertiser → directory mesh → discoverer → `mesh_found`/`mesh_lost`
 //! — runs hermetically. This is the regression guard for the directory
 //! bootstrap fix (a discoverer never co-hosts; only the advertiser does).
 
@@ -19,7 +19,7 @@ use common::{CONNECT_TIMEOUT, POLL, test_cmd, tmp_log};
 
 /// Loopback directory + fast timings so the test runs in seconds:
 /// short co-host grace (advertiser becomes the directory beacon fast),
-/// frequent re-ads, and a short expiry (quick `swarm_lost`).
+/// frequent re-ads, and a short expiry (quick `mesh_lost`).
 const DIR_FLAGS: [(&str, &str); 5] = [
     ("--directory-private", ""),
     ("--beacon-cohost-grace-secs", "2"),
@@ -48,7 +48,7 @@ fn reap(child: &mut Child) {
 
 #[test]
 fn directory_advertise_then_discover() {
-    // Advertiser: a private swarm that lists itself in directory `dtest`.
+    // Advertiser: a private mesh that lists itself in directory `dtest`.
     let adv_log = tmp_log("dir-adv");
     let adv_file = File::create(&adv_log).unwrap();
     let mut advertiser = test_cmd()
@@ -68,7 +68,7 @@ fn directory_advertise_then_discover() {
         .spawn()
         .expect("spawn advertiser");
 
-    // Pull the advertised swarm id out of the advertiser's `ready` event.
+    // Pull the advertised mesh id out of the advertiser's `ready` event.
     let ready = wait_for_line(&adv_log, "\"event\":\"ready\"", CONNECT_TIMEOUT);
     let Some(ready) = ready else {
         reap(&mut advertiser);
@@ -78,7 +78,7 @@ fn directory_advertise_then_discover() {
         );
     };
     let ready: serde_json::Value = serde_json::from_str(&ready).expect("ready json");
-    let listed_id = ready["swarm"].as_str().expect("swarm id").to_string();
+    let listed_id = ready["mesh"].as_str().expect("mesh id").to_string();
 
     // Discoverer: browse `dtest` and stream directory events.
     let disc_log = tmp_log("dir-disc");
@@ -98,8 +98,8 @@ fn directory_advertise_then_discover() {
         .spawn()
         .expect("spawn discoverer");
 
-    // The advertised swarm should surface as `swarm_found`.
-    let found = wait_for_line(&disc_log, "\"event\":\"swarm_found\"", CONNECT_TIMEOUT);
+    // The advertised mesh should surface as `mesh_found`.
+    let found = wait_for_line(&disc_log, "\"event\":\"mesh_found\"", CONNECT_TIMEOUT);
     let found_ok = found
         .as_deref()
         .is_some_and(|line| line.contains(&listed_id));
@@ -108,14 +108,14 @@ fn directory_advertise_then_discover() {
         let disc = fs::read_to_string(&disc_log).unwrap_or_default();
         reap(&mut advertiser);
         reap(&mut discoverer);
-        panic!("discoverer never reported swarm_found for {listed_id}\nadv:\n{adv}\ndisc:\n{disc}");
+        panic!("discoverer never reported mesh_found for {listed_id}\nadv:\n{adv}\ndisc:\n{disc}");
     }
 
-    // Advertiser exits → ads stop → the listing ages out → `swarm_lost`.
+    // Advertiser exits → ads stop → the listing ages out → `mesh_lost`.
     reap(&mut advertiser);
     let lost = wait_for_line(
         &disc_log,
-        "\"event\":\"swarm_lost\"",
+        "\"event\":\"mesh_lost\"",
         Duration::from_secs(30),
     );
     let lost_ok = lost
@@ -129,7 +129,7 @@ fn directory_advertise_then_discover() {
 
     assert!(
         lost_ok,
-        "discoverer never reported swarm_lost for {listed_id}\ndisc:\n{disc}"
+        "discoverer never reported mesh_lost for {listed_id}\ndisc:\n{disc}"
     );
 }
 
@@ -185,13 +185,13 @@ fn discover_stops_on_sigterm() {
         .spawn()
         .expect("spawn discoverer");
 
-    // Proven fully up once it surfaces the advertised swarm.
-    let up = wait_for_line(&disc_log, "\"event\":\"swarm_found\"", CONNECT_TIMEOUT).is_some();
+    // Proven fully up once it surfaces the advertised mesh.
+    let up = wait_for_line(&disc_log, "\"event\":\"mesh_found\"", CONNECT_TIMEOUT).is_some();
     reap(&mut advertiser);
     if !up {
         reap(&mut discoverer);
         panic!(
-            "discoverer never surfaced a swarm\ndisc:\n{}",
+            "discoverer never surfaced a mesh\ndisc:\n{}",
             fs::read_to_string(&disc_log).unwrap_or_default()
         );
     }

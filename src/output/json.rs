@@ -1,5 +1,5 @@
 //! The JSON wire layer: the serde shapes for every line the daemon
-//! emits on stdout (consumed by the `/swarm` skill and any `--output
+//! emits on stdout (consumed by the `/mesh` skill and any `--output
 //! json` client) plus the serializers that render them. Field
 //! order/naming is part of the wire format — documented in AGENTS.md,
 //! pinned by the insta snapshots in `tests`. The `Output` sink in the
@@ -11,10 +11,10 @@ use std::io::Write;
 
 use serde::Serialize;
 
-use agent_habilis_gossip::util::consts::SWARM_GLYPH;
+use agent_habilis_mesh::util::consts::MESH_GLYPH;
 
 use super::{OutputEvent, TaskMessageLeg};
-use agent_habilis_gossip::protocol::{Message, MessageKind, Nickname, PresenceSubtype};
+use agent_habilis_mesh::protocol::{Message, MessageKind, Nickname, PresenceSubtype};
 
 /// One-shot events (everything except the `"event":"message"` family).
 /// `#[serde(tag = "event")]` inlines the discriminator as the first field.
@@ -23,7 +23,7 @@ use agent_habilis_gossip::protocol::{Message, MessageKind, Nickname, PresenceSub
 pub(super) enum SimpleEvent<'a> {
     Ready {
         version: &'a str,
-        swarm: &'a str,
+        mesh: &'a str,
         name: &'a str,
         nickname: &'a str,
         /// Skill-drift warning for a stale install; omitted from the wire when
@@ -40,7 +40,7 @@ pub(super) enum SimpleEvent<'a> {
     PeerTimeout {
         nickname: &'a str,
         last_seen_secs_ago: u64,
-        /// Pre-formatted, markdown-safe line the `/swarm` skill echoes
+        /// Pre-formatted, markdown-safe line the `/mesh` skill echoes
         /// verbatim. See [`peer_timeout_display`].
         display: String,
     },
@@ -87,7 +87,7 @@ struct MessageHeader<'a> {
     pub id: &'a str,
     #[serde(rename = "type")]
     pub ty: &'static str,
-    pub swarm: &'a str,
+    pub mesh: &'a str,
     pub author: &'a str,
     /// Author's full Ed25519 public key (hex) — the cryptographic identity
     /// behind the display `author`. `Some` on every signed (real) message;
@@ -113,7 +113,7 @@ struct MsgLine<'a> {
     /// panic on crafted input.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<crate::a2a::Message>,
-    /// Pre-formatted, markdown-safe line the `/swarm` skill echoes
+    /// Pre-formatted, markdown-safe line the `/mesh` skill echoes
     /// verbatim — the single source of truth for what the user sees.
     /// See [`msg_display`].
     pub display: String,
@@ -139,7 +139,7 @@ struct PresenceLine<'a> {
 struct TaskLine<'a> {
     pub event: &'static str,
     pub id: &'a str,
-    pub swarm: &'a str,
+    pub mesh: &'a str,
     pub author: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pubkey: Option<&'a str>,
@@ -167,7 +167,7 @@ struct TaskLine<'a> {
 struct TaskProgressLine<'a> {
     pub event: &'static str,
     pub id: &'a str,
-    pub swarm: &'a str,
+    pub mesh: &'a str,
     pub author: &'a str,
     pub ts: i64,
     pub to: &'a str,
@@ -191,7 +191,7 @@ struct StateLine<'a> {
     id: &'a str,
     #[serde(rename = "type")]
     ty: &'static str,
-    swarm: &'a str,
+    mesh: &'a str,
     author: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pubkey: Option<&'a str>,
@@ -208,7 +208,7 @@ fn message_header<'a>(msg: &'a Message, ty: &'static str) -> MessageHeader<'a> {
         event: "message",
         id: msg.id.as_str(),
         ty,
-        swarm: msg.swarm.as_str(),
+        mesh: msg.mesh.as_str(),
         author: msg.author.as_str(),
         pubkey: (!msg.pubkey.is_empty()).then_some(msg.pubkey.as_str()),
         ts: msg.timestamp,
@@ -216,7 +216,7 @@ fn message_header<'a>(msg: &'a Message, ty: &'static str) -> MessageHeader<'a> {
 }
 
 /// The pre-formatted, markdown-safe `display` line for a `msg` event —
-/// the single source of truth the `/swarm` skill echoes verbatim, so the
+/// the single source of truth the `/mesh` skill echoes verbatim, so the
 /// model never composes or re-types a body. Nicks are wrapped in literal
 /// backticks: the skill renders into markdown, where a bare `<nick>` is
 /// stripped as an HTML tag, and the code span prevents that. The body is
@@ -225,8 +225,8 @@ fn message_header<'a>(msg: &'a Message, ty: &'static str) -> MessageHeader<'a> {
 /// backticks).
 fn msg_display(author: &str, body: &str, reply: Option<&str>) -> String {
     match reply {
-        Some(target) => format!("{SWARM_GLYPH}\u{FE0F} `<{author}>` → `<{target}>`: {body}"),
-        None => format!("{SWARM_GLYPH}\u{FE0F} `<{author}>`: {body}"),
+        Some(target) => format!("{MESH_GLYPH}\u{FE0F} `<{author}>` → `<{target}>`: {body}"),
+        None => format!("{MESH_GLYPH}\u{FE0F} `<{author}>`: {body}"),
     }
 }
 
@@ -244,7 +244,7 @@ fn task_display(
     body: &str,
 ) -> String {
     let label = state.map_or_else(|| kind.to_owned(), |state| format!("{kind} {state}"));
-    format!("{SWARM_GLYPH}\u{FE0F} task {label} `<{author}>` → `<{to}>`: {body}")
+    format!("{MESH_GLYPH}\u{FE0F} task {label} `<{author}>` → `<{to}>`: {body}")
 }
 
 /// `display` line for a `task_progress` event:
@@ -253,9 +253,9 @@ fn task_display(
 fn task_progress_display(author: &str, to: &str, done: Option<u64>, total: Option<u64>) -> String {
     match (done, total) {
         (Some(done), Some(total)) => {
-            format!("{SWARM_GLYPH}\u{FE0F} task progress `<{author}>` → `<{to}>`: {done}/{total}")
+            format!("{MESH_GLYPH}\u{FE0F} task progress `<{author}>` → `<{to}>`: {done}/{total}")
         }
-        _ => format!("{SWARM_GLYPH}\u{FE0F} task progress `<{author}>` → `<{to}>`: working"),
+        _ => format!("{MESH_GLYPH}\u{FE0F} task progress `<{author}>` → `<{to}>`: working"),
     }
 }
 
@@ -263,26 +263,26 @@ fn task_progress_display(author: &str, to: &str, done: Option<u64>, total: Optio
 /// `` 💬️ `<author>` has joined `` / `… has left`. See [`msg_display`] for the
 /// backtick rationale.
 fn presence_display(author: &str, subtype: PresenceSubtype) -> String {
-    format!("{SWARM_GLYPH}\u{FE0F} `<{author}>` has {subtype}")
+    format!("{MESH_GLYPH}\u{FE0F} `<{author}>` has {subtype}")
 }
 
 /// `display` line for a `peer_timeout` event.
 pub(super) fn peer_timeout_display(nickname: &str) -> String {
-    format!("{SWARM_GLYPH}\u{FE0F} `<{nickname}>` went quiet")
+    format!("{MESH_GLYPH}\u{FE0F} `<{nickname}>` went quiet")
 }
 
 /// `display` line for a `peer_return` event.
 pub(super) fn peer_return_display(nickname: &str) -> String {
-    format!("{SWARM_GLYPH}\u{FE0F} `<{nickname}>` came back")
+    format!("{MESH_GLYPH}\u{FE0F} `<{nickname}>` came back")
 }
 
 /// `display` block for a `ping_report` event: a markdown RTT table (one
 /// row per responding peer), or a single line when no peer answered.
 pub(super) fn ping_report_display(peers: &[PingPeer], known: usize) -> String {
     if peers.is_empty() {
-        return format!("{SWARM_GLYPH}\u{FE0F} ping: no peers responded");
+        return format!("{MESH_GLYPH}\u{FE0F} ping: no peers responded");
     }
-    let mut out = format!("{SWARM_GLYPH}\u{FE0F} ping\n| peer | RTT |\n|---|---|\n");
+    let mut out = format!("{MESH_GLYPH}\u{FE0F} ping\n| peer | RTT |\n|---|---|\n");
     for peer in peers {
         let _ = writeln!(out, "| `<{}>` | {}ms |", peer.nickname, peer.rtt_ms);
     }
@@ -309,7 +309,7 @@ pub(super) fn emit_json<T: Serialize>(value: &T) {
 /// Format a presence message as JSON.
 ///
 /// Serializes the struct directly because the documented wire format
-/// pins the field order (`event`, `id`, `type`, `swarm`, `author`,
+/// pins the field order (`event`, `id`, `type`, `mesh`, `author`,
 /// `ts`, …) and `Value::to_string` would sort keys alphabetically.
 pub(super) fn format_presence_json(msg: &Message, subtype: PresenceSubtype) -> String {
     // Presence carries no body — peer model/harness/host lives in the `meta` channel.
@@ -387,7 +387,7 @@ pub(super) fn format_task_json(msg: &Message, is_self: bool) -> String {
         .expect("a task frame carries its task id")
         .as_str()
         .to_owned();
-    // A liveness beat (a status marked `swarm:beat`) → task_progress widget.
+    // A liveness beat (a status marked `mesh:beat`) → task_progress widget.
     if let Ok(payload) = crate::a2a::gossip::status_payload(msg)
         && crate::a2a::gossip::is_beat(&payload)
     {
@@ -396,7 +396,7 @@ pub(super) fn format_task_json(msg: &Message, is_self: bool) -> String {
         return serde_json::to_string(&TaskProgressLine {
             event: "task_progress",
             id: msg.id.as_str(),
-            swarm: msg.swarm.as_str(),
+            mesh: msg.mesh.as_str(),
             author: msg.author.as_str(),
             ts: msg.timestamp,
             to: to.as_str(),
@@ -414,7 +414,7 @@ pub(super) fn format_task_json(msg: &Message, is_self: bool) -> String {
     serde_json::to_string(&TaskLine {
         event: "task",
         id: msg.id.as_str(),
-        swarm: msg.swarm.as_str(),
+        mesh: msg.mesh.as_str(),
         author: msg.author.as_str(),
         pubkey: (!msg.pubkey.is_empty()).then_some(msg.pubkey.as_str()),
         ts: msg.timestamp,
@@ -437,10 +437,10 @@ pub(super) fn format_task_message_json(leg: &TaskMessageLeg<'_>) -> String {
     serde_json::to_string(&TaskLine {
         event: "task",
         id: leg.id,
-        swarm: leg.swarm,
+        mesh: leg.mesh,
         author: leg.author,
         pubkey: None,
-        ts: agent_habilis_gossip::util::clock::unix_secs(),
+        ts: agent_habilis_mesh::util::clock::unix_secs(),
         to: leg.peer,
         task_id: leg.task_id.to_owned(),
         kind: "message",
@@ -539,9 +539,9 @@ fn body_merge(body: &str) -> Option<serde_json::Value> {
 /// so the skill's markdown renderer keeps the `<nick>`; "you" is plain text.
 fn state_display(author: &str, is_self: bool, what: &str) -> String {
     if is_self {
-        format!("{SWARM_GLYPH}\u{FE0F} you changed {what}")
+        format!("{MESH_GLYPH}\u{FE0F} you changed {what}")
     } else {
-        format!("{SWARM_GLYPH}\u{FE0F} `<{author}>` changed {what}")
+        format!("{MESH_GLYPH}\u{FE0F} `<{author}>` changed {what}")
     }
 }
 
@@ -549,7 +549,7 @@ fn state_display(author: &str, is_self: bool, what: &str) -> String {
 /// header, the merge delta (pulled out of the `State` body), the freshly-derived
 /// `document`, the `display` line, and `self`.
 pub(super) fn format_state_json(
-    channel: agent_habilis_gossip::protocol::Channel,
+    channel: agent_habilis_mesh::protocol::Channel,
     event: &Message,
     document: &serde_json::Value,
     is_self: bool,
@@ -563,7 +563,7 @@ pub(super) fn format_state_json(
         event: channel.label(),
         id: event.id.as_str(),
         ty: channel.label(),
-        swarm: event.swarm.as_str(),
+        mesh: event.mesh.as_str(),
         author: event.author.as_str(),
         pubkey: (!event.pubkey.is_empty()).then_some(event.pubkey.as_str()),
         ts: event.timestamp,
@@ -580,7 +580,7 @@ pub(super) fn format_state_json(
 /// advance its `--after` cursor. The body after `seq` is byte-identical to the
 /// live `--output json` line for the same event (same [`event_json`]
 /// renderer) — the parity guarantee `poll` rests on. `None` for events that
-/// produce no JSON line (e.g. `SwarmId`).
+/// produce no JSON line (e.g. `MeshId`).
 #[must_use]
 pub fn surfaced_event_json(seq: u64, event: &OutputEvent) -> Option<String> {
     let line = event_json(event)?;
@@ -595,21 +595,21 @@ pub fn surfaced_event_json(seq: u64, event: &OutputEvent) -> Option<String> {
 /// Render a captured [`OutputEvent`] to the exact JSON line the
 /// daemon writes in `--output json` mode. Reuses the same serializers
 /// as the `Stream` sink, so in-process tests assert the byte-identical
-/// wire format the `/swarm` skill + MCP clients parse. `None` for events
-/// that produce no JSON line in JSON mode (`SwarmId` is the bare stderr
+/// wire format the `/mesh` skill + MCP clients parse. `None` for events
+/// that produce no JSON line in JSON mode (`MeshId` is the bare stderr
 /// `💬…` line, never JSON).
 #[must_use]
 pub fn event_json(event: &OutputEvent) -> Option<String> {
     let json = match event {
         OutputEvent::Ready {
-            swarm,
+            mesh,
             name,
             nickname,
             drift,
             a2a_port,
         } => serde_json::to_string(&SimpleEvent::Ready {
             version: crate::VERSION,
-            swarm: swarm.as_str(),
+            mesh: mesh.as_str(),
             name: name.as_str(),
             nickname: nickname.as_str(),
             drift: drift.as_deref(),
@@ -621,7 +621,7 @@ pub fn event_json(event: &OutputEvent) -> Option<String> {
         }
         OutputEvent::TaskMessage {
             id,
-            swarm,
+            mesh,
             author,
             peer,
             task_id,
@@ -631,7 +631,7 @@ pub fn event_json(event: &OutputEvent) -> Option<String> {
         } => {
             return Some(format_task_message_json(&TaskMessageLeg {
                 id,
-                swarm,
+                mesh,
                 author,
                 peer,
                 task_id,
@@ -689,7 +689,7 @@ pub fn event_json(event: &OutputEvent) -> Option<String> {
             document,
             is_self,
         } => return Some(format_state_json(*channel, event, document, *is_self)),
-        OutputEvent::SwarmId { .. } => return None,
+        OutputEvent::MeshId { .. } => return None,
     };
     json.ok()
 }

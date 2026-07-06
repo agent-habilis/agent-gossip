@@ -1,4 +1,4 @@
-//! `agent-gossip plug` / `agent-gossip unplug`: install or remove the swarm integrations
+//! `agent-mesh plug` / `agent-mesh unplug`: install or remove the mesh integrations
 //! across agents. Each artifact is embedded at compile time (like the manual),
 //! so a brew/cargo-installed binary carries them with no repo or external
 //! installer. Both act immediately; `plug` is reversible with `unplug`.
@@ -9,7 +9,7 @@ use std::process::Command;
 use anyhow::{Context, Result, bail};
 use include_dir::Dir;
 
-use agent_habilis_gossip::util::output::{status, status_warn, warn};
+use agent_habilis_mesh::util::output::{status, status_warn, warn};
 
 use super::agent::{Agent, CC_PLUGIN, GENERIC_SKILL, PI_EXTENSION, home_dir, skipped};
 
@@ -86,7 +86,7 @@ fn finish(acted: usize, verb: &str) {
         warn("nothing to do (try --agent claude-code|pi|generic|cursor)");
     } else {
         let noun = if acted == 1 { "agent" } else { "agents" };
-        status("Finished", &format!("{verb} swarm · {acted} {noun}"));
+        status("Finished", &format!("{verb} mesh · {acted} {noun}"));
     }
 }
 

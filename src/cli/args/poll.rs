@@ -1,17 +1,17 @@
-//! `poll` command args: retrieve buffered messages from a running swarm
+//! `poll` command args: retrieve buffered messages from a running mesh
 //! process via IPC.
 
 use clap::Parser;
 
-use agent_habilis_gossip::protocol::{Nickname, SwarmId};
+use agent_habilis_mesh::protocol::{Nickname, MeshId};
 
 use super::output::OutputFormat;
 
 #[derive(Parser, Debug)]
 pub(crate) struct PollOpts {
-    /// Swarm identifier (💬...)
+    /// Mesh identifier (💬...)
     #[arg(long)]
-    pub swarm: SwarmId,
+    pub mesh: MeshId,
 
     /// Nickname of the local agent (must have a running join/create session)
     #[arg(long)]

@@ -1,9 +1,9 @@
-//! `discover` command args: browse swarms advertising in a directory.
+//! `discover` command args: browse meshes advertising in a directory.
 //! (The live picker runtime is [`crate::cli::discover`].)
 
 use clap::Parser;
 
-use agent_habilis_gossip::protocol::swarm::SwarmName;
+use agent_habilis_mesh::protocol::mesh::MeshName;
 
 use super::lookup::PublicLookupArgs;
 use super::shared::SharedServerOpts;
@@ -14,7 +14,7 @@ pub(crate) struct DiscoverOpts {
     /// directory. Must match the directory publishers passed to
     /// `--advertise`.
     #[arg(long)]
-    pub directory: Option<SwarmName>,
+    pub directory: Option<MeshName>,
 
     /// Lookups used to reach the directory (`--mdns`/`--dht`/`--relay`).
     /// Naming none (or `--public`) uses all three; naming any restricts to
@@ -33,11 +33,11 @@ mod tests {
     use clap::Parser;
 
     use crate::cli::args::{Cli, Commands};
-    use agent_habilis_gossip::protocol::swarm::SwarmName;
+    use agent_habilis_mesh::protocol::mesh::MeshName;
 
     #[test]
     fn discover_parses_directory() {
-        fn directory_of(args: &[&str]) -> Option<SwarmName> {
+        fn directory_of(args: &[&str]) -> Option<MeshName> {
             match Cli::parse_from(args).command {
                 Commands::Discover { opts } => opts.directory,
                 Commands::Create { .. }
@@ -62,12 +62,12 @@ mod tests {
             }
         }
         // Bare discover ⇒ no explicit directory (defaults to global downstream).
-        assert!(directory_of(&["agent-gossip", "discover"]).is_none());
-        // `--directory` is decoded into a SwarmName.
+        assert!(directory_of(&["agent-mesh", "discover"]).is_none());
+        // `--directory` is decoded into a MeshName.
         assert_eq!(
-            directory_of(&["agent-gossip", "discover", "--directory", "gamedev"])
+            directory_of(&["agent-mesh", "discover", "--directory", "gamedev"])
                 .as_ref()
-                .map(SwarmName::as_str),
+                .map(MeshName::as_str),
             Some("gamedev")
         );
     }

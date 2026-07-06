@@ -1,13 +1,13 @@
 //! Advertising an a2a ticket into a directory and discovering it there — the
 //! `--advertise` / `a2a discover` path. A directory is itself a well-known
-//! swarm (derived from a name + lookups); the exposer joins it and re-broadcasts
+//! mesh (derived from a name + lookups); the exposer joins it and re-broadcasts
 //! a `{"ticket": "💬…", "label": "…"}` body on a timer, and a discoverer joins
 //! the same directory, collects those ads, ages out silent ones, and hands the
 //! chosen ticket back to `a2a connect`.
 //!
 //! The pure collector ([`TicketListings`]) is clock-injected and network-free
 //! so it unit-tests without a mesh; the live sides ([`spawn_ticket_advertiser`]
-//! / [`TicketDirectory`]) wrap it around a directory [`SwarmSession`].
+//! / [`TicketDirectory`]) wrap it around a directory [`MeshSession`].
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -18,13 +18,13 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinHandle;
 
-use crate::embed::{DIRECTORY_ADVERTISER_COHOST, SwarmSession};
-use agent_habilis_gossip::daemon::CoHostPolicy;
-use agent_habilis_gossip::directory::directory_swarm;
-use agent_habilis_gossip::protocol::swarm::{LookupOpts, LookupSet, SwarmName, resolve_lookups};
-use agent_habilis_gossip::protocol::{MessageBody, Nickname, SwarmId};
-use agent_habilis_gossip::util::clock::unix_secs;
-use agent_habilis_gossip::util::tuning::{
+use crate::embed::{DIRECTORY_ADVERTISER_COHOST, MeshSession};
+use agent_habilis_mesh::daemon::CoHostPolicy;
+use agent_habilis_mesh::directory::directory_mesh;
+use agent_habilis_mesh::protocol::mesh::{LookupOpts, LookupSet, MeshName, resolve_lookups};
+use agent_habilis_mesh::protocol::{MessageBody, Nickname, MeshId};
+use agent_habilis_mesh::util::clock::unix_secs;
+use agent_habilis_mesh::util::tuning::{
     advertise_interval_secs, directory_expiry_secs, directory_private_for_test,
 };
 
@@ -40,7 +40,7 @@ const MAX_LABEL_CHARS: usize = 64;
 
 /// A directory ad: the exposer's full `💬…` ticket plus an optional human label.
 /// Serialized as a JSON object; its `ticket` key is what tells it apart from a
-/// swarm ad's `id` key, so the two never cross-parse.
+/// mesh ad's `id` key, so the two never cross-parse.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct TicketAd {
     pub ticket: String,
@@ -175,7 +175,7 @@ impl TicketListings {
 /// # Errors
 /// The ad fails to serialize into a message body (a bad label).
 pub(crate) fn spawn_ticket_advertiser(
-    directory: SwarmName,
+    directory: MeshName,
     lookups: LookupOpts,
     ad: &TicketAd,
 ) -> Result<JoinHandle<()>> {
@@ -183,13 +183,13 @@ pub(crate) fn spawn_ticket_advertiser(
     // every tick.
     let body = ad.to_body()?;
     Ok(tokio::spawn(async move {
-        let swarm = directory_swarm(&directory, lookups);
+        let mesh = directory_mesh(&directory, lookups);
         let session =
-            match SwarmSession::join_decoded(swarm, None, DIRECTORY_ADVERTISER_COHOST).await {
+            match MeshSession::join_decoded(mesh, None, DIRECTORY_ADVERTISER_COHOST).await {
                 Ok(session) => session,
                 Err(error) => {
                     tracing::warn!(
-                        target: "agent_gossip::directory",
+                        target: "agent_mesh::directory",
                         %error,
                         directory = %directory,
                         "a2a advertise: could not join the directory; ticket stays unlisted"
@@ -202,7 +202,7 @@ pub(crate) fn spawn_ticket_advertiser(
             ticker.tick().await;
             if let Err(error) = session.send(body.clone()).await {
                 tracing::debug!(
-                    target: "agent_gossip::directory",
+                    target: "agent_mesh::directory",
                     %error,
                     "a2a advertise: re-broadcast failed (will retry next tick)"
                 );
@@ -224,7 +224,7 @@ pub(crate) enum TicketDirectoryEvent {
 /// background, and ages out silent publishers.
 #[derive(Debug)]
 pub(crate) struct TicketDirectory {
-    session: Option<SwarmSession>,
+    session: Option<MeshSession>,
     listings: Arc<Mutex<TicketListings>>,
     events_rx: Option<mpsc::UnboundedReceiver<TicketDirectoryEvent>>,
     task: Option<JoinHandle<()>>,
@@ -232,15 +232,15 @@ pub(crate) struct TicketDirectory {
 
 impl TicketDirectory {
     /// Open directory `name` and collect a2a ticket ads over `lookups` — the
-    /// same topic-coupling rule as swarm discovery: advertiser and discoverer
+    /// same topic-coupling rule as mesh discovery: advertiser and discoverer
     /// meet only over the same lookups.
     ///
     /// # Errors
     /// The directory session cannot be established.
-    pub(crate) async fn open(name: SwarmName, lookups: LookupSet) -> Result<Self> {
+    pub(crate) async fn open(name: MeshName, lookups: LookupSet) -> Result<Self> {
         let resolved = resolve_lookups(!directory_private_for_test(), lookups);
-        let swarm = directory_swarm(&name, resolved);
-        let session = SwarmSession::join_decoded(swarm, None, CoHostPolicy::Never).await?;
+        let mesh = directory_mesh(&name, resolved);
+        let session = MeshSession::join_decoded(mesh, None, CoHostPolicy::Never).await?;
         let mut inbound = session.messages();
         let listings = Arc::new(Mutex::new(TicketListings::new()));
         let (events_tx, events_rx) = mpsc::unbounded_channel();
@@ -311,18 +311,18 @@ impl TicketDirectory {
         self.events_rx.take()
     }
 
-    /// The directory session's `(swarm id, nickname)` while open — for
+    /// The directory session's `(mesh id, nickname)` while open — for
     /// `logging::attach`.
-    pub(crate) fn session_identity(&self) -> Option<(&SwarmId, &Nickname)> {
+    pub(crate) fn session_identity(&self) -> Option<(&MeshId, &Nickname)> {
         self.session
             .as_ref()
-            .map(|session| (session.swarm_id(), session.nickname()))
+            .map(|session| (session.mesh_id(), session.nickname()))
     }
 
     /// Leave the directory and stop collecting.
     ///
     /// # Errors
-    /// Propagates a clean-shutdown error from [`SwarmSession::leave`].
+    /// Propagates a clean-shutdown error from [`MeshSession::leave`].
     pub(crate) async fn close(mut self) -> Result<()> {
         if let Some(task) = self.task.take() {
             task.abort();
@@ -348,7 +348,7 @@ mod tests {
 
     use super::{TicketAd, TicketChange, TicketListings};
     use crate::a2a::ticket::A2aTicket;
-    use agent_habilis_gossip::protocol::swarm::LookupOpts;
+    use agent_habilis_mesh::protocol::mesh::LookupOpts;
     use iroh::{EndpointAddr, SecretKey};
 
     fn a2a_ticket(secret: u8, password: bool) -> String {
@@ -375,8 +375,8 @@ mod tests {
     }
 
     #[test]
-    fn swarm_ads_and_ticket_ads_never_cross_parse() {
-        // A swarm ad has `id`; a ticket ad `ticket`.
+    fn mesh_ads_and_ticket_ads_never_cross_parse() {
+        // A mesh ad has `id`; a ticket ad `ticket`.
         assert!(TicketAd::parse(r#"{"id":"💬abc","peers":2}"#).is_none());
     }
 

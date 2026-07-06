@@ -1,4 +1,4 @@
-//! Integration tests: `agent-gossip mcp` over stdio.
+//! Integration tests: `agent-mesh mcp` over stdio.
 //!
 //! Spawns the binary, pipes in JSON-RPC, asserts the server's
 //! responses. These are the reliability guarantees we make at the
@@ -40,7 +40,7 @@ impl McpClient {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .expect("spawn agent-gossip mcp");
+            .expect("spawn agent-mesh mcp");
         let stdin = child.stdin.take().expect("child stdin");
         let stdout = child.stdout.take().expect("child stdout");
         let reader = BufReader::new(stdout);
@@ -61,7 +61,7 @@ impl McpClient {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .expect("spawn agent-gossip mcp");
+            .expect("spawn agent-mesh mcp");
         let stdin = child.stdin.take().expect("child stdin");
         let stdout = child.stdout.take().expect("child stdout");
         let reader = BufReader::new(stdout);
@@ -130,30 +130,30 @@ impl McpClient {
         self.recv_until_response(id)
     }
 
-    /// Shorthand for the `create_swarm` + extract-id ritual that
+    /// Shorthand for the `create_mesh` + extract-id ritual that
     /// opens almost every integration test. Returns
-    /// `(swarm_id, nickname)`.
-    fn create_and_get_swarm(&mut self, id: u64) -> (String, String) {
+    /// `(mesh_id, nickname)`.
+    fn create_and_get_mesh(&mut self, id: u64) -> (String, String) {
         let created = tool_result_json(&self.tool_call(
             id,
-            "create_swarm",
+            "create_mesh",
             serde_json::json!({ "name": "mcptest" }),
         ))
-        .expect("create_swarm must succeed");
-        let swarm = created["swarm"]
+        .expect("create_mesh must succeed");
+        let mesh = created["mesh"]
             .as_str()
-            .expect("create_swarm result must include swarm")
+            .expect("create_mesh result must include mesh")
             .to_string();
         assert_eq!(
             created["name"].as_str(),
             Some("mcptest"),
-            "create_swarm result must echo back the name"
+            "create_mesh result must echo back the name"
         );
         let nickname = created["nickname"]
             .as_str()
-            .expect("create_swarm result must include nickname")
+            .expect("create_mesh result must include nickname")
             .to_string();
-        (swarm, nickname)
+        (mesh, nickname)
     }
 }
 
@@ -184,7 +184,7 @@ fn tool_result_text(response: &serde_json::Value) -> Option<String> {
 }
 
 fn tool_error(response: &serde_json::Value) -> Option<String> {
-    // Either a JSON-RPC error (invalid args / not in swarm) or
+    // Either a JSON-RPC error (invalid args / not in mesh) or
     // `isError: true` in the result content.
     if let Some(msg) = response
         .get("error")
@@ -214,14 +214,14 @@ fn tool_error(response: &serde_json::Value) -> Option<String> {
     None
 }
 
-/// Spawn two MCP clients, have the first create a private swarm
+/// Spawn two MCP clients, have the first create a private mesh
 /// and the second join it, then block until gossip has linked them
 /// (creator sees the joiner's `joined` presence in its buffer).
-/// Returns `(creator, joiner, swarm_id, creator_nickname)`.
+/// Returns `(creator, joiner, mesh_id, creator_nickname)`.
 ///
 /// Id reservations (so tests can't collide with our probes):
-/// - `base_id + 0` — creator's `create_swarm`
-/// - `base_id + 1` — joiner's `join_swarm`
+/// - `base_id + 0` — creator's `create_mesh`
+/// - `base_id + 1` — joiner's `join_mesh`
 /// - `base_id + 90_000 .. base_id + 90_050` — linkage-probe `fetch_messages`
 ///   on the creator. Tests must keep their own ids below that offset.
 ///
@@ -236,13 +236,13 @@ fn create_pair(base_id: u64) -> (McpClient, McpClient, String, String) {
 fn create_pair_with(base_id: u64, creator_args: &[&str]) -> (McpClient, McpClient, String, String) {
     let mut creator = McpClient::spawn_with_args(creator_args);
     let mut joiner = McpClient::spawn();
-    let (swarm, creator_nick) = creator.create_and_get_swarm(base_id);
+    let (mesh, creator_nick) = creator.create_and_get_mesh(base_id);
     tool_result_json(&joiner.tool_call(
         base_id + 1,
-        "join_swarm",
-        serde_json::json!({ "swarm": swarm.clone() }),
+        "join_mesh",
+        serde_json::json!({ "mesh": mesh.clone() }),
     ))
-    .expect("join_swarm must succeed");
+    .expect("join_mesh must succeed");
 
     // Poll the joiner's buffer until it contains a message authored
     // by the creator — the only unambiguous signal that iroh's
@@ -282,31 +282,31 @@ fn create_pair_with(base_id: u64, creator_args: &[&str]) -> (McpClient, McpClien
         std::thread::sleep(Duration::from_millis(100));
     }
 
-    (creator, joiner, swarm, creator_nick)
+    (creator, joiner, mesh, creator_nick)
 }
 
 // ─── password ────────────────────────────────────────────────────
 
-/// A passworded swarm over MCP: `create_swarm` takes `password`;
-/// `join_swarm` without it (or with the wrong one) is an `invalid_params`
+/// A passworded mesh over MCP: `create_mesh` takes `password`;
+/// `join_mesh` without it (or with the wrong one) is an `invalid_params`
 /// error naming the requirement — the server never prompts — and the right
 /// password joins.
 #[test]
-fn join_swarm_requires_the_password() {
+fn join_mesh_requires_the_password() {
     let mut creator = McpClient::spawn();
     let created = tool_result_json(&creator.tool_call(
         7000,
-        "create_swarm",
+        "create_mesh",
         serde_json::json!({ "name": "mcp-pw", "password": "hunter2" }),
     ))
-    .expect("passworded create_swarm must succeed");
-    let swarm = created["swarm"].as_str().expect("swarm id").to_string();
+    .expect("passworded create_mesh must succeed");
+    let mesh = created["mesh"].as_str().expect("mesh id").to_string();
 
     let mut joiner = McpClient::spawn();
     let missing = tool_error(&joiner.tool_call(
         7001,
-        "join_swarm",
-        serde_json::json!({ "swarm": swarm.clone() }),
+        "join_mesh",
+        serde_json::json!({ "mesh": mesh.clone() }),
     ))
     .expect("join without password must error");
     assert!(
@@ -316,8 +316,8 @@ fn join_swarm_requires_the_password() {
 
     let wrong = tool_error(&joiner.tool_call(
         7002,
-        "join_swarm",
-        serde_json::json!({ "swarm": swarm.clone(), "password": "hunter3" }),
+        "join_mesh",
+        serde_json::json!({ "mesh": mesh.clone(), "password": "hunter3" }),
     ))
     .expect("join with a wrong password must error");
     assert!(
@@ -327,8 +327,8 @@ fn join_swarm_requires_the_password() {
 
     tool_result_json(&joiner.tool_call(
         7003,
-        "join_swarm",
-        serde_json::json!({ "swarm": swarm, "password": "hunter2" }),
+        "join_mesh",
+        serde_json::json!({ "mesh": mesh, "password": "hunter2" }),
     ))
     .expect("join with the right password must succeed");
 }
@@ -352,9 +352,9 @@ fn mcp_stdout_is_pure_jsonrpc_through_full_lifecycle() {
         r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"t","version":"0.1"}}}"#,
         r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
         r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#,
-        r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"create_swarm","arguments":{"name":"mcptest"}}}"#,
+        r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"create_mesh","arguments":{"name":"mcptest"}}}"#,
         r#"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"send_message","arguments":{"text":"sanity"}}}"#,
-        r#"{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"leave_swarm","arguments":{}}}"#,
+        r#"{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"leave_mesh","arguments":{}}}"#,
     ] {
         writeln!(stdin, "{line}").unwrap();
     }
@@ -393,7 +393,7 @@ fn tools_require_session_and_error_when_absent() {
     for (id, tool) in [
         (10, "send_message"),
         (11, "fetch_messages"),
-        (12, "swarm_info"),
+        (12, "mesh_info"),
     ] {
         let args = if tool == "send_message" {
             serde_json::json!({ "text": "hi" })
@@ -404,40 +404,40 @@ fn tools_require_session_and_error_when_absent() {
         let err = tool_error(&resp)
             .unwrap_or_else(|| panic!("{tool} without session should error, got: {resp}"));
         assert!(
-            err.contains("not in a swarm"),
-            "{tool}: expected 'not in a swarm' error, got: {err}"
+            err.contains("not in a mesh"),
+            "{tool}: expected 'not in a mesh' error, got: {err}"
         );
     }
 }
 
 #[test]
-fn swarm_version_works_without_a_session() {
+fn mesh_version_works_without_a_session() {
     let mut client = McpClient::spawn();
-    // Unlike the messaging tools, version is a local check — no swarm needed.
-    let resp = client.tool_call(30, "swarm_version", serde_json::json!({}));
-    let json = tool_result_json(&resp).expect("swarm_version should return a JSON result");
+    // Unlike the messaging tools, version is a local check — no mesh needed.
+    let resp = client.tool_call(30, "mesh_version", serde_json::json!({}));
+    let json = tool_result_json(&resp).expect("mesh_version should return a JSON result");
     assert!(
         json["version"]
             .as_str()
             .is_some_and(|text| !text.is_empty()),
-        "swarm_version must report a non-empty build string, got: {json}"
+        "mesh_version must report a non-empty build string, got: {json}"
     );
     // MCP carries no skill of its own, so the version result is version-only —
     // the former skill-drift fields are gone.
     assert!(
         json.get("skill_up_to_date").is_none() && json.get("skill_state").is_none(),
-        "swarm_version must not report skill fields over MCP, got: {json}"
+        "mesh_version must not report skill fields over MCP, got: {json}"
     );
 }
 
 #[test]
-fn swarm_manual_returns_the_manual_without_a_session() {
+fn mesh_manual_returns_the_manual_without_a_session() {
     let mut client = McpClient::spawn();
-    let resp = client.tool_call(31, "swarm_manual", serde_json::json!({}));
-    let text = tool_result_text(&resp).expect("swarm_manual should return text content");
+    let resp = client.tool_call(31, "mesh_manual", serde_json::json!({}));
+    let text = tool_result_text(&resp).expect("mesh_manual should return text content");
     assert!(
         text.contains("COMMANDS") && text.contains("JSON EVENTS"),
-        "swarm_manual must return the full manual, got {} chars",
+        "mesh_manual must return the full manual, got {} chars",
         text.len()
     );
 }
@@ -455,55 +455,55 @@ fn initialize_carries_behavioral_instructions() {
         .as_str()
         .expect("initialize result must carry instructions");
     assert!(
-        instructions.contains("fetch_messages") && instructions.contains("swarm_manual"),
-        "instructions must teach the poll loop and point to swarm_manual"
+        instructions.contains("fetch_messages") && instructions.contains("mesh_manual"),
+        "instructions must teach the poll loop and point to mesh_manual"
     );
 }
 
 #[test]
-fn create_swarm_twice_errors_cleanly() {
+fn create_mesh_twice_errors_cleanly() {
     let mut client = McpClient::spawn();
-    let first = client.tool_call(20, "create_swarm", serde_json::json!({ "name": "twice1" }));
-    let first_json = tool_result_json(&first).expect("first create_swarm should succeed");
-    assert!(first_json["swarm"].as_str().unwrap().starts_with("💬"));
+    let first = client.tool_call(20, "create_mesh", serde_json::json!({ "name": "twice1" }));
+    let first_json = tool_result_json(&first).expect("first create_mesh should succeed");
+    assert!(first_json["mesh"].as_str().unwrap().starts_with("💬"));
     assert_eq!(first_json["name"].as_str(), Some("twice1"));
 
-    let second = client.tool_call(21, "create_swarm", serde_json::json!({ "name": "twice2" }));
-    let err = tool_error(&second).expect("second create_swarm should error, but got success");
+    let second = client.tool_call(21, "create_mesh", serde_json::json!({ "name": "twice2" }));
+    let err = tool_error(&second).expect("second create_mesh should error, but got success");
     assert!(
-        err.contains("already in swarm"),
-        "expected 'already in swarm' error, got: {err}"
+        err.contains("already in mesh"),
+        "expected 'already in mesh' error, got: {err}"
     );
 }
 
 #[test]
-fn join_swarm_idempotent_for_same_swarm() {
+fn join_mesh_idempotent_for_same_mesh() {
     let mut client = McpClient::spawn();
-    let (swarm, nickname) = client.create_and_get_swarm(30);
+    let (mesh, nickname) = client.create_and_get_mesh(30);
 
-    // Idempotent: join the swarm we just created with the same
+    // Idempotent: join the mesh we just created with the same
     // nickname → no error, same handle back.
     let rejoin = client.tool_call(
         31,
-        "join_swarm",
-        serde_json::json!({ "swarm": swarm.clone(), "nickname": nickname.clone() }),
+        "join_mesh",
+        serde_json::json!({ "mesh": mesh.clone(), "nickname": nickname.clone() }),
     );
     let rejoin_json = tool_result_json(&rejoin).unwrap_or_else(|| {
-        panic!("idempotent join_swarm should succeed, but got error response: {rejoin}")
+        panic!("idempotent join_mesh should succeed, but got error response: {rejoin}")
     });
-    assert_eq!(rejoin_json["swarm"].as_str(), Some(swarm.as_str()));
+    assert_eq!(rejoin_json["mesh"].as_str(), Some(mesh.as_str()));
     assert_eq!(rejoin_json["nickname"].as_str(), Some(nickname.as_str()));
 
-    // Different nickname on the same swarm → error.
+    // Different nickname on the same mesh → error.
     let conflict = client.tool_call(
         32,
-        "join_swarm",
-        serde_json::json!({ "swarm": swarm, "nickname": "someone-else" }),
+        "join_mesh",
+        serde_json::json!({ "mesh": mesh, "nickname": "someone-else" }),
     );
     let err = tool_error(&conflict).expect("different-nick join should error");
     assert!(
-        err.contains("already in swarm"),
-        "expected 'already in swarm' error, got: {err}"
+        err.contains("already in mesh"),
+        "expected 'already in mesh' error, got: {err}"
     );
 }
 
@@ -512,8 +512,8 @@ fn join_with_invalid_input_errors_gracefully() {
     let mut client = McpClient::spawn();
     let resp = client.tool_call(
         40,
-        "join_swarm",
-        serde_json::json!({ "swarm": "not-a-swarm-id" }),
+        "join_mesh",
+        serde_json::json!({ "mesh": "not-a-mesh-id" }),
     );
     let err = tool_error(&resp).expect("invalid join should error");
     // Exact wording can vary; just confirm we got an error and no
@@ -521,15 +521,15 @@ fn join_with_invalid_input_errors_gracefully() {
     assert!(!err.is_empty(), "error message must not be empty");
 
     // Prove the server is still alive: call a benign tool.
-    let info = client.tool_call(41, "swarm_info", serde_json::json!({}));
-    let err2 = tool_error(&info).expect("swarm_info with no session should error");
-    assert!(err2.contains("not in a swarm"));
+    let info = client.tool_call(41, "mesh_info", serde_json::json!({}));
+    let err2 = tool_error(&info).expect("mesh_info with no session should error");
+    assert!(err2.contains("not in a mesh"));
 }
 
 #[test]
 fn leave_without_session_is_noop() {
     let mut client = McpClient::spawn();
-    let resp = client.tool_call(50, "leave_swarm", serde_json::json!({}));
+    let resp = client.tool_call(50, "leave_mesh", serde_json::json!({}));
     // Docs say: "no-op if not in one." Must succeed.
     let json = tool_result_json(&resp).expect("leave with no session should succeed");
     assert_eq!(json["ok"], serde_json::json!(true));
@@ -540,24 +540,24 @@ fn leave_then_create_cycle_works_within_one_server() {
     let mut client = McpClient::spawn();
     let first = tool_result_json(&client.tool_call(
         60,
-        "create_swarm",
+        "create_mesh",
         serde_json::json!({ "name": "cycle1" }),
     ))
     .expect("create");
-    let first_swarm = first["swarm"].as_str().unwrap().to_string();
+    let first_mesh = first["mesh"].as_str().unwrap().to_string();
 
-    let _ = client.tool_call(61, "leave_swarm", serde_json::json!({}));
+    let _ = client.tool_call(61, "leave_mesh", serde_json::json!({}));
 
     let second = tool_result_json(&client.tool_call(
         62,
-        "create_swarm",
+        "create_mesh",
         serde_json::json!({ "name": "cycle2" }),
     ))
     .expect("create after leave");
     assert_ne!(
-        second["swarm"].as_str().unwrap(),
-        first_swarm,
-        "second create should mint a fresh swarm id"
+        second["mesh"].as_str().unwrap(),
+        first_mesh,
+        "second create should mint a fresh mesh id"
     );
 }
 
@@ -566,43 +566,43 @@ fn send_message_without_session_errors() {
     let mut client = McpClient::spawn();
     let resp = client.tool_call(70, "send_message", serde_json::json!({ "text": "orphan" }));
     let err = tool_error(&resp).expect("send_message without session should error");
-    assert!(err.contains("not in a swarm"));
+    assert!(err.contains("not in a mesh"));
 }
 
 #[test]
-fn create_swarm_with_granular_relay_succeeds() {
+fn create_mesh_with_granular_relay_succeeds() {
     // Granular lookups: naming `relay` opts into it directly, the same way
     // the CLI `--relay` flag does — the old "relay requires public" rule is
-    // gone, so a relay-only (network:private) swarm now creates fine.
+    // gone, so a relay-only (network:private) mesh now creates fine.
     let mut client = McpClient::spawn();
     let resp = client.tool_call(
         80,
-        "create_swarm",
+        "create_mesh",
         serde_json::json!({ "name": "relayp", "network": "private", "relay": "https://relay.example/" }),
     );
     let result = tool_result_json(&resp).expect("granular relay create should succeed");
     assert!(
-        result["swarm"]
+        result["mesh"]
             .as_str()
             .unwrap_or_default()
             .starts_with("💬"),
-        "expected a swarm id, got: {result}"
+        "expected a mesh id, got: {result}"
     );
 }
 
 #[test]
-fn create_swarm_without_name_mints_random() {
+fn create_mesh_without_name_mints_random() {
     // `name` is optional, mirroring the CLI and the plugin/pi front-ends:
     // omit it and the server mints a random `word-word` name (and nickname).
     let mut client = McpClient::spawn();
-    let resp = client.tool_call(100, "create_swarm", serde_json::json!({}));
+    let resp = client.tool_call(100, "create_mesh", serde_json::json!({}));
     let result = tool_result_json(&resp).expect("nameless create should succeed");
     assert!(
-        result["swarm"]
+        result["mesh"]
             .as_str()
             .unwrap_or_default()
             .starts_with("💬"),
-        "expected a swarm id, got: {result}"
+        "expected a mesh id, got: {result}"
     );
     assert!(
         !result["name"].as_str().unwrap_or_default().is_empty(),
@@ -615,11 +615,11 @@ fn create_swarm_without_name_mints_random() {
 }
 
 #[test]
-fn create_swarm_with_unknown_network_errors() {
+fn create_mesh_with_unknown_network_errors() {
     let mut client = McpClient::spawn();
     let resp = client.tool_call(
         90,
-        "create_swarm",
+        "create_mesh",
         serde_json::json!({ "name": "bogus1", "network": "bogus" }),
     );
     let err = tool_error(&resp).expect("bogus network should error");
@@ -636,7 +636,7 @@ fn send_empty_body_works() {
     // Protocol doesn't forbid empty body; just make sure it doesn't
     // crash and the echo / buffer both reflect it.
     let mut client = McpClient::spawn();
-    let (_swarm, _) = client.create_and_get_swarm(100);
+    let (_mesh, _) = client.create_and_get_mesh(100);
 
     let sent = client.tool_call(101, "send_message", serde_json::json!({ "text": "" }));
     let sent_json = tool_result_json(&sent).expect("empty-body send should succeed");
@@ -678,7 +678,7 @@ fn fetch_messages_with_out_of_range_after_is_graceful() {
     // without crashing; `after: 0` returns the whole buffer. Both must be
     // well-formed arrays.
     let mut client = McpClient::spawn();
-    client.create_and_get_swarm(110);
+    client.create_and_get_mesh(110);
     let _ = client.tool_call(111, "send_message", serde_json::json!({ "text": "a" }));
 
     let far_future = tool_result_json(&client.tool_call(
@@ -711,7 +711,7 @@ fn fetch_messages_long_parks_then_times_out_empty() {
     // behaviorally at the embed layer (session.rs); here we assert the wire
     // round-trip + timeout shape. (Cursor first advanced past history.)
     let mut client = McpClient::spawn_with_args(&["--longpoll-max-ms", "500"]);
-    client.create_and_get_swarm(130);
+    client.create_and_get_mesh(130);
 
     // A lone session still emits one async join-time event: the daemon publishes
     // its own agent-card to the meta channel. A single immediate fetch to
@@ -743,15 +743,15 @@ fn fetch_messages_long_parks_then_times_out_empty() {
 }
 
 #[test]
-fn send_message_broadcasts_to_the_swarm() {
-    // `send_message` is a swarm broadcast (A2A is point-to-point, so directed
+fn send_message_broadcasts_to_the_mesh() {
+    // `send_message` is a mesh broadcast (A2A is point-to-point, so directed
     // 1:1 is a task via `a2a_call`, not chat). Confirm a plain send succeeds.
     let mut client = McpClient::spawn();
-    client.create_and_get_swarm(120);
+    client.create_and_get_mesh(120);
     let resp = client.tool_call(
         121,
         "send_message",
-        serde_json::json!({ "text": "hello swarm" }),
+        serde_json::json!({ "text": "hello mesh" }),
     );
     let json = tool_result_json(&resp).expect("broadcast send should succeed");
     assert!(!json["id"].as_str().unwrap().is_empty());
@@ -767,7 +767,7 @@ fn fetch_messages_cursor_returns_only_new_since_last_call() {
     // fetch sees the self-sends; the *next* cursor-less fetch is empty (the
     // cursor advanced past them). Explicit `after` overrides the cursor.
     let mut client = McpClient::spawn();
-    client.create_and_get_swarm(200);
+    client.create_and_get_mesh(200);
 
     // Capture the seq just before the sends so we can replay from there.
     let baseline = tool_result_json(&client.tool_call(
@@ -874,7 +874,7 @@ fn fetch_messages_cursor_returns_only_new_since_last_call() {
 /// `message`-kind `event:"task"` record.
 #[test]
 fn task_creation_surfaces_to_worker_via_fetch() {
-    let (mut creator, mut joiner, swarm, creator_nick) = create_pair(700);
+    let (mut creator, mut joiner, mesh, creator_nick) = create_pair(700);
 
     let resp = tool_result_json(&joiner.tool_call(
         710,
@@ -886,7 +886,7 @@ fn task_creation_surfaces_to_worker_via_fetch() {
                 "messageId": "550e8400-e29b-41d4-a716-446655440000",
                 "role": "ROLE_USER",
                 "parts": [{ "text": "## Task\nport it" }],
-                "contextId": swarm,
+                "contextId": mesh,
             }},
         }),
     ))
@@ -937,7 +937,7 @@ fn task_creation_surfaces_to_worker_via_fetch() {
 #[test]
 fn task_creation_to_unknown_participant_errors() {
     let mut client = McpClient::spawn();
-    let (swarm, _nick) = client.create_and_get_swarm(730);
+    let (mesh, _nick) = client.create_and_get_mesh(730);
     let resp = client.tool_call(
         731,
         "a2a_call",
@@ -948,7 +948,7 @@ fn task_creation_to_unknown_participant_errors() {
                 "messageId": "550e8400-e29b-41d4-a716-446655440000",
                 "role": "ROLE_USER",
                 "parts": [{ "text": "brief" }],
-                "contextId": swarm,
+                "contextId": mesh,
             }},
         }),
     );
@@ -959,13 +959,13 @@ fn task_creation_to_unknown_participant_errors() {
     );
 }
 
-/// `swarm_info` now reports the participant count and the live roster
+/// `mesh_info` now reports the participant count and the live roster
 /// (each peer's nickname, recency, quiet flag, reach tag).
 #[test]
-fn swarm_info_reports_participant_roster() {
-    let (mut creator, mut joiner, _swarm, _creator_nick) = create_pair(740);
-    let joiner_nick = tool_result_json(&joiner.tool_call(741, "swarm_info", serde_json::json!({})))
-        .expect("joiner swarm_info")["nickname"]
+fn mesh_info_reports_participant_roster() {
+    let (mut creator, mut joiner, _mesh, _creator_nick) = create_pair(740);
+    let joiner_nick = tool_result_json(&joiner.tool_call(741, "mesh_info", serde_json::json!({})))
+        .expect("joiner mesh_info")["nickname"]
         .as_str()
         .expect("nickname")
         .to_string();
@@ -974,8 +974,8 @@ fn swarm_info_reports_participant_roster() {
     let deadline = Instant::now() + MSG_TIMEOUT;
     let mut probe = 742;
     let info = loop {
-        let info = tool_result_json(&creator.tool_call(probe, "swarm_info", serde_json::json!({})))
-            .expect("creator swarm_info");
+        let info = tool_result_json(&creator.tool_call(probe, "mesh_info", serde_json::json!({})))
+            .expect("creator mesh_info");
         if info["participant_count"].as_u64() == Some(2) {
             break info;
         }
@@ -1016,11 +1016,11 @@ const DIR_FLAGS: [(&str, &str); 4] = [
     ("--alive-timeout-secs", "5"),
 ];
 
-/// `discover_swarms` finds a swarm advertised into the same directory. A CLI
+/// `discover_meshes` finds a mesh advertised into the same directory. A CLI
 /// advertiser lists itself over the loopback ladder; an MCP server (also on
 /// loopback via the hidden `--directory-private`) browses and sees it.
 #[test]
-fn discover_swarms_finds_an_advertised_swarm() {
+fn discover_meshes_finds_an_advertised_mesh() {
     let adv_log = tmp_log("mcp-disc-adv");
     let adv_file = File::create(&adv_log).unwrap();
     let mut advertiser = test_cmd()
@@ -1042,13 +1042,13 @@ fn discover_swarms_finds_an_advertised_swarm() {
         .spawn()
         .expect("spawn advertiser");
 
-    // Wait until the advertiser has started (its `ready` JSON carries `swarm`)
+    // Wait until the advertiser has started (its `ready` JSON carries `mesh`)
     // so the discoverer's first window isn't spent waiting for it to come up.
     let up_deadline = Instant::now() + CONNECT_TIMEOUT;
     while Instant::now() < up_deadline
         && !fs::read_to_string(&adv_log)
             .unwrap_or_default()
-            .contains("\"swarm\"")
+            .contains("\"mesh\"")
     {
         std::thread::sleep(POLL);
     }
@@ -1059,11 +1059,11 @@ fn discover_swarms_finds_an_advertised_swarm() {
     let found = loop {
         let resp = client.tool_call(
             id,
-            "discover_swarms",
+            "discover_meshes",
             serde_json::json!({ "directory": "mcdir" }),
         );
-        let json = tool_result_json(&resp).expect("discover_swarms returns a result");
-        let hit = json["swarms"]
+        let json = tool_result_json(&resp).expect("discover_meshes returns a result");
+        let hit = json["meshes"]
             .as_array()
             .into_iter()
             .flatten()
@@ -1080,17 +1080,17 @@ fn discover_swarms_finds_an_advertised_swarm() {
     let _ = advertiser.kill();
     let _ = advertiser.wait();
     let _ = fs::remove_file(&adv_log);
-    assert!(found, "discover_swarms never found the advertised swarm");
+    assert!(found, "discover_meshes never found the advertised mesh");
 }
 
 /// `ping` reports a round-trip time for a linked peer. The pinger uses a short
 /// window (hidden `--ping-window-secs`) so the round finalizes in seconds.
 #[test]
 fn ping_reports_rtt_to_a_peer() {
-    let (mut creator, mut joiner, _swarm, _creator_nick) =
+    let (mut creator, mut joiner, _mesh, _creator_nick) =
         create_pair_with(900, &["--ping-window-secs", "2"]);
-    let joiner_nick = tool_result_json(&joiner.tool_call(901, "swarm_info", serde_json::json!({})))
-        .expect("joiner swarm_info")["nickname"]
+    let joiner_nick = tool_result_json(&joiner.tool_call(901, "mesh_info", serde_json::json!({})))
+        .expect("joiner mesh_info")["nickname"]
         .as_str()
         .expect("nickname")
         .to_string();
@@ -1148,7 +1148,7 @@ fn poll_doc(
 /// the meta MCP tools reach a real, independent second channel.
 #[test]
 fn state_and_meta_round_trip_over_mcp() {
-    let (mut creator, mut joiner, _swarm, _nick) = create_pair(900);
+    let (mut creator, mut joiner, _mesh, _nick) = create_pair(900);
 
     // state: creator merges, the joiner's get_state reflects it.
     let merged = tool_result_json(&creator.tool_call(

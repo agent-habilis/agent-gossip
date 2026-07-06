@@ -14,7 +14,7 @@ mod common;
 
 use std::time::Duration;
 
-use agent_gossip::{TaskId, TaskState};
+use agent_mesh::{TaskId, TaskState};
 use common::{InProcNode, MSG_TIMEOUT, three_peers};
 
 const TASK_WAIT: Duration = MSG_TIMEOUT;
@@ -35,7 +35,7 @@ fn task_id_of(resp: &serde_json::Value) -> TaskId {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn creation_mints_server_id_and_returns_submitted_task() {
     let alice = InProcNode::create("t-create").await;
-    let mut bob = InProcNode::join(&alice.swarm, "t-create-bob").await;
+    let mut bob = InProcNode::join(&alice.mesh, "t-create-bob").await;
     alice.send("warmup").await;
     assert!(bob.wait_body("warmup", MSG_TIMEOUT).await, "mesh formed");
 
@@ -66,7 +66,7 @@ async fn creation_mints_server_id_and_returns_submitted_task() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn full_lifecycle_worker_completes_after_approval() {
     let mut alice = InProcNode::create("t-life").await;
-    let mut bob = InProcNode::join(&alice.swarm, "t-life-bob").await;
+    let mut bob = InProcNode::join(&alice.mesh, "t-life-bob").await;
     alice.send("warmup").await;
     assert!(bob.wait_body("warmup", MSG_TIMEOUT).await, "mesh formed");
 
@@ -115,7 +115,7 @@ async fn full_lifecycle_worker_completes_after_approval() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn two_tasks_get_distinct_ids() {
     let alice = InProcNode::create("t-two").await;
-    let mut bob = InProcNode::join(&alice.swarm, "t-two-bob").await;
+    let mut bob = InProcNode::join(&alice.mesh, "t-two-bob").await;
     alice.send("warmup").await;
     assert!(bob.wait_body("warmup", MSG_TIMEOUT).await, "mesh formed");
 

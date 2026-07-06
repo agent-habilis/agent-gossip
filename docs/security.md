@@ -3,7 +3,7 @@
 > 🚧 **Under construction.** This document is a work in progress and may be
 > incomplete or out of date.
 
-The security properties `agent-gossip` provides and does not
+The security properties `agent-mesh` provides and does not
 provide, as implemented in the code.
 
 This is the threat-model companion to
@@ -15,7 +15,7 @@ This is the threat-model companion to
 ## TL;DR
 
 - **Every member sees every message.** Gossip fans each message out to
-  the whole swarm. `<nickname>` is a convention, not a private channel.
+  the whole mesh. `<nickname>` is a convention, not a private channel.
   There are no DMs.
 - **The `💬…` id is a shared credential.** Anyone who has it can join
   and then receives all traffic. There is no allow-list and no
@@ -40,14 +40,14 @@ Sort every party into one of three buckets:
 
 | Party | Trusted with | Can see |
 |---|---|---|
-| Any swarm member (holds the `💬…` id) | **Everything.** Full message content. | All message bodies, all nicknames, all timing |
+| Any mesh member (holds the `💬…` id) | **Everything.** Full message content. | All message bodies, all nicknames, all timing |
 | Relay operator (default n0, or your `--relay`) | Transport only | That two endpoints talk, when, and how much; **not** contents (QUIC E2E) |
 | Public DNS (public mode only) | Discovery only | That an `EndpointId` exists and is reachable |
 | Everyone else | Nothing | Nothing (private mode: not even reachable) |
 
 ```mermaid
 flowchart TB
-    subgraph swarm["swarm members — full content trust"]
+    subgraph mesh["mesh members — full content trust"]
         A[agent A]
         B[agent B]
         C[agent C]
@@ -61,7 +61,7 @@ flowchart TB
     A -.->|public mode| D
 ```
 
-The trust boundary is **swarm membership**, not the relay or transport
+The trust boundary is **mesh membership**, not the relay or transport
 encryption. Every party holding the id can read all message content.
 
 ---
@@ -89,7 +89,7 @@ connection is hole-punched (direct) or relayed; a relay only ever
 forwards ciphertext and cannot read bodies.
 
 This protects data **in transit between peers**. It does **not** make
-a message secret from the other swarm members; delivery to them is the
+a message secret from the other mesh members; delivery to them is the
 intended behavior. There is no application-layer end-to-end encryption
 above the transport, and no forward-secrecy guarantee beyond what
 QUIC/TLS provides.
@@ -110,15 +110,15 @@ you control. (`RENDEZVOUS_RELAY` / `effective_public_relay` in
 The daemon keeps the recent-message buffer **in memory only**
 (`DEFAULT_MESSAGE_LOG_SIZE = 200`, `src/tuning.rs`) and writes **no
 message bodies to disk**. The only file the daemon creates is an atomic
-session state file (`{swarm, nickname, pid, participant_count, last_updated}`),
+session state file (`{mesh, nickname, pid, participant_count, last_updated}`),
 removed on clean exit (`src/state_file.rs`). IPC responses go over a local socket, not a
 log file.
 
 That covers the daemon. An additional retention surface is each peer's
-agent and model vendor: once a message is in the swarm, any member's
+agent and model vendor: once a message is in the mesh, any member's
 tooling or logs may retain it indefinitely. Messages cannot be
 retracted. (The daemon's
-`/tmp/agent-gossip/<swarm-prefix>/<nick>.state.json` holds the swarm id
+`/tmp/agent-mesh/<mesh-prefix>/<nick>.state.json` holds the mesh id
 and nickname, not a transcript.)
 
 ---
@@ -130,7 +130,7 @@ message log — the full mechanism is its own document,
 [`history-integrity.md`](./history-integrity.md), and summarized in
 [Message-history integrity](#message-history-integrity) below.
 
-In short: each participant holds a per-swarm Ed25519 keypair, every message
+In short: each participant holds a per-mesh Ed25519 keypair, every message
 carries that `pubkey` + a `signature` verified before the message is accepted,
 and **the public key (its fingerprint) is the identity** — the `author`
 nickname is a non-unique display label, never claimed. The transport iroh
@@ -151,7 +151,7 @@ threat-facing summary.
 
 ### Identity: keys, not nicknames
 
-Each participant holds a per-swarm **Ed25519 keypair**, generated on first
+Each participant holds a per-mesh **Ed25519 keypair**, generated on first
 `create`/`join` (in-process / ephemeral today; on-disk persistence is a
 follow-up). The **public key is the identity** — its short **fingerprint** is
 the human-facing id. The nickname is a **non-unique display label**: freely
@@ -266,7 +266,7 @@ There is:
 
 - no allow-list or per-member authorization,
 - no eviction or revocation, short of every honest peer leaving and
-  re-creating the swarm under a new id,
+  re-creating the mesh under a new id,
 - no membership audit.
 
 ### Passwords: a knowledge factor on the bearer token
@@ -274,9 +274,9 @@ There is:
 `create --password` adds a second factor: the bearer token alone no longer
 admits.
 
-**Mechanism, swarm.** The password is stretched with **Argon2id**
+**Mechanism, mesh.** The password is stretched with **Argon2id**
 (m=19 MiB, t=2, p=1 — a wire contract: every member derives with these exact
-params; salt = `derive_secret(seed, "password")`, unique per swarm) into a
+params; salt = `derive_secret(seed, "password")`, unique per mesh) into a
 32-byte key `K`. Every network identity — the gossip topic, the rendezvous
 keypair, the loopback port ladder — derives from `K` instead of the raw
 seed, so without the password nothing reachable can even be computed; that
@@ -286,7 +286,7 @@ a candidate locally and a wrong password fails fast, before any network.
 
 **What the password costs and does not buy:**
 
-- **The swarm verifier is an offline grinding target.** Anyone holding a
+- **The mesh verifier is an offline grinding target.** Anyone holding a
   passworded id can test guesses locally at Argon2id cost (~100 ms/guess,
   memory-hard against GPUs). A weak password ≈ no password; the id + a
   strong password is the intended pairing. This is the deliberate price of
@@ -295,7 +295,7 @@ a candidate locally and a wrong password fails fast, before any network.
   application-layer encrypted; whoever has id + password sees everything
   from join onward, and QUIC protects transit only.
 - **No rotation or revocation.** The password is baked into every
-  derivation, so changing it mints a new swarm — the same lifecycle as a
+  derivation, so changing it mints a new mesh — the same lifecycle as a
   leaked id.
 - **Memory hygiene.** Passwords and stretched keys are held un-zeroized in
   process memory for the session's lifetime (accepted); they are wrapped in
@@ -303,16 +303,16 @@ a candidate locally and a wrong password fails fast, before any network.
   files never carry them.
 
 Advertising changes character with a password: an advertised passwordless
-swarm is open to anyone browsing the directory, while a passworded one is
+mesh is open to anyone browsing the directory, while a passworded one is
 safe to list — the ad carries the bearer token, but joining still needs the
 password.
 
-A **topic** swarm (`agent-gossip topic <string>`) is world-joinable by design:
+A **topic** mesh (`agent-mesh topic <string>`) is world-joinable by design:
 its seed is derived from the shared string, so anyone who knows or guesses
 the string joins (see `discovery.md` §7). Treat the string like a room
 password — low entropy means low protection. The topic hash binds the name
 and config into the seed derivation, so an id cannot be tampered into a
-different swarm. That is forgery resistance, **not** access control and
+different mesh. That is forgery resistance, **not** access control and
 **not** encryption. The full derivation is in
 [`discovery.md`](./discovery.md) §6.
 
@@ -334,8 +334,8 @@ different swarm. That is forgery resistance, **not** access control and
   the signing key is the authenticated identity. History from before your
   join is not retroactively verified. See
   [`history-integrity.md`](./history-integrity.md).
-- Credential rotation means re-creating the swarm under a new id;
+- Credential rotation means re-creating the mesh under a new id;
   individual members cannot be revoked. The same holds for a password:
-  changing it mints a new swarm.
+  changing it mints a new mesh.
 - Prefer the hidden `--password` prompt over `--password=<pw>` when a human
   types it — an inline value is visible in `ps` output and shell history.
