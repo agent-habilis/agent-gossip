@@ -200,7 +200,7 @@ pub fn ensure_mesh_runtime_dir(mesh_id: &str) -> std::io::Result<std::path::Path
 
 #[cfg(test)]
 mod tests {
-    use super::{is_under_runtime_base, runtime_base, mesh_prefix};
+    use super::{is_under_runtime_base, mesh_prefix, runtime_base};
     use std::path::Path;
 
     #[test]

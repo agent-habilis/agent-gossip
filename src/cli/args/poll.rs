@@ -3,7 +3,7 @@
 
 use clap::Parser;
 
-use agent_habilis_mesh::protocol::{Nickname, MeshId};
+use agent_habilis_mesh::protocol::{MeshId, Nickname};
 
 use super::output::OutputFormat;
 

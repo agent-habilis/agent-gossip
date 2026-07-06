@@ -9,13 +9,13 @@ use serde::{Serialize, de::DeserializeOwned};
 use tokio::io::{AsyncWriteExt, BufReader};
 use tokio::sync::mpsc;
 
-use crate::protocol::{MessageId, Nickname, MeshId};
+use crate::protocol::{MeshId, MessageId, Nickname};
 use crate::util::bounded_read::{LineRead, read_bounded_line};
 use crate::util::consts::{MAX_IPC_COMMAND_BYTES, MAX_IPC_RESPONSE_BYTES, MESH_GLYPH};
 use crate::util::tuning::{
     IPC_ACCEPT_BACKOFF_MAX_SECS, IPC_ACCEPT_BACKOFF_MIN_MS, IPC_IO_TIMEOUT_SECS,
 };
-use crate::util::{ensure_mesh_runtime_dir, runtime_base, mesh_runtime_dir};
+use crate::util::{ensure_mesh_runtime_dir, mesh_runtime_dir, runtime_base};
 
 /// Returns the IPC endpoint identifier for a specific agent on a mesh —
 /// a filesystem socket path (the project targets Unix only). Lives in the
@@ -312,7 +312,7 @@ mod tests {
     use serde::{Deserialize, Serialize};
 
     use super::{
-        Addressed, IpcMessage, Nickname, MeshId, bind, json_error, json_ok, mpsc, send, serve,
+        Addressed, IpcMessage, MeshId, Nickname, bind, json_error, json_ok, mpsc, send, serve,
         socket_path,
     };
 
@@ -552,9 +552,7 @@ mod tests {
         let mut idle = Stream::connect(name).await.unwrap();
 
         // A healthy command still round-trips while the idle one is parked.
-        let cmd = TestCommand::Ping {
-            mesh: mesh.clone(),
-        };
+        let cmd = TestCommand::Ping { mesh: mesh.clone() };
         let response = send(&cmd, &nickname).await.unwrap();
         assert!(response.contains("healthy"), "listener stalled: {response}");
 

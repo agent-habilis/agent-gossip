@@ -285,11 +285,7 @@ pub(crate) fn cli_poll(mesh: &str, nickname: &str, after: Option<&str>) -> Strin
 /// `agent-square poll --long` (long-poll; blocks until events arrive), returning the
 /// JSON stdout and how long the call took — so a test can assert it blocked /
 /// resolved promptly.
-pub(crate) fn cli_poll_long(
-    mesh: &str,
-    nickname: &str,
-    after: Option<&str>,
-) -> (String, Duration) {
+pub(crate) fn cli_poll_long(mesh: &str, nickname: &str, after: Option<&str>) -> (String, Duration) {
     let mut args = vec![
         "poll",
         "--mesh",
@@ -482,8 +478,8 @@ pub(crate) fn cli_channel_merge(
 
 use agent_square::embed::{CreateConfig, JoinConfig, MeshSession};
 use agent_square::{
-    Channel, Message, MessageBody, MessageId, MessageKind, Nickname, OutputEvent, PresenceSubtype,
-    MeshName, TaskId, TaskState, TransportPolicy,
+    Channel, MeshName, Message, MessageBody, MessageId, MessageKind, Nickname, OutputEvent,
+    PresenceSubtype, TaskId, TaskState, TransportPolicy,
 };
 use tokio::sync::mpsc::UnboundedReceiver;
 

@@ -13,8 +13,8 @@ use crate::output;
 use agent_habilis_mesh::daemon::state::EventLoopState;
 use agent_habilis_mesh::protocol::identity::Identity;
 use agent_habilis_mesh::protocol::{
-    AppTag, Channel, CorrId, Message, MessageBody, MessageId, MessageKind, Nickname, Shard,
-    ShardGroup, MeshId,
+    AppTag, Channel, CorrId, MeshId, Message, MessageBody, MessageId, MessageKind, Nickname, Shard,
+    ShardGroup,
 };
 use agent_habilis_mesh::transport::MeshSender;
 use agent_habilis_mesh::util::consts::{
@@ -810,13 +810,9 @@ pub(crate) async fn send_shard_repair_requests(
         agent_habilis_mesh::logging::messages::log_out(&frame);
         match frame.serialize() {
             Ok(bytes) => {
-                if let Err(error) = agent_habilis_mesh::unicast::deliver(
-                    &frame,
-                    Bytes::from(bytes),
-                    state,
-                    sender,
-                )
-                .await
+                if let Err(error) =
+                    agent_habilis_mesh::unicast::deliver(&frame, Bytes::from(bytes), state, sender)
+                        .await
                 {
                     tracing::debug!(%error, "shard repair request send failed; next tick retries");
                 }
@@ -886,9 +882,8 @@ pub(crate) async fn broadcast_a2a_call(
     };
     // Clamp before adding to `Instant`: an unclamped client `timeout_secs` would
     // overflow the platform `Instant` and panic the event loop.
-    let max_timeout = std::time::Duration::from_secs(
-        agent_habilis_mesh::util::consts::A2A_CALL_MAX_TIMEOUT_SECS,
-    );
+    let max_timeout =
+        std::time::Duration::from_secs(agent_habilis_mesh::util::consts::A2A_CALL_MAX_TIMEOUT_SECS);
     if timeout > max_timeout {
         tracing::warn!(
             requested_secs = timeout.as_secs(),

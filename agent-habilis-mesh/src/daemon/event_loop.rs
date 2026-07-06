@@ -20,7 +20,7 @@ use tokio::sync::{broadcast, mpsc, watch};
 use crate::daemon::state_file::StateFile;
 use crate::gossip::event::{NodeEvent, NodeSink, PingRtt};
 use crate::protocol::mesh::MeshName;
-use crate::protocol::{Message, Nickname, MeshId};
+use crate::protocol::{MeshId, Message, Nickname};
 use crate::transport::MeshSender;
 use crate::transport::ipc::IpcMessage;
 use crate::transport::spool;
@@ -116,7 +116,13 @@ pub async fn run<A: NodeDriver>(
     app.init_state_file(state_file.as_ref());
     let mut state = EventLoopState::new(state_file, started, identity, mesh_password, mesh_key);
     state.mint_mesh = mint_mesh; // creator-only: backs the `invite` command
-    wire_session_state(&mut state, &endpoint, transport, live_count, rendezvous_params.id);
+    wire_session_state(
+        &mut state,
+        &endpoint,
+        transport,
+        live_count,
+        rendezvous_params.id,
+    );
 
     // An eager member co-hosts from t=0 so a beacon exists before any
     // joiner subscribes; everyone else defers to the heal gate

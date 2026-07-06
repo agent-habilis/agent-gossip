@@ -22,7 +22,7 @@ use crate::embed::{DIRECTORY_ADVERTISER_COHOST, MeshSession};
 use agent_habilis_mesh::daemon::CoHostPolicy;
 use agent_habilis_mesh::directory::directory_mesh;
 use agent_habilis_mesh::protocol::mesh::{LookupOpts, LookupSet, MeshName, resolve_lookups};
-use agent_habilis_mesh::protocol::{MessageBody, Nickname, MeshId};
+use agent_habilis_mesh::protocol::{MeshId, MessageBody, Nickname};
 use agent_habilis_mesh::util::clock::unix_secs;
 use agent_habilis_mesh::util::tuning::{
     advertise_interval_secs, directory_expiry_secs, directory_private_for_test,
@@ -184,19 +184,19 @@ pub(crate) fn spawn_ticket_advertiser(
     let body = ad.to_body()?;
     Ok(tokio::spawn(async move {
         let mesh = directory_mesh(&directory, lookups);
-        let session =
-            match MeshSession::join_decoded(mesh, None, DIRECTORY_ADVERTISER_COHOST).await {
-                Ok(session) => session,
-                Err(error) => {
-                    tracing::warn!(
-                        target: "agent_square::directory",
-                        %error,
-                        directory = %directory,
-                        "a2a advertise: could not join the directory; ticket stays unlisted"
-                    );
-                    return;
-                }
-            };
+        let session = match MeshSession::join_decoded(mesh, None, DIRECTORY_ADVERTISER_COHOST).await
+        {
+            Ok(session) => session,
+            Err(error) => {
+                tracing::warn!(
+                    target: "agent_square::directory",
+                    %error,
+                    directory = %directory,
+                    "a2a advertise: could not join the directory; ticket stays unlisted"
+                );
+                return;
+            }
+        };
         let mut ticker = tokio::time::interval(Duration::from_secs(advertise_interval_secs()));
         loop {
             ticker.tick().await;

@@ -5,7 +5,7 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use crate::a2a::TaskId;
 use agent_habilis_mesh::protocol::mesh::MeshName;
-use agent_habilis_mesh::protocol::{Message, MessageId, MessageKind, Nickname, MeshId};
+use agent_habilis_mesh::protocol::{MeshId, Message, MessageId, MessageKind, Nickname};
 use agent_habilis_mesh::util::consts::MESH_GLYPH;
 
 mod json;

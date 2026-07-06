@@ -12,16 +12,16 @@
 pub mod crypto;
 mod ident;
 pub mod identity;
+pub mod mesh;
 pub mod message;
 pub mod nickname;
 pub mod peer_addr;
 pub mod seal;
-pub mod mesh;
 mod wordlist;
 
+pub use mesh::MeshId;
 pub use message::{
     AppTag, Channel, CorrId, Message, MessageBody, MessageId, MessageKind, PresenceSubtype, Shard,
     ShardGroup,
 };
 pub use nickname::Nickname;
-pub use mesh::MeshId;

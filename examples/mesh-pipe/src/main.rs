@@ -26,7 +26,7 @@ use agent_habilis_mesh::embed::Node;
 use agent_habilis_mesh::gossip::app::{AppClass, NodeApp};
 use agent_habilis_mesh::gossip::event::SilentSink;
 use agent_habilis_mesh::protocol::mesh::{
-    DirectorySelection, LookupSet, RelaySelection, MeshConfig, MeshName, resolve_lookups,
+    DirectorySelection, LookupSet, MeshConfig, MeshName, RelaySelection, resolve_lookups,
 };
 use agent_habilis_mesh::protocol::{AppTag, Message, MessageBody, Nickname};
 use agent_habilis_mesh::resolver::JoinTarget;

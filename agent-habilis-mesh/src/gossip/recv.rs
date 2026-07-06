@@ -73,14 +73,8 @@ pub(crate) async fn handle_gossip_event(
                     state.last_sent_at = now;
                 }
             } else {
-                announce_arrival(
-                    ctx.sender,
-                    ctx.mesh,
-                    ctx.author,
-                    ctx.identity,
-                    ctx.endpoint,
-                )
-                .await;
+                announce_arrival(ctx.sender, ctx.mesh, ctx.author, ctx.identity, ctx.endpoint)
+                    .await;
                 state.announced = true;
                 state.note_peerinfo(node_id, now);
                 state.last_sent_at = now;

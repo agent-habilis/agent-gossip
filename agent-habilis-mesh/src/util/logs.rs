@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::sync::OnceLock;
 
 use crate::util::consts::LOG_FILE_MAX_BYTES;
-use crate::util::{runtime_base, mesh_prefix};
+use crate::util::{mesh_prefix, runtime_base};
 
 /// Log config, installed **once** at startup from the `--log-dir` /
 /// `--log-max-bytes` / `--log-raw` flags. The `cli` layer parses the flags and

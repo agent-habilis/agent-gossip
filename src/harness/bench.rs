@@ -12,9 +12,9 @@
     reason = "opaque bench-only newtypes; never surfaced or formatted"
 )]
 
-use crate::{Message, MessageBody, Nickname, MeshId, MeshName};
+use crate::{MeshId, MeshName, Message, MessageBody, Nickname};
 use agent_habilis_mesh::protocol::crypto;
-use agent_habilis_mesh::protocol::mesh::{LookupOpts, RelayChoice, Mesh, MeshConfig};
+use agent_habilis_mesh::protocol::mesh::{LookupOpts, Mesh, MeshConfig, RelayChoice};
 
 /// A mesh config built from non-test constructors (the `MeshConfig`
 /// ctors are `#[cfg(test)]`). `loopback` = no lookups; `public` = the

@@ -17,8 +17,8 @@ use sha2::{Digest, Sha256};
 
 use crate::protocol::crypto::{self, Password};
 use crate::protocol::identity;
-use crate::protocol::seal;
 use crate::protocol::mesh::Mesh;
+use crate::protocol::seal;
 use crate::util::clock;
 use crate::util::consts::{MESH_URI_SEPARATOR, TICKET_GLYPH};
 

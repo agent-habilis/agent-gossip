@@ -38,7 +38,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 
 use crate::protocol::mesh::MeshName;
-use crate::protocol::{Nickname, MeshId};
+use crate::protocol::{MeshId, Nickname};
 use crate::util::clock;
 
 /// Owns a session state file for the lifetime of a daemon process.
@@ -57,12 +57,7 @@ pub struct StateFile {
 }
 
 impl StateFile {
-    pub(crate) fn new(
-        path: PathBuf,
-        mesh: &MeshId,
-        nickname: &Nickname,
-        name: &MeshName,
-    ) -> Self {
+    pub(crate) fn new(path: PathBuf, mesh: &MeshId, nickname: &Nickname, name: &MeshName) -> Self {
         Self {
             path,
             mesh: mesh.as_str().to_string(),
@@ -292,7 +287,7 @@ fn tmp_sibling(path: &Path) -> PathBuf {
 mod tests {
     use std::path::PathBuf;
 
-    use super::{Nickname, StateFile, MeshId, MeshName, clock};
+    use super::{MeshId, MeshName, Nickname, StateFile, clock};
 
     fn name(value: &str) -> MeshName {
         MeshName::new(value).expect("valid mesh name")

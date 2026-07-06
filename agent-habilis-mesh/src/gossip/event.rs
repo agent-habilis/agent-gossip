@@ -1,5 +1,5 @@
 use crate::protocol::mesh::MeshName;
-use crate::protocol::{Channel, Message, Nickname, MeshId};
+use crate::protocol::{Channel, MeshId, Message, Nickname};
 
 /// One peer's round-trip time in a [`NodeEvent::PingReport`] — the engine's
 /// chat-agnostic ping datum. The app maps it onto its `output::PingPeer` for

@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::protocol::crypto::derive_secret;
 use crate::protocol::mesh::{LookupOpts, Mesh, MeshConfig, MeshName};
-use crate::protocol::{MessageBody, MeshId};
+use crate::protocol::{MeshId, MessageBody};
 
 /// Domain-separation seed for every directory. The directory name is
 /// the `derive_secret` *label*; this is the *seed*, so a directory's

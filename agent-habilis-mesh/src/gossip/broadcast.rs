@@ -13,7 +13,7 @@ use crate::daemon::ctx::HandlerCtx;
 use crate::daemon::state::EventLoopState;
 use crate::gossip::event::{NodeEvent, NodeSink};
 use crate::protocol::identity::Identity;
-use crate::protocol::{AppTag, Channel, CorrId, Message, MessageBody, Nickname, MeshId};
+use crate::protocol::{AppTag, Channel, CorrId, MeshId, Message, MessageBody, Nickname};
 use crate::util::consts::MAX_MESSAGE_SIZE;
 
 /// Build → sign → deliver one outbound `App` frame — the payload-generic

@@ -28,7 +28,7 @@ use agent_habilis_mesh::protocol::mesh::{
     DEFAULT_DIRECTORY, DirectorySelection, LookupOpts, LookupSet, Mesh, MeshConfig, MeshName,
     resolve_lookups,
 };
-use agent_habilis_mesh::protocol::{Message, MessageBody, Nickname, MeshId};
+use agent_habilis_mesh::protocol::{MeshId, Message, MessageBody, Nickname};
 use agent_habilis_mesh::resolver::JoinTarget;
 use agent_habilis_mesh::transport::TransportPolicy;
 use agent_habilis_mesh::util::consts::GOSSIP_ACTIVE_VIEW_CAPACITY;
@@ -1274,19 +1274,19 @@ pub(crate) fn spawn_advertiser(
         // before any discoverer subscribes (a `Deferred` advertiser would
         // only beacon at the first heal tick, after discoverers already
         // failed their first graft). Probe-first; see DIRECTORY_ADVERTISER_COHOST.
-        let session =
-            match MeshSession::join_decoded(mesh, None, DIRECTORY_ADVERTISER_COHOST).await {
-                Ok(session) => session,
-                Err(error) => {
-                    tracing::warn!(
-                        target: "agent_square::directory",
-                        %error,
-                        directory = %directory,
-                        "directory advertise: could not join the directory; mesh stays unlisted"
-                    );
-                    return;
-                }
-            };
+        let session = match MeshSession::join_decoded(mesh, None, DIRECTORY_ADVERTISER_COHOST).await
+        {
+            Ok(session) => session,
+            Err(error) => {
+                tracing::warn!(
+                    target: "agent_square::directory",
+                    %error,
+                    directory = %directory,
+                    "directory advertise: could not join the directory; mesh stays unlisted"
+                );
+                return;
+            }
+        };
         let mut ticker = tokio::time::interval(Duration::from_secs(advertise_interval_secs()));
         loop {
             ticker.tick().await;

@@ -25,7 +25,10 @@ async fn rpc_tasks_list_reaches_the_peer() {
     // broadcast into a still-converging overlay is lost for good and the call
     // dies as a 60s waiter timeout — the suite's long-standing flake.
     bob.send("link-back").await;
-    assert!(alice.wait_body("link-back", MSG_TIMEOUT).await, "alice meshed");
+    assert!(
+        alice.wait_body("link-back", MSG_TIMEOUT).await,
+        "alice meshed"
+    );
 
     let response = alice
         .session
@@ -61,7 +64,10 @@ async fn rpc_message_send_opens_task_and_returns_it() {
     // broadcast into a still-converging overlay is lost for good and the call
     // dies as a 60s waiter timeout — the suite's long-standing flake.
     bob.send("link-back").await;
-    assert!(alice.wait_body("link-back", MSG_TIMEOUT).await, "alice meshed");
+    assert!(
+        alice.wait_body("link-back", MSG_TIMEOUT).await,
+        "alice meshed"
+    );
 
     let our_message_id = "550e8400-e29b-41d4-a716-446655440000";
     let create = json!({ "message": {
@@ -110,7 +116,10 @@ async fn rpc_state_merge_is_refused() {
     // broadcast into a still-converging overlay is lost for good and the call
     // dies as a 60s waiter timeout — the suite's long-standing flake.
     bob.send("link-back").await;
-    assert!(alice.wait_body("link-back", MSG_TIMEOUT).await, "alice meshed");
+    assert!(
+        alice.wait_body("link-back", MSG_TIMEOUT).await,
+        "alice meshed"
+    );
 
     let response = alice
         .session

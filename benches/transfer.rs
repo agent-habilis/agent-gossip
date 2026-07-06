@@ -26,7 +26,7 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use agent_square::embed::{CreateConfig, JoinConfig, MeshSession};
-use agent_square::{JoinTarget, MessageBody, MeshName};
+use agent_square::{JoinTarget, MeshName, MessageBody};
 use tokio::sync::broadcast::error::RecvError;
 
 /// Zero-padded index width in the `"{index:0N}:"` body prefix — one shared

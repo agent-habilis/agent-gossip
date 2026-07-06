@@ -295,7 +295,7 @@ mod tests {
     use super::{Route, route};
     use crate::daemon::state::EventLoopState;
     use crate::protocol::identity::Identity;
-    use crate::protocol::{AppTag, CorrId, Message, MessageBody, Nickname, MeshId};
+    use crate::protocol::{AppTag, CorrId, MeshId, Message, MessageBody, Nickname};
 
     fn nick(name: &str) -> Nickname {
         Nickname::from(name)

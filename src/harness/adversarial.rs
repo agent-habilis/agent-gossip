@@ -15,7 +15,7 @@ use crate::a2a::wire;
 use agent_habilis_mesh::protocol::identity::{self, Identity};
 use agent_habilis_mesh::protocol::message::Message;
 use agent_habilis_mesh::protocol::message::PresenceSubtype;
-use agent_habilis_mesh::protocol::{AppTag, CorrId, MessageBody, MessageKind, Nickname, MeshId};
+use agent_habilis_mesh::protocol::{AppTag, CorrId, MeshId, MessageBody, MessageKind, Nickname};
 
 // The reassembly byte budgets, so the suite's tripwires assert against the
 // same constants the store enforces.
@@ -185,9 +185,15 @@ impl CraftedMsg {
     /// `total` are taken verbatim, valid or not (the receiver's parse gate is
     /// the thing under test).
     pub fn shard(mut self, group: &str, idx: u32, total: u32) -> Self {
-        let group =
-            agent_habilis_mesh::protocol::ShardGroup::from_uuid_str(group).expect("valid shard group uuid");
-        self.msg = self.msg.with_shard(Some(agent_habilis_mesh::protocol::Shard { group, idx, total }));
+        let group = agent_habilis_mesh::protocol::ShardGroup::from_uuid_str(group)
+            .expect("valid shard group uuid");
+        self.msg = self
+            .msg
+            .with_shard(Some(agent_habilis_mesh::protocol::Shard {
+                group,
+                idx,
+                total,
+            }));
         self
     }
 

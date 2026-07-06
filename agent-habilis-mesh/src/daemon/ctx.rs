@@ -5,7 +5,7 @@ use tokio::sync::broadcast;
 
 use crate::gossip::event::NodeSink;
 use crate::protocol::identity::Identity;
-use crate::protocol::{Message, Nickname, MeshId};
+use crate::protocol::{MeshId, Message, Nickname};
 use crate::transport::MeshSender;
 
 /// Immutable loop-level context threaded through every handler.

@@ -9,11 +9,11 @@ use tokio::sync::{mpsc, watch};
 
 use crate::gossip::event::{NodeEvent, NodeSink};
 use crate::lookup::{
-    add_peer_addr, build_participant_endpoint, build_mesh, relay_ladder, select_bootstrap_rung,
+    add_peer_addr, build_mesh, build_participant_endpoint, relay_ladder, select_bootstrap_rung,
 };
 use crate::protocol::crypto::Password;
 use crate::protocol::mesh::{LookupOpts, Mesh, MeshConfig, MeshName};
-use crate::protocol::{Nickname, MeshId};
+use crate::protocol::{MeshId, Nickname};
 use crate::util::tuning::RELAY_RUNG_PROBE_SECS;
 
 use crate::beacon::RendezvousParams;

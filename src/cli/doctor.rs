@@ -7,7 +7,7 @@ use serde::Serialize;
 use crate::a2a::ipc::IpcCommand;
 use agent_habilis_mesh::lookup::{self, NetworkCapability};
 use agent_habilis_mesh::protocol::MeshId;
-use agent_habilis_mesh::protocol::mesh::{RelayChoice, Mesh};
+use agent_habilis_mesh::protocol::mesh::{Mesh, RelayChoice};
 use agent_habilis_mesh::transport::ipc;
 use agent_habilis_mesh::util::output;
 
@@ -608,8 +608,11 @@ mod tests {
         // Regression: an invite-only mesh withholds its derivation secret from
         // the bare hash, so deriving the loopback ladder used to panic in
         // `effective_seed`. `doctor` must report the reason instead of crashing.
-        let mut mesh =
-            Mesh::new([1u8; 32], MeshName::new("t").unwrap(), MeshConfig::loopback());
+        let mut mesh = Mesh::new(
+            [1u8; 32],
+            MeshName::new("t").unwrap(),
+            MeshConfig::loopback(),
+        );
         mesh.set_invite();
         let section = declared_methods_section(&mesh);
         let ports = section

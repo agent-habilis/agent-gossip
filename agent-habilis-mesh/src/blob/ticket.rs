@@ -17,8 +17,8 @@ use anyhow::{Context, Result, bail};
 use iroh::EndpointAddr;
 use sha2::{Digest, Sha256};
 
-use crate::protocol::peer_addr::{endpoint_addr_from_json, endpoint_addr_to_json};
 use crate::protocol::mesh::LookupOpts;
+use crate::protocol::peer_addr::{endpoint_addr_from_json, endpoint_addr_to_json};
 use crate::util::consts::{MESH_URI_SEPARATOR, TICKET_GLYPH};
 
 use super::{HASH_LEN, SECRET_LEN};
@@ -73,7 +73,10 @@ impl BlobTicket {
         framed.push(VERSION);
         framed.push(KIND);
         framed.extend_from_slice(&payload);
-        format!("{PREFIX}{MESH_URI_SEPARATOR}{}", base58check_encode(&framed))
+        format!(
+            "{PREFIX}{MESH_URI_SEPARATOR}{}",
+            base58check_encode(&framed)
+        )
     }
 
     /// The blob's content hash as lowercase hex — the content-addressed name to
@@ -147,7 +150,9 @@ fn take_array<const N: usize>(bytes: &[u8], pos: &mut usize) -> Option<[u8; N]> 
 /// that dropped the VS-16 (`🎟://`) or the separator. Mirrors the a2a bridge
 /// ticket. `None` if the token doesn't carry the ticket glyph.
 fn strip_ticket_prefix(token: &str) -> Option<&str> {
-    let base = TICKET_GLYPH.strip_suffix('\u{FE0F}').unwrap_or(TICKET_GLYPH);
+    let base = TICKET_GLYPH
+        .strip_suffix('\u{FE0F}')
+        .unwrap_or(TICKET_GLYPH);
     let rest = token.strip_prefix(base)?;
     let rest = rest.strip_prefix('\u{FE0F}').unwrap_or(rest);
     Some(rest.strip_prefix(MESH_URI_SEPARATOR).unwrap_or(rest))

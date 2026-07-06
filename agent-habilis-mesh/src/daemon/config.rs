@@ -12,7 +12,7 @@ use tokio::sync::{broadcast, mpsc, watch};
 
 use crate::gossip::event::NodeSink;
 use crate::protocol::mesh::{Mesh, MeshName};
-use crate::protocol::{Message, Nickname, MeshId};
+use crate::protocol::{MeshId, Message, Nickname};
 
 use crate::beacon;
 
