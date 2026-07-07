@@ -404,6 +404,7 @@ async fn broadcast_task_frame(
     task_id: &crate::a2a::TaskId,
     kind: MessageKind,
     payload_body: MessageBody,
+    echo_body: MessageBody,
     content: bool,
     state: &mut EventLoopState,
     app: &mut A2aApp,
@@ -417,7 +418,11 @@ async fn broadcast_task_frame(
     if single.wire_len() <= MAX_MESSAGE_SIZE {
         let bytes = Bytes::from(single.serialize()?);
         let id = single.id.clone();
-        send_task_leg(state, sender, out, &single, bytes, true, content).await?;
+        // The wire frame's directed body is sealed to the addressee, which we
+        // cannot decrypt; surface the self-echo from a plaintext twin instead
+        // (same id, never signed or sent).
+        let echo = Message::new_frame(mesh, author, kind, echo_body).with_id(id.clone());
+        send_task_leg(state, sender, out, &single, bytes, Some(&echo), content).await?;
         ingest_own_leg(app, &single, task_id, out);
         return Ok((id, single));
     }
@@ -474,14 +479,17 @@ async fn broadcast_task_frame(
         if total > LOGGED_SHARD_GROUP_MAX_TOTAL {
             cache_frames.push(bytes.clone());
         }
-        send_task_leg(state, sender, out, &msg, bytes, false, content).await?;
+        send_task_leg(state, sender, out, &msg, bytes, None, content).await?;
     }
     if !cache_frames.is_empty() {
         state.shard_cache.insert(group.clone(), cache_frames);
     }
-    // Echo + ingest the logical leg once (one content leg toward the cap).
-    let logical = Message::new_frame(mesh, author, kind, payload_body).with_id(logical_id);
-    out.print_task(&logical, true);
+    // Echo + ingest the logical leg once (one content leg toward the cap);
+    // the echo is the plaintext twin (the logical body is sealed).
+    let logical =
+        Message::new_frame(mesh, author, kind.clone(), payload_body).with_id(logical_id.clone());
+    let echo = Message::new_frame(mesh, author, kind, echo_body).with_id(logical_id);
+    out.print_task(&echo, true);
     ingest_own_leg(app, &logical, task_id, out);
     Ok((logical.id.clone(), logical))
 }
@@ -592,14 +600,15 @@ pub(crate) async fn broadcast_task_status(
     out: &output::Output,
 ) -> anyhow::Result<(MessageId, Message)> {
     let update = crate::a2a::gossip::status_update(mesh, task_id, task_state, note, None);
-    let body = seal_directed(state, peer, &crate::a2a::gossip::payload_body(&update)?)?;
+    let plain = crate::a2a::gossip::payload_body(&update)?;
+    let sealed = seal_directed(state, peer, &plain)?;
     let kind = MessageKind::App {
         tag: AppTag::from(wire::STATUS),
         to: Some(peer.clone()),
         corr: None,
     };
     broadcast_task_frame(
-        mesh, author, task_id, kind, body, true, state, app, sender, out,
+        mesh, author, task_id, kind, sealed, plain, true, state, app, sender, out,
     )
     .await
 }
@@ -627,14 +636,15 @@ pub(crate) async fn broadcast_task_artifact(
 ) -> anyhow::Result<(MessageId, Message)> {
     let parts = build_offload_parts(mesh, author, task_id, text, file, state, app).await?;
     let update = crate::a2a::gossip::artifact_update_parts(mesh, task_id, parts);
-    let body = seal_directed(state, peer, &crate::a2a::gossip::payload_body(&update)?)?;
+    let plain = crate::a2a::gossip::payload_body(&update)?;
+    let sealed = seal_directed(state, peer, &plain)?;
     let kind = MessageKind::App {
         tag: AppTag::from(wire::ARTIFACT),
         to: Some(peer.clone()),
         corr: None,
     };
     broadcast_task_frame(
-        mesh, author, task_id, kind, body, true, state, app, sender, out,
+        mesh, author, task_id, kind, sealed, plain, true, state, app, sender, out,
     )
     .await
 }
@@ -694,16 +704,16 @@ async fn build_offload_parts(
 }
 
 /// Broadcast (or buffer, while unmeshed) one fully-built task leg, retaining
-/// **content** legs for anti-entropy. `echo` gates the operator print so the
-/// raw shards of a split leg commit silently. Errors if the unmeshed buffer
-/// is full.
+/// **content** legs for anti-entropy. `echo` carries the plaintext twin whose
+/// operator line surfaces (`None` for the raw shards of a split leg, which
+/// commit silently). Errors if the unmeshed buffer is full.
 async fn send_task_leg(
     state: &mut EventLoopState,
     sender: &MeshSender,
     out: &output::Output,
     msg: &Message,
     bytes: Bytes,
-    echo: bool,
+    echo: Option<&Message>,
     content: bool,
 ) -> anyhow::Result<()> {
     if state.meshed {
@@ -726,18 +736,19 @@ async fn send_task_leg(
     Ok(())
 }
 
-/// Retain a task leg locally, echoing the operator line only when `echo`
-/// (false for the raw shards of a split leg). Content legs retain; the beat
-/// doesn't.
+/// Retain a task leg locally, echoing the operator line from the plaintext
+/// twin when given (`None` for the raw shards of a split leg — the wire
+/// frame's directed body is sealed, so it cannot be surfaced). Content legs
+/// retain; the beat doesn't.
 fn retain_leg(
     state: &mut EventLoopState,
     msg: &Message,
     out: &output::Output,
-    echo: bool,
+    echo: Option<&Message>,
     content: bool,
 ) {
-    if echo {
-        out.print_task(msg, true);
+    if let Some(echo) = echo {
+        out.print_task(echo, true);
     }
     if content {
         retain_outbound(state, msg);
