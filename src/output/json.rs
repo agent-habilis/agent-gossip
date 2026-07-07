@@ -516,17 +516,7 @@ fn state_change_summary(merge: Option<&serde_json::Value>) -> String {
     };
     if let Some(map) = merge.and_then(serde_json::Value::as_object) {
         for (key, value) in map {
-            // A non-empty object value names its changed members one level deep
-            // (`/peers/alice`); anything else names the top-level key.
-            if let serde_json::Value::Object(sub) = value
-                && !sub.is_empty()
-            {
-                for subkey in sub.keys() {
-                    push(format!("/{key}/{subkey}"));
-                }
-                continue;
-            }
-            push(format!("/{key}"));
+            push_changed_paths(key, value, &mut push);
         }
     }
     if paths.is_empty() {
@@ -536,6 +526,21 @@ fn state_change_summary(merge: Option<&serde_json::Value>) -> String {
     } else {
         paths.join(", ")
     }
+}
+
+/// Push the changed path(s) for one top-level `merge` entry. A non-empty
+/// object value names its changed members one level deep (`/peers/alice`);
+/// anything else names the top-level key.
+fn push_changed_paths(key: &str, value: &serde_json::Value, push: &mut impl FnMut(String)) {
+    if let serde_json::Value::Object(sub) = value
+        && !sub.is_empty()
+    {
+        for subkey in sub.keys() {
+            push(format!("/{key}/{subkey}"));
+        }
+        return;
+    }
+    push(format!("/{key}"));
 }
 
 /// The `changed …` clause from a raw `State` body (parses once, then defers to

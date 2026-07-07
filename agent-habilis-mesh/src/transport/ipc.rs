@@ -453,6 +453,23 @@ mod tests {
 
     // ── IPC round-trip via local socket ────────────────────────────
 
+    /// Answer exactly one inbound command, then return. Split out of
+    /// `ipc_listen_and_send_msg` so the match arms aren't nested inside the
+    /// spawned future's `if let`.
+    async fn respond_once(mut rx: mpsc::Receiver<IpcMessage<TestCommand>>) {
+        let Some((cmd, resp_tx)) = rx.recv().await else {
+            return;
+        };
+        match cmd {
+            TestCommand::Msg { body, .. } => {
+                let _ = resp_tx.send(json_ok(&format!("got: {body}")));
+            }
+            TestCommand::Ping { .. } => {
+                let _ = resp_tx.send(json_error("unexpected command"));
+            }
+        }
+    }
+
     #[tokio::test]
     async fn ipc_listen_and_send_msg() {
         // Base58-encode the pid so the mesh id passes strict charset validation.
@@ -460,7 +477,7 @@ mod tests {
         let mesh = MeshId::new(format!("💬ipctest{pid_b58}")).unwrap();
         let nickname = Nickname::from("test-nick");
 
-        let (tx, mut rx) = mpsc::channel::<IpcMessage<TestCommand>>(8);
+        let (tx, rx) = mpsc::channel::<IpcMessage<TestCommand>>(8);
 
         // Bind synchronously (no sleep needed — the socket is accepting the
         // instant `bind` returns), then spawn the accept loop.
@@ -472,18 +489,7 @@ mod tests {
         ));
 
         // Spawn a handler that responds to messages
-        let handler = tokio::spawn(async move {
-            if let Some((cmd, resp_tx)) = rx.recv().await {
-                match cmd {
-                    TestCommand::Msg { body, .. } => {
-                        let _ = resp_tx.send(json_ok(&format!("got: {body}")));
-                    }
-                    TestCommand::Ping { .. } => {
-                        let _ = resp_tx.send(json_error("unexpected command"));
-                    }
-                }
-            }
-        });
+        let handler = tokio::spawn(respond_once(rx));
 
         // Send a command
         let cmd = TestCommand::Msg {
@@ -517,6 +523,15 @@ mod tests {
         assert_eq!(backoff, cap, "sustained failure settles at the cap");
     }
 
+    /// Answer every inbound command with `"healthy"` until the channel
+    /// closes. Split out of `idle_connection_is_closed_at_the_read_deadline`
+    /// so the loop body isn't nested inside the spawned future's `while let`.
+    async fn respond_healthy_forever(mut rx: mpsc::Receiver<IpcMessage<TestCommand>>) {
+        while let Some((_cmd, resp_tx)) = rx.recv().await {
+            let _ = resp_tx.send(json_ok("healthy"));
+        }
+    }
+
     // An idle client (connects, never sends) must be disconnected at the
     // I/O deadline instead of pinning a handler task + fd for the
     // daemon's lifetime, and the listener must keep serving others
@@ -531,7 +546,7 @@ mod tests {
         let pid_b58 = bs58::encode(std::process::id().to_le_bytes()).into_string();
         let mesh = MeshId::new(format!("💬ipcquiet{pid_b58}")).unwrap();
         let nickname = Nickname::from("idle-nick");
-        let (tx, mut rx) = mpsc::channel::<IpcMessage<TestCommand>>(8);
+        let (tx, rx) = mpsc::channel::<IpcMessage<TestCommand>>(8);
         let listener = bind(&mesh, &nickname).expect("bind IPC socket");
         let listener_handle = tokio::spawn(serve(
             listener,
@@ -540,11 +555,7 @@ mod tests {
         ));
         // Echo handler so a healthy command still round-trips while the
         // idle connection is parked.
-        let handler = tokio::spawn(async move {
-            while let Some((_cmd, resp_tx)) = rx.recv().await {
-                let _ = resp_tx.send(json_ok("healthy"));
-            }
-        });
+        let handler = tokio::spawn(respond_healthy_forever(rx));
 
         // Park a silent connection.
         let path = socket_path(&mesh, &nickname);

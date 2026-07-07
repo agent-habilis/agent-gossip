@@ -105,26 +105,68 @@ impl Graph {
                 continue;
             }
             for (next, edge) in self.adj.get(&node).into_iter().flatten() {
-                if *next != dst && blocked.contains(next) {
-                    continue;
-                }
-                let next_cost = cost.add(*edge);
-                let improved = match best.get(next) {
-                    Some(known) => next_cost < *known,
-                    None => true,
+                let candidate = RelaxEdge {
+                    node,
+                    cost,
+                    next: *next,
+                    weight: *edge,
+                    dst,
+                    blocked,
                 };
-                if improved {
-                    best.insert(*next, next_cost);
-                    prev.insert(*next, node);
-                    heap.push(HeapEntry {
-                        cost: next_cost,
-                        node: *next,
-                    });
-                }
+                relax(&mut best, &mut prev, &mut heap, candidate);
             }
         }
         None
     }
+}
+
+/// The edge under consideration by one relaxation step: `node -> next`
+/// weighing `weight` atop the already-settled `cost` to `node`, gated by
+/// `dst` (never itself blocked) and the `blocked` set.
+#[derive(Clone, Copy)]
+struct RelaxEdge<'a> {
+    node: EndpointId,
+    cost: LinkMetric,
+    next: EndpointId,
+    weight: LinkMetric,
+    dst: EndpointId,
+    blocked: &'a HashSet<EndpointId>,
+}
+
+/// Relax `candidate`: skip it when `next` is blocked (unless it's `dst`
+/// itself), then update `best`/`prev`/`heap` if the new cost improves on any
+/// previously known cost to `next`.
+fn relax(
+    best: &mut HashMap<EndpointId, LinkMetric>,
+    prev: &mut HashMap<EndpointId, EndpointId>,
+    heap: &mut BinaryHeap<HeapEntry>,
+    candidate: RelaxEdge<'_>,
+) {
+    let RelaxEdge {
+        node,
+        cost,
+        next,
+        weight,
+        dst,
+        blocked,
+    } = candidate;
+    if next != dst && blocked.contains(&next) {
+        return;
+    }
+    let next_cost = cost.add(weight);
+    let improved = match best.get(&next) {
+        Some(known) => next_cost < *known,
+        None => true,
+    };
+    if !improved {
+        return;
+    }
+    best.insert(next, next_cost);
+    prev.insert(next, node);
+    heap.push(HeapEntry {
+        cost: next_cost,
+        node: next,
+    });
 }
 
 /// Walk `prev` from `dst` back to `src`, returning the hops after `src` in

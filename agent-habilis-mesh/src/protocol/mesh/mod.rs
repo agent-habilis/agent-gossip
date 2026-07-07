@@ -715,17 +715,17 @@ mod mesh_tests {
         }
 
         fn arb_config() -> impl Strategy<Value = MeshConfig> {
-            (any::<bool>(), proptest::option::of(uniform16(0u8..))).prop_map(
-                |(public, verifier)| {
-                    let mut config = if public {
-                        MeshConfig::public_preset()
-                    } else {
-                        MeshConfig::loopback()
-                    };
-                    config.password = verifier;
-                    config
-                },
-            )
+            (any::<bool>(), proptest::option::of(uniform16(0u8..))).prop_map(build_config)
+        }
+
+        fn build_config((public, verifier): (bool, Option<[u8; 16]>)) -> MeshConfig {
+            let mut config = if public {
+                MeshConfig::public_preset()
+            } else {
+                MeshConfig::loopback()
+            };
+            config.password = verifier;
+            config
         }
 
         proptest! {

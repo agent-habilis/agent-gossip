@@ -227,6 +227,7 @@ impl Session {
 
 #[cfg(test)]
 mod tests {
+    use std::future::Future;
     use std::time::Duration;
 
     use serde_json::json;
@@ -276,6 +277,30 @@ mod tests {
         }
     }
 
+    /// Whether `event` is the self-echo of `sent` — a `Message` event
+    /// tagged `is_self:true` whose id matches.
+    fn is_self_echo(event: &crate::output::OutputEvent, sent: &MessageId) -> bool {
+        matches!(
+            event,
+            crate::output::OutputEvent::Message { msg, is_self }
+                if *is_self && msg.id == *sent
+        )
+    }
+
+    /// Whether `event` is bob-cursor's join presence — the marker
+    /// `implicit_cursor_returns_delta_on_subsequent_fetches` waits on to know
+    /// its cursor baseline includes the join.
+    fn is_bob_join(event: &crate::output::OutputEvent) -> bool {
+        as_message(event).is_some_and(|msg| {
+            matches!(
+                msg.kind,
+                MessageKind::Presence {
+                    subtype: PresenceSubtype::Joined
+                }
+            ) && msg.author.as_str() == "bob-cursor"
+        })
+    }
+
     /// Generous in-process delivery budget. Every mesh wait below is adaptive —
     /// it breaks the instant the condition holds — so a healthy run returns in
     /// milliseconds and only a genuinely stalled link pays this ceiling. Set
@@ -283,23 +308,55 @@ mod tests {
     /// delivery; mirrors the integration suite's `MSG_TIMEOUT`.
     const DELIVER: Duration = Duration::from_mins(1);
 
-    async fn wait_for_gossip(session: &Session, author: &str, body: &str) -> Option<MessageId> {
-        // Poll up to `DELIVER` for the message to propagate via gossip.
-        let deadline = tokio::time::Instant::now() + DELIVER;
+    /// Retry `probe` on `interval` until it yields `Some` or `deadline` passes
+    /// — the shared shape behind every "wait for gossip to land" poll below.
+    async fn poll_until<Fut, T>(
+        deadline: tokio::time::Instant,
+        interval: Duration,
+        mut probe: impl FnMut() -> Fut,
+    ) -> Option<T>
+    where
+        Fut: Future<Output = Option<T>>,
+    {
         while tokio::time::Instant::now() < deadline {
-            if let Ok(events) = session.fetch_messages(None, false).await {
-                for entry in &events {
-                    if let Some(msg) = as_message(&entry.event)
-                        && msg.author.as_str() == author
-                        && crate::a2a::gossip::chat_text(msg).as_deref() == Some(body)
-                    {
-                        return Some(msg.id.clone());
-                    }
-                }
+            if let Some(value) = probe().await {
+                return Some(value);
             }
-            tokio::time::sleep(Duration::from_millis(200)).await;
+            tokio::time::sleep(interval).await;
         }
         None
+    }
+
+    async fn wait_for_gossip(session: &Session, author: &str, body: &str) -> Option<MessageId> {
+        let deadline = tokio::time::Instant::now() + DELIVER;
+        poll_until(deadline, Duration::from_millis(200), || async {
+            let events = session.fetch_messages(None, false).await.ok()?;
+            events.iter().find_map(|entry| {
+                let msg = as_message(&entry.event)?;
+                (msg.author.as_str() == author
+                    && crate::a2a::gossip::chat_text(msg).as_deref() == Some(body))
+                .then(|| msg.id.clone())
+            })
+        })
+        .await
+    }
+
+    /// Long-poll `session` (an `after`-anchored fetch, so it parks rather
+    /// than busy-spins) until a message with the given body surfaces.
+    async fn watch_for_body(session: &Session, after: Option<u64>, body: &str) {
+        loop {
+            let events = session
+                .fetch_messages(after, true)
+                .await
+                .expect("long-poll fetch");
+            let found = events
+                .iter()
+                .filter_map(|item| as_message(&item.event))
+                .any(|msg| crate::a2a::gossip::chat_text(msg).as_deref() == Some(body));
+            if found {
+                break;
+            }
+        }
     }
 
     #[tokio::test]
@@ -398,24 +455,10 @@ mod tests {
         // re-issue until the message shows (each call still parks). The park is
         // the daemon's 60s long-poll cap, so under a loaded host a correct
         // delivery still arrives long before the call would time out empty.
-        let watch = async {
-            loop {
-                let events = joiner
-                    .fetch_messages(after, true)
-                    .await
-                    .expect("long-poll fetch");
-                if events
-                    .iter()
-                    .filter_map(|item| as_message(&item.event))
-                    .any(|msg| {
-                        crate::a2a::gossip::chat_text(msg).as_deref() == Some("after warmup")
-                    })
-                {
-                    break;
-                }
-            }
-        };
-        let watch = tokio::time::timeout(Duration::from_secs(90), watch);
+        let watch = tokio::time::timeout(
+            Duration::from_secs(90),
+            watch_for_body(&joiner, after, "after warmup"),
+        );
         let ((), watched) = tokio::join!(delayed_send, watch);
         assert!(
             watched.is_ok(),
@@ -463,21 +506,16 @@ mod tests {
         assert!(echo.timestamp > 0, "echo must carry a unix timestamp");
 
         // The self-send surfaces in a fetch, marked `self:true`.
-        let mut saw_self = false;
         let deadline = tokio::time::Instant::now() + DELIVER;
-        while tokio::time::Instant::now() < deadline && !saw_self {
+        let saw_self = poll_until(deadline, Duration::from_millis(150), || async {
             let events = alice.fetch_messages(None, false).await.expect("fetch");
-            saw_self = events.iter().any(|item| {
-                matches!(
-                    &item.event,
-                    crate::output::OutputEvent::Message { msg, is_self }
-                        if *is_self && msg.id == sent
-                )
-            });
-            if !saw_self {
-                tokio::time::sleep(Duration::from_millis(150)).await;
-            }
-        }
+            events
+                .iter()
+                .any(|item| is_self_echo(&item.event, &sent))
+                .then_some(())
+        })
+        .await
+        .is_some();
         assert!(saw_self, "own send should surface once with self:true");
 
         alice.leave().await;
@@ -502,32 +540,19 @@ mod tests {
         // everything currently buffered — which is exactly what we test next.
         // Capture the seq just BEFORE bob's join (the prior event's seq) so a
         // later explicit replay from there re-reads bob's join + send.
-        let mut replay_from: Option<u64> = None;
         let deadline = tokio::time::Instant::now() + DELIVER;
-        while tokio::time::Instant::now() < deadline {
+        let replay_from = poll_until(deadline, Duration::from_millis(150), || async {
             let events = alice
                 .fetch_messages(None, false)
                 .await
                 .expect("first fetch");
-            let bob_join_idx = events.iter().position(|item| {
-                as_message(&item.event).is_some_and(|msg| {
-                    matches!(
-                        msg.kind,
-                        MessageKind::Presence {
-                            subtype: PresenceSubtype::Joined
-                        }
-                    ) && msg.author.as_str() == "bob-cursor"
-                })
-            });
-            if let Some(idx) = bob_join_idx {
-                // The seq strictly before bob's join (0 if it's the first event)
-                // — replaying from here re-includes the join and everything after.
-                replay_from = Some(idx.checked_sub(1).map_or(0, |prev| events[prev].seq));
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(150)).await;
-        }
-        let replay_from = replay_from.expect("first fetch should see bob's join presence");
+            let bob_join_idx = events.iter().position(|item| is_bob_join(&item.event));
+            // The seq strictly before bob's join (0 if it's the first event) —
+            // replaying from here re-includes the join and everything after.
+            bob_join_idx.map(|idx| idx.checked_sub(1).map_or(0, |prev| events[prev].seq))
+        })
+        .await
+        .expect("first fetch should see bob's join presence");
 
         // Second fetch with no new traffic: cursor advanced past everything
         // buffered, so the delta must be empty.
@@ -545,21 +570,20 @@ mod tests {
         bob.send_message(MessageBody::from("hi via cursor"))
             .await
             .expect("send");
-        let mut saw_body = false;
         let delta_deadline = tokio::time::Instant::now() + Duration::from_secs(10);
-        while tokio::time::Instant::now() < delta_deadline && !saw_body {
+        let saw_body = poll_until(delta_deadline, Duration::from_millis(150), || async {
             let events = alice
                 .fetch_messages(None, false)
                 .await
                 .expect("delta fetch 2");
-            saw_body = events
+            events
                 .iter()
                 .filter_map(|item| as_message(&item.event))
-                .any(|msg| crate::a2a::gossip::chat_text(msg).as_deref() == Some("hi via cursor"));
-            if !saw_body {
-                tokio::time::sleep(Duration::from_millis(150)).await;
-            }
-        }
+                .any(|msg| crate::a2a::gossip::chat_text(msg).as_deref() == Some("hi via cursor"))
+                .then_some(())
+        })
+        .await
+        .is_some();
         assert!(
             saw_body,
             "delta fetch after bob's send should surface body=hi via cursor"

@@ -1644,9 +1644,28 @@ mod topic_tests {
 
     use agent_habilis_mesh::daemon::CoHostPolicy;
     use agent_habilis_mesh::protocol::mesh::{Mesh, MeshConfig};
-    use agent_habilis_mesh::protocol::{MessageBody, Nickname};
+    use agent_habilis_mesh::protocol::{Message, MessageBody, Nickname};
+    use tokio::sync::broadcast;
 
     use super::{JoinError, MeshSession, TopicConfig};
+
+    /// Wait for alice's topic message on `bob_rx`, ignoring anything else
+    /// (e.g. earlier retries' echoes) until the channel closes.
+    async fn recv_hello_topic(bob_rx: &mut broadcast::Receiver<Message>) -> bool {
+        loop {
+            match bob_rx.recv().await {
+                Ok(msg)
+                    if msg.author.as_str() == "alice-topic"
+                        && crate::a2a::gossip::chat_text(&msg).as_deref()
+                            == Some("hello topic") =>
+                {
+                    return true;
+                }
+                Ok(_) => {}
+                Err(_) => return false,
+            }
+        }
+    }
 
     /// The empty/whitespace-string guard is centralized in `TopicParams::resolve`,
     /// so it holds for the public embed API too (not just the CLI/MCP edges) —
@@ -1703,22 +1722,9 @@ mod topic_tests {
                 .send(MessageBody::from("hello topic"))
                 .await
                 .expect("alice send");
-            let seen = tokio::time::timeout(Duration::from_millis(500), async {
-                loop {
-                    match bob_rx.recv().await {
-                        Ok(msg) => {
-                            if msg.author.as_str() == "alice-topic"
-                                && crate::a2a::gossip::chat_text(&msg).as_deref()
-                                    == Some("hello topic")
-                            {
-                                break true;
-                            }
-                        }
-                        Err(_) => break false,
-                    }
-                }
-            })
-            .await;
+            let seen =
+                tokio::time::timeout(Duration::from_millis(500), recv_hello_topic(&mut bob_rx))
+                    .await;
             received = matches!(seen, Ok(true));
         }
         assert!(

@@ -284,45 +284,66 @@ pub fn spawn_relay_monitor(
     let probe = Duration::from_secs(RELAY_RUNG_PROBE_SECS);
     tokio::spawn(async move {
         if homed {
-            // Poll the rung we're homed on until a sustained outage.
-            let mut fails: u32 = 0;
-            loop {
-                tokio::time::sleep(Duration::from_secs(RELAY_LIVENESS_INTERVAL_SECS)).await;
-                if tokio::time::timeout(probe, endpoint.online()).await.is_ok() {
-                    fails = 0;
-                    continue;
-                }
-                fails += 1;
-                if !should_evict_rung(fails) {
-                    continue;
-                }
-                tracing::info!(
-                    target: "agent_square::lookup",
-                    fails,
-                    "beacon relay rung unreachable; re-walking the ladder"
-                );
-                let _ = rung_tx.send(select_bootstrap_rung(&ladder, probe).await);
-                return;
-            }
-        }
-        // Relay-less: keep re-walking the ladder to rediscover a rung,
-        // backing off after each fruitless round so an all-down ladder
-        // isn't hammered. Never stops.
-        let mut backoff = Duration::from_secs(RELAY_REPROBE_BACKOFF_MIN_SECS);
-        loop {
-            if let Some(rung) = select_bootstrap_rung(&ladder, probe).await {
-                tracing::info!(
-                    target: "agent_square::lookup",
-                    relay = %rung,
-                    "relay-less beacon rediscovered a reachable rung"
-                );
-                let _ = rung_tx.send(Some(rung));
-                return;
-            }
-            tokio::time::sleep(backoff).await;
-            backoff = next_relay_backoff(backoff);
+            monitor_homed_rung(&endpoint, &ladder, &rung_tx, probe).await;
+        } else {
+            monitor_relay_less(&ladder, &rung_tx, probe).await;
         }
     })
+}
+
+/// Poll the rung we're homed on until a sustained outage, then re-walk the
+/// ladder once and publish the result. Split out of [`spawn_relay_monitor`]
+/// so the loop body isn't nested inside the spawned future's `if homed`.
+async fn monitor_homed_rung(
+    endpoint: &Endpoint,
+    ladder: &[RelayUrl],
+    rung_tx: &watch::Sender<Option<RelayUrl>>,
+    probe: Duration,
+) {
+    let mut fails: u32 = 0;
+    loop {
+        tokio::time::sleep(Duration::from_secs(RELAY_LIVENESS_INTERVAL_SECS)).await;
+        if tokio::time::timeout(probe, endpoint.online()).await.is_ok() {
+            fails = 0;
+            continue;
+        }
+        fails += 1;
+        if !should_evict_rung(fails) {
+            continue;
+        }
+        tracing::info!(
+            target: "agent_square::lookup",
+            fails,
+            "beacon relay rung unreachable; re-walking the ladder"
+        );
+        let _ = rung_tx.send(select_bootstrap_rung(ladder, probe).await);
+        return;
+    }
+}
+
+/// Relay-less: keep re-walking the ladder to rediscover a rung, backing off
+/// after each fruitless round so an all-down ladder isn't hammered. Never
+/// stops. Split out of [`spawn_relay_monitor`] for the same reason as
+/// [`monitor_homed_rung`].
+async fn monitor_relay_less(
+    ladder: &[RelayUrl],
+    rung_tx: &watch::Sender<Option<RelayUrl>>,
+    probe: Duration,
+) {
+    let mut backoff = Duration::from_secs(RELAY_REPROBE_BACKOFF_MIN_SECS);
+    loop {
+        if let Some(rung) = select_bootstrap_rung(ladder, probe).await {
+            tracing::info!(
+                target: "agent_square::lookup",
+                relay = %rung,
+                "relay-less beacon rediscovered a reachable rung"
+            );
+            let _ = rung_tx.send(Some(rung));
+            return;
+        }
+        tokio::time::sleep(backoff).await;
+        backoff = next_relay_backoff(backoff);
+    }
 }
 
 #[cfg(test)]

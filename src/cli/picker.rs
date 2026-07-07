@@ -385,23 +385,35 @@ fn spawn_key_reader(
     std::thread::JoinHandle<()>,
 ) {
     let (key_tx, key_rx) = tokio::sync::mpsc::unbounded_channel();
-    let handle = std::thread::spawn(move || {
-        let mut buf = [0u8; 16];
-        while !stop.load(std::sync::atomic::Ordering::Relaxed) {
-            match read_stdin(&mut buf) {
-                Some(0) => {} // VTIME timeout, no input — re-check `stop`
-                Some(count) => {
-                    for key in parse_keys(&buf[..count]) {
-                        if key_tx.send(key).is_err() {
-                            return;
-                        }
-                    }
-                }
-                None => return, // read error
-            }
-        }
-    });
+    let handle = std::thread::spawn(move || read_key_loop(&stop, &key_tx));
     (key_rx, handle)
+}
+
+/// The reader thread's body: read raw bytes and forward parsed keys until
+/// `stop` is set or the channel/read end closes.
+fn read_key_loop(
+    stop: &std::sync::atomic::AtomicBool,
+    key_tx: &tokio::sync::mpsc::UnboundedSender<Key>,
+) {
+    let mut buf = [0u8; 16];
+    while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+        match read_stdin(&mut buf) {
+            Some(0) => {} // VTIME timeout, no input — re-check `stop`
+            Some(count) if forward_keys(&buf[..count], key_tx) => {}
+            Some(_) | None => return, // channel closed or read error
+        }
+    }
+}
+
+/// Parse `bytes` into keys and forward each to `key_tx`. Returns `false` once
+/// the receiver has hung up, so the caller can stop reading.
+fn forward_keys(bytes: &[u8], key_tx: &tokio::sync::mpsc::UnboundedSender<Key>) -> bool {
+    for key in parse_keys(bytes) {
+        if key_tx.send(key).is_err() {
+            return false;
+        }
+    }
+    true
 }
 
 /// One raw `read(2)` from stdin. `Some(0)` on the `VTIME` poll timeout,
@@ -427,15 +439,11 @@ fn parse_keys(bytes: &[u8]) -> Vec<Key> {
     while index < bytes.len() {
         match bytes[index] {
             0x1b => {
-                // CSI: ESC '[' final-byte. Recognize the arrows; skip
-                // any other sequence. A lone ESC is a quit.
-                if bytes.get(index + 1) == Some(&b'[') {
-                    match bytes.get(index + 2) {
-                        Some(b'A') => keys.push(Key::Up),
-                        Some(b'B') => keys.push(Key::Down),
-                        _ => {}
-                    }
-                    index += 3;
+                // CSI: ESC '[' final-byte. Recognize the arrows; skip any
+                // other sequence. A lone ESC (not a CSI) is a quit.
+                if let Some(csi) = parse_csi(&bytes[index..]) {
+                    keys.extend(csi.key);
+                    index += csi.consumed;
                     continue;
                 }
                 keys.push(Key::Quit);
@@ -449,6 +457,28 @@ fn parse_keys(bytes: &[u8]) -> Vec<Key> {
         index += 1;
     }
     keys
+}
+
+/// One parsed CSI escape sequence: the arrow key it maps to (if
+/// recognized) and how many bytes (`ESC '[' final-byte`) it consumed.
+struct Csi {
+    key: Option<Key>,
+    consumed: usize,
+}
+
+/// Parse a CSI sequence at the start of `rest` (`rest[0]` is the leading
+/// `ESC`). `None` when `rest[1]` isn't `[` — not a CSI sequence at all, so
+/// the caller treats the lone `ESC` as a quit.
+fn parse_csi(rest: &[u8]) -> Option<Csi> {
+    if rest.get(1) != Some(&b'[') {
+        return None;
+    }
+    let key = match rest.get(2) {
+        Some(b'A') => Some(Key::Up),
+        Some(b'B') => Some(Key::Down),
+        _ => None,
+    };
+    Some(Csi { key, consumed: 3 })
 }
 
 #[cfg(test)]

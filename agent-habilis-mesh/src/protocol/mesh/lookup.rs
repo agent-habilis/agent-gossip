@@ -142,22 +142,27 @@ impl LookupOpts {
             if count > MAX_RELAY_LADDER {
                 bail!("relay ladder too long: {count}");
             }
-            let mut ladder = Vec::with_capacity(count);
-            for _ in 0..count {
-                let len = read_u16(bytes, pos).context("truncated relay URL length")? as usize;
-                if len > MAX_RELAY_URL_BYTES {
-                    bail!("relay URL too long: {len}");
-                }
-                let end = pos.checked_add(len).context("relay URL length overflow")?;
-                let raw = bytes.get(*pos..end).context("truncated relay URL")?;
-                *pos = end;
-                let text = std::str::from_utf8(raw).context("relay URL is not UTF-8")?;
-                ladder.push(text.parse::<RelayUrl>().context("invalid relay URL")?);
-            }
-            RelayChoice::Custom(ladder)
+            RelayChoice::Custom(decode_relay_ladder(bytes, pos, count)?)
         };
         Ok(LookupOpts { mdns, dht, relay })
     }
+}
+
+/// Decode `count` length-prefixed relay URLs from the cursor, advancing `pos`.
+fn decode_relay_ladder(bytes: &[u8], pos: &mut usize, count: usize) -> Result<Vec<RelayUrl>> {
+    let mut ladder = Vec::with_capacity(count);
+    for _ in 0..count {
+        let len = read_u16(bytes, pos).context("truncated relay URL length")? as usize;
+        if len > MAX_RELAY_URL_BYTES {
+            bail!("relay URL too long: {len}");
+        }
+        let end = pos.checked_add(len).context("relay URL length overflow")?;
+        let raw = bytes.get(*pos..end).context("truncated relay URL")?;
+        *pos = end;
+        let text = std::str::from_utf8(raw).context("relay URL is not UTF-8")?;
+        ladder.push(text.parse::<RelayUrl>().context("invalid relay URL")?);
+    }
+    Ok(ladder)
 }
 
 pub(super) fn read_u16(bytes: &[u8], pos: &mut usize) -> Result<u16> {

@@ -35,7 +35,7 @@ use std::process::Stdio;
 use std::time::{Duration, Instant};
 
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
-use tokio::process::{Child, Command};
+use tokio::process::{Child, ChildStdin, Command};
 
 /// The circuit is the sole directed transport, and the active view is capped so
 /// the mesh is genuinely partial (routes to non-neighbours are multi-hop).
@@ -60,6 +60,25 @@ async fn read_mesh_id(reader: &mut BufReader<tokio::process::ChildStderr>) -> Op
 async fn reap(mut child: Child) {
     let _ = child.kill().await;
     let _ = child.wait().await;
+}
+
+/// Re-feed the payload on `sender_stdin` if throttled `last_feed` cadence has
+/// elapsed. Returns `false` once the write fails (sender's stdin is gone),
+/// signalling the caller to give up on the retry loop.
+async fn feed_if_due(
+    sender_stdin: &mut ChildStdin,
+    payload_bytes: &[u8],
+    last_feed: &mut Option<Instant>,
+) -> bool {
+    let due = last_feed.is_none_or(|at| at.elapsed() >= Duration::from_secs(4));
+    if !due {
+        return true;
+    }
+    if sender_stdin.write_all(payload_bytes).await.is_err() || sender_stdin.flush().await.is_err() {
+        return false;
+    }
+    *last_feed = Some(Instant::now());
+    true
 }
 
 /// Spawn a `connect` joiner (a relay or the receiver) under the circuit-only
@@ -113,13 +132,12 @@ async fn payload_relays_across_a_circuit() {
         .expect("sender printed a mesh id");
 
     // Drain the sender's remaining stderr so its pipe never fills and blocks it.
+    // `sink`'s content is discarded, so clearing it after each read (instead of
+    // before, as the loop-and-break form would) is behaviorally equivalent.
     tokio::spawn(async move {
         let mut sink = String::new();
-        loop {
+        while sender_stderr.read_line(&mut sink).await.unwrap_or(0) != 0 {
             sink.clear();
-            if sender_stderr.read_line(&mut sink).await.unwrap_or(0) == 0 {
-                break;
-            }
         }
     });
 
@@ -161,14 +179,8 @@ async fn payload_relays_across_a_circuit() {
         // Re-feed every few seconds (and immediately on the first pass) until the
         // payload lands — each write is one more directed-send attempt across the
         // converging mesh.
-        let due = last_feed.is_none_or(|at| at.elapsed() >= Duration::from_secs(4));
-        if due {
-            if sender_stdin.write_all(payload_bytes).await.is_err()
-                || sender_stdin.flush().await.is_err()
-            {
-                break; // sender gone
-            }
-            last_feed = Some(Instant::now());
+        if !feed_if_due(&mut sender_stdin, payload_bytes, &mut last_feed).await {
+            break; // sender gone
         }
         // Read whatever has arrived, bounded so we loop back to re-feed.
         match tokio::time::timeout(Duration::from_secs(2), receiver_stdout.read(&mut chunk)).await {

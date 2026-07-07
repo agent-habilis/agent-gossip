@@ -38,13 +38,8 @@ pub(crate) async fn read_bounded_line<R: AsyncBufRead + Unpin>(
             return Ok(finish(&buf));
         }
         if let Some(pos) = chunk.iter().position(|&byte| byte == b'\n') {
-            if !overflow {
-                let room = max.saturating_sub(buf.len());
-                if pos > room {
-                    overflow = true;
-                } else {
-                    buf.extend_from_slice(&chunk[..pos]);
-                }
+            if !overflow && would_overflow(&mut buf, &chunk[..pos], max) {
+                overflow = true;
             }
             reader.consume(pos + 1);
             return Ok(if overflow {
@@ -55,16 +50,23 @@ pub(crate) async fn read_bounded_line<R: AsyncBufRead + Unpin>(
         }
         // No newline in this chunk: accumulate up to the cap, consume all.
         let len = chunk.len();
-        if !overflow {
-            let room = max.saturating_sub(buf.len());
-            if len > room {
-                overflow = true;
-            } else {
-                buf.extend_from_slice(chunk);
-            }
+        if !overflow && would_overflow(&mut buf, chunk, max) {
+            overflow = true;
         }
         reader.consume(len);
     }
+}
+
+/// Append `piece` to `buf` if it fits within `max`; otherwise leave `buf`
+/// untouched and report the overflow. Split out of [`read_bounded_line`] so
+/// the room-check/extend branch isn't nested inside its `if let`/`if`.
+fn would_overflow(buf: &mut Vec<u8>, piece: &[u8], max: usize) -> bool {
+    let room = max.saturating_sub(buf.len());
+    if piece.len() > room {
+        return true;
+    }
+    buf.extend_from_slice(piece);
+    false
 }
 
 fn finish(buf: &[u8]) -> LineRead {

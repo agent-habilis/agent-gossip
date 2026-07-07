@@ -1215,6 +1215,37 @@ pub(crate) async fn wire_circuit(alice: &InProcNode, bob: &InProcNode) {
 // binary: real SIGKILL / SIGSTOP-SIGCONT, real stdout, real
 // Unix-socket IPC, real heal/anti-entropy timing.
 
+/// Human-mode create prints `others can join with: agent-square join <id>`;
+/// pull the id token out of that hint, if `trimmed` is such a line.
+fn parse_join_hint_mesh_id(trimmed: &str) -> Option<String> {
+    let (_, after) = trimmed.split_once("agent-square join ")?;
+    after.split_whitespace().next().map(str::to_owned)
+}
+
+/// Both lifecycle lines end with ` as <NICK>` (`created #N and joined as
+/// <nick>` / `joined #N as <nick>`); presence/message lines never contain
+/// ` as <`. Anchor on the last ` as <` so the leading `<author>` of a
+/// message line can't be mistaken for the nick.
+fn parse_lifecycle_nickname(trimmed: &str) -> Option<String> {
+    let (_, after_as) = trimmed.rsplit_once(" as <")?;
+    let end = after_as.find('>')?;
+    Some(after_as[..end].to_string())
+}
+
+/// Scan a `create`/`join` log's full contents so far for the mesh id and
+/// nickname, filling in whichever of `mesh_id`/`nickname` is still unset.
+fn scan_create_log(content: &str, mesh_id: &mut Option<String>, nickname: &mut Option<String>) {
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if mesh_id.is_none() {
+            *mesh_id = parse_join_hint_mesh_id(trimmed);
+        }
+        if nickname.is_none() {
+            *nickname = parse_lifecycle_nickname(trimmed);
+        }
+    }
+}
+
 pub(crate) struct Node {
     child: Child,
     log: PathBuf,
@@ -1267,28 +1298,7 @@ impl Node {
 
         while Instant::now() < deadline && (mesh_id.is_none() || nickname.is_none()) {
             let content = fs::read_to_string(&log).unwrap_or_default();
-            for line in content.lines() {
-                let trimmed = line.trim();
-                // Human-mode create prints `others can join with: agent-square
-                // join <id>`; pull the id token out of that hint.
-                if mesh_id.is_none()
-                    && let Some((_, after)) = trimmed.split_once("agent-square join ")
-                {
-                    mesh_id = after.split_whitespace().next().map(str::to_owned);
-                }
-                // Both lifecycle lines end with ` as <NICK>`
-                // (`created #N and joined as <nick>` /
-                // `joined #N as <nick>`); presence/message
-                // lines never contain ` as <`. Anchor on the last
-                // ` as <` so the leading `<author>` of a message
-                // line can't be mistaken for the nick.
-                if nickname.is_none()
-                    && let Some((_, after_as)) = trimmed.rsplit_once(" as <")
-                    && let Some(end) = after_as.find('>')
-                {
-                    nickname = Some(after_as[..end].to_string());
-                }
-            }
+            scan_create_log(&content, &mut mesh_id, &mut nickname);
             if mesh_id.is_none() || nickname.is_none() {
                 std::thread::sleep(POLL);
             }

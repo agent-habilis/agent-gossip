@@ -94,39 +94,66 @@ impl CardRewriter {
                 out.append(&mut self.pending);
                 return;
             }
-            match &mut self.state {
-                State::Head => {
-                    let Some(end) = find_header_end(&self.pending) else {
-                        if self.pending.len() > MAX_HEAD_BYTES {
-                            self.raw = true;
-                        }
-                        return;
-                    };
-                    let header: Vec<u8> = self.pending.drain(..end).collect();
-                    self.dispatch_header(header, out);
-                }
-                State::StreamBody { remaining } => {
-                    let take = (*remaining).min(self.pending.len());
-                    out.extend(self.pending.drain(..take));
-                    *remaining -= take;
-                    if *remaining > 0 {
-                        return;
-                    }
-                    self.state = State::Head;
-                }
-                State::BufferBody {
-                    body, remaining, ..
-                } => {
-                    let take = (*remaining).min(self.pending.len());
-                    body.extend(self.pending.drain(..take));
-                    *remaining -= take;
-                    if *remaining > 0 {
-                        return;
-                    }
-                    self.emit_buffered(out);
-                }
+            // Dispatched by hand (not a `match` on `&mut self.state`) so each
+            // branch can call a `&mut self` helper without holding a borrow
+            // of `self.state` across it.
+            let keep_going = if matches!(self.state, State::Head) {
+                self.advance_head(out)
+            } else if matches!(self.state, State::StreamBody { .. }) {
+                self.advance_stream_body(out)
+            } else {
+                self.advance_buffer_body(out)
+            };
+            if !keep_going {
+                return;
             }
         }
+    }
+
+    /// Wait for the header block, then dispatch on its content. `false` means
+    /// more bytes are needed before progress can continue.
+    fn advance_head(&mut self, out: &mut Vec<u8>) -> bool {
+        let Some(end) = find_header_end(&self.pending) else {
+            self.raw = self.pending.len() > MAX_HEAD_BYTES;
+            return false;
+        };
+        let header: Vec<u8> = self.pending.drain(..end).collect();
+        self.dispatch_header(header, out);
+        true
+    }
+
+    /// Pass framed bytes straight through until `remaining` is exhausted.
+    fn advance_stream_body(&mut self, out: &mut Vec<u8>) -> bool {
+        let State::StreamBody { remaining } = &mut self.state else {
+            unreachable!("advance_stream_body called outside StreamBody state")
+        };
+        let take = (*remaining).min(self.pending.len());
+        out.extend(self.pending.drain(..take));
+        *remaining -= take;
+        if *remaining > 0 {
+            return false;
+        }
+        self.state = State::Head;
+        true
+    }
+
+    /// Accumulate framed bytes into the buffered body until `remaining` is
+    /// exhausted, then emit the (possibly rewritten) card.
+    fn advance_buffer_body(&mut self, out: &mut Vec<u8>) -> bool {
+        let State::BufferBody {
+            body, remaining, ..
+        } = &mut self.state
+        else {
+            unreachable!("advance_buffer_body called outside BufferBody state")
+        };
+        let take = (*remaining).min(self.pending.len());
+        body.extend(self.pending.drain(..take));
+        *remaining -= take;
+        if *remaining > 0 {
+            return false;
+        }
+        self.emit_buffered(out);
+        true
     }
 
     /// Classify a just-completed header block and set the next state.

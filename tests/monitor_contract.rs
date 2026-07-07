@@ -22,6 +22,37 @@ use common::{
     tmp_log, wait_until,
 };
 
+/// Parse a JSON stdout line as a `ready` event, returning its
+/// `(mesh, name, nickname)` fields, or `None` if the line isn't a `ready`
+/// event (or isn't JSON at all).
+fn parse_ready_event(line: &str) -> Option<(String, String, String)> {
+    let parsed = serde_json::from_str::<serde_json::Value>(line).ok()?;
+    if parsed["event"] != "ready" {
+        return None;
+    }
+    let mesh = parsed["square"].as_str()?.to_string();
+    let name = parsed["name"].as_str()?.to_string();
+    let nickname = parsed["nickname"].as_str()?.to_string();
+    Some((mesh, name, nickname))
+}
+
+/// Scan a JSON-mode log's full contents so far for the `ready` event,
+/// filling in `mesh`/`name`/`nickname` once found.
+fn scan_ready_events(
+    content: &str,
+    mesh: &mut Option<String>,
+    name: &mut Option<String>,
+    nickname: &mut Option<String>,
+) {
+    for line in content.lines() {
+        if let Some((parsed_mesh, parsed_name, parsed_nickname)) = parse_ready_event(line) {
+            *mesh = Some(parsed_mesh);
+            *name = Some(parsed_name);
+            *nickname = Some(parsed_nickname);
+        }
+    }
+}
+
 /// A node running in JSON output mode, with stdout captured to a log file.
 struct JsonNode {
     child: Child,
@@ -65,15 +96,7 @@ impl JsonNode {
         while Instant::now() < deadline && (mesh.is_none() || nickname.is_none() || name.is_none())
         {
             let content = fs::read_to_string(&log).unwrap_or_default();
-            for line in content.lines() {
-                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(line)
-                    && parsed["event"] == "ready"
-                {
-                    mesh = parsed["square"].as_str().map(ToString::to_string);
-                    name = parsed["name"].as_str().map(ToString::to_string);
-                    nickname = parsed["nickname"].as_str().map(ToString::to_string);
-                }
-            }
+            scan_ready_events(&content, &mut mesh, &mut name, &mut nickname);
             if mesh.is_none() || nickname.is_none() || name.is_none() {
                 std::thread::sleep(POLL);
             }
@@ -1182,14 +1205,10 @@ async fn test_task_times_out_when_skill_goes_silent() {
     // `task_timeout` on **either** node — before the fix, none would ever fire.
     let timed_out = wait_until(
         || {
-            let count = |node: &JsonNode| {
-                node.json_events()
-                    .iter()
-                    .filter(|value| {
-                        value["event"] == "task_timeout" && value["task_id"] == tid.as_str()
-                    })
-                    .count()
+            let is_this_timeout = |value: &&serde_json::Value| {
+                value["event"] == "task_timeout" && value["task_id"] == tid.as_str()
             };
+            let count = |node: &JsonNode| node.json_events().iter().filter(is_this_timeout).count();
             count(&creator) + count(&joiner)
         },
         1,

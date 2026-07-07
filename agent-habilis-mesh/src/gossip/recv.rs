@@ -789,42 +789,16 @@ fn gate_and_decrypt(
     app: &dyn NodeApp,
 ) -> Gated {
     if is_directed_content(&message.kind) {
-        if addressed_to_us(message, ctx.author) {
-            // Whether the directed body is sealed is the app's call, not a
-            // structural given: a2a's directed tags arrive encrypted, but a
-            // non-a2a consumer may send plaintext directed bytes. The frame is
-            // signature-authenticated either way; `sealed=false` only means "not
-            // additionally encrypted".
-            if app.classify(message).sealed {
-                let sealed = message.body.clone();
-                if !decrypt_directed(message, state, ctx) {
-                    return Gated::Drop;
-                }
-                let Some(class) = gate_app_payload(message, app) else {
-                    return Gated::Drop;
-                };
-                return Gated::Pass {
-                    sealed: Some(sealed),
-                    class: Some(class),
-                };
-            }
-            // Plaintext directed body: the wire body is already the final body,
-            // so retain_and_index re-serves it unchanged (`sealed: None`).
-            let Some(class) = gate_app_payload(message, app) else {
-                return Gated::Drop;
-            };
+        if !addressed_to_us(message, ctx.author) {
+            // Relay: an opaque directed frame — forwarded + retained, never
+            // validated or surfaced (the dispatch below is gated to the
+            // addressee), so it needs no classification here.
             return Gated::Pass {
                 sealed: None,
-                class: Some(class),
+                class: None,
             };
         }
-        // Relay: an opaque directed frame — forwarded + retained, never validated
-        // or surfaced (the dispatch below is gated to the addressee), so it needs
-        // no classification here.
-        return Gated::Pass {
-            sealed: None,
-            class: None,
-        };
+        return gate_directed_to_us(message, state, ctx, app);
     }
     // A broadcast app frame on a passworded mesh must arrive sealed with the
     // mesh key: decrypt in place so validation + surfacing see plaintext,
@@ -858,6 +832,43 @@ fn gate_and_decrypt(
             sealed: None,
             class: None,
         },
+    }
+}
+
+/// Validate + decrypt a directed frame that's addressed to us (as opposed to
+/// one we're only relaying).
+fn gate_directed_to_us(
+    message: &mut Message,
+    state: &EventLoopState,
+    ctx: &HandlerCtx<'_>,
+    app: &dyn NodeApp,
+) -> Gated {
+    // Whether the directed body is sealed is the app's call, not a
+    // structural given: a2a's directed tags arrive encrypted, but a
+    // non-a2a consumer may send plaintext directed bytes. The frame is
+    // signature-authenticated either way; `sealed=false` only means "not
+    // additionally encrypted".
+    if !app.classify(message).sealed {
+        // Plaintext directed body: the wire body is already the final body,
+        // so retain_and_index re-serves it unchanged (`sealed: None`).
+        let Some(class) = gate_app_payload(message, app) else {
+            return Gated::Drop;
+        };
+        return Gated::Pass {
+            sealed: None,
+            class: Some(class),
+        };
+    }
+    let sealed = message.body.clone();
+    if !decrypt_directed(message, state, ctx) {
+        return Gated::Drop;
+    }
+    let Some(class) = gate_app_payload(message, app) else {
+        return Gated::Drop;
+    };
+    Gated::Pass {
+        sealed: Some(sealed),
+        class: Some(class),
     }
 }
 

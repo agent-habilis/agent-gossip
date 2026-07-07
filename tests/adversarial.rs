@@ -381,6 +381,17 @@ async fn gap_nickname_impersonation_is_accepted() {
     attacker.leave().await;
 }
 
+/// True if `event` is a delivered `Message` whose visible text equals
+/// `body` — used to check whether a given sybil identity's flood message
+/// was accepted.
+fn is_flood_message(event: &OutputEvent, body: &str) -> bool {
+    matches!(
+        event,
+        OutputEvent::Message { msg, is_self: false }
+            if agent_square::a2a::gossip::chat_text(msg).as_deref() == Some(body)
+    )
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[should_panic(expected = "OPEN GAP")]
 async fn gap_sybil_identities_are_accepted() {
@@ -401,13 +412,7 @@ async fn gap_sybil_identities_are_accepted() {
         .wait_for(T, |events| {
             (0..5u32).all(|index| {
                 let body = format!("flood-{index}");
-                events.iter().any(|event| {
-                    matches!(
-                        event,
-                        OutputEvent::Message { msg, is_self: false }
-                            if agent_square::a2a::gossip::chat_text(msg).as_deref() == Some(&body)
-                    )
-                })
+                events.iter().any(|event| is_flood_message(event, &body))
             })
         })
         .await;
