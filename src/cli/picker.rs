@@ -70,20 +70,37 @@ const DISABLE_WRAP: &str = "\x1b[?7l";
 const ENABLE_WRAP: &str = "\x1b[?7h";
 const ERASE_LINE: &str = "\x1b[K";
 
+/// The row-shaping callbacks [`run`] needs: re-snapshotting the rows,
+/// rendering one row's text, and extracting a row's picked value.
+pub(super) struct PickerCallbacks<Snapshot, Row, Pick> {
+    pub snapshot: Snapshot,
+    pub row: Row,
+    pub pick: Pick,
+}
+
 /// Run the live arrow-key picker until the user selects/quits or the
-/// source closes. `snapshot` re-reads the rows on every change event
-/// (`events` is a change *signal* — its payload is unused); `row` renders
-/// one row's text after the selection marker (the `selected` flag lets it
-/// bold the highlighted row); `pick` extracts the returned value. `↑`/`↓`
-/// (and `j`/`k`) move, `enter` selects, `q`/esc/ctrl-c quit. Returns
-/// [`PickerOutcome::Unsupported`] when stdin isn't a TTY.
-pub(super) async fn run<R, E>(
+/// source closes. `callbacks.snapshot` re-reads the rows on every change
+/// event (`events` is a change *signal* — its payload is unused);
+/// `callbacks.row` renders one row's text after the selection marker (the
+/// `selected` flag lets it bold the highlighted row); `callbacks.pick`
+/// extracts the returned value. `↑`/`↓` (and `j`/`k`) move, `enter`
+/// selects, `q`/esc/ctrl-c quit. Returns [`PickerOutcome::Unsupported`]
+/// when stdin isn't a TTY.
+pub(super) async fn run<R, E, Snapshot, Row, Pick>(
     text: &PickerText,
-    snapshot: impl Fn() -> Vec<R>,
-    row: impl Fn(&R, bool) -> String,
-    pick: impl Fn(&R) -> String,
+    callbacks: PickerCallbacks<Snapshot, Row, Pick>,
     events: &mut tokio::sync::mpsc::UnboundedReceiver<E>,
-) -> PickerOutcome {
+) -> PickerOutcome
+where
+    Snapshot: Fn() -> Vec<R>,
+    Row: Fn(&R, bool) -> String,
+    Pick: Fn(&R) -> String,
+{
+    let PickerCallbacks {
+        snapshot,
+        row,
+        pick,
+    } = callbacks;
     let Some(raw) = RawMode::enable() else {
         return PickerOutcome::Unsupported;
     };
@@ -103,7 +120,16 @@ pub(super) async fn run<R, E>(
     // Cached rows — refreshed only on a change event (the only thing that
     // changes them). A keypress just moves `selected`.
     let mut listings = snapshot();
-    render(text, &listings, &row, selected, dots, &mut prev_lines);
+    render(
+        text,
+        &listings,
+        &row,
+        RenderState {
+            selected,
+            dots,
+            prev_lines: &mut prev_lines,
+        },
+    );
 
     // Drives the empty-state dot animation; no change event fires while
     // we are waiting, so the redraw has to be self-clocked.
@@ -128,7 +154,16 @@ pub(super) async fn run<R, E>(
                     }
                     Key::Quit => break PickerOutcome::Quit,
                 }
-                render(text, &listings, &row, selected, dots, &mut prev_lines);
+                render(
+                    text,
+                    &listings,
+                    &row,
+                    RenderState {
+                        selected,
+                        dots,
+                        prev_lines: &mut prev_lines,
+                    },
+                );
             }
             change = events.recv() => {
                 if change.is_none() {
@@ -136,14 +171,32 @@ pub(super) async fn run<R, E>(
                 }
                 listings = snapshot();
                 selected = selected.min(listings.len().saturating_sub(1));
-                render(text, &listings, &row, selected, dots, &mut prev_lines);
+                render(
+                    text,
+                    &listings,
+                    &row,
+                    RenderState {
+                        selected,
+                        dots,
+                        prev_lines: &mut prev_lines,
+                    },
+                );
             }
             _ = anim.tick() => {
                 // Animate only while waiting; a populated list is static,
                 // so there is nothing to repaint once rows appear.
                 if listings.is_empty() {
                     dots = dots % 3 + 1;
-                    render(text, &listings, &row, selected, dots, &mut prev_lines);
+                    render(
+                    text,
+                    &listings,
+                    &row,
+                    RenderState {
+                        selected,
+                        dots,
+                        prev_lines: &mut prev_lines,
+                    },
+                );
                 }
             }
         }
@@ -163,9 +216,18 @@ pub(super) async fn run<R, E>(
     outcome
 }
 
+/// The redraw-loop bookkeeping [`render`] both reads and updates each call:
+/// which row is highlighted, the empty-state dot count, and the previous
+/// render's line count (rewritten in place to the new count).
+struct RenderState<'a> {
+    selected: usize,
+    dots: usize,
+    prev_lines: &'a mut usize,
+}
+
 /// Redraw the picker **in place**, overwriting only its own lines (never
-/// clearing the screen). `prev_lines` is the previous render's line count:
-/// when non-zero the cursor is moved back up to the top of that block
+/// clearing the screen). `state.prev_lines` is the previous render's line
+/// count: when non-zero the cursor is moved back up to the top of that block
 /// (`\x1b[{n}F`) before rewriting; on the first render (0) it starts at
 /// column 0 of the current line. Every line ends with `ERASE_LINE` to
 /// scrub leftovers from a longer prior render, and when the block shrinks
@@ -176,11 +238,15 @@ fn render<R>(
     text: &PickerText,
     listings: &[R],
     row: &impl Fn(&R, bool) -> String,
-    selected: usize,
-    dots: usize,
-    prev_lines: &mut usize,
+    state: RenderState<'_>,
 ) {
     use std::fmt::Write as _;
+
+    let RenderState {
+        selected,
+        dots,
+        prev_lines,
+    } = state;
 
     // Build the visible block as logical lines; `push_line` terminates each
     // with `ERASE_LINE` + `\n` and counts it.

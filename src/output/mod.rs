@@ -129,6 +129,27 @@ pub enum OutputEvent {
     },
 }
 
+/// The value cluster for [`Output::ready`]: the mesh identity fields plus
+/// optional startup diagnostics (skill drift, `--a2a-serve` port).
+#[derive(Clone, Copy)]
+pub(crate) struct ReadyParams<'a> {
+    pub mesh: &'a MeshId,
+    pub name: &'a MeshName,
+    pub nickname: &'a Nickname,
+    pub drift: Option<&'a str>,
+    pub a2a_port: Option<u16>,
+}
+
+/// The value cluster for [`Output::state_changed`]: the channel, the patch
+/// event, the freshly-derived document, and whether it was our own write.
+#[derive(Clone, Copy)]
+pub(crate) struct StateChangedParams<'a> {
+    pub channel: agent_habilis_mesh::protocol::Channel,
+    pub event: &'a Message,
+    pub document: &'a serde_json::Value,
+    pub is_self: bool,
+}
+
 /// An RPC `message/send` task leg with no backing frame — the fields
 /// [`Output::task_message`] and [`json::format_task_message_json`] need,
 /// bundled (they mirror the [`OutputEvent::TaskMessage`] variant's fields).
@@ -408,14 +429,14 @@ impl Output {
         }
     }
 
-    pub(crate) fn ready(
-        &self,
-        mesh: &MeshId,
-        name: &MeshName,
-        nickname: &Nickname,
-        drift: Option<&str>,
-        a2a_port: Option<u16>,
-    ) {
+    pub(crate) fn ready(&self, params: ReadyParams<'_>) {
+        let ReadyParams {
+            mesh,
+            name,
+            nickname,
+            drift,
+            a2a_port,
+        } = params;
         self.dispatch(
             || OutputEvent::Ready {
                 mesh: mesh.clone(),
@@ -624,13 +645,13 @@ impl Output {
     /// reaction channel, so an agent is never woken by its own patch (alternation
     /// stays loop-safe without a per-consumer guard). On the CLI/Monitor path the
     /// self-skip is the Monitor's job.
-    pub(crate) fn state_changed(
-        &self,
-        channel: agent_habilis_mesh::protocol::Channel,
-        event: &Message,
-        document: &serde_json::Value,
-        is_self: bool,
-    ) {
+    pub(crate) fn state_changed(&self, params: StateChangedParams<'_>) {
+        let StateChangedParams {
+            channel,
+            event,
+            document,
+            is_self,
+        } = params;
         let make = || OutputEvent::StateChanged {
             channel,
             event: Box::new(event.clone()),
@@ -918,7 +939,13 @@ impl agent_habilis_mesh::gossip::event::NodeSink for Output {
                 nickname,
                 drift,
                 a2a_port,
-            } => self.ready(&mesh, &name, &nickname, drift.as_deref(), a2a_port),
+            } => self.ready(ReadyParams {
+                mesh: &mesh,
+                name: &name,
+                nickname: &nickname,
+                drift: drift.as_deref(),
+                a2a_port,
+            }),
             NodeEvent::MeshId { id } => self.mesh_id_line(&id),
             NodeEvent::Info(message) => self.info(&message),
             NodeEvent::Error(message) => self.error(&message),
@@ -948,7 +975,12 @@ impl agent_habilis_mesh::gossip::event::NodeSink for Output {
                 event,
                 document,
                 is_self,
-            } => self.state_changed(channel, &event, &document, is_self),
+            } => self.state_changed(StateChangedParams {
+                channel,
+                event: &event,
+                document: &document,
+                is_self,
+            }),
         }
     }
 }

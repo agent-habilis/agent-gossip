@@ -336,7 +336,19 @@ pub async fn setup_mesh(kind: SetupKind, params: SetupParams<'_>) -> Result<Even
             advertise,
             password,
             invite_only,
-        } => setup_create(&build, name, config, advertise, password, invite_only).await?,
+        } => {
+            setup_create(
+                &build,
+                CreateSetup {
+                    name,
+                    config,
+                    advertise,
+                    password,
+                    invite_only,
+                },
+            )
+            .await?
+        }
         kind @ (SetupKind::Join { .. } | SetupKind::Topic { .. }) => {
             setup_join(&build, kind).await?
         }
@@ -383,19 +395,29 @@ pub async fn setup_mesh(kind: SetupKind, params: SetupParams<'_>) -> Result<Even
     })
 }
 
-/// Mint a new mesh: seed + optional password stretch, then stand up the
-/// endpoint, gossip overlay and rendezvous. The origin co-hosts the
-/// rendezvous immediately ([`CoHostPolicy::Eager`]): it has no bootstrap
-/// dial to self-collide with, and an otherwise empty mesh needs a beacon
-/// from t=0.
-async fn setup_create(
-    build: &SetupBuild<'_>,
+/// The value cluster [`setup_create`] needs beyond the shared [`SetupBuild`]
+/// handles — mirrors [`SetupKind::Create`]'s fields one-for-one.
+struct CreateSetup {
     name: MeshName,
     config: MeshConfig,
     advertise: Option<MeshName>,
     password: Option<Password>,
     invite_only: bool,
-) -> Result<Assembled> {
+}
+
+/// Mint a new mesh: seed + optional password stretch, then stand up the
+/// endpoint, gossip overlay and rendezvous. The origin co-hosts the
+/// rendezvous immediately ([`CoHostPolicy::Eager`]): it has no bootstrap
+/// dial to self-collide with, and an otherwise empty mesh needs a beacon
+/// from t=0.
+async fn setup_create(build: &SetupBuild<'_>, create: CreateSetup) -> Result<Assembled> {
+    let CreateSetup {
+        name,
+        config,
+        advertise,
+        password,
+        invite_only,
+    } = create;
     let sink = build.sink;
     let author = build.author;
 

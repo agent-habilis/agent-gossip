@@ -172,22 +172,11 @@ impl A2aApp {
     /// (unregistered) when the registry is at [`POLL_WAITERS_CAP`], so the
     /// caller can fail it fast instead of parking silently.
     #[must_use]
-    pub(crate) fn register_a2a_waiter(
-        &mut self,
-        corr: agent_habilis_mesh::protocol::CorrId,
-        peer: Nickname,
-        deadline: TokioInstant,
-        responder: A2aResponder,
-    ) -> Option<A2aResponder> {
+    pub(crate) fn register_a2a_waiter(&mut self, waiter: A2aWaiter) -> Option<A2aResponder> {
         if self.a2a_waiters.len() >= agent_habilis_mesh::util::consts::POLL_WAITERS_CAP {
-            return Some(responder);
+            return Some(waiter.responder);
         }
-        self.a2a_waiters.push(A2aWaiter {
-            corr,
-            peer,
-            deadline,
-            responder,
-        });
+        self.a2a_waiters.push(waiter);
         None
     }
 
@@ -252,10 +241,12 @@ impl A2aApp {
         };
         crate::a2a::task::adopt_initiator(
             &mut self.tasks,
-            &task_id,
-            peer,
-            task_state,
-            Instant::now(),
+            crate::a2a::task::AdoptInitiatorParams {
+                task_id: &task_id,
+                peer,
+                task_state,
+                now: Instant::now(),
+            },
         );
     }
 
@@ -368,10 +359,10 @@ fn rpc_result_from_body(body: &str) -> Result<serde_json::Value, crate::a2a::rpc
 /// An outstanding gossip A2A call, waiting for a response frame with a matching
 /// correlation id `corr` from `peer`, or for `deadline` to elapse.
 pub(crate) struct A2aWaiter {
-    corr: agent_habilis_mesh::protocol::CorrId,
-    peer: Nickname,
-    deadline: TokioInstant,
-    responder: A2aResponder,
+    pub(crate) corr: agent_habilis_mesh::protocol::CorrId,
+    pub(crate) peer: Nickname,
+    pub(crate) deadline: TokioInstant,
+    pub(crate) responder: A2aResponder,
 }
 
 #[cfg(test)]

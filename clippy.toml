@@ -12,6 +12,7 @@ allowed-idents-below-min-chars = ["_", "T", "E", "K", "V", "R", "S", "i", "j"]
 # Complexity ceilings (favor small, readable functions).
 cognitive-complexity-threshold = 20
 too-many-lines-threshold = 120
+too-many-arguments-threshold = 4
 
 # Domain terms that must not trip clippy::doc_markdown (extends the default
 # allow-list rather than replacing it).

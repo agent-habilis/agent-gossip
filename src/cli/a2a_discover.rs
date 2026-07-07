@@ -17,19 +17,29 @@ use super::picker::{self, PickerOutcome, PickerText, interrupted, sigterm_stream
 /// whole multi-hundred-char token (the pick carries the full one).
 const TICKET_PREVIEW_CHARS: usize = 16;
 
+/// The parsed `agent-square a2a discover` CLI arguments.
+pub(super) struct DiscoverParams {
+    pub(super) directory: Option<MeshName>,
+    pub(super) port: Option<u16>,
+    pub(super) lookups: LookupSet,
+    pub(super) password: Option<super::password::PasswordFlag>,
+    pub(super) json: bool,
+}
+
 /// Run `agent-square a2a discover`: browse `directory` for advertised bridges. Human +
 /// TTY runs the picker and, on a pick, binds the local bridge (`a2a connect`);
 /// `json` (or no TTY) streams directory changes and returns.
 ///
 /// # Errors
 /// The directory session cannot be established, or the post-pick connect fails.
-pub(super) async fn discover(
-    directory: Option<MeshName>,
-    port: Option<u16>,
-    lookups: LookupSet,
-    password: Option<super::password::PasswordFlag>,
-    json: bool,
-) -> Result<()> {
+pub(super) async fn discover(params: DiscoverParams) -> Result<()> {
+    let DiscoverParams {
+        directory,
+        port,
+        lookups,
+        password,
+        json,
+    } = params;
     let name = directory.unwrap_or_else(|| {
         MeshName::new(DEFAULT_DIRECTORY).expect("the default directory name is valid")
     });
@@ -160,9 +170,11 @@ async fn run_ticket_picker(
     };
     picker::run(
         &text,
-        || discoverer.snapshot(),
-        row,
-        |listing| listing.ticket.clone(),
+        picker::PickerCallbacks {
+            snapshot: || discoverer.snapshot(),
+            row,
+            pick: |listing: &TicketListing| listing.ticket.clone(),
+        },
         events,
     )
     .await

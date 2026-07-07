@@ -200,6 +200,7 @@ mod tests {
     use std::time::Instant;
 
     use super::{EventLoopState, warn_on_high_resident_memory};
+    use crate::daemon::state::MeshSecrets;
     use crate::gossip::event::CountingSink;
     use crate::protocol::identity::Identity;
 
@@ -208,8 +209,7 @@ mod tests {
             None,
             Instant::now(),
             Arc::new(Identity::generate()),
-            None,
-            None,
+            MeshSecrets::default(),
         )
     }
 

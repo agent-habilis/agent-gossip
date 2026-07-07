@@ -39,13 +39,7 @@ pub async fn deliver(
     // function runs the chosen directed transport, then applies the **one**
     // gossip fallback (no arm falls back on its own — Part B of the refactor).
     let policy = state.transport;
-    let attempt = match route(
-        msg,
-        state,
-        policy.unicast,
-        policy.gossip_directed,
-        policy.circuit,
-    ) {
+    let attempt = match route(msg, state, policy) {
         // Gossip is the transport itself here, not a fallback.
         Route::Gossip => return broadcast(sender, bytes).await,
         Route::Undeliverable => {
@@ -103,15 +97,13 @@ enum Route {
 fn route(
     msg: &Message,
     state: &EventLoopState,
-    unicast_on: bool,
-    gossip_on: bool,
-    circuit_on: bool,
+    policy: crate::transport::TransportPolicy,
 ) -> Route {
     let Some(nick) = sole_addressee(&msg.kind) else {
         // Broadcast / infrastructure kind: gossip is the only transport, always.
         return Route::Gossip;
     };
-    directed_route(nick, state, unicast_on, gossip_on, circuit_on)
+    directed_route(nick, state, policy)
 }
 
 /// The message-independent half of [`route`]: every directed kind to the same
@@ -120,12 +112,10 @@ fn route(
 fn directed_route(
     nick: &Nickname,
     state: &EventLoopState,
-    unicast_on: bool,
-    gossip_on: bool,
-    circuit_on: bool,
+    policy: crate::transport::TransportPolicy,
 ) -> Route {
-    if let (true, Some(eid)) = (unicast_on, unicast_endpoint(nick, state)) {
-        return if gossip_on {
+    if let (true, Some(eid)) = (policy.unicast, unicast_endpoint(nick, state)) {
+        return if policy.gossip_directed {
             Route::UnicastPreferred(eid)
         } else {
             Route::UnicastOnly(eid)
@@ -134,10 +124,12 @@ fn directed_route(
     // No *direct* unicast route. If we know the peer's endpoint, prefer the
     // circuit transport (it can route to a known peer through the mesh); else
     // gossip if allowed; else the message can't be delivered.
-    if circuit_on && let Some(target) = target_endpoint(nick, state) {
+    if policy.circuit
+        && let Some(target) = target_endpoint(nick, state)
+    {
         return Route::Circuit(target);
     }
-    if gossip_on {
+    if policy.gossip_directed {
         Route::Gossip
     } else {
         Route::Undeliverable
@@ -158,13 +150,7 @@ pub enum Lane {
 }
 
 pub(crate) fn lane_for(nick: &Nickname, state: &EventLoopState) -> Lane {
-    match directed_route(
-        nick,
-        state,
-        state.transport.unicast,
-        state.transport.gossip_directed,
-        state.transport.circuit,
-    ) {
+    match directed_route(nick, state, state.transport) {
         Route::UnicastPreferred(_) | Route::UnicastOnly(_) => Lane::Unicast,
         Route::Circuit(_) => Lane::Circuit,
         Route::Gossip => Lane::Gossip,
@@ -293,9 +279,11 @@ mod tests {
     use iroh::{EndpointId, SecretKey};
 
     use super::{Route, route};
-    use crate::daemon::state::EventLoopState;
+    use crate::daemon::state::{EventLoopState, MeshSecrets};
     use crate::protocol::identity::Identity;
+    use crate::protocol::message::AppFrameParams;
     use crate::protocol::{AppTag, CorrId, MeshId, Message, MessageBody, Nickname};
+    use crate::transport::TransportPolicy;
 
     fn nick(name: &str) -> Nickname {
         Nickname::from(name)
@@ -319,8 +307,7 @@ mod tests {
             None,
             Instant::now(),
             Arc::new(Identity::generate()),
-            None,
-            None,
+            MeshSecrets::default(),
         );
         state.meshed = true;
         let bob = endpoint_id(1);
@@ -342,7 +329,15 @@ mod tests {
     fn directed_message_with_known_endpoint_prefers_unicast() {
         let (state, bob) = state_knowing_bob();
         assert_eq!(
-            route(&directed_msg(), &state, true, true, false),
+            route(
+                &directed_msg(),
+                &state,
+                TransportPolicy {
+                    unicast: true,
+                    gossip_directed: true,
+                    circuit: false
+                }
+            ),
             Route::UnicastPreferred(bob)
         );
     }
@@ -353,18 +348,36 @@ mod tests {
         let req = Message::new_app(
             &mesh(),
             &nick("alice"),
-            AppTag::from("a2a_req"),
-            Some(nick("bob")),
-            Some(CorrId::from("00000000-0000-0000-0000-0000000000aa")),
-            body(),
+            AppFrameParams {
+                tag: AppTag::from("a2a_req"),
+                to: Some(nick("bob")),
+                corr: Some(CorrId::from("00000000-0000-0000-0000-0000000000aa")),
+                body: body(),
+            },
         );
         let pong = Message::new_pong(&mesh(), &nick("alice"), nick("bob"));
         assert_eq!(
-            route(&req, &state, true, true, false),
+            route(
+                &req,
+                &state,
+                TransportPolicy {
+                    unicast: true,
+                    gossip_directed: true,
+                    circuit: false
+                }
+            ),
             Route::UnicastPreferred(bob)
         );
         assert_eq!(
-            route(&pong, &state, true, true, false),
+            route(
+                &pong,
+                &state,
+                TransportPolicy {
+                    unicast: true,
+                    gossip_directed: true,
+                    circuit: false
+                }
+            ),
             Route::UnicastPreferred(bob)
         );
     }
@@ -373,7 +386,15 @@ mod tests {
     fn unicast_only_policy_forbids_gossip_fallback() {
         let (state, bob) = state_knowing_bob();
         assert_eq!(
-            route(&directed_msg(), &state, true, false, false),
+            route(
+                &directed_msg(),
+                &state,
+                TransportPolicy {
+                    unicast: true,
+                    gossip_directed: false,
+                    circuit: false
+                }
+            ),
             Route::UnicastOnly(bob)
         );
     }
@@ -386,15 +407,39 @@ mod tests {
         let open = Message::new_app(
             &mesh(),
             &nick("alice"),
-            AppTag::from("a2a_msg"),
-            None,
-            None,
-            body(),
+            AppFrameParams {
+                tag: AppTag::from("a2a_msg"),
+                to: None,
+                corr: None,
+                body: body(),
+            },
         );
         // Even with unicast on and a known peer, a non-directed kind gossips —
         // and stays gossip regardless of policy.
-        assert_eq!(route(&open, &state, true, true, false), Route::Gossip);
-        assert_eq!(route(&open, &state, false, true, false), Route::Gossip);
+        assert_eq!(
+            route(
+                &open,
+                &state,
+                TransportPolicy {
+                    unicast: true,
+                    gossip_directed: true,
+                    circuit: false
+                }
+            ),
+            Route::Gossip
+        );
+        assert_eq!(
+            route(
+                &open,
+                &state,
+                TransportPolicy {
+                    unicast: false,
+                    gossip_directed: true,
+                    circuit: false
+                }
+            ),
+            Route::Gossip
+        );
     }
 
     #[test]
@@ -403,12 +448,19 @@ mod tests {
             None,
             Instant::now(),
             Arc::new(Identity::generate()),
-            None,
-            None,
+            MeshSecrets::default(),
         );
         state.meshed = true; // meshed, but we hold no endpoint for bob
         assert_eq!(
-            route(&directed_msg(), &state, true, true, false),
+            route(
+                &directed_msg(),
+                &state,
+                TransportPolicy {
+                    unicast: true,
+                    gossip_directed: true,
+                    circuit: false
+                }
+            ),
             Route::Gossip
         );
     }
@@ -418,7 +470,15 @@ mod tests {
         let (mut state, _) = state_knowing_bob();
         state.meshed = false; // no unicast route until meshed
         assert_eq!(
-            route(&directed_msg(), &state, true, true, false),
+            route(
+                &directed_msg(),
+                &state,
+                TransportPolicy {
+                    unicast: true,
+                    gossip_directed: true,
+                    circuit: false
+                }
+            ),
             Route::Gossip
         );
     }
@@ -429,8 +489,7 @@ mod tests {
             None,
             Instant::now(),
             Arc::new(Identity::generate()),
-            None,
-            None,
+            MeshSecrets::default(),
         );
         state.meshed = true;
         let rendezvous = endpoint_id(9);
@@ -438,7 +497,15 @@ mod tests {
         // bob's advertised endpoint *is* the rendezvous pseudo-node.
         state.participant_endpoints.insert(nick("bob"), rendezvous);
         assert_eq!(
-            route(&directed_msg(), &state, true, true, false),
+            route(
+                &directed_msg(),
+                &state,
+                TransportPolicy {
+                    unicast: true,
+                    gossip_directed: true,
+                    circuit: false
+                }
+            ),
             Route::Gossip
         );
     }
@@ -448,7 +515,15 @@ mod tests {
         let (state, _) = state_knowing_bob();
         // Unicast off + a known peer ⇒ still gossip (the `--no-unicast` switch).
         assert_eq!(
-            route(&directed_msg(), &state, false, true, false),
+            route(
+                &directed_msg(),
+                &state,
+                TransportPolicy {
+                    unicast: false,
+                    gossip_directed: true,
+                    circuit: false
+                }
+            ),
             Route::Gossip
         );
     }
@@ -461,12 +536,19 @@ mod tests {
             None,
             Instant::now(),
             Arc::new(Identity::generate()),
-            None,
-            None,
+            MeshSecrets::default(),
         );
         state.meshed = true; // no endpoint for bob, and gossip forbidden
         assert_eq!(
-            route(&directed_msg(), &state, true, false, false),
+            route(
+                &directed_msg(),
+                &state,
+                TransportPolicy {
+                    unicast: true,
+                    gossip_directed: false,
+                    circuit: false
+                }
+            ),
             Route::Undeliverable
         );
     }
@@ -475,7 +557,15 @@ mod tests {
     fn both_transports_disabled_is_undeliverable_for_directed() {
         let (state, _) = state_knowing_bob();
         assert_eq!(
-            route(&directed_msg(), &state, false, false, false),
+            route(
+                &directed_msg(),
+                &state,
+                TransportPolicy {
+                    unicast: false,
+                    gossip_directed: false,
+                    circuit: false
+                }
+            ),
             Route::Undeliverable
         );
     }
@@ -488,12 +578,25 @@ mod tests {
         let open = Message::new_app(
             &mesh(),
             &nick("alice"),
-            AppTag::from("a2a_msg"),
-            None,
-            None,
-            body(),
+            AppFrameParams {
+                tag: AppTag::from("a2a_msg"),
+                to: None,
+                corr: None,
+                body: body(),
+            },
         );
-        assert_eq!(route(&open, &state, false, false, false), Route::Gossip);
+        assert_eq!(
+            route(
+                &open,
+                &state,
+                TransportPolicy {
+                    unicast: false,
+                    gossip_directed: false,
+                    circuit: false
+                }
+            ),
+            Route::Gossip
+        );
     }
 
     // ── the circuit tier (Phase 1: stub, tier ordering only) ─────────────
@@ -505,7 +608,15 @@ mod tests {
         let (mut state, bob) = state_knowing_bob();
         state.meshed = false;
         assert_eq!(
-            route(&directed_msg(), &state, true, true, true),
+            route(
+                &directed_msg(),
+                &state,
+                TransportPolicy {
+                    unicast: true,
+                    gossip_directed: true,
+                    circuit: true
+                }
+            ),
             Route::Circuit(bob)
         );
     }
@@ -516,7 +627,15 @@ mod tests {
         // no-direct-route case.
         let (state, bob) = state_knowing_bob();
         assert_eq!(
-            route(&directed_msg(), &state, true, true, true),
+            route(
+                &directed_msg(),
+                &state,
+                TransportPolicy {
+                    unicast: true,
+                    gossip_directed: true,
+                    circuit: true
+                }
+            ),
             Route::UnicastPreferred(bob)
         );
     }
@@ -529,12 +648,19 @@ mod tests {
             None,
             Instant::now(),
             Arc::new(Identity::generate()),
-            None,
-            None,
+            MeshSecrets::default(),
         );
         state.meshed = true;
         assert_eq!(
-            route(&directed_msg(), &state, true, true, true),
+            route(
+                &directed_msg(),
+                &state,
+                TransportPolicy {
+                    unicast: true,
+                    gossip_directed: true,
+                    circuit: true
+                }
+            ),
             Route::Gossip
         );
     }
@@ -545,7 +671,15 @@ mod tests {
         let (mut state, _) = state_knowing_bob();
         state.meshed = false;
         assert_eq!(
-            route(&directed_msg(), &state, true, true, false),
+            route(
+                &directed_msg(),
+                &state,
+                TransportPolicy {
+                    unicast: true,
+                    gossip_directed: true,
+                    circuit: false
+                }
+            ),
             Route::Gossip
         );
     }

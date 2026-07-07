@@ -20,13 +20,13 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use agent_habilis_mesh::transport::MeshSender;
 use bytes::Bytes;
 
 use crate::a2a::app::A2aApp;
 use crate::output;
+use agent_habilis_mesh::daemon::ctx::HandlerCtx;
 use agent_habilis_mesh::daemon::state::EventLoopState;
-use agent_habilis_mesh::protocol::{MeshId, Message, MessageKind, Nickname};
+use agent_habilis_mesh::protocol::{Message, MessageKind, Nickname};
 use agent_habilis_mesh::util::consts::TASK_CONTENT_CAP;
 use agent_habilis_mesh::util::tuning::{
     task_keepalive_max_secs, task_keepalive_secs, task_timeout_secs,
@@ -136,19 +136,28 @@ pub(crate) struct LegInfo<'a> {
     pub fraction: Option<(u64, u64)>,
 }
 
+/// The value cluster [`ingest`] needs beyond its `tasks` registry handle.
+#[derive(Clone, Copy)]
+pub(crate) struct IngestLegParams<'a> {
+    pub(crate) frame: &'a Message,
+    pub(crate) task_id: &'a TaskId,
+    pub(crate) mine: bool,
+    pub(crate) now: Instant,
+}
+
 /// Feed one **validated logical** task frame into the registry from the
 /// broadcast (`mine = true`) or receive (`mine = false`) path. The single
 /// call site for both: it reduces the frame to a [`LegInfo`] (deriving the
 /// peer and the beat fraction) and advances the machine. A frame that
 /// belongs to no task is a no-op. Returns `true` if this leg crossed the
 /// content cap.
-pub(crate) fn ingest(
-    tasks: &mut HashMap<TaskId, TaskRecord>,
-    frame: &Message,
-    task_id: &TaskId,
-    mine: bool,
-    now: Instant,
-) -> bool {
+pub(crate) fn ingest(tasks: &mut HashMap<TaskId, TaskRecord>, params: IngestLegParams<'_>) -> bool {
+    let IngestLegParams {
+        frame,
+        task_id,
+        mine,
+        now,
+    } = params;
     // A task leg is a directed status/artifact app frame. `a2a_msg` (broadcast
     // chat) and every infra kind are never task legs; task `message/send` legs
     // are applied directly from the RPC path, not through `ingest`. The caller
@@ -196,17 +205,30 @@ pub(crate) fn ingest(
     )
 }
 
+/// The value cluster [`adopt_initiator`] needs beyond its `tasks` registry
+/// handle.
+#[derive(Clone, Copy)]
+pub(crate) struct AdoptInitiatorParams<'a> {
+    pub(crate) task_id: &'a TaskId,
+    pub(crate) peer: &'a Nickname,
+    pub(crate) task_state: TaskState,
+    pub(crate) now: Instant,
+}
+
 /// Upsert the **initiator**-side record for a task whose authoritative `Task`
 /// the worker just returned over RPC (`message/send` create/follow-up). The
 /// worker (server) is the source of truth for the task's state, so we mirror
 /// `task_state` rather than replay legs. Terminal records are frozen.
 pub(crate) fn adopt_initiator(
     tasks: &mut HashMap<TaskId, TaskRecord>,
-    task_id: &TaskId,
-    peer: &Nickname,
-    task_state: TaskState,
-    now: Instant,
+    params: AdoptInitiatorParams<'_>,
 ) {
+    let AdoptInitiatorParams {
+        task_id,
+        peer,
+        task_state,
+        now,
+    } = params;
     match tasks.entry(task_id.clone()) {
         std::collections::hash_map::Entry::Vacant(slot) => {
             // First adoption (task creation): open the initiator-side record at
@@ -412,9 +434,7 @@ fn advance(rec: &mut TaskRecord, kind: LegKind, mine: bool) {
 pub(crate) async fn tick_task_sweep(
     state: &mut EventLoopState,
     app: &mut A2aApp,
-    sender: &MeshSender,
-    mesh: &MeshId,
-    author: &Nickname,
+    ctx: &HandlerCtx<'_>,
     out: &output::Output,
 ) {
     let now = Instant::now();
@@ -435,13 +455,24 @@ pub(crate) async fn tick_task_sweep(
         out.task_timeout(&task_id);
         tracing::debug!(%task_id, %peer, "task evicted (idle-debounce timeout)");
         let update = gossip::status_update(
-            mesh,
-            &task_id,
-            TaskState::Canceled,
-            None,
-            Some(serde_json::json!({ META_REASON: "timeout" })),
+            ctx.mesh,
+            gossip::StatusUpdateParams {
+                task_id: &task_id,
+                state: TaskState::Canceled,
+                note: None,
+                metadata: Some(serde_json::json!({ META_REASON: "timeout" })),
+            },
         );
-        broadcast_status(state, sender, mesh, author, &peer, &task_id, &update).await;
+        broadcast_status(
+            state,
+            ctx,
+            BroadcastStatusParams {
+                peer: &peer,
+                task_id: &task_id,
+                update: &update,
+            },
+        )
+        .await;
     }
 
     // GC: drop terminal records past the dedup window so the registry stays
@@ -478,9 +509,7 @@ pub(crate) async fn tick_task_sweep(
 pub(crate) async fn tick_task_keepalive(
     state: &mut EventLoopState,
     app: &mut A2aApp,
-    sender: &MeshSender,
-    mesh: &MeshId,
-    author: &Nickname,
+    ctx: &HandlerCtx<'_>,
 ) {
     /// `(task_id, peer, state, last_fraction)` for one keepalive-due task.
     type KeepaliveDue = (TaskId, Nickname, TaskState, Option<(u64, u64)>);
@@ -504,17 +533,38 @@ pub(crate) async fn tick_task_keepalive(
 
     for (task_id, peer, task_state, fraction) in due {
         let update = gossip::status_update(
-            mesh,
-            &task_id,
-            task_state,
-            None,
-            Some(gossip::beat_metadata(fraction)),
+            ctx.mesh,
+            gossip::StatusUpdateParams {
+                task_id: &task_id,
+                state: task_state,
+                note: None,
+                metadata: Some(gossip::beat_metadata(fraction)),
+            },
         );
-        broadcast_status(state, sender, mesh, author, &peer, &task_id, &update).await;
+        broadcast_status(
+            state,
+            ctx,
+            BroadcastStatusParams {
+                peer: &peer,
+                task_id: &task_id,
+                update: &update,
+            },
+        )
+        .await;
         if let Some(rec) = app.tasks.get_mut(&task_id) {
             rec.last_activity = Instant::now();
         }
     }
+}
+
+/// The value cluster [`broadcast_status`] needs beyond its `state`/`ctx`
+/// handles.
+struct BroadcastStatusParams<'a> {
+    peer: &'a Nickname,
+    /// The task id rides inside the status payload body (8.0); the envelope no
+    /// longer carries it, so this is unused here beyond documenting the leg.
+    task_id: &'a TaskId,
+    update: &'a super::TaskStatusUpdate,
 }
 
 /// Build, sign, and fire-and-forget a daemon-originated status frame (the
@@ -522,15 +572,14 @@ pub(crate) async fn tick_task_keepalive(
 /// like any other plumbing broadcast — the payloads are small literals.
 async fn broadcast_status(
     state: &EventLoopState,
-    sender: &MeshSender,
-    mesh: &MeshId,
-    author: &Nickname,
-    peer: &Nickname,
-    // The task id rides inside the status payload body (8.0); the envelope no
-    // longer carries it, so this is unused here beyond documenting the leg.
-    _task_id: &TaskId,
-    update: &super::TaskStatusUpdate,
+    ctx: &HandlerCtx<'_>,
+    params: BroadcastStatusParams<'_>,
 ) {
+    let BroadcastStatusParams {
+        peer,
+        task_id: _task_id,
+        update,
+    } = params;
     let Ok(body) = gossip::payload_body(update) else {
         return;
     };
@@ -546,9 +595,9 @@ async fn broadcast_status(
         to: Some(peer.clone()),
         corr: None,
     };
-    let msg = Message::new_frame(mesh, author, kind, body).signed(&state.identity);
+    let msg = Message::new_frame(ctx.mesh, ctx.author, kind, body).signed(&state.identity);
     if let Ok(bytes) = msg.serialize() {
-        let _ = sender.broadcast(Bytes::from(bytes)).await;
+        let _ = ctx.sender.broadcast(Bytes::from(bytes)).await;
     }
 }
 
@@ -626,7 +675,7 @@ mod tests {
     /// ciphertext) is not a valid payload.
     #[test]
     fn own_sealed_artifact_echo_advances_and_renders_without_panic() {
-        use agent_habilis_mesh::protocol::{AppTag, MeshId, Message, MessageBody};
+        use agent_habilis_mesh::protocol::{AppFrameParams, AppTag, MeshId, Message, MessageBody};
 
         let mut tasks = HashMap::new();
         let now = Instant::now();
@@ -647,10 +696,12 @@ mod tests {
         let sealed = Message::new_app(
             &mesh,
             &Nickname::from("worker-bot"),
-            AppTag::from(crate::a2a::wire::ARTIFACT),
-            Some(Nickname::from("calm-otter")),
-            None,
-            MessageBody::new("sealed-ciphertext-stand-in").expect("valid body"),
+            AppFrameParams {
+                tag: AppTag::from(crate::a2a::wire::ARTIFACT),
+                to: Some(Nickname::from("calm-otter")),
+                corr: None,
+                body: MessageBody::new("sealed-ciphertext-stand-in").expect("valid body"),
+            },
         );
         assert!(
             crate::a2a::gossip::frame_task_id(&sealed).is_none(),
@@ -658,7 +709,15 @@ mod tests {
         );
 
         // ②: the self-echo still advances the record (id threaded, not parsed).
-        super::ingest(&mut tasks, &sealed, &task_id, true, now);
+        super::ingest(
+            &mut tasks,
+            super::IngestLegParams {
+                frame: &sealed,
+                task_id: &task_id,
+                mine: true,
+                now,
+            },
+        );
         assert_eq!(
             tasks[&tid()].state,
             TaskState::InputRequired,
@@ -673,11 +732,15 @@ mod tests {
         let plaintext = Message::new_app(
             &mesh,
             &Nickname::from("worker-bot"),
-            AppTag::from(crate::a2a::wire::ARTIFACT),
-            Some(Nickname::from("calm-otter")),
-            None,
-            MessageBody::new(serde_json::to_string(&payload).expect("payload serializes"))
+            AppFrameParams {
+                tag: AppTag::from(crate::a2a::wire::ARTIFACT),
+                to: Some(Nickname::from("calm-otter")),
+                corr: None,
+                body: MessageBody::new(
+                    serde_json::to_string(&payload).expect("payload serializes"),
+                )
                 .expect("valid body"),
+            },
         );
         let line = crate::output::event_json(&crate::output::OutputEvent::Task {
             msg: Box::new(plaintext),

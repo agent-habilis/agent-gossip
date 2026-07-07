@@ -36,7 +36,7 @@ use crate::{beacon, gossip, lifecycle, lookup};
 use super::app::NodeDriver;
 use super::config::{CoHostPolicy, DriverMode, EventLoopConfig};
 use super::ctx::HandlerCtx;
-use super::state::EventLoopState;
+use super::state::{EventLoopState, MeshSecrets};
 use super::{setup, timers};
 use crate::gossip::app::NodeApp;
 
@@ -50,6 +50,10 @@ use crate::gossip::app::NodeApp;
 ///
 /// # Errors
 /// Propagates a fatal setup/transport error that terminates the event loop.
+#[expect(
+    clippy::too_many_lines,
+    reason = "session setup + secrets + sender/receiver wiring before handing off to event_loop; each step is a single call, and splitting further would only scatter sequential setup across helpers"
+)]
 pub async fn run<A: NodeDriver>(
     cfg: EventLoopConfig,
     app: A,
@@ -114,14 +118,24 @@ pub async fn run<A: NodeDriver>(
     // bearer token) before readiness is advertised — the local client reads them
     // from this mode-600 file.
     app.init_state_file(state_file.as_ref());
-    let mut state = EventLoopState::new(state_file, started, identity, mesh_password, mesh_key);
+    let mut state = EventLoopState::new(
+        state_file,
+        started,
+        identity,
+        MeshSecrets {
+            password: mesh_password,
+            key: mesh_key,
+        },
+    );
     state.mint_mesh = mint_mesh; // creator-only: backs the `invite` command
     wire_session_state(
         &mut state,
         &endpoint,
-        transport,
-        live_count,
-        rendezvous_params.id,
+        SessionWireParams {
+            transport,
+            live_count,
+            rendezvous_id: rendezvous_params.id,
+        },
     );
 
     // An eager member co-hosts from t=0 so a beacon exists before any
@@ -257,35 +271,32 @@ fn build_sender(
 /// unicast pool (the default is detached), the transport policy, the
 /// advertise counter (set before the first write so the initial ad carries a
 /// real count), and the rendezvous id — then publish the initial count.
-fn wire_session_state(
-    state: &mut EventLoopState,
-    endpoint: &Endpoint,
-    transport: crate::transport::TransportPolicy,
-    live_count: Option<std::sync::Arc<std::sync::atomic::AtomicUsize>>,
-    rendezvous_id: EndpointId,
-) {
+fn wire_session_state(state: &mut EventLoopState, endpoint: &Endpoint, wiring: SessionWireParams) {
     state.unicast_pool = crate::unicast::UnicastPool::new(endpoint.clone());
-    state.transport = transport;
-    state.live_count = live_count;
-    state.rendezvous_id = Some(rendezvous_id);
+    state.transport = wiring.transport;
+    state.live_count = wiring.live_count;
+    state.rendezvous_id = Some(wiring.rendezvous_id);
     state.write_participant_count();
 }
 
+/// The per-session value cluster [`wire_session_state`] folds into a fresh
+/// [`EventLoopState`]: the configured transport policy, the shared advertise
+/// counter (if advertising), and the well-known rendezvous endpoint id.
+struct SessionWireParams {
+    transport: crate::transport::TransportPolicy,
+    live_count: Option<std::sync::Arc<std::sync::atomic::AtomicUsize>>,
+    rendezvous_id: EndpointId,
+}
+
 /// The alive tick: note the gap, then broadcast the keepalive presence.
-async fn alive_arm(
-    anchors: &mut TickAnchors,
-    state: &mut EventLoopState,
-    sender: &MeshSender,
-    mesh: &MeshId,
-    author: &Nickname,
-) {
+async fn alive_arm(anchors: &mut TickAnchors, state: &mut EventLoopState, ctx: &HandlerCtx<'_>) {
     timers::note_tick_gap(
         "alive",
         &mut anchors.alive,
         &mut anchors.alive_wall,
         Duration::from_secs(ALIVE_INTERVAL_SECS),
     );
-    lifecycle::heartbeat::tick_alive(state, sender, mesh, author).await;
+    lifecycle::heartbeat::tick_alive(state, ctx.sender, ctx.mesh, ctx.author).await;
 }
 
 /// The anti-entropy tick: note the gap, advertise the chat digest, then both
@@ -293,9 +304,7 @@ async fn alive_arm(
 async fn antientropy_arm(
     anchors: &mut TickAnchors,
     state: &mut EventLoopState,
-    sender: &MeshSender,
-    mesh: &MeshId,
-    author: &Nickname,
+    ctx: &HandlerCtx<'_>,
 ) {
     timers::note_tick_gap(
         "antientropy",
@@ -303,31 +312,25 @@ async fn antientropy_arm(
         &mut anchors.antientropy_wall,
         Duration::from_secs(antientropy_interval_secs()),
     );
-    gossip::antientropy::broadcast_digest(state, sender, mesh, author).await;
-    gossip::antientropy::broadcast_state_digests(state, sender, mesh, author).await;
+    gossip::antientropy::broadcast_digest(state, ctx.sender, ctx.mesh, ctx.author).await;
+    gossip::antientropy::broadcast_state_digests(state, ctx.sender, ctx.mesh, ctx.author).await;
 }
 
 /// The relay link-state tick: re-broadcast our own measured links (one per direct
 /// neighbour) so every peer keeps a fresh routing graph. No-op until meshed — a
 /// vector with no links helps no one.
-async fn linkstate_arm(
-    state: &mut EventLoopState,
-    sender: &MeshSender,
-    mesh: &MeshId,
-    author: &Nickname,
-    origin: EndpointId,
-) {
+async fn linkstate_arm(state: &mut EventLoopState, ctx: &HandlerCtx<'_>) {
     if !state.meshed {
         return;
     }
     state.link_state_seq += 1;
-    let vector = crate::circuit::self_vector(
-        origin,
-        state.link_state_seq,
-        state.identity.seal_public(),
-        &state.linked_endpoints,
-        &state.circuit_telemetry,
-    );
+    let vector = crate::circuit::self_vector(crate::circuit::SelfVectorParams {
+        origin: ctx.endpoint.id(),
+        seq: state.link_state_seq,
+        seal_key: state.identity.seal_public(),
+        neighbors: &state.linked_endpoints,
+        telemetry: &state.circuit_telemetry,
+    });
     let Ok(json) = vector.to_json() else {
         return;
     };
@@ -339,8 +342,8 @@ async fn linkstate_arm(
         return;
     };
     gossip::broadcast_msg(
-        sender,
-        &Message::new_link_state(mesh, author, body).signed(&state.identity),
+        ctx.sender,
+        &Message::new_link_state(ctx.mesh, ctx.author, body).signed(&state.identity),
     )
     .await;
 }
@@ -519,7 +522,12 @@ async fn event_loop<A: NodeDriver>(loop_state: EventLoop<A>) -> Result<()> {
                 None => ipc_rx = None,
                 Some((cmd, resp_tx)) => {
                     let ctx = parts.ctx(&sender);
-                    if app.handle_ipc(cmd, resp_tx, &mesh_name, &mut state, &ctx).await {
+                    let req = super::app::IpcRequest {
+                        cmd,
+                        resp: resp_tx,
+                        name: &mesh_name,
+                    };
+                    if app.handle_ipc(req, &mut state, &ctx).await {
                         state.last_sent_at = Instant::now();
                     }
                 }
@@ -549,7 +557,8 @@ async fn event_loop<A: NodeDriver>(loop_state: EventLoop<A>) -> Result<()> {
             },
             _ = intervals.prune.tick() => timers::tick_prune(&mut state, sink.as_ref()),
             _ = intervals.alive.tick() => {
-                alive_arm(&mut anchors, &mut state, &sender, &mesh_str, &author).await;
+                let ctx = parts.ctx(&sender);
+                alive_arm(&mut anchors, &mut state, &ctx).await;
             }
             _ = intervals.sweep.tick() => {
                 sweep_arm(&mut anchors, &mut state, sink.as_ref());
@@ -560,29 +569,45 @@ async fn event_loop<A: NodeDriver>(loop_state: EventLoop<A>) -> Result<()> {
                 let (mono_gap, wall_gap) = timers::note_tick_gap("heal", &mut anchors.heal, &mut anchors.heal_wall, Duration::from_secs(heal_interval_secs()));
                 if state.gossip_open {
                     let ctx = parts.ctx(&sender);
-                    heal_tick(mono_gap, wall_gap, &mut state, &ctx, &rendezvous_params, cohost, started, &mut rendezvous).await;
+                    heal_tick(&mut state, &ctx, HealTickParams {
+                        gap: TickGap { mono: mono_gap, wall: wall_gap },
+                        params: &rendezvous_params,
+                        cohost,
+                        started,
+                    }, &mut rendezvous).await;
                 } else {
                     // Stream ended: resubscribe instead of healing a dead topic
                     // (see `resubscribe_tick`); the beacon keeps the mesh joinable.
-                    resubscribe_tick(&gossip, &rendezvous_params, &parts, &mut state, &mut app, &mut sender, &mut receiver, &mut resubscribe_attempts, exit_on_quit).await?;
-                    maybe_cohost(cohost, &state, started, &rendezvous_params, &endpoint, &mut rendezvous).await;
+                    resubscribe_tick(
+                        &ResubscribeEnv { gossip: &gossip, params: &rendezvous_params, parts: &parts, exit_on_quit },
+                        &mut state,
+                        &mut app,
+                        GossipLink { sender: &mut sender, receiver: &mut receiver, attempts: &mut resubscribe_attempts },
+                    ).await?;
+                    let ctx = parts.ctx(&sender);
+                    maybe_cohost(&state, &ctx, &CohostArm { policy: cohost, params: &rendezvous_params, started }, &mut rendezvous).await;
                 }
             }
             // A bootstrap rung chosen off-loop (startup probe / beacon self-monitor); apply it cheaply.
             // `Ok(())` only: a closed channel (impossible while the beacon params live) disables the arm.
             Ok(()) = rung_rx.changed() => apply_rung_change(&mut rendezvous_params, &endpoint, &mut rendezvous, &rung_rx),
-            _ = intervals.reclaim.tick() =>
-                maybe_reclaim(cohost, &state, &rendezvous_params, &endpoint, &mut rendezvous).await,
+            _ = intervals.reclaim.tick() => {
+                let ctx = parts.ctx(&sender);
+                maybe_reclaim(&state, &ctx, &CohostArm { policy: cohost, params: &rendezvous_params, started }, &mut rendezvous).await;
+            }
             _ = intervals.antientropy.tick() => {
-                antientropy_arm(&mut anchors, &mut state, &sender, &mesh_str, &author).await;
+                let ctx = parts.ctx(&sender);
+                antientropy_arm(&mut anchors, &mut state, &ctx).await;
             }
             _ = intervals.state_refresh.tick() => timers::tick_state_refresh(&state, &endpoint).await,
             _ = intervals.linkstate.tick() => {
-                linkstate_arm(&mut state, &sender, &mesh_str, &author, endpoint.id()).await;
+                let ctx = parts.ctx(&sender);
+                linkstate_arm(&mut state, &ctx).await;
             }
             _ = recv_opt(&mut external_quit_rx) => {
                 // External quit is always embedded (MCP): never hard-exit (`false`).
-                announce_and_maybe_exit(&sender, &mesh_str, &mesh_name, &author, &mut state, &mut app, sink.as_ref(), false).await;
+                let ctx = parts.ctx(&sender);
+                announce_and_maybe_exit(&mut state, &mut app, &ctx, QuitParams { name: &mesh_name, exit_on_quit: false }).await;
                 break;
             }
             req = recv_opt(&mut external_req_rx) => match req {
@@ -595,7 +620,8 @@ async fn event_loop<A: NodeDriver>(loop_state: EventLoop<A>) -> Result<()> {
                 }
             },
             _ = quit_rx.recv() => {
-                announce_and_maybe_exit(&sender, &mesh_str, &mesh_name, &author, &mut state, &mut app, sink.as_ref(), exit_on_quit).await;
+                let ctx = parts.ctx(&sender);
+                announce_and_maybe_exit(&mut state, &mut app, &ctx, QuitParams { name: &mesh_name, exit_on_quit }).await;
                 break;
             }
         }
@@ -617,13 +643,10 @@ async fn event_loop<A: NodeDriver>(loop_state: EventLoop<A>) -> Result<()> {
 /// kill landing during that window can't strand the file with a still-fresh
 /// `last_updated`, leaving a ghost pill on the statusline.
 async fn shutdown<A: NodeDriver>(
-    sender: &MeshSender,
-    mesh: &MeshId,
-    name: &MeshName,
-    author: &Nickname,
     state: &mut EventLoopState,
     app: &mut A,
-    sink: &dyn NodeSink,
+    ctx: &HandlerCtx<'_>,
+    name: &MeshName,
 ) {
     // Release app-owned resources (fail parked app waiters, close the
     // blob-serving endpoint whose store spool is dropped with it).
@@ -631,14 +654,22 @@ async fn shutdown<A: NodeDriver>(
     if let Some(sf) = state.state_file.as_ref() {
         sf.remove();
     }
-    sink.emit(NodeEvent::Info(format!("left #{name}")));
+    ctx.sink.emit(NodeEvent::Info(format!("left #{name}")));
     lifecycle::log_leaving(name.as_str());
     gossip::broadcast_msg(
-        sender,
-        &Message::new_left(mesh, author).signed(&state.identity),
+        ctx.sender,
+        &Message::new_left(ctx.mesh, ctx.author).signed(&state.identity),
     )
     .await;
     tokio::time::sleep(Duration::from_millis(500)).await;
+}
+
+/// The mesh name (for the departure log line) and whether this quit should
+/// hard-exit the process — the plain values [`announce_and_maybe_exit`] needs
+/// beyond the loop state and the shared handler context.
+struct QuitParams<'a> {
+    name: &'a MeshName,
+    exit_on_quit: bool,
 }
 
 /// Announce departure, then decide whether to hard-exit the process.
@@ -650,41 +681,33 @@ async fn shutdown<A: NodeDriver>(
 /// destructors, so the heap profiler would never flush `dhat-heap.json`; we fall
 /// through so `main` unwinds and the profiler drops (safe because profiling runs
 /// use `--no-interactive`, i.e. no blocking stdin thread to hang shutdown).
-#[expect(
-    clippy::too_many_arguments,
-    reason = "graceful shutdown threads the gossip sender, the daemon identity (mesh/name/author), the mesh state, the app state, the output sink, and the CLI hard-exit flag"
-)]
 async fn announce_and_maybe_exit<A: NodeDriver>(
-    sender: &MeshSender,
-    mesh: &MeshId,
-    name: &MeshName,
-    author: &Nickname,
     state: &mut EventLoopState,
     app: &mut A,
-    sink: &dyn NodeSink,
-    exit_on_quit: bool,
+    ctx: &HandlerCtx<'_>,
+    quit: QuitParams<'_>,
 ) {
     // Empty out any parked long-poll waiters first, so a held call returns a
     // clean timeout (empty) rather than a dropped-channel error — and before
     // the `exit_on_quit` path below may `std::process::exit`. Other app-owned
     // waiters (A2A calls) are failed in `on_shutdown` (inside `shutdown`).
     app.close_poll_waiters();
-    shutdown(sender, mesh, name, author, state, app, sink).await;
+    shutdown(state, app, ctx, quit.name).await;
     // Drain any frames still queued for the spool before we abort the process —
     // otherwise `process::exit` kills the detached writer mid-flush and a
     // burst-then-quit loses its tail (a sneakernet hand-off's last messages).
     // Bounded so a wedged disk can't hang shutdown.
     let _ = tokio::time::timeout(
         Duration::from_secs(crate::util::consts::SPOOL_FLUSH_TIMEOUT_SECS),
-        sender.flush(),
+        ctx.sender.flush(),
     )
     .await;
     #[cfg(not(feature = "dhat-heap"))]
-    if exit_on_quit {
+    if quit.exit_on_quit {
         std::process::exit(0);
     }
     #[cfg(feature = "dhat-heap")]
-    let _ = exit_on_quit;
+    let _ = quit.exit_on_quit;
 }
 
 /// Spawn ctrl-c (all platforms) plus SIGTERM/SIGHUP/SIGQUIT (unix)
@@ -954,19 +977,18 @@ fn is_wall_resume(wall_gap: Duration, mono_gap: Duration, stall_threshold: Durat
 /// signal that survives a macOS sleep, which freezes the monotonic
 /// clock with the process.
 async fn run_heal(
-    mono_gap: Duration,
-    wall_gap: Duration,
+    gap: TickGap,
     state: &mut EventLoopState,
     ctx: &HandlerCtx<'_>,
     params: &beacon::RendezvousParams,
 ) {
     let threshold = Duration::from_secs(heal_stall_threshold_secs());
-    let hard_edge = is_resume(mono_gap, threshold) || is_wall_resume(wall_gap, mono_gap, threshold);
+    let hard_edge = is_resume(gap.mono, threshold) || is_wall_resume(gap.wall, gap.mono, threshold);
     if hard_edge {
         tracing::warn!(
             target: "agent_square::gossip",
-            mono_gap_ms = u64::try_from(mono_gap.as_millis()).unwrap_or(u64::MAX),
-            wall_gap_ms = u64::try_from(wall_gap.as_millis()).unwrap_or(u64::MAX),
+            mono_gap_ms = u64::try_from(gap.mono.as_millis()).unwrap_or(u64::MAX),
+            wall_gap_ms = u64::try_from(gap.wall.as_millis()).unwrap_or(u64::MAX),
             "heal: hard re-bootstrap edge"
         );
         state.note_degraded();
@@ -1014,24 +1036,41 @@ async fn run_heal(
     }
 }
 
-/// One heal tick: re-bootstrap/heal, then (re)claim the beacon if we
-/// should co-host. Grouped so the event-loop arm stays a one-liner.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "threads the heal + cohost state the event loop owns; splitting would only re-bundle it"
-)]
-async fn heal_tick(
-    mono_gap: Duration,
-    wall_gap: Duration,
-    state: &mut EventLoopState,
-    ctx: &HandlerCtx<'_>,
-    params: &beacon::RendezvousParams,
+/// A tick's elapsed-time gap on both clocks: monotonic (throttle-blind) and
+/// wall (the only one a macOS suspend shows up on) — see [`is_resume`] /
+/// [`is_wall_resume`].
+#[derive(Clone, Copy)]
+struct TickGap {
+    mono: Duration,
+    wall: Duration,
+}
+
+/// The value cluster [`heal_tick`] needs beyond the loop state and handler
+/// context: the tick's gap, the rendezvous params to heal/claim under, which
+/// co-host policy governs this session, and (for the unmeshed-joiner grace)
+/// when the event loop started.
+struct HealTickParams<'a> {
+    gap: TickGap,
+    params: &'a beacon::RendezvousParams,
     cohost: CoHostPolicy,
     started: Instant,
+}
+
+/// One heal tick: re-bootstrap/heal, then (re)claim the beacon if we
+/// should co-host. Grouped so the event-loop arm stays a one-liner.
+async fn heal_tick(
+    state: &mut EventLoopState,
+    ctx: &HandlerCtx<'_>,
+    tick: HealTickParams<'_>,
     rendezvous: &mut Option<beacon::Rendezvous>,
 ) {
-    run_heal(mono_gap, wall_gap, state, ctx, params).await;
-    maybe_cohost(cohost, state, started, params, ctx.endpoint, rendezvous).await;
+    run_heal(tick.gap, state, ctx, tick.params).await;
+    let arm = CohostArm {
+        policy: tick.cohost,
+        params: tick.params,
+        started: tick.started,
+    };
+    maybe_cohost(state, ctx, &arm, rendezvous).await;
 }
 
 /// Per-timer gap anchors; the heal gap also drives the resume-edge hard
@@ -1111,6 +1150,26 @@ enum Resubscribe {
     Fatal,
 }
 
+/// The resubscribe attempt's read-only environment: the gossip frontend to
+/// re-subscribe through, the rendezvous params to bootstrap from, the shared
+/// ctx-building parts (for its `sink` and to rebuild a [`HandlerCtx`] once the
+/// sender is swapped), and the CLI hard-exit flag for the `Fatal` path.
+struct ResubscribeEnv<'a> {
+    gossip: &'a iroh_gossip::net::Gossip,
+    params: &'a beacon::RendezvousParams,
+    parts: &'a CtxParts<'a>,
+    exit_on_quit: bool,
+}
+
+/// The live gossip link a resubscribe mutates: the sender/receiver pair
+/// swapped in on success, and the consecutive-failure counter it resets or
+/// increments.
+struct GossipLink<'a> {
+    sender: &'a mut MeshSender,
+    receiver: &'a mut GossipReceiver,
+    attempts: &'a mut u32,
+}
+
 /// One heal-tick turn while the gossip stream is down: attempt the
 /// resubscribe and, on success, swap in the fresh sender/receiver,
 /// drain the dead subscription's buffer (the actor counts those
@@ -1122,32 +1181,23 @@ enum Resubscribe {
 /// daemon stops posing as a live member: statusline state file cleared
 /// (a `Left` broadcast is pointless on a dead topic), `exit(1)` on the
 /// CLI path, `Err` for embedded drivers.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "threads the loop-owned swap targets (sender/receiver) plus the ctx parts; bundling them would just re-wrap the event loop's locals"
-)]
 async fn resubscribe_tick(
-    gossip: &iroh_gossip::net::Gossip,
-    params: &beacon::RendezvousParams,
-    parts: &CtxParts<'_>,
+    env: &ResubscribeEnv<'_>,
     state: &mut EventLoopState,
     app: &mut dyn NodeApp,
-    sender: &mut MeshSender,
-    receiver: &mut GossipReceiver,
-    attempts: &mut u32,
-    exit_on_quit: bool,
+    link: GossipLink<'_>,
 ) -> Result<()> {
-    match try_resubscribe(gossip, params, state, attempts, parts.sink).await {
+    match try_resubscribe(env, state, link.attempts).await {
         Resubscribe::Restored(new_sender, new_receiver) => {
-            let mut dead_receiver = std::mem::replace(receiver, new_receiver);
+            let mut dead_receiver = std::mem::replace(link.receiver, new_receiver);
             // Swap only the inner gossip sender; the spool writer Arc survives
             // the resubscribe so a healed daemon keeps mirroring.
-            sender.replace_gossip(new_sender);
+            link.sender.replace_gossip(new_sender);
             state.gossip_open = true;
             // The dead subscription's link view is void; the fresh one
             // emits its own NeighborUps (and re-arms the probe gate).
             state.rendezvous_linked = false;
-            let ctx = parts.ctx(sender);
+            let ctx = env.parts.ctx(link.sender);
             gossip::drain_dead_receiver(&mut dead_receiver, state, app, &ctx).await;
             drop(dead_receiver);
             gossip::heal::recover_from_starvation(state, &ctx).await;
@@ -1157,15 +1207,15 @@ async fn resubscribe_tick(
             if let Some(state_file) = state.state_file.as_ref() {
                 state_file.remove();
             }
-            parts.sink.emit(NodeEvent::Error(
+            env.parts.sink.emit(NodeEvent::Error(
                 "gossip subscription unrecoverable; shutting down".to_owned(),
             ));
             #[cfg(not(feature = "dhat-heap"))]
-            if exit_on_quit {
+            if env.exit_on_quit {
                 std::process::exit(1);
             }
             #[cfg(feature = "dhat-heap")]
-            let _ = exit_on_quit;
+            let _ = env.exit_on_quit;
             anyhow::bail!("gossip subscription unrecoverable after repeated resubscribe attempts");
         }
     }
@@ -1181,22 +1231,20 @@ async fn resubscribe_tick(
 /// means the gossip actor itself is gone (endpoint closed), which no
 /// retry can fix.
 async fn try_resubscribe(
-    gossip: &iroh_gossip::net::Gossip,
-    params: &beacon::RendezvousParams,
+    env: &ResubscribeEnv<'_>,
     state: &EventLoopState,
     attempts: &mut u32,
-    sink: &dyn NodeSink,
 ) -> Resubscribe {
-    let mut bootstrap = vec![params.id];
+    let mut bootstrap = vec![env.params.id];
     bootstrap.extend(state.known_endpoints.iter().copied());
-    match gossip.subscribe(params.topic_id, bootstrap).await {
+    match env.gossip.subscribe(env.params.topic_id, bootstrap).await {
         Ok(topic) => {
             *attempts = 0;
             tracing::warn!(
                 target: "agent_square::gossip",
                 "gossip stream restored (resubscribed)"
             );
-            sink.emit(NodeEvent::Info(
+            env.parts.sink.emit(NodeEvent::Info(
                 "gossip stream restored; rejoining the mesh".to_owned(),
             ));
             let (sender, receiver) = topic.split();
@@ -1272,20 +1320,34 @@ async fn handle_stdin_arm<A: NodeDriver>(
     }
 }
 
+/// The co-host decision inputs a heal/reclaim tick needs: which policy
+/// governs this session, the rendezvous params to (re)claim under, and
+/// (for the unmeshed-joiner grace `maybe_cohost` alone reads) when the
+/// event loop started.
+struct CohostArm<'a> {
+    policy: CoHostPolicy,
+    params: &'a beacon::RendezvousParams,
+    started: Instant,
+}
+
 /// Heal-tick co-host: stand up the beacon if this member may serve it
 /// now (`may_cohost`). Claim-if-free in private; in public a non-`Eager`
 /// member probes first (`beacon::ensure`) so it never registers a
 /// duplicate rendezvous that would capture its own bootstrap dial.
 async fn maybe_cohost(
-    cohost: CoHostPolicy,
     state: &EventLoopState,
-    started: Instant,
-    params: &beacon::RendezvousParams,
-    endpoint: &Endpoint,
+    ctx: &HandlerCtx<'_>,
+    arm: &CohostArm<'_>,
     current: &mut Option<beacon::Rendezvous>,
 ) {
-    if may_cohost(cohost, state.meshed, started) {
-        beacon::ensure(params, endpoint, current, probes_before_claim(cohost)).await;
+    if may_cohost(arm.policy, state.meshed, arm.started) {
+        beacon::ensure(
+            arm.params,
+            ctx.endpoint,
+            current,
+            probes_before_claim(arm.policy),
+        )
+        .await;
     }
 }
 
@@ -1297,18 +1359,23 @@ async fn maybe_cohost(
 /// else probes first (`!Eager`) so a survivor that already took over
 /// isn't displaced by a colliding duplicate.
 async fn maybe_reclaim(
-    cohost: CoHostPolicy,
     state: &EventLoopState,
-    params: &beacon::RendezvousParams,
-    endpoint: &Endpoint,
+    ctx: &HandlerCtx<'_>,
+    arm: &CohostArm<'_>,
     current: &mut Option<beacon::Rendezvous>,
 ) {
-    if cohost != CoHostPolicy::Never
+    if arm.policy != CoHostPolicy::Never
         && state
             .reclaim_until
             .is_some_and(|deadline| Instant::now() < deadline)
     {
-        beacon::ensure(params, endpoint, current, probes_before_claim(cohost)).await;
+        beacon::ensure(
+            arm.params,
+            ctx.endpoint,
+            current,
+            probes_before_claim(arm.policy),
+        )
+        .await;
     }
 }
 

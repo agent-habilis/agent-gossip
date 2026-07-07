@@ -343,7 +343,12 @@ async fn join_setup(
     }
     .resolve()
     .map_err(JoinError::Resolve)?;
-    resolved_setup(resolved, cfg.max_peers, cfg.spool, cfg.transport, output).await
+    let limits = SetupLimits {
+        max_peers: cfg.max_peers,
+        spool: cfg.spool,
+        transport: cfg.transport,
+    };
+    resolved_setup(resolved, limits, output).await
 }
 
 /// Resolve + set up a topic (a string-derived public mesh).
@@ -361,19 +366,36 @@ async fn topic_setup(
     }
     .resolve()
     .map_err(JoinError::Resolve)?;
-    resolved_setup(resolved, cfg.max_peers, cfg.spool, cfg.transport, output).await
+    let limits = SetupLimits {
+        max_peers: cfg.max_peers,
+        spool: cfg.spool,
+        transport: cfg.transport,
+    };
+    resolved_setup(resolved, limits, output).await
+}
+
+/// The peer-cap / spool / transport trio [`join_setup`] and [`topic_setup`]
+/// thread through to [`resolved_setup`], lifted out of their otherwise-distinct
+/// `*Config` structs.
+struct SetupLimits {
+    max_peers: usize,
+    spool: Option<std::path::PathBuf>,
+    transport: TransportPolicy,
 }
 
 /// The shared tail of [`join_setup`] / [`topic_setup`]: run `setup_mesh` for
 /// an already-resolved join-flavored setup.
 async fn resolved_setup(
     resolved: Resolved,
-    max_peers: usize,
-    spool: Option<std::path::PathBuf>,
-    transport: TransportPolicy,
+    limits: SetupLimits,
     output: Output,
 ) -> Result<(EventLoopConfig, crate::a2a::app::SurfacedIo), JoinError> {
     let Resolved { kind, author, .. } = resolved;
+    let SetupLimits {
+        max_peers,
+        spool,
+        transport,
+    } = limits;
     let io = crate::a2a::app::SurfacedIo::new(output);
     let sink = io.sink();
     let elc = setup_mesh(
@@ -393,6 +415,47 @@ async fn resolved_setup(
     .await
     .map_err(|error| JoinError::Setup(error.context("setup_mesh failed")))?;
     Ok((elc, io))
+}
+
+/// The advertiser handle / signal-handling flag shared by
+/// [`InProcessSession::spawn`] and [`MeshSession::with_events_and_signals`] —
+/// the bits of the spawn call that are about the *process* environment rather
+/// than the mesh itself.
+struct SpawnEnv {
+    advertiser: Option<JoinHandle<()>>,
+    handle_signals: bool,
+}
+
+/// The call describing a directed [`MeshSession::a2a_call`] /
+/// `InProcessSession::a2a_call` — which peer, which JSON-RPC method, its
+/// params, and how long to wait for the reply.
+#[derive(Debug)]
+pub struct A2aCallParams {
+    /// The peer to call.
+    pub peer: Nickname,
+    /// The JSON-RPC method name (`PascalCase` per the safe A2A subset).
+    pub method: String,
+    /// The method's JSON-RPC params.
+    pub params: serde_json::Value,
+    /// How long to wait for the peer's reply before giving up.
+    pub timeout: Duration,
+}
+
+/// A synthetic link-state vector for [`MeshSession::inject_link_vector`] /
+/// `InProcessSession::inject_link_vector` (testkit-only): one peer's outbound
+/// edges, as if freshly gossiped.
+#[cfg(feature = "adversarial")]
+#[derive(Debug)]
+pub struct LinkVectorParams {
+    /// The vector's origin (the peer whose edges these are).
+    pub origin: iroh::EndpointId,
+    /// Monotonic per-origin sequence — a higher value wins over what the
+    /// mesh already converged on.
+    pub seq: u64,
+    /// The origin's X25519 circuit key (the terminal onion layer).
+    pub seal_key: [u8; 32],
+    /// The origin's `(neighbour, cost)` outbound edges.
+    pub links: Vec<(iroh::EndpointId, u32)>,
 }
 
 /// The in-process session core shared by the public [`MeshSession`] (embed
@@ -425,15 +488,18 @@ impl InProcessSession {
     /// Wire the typed channels into `elc`, spawn the event loop, and build
     /// the core. `push` is `Some` to fan inbound traffic out to a broadcast
     /// ([`MeshSession::messages`]), `None` for a poll-only consumer (MCP).
-    /// `handle_signals`: see [`DriverMode::InProcess`] — `false` for sessions
-    /// living inside a foreground command that owns its own lifetime.
+    /// `env.handle_signals`: see [`DriverMode::InProcess`] — `false` for
+    /// sessions living inside a foreground command that owns its own lifetime.
     fn spawn(
         mut elc: EventLoopConfig,
         io: crate::a2a::app::SurfacedIo,
-        advertiser: Option<JoinHandle<()>>,
+        env: SpawnEnv,
         push: Option<broadcast::Sender<Message>>,
-        handle_signals: bool,
     ) -> Self {
+        let SpawnEnv {
+            advertiser,
+            handle_signals,
+        } = env;
         let (req_tx, req_rx) = mpsc::channel::<SessionRequest>(32);
         let (quit_tx, quit_rx) = mpsc::channel::<()>(1);
         elc.driver = DriverMode::InProcess {
@@ -480,7 +546,15 @@ impl InProcessSession {
     /// [`CreateError::AdvertiseRequiresReachable`] / [`CreateError::Setup`].
     pub(crate) async fn create_poll(cfg: CreateConfig) -> Result<Self, CreateError> {
         let (elc, io, advertiser) = create_setup(cfg, Output::silent()).await?;
-        Ok(Self::spawn(elc, io, advertiser, None, true))
+        Ok(Self::spawn(
+            elc,
+            io,
+            SpawnEnv {
+                advertiser,
+                handle_signals: true,
+            },
+            None,
+        ))
     }
 
     /// Join an existing mesh as a poll-only, silent core (the MCP server).
@@ -489,7 +563,15 @@ impl InProcessSession {
     /// [`JoinError::Resolve`] / [`JoinError::Setup`].
     pub(crate) async fn join_poll(cfg: JoinConfig) -> Result<Self, JoinError> {
         let (elc, io) = join_setup(cfg, Output::silent()).await?;
-        Ok(Self::spawn(elc, io, None, None, true))
+        Ok(Self::spawn(
+            elc,
+            io,
+            SpawnEnv {
+                advertiser: None,
+                handle_signals: true,
+            },
+            None,
+        ))
     }
 
     /// Join a topic (string-derived public mesh) as a poll-only, silent core
@@ -500,7 +582,15 @@ impl InProcessSession {
     /// endpoint/gossip failure.
     pub(crate) async fn topic_poll(cfg: TopicConfig) -> Result<Self, JoinError> {
         let (elc, io) = topic_setup(cfg, Output::silent()).await?;
-        Ok(Self::spawn(elc, io, None, None, true))
+        Ok(Self::spawn(
+            elc,
+            io,
+            SpawnEnv {
+                advertiser: None,
+                handle_signals: true,
+            },
+            None,
+        ))
     }
 
     pub(crate) fn mesh_id(&self) -> &MeshId {
@@ -621,13 +711,13 @@ impl InProcessSession {
     ///
     /// # Errors
     /// Fails if the event loop has stopped or dropped the response.
-    pub(crate) async fn a2a_call(
-        &self,
-        peer: Nickname,
-        method: String,
-        params: serde_json::Value,
-        timeout: Duration,
-    ) -> anyhow::Result<serde_json::Value> {
+    pub(crate) async fn a2a_call(&self, call: A2aCallParams) -> anyhow::Result<serde_json::Value> {
+        let A2aCallParams {
+            peer,
+            method,
+            params,
+            timeout,
+        } = call;
         let (resp_tx, resp_rx) = oneshot::channel();
         self.req_tx
             .send(SessionRequest::A2aCall {
@@ -770,13 +860,13 @@ impl InProcessSession {
     /// # Errors
     /// Fails if the event loop has stopped.
     #[cfg(feature = "adversarial")]
-    pub(crate) async fn inject_link_vector(
-        &self,
-        origin: iroh::EndpointId,
-        seq: u64,
-        seal_key: [u8; 32],
-        links: Vec<(iroh::EndpointId, u32)>,
-    ) -> anyhow::Result<()> {
+    pub(crate) async fn inject_link_vector(&self, vector: LinkVectorParams) -> anyhow::Result<()> {
+        let LinkVectorParams {
+            origin,
+            seq,
+            seal_key,
+            links,
+        } = vector;
         self.req_tx
             .send(SessionRequest::InjectLinkVector {
                 origin,
@@ -872,6 +962,24 @@ impl Drop for InProcessSession {
     }
 }
 
+/// The result artifact for [`MeshSession::task_artifact`]: the text plus an
+/// optional file, split into its blob-offload parts (`name`/`mime` describe
+/// `file`, so they only mean anything when it is `Some`).
+#[derive(Debug)]
+pub struct TaskArtifactParams {
+    /// The task this artifact belongs to.
+    pub task_id: TaskId,
+    /// The artifact's text part.
+    pub text: String,
+    /// An optional file to offload over the blob channel and reference by
+    /// `Part.url`.
+    pub file: Option<std::path::PathBuf>,
+    /// `file`'s display name, if any.
+    pub file_name: Option<String>,
+    /// `file`'s MIME type, if any.
+    pub file_mime: Option<String>,
+}
+
 /// A live mesh membership (the public embed facade): the shared
 /// `InProcessSession` plus the inbound broadcast and captured-event
 /// stream. Dropping it (or [`MeshSession::leave`]) winds the loop down.
@@ -963,7 +1071,13 @@ impl MeshSession {
         .await?;
         elc.cohost = cohost;
         Ok(Self::with_events_and_signals(
-            elc, io, None, events_rx, false,
+            elc,
+            io,
+            SpawnEnv {
+                advertiser: None,
+                handle_signals: false,
+            },
+            events_rx,
         ))
     }
 
@@ -977,21 +1091,27 @@ impl MeshSession {
         advertiser: Option<JoinHandle<()>>,
         events_rx: mpsc::UnboundedReceiver<OutputEvent>,
     ) -> Self {
-        Self::with_events_and_signals(elc, io, advertiser, events_rx, true)
+        Self::with_events_and_signals(
+            elc,
+            io,
+            SpawnEnv {
+                advertiser,
+                handle_signals: true,
+            },
+            events_rx,
+        )
     }
 
     /// [`Self::with_events`] with the signal registration explicit — the
-    /// directory sessions pass `false`.
+    /// directory sessions pass `handle_signals: false`.
     fn with_events_and_signals(
         elc: EventLoopConfig,
         io: crate::a2a::app::SurfacedIo,
-        advertiser: Option<JoinHandle<()>>,
+        env: SpawnEnv,
         events_rx: mpsc::UnboundedReceiver<OutputEvent>,
-        handle_signals: bool,
     ) -> Self {
         let (msg_tx, _initial_rx) = broadcast::channel::<Message>(EMBED_INBOUND_CAP);
-        let core =
-            InProcessSession::spawn(elc, io, advertiser, Some(msg_tx.clone()), handle_signals);
+        let core = InProcessSession::spawn(elc, io, env, Some(msg_tx.clone()));
         Self {
             core,
             msg_tx,
@@ -1122,14 +1242,14 @@ impl MeshSession {
     ///
     /// # Errors
     /// Fails if the event loop has stopped or dropped the response.
-    pub async fn task_artifact(
-        &self,
-        task_id: TaskId,
-        text: String,
-        file: Option<std::path::PathBuf>,
-        file_name: Option<String>,
-        file_mime: Option<String>,
-    ) -> anyhow::Result<Message> {
+    pub async fn task_artifact(&self, artifact: TaskArtifactParams) -> anyhow::Result<Message> {
+        let TaskArtifactParams {
+            task_id,
+            text,
+            file,
+            file_name,
+            file_mime,
+        } = artifact;
         let file = file.map(|path| agent_habilis_mesh::blob::FileRef {
             path,
             name: file_name,
@@ -1146,14 +1266,8 @@ impl MeshSession {
     ///
     /// # Errors
     /// Fails if the event loop has stopped or dropped the response.
-    pub async fn a2a_call(
-        &self,
-        peer: Nickname,
-        method: String,
-        params: serde_json::Value,
-        timeout: Duration,
-    ) -> anyhow::Result<serde_json::Value> {
-        self.core.a2a_call(peer, method, params, timeout).await
+    pub async fn a2a_call(&self, call: A2aCallParams) -> anyhow::Result<serde_json::Value> {
+        self.core.a2a_call(call).await
     }
 
     /// Broadcast pre-built wire bytes **verbatim** into the mesh — no
@@ -1194,16 +1308,8 @@ impl MeshSession {
     /// # Errors
     /// Fails if the event loop has stopped.
     #[cfg(feature = "adversarial")]
-    pub async fn inject_link_vector(
-        &self,
-        origin: iroh::EndpointId,
-        seq: u64,
-        seal_key: [u8; 32],
-        links: Vec<(iroh::EndpointId, u32)>,
-    ) -> anyhow::Result<()> {
-        self.core
-            .inject_link_vector(origin, seq, seal_key, links)
-            .await
+    pub async fn inject_link_vector(&self, vector: LinkVectorParams) -> anyhow::Result<()> {
+        self.core.inject_link_vector(vector).await
     }
 
     /// Simulate the gossip stream terminally ending (the daemon must

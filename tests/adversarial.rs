@@ -304,10 +304,12 @@ async fn status_task_id_mismatch_is_dropped() {
     let victim_nick = victim.nickname.clone();
     let evil = CraftedMsg::status_frame(
         attacker.session.mesh_id(),
-        "ghost",
-        &victim_nick,
-        "550e8400-e29b-41d4-a716-446655440000", // frame correlation
-        "660e8400-e29b-41d4-a716-446655440001", // payload taskId — mismatch
+        adversarial::StatusFrameParams {
+            author: "ghost",
+            to: &victim_nick,
+            frame_task_id: "550e8400-e29b-41d4-a716-446655440000", // frame correlation
+            payload_task_id: "660e8400-e29b-41d4-a716-446655440001", // payload taskId — mismatch
+        },
     )
     .sign(&key)
     .bytes();

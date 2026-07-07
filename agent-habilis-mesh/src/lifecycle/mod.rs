@@ -121,14 +121,28 @@ pub(crate) fn observe(
     }
 }
 
+/// A received `Presence` frame plus the roster delta [`membership::observe`]
+/// already computed for it, passed to [`handle_presence`]. Constructed by
+/// [`crate::gossip::recv::ingest`], across the `gossip`/`lifecycle` module
+/// boundary — hence `pub(crate)` rather than module-private.
+pub(crate) struct PresenceEvent<'a> {
+    pub(crate) message: &'a Message,
+    pub(crate) subtype: PresenceSubtype,
+    pub(crate) update: &'a membership::MembershipUpdate,
+    pub(crate) surfaceable: bool,
+}
+
 pub(crate) async fn handle_presence(
-    message: &Message,
-    subtype: PresenceSubtype,
-    update: &membership::MembershipUpdate,
-    surfaceable: bool,
+    event: PresenceEvent<'_>,
     state: &mut EventLoopState,
     ctx: &HandlerCtx<'_>,
 ) {
+    let PresenceEvent {
+        message,
+        subtype,
+        update,
+        surfaceable,
+    } = event;
     if subtype == PresenceSubtype::Alive {
         return;
     }

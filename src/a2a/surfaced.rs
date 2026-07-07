@@ -161,6 +161,15 @@ pub(crate) fn render_poll_array(events: &[SurfacedEvent]) -> String {
     format!("[{}]", lines.join(","))
 }
 
+/// The value cluster [`SurfacedState::poll_or_register`] needs beyond its
+/// `&mut self` ring/registry handle.
+pub(crate) struct PollOrRegisterParams {
+    pub(crate) after: Option<u64>,
+    pub(crate) long: bool,
+    pub(crate) now: TokioInstant,
+    pub(crate) responder: PollResponder,
+}
+
 /// The surfaced-events ring plus the parked long-poll waiters — the a2a layer's
 /// slice of the daemon's surfacing state, held by [`A2aApp`](super::app::A2aApp)
 /// so the daemon engine never names `OutputEvent`.
@@ -263,13 +272,13 @@ impl SurfacedState {
     ///    and if the registry is full, respond empty.
     ///
     /// `now` is the registration instant (passed in so tests can pin it).
-    pub(crate) fn poll_or_register(
-        &mut self,
-        after: Option<u64>,
-        long: bool,
-        now: TokioInstant,
-        responder: PollResponder,
-    ) {
+    pub(crate) fn poll_or_register(&mut self, params: PollOrRegisterParams) {
+        let PollOrRegisterParams {
+            after,
+            long,
+            now,
+            responder,
+        } = params;
         let events = self.poll_since(after);
         if !events.is_empty() {
             responder.send_batch(events);
@@ -355,7 +364,7 @@ impl SurfacedState {
 
 #[cfg(test)]
 mod tests {
-    use super::{PollResponder, SurfacedEvents, SurfacedState};
+    use super::{PollOrRegisterParams, PollResponder, SurfacedEvents, SurfacedState};
     use crate::output::OutputEvent;
     use agent_habilis_mesh::protocol::Nickname;
     use std::time::Duration;
@@ -550,7 +559,12 @@ mod tests {
         surfaced.push(peer_return("a"));
         let (tx, rx) = tokio::sync::oneshot::channel::<String>();
         // Buffer has events → respond now even though long is set; no waiter.
-        surfaced.poll_or_register(None, true, TokioInstant::now(), PollResponder::Json(tx));
+        surfaced.poll_or_register(PollOrRegisterParams {
+            after: None,
+            long: true,
+            now: TokioInstant::now(),
+            responder: PollResponder::Json(tx),
+        });
         let body = rx.await.expect("immediate response");
         assert!(body.len() > 2, "non-empty: {body}");
         assert!(surfaced.poll_waiters.is_empty(), "never parked");
@@ -561,7 +575,12 @@ mod tests {
         let mut surfaced = SurfacedState::new();
         let (tx, rx) = tokio::sync::oneshot::channel::<String>();
         // Empty buffer, not long → immediate empty, no waiter.
-        surfaced.poll_or_register(None, false, TokioInstant::now(), PollResponder::Json(tx));
+        surfaced.poll_or_register(PollOrRegisterParams {
+            after: None,
+            long: false,
+            now: TokioInstant::now(),
+            responder: PollResponder::Json(tx),
+        });
         assert_eq!(rx.await.expect("immediate"), "[]");
         assert!(surfaced.poll_waiters.is_empty());
     }
@@ -572,7 +591,12 @@ mod tests {
         let (tx, rx) = tokio::sync::oneshot::channel::<String>();
         let now = TokioInstant::now();
         // Empty buffer, long → parked with deadline now + longpoll_max_ms().
-        surfaced.poll_or_register(None, true, now, PollResponder::Json(tx));
+        surfaced.poll_or_register(PollOrRegisterParams {
+            after: None,
+            long: true,
+            now,
+            responder: PollResponder::Json(tx),
+        });
         assert_eq!(surfaced.poll_waiters.len(), 1, "parked");
         let cap = Duration::from_millis(agent_habilis_mesh::util::tuning::longpoll_max_ms());
         surfaced.expire_poll_waiters(now + cap - Duration::from_millis(1));

@@ -964,18 +964,20 @@ fn task_creation_to_unknown_participant_errors() {
 #[test]
 fn mesh_info_reports_participant_roster() {
     let (mut creator, mut joiner, _mesh, _creator_nick) = create_pair(740);
-    let joiner_nick = tool_result_json(&joiner.tool_call(741, "square_info", serde_json::json!({})))
-        .expect("joiner square_info")["nickname"]
-        .as_str()
-        .expect("nickname")
-        .to_string();
+    let joiner_nick =
+        tool_result_json(&joiner.tool_call(741, "square_info", serde_json::json!({})))
+            .expect("joiner square_info")["nickname"]
+            .as_str()
+            .expect("nickname")
+            .to_string();
 
     // Poll the creator's roster until it has converged to both members.
     let deadline = Instant::now() + MSG_TIMEOUT;
     let mut probe = 742;
     let info = loop {
-        let info = tool_result_json(&creator.tool_call(probe, "square_info", serde_json::json!({})))
-            .expect("creator square_info");
+        let info =
+            tool_result_json(&creator.tool_call(probe, "square_info", serde_json::json!({})))
+                .expect("creator square_info");
         if info["participant_count"].as_u64() == Some(2) {
             break info;
         }
@@ -1089,11 +1091,12 @@ fn discover_meshes_finds_an_advertised_mesh() {
 fn ping_reports_rtt_to_a_peer() {
     let (mut creator, mut joiner, _mesh, _creator_nick) =
         create_pair_with(900, &["--ping-window-secs", "2"]);
-    let joiner_nick = tool_result_json(&joiner.tool_call(901, "square_info", serde_json::json!({})))
-        .expect("joiner square_info")["nickname"]
-        .as_str()
-        .expect("nickname")
-        .to_string();
+    let joiner_nick =
+        tool_result_json(&joiner.tool_call(901, "square_info", serde_json::json!({})))
+            .expect("joiner square_info")["nickname"]
+            .as_str()
+            .expect("nickname")
+            .to_string();
 
     // One round may miss if the mesh just linked; retry within budget.
     let deadline = Instant::now() + MSG_TIMEOUT;

@@ -230,19 +230,31 @@ fn msg_display(author: &str, body: &str, reply: Option<&str>) -> String {
     }
 }
 
+/// The value cluster for [`task_display`]: the author/target nicks, the
+/// native A2A `kind`/`state`, and the text body.
+#[derive(Clone, Copy)]
+struct TaskDisplayParams<'a> {
+    author: &'a str,
+    to: &'a str,
+    kind: &'a str,
+    state: Option<crate::a2a::TaskState>,
+    body: &'a str,
+}
+
 /// `display` line for a `task` event:
 /// `` 💬️ task offer `<author>` → `<to>`: body ``. See
 /// [`msg_display`] for the backtick rationale. The skill may render a
 /// richer interaction (the tasks widget, collapsed status lines) instead
 /// of echoing this verbatim; it is the canonical line for raw
 /// `--output json` consumers.
-fn task_display(
-    author: &str,
-    to: &str,
-    kind: &str,
-    state: Option<crate::a2a::TaskState>,
-    body: &str,
-) -> String {
+fn task_display(params: TaskDisplayParams<'_>) -> String {
+    let TaskDisplayParams {
+        author,
+        to,
+        kind,
+        state,
+        body,
+    } = params;
     let label = state.map_or_else(|| kind.to_owned(), |state| format!("{kind} {state}"));
     format!("{MESH_GLYPH}\u{FE0F} task {label} `<{author}>` → `<{to}>`: {body}")
 }
@@ -422,7 +434,13 @@ pub(super) fn format_task_json(msg: &Message, is_self: bool) -> String {
         task_id,
         kind,
         state: state.map(crate::a2a::TaskState::as_str),
-        display: task_display(msg.author.as_str(), to.as_str(), kind, state, &body),
+        display: task_display(TaskDisplayParams {
+            author: msg.author.as_str(),
+            to: to.as_str(),
+            kind,
+            state,
+            body: &body,
+        }),
         body,
         payload: serde_json::from_str(msg.body.as_str()).ok(),
         is_self,
@@ -445,7 +463,13 @@ pub(super) fn format_task_message_json(leg: &TaskMessageLeg<'_>) -> String {
         task_id: leg.task_id.to_owned(),
         kind: "message",
         state: leg.state.map(crate::a2a::TaskState::as_str),
-        display: task_display(leg.author, leg.peer, "message", leg.state, leg.text),
+        display: task_display(TaskDisplayParams {
+            author: leg.author,
+            to: leg.peer,
+            kind: "message",
+            state: leg.state,
+            body: leg.text,
+        }),
         body: leg.text.to_owned(),
         payload: None,
         is_self: leg.is_self,

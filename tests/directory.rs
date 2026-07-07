@@ -108,7 +108,9 @@ fn directory_advertise_then_discover() {
         let disc = fs::read_to_string(&disc_log).unwrap_or_default();
         reap(&mut advertiser);
         reap(&mut discoverer);
-        panic!("discoverer never reported square_found for {listed_id}\nadv:\n{adv}\ndisc:\n{disc}");
+        panic!(
+            "discoverer never reported square_found for {listed_id}\nadv:\n{adv}\ndisc:\n{disc}"
+        );
     }
 
     // Advertiser exits → ads stop → the listing ages out → `square_lost`.

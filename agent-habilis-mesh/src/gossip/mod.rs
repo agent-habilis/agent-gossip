@@ -18,7 +18,7 @@ mod recv;
 use iroh::endpoint::TransportAddrUsage;
 use iroh::{Endpoint, EndpointId, RelayUrl, TransportAddr};
 
-pub use broadcast::{broadcast_msg, broadcast_state_merge, send_app};
+pub use broadcast::{StateMergeParams, broadcast_msg, broadcast_state_merge, send_app};
 pub(crate) use recv::{drain_dead_receiver, handle_gossip_event, ingest};
 
 /// Snapshot the active transport path to `node_id`: a short label

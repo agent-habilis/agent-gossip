@@ -338,7 +338,10 @@ async fn active_meshes_section() -> Section {
         checks.push(Check::new(format!("#{}", info.name), Verdict::Ok, detail));
     }
     if checks.is_empty() {
-        checks.push(Check::bare("no active squares on this machine", Verdict::Ok));
+        checks.push(Check::bare(
+            "no active squares on this machine",
+            Verdict::Ok,
+        ));
     }
     Section {
         title: "Active squares".to_owned(),

@@ -51,6 +51,14 @@ pub(crate) struct Registered {
     pub password: bool,
 }
 
+/// The content identity of a file being snapshotted into the store —
+/// [`BlobStore::snapshot`]'s content-addressing key plus its owning task.
+pub(crate) struct ContentMeta {
+    pub(crate) sha256: [u8; HASH_LEN],
+    pub(crate) size: u64,
+    pub(crate) content_id: ContentId,
+}
+
 /// One store per peer (per daemon). Holds the blobs this peer offloaded — its
 /// outbound inputs and produced outputs — content-addressed, never replicated.
 pub(crate) struct BlobStore {
@@ -90,11 +98,14 @@ impl BlobStore {
     pub(crate) fn snapshot(
         &mut self,
         src: &Path,
-        sha256: [u8; HASH_LEN],
-        size: u64,
+        meta: ContentMeta,
         secret: &NewSecret,
-        content_id: ContentId,
     ) -> Result<Registered> {
+        let ContentMeta {
+            sha256,
+            size,
+            content_id,
+        } = meta;
         if let Some(entry) = self.map.get(&sha256) {
             return Ok(Registered {
                 ticket_secret: entry.ticket_secret,
@@ -211,7 +222,7 @@ fn hex_encode(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::BlobStore;
+    use super::{BlobStore, ContentMeta};
     use crate::blob::{ContentId, HASH_LEN, SECRET_LEN};
     use rand::RngCore;
     use std::fs;
@@ -246,10 +257,12 @@ mod tests {
         let registered = store
             .snapshot(
                 &src,
-                hash,
-                4096,
+                ContentMeta {
+                    sha256: hash,
+                    size: 4096,
+                    content_id: ContentId::new("blob-test-content"),
+                },
                 &plain_secret([9u8; SECRET_LEN]),
-                ContentId::new("blob-test-content"),
             )
             .unwrap();
         assert_eq!(registered.ticket_secret, [9u8; SECRET_LEN]);
@@ -273,19 +286,23 @@ mod tests {
         let first = store
             .snapshot(
                 &src,
-                hash,
-                12,
+                ContentMeta {
+                    sha256: hash,
+                    size: 12,
+                    content_id: ContentId::new("blob-test-content"),
+                },
                 &plain_secret([1u8; SECRET_LEN]),
-                ContentId::new("blob-test-content"),
             )
             .unwrap();
         let second = store
             .snapshot(
                 &src,
-                hash,
-                12,
+                ContentMeta {
+                    sha256: hash,
+                    size: 12,
+                    content_id: ContentId::new("blob-test-content"),
+                },
                 &plain_secret([2u8; SECRET_LEN]),
-                ContentId::new("blob-test-content"),
             )
             .unwrap();
         assert_eq!(first.ticket_secret, [1u8; SECRET_LEN]);
@@ -309,10 +326,12 @@ mod tests {
         store
             .snapshot(
                 &src,
-                hash,
-                3,
+                ContentMeta {
+                    sha256: hash,
+                    size: 3,
+                    content_id: task.clone(),
+                },
                 &plain_secret([0u8; SECRET_LEN]),
-                task.clone(),
             )
             .unwrap();
         let path = store.get(&hash).unwrap().path.clone();

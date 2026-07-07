@@ -79,10 +79,12 @@ fn chat_frame(author: &str, text: &str) -> Message {
     Message::new_app(
         &sid(),
         &nick(author),
-        agent_habilis_mesh::protocol::AppTag::from(crate::a2a::wire::MSG),
-        None,
-        None,
-        body,
+        agent_habilis_mesh::protocol::AppFrameParams {
+            tag: agent_habilis_mesh::protocol::AppTag::from(crate::a2a::wire::MSG),
+            to: None,
+            corr: None,
+            body,
+        },
     )
     .with_id(frame_id)
 }
@@ -215,17 +217,33 @@ fn json_presence_left() {
 
 // ── task type ──────────────────────────────────────────────
 
-/// A task **status** frame carrying `state` (with optional beat metadata).
-fn status_frame(
-    author: &str,
-    to: &str,
-    task_id: &str,
+/// The value cluster for the `status_frame` test helper: the crafted
+/// frame's task id (with optional beat metadata).
+struct StatusFrameArgs<'a> {
+    task_id: &'a str,
     state: crate::a2a::TaskState,
-    note: Option<&str>,
+    note: Option<&'a str>,
     metadata: Option<serde_json::Value>,
-) -> Message {
+}
+
+/// A task **status** frame carrying `state` (with optional beat metadata).
+fn status_frame(author: &str, to: &str, args: StatusFrameArgs<'_>) -> Message {
+    let StatusFrameArgs {
+        task_id,
+        state,
+        note,
+        metadata,
+    } = args;
     let tid = crate::a2a::TaskId::from_uuid_str(task_id).expect("valid task id");
-    let update = crate::a2a::gossip::status_update(&sid(), &tid, state, note, metadata);
+    let update = crate::a2a::gossip::status_update(
+        &sid(),
+        crate::a2a::gossip::StatusUpdateParams {
+            task_id: &tid,
+            state,
+            note,
+            metadata,
+        },
+    );
     let body = crate::a2a::gossip::payload_body(&update).expect("payload serializes");
     let kind = MessageKind::app_to(crate::a2a::wire::STATUS, nick(to), None);
     Message::new_frame(&sid(), &nick(author), kind, body)
@@ -237,10 +255,12 @@ fn task_event_json_shape() {
     let msg = status_frame(
         "drift-oak",
         "calm-otter",
-        "550e8400-e29b-41d4-a716-446655440000",
-        crate::a2a::TaskState::Working,
-        Some("on it"),
-        None,
+        StatusFrameArgs {
+            task_id: "550e8400-e29b-41d4-a716-446655440000",
+            state: crate::a2a::TaskState::Working,
+            note: Some("on it"),
+            metadata: None,
+        },
     );
     // Routed through `event_json` so the captured-event form is
     // byte-identical to the stdout `--output json` line.
@@ -273,10 +293,12 @@ fn task_self_echo_flag() {
     let msg = status_frame(
         "drift-oak",
         "calm-otter",
-        "550e8400-e29b-41d4-a716-446655440000",
-        crate::a2a::TaskState::Completed,
-        Some("looks good"),
-        None,
+        StatusFrameArgs {
+            task_id: "550e8400-e29b-41d4-a716-446655440000",
+            state: crate::a2a::TaskState::Completed,
+            note: Some("looks good"),
+            metadata: None,
+        },
     );
     let json = super::json::event_json(&OutputEvent::Task {
         msg: Box::new(msg),
@@ -296,10 +318,12 @@ fn task_progress_event_json_shape() {
     let msg = status_frame(
         "calm-otter",
         "drift-oak",
-        "550e8400-e29b-41d4-a716-446655440000",
-        crate::a2a::TaskState::Working,
-        None,
-        Some(crate::a2a::gossip::beat_metadata(Some((35, 100)))),
+        StatusFrameArgs {
+            task_id: "550e8400-e29b-41d4-a716-446655440000",
+            state: crate::a2a::TaskState::Working,
+            note: None,
+            metadata: Some(crate::a2a::gossip::beat_metadata(Some((35, 100)))),
+        },
     );
     let json = super::json::event_json(&OutputEvent::Task {
         msg: Box::new(msg),
@@ -404,10 +428,12 @@ mod snapshots {
         let tid = crate::a2a::TaskId::from(SNAP_TASK_ID);
         let mut update = crate::a2a::gossip::status_update(
             &agent_habilis_mesh::protocol::MeshId::from("💬://test"),
-            &tid,
-            state,
-            note,
-            metadata,
+            crate::a2a::gossip::StatusUpdateParams {
+                task_id: &tid,
+                state,
+                note,
+                metadata,
+            },
         );
         // Pin the note message's random id for a stable snapshot.
         if let Some(message) = update.status.message.as_mut() {

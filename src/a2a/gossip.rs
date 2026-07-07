@@ -131,18 +131,29 @@ pub fn parts_text(parts: &[Part]) -> String {
         .join("\n")
 }
 
+/// A task status update's task/state/note/metadata — the fields
+/// [`status_update`] composes alongside the frame's mesh, grouped so the
+/// call stays within the argument budget.
+#[derive(Debug)]
+pub struct StatusUpdateParams<'a> {
+    pub task_id: &'a TaskId,
+    pub state: TaskState,
+    pub note: Option<&'a str>,
+    pub metadata: Option<serde_json::Value>,
+}
+
 /// Compose a task status update. `note` becomes `status.message` (an
 /// agent-role Message — a worker's acceptance note, a question, a result
 /// summary). v1.0 dropped `TaskStatusUpdateEvent.final`; a terminal `state` is
 /// itself the stream-close signal.
 #[must_use]
-pub fn status_update(
-    mesh: &MeshId,
-    task_id: &TaskId,
-    state: TaskState,
-    note: Option<&str>,
-    metadata: Option<serde_json::Value>,
-) -> TaskStatusUpdate {
+pub fn status_update(mesh: &MeshId, params: StatusUpdateParams<'_>) -> TaskStatusUpdate {
+    let StatusUpdateParams {
+        task_id,
+        state,
+        note,
+        metadata,
+    } = params;
     let message = note.map(|text| {
         let mut msg = Message::text(Role::Agent, text);
         msg.context_id = Some(mesh.as_str().to_string());

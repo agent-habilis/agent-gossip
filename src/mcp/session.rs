@@ -9,7 +9,8 @@ use anyhow::Result;
 
 use crate::a2a::TaskId;
 use crate::embed::{
-    CreateConfig, CreateError, InProcessSession, JoinConfig, JoinError, TopicConfig,
+    A2aCallParams, CreateConfig, CreateError, InProcessSession, JoinConfig, JoinError,
+    TaskArtifactParams, TopicConfig,
 };
 use agent_habilis_mesh::daemon::state::RosterSnapshot;
 use agent_habilis_mesh::protocol::mesh::MeshName;
@@ -107,12 +108,15 @@ impl Session {
     /// Fails if the event loop has stopped.
     pub(super) async fn task_artifact(
         &self,
-        task_id: TaskId,
-        text: String,
-        file: Option<std::path::PathBuf>,
-        file_name: Option<String>,
-        file_mime: Option<String>,
+        artifact: TaskArtifactParams,
     ) -> Result<(MessageId, Message)> {
+        let TaskArtifactParams {
+            task_id,
+            text,
+            file,
+            file_name,
+            file_mime,
+        } = artifact;
         let file = file.map(|path| agent_habilis_mesh::blob::FileRef {
             path,
             name: file_name,
@@ -127,14 +131,8 @@ impl Session {
     ///
     /// # Errors
     /// Fails if the event loop has stopped.
-    pub(super) async fn a2a_call(
-        &self,
-        peer: Nickname,
-        method: String,
-        params: serde_json::Value,
-        timeout: std::time::Duration,
-    ) -> Result<serde_json::Value> {
-        self.inner.a2a_call(peer, method, params, timeout).await
+    pub(super) async fn a2a_call(&self, call: A2aCallParams) -> Result<serde_json::Value> {
+        self.inner.a2a_call(call).await
     }
 
     /// Snapshot the live participant roster (active + quiet, recency-sorted).

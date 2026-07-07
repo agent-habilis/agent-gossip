@@ -118,14 +118,16 @@ impl BlobServer {
         };
         let registered = self.store.lock().await.snapshot(
             path,
-            sha256,
-            size,
+            super::store::ContentMeta {
+                sha256,
+                size,
+                content_id,
+            },
             &super::store::NewSecret {
                 ticket_secret: salt,
                 compare_secret: compare,
                 password: self.password.is_some(),
             },
-            content_id,
         )?;
         Ok(ticket(registered))
     }

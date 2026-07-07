@@ -509,6 +509,16 @@ fn is_lower_hex(value: &str, bytes: usize) -> bool {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
+/// Parameters for [`Message::new_app`] (and [`crate::gossip::send_app`], which
+/// shares the same `App` frame shape).
+#[derive(Debug)]
+pub struct AppFrameParams {
+    pub tag: AppTag,
+    pub to: Option<Nickname>,
+    pub corr: Option<CorrId>,
+    pub body: MessageBody,
+}
+
 impl Message {
     fn new(mesh: &MeshId, author: &Nickname, kind: MessageKind, body: MessageBody) -> Self {
         Message {
@@ -546,15 +556,17 @@ impl Message {
     /// the directed addressee (`None` for a broadcast), `corr` the optional
     /// request/response correlation id, and `body` the opaque payload. The
     /// engine routes on `to`/`corr` and never inspects `body`.
+    ///
+    /// Reused as-is by [`crate::gossip::send_app`], whose `App` frame shape is
+    /// identical.
     #[must_use]
-    pub fn new_app(
-        mesh: &MeshId,
-        author: &Nickname,
-        tag: AppTag,
-        to: Option<Nickname>,
-        corr: Option<CorrId>,
-        body: MessageBody,
-    ) -> Self {
+    pub fn new_app(mesh: &MeshId, author: &Nickname, params: AppFrameParams) -> Self {
+        let AppFrameParams {
+            tag,
+            to,
+            corr,
+            body,
+        } = params;
         Self::new(mesh, author, MessageKind::App { tag, to, corr }, body)
     }
 
@@ -911,19 +923,34 @@ impl ChainCtx {
 }
 
 #[cfg(any(test, feature = "test-fixtures"))]
+#[derive(Debug)]
+pub struct BuildMsgParams<'a> {
+    pub mesh: &'a MeshId,
+    pub author: &'a Nickname,
+    pub body: MessageBody,
+    pub chain: ChainCtx,
+}
+
+#[cfg(any(test, feature = "test-fixtures"))]
 /// # Errors
 /// Returns an error if the inputs are invalid or the operation fails.
 pub fn build_msg_bytes(
-    mesh: &MeshId,
-    body: MessageBody,
-    author: &Nickname,
+    params: BuildMsgParams<'_>,
     identity: &Identity,
-    chain: ChainCtx,
 ) -> Result<(Bytes, Message)> {
-    let msg = Message::new_app(mesh, author, AppTag::from("a2a_msg"), None, None, body)
-        .with_chain(chain.seq, chain.prev)
-        .with_parents(chain.parents)
-        .signed(identity);
+    let msg = Message::new_app(
+        params.mesh,
+        params.author,
+        AppFrameParams {
+            tag: AppTag::from("a2a_msg"),
+            to: None,
+            corr: None,
+            body: params.body,
+        },
+    )
+    .with_chain(params.chain.seq, params.chain.prev)
+    .with_parents(params.chain.parents)
+    .signed(identity);
     let raw = msg.serialize()?;
     Ok((Bytes::from(raw), msg))
 }
@@ -954,8 +981,8 @@ impl Message {
 #[cfg(test)]
 mod tests {
     use super::{
-        AppTag, ChainCtx, MeshId, Message, MessageBody, MessageKind, Nickname, PresenceSubtype,
-        build_msg_bytes,
+        AppFrameParams, AppTag, BuildMsgParams, ChainCtx, MeshId, Message, MessageBody,
+        MessageKind, Nickname, PresenceSubtype, build_msg_bytes,
     };
 
     fn nick(name: &str) -> Nickname {
@@ -971,10 +998,12 @@ mod tests {
         let msg = Message::new_app(
             &sid(),
             &nick("word-word"),
-            AppTag::from("a2a_msg"),
-            None,
-            None,
-            MessageBody::from("Hello, world!"),
+            AppFrameParams {
+                tag: AppTag::from("a2a_msg"),
+                to: None,
+                corr: None,
+                body: MessageBody::from("Hello, world!"),
+            },
         );
         let bytes = msg.serialize().unwrap();
         let parsed = Message::parse(&bytes).unwrap();
@@ -1023,10 +1052,12 @@ mod tests {
         let msg = Message::new_app(
             &sid(),
             &nick("word-word"),
-            AppTag::from("a2a_status"),
-            Some(target.clone()),
-            None,
-            MessageBody::from(r#"{"kind":"status-update"}"#),
+            AppFrameParams {
+                tag: AppTag::from("a2a_status"),
+                to: Some(target.clone()),
+                corr: None,
+                body: MessageBody::from(r#"{"kind":"status-update"}"#),
+            },
         );
         let bytes = msg.serialize().unwrap();
         let wire = String::from_utf8_lossy(&bytes);
@@ -1060,10 +1091,12 @@ mod tests {
         let mut msg = Message::new_app(
             &sid(),
             &nick("word-word"),
-            AppTag::from("a2a_msg"),
-            None,
-            None,
-            MessageBody::from("With ext."),
+            AppFrameParams {
+                tag: AppTag::from("a2a_msg"),
+                to: None,
+                corr: None,
+                body: MessageBody::from("With ext."),
+            },
         );
         msg.ext = serde_json::json!({"tags": ["rust", "p2p"], "priority": 1});
         let bytes = msg.serialize().unwrap();
@@ -1165,11 +1198,13 @@ mod tests {
         let alice = nick("alice");
         let identity = crate::protocol::identity::Identity::generate();
         let (bytes, built) = build_msg_bytes(
-            &sid(),
-            MessageBody::from("hello"),
-            &alice,
+            BuildMsgParams {
+                mesh: &sid(),
+                author: &alice,
+                body: MessageBody::from("hello"),
+                chain: ChainCtx::genesis(),
+            },
             &identity,
-            ChainCtx::genesis(),
         )
         .unwrap();
         assert!(!built.id.as_str().is_empty());
@@ -1436,7 +1471,8 @@ mod tests {
         };
 
         use super::super::{
-            AppTag, MAX_MESSAGE_SIZE, Message, MessageBody, MessageKind, Nickname, VERSION,
+            AppFrameParams, AppTag, MAX_MESSAGE_SIZE, Message, MessageBody, MessageKind, Nickname,
+            VERSION,
         };
         use super::sid;
 
@@ -1456,7 +1492,7 @@ mod tests {
                 author in arb_nickname(),
             ) {
                 let body = MessageBody::new(body).unwrap();
-                let msg = Message::new_app(&sid(), &author, AppTag::from("a2a_msg"), None, None, body);
+                let msg = Message::new_app(&sid(), &author, AppFrameParams { tag: AppTag::from("a2a_msg"), to: None, corr: None, body });
                 let bytes = msg.serialize().unwrap();
                 let parsed = Message::parse(&bytes).unwrap();
                 prop_assert_eq!(&parsed.body, &msg.body);
@@ -1496,7 +1532,7 @@ mod tests {
             ) {
                 let body = MessageBody::new(body).unwrap();
                 let expected = body.clone();
-                let msg = Message::new_app(&sid(), &author, AppTag::from("a2a_msg"), None, None, body);
+                let msg = Message::new_app(&sid(), &author, AppFrameParams { tag: AppTag::from("a2a_msg"), to: None, corr: None, body });
                 let bytes = msg.serialize().unwrap();
                 let parsed = Message::parse(&bytes).unwrap();
                 prop_assert_eq!(&parsed.body, &expected);
@@ -1509,10 +1545,12 @@ mod tests {
                 let msg = Message::new_app(
                     &sid(),
                     &Nickname::from("nick-name"),
-                    AppTag::from("a2a_msg"),
-                    None,
-                    None,
-                    MessageBody::new(body).unwrap(),
+                    AppFrameParams {
+                        tag: AppTag::from("a2a_msg"),
+                        to: None,
+                        corr: None,
+                        body: MessageBody::new(body).unwrap(),
+                    },
                 );
                 if let Ok(bytes) = msg.serialize() {
                     prop_assert!(bytes.len() <= MAX_MESSAGE_SIZE);

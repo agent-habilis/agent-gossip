@@ -20,13 +20,23 @@ use super::telemetry::NeighborProfile;
 /// carrying its currently-measured metric (a default until the telemetry probe
 /// is wired). `seq` orders our successive advertisements so a receiver keeps
 /// only the freshest.
-pub(crate) fn self_vector(
-    origin: EndpointId,
-    seq: u64,
-    seal_key: [u8; 32],
-    neighbors: &HashSet<EndpointId>,
-    telemetry: &HashMap<EndpointId, NeighborProfile>,
-) -> LinkVector {
+#[derive(Clone, Copy)]
+pub(crate) struct SelfVectorParams<'a> {
+    pub(crate) origin: EndpointId,
+    pub(crate) seq: u64,
+    pub(crate) seal_key: [u8; 32],
+    pub(crate) neighbors: &'a HashSet<EndpointId>,
+    pub(crate) telemetry: &'a HashMap<EndpointId, NeighborProfile>,
+}
+
+pub(crate) fn self_vector(params: SelfVectorParams<'_>) -> LinkVector {
+    let SelfVectorParams {
+        origin,
+        seq,
+        seal_key,
+        neighbors,
+        telemetry,
+    } = params;
     // Each link advertises our own measured cost to that neighbour (from ping
     // RTT / delivery), or the default profile's cost until we've probed it.
     let default = NeighborProfile::default().metric();

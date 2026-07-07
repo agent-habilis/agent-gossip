@@ -34,6 +34,15 @@ pub struct AppClass {
     pub sealed: bool,
 }
 
+/// An inbound `App` frame plus the surfacing decision already made by the
+/// engine's generic prefix (join-horizon / third-party gating), passed to
+/// [`NodeApp::on_app_frame`].
+#[derive(Debug)]
+pub struct InboundApp<'a> {
+    pub message: &'a Message,
+    pub surfaceable: bool,
+}
+
 /// The seam the engine drives for application-payload handling. The engine
 /// owns [`EventLoopState`] and hands the app the frame plus the loop context
 /// once it has done parse → signature verify → mesh gate → dedup → shard
@@ -50,8 +59,7 @@ pub trait NodeApp: Send {
     /// like an RPC leg, or a directed leg addressed elsewhere).
     async fn on_app_frame(
         &mut self,
-        message: &Message,
-        surfaceable: bool,
+        frame: InboundApp<'_>,
         state: &mut EventLoopState,
         ctx: &HandlerCtx<'_>,
     ) -> bool;

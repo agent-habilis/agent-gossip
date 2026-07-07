@@ -476,7 +476,11 @@ pub(crate) fn cli_channel_merge(
 
 // ── In-process harness (embed::MeshSession) ──────────────────────
 
-use agent_square::embed::{CreateConfig, JoinConfig, MeshSession};
+#[cfg(feature = "adversarial")]
+use agent_square::embed::LinkVectorParams;
+use agent_square::embed::{
+    A2aCallParams, CreateConfig, JoinConfig, MeshSession, TaskArtifactParams,
+};
 use agent_square::{
     Channel, MeshName, Message, MessageBody, MessageId, MessageKind, Nickname, OutputEvent,
     PresenceSubtype, TaskId, TaskState, TransportPolicy,
@@ -816,12 +820,12 @@ impl InProcNode {
         params: serde_json::Value,
     ) -> serde_json::Value {
         self.session
-            .a2a_call(
-                Nickname::new(target).expect("valid target"),
-                method.to_owned(),
+            .a2a_call(A2aCallParams {
+                peer: Nickname::new(target).expect("valid target"),
+                method: method.to_owned(),
                 params,
-                Duration::from_mins(1),
-            )
+                timeout: Duration::from_mins(1),
+            })
             .await
             .expect("a2a_call transport")
     }
@@ -837,7 +841,13 @@ impl InProcNode {
     /// Worker-emit a `TaskArtifactUpdate` (the result) on a task we're serving.
     pub(crate) async fn task_artifact(&self, task_id: &TaskId, text: &str) {
         self.session
-            .task_artifact(task_id.clone(), text.to_owned(), None, None, None)
+            .task_artifact(TaskArtifactParams {
+                task_id: task_id.clone(),
+                text: text.to_owned(),
+                file: None,
+                file_name: None,
+                file_mime: None,
+            })
             .await
             .expect("in-process task_artifact failed");
     }
@@ -847,13 +857,13 @@ impl InProcNode {
     /// so a test can read the minted `💬…` reference.
     pub(crate) async fn task_artifact_file(&self, task_id: &TaskId, path: &Path) -> Message {
         self.session
-            .task_artifact(
-                task_id.clone(),
-                String::new(),
-                Some(path.to_path_buf()),
-                None,
-                None,
-            )
+            .task_artifact(TaskArtifactParams {
+                task_id: task_id.clone(),
+                text: String::new(),
+                file: Some(path.to_path_buf()),
+                file_name: None,
+                file_mime: None,
+            })
             .await
             .expect("in-process task_artifact_file failed")
     }
@@ -1160,21 +1170,41 @@ pub(crate) async fn wire_circuit(alice: &InProcNode, bob: &InProcNode) {
     // alice's graph: its own edge to bob, plus bob's terminal key.
     alice
         .session
-        .inject_link_vector(a_id, SEQ, a_key, vec![(b_id, COST)])
+        .inject_link_vector(LinkVectorParams {
+            origin: a_id,
+            seq: SEQ,
+            seal_key: a_key,
+            links: vec![(b_id, COST)],
+        })
         .await
         .expect("inject alice's circuit edge");
     alice
         .session
-        .inject_link_vector(b_id, SEQ, b_key, vec![])
+        .inject_link_vector(LinkVectorParams {
+            origin: b_id,
+            seq: SEQ,
+            seal_key: b_key,
+            links: vec![],
+        })
         .await
         .expect("inject bob's circuit key into alice");
     // bob's graph: its own edge to alice, plus alice's terminal key.
     bob.session
-        .inject_link_vector(b_id, SEQ, b_key, vec![(a_id, COST)])
+        .inject_link_vector(LinkVectorParams {
+            origin: b_id,
+            seq: SEQ,
+            seal_key: b_key,
+            links: vec![(a_id, COST)],
+        })
         .await
         .expect("inject bob's circuit edge");
     bob.session
-        .inject_link_vector(a_id, SEQ, a_key, vec![])
+        .inject_link_vector(LinkVectorParams {
+            origin: a_id,
+            seq: SEQ,
+            seal_key: a_key,
+            links: vec![],
+        })
         .await
         .expect("inject alice's circuit key into bob");
 }
