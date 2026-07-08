@@ -50,7 +50,7 @@ pub(crate) use topology::TopologyOpts;
 #[derive(Parser, Debug)]
 #[command(
     name = "agent-square",
-    about = "square network for agents",
+    about = "mesh network for agents",
     version = agent_habilis_mesh::util::version::VERSION,
     after_help = "a tool by agent-habilis █🫈"
 )]
@@ -98,7 +98,7 @@ pub(crate) enum Commands {
         opts: TopicOpts,
     },
 
-    /// Leave square(s): stop this session's local daemon(s).
+    /// Leave a square: stop this session's local daemon.
     ///
     /// Finds running create/join/topic daemons through their state files
     /// and sends each a SIGTERM; a daemon broadcasts `left` to its peers
@@ -113,7 +113,7 @@ pub(crate) enum Commands {
         opts: LeaveOpts,
     },
 
-    /// Report the square(s) this session is joined to.
+    /// Report the square this session is joined to.
     ///
     /// The read-only sibling of `leave`: discovers running daemons through
     /// their state files and prints the ones owned by the calling session
@@ -194,7 +194,7 @@ pub(crate) enum Commands {
         opts: StateOpts,
     },
 
-    /// Read or change the square's `meta` channel.
+    /// Read or change the square's meta state.
     ///
     /// A second shared-state document beside `state`, identical machinery but
     /// conventionally holding square metadata (peer info, …) rather than the task.
@@ -268,16 +268,16 @@ pub(crate) enum Commands {
     /// With no `--agent`, the detected agents are used; an agent that is not
     /// on this machine is skipped, never scaffolded. Reversible with `unplug`.
     Plug {
-        /// Agent(s) to install into (repeatable). Defaults to detected agents.
+        /// Agent to install into (repeatable). Defaults to detected agents.
         #[arg(long = "agent", value_enum)]
         agents: Vec<super::agent::Agent>,
     },
 
-    /// Unplug the square integrations from your agents (symmetric to `plug`).
+    /// Remove the square integrations from your agents.
     ///
     /// With no `--agent`, the agents that have it are used.
     Unplug {
-        /// Agent(s) to remove from (repeatable). Defaults to agents that have
+        /// Agent to remove from (repeatable). Defaults to agents that have
         /// the integration installed.
         #[arg(long = "agent", value_enum)]
         agents: Vec<super::agent::Agent>,

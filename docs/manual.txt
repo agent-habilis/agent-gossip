@@ -521,7 +521,7 @@ COMMANDS
               them with meta get under /peers/<nickname> (see "SHARED STATE").
 
        leave [MESH] [--nickname NAME] [--session-pid PID] [--output human|json]
-              Leave square(s): stop the local create/join/topic daemon(s).
+              Leave a square: stop the local create/join/topic daemon.
               Discovery is via the daemons' state files under
               /tmp/agent-square; each match gets a SIGTERM, on which
               the daemon broadcasts `left` to its peers and removes its
@@ -552,7 +552,7 @@ COMMANDS
                  "other_sessions":0,"cleaned":0}
 
        session [--session-pid PID] [--output human|json]
-              Report the square(s) the calling session is joined to — the
+              Report the square the calling session is joined to — the
               read-only sibling of leave, with the same discovery and the
               same session-ownership rule. This is how an agent that lost
               its conversation context (a context clear or compaction)

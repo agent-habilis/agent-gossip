@@ -75,7 +75,6 @@ pub use agent_habilis_mesh::util::{ensure_runtime_base, mesh_prefix, runtime_bas
 pub use output::{OutputEvent, event_json, surfaced_event_json};
 
 use anyhow::Result;
-use clap::Parser;
 
 use cli::Cli;
 
@@ -90,10 +89,15 @@ use cli::Cli;
 /// Propagates any error from the selected subcommand — mesh setup
 /// failure, join timeout, IPC errors, invalid mesh-mode flags, etc.
 pub async fn run_cli() -> Result<()> {
+    // Parse through `cli_command()` (not `Cli::parse()`) so the `help`
+    // subcommand blurb override in that builder applies at runtime too.
+    let matches = cli_command().get_matches();
+    let cli = <Cli as clap::FromArgMatches>::from_arg_matches(&matches)
+        .unwrap_or_else(|error| error.exit());
     // Box the single large await so it lives on the heap, not this frame —
     // the same lever the event loop uses (see `daemon::event_loop`); the
     // setup → run future is near clippy's `large_futures` budget.
-    Box::pin(cli::dispatch(Cli::parse())).await
+    Box::pin(cli::dispatch(cli)).await
 }
 
 /// The fully-built `agent-square` clap command tree, for offline man-page
@@ -101,7 +105,17 @@ pub async fn run_cli() -> Result<()> {
 /// `clap_mangen`). Arg surface only; no iroh, no runtime state.
 #[must_use]
 pub fn cli_command() -> clap::Command {
-    <Cli as clap::CommandFactory>::command()
+    // Override clap's auto-generated `help` subcommand blurb — its default
+    // ("… of the given subcommand(s)") is the one `(s)` plural we can't reach
+    // from a `///` doc, since clap owns the string. The subcommand is only
+    // materialized once the command is built, so `build()` first, then
+    // `mut_subcommand` (a later `get_matches`/render is a no-op rebuild that
+    // preserves this). Keeps `agent-square help <cmd>` behavior intact.
+    let mut command = <Cli as clap::CommandFactory>::command();
+    command.build();
+    command.mut_subcommand("help", |help| {
+        help.about("Print this message or the help of the given subcommand")
+    })
 }
 
 /// Build the deferred log sink and register it process-globally.
