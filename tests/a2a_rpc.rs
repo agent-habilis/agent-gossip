@@ -8,6 +8,7 @@ mod common;
 
 use std::time::Duration;
 
+use agent_square::embed::A2aCallParams;
 use common::{InProcNode, MSG_TIMEOUT};
 use serde_json::json;
 
@@ -32,12 +33,12 @@ async fn rpc_tasks_list_reaches_the_peer() {
 
     let response = alice
         .session
-        .a2a_call(
-            "rpc-bob".parse().unwrap(),
-            "ListTasks".to_string(),
-            json!({}),
-            RPC_TIMEOUT,
-        )
+        .a2a_call(A2aCallParams {
+            peer: "rpc-bob".parse().unwrap(),
+            method: "ListTasks".to_string(),
+            params: json!({}),
+            timeout: RPC_TIMEOUT,
+        })
         .await
         .expect("a2a_call returns");
     assert!(
@@ -78,12 +79,12 @@ async fn rpc_message_send_opens_task_and_returns_it() {
     }});
     let response = alice
         .session
-        .a2a_call(
-            "rpc-send-bob".parse().unwrap(),
-            "SendMessage".to_string(),
-            create,
-            RPC_TIMEOUT,
-        )
+        .a2a_call(A2aCallParams {
+            peer: "rpc-send-bob".parse().unwrap(),
+            method: "SendMessage".to_string(),
+            params: create,
+            timeout: RPC_TIMEOUT,
+        })
         .await
         .expect("a2a_call returns");
     // v1.0 SendMessage returns a SendMessageResponse oneof: {"task": <Task>}.
@@ -123,12 +124,12 @@ async fn rpc_state_merge_is_refused() {
 
     let response = alice
         .session
-        .a2a_call(
-            "rpc-merge-bob".parse().unwrap(),
-            "mesh/state.merge".to_string(),
-            json!({ "merge": { "x": 1 } }),
-            RPC_TIMEOUT,
-        )
+        .a2a_call(A2aCallParams {
+            peer: "rpc-merge-bob".parse().unwrap(),
+            method: "mesh/state.merge".to_string(),
+            params: json!({ "merge": { "x": 1 } }),
+            timeout: RPC_TIMEOUT,
+        })
         .await
         .expect("a2a_call returns");
     assert!(
@@ -156,12 +157,12 @@ async fn rpc_unknown_peer_fails_fast() {
     }});
     let response = alice
         .session
-        .a2a_call(
-            "ghost-peer".parse().unwrap(),
-            "SendMessage".to_string(),
-            create,
-            RPC_TIMEOUT,
-        )
+        .a2a_call(A2aCallParams {
+            peer: "ghost-peer".parse().unwrap(),
+            method: "SendMessage".to_string(),
+            params: create,
+            timeout: RPC_TIMEOUT,
+        })
         .await
         .expect("a2a_call returns");
     assert!(

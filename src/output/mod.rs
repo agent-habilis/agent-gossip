@@ -129,6 +129,27 @@ pub enum OutputEvent {
     },
 }
 
+/// The value cluster for [`Output::ready`]: the mesh identity fields plus
+/// optional startup diagnostics (skill drift, `--a2a-serve` port).
+#[derive(Clone, Copy)]
+pub(crate) struct ReadyParams<'a> {
+    pub mesh: &'a MeshId,
+    pub name: &'a MeshName,
+    pub nickname: &'a Nickname,
+    pub drift: Option<&'a str>,
+    pub a2a_port: Option<u16>,
+}
+
+/// The value cluster for [`Output::state_changed`]: the channel, the patch
+/// event, the freshly-derived document, and whether it was our own write.
+#[derive(Clone, Copy)]
+pub(crate) struct StateChangedParams<'a> {
+    pub channel: agent_habilis_mesh::protocol::Channel,
+    pub event: &'a Message,
+    pub document: &'a serde_json::Value,
+    pub is_self: bool,
+}
+
 /// An RPC `message/send` task leg with no backing frame — the fields
 /// [`Output::task_message`] and [`json::format_task_message_json`] need,
 /// bundled (they mirror the [`OutputEvent::TaskMessage`] variant's fields).
@@ -318,52 +339,66 @@ impl Output {
         let mut chars = text.chars().peekable();
         while let Some(ch) = chars.next() {
             match ch {
-                '<' => {
-                    let mut name = String::new();
-                    let mut closed = false;
-                    while let Some(&next) = chars.peek() {
-                        chars.next();
-                        if next == '>' {
-                            closed = true;
-                            break;
-                        }
-                        name.push(next);
-                    }
-                    if closed {
-                        let (open, close) = self.nick_ansi(&name, true);
-                        out.push_str(open);
-                        out.push('<');
-                        out.push_str(&name);
-                        out.push('>');
-                        out.push_str(close);
-                    } else {
-                        out.push('<');
-                        out.push_str(&name);
-                    }
-                }
-                '#' => {
-                    let mut name = String::new();
-                    while let Some(&next) = chars.peek() {
-                        if next.is_whitespace() || matches!(next, '<' | '>' | '#') {
-                            break;
-                        }
-                        name.push(next);
-                        chars.next();
-                    }
-                    if name.is_empty() {
-                        out.push('#');
-                    } else {
-                        let (open, close) = mesh_ansi(true);
-                        out.push_str(open);
-                        out.push('#');
-                        out.push_str(&name);
-                        out.push_str(close);
-                    }
-                }
+                '<' => self.scan_nick_tag(&mut chars, &mut out),
+                '#' => Self::scan_mesh_tag(&mut chars, &mut out),
                 other => out.push(other),
             }
         }
         out
+    }
+
+    /// Consume a `<nick` tag body (the `<` is already consumed) up to and
+    /// including its closing `>`, appending the colorized token to `out` —
+    /// or the literal, unclosed prefix when the string ends first.
+    fn scan_nick_tag(
+        &self,
+        chars: &mut std::iter::Peekable<std::str::Chars<'_>>,
+        out: &mut String,
+    ) {
+        let mut name = String::new();
+        let mut closed = false;
+        while let Some(&next) = chars.peek() {
+            chars.next();
+            if next == '>' {
+                closed = true;
+                break;
+            }
+            name.push(next);
+        }
+        if closed {
+            let (open, close) = self.nick_ansi(&name, true);
+            out.push_str(open);
+            out.push('<');
+            out.push_str(&name);
+            out.push('>');
+            out.push_str(close);
+        } else {
+            out.push('<');
+            out.push_str(&name);
+        }
+    }
+
+    /// Consume a `#mesh` tag body (the `#` is already consumed) up to the
+    /// next delimiter/whitespace, appending the colorized token to `out` —
+    /// or a bare `#` when no name follows.
+    fn scan_mesh_tag(chars: &mut std::iter::Peekable<std::str::Chars<'_>>, out: &mut String) {
+        let mut name = String::new();
+        while let Some(&next) = chars.peek() {
+            if next.is_whitespace() || matches!(next, '<' | '>' | '#') {
+                break;
+            }
+            name.push(next);
+            chars.next();
+        }
+        if name.is_empty() {
+            out.push('#');
+        } else {
+            let (open, close) = mesh_ansi(true);
+            out.push_str(open);
+            out.push('#');
+            out.push_str(&name);
+            out.push_str(close);
+        }
     }
 
     /// Capture every event into `tx` (embed facade / in-process
@@ -408,14 +443,14 @@ impl Output {
         }
     }
 
-    pub(crate) fn ready(
-        &self,
-        mesh: &MeshId,
-        name: &MeshName,
-        nickname: &Nickname,
-        drift: Option<&str>,
-        a2a_port: Option<u16>,
-    ) {
+    pub(crate) fn ready(&self, params: ReadyParams<'_>) {
+        let ReadyParams {
+            mesh,
+            name,
+            nickname,
+            drift,
+            a2a_port,
+        } = params;
         self.dispatch(
             || OutputEvent::Ready {
                 mesh: mesh.clone(),
@@ -624,13 +659,13 @@ impl Output {
     /// reaction channel, so an agent is never woken by its own patch (alternation
     /// stays loop-safe without a per-consumer guard). On the CLI/Monitor path the
     /// self-skip is the Monitor's job.
-    pub(crate) fn state_changed(
-        &self,
-        channel: agent_habilis_mesh::protocol::Channel,
-        event: &Message,
-        document: &serde_json::Value,
-        is_self: bool,
-    ) {
+    pub(crate) fn state_changed(&self, params: StateChangedParams<'_>) {
+        let StateChangedParams {
+            channel,
+            event,
+            document,
+            is_self,
+        } = params;
         let make = || OutputEvent::StateChanged {
             channel,
             event: Box::new(event.clone()),
@@ -829,6 +864,16 @@ impl Output {
         self.error(&error.to_string());
     }
 
+    /// Human-mode render of a ping round: one colorized `<nick> Nms` line
+    /// per responder, then the `responded/known online` summary.
+    fn print_ping_report_human(&self, peers: &[PingPeer], known: usize) {
+        for peer in peers {
+            let (open, close) = self.nick_ansi(peer.nickname.as_str(), stderr_color());
+            eprintln!("{open}<{}>{close} {}ms", peer.nickname, peer.rtt_ms);
+        }
+        eprintln!("{}/{known} online", peers.len());
+    }
+
     /// Emit the result of an `agent-square ping` round: per-peer RTT, plus how
     /// many of the known peers responded (the responder count is just
     /// `peers.len()`). `known` is the current participant roster size.
@@ -847,14 +892,7 @@ impl Output {
             }
             Output::Stream { mode, tap, .. } => {
                 match mode {
-                    OutputMode::Human => {
-                        for peer in &peers {
-                            let (open, close) =
-                                self.nick_ansi(peer.nickname.as_str(), stderr_color());
-                            eprintln!("{open}<{}>{close} {}ms", peer.nickname, peer.rtt_ms);
-                        }
-                        eprintln!("{}/{known} online", peers.len());
-                    }
+                    OutputMode::Human => self.print_ping_report_human(&peers, known),
                     OutputMode::Json => emit_json(&SimpleEvent::PingReport {
                         responded: peers.len(),
                         display: ping_report_display(&peers, known),
@@ -918,7 +956,13 @@ impl agent_habilis_mesh::gossip::event::NodeSink for Output {
                 nickname,
                 drift,
                 a2a_port,
-            } => self.ready(&mesh, &name, &nickname, drift.as_deref(), a2a_port),
+            } => self.ready(ReadyParams {
+                mesh: &mesh,
+                name: &name,
+                nickname: &nickname,
+                drift: drift.as_deref(),
+                a2a_port,
+            }),
             NodeEvent::MeshId { id } => self.mesh_id_line(&id),
             NodeEvent::Info(message) => self.info(&message),
             NodeEvent::Error(message) => self.error(&message),
@@ -948,7 +992,12 @@ impl agent_habilis_mesh::gossip::event::NodeSink for Output {
                 event,
                 document,
                 is_self,
-            } => self.state_changed(channel, &event, &document, is_self),
+            } => self.state_changed(StateChangedParams {
+                channel,
+                event: &event,
+                document: &document,
+                is_self,
+            }),
         }
     }
 }

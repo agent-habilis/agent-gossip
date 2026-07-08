@@ -13,8 +13,8 @@ use crate::output;
 use agent_habilis_mesh::daemon::state::EventLoopState;
 use agent_habilis_mesh::protocol::identity::Identity;
 use agent_habilis_mesh::protocol::{
-    AppTag, Channel, CorrId, MeshId, Message, MessageBody, MessageId, MessageKind, Nickname, Shard,
-    ShardGroup,
+    AppFrameParams, AppTag, Channel, CorrId, MeshId, Message, MessageBody, MessageId, MessageKind,
+    Nickname, Shard, ShardGroup,
 };
 use agent_habilis_mesh::transport::MeshSender;
 use agent_habilis_mesh::util::consts::{
@@ -22,18 +22,26 @@ use agent_habilis_mesh::util::consts::{
     MAX_SHARD_TOTAL,
 };
 
+/// The stdin line plus the identity it's authored under — grouped so
+/// `handle_stdin_line` stays within the argument budget alongside its
+/// sender/state/out handles.
+pub(crate) struct StdinLineParams<'a> {
+    pub(crate) text: &'a str,
+    pub(crate) mesh: &'a MeshId,
+    pub(crate) author: &'a Nickname,
+}
+
 /// Process one line of interactive stdin as a mesh broadcast (A2A is
 /// point-to-point, so directed 1:1 is a task, not a chat line) — validate the
 /// body, then delegate to `broadcast_message` so the send (and its
 /// oversize/serialize error handling) is identical to the IPC and embed paths.
 pub(crate) async fn handle_stdin_line(
-    text: &str,
+    params: StdinLineParams<'_>,
     sender: &MeshSender,
-    mesh: &MeshId,
-    author: &Nickname,
     state: &mut EventLoopState,
     out: &output::Output,
 ) {
+    let StdinLineParams { text, mesh, author } = params;
     out.clear_input_line();
     if text.is_empty() {
         return;
@@ -45,7 +53,18 @@ pub(crate) async fn handle_stdin_line(
             return;
         }
     };
-    match broadcast_message(mesh, author, body, state, sender, out).await {
+    match broadcast_message(
+        BroadcastMessageParams {
+            mesh,
+            author,
+            text: body,
+        },
+        state,
+        sender,
+        out,
+    )
+    .await
+    {
         Ok(_) => state.last_sent_at = Instant::now(),
         Err(error) => out.report_error(&error),
     }
@@ -149,21 +168,43 @@ struct ChainStamp {
     parents: Vec<String>,
 }
 
+/// The identity + payload of one outbound chat frame — the fields `build_msg`
+/// shares with [`synthesize_logical_msg`], grouped so the chain-stamp/shard/
+/// signer args stay their own params.
+struct ChatFrameParams<'a> {
+    mesh: &'a MeshId,
+    author: &'a Nickname,
+    body: MessageBody,
+    id: Option<MessageId>,
+}
+
 /// Build, chain-stamp, shard-tag and sign one outbound chat frame (without
-/// serializing — the caller measures or serializes). `id` pins the frame id:
-/// the payload's A2A `messageId` for a single-frame body (`None` keeps the
+/// serializing — the caller measures or serializes). `frame.id` pins the frame
+/// id: the payload's A2A `messageId` for a single-frame body (`None` keeps the
 /// minted id — shards of a split body keep their own ids; the *group* carries
 /// the A2A id there).
 fn build_msg(
-    mesh: &MeshId,
-    author: &Nickname,
-    body: MessageBody,
-    id: Option<MessageId>,
+    frame: ChatFrameParams<'_>,
     stamp: ChainStamp,
     shard: Option<Shard>,
     signer: &Identity,
 ) -> Message {
-    let mut msg = Message::new_app(mesh, author, AppTag::from(wire::MSG), None, None, body);
+    let ChatFrameParams {
+        mesh,
+        author,
+        body,
+        id,
+    } = frame;
+    let mut msg = Message::new_app(
+        mesh,
+        author,
+        AppFrameParams {
+            tag: AppTag::from(wire::MSG),
+            to: None,
+            corr: None,
+            body,
+        },
+    );
     if let Some(id) = id {
         msg = msg.with_id(id);
     }
@@ -173,6 +214,15 @@ fn build_msg(
         .signed(signer)
 }
 
+/// One outbound wire frame plus its echo flag — the part
+/// [`send_msg_part`] commits/delivers, grouped so the state/sender/out handles
+/// stay their own leading params.
+struct OutboundPart<'a> {
+    msg: &'a Message,
+    bytes: Bytes,
+    echo: bool,
+}
+
 /// Broadcast (or buffer, while unmeshed) one fully-built `Msg` and commit it to
 /// the per-author chain + log. `echo` gates the operator print so the raw shards
 /// of a split body commit silently. Errors if the unmeshed buffer is full.
@@ -180,10 +230,9 @@ async fn send_msg_part(
     state: &mut EventLoopState,
     sender: &MeshSender,
     out: &output::Output,
-    msg: &Message,
-    bytes: Bytes,
-    echo: bool,
+    part: OutboundPart<'_>,
 ) -> anyhow::Result<()> {
+    let OutboundPart { msg, bytes, echo } = part;
     if state.meshed {
         commit_outbound_part(state, msg, out, echo);
         // Single send decision: a directed message goes point-to-point over
@@ -217,9 +266,27 @@ fn synthesize_logical_msg(
     body: MessageBody,
     group: &ShardGroup,
 ) -> Message {
-    let mut msg = Message::new_app(mesh, author, AppTag::from(wire::MSG), None, None, body);
+    let mut msg = Message::new_app(
+        mesh,
+        author,
+        AppFrameParams {
+            tag: AppTag::from(wire::MSG),
+            to: None,
+            corr: None,
+            body,
+        },
+    );
     msg.id = MessageId::new(group.as_str()).expect("a shard group is a valid message id");
     msg
+}
+
+/// The identity + text of one outbound chat broadcast — grouped so
+/// `broadcast_message` stays within the argument budget alongside its
+/// state/sender/out handles.
+pub(crate) struct BroadcastMessageParams<'a> {
+    pub(crate) mesh: &'a MeshId,
+    pub(crate) author: &'a Nickname,
+    pub(crate) text: MessageBody,
 }
 
 /// Build, sign, log and gossip-broadcast one outbound chat message. The
@@ -237,14 +304,17 @@ fn synthesize_logical_msg(
 /// Propagates a [`Message::serialize`] failure and a gossip broadcast error,
 /// errors if the unmeshed pending-outbound buffer is full, and refuses a body
 /// that would need more than [`MAX_SHARD_TOTAL`] shards.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one straight-line compose/sign/split/broadcast pipeline shared by every caller; splitting would scatter a single sequential path across helpers"
+)]
 pub(crate) async fn broadcast_message(
-    mesh: &MeshId,
-    author: &Nickname,
-    text: MessageBody,
+    params: BroadcastMessageParams<'_>,
     state: &mut EventLoopState,
     sender: &MeshSender,
     out: &output::Output,
 ) -> anyhow::Result<(MessageId, Message)> {
+    let BroadcastMessageParams { mesh, author, text } = params;
     let signer = state.identity.clone();
     let payload = crate::a2a::gossip::chat_message(mesh, text.as_str());
     let payload_id =
@@ -261,10 +331,12 @@ pub(crate) async fn broadcast_message(
     let encrypted = state.broadcast_key.is_some();
     // Fast path: the whole payload in one frame, its id the A2A messageId.
     let single = build_msg(
-        mesh,
-        author,
-        wire_body.clone(),
-        Some(payload_id.clone()),
+        ChatFrameParams {
+            mesh,
+            author,
+            body: wire_body.clone(),
+            id: Some(payload_id.clone()),
+        },
         ChainStamp {
             seq: state.self_seq,
             prev: state.self_prev.clone(),
@@ -279,13 +351,33 @@ pub(crate) async fn broadcast_message(
         if encrypted {
             // Commit + gossip the sealed frame silently, then echo/return a
             // plaintext-bodied view so the operator/agent sees the text.
-            send_msg_part(state, sender, out, &single, bytes, false).await?;
+            send_msg_part(
+                state,
+                sender,
+                out,
+                OutboundPart {
+                    msg: &single,
+                    bytes,
+                    echo: false,
+                },
+            )
+            .await?;
             let mut plain = single.clone();
             plain.body = body;
             out.print_message_ex(&plain, true);
             return Ok((id, plain));
         }
-        send_msg_part(state, sender, out, &single, bytes, true).await?;
+        send_msg_part(
+            state,
+            sender,
+            out,
+            OutboundPart {
+                msg: &single,
+                bytes,
+                echo: true,
+            },
+        )
+        .await?;
         return Ok((id, single));
     }
     // Too big: split the payload across shard-tagged frames. Each shard is an
@@ -304,10 +396,12 @@ pub(crate) async fn broadcast_message(
     let hash_stub = "0".repeat(64);
     let probe_parents = vec![hash_stub.clone(); state.dag_parents().len().max(1)];
     let probe = build_msg(
-        mesh,
-        author,
-        MessageBody::new(String::new()).expect("empty body is valid"),
-        None,
+        ChatFrameParams {
+            mesh,
+            author,
+            body: MessageBody::new(String::new()).expect("empty body is valid"),
+            id: None,
+        },
         ChainStamp {
             seq: state.self_seq,
             prev: Some(hash_stub),
@@ -358,10 +452,12 @@ pub(crate) async fn broadcast_message(
         };
         let chunk_body = MessageBody::new(*chunk).expect("a substring of a valid body is valid");
         let msg = build_msg(
-            mesh,
-            author,
-            chunk_body,
-            None,
+            ChatFrameParams {
+                mesh,
+                author,
+                body: chunk_body,
+                id: None,
+            },
             ChainStamp {
                 seq: state.self_seq,
                 prev: state.self_prev.clone(),
@@ -374,7 +470,17 @@ pub(crate) async fn broadcast_message(
         if total > LOGGED_SHARD_GROUP_MAX_TOTAL {
             cache_frames.push(bytes.clone());
         }
-        send_msg_part(state, sender, out, &msg, bytes, false).await?;
+        send_msg_part(
+            state,
+            sender,
+            out,
+            OutboundPart {
+                msg: &msg,
+                bytes,
+                echo: false,
+            },
+        )
+        .await?;
     }
     if !cache_frames.is_empty() {
         state.shard_cache.insert(group.clone(), cache_frames);
@@ -382,6 +488,21 @@ pub(crate) async fn broadcast_message(
     let logical = synthesize_logical_msg(mesh, author, body, &group);
     out.print_message_ex(&logical, true);
     Ok((logical.id.clone(), logical))
+}
+
+/// One worker-pushed task frame's identity, target-kind, payload/echo bodies,
+/// and cap-tracking flag, plus the in-flight task registry it's ingested
+/// into — grouped so `broadcast_task_frame` stays within the argument budget
+/// alongside its state/sender/out handles.
+struct TaskFrameParams<'a> {
+    mesh: &'a MeshId,
+    author: &'a Nickname,
+    task_id: &'a crate::a2a::TaskId,
+    kind: MessageKind,
+    payload_body: MessageBody,
+    echo_body: MessageBody,
+    content: bool,
+    app: &'a mut A2aApp,
 }
 
 /// Broadcast one already-composed task frame (a worker's `TaskStatusUpdate`
@@ -394,22 +515,22 @@ pub(crate) async fn broadcast_message(
 /// # Errors
 /// Propagates a [`Message::serialize`] failure, a gossip broadcast error, and
 /// a full unmeshed pending-outbound buffer.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "a task-frame emit threads mesh/author identity, the target + task id + payload, and the state/app/sender/output it broadcasts through"
-)]
 async fn broadcast_task_frame(
-    mesh: &MeshId,
-    author: &Nickname,
-    task_id: &crate::a2a::TaskId,
-    kind: MessageKind,
-    payload_body: MessageBody,
-    content: bool,
+    frame: TaskFrameParams<'_>,
     state: &mut EventLoopState,
-    app: &mut A2aApp,
     sender: &MeshSender,
     out: &output::Output,
 ) -> anyhow::Result<(MessageId, Message)> {
+    let TaskFrameParams {
+        mesh,
+        author,
+        task_id,
+        kind,
+        payload_body,
+        echo_body,
+        content,
+        app,
+    } = frame;
     let signer = state.identity.clone();
     // Fast path: the whole leg in one frame.
     let single =
@@ -417,7 +538,22 @@ async fn broadcast_task_frame(
     if single.wire_len() <= MAX_MESSAGE_SIZE {
         let bytes = Bytes::from(single.serialize()?);
         let id = single.id.clone();
-        send_task_leg(state, sender, out, &single, bytes, true, content).await?;
+        // The wire frame's directed body is sealed to the addressee, which we
+        // cannot decrypt; surface the self-echo from a plaintext twin instead
+        // (same id, never signed or sent).
+        let echo = Message::new_frame(mesh, author, kind, echo_body).with_id(id.clone());
+        send_task_leg(
+            state,
+            sender,
+            out,
+            TaskLegPart {
+                msg: &single,
+                bytes,
+                echo: Some(&echo),
+                content,
+            },
+        )
+        .await?;
         ingest_own_leg(app, &single, task_id, out);
         return Ok((id, single));
     }
@@ -474,16 +610,43 @@ async fn broadcast_task_frame(
         if total > LOGGED_SHARD_GROUP_MAX_TOTAL {
             cache_frames.push(bytes.clone());
         }
-        send_task_leg(state, sender, out, &msg, bytes, false, content).await?;
+        send_task_leg(
+            state,
+            sender,
+            out,
+            TaskLegPart {
+                msg: &msg,
+                bytes,
+                echo: None,
+                content,
+            },
+        )
+        .await?;
     }
     if !cache_frames.is_empty() {
         state.shard_cache.insert(group.clone(), cache_frames);
     }
-    // Echo + ingest the logical leg once (one content leg toward the cap).
-    let logical = Message::new_frame(mesh, author, kind, payload_body).with_id(logical_id);
-    out.print_task(&logical, true);
+    // Echo + ingest the logical leg once (one content leg toward the cap);
+    // the echo is the plaintext twin (the logical body is sealed).
+    let logical =
+        Message::new_frame(mesh, author, kind.clone(), payload_body).with_id(logical_id.clone());
+    let echo = Message::new_frame(mesh, author, kind, echo_body).with_id(logical_id);
+    out.print_task(&echo, true);
     ingest_own_leg(app, &logical, task_id, out);
     Ok((logical.id.clone(), logical))
+}
+
+/// A worker-emitted status leg's identity, task, state/note, and the task
+/// registry it's resolved (and later ingested) against — grouped so
+/// `emit_task_status` stays within the argument budget alongside its
+/// state/sender/out handles.
+pub(crate) struct TaskStatusParams<'a> {
+    pub(crate) mesh: &'a MeshId,
+    pub(crate) author: &'a Nickname,
+    pub(crate) task_id: &'a crate::a2a::TaskId,
+    pub(crate) task_state: crate::a2a::TaskState,
+    pub(crate) note: Option<&'a str>,
+    pub(crate) app: &'a mut A2aApp,
 }
 
 /// Worker-emit a `TaskStatusUpdate` for a task we're serving: resolve the
@@ -493,29 +656,52 @@ async fn broadcast_task_frame(
 /// # Errors
 /// `unknown task` if we hold no record for `task_id`; otherwise a
 /// serialize/broadcast failure.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "a task-frame emit threads mesh/author identity, the target + task id + payload, and the state/app/sender/output it broadcasts through"
-)]
 pub(crate) async fn emit_task_status(
-    mesh: &MeshId,
-    author: &Nickname,
-    task_id: &crate::a2a::TaskId,
-    task_state: crate::a2a::TaskState,
-    note: Option<&str>,
+    params: TaskStatusParams<'_>,
     state: &mut EventLoopState,
-    app: &mut A2aApp,
     sender: &MeshSender,
     out: &output::Output,
 ) -> anyhow::Result<Message> {
+    let TaskStatusParams {
+        mesh,
+        author,
+        task_id,
+        task_state,
+        note,
+        app,
+    } = params;
     let Some(peer) = app.tasks.get(task_id).map(|rec| rec.peer.clone()) else {
         return Err(anyhow::anyhow!("unknown task '{task_id}'"));
     };
     broadcast_task_status(
-        mesh, author, &peer, task_id, task_state, note, state, app, sender, out,
+        BroadcastTaskStatusParams {
+            mesh,
+            author,
+            peer: &peer,
+            task_id,
+            task_state,
+            note,
+            app,
+        },
+        state,
+        sender,
+        out,
     )
     .await
     .map(|(_id, msg)| msg)
+}
+
+/// A worker-emitted artifact leg's identity, task, result text/file, and the
+/// task registry it's resolved (and later ingested) against — grouped so
+/// `emit_task_artifact` stays within the argument budget alongside its
+/// state/sender/out handles.
+pub(crate) struct TaskArtifactEmitParams<'a> {
+    pub(crate) mesh: &'a MeshId,
+    pub(crate) author: &'a Nickname,
+    pub(crate) task_id: &'a crate::a2a::TaskId,
+    pub(crate) text: &'a str,
+    pub(crate) file: Option<agent_habilis_mesh::blob::FileRef>,
+    pub(crate) app: &'a mut A2aApp,
 }
 
 /// Worker-emit a `TaskArtifactUpdate` (the result) for a task we're serving.
@@ -523,26 +709,36 @@ pub(crate) async fn emit_task_status(
 /// # Errors
 /// `unknown task` if we hold no record for `task_id`; otherwise a
 /// serialize/broadcast failure.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "threads mesh/author identity, the task id + result text/file, and the state/app/sender/output it broadcasts through"
-)]
 pub(crate) async fn emit_task_artifact(
-    mesh: &MeshId,
-    author: &Nickname,
-    task_id: &crate::a2a::TaskId,
-    text: &str,
-    file: Option<agent_habilis_mesh::blob::FileRef>,
+    params: TaskArtifactEmitParams<'_>,
     state: &mut EventLoopState,
-    app: &mut A2aApp,
     sender: &MeshSender,
     out: &output::Output,
 ) -> anyhow::Result<Message> {
+    let TaskArtifactEmitParams {
+        mesh,
+        author,
+        task_id,
+        text,
+        file,
+        app,
+    } = params;
     let Some(peer) = app.tasks.get(task_id).map(|rec| rec.peer.clone()) else {
         return Err(anyhow::anyhow!("unknown task '{task_id}'"));
     };
     broadcast_task_artifact(
-        mesh, author, &peer, task_id, text, file, state, app, sender, out,
+        BroadcastTaskArtifactParams {
+            mesh,
+            author,
+            peer: &peer,
+            task_id,
+            text,
+            file,
+            app,
+        },
+        state,
+        sender,
+        out,
     )
     .await
     .map(|(_id, msg)| msg)
@@ -570,38 +766,86 @@ pub(crate) fn seal_directed(
     agent_habilis_mesh::protocol::seal::seal_to_body(&key, body.as_str())
 }
 
+/// A worker-emitted status leg's identity, addressee, task, state/note, and
+/// the task registry the frame is ingested into — grouped so
+/// `broadcast_task_status` stays within the argument budget alongside its
+/// state/sender/out handles.
+pub(crate) struct BroadcastTaskStatusParams<'a> {
+    pub(crate) mesh: &'a MeshId,
+    pub(crate) author: &'a Nickname,
+    pub(crate) peer: &'a Nickname,
+    pub(crate) task_id: &'a crate::a2a::TaskId,
+    pub(crate) task_state: crate::a2a::TaskState,
+    pub(crate) note: Option<&'a str>,
+    pub(crate) app: &'a mut A2aApp,
+}
+
 /// A worker-emitted `TaskStatusUpdate` (`a2a status`): compose the A2A status
 /// payload and push it to `peer` fire-and-forget.
 ///
 /// # Errors
 /// Propagates a serialize/broadcast failure.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "a task-frame emit threads mesh/author identity, the target + task id + payload, and the state/app/sender/output it broadcasts through"
-)]
 pub(crate) async fn broadcast_task_status(
-    mesh: &MeshId,
-    author: &Nickname,
-    peer: &Nickname,
-    task_id: &crate::a2a::TaskId,
-    task_state: crate::a2a::TaskState,
-    note: Option<&str>,
+    params: BroadcastTaskStatusParams<'_>,
     state: &mut EventLoopState,
-    app: &mut A2aApp,
     sender: &MeshSender,
     out: &output::Output,
 ) -> anyhow::Result<(MessageId, Message)> {
-    let update = crate::a2a::gossip::status_update(mesh, task_id, task_state, note, None);
-    let body = seal_directed(state, peer, &crate::a2a::gossip::payload_body(&update)?)?;
+    let BroadcastTaskStatusParams {
+        mesh,
+        author,
+        peer,
+        task_id,
+        task_state,
+        note,
+        app,
+    } = params;
+    let update = crate::a2a::gossip::status_update(
+        mesh,
+        crate::a2a::gossip::StatusUpdateParams {
+            task_id,
+            state: task_state,
+            note,
+            metadata: None,
+        },
+    );
+    let plain = crate::a2a::gossip::payload_body(&update)?;
+    let sealed = seal_directed(state, peer, &plain)?;
     let kind = MessageKind::App {
         tag: AppTag::from(wire::STATUS),
         to: Some(peer.clone()),
         corr: None,
     };
     broadcast_task_frame(
-        mesh, author, task_id, kind, body, true, state, app, sender, out,
+        TaskFrameParams {
+            mesh,
+            author,
+            task_id,
+            kind,
+            payload_body: sealed,
+            echo_body: plain,
+            content: true,
+            app,
+        },
+        state,
+        sender,
+        out,
     )
     .await
+}
+
+/// A worker-emitted artifact leg's identity, addressee, task, result
+/// text/file, and the task registry the frame is ingested into — grouped so
+/// `broadcast_task_artifact` stays within the argument budget alongside its
+/// state/sender/out handles.
+pub(crate) struct BroadcastTaskArtifactParams<'a> {
+    pub(crate) mesh: &'a MeshId,
+    pub(crate) author: &'a Nickname,
+    pub(crate) peer: &'a Nickname,
+    pub(crate) task_id: &'a crate::a2a::TaskId,
+    pub(crate) text: &'a str,
+    pub(crate) file: Option<agent_habilis_mesh::blob::FileRef>,
+    pub(crate) app: &'a mut A2aApp,
 }
 
 /// A worker-emitted `TaskArtifactUpdate` (`a2a artifact`): compose the A2A
@@ -609,34 +853,68 @@ pub(crate) async fn broadcast_task_status(
 ///
 /// # Errors
 /// Propagates a serialize/broadcast failure.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "a task-frame emit threads mesh/author identity, the target + task id + payload, and the state/app/sender/output it broadcasts through"
-)]
 pub(crate) async fn broadcast_task_artifact(
-    mesh: &MeshId,
-    author: &Nickname,
-    peer: &Nickname,
-    task_id: &crate::a2a::TaskId,
-    text: &str,
-    file: Option<agent_habilis_mesh::blob::FileRef>,
+    params: BroadcastTaskArtifactParams<'_>,
     state: &mut EventLoopState,
-    app: &mut A2aApp,
     sender: &MeshSender,
     out: &output::Output,
 ) -> anyhow::Result<(MessageId, Message)> {
-    let parts = build_offload_parts(mesh, author, task_id, text, file, state, app).await?;
+    let BroadcastTaskArtifactParams {
+        mesh,
+        author,
+        peer,
+        task_id,
+        text,
+        file,
+        app,
+    } = params;
+    let parts = build_offload_parts(
+        OffloadTextParams {
+            mesh,
+            author,
+            task_id,
+            text,
+            file,
+        },
+        state,
+        app,
+    )
+    .await?;
     let update = crate::a2a::gossip::artifact_update_parts(mesh, task_id, parts);
-    let body = seal_directed(state, peer, &crate::a2a::gossip::payload_body(&update)?)?;
+    let plain = crate::a2a::gossip::payload_body(&update)?;
+    let sealed = seal_directed(state, peer, &plain)?;
     let kind = MessageKind::App {
         tag: AppTag::from(wire::ARTIFACT),
         to: Some(peer.clone()),
         corr: None,
     };
     broadcast_task_frame(
-        mesh, author, task_id, kind, body, true, state, app, sender, out,
+        TaskFrameParams {
+            mesh,
+            author,
+            task_id,
+            kind,
+            payload_body: sealed,
+            echo_body: plain,
+            content: true,
+            app,
+        },
+        state,
+        sender,
+        out,
     )
     .await
+}
+
+/// The identity + task-target of a `--file`-bearing leg — grouped so
+/// `build_offload_parts` stays within the argument budget alongside its
+/// state/app handles.
+struct OffloadTextParams<'a> {
+    mesh: &'a MeshId,
+    author: &'a Nickname,
+    task_id: &'a crate::a2a::TaskId,
+    text: &'a str,
+    file: Option<agent_habilis_mesh::blob::FileRef>,
 }
 
 /// Resolve the parts of a `--file`-bearing leg: with no file, a single text
@@ -645,14 +923,17 @@ pub(crate) async fn broadcast_task_artifact(
 /// peer's blob server on the first offload. The heavy read+hash runs off the
 /// event loop inside `blob::url_part`.
 async fn build_offload_parts(
-    mesh: &MeshId,
-    author: &Nickname,
-    task_id: &crate::a2a::TaskId,
-    text: &str,
-    file: Option<agent_habilis_mesh::blob::FileRef>,
+    params: OffloadTextParams<'_>,
     state: &EventLoopState,
     app: &mut A2aApp,
 ) -> anyhow::Result<Vec<crate::a2a::Part>> {
+    let OffloadTextParams {
+        mesh,
+        author,
+        task_id,
+        text,
+        file,
+    } = params;
     let Some(file) = file else {
         return Ok(vec![crate::a2a::Part::text(text)]);
     };
@@ -672,12 +953,14 @@ async fn build_offload_parts(
     // ticket can't be redeemed without it.
     let password = state.mesh_password.clone();
     let offload = agent_habilis_mesh::blob::url_part(
-        file,
         &mut app.blob_server,
         &lookups,
-        spool,
-        agent_habilis_mesh::blob::ContentId::new(task_id.as_str()),
-        password,
+        agent_habilis_mesh::blob::OffloadParams {
+            file,
+            spool_dir: spool,
+            content_id: agent_habilis_mesh::blob::ContentId::new(task_id.as_str()),
+            password,
+        },
     )
     .await?;
     let part = crate::a2a::Part {
@@ -693,30 +976,43 @@ async fn build_offload_parts(
     Ok(parts)
 }
 
+/// One outbound task leg's wire frame/bytes plus its echo twin and
+/// cap-tracking flag — the part [`send_task_leg`] retains/delivers, grouped so
+/// the state/sender/out handles stay their own leading params.
+struct TaskLegPart<'a> {
+    msg: &'a Message,
+    bytes: Bytes,
+    echo: Option<&'a Message>,
+    content: bool,
+}
+
 /// Broadcast (or buffer, while unmeshed) one fully-built task leg, retaining
-/// **content** legs for anti-entropy. `echo` gates the operator print so the
-/// raw shards of a split leg commit silently. Errors if the unmeshed buffer
-/// is full.
+/// **content** legs for anti-entropy. `echo` carries the plaintext twin whose
+/// operator line surfaces (`None` for the raw shards of a split leg, which
+/// commit silently). Errors if the unmeshed buffer is full.
 async fn send_task_leg(
     state: &mut EventLoopState,
     sender: &MeshSender,
     out: &output::Output,
-    msg: &Message,
-    bytes: Bytes,
-    echo: bool,
-    content: bool,
+    part: TaskLegPart<'_>,
 ) -> anyhow::Result<()> {
+    let TaskLegPart {
+        msg,
+        bytes,
+        echo,
+        content,
+    } = part;
     if state.meshed {
         // Meshed: retain locally, then hit the wire (a transient send error
         // still leaves a content leg in our log for anti-entropy). Unicast when
         // the addressee is dialable, else gossip (see `unicast::deliver`).
-        retain_leg(state, msg, out, echo, content);
+        retain_leg(state, out, RetainLegParams { msg, echo, content });
         agent_habilis_mesh::unicast::deliver(msg, bytes, state, sender).await?;
     } else if state.pending_outbound.push(bytes.clone()) {
         // Buffered for gossip; mirror to the spool only on a successful buffer
         // so a reported drop matches reality.
         sender.spool(&bytes);
-        retain_leg(state, msg, out, echo, content);
+        retain_leg(state, out, RetainLegParams { msg, echo, content });
     } else {
         tracing::warn!("pending outbound buffer full; outbound message dropped");
         return Err(anyhow::anyhow!(
@@ -726,18 +1022,23 @@ async fn send_task_leg(
     Ok(())
 }
 
-/// Retain a task leg locally, echoing the operator line only when `echo`
-/// (false for the raw shards of a split leg). Content legs retain; the beat
-/// doesn't.
-fn retain_leg(
-    state: &mut EventLoopState,
-    msg: &Message,
-    out: &output::Output,
-    echo: bool,
+/// A task leg's frame plus its echo twin and cap-tracking flag — the fields
+/// [`retain_leg`] needs beyond its state/out handles.
+#[derive(Clone, Copy)]
+struct RetainLegParams<'a> {
+    msg: &'a Message,
+    echo: Option<&'a Message>,
     content: bool,
-) {
-    if echo {
-        out.print_task(msg, true);
+}
+
+/// Retain a task leg locally, echoing the operator line from the plaintext
+/// twin when given (`None` for the raw shards of a split leg — the wire
+/// frame's directed body is sealed, so it cannot be surfaced). Content legs
+/// retain; the beat doesn't.
+fn retain_leg(state: &mut EventLoopState, out: &output::Output, params: RetainLegParams<'_>) {
+    let RetainLegParams { msg, echo, content } = params;
+    if let Some(echo) = echo {
+        out.print_task(echo, true);
     }
     if content {
         retain_outbound(state, msg);
@@ -754,7 +1055,15 @@ fn ingest_own_leg(
     task_id: &crate::a2a::TaskId,
     out: &output::Output,
 ) {
-    if crate::a2a::task::ingest(&mut app.tasks, msg, task_id, true, Instant::now()) {
+    if crate::a2a::task::ingest(
+        &mut app.tasks,
+        crate::a2a::task::IngestLegParams {
+            frame: msg,
+            task_id,
+            mine: true,
+            now: Instant::now(),
+        },
+    ) {
         out.info(&format!(
             "task exceeded {} messages; wrap it up",
             agent_habilis_mesh::util::consts::TASK_CONTENT_CAP
@@ -801,10 +1110,12 @@ pub(crate) async fn send_shard_repair_requests(
         let frame = Message::new_app(
             mesh,
             author,
-            AppTag::from(wire::REQ),
-            Some(ticket.author.clone()),
-            Some(corr),
-            sealed,
+            AppFrameParams {
+                tag: AppTag::from(wire::REQ),
+                to: Some(ticket.author.clone()),
+                corr: Some(corr),
+                body: sealed,
+            },
         )
         .signed(&state.identity);
         agent_habilis_mesh::logging::messages::log_out(&frame);
@@ -822,25 +1133,38 @@ pub(crate) async fn send_shard_repair_requests(
     }
 }
 
+/// A directed gossip A2A call's identity, target, JSON-RPC method/params/
+/// timeout, and the transport-specific responder it answers through —
+/// grouped so `broadcast_a2a_call` stays within the argument budget alongside
+/// its state/app/sender handles.
+pub(crate) struct BroadcastA2aCallParams<'a> {
+    pub(crate) mesh: &'a MeshId,
+    pub(crate) author: &'a Nickname,
+    pub(crate) peer: Nickname,
+    pub(crate) method: &'a str,
+    pub(crate) params: serde_json::Value,
+    pub(crate) timeout: std::time::Duration,
+    pub(crate) responder: crate::a2a::app::A2aResponder,
+}
+
 /// waiter times out via the loop's a2a-deadline arm. Fails fast (through the
 /// responder) when `peer` isn't a current participant or the waiter registry
 /// is full — no silent park.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the client call carries mesh/author identity, the target + RPC method/params/timeout, the transport-specific responder, and the state + app + sender it parks and broadcasts through"
-)]
 pub(crate) async fn broadcast_a2a_call(
-    mesh: &MeshId,
-    author: &Nickname,
-    peer: Nickname,
-    method: &str,
-    params: serde_json::Value,
-    timeout: std::time::Duration,
-    responder: crate::a2a::app::A2aResponder,
+    call: BroadcastA2aCallParams<'_>,
     state: &mut EventLoopState,
     app: &mut A2aApp,
     sender: &MeshSender,
 ) {
+    let BroadcastA2aCallParams {
+        mesh,
+        author,
+        peer,
+        method,
+        params,
+        timeout,
+        responder,
+    } = call;
     let rpc_error = |code: i64, message: &str| {
         serde_json::json!({ "error": { "code": code, "message": message } }).to_string()
     };
@@ -892,15 +1216,40 @@ pub(crate) async fn broadcast_a2a_call(
         );
     }
     let deadline = tokio::time::Instant::now() + timeout.min(max_timeout);
-    if let Some(unregistered) = app.register_a2a_waiter(corr, peer, deadline, responder) {
+    if let Some(unregistered) = app.register_a2a_waiter(crate::a2a::app::A2aWaiter {
+        corr,
+        peer,
+        deadline,
+        responder,
+    }) {
         unregistered.send_response(&rpc_error(-32603, "too many in-flight a2a calls"));
         return;
     }
     // Directed request over the shared RPC sender: unicast → circuit → gossip per
     // frame, transparently splitting a large sealed body into shard frames.
-    if let Err(error) = send_directed_rpc(mesh, author, kind, body, state, sender).await {
+    if let Err(error) = send_directed_rpc(
+        DirectedRpcParams {
+            mesh,
+            author,
+            kind,
+            body,
+        },
+        state,
+        sender,
+    )
+    .await
+    {
         tracing::warn!(target: "agent_square::gossip", %error, "a2a request send failed");
     }
+}
+
+/// A directed RPC frame's identity, kind, and body — the fields
+/// `send_directed_rpc` needs beyond its state/sender handles.
+pub(crate) struct DirectedRpcParams<'a> {
+    pub(crate) mesh: &'a MeshId,
+    pub(crate) author: &'a Nickname,
+    pub(crate) kind: MessageKind,
+    pub(crate) body: MessageBody,
 }
 
 /// Send one directed RPC frame (an `App` request/response), transparently
@@ -916,13 +1265,16 @@ pub(crate) async fn broadcast_a2a_call(
 /// Propagates a serialize/deliver failure and refuses a body past the input
 /// ceiling or the receiver's per-group reassembly budget.
 pub(crate) async fn send_directed_rpc(
-    mesh: &MeshId,
-    author: &Nickname,
-    kind: MessageKind,
-    body: MessageBody,
+    params: DirectedRpcParams<'_>,
     state: &mut EventLoopState,
     sender: &MeshSender,
 ) -> anyhow::Result<()> {
+    let DirectedRpcParams {
+        mesh,
+        author,
+        kind,
+        body,
+    } = params;
     let signer = state.identity.clone();
     let single = Message::new_frame(mesh, author, kind.clone(), body.clone()).signed(&signer);
     if single.wire_len() <= MAX_MESSAGE_SIZE {
@@ -986,17 +1338,25 @@ pub(crate) async fn send_directed_rpc(
     Ok(())
 }
 
+/// A ping round's identity plus the responder the RTT rows are delivered
+/// through — grouped so `session_ping` stays within the argument budget
+/// alongside its state/sender handles.
+struct SessionPingParams<'a> {
+    mesh: &'a MeshId,
+    author: &'a Nickname,
+    resp: tokio::sync::oneshot::Sender<Vec<agent_habilis_mesh::gossip::event::PingRtt>>,
+}
+
 /// Arm a fresh ping round carrying the responder; the deadline-driven
 /// `finalize_ping_round` delivers the RTT rows through it. Mirrors the IPC
 /// `Ping` handler, which leaves `resp` unset and emits the `ping_report`
 /// event instead.
 async fn session_ping(
-    mesh: &MeshId,
-    author: &Nickname,
+    params: SessionPingParams<'_>,
     state: &mut EventLoopState,
     sender: &MeshSender,
-    resp: tokio::sync::oneshot::Sender<Vec<agent_habilis_mesh::gossip::event::PingRtt>>,
 ) -> bool {
+    let SessionPingParams { mesh, author, resp } = params;
     let now = tokio::time::Instant::now();
     state.ping_round = Some(Box::new(agent_habilis_mesh::daemon::state::PingRound {
         t1: now,
@@ -1013,6 +1373,16 @@ async fn session_ping(
     true
 }
 
+/// One typed in-process request plus the identity + app state it's served
+/// against — grouped so `handle_session_request` stays within the argument
+/// budget alongside its state/sender/output handles.
+pub(crate) struct SessionRequestParams<'a> {
+    pub(crate) req: SessionRequest,
+    pub(crate) mesh: &'a MeshId,
+    pub(crate) author: &'a Nickname,
+    pub(crate) app: &'a mut A2aApp,
+}
+
 /// Handle one typed in-process [`SessionRequest`] (embed / MCP). `Send`
 /// broadcasts via the shared helper and echoes the canonical [`Message`]
 /// back on the oneshot; `Poll` returns the join-horizon-filtered buffer.
@@ -1023,19 +1393,31 @@ async fn session_ping(
     reason = "a dispatch match with one arm per SessionRequest variant (mirrors handle_ipc_command)"
 )]
 pub(crate) async fn handle_session_request(
-    req: SessionRequest,
-    mesh: &MeshId,
-    author: &Nickname,
+    params: SessionRequestParams<'_>,
     state: &mut EventLoopState,
-    app: &mut A2aApp,
     sender: &MeshSender,
     output: &output::Output,
 ) -> bool {
+    let SessionRequestParams {
+        req,
+        mesh,
+        author,
+        app,
+    } = params;
     match req {
         SessionRequest::Send { body, resp } => {
-            let outcome = broadcast_message(mesh, author, body, state, sender, output)
-                .await
-                .map(|(_id, msg)| msg);
+            let outcome = broadcast_message(
+                BroadcastMessageParams {
+                    mesh,
+                    author,
+                    text: body,
+                },
+                state,
+                sender,
+                output,
+            )
+            .await
+            .map(|(_id, msg)| msg);
             let sent_ok = outcome.is_ok();
             let _ = resp.send(outcome);
             sent_ok
@@ -1044,12 +1426,13 @@ pub(crate) async fn handle_session_request(
             // Same policy as the CLI/IPC `Poll` arm: respond now if events are
             // buffered, else (with `long`) park a typed waiter the loop
             // fulfills/expires. A parked waiter broadcasts nothing → `false`.
-            app.surfaced.poll_or_register(
-                after,
-                long,
-                tokio::time::Instant::now(),
-                crate::a2a::surfaced::PollResponder::Typed(resp),
-            );
+            app.surfaced
+                .poll_or_register(crate::a2a::surfaced::PollOrRegisterParams {
+                    after,
+                    long,
+                    now: tokio::time::Instant::now(),
+                    responder: crate::a2a::surfaced::PollResponder::Typed(resp),
+                });
             false
         }
         SessionRequest::TaskStatus {
@@ -1059,13 +1442,15 @@ pub(crate) async fn handle_session_request(
             resp,
         } => {
             let outcome = emit_task_status(
-                mesh,
-                author,
-                &task_id,
-                task_state,
-                note.as_deref(),
+                TaskStatusParams {
+                    mesh,
+                    author,
+                    task_id: &task_id,
+                    task_state,
+                    note: note.as_deref(),
+                    app,
+                },
                 state,
-                app,
                 sender,
                 output,
             )
@@ -1081,7 +1466,17 @@ pub(crate) async fn handle_session_request(
             resp,
         } => {
             let outcome = emit_task_artifact(
-                mesh, author, &task_id, &text, file, state, app, sender, output,
+                TaskArtifactEmitParams {
+                    mesh,
+                    author,
+                    task_id: &task_id,
+                    text: &text,
+                    file,
+                    app,
+                },
+                state,
+                sender,
+                output,
             )
             .await;
             let sent_ok = outcome.is_ok();
@@ -1094,14 +1489,16 @@ pub(crate) async fn handle_session_request(
         }
         SessionRequest::StateMerge { merge, resp } => {
             let outcome = agent_habilis_mesh::gossip::broadcast_state_merge(
-                mesh,
-                author,
-                merge,
                 state,
-                sender,
-                output,
-                Channel::State,
-                true,
+                agent_habilis_mesh::gossip::StateMergeParams {
+                    mesh,
+                    author,
+                    merge,
+                    sender,
+                    sink: output,
+                    channel: Channel::State,
+                    surface: true,
+                },
             )
             .await;
             let sent = outcome.is_ok();
@@ -1114,14 +1511,16 @@ pub(crate) async fn handle_session_request(
         }
         SessionRequest::MetaMerge { merge, resp } => {
             let outcome = agent_habilis_mesh::gossip::broadcast_state_merge(
-                mesh,
-                author,
-                merge,
                 state,
-                sender,
-                output,
-                Channel::Meta,
-                true,
+                agent_habilis_mesh::gossip::StateMergeParams {
+                    mesh,
+                    author,
+                    merge,
+                    sender,
+                    sink: output,
+                    channel: Channel::Meta,
+                    surface: true,
+                },
             )
             .await;
             let sent = outcome.is_ok();
@@ -1132,22 +1531,26 @@ pub(crate) async fn handle_session_request(
             let _ = resp.send(state.meta_doc.to_json());
             false
         }
-        SessionRequest::Ping { resp } => session_ping(mesh, author, state, sender, resp).await,
+        SessionRequest::Ping { resp } => {
+            session_ping(SessionPingParams { mesh, author, resp }, state, sender).await
+        }
         SessionRequest::A2aCall {
             peer,
             method,
-            params,
+            params: rpc_params,
             timeout,
             resp,
         } => {
             broadcast_a2a_call(
-                mesh,
-                author,
-                peer,
-                &method,
-                params,
-                timeout,
-                crate::a2a::app::A2aResponder::Typed(resp),
+                BroadcastA2aCallParams {
+                    mesh,
+                    author,
+                    peer,
+                    method: &method,
+                    params: rpc_params,
+                    timeout,
+                    responder: crate::a2a::app::A2aResponder::Typed(resp),
+                },
                 state,
                 app,
                 sender,

@@ -271,21 +271,28 @@ impl MeshDoc {
                 return;
             }
             for hash in ready {
-                let Some(frame) = self.pending.remove(&hash) else {
-                    continue;
-                };
-                let Some(bytes) = self.change_bytes(&frame) else {
-                    continue;
-                };
-                let Ok(change) = Change::from_bytes(bytes) else {
-                    continue;
-                };
-                if self.gate_cards && forges_foreign_card(&self.doc, &change, &frame.author) {
-                    continue; // dropped, same as a directly-rejected change
-                }
-                self.apply(change, hash, frame);
+                self.try_apply_pending(hash);
             }
         }
+    }
+
+    /// Apply one now-ready buffered frame through the gate, dropping it
+    /// silently if it's no longer pending, decodes badly, or forges a card —
+    /// same handling as the equivalent direct-ingest failure modes.
+    fn try_apply_pending(&mut self, hash: ChangeHash) {
+        let Some(frame) = self.pending.remove(&hash) else {
+            return;
+        };
+        let Some(bytes) = self.change_bytes(&frame) else {
+            return;
+        };
+        let Ok(change) = Change::from_bytes(bytes) else {
+            return;
+        };
+        if self.gate_cards && forges_foreign_card(&self.doc, &change, &frame.author) {
+            return; // dropped, same as a directly-rejected change
+        }
+        self.apply(change, hash, frame);
     }
 }
 

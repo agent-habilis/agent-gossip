@@ -692,7 +692,7 @@ mod harness_tests;
 
 pub(crate) use connect::connect;
 pub(crate) use directory::{TicketDirectory, TicketDirectoryEvent, TicketListing};
-pub(crate) use expose::expose;
+pub(crate) use expose::{ExposeParams, expose};
 
 /// ALPN for the a2a bridge — a raw bidirectional QUIC stream with its own
 /// protocol identity, distinct from the gossip protocol's `GOSSIP_ALPN`.

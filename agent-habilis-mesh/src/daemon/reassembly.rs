@@ -379,7 +379,9 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use super::{ReassemblyStore, ShardIngest};
-    use crate::protocol::{MeshId, Message, MessageBody, Nickname, Shard, ShardGroup};
+    use crate::protocol::{
+        AppFrameParams, MeshId, Message, MessageBody, Nickname, Shard, ShardGroup,
+    };
     use crate::util::consts::{
         REASSEMBLY_AUTHOR_BUDGET_BYTES, REASSEMBLY_GROUP_MAX_BYTES, REASSEMBLY_STALE_SECS,
         REASSEMBLY_TOTAL_BUDGET_BYTES,
@@ -394,21 +396,19 @@ mod tests {
     }
 
     /// A shard frame notionally signed by `pubkey`.
-    fn shard_msg(body: &str, pubkey: &str, group: &ShardGroup, idx: u32, total: u32) -> Message {
+    fn shard_msg(body: &str, pubkey: &str, shard: Shard) -> Message {
         let mut message = Message::new_app(
             &MeshId::from("💬test"),
             &Nickname::from("author"),
-            crate::protocol::AppTag::from("a2a_msg"),
-            None,
-            None,
-            MessageBody::from(body),
+            AppFrameParams {
+                tag: crate::protocol::AppTag::from("a2a_msg"),
+                to: None,
+                corr: None,
+                body: MessageBody::from(body),
+            },
         );
         message.pubkey = pubkey.to_owned();
-        message.shard = Some(Shard {
-            group: group.clone(),
-            idx,
-            total,
-        });
+        message.shard = Some(shard);
         message
     }
 
@@ -426,7 +426,15 @@ mod tests {
         assert!(matches!(
             ingest(
                 &mut store,
-                &shard_msg("alice-0", "alice", &group_a(), 0, 2),
+                &shard_msg(
+                    "alice-0",
+                    "alice",
+                    Shard {
+                        group: group_a(),
+                        idx: 0,
+                        total: 2
+                    }
+                ),
                 now
             ),
             ShardIngest::Buffered
@@ -435,7 +443,15 @@ mod tests {
             matches!(
                 ingest(
                     &mut store,
-                    &shard_msg("mallory-1", "mallory", &group_a(), 1, 2),
+                    &shard_msg(
+                        "mallory-1",
+                        "mallory",
+                        Shard {
+                            group: group_a(),
+                            idx: 1,
+                            total: 2
+                        }
+                    ),
                     now
                 ),
                 ShardIngest::Buffered
@@ -445,7 +461,15 @@ mod tests {
         // Alice's own second shard completes with alice's bodies only.
         let ShardIngest::Complete(logical) = ingest(
             &mut store,
-            &shard_msg("alice-1", "alice", &group_a(), 1, 2),
+            &shard_msg(
+                "alice-1",
+                "alice",
+                Shard {
+                    group: group_a(),
+                    idx: 1,
+                    total: 2,
+                },
+            ),
             now,
         ) else {
             panic!("alice's set completes");
@@ -457,11 +481,45 @@ mod tests {
     fn slots_by_idx_not_arrival() {
         let now = Instant::now();
         let mut store = ReassemblyStore::default();
-        ingest(&mut store, &shard_msg("b", "a", &group_a(), 1, 3), now);
-        ingest(&mut store, &shard_msg("a", "a", &group_a(), 0, 3), now);
-        let ShardIngest::Complete(logical) =
-            ingest(&mut store, &shard_msg("c", "a", &group_a(), 2, 3), now)
-        else {
+        ingest(
+            &mut store,
+            &shard_msg(
+                "b",
+                "a",
+                Shard {
+                    group: group_a(),
+                    idx: 1,
+                    total: 3,
+                },
+            ),
+            now,
+        );
+        ingest(
+            &mut store,
+            &shard_msg(
+                "a",
+                "a",
+                Shard {
+                    group: group_a(),
+                    idx: 0,
+                    total: 3,
+                },
+            ),
+            now,
+        );
+        let ShardIngest::Complete(logical) = ingest(
+            &mut store,
+            &shard_msg(
+                "c",
+                "a",
+                Shard {
+                    group: group_a(),
+                    idx: 2,
+                    total: 3,
+                },
+            ),
+            now,
+        ) else {
             panic!("third shard completes the group");
         };
         assert_eq!(logical.body.as_str(), "abc", "slotted by idx, not arrival");
@@ -473,14 +531,46 @@ mod tests {
     fn header_mismatch_is_dropped() {
         let now = Instant::now();
         let mut store = ReassemblyStore::default();
-        ingest(&mut store, &shard_msg("x", "a", &group_a(), 0, 3), now);
+        ingest(
+            &mut store,
+            &shard_msg(
+                "x",
+                "a",
+                Shard {
+                    group: group_a(),
+                    idx: 0,
+                    total: 3,
+                },
+            ),
+            now,
+        );
         // Same signer contradicting its own advertised total: crafted stream.
         assert!(matches!(
-            ingest(&mut store, &shard_msg("y", "a", &group_a(), 1, 4), now),
+            ingest(
+                &mut store,
+                &shard_msg(
+                    "y",
+                    "a",
+                    Shard {
+                        group: group_a(),
+                        idx: 1,
+                        total: 4
+                    }
+                ),
+                now
+            ),
             ShardIngest::Dropped
         ));
         // A different kind under the same group is equally crafted.
-        let mut wrong_kind = shard_msg("z", "a", &group_a(), 1, 3);
+        let mut wrong_kind = shard_msg(
+            "z",
+            "a",
+            Shard {
+                group: group_a(),
+                idx: 1,
+                total: 3,
+            },
+        );
         wrong_kind.kind = crate::protocol::MessageKind::Presence {
             subtype: crate::protocol::PresenceSubtype::Joined,
         };
@@ -494,14 +584,48 @@ mod tests {
     fn duplicate_idx_is_dropped_first_seen_wins() {
         let now = Instant::now();
         let mut store = ReassemblyStore::default();
-        ingest(&mut store, &shard_msg("first", "a", &group_a(), 0, 2), now);
+        ingest(
+            &mut store,
+            &shard_msg(
+                "first",
+                "a",
+                Shard {
+                    group: group_a(),
+                    idx: 0,
+                    total: 2,
+                },
+            ),
+            now,
+        );
         assert!(matches!(
-            ingest(&mut store, &shard_msg("second", "a", &group_a(), 0, 2), now),
+            ingest(
+                &mut store,
+                &shard_msg(
+                    "second",
+                    "a",
+                    Shard {
+                        group: group_a(),
+                        idx: 0,
+                        total: 2
+                    }
+                ),
+                now
+            ),
             ShardIngest::Dropped
         ));
-        let ShardIngest::Complete(logical) =
-            ingest(&mut store, &shard_msg("!", "a", &group_a(), 1, 2), now)
-        else {
+        let ShardIngest::Complete(logical) = ingest(
+            &mut store,
+            &shard_msg(
+                "!",
+                "a",
+                Shard {
+                    group: group_a(),
+                    idx: 1,
+                    total: 2,
+                },
+            ),
+            now,
+        ) else {
             panic!("completes");
         };
         assert_eq!(logical.body.as_str(), "first!", "first-seen wins per idx");
@@ -512,11 +636,35 @@ mod tests {
         let now = Instant::now();
         let mut store = ReassemblyStore::default();
         let big = "x".repeat(REASSEMBLY_GROUP_MAX_BYTES / 2 + 1);
-        ingest(&mut store, &shard_msg(&big, "a", &group_a(), 0, 3), now);
+        ingest(
+            &mut store,
+            &shard_msg(
+                &big,
+                "a",
+                Shard {
+                    group: group_a(),
+                    idx: 0,
+                    total: 3,
+                },
+            ),
+            now,
+        );
         // The second shard pushes the group past its byte ceiling: the whole
         // group is dropped, and its budget released.
         assert!(matches!(
-            ingest(&mut store, &shard_msg(&big, "a", &group_a(), 1, 3), now),
+            ingest(
+                &mut store,
+                &shard_msg(
+                    &big,
+                    "a",
+                    Shard {
+                        group: group_a(),
+                        idx: 1,
+                        total: 3
+                    }
+                ),
+                now
+            ),
             ShardIngest::Dropped
         ));
         assert_eq!(store.total_bytes, 0, "dropped group released its budget");
@@ -532,10 +680,30 @@ mod tests {
         // Two half-budget groups from one author fill its allowance...
         let stale = group("00000000-0000-4000-8000-000000000001");
         let fresh = group("00000000-0000-4000-8000-000000000002");
-        ingest(&mut store, &shard_msg(&chunk, "a", &stale, 0, 2), start);
         ingest(
             &mut store,
-            &shard_msg(&chunk, "a", &fresh, 0, 2),
+            &shard_msg(
+                &chunk,
+                "a",
+                Shard {
+                    group: stale.clone(),
+                    idx: 0,
+                    total: 2,
+                },
+            ),
+            start,
+        );
+        ingest(
+            &mut store,
+            &shard_msg(
+                &chunk,
+                "a",
+                Shard {
+                    group: fresh.clone(),
+                    idx: 0,
+                    total: 2,
+                },
+            ),
             start + Duration::from_secs(1),
         );
         // ...so a third group evicts the stalest (the first), not the freshest.
@@ -543,7 +711,15 @@ mod tests {
         assert!(matches!(
             ingest(
                 &mut store,
-                &shard_msg(&chunk, "a", &newcomer, 0, 2),
+                &shard_msg(
+                    &chunk,
+                    "a",
+                    Shard {
+                        group: newcomer.clone(),
+                        idx: 0,
+                        total: 2
+                    }
+                ),
                 start + Duration::from_secs(2)
             ),
             ShardIngest::Buffered
@@ -569,7 +745,15 @@ mod tests {
             let sybil_group = group(&format!("00000000-0000-4000-8000-0000000000{author:02x}"));
             match ingest(
                 &mut store,
-                &shard_msg(&chunk, &format!("sybil-{author}"), &sybil_group, 0, 2),
+                &shard_msg(
+                    &chunk,
+                    &format!("sybil-{author}"),
+                    Shard {
+                        group: sybil_group,
+                        idx: 0,
+                        total: 2,
+                    },
+                ),
                 now,
             ) {
                 ShardIngest::Buffered => fitted += 1,
@@ -588,17 +772,53 @@ mod tests {
     fn stale_groups_are_swept_and_release_budget() {
         let start = Instant::now();
         let mut store = ReassemblyStore::default();
-        ingest(&mut store, &shard_msg("x", "a", &group_a(), 0, 3), start);
+        ingest(
+            &mut store,
+            &shard_msg(
+                "x",
+                "a",
+                Shard {
+                    group: group_a(),
+                    idx: 0,
+                    total: 3,
+                },
+            ),
+            start,
+        );
         // Progress (a NEW slot) refreshes the group's clock...
         let touched = start + Duration::from_secs(REASSEMBLY_STALE_SECS - 1);
         assert!(matches!(
-            ingest(&mut store, &shard_msg("y", "a", &group_a(), 1, 3), touched),
+            ingest(
+                &mut store,
+                &shard_msg(
+                    "y",
+                    "a",
+                    Shard {
+                        group: group_a(),
+                        idx: 1,
+                        total: 3
+                    }
+                ),
+                touched
+            ),
             ShardIngest::Buffered
         ));
         // ...but a duplicate slot does NOT — no attacker keepalive via resends.
         let dup_at = touched + Duration::from_secs(REASSEMBLY_STALE_SECS - 1);
         assert!(matches!(
-            ingest(&mut store, &shard_msg("x", "a", &group_a(), 0, 3), dup_at),
+            ingest(
+                &mut store,
+                &shard_msg(
+                    "x",
+                    "a",
+                    Shard {
+                        group: group_a(),
+                        idx: 0,
+                        total: 3
+                    }
+                ),
+                dup_at
+            ),
             ShardIngest::Dropped
         ));
         assert_eq!(
@@ -628,7 +848,15 @@ mod tests {
         while at.duration_since(start).as_secs() < REASSEMBLY_MAX_GROUP_LIFETIME_SECS {
             ingest(
                 &mut store,
-                &shard_msg("x", "a", &group_a(), idx % total, total),
+                &shard_msg(
+                    "x",
+                    "a",
+                    Shard {
+                        group: group_a(),
+                        idx: idx % total,
+                        total,
+                    },
+                ),
                 at,
             );
             idx += 1;
@@ -647,10 +875,34 @@ mod tests {
     fn completion_releases_the_budget() {
         let now = Instant::now();
         let mut store = ReassemblyStore::default();
-        ingest(&mut store, &shard_msg("a", "a", &group_a(), 0, 2), now);
+        ingest(
+            &mut store,
+            &shard_msg(
+                "a",
+                "a",
+                Shard {
+                    group: group_a(),
+                    idx: 0,
+                    total: 2,
+                },
+            ),
+            now,
+        );
         assert!(store.total_bytes > 0);
         assert!(matches!(
-            ingest(&mut store, &shard_msg("b", "a", &group_a(), 1, 2), now),
+            ingest(
+                &mut store,
+                &shard_msg(
+                    "b",
+                    "a",
+                    Shard {
+                        group: group_a(),
+                        idx: 1,
+                        total: 2
+                    }
+                ),
+                now
+            ),
             ShardIngest::Complete(_)
         ));
         assert_eq!(store.total_bytes, 0);
@@ -666,15 +918,43 @@ mod tests {
         // A small group (logged, heals via anti-entropy) and a big one.
         let small = group("00000000-0000-4000-8000-00000000000a");
         let big = group("00000000-0000-4000-8000-00000000000b");
-        ingest(&mut store, &shard_msg("s", "a", &small, 0, 2), start);
         ingest(
             &mut store,
-            &shard_msg("b", "a", &big, 0, LOGGED_SHARD_GROUP_MAX_TOTAL + 4),
+            &shard_msg(
+                "s",
+                "a",
+                Shard {
+                    group: small,
+                    idx: 0,
+                    total: 2,
+                },
+            ),
             start,
         );
         ingest(
             &mut store,
-            &shard_msg("b", "a", &big, 2, LOGGED_SHARD_GROUP_MAX_TOTAL + 4),
+            &shard_msg(
+                "b",
+                "a",
+                Shard {
+                    group: big.clone(),
+                    idx: 0,
+                    total: LOGGED_SHARD_GROUP_MAX_TOTAL + 4,
+                },
+            ),
+            start,
+        );
+        ingest(
+            &mut store,
+            &shard_msg(
+                "b",
+                "a",
+                Shard {
+                    group: big.clone(),
+                    idx: 2,
+                    total: LOGGED_SHARD_GROUP_MAX_TOTAL + 4,
+                },
+            ),
             start,
         );
 
@@ -736,7 +1016,15 @@ mod tests {
             ));
             let _ = ingest(
                 &mut store,
-                &shard_msg(&chunk, author, &group, round % 5, u32::MAX),
+                &shard_msg(
+                    &chunk,
+                    author,
+                    Shard {
+                        group,
+                        idx: round % 5,
+                        total: u32::MAX,
+                    },
+                ),
                 now,
             );
             assert!(store.total_bytes <= REASSEMBLY_TOTAL_BUDGET_BYTES);

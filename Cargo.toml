@@ -85,6 +85,7 @@ min_ident_chars = "warn"
 shadow_unrelated = "warn"
 semicolon_inside_block = "warn"
 allow_attributes_without_reason = "warn"
+excessive_nesting = "warn"
 # Force `#[expect(...)]` over `#[allow(...)]` where the lint still fires, so a
 # suppression that goes stale (lint no longer triggers) becomes a build error
 # instead of silently lingering.

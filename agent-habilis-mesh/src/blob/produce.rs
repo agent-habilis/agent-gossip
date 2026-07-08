@@ -118,14 +118,16 @@ impl BlobServer {
         };
         let registered = self.store.lock().await.snapshot(
             path,
-            sha256,
-            size,
+            super::store::ContentMeta {
+                sha256,
+                size,
+                content_id,
+            },
             &super::store::NewSecret {
                 ticket_secret: salt,
                 compare_secret: compare,
                 password: self.password.is_some(),
             },
-            content_id,
         )?;
         Ok(ticket(registered))
     }
@@ -148,13 +150,18 @@ fn spawn_accept_loop(endpoint: Endpoint, store: Arc<Mutex<BlobStore>>) {
     tokio::spawn(async move {
         while let Some(incoming) = endpoint.accept().await {
             let store = Arc::clone(&store);
-            tokio::spawn(async move {
-                if let Err(error) = serve_connection(incoming, &store).await {
-                    tracing::debug!(%error, "blob serve connection ended");
-                }
-            });
+            tokio::spawn(handle_incoming(incoming, store));
         }
     });
+}
+
+/// Serve one accepted connection and log a failed fetch. Split out of
+/// [`spawn_accept_loop`] so the error branch isn't nested inside its
+/// spawned-within-spawned `while let`.
+async fn handle_incoming(incoming: Incoming, store: Arc<Mutex<BlobStore>>) {
+    if let Err(error) = serve_connection(incoming, &store).await {
+        tracing::debug!(%error, "blob serve connection ended");
+    }
 }
 
 /// Serve one fetch connection: accept its single bi-stream and answer it.

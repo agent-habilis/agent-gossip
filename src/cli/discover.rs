@@ -147,9 +147,11 @@ async fn run_mesh_picker(
     };
     picker::run(
         &text,
-        || discoverer.snapshot(),
-        row,
-        |listing| listing.mesh.as_str().to_owned(),
+        picker::PickerCallbacks {
+            snapshot: || discoverer.snapshot(),
+            row,
+            pick: |listing: &MeshListing| listing.mesh.as_str().to_owned(),
+        },
         events,
     )
     .await

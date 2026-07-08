@@ -58,8 +58,26 @@ fn post(port: u16, path: &str, token: &str, body: &Value) -> (u16, Value) {
     (status, parsed)
 }
 
+/// One JSON-RPC call's identity + payload — grouped so the [`rpc`] test helper
+/// stays within the argument budget.
+#[derive(Clone, Copy)]
+struct RpcCall<'a> {
+    port: u16,
+    path: &'a str,
+    token: &'a str,
+    method: &'a str,
+    params: &'a Value,
+}
+
 /// A JSON-RPC call that must succeed; returns `result`.
-fn rpc(port: u16, path: &str, token: &str, method: &str, params: &Value) -> Value {
+fn rpc(call: RpcCall<'_>) -> Value {
+    let RpcCall {
+        port,
+        path,
+        token,
+        method,
+        params,
+    } = call;
     let (status, response) = post(
         port,
         path,
@@ -155,17 +173,17 @@ fn a2a_binding_serves_card_rpc_and_tasks() {
 
     // message/send on the mesh endpoint broadcasts; the echo is the
     // daemon-authored A2A Message.
-    let echo = rpc(
+    let echo = rpc(RpcCall {
         port,
-        "/mesh",
-        &token,
-        "SendMessage",
-        &serde_json::json!({ "message": {
+        path: "/mesh",
+        token: &token,
+        method: "SendMessage",
+        params: &serde_json::json!({ "message": {
             "messageId": "650e8400-e29b-41d4-a716-446655440111",
             "role": "ROLE_USER",
             "parts": [{ "text": "hello from a2a" }],
         }}),
-    );
+    });
     // v1.0 SendMessageResponse oneof: a broadcast has no task, so `{"message":…}`.
     assert_eq!(echo["message"]["parts"][0]["text"], "hello from a2a");
     // Cross-binding: the plain gossip peer surfaces the text.
@@ -200,17 +218,17 @@ fn a2a_binding_serves_card_rpc_and_tasks() {
     // through the gossip request/response waiter — the peer mints the task id
     // and returns the Task synchronously (an off-the-shelf A2A client can
     // delegate a task over the compliant transport).
-    let task = rpc(
+    let task = rpc(RpcCall {
         port,
-        "/peers/a2a-peer",
-        &token,
-        "SendMessage",
-        &serde_json::json!({ "message": {
+        path: "/peers/a2a-peer",
+        token: &token,
+        method: "SendMessage",
+        params: &serde_json::json!({ "message": {
             "messageId": "550e8400-e29b-41d4-a716-446655440000",
             "role": "ROLE_USER",
             "parts": [{ "text": "review src/net" }],
         }}),
-    );
+    });
     // v1.0 SendMessageResponse oneof: creation yields `{"task": <Task>}`.
     assert_eq!(
         task["task"]["status"]["state"], "TASK_STATE_SUBMITTED",
@@ -222,15 +240,21 @@ fn a2a_binding_serves_card_rpc_and_tasks() {
         .to_string();
 
     // The initiator (this host) adopted the task; tasks/get + tasks/list see it.
-    let fetched = rpc(
+    let fetched = rpc(RpcCall {
         port,
-        "/mesh",
-        &token,
-        "GetTask",
-        &serde_json::json!({ "id": task_id }),
-    );
+        path: "/mesh",
+        token: &token,
+        method: "GetTask",
+        params: &serde_json::json!({ "id": task_id }),
+    });
     assert_eq!(fetched["id"].as_str(), Some(task_id.as_str()));
-    let listed = rpc(port, "/mesh", &token, "ListTasks", &serde_json::json!({}));
+    let listed = rpc(RpcCall {
+        port,
+        path: "/mesh",
+        token: &token,
+        method: "ListTasks",
+        params: &serde_json::json!({}),
+    });
     assert!(
         listed["tasks"]
             .as_array()
@@ -239,24 +263,30 @@ fn a2a_binding_serves_card_rpc_and_tasks() {
     );
 
     // The mesh-state extension methods mirror `agent-square state merge/get`.
-    rpc(
+    rpc(RpcCall {
         port,
-        "/mesh",
-        &token,
-        "mesh/state.merge",
-        &serde_json::json!({ "merge": { "turn": "a2a" } }),
-    );
-    let doc = rpc(
+        path: "/mesh",
+        token: &token,
+        method: "mesh/state.merge",
+        params: &serde_json::json!({ "merge": { "turn": "a2a" } }),
+    });
+    let doc = rpc(RpcCall {
         port,
-        "/mesh",
-        &token,
-        "mesh/state.get",
-        &serde_json::json!({}),
-    );
+        path: "/mesh",
+        token: &token,
+        method: "mesh/state.get",
+        params: &serde_json::json!({}),
+    });
     assert_eq!(doc["turn"], "a2a");
 
     // GetExtendedAgentCard (authenticated) returns the full v1.0 card.
-    let extended = rpc(port, "/mesh", &token, "GetExtendedAgentCard", &Value::Null);
+    let extended = rpc(RpcCall {
+        port,
+        path: "/mesh",
+        token: &token,
+        method: "GetExtendedAgentCard",
+        params: &Value::Null,
+    });
     assert!(
         extended["supportedInterfaces"].is_array(),
         "extended card is a v1.0 AgentCard: {extended}"

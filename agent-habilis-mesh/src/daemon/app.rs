@@ -146,20 +146,30 @@ pub trait NodeDriver: NodeApp {
     }
 
     /// Apply one parsed IPC command (the unix-socket `msg`/`poll`/… path),
-    /// answering on `resp`. Returns `true` when it broadcast.
+    /// answering on `req.resp`. Returns `true` when it broadcast.
     ///
     /// Defaults to answering with a not-supported error and returning `false` —
     /// an app whose [`Self::Ipc`] is a trivial type serves no IPC command set.
     async fn handle_ipc(
         &mut self,
-        cmd: Self::Ipc,
-        resp: oneshot::Sender<String>,
-        name: &MeshName,
+        req: IpcRequest<'_, Self::Ipc>,
         state: &mut EventLoopState,
         ctx: &HandlerCtx<'_>,
     ) -> bool {
-        let _ = (cmd, name, state, ctx);
-        let _ = resp.send("{\"error\":\"this app serves no IPC commands\"}".to_owned());
+        let _ = (req.name, state, ctx);
+        let _ = req
+            .resp
+            .send("{\"error\":\"this app serves no IPC commands\"}".to_owned());
         false
     }
+}
+
+/// One parsed IPC command bundled with its answer channel and this
+/// session's mesh name — the value cluster [`NodeDriver::handle_ipc`] needs
+/// beyond the loop state and handler context.
+#[derive(Debug)]
+pub struct IpcRequest<'a, C> {
+    pub cmd: C,
+    pub resp: oneshot::Sender<String>,
+    pub name: &'a MeshName,
 }

@@ -56,7 +56,10 @@ use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 
 use crate::a2a::TaskId;
-use crate::embed::{CreateConfig, CreateError, Directory, JoinConfig, JoinError, TopicConfig};
+use crate::embed::{
+    A2aCallParams, CreateConfig, CreateError, Directory, JoinConfig, JoinError, TaskArtifactParams,
+    TopicConfig,
+};
 use agent_habilis_mesh::daemon::derive_topic_mesh;
 use agent_habilis_mesh::daemon::state::RosterEntry;
 use agent_habilis_mesh::protocol::mesh::{LookupSet, MeshName, RelayLadder, RelaySelection};
@@ -756,7 +759,13 @@ impl AgentSquareServer {
                 .map(str::to_owned)
         });
         match session
-            .task_artifact(task_id, args.text, file, file_name, args.file_mime)
+            .task_artifact(TaskArtifactParams {
+                task_id,
+                text: args.text,
+                file,
+                file_name,
+                file_mime: args.file_mime,
+            })
             .await
         {
             Ok((id, message)) => ok_json(SendMessageResult { id, message }),
@@ -776,12 +785,12 @@ impl AgentSquareServer {
         let peer = Nickname::new(args.to)
             .map_err(|error| McpError::invalid_params(format!("invalid peer: {error}"), None))?;
         let response = session
-            .a2a_call(
+            .a2a_call(A2aCallParams {
                 peer,
-                args.method,
-                args.params,
-                Duration::from_secs(args.timeout_secs),
-            )
+                method: args.method,
+                params: args.params,
+                timeout: Duration::from_secs(args.timeout_secs),
+            })
             .await
             .map_err(to_mcp_error)?;
         // Surface a JSON-RPC error as a tool error so the agent sees it fail.

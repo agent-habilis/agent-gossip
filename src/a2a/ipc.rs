@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use crate::a2a::app::A2aApp;
-use crate::a2a::surfaced::PollResponder;
+use crate::a2a::surfaced::{PollOrRegisterParams, PollResponder};
 use crate::a2a::{TaskId, TaskState};
 use crate::output;
 use agent_habilis_mesh::daemon::state::{EventLoopState, PingRound};
@@ -15,8 +15,11 @@ use agent_habilis_mesh::protocol::{MeshId, Message, MessageBody, Nickname};
 use agent_habilis_mesh::transport::ipc::{Addressed, json_ack, json_error, json_ok_msg};
 use agent_habilis_mesh::util::tuning::ping_window_secs;
 
-use crate::a2a::send::{broadcast_message, emit_task_artifact, emit_task_status};
-use agent_habilis_mesh::gossip::{broadcast_msg, broadcast_state_merge};
+use crate::a2a::send::{
+    BroadcastMessageParams, TaskArtifactEmitParams, TaskStatusParams, broadcast_message,
+    emit_task_artifact, emit_task_status,
+};
+use agent_habilis_mesh::gossip::{StateMergeParams, broadcast_msg, broadcast_state_merge};
 
 /// Command sent from CLI to the running server over IPC. App-side because its
 /// arms carry a2a-typed payloads (task id/state, gossip A2A calls); the engine's
@@ -150,26 +153,38 @@ impl Addressed for IpcCommand {
     }
 }
 
+/// One IPC command plus the daemon's own identity (mesh/name/author) and app
+/// state it's served against — grouped so `handle_ipc_command` stays within
+/// the argument budget alongside its state/sender/output handles.
+pub(crate) struct IpcDispatchParams<'a> {
+    pub(crate) cmd: IpcCommand,
+    pub(crate) resp_tx: oneshot::Sender<String>,
+    pub(crate) mesh: &'a MeshId,
+    pub(crate) name: &'a MeshName,
+    pub(crate) author: &'a Nickname,
+    pub(crate) app: &'a mut A2aApp,
+}
+
 /// Returns `true` if the handler broadcast anything, so the caller
 /// can refresh `last_sent_at` for heartbeat suppression.
 #[expect(
     clippy::too_many_lines,
-    clippy::too_many_arguments,
-    reason = "a dispatch match with one arm per IpcCommand (the state/meta channel pair \
-              doubles the patch/get arms), plus the daemon's own identity (mesh/name/author), \
-              the live state, gossip sender, and output sink"
+    reason = "a dispatch match with one arm per IpcCommand (the state/meta channel pair doubles the patch/get arms)"
 )]
 pub(crate) async fn handle_ipc_command(
-    cmd: IpcCommand,
-    resp_tx: oneshot::Sender<String>,
-    mesh: &MeshId,
-    name: &MeshName,
-    author: &Nickname,
+    params: IpcDispatchParams<'_>,
     state: &mut EventLoopState,
-    app: &mut A2aApp,
     sender: &MeshSender,
     output: &output::Output,
 ) -> bool {
+    let IpcDispatchParams {
+        cmd,
+        resp_tx,
+        mesh,
+        name,
+        author,
+        app,
+    } = params;
     // The per-mesh socket path already routes a command to the right daemon,
     // but a command carries its own mesh id — validate it matches ours rather
     // than binding it to `_` and trusting the path alone (a stale socket path or
@@ -184,7 +199,18 @@ pub(crate) async fn handle_ipc_command(
     match cmd {
         IpcCommand::Msg { mesh: _, body } => {
             tracing::debug!("IPC msg command received");
-            match broadcast_message(mesh, author, body, state, sender, output).await {
+            match broadcast_message(
+                BroadcastMessageParams {
+                    mesh,
+                    author,
+                    text: body,
+                },
+                state,
+                sender,
+                output,
+            )
+            .await
+            {
                 Ok((msg_id, msg)) => {
                     let _ = resp_tx.send(json_ok_msg(&msg_id, &msg));
                     true
@@ -207,12 +233,12 @@ pub(crate) async fn handle_ipc_command(
             // buffered, else (with `long`) parks a waiter the loop fulfills
             // on the next surfaced event or expires at the park cap. A parked
             // waiter broadcasts nothing → `false`.
-            app.surfaced.poll_or_register(
+            app.surfaced.poll_or_register(PollOrRegisterParams {
                 after,
                 long,
-                tokio::time::Instant::now(),
-                PollResponder::Json(resp_tx),
-            );
+                now: tokio::time::Instant::now(),
+                responder: PollResponder::Json(resp_tx),
+            });
             false
         }
         IpcCommand::Ping { mesh: _ } => {
@@ -244,13 +270,15 @@ pub(crate) async fn handle_ipc_command(
         } => {
             tracing::debug!(%task_id, ?task_state, "IPC a2a status command received");
             match emit_task_status(
-                mesh,
-                author,
-                &task_id,
-                task_state,
-                note.as_deref(),
+                TaskStatusParams {
+                    mesh,
+                    author,
+                    task_id: &task_id,
+                    task_state,
+                    note: note.as_deref(),
+                    app,
+                },
                 state,
-                app,
                 sender,
                 output,
             )
@@ -281,7 +309,17 @@ pub(crate) async fn handle_ipc_command(
                 mime: file_mime,
             });
             match emit_task_artifact(
-                mesh, author, &task_id, &text, file, state, app, sender, output,
+                TaskArtifactEmitParams {
+                    mesh,
+                    author,
+                    task_id: &task_id,
+                    text: &text,
+                    file,
+                    app,
+                },
+                state,
+                sender,
+                output,
             )
             .await
             {
@@ -301,14 +339,16 @@ pub(crate) async fn handle_ipc_command(
         }
         IpcCommand::StateMerge { mesh: _, merge } => {
             let outcome = broadcast_state_merge(
-                mesh,
-                author,
-                merge,
                 state,
-                sender,
-                output,
-                agent_habilis_mesh::protocol::Channel::State,
-                true,
+                StateMergeParams {
+                    mesh,
+                    author,
+                    merge,
+                    sender,
+                    sink: output,
+                    channel: agent_habilis_mesh::protocol::Channel::State,
+                    surface: true,
+                },
             )
             .await;
             let (response, broadcast) = state_merge_response(outcome);
@@ -324,14 +364,16 @@ pub(crate) async fn handle_ipc_command(
         }
         IpcCommand::MetaMerge { mesh: _, merge } => {
             let outcome = broadcast_state_merge(
-                mesh,
-                author,
-                merge,
                 state,
-                sender,
-                output,
-                agent_habilis_mesh::protocol::Channel::Meta,
-                true,
+                StateMergeParams {
+                    mesh,
+                    author,
+                    merge,
+                    sender,
+                    sink: output,
+                    channel: agent_habilis_mesh::protocol::Channel::Meta,
+                    surface: true,
+                },
             )
             .await;
             let (response, broadcast) = state_merge_response(outcome);
@@ -353,20 +395,22 @@ pub(crate) async fn handle_ipc_command(
             mesh: _,
             to,
             method,
-            params,
+            params: rpc_params,
             timeout_secs,
         } => {
             // The response arrives later (the peer's `A2aResp`, or a timeout),
             // so park `resp_tx` in the waiter — like the long-poll `Poll` arm —
             // and answer nothing now.
             crate::a2a::send::broadcast_a2a_call(
-                mesh,
-                author,
-                to,
-                &method,
-                params,
-                Duration::from_secs(timeout_secs),
-                crate::a2a::app::A2aResponder::Ipc(resp_tx),
+                crate::a2a::send::BroadcastA2aCallParams {
+                    mesh,
+                    author,
+                    peer: to,
+                    method: &method,
+                    params: rpc_params,
+                    timeout: Duration::from_secs(timeout_secs),
+                    responder: crate::a2a::app::A2aResponder::Ipc(resp_tx),
+                },
                 state,
                 app,
                 sender,
@@ -709,11 +753,13 @@ mod tests {
                 let expected_body = body.clone();
                 let identity = agent_habilis_mesh::protocol::identity::Identity::generate();
                 let (bytes, built) = agent_habilis_mesh::protocol::message::build_msg_bytes(
-                    &mesh,
-                    body,
-                    &author,
+                    agent_habilis_mesh::protocol::message::BuildMsgParams {
+                        mesh: &mesh,
+                        author: &author,
+                        body,
+                        chain: agent_habilis_mesh::protocol::message::ChainCtx::genesis(),
+                    },
                     &identity,
-                    agent_habilis_mesh::protocol::message::ChainCtx::genesis(),
                 )
                 .unwrap();
                 prop_assert!(!built.id.as_str().is_empty());

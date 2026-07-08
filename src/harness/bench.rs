@@ -118,10 +118,12 @@ impl BenchMessage {
         Self(Message::new_app(
             &mesh,
             &author,
-            agent_habilis_mesh::protocol::AppTag::from(crate::a2a::wire::MSG),
-            None,
-            None,
-            MessageBody::new(body).expect("valid body"),
+            agent_habilis_mesh::protocol::AppFrameParams {
+                tag: agent_habilis_mesh::protocol::AppTag::from(crate::a2a::wire::MSG),
+                to: None,
+                corr: None,
+                body: MessageBody::new(body).expect("valid body"),
+            },
         ))
     }
 

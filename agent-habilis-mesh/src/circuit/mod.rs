@@ -18,8 +18,8 @@ mod telemetry;
 mod wire;
 
 pub(crate) use accept::CircuitAcceptor;
-pub(crate) use linkstate::self_vector;
 pub use linkstate::{LinkStateStore, LinkVector};
+pub(crate) use linkstate::{SelfVectorParams, self_vector};
 pub(crate) use open::open_circuit;
 pub(crate) use telemetry::NeighborProfile;
 

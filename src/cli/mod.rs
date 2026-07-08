@@ -345,14 +345,14 @@ async fn a2a(action: A2aAction) -> Result<()> {
             let password = password::resolve_password(password, /* confirm */ true, json)?;
             let advertise =
                 agent_habilis_mesh::protocol::mesh::DirectorySelection::from_flag(advertise);
-            Box::pin(crate::a2a::expose(
-                &to,
-                lookups.to_set(),
+            Box::pin(crate::a2a::expose(crate::a2a::ExposeParams {
+                to: &to,
+                flags: lookups.to_set(),
                 advertise,
                 loopback,
                 json,
                 password,
-            ))
+            }))
             .await
         }
         A2aAction::Connect {
@@ -380,13 +380,13 @@ async fn a2a(action: A2aAction) -> Result<()> {
             output,
         } => {
             let json = matches!(output, OutputFormat::Json);
-            Box::pin(a2a_discover::discover(
+            Box::pin(a2a_discover::discover(a2a_discover::DiscoverParams {
                 directory,
                 port,
-                lookups.to_set(),
+                lookups: lookups.to_set(),
                 password,
                 json,
-            ))
+            }))
             .await
         }
         A2aAction::Call {
@@ -733,7 +733,10 @@ async fn state(opts: StateOpts) -> Result<()> {
                 nickname,
             )
         }
-        StateAction::Get { square: mesh, nickname } => (IpcCommand::StateGet { mesh }, nickname),
+        StateAction::Get {
+            square: mesh,
+            nickname,
+        } => (IpcCommand::StateGet { mesh }, nickname),
     };
     let resp = ipc::send(&cmd, &nickname).await?;
     println!("{resp}");
@@ -769,7 +772,10 @@ async fn meta(opts: MetaOpts) -> Result<()> {
                 nickname,
             )
         }
-        MetaAction::Get { square: mesh, nickname } => (IpcCommand::MetaGet { mesh }, nickname),
+        MetaAction::Get {
+            square: mesh,
+            nickname,
+        } => (IpcCommand::MetaGet { mesh }, nickname),
     };
     let resp = ipc::send(&cmd, &nickname).await?;
     println!("{resp}");

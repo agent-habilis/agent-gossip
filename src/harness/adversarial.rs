@@ -15,7 +15,9 @@ use crate::a2a::wire;
 use agent_habilis_mesh::protocol::identity::{self, Identity};
 use agent_habilis_mesh::protocol::message::Message;
 use agent_habilis_mesh::protocol::message::PresenceSubtype;
-use agent_habilis_mesh::protocol::{AppTag, CorrId, MeshId, MessageBody, MessageKind, Nickname};
+use agent_habilis_mesh::protocol::{
+    AppFrameParams, AppTag, CorrId, MeshId, MessageBody, MessageKind, Nickname,
+};
 
 // The reassembly byte budgets, so the suite's tripwires assert against the
 // same constants the store enforces.
@@ -41,6 +43,16 @@ pub fn pubkey_hex(key: &TestKey) -> String {
     identity::encode_pubkey(&key.0.public())
 }
 
+/// The value cluster for [`CraftedMsg::status_frame`]: the author/target
+/// nicknames plus the frame-vs-payload task-id pair under test.
+#[derive(Clone, Copy)]
+pub struct StatusFrameParams<'a> {
+    pub author: &'a str,
+    pub to: &'a str,
+    pub frame_task_id: &'a str,
+    pub payload_task_id: &'a str,
+}
+
 /// Builder for a crafted `Msg`. Choose every field, then `sign` (or not) and
 /// take the wire [`bytes`](CraftedMsg::bytes). Mutating *after* `sign` (e.g.
 /// [`tamper_body`](CraftedMsg::tamper_body)) yields a structurally-valid
@@ -59,7 +71,16 @@ impl CraftedMsg {
         let author = Nickname::new(author.to_owned()).expect("test author is a valid nickname");
         let body = MessageBody::new(body.to_owned()).expect("test body is valid");
         Self {
-            msg: Message::new_app(mesh, &author, AppTag::from(wire::MSG), None, None, body),
+            msg: Message::new_app(
+                mesh,
+                &author,
+                AppFrameParams {
+                    tag: AppTag::from(wire::MSG),
+                    to: None,
+                    corr: None,
+                    body,
+                },
+            ),
         }
     }
 
@@ -114,13 +135,13 @@ impl CraftedMsg {
     /// carries `frame_task_id` while the PAYLOAD claims `payload_task_id` — the
     /// cross-validation attack shape a correct client never produces. Both
     /// must be valid UUIDs. Unsigned until [`sign`](CraftedMsg::sign).
-    pub fn status_frame(
-        mesh: &MeshId,
-        author: &str,
-        to: &str,
-        frame_task_id: &str,
-        payload_task_id: &str,
-    ) -> Self {
+    pub fn status_frame(mesh: &MeshId, params: StatusFrameParams<'_>) -> Self {
+        let StatusFrameParams {
+            author,
+            to,
+            frame_task_id,
+            payload_task_id,
+        } = params;
         let author = Nickname::new(author.to_owned()).expect("test author is a valid nickname");
         let to = Nickname::new(to.to_owned()).expect("valid target");
         let frame_tid =
@@ -129,20 +150,24 @@ impl CraftedMsg {
             crate::a2a::TaskId::from_uuid_str(payload_task_id).expect("valid payload task id");
         let update = crate::a2a::gossip::status_update(
             mesh,
-            &payload_tid,
-            crate::a2a::TaskState::Working,
-            None,
-            None,
+            crate::a2a::gossip::StatusUpdateParams {
+                task_id: &payload_tid,
+                state: crate::a2a::TaskState::Working,
+                note: None,
+                metadata: None,
+            },
         );
         let body = crate::a2a::gossip::payload_body(&update).expect("crafted payload serializes");
         Self {
             msg: Message::new_app(
                 mesh,
                 &author,
-                AppTag::from(wire::STATUS),
-                Some(to),
-                Some(CorrId::from(frame_tid.as_str())),
-                body,
+                AppFrameParams {
+                    tag: AppTag::from(wire::STATUS),
+                    to: Some(to),
+                    corr: Some(CorrId::from(frame_tid.as_str())),
+                    body,
+                },
             ),
         }
     }

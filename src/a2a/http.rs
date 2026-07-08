@@ -3,7 +3,7 @@ use http_body_util::{BodyExt, Full};
 use hyper::body::{Bytes, Incoming};
 use hyper::service::service_fn;
 use hyper::{Method, Request, Response, StatusCode};
-use tokio::net::TcpListener;
+use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, oneshot};
 
 use agent_habilis_mesh::protocol::Nickname;
@@ -76,26 +76,26 @@ pub(crate) fn spawn(binding: A2aBinding, req_tx: mpsc::Sender<A2aRequest>) {
                     continue;
                 }
             };
-            let token = token.clone();
-            let req_tx = req_tx.clone();
-            tokio::spawn(async move {
-                let io = hyper_util::rt::TokioIo::new(stream);
-                let service = service_fn(move |request| {
-                    let token = token.clone();
-                    let req_tx = req_tx.clone();
-                    async move {
-                        Ok::<_, std::convert::Infallible>(handle(request, &token, &req_tx).await)
-                    }
-                });
-                if let Err(error) = hyper::server::conn::http1::Builder::new()
-                    .serve_connection(io, service)
-                    .await
-                {
-                    tracing::debug!(%error, "a2a: connection ended with error");
-                }
-            });
+            tokio::spawn(serve_connection(stream, token.clone(), req_tx.clone()));
         }
     });
+}
+
+/// Serve one accepted connection as HTTP/1.1, dispatching every request on it
+/// through [`handle`].
+async fn serve_connection(stream: TcpStream, token: String, req_tx: mpsc::Sender<A2aRequest>) {
+    let io = hyper_util::rt::TokioIo::new(stream);
+    let service = service_fn(move |request| {
+        let token = token.clone();
+        let req_tx = req_tx.clone();
+        async move { Ok::<_, std::convert::Infallible>(handle(request, &token, &req_tx).await) }
+    });
+    if let Err(error) = hyper::server::conn::http1::Builder::new()
+        .serve_connection(io, service)
+        .await
+    {
+        tracing::debug!(%error, "a2a: connection ended with error");
+    }
 }
 
 fn json_response(status: StatusCode, body: &serde_json::Value) -> Response<Full<Bytes>> {

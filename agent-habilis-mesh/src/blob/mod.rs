@@ -58,10 +58,19 @@ pub struct FileRef {
     pub mime: Option<String>,
 }
 
-/// Offload `file` over the blob channel and return an A2A `Part` that references
-/// it by `url` (a `💬` ticket) — for an output `Artifact.parts` or an input
-/// `Message.parts`. Lazily binds the daemon's blob server on the first offload
-/// (into `spool_dir`), reusing it thereafter.
+/// Parameters for [`url_part`]'s one-shot blob offload.
+#[derive(Debug)]
+pub struct OffloadParams {
+    pub file: FileRef,
+    pub spool_dir: PathBuf,
+    pub content_id: ContentId,
+    pub password: Option<crate::protocol::crypto::Password>,
+}
+
+/// Offload `request.file` over the blob channel and return an A2A `Part` that
+/// references it by `url` (a `💬` ticket) — for an output `Artifact.parts` or
+/// an input `Message.parts`. Lazily binds the daemon's blob server on the
+/// first offload (into `request.spool_dir`), reusing it thereafter.
 ///
 /// # Errors
 /// Binding the blob server, hashing, or snapshotting the file fails (e.g. the
@@ -69,13 +78,16 @@ pub struct FileRef {
 /// # Panics
 /// Panics if an internal invariant is violated.
 pub async fn url_part(
-    file: FileRef,
     server: &mut Option<BlobServer>,
     lookups: &LookupOpts,
-    spool_dir: PathBuf,
-    content_id: ContentId,
-    password: Option<crate::protocol::crypto::Password>,
+    request: OffloadParams,
 ) -> Result<BlobPart> {
+    let OffloadParams {
+        file,
+        spool_dir,
+        content_id,
+        password,
+    } = request;
     if server.is_none() {
         *server = Some(BlobServer::start(lookups.clone(), spool_dir, password).await?);
     }

@@ -13,6 +13,16 @@ pub(crate) struct DigestWindow {
     pub ids: Vec<[u8; 16]>,
 }
 
+/// Inclusive `[lo, hi]` timestamp bounds to filter by — the shape shared by a
+/// [`DigestWindow`] and a wire-decoded digest window entry (the anti-entropy
+/// caller's own type), grouped so [`MessageLog::missing_in_window`] doesn't
+/// need either concrete type by name.
+#[derive(Clone, Copy)]
+pub(crate) struct WindowRange {
+    pub lo: i64,
+    pub hi: i64,
+}
+
 /// A bounded buffer of the recent messages a member retains — the
 /// anti-entropy recovery source and the poll/fetch history. Held in arrival
 /// order (push order ≈ ascending timestamp) for the poll cursor and the
@@ -147,8 +157,7 @@ impl MessageLog {
     /// recovers what it missed. Out-of-window messages are never re-sent.
     pub(crate) fn missing_in_window(
         &self,
-        lo: i64,
-        hi: i64,
+        range: WindowRange,
         have: &HashSet<[u8; 16]>,
         max: usize,
     ) -> Vec<Message> {
@@ -156,7 +165,9 @@ impl MessageLog {
             .iter()
             .rev()
             .filter(|msg| {
-                msg.timestamp >= lo && msg.timestamp <= hi && !have.contains(&msg.dedup_key())
+                msg.timestamp >= range.lo
+                    && msg.timestamp <= range.hi
+                    && !have.contains(&msg.dedup_key())
             })
             .take(max)
             .cloned()
@@ -178,16 +189,18 @@ fn eviction_key(msg: &Message) -> (i64, &str, Option<u64>, &str) {
 mod tests {
     use std::collections::HashSet;
 
-    use super::{Message, MessageLog};
+    use super::{Message, MessageLog, WindowRange};
 
     fn msg(id: &str) -> Message {
         Message::new_app(
             &crate::protocol::MeshId::from("💬test"),
             &crate::protocol::Nickname::from("author"),
-            crate::protocol::AppTag::from("a2a_msg"),
-            None,
-            None,
-            crate::protocol::MessageBody::from(id),
+            crate::protocol::AppFrameParams {
+                tag: crate::protocol::AppTag::from("a2a_msg"),
+                to: None,
+                corr: None,
+                body: crate::protocol::MessageBody::from(id),
+            },
         )
     }
 
@@ -254,7 +267,7 @@ mod tests {
             .ids
             .into_iter()
             .collect();
-        let gap = log.missing_in_window(20, 40, &have, 10);
+        let gap = log.missing_in_window(WindowRange { lo: 20, hi: 40 }, &have, 10);
         let bodies: HashSet<&str> = gap.iter().map(|msg| msg.body.as_str()).collect();
         // ts 20 and 40 are in-window and missing; 30 is in `have`; 10 and 50
         // are out of window — never re-sent.
@@ -283,7 +296,14 @@ mod tests {
         assert_eq!(window.hi, i64::MAX, "newest window must be open-ended");
         let have: HashSet<[u8; 16]> = window.ids.into_iter().collect();
         let offered: HashSet<String> = holder
-            .missing_in_window(window.lo, window.hi, &have, 100)
+            .missing_in_window(
+                WindowRange {
+                    lo: window.lo,
+                    hi: window.hi,
+                },
+                &have,
+                100,
+            )
             .iter()
             .map(|msg| msg.body.as_str().to_string())
             .collect();

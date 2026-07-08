@@ -155,13 +155,13 @@ impl MeshName {
                 // collapse and a leading `-` is suppressed. A trailing run
                 // leaves `pending_dash` set but is never emitted.
                 pending_dash = !out.is_empty();
-            } else {
-                if pending_dash {
-                    out.push('-');
-                    pending_dash = false;
-                }
-                out.push(ch);
+                continue;
             }
+            if pending_dash {
+                out.push('-');
+                pending_dash = false;
+            }
+            out.push(ch);
         }
 
         let chars: Vec<char> = out.chars().collect();

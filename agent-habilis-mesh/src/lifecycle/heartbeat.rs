@@ -95,8 +95,7 @@ mod tests {
             None,
             Instant::now(),
             std::sync::Arc::new(crate::protocol::identity::Identity::generate()),
-            None,
-            None,
+            crate::daemon::state::MeshSecrets::default(),
         )
     }
 

@@ -21,7 +21,7 @@ mod wordlist;
 
 pub use mesh::MeshId;
 pub use message::{
-    AppTag, Channel, CorrId, Message, MessageBody, MessageId, MessageKind, PresenceSubtype, Shard,
-    ShardGroup,
+    AppFrameParams, AppTag, Channel, CorrId, Message, MessageBody, MessageId, MessageKind,
+    PresenceSubtype, Shard, ShardGroup,
 };
 pub use nickname::Nickname;

@@ -2,10 +2,10 @@ use serde_json::Value;
 use tokio::sync::oneshot;
 
 use crate::a2a::app::A2aApp;
-use crate::a2a::send::{broadcast_message, emit_task_status};
+use crate::a2a::send::{BroadcastMessageParams, broadcast_message, emit_task_status};
 use crate::output;
 use agent_habilis_mesh::daemon::state::EventLoopState;
-use agent_habilis_mesh::gossip::broadcast_state_merge;
+use agent_habilis_mesh::gossip::{StateMergeParams, broadcast_state_merge};
 use agent_habilis_mesh::protocol::mesh::MeshId;
 use agent_habilis_mesh::protocol::{Channel, MessageBody, Nickname};
 use agent_habilis_mesh::transport::MeshSender;
@@ -192,27 +192,53 @@ pub(crate) fn task_object(task_id: &TaskId, rec: &TaskRecord, mesh: &MeshId) -> 
     })
 }
 
+/// One JSON-RPC op's identity (mesh/author/pubkey/local port) plus the app
+/// state it's resolved against — grouped so `handle_op` stays within the
+/// argument budget alongside its state/sender/output handles.
+pub(crate) struct HandleOpParams<'a> {
+    pub(crate) op: A2aOp,
+    pub(crate) mesh: &'a MeshId,
+    pub(crate) author: &'a Nickname,
+    pub(crate) our_pubkey: &'a str,
+    pub(crate) a2a_port: u16,
+    pub(crate) app: &'a mut A2aApp,
+}
+
 /// Execute one op against the live loop state — the JSON-RPC binding's
 /// dispatch, sharing the exact broadcast paths the IPC socket uses so the
 /// two bindings cannot drift.
 #[expect(
-    clippy::too_many_arguments,
-    reason = "the JSON-RPC op dispatch threads mesh/author identity, our pubkey, the local a2a port, plus the mesh state, app state, gossip sender, and output it executes through"
+    clippy::too_many_lines,
+    reason = "a dispatch match with one arm per A2aOp variant, mirroring handle_ipc_command/handle_session_request"
 )]
 pub(crate) async fn handle_op(
-    op: A2aOp,
-    mesh: &MeshId,
-    author: &Nickname,
-    our_pubkey: &str,
-    a2a_port: u16,
+    params: HandleOpParams<'_>,
     state: &mut EventLoopState,
-    app: &mut A2aApp,
     sender: &MeshSender,
     output: &output::Output,
 ) -> Result<Value, RpcError> {
+    let HandleOpParams {
+        op,
+        mesh,
+        author,
+        our_pubkey,
+        a2a_port,
+        app,
+    } = params;
     match op {
         A2aOp::SendMessage { to, message } => {
-            send_message(to, message, mesh, author, state, sender, output).await
+            send_message(
+                SendMessageParams {
+                    to,
+                    message,
+                    mesh,
+                    author,
+                },
+                state,
+                sender,
+                output,
+            )
+            .await
         }
         A2aOp::GetTask { task_id } => app
             .tasks
@@ -235,13 +261,15 @@ pub(crate) async fn handle_op(
                 return Err(RpcError::task_not_found(&task_id));
             }
             emit_task_status(
-                mesh,
-                author,
-                &task_id,
-                super::TaskState::Canceled,
-                Some("canceled"),
+                crate::a2a::send::TaskStatusParams {
+                    mesh,
+                    author,
+                    task_id: &task_id,
+                    task_state: super::TaskState::Canceled,
+                    note: Some("canceled"),
+                    app,
+                },
                 state,
-                app,
                 sender,
                 output,
             )
@@ -260,9 +288,20 @@ pub(crate) async fn handle_op(
             Ok(document)
         }
         A2aOp::ChannelMerge { channel, merge } => {
-            broadcast_state_merge(mesh, author, merge, state, sender, output, channel, true)
-                .await
-                .map_err(|error| RpcError::internal(error.to_string()))?;
+            broadcast_state_merge(
+                state,
+                StateMergeParams {
+                    mesh,
+                    author,
+                    merge,
+                    sender,
+                    sink: output,
+                    channel,
+                    surface: true,
+                },
+            )
+            .await
+            .map_err(|error| RpcError::internal(error.to_string()))?;
             Ok(serde_json::json!({ "ok": true }))
         }
         A2aOp::OwnCard => {
@@ -310,6 +349,16 @@ pub(crate) async fn handle_op(
     }
 }
 
+/// The addressee (must be `None`), payload, and identity of one
+/// `message/send` RPC op — grouped so `send_message` stays within the
+/// argument budget alongside its state/sender/output handles.
+struct SendMessageParams<'a> {
+    to: Option<Nickname>,
+    message: super::Message,
+    mesh: &'a MeshId,
+    author: &'a Nickname,
+}
+
 /// A **broadcast** `message/send` (no addressee): re-author the wire payload
 /// from the client Message's text projection (role/context/extension stamping
 /// stays the daemon's job) and flood it. A *directed* `message/send` (task
@@ -317,14 +366,17 @@ pub(crate) async fn handle_op(
 /// intercepts it and routes it through the gossip request/response waiter, and
 /// the gossip serve path ingests it directly — so a `Some(to)` here is a bug.
 async fn send_message(
-    to: Option<Nickname>,
-    message: super::Message,
-    mesh: &MeshId,
-    author: &Nickname,
+    params: SendMessageParams<'_>,
     state: &mut EventLoopState,
     sender: &MeshSender,
     output: &output::Output,
 ) -> Result<Value, RpcError> {
+    let SendMessageParams {
+        to,
+        message,
+        mesh,
+        author,
+    } = params;
     if to.is_some() {
         return Err(RpcError::internal(
             "directed message/send should be routed through the request/response waiter",
@@ -333,9 +385,18 @@ async fn send_message(
     let text = super::gossip::display_text(&message);
     let body = MessageBody::new(text)
         .map_err(|error| RpcError::invalid_params(format!("message text: {error}")))?;
-    let (_id, frame) = broadcast_message(mesh, author, body, state, sender, output)
-        .await
-        .map_err(|error| RpcError::internal(error.to_string()))?;
+    let (_id, frame) = broadcast_message(
+        BroadcastMessageParams {
+            mesh,
+            author,
+            text: body,
+        },
+        state,
+        sender,
+        output,
+    )
+    .await
+    .map_err(|error| RpcError::internal(error.to_string()))?;
     // A2A v1.0 `SendMessage` returns a `SendMessageResponse` oneof; a broadcast
     // has no task, so echo the daemon-authored Message as `{"message": …}`.
     let echo: super::Message = serde_json::from_str(frame.body.as_str())

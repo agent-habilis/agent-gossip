@@ -304,10 +304,12 @@ async fn status_task_id_mismatch_is_dropped() {
     let victim_nick = victim.nickname.clone();
     let evil = CraftedMsg::status_frame(
         attacker.session.mesh_id(),
-        "ghost",
-        &victim_nick,
-        "550e8400-e29b-41d4-a716-446655440000", // frame correlation
-        "660e8400-e29b-41d4-a716-446655440001", // payload taskId — mismatch
+        adversarial::StatusFrameParams {
+            author: "ghost",
+            to: &victim_nick,
+            frame_task_id: "550e8400-e29b-41d4-a716-446655440000", // frame correlation
+            payload_task_id: "660e8400-e29b-41d4-a716-446655440001", // payload taskId — mismatch
+        },
     )
     .sign(&key)
     .bytes();
@@ -379,6 +381,17 @@ async fn gap_nickname_impersonation_is_accepted() {
     attacker.leave().await;
 }
 
+/// True if `event` is a delivered `Message` whose visible text equals
+/// `body` — used to check whether a given sybil identity's flood message
+/// was accepted.
+fn is_flood_message(event: &OutputEvent, body: &str) -> bool {
+    matches!(
+        event,
+        OutputEvent::Message { msg, is_self: false }
+            if agent_square::a2a::gossip::chat_text(msg).as_deref() == Some(body)
+    )
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[should_panic(expected = "OPEN GAP")]
 async fn gap_sybil_identities_are_accepted() {
@@ -399,13 +412,7 @@ async fn gap_sybil_identities_are_accepted() {
         .wait_for(T, |events| {
             (0..5u32).all(|index| {
                 let body = format!("flood-{index}");
-                events.iter().any(|event| {
-                    matches!(
-                        event,
-                        OutputEvent::Message { msg, is_self: false }
-                            if agent_square::a2a::gossip::chat_text(msg).as_deref() == Some(&body)
-                    )
-                })
+                events.iter().any(|event| is_flood_message(event, &body))
             })
         })
         .await;

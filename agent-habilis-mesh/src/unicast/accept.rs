@@ -29,25 +29,33 @@ impl UnicastAcceptor {
     }
 }
 
+impl UnicastAcceptor {
+    /// Forward one frame read outcome to the event loop. Split out of
+    /// `accept` so the match arms aren't nested inside its `while let`.
+    fn handle_frame<Error: std::fmt::Display>(&self, result: Result<Vec<u8>, Error>) {
+        match result {
+            Ok(bytes) => {
+                // Bounded, non-blocking: a flooding peer can't back-pressure
+                // the event loop, and a dropped frame heals via anti-entropy.
+                if self.tx.try_send(Bytes::from(bytes)).is_err() {
+                    tracing::debug!(target: LOG_TARGET, "unicast inbox full or closed; frame dropped");
+                } else {
+                    tracing::debug!(target: LOG_TARGET, "unicast frame accepted");
+                }
+            }
+            Err(error) => {
+                tracing::debug!(target: LOG_TARGET, %error, "unicast frame read failed");
+            }
+        }
+    }
+}
+
 impl ProtocolHandler for UnicastAcceptor {
     async fn accept(&self, conn: Connection) -> Result<(), AcceptError> {
         // Each accepted uni-stream carries exactly one message; loop until the
         // peer closes the connection (`accept_uni` errors).
         while let Ok(mut recv) = conn.accept_uni().await {
-            match recv.read_to_end(MAX_UNICAST_FRAME).await {
-                Ok(bytes) => {
-                    // Bounded, non-blocking: a flooding peer can't back-pressure
-                    // the event loop, and a dropped frame heals via anti-entropy.
-                    if self.tx.try_send(Bytes::from(bytes)).is_err() {
-                        tracing::debug!(target: LOG_TARGET, "unicast inbox full or closed; frame dropped");
-                    } else {
-                        tracing::debug!(target: LOG_TARGET, "unicast frame accepted");
-                    }
-                }
-                Err(error) => {
-                    tracing::debug!(target: LOG_TARGET, %error, "unicast frame read failed");
-                }
-            }
+            self.handle_frame(recv.read_to_end(MAX_UNICAST_FRAME).await);
         }
         Ok(())
     }

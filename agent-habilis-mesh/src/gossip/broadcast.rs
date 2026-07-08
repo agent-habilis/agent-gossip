@@ -7,13 +7,12 @@
 
 use crate::transport::MeshSender;
 use bytes::Bytes;
-use iroh::Endpoint;
 
 use crate::daemon::ctx::HandlerCtx;
 use crate::daemon::state::EventLoopState;
 use crate::gossip::event::{NodeEvent, NodeSink};
-use crate::protocol::identity::Identity;
-use crate::protocol::{AppTag, Channel, CorrId, MeshId, Message, MessageBody, Nickname};
+use crate::protocol::message::AppFrameParams;
+use crate::protocol::{Channel, MeshId, Message, MessageBody, Nickname};
 use crate::util::consts::MAX_MESSAGE_SIZE;
 
 /// Build → sign → deliver one outbound `App` frame — the payload-generic
@@ -51,12 +50,9 @@ use crate::util::consts::MAX_MESSAGE_SIZE;
 pub async fn send_app(
     state: &mut EventLoopState,
     ctx: &HandlerCtx<'_>,
-    tag: AppTag,
-    to: Option<Nickname>,
-    corr: Option<CorrId>,
-    body: MessageBody,
+    params: AppFrameParams,
 ) -> anyhow::Result<()> {
-    let frame = Message::new_app(ctx.mesh, ctx.author, tag, to, corr, body).signed(ctx.identity);
+    let frame = Message::new_app(ctx.mesh, ctx.author, params).signed(ctx.identity);
     if frame.wire_len() > MAX_MESSAGE_SIZE {
         anyhow::bail!(
             "app frame too large: {} bytes exceeds the {MAX_MESSAGE_SIZE}-byte single-frame limit",
@@ -98,6 +94,23 @@ pub async fn broadcast_msg(sender: &MeshSender, msg: &Message) {
     }
 }
 
+/// Parameters for [`broadcast_state_merge`]. A dedicated struct rather than
+/// reusing `HandlerCtx`: several root-crate callers only hold loose
+/// `mesh`/`author`/`sender`/`sink` locals, not a full `HandlerCtx`.
+#[expect(
+    missing_debug_implementations,
+    reason = "sink is a &'a dyn NodeSink trait object with no Debug impl"
+)]
+pub struct StateMergeParams<'a> {
+    pub mesh: &'a MeshId,
+    pub author: &'a Nickname,
+    pub merge: serde_json::Value,
+    pub sender: &'a MeshSender,
+    pub sink: &'a dyn NodeSink,
+    pub channel: Channel,
+    pub surface: bool,
+}
+
 /// The single shared-state write helper, shared by the IPC `state_merge` command
 /// and the embed `StateMerge` request. Translates the RFC 7386 merge into one
 /// automerge change, gossips it inside a signed frame, and retains it locally so
@@ -118,21 +131,21 @@ pub async fn broadcast_msg(sender: &MeshSender, msg: &Message) {
 /// # Errors
 /// Unrepresentable merge, oversize frame, a rejected foreign-card write, or a
 /// broadcast refusal.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the shared-state write threads mesh/author identity, the merge, the mesh state, the gossip sender and event sink, plus the target channel and the surface flag"
-)]
 pub async fn broadcast_state_merge(
-    mesh: &MeshId,
-    author: &Nickname,
-    merge: serde_json::Value,
     state: &mut EventLoopState,
-    sender: &MeshSender,
-    sink: &dyn NodeSink,
-    channel: Channel,
-    surface: bool,
+    params: StateMergeParams<'_>,
 ) -> anyhow::Result<()> {
     use crate::daemon::doc::Ingested;
+
+    let StateMergeParams {
+        mesh,
+        author,
+        merge,
+        sender,
+        sink,
+        channel,
+        surface,
+    } = params;
 
     // 1. Build the change on a fork (no live mutation yet); a no-op merge is a
     //    silent success.
@@ -216,14 +229,8 @@ pub async fn broadcast_state_merge(
 /// message log (`handle_peer_info` returns before the log push), so
 /// re-sending it is invisible to `poll`/`fetch_messages` consumers —
 /// safe to repeat on every new neighbor.
-pub(super) async fn broadcast_peer_info(
-    sender: &MeshSender,
-    mesh: &MeshId,
-    author: &Nickname,
-    identity: &Identity,
-    endpoint: &Endpoint,
-) {
-    let our_addr = endpoint.addr();
+pub(super) async fn broadcast_peer_info(ctx: &HandlerCtx<'_>) {
+    let our_addr = ctx.endpoint.addr();
     let addr_data = serde_json::to_string(&crate::protocol::peer_addr::endpoint_addr_to_json(
         &our_addr,
     ))
@@ -231,8 +238,8 @@ pub(super) async fn broadcast_peer_info(
     let addr_body =
         MessageBody::new(addr_data).expect("endpoint address JSON has no control characters");
     broadcast_msg(
-        sender,
-        &Message::new_peer_info(mesh, author, addr_body).signed(identity),
+        ctx.sender,
+        &Message::new_peer_info(ctx.mesh, ctx.author, addr_body).signed(ctx.identity),
     )
     .await;
 }
@@ -240,13 +247,11 @@ pub(super) async fn broadcast_peer_info(
 /// Announce our arrival: `joined` presence followed by `PeerInfo`.
 /// Called once at the top of the event loop; the caller bumps
 /// `last_sent_at` afterwards.
-pub(super) async fn announce_arrival(
-    sender: &MeshSender,
-    mesh: &MeshId,
-    author: &Nickname,
-    identity: &Identity,
-    endpoint: &Endpoint,
-) {
-    broadcast_msg(sender, &Message::new_joined(mesh, author).signed(identity)).await;
-    broadcast_peer_info(sender, mesh, author, identity, endpoint).await;
+pub(super) async fn announce_arrival(ctx: &HandlerCtx<'_>) {
+    broadcast_msg(
+        ctx.sender,
+        &Message::new_joined(ctx.mesh, ctx.author).signed(ctx.identity),
+    )
+    .await;
+    broadcast_peer_info(ctx).await;
 }

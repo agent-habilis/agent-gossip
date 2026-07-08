@@ -53,6 +53,19 @@ fn rotate(path: &Path) -> io::Result<fs::File> {
         .open(path)
 }
 
+/// Rotate the attached file once `written` reaches `max` (`max == 0`
+/// disables rotation). Best-effort: on rotate failure keep the current file
+/// (temporarily over cap) and retry next write — never drop the sink.
+fn maybe_rotate(file: &mut fs::File, path: &Path, written: &mut u64, max: u64) {
+    if max == 0 || *written < max {
+        return;
+    }
+    if let Ok(rotated) = rotate(path) {
+        *file = rotated;
+        *written = 0;
+    }
+}
+
 #[derive(Clone)]
 pub struct LogSink(Arc<Mutex<State>>);
 
@@ -197,15 +210,7 @@ impl Write for LogSink {
             } => {
                 file.write_all(bytes)?;
                 *written += bytes.len() as u64;
-                if *max != 0 && *written >= *max {
-                    // Best-effort: on rotate failure keep the current
-                    // file (temporarily over cap) and retry next write —
-                    // never drop the sink.
-                    if let Ok(rotated) = rotate(path) {
-                        *file = rotated;
-                        *written = 0;
-                    }
-                }
+                maybe_rotate(file, path, written, *max);
             }
             State::Stderr => io::stderr().write_all(bytes)?,
         }

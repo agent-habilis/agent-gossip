@@ -23,12 +23,12 @@ use agent_habilis_mesh::daemon::setup::{SetupKind, SetupParams, setup_mesh};
 use agent_habilis_mesh::daemon::state::EventLoopState;
 use agent_habilis_mesh::daemon::{CreateParams, JoinParams, Resolved, TopicParams};
 use agent_habilis_mesh::embed::Node;
-use agent_habilis_mesh::gossip::app::{AppClass, NodeApp};
+use agent_habilis_mesh::gossip::app::{AppClass, InboundApp, NodeApp};
 use agent_habilis_mesh::gossip::event::SilentSink;
 use agent_habilis_mesh::protocol::mesh::{
     DirectorySelection, LookupSet, MeshConfig, MeshName, RelaySelection, resolve_lookups,
 };
-use agent_habilis_mesh::protocol::{AppTag, Message, MessageBody, Nickname};
+use agent_habilis_mesh::protocol::{AppFrameParams, AppTag, Message, MessageBody, Nickname};
 use agent_habilis_mesh::resolver::JoinTarget;
 use agent_habilis_mesh::transport::TransportPolicy;
 use agent_habilis_mesh::util::consts::{GOSSIP_ACTIVE_VIEW_CAPACITY, MAX_MESSAGE_SIZE};
@@ -209,11 +209,14 @@ impl NodeApp for PipeApp {
 
     async fn on_app_frame(
         &mut self,
-        message: &Message,
-        _surfaceable: bool,
+        frame: InboundApp<'_>,
         _state: &mut EventLoopState,
         _ctx: &HandlerCtx<'_>,
     ) -> bool {
+        let InboundApp {
+            message,
+            surfaceable: _,
+        } = frame;
         match message.kind.app_tag().map(AppTag::as_str) {
             Some(tag::DATA) => match BASE64.decode(message.body.as_str()) {
                 Ok(bytes) => {
@@ -255,8 +258,17 @@ impl NodeDriver for PipeApp {
         ctx: &HandlerCtx<'_>,
     ) -> bool {
         let PipeRequest::Send { tag, to, body } = req;
-        if let Err(error) =
-            agent_habilis_mesh::gossip::send_app(state, ctx, tag, to, None, body).await
+        if let Err(error) = agent_habilis_mesh::gossip::send_app(
+            state,
+            ctx,
+            AppFrameParams {
+                tag,
+                to,
+                corr: None,
+                body,
+            },
+        )
+        .await
         {
             eprintln!("mesh-pipe: send failed: {error}");
         }
@@ -344,16 +356,24 @@ fn listen_select(args: &ListenArgs) -> Result<Select> {
     }
 }
 
+/// The per-session config for [`spawn_node`]: the nickname override plus the
+/// `TransportArgs`-derived active-view cap and directed-transport policy —
+/// shared by both `listen` and `connect`.
+struct SpawnConfig {
+    nickname: Option<Nickname>,
+    max_peers: usize,
+    transport: TransportPolicy,
+}
+
 /// Build the event loop for `select`, spawn it as a [`Node`], and return the
 /// node. `handle_signals` is true — each subcommand is a foreground process that
 /// owns its own lifetime, so ctrl-c should leave the mesh cleanly.
-async fn spawn_node(
-    select: Select,
-    nickname: Option<Nickname>,
-    app: PipeApp,
-    max_peers: usize,
-    transport: TransportPolicy,
-) -> Result<Node<PipeApp>> {
+async fn spawn_node(select: Select, app: PipeApp, config: SpawnConfig) -> Result<Node<PipeApp>> {
+    let SpawnConfig {
+        nickname,
+        max_peers,
+        transport,
+    } = config;
     let (kind, author, is_create) = select.resolve(nickname)?;
     let elc = setup_mesh(
         kind,
@@ -410,10 +430,12 @@ async fn run_listen(args: ListenArgs) -> Result<()> {
 
     let node = spawn_node(
         select,
-        nickname,
         PipeApp::sender(),
-        args.transport.max_peers,
-        args.transport.policy(),
+        SpawnConfig {
+            nickname,
+            max_peers: args.transport.max_peers,
+            transport: args.transport.policy(),
+        },
     )
     .await?;
 
@@ -464,10 +486,12 @@ async fn run_connect(args: ConnectArgs) -> Result<()> {
     let (done_tx, done_rx) = oneshot::channel();
     let node = spawn_node(
         select,
-        nickname,
         PipeApp::receiver(done_tx),
-        args.transport.max_peers,
-        args.transport.policy(),
+        SpawnConfig {
+            nickname,
+            max_peers: args.transport.max_peers,
+            transport: args.transport.policy(),
+        },
     )
     .await?;
 

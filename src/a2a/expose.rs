@@ -32,6 +32,18 @@ const WRONG_PASSWORD: u32 = 3;
 /// Close code for a stream whose auth token matches no secret at all.
 const BAD_SECRET: u32 = 1;
 
+/// The a2a bridge's target + lookup/advertise/output configuration — grouped
+/// (matching the embed facade's `*Config` structs) since `expose` is a single
+/// CLI operation with no environment handles to keep separate.
+pub(crate) struct ExposeParams<'a> {
+    pub(crate) to: &'a str,
+    pub(crate) flags: LookupSet,
+    pub(crate) advertise: DirectorySelection,
+    pub(crate) loopback: bool,
+    pub(crate) json: bool,
+    pub(crate) password: Option<Password>,
+}
+
 /// Exposer: forward a local `http://` A2A origin to a single peer over the
 /// mesh. Prints the consumer's `agent-square a2a connect` command on stdout.
 ///
@@ -42,14 +54,15 @@ const BAD_SECRET: u32 = 1;
 /// # Errors
 /// A `--to` that is not a plain `http://` URL, `--advertise` on an unreachable
 /// (loopback) config, or endpoint bind / discovery-config failures.
-pub(crate) async fn expose(
-    to: &str,
-    flags: LookupSet,
-    advertise: DirectorySelection,
-    loopback: bool,
-    json: bool,
-    password: Option<Password>,
-) -> Result<()> {
+pub(crate) async fn expose(params: ExposeParams<'_>) -> Result<()> {
+    let ExposeParams {
+        to,
+        flags,
+        advertise,
+        loopback,
+        json,
+        password,
+    } = params;
     let origin = parse_origin(to)?;
     // A bridge is a network transfer: default (no lookup flag) is the all-on
     // public preset; naming a granular flag restricts to it. `--loopback` is the
@@ -149,7 +162,9 @@ async fn serve_streams(conn: &Connection, origin: &str, auth: &TicketAuth) -> Re
         let auth = auth.clone();
         let origin = origin.to_owned();
         tokio::spawn(async move {
-            if let Err(error) = serve_stream(&conn, send, recv, &auth, &origin).await {
+            if let Err(error) =
+                serve_stream(&conn, BiStreamHalves { send, recv }, &auth, &origin).await
+            {
                 tracing::debug!(%error, "a2a bridge stream ended");
             }
         });
@@ -157,15 +172,22 @@ async fn serve_streams(conn: &Connection, origin: &str, auth: &TicketAuth) -> Re
     Ok(())
 }
 
+/// The QUIC bi-stream's two halves — grouped so `serve_stream` stays within
+/// the argument budget alongside its connection/auth/origin params.
+struct BiStreamHalves {
+    send: SendStream,
+    recv: RecvStream,
+}
+
 /// Authenticate one bi-stream by its 32-byte token header, dial the origin, and
 /// raw-proxy. A bad token closes the whole connection (the bearer is poisoned).
 async fn serve_stream(
     conn: &Connection,
-    send: SendStream,
-    mut recv: RecvStream,
+    streams: BiStreamHalves,
     auth: &TicketAuth,
     origin: &str,
 ) -> Result<()> {
+    let BiStreamHalves { send, mut recv } = streams;
     let mut token = [0u8; SECRET_LEN];
     if recv.read_exact(&mut token).await.is_err() {
         return Ok(());

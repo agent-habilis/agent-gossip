@@ -16,7 +16,7 @@ use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 
 use crate::daemon::ctx::HandlerCtx;
-use crate::daemon::message_log::DigestWindow;
+use crate::daemon::message_log::{DigestWindow, WindowRange};
 use crate::daemon::state::EventLoopState;
 use crate::protocol::{Channel, MeshId, Message, MessageBody, Nickname};
 use crate::util::tuning::{ANTIENTROPY_DIGEST_WINDOW_IDS, antientropy_max_resend};
@@ -158,10 +158,14 @@ pub(crate) async fn handle_digest(message: &Message, state: &EventLoopState, ctx
         if budget == 0 {
             break;
         }
-        for msg in state
-            .message_log
-            .missing_in_window(window.lo, window.hi, &have, budget)
-        {
+        for msg in state.message_log.missing_in_window(
+            WindowRange {
+                lo: window.lo,
+                hi: window.hi,
+            },
+            &have,
+            budget,
+        ) {
             if let Ok(bytes) = msg.serialize() {
                 let _ = ctx.sender.broadcast(Bytes::from(bytes)).await;
                 // Mark it sent so the next (overlapping) window doesn't re-send
@@ -198,15 +202,21 @@ pub(crate) async fn broadcast_state_digests(
     mesh: &MeshId,
     author: &Nickname,
 ) {
-    broadcast_state_digest(state, sender, mesh, author, Channel::State).await;
-    broadcast_state_digest(state, sender, mesh, author, Channel::Meta).await;
+    let origin = DigestOrigin { mesh, author };
+    broadcast_state_digest(state, sender, origin, Channel::State).await;
+    broadcast_state_digest(state, sender, origin, Channel::Meta).await;
 }
 
-pub(crate) async fn broadcast_state_digest(
+#[derive(Clone, Copy)]
+struct DigestOrigin<'a> {
+    mesh: &'a MeshId,
+    author: &'a Nickname,
+}
+
+async fn broadcast_state_digest(
     state: &mut EventLoopState,
     sender: &MeshSender,
-    mesh: &MeshId,
-    author: &Nickname,
+    origin: DigestOrigin<'_>,
     channel: Channel,
 ) {
     if !state.meshed {
@@ -224,7 +234,8 @@ pub(crate) async fn broadcast_state_digest(
     };
     broadcast_msg(
         sender,
-        &Message::new_channel_digest(mesh, author, body, channel).signed(&state.identity),
+        &Message::new_channel_digest(origin.mesh, origin.author, body, channel)
+            .signed(&state.identity),
     )
     .await;
 }
@@ -284,10 +295,12 @@ mod tests {
             let mut message = Message::new_app(
                 &MeshId::from("💬test"),
                 &Nickname::from("author"),
-                crate::protocol::AppTag::from("a2a_msg"),
-                None,
-                None,
-                MessageBody::from(format!("m{index}").as_str()),
+                crate::protocol::message::AppFrameParams {
+                    tag: crate::protocol::AppTag::from("a2a_msg"),
+                    to: None,
+                    corr: None,
+                    body: MessageBody::from(format!("m{index}").as_str()),
+                },
             );
             message.timestamp = 1_700_000_000 + i64::try_from(index).unwrap();
             log.push(message);

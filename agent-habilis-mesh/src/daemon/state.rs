@@ -371,20 +371,30 @@ pub struct PingRound {
     pub resp: Option<tokio::sync::oneshot::Sender<Vec<crate::gossip::event::PingRtt>>>,
 }
 
+/// The mesh's secret material, grouped so [`EventLoopState::new`] can take
+/// both by value (the stretched key must be owned here so it drops/zeroizes
+/// once the per-channel keys are derived) without blowing its argument budget.
+#[derive(Default)]
+pub(crate) struct MeshSecrets {
+    pub password: Option<crate::protocol::crypto::Password>,
+    pub key: Option<zeroize::Zeroizing<[u8; 32]>>,
+}
+
 impl EventLoopState {
     /// Build a fresh event-loop state. `now` is passed explicitly so
-    /// tests can pin a deterministic instant.
-    #[expect(
-        clippy::needless_pass_by_value,
-        reason = "mesh_key is taken by value so the stretched key is dropped (zeroized) here once the per-channel keys are derived, rather than lingering in the caller"
-    )]
+    /// tests can pin a deterministic instant. `secrets` is taken by value (not
+    /// `&MeshSecrets`) so its `key` is dropped (zeroized) here once the
+    /// per-channel keys are derived, rather than lingering in the caller.
     pub(crate) fn new(
         state_file: Option<StateFile>,
         now: Instant,
         identity: Arc<Identity>,
-        mesh_password: Option<crate::protocol::crypto::Password>,
-        mesh_key: Option<zeroize::Zeroizing<[u8; 32]>>,
+        secrets: MeshSecrets,
     ) -> Self {
+        let MeshSecrets {
+            password: mesh_password,
+            key: mesh_key,
+        } = secrets;
         // Per-channel encryption keys, domain-separated from each other and from
         // every other seed-derived secret. `None` (passwordless) ⇒ the docs and
         // broadcast chat stay plaintext, exactly as before.
@@ -766,10 +776,10 @@ const MAX_DAG_PARENTS: usize = 16;
 #[cfg(test)]
 mod tests {
     use super::{
-        Duration, EndpointId, EventLoopState, Instant, KNOWN_ENDPOINTS_CAP, Message, Nickname,
-        QUIET_CAP, RELINK_COOLDOWN_SECS, Reach,
+        Duration, EndpointId, EventLoopState, Instant, KNOWN_ENDPOINTS_CAP, MeshSecrets, Message,
+        Nickname, QUIET_CAP, RELINK_COOLDOWN_SECS, Reach,
     };
-    use crate::protocol::{MeshId, MessageBody, MessageId};
+    use crate::protocol::{AppFrameParams, MeshId, MessageBody, MessageId};
 
     fn nick(name: &str) -> Nickname {
         Nickname::new(name.to_owned()).expect("valid test nickname")
@@ -781,10 +791,12 @@ mod tests {
         let mut message = Message::new_app(
             &MeshId::from("💬test"),
             &nick("author-nick"),
-            crate::protocol::AppTag::from("a2a_msg"),
-            None,
-            None,
-            MessageBody::from("body"),
+            AppFrameParams {
+                tag: crate::protocol::AppTag::from("a2a_msg"),
+                to: None,
+                corr: None,
+                body: MessageBody::from("body"),
+            },
         );
         message.id = id.clone();
         message
@@ -795,8 +807,7 @@ mod tests {
             None,
             Instant::now(),
             std::sync::Arc::new(crate::protocol::identity::Identity::generate()),
-            None,
-            None,
+            MeshSecrets::default(),
         )
     }
 

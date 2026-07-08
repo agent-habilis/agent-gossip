@@ -21,7 +21,7 @@ use crate::protocol::message::MessageBody;
 use crate::protocol::{Channel, Message, MessageKind, Nickname};
 use crate::util::tuning::RECLAIM_WINDOW_SECS;
 
-use super::app::{AppClass, NodeApp};
+use super::app::{AppClass, InboundApp, NodeApp};
 use super::broadcast::{announce_arrival, broadcast_peer_info};
 use super::{antientropy, conn_path};
 
@@ -61,20 +61,12 @@ pub(crate) async fn handle_gossip_event(
                 if state.peerinfo_on_cooldown(node_id, now) {
                     tracing::debug!(endpoint_id = %node_id, "skipped PeerInfo re-flood (cooldown)");
                 } else {
-                    broadcast_peer_info(
-                        ctx.sender,
-                        ctx.mesh,
-                        ctx.author,
-                        ctx.identity,
-                        ctx.endpoint,
-                    )
-                    .await;
+                    broadcast_peer_info(ctx).await;
                     state.note_peerinfo(node_id, now);
                     state.last_sent_at = now;
                 }
             } else {
-                announce_arrival(ctx.sender, ctx.mesh, ctx.author, ctx.identity, ctx.endpoint)
-                    .await;
+                announce_arrival(ctx).await;
                 state.announced = true;
                 state.note_peerinfo(node_id, now);
                 state.last_sent_at = now;
@@ -221,6 +213,10 @@ async fn flush_pending(state: &mut EventLoopState, ctx: &HandlerCtx<'_>, edge: &
 /// `mark_seen` dedup are identical on both planes — a message delivered over
 /// both surfaces exactly once. `message` is mutable so a directed frame sealed
 /// to us can be decrypted in place before surfacing (see `gate_and_decrypt`).
+#[expect(
+    clippy::too_many_lines,
+    reason = "one straight-line validate/dispatch pipeline (parse, self-echo drop, rate-check, lifecycle observe, dispatch by kind, message-log); splitting would scatter a single sequential gate chain across helpers"
+)]
 pub(crate) async fn ingest(
     content: Bytes,
     state: &mut EventLoopState,
@@ -297,7 +293,17 @@ pub(crate) async fn ingest(
     // A shard of a split body never surfaces as a raw slice — see
     // `handle_shard` for the retain/reassemble/gate/surface sequence.
     if message.shard.is_some() {
-        handle_shard(&message, &canonical, surfaceable, state, app, ctx).await;
+        handle_shard(
+            InboundFrame {
+                message: &message,
+                canonical: &canonical,
+                surfaceable,
+            },
+            state,
+            app,
+            ctx,
+        )
+        .await;
         return;
     }
 
@@ -357,7 +363,16 @@ pub(crate) async fn ingest(
             return;
         }
         MessageKind::State => {
-            dispatch_channel(Channel::State, &message, surfaceable, state, app, ctx);
+            dispatch_channel(
+                ChannelEvent {
+                    channel: Channel::State,
+                    message: &message,
+                    surfaceable,
+                },
+                state,
+                app,
+                ctx,
+            );
             return;
         }
         MessageKind::StateDigest => {
@@ -365,7 +380,16 @@ pub(crate) async fn ingest(
             return;
         }
         MessageKind::Meta => {
-            dispatch_channel(Channel::Meta, &message, surfaceable, state, app, ctx);
+            dispatch_channel(
+                ChannelEvent {
+                    channel: Channel::Meta,
+                    message: &message,
+                    surfaceable,
+                },
+                state,
+                app,
+                ctx,
+            );
             return;
         }
         MessageKind::MetaDigest => {
@@ -378,10 +402,12 @@ pub(crate) async fn ingest(
         }
         MessageKind::Presence { subtype } => {
             lifecycle::handle_presence(
-                &message,
-                *subtype,
-                &observed.update,
-                surfaceable,
+                lifecycle::PresenceEvent {
+                    message: &message,
+                    subtype: *subtype,
+                    update: &observed.update,
+                    surfaceable,
+                },
                 state,
                 ctx,
             )
@@ -391,7 +417,17 @@ pub(crate) async fn ingest(
             // The app-payload seam: dispatch RPC legs / chat / task frames.
             // `false` means the frame is plumbing or addressed elsewhere —
             // stop before retention.
-            if !app.on_app_frame(&message, surfaceable, state, ctx).await {
+            if !app
+                .on_app_frame(
+                    InboundApp {
+                        message: &message,
+                        surfaceable,
+                    },
+                    state,
+                    ctx,
+                )
+                .await
+            {
                 return;
             }
         }
@@ -402,7 +438,15 @@ pub(crate) async fn ingest(
     if let Some(sealed) = sealed_body {
         message.body = sealed;
     }
-    retain_and_index(message, &canonical, state, ctx, app_class.as_ref());
+    retain_and_index(
+        message,
+        RetainMeta {
+            canonical: &canonical,
+            class: app_class.as_ref(),
+        },
+        state,
+        ctx,
+    );
 }
 
 /// Fold a received relay link-state advertisement into the routing table. The
@@ -431,18 +475,27 @@ fn handle_link_state(message: &Message, state: &mut EventLoopState) {
     }
 }
 
+struct InboundFrame<'a> {
+    message: &'a Message,
+    canonical: &'a [u8],
+    surfaceable: bool,
+}
+
 /// One shard of a split body: retain it for anti-entropy (so a missing shard
 /// heals like any message) and, when its group completes, gate the
 /// reassembled logical message through the A2A boundary and surface it once —
 /// embed-pushed and dispatched exactly like an ordinary inbound message.
 async fn handle_shard(
-    message: &Message,
-    canonical: &[u8],
-    surfaceable: bool,
+    frame: InboundFrame<'_>,
     state: &mut EventLoopState,
     app: &mut dyn NodeApp,
     ctx: &HandlerCtx<'_>,
 ) {
+    let InboundFrame {
+        message,
+        canonical,
+        surfaceable,
+    } = frame;
     // A directed shard (task leg / RPC) not addressed to us is relayed at the
     // gossip layer but never retained or reassembled here — a third party must
     // not persist or reconstruct a task exchange it is not part of. The
@@ -460,7 +513,15 @@ async fn handle_shard(
     // (RPC shards are plumbing — `retain_and_index` skips them by kind
     // either way.)
     if crate::protocol::message::shard_fits_log(message) {
-        retain_and_index(message.clone(), canonical, state, ctx, shard_class.as_ref());
+        retain_and_index(
+            message.clone(),
+            RetainMeta {
+                canonical,
+                class: shard_class.as_ref(),
+            },
+            state,
+            ctx,
+        );
     }
     if let Some(mut logical) = state.reassemble(message) {
         // Only the addressee reaches here (non-addressed directed shards returned
@@ -493,7 +554,16 @@ async fn handle_shard(
         // a directed RPC request/response (both shard now) reaches its handler,
         // and content surfaces. The shards were already retained above, so the
         // retain decision `on_app_frame` returns is ignored here.
-        let _ = app.on_app_frame(&logical, surfaceable, state, ctx).await;
+        let _ = app
+            .on_app_frame(
+                InboundApp {
+                    message: &logical,
+                    surfaceable,
+                },
+                state,
+                ctx,
+            )
+            .await;
     }
 }
 
@@ -507,13 +577,19 @@ async fn handle_shard(
 /// are presence-like — `broadcast_task` stamps them without a chain, so they
 /// must stay out of the fork/DAG indexes (see the `task` glossary invariant).
 /// Presence is loggable but not indexed.
+#[derive(Clone, Copy)]
+struct RetainMeta<'a> {
+    canonical: &'a [u8],
+    class: Option<&'a AppClass>,
+}
+
 fn retain_and_index(
     message: Message,
-    canonical: &[u8],
+    meta: RetainMeta<'_>,
     state: &mut EventLoopState,
     ctx: &HandlerCtx<'_>,
-    class: Option<&AppClass>,
 ) {
+    let RetainMeta { canonical, class } = meta;
     // App frames carry the app's per-tag policy (`classify`, computed once by the
     // caller and threaded in here); infra kinds (`class == None`) use the engine's
     // own rule. A beat is plumbing — never retained/indexed.
@@ -556,19 +632,27 @@ fn retain_and_index(
 /// adopt the author's endpoint hint into the dial book. Selects the disjoint doc
 /// field so the borrow released by [`ingest_channel_event`] frees `state` for the
 /// address adoption.
-fn dispatch_channel(
+#[derive(Clone, Copy)]
+struct ChannelEvent<'a> {
     channel: Channel,
-    message: &Message,
+    message: &'a Message,
     surfaceable: bool,
+}
+
+fn dispatch_channel(
+    event: ChannelEvent<'_>,
     state: &mut EventLoopState,
     app: &mut dyn NodeApp,
     ctx: &HandlerCtx<'_>,
 ) {
+    let ChannelEvent {
+        channel, message, ..
+    } = event;
     let doc = match channel {
         Channel::State => &mut state.state_doc,
         Channel::Meta => &mut state.meta_doc,
     };
-    ingest_channel_event(channel, doc, message, surfaceable, ctx);
+    ingest_channel_event(event, doc, ctx);
     if channel == Channel::Meta {
         // Post-apply hook: let the app adopt the author's endpoint hint from the
         // freshly-synced meta doc (the borrow above released `state`).
@@ -599,17 +683,21 @@ fn surface_view(message: &Message, plain: Option<String>) -> std::borrow::Cow<'_
 /// instead of reacting to replayed intermediate states). A received event is
 /// never our own (`is_self = false`). Both channels share this path verbatim.
 fn ingest_channel_event(
-    channel: Channel,
+    event: ChannelEvent<'_>,
     doc: &mut crate::daemon::doc::MeshDoc,
-    message: &Message,
-    surfaceable: bool,
     ctx: &HandlerCtx<'_>,
 ) {
+    use crate::daemon::doc::Ingested;
+
+    let ChannelEvent {
+        channel,
+        message,
+        surfaceable,
+    } = event;
     // The doc dedups by change hash, buffers out-of-order changes until their
     // deps land, retains the signed frame for re-serve, and gates card forgery
     // (the card carries the peer's cryptographic identity) — every recipient
     // applies the same gate, so a forgery converges nowhere.
-    use crate::daemon::doc::Ingested;
     match doc.ingest(message) {
         Ingested::Applied {
             changed: true,
@@ -701,42 +789,16 @@ fn gate_and_decrypt(
     app: &dyn NodeApp,
 ) -> Gated {
     if is_directed_content(&message.kind) {
-        if addressed_to_us(message, ctx.author) {
-            // Whether the directed body is sealed is the app's call, not a
-            // structural given: a2a's directed tags arrive encrypted, but a
-            // non-a2a consumer may send plaintext directed bytes. The frame is
-            // signature-authenticated either way; `sealed=false` only means "not
-            // additionally encrypted".
-            if app.classify(message).sealed {
-                let sealed = message.body.clone();
-                if !decrypt_directed(message, state, ctx) {
-                    return Gated::Drop;
-                }
-                let Some(class) = gate_app_payload(message, app) else {
-                    return Gated::Drop;
-                };
-                return Gated::Pass {
-                    sealed: Some(sealed),
-                    class: Some(class),
-                };
-            }
-            // Plaintext directed body: the wire body is already the final body,
-            // so retain_and_index re-serves it unchanged (`sealed: None`).
-            let Some(class) = gate_app_payload(message, app) else {
-                return Gated::Drop;
-            };
+        if !addressed_to_us(message, ctx.author) {
+            // Relay: an opaque directed frame — forwarded + retained, never
+            // validated or surfaced (the dispatch below is gated to the
+            // addressee), so it needs no classification here.
             return Gated::Pass {
                 sealed: None,
-                class: Some(class),
+                class: None,
             };
         }
-        // Relay: an opaque directed frame — forwarded + retained, never validated
-        // or surfaced (the dispatch below is gated to the addressee), so it needs
-        // no classification here.
-        return Gated::Pass {
-            sealed: None,
-            class: None,
-        };
+        return gate_directed_to_us(message, state, ctx, app);
     }
     // A broadcast app frame on a passworded mesh must arrive sealed with the
     // mesh key: decrypt in place so validation + surfacing see plaintext,
@@ -770,6 +832,43 @@ fn gate_and_decrypt(
             sealed: None,
             class: None,
         },
+    }
+}
+
+/// Validate + decrypt a directed frame that's addressed to us (as opposed to
+/// one we're only relaying).
+fn gate_directed_to_us(
+    message: &mut Message,
+    state: &EventLoopState,
+    ctx: &HandlerCtx<'_>,
+    app: &dyn NodeApp,
+) -> Gated {
+    // Whether the directed body is sealed is the app's call, not a
+    // structural given: a2a's directed tags arrive encrypted, but a
+    // non-a2a consumer may send plaintext directed bytes. The frame is
+    // signature-authenticated either way; `sealed=false` only means "not
+    // additionally encrypted".
+    if !app.classify(message).sealed {
+        // Plaintext directed body: the wire body is already the final body,
+        // so retain_and_index re-serves it unchanged (`sealed: None`).
+        let Some(class) = gate_app_payload(message, app) else {
+            return Gated::Drop;
+        };
+        return Gated::Pass {
+            sealed: None,
+            class: Some(class),
+        };
+    }
+    let sealed = message.body.clone();
+    if !decrypt_directed(message, state, ctx) {
+        return Gated::Drop;
+    }
+    let Some(class) = gate_app_payload(message, app) else {
+        return Gated::Drop;
+    };
+    Gated::Pass {
+        sealed: Some(sealed),
+        class: Some(class),
     }
 }
 

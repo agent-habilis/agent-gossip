@@ -26,8 +26,8 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use agent_square::embed::{CreateConfig, JoinConfig, MeshSession};
-use agent_square::{JoinTarget, MeshName, MessageBody};
-use tokio::sync::broadcast::error::RecvError;
+use agent_square::{JoinTarget, MeshName, Message, MessageBody};
+use tokio::sync::broadcast::{self, error::RecvError};
 
 /// Zero-padded index width in the `"{index:0N}:"` body prefix — one shared
 /// source for the format width and the receiver's parse.
@@ -93,6 +93,49 @@ fn verify_chunk(body: &str, expected_count: u32) -> Option<u32> {
     Some(index)
 }
 
+/// Shared tallies the receiver's spawned task reports progress through.
+#[derive(Clone)]
+struct DeliveryTally {
+    delivered: Arc<AtomicUsize>,
+    delivered_bytes: Arc<AtomicU64>,
+    lagged: Arc<AtomicU64>,
+}
+
+/// Drain `rx` until `chunk_count` distinct chunk indices have arrived (or the
+/// channel closes), tallying delivered count/bytes and any broadcast lag
+/// through `tally`. Body of the receiver's spawned task.
+async fn receive_chunks(
+    mut rx: broadcast::Receiver<Message>,
+    chunk_count: u32,
+    tally: DeliveryTally,
+) {
+    let mut seen = vec![false; chunk_count as usize];
+    loop {
+        let msg = match rx.recv().await {
+            Ok(msg) => msg,
+            Err(RecvError::Lagged(skipped)) => {
+                tally.lagged.fetch_add(skipped, Ordering::Relaxed);
+                continue;
+            }
+            Err(RecvError::Closed) => break,
+        };
+        let Some(index) = verify_chunk(msg.body.as_str(), chunk_count) else {
+            continue;
+        };
+        let slot = &mut seen[index as usize];
+        if *slot {
+            continue;
+        }
+        *slot = true;
+        tally
+            .delivered_bytes
+            .fetch_add(msg.body.as_str().len() as u64, Ordering::Relaxed);
+        if tally.delivered.fetch_add(1, Ordering::Relaxed) + 1 == chunk_count as usize {
+            break;
+        }
+    }
+}
+
 #[tokio::main(flavor = "multi_thread")]
 async fn main() {
     let target_mb: u64 = std::env::var("BENCH_TRANSFER_MB")
@@ -119,7 +162,7 @@ async fn main() {
         .expect("join");
 
     // Subscribe before sending so we see everything sent after this point.
-    let mut rx = node_b.messages();
+    let rx = node_b.messages();
 
     let delivered = Arc::new(AtomicUsize::new(0));
     let delivered_bytes = Arc::new(AtomicU64::new(0));
@@ -127,37 +170,12 @@ async fn main() {
 
     // Receiver: verify + tally distinct chunk indices. Owns its `seen`
     // bitset; reports progress through the shared atomics.
-    let receiver = {
-        let delivered = Arc::clone(&delivered);
-        let delivered_bytes = Arc::clone(&delivered_bytes);
-        let lagged = Arc::clone(&lagged);
-        tokio::spawn(async move {
-            let mut seen = vec![false; chunk_count as usize];
-            loop {
-                match rx.recv().await {
-                    Ok(msg) => {
-                        if let Some(index) = verify_chunk(msg.body.as_str(), chunk_count) {
-                            let slot = &mut seen[index as usize];
-                            if !*slot {
-                                *slot = true;
-                                delivered_bytes
-                                    .fetch_add(msg.body.as_str().len() as u64, Ordering::Relaxed);
-                                if delivered.fetch_add(1, Ordering::Relaxed) + 1
-                                    == chunk_count as usize
-                                {
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                    Err(RecvError::Lagged(skipped)) => {
-                        lagged.fetch_add(skipped, Ordering::Relaxed);
-                    }
-                    Err(RecvError::Closed) => break,
-                }
-            }
-        })
+    let tally = DeliveryTally {
+        delivered: Arc::clone(&delivered),
+        delivered_bytes: Arc::clone(&delivered_bytes),
+        lagged: Arc::clone(&lagged),
     };
+    let receiver = tokio::spawn(receive_chunks(rx, chunk_count, tally));
 
     // Pre-build every chunk body *before* the clock starts: payload
     // generation + `MessageBody` validation are not transfer work and must
