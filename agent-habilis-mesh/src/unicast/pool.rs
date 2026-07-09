@@ -70,9 +70,8 @@ impl UnicastPool {
         }
     }
 
-    /// The underlying participant endpoint, when wired — used by the relay
-    /// transport to dial the first circuit hop (and to learn our own id). `None`
-    /// for a detached pool (unit-test states).
+    /// The underlying participant endpoint, when wired (also how we learn our own
+    /// id). `None` for a detached pool (unit-test states).
     pub fn endpoint(&self) -> Option<Endpoint> {
         self.inner.endpoint.clone()
     }

@@ -152,6 +152,10 @@ pub struct EventLoopConfig {
     /// Which transports directed messages may use (per-session). `run()` copies
     /// it into `EventLoopState::transport`, which `unicast::deliver` reads.
     pub transport: crate::transport::TransportPolicy,
+    /// The multi-hop transport handle when `--multihop` registered it on the
+    /// participant endpoint; `run()` moves it into `EventLoopState::multihop`.
+    /// `None` when multihop is off. Built in `setup_mesh`.
+    pub multihop: Option<iroh_multihop_transport::MultihopHandle>,
     /// Inbound unicast frames from the `UNICAST_ALPN` acceptor. The event loop
     /// drains this into `gossip::ingest` (the same path as gossip), so both
     /// transports share signature-verify + dedup. Built in `setup_mesh`.

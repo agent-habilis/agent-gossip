@@ -1,10 +1,9 @@
 //! Per-link routing cost — an ETX/ETT-style composite where **lower is better**
 //! and costs **add across hops**. Kept an integer so it is `Ord` for Dijkstra.
 //!
-//! The research is decisive that hop-count is the wrong metric (it favours the
-//! longest, weakest links); a delivery-ratio/RTT composite is the settled mesh
-//! result. This type is the composite's carrier; how a neighbour's live
-//! telemetry maps into it lives with the telemetry layer.
+//! Hop-count is the wrong metric (it favours the longest, weakest links); a
+//! delivery-ratio/RTT composite is the settled mesh result. This type is the
+//! composite's carrier; mapping live telemetry into it is the host's job.
 
 /// The cost of one link, or an accumulated path cost. Lower is better;
 /// [`LinkMetric::INFINITE`] marks an unusable link, and any path crossing one
@@ -13,7 +12,7 @@
 #[derive(
     Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
 )]
-pub(crate) struct LinkMetric(pub u32);
+pub struct LinkMetric(pub u32);
 
 impl LinkMetric {
     /// A zero-cost link — the identity for path accumulation (cost of staying
@@ -21,7 +20,7 @@ impl LinkMetric {
     pub(crate) const ZERO: Self = Self(0);
 
     /// An unusable link: never selected, and any path crossing it is unusable.
-    pub(crate) const INFINITE: Self = Self(u32::MAX);
+    pub const INFINITE: Self = Self(u32::MAX);
 
     /// Accumulate this link's cost onto the rest of a path (saturating), so a
     /// path through an [`INFINITE`](Self::INFINITE) link stays unusable.

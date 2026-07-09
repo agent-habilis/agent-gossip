@@ -1583,21 +1583,25 @@ pub(crate) async fn handle_session_request(
             tracing::warn!("gossip stream severed (adversarial); heal arm will resubscribe");
             false
         }
-        // Inject a synthetic link-state vector (adversarial/testkit only) so a
-        // circuit route can converge — a live mesh never converges usable
-        // circuit edges for the transport matrix / linear-circuit tests.
+        // Inject a synthetic link-state vector (adversarial/testkit only) into the
+        // multihop routing table. NOTE: with the datagram-based multihop
+        // transport, a route only forwards if each hop has a *live* underlay
+        // endpoint; a synthetic vector carries a placeholder underlay address, so
+        // injected topology no longer produces a forwarding route. The
+        // transport-matrix suite is being reworked around real underlay endpoints
+        // (`iroh_multihop_transport`'s own e2e tests already cover multi-hop
+        // delivery). `seal_key` is obsolete (routes carry underlay addrs, not
+        // onion keys) and ignored.
         #[cfg(feature = "adversarial")]
-        SessionRequest::InjectLinkVector {
-            origin,
-            seq,
-            seal_key,
-            links,
-        } => {
-            state
-                .link_state
-                .ingest(agent_habilis_mesh::circuit::LinkVector::from_raw(
-                    origin, seq, seal_key, links,
+        SessionRequest::InjectLinkVector { origin, seq, links } => {
+            if let Some(handle) = state.multihop.as_ref() {
+                handle.feed_topology(agent_habilis_mesh::iroh_multihop_transport::LinkVector::new(
+                    origin,
+                    seq,
+                    iroh::EndpointAddr::new(origin),
+                    links,
                 ));
+            }
             false
         }
         // Reassembly accounting snapshot (adversarial only) for the

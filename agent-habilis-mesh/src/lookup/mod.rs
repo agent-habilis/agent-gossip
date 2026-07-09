@@ -46,13 +46,20 @@ pub use relay::{
 ///   Ignored when lookups are on (N0 manages binding).
 /// # Errors
 /// Returns an error if the inputs are invalid or the operation fails.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "endpoint knobs (identity/port/alpns/multihop) are independent options; a struct would only relocate them"
+)]
 pub async fn build_endpoint(
     lookups: &LookupOpts,
     secret_key: Option<SecretKey>,
     bind_port: Option<u16>,
     alpns: Vec<Vec<u8>>,
+    multihop: Option<iroh_multihop_transport::MultihopHandle>,
 ) -> Result<Endpoint> {
-    let is_beacon = secret_key.is_some();
+    // The multihop participant endpoint carries a pinned key too, so it is *not*
+    // a beacon; the presence of a multihop handle disambiguates.
+    let is_beacon = secret_key.is_some() && multihop.is_none();
     let network = lookups.network_label();
     let mut builder = if lookups.is_loopback() {
         debug_assert!(
@@ -101,6 +108,14 @@ pub async fn build_endpoint(
         builder = builder.alpns(alpns);
     }
 
+    // Register the multi-hop custom transport (plus its address lookup + backup
+    // path selector) so a `connect` to a peer with no direct path rides the
+    // multihop path. The handle's app id must match this endpoint's key — the
+    // caller (`build_participant_multihop`) pins the same secret.
+    if let Some(handle) = multihop {
+        builder = builder.preset(handle);
+    }
+
     // Transport config is intentionally left at iroh's defaults: iroh tunes
     // keep-alive / idle (and the per-path multipath settings) for its
     // holepunching, and its own docs warn that adjusting them "may cause
@@ -141,7 +156,28 @@ pub async fn build_endpoint(
 /// # Errors
 /// Returns an error if the inputs are invalid or the operation fails.
 pub async fn build_participant_endpoint(lookups: &LookupOpts) -> Result<Endpoint> {
-    build_endpoint(lookups, None, None, Vec::new()).await
+    build_endpoint(lookups, None, None, Vec::new(), None).await
+}
+
+/// A participant endpoint with the multi-hop transport registered, plus the
+/// [`MultihopHandle`](iroh_multihop_transport::MultihopHandle) that owns the
+/// forwarding underlay and routing table. The app endpoint's key is pinned so it
+/// matches the handle's advertised hop identity. The underlay is a second,
+/// plain participant endpoint dedicated to hop-by-hop packet forwarding.
+///
+/// # Errors
+/// Returns an error if either endpoint fails to bind.
+pub async fn build_participant_multihop(
+    lookups: &LookupOpts,
+) -> Result<(Endpoint, iroh_multihop_transport::MultihopHandle)> {
+    let mut key_bytes = [0u8; 32];
+    rand::RngCore::fill_bytes(&mut rand::rng(), &mut key_bytes);
+    let secret = SecretKey::from_bytes(&key_bytes);
+    let underlay = build_endpoint(lookups, None, None, Vec::new(), None).await?;
+    let handle = iroh_multihop_transport::MultihopHandle::new(secret.public(), underlay);
+    let endpoint =
+        build_endpoint(lookups, Some(secret), None, Vec::new(), Some(handle.clone())).await?;
+    Ok((endpoint, handle))
 }
 
 /// Register a peer's address so the endpoint can connect to it.
@@ -208,7 +244,6 @@ pub(crate) fn build_mesh(
     endpoint: Endpoint,
     active_view_capacity: usize,
     unicast: Option<crate::unicast::UnicastAcceptor>,
-    circuit: Option<crate::circuit::CircuitAcceptor>,
 ) -> (Gossip, Router) {
     // `active_view_capacity` is the live direct-neighbor cap (`--max-peers`),
     // raised above iroh-gossip's default (5) so meshes up to it form a full mesh
@@ -228,11 +263,6 @@ pub(crate) fn build_mesh(
     // passes `None` (it is not a participant and carries no unicast traffic).
     if let Some(acceptor) = unicast {
         builder = builder.accept(crate::unicast::UNICAST_ALPN, acceptor);
-    }
-    // A participant also accepts inbound circuits (peel + splice/deliver);
-    // the rendezvous/beacon endpoint passes `None` like unicast.
-    if let Some(acceptor) = circuit {
-        builder = builder.accept(crate::circuit::CIRCUIT_ALPN, acceptor);
     }
     let router = builder.spawn();
     (gossip, router)

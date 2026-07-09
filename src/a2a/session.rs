@@ -109,7 +109,6 @@ pub(crate) enum SessionRequest {
     InjectLinkVector {
         origin: iroh::EndpointId,
         seq: u64,
-        seal_key: [u8; 32],
         links: Vec<(iroh::EndpointId, u32)>,
     },
     /// Snapshot the reassembly store's accounting

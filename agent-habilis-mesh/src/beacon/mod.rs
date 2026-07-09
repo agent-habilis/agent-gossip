@@ -180,7 +180,7 @@ async fn build_rendezvous_endpoint(
             tracing::debug!("public rendezvous already served by a beacon; staying participant");
             return None;
         }
-        let endpoint = build_endpoint(&lookups, Some(params.secret.clone()), None, Vec::new())
+        let endpoint = build_endpoint(&lookups, Some(params.secret.clone()), None, Vec::new(), None)
             .await
             .ok();
         if endpoint.is_some() {
@@ -196,6 +196,7 @@ async fn build_rendezvous_endpoint(
             Some(params.secret.clone()),
             Some(port),
             Vec::new(),
+            None,
         )
         .await
         {
@@ -254,7 +255,6 @@ pub(crate) async fn ensure(
     let (gossip, router) = build_mesh(
         endpoint.clone(),
         crate::util::consts::GOSSIP_ACTIVE_VIEW_CAPACITY,
-        None,
         None,
     );
 

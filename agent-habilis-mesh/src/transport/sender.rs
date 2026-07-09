@@ -11,7 +11,7 @@ use super::spool::SpoolWriter;
 /// active) before handing it to gossip, so one call site feeds both planes and
 /// the ~ten existing `.broadcast()` sites need no per-site change. Frames that
 /// reach the wire by a path that *bypasses* `broadcast` (a directed
-/// unicast/circuit send, or an unmeshed frame buffered for later gossip) mirror
+/// unicast send, or an unmeshed frame buffered for later gossip) mirror
 /// explicitly via [`MeshSender::spool`].
 #[derive(Debug)]
 pub struct MeshSender {

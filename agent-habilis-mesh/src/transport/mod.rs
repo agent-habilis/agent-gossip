@@ -12,16 +12,21 @@ pub use sender::MeshSender;
 /// property (an embedder can run two sessions with different policies). Consumed
 /// by `unicast::deliver` via `EventLoopState::transport`; broadcasts ignore it
 /// (they structurally ride gossip). Each flag is the positive of a hidden CLI
-/// switch: `--no-unicast` / `--no-gossip-directed` / `--no-circuit`.
+/// switch: `--no-unicast` / `--no-gossip-directed`.
+///
+/// Multi-hop reachability is no longer a per-message toggle: it is the
+/// [`iroh-multihop-transport`](iroh_multihop_transport) custom transport
+/// registered on the endpoint at build time (the `--multihop` flag). When
+/// registered, a `unicast` connect transparently rides the multihop path if no
+/// direct one exists — iroh's path selection decides.
 #[derive(Clone, Copy, Debug)]
 pub struct TransportPolicy {
-    /// Attempt the point-to-point unicast transport for a directed message.
+    /// Attempt the point-to-point unicast transport for a directed message. iroh
+    /// picks a direct path when available, else the multihop transport.
     pub unicast: bool,
     /// Let gossip carry (or be the fallback for) a directed message. Off makes
-    /// directed traffic unicast/circuit-only with no gossip fallback.
+    /// directed traffic unicast-only with no gossip fallback.
     pub gossip_directed: bool,
-    /// Attempt the multi-hop circuit transport when there is no direct route.
-    pub circuit: bool,
 }
 
 impl TransportPolicy {
@@ -30,7 +35,6 @@ impl TransportPolicy {
     pub const DEFAULTS: Self = Self {
         unicast: true,
         gossip_directed: true,
-        circuit: true,
     };
 }
 

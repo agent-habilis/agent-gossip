@@ -283,8 +283,9 @@ pub enum MessageKind {
     /// Anti-entropy digest for the **meta** channel — the meta-channel counterpart
     /// to [`StateDigest`](MessageKind::StateDigest).
     MetaDigest,
-    /// A circuit-routing **link-state** advertisement: the author's own measured
-    /// links (`body` is a serialized [`crate::circuit::LinkVector`]). Broadcast
+    /// A multihop-routing **link-state** advertisement: the author's own measured
+    /// links + underlay address (`body` is a serialized
+    /// [`iroh_multihop_transport::LinkVector`]). Broadcast
     /// plumbing like `Digest`/`Ping` — never logged, never surfaced, never
     /// chain/DAG-folded; every node folds the freshest vector per origin into its
     /// routing graph. Ephemeral (a fresh vector supersedes the old by `seq`), so
@@ -632,8 +633,8 @@ impl Message {
         Self::new(mesh, author, MessageKind::Digest, ids_json)
     }
 
-    /// A relay link-state advertisement; `vector_json` is a serialized
-    /// [`crate::circuit::LinkVector`].
+    /// A multihop link-state advertisement; `vector_json` is a serialized
+    /// [`iroh_multihop_transport::LinkVector`].
     pub(crate) fn new_link_state(
         mesh: &MeshId,
         author: &Nickname,

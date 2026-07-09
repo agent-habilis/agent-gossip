@@ -12,7 +12,6 @@ use crate::daemon::state::EventLoopState;
 use crate::protocol::message::sole_addressee;
 use crate::protocol::{Message, Nickname};
 use crate::transport::MeshSender;
-use crate::util::tuning;
 
 /// Route one already-signed, already-serialized message. `bytes` MUST be
 /// `msg.serialize()` — the same wire form gossip uses.
@@ -49,7 +48,6 @@ pub async fn deliver(
         }
         Route::UnicastPreferred(eid) => try_unicast_warm(eid, &bytes, state, sender).await,
         Route::UnicastOnly(eid) => try_unicast_only(eid, &bytes, state, sender).await,
-        Route::Circuit(target) => try_circuit(target, &bytes, state, sender).await,
     };
     match attempt {
         Attempt::Delivered => Ok(()),
@@ -76,15 +74,12 @@ enum Route {
     /// Broadcast over gossip — a non-directed kind, or a directed message with no
     /// unicast route while gossip is allowed.
     Gossip,
-    /// Prefer unicast to this endpoint; fall back to gossip if it isn't warm.
+    /// Prefer unicast to this endpoint; fall back to gossip if it isn't warm. The
+    /// underlying iroh connection uses a direct path when one exists, else the
+    /// registered multihop transport — the send decision no longer distinguishes.
     UnicastPreferred(EndpointId),
     /// Unicast to this endpoint only — no gossip fallback (dial inline if cold).
     UnicastOnly(EndpointId),
-    /// A directed message to a peer we know (`EndpointId`) but have no *direct*
-    /// unicast route to: route it over a multi-hop **circuit** circuit. `deliver`
-    /// computes the source-route from the link-state graph and falls back to
-    /// gossip if there is no path (or the circuit fails).
-    Circuit(EndpointId),
     /// No transport available: a directed message with no unicast route and
     /// gossip disabled.
     Undeliverable,
@@ -109,25 +104,22 @@ fn route(
 /// The message-independent half of [`route`]: every directed kind to the same
 /// addressee routes identically, so this is also what the `peers` roster
 /// surfaces as a peer's `transport` column (via [`lane_for`]).
+///
+/// A peer whose endpoint we know is reached by a unicast connect — iroh's path
+/// selection uses a direct path when one exists and the registered multihop
+/// transport otherwise, so there is no separate multi-hop tier in the send
+/// decision anymore.
 fn directed_route(
     nick: &Nickname,
     state: &EventLoopState,
     policy: crate::transport::TransportPolicy,
 ) -> Route {
-    if let (true, Some(eid)) = (policy.unicast, unicast_endpoint(nick, state)) {
+    if let (true, Some(eid)) = (policy.unicast, directed_endpoint(nick, state)) {
         return if policy.gossip_directed {
             Route::UnicastPreferred(eid)
         } else {
             Route::UnicastOnly(eid)
         };
-    }
-    // No *direct* unicast route. If we know the peer's endpoint, prefer the
-    // circuit transport (it can route to a known peer through the mesh); else
-    // gossip if allowed; else the message can't be delivered.
-    if policy.circuit
-        && let Some(target) = target_endpoint(nick, state)
-    {
-        return Route::Circuit(target);
     }
     if policy.gossip_directed {
         Route::Gossip
@@ -144,25 +136,33 @@ fn directed_route(
 #[serde(rename_all = "lowercase")]
 pub enum Lane {
     Unicast,
-    Circuit,
+    Multihop,
     Gossip,
     Unreachable,
 }
 
+/// The roster's `transport` column. A directed frame to a known peer takes a
+/// unicast connect; we label it `unicast` when a *direct* path is expected (the
+/// peer is in our gossip mesh) and `multihop` otherwise — a best-effort hint,
+/// since the actual path is chosen by iroh at connect time.
 pub(crate) fn lane_for(nick: &Nickname, state: &EventLoopState) -> Lane {
     match directed_route(nick, state, state.transport) {
-        Route::UnicastPreferred(_) | Route::UnicastOnly(_) => Lane::Unicast,
-        Route::Circuit(_) => Lane::Circuit,
+        Route::UnicastPreferred(_) | Route::UnicastOnly(_) => {
+            if directly_meshed(nick, state) {
+                Lane::Unicast
+            } else {
+                Lane::Multihop
+            }
+        }
         Route::Gossip => Lane::Gossip,
         Route::Undeliverable => Lane::Unreachable,
     }
 }
 
-/// The endpoint we hold for `nick` regardless of whether it is *directly*
-/// dialable — the circuit transport can route to a known peer through the mesh
-/// even when a direct unicast route is unavailable. Excludes the rendezvous
-/// pseudo-node (never a circuit destination).
-fn target_endpoint(nick: &Nickname, state: &EventLoopState) -> Option<EndpointId> {
+/// The endpoint a directed message to `nick` can be sent to, or `None` for an
+/// addressee we hold no endpoint for or the rendezvous pseudo-node (never a
+/// directed target). Reachability is left to iroh's connect (direct or multihop).
+fn directed_endpoint(nick: &Nickname, state: &EventLoopState) -> Option<EndpointId> {
     let eid = *state.participant_endpoints.get(nick)?;
     if state.rendezvous_id == Some(eid) {
         return None;
@@ -170,18 +170,10 @@ fn target_endpoint(nick: &Nickname, state: &EventLoopState) -> Option<EndpointId
     Some(eid)
 }
 
-/// The endpoint a directed message to `nick` can be unicast to, or `None` when
-/// there is no unicast route: an addressee we hold no endpoint for, the
-/// rendezvous pseudo-node (never a unicast target), or an unmeshed node.
-fn unicast_endpoint(nick: &Nickname, state: &EventLoopState) -> Option<EndpointId> {
-    if !state.meshed {
-        return None;
-    }
-    let eid = *state.participant_endpoints.get(nick)?;
-    if state.rendezvous_id == Some(eid) {
-        return None;
-    }
-    Some(eid)
+/// Whether `nick` is a known peer in our live gossip mesh — the signal that a
+/// *direct* unicast path is expected rather than a multihop one.
+fn directly_meshed(nick: &Nickname, state: &EventLoopState) -> bool {
+    state.meshed && directed_endpoint(nick, state).is_some()
 }
 
 /// Warm-preferred unicast: send point-to-point when the connection is already
@@ -227,43 +219,6 @@ async fn try_unicast_only(
     }
 }
 
-/// Multi-hop circuit: telescope up to N node-disjoint circuits (best-first) to a
-/// known-but-not-directly-reachable peer, computing the source-route from the
-/// link-state graph. Falls through when there is no endpoint, no graph path (or
-/// a hop's key is unknown), or every build fails — [`deliver`] decides whether
-/// to then ride gossip.
-async fn try_circuit(
-    target: EndpointId,
-    bytes: &Bytes,
-    state: &EventLoopState,
-    sender: &MeshSender,
-) -> Attempt {
-    let Some(endpoint) = state.unicast_pool.endpoint() else {
-        return Attempt::FellThrough; // detached pool
-    };
-    let paths = state
-        .link_state
-        .circuit_paths(endpoint.id(), target, tuning::CIRCUIT_MAX_PATHS);
-    if paths.is_empty() {
-        return Attempt::FellThrough; // no route through the mesh yet
-    }
-    for path in &paths {
-        let circuit_id: u64 = rand::random();
-        match crate::circuit::open_circuit(&endpoint, circuit_id, path, bytes.as_ref()).await {
-            Ok(()) => {
-                sender.spool(bytes);
-                return Attempt::Delivered;
-            }
-            Err(error) => tracing::debug!(
-                target: crate::circuit::LOG_TARGET,
-                %error,
-                "circuit attempt failed; trying the next disjoint path"
-            ),
-        }
-    }
-    Attempt::FellThrough
-}
-
 async fn broadcast(sender: &MeshSender, bytes: Bytes) -> Result<()> {
     sender
         .broadcast(bytes)
@@ -278,7 +233,7 @@ mod tests {
 
     use iroh::{EndpointId, SecretKey};
 
-    use super::{Route, route};
+    use super::{Lane, Route, lane_for, route};
     use crate::daemon::state::{EventLoopState, MeshSecrets};
     use crate::protocol::identity::Identity;
     use crate::protocol::message::AppFrameParams;
@@ -320,8 +275,10 @@ mod tests {
         Message::new_pong(&mesh(), &nick("alice"), nick("bob"))
     }
 
-    // Existing cases pin the direct-unicast/gossip behavior with the circuit
-    // transport OFF, so they assert the pre-circuit routing unchanged.
+    const ALL_ON: TransportPolicy = TransportPolicy {
+        unicast: true,
+        gossip_directed: true,
+    };
 
     // ── the p2p path ──────────────────────────────────────────────────
 
@@ -329,15 +286,7 @@ mod tests {
     fn directed_message_with_known_endpoint_prefers_unicast() {
         let (state, bob) = state_knowing_bob();
         assert_eq!(
-            route(
-                &directed_msg(),
-                &state,
-                TransportPolicy {
-                    unicast: true,
-                    gossip_directed: true,
-                    circuit: false
-                }
-            ),
+            route(&directed_msg(), &state, ALL_ON),
             Route::UnicastPreferred(bob)
         );
     }
@@ -356,30 +305,8 @@ mod tests {
             },
         );
         let pong = Message::new_pong(&mesh(), &nick("alice"), nick("bob"));
-        assert_eq!(
-            route(
-                &req,
-                &state,
-                TransportPolicy {
-                    unicast: true,
-                    gossip_directed: true,
-                    circuit: false
-                }
-            ),
-            Route::UnicastPreferred(bob)
-        );
-        assert_eq!(
-            route(
-                &pong,
-                &state,
-                TransportPolicy {
-                    unicast: true,
-                    gossip_directed: true,
-                    circuit: false
-                }
-            ),
-            Route::UnicastPreferred(bob)
-        );
+        assert_eq!(route(&req, &state, ALL_ON), Route::UnicastPreferred(bob));
+        assert_eq!(route(&pong, &state, ALL_ON), Route::UnicastPreferred(bob));
     }
 
     #[test]
@@ -392,10 +319,22 @@ mod tests {
                 TransportPolicy {
                     unicast: true,
                     gossip_directed: false,
-                    circuit: false
-                }
+                },
             ),
             Route::UnicastOnly(bob)
+        );
+    }
+
+    /// A known peer we're not yet meshed with is still reached by a unicast
+    /// connect — iroh's path selection uses the multihop transport when no direct
+    /// path exists, so there is no separate circuit tier to fall to.
+    #[test]
+    fn known_peer_while_unmeshed_still_attempts_unicast() {
+        let (mut state, bob) = state_knowing_bob();
+        state.meshed = false;
+        assert_eq!(
+            route(&directed_msg(), &state, ALL_ON),
+            Route::UnicastPreferred(bob)
         );
     }
 
@@ -416,18 +355,7 @@ mod tests {
         );
         // Even with unicast on and a known peer, a non-directed kind gossips —
         // and stays gossip regardless of policy.
-        assert_eq!(
-            route(
-                &open,
-                &state,
-                TransportPolicy {
-                    unicast: true,
-                    gossip_directed: true,
-                    circuit: false
-                }
-            ),
-            Route::Gossip
-        );
+        assert_eq!(route(&open, &state, ALL_ON), Route::Gossip);
         assert_eq!(
             route(
                 &open,
@@ -435,8 +363,7 @@ mod tests {
                 TransportPolicy {
                     unicast: false,
                     gossip_directed: true,
-                    circuit: false
-                }
+                },
             ),
             Route::Gossip
         );
@@ -451,40 +378,11 @@ mod tests {
             MeshSecrets::default(),
         );
         state.meshed = true; // meshed, but we hold no endpoint for bob
-        assert_eq!(
-            route(
-                &directed_msg(),
-                &state,
-                TransportPolicy {
-                    unicast: true,
-                    gossip_directed: true,
-                    circuit: false
-                }
-            ),
-            Route::Gossip
-        );
+        assert_eq!(route(&directed_msg(), &state, ALL_ON), Route::Gossip);
     }
 
     #[test]
-    fn unmeshed_directed_message_takes_gossip() {
-        let (mut state, _) = state_knowing_bob();
-        state.meshed = false; // no unicast route until meshed
-        assert_eq!(
-            route(
-                &directed_msg(),
-                &state,
-                TransportPolicy {
-                    unicast: true,
-                    gossip_directed: true,
-                    circuit: false
-                }
-            ),
-            Route::Gossip
-        );
-    }
-
-    #[test]
-    fn rendezvous_addressee_is_never_a_unicast_target() {
+    fn rendezvous_addressee_is_never_a_directed_target() {
         let mut state = EventLoopState::new(
             None,
             Instant::now(),
@@ -496,18 +394,7 @@ mod tests {
         state.rendezvous_id = Some(rendezvous);
         // bob's advertised endpoint *is* the rendezvous pseudo-node.
         state.participant_endpoints.insert(nick("bob"), rendezvous);
-        assert_eq!(
-            route(
-                &directed_msg(),
-                &state,
-                TransportPolicy {
-                    unicast: true,
-                    gossip_directed: true,
-                    circuit: false
-                }
-            ),
-            Route::Gossip
-        );
+        assert_eq!(route(&directed_msg(), &state, ALL_ON), Route::Gossip);
     }
 
     #[test]
@@ -521,8 +408,7 @@ mod tests {
                 TransportPolicy {
                     unicast: false,
                     gossip_directed: true,
-                    circuit: false
-                }
+                },
             ),
             Route::Gossip
         );
@@ -546,8 +432,7 @@ mod tests {
                 TransportPolicy {
                     unicast: true,
                     gossip_directed: false,
-                    circuit: false
-                }
+                },
             ),
             Route::Undeliverable
         );
@@ -563,8 +448,7 @@ mod tests {
                 TransportPolicy {
                     unicast: false,
                     gossip_directed: false,
-                    circuit: false
-                }
+                },
             ),
             Route::Undeliverable
         );
@@ -592,95 +476,30 @@ mod tests {
                 TransportPolicy {
                     unicast: false,
                     gossip_directed: false,
-                    circuit: false
-                }
+                },
             ),
             Route::Gossip
         );
     }
 
-    // ── the circuit tier (Phase 1: stub, tier ordering only) ─────────────
+    // ── the roster lane ───────────────────────────────────────────────
 
     #[test]
-    fn known_peer_without_direct_route_prefers_circuit() {
-        // Bob's endpoint is known but we're unmeshed ⇒ no direct unicast route ⇒
-        // route to him over a circuit rather than a gossip flood.
-        let (mut state, bob) = state_knowing_bob();
-        state.meshed = false;
-        assert_eq!(
-            route(
-                &directed_msg(),
-                &state,
-                TransportPolicy {
-                    unicast: true,
-                    gossip_directed: true,
-                    circuit: true
-                }
-            ),
-            Route::Circuit(bob)
-        );
+    fn lane_is_unicast_for_a_meshed_known_peer() {
+        let (state, _) = state_knowing_bob();
+        assert_eq!(lane_for(&nick("bob"), &state), Lane::Unicast);
     }
 
     #[test]
-    fn direct_unicast_route_beats_circuit() {
-        // A directly-dialable peer still goes unicast — circuit is only for the
-        // no-direct-route case.
-        let (state, bob) = state_knowing_bob();
-        assert_eq!(
-            route(
-                &directed_msg(),
-                &state,
-                TransportPolicy {
-                    unicast: true,
-                    gossip_directed: true,
-                    circuit: true
-                }
-            ),
-            Route::UnicastPreferred(bob)
-        );
-    }
-
-    #[test]
-    fn unknown_peer_has_no_circuit_and_falls_back_to_gossip() {
-        // No endpoint for the target ⇒ nothing to route a circuit to ⇒ gossip,
-        // even with the circuit transport enabled.
-        let mut state = EventLoopState::new(
-            None,
-            Instant::now(),
-            Arc::new(Identity::generate()),
-            MeshSecrets::default(),
-        );
-        state.meshed = true;
-        assert_eq!(
-            route(
-                &directed_msg(),
-                &state,
-                TransportPolicy {
-                    unicast: true,
-                    gossip_directed: true,
-                    circuit: true
-                }
-            ),
-            Route::Gossip
-        );
-    }
-
-    #[test]
-    fn circuit_disabled_falls_back_to_gossip() {
-        // `--no-circuit` with no direct route ⇒ the gossip fallback.
+    fn lane_is_multihop_for_a_known_but_unmeshed_peer() {
         let (mut state, _) = state_knowing_bob();
         state.meshed = false;
-        assert_eq!(
-            route(
-                &directed_msg(),
-                &state,
-                TransportPolicy {
-                    unicast: true,
-                    gossip_directed: true,
-                    circuit: false
-                }
-            ),
-            Route::Gossip
-        );
+        assert_eq!(lane_for(&nick("bob"), &state), Lane::Multihop);
+    }
+
+    #[test]
+    fn lane_is_gossip_for_an_unknown_peer() {
+        let (state, _) = state_knowing_bob();
+        assert_eq!(lane_for(&nick("carol"), &state), Lane::Gossip);
     }
 }

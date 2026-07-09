@@ -117,7 +117,7 @@ pub(super) async fn bind(
     lookups: LookupOpts,
     password: Option<&Password>,
 ) -> Result<(Endpoint, A2aTicket, TicketAuth)> {
-    let endpoint = build_endpoint(&lookups, None, None, vec![A2A_ALPN.to_vec()]).await?;
+    let endpoint = build_endpoint(&lookups, None, None, vec![A2A_ALPN.to_vec()], None).await?;
     if !lookups.is_loopback() {
         wait_online(&endpoint).await;
     }

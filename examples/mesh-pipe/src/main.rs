@@ -96,7 +96,6 @@ impl TransportArgs {
         TransportPolicy {
             unicast: !self.no_unicast,
             gossip_directed: !self.no_gossip_directed,
-            circuit: true,
         }
     }
 }
@@ -385,6 +384,7 @@ async fn spawn_node(select: Select, app: PipeApp, config: SpawnConfig) -> Result
             spool: None,
             sink: std::sync::Arc::new(SilentSink),
             transport,
+            multihop: false,
             drift: None,
             a2a_serve: None,
         },

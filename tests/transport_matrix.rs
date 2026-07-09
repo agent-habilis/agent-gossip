@@ -12,14 +12,8 @@
 //! - `matrix_default`  — all transports on (unicast-preferred + gossip).
 //! - `matrix_unicast`  — `no_gossip_directed`: directed frames take `UnicastOnly`
 //!   with **no** fallback, so a completed lifecycle proves unicast.
-//! - `matrix_gossip`   — `no_unicast + no_circuit`: directed frames take
-//!   `Route::Gossip`, so completion proves gossip.
-//! - `matrix_circuit`  — `no_unicast + no_gossip_directed`, with a **synthetic
-//!   link-state graph** injected (`wire_circuit`) so a circuit route exists:
-//!   directed frames take a circuit with no gossip fallback, so completion
-//!   proves circuit. Injected because a live rendezvous-bootstrapped mesh never
-//!   converges usable circuit edges — the same reason `src/circuit`'s own tests
-//!   build controlled topologies. Gated on the `adversarial` feature.
+//! - `matrix_gossip`   — `no_unicast`: directed frames take `Route::Gossip`, so
+//!   completion proves gossip.
 //! - `matrix_spool`    — default policy + a shared `--spool` dir: the suite runs
 //!   as usual and the durable frames are additionally mirrored to disk.
 //!
@@ -42,24 +36,19 @@ const FULL_MESH: usize = 64;
 const UNICAST_ONLY: TransportPolicy = TransportPolicy {
     unicast: true,
     gossip_directed: false,
-    circuit: false,
 };
 
-/// `no_unicast + no_circuit`: directed frames take `Route::Gossip`.
+/// `no_unicast`: directed frames take `Route::Gossip`.
 const GOSSIP_ONLY: TransportPolicy = TransportPolicy {
     unicast: false,
     gossip_directed: true,
-    circuit: false,
 };
 
-/// `no_unicast + no_gossip_directed`: directed frames take a circuit, with no
-/// gossip fallback to mask a circuit failure.
-#[cfg(feature = "adversarial")]
-const CIRCUIT_ONLY: TransportPolicy = TransportPolicy {
-    unicast: false,
-    gossip_directed: false,
-    circuit: true,
-};
+// The former `matrix_circuit` row is gone: multi-hop is now the
+// `iroh-multihop-transport` datagram transport, which only forwards over *live*
+// underlay endpoints and so can't be exercised by injecting a synthetic graph
+// onto an in-proc mesh. Real multi-hop delivery is covered end-to-end by that
+// crate's own `tests/e2e.rs` (A↔B over one and two relays).
 
 /// Parse the `Task` id out of a `SendMessage` response.
 fn task_id_of(resp: &Value) -> TaskId {
@@ -204,33 +193,6 @@ async fn matrix_gossip() {
     let mut bob =
         InProcNode::join_with_transport(&alice.mesh, "tm-gos-b", GOSSIP_ONLY, FULL_MESH).await;
     run_operations(&mut alice, &mut bob).await;
-    alice.leave().await;
-    bob.leave().await;
-}
-
-/// Circuit: with unicast **and** directed-gossip off, a directed frame has only
-/// the circuit transport — and no gossip fallback to mask it — so a completed
-/// lifecycle proves the frame rode the circuit (over the circuit ALPN + onion +
-/// terminal-delivery path). A live rendezvous-bootstrapped mesh never converges
-/// usable circuit edges (participants bridge through the rendezvous rather than
-/// becoming direct gossip neighbours), so — exactly as `src/circuit`'s own tests
-/// do — we hand each node the routing graph directly with `wire_circuit` (a
-/// synthetic 1-hop topology), then drive real app operations over it. Gated on
-/// `adversarial`: the injection hook is a testkit escape hatch, not public API.
-#[cfg(feature = "adversarial")]
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn matrix_circuit() {
-    let mut alice =
-        InProcNode::create_with_transport("tm-circuit", "tm-cir-a", CIRCUIT_ONLY, FULL_MESH).await;
-    let mut bob =
-        InProcNode::join_with_transport(&alice.mesh, "tm-cir-b", CIRCUIT_ONLY, FULL_MESH).await;
-
-    // Stand up the synthetic circuit topology; the graph persists (max-seq) so
-    // the daemon's own link-state ticks can't clobber it.
-    common::wire_circuit(&alice, &bob).await;
-
-    run_operations(&mut alice, &mut bob).await;
-
     alice.leave().await;
     bob.leave().await;
 }

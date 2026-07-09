@@ -9,7 +9,8 @@ use tokio::sync::{mpsc, watch};
 
 use crate::gossip::event::{NodeEvent, NodeSink};
 use crate::lookup::{
-    add_peer_addr, build_mesh, build_participant_endpoint, relay_ladder, select_bootstrap_rung,
+    add_peer_addr, build_mesh, build_participant_endpoint, build_participant_multihop, relay_ladder,
+    select_bootstrap_rung,
 };
 use crate::protocol::crypto::Password;
 use crate::protocol::mesh::{LookupOpts, Mesh, MeshConfig, MeshName};
@@ -173,15 +174,22 @@ pub(crate) fn register_rendezvous(endpoint: &Endpoint, params: &RendezvousParams
 /// received `UNICAST_ALPN` frames to the returned receiver, which the event
 /// loop drains into `gossip::ingest`. Bounded so a flooding peer can't
 /// back-pressure the loop (a dropped frame heals via anti-entropy).
-fn unicast_inbox() -> (
-    mpsc::Receiver<bytes::Bytes>,
-    crate::unicast::UnicastAcceptor,
-    mpsc::Sender<bytes::Bytes>,
-) {
+fn unicast_inbox() -> (mpsc::Receiver<bytes::Bytes>, crate::unicast::UnicastAcceptor) {
     let (tx, rx) = mpsc::channel::<bytes::Bytes>(crate::util::consts::UNICAST_INBOX_CAP);
-    // The relay's terminal delivery shares this inbox, so a relayed frame lands
-    // in the same `gossip::ingest` path as a unicast one.
-    (rx, crate::unicast::UnicastAcceptor::new(tx.clone()), tx)
+    (rx, crate::unicast::UnicastAcceptor::new(tx))
+}
+
+/// Build this member's participant endpoint, registering the multi-hop transport
+/// (and standing up its underlay) when `--multihop` is set.
+async fn build_member_endpoint(
+    build: &SetupBuild<'_>,
+) -> Result<(Endpoint, Option<iroh_multihop_transport::MultihopHandle>)> {
+    if build.multihop {
+        let (endpoint, handle) = build_participant_multihop(build.lookups).await?;
+        Ok((endpoint, Some(handle)))
+    } else {
+        Ok((build_participant_endpoint(build.lookups).await?, None))
+    }
 }
 
 /// The per-session inputs to [`setup_mesh`] that are independent of the
@@ -201,6 +209,10 @@ pub struct SetupParams<'a> {
     /// [`crate::transport::TransportPolicy::DEFAULTS`] (all enabled) on the
     /// embed/MCP paths; the CLI derives it from `--no-unicast`/`--no-*`.
     pub transport: crate::transport::TransportPolicy,
+    /// `--multihop`: register the multi-hop custom transport on the participant
+    /// endpoint (a second underlay endpoint is stood up for hop-by-hop
+    /// forwarding). Off by default on every path.
+    pub multihop: bool,
     /// Skill-drift warning folded into the `ready` event. Computed by the CLI
     /// (the real `agent-square create`/`join` path) from the on-disk install;
     /// `None` on the embed/library and MCP paths, which keeps the in-process
@@ -230,7 +242,8 @@ struct SetupBuild<'a> {
     max_peers: usize,
     lookups: &'a LookupOpts,
     unicast_acceptor: &'a crate::unicast::UnicastAcceptor,
-    circuit_acceptor: &'a crate::circuit::CircuitAcceptor,
+    /// Register the multi-hop transport on the participant endpoint.
+    multihop: bool,
     rung_tx: &'a watch::Sender<Option<RelayUrl>>,
 }
 
@@ -253,6 +266,9 @@ struct Assembled {
     /// The invite-only creator's mesh (with its in-memory issuer key + root),
     /// retained so `invite` can mint. `Some` only on an invite-only creator.
     mint_mesh: Option<Mesh>,
+    /// The multi-hop transport handle when `--multihop` registered it, threaded
+    /// into `EventLoopState` so the link-state tick can feed its routing table.
+    multihop: Option<iroh_multihop_transport::MultihopHandle>,
 }
 
 /// # Errors
@@ -266,6 +282,7 @@ pub async fn setup_mesh(kind: SetupKind, params: SetupParams<'_>) -> Result<Even
         spool,
         sink,
         transport,
+        multihop,
         drift,
         a2a_serve,
     } = params;
@@ -289,22 +306,11 @@ pub async fn setup_mesh(kind: SetupKind, params: SetupParams<'_>) -> Result<Even
     let ladder = relay_ladder(&lookups.relay);
     let (rung_tx, rung_rx) = watch::channel(ladder.first().cloned());
 
-    let (unicast_rx, unicast_acceptor, inbox_tx) = unicast_inbox();
+    let (unicast_rx, unicast_acceptor) = unicast_inbox();
 
-    // This member's per-author signing identity (also the source of its X25519
-    // seal key, which relays peel circuit onions with). Hoisted above the match
-    // so the relay acceptor can be built before the Router is spawned.
+    // This member's per-author signing identity. Hoisted above the match so it is
+    // available to both attach paths.
     let identity = std::sync::Arc::new(crate::protocol::identity::Identity::generate());
-    // The relay acceptor needs the participant endpoint to dial the next hop, but
-    // is registered on the Router *before* that endpoint is bound below; it reads
-    // the endpoint from this cell, filled once the endpoint exists.
-    let circuit_endpoint: std::sync::Arc<std::sync::OnceLock<Endpoint>> =
-        std::sync::Arc::new(std::sync::OnceLock::new());
-    let circuit_acceptor = crate::circuit::CircuitAcceptor::new(
-        inbox_tx,
-        identity.seal_secret(),
-        circuit_endpoint.clone(),
-    );
 
     let build = SetupBuild {
         author: &author,
@@ -314,7 +320,7 @@ pub async fn setup_mesh(kind: SetupKind, params: SetupParams<'_>) -> Result<Even
         max_peers,
         lookups: &lookups,
         unicast_acceptor: &unicast_acceptor,
-        circuit_acceptor: &circuit_acceptor,
+        multihop,
         rung_tx: &rung_tx,
     };
     let Assembled {
@@ -329,6 +335,7 @@ pub async fn setup_mesh(kind: SetupKind, params: SetupParams<'_>) -> Result<Even
         mesh_password,
         mesh_key,
         mint_mesh,
+        multihop: multihop_handle,
     } = match kind {
         SetupKind::Create {
             name,
@@ -353,11 +360,6 @@ pub async fn setup_mesh(kind: SetupKind, params: SetupParams<'_>) -> Result<Even
             setup_join(&build, kind).await?
         }
     };
-
-    // Now that the endpoint is bound, hand it to the relay acceptor so it can
-    // dial the next hop when forwarding a circuit (`set` is a no-op if the
-    // acceptor was never registered — the beacon/rendezvous path).
-    let _ = circuit_endpoint.set(endpoint.clone());
 
     // Off the critical path: `ready` is already out. Confirm/correct the
     // optimistic rung 0 in the background (covers a joiner, which has no
@@ -385,6 +387,7 @@ pub async fn setup_mesh(kind: SetupKind, params: SetupParams<'_>) -> Result<Even
         state_file,
         spool,
         transport,
+        multihop: multihop_handle,
         unicast_rx,
         // Set by the advertise path (cli::create / embed::create) before
         // `run`; absent for every non-advertising session.
@@ -424,7 +427,7 @@ async fn setup_create(build: &SetupBuild<'_>, create: CreateSetup) -> Result<Ass
     let mut seed = [0u8; 32];
     rand::rng().fill_bytes(&mut seed);
 
-    let endpoint = build_participant_endpoint(build.lookups).await?;
+    let (endpoint, multihop) = build_member_endpoint(build).await?;
 
     let mut mesh = Mesh::new(seed, name.clone(), config);
     // Invite-only: mint the invite root + issuer keypair and bake the issuer
@@ -493,7 +496,6 @@ async fn setup_create(build: &SetupBuild<'_>, create: CreateSetup) -> Result<Ass
         endpoint.clone(),
         build.max_peers,
         Some(build.unicast_acceptor.clone()),
-        Some(build.circuit_acceptor.clone()),
     );
     // Creator has no peers yet — bootstrap is empty.
     let topic = gossip.subscribe(topic_id, vec![]).await?;
@@ -513,6 +515,7 @@ async fn setup_create(build: &SetupBuild<'_>, create: CreateSetup) -> Result<Ass
         mesh_password,
         mesh_key,
         mint_mesh,
+        multihop,
     })
 }
 
@@ -537,7 +540,7 @@ async fn setup_join(build: &SetupBuild<'_>, kind: SetupKind) -> Result<Assembled
         MeshId::new(id_str.clone()).expect("Mesh::to_string always produces a valid MeshId");
     let topic_id = mesh.topic_id();
 
-    let endpoint = build_participant_endpoint(build.lookups).await?;
+    let (endpoint, multihop) = build_member_endpoint(build).await?;
 
     let rdv = rendezvous_params(&mesh, topic_id, build.lookups, build.rung_tx.clone());
     // Must precede the join: the participant resolves the rendezvous id via
@@ -549,7 +552,6 @@ async fn setup_join(build: &SetupBuild<'_>, kind: SetupKind) -> Result<Assembled
         endpoint.clone(),
         build.max_peers,
         Some(build.unicast_acceptor.clone()),
-        Some(build.circuit_acceptor.clone()),
     );
     // We subscribe, background-connect to the rendezvous, and — for a plain
     // join — `daemon::run` defers co-hosting our own (same seed-id) rendezvous
@@ -591,5 +593,6 @@ async fn setup_join(build: &SetupBuild<'_>, kind: SetupKind) -> Result<Assembled
         // A joiner holds no issuer key, so it can never mint — even after
         // redeeming an invite-only mesh.
         mint_mesh: None,
+        multihop,
     })
 }

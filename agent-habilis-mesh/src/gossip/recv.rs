@@ -449,27 +449,29 @@ pub(crate) async fn ingest(
     );
 }
 
-/// Fold a received relay link-state advertisement into the routing table. The
-/// author's own measured links (`body` = a serialized `LinkVector`) supersede
-/// the last vector we held for that origin. Plumbing like the digests — never
-/// logged or surfaced; a malformed body is dropped.
+/// Fold a received multihop link-state advertisement into the routing table. The
+/// author's own measured links + underlay address (`body` = a serialized
+/// `LinkVector`) supersede the last vector we held for that origin. Dropped
+/// silently when the multihop transport is off or the body is malformed —
+/// plumbing like the digests, never logged or surfaced.
 fn handle_link_state(message: &Message, state: &mut EventLoopState) {
-    match crate::circuit::LinkVector::from_json(message.body.as_str()) {
+    let Some(handle) = state.multihop.as_ref() else {
+        return; // multihop off: nothing consumes the routing table
+    };
+    match serde_json::from_str::<iroh_multihop_transport::LinkVector>(message.body.as_str()) {
         Ok(vector) => {
-            let updated = state.link_state.ingest(vector);
+            let updated = handle.feed_topology(vector);
             tracing::debug!(
-                target: crate::circuit::LOG_TARGET,
                 author = %message.author,
                 updated,
-                "relay link-state received"
+                "multihop link-state received"
             );
         }
         Err(error) => {
             tracing::debug!(
-                target: crate::circuit::LOG_TARGET,
                 author = %message.author,
                 %error,
-                "dropping malformed relay link-state"
+                "dropping malformed multihop link-state"
             );
         }
     }

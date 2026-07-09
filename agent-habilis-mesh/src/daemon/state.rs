@@ -214,17 +214,15 @@ pub struct EventLoopState {
     /// in-process nodes can each run a different policy (the CLI sources it
     /// from the hidden `--no-unicast`/`--no-gossip-directed`/`--no-circuit`
     /// flags, embed from its config). Read by [`crate::unicast::deliver`].
-    /// Circuit routing table: the freshest link-state vector per origin, folded
-    /// into the routing graph on demand. Populated from received `LinkState`
-    /// frames; read by the circuit send path (and the topology view). See
-    /// [`crate::circuit`].
-    pub link_state: crate::circuit::LinkStateStore,
+    /// The multi-hop transport handle, when the `--multihop` flag registered it
+    /// on the participant endpoint. Owns the routing table (fed from received
+    /// `LinkState` frames) and the underlay endpoint. `None` when multihop is off
+    /// or on a non-participant (beacon/rendezvous) endpoint. See
+    /// [`iroh_multihop_transport`].
+    pub multihop: Option<iroh_multihop_transport::MultihopHandle>,
     /// Monotonic sequence for *our own* emitted link-state vectors, so peers keep
     /// the freshest and drop reorders.
     pub link_state_seq: u64,
-    /// Locally-measured per-neighbour telemetry (ping RTT + delivery), keyed by
-    /// endpoint id — the metrics we advertise for *our own* links in link-state.
-    pub circuit_telemetry: HashMap<EndpointId, crate::circuit::NeighborProfile>,
     /// When `Some(deadline)` and not yet elapsed, the event loop runs
     /// a fast `beacon::ensure` burst (event-driven failover). Armed
     /// on `NeighborDown` — the beacon may have just died — so a
@@ -427,9 +425,8 @@ impl EventLoopState {
             meshed: false,
             transport: crate::transport::TransportPolicy::DEFAULTS,
             unicast_pool: crate::unicast::UnicastPool::disconnected(),
-            link_state: crate::circuit::LinkStateStore::default(),
+            multihop: None,
             link_state_seq: 0,
-            circuit_telemetry: HashMap::new(),
             reclaim_until: None,
             seen: BoundedIdSet::new(seen_ids_cap()),
             pending_outbound: BoundedQueue::new(PENDING_OUTBOUND_CAP),
@@ -1033,13 +1030,14 @@ mod tests {
         assert_eq!(lane(&state, "dialable"), Lane::Unicast);
         assert_eq!(lane(&state, "unknown"), Lane::Gossip);
 
-        // Unmeshed: the known endpoint is no longer a unicast route, so the
-        // circuit plane picks it up.
+        // Unmeshed: the known endpoint is reached via the multihop transport (iroh
+        // picks a direct path when meshed, else the multihop one), so the column
+        // reads `multihop` rather than a direct `unicast`.
         state.meshed = false;
-        assert_eq!(lane(&state, "dialable"), Lane::Circuit);
+        assert_eq!(lane(&state, "dialable"), Lane::Multihop);
 
         // Policy narrows the column exactly like it narrows `deliver`.
-        state.transport.circuit = false;
+        state.transport.unicast = false;
         assert_eq!(lane(&state, "dialable"), Lane::Gossip);
         state.transport.gossip_directed = false;
         assert_eq!(lane(&state, "dialable"), Lane::Unreachable);

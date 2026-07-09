@@ -476,8 +476,6 @@ pub(crate) fn cli_channel_merge(
 
 // ── In-process harness (embed::MeshSession) ──────────────────────
 
-#[cfg(feature = "adversarial")]
-use agent_square::embed::LinkVectorParams;
 use agent_square::embed::{
     A2aCallParams, CreateConfig, JoinConfig, MeshSession, TaskArtifactParams,
 };
@@ -1151,62 +1149,6 @@ pub(crate) async fn three_peers(suffix: &str) -> (InProcNode, InProcNode, InProc
     let joiner_a = InProcNode::join(&creator.mesh, &format!("mon-{suffix}-a")).await;
     let joiner_b = InProcNode::join(&creator.mesh, &format!("mon-{suffix}-b")).await;
     (creator, joiner_a, joiner_b)
-}
-
-/// Inject a synthetic 1-hop circuit topology between `alice` and `bob` so
-/// directed frames can route over a circuit (`no_unicast`). A live
-/// rendezvous-bootstrapped mesh never converges usable circuit edges — the
-/// participants bridge through the rendezvous rather than becoming direct gossip
-/// neighbours — so, like `src/circuit`'s own tests, we hand each node the
-/// routing graph directly. Each node gets its own outbound edge to the peer plus
-/// the peer's X25519 key (the terminal onion layer). A `u64::MAX` seq beats any
-/// real (low-seq) emit so the injected topology persists.
-#[cfg(feature = "adversarial")]
-pub(crate) async fn wire_circuit(alice: &InProcNode, bob: &InProcNode) {
-    const SEQ: u64 = u64::MAX;
-    const COST: u32 = 1;
-    let (a_id, a_key) = (alice.session.endpoint_id(), alice.session.circuit_key());
-    let (b_id, b_key) = (bob.session.endpoint_id(), bob.session.circuit_key());
-    // alice's graph: its own edge to bob, plus bob's terminal key.
-    alice
-        .session
-        .inject_link_vector(LinkVectorParams {
-            origin: a_id,
-            seq: SEQ,
-            seal_key: a_key,
-            links: vec![(b_id, COST)],
-        })
-        .await
-        .expect("inject alice's circuit edge");
-    alice
-        .session
-        .inject_link_vector(LinkVectorParams {
-            origin: b_id,
-            seq: SEQ,
-            seal_key: b_key,
-            links: vec![],
-        })
-        .await
-        .expect("inject bob's circuit key into alice");
-    // bob's graph: its own edge to alice, plus alice's terminal key.
-    bob.session
-        .inject_link_vector(LinkVectorParams {
-            origin: b_id,
-            seq: SEQ,
-            seal_key: b_key,
-            links: vec![(a_id, COST)],
-        })
-        .await
-        .expect("inject bob's circuit edge");
-    bob.session
-        .inject_link_vector(LinkVectorParams {
-            origin: a_id,
-            seq: SEQ,
-            seal_key: a_key,
-            links: vec![],
-        })
-        .await
-        .expect("inject alice's circuit key into bob");
 }
 
 // ── Subprocess harness (real `agent-square` processes) ─────

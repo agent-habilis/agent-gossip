@@ -1,20 +1,20 @@
-//! The link-state graph as a metric-weighted directed graph, assembled from peers' gossiped
-//! link-vectors, and the source-route computation over it: shortest path
-//! (Dijkstra) plus node-disjoint backups for the warm circuit pool.
+//! The link-state graph as a metric-weighted directed graph, assembled from
+//! peers' gossiped link-vectors, and the source-route computation over it:
+//! shortest path (Dijkstra) plus node-disjoint backups.
 //!
 //! The initiator holds this graph and picks the whole hop sequence itself —
-//! source routing, which the telescoping circuit requires (each hop only knows
-//! its neighbours; only the initiator can reason about a whole path).
+//! source routing (each hop only knows its neighbours; only the initiator can
+//! reason about a whole path).
 
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, HashSet};
 
 use iroh::EndpointId;
 
-use super::metric::LinkMetric;
+use crate::metric::LinkMetric;
 
-/// A directed, metric-weighted view of the link-state graph: for each node, its outbound
-/// links `(neighbour, cost)`. Nodes are keyed by their stable `EndpointId`.
+/// A directed, metric-weighted view of the link-state graph: for each node, its
+/// outbound links `(neighbour, cost)`. Nodes are keyed by their stable `EndpointId`.
 #[derive(Debug, Default, Clone)]
 pub(crate) struct Graph {
     adj: HashMap<EndpointId, Vec<(EndpointId, LinkMetric)>>,
@@ -40,15 +40,16 @@ impl Graph {
 
     /// Shortest path from `src` to `dst` by total [`LinkMetric`], or `None` when
     /// `dst` is unreachable.
+    #[cfg(test)]
     pub(crate) fn shortest_path(&self, src: EndpointId, dst: EndpointId) -> Option<Path> {
         self.shortest_path_avoiding(src, dst, &HashSet::new())
     }
 
-    /// Up to `k` **node-disjoint** paths from `src` to `dst`, shortest first —
-    /// the warm circuit pool. Greedy: take the shortest, block its interior
-    /// hops, repeat. Interior-disjoint so one dead hop can't sever two
-    /// circuits at once (`src`/`dst` are shared by construction). Stops early
-    /// when no further disjoint path exists.
+    /// Up to `k` **node-disjoint** paths from `src` to `dst`, shortest first.
+    /// Greedy: take the shortest, block its interior hops, repeat.
+    /// Interior-disjoint so one dead hop can't sever two circuits at once
+    /// (`src`/`dst` are shared by construction). Stops early when no further
+    /// disjoint path exists.
     pub(crate) fn disjoint_paths(
         &self,
         src: EndpointId,
@@ -120,9 +121,9 @@ impl Graph {
     }
 }
 
-/// The edge under consideration by one relaxation step: `node -> next`
-/// weighing `weight` atop the already-settled `cost` to `node`, gated by
-/// `dst` (never itself blocked) and the `blocked` set.
+/// The edge under consideration by one relaxation step: `node -> next` weighing
+/// `weight` atop the already-settled `cost` to `node`, gated by `dst` (never
+/// itself blocked) and the `blocked` set.
 #[derive(Clone, Copy)]
 struct RelaxEdge<'a> {
     node: EndpointId,
@@ -133,9 +134,9 @@ struct RelaxEdge<'a> {
     blocked: &'a HashSet<EndpointId>,
 }
 
-/// Relax `candidate`: skip it when `next` is blocked (unless it's `dst`
-/// itself), then update `best`/`prev`/`heap` if the new cost improves on any
-/// previously known cost to `next`.
+/// Relax `candidate`: skip it when `next` is blocked (unless it's `dst` itself),
+/// then update `best`/`prev`/`heap` if the new cost improves on any previously
+/// known cost to `next`.
 fn relax(
     best: &mut HashMap<EndpointId, LinkMetric>,
     prev: &mut HashMap<EndpointId, EndpointId>,
@@ -246,21 +247,7 @@ mod tests {
     }
 
     #[test]
-    fn shortest_path_traces_a_four_node_line() {
-        // a → b → c → d, unit cost per hop: the whole chain is the only route.
-        let (na, nb, nc, nd) = (eid(1), eid(2), eid(3), eid(4));
-        let mut graph = Graph::default();
-        link(&mut graph, na, nb, 1);
-        link(&mut graph, nb, nc, 1);
-        link(&mut graph, nc, nd, 1);
-        let path = graph.shortest_path(na, nd).expect("reachable");
-        assert_eq!(path.hops, vec![nb, nc, nd]);
-        assert_eq!(path.cost, LinkMetric(3));
-    }
-
-    #[test]
     fn shortest_path_prefers_a_cheaper_direct_over_the_chain() {
-        // Chain a→b→c→d (total 3) plus a direct a→d (cost 1): the shortcut wins.
         let (na, nb, nc, nd) = (eid(1), eid(2), eid(3), eid(4));
         let mut graph = Graph::default();
         link(&mut graph, na, nb, 1);
@@ -274,7 +261,6 @@ mod tests {
 
     #[test]
     fn shortest_path_prefers_the_chain_when_the_direct_link_is_costlier() {
-        // Same chain (total 3) but the direct a→d costs 10: the multi-hop wins.
         let (na, nb, nc, nd) = (eid(1), eid(2), eid(3), eid(4));
         let mut graph = Graph::default();
         link(&mut graph, na, nb, 1);
@@ -284,19 +270,6 @@ mod tests {
         let path = graph.shortest_path(na, nd).expect("reachable");
         assert_eq!(path.hops, vec![nb, nc, nd]);
         assert_eq!(path.cost, LinkMetric(3));
-    }
-
-    #[test]
-    fn shortest_path_prefers_lower_total_cost_over_fewer_hops() {
-        // Direct na->nb costs 10; the two-hop na->nc->nb costs 2. Cost wins.
-        let (na, nb, nc) = (eid(1), eid(2), eid(3));
-        let mut graph = Graph::default();
-        link(&mut graph, na, nb, 10);
-        link(&mut graph, na, nc, 1);
-        link(&mut graph, nc, nb, 1);
-        let path = graph.shortest_path(na, nb).expect("reachable");
-        assert_eq!(path.hops, vec![nc, nb]);
-        assert_eq!(path.cost, LinkMetric(2));
     }
 
     #[test]
@@ -326,7 +299,6 @@ mod tests {
         link(&mut graph, nc, nd, 1);
         let paths = graph.disjoint_paths(na, nd, 2);
         assert_eq!(paths.len(), 2, "both diamond arms are available");
-        // Interior hops (nb vs nc) never repeat across the two paths.
         assert_ne!(paths[0].hops[0], paths[1].hops[0]);
         for path in &paths {
             assert_eq!(*path.hops.last().unwrap(), nd);
@@ -335,17 +307,12 @@ mod tests {
 
     #[test]
     fn disjoint_paths_stops_when_no_alternative_exists() {
-        // A single shared hop nr: na -> nr -> nd. Only one disjoint path.
         let (na, nr, nd) = (eid(1), eid(5), eid(4));
         let mut graph = Graph::default();
         link(&mut graph, na, nr, 1);
         link(&mut graph, nr, nd, 1);
         let paths = graph.disjoint_paths(na, nd, 3);
-        assert_eq!(
-            paths.len(),
-            1,
-            "the lone hop can't be reused for a 2nd path"
-        );
+        assert_eq!(paths.len(), 1, "the lone hop can't be reused for a 2nd path");
         assert_eq!(paths[0].hops, vec![nr, nd]);
     }
 }

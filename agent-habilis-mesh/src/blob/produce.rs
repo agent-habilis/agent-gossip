@@ -62,7 +62,7 @@ impl BlobServer {
         password: Option<Password>,
     ) -> Result<Self> {
         let endpoint =
-            build_endpoint(&lookups, None, None, vec![super::BLOB_ALPN.to_vec()]).await?;
+            build_endpoint(&lookups, None, None, vec![super::BLOB_ALPN.to_vec()], None).await?;
         if !lookups.is_loopback() {
             wait_online(&endpoint).await;
         }

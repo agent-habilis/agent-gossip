@@ -61,12 +61,6 @@ pub(crate) fn antientropy_interval_secs() -> u64 {
 /// is not yet wired, so this cadence bounds convergence time.
 pub(crate) const LINKSTATE_INTERVAL_SECS: u64 = 15;
 
-/// Max node-disjoint circuits tried (best-first) for one directed message
-/// before falling back to gossip — the "up to N tries" retry budget. Kept small:
-/// disjoint alternates give diminishing returns and each is a full telescoping
-/// build.
-pub(crate) const CIRCUIT_MAX_PATHS: usize = 3;
-
 /// Max ids advertised per digest **window**. A digest carries up to two
 /// windows: an **open-ended newest** one (`[lo, i64::MAX]`, which drives
 /// reconnect recovery — holders re-send every *newer* message the sender
@@ -98,8 +92,8 @@ pub(crate) fn spool_max_bytes() -> u64 {
     current().spool_max_bytes.max(1)
 }
 
-// The three directed-transport toggles (unicast / gossip-directed / circuit)
-// are **not** here: transport policy is a per-session property, carried in
+// The directed-transport toggles (unicast / gossip-directed) are **not** here:
+// transport policy is a per-session property, carried in
 // `EventLoopState::transport` (a `crate::transport::TransportPolicy`) and read
 // by `unicast::deliver`. The CLI flags feed the session config, not this global.
 

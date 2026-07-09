@@ -54,31 +54,40 @@ any frame remains gossip-carriable and anti-entropy-healable.
 
 State: `unicast_pool` (the per-peer connection pool). See [`src/unicast`].
 
-### circuit
+### multihop
 
-*Layer: transport · keyed by node id (hex).*
+*Layer: transport (a real iroh transport, not an app-level plane).*
 
-The directed, multi-hop counterpart of broadcast **gossip**: the transport a
-**directed** frame takes when its addressee is *known* but not **directly**
-reachable by **unicast**. What distinguishes it is not secrecy — every directed
-frame is **seal**ed to its addressee regardless of transport — but *routing
-through third parties*: the initiator source-routes a **circuit**, a telescoping
-chain of QUIC connections through **peers it is already connected to**, over its
-own ALPN (`agent-square/circuit/1`). Each **hop** peels one **onion**-sealed
-layer, learning only its successor, and splices the payload straight through; the
-terminal hop delivers into the *same* `gossip::ingest` seam as unicast, so the
-addressee ingests a circuit-delivered frame identically. Forwarding **hops** need
-**not** be publicly reachable — this is the serverless, multi-hop counterpart to
-iroh's own (server-based, single-hop) **relay**, and deliberately named apart from
-it.
+Reaching a peer that has **no direct path** by relaying its QUIC packets through
+intermediate peers. Unlike **unicast**/**circuit**/**gossip**, multihop is **not**
+an application protocol layered on iroh's stock transport — it is a genuine iroh
+**custom transport** (the `iroh-multihop-transport` crate, registered via iroh's
+`unstable-custom-transports` seam). iroh runs its full QUIC state machine
+end-to-end, so the two endpoints share a real `iroh::Connection` — streams,
+congestion control, path migration, QUIC-TLS end-to-end secrecy — and the relays
+forward only opaque, already-encrypted packets.
 
-Route selection is **proactive link-state**: every node gossips its own measured
-**link-vector** (a `linkstate` frame: its neighbours + per-link `LinkMetric` + its
-X25519 key), so each node holds the whole metric-weighted routing **graph** and
-computes routes locally with Dijkstra — including up to N **node-disjoint**
-alternates tried best-first before falling back to gossip. Tier order for a
-directed frame: direct **unicast** → **circuit** → gossip. Gated by
-`--no-circuit`. State: `link_state` (`LinkStateStore`). See [`src/circuit`].
+Because it is a transport, there is **no separate send tier**: a `unicast`
+`connect` transparently rides the multihop path when no direct one exists (iroh's
+path selection decides, with a backup bias so multihop only wins as a last
+resort). Multiple transports (IP + relay-server + multihop) coexist on one
+endpoint.
+
+The routing brain is **proactive link-state**: every node gossips its own
+**link-vector** (a `linkstate` frame: its neighbours + per-link `LinkMetric` +
+**its own underlay dial address**), so each node holds the whole metric-weighted
+routing **graph** and computes node-disjoint source **routes** locally with
+Dijkstra. A computed route is packed into the peer's `CustomAddr` and travels with
+the connection; relays and the destination need no routing table of their own (the
+route is self-contained and reversible for replies). Forwarding rides a dedicated
+**underlay** iroh endpoint per node (its own `iroh-multihop/forward/1` ALPN),
+distinct from the application endpoint whose packets it carries.
+
+Reachability-first (v1): confidentiality is QUIC-TLS end-to-end; per-hop onion
+anonymity (which the former **circuit** plane provided) is a future addition.
+Registered by the `--multihop` flag. State: `multihop`
+(`iroh_multihop_transport::MultihopHandle`). See
+[`iroh-multihop-transport`](../iroh-multihop-transport).
 
 ### spool
 

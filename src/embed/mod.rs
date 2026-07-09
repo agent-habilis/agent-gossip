@@ -311,6 +311,7 @@ async fn create_setup(
             spool: cfg.spool,
             sink,
             transport: cfg.transport,
+            multihop: false,
             drift: None,
             a2a_serve: None,
         },
@@ -408,6 +409,7 @@ async fn resolved_setup(
             spool,
             sink,
             transport,
+            multihop: false,
             drift: None,
             a2a_serve: None,
         },
@@ -452,8 +454,6 @@ pub struct LinkVectorParams {
     /// Monotonic per-origin sequence — a higher value wins over what the
     /// mesh already converged on.
     pub seq: u64,
-    /// The origin's X25519 circuit key (the terminal onion layer).
-    pub seal_key: [u8; 32],
     /// The origin's `(neighbour, cost)` outbound edges.
     pub links: Vec<(iroh::EndpointId, u32)>,
 }
@@ -853,27 +853,17 @@ impl InProcessSession {
         self.circuit_key
     }
 
-    /// Ingest a synthetic link-state vector into this node's routing graph
-    /// (testkit) — stands up a circuit topology a live rendezvous mesh won't
-    /// converge. See [`agent_habilis_mesh::circuit::LinkStateStore`].
+    /// Ingest a synthetic link-state vector into this node's multihop routing
+    /// table (testkit) — stands up a topology a live rendezvous mesh won't
+    /// converge. See [`iroh_multihop_transport::Topology`].
     ///
     /// # Errors
     /// Fails if the event loop has stopped.
     #[cfg(feature = "adversarial")]
     pub(crate) async fn inject_link_vector(&self, vector: LinkVectorParams) -> anyhow::Result<()> {
-        let LinkVectorParams {
-            origin,
-            seq,
-            seal_key,
-            links,
-        } = vector;
+        let LinkVectorParams { origin, seq, links } = vector;
         self.req_tx
-            .send(SessionRequest::InjectLinkVector {
-                origin,
-                seq,
-                seal_key,
-                links,
-            })
+            .send(SessionRequest::InjectLinkVector { origin, seq, links })
             .await
             .map_err(|_| anyhow::anyhow!("mesh event loop has stopped"))
     }
@@ -1066,6 +1056,7 @@ impl MeshSession {
                 drift: None,
                 a2a_serve: None,
                 transport: TransportPolicy::default(),
+                multihop: false,
             },
         )
         .await?;
@@ -1299,11 +1290,12 @@ impl MeshSession {
         self.core.circuit_key()
     }
 
-    /// Ingest a synthetic link-state vector into this node's routing graph so a
-    /// circuit route can be computed over a live mesh that would not otherwise
-    /// converge one. Test-only (`adversarial`); mirrors how `src/circuit`'s own
-    /// tests build controlled topologies. `origin`/`seal_key`/`links` are a
-    /// peer's endpoint id, X25519 key, and `(neighbour, cost)` edges.
+    /// Ingest a synthetic link-state vector into this node's multihop routing
+    /// table. Test-only (`adversarial`). NOTE: with the datagram-based multihop
+    /// transport a route only forwards over *live* underlay endpoints, so an
+    /// injected vector no longer yields a forwarding route; real multi-hop
+    /// delivery is covered by `iroh-multihop-transport`'s own e2e tests.
+    /// `origin`/`links` are a peer's endpoint id and `(neighbour, cost)` edges.
     ///
     /// # Errors
     /// Fails if the event loop has stopped.

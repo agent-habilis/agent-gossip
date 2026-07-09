@@ -20,7 +20,7 @@ use crate::util::consts::MAX_MESSAGE_SIZE;
 /// task builders. A non-a2a consumer emits its `App`-tagged payloads through
 /// this one primitive: it stamps the frame with `tag`/`to`/`corr`, signs it with
 /// the loop identity, and routes it with the same single-send decision the a2a
-/// path uses ([`crate::unicast::deliver`]) — unicast/circuit to a sole addressee
+/// path uses ([`crate::unicast::deliver`]) — unicast to a sole addressee
 /// when dialable, gossip otherwise. A broadcast (`to == None`) always gossips.
 ///
 /// Reliability matches the engine's own plumbing: while unmeshed the frame is

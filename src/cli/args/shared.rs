@@ -154,11 +154,11 @@ pub(crate) struct SharedServerOpts {
     #[arg(long, hide = true, default_value_t = false)]
     pub no_gossip_directed: bool,
 
-    /// Disable the circuit (multi-hop circuit) transport: a directed message with
-    /// no direct unicast route falls back to gossip instead of being routed
-    /// over a circuit.
+    /// Register the multi-hop transport on the participant endpoint: a directed
+    /// message to a peer with no direct path rides the multihop path (relayed
+    /// through peers) instead of gossip. Stands up a second underlay endpoint.
     #[arg(long, hide = true, default_value_t = false)]
-    pub no_circuit: bool,
+    pub multihop: bool,
 }
 
 impl SharedServerOpts {
@@ -200,7 +200,6 @@ impl SharedServerOpts {
         agent_habilis_mesh::transport::TransportPolicy {
             unicast: !self.no_unicast,
             gossip_directed: !self.no_gossip_directed,
-            circuit: !self.no_circuit,
         }
     }
 }

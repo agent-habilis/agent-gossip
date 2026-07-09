@@ -476,13 +476,14 @@ fn state_merge_response(outcome: anyhow::Result<()>) -> (String, bool) {
     }
 }
 
-/// Serialize this daemon's circuit routing topology (its assembled mesh graph) for
-/// the `topology` IPC query. `{"ok":true,"topology":{self_id, edges:[…]}}`.
+/// Serialize this daemon's multihop routing topology (its assembled mesh graph)
+/// for the `topology` IPC query. `{"ok":true,"topology":{self_id, edges:[…]}}`.
+/// Empty when the multihop transport is off (no routing table).
 fn topology_response(state: &EventLoopState) -> String {
-    let Some(endpoint) = state.unicast_pool.endpoint() else {
+    let Some(handle) = state.multihop.as_ref() else {
         return r#"{"ok":true,"topology":{"self_id":"","edges":[]}}"#.to_owned();
     };
-    let topology = state.link_state.topology(endpoint.id());
+    let topology = handle.topology_view();
     let topo_json = serde_json::to_string(&topology).unwrap_or_else(|_| "null".to_owned());
     format!(r#"{{"ok":true,"topology":{topo_json}}}"#)
 }

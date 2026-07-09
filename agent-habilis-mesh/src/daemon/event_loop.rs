@@ -81,6 +81,7 @@ pub async fn run<A: NodeDriver>(
         state_file,
         spool,
         transport,
+        multihop,
         unicast_rx,
         live_count,
         driver,
@@ -128,6 +129,7 @@ pub async fn run<A: NodeDriver>(
         },
     );
     state.mint_mesh = mint_mesh; // creator-only: backs the `invite` command
+    state.multihop = multihop; // `--multihop`: the registered transport's handle
     wire_session_state(
         &mut state,
         &endpoint,
@@ -316,28 +318,34 @@ async fn antientropy_arm(
     gossip::antientropy::broadcast_state_digests(state, ctx.sender, ctx.mesh, ctx.author).await;
 }
 
-/// The relay link-state tick: re-broadcast our own measured links (one per direct
-/// neighbour) so every peer keeps a fresh routing graph. No-op until meshed — a
-/// vector with no links helps no one.
+/// Default per-link routing cost we advertise for our own neighbours until live
+/// telemetry (RTT / delivery) is wired into the multihop metric.
+const MULTIHOP_LINK_COST: u32 = 10;
+
+/// The multihop link-state tick: re-broadcast our own links (one per direct
+/// neighbour, carrying our underlay dial address) so every peer keeps a fresh
+/// routing graph for the multihop transport. No-op until meshed, or when the
+/// multihop transport is off — a vector with no consumer helps no one.
 async fn linkstate_arm(state: &mut EventLoopState, ctx: &HandlerCtx<'_>) {
-    if !state.meshed {
+    if !state.meshed || state.multihop.is_none() {
         return;
     }
     state.link_state_seq += 1;
-    let vector = crate::circuit::self_vector(crate::circuit::SelfVectorParams {
-        origin: ctx.endpoint.id(),
-        seq: state.link_state_seq,
-        seal_key: state.identity.seal_public(),
-        neighbors: &state.linked_endpoints,
-        telemetry: &state.circuit_telemetry,
-    });
-    let Ok(json) = vector.to_json() else {
+    let seq = state.link_state_seq;
+    let links: Vec<_> = state
+        .linked_endpoints
+        .iter()
+        .map(|eid| (*eid, MULTIHOP_LINK_COST))
+        .collect();
+    let handle = state.multihop.as_ref().expect("checked above");
+    let vector = handle.link_vector(seq, links);
+    // Fold our own vector into our own routing table: gossip never loops a
+    // broadcast back, and without our outbound edges the local graph can't
+    // source a route (`route_to(self, …)` would always be empty).
+    handle.feed_topology(vector.clone());
+    let Ok(json) = serde_json::to_string(&vector) else {
         return;
     };
-    // Fold our own vector into our own store: gossip never loops a broadcast
-    // back, and without our outbound edges the local graph can't source a
-    // circuit (`circuit_paths(self, …)` would always be empty).
-    state.link_state.ingest(vector);
     let Ok(body) = crate::protocol::MessageBody::new(json) else {
         return;
     };
@@ -858,32 +866,10 @@ fn finalize_ping_round(state: &mut EventLoopState, sink: &dyn NodeSink) {
     let Some(round) = state.ping_round.take() else {
         return;
     };
-    // Fold this round's RTT + delivery into per-neighbour circuit telemetry (the
-    // metrics we advertise for our own links). Bounded to our **direct
-    // neighbours** — `circuit::self_vector` only advertises those, and the active
-    // view is capped by `--max-peers` — so the map can't grow over peer churn:
-    // prune entries for peers no longer linked, and record only for linked ones.
-    // (Collect first to avoid borrowing `participant_endpoints`/`linked_endpoints`
-    // while mutating `circuit_telemetry`.)
-    let linked = state.linked_endpoints.clone();
-    state
-        .circuit_telemetry
-        .retain(|endpoint, _| linked.contains(endpoint));
-    let neighbors: Vec<(Nickname, EndpointId)> = state
-        .participant_endpoints
-        .iter()
-        .filter(|(_, endpoint)| linked.contains(*endpoint))
-        .map(|(nickname, endpoint)| (nickname.clone(), *endpoint))
-        .collect();
-    for (nickname, endpoint) in neighbors {
-        let profile = state.circuit_telemetry.entry(endpoint).or_default();
-        if let Some(arrival) = round.pongs.get(&nickname) {
-            profile.record_rtt(arrival.duration_since(round.t1));
-            profile.record_success();
-        } else {
-            profile.record_failure();
-        }
-    }
+    // (Live per-neighbour RTT/delivery telemetry once fed the circuit metric; the
+    // multihop transport currently advertises a flat link cost, so the ping round
+    // only produces the user-facing report below. Re-wiring telemetry into the
+    // multihop metric is a future enhancement.)
     let mut peers: Vec<PingRtt> = round
         .pongs
         .iter()

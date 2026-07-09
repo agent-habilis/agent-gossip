@@ -196,6 +196,7 @@ async fn run_session(resolved: Resolved, shared: SharedServerOpts) -> Result<()>
             spool: shared.spool,
             sink,
             transport,
+            multihop: shared.multihop,
             drift: drift.as_deref(),
             a2a_serve: a2a_serve_port,
         },

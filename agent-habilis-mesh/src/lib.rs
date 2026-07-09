@@ -6,6 +6,10 @@
 //! (`publish = false`); the `agent-square` crate depends on it and re-exports
 //! the curated public surface.
 
+// Re-exported so the app crate can name the multi-hop transport's public types
+// (e.g. `LinkVector`) without a second direct dependency.
+pub use iroh_multihop_transport;
+
 pub mod beacon;
 pub mod blob;
 pub mod daemon;
@@ -24,18 +28,6 @@ pub mod resolver;
 pub mod transport;
 pub mod unicast;
 pub mod util;
-// Graph search + telemetry probes are exercised by unit tests and get wired into
-// the send path in later phases; until then they're dead in a non-test build
-// only, so the expectation is scoped to that build (a test build uses them
-// freely).
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "relay graph search / telemetry not yet reachable from production; wired in later phases"
-    )
-)]
-pub mod circuit;
 
 // Re-exported at the crate root so engine code (and the app's re-export) can
 // reach the build version stamp as `crate::VERSION`.

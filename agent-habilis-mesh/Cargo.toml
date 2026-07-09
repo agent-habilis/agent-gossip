@@ -47,6 +47,10 @@ async-trait.workspace = true
 uuid.workspace = true
 iroh.workspace = true
 iroh-gossip.workspace = true
+# The multi-hop iroh custom transport: reach a peer with no direct path by
+# relaying its QUIC packets through intermediate peers. Registered on the
+# participant endpoint (the `--multihop` flag).
+iroh-multihop-transport = { path = "../iroh-multihop-transport" }
 bs58.workspace = true
 automerge.workspace = true
 sha2.workspace = true
