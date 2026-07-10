@@ -76,11 +76,6 @@ chacha20poly1305 = "0.10"
 # Best-effort wiping of retained secrets (the mesh password + derived channel
 # keys) on drop, so they don't linger in process memory / core dumps.
 zeroize = "1"
-# Filesystem watcher backing the `--spool` directory transport: FSEvents on
-# macOS, inotify on Linux. No debouncer companion crate — spool filenames are
-# content-addressed (`sha256(frame)`), so re-delivered or coalesced events are
-# idempotent and a periodic rescan covers any the OS drops.
-notify = "8"
 interprocess = { version = "2", features = ["tokio"] }
 anstyle.workspace = true
 anstream.workspace = true

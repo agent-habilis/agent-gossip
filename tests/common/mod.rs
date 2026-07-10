@@ -144,42 +144,6 @@ pub(crate) fn tmp_log(tag: &str) -> PathBuf {
     ))
 }
 
-/// A fresh, unique scratch directory for a spool test, under the OS temp dir.
-/// Not pre-created — `spool::install` (via `--spool`) makes it.
-pub(crate) fn spool_dir(tag: &str) -> PathBuf {
-    let sequence = COUNTER.fetch_add(1, Ordering::Relaxed);
-    std::env::temp_dir().join(format!(
-        "agent-square-spool-{}-{}-{}",
-        tag,
-        std::process::id(),
-        sequence
-    ))
-}
-
-/// The per-mesh subdir a spool writes frames into (`<root>/<mesh-prefix>/`),
-/// mirroring `transport::spool::install`.
-pub(crate) fn spool_mesh_dir(root: &Path, mesh: &str) -> PathBuf {
-    root.join(agent_square::mesh_prefix(mesh))
-}
-
-/// Poll until the spool subdir holds at least `min` committed `.frame` files,
-/// or `timeout` elapses. Returns the count seen (so a caller can assert `>=`).
-pub(crate) async fn wait_for_frames(dir: &Path, min: usize, timeout: Duration) -> usize {
-    let deadline = Instant::now() + timeout;
-    loop {
-        let count = fs::read_dir(dir).map_or(0, |entries| {
-            entries
-                .filter_map(Result::ok)
-                .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "frame"))
-                .count()
-        });
-        if count >= min || Instant::now() >= deadline {
-            return count;
-        }
-        tokio::time::sleep(POLL).await;
-    }
-}
-
 pub(crate) fn socket_path(mesh: &str, nickname: &str) -> String {
     runtime_base()
         .join(agent_square::mesh_prefix(mesh))
@@ -532,32 +496,6 @@ impl InProcNode {
             MeshSession::create(cfg)
                 .await
                 .expect("in-process passworded create failed"),
-        )
-    }
-
-    /// Create a mesh that mirrors every frame into `spool` and ingests frames
-    /// other daemons write there (the filesystem spool, `--spool`).
-    pub(crate) async fn create_with_spool(name: &str, nick: &str, spool: &Path) -> Self {
-        let mut cfg = CreateConfig::new(test_mesh_name(name));
-        cfg.nickname = Some(Nickname::new(nick).expect("valid test nickname"));
-        cfg.spool = Some(spool.to_path_buf());
-        Self::from_session(
-            MeshSession::create(cfg)
-                .await
-                .expect("in-process spool create failed"),
-        )
-    }
-
-    /// Join `mesh` (a `💬…` id), mirroring/ingesting frames through `spool`.
-    pub(crate) async fn join_with_spool(mesh: &str, nick: &str, spool: &Path) -> Self {
-        let target = mesh.parse().expect("valid test join target");
-        let mut cfg = JoinConfig::new(target);
-        cfg.nickname = Some(Nickname::new(nick).expect("valid test nickname"));
-        cfg.spool = Some(spool.to_path_buf());
-        Self::from_session(
-            MeshSession::join(cfg)
-                .await
-                .expect("in-process spool join failed"),
         )
     }
 

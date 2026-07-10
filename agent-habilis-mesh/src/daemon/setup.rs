@@ -201,9 +201,6 @@ pub struct SetupParams<'a> {
     pub interactive: bool,
     pub max_peers: usize,
     pub state_file: Option<PathBuf>,
-    /// `--spool DIR`: shared-directory frame mirror. `None` (embed/MCP default)
-    /// disables it. Threaded verbatim into [`EventLoopConfig::spool`].
-    pub spool: Option<PathBuf>,
     pub sink: std::sync::Arc<dyn NodeSink>,
     /// Which transports directed messages may use (per-session). Defaults to
     /// [`crate::transport::TransportPolicy::DEFAULTS`] (all enabled) on the
@@ -279,7 +276,6 @@ pub async fn setup_mesh(kind: SetupKind, params: SetupParams<'_>) -> Result<Even
         interactive,
         max_peers,
         state_file,
-        spool,
         sink,
         transport,
         multihop,
@@ -392,7 +388,6 @@ pub async fn setup_mesh(kind: SetupKind, params: SetupParams<'_>) -> Result<Even
         rung_rx,
         cohost,
         state_file,
-        spool,
         transport,
         multihop: multihop_handle,
         unicast_rx,

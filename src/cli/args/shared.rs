@@ -56,16 +56,6 @@ pub(crate) struct SharedServerOpts {
     #[arg(long)]
     pub state_file: Option<std::path::PathBuf>,
 
-    /// Mirror every frame into DIR and ingest frames other daemons write there —
-    /// same-machine or sneakernet exchange over a shared directory. Each frame
-    /// is a content-addressed `.frame` file under `DIR/<mesh-id>/`; a peer
-    /// pointed at the same DIR (a synced folder, or a USB stick carried between
-    /// machines) picks them up and anti-entropy backfills the rest. Local
-    /// filesystems only — network shares degrade the atomic-rename and
-    /// change-notification guarantees this relies on.
-    #[arg(long, value_name = "DIR")]
-    pub spool: Option<std::path::PathBuf>,
-
     // ── Hidden tuning knobs ───────────────────────────────────────
     // Not in `--help`. Production runs on the `agent_habilis_mesh::util::consts`
     // defaults below; the subprocess test suite passes these to run with
@@ -135,10 +125,6 @@ pub(crate) struct SharedServerOpts {
     #[arg(long, hide = true, default_value_t = consts::ANTIENTROPY_MAX_RESEND)]
     pub antientropy_max_resend: usize,
 
-    /// Byte budget for a square's spool subdir before oldest-first GC (bytes).
-    #[arg(long, hide = true, default_value_t = consts::SPOOL_MAX_BYTES)]
-    pub spool_max_bytes: u64,
-
     /// Use the loopback (private) directory + relax the advertise→public guard.
     #[arg(long, hide = true, default_value_t = false)]
     pub directory_private: bool,
@@ -188,7 +174,6 @@ impl SharedServerOpts {
             directory_expiry_secs: self.directory_expiry_secs,
             antientropy_interval_secs: self.antientropy_interval_secs,
             antientropy_max_resend: self.antientropy_max_resend,
-            spool_max_bytes: self.spool_max_bytes,
             directory_private: self.directory_private,
         }
     }

@@ -23,7 +23,6 @@ use crate::protocol::mesh::MeshName;
 use crate::protocol::{MeshId, Message, Nickname};
 use crate::transport::MeshSender;
 use crate::transport::ipc::IpcMessage;
-use crate::transport::spool;
 use crate::util::bounded_read::{LineRead, read_bounded_line};
 use crate::util::consts::MAX_STDIN_LINE_BYTES;
 use crate::util::tuning::{
@@ -79,7 +78,6 @@ pub async fn run<A: NodeDriver>(
         rung_rx,
         cohost,
         state_file,
-        spool,
         transport,
         multihop,
         unicast_rx,
@@ -160,10 +158,7 @@ pub async fn run<A: NodeDriver>(
 
     let (gossip_sender, receiver) = topic.split();
 
-    // Wrap the sender, installing the `--spool` mirror when configured. A bad
-    // spool dir aborts startup; the watcher guard must outlive the loop, so it
-    // stays owned here (like `_router`). See `build_sender`.
-    let (sender, spool_rx, _spool_watcher) = build_sender(spool, gossip_sender, &mesh_str)?;
+    let sender = MeshSender::new(gossip_sender);
 
     let ipc_rx = spawn_ipc_rx::<A::Ipc>(ipc_listener_disabled, &mesh_str, &author, &sink);
 
@@ -251,36 +246,8 @@ pub async fn run<A: NodeDriver>(
         exit_on_quit,
         a2a_rx,
         unicast_rx: Some(unicast_rx),
-        spool_rx,
     }))
     .await
-}
-
-/// The wrapped sender, plus the spool's inbound receiver and watcher guard when
-/// `--spool` is active. Aliased so the return stays under `type_complexity`.
-type SenderSetup = (
-    MeshSender,
-    Option<mpsc::Receiver<bytes::Bytes>>,
-    Option<notify::RecommendedWatcher>,
-);
-
-/// Wrap the raw gossip sender, installing the `--spool` mirror when a directory
-/// was configured. The returned watcher guard must be held for the loop's whole
-/// lifetime; dropping it stops inbound spool ingestion.
-fn build_sender(
-    spool: Option<std::path::PathBuf>,
-    gossip_sender: GossipSender,
-    mesh_id: &MeshId,
-) -> Result<SenderSetup> {
-    let Some(dir) = spool else {
-        return Ok((MeshSender::new(gossip_sender, None), None, None));
-    };
-    let (writer, inbound_rx, watcher) = spool::install(&dir, mesh_id.as_str())?.into_parts();
-    Ok((
-        MeshSender::new(gossip_sender, Some(writer)),
-        Some(inbound_rx),
-        Some(watcher),
-    ))
 }
 
 /// The 1-minute housekeeping arm: the memory warn + reassembly sweep, then
@@ -431,10 +398,6 @@ struct EventLoop<A: NodeDriver> {
     /// `gossip::ingest` (same validation + dedup path as gossip). `Option` so
     /// the `select!` arm can disable itself if the channel ever closes.
     unicast_rx: Option<mpsc::Receiver<bytes::Bytes>>,
-    /// Inbound frames the `--spool` watcher read from the shared directory,
-    /// drained into `gossip::ingest` (same path as gossip/unicast). `None` when
-    /// no spool is active; the arm disables itself if the channel closes.
-    spool_rx: Option<mpsc::Receiver<bytes::Bytes>>,
 }
 
 /// The daemon's `select!` loop. Never returns normally on the CLI
@@ -485,7 +448,6 @@ async fn event_loop<A: NodeDriver>(loop_state: EventLoop<A>) -> Result<()> {
         exit_on_quit,
         mut a2a_rx,
         mut unicast_rx,
-        mut spool_rx,
     } = loop_state;
 
     log_daemon_start(&author);
@@ -571,13 +533,6 @@ async fn event_loop<A: NodeDriver>(loop_state: EventLoop<A>) -> Result<()> {
             frame = recv_opt(&mut unicast_rx) => match frame {
                 Some(bytes) => gossip::ingest(bytes, &mut state, &mut app, &parts.ctx(&sender)).await,
                 None => unicast_rx = None,
-            },
-            // Inbound spool frames (files peers wrote to the shared dir) ride
-            // the same `ingest` path — self-echo + verify + dedup drop our own
-            // mirrored frames and any duplicates.
-            frame = recv_opt(&mut spool_rx) => match frame {
-                Some(bytes) => gossip::ingest(bytes, &mut state, &mut app, &parts.ctx(&sender)).await,
-                None => spool_rx = None,
             },
             _ = intervals.prune.tick() => timers::tick_prune(&mut state, sink.as_ref()),
             _ = intervals.alive.tick() => {
@@ -717,15 +672,6 @@ async fn announce_and_maybe_exit<A: NodeDriver>(
     // waiters (A2A calls) are failed in `on_shutdown` (inside `shutdown`).
     app.close_poll_waiters();
     shutdown(state, app, ctx, quit.name).await;
-    // Drain any frames still queued for the spool before we abort the process —
-    // otherwise `process::exit` kills the detached writer mid-flush and a
-    // burst-then-quit loses its tail (a sneakernet hand-off's last messages).
-    // Bounded so a wedged disk can't hang shutdown.
-    let _ = tokio::time::timeout(
-        Duration::from_secs(crate::util::consts::SPOOL_FLUSH_TIMEOUT_SECS),
-        ctx.sender.flush(),
-    )
-    .await;
     #[cfg(not(feature = "dhat-heap"))]
     if quit.exit_on_quit {
         std::process::exit(0);
@@ -1192,8 +1138,6 @@ async fn resubscribe_tick(
     match try_resubscribe(env, state, link.attempts).await {
         Resubscribe::Restored(new_sender, new_receiver) => {
             let mut dead_receiver = std::mem::replace(link.receiver, new_receiver);
-            // Swap only the inner gossip sender; the spool writer Arc survives
-            // the resubscribe so a healed daemon keeps mirroring.
             link.sender.replace_gossip(new_sender);
             state.gossip_open = true;
             // The dead subscription's link view is void; the fresh one

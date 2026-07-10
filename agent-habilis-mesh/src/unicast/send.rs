@@ -46,8 +46,8 @@ pub async fn deliver(
                 "directed message undeliverable: no unicast route and gossip is disabled"
             ));
         }
-        Route::UnicastPreferred(eid) => try_unicast_warm(eid, &bytes, state, sender).await,
-        Route::UnicastOnly(eid) => try_unicast_only(eid, &bytes, state, sender).await,
+        Route::UnicastPreferred(eid) => try_unicast_warm(eid, &bytes, state).await,
+        Route::UnicastOnly(eid) => try_unicast_only(eid, &bytes, state).await,
     };
     match attempt {
         Attempt::Delivered => Ok(()),
@@ -178,17 +178,10 @@ fn directly_meshed(nick: &Nickname, state: &EventLoopState) -> bool {
 
 /// Warm-preferred unicast: send point-to-point when the connection is already
 /// warm, else warm it in the background and fall through (never blocking on a
-/// cold dial). Mirrors to the spool on its own success — it bypassed
-/// `broadcast`'s tee.
-async fn try_unicast_warm(
-    eid: EndpointId,
-    bytes: &Bytes,
-    state: &EventLoopState,
-    sender: &MeshSender,
-) -> Attempt {
+/// cold dial).
+async fn try_unicast_warm(eid: EndpointId, bytes: &Bytes, state: &EventLoopState) -> Attempt {
     let pool = state.unicast_pool.clone();
     if pool.send_if_warm(eid, bytes.clone()).await {
-        sender.spool(bytes);
         Attempt::Delivered
     } else {
         pool.warm(eid);
@@ -200,19 +193,12 @@ async fn try_unicast_warm(
 /// fallback, so a cold peer is reached synchronously). A dial failure falls
 /// through — [`deliver`]'s central rule turns that into an undeliverable error,
 /// not a silent gossip.
-async fn try_unicast_only(
-    eid: EndpointId,
-    bytes: &Bytes,
-    state: &EventLoopState,
-    sender: &MeshSender,
-) -> Attempt {
+async fn try_unicast_only(eid: EndpointId, bytes: &Bytes, state: &EventLoopState) -> Attempt {
     let pool = state.unicast_pool.clone();
     if pool.send_if_warm(eid, bytes.clone()).await {
-        sender.spool(bytes);
         return Attempt::Delivered;
     }
     if pool.dial_and_send(eid, bytes.clone()).await.is_ok() {
-        sender.spool(bytes);
         Attempt::Delivered
     } else {
         Attempt::FellThrough

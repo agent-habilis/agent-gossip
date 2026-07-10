@@ -4,7 +4,6 @@
 
 pub mod ipc;
 pub(crate) mod sender;
-pub(crate) mod spool;
 
 pub use sender::MeshSender;
 

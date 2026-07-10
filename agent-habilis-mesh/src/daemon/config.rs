@@ -144,11 +144,6 @@ pub struct EventLoopConfig {
     pub cohost: CoHostPolicy,
     /// When set, the daemon writes peer count changes to this file.
     pub state_file: Option<PathBuf>,
-    /// `--spool DIR`: mirror every outbound frame into `DIR/<mesh-prefix>/` and
-    /// ingest frames other daemons write there. The event loop installs the
-    /// spool (`transport::spool::install`), wraps the gossip sender to tee, and
-    /// drains the inbound files into `gossip::ingest`. `None` disables it.
-    pub spool: Option<PathBuf>,
     /// Which transports directed messages may use (per-session). `run()` copies
     /// it into `EventLoopState::transport`, which `unicast::deliver` reads.
     pub transport: crate::transport::TransportPolicy,

@@ -193,7 +193,6 @@ async fn run_session(resolved: Resolved, shared: SharedServerOpts) -> Result<()>
             interactive: !shared.no_interactive,
             max_peers: shared.max_peers,
             state_file: shared.state_file,
-            spool: shared.spool,
             sink,
             transport,
             multihop: shared.multihop,

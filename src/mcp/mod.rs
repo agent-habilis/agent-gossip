@@ -475,9 +475,6 @@ impl AgentSquareServer {
             max_peers: GOSSIP_ACTIVE_VIEW_CAPACITY,
             password: args.password,
             transport: agent_habilis_mesh::transport::TransportPolicy::default(),
-            // The MCP server is a poll-only consumer; the spool is a CLI-daemon
-            // feature, so it never mirrors to a shared directory.
-            spool: None,
         };
         let session = Session::create(cfg).await.map_err(|error| match error {
             CreateError::AdvertiseRequiresReachable => {
@@ -517,7 +514,6 @@ impl AgentSquareServer {
             max_peers: GOSSIP_ACTIVE_VIEW_CAPACITY,
             password: args.password,
             transport: agent_habilis_mesh::transport::TransportPolicy::default(),
-            spool: None,
         })
         .await
         .map_err(join_error_to_mcp)?;

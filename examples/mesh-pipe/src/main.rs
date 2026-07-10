@@ -381,7 +381,6 @@ async fn spawn_node(select: Select, app: PipeApp, config: SpawnConfig) -> Result
             interactive: false,
             max_peers,
             state_file: None,
-            spool: None,
             sink: std::sync::Arc::new(SilentSink),
             transport,
             multihop: false,

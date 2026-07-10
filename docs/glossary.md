@@ -89,39 +89,6 @@ Registered by the `--multihop` flag. State: `multihop`
 (`iroh_multihop_transport::MultihopHandle`). See
 [`iroh-multihop-transport`](../iroh-multihop-transport).
 
-### spool
-
-*Layer: transport · keyed by content hash.*
-
-A shared-directory **mirror** of the broadcast **frame** stream, opt-in with
-`--spool DIR`. Every outbound frame is written as a content-addressed file
-(`sha256(frame)[..16].frame`) under `DIR/<mesh-prefix>/`, and a filesystem
-watcher feeds files *other* daemons write there back into the *same*
-`gossip::ingest` seam as gossip and unicast — so signature-verify, mesh-gate,
-self-echo drop, and dedup are identical, and a frame delivered over both planes
-surfaces exactly once. Two daemons pointed at one directory (a synced folder, or
-a USB stick physically carried between machines — **sneakernet**) exchange state
-with no network at all; **anti-entropy** backfills whatever a straggler missed.
-
-Deliberately **not** a directed-routing lane and not a `Route` variant:
-broadcasts already ride gossip, so the spool only *mirrors* the outbound stream
-and *feeds* foreign frames in. The roster's **connected/gossip** `reach` tag
-stays truthful about directed routing — a spool peer is not "connected". Only
-**durable** frames are mirrored (chat, task legs, `state`/`meta` changes — what
-`MessageKind::is_spoolable` marks); ephemeral plumbing (presence, dial hints,
-digests, ping/pong, link-state) is never written, so ingesting a file can't
-resurrect a departed peer. Frames are content-addressed, so a re-copied or
-event-coalesced file ingests at most once, and the writer's temp-file +
-atomic-`rename` keeps a half-written file invisible; files and the directory are
-created owner-only (`0600`/`0700`) so an unpassworded mesh's plaintext frames
-aren't exposed to other local users. A byte-cap GC (oldest-mtime first,
-`SPOOL_MAX_BYTES`, hidden `--spool-max-bytes`) bounds the directory — which also
-**bounds pure-sneakernet recovery**: an offline joiner recovers only the frames
-still on disk, so a mesh whose history exceeds the cap needs a larger
-`--spool-max-bytes` or a live peer to fully converge. Local filesystems only — a
-network share degrades the atomic-rename and change-notification guarantees. See
-[`src/transport/spool`].
-
 ### participant
 
 *Layer: membership · keyed by nickname.*

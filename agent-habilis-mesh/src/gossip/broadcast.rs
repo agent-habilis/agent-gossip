@@ -24,8 +24,8 @@ use crate::util::consts::MAX_MESSAGE_SIZE;
 /// when dialable, gossip otherwise. A broadcast (`to == None`) always gossips.
 ///
 /// Reliability matches the engine's own plumbing: while unmeshed the frame is
-/// buffered into `pending_outbound` (flushed on the first real-peer link) and
-/// mirrored to the spool, so a send issued before the mesh forms is not lost.
+/// buffered into `pending_outbound` (flushed on the first real-peer link), so a
+/// send issued before the mesh forms is not lost.
 ///
 /// This is a **single-frame** send: unlike the a2a chat path it does not split a
 /// large body across shards (that logic is entangled with a2a's per-author hash
@@ -67,9 +67,7 @@ pub async fn send_app(
         crate::unicast::deliver(&frame, bytes, state, ctx.sender).await
     } else if state.pending_outbound.push(bytes.clone()) {
         // Buffered until the first real-peer link flushes it (see
-        // `gossip::recv::flush_pending`); mirror to the spool only when the
-        // buffer accepted it, so a reported success is always durable.
-        ctx.sender.spool(&bytes);
+        // `gossip::recv::flush_pending`).
         Ok(())
     } else {
         anyhow::bail!("pending outbound buffer full; app frame dropped")
@@ -212,14 +210,10 @@ pub async fn broadcast_state_merge(
             .await
             .map_err(|error| anyhow::anyhow!("{error}"))?;
     } else {
-        // Unmeshed: buffer for gossip until we mesh, and mirror to the spool
-        // only when the buffer accepted the frame — so we never export a change
-        // we've reported as un-buffered. (The change is already in the local
-        // doc, so heads anti-entropy still reconciles it if the buffer is full.)
-        let frame = Bytes::from(bytes);
-        if state.pending_outbound.push(frame.clone()) {
-            sender.spool(&frame);
-        }
+        // Unmeshed: buffer for gossip until we mesh. (The change is already in
+        // the local doc, so heads anti-entropy still reconciles it if the buffer
+        // is full.)
+        state.pending_outbound.push(Bytes::from(bytes));
     }
     Ok(())
 }

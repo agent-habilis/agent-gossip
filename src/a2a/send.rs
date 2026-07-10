@@ -239,14 +239,11 @@ async fn send_msg_part(
         // unicast when the addressee is dialable, else gossip (see `unicast`).
         agent_habilis_mesh::unicast::deliver(msg, bytes, state, sender).await?;
     } else if state.pending_outbound.push(bytes.clone()) {
-        // Buffered for gossip; mirror to the spool now so a never-meshed spool
-        // daemon still exports it (on a later mesh, flush re-broadcasts and the
-        // spool tee is a no-op — the file already exists).
-        sender.spool(&bytes);
+        // Buffered for gossip until the first real-peer link flushes it.
         commit_outbound_part(state, msg, out, echo);
     } else {
-        // Full buffer: the frame reaches no plane, so it must NOT be spooled —
-        // the reported drop has to match reality.
+        // Full buffer: the frame reaches no plane, so the reported drop matches
+        // reality.
         tracing::warn!("pending outbound buffer full; outbound message dropped");
         return Err(anyhow::anyhow!(
             "pending outbound buffer full; message dropped"
@@ -1009,9 +1006,7 @@ async fn send_task_leg(
         retain_leg(state, out, RetainLegParams { msg, echo, content });
         agent_habilis_mesh::unicast::deliver(msg, bytes, state, sender).await?;
     } else if state.pending_outbound.push(bytes.clone()) {
-        // Buffered for gossip; mirror to the spool only on a successful buffer
-        // so a reported drop matches reality.
-        sender.spool(&bytes);
+        // Buffered for gossip until the first real-peer link flushes it.
         retain_leg(state, out, RetainLegParams { msg, echo, content });
     } else {
         tracing::warn!("pending outbound buffer full; outbound message dropped");

@@ -54,9 +54,6 @@ pub struct JoinConfig {
     /// Which transport planes directed sends may use. Default all-on;
     /// narrowed by tests to pin a message to one lane.
     pub transport: TransportPolicy,
-    /// Mirror frames into this shared directory (and ingest frames peers write
-    /// there) — the filesystem spool. `None` disables it.
-    pub spool: Option<std::path::PathBuf>,
 }
 
 impl JoinConfig {
@@ -72,7 +69,6 @@ impl JoinConfig {
             max_peers: GOSSIP_ACTIVE_VIEW_CAPACITY,
             password: None,
             transport: TransportPolicy::default(),
-            spool: None,
         }
     }
 }
@@ -93,9 +89,6 @@ pub struct TopicConfig {
     /// Which transport planes directed sends may use. Default all-on;
     /// narrowed by tests to pin a message to one lane.
     pub transport: TransportPolicy,
-    /// Mirror frames into this shared directory (and ingest frames peers write
-    /// there) — the filesystem spool. `None` disables it.
-    pub spool: Option<std::path::PathBuf>,
 }
 
 impl TopicConfig {
@@ -107,7 +100,6 @@ impl TopicConfig {
             nickname: None,
             max_peers: GOSSIP_ACTIVE_VIEW_CAPACITY,
             transport: TransportPolicy::default(),
-            spool: None,
         }
     }
 }
@@ -148,9 +140,6 @@ pub struct CreateConfig {
     /// Which transport planes directed sends may use. Default all-on;
     /// narrowed by tests to pin a message to one lane.
     pub transport: TransportPolicy,
-    /// Mirror frames into this shared directory (and ingest frames peers write
-    /// there) — the filesystem spool. `None` disables it.
-    pub spool: Option<std::path::PathBuf>,
 }
 
 impl CreateConfig {
@@ -169,7 +158,6 @@ impl CreateConfig {
             max_peers: GOSSIP_ACTIVE_VIEW_CAPACITY,
             password: None,
             transport: TransportPolicy::default(),
-            spool: None,
         }
     }
 }
@@ -308,7 +296,6 @@ async fn create_setup(
             interactive: false,
             max_peers,
             state_file: None,
-            spool: cfg.spool,
             sink,
             transport: cfg.transport,
             multihop: false,
@@ -346,7 +333,6 @@ async fn join_setup(
     .map_err(JoinError::Resolve)?;
     let limits = SetupLimits {
         max_peers: cfg.max_peers,
-        spool: cfg.spool,
         transport: cfg.transport,
     };
     resolved_setup(resolved, limits, output).await
@@ -369,18 +355,16 @@ async fn topic_setup(
     .map_err(JoinError::Resolve)?;
     let limits = SetupLimits {
         max_peers: cfg.max_peers,
-        spool: cfg.spool,
         transport: cfg.transport,
     };
     resolved_setup(resolved, limits, output).await
 }
 
-/// The peer-cap / spool / transport trio [`join_setup`] and [`topic_setup`]
-/// thread through to [`resolved_setup`], lifted out of their otherwise-distinct
+/// The peer-cap / transport pair [`join_setup`] and [`topic_setup`] thread
+/// through to [`resolved_setup`], lifted out of their otherwise-distinct
 /// `*Config` structs.
 struct SetupLimits {
     max_peers: usize,
-    spool: Option<std::path::PathBuf>,
     transport: TransportPolicy,
 }
 
@@ -394,7 +378,6 @@ async fn resolved_setup(
     let Resolved { kind, author, .. } = resolved;
     let SetupLimits {
         max_peers,
-        spool,
         transport,
     } = limits;
     let io = crate::a2a::app::SurfacedIo::new(output);
@@ -406,7 +389,6 @@ async fn resolved_setup(
             interactive: false,
             max_peers,
             state_file: None,
-            spool,
             sink,
             transport,
             multihop: false,
@@ -1051,7 +1033,6 @@ impl MeshSession {
                 interactive: false,
                 max_peers: GOSSIP_ACTIVE_VIEW_CAPACITY,
                 state_file: None,
-                spool: None,
                 sink,
                 drift: None,
                 a2a_serve: None,

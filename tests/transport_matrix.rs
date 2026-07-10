@@ -14,8 +14,6 @@
 //!   with **no** fallback, so a completed lifecycle proves unicast.
 //! - `matrix_gossip`   — `no_unicast`: directed frames take `Route::Gossip`, so
 //!   completion proves gossip.
-//! - `matrix_spool`    — default policy + a shared `--spool` dir: the suite runs
-//!   as usual and the durable frames are additionally mirrored to disk.
 //!
 //! Every row is **pure-by-policy** (the forced transport is the only path a
 //! directed frame can take), so "the lifecycle completed" is a real proof the
@@ -26,7 +24,7 @@ mod common;
 use std::time::Instant;
 
 use agent_square::{Channel, TaskId, TaskState, TransportPolicy};
-use common::{InProcNode, MSG_TIMEOUT, POLL, spool_dir, spool_mesh_dir, wait_for_frames};
+use common::{InProcNode, MSG_TIMEOUT, POLL};
 use serde_json::{Value, json};
 
 /// Active-view cap for the (2-node) rows that want a full mesh.
@@ -195,25 +193,4 @@ async fn matrix_gossip() {
     run_operations(&mut alice, &mut bob).await;
     alice.leave().await;
     bob.leave().await;
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn matrix_spool() {
-    let dir = spool_dir("matrix");
-    let mut alice = InProcNode::create_with_spool("tm-spool", "tm-spl-a", &dir).await;
-    let mut bob = InProcNode::join_with_spool(&alice.mesh, "tm-spl-b", &dir).await;
-
-    run_operations(&mut alice, &mut bob).await;
-
-    // The durable operations were additionally mirrored to the shared directory.
-    let frame_dir = spool_mesh_dir(&dir, &alice.mesh);
-    assert!(
-        wait_for_frames(&frame_dir, 1, MSG_TIMEOUT).await >= 1,
-        "no .frame files mirrored under {}",
-        frame_dir.display()
-    );
-
-    alice.leave().await;
-    bob.leave().await;
-    let _ = std::fs::remove_dir_all(&dir);
 }
