@@ -273,7 +273,7 @@ mod tests {
                 continue;
             }
             assert!(
-                SKILLS.get_file(&format!("{skill}/SKILL.md")).is_some(),
+                SKILLS.get_file(format!("{skill}/SKILL.md")).is_some(),
                 "{skill} entrypoint"
             );
         }

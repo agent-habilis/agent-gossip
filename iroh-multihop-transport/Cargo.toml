@@ -18,7 +18,7 @@ workspace = true
 iroh = { workspace = true, features = ["unstable-custom-transports"] }
 # `CustomAddr` is not re-exported through `iroh`; name it from iroh-base
 # directly. Patched to the same fork rev as `iroh` at the workspace root.
-iroh-base = "1.0.1"
+iroh-base = "1.0.2"
 # The quinn fork iroh runs on. Needed directly to name `noq_udp::RecvMeta`
 # in the `CustomEndpoint::poll_recv` signature. Resolves to the same
 # crates.io 1.0.1 iroh depends on — no patch required.
