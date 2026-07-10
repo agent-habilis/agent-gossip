@@ -39,6 +39,6 @@ pub(crate) mod timers;
 
 pub(crate) mod event_loop;
 
-pub use config::{CoHostPolicy, DriverMode, EventLoopConfig};
+pub use config::{CoHostPolicy, DriverMode, EventLoopConfig, ReadyAnnounce};
 pub use event_loop::run;
 pub use params::{CreateParams, JoinParams, Resolved, TopicParams, derive_topic_mesh};

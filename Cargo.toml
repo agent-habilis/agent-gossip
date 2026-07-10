@@ -168,8 +168,8 @@ agent-habilis-mesh = { path = "agent-habilis-mesh" }
 dhat = { version = "0.3", optional = true }
 tokio.workspace = true
 clap = { version = "4", features = ["derive"] }
-# Embeds the integration artifacts (Claude Code plugin, pi extension, generic
-# skill) into the binary at compile time so `agent-square setup` is self-contained.
+# Embeds the portable Agent Skills tree into the binary at compile time so
+# `agent-square plug` is self-contained.
 include_dir = "0.7"
 anstyle.workspace = true
 anstream.workspace = true

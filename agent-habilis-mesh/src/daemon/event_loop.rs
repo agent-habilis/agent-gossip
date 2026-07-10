@@ -85,6 +85,7 @@ pub async fn run<A: NodeDriver>(
         unicast_rx,
         live_count,
         driver,
+        ready,
     } = cfg;
 
     // Every driver-derived fact in one place. Only the CLI exits the
@@ -185,7 +186,9 @@ pub async fn run<A: NodeDriver>(
     };
 
     // Flip `ready` to `true` only once the daemon can actually serve, then
-    // re-write the state file (the earlier write reported `ready: false`).
+    // re-write the state file (the earlier write reported `ready: false`) and
+    // emit the `ready` event.
+    //
     // "Serving" means: in CLI mode the IPC socket is bound — `spawn_ipc_rx`
     // binds *synchronously*, so a `Some` receiver proves an accepting socket
     // exists and a gate that observes the flag is guaranteed a subsequent
@@ -193,9 +196,22 @@ pub async fn run<A: NodeDriver>(
     // must NOT advertise readiness (the daemon still gossips, but has no IPC).
     // In-process mode (embed/MCP) has no socket by design (`req_rx` drives it)
     // and no `--state-file`, so it is always considered serving.
+    //
+    // The event is emitted *here*, beside the flag, rather than in `setup`:
+    // there it announced a socket that had not been bound, so a client acting
+    // on `ready` could race the listener. The two readiness signals — the
+    // stdout event and the state-file flag `agent-square ready` polls — now
+    // have one source and cannot disagree.
     if ipc_listener_disabled || ipc_rx.is_some() {
         state.ready = true;
         state.write_participant_count();
+        sink.emit(NodeEvent::Ready {
+            mesh: mesh_str.clone(),
+            name: mesh_name.clone(),
+            nickname: author.clone(),
+            drift: ready.drift,
+            a2a_port: ready.a2a_port,
+        });
     }
 
     // `_router` stays owned in this scope so its accept loop outlives

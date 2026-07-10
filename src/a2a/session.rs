@@ -20,7 +20,7 @@ pub(crate) enum SessionRequest {
         /// Long-poll: park the read up to the server cap, returning early on
         /// the first new event. `false` is an immediate read.
         long: bool,
-        resp: oneshot::Sender<Vec<crate::a2a::surfaced::SurfacedEvent>>,
+        resp: oneshot::Sender<crate::a2a::surfaced::PollBatch>,
     },
     /// Worker-emit a `TaskStatusUpdate` on a task we're serving (`a2a status`):
     /// the daemon resolves the peer from the task record and pushes it.

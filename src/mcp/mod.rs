@@ -390,6 +390,12 @@ struct FetchMessagesResult {
     /// The newest `seq` returned (the next `after`), or `None` when nothing
     /// new arrived.
     current_seq: Option<u64>,
+    /// Set when the `after` cursor aged out of the surfaced-events ring: every
+    /// event below this `seq` was evicted before this call and is gone. The
+    /// window below is a fresh baseline, not a continuation. `None` on a normal
+    /// read — which is the only case in which `messages` is complete.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    missed_before: Option<u64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -640,10 +646,16 @@ impl AgentSquareServer {
     ) -> Result<CallToolResult, McpError> {
         let guard = self.session.lock().await;
         let session = guard.as_ref().ok_or_else(not_in_mesh_error)?;
-        let events = session
+        let batch = session
             .fetch_messages(args.after, args.long)
             .await
             .map_err(to_mcp_error)?;
+        if let Some(missed_before) = batch.missed_before {
+            tracing::warn!(
+                missed_before,
+                "fetch_messages: cursor aged out of the ring; events were lost"
+            );
+        }
         // Embed each surfaced event's rendered line verbatim as a `RawValue`,
         // so the MCP result is byte-identical to the `--output json` stream
         // (a `Value` round-trip would key-sort the order-pinned fields).
@@ -651,9 +663,10 @@ impl AgentSquareServer {
         // the raw batch: every pollable event is expected to render, but if one
         // ever fails to (a bug — log it), the cursor must not advance past an
         // event the client never received, or it would silently lose it.
-        let mut messages: Vec<Box<serde_json::value::RawValue>> = Vec::with_capacity(events.len());
+        let mut messages: Vec<Box<serde_json::value::RawValue>> =
+            Vec::with_capacity(batch.events.len());
         let mut current_seq: Option<u64> = None;
-        for item in &events {
+        for item in &batch.events {
             if let Some(value) = crate::output::surfaced_event_json(item.seq, &item.event)
                 .and_then(|line| serde_json::value::RawValue::from_string(line).ok())
             {
@@ -669,6 +682,7 @@ impl AgentSquareServer {
         ok_json(FetchMessagesResult {
             messages,
             current_seq,
+            missed_before: batch.missed_before,
         })
     }
 

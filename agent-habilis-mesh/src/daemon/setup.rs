@@ -20,7 +20,7 @@ use crate::util::tuning::RELAY_RUNG_PROBE_SECS;
 use crate::beacon::RendezvousParams;
 use crate::lifecycle;
 
-use super::{CoHostPolicy, DriverMode, EventLoopConfig};
+use super::{CoHostPolicy, DriverMode, EventLoopConfig, ReadyAnnounce};
 
 /// What kind of mesh we're setting up — either minting a new one
 /// (create) or attaching to an existing one (join).
@@ -361,9 +361,16 @@ pub async fn setup_mesh(kind: SetupKind, params: SetupParams<'_>) -> Result<Even
         }
     };
 
-    // Off the critical path: `ready` is already out. Confirm/correct the
-    // optimistic rung 0 in the background (covers a joiner, which has no
-    // beacon self-monitor of its own).
+    // Read out of `build` before anything below moves what it borrows
+    // (`author`, `sink`, `rung_tx`).
+    let ready = ReadyAnnounce {
+        drift: build.drift.map(str::to_owned),
+        a2a_port: build.a2a_port,
+    };
+
+    // Off the critical path: nothing below blocks `ready`, which `run` emits
+    // once the IPC socket accepts. Confirm/correct the optimistic rung 0 in the
+    // background (covers a joiner, which has no beacon self-monitor of its own).
     spawn_startup_rung_confirmation(ladder, rung_tx);
 
     Ok(EventLoopConfig {
@@ -395,6 +402,7 @@ pub async fn setup_mesh(kind: SetupKind, params: SetupParams<'_>) -> Result<Even
         // Default to the CLI driver; the MCP / embed sessions
         // overwrite `cfg.driver` before handing it to `daemon::run`.
         driver: DriverMode::Cli,
+        ready,
     })
 }
 
@@ -477,13 +485,7 @@ async fn setup_create(build: &SetupBuild<'_>, create: CreateSetup) -> Result<Ass
     sink.emit(NodeEvent::MeshId {
         id: mesh_id.clone(),
     });
-    sink.emit(NodeEvent::Ready {
-        mesh: mesh_id.clone(),
-        name: name.clone(),
-        nickname: author.clone(),
-        drift: build.drift.map(str::to_owned),
-        a2a_port: build.a2a_port,
-    });
+    // `ready` is emitted by `run`, once the IPC socket accepts — not here.
     let topic_id = mesh.topic_id();
     lifecycle::log_ready(
         topic_id,
@@ -522,8 +524,10 @@ async fn setup_create(build: &SetupBuild<'_>, create: CreateSetup) -> Result<Ass
 /// Attach to an existing mesh. Join and Topic share one attach path;
 /// they differ only in the co-host policy (Topic has no distinguished
 /// creator, so its first peer must beacon) and the startup verb. Like
-/// `create`, non-blocking: `ready` fires immediately so the joiner is
-/// never invisible while bootstrapping.
+/// `create`, non-blocking on the *mesh*: the subscribe below only kicks off a
+/// background connect, so a joiner is never invisible while bootstrapping and
+/// `ready` never waits for a peer. It does wait for the IPC socket — see
+/// `run`.
 async fn setup_join(build: &SetupBuild<'_>, kind: SetupKind) -> Result<Assembled> {
     let sink = build.sink;
     let author = build.author;
@@ -561,13 +565,7 @@ async fn setup_join(build: &SetupBuild<'_>, kind: SetupKind) -> Result<Assembled
     // See `EventLoopConfig::cohost`.
     let topic = gossip.subscribe(topic_id, vec![rdv.id]).await?;
 
-    sink.emit(NodeEvent::Ready {
-        mesh: mesh_id.clone(),
-        name: mesh.name.clone(),
-        nickname: author.clone(),
-        drift: build.drift.map(str::to_owned),
-        a2a_port: build.a2a_port,
-    });
+    // `ready` is emitted by `run`, once the IPC socket accepts — not here.
     lifecycle::log_ready(
         topic_id,
         mesh.name.as_str(),

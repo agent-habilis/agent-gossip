@@ -1,31 +1,41 @@
 //! The agent/integration model shared by `plug`, `unplug`, and `doctor`:
-//! the artifacts embedded in this binary, which agents exist, where each one's
-//! integration lives, and whether it's set up / up to date. Mirrors
-//! `../browse`'s `util::skill` (embed + agent + state co-located).
+//! the embedded skill tree, which agents exist, where each one's integration
+//! lives, and whether it's set up / up to date.
 
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use include_dir::{Dir, include_dir};
+use include_dir::{include_dir, Dir};
 
-/// The Claude Code plugin — multi-skill, loads as `square@skills-dir`.
-pub(crate) static CC_PLUGIN: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/claude-code-plugin");
-/// The pi extension — TS source (peer deps come from the pi runtime). Embedded
-/// from the `build.rs`-staged copy in `OUT_DIR`, which excludes the local
-/// `node_modules`, so it never bloats the binary.
-pub(crate) static PI_EXTENSION: Dir<'_> = include_dir!("$OUT_DIR/pi-extension");
-/// The portable, agent-agnostic MCP skill.
-pub(crate) const GENERIC_SKILL: &str = include_str!("../../skills/square/SKILL.md");
+/// The portable Agent Skills payload installed into each supported harness.
+pub(crate) static SKILLS: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/skills");
+
+const OWNED_SKILL_DIRS: &[&str] = &[
+    "square-create",
+    "square-discover",
+    "square-doctor",
+    "square-handover",
+    "square-join",
+    "square-leave",
+    "square-meta",
+    "square-msg",
+    "square-ping",
+    "square-state",
+    "square-status",
+    "square-task",
+    "square-topic",
+    "shared",
+];
 
 /// Ties this module's compilation to the embedded artifacts' content
-/// (fingerprint emitted by `build.rs`), so editing a plugin/skill/extension
-/// file forces a rebuild that re-expands the `include_dir!`/`include_str!`
-/// embeds above — `include_dir!` is otherwise untracked on stable. Anonymous
+/// (fingerprint emitted by `build.rs`), so editing a skill file forces a
+/// rebuild that re-expands the `include_dir!` embed above — `include_dir!` is
+/// otherwise untracked on stable. Anonymous
 /// `const _` so it's evaluated (the `env!` is the load-bearing part) but never
 /// flagged as unused.
 const _: &str = env!("AGENT_SQUARE_EMBED_FINGERPRINT");
 
-/// Directory/file names never materialized — build cruft and pi's local deps.
+/// Directory/file names never materialized — build cruft and local deps.
 /// The exact same fragment `build.rs` uses to filter staging + the fingerprint,
 /// so the embedded set, the written-out set, and the in-sync check can never
 /// disagree.
@@ -34,14 +44,16 @@ const SKIP: &[&str] = include!("embed_skip.rs");
 /// An agent the mesh integrations can be installed into.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
 pub(crate) enum Agent {
-    /// Claude Code — the plugin at `~/.claude/skills/square`.
+    /// Claude Code — skills under `~/.claude/skills`.
     #[value(name = "claude-code", alias = "claude")]
     ClaudeCode,
-    /// pi — the extension installed via `pi install`.
+    /// pi — skills under `~/.pi/agent/skills`.
     Pi,
     /// A generic agent following the `~/.agents/skills` convention.
     Generic,
-    /// Cursor — the skill at `~/.cursor/skills/square`.
+    /// Codex — skills under `~/.codex/skills`.
+    Codex,
+    /// Cursor — skills under `~/.cursor/skills`.
     Cursor,
 }
 
@@ -72,27 +84,34 @@ impl AgentState {
 
 impl Agent {
     /// Every agent, in display order.
-    pub(crate) const ALL: [Agent; 4] =
-        [Agent::ClaudeCode, Agent::Pi, Agent::Generic, Agent::Cursor];
+    pub(crate) const ALL: [Agent; 5] = [
+        Agent::ClaudeCode,
+        Agent::Pi,
+        Agent::Generic,
+        Agent::Codex,
+        Agent::Cursor,
+    ];
 
-    /// The agent's CLI label (`claude` / `pi` / `generic` / `cursor`), for display.
+    /// The agent's CLI label, for display.
     pub(crate) fn label(self) -> &'static str {
         match self {
             Agent::ClaudeCode => "claude-code",
             Agent::Pi => "pi",
             Agent::Generic => "generic",
+            Agent::Codex => "codex",
             Agent::Cursor => "cursor",
         }
     }
 
-    /// The agent's home dir (`~/.claude`, `~/.pi`, `~/.agents`, `~/.cursor`) —
-    /// its presence is the detection signal that gates `plug` (default
-    /// selection AND explicit `--agent`: no install into an absent agent).
+    /// The agent's home dir — its presence is the detection signal that gates
+    /// `plug` (default selection AND explicit `--agent`: no install into an
+    /// absent agent).
     pub(crate) fn agent_dir(self, home: &Path) -> PathBuf {
         let part = match self {
             Agent::ClaudeCode => ".claude",
             Agent::Pi => ".pi",
             Agent::Generic => ".agents",
+            Agent::Codex => ".codex",
             Agent::Cursor => ".cursor",
         };
         home.join(part)
@@ -102,32 +121,48 @@ impl Agent {
         self.agent_dir(home).exists()
     }
 
-    /// The path this agent's integration lives at once installed.
+    /// The skill root this agent reads once installed.
     pub(crate) fn install_path(self, home: &Path) -> PathBuf {
         match self {
-            Agent::ClaudeCode => home.join(".claude/skills/square"),
-            // pi-package source, materialized then `pi install`ed.
-            Agent::Pi => home.join(".agent-square/pi-extension"),
-            Agent::Generic => home.join(".agents/skills/square"),
-            // Cursor reads global Agent Skills from `~/.cursor/skills`; it
-            // gets the same portable skill the generic target ships.
-            Agent::Cursor => home.join(".cursor/skills/square"),
+            Agent::ClaudeCode => home.join(".claude/skills"),
+            Agent::Pi => home.join(".pi/agent/skills"),
+            Agent::Generic => home.join(".agents/skills"),
+            Agent::Codex => home.join(".codex/skills"),
+            Agent::Cursor => home.join(".cursor/skills"),
         }
     }
 
     pub(crate) fn installed(self, home: &Path) -> bool {
-        let path = self.install_path(home);
-        path.is_symlink() || path.exists()
+        self.owned_skill_dirs(home)
+            .into_iter()
+            .chain(self.legacy_install_paths(home))
+            .any(|path| path.is_symlink() || path.exists())
     }
 
     /// Does the installed copy match the embedded one?
     fn in_sync(self, home: &Path) -> bool {
-        let path = self.install_path(home);
+        dir_in_sync(&SKILLS, &self.install_path(home))
+            && self
+                .legacy_install_paths(home)
+                .into_iter()
+                .all(|path| !path.exists() && !path.is_symlink())
+    }
+
+    pub(crate) fn owned_skill_dirs(self, home: &Path) -> Vec<PathBuf> {
+        let root = self.install_path(home);
+        OWNED_SKILL_DIRS
+            .iter()
+            .map(|name| root.join(name))
+            .collect()
+    }
+
+    pub(crate) fn legacy_install_paths(self, home: &Path) -> Vec<PathBuf> {
         match self {
-            Agent::ClaudeCode => dir_in_sync(&CC_PLUGIN, &path),
-            Agent::Pi => dir_in_sync(&PI_EXTENSION, &path),
-            Agent::Generic | Agent::Cursor => std::fs::read(path.join("SKILL.md"))
-                .is_ok_and(|on_disk| on_disk == GENERIC_SKILL.as_bytes()),
+            Agent::ClaudeCode => vec![home.join(".claude/skills/square")],
+            Agent::Pi => vec![home.join(".agent-square/pi-extension")],
+            Agent::Generic => vec![home.join(".agents/skills/square")],
+            Agent::Codex => Vec::new(),
+            Agent::Cursor => vec![home.join(".cursor/skills/square")],
         }
     }
 
@@ -219,80 +254,160 @@ pub(crate) fn drift_warning(home: &Path) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Agent, CC_PLUGIN, GENERIC_SKILL, PI_EXTENSION};
+    use super::{Agent, OWNED_SKILL_DIRS, SKILLS};
+    use include_dir::Dir;
     use std::path::Path;
 
     #[test]
     fn embedded_artifacts_carry_their_entrypoints() {
-        // include_dir paths are relative to the embedded root (no dir-name prefix).
-        assert!(CC_PLUGIN.get_file(".claude-plugin/plugin.json").is_some());
-        assert!(PI_EXTENSION.get_file("index.ts").is_some());
-        assert!(GENERIC_SKILL.starts_with("---"));
-        assert!(GENERIC_SKILL.contains("name: square"));
+        for skill in OWNED_SKILL_DIRS {
+            if *skill == "shared" {
+                continue;
+            }
+            assert!(
+                SKILLS.get_file(&format!("{skill}/SKILL.md")).is_some(),
+                "{skill} entrypoint"
+            );
+        }
+        assert!(SKILLS.get_dir("shared").is_some());
+        assert!(SKILLS.get_file("shared/SKILL.md").is_none());
+        assert!(SKILLS.get_dir("square").is_none());
+    }
+
+    #[test]
+    fn portable_square_skill_layout_is_progressive() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("skills");
+        for skill in OWNED_SKILL_DIRS {
+            if *skill == "shared" {
+                continue;
+            }
+            let skill_dir = root.join(skill);
+            assert!(skill_dir.join("SKILL.md").is_file(), "{skill} entrypoint");
+            assert!(skill_dir.join("workflow.md").is_file(), "{skill} workflow");
+        }
+        for skill in [
+            "square-create",
+            "square-discover",
+            "square-join",
+            "square-topic",
+        ] {
+            let skill_dir = root.join(skill);
+            assert!(
+                skill_dir.join("adapters/generic.md").is_file(),
+                "{skill} daemon adapter"
+            );
+        }
+        // `create`/`join`/`topic` have exactly one adapter: every harness starts
+        // the daemon and polls the same way. A Claude-Code-specific adapter is
+        // what carried the Monitor event path, which truncated message bodies at
+        // 500 chars and persisted them to disk. `discover` still needs Monitor —
+        // it streams until killed and has no poll equivalent.
+        for skill in ["square-create", "square-join", "square-topic"] {
+            assert!(
+                !root.join(skill).join("adapters/claude-code.md").exists(),
+                "{skill} must not reintroduce a Monitor adapter"
+            );
+        }
+        assert!(
+            root.join("square-discover/adapters/claude-code.md")
+                .is_file(),
+            "square-discover still has a Monitor adapter (tracked follow-up)"
+        );
+        assert!(root.join("shared/harness-detect.md").is_file());
+        assert!(root.join("shared/receive-loop.md").is_file());
+        assert!(root.join("shared/events.md").is_file());
+        assert!(root.join("shared/meta.md").is_file());
+        assert!(root.join("shared/reattach.md").is_file());
+        assert!(!root.join("shared/SKILL.md").exists());
+    }
+
+    /// A harness writes a background command's output to a file. The daemon's
+    /// `--output json` stdout carries every message body, and its stderr prints
+    /// the bare square id — a join credential (`Output::mesh_id_line`). The
+    /// `> /dev/null 2>&1` in each adapter is therefore the only thing keeping
+    /// either off disk; dropping one would reintroduce the leak silently, so pin
+    /// it here rather than trust review.
+    ///
+    /// Stated as a property of *any* backgrounded `agent-square` line, so a
+    /// future adapter is covered too.
+    #[test]
+    fn backgrounded_square_commands_discard_stdout_and_stderr() {
+        for skill in ["square-create", "square-join", "square-topic"] {
+            let path = format!("{skill}/adapters/generic.md");
+            let adapter = SKILLS
+                .get_file(&path)
+                .and_then(include_dir::File::contents_utf8)
+                .unwrap_or_else(|| panic!("{path} is embedded"));
+
+            let backgrounded: Vec<&str> = adapter
+                .lines()
+                .map(str::trim_end)
+                .filter(|line| line.starts_with("agent-square ") && line.ends_with('&'))
+                .collect();
+            assert!(
+                backgrounded.len() >= 2,
+                "{path}: expected the daemon launch and the poll bell to be backgrounded, found {backgrounded:?}"
+            );
+            for line in backgrounded {
+                assert!(
+                    line.contains("> /dev/null 2>&1"),
+                    "{path}: a backgrounded command must discard stdout AND stderr, \
+                     or the harness writes message bodies and the square id to a \
+                     file: {line}"
+                );
+            }
+        }
     }
 
     #[test]
     fn install_paths_are_under_home() {
         let home = Path::new("/home/x");
-        assert!(
-            Agent::ClaudeCode
-                .install_path(home)
-                .ends_with(".claude/skills/square")
-        );
-        assert!(
-            Agent::Pi
-                .install_path(home)
-                .ends_with(".agent-square/pi-extension")
-        );
-        assert!(
-            Agent::Generic
-                .install_path(home)
-                .ends_with(".agents/skills/square")
-        );
-        assert!(
-            Agent::Cursor
-                .install_path(home)
-                .ends_with(".cursor/skills/square")
-        );
+        assert!(Agent::ClaudeCode
+            .install_path(home)
+            .ends_with(".claude/skills"));
+        assert!(Agent::Pi.install_path(home).ends_with(".pi/agent/skills"));
+        assert!(Agent::Generic
+            .install_path(home)
+            .ends_with(".agents/skills"));
+        assert!(Agent::Codex.install_path(home).ends_with(".codex/skills"));
+        assert!(Agent::Cursor.install_path(home).ends_with(".cursor/skills"));
     }
 
     #[test]
-    fn generic_in_sync_only_when_skill_matches_embedded() {
+    fn generic_in_sync_only_when_skill_tree_matches_embedded() {
         let home = std::env::temp_dir().join(format!("agent-square-insync-{}", std::process::id()));
         let dir = Agent::Generic.install_path(&home);
         std::fs::create_dir_all(&dir).unwrap();
 
-        // No SKILL.md yet → out of sync.
         assert!(!Agent::Generic.in_sync(&home));
 
-        let file = dir.join("SKILL.md");
-        std::fs::write(&file, GENERIC_SKILL).unwrap();
+        write_embedded_dir(&SKILLS, &dir);
         assert!(Agent::Generic.in_sync(&home));
 
-        // A diverged copy → out of sync.
-        std::fs::write(&file, format!("{GENERIC_SKILL}\n")).unwrap();
+        let file = dir.join("square-create/SKILL.md");
+        let mut contents = std::fs::read_to_string(&file).unwrap();
+        contents.push('\n');
+        std::fs::write(&file, contents).unwrap();
         assert!(!Agent::Generic.in_sync(&home));
 
         std::fs::remove_dir_all(&home).unwrap();
     }
 
     #[test]
-    fn cursor_in_sync_only_when_skill_matches_embedded() {
+    fn cursor_in_sync_only_when_skill_tree_matches_embedded() {
         let home =
             std::env::temp_dir().join(format!("agent-square-cursor-insync-{}", std::process::id()));
         let dir = Agent::Cursor.install_path(&home);
         std::fs::create_dir_all(&dir).unwrap();
 
-        // No SKILL.md yet → out of sync.
         assert!(!Agent::Cursor.in_sync(&home));
 
-        // Cursor carries the same portable skill the generic target ships.
-        let file = dir.join("SKILL.md");
-        std::fs::write(&file, GENERIC_SKILL).unwrap();
+        write_embedded_dir(&SKILLS, &dir);
         assert!(Agent::Cursor.in_sync(&home));
 
-        // A diverged copy → out of sync.
-        std::fs::write(&file, format!("{GENERIC_SKILL}\n")).unwrap();
+        std::fs::write(dir.join("shared/extra.md"), "extra").unwrap();
+        assert!(Agent::Cursor.in_sync(&home));
+        std::fs::remove_file(dir.join("square-join/workflow.md")).unwrap();
         assert!(!Agent::Cursor.in_sync(&home));
 
         std::fs::remove_dir_all(&home).unwrap();
@@ -303,19 +418,28 @@ mod tests {
         let home = std::env::temp_dir().join(format!("agent-square-drift-{}", std::process::id()));
         let dir = Agent::Generic.install_path(&home);
         std::fs::create_dir_all(&dir).unwrap();
-        let file = dir.join("SKILL.md");
 
-        // Installed and matching → no warning (claude-code/pi/cursor are absent).
-        std::fs::write(&file, GENERIC_SKILL).unwrap();
+        write_embedded_dir(&SKILLS, &dir);
         assert!(super::drift_warning(&home).is_none());
 
-        // Diverged install → the canonical drift warning.
-        std::fs::write(&file, format!("{GENERIC_SKILL}\n")).unwrap();
+        std::fs::write(dir.join("square-join/SKILL.md"), "stale").unwrap();
         let warning = super::drift_warning(&home).expect("diverged install warns");
         assert_eq!(warning, super::SKILL_DRIFT_MSG);
         assert!(warning.contains("out of date"));
         assert!(warning.contains("agent-square plug"));
 
         std::fs::remove_dir_all(&home).unwrap();
+    }
+
+    fn write_embedded_dir(dir: &Dir<'_>, dest: &Path) {
+        std::fs::create_dir_all(dest).unwrap();
+        for file in dir.files() {
+            let target = dest.join(file.path().file_name().expect("embedded file has a name"));
+            std::fs::write(target, file.contents()).unwrap();
+        }
+        for subdir in dir.dirs() {
+            let name = subdir.path().file_name().expect("embedded dir has a name");
+            write_embedded_dir(subdir, &dest.join(name));
+        }
     }
 }

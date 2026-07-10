@@ -4,14 +4,13 @@
 //! installer. Both act immediately; `plug` is reversible with `unplug`.
 
 use std::path::Path;
-use std::process::Command;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use include_dir::Dir;
 
 use agent_habilis_mesh::util::output::{status, status_warn, warn};
 
-use super::agent::{Agent, CC_PLUGIN, GENERIC_SKILL, PI_EXTENSION, home_dir, skipped};
+use super::agent::{Agent, SKILLS, home_dir, skipped};
 
 /// Which operation a default selection is for.
 #[derive(Clone, Copy)]
@@ -23,7 +22,7 @@ enum Op {
 /// Install the embedded integrations into the selected agents.
 ///
 /// # Errors
-/// `$HOME` unset, a filesystem error, or `pi install` failing.
+/// `$HOME` unset, or a filesystem error.
 pub(crate) fn plug(agents: &[Agent]) -> Result<()> {
     let home = home_dir()?;
     let mut acted = 0;
@@ -83,7 +82,7 @@ fn dedup(agents: &[Agent]) -> Vec<Agent> {
 /// absent), so the summary never overstates what happened.
 fn finish(acted: usize, verb: &str) {
     if acted == 0 {
-        warn("nothing to do (try --agent claude-code|pi|generic|cursor)");
+        warn("nothing to do (try --agent claude-code|pi|generic|codex|cursor)");
     } else {
         let noun = if acted == 1 { "agent" } else { "agents" };
         status("Finished", &format!("{verb} square · {acted} {noun}"));
@@ -112,25 +111,8 @@ fn install(agent: Agent, home: &Path) -> Result<bool> {
         "Plugging in",
         &format!("{} ({})", agent.label(), path.display()),
     );
-    match agent {
-        Agent::ClaudeCode => {
-            remove_existing(&path)?;
-            write_dir(&CC_PLUGIN, &path)?;
-        }
-        Agent::Generic | Agent::Cursor => {
-            remove_existing(&path)?;
-            let file = path.join("SKILL.md");
-            std::fs::create_dir_all(&path)
-                .with_context(|| format!("creating {}", path.display()))?;
-            std::fs::write(&file, GENERIC_SKILL)
-                .with_context(|| format!("writing {}", file.display()))?;
-        }
-        Agent::Pi => {
-            remove_existing(&path)?;
-            write_dir(&PI_EXTENSION, &path)?;
-            pi(&["install", &path.to_string_lossy()])?;
-        }
-    }
+    remove_owned(agent, home)?;
+    write_dir(&SKILLS, &path)?;
     Ok(true)
 }
 
@@ -150,12 +132,20 @@ fn remove(agent: Agent, home: &Path) -> Result<bool> {
         "Unplugging",
         &format!("{} ({})", agent.label(), path.display()),
     );
-    if agent == Agent::Pi {
-        // Best-effort deregister before deleting the source it points at.
-        let _ = pi(&["remove", &path.to_string_lossy()]);
-    }
-    remove_existing(&path)?;
+    remove_owned(agent, home)?;
     Ok(true)
+}
+
+fn remove_owned(agent: Agent, home: &Path) -> Result<bool> {
+    let mut removed = false;
+    for path in agent
+        .owned_skill_dirs(home)
+        .into_iter()
+        .chain(agent.legacy_install_paths(home))
+    {
+        removed |= remove_existing(&path)?;
+    }
+    Ok(removed)
 }
 
 /// Recursively write an embedded `Dir` to `dest`, skipping [`SKIP`] names.
@@ -181,37 +171,14 @@ fn write_dir(dir: &Dir<'_>, dest: &Path) -> Result<()> {
 
 /// Delete `path` if it exists, whatever it is. A symlink/file is unlinked
 /// without touching its target; a real directory is removed recursively.
-fn remove_existing(path: &Path) -> Result<()> {
+fn remove_existing(path: &Path) -> Result<bool> {
     if path.is_symlink() || path.is_file() {
         std::fs::remove_file(path).with_context(|| format!("removing {}", path.display()))?;
+        Ok(true)
     } else if path.is_dir() {
         std::fs::remove_dir_all(path).with_context(|| format!("removing {}", path.display()))?;
+        Ok(true)
+    } else {
+        Ok(false)
     }
-    Ok(())
-}
-
-/// Run `pi <args>`, surfacing a clear error when `pi` is missing or fails.
-/// Output is captured (not inherited) so pi's own chatter never breaks the
-/// cargo-style status formatting; on failure its stderr is folded into the
-/// error so the failure stays diagnosable.
-fn pi(args: &[&str]) -> Result<()> {
-    let output = Command::new("pi")
-        .args(args)
-        .output()
-        .context("running `pi` (is the pi CLI on PATH?)")?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let detail = stderr.trim();
-        let suffix = if detail.is_empty() {
-            String::new()
-        } else {
-            format!(":\n{detail}")
-        };
-        bail!(
-            "`pi {}` failed with {}{suffix}",
-            args.join(" "),
-            output.status
-        );
-    }
-    Ok(())
 }

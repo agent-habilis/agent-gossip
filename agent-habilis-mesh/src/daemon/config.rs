@@ -171,6 +171,20 @@ pub struct EventLoopConfig {
     /// driver into the `setup_mesh` signature (so it can't be the
     /// wrong variant for a window) is the remaining follow-up.
     pub driver: DriverMode,
+    /// Carried from `setup_mesh` to `run` purely so the `ready` event can be
+    /// emitted at the point the daemon can actually serve, rather than in
+    /// setup — where it announced a socket that was not yet bound.
+    pub ready: ReadyAnnounce,
+}
+
+/// The `ready` event's payload that only setup knows. Everything else it
+/// needs (mesh id, name, nickname) `run` already holds.
+#[derive(Debug, Default)]
+pub struct ReadyAnnounce {
+    /// A stale skill install, rendered by `agent-square`'s `drift_warning`.
+    pub drift: Option<String>,
+    /// The bound A2A HTTP port under `--a2a-serve`.
+    pub a2a_port: Option<u16>,
 }
 
 impl std::fmt::Debug for EventLoopConfig {

@@ -637,7 +637,7 @@ impl InProcessSession {
         &self,
         after: Option<u64>,
         long: bool,
-    ) -> anyhow::Result<Vec<crate::a2a::surfaced::SurfacedEvent>> {
+    ) -> anyhow::Result<crate::a2a::surfaced::PollBatch> {
         let (resp_tx, resp_rx) = oneshot::channel();
         self.req_tx
             .send(SessionRequest::Poll {
@@ -1204,13 +1204,17 @@ impl MeshSession {
     /// batch at the deadline just means the window elapsed quietly; call
     /// again. `false` is the immediate read.
     ///
+    /// Check [`PollBatch::missed_before`](crate::a2a::surfaced::PollBatch): when
+    /// set, the cursor aged out of the ring and every event below that seq was
+    /// lost. Re-baseline on the returned window.
+    ///
     /// # Errors
     /// Fails if the event loop has stopped or dropped the response.
     pub async fn fetch(
         &self,
         after: Option<u64>,
         long: bool,
-    ) -> anyhow::Result<Vec<crate::a2a::surfaced::SurfacedEvent>> {
+    ) -> anyhow::Result<crate::a2a::surfaced::PollBatch> {
         self.core.fetch(after, long).await
     }
 

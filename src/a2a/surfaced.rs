@@ -67,33 +67,35 @@ impl SurfacedEvents {
         self.next_seq - 1
     }
 
-    /// The events surfaced after `after`, in seq order, plus an `evicted` flag.
+    /// The events surfaced after `after`, in seq order, plus `missed_before`.
     ///
-    /// - `after == None` → the whole buffer (a first poll), `evicted == false`.
-    /// - `after == Some(seq)` → every event with `seq > after`. `evicted` is
-    ///   true when `after` precedes the oldest retained seq *and* is not 0 —
-    ///   i.e. the cursor aged out, so the caller silently missed the gap and
-    ///   should re-baseline (the `poll` handler emits an `info` notice, the
-    ///   same contract as the message log's evicted-cursor path).
+    /// - `after == None` → the whole buffer (a first poll), `missed_before` none.
+    /// - `after == Some(seq)` → every event with `seq > after`. `missed_before`
+    ///   is `Some(oldest_retained_seq)` when `after` precedes the oldest
+    ///   retained seq *and* is not 0 — i.e. the cursor aged out, so the caller
+    ///   missed everything below that seq and must re-baseline. The `poll`
+    ///   response leads with a `gap` line saying so; it is **not** reported by
+    ///   emitting an `info`, which would feed back into this very ring (see
+    ///   [`SurfacedState::poll_since`]).
     ///
-    /// A cursor at or past the newest seq returns an empty slice with
-    /// `evicted == false` (caller is simply up to date).
-    pub(crate) fn since(&self, after: Option<u64>) -> (Vec<SurfacedEvent>, bool) {
+    /// A cursor at or past the newest seq returns an empty slice and no gap
+    /// (caller is simply up to date).
+    pub(crate) fn since(&self, after: Option<u64>) -> (Vec<SurfacedEvent>, Option<u64>) {
         let Some(after) = after else {
-            return (self.events.iter().cloned().collect(), false);
+            return (self.events.iter().cloned().collect(), None);
         };
-        let evicted = after != 0
-            && self
-                .events
-                .front()
-                .is_some_and(|oldest| after < oldest.seq.saturating_sub(1));
+        let missed_before = self
+            .events
+            .front()
+            .filter(|oldest| after != 0 && after < oldest.seq.saturating_sub(1))
+            .map(|oldest| oldest.seq);
         let slice = self
             .events
             .iter()
             .filter(|item| item.seq > after)
             .cloned()
             .collect();
-        (slice, evicted)
+        (slice, missed_before)
     }
 
     #[cfg(test)]
@@ -102,12 +104,29 @@ impl SurfacedEvents {
     }
 }
 
+/// One poll's answer: the events, plus whether the reader's cursor aged out of
+/// the ring before them.
+///
+/// `missed_before` is the whole point of the type. Without it a reader whose
+/// cursor fell off the back of the ring receives a normal-looking window and
+/// silently skips everything below it — the loss is indistinguishable from
+/// "nothing happened".
+#[derive(Debug, Default)]
+pub struct PollBatch {
+    pub events: Vec<SurfacedEvent>,
+    /// `Some(oldest_retained_seq)`: every event before this seq was evicted
+    /// unread. The reader must re-baseline on the returned window.
+    pub missed_before: Option<u64>,
+}
+
 /// How a fulfilled/expired long-poll waiter's batch is delivered, per
 /// transport: the CLI/IPC path wants the JSON-array string the `Poll` arm
 /// builds today; the in-process path wants the typed events the caller renders.
+/// Both carry the gap — a loss the JSON reader learns about must not be hidden
+/// from the typed one.
 pub(crate) enum PollResponder {
     Json(tokio::sync::oneshot::Sender<String>),
-    Typed(tokio::sync::oneshot::Sender<Vec<SurfacedEvent>>),
+    Typed(tokio::sync::oneshot::Sender<PollBatch>),
 }
 
 impl PollResponder {
@@ -120,19 +139,19 @@ impl PollResponder {
                 let _ = tx.send("[]".to_string());
             }
             PollResponder::Typed(tx) => {
-                let _ = tx.send(Vec::new());
+                let _ = tx.send(PollBatch::default());
             }
         }
     }
 
     /// Send a fulfilled batch for this transport.
-    fn send_batch(self, events: Vec<SurfacedEvent>) {
+    fn send_batch(self, batch: PollBatch) {
         match self {
             PollResponder::Json(tx) => {
-                let _ = tx.send(render_poll_array(&events));
+                let _ = tx.send(render_poll_array(&batch));
             }
             PollResponder::Typed(tx) => {
-                let _ = tx.send(events);
+                let _ = tx.send(batch);
             }
         }
     }
@@ -148,16 +167,32 @@ pub(crate) struct PollWaiter {
     responder: PollResponder,
 }
 
-/// Render surfaced events to the `poll` JSON-array string — the single source
-/// of truth shared by the immediate `Poll` arm and a fulfilled long-poll, so
-/// the two can never drift. Mirrors the per-event `filter_map` the IPC `Poll`
-/// arm uses (`surfaced_event_json` returns `None` for an unrenderable event,
-/// which is dropped, never `unwrap`ped).
-pub(crate) fn render_poll_array(events: &[SurfacedEvent]) -> String {
-    let lines: Vec<String> = events
-        .iter()
-        .filter_map(|item| crate::output::surfaced_event_json(item.seq, &item.event))
-        .collect();
+/// Render a poll batch to the `poll` JSON-array string — the single source of
+/// truth shared by the immediate `Poll` arm and a fulfilled long-poll, so the
+/// two can never drift. Mirrors the per-event `filter_map` the IPC `Poll` arm
+/// uses (`surfaced_event_json` returns `None` for an unrenderable event, which
+/// is dropped, never `unwrap`ped).
+///
+/// A `gap` marker leads the array when the reader's cursor aged out. It is
+/// synthesized *here*, at render time, and never pushed into the ring: the
+/// ring is fed by the user-facing sink, so a real event announcing the loss
+/// would itself become a ring entry (and, on the embed path, a live
+/// `events()` item). It carries no `seq` — it is a statement about the
+/// events that are missing, not one of them — so a reader advancing `--after`
+/// off the highest returned `seq` ignores it naturally.
+pub(crate) fn render_poll_array(batch: &PollBatch) -> String {
+    let mut lines: Vec<String> = Vec::with_capacity(batch.events.len() + 1);
+    if let Some(missed_before) = batch.missed_before {
+        lines.push(format!(
+            r#"{{"event":"gap","missed_before":{missed_before}}}"#
+        ));
+    }
+    lines.extend(
+        batch
+            .events
+            .iter()
+            .filter_map(|item| crate::output::surfaced_event_json(item.seq, &item.event)),
+    );
     format!("[{}]", lines.join(","))
 }
 
@@ -210,18 +245,15 @@ impl SurfacedState {
     /// transient events alike. Join-horizon needs no re-filtering here: a
     /// pre-join message is never *surfaced*, so it never entered this ring.
     ///
-    /// Diagnostics (cursor aged out, response capped) go to the developer log
-    /// via `tracing`, **not** through the daemon's user-facing sink: that sink
-    /// carries the surfaced-events tap, so an `info`/`error` notice emitted here
-    /// would feed straight back into the very ring being polled (and, on the
-    /// embed/Capture path, into the live `events()` subscription).
-    pub(crate) fn poll_since(&self, after: Option<u64>) -> Vec<SurfacedEvent> {
-        let (mut events, evicted) = self.surfaced_events.since(after);
-        if evicted {
-            tracing::debug!(
-                "poll: --after seq aged out of the ring; returning all surfaced events"
-            );
-        }
+    /// An aged-out cursor is reported to the caller in the returned
+    /// [`PollBatch::missed_before`], **not** by emitting an `info`/`error`
+    /// through the daemon's user-facing sink: that sink carries the
+    /// surfaced-events tap, so a notice emitted here would feed straight back
+    /// into the very ring being polled (and, on the embed/Capture path, into
+    /// the live `events()` subscription). Purely developer-facing diagnostics
+    /// still go to `tracing`.
+    pub(crate) fn poll_since(&self, after: Option<u64>) -> PollBatch {
+        let (mut events, mut missed_before) = self.surfaced_events.since(after);
         // Cap the response to the fixed IPC window. The ring is sized to match
         // the window (see `SURFACED_EVENTS_CAP`), so in the steady state this is
         // a no-op; it only trims if a future ring grows past the window.
@@ -230,9 +262,16 @@ impl SurfacedState {
                 events.len() - agent_habilis_mesh::util::consts::POLL_RESPONSE_MAX_MSGS;
             events.drain(0..drop_count);
             tracing::debug!(dropped = drop_count, "poll: response capped to the window");
+            // Trimming drops events the caller had not seen — the same loss as
+            // an aged-out cursor, and it must be reported the same way. The
+            // surviving front is the new floor.
+            missed_before = events.first().map(|item| item.seq).or(missed_before);
         }
-        tracing::debug!(returned = events.len(), evicted, "poll served");
-        events
+        tracing::debug!(returned = events.len(), missed_before, "poll served");
+        PollBatch {
+            events,
+            missed_before,
+        }
     }
 
     /// Register a blocking poll that found the buffer empty. The wait baseline
@@ -279,9 +318,11 @@ impl SurfacedState {
             now,
             responder,
         } = params;
-        let events = self.poll_since(after);
-        if !events.is_empty() {
-            responder.send_batch(events);
+        let batch = self.poll_since(after);
+        // A gap is news even with an empty window: the caller must learn it
+        // lost events rather than park as if it were up to date.
+        if !batch.events.is_empty() || batch.missed_before.is_some() {
+            responder.send_batch(batch);
             return;
         }
         if !long {
@@ -364,7 +405,9 @@ impl SurfacedState {
 
 #[cfg(test)]
 mod tests {
-    use super::{PollOrRegisterParams, PollResponder, SurfacedEvents, SurfacedState};
+    use super::{
+        PollOrRegisterParams, PollResponder, SurfacedEvents, SurfacedState, render_poll_array,
+    };
     use crate::output::OutputEvent;
     use agent_habilis_mesh::protocol::Nickname;
     use std::time::Duration;
@@ -385,9 +428,9 @@ mod tests {
         let mut buf = SurfacedEvents::new(10);
         buf.push(peer_return("a"));
         buf.push(peer_return("b"));
-        let (events, evicted) = buf.since(None);
+        let (events, missed_before) = buf.since(None);
         assert_eq!(events.len(), 2);
-        assert!(!evicted);
+        assert!(missed_before.is_none());
         assert_eq!(events[0].seq, 1);
         assert_eq!(events[1].seq, 2);
     }
@@ -398,8 +441,8 @@ mod tests {
         let s1 = buf.push(peer_return("a"));
         buf.push(peer_return("b"));
         buf.push(peer_return("c"));
-        let (events, evicted) = buf.since(Some(s1));
-        assert!(!evicted);
+        let (events, missed_before) = buf.since(Some(s1));
+        assert!(missed_before.is_none());
         assert_eq!(events.len(), 2);
         assert_eq!(events[0].seq, 2);
         assert_eq!(events[1].seq, 3);
@@ -412,8 +455,11 @@ mod tests {
         for name in ["a", "b", "c", "d"] {
             buf.push(peer_return(name));
         }
-        let (events, evicted) = buf.since(Some(0));
-        assert!(!evicted, "the 0 cursor is the before-anything baseline");
+        let (events, missed_before) = buf.since(Some(0));
+        assert!(
+            missed_before.is_none(),
+            "the 0 cursor is the before-anything baseline"
+        );
         assert_eq!(events.len(), 2, "only the retained window");
     }
 
@@ -422,9 +468,9 @@ mod tests {
         let mut buf = SurfacedEvents::new(10);
         buf.push(peer_return("a"));
         let s2 = buf.push(peer_return("b"));
-        let (events, evicted) = buf.since(Some(s2));
+        let (events, missed_before) = buf.since(Some(s2));
         assert!(events.is_empty());
-        assert!(!evicted);
+        assert!(missed_before.is_none());
     }
 
     #[test]
@@ -435,9 +481,9 @@ mod tests {
         let consumed = buf.push(peer_return("a")); // seq 1, evicted next
         buf.push(peer_return("b")); // seq 2
         buf.push(peer_return("c")); // seq 3 → evicts seq 1; ring {2,3}
-        let (events, evicted) = buf.since(Some(consumed));
+        let (events, missed_before) = buf.since(Some(consumed));
         assert!(
-            !evicted,
+            missed_before.is_none(),
             "cursor at the evicted seq still has seq 2 next — no gap"
         );
         assert_eq!(events.len(), 2, "returns seq 2 and 3");
@@ -452,13 +498,55 @@ mod tests {
         buf.push(peer_return("c")); // seq 3
         buf.push(peer_return("d")); // seq 4 → evicts seq 2; ring {3,4}
         assert_eq!(buf.len(), 2);
-        let (events, evicted) = buf.since(Some(stale));
-        assert!(
-            evicted,
-            "seq 2 aged out between the cursor and the retained window"
+        let (events, missed_before) = buf.since(Some(stale));
+        assert_eq!(
+            missed_before,
+            Some(3),
+            "seq 2 aged out unseen; the oldest surviving seq is the new floor"
         );
         // Still returns the current window so the caller can re-baseline.
         assert_eq!(events.len(), 2);
+    }
+
+    /// The gap must survive rendering. `since` has always computed it; the
+    /// regression this guards is `poll_since` dropping it on the floor, which
+    /// left a reader that had lost events unable to tell.
+    #[test]
+    fn evicted_cursor_renders_a_leading_gap_marker() {
+        let mut state = SurfacedState::new();
+        // Overflow a small ring by hand: push past the cursor's next-expected
+        // seq so it ages out unseen.
+        for name in ["a", "b", "c"] {
+            state.push(peer_return(name));
+        }
+        // Force the eviction the ring cap would cause in production.
+        while state.surfaced_events.len() > 1 {
+            state.surfaced_events.events.pop_front();
+        }
+        let batch = state.poll_since(Some(1));
+        assert_eq!(batch.missed_before, Some(3), "seq 2 was lost");
+
+        let rendered = render_poll_array(&batch);
+        assert!(
+            rendered.starts_with(r#"[{"event":"gap","missed_before":3}"#),
+            "the gap must lead the array, before any event: {rendered}"
+        );
+        assert!(
+            !rendered.contains(r#""event":"gap","missed_before":3},{"event":"gap""#),
+            "exactly one gap marker"
+        );
+    }
+
+    #[test]
+    fn clean_poll_renders_no_gap_marker() {
+        let mut state = SurfacedState::new();
+        state.push(peer_return("a"));
+        let batch = state.poll_since(Some(0));
+        assert!(batch.missed_before.is_none());
+        assert!(
+            !render_poll_array(&batch).contains(r#""event":"gap""#),
+            "a reader that lost nothing is told nothing"
+        );
     }
 
     #[test]

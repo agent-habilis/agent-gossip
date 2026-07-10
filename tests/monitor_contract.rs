@@ -1,12 +1,13 @@
-//! Integration tests for the Monitor tool contract.
+//! Integration tests for the `--output json` stdout contract.
 //!
-//! The Claude Code Monitor tool runs a command in the background and feeds each
-//! stdout line back to Claude as an event. These tests validate that the daemon's
-//! JSON stdout output matches the event shapes the skill's Monitor event handler
-//! expects.
+//! These validate the event shapes the daemon prints on stdout. The skills no
+//! longer read events from that stream — they poll, because a harness that
+//! renders a background command's stdout truncates what it shows and persists
+//! what it watches (see `skills/shared/receive-loop.md`). The stream is still a
+//! public wire format for anyone consuming it directly, so its shapes stay
+//! pinned here.
 //!
-//! Uses `--output json` mode (the mode Monitor will use) and 3 peers to test
-//! multi-peer dynamics.
+//! Uses `--output json` and 3 peers to test multi-peer dynamics.
 //!
 //! Run `cargo build --release` first for faster crypto (shorter connect times).
 mod common;
@@ -247,6 +248,10 @@ fn three_peers(suffix: &str) -> (JsonNode, JsonNode, JsonNode, String) {
 
 /// The `ready` event has the expected JSON shape with `mesh`, `name`,
 /// and `nickname`.
+///
+/// It surfaces *after* the session is constructed, not during setup: `ready` is
+/// emitted at the point the daemon can serve, so an in-process session sees it
+/// once the event loop reaches that point.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_ready_event_shape() {
     let mut creator = InProcNode::create("readyshape").await;
@@ -255,6 +260,16 @@ async fn test_ready_event_shape() {
     assert!(mesh.starts_with("💬"));
     assert!(!nick.is_empty());
 
+    assert!(
+        creator
+            .wait_for(CONNECT_TIMEOUT, |events| {
+                events
+                    .iter()
+                    .any(|event| matches!(event, agent_square::OutputEvent::Ready { .. }))
+            })
+            .await,
+        "no ready event surfaced"
+    );
     let events = creator.json_events();
     let ready = events
         .iter()

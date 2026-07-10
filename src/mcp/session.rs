@@ -200,14 +200,14 @@ impl Session {
         &self,
         after: Option<u64>,
         long: bool,
-    ) -> Result<Vec<crate::a2a::surfaced::SurfacedEvent>> {
-        let events = self.inner.fetch(self.effective_after(after), long).await?;
+    ) -> Result<crate::a2a::surfaced::PollBatch> {
+        let batch = self.inner.fetch(self.effective_after(after), long).await?;
         if after.is_none()
-            && let Some(seq) = events.last().map(|item| item.seq)
+            && let Some(seq) = batch.events.last().map(|item| item.seq)
         {
             self.advance_cursor_to(seq);
         }
-        Ok(events)
+        Ok(batch)
     }
 
     /// Explicit cursor wins; otherwise fall back to the implicit one.
@@ -330,7 +330,7 @@ mod tests {
     async fn wait_for_gossip(session: &Session, author: &str, body: &str) -> Option<MessageId> {
         let deadline = tokio::time::Instant::now() + DELIVER;
         poll_until(deadline, Duration::from_millis(200), || async {
-            let events = session.fetch_messages(None, false).await.ok()?;
+            let events = session.fetch_messages(None, false).await.ok()?.events;
             events.iter().find_map(|entry| {
                 let msg = as_message(&entry.event)?;
                 (msg.author.as_str() == author
@@ -348,7 +348,8 @@ mod tests {
             let events = session
                 .fetch_messages(after, true)
                 .await
-                .expect("long-poll fetch");
+                .expect("long-poll fetch")
+                .events;
             let found = events
                 .iter()
                 .filter_map(|item| as_message(&item.event))
@@ -438,6 +439,7 @@ mod tests {
             .fetch_messages(None, false)
             .await
             .expect("baseline")
+            .events
             .last()
             .map(|item| item.seq);
 
@@ -508,7 +510,11 @@ mod tests {
         // The self-send surfaces in a fetch, marked `self:true`.
         let deadline = tokio::time::Instant::now() + DELIVER;
         let saw_self = poll_until(deadline, Duration::from_millis(150), || async {
-            let events = alice.fetch_messages(None, false).await.expect("fetch");
+            let events = alice
+                .fetch_messages(None, false)
+                .await
+                .expect("fetch")
+                .events;
             events
                 .iter()
                 .any(|item| is_self_echo(&item.event, &sent))
@@ -545,7 +551,8 @@ mod tests {
             let events = alice
                 .fetch_messages(None, false)
                 .await
-                .expect("first fetch");
+                .expect("first fetch")
+                .events;
             let bob_join_idx = events.iter().position(|item| is_bob_join(&item.event));
             // The seq strictly before bob's join (0 if it's the first event) —
             // replaying from here re-includes the join and everything after.
@@ -559,7 +566,8 @@ mod tests {
         let empty_delta = alice
             .fetch_messages(None, false)
             .await
-            .expect("delta fetch");
+            .expect("delta fetch")
+            .events;
         assert!(
             empty_delta.is_empty(),
             "second cursor-less fetch must return delta (empty), got {empty_delta:?}"
@@ -575,7 +583,8 @@ mod tests {
             let events = alice
                 .fetch_messages(None, false)
                 .await
-                .expect("delta fetch 2");
+                .expect("delta fetch 2")
+                .events;
             events
                 .iter()
                 .filter_map(|item| as_message(&item.event))
@@ -594,7 +603,8 @@ mod tests {
         let forced = alice
             .fetch_messages(Some(replay_from), false)
             .await
-            .expect("explicit fetch");
+            .expect("explicit fetch")
+            .events;
         assert!(
             forced
                 .iter()
@@ -608,7 +618,8 @@ mod tests {
         let after_replay = alice
             .fetch_messages(None, false)
             .await
-            .expect("post-replay fetch");
+            .expect("post-replay fetch")
+            .events;
         assert!(
             after_replay.is_empty(),
             "explicit replay must not advance the implicit cursor, got {after_replay:?}"

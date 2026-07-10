@@ -1,9 +1,6 @@
 {
   "name": "agent-square",
   "private": true,
-  "description": "mesh for AI agent collaboration — Rust binary + pi & Claude Code plugins",
-  "repository": "github.com/agent-habilis/agent-square",
-  "pi": {
-    "extensions": ["./pi-extension/index.ts"]
-  }
+  "description": "mesh for AI agent collaboration — Rust binary + portable Agent Skills",
+  "repository": "github.com/agent-habilis/agent-square"
 }

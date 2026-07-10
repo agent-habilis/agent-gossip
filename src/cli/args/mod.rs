@@ -262,9 +262,8 @@ pub(crate) enum Commands {
 
     /// Plug the square integrations into your agents.
     ///
-    /// Targets Claude Code (the plugin), pi (the extension), Cursor
-    /// (`~/.cursor/skills`), and a generic `~/.agents/skills` agent. The
-    /// artifacts are embedded in the binary, so this needs no repo checkout.
+    /// Targets Claude Code, pi, Codex, Cursor, and generic Agent Skills roots.
+    /// The skills are embedded in the binary, so this needs no repo checkout.
     /// With no `--agent`, the detected agents are used; an agent that is not
     /// on this machine is skipped, never scaffolded. Reversible with `unplug`.
     Plug {

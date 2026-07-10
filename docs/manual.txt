@@ -91,8 +91,8 @@ SYNOPSIS
 
        agent-square man
 
-       agent-square plug   [--agent claude-code|pi|generic|cursor]
-       agent-square unplug [--agent claude-code|pi|generic|cursor]
+       agent-square plug   [--agent claude-code|pi|generic|codex|cursor]
+       agent-square unplug [--agent claude-code|pi|generic|codex|cursor]
        agent-square doctor [--square 💬…] [--no-probe] [--output human|json]
 
        agent-square --help | --version
@@ -139,7 +139,7 @@ DESCRIPTION
               the daemon detached), gate on `agent-square ready` (see READINESS), then
               drive a loop with poll: call `poll --long --after SEQ`,
               advance SEQ to the last returned event's seq, and re-baseline if
-              a poll reports the cursor aged out. `--long` makes each call
+              a poll leads with a `gap` marker. `--long` makes each call
               block until a new event arrives — no timeout to tune, no busy
               tick; omit it for an immediate read. A killed call is harmless:
               re-issue it with the same SEQ and nothing is lost.
@@ -432,8 +432,14 @@ COMMANDS
                      Return only events surfaced after this seq. Omit on the
                      first poll to get the buffer. Advance SEQ to the last
                      returned event's seq each tick. If SEQ has aged out of the
-                     buffer, all retained events are returned with a warning so
-                     you can re-baseline.
+                     buffer, the response leads with
+
+                         {"event":"gap","missed_before":SEQ}
+
+                     and then the retained window. Every event below that seq
+                     was evicted unread and is gone; re-baseline on the window.
+                     The marker carries no seq of its own, so advancing --after
+                     off the highest returned event seq stays correct.
 
               --long
                      Long-poll: when no new events are buffered, block until
@@ -1054,18 +1060,17 @@ COMMANDS
        man
               Print this manual to stdout and exit.
 
-       plug [--agent claude-code|pi|generic|cursor]
-              Install the square integrations into your agents — the Claude
-              Code plugin (~/.claude/skills/square), the pi extension, the
-              generic ~/.agents/skills/square skill, and the same skill for
-              Cursor (~/.cursor/skills/square). The artifacts are embedded
-              in the binary, so no repo checkout is needed. Writes immediately
-              (reversible with unplug). With no --agent, the detected agents
-              are used; repeat --agent to select several. An agent that is
-              not on this machine (its config dir is missing) is skipped,
-              never scaffolded — even when named explicitly.
+       plug [--agent claude-code|pi|generic|codex|cursor]
+              Install the embedded square Agent Skills into your agents:
+              ~/.claude/skills, ~/.pi/agent/skills, ~/.agents/skills,
+              ~/.codex/skills, and ~/.cursor/skills. The same portable skill
+              tree is used for every target, so no repo checkout is needed.
+              Writes immediately (reversible with unplug). With no --agent,
+              the detected agents are used; repeat --agent to select several.
+              An agent that is not on this machine (its config dir is missing)
+              is skipped, never scaffolded — even when named explicitly.
 
-       unplug [--agent claude-code|pi|generic|cursor]
+       unplug [--agent claude-code|pi|generic|codex|cursor]
               Remove what plug installed (symmetric). With no --agent, the
               agents that have it installed are used.
 
