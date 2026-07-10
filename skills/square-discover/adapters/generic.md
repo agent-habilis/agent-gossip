@@ -1,4 +1,4 @@
-# Generic adapter for square-discover
+## Generic adapter
 
 Directory discovery has no poll API because it does not join a square. In a
 shell-only harness, run a bounded foreground discovery and parse its JSON stdout:

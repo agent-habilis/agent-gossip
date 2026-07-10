@@ -21,6 +21,7 @@ SYNOPSIS
                   [--max-peers N] [--filter-self] [--a2a-serve[=PORT]]
 
        agent-square poll --square 💬… --nickname NAME [--after SEQ] [--long] [--output json]
+       agent-square poll --state-file PATH [--after SEQ] [--long] [--output json]
 
        agent-square ping --square 💬… --nickname NAME [--output json]
 
@@ -386,6 +387,7 @@ COMMANDS
               on approval emit `a2a status --state completed`.
 
        poll --square 💬… --nickname NAME [--after SEQ] [--long] [--output json]
+       poll --state-file PATH [--after SEQ] [--long] [--output json]
               Retrieve buffered surfaced events from a running daemon.
               Short-lived. Prints a JSON array whose objects are the **same**
               shape the live --output json stream emits — chat, presence
@@ -397,6 +399,15 @@ COMMANDS
               EVENTS"). The task progress beat is the lone exception: it is
               liveness plumbing, surfaced on the stream as task_progress but
               never retained here.
+
+              --state-file PATH
+                     Resolve --square/--nickname from a create/join/topic
+                     --state-file instead of passing them: wait until that
+                     file reports the daemon serving (exactly like `ready`),
+                     then poll as the identity it carries. Lets a receive
+                     bell be armed in the same breath as the daemon launch,
+                     before the daemon has minted its identity. Conflicts
+                     with --square/--nickname.
 
               --after SEQ
                      Return only events surfaced after this seq. Omit on the

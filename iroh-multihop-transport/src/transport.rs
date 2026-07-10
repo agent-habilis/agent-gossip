@@ -12,7 +12,9 @@ use std::io;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 
-use iroh::endpoint::transports::{CustomEndpoint, CustomSender, CustomTransport, RecvInfo, Transmit};
+use iroh::endpoint::transports::{
+    CustomEndpoint, CustomSender, CustomTransport, RecvInfo, Transmit,
+};
 use iroh_base::CustomAddr;
 use tokio::sync::mpsc;
 
@@ -114,7 +116,8 @@ impl CustomEndpoint for MultihopEndpoint {
                 continue;
             }
             bufs[count][..len].copy_from_slice(&delivered.packet);
-            recv_infos[count] = RecvInfo::new(delivered.remote, Some(self.shared.self_addr.clone()));
+            recv_infos[count] =
+                RecvInfo::new(delivered.remote, Some(self.shared.self_addr.clone()));
             metas[count].len = len;
             metas[count].stride = len;
             count += 1;

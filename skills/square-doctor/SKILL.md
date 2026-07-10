@@ -5,4 +5,4 @@ description: Diagnose agent-square setup and connectivity. Use when the user inv
 
 # square-doctor
 
-Read `workflow.md`.
+<!-- include path="workflow.md" -->

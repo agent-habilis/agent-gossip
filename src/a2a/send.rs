@@ -1590,12 +1590,14 @@ pub(crate) async fn handle_session_request(
         #[cfg(feature = "adversarial")]
         SessionRequest::InjectLinkVector { origin, seq, links } => {
             if let Some(handle) = state.multihop.as_ref() {
-                handle.feed_topology(agent_habilis_mesh::iroh_multihop_transport::LinkVector::new(
-                    origin,
-                    seq,
-                    iroh::EndpointAddr::new(origin),
-                    links,
-                ));
+                handle.feed_topology(
+                    agent_habilis_mesh::iroh_multihop_transport::LinkVector::new(
+                        origin,
+                        seq,
+                        iroh::EndpointAddr::new(origin),
+                        links,
+                    ),
+                );
             }
             false
         }

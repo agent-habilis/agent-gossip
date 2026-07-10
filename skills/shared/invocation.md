@@ -1,4 +1,4 @@
-# Invocation rendering
+## Command prefix
 
 Render user-facing skill commands with the current harness's command prefix.
 
@@ -14,4 +14,6 @@ ${SKILL_PREFIX}square-join
 ${SKILL_PREFIX}square-leave
 ```
 
-Do not show the other harness's prefix as an alias in the same output.
+Do not show the other harness's prefix as an alias in the same output. The
+harness is the product hosting the agent, not the model vendor — never guess
+it from the model name.

@@ -1,9 +1,7 @@
-# square-handover workflow
-
 ## Guard
 
-If `$SQUARE` or `$NICKNAME` is missing, read `../shared/reattach.md` and try to
-recover the session identity. If that does not yield a square, print:
+If `$SQUARE` or `$NICKNAME` is missing, follow the **Reattach** section and try
+to recover the session identity. If that does not yield a square, print:
 
 ```text
 💬 Not in a square. Use ${SKILL_PREFIX}square-create or ${SKILL_PREFIX}square-join first.
@@ -52,6 +50,6 @@ mechanism when available.
 
 ## Completion
 
-Read `../shared/events.md` and follow task event rules. For handover, you are
-done when the worker emits `state:"working"` for the task. Do not wait for the
-final work result.
+Follow the task event rules in the **Event handling** section. For handover,
+you are done when the worker emits `state:"working"` for the task. Do not wait
+for the final work result.

@@ -9,8 +9,8 @@ use tokio::sync::{mpsc, watch};
 
 use crate::gossip::event::{NodeEvent, NodeSink};
 use crate::lookup::{
-    add_peer_addr, build_mesh, build_participant_endpoint, build_participant_multihop, relay_ladder,
-    select_bootstrap_rung,
+    add_peer_addr, build_mesh, build_participant_endpoint, build_participant_multihop,
+    relay_ladder, select_bootstrap_rung,
 };
 use crate::protocol::crypto::Password;
 use crate::protocol::mesh::{LookupOpts, Mesh, MeshConfig, MeshName};
@@ -174,7 +174,10 @@ pub(crate) fn register_rendezvous(endpoint: &Endpoint, params: &RendezvousParams
 /// received `UNICAST_ALPN` frames to the returned receiver, which the event
 /// loop drains into `gossip::ingest`. Bounded so a flooding peer can't
 /// back-pressure the loop (a dropped frame heals via anti-entropy).
-fn unicast_inbox() -> (mpsc::Receiver<bytes::Bytes>, crate::unicast::UnicastAcceptor) {
+fn unicast_inbox() -> (
+    mpsc::Receiver<bytes::Bytes>,
+    crate::unicast::UnicastAcceptor,
+) {
     let (tx, rx) = mpsc::channel::<bytes::Bytes>(crate::util::consts::UNICAST_INBOX_CAP);
     (rx, crate::unicast::UnicastAcceptor::new(tx))
 }

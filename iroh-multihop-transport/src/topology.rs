@@ -81,7 +81,9 @@ impl Topology {
 
     /// The underlay address an origin advertised, for dialing a hop through it.
     fn underlay(&self, origin: EndpointId) -> Option<EndpointAddr> {
-        self.vectors.get(&origin).map(|vector| vector.underlay.clone())
+        self.vectors
+            .get(&origin)
+            .map(|vector| vector.underlay.clone())
     }
 
     /// Up to `max_paths` **node-disjoint** source [`Route`]s from `src` to `dst`,
@@ -199,7 +201,11 @@ mod tests {
         let routes = store.route_to(na, nd, 3);
         assert_eq!(routes.len(), 1);
         assert_eq!(
-            routes[0].hops().iter().map(|hop| hop.app_id).collect::<Vec<_>>(),
+            routes[0]
+                .hops()
+                .iter()
+                .map(|hop| hop.app_id)
+                .collect::<Vec<_>>(),
             vec![nb, nc, nd]
         );
         // Every hop carries a dialable underlay addr for that node.
@@ -228,9 +234,17 @@ mod tests {
         store.ingest(vector(nc, 1, &[(nd, 1)]));
         store.ingest(vector(nd, 1, &[]));
         let routes = store.route_to(na, nd, 3);
-        assert_eq!(routes.len(), 1, "the interior-less direct route ends the search");
         assert_eq!(
-            routes[0].hops().iter().map(|hop| hop.app_id).collect::<Vec<_>>(),
+            routes.len(),
+            1,
+            "the interior-less direct route ends the search"
+        );
+        assert_eq!(
+            routes[0]
+                .hops()
+                .iter()
+                .map(|hop| hop.app_id)
+                .collect::<Vec<_>>(),
             vec![nd]
         );
     }

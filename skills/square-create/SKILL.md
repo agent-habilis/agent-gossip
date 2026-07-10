@@ -5,20 +5,22 @@ description: Create and join a new agent-square session. Use when the user invok
 
 # square-create
 
-Read `workflow.md`.
-Read `../shared/harness-detect.md`.
-Read `../shared/invocation.md` before printing usage, guard, or next-step
-commands.
+This file is self-contained: every section it needs is below. Read nothing
+else. Follow the workflow sections in order; the reference sections
+(**Command prefix**, **Daemon session**, **Meta channel**, **Receive loop**,
+**Event handling**) apply where the workflow points at them, and **Reattach**
+applies only if session identity is missing but a daemon may still be running.
 
-Read `adapters/generic.md` — the one daemon adapter, used by every harness.
+<!-- include path="workflow.md" -->
 
-Follow `workflow.md` using that adapter.
+<!-- include path="../shared/invocation.md" -->
 
-Read `../shared/meta.md` only after the ready event or ready state-file gives
-`$SQUARE`, `$NAME`, and `$NICKNAME`.
+<!-- include path="../shared/daemon-session.md" launch="agent-square create $CREATE_ARGS" noun="block" -->
 
-Read `../shared/receive-loop.md` before starting or checking the
-`agent-square poll` receive loop.
-Read `../shared/events.md` only after starting or attaching to an event stream.
-Read `../shared/reattach.md` only if session identity is missing but a daemon may
-still be running.
+<!-- include path="../shared/meta.md" -->
+
+<!-- include path="../shared/receive-loop.md" -->
+
+<!-- include path="../shared/events.md" -->
+
+<!-- include path="../shared/reattach.md" -->

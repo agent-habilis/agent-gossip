@@ -1,12 +1,10 @@
-# square-join workflow
-
 ## Quiet mode
 
 Produce no narration while running this workflow. Do not announce tool calls,
 readiness checks, metadata reporting, polling setup, or what you are about to
 do. The only user-visible output is a usage/guard/failure line, the final output
 line below, drift text when present, and later event `display` lines handled by
-`../shared/events.md`.
+the **Event handling** section.
 
 ## Arguments
 
@@ -37,24 +35,11 @@ Then stop.
 
 ## Join
 
-Use the selected adapter to start:
-
-```bash
-agent-square join {TARGET} --no-interactive --output json
-```
-
-The adapter owns transport details: a background daemon with `--state-file`,
-the `agent-square ready` gate, and the poll receive loop. There is one adapter.
-
-Wait until identity is ready, then hold:
-
-- `$SQUARE` = ready square id
-- `$NAME` = ready square name
-- `$NICKNAME` = ready nickname
-
-If any value is missing, print `failed to join square` and stop. If failure looks
-like a creator-unreachable timeout, print `creator unreachable, square may be
-dead`.
+Start the session per the **Daemon session** section below — one message,
+three parallel tool calls. Hold `$SQUARE`, `$NAME`, and `$NICKNAME` from the
+gate script's output. If any value is missing, print `failed to join square`
+and stop. If failure looks like a creator-unreachable timeout, print `creator
+unreachable, square may be dead`.
 
 ## Output
 
@@ -64,17 +49,11 @@ Print exactly:
 💬️ joined `#$NAME` as `<$NICKNAME>`
 ```
 
-If the ready event or ready output carries `drift`, print it verbatim after the
-confirmation line.
+If the ready output carries `drift`, print it verbatim after the confirmation
+line.
 
 ## After readiness
 
-Read `../shared/meta.md` and report this agent's model, harness, host, and idle
-status into the meta channel.
-
-Read `../shared/events.md` before handling any daemon events. Read
-`../shared/receive-loop.md`, arm the background bell before the final output
-line, and only print that line once the bell is still running. If the bell exits
-immediately, poll in the foreground, handle the batch with
-`../shared/events.md`, update `$LAST`, and re-arm until a bell stays
-outstanding.
+Identity and meta are already reported by the gate script; the bell is already
+armed. Handle every later daemon event per the **Receive loop** and **Event
+handling** sections.

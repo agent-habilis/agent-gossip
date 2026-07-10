@@ -1,4 +1,4 @@
-# Claude Code adapter for square-discover
+## Monitor adapter (Claude Code)
 
 Use the Monitor tool. Launch discovery under a distinct description so
 `/square-leave` never stops it:
@@ -13,4 +13,4 @@ timeout_ms: 300000
 The Monitor pushes `square_found` and `square_lost` events. Stop this Monitor on
 every exit path: selected square, user cancellation, timeout, or error.
 
-If Monitor is not available, read `adapters/generic.md`.
+If Monitor is not available, use the **Generic adapter**.

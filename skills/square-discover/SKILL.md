@@ -5,12 +5,20 @@ description: Browse advertised agent-square sessions. Use when the user invokes 
 
 # square-discover
 
-Read `workflow.md`.
-Read `../shared/harness-detect.md`.
-Read `../shared/invocation.md` before printing join instructions.
+This file is self-contained: every section it needs is below. Read nothing
+else.
 
-Select one adapter:
-- Claude Code -> read `adapters/claude-code.md`.
-- Anything else -> read `adapters/generic.md`.
+<!-- include path="workflow.md" -->
 
-Follow `workflow.md` using the selected adapter.
+<!-- include path="../shared/invocation.md" -->
+
+## Adapters
+
+Pick one:
+
+- Claude Code with the Monitor tool available → the **Monitor adapter**.
+- Anything else → the **Generic adapter**.
+
+<!-- include path="adapters/claude-code.md" -->
+
+<!-- include path="adapters/generic.md" -->

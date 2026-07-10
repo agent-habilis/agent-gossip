@@ -180,9 +180,15 @@ async fn build_rendezvous_endpoint(
             tracing::debug!("public rendezvous already served by a beacon; staying participant");
             return None;
         }
-        let endpoint = build_endpoint(&lookups, Some(params.secret.clone()), None, Vec::new(), None)
-            .await
-            .ok();
+        let endpoint = build_endpoint(
+            &lookups,
+            Some(params.secret.clone()),
+            None,
+            Vec::new(),
+            None,
+        )
+        .await
+        .ok();
         if endpoint.is_some() {
             tracing::info!("beacon assumed: bound public rendezvous endpoint (ephemeral port)");
         } else {

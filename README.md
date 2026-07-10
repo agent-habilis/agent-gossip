@@ -114,7 +114,8 @@ printed to stdout.
 ### Other MCP clients (Gemini, Codex, …)
 
 After registering the MCP server (see [Installation](#installation)), use the
-portable skills in [`skills/`](./skills/) for square peer behavior.
+portable skills for square peer behavior (sources in [`skills/`](./skills/),
+rendered to one self-contained file per skill at build time).
 `agent-square mcp` is a stdio JSON-RPC server exposing tools for the square lifecycle
 (`create_square`, `join_square`, `discover_squares`, `leave_square`), messaging
 (`send_message`, `send_exchange`, `fetch_messages`), shared state

@@ -14,7 +14,7 @@ use agent_habilis_mesh::daemon::run as run_event_loop;
 use agent_habilis_mesh::daemon::setup::{SetupKind, SetupParams, setup_mesh};
 use agent_habilis_mesh::daemon::{CreateParams, JoinParams, Resolved, TopicParams};
 use agent_habilis_mesh::protocol::mesh::{Mesh, MeshConfig, MeshName, resolve_lookups};
-use agent_habilis_mesh::protocol::{MessageId, Nickname};
+use agent_habilis_mesh::protocol::{MeshId, MessageId, Nickname};
 use agent_habilis_mesh::resolver::JoinTarget;
 use agent_habilis_mesh::transport::ipc;
 
@@ -552,7 +552,7 @@ async fn a2a(action: A2aAction) -> Result<()> {
 
 fn compose_a2a_params(
     method: &str,
-    mesh: &agent_habilis_mesh::protocol::MeshId,
+    mesh: &MeshId,
     text: Option<&str>,
     task_id: Option<&crate::a2a::TaskId>,
 ) -> serde_json::Value {
@@ -574,12 +574,34 @@ fn compose_a2a_params(
 /// raw IPC JSON (`{ok, participants, participant_count}`), like `poll`.
 async fn poll(opts: PollOpts) -> Result<()> {
     let PollOpts {
-        square: mesh,
+        square,
         nickname,
+        state_file,
         after,
         long,
         output: _,
     } = opts;
+    // clap enforces exactly one form: `--state-file`, or `--square` +
+    // `--nickname`. The state-file form waits for readiness first so a poll
+    // can be armed before the daemon has minted its identity.
+    let (mesh, nickname) = if let Some(path) = state_file {
+        wait_for_ready(&path, agent_habilis_mesh::util::tuning::READY_MAX_SECS).await?;
+        let identity = agent_habilis_mesh::daemon::state_file::read_identity(&path);
+        let missing = |field: &'static str| {
+            anyhow::anyhow!("state file {} carries no {field}", path.display())
+        };
+        let mesh: MeshId = identity.mesh.ok_or_else(|| missing("square id"))?.parse()?;
+        let nick: Nickname = identity
+            .nickname
+            .ok_or_else(|| missing("nickname"))?
+            .parse()?;
+        (mesh, nick)
+    } else {
+        (
+            square.expect("clap: --square required without --state-file"),
+            nickname.expect("clap: --nickname required without --state-file"),
+        )
+    };
     let cmd = IpcCommand::Poll { mesh, after, long };
 
     loop {
@@ -803,6 +825,16 @@ async fn ready(opts: ReadyOpts) -> Result<()> {
         timeout_secs,
         output,
     } = opts;
+    wait_for_ready(&state_file, timeout_secs).await?;
+    if matches!(output, OutputFormat::Json) {
+        print_ready_identity(&state_file);
+    }
+    Ok(())
+}
+
+/// Block until `state_file` reports a fresh `ready: true`, or fail at the
+/// deadline. The wait behind both the `ready` gate and `poll --state-file`.
+async fn wait_for_ready(state_file: &std::path::Path, timeout_secs: u64) -> Result<()> {
     // Saturating add: an absurd `--timeout-secs` must not panic the gate
     // (`Instant + Duration` panics on overflow); clamp to a far-future
     // deadline instead.
@@ -819,16 +851,13 @@ async fn ready(opts: ReadyOpts) -> Result<()> {
         // daemon may be mid-overwrite. A *persistent* error (e.g. a bad path)
         // can't self-heal and just spins to the deadline, so log it so the
         // cause is recoverable.
-        let path = state_file.clone();
+        let path = state_file.to_path_buf();
         let read = tokio::task::spawn_blocking(move || {
             agent_habilis_mesh::daemon::state_file::read_snapshot(&path)
         })
         .await?;
         match read {
             Ok(Some(snapshot)) if snapshot.ready && ready_is_fresh(snapshot.last_updated) => {
-                if matches!(output, OutputFormat::Json) {
-                    print_ready_identity(&state_file);
-                }
                 return Ok(());
             }
             Ok(_) => {}

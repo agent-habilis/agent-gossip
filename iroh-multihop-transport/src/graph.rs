@@ -312,7 +312,11 @@ mod tests {
         link(&mut graph, na, nr, 1);
         link(&mut graph, nr, nd, 1);
         let paths = graph.disjoint_paths(na, nd, 3);
-        assert_eq!(paths.len(), 1, "the lone hop can't be reused for a 2nd path");
+        assert_eq!(
+            paths.len(),
+            1,
+            "the lone hop can't be reused for a 2nd path"
+        );
         assert_eq!(paths[0].hops, vec![nr, nd]);
     }
 }

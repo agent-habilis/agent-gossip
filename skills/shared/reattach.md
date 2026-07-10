@@ -1,4 +1,4 @@
-# Reattach
+## Reattach
 
 Use this only when `$SQUARE`, `$NAME`, or `$NICKNAME` are missing and the current
 skill needs an existing square.

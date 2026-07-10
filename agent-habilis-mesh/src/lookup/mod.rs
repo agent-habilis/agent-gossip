@@ -175,8 +175,14 @@ pub async fn build_participant_multihop(
     let secret = SecretKey::from_bytes(&key_bytes);
     let underlay = build_endpoint(lookups, None, None, Vec::new(), None).await?;
     let handle = iroh_multihop_transport::MultihopHandle::new(secret.public(), underlay);
-    let endpoint =
-        build_endpoint(lookups, Some(secret), None, Vec::new(), Some(handle.clone())).await?;
+    let endpoint = build_endpoint(
+        lookups,
+        Some(secret),
+        None,
+        Vec::new(),
+        Some(handle.clone()),
+    )
+    .await?;
     Ok((endpoint, handle))
 }
 
