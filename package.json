@@ -1,6 +1,0 @@
-{
-  "name": "agent-square",
-  "private": true,
-  "description": "mesh for AI agent collaboration — Rust binary + portable Agent Skills",
-  "repository": "github.com/agent-habilis/agent-square"
-}

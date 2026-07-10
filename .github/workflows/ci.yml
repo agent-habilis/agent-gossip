@@ -64,15 +64,3 @@ jobs:
       # other's timing, flaking even though the daemons mesh fine; 2 still
       # overlaps the long deliberate sleeps for speed.
       - run: cargo test --profile ci -- --test-threads=2
-
-  pi-extension:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: pi-extension
-    steps:
-      - uses: actions/checkout@v5
-      - uses: oven-sh/setup-bun@v2
-      - run: bun install --frozen-lockfile
-      - run: bun run typecheck
-      - run: bun run lint

@@ -3,14 +3,14 @@
 //! so a brew/cargo-installed binary carries them with no repo or external
 //! installer. Both act immediately; `plug` is reversible with `unplug`.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use include_dir::Dir;
 
-use agent_habilis_mesh::util::output::{status, status_warn, warn};
+use agent_habilis_mesh::util::output::{home_path, status, status_warn, warn};
 
-use super::agent::{Agent, SKILLS, home_dir, skipped};
+use super::agent::{self, Agent, AgentState, SKILLS, home_dir, owned_skill_dirs_under, skipped};
 
 /// Which operation a default selection is for.
 #[derive(Clone, Copy)]
@@ -19,44 +19,64 @@ enum Op {
     Remove,
 }
 
-/// Install the embedded integrations into the selected agents.
+/// Install the embedded integrations into the selected agents and paths.
 ///
 /// # Errors
 /// `$HOME` unset, or a filesystem error.
-pub(crate) fn plug(agents: &[Agent]) -> Result<()> {
+pub(crate) fn plug(agents: &[Agent], paths: &[PathBuf]) -> Result<()> {
     let home = home_dir()?;
-    let mut acted = 0;
-    for agent in resolve(&home, agents, Op::Install) {
-        if install(agent, &home)? {
-            acted += 1;
-        }
+    // Agent installs are silent — the roster below is the authoritative report.
+    for agent in resolve(&home, agents, paths, Op::Install) {
+        install(agent, &home)?;
     }
-    finish(acted, "plugging in");
+    for path in dedup_paths(paths) {
+        install_root(&path)?;
+        status("Installed", &format!("{} (path)", home_path(&path)));
+    }
+    // Always list every supported agent and where it landed.
+    print_roster(&home);
     Ok(())
 }
 
-/// Remove the integrations from the selected agents — symmetric to [`plug`].
+/// Remove the integrations from the selected agents and paths — symmetric to
+/// [`plug`].
 ///
 /// # Errors
 /// `$HOME` unset, or a filesystem error while removing.
-pub(crate) fn unplug(agents: &[Agent]) -> Result<()> {
+pub(crate) fn unplug(agents: &[Agent], paths: &[PathBuf]) -> Result<()> {
     let home = home_dir()?;
     let mut acted = 0;
-    for agent in resolve(&home, agents, Op::Remove) {
+    for agent in resolve(&home, agents, paths, Op::Remove) {
         if remove(agent, &home)? {
             acted += 1;
         }
     }
-    finish(acted, "unplugging");
+    for path in dedup_paths(paths) {
+        if remove_root(&path)? {
+            status("Unplugging", &format!("{} (path)", home_path(&path)));
+            acted += 1;
+        } else {
+            status_warn(
+                "Skipping",
+                &format!("{} (nothing installed)", home_path(&path)),
+            );
+        }
+    }
+    finish(acted);
     Ok(())
 }
 
-/// Decide which agents to act on: explicit `--agent` flags, or — when none are
-/// given — the default set for `op` (detected agents to install into, agents
-/// that have it to remove from).
-fn resolve(home: &Path, agents: &[Agent], op: Op) -> Vec<Agent> {
+/// Decide which agents to act on. Explicit `--agent` flags win. With no
+/// `--agent` and no `--path`, fall back to the default set for `op` (detected
+/// agents to install into, agents that have it to remove from). When only
+/// `--path` is given, act on no agents — an explicit path is not a request to
+/// touch every detected agent too.
+fn resolve(home: &Path, agents: &[Agent], paths: &[PathBuf], op: Op) -> Vec<Agent> {
     if !agents.is_empty() {
         return dedup(agents);
+    }
+    if !paths.is_empty() {
+        return Vec::new();
     }
     Agent::ALL
         .into_iter()
@@ -78,47 +98,42 @@ fn dedup(agents: &[Agent]) -> Vec<Agent> {
     out
 }
 
-/// `acted` counts agents actually installed/removed (not those skipped as
-/// absent), so the summary never overstates what happened.
-fn finish(acted: usize, verb: &str) {
+/// `paths` with duplicates removed, preserving order.
+fn dedup_paths(paths: &[PathBuf]) -> Vec<PathBuf> {
+    let mut out: Vec<PathBuf> = Vec::new();
+    for path in paths {
+        if !out.contains(path) {
+            out.push(path.clone());
+        }
+    }
+    out
+}
+
+/// The `unplug` summary line — `plug` reports via [`print_roster`] instead.
+fn finish(acted: usize) {
     if acted == 0 {
-        warn("nothing to do (try --agent claude-code|pi|generic|codex|cursor)");
+        warn("nothing to do (try --agent claude-code|pi|codex|cursor|opencode or --path DIR)");
     } else {
-        let noun = if acted == 1 { "agent" } else { "agents" };
-        status("Finished", &format!("{verb} square · {acted} {noun}"));
+        let noun = if acted == 1 { "target" } else { "targets" };
+        status("Finished", &format!("unplugging square · {acted} {noun}"));
     }
 }
 
-/// Install the integration for one agent: remove any existing install first,
-/// then write fresh. Returns whether it acted: `false` (a logged skip) when
-/// the agent isn't on this machine — `plug` overwrites an existing agent's
-/// install but never creates config dirs for an absent agent, even when
-/// selected explicitly with `--agent`; symmetric with [`remove`].
-fn install(agent: Agent, home: &Path) -> Result<bool> {
-    let path = agent.install_path(home);
+/// Install for one agent — silently; [`print_roster`] reports the outcome.
+/// `plug` overwrites an existing agent's install but never creates config dirs
+/// for an absent agent, even when selected explicitly with `--agent`.
+fn install(agent: Agent, home: &Path) -> Result<()> {
     if !agent.detected(home) {
-        status_warn(
-            "Skipping",
-            &format!(
-                "{} (not detected: {} is missing)",
-                agent.label(),
-                agent.agent_dir(home).display()
-            ),
-        );
-        return Ok(false);
+        return Ok(());
     }
-    status(
-        "Plugging in",
-        &format!("{} ({})", agent.label(), path.display()),
-    );
     remove_owned(agent, home)?;
-    write_dir(&SKILLS, &path)?;
-    Ok(true)
+    write_dir(&SKILLS, &agent.install_path(home))?;
+    Ok(())
 }
 
-/// Remove the integration for one agent — symmetric with [`install`]. Returns
-/// whether it acted: `false` (a logged skip) when the agent has nothing
-/// installed, so the caller's summary counts only real removals.
+/// Remove the integration for one agent — logs each removal for `unplug`.
+/// Returns whether it acted (`false` = a logged skip), so the summary counts
+/// only real removals.
 fn remove(agent: Agent, home: &Path) -> Result<bool> {
     let path = agent.install_path(home);
     if !agent.installed(home) {
@@ -136,6 +151,26 @@ fn remove(agent: Agent, home: &Path) -> Result<bool> {
     Ok(true)
 }
 
+/// Install into an explicit directory as a skill root: clear the skill dirs
+/// we own under it, then write fresh. No detection gate — the path is intent.
+fn install_root(root: &Path) -> Result<()> {
+    for dir in owned_skill_dirs_under(root) {
+        remove_existing(&dir)?;
+    }
+    write_dir(&SKILLS, root)?;
+    Ok(())
+}
+
+/// Remove the skill dirs we own under an explicit directory, leaving the folder
+/// and anything else in it untouched. Returns whether anything was removed.
+fn remove_root(root: &Path) -> Result<bool> {
+    let mut removed = false;
+    for dir in owned_skill_dirs_under(root) {
+        removed |= remove_existing(&dir)?;
+    }
+    Ok(removed)
+}
+
 fn remove_owned(agent: Agent, home: &Path) -> Result<bool> {
     let mut removed = false;
     for path in agent
@@ -148,7 +183,31 @@ fn remove_owned(agent: Agent, home: &Path) -> Result<bool> {
     Ok(removed)
 }
 
-/// Recursively write an embedded `Dir` to `dest`, skipping [`SKIP`] names.
+/// List every supported agent and whether the integration is now installed for
+/// it — the `plug` summary. Reads the same post-operation state `doctor` shows.
+fn print_roster(home: &Path) {
+    for (agent, path, state) in agent::states(home) {
+        match state {
+            AgentState::UpToDate => status(
+                "Installed",
+                &format!("{} ({})", agent.label(), home_path(&path)),
+            ),
+            AgentState::OutOfDate => status_warn(
+                "Out of date",
+                &format!("{} ({})", agent.label(), home_path(&path)),
+            ),
+            AgentState::NotSetUp => status_warn(
+                "Skipped",
+                &format!("{} (present, not installed)", agent.label()),
+            ),
+            AgentState::Absent => {
+                status_warn("Skipped", &format!("{} (not detected)", agent.label()));
+            }
+        }
+    }
+}
+
+/// Recursively write an embedded `Dir` to `dest`, skipping [`skipped`] names.
 fn write_dir(dir: &Dir<'_>, dest: &Path) -> Result<()> {
     std::fs::create_dir_all(dest).with_context(|| format!("creating {}", dest.display()))?;
     for file in dir.files() {
@@ -180,5 +239,46 @@ fn remove_existing(path: &Path) -> Result<bool> {
         Ok(true)
     } else {
         Ok(false)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{install_root, remove_root};
+
+    /// `--path` install writes the skill tree into the directory as a root, and
+    /// `--path` unplug removes only the skill dirs — never the folder or files
+    /// the user keeps beside them.
+    #[test]
+    fn path_target_install_and_owned_only_removal() {
+        let root = std::env::temp_dir().join(format!("agent-square-path-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        // A file the user keeps in the same folder — must survive unplug.
+        let sentinel = root.join("keep.txt");
+        std::fs::write(&sentinel, "mine").unwrap();
+
+        install_root(&root).unwrap();
+        assert!(
+            root.join("square-create/SKILL.md").is_file(),
+            "install writes the per-command skills under the path"
+        );
+        assert!(root.join("shared").is_dir(), "install writes shared/");
+
+        let removed = remove_root(&root).unwrap();
+        assert!(removed, "unplug reports it removed something");
+        assert!(
+            !root.join("square-create").exists(),
+            "unplug removes the owned skill dirs"
+        );
+        assert!(!root.join("shared").exists(), "unplug removes shared/");
+        assert!(sentinel.is_file(), "unplug leaves the user's own files");
+        assert!(root.is_dir(), "unplug leaves the folder itself");
+
+        // A second unplug is a no-op (nothing owned remains).
+        assert!(!remove_root(&root).unwrap());
+
+        std::fs::remove_dir_all(&root).unwrap();
     }
 }

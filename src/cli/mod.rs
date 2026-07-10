@@ -130,8 +130,8 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
         }
         // Embedded integration artifacts written to the agents' skills dirs —
         // self-contained, no repo checkout needed (like `Man`).
-        Commands::Plug { agents } => plug::plug(&agents),
-        Commands::Unplug { agents } => plug::unplug(&agents),
+        Commands::Plug { agents, paths } => plug::plug(&agents, &paths),
+        Commands::Unplug { agents, paths } => plug::unplug(&agents, &paths),
         Commands::Doctor { opts } => doctor::run(opts).await,
     }
 }

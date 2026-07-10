@@ -122,11 +122,8 @@ exclude = [
     ".cargo/",
     ".github/",
     "Formula/",
-    "claude-code-plugin/",
-    "pi-extension/",
     "docs/",
     "examples/",
-    "package.json",
     "proptest-regressions/",
     ".stignore",
 ]

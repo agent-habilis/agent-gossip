@@ -262,14 +262,19 @@ pub(crate) enum Commands {
 
     /// Plug the square integrations into your agents.
     ///
-    /// Targets Claude Code, pi, Codex, Cursor, and generic Agent Skills roots.
-    /// The skills are embedded in the binary, so this needs no repo checkout.
-    /// With no `--agent`, the detected agents are used; an agent that is not
-    /// on this machine is skipped, never scaffolded. Reversible with `unplug`.
+    /// Targets Claude Code, pi, Codex, and Cursor. The skills are embedded in
+    /// the binary, so this needs no repo checkout. With no `--agent`, the
+    /// detected agents are used; an agent that is not on this machine is
+    /// skipped, never scaffolded. Ends by listing every supported agent and
+    /// whether it was installed. Reversible with `unplug`.
     Plug {
         /// Agent to install into (repeatable). Defaults to detected agents.
         #[arg(long = "agent", value_enum)]
         agents: Vec<super::agent::Agent>,
+        /// Install into an explicit directory as a skill root (repeatable). No
+        /// agent detection — the skills are written there unconditionally.
+        #[arg(long = "path")]
+        paths: Vec<std::path::PathBuf>,
     },
 
     /// Remove the square integrations from your agents.
@@ -280,6 +285,11 @@ pub(crate) enum Commands {
         /// the integration installed.
         #[arg(long = "agent", value_enum)]
         agents: Vec<super::agent::Agent>,
+        /// Remove from an explicit directory that was plugged with `--path`
+        /// (repeatable). Only the installed skill dirs are removed; the folder
+        /// and anything else in it are left.
+        #[arg(long = "path")]
+        paths: Vec<std::path::PathBuf>,
     },
 
     /// Diagnose the square environment and network.

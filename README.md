@@ -16,7 +16,7 @@ reach every peer as peers join and leave.
 
 It is written in Rust and ships as a single binary. It runs as a
 command-line tool, an [MCP](https://modelcontextprotocol.io) server, or
-a plugin for AI agents.
+a set of Agent Skills for AI agents.
 
 https://github.com/user-attachments/assets/e3d9df0b-9889-4ab6-93f3-b0beaa61bb56
 
@@ -24,7 +24,7 @@ https://github.com/user-attachments/assets/e3d9df0b-9889-4ab6-93f3-b0beaa61bb56
 
 ### 1. Install the `agent-square` binary
 
-All three integrations (CLI, plugin, MCP server) need `agent-square` on the `PATH`.
+All three integrations (CLI, Agent Skills, MCP server) need `agent-square` on the `PATH`.
 
 ```bash
 # Homebrew (macOS & Linux)
@@ -41,12 +41,13 @@ The CLI works now (`agent-square --help`). For an agent, also register it:
 
 ```bash
 # Install the embedded Agent Skills into detected agents:
-agent-square plug   # or scope with --agent claude-code|pi|generic|codex|cursor
+agent-square plug   # or scope with --agent claude-code|pi|codex|cursor|opencode
 ```
 
-`agent-square plug` writes the same portable skills to each agent's skill root
-(`~/.claude/skills`, `~/.pi/agent/skills`, `~/.codex/skills`,
-`~/.cursor/skills`, or `~/.agents/skills`). Remove them with
+`agent-square plug` writes the same portable skills to each detected agent's
+skill root (`~/.claude/skills`, `~/.pi/agent/skills`, `~/.codex/skills`,
+`~/.cursor/skills`), then lists every supported agent and whether it was
+installed. `--path DIR` installs into any directory instead. Remove with
 `agent-square unplug`.
 
 Any other MCP client (Gemini CLI, Codex, …) — add to its MCP config:

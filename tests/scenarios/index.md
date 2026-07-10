@@ -78,9 +78,9 @@ Each runbook has four parts:
 - **Expected behavior & UX** — the observable outcomes/experience to validate.
 
 Expected UI strings reference the canonical `display` lines the daemon emits
-(`src/output/json.rs` `*_display`) and the front-end Output sections
-(`claude-code-plugin/skills/*/SKILL.md`). The bee is `💬️` (U+FE0F); a mesh id
-is canonically `💬://<base58>`.
+(`src/output/json.rs` `*_display`) and the front-end Output rules
+(`skills/square-*/workflow.md` and `skills/shared/events.md`). The bee is `💬️`
+(U+FE0F); a mesh id is canonically `💬://<base58>`.
 
 ## Capability reference (for the human, not the agents)
 

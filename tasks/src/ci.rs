@@ -43,10 +43,6 @@ pub(crate) fn run(sh: &Shell) -> TaskOutcome {
     // heal recovery, anti-entropy backfill) run here every time — they
     // live in `tests/gossip_network.rs` with shortened eviction timers.
 
-    crate::pi::typecheck(sh)?;
-    crate::pi::lint(sh)?;
-    crate::pi::test(sh)?;
-
     crate::util::sweep_stale_artifacts(sh);
     Ok(())
 }

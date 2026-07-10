@@ -83,7 +83,7 @@ mod tests {
         assert_eq!(opts.string, "-release-2026");
     }
 
-    // The pi extension builds `topic <flags> -- <string>` so a string that
+    // A caller can build `topic <flags> -- <string>` so a string that
     // collides with a known flag still lands in the positional.
     #[test]
     fn topic_accepts_string_after_end_of_flags() {

@@ -13,7 +13,6 @@ mod install;
 mod lint;
 mod logs;
 mod man;
-mod pi;
 mod proptest;
 mod release;
 mod run;
@@ -32,8 +31,8 @@ struct Cli {
 }
 
 /// Variant doc comments *are* the `--help` text — no separate usage
-/// block to drift. clap kebab-cases names (`PiTypecheck` →
-/// `pi-typecheck`), so the invocation surface stays stable.
+/// block to drift. clap kebab-cases names (`Proptest` →
+/// `proptest`), so the invocation surface stays stable.
 #[derive(Subcommand)]
 enum Task {
     /// Run unit tests.
@@ -93,12 +92,6 @@ enum Task {
     Man,
     /// Run property-based tests.
     Proptest,
-    /// Type-check the pi extension.
-    PiTypecheck,
-    /// Lint the pi extension.
-    PiLint,
-    /// Run the pi extension's bun test suite.
-    PiTest,
     /// Internal: cargo-zigbuild's `zig cc`/`c++`/`ar` shim. cargo-zigbuild's
     /// cross-link wrapper re-execs THIS binary as `<exe> zig …` (it resolves
     /// itself via `current_exe()`), so the cross build in `build` can only link
@@ -145,9 +138,6 @@ fn main() -> ExitCode {
         Task::Logs => logs::run(),
         Task::Man => man::run(),
         Task::Proptest => proptest::run(&sh),
-        Task::PiTypecheck => pi::typecheck(&sh),
-        Task::PiLint => pi::lint(&sh),
-        Task::PiTest => pi::test(&sh),
         Task::Zig(zig) => zig
             .execute()
             .map_err(|err| -> Box<dyn std::error::Error> { err.into() }),

@@ -49,12 +49,13 @@ pub(crate) enum Agent {
     ClaudeCode,
     /// pi — skills under `~/.pi/agent/skills`.
     Pi,
-    /// A generic agent following the `~/.agents/skills` convention.
-    Generic,
     /// Codex — skills under `~/.codex/skills`.
     Codex,
     /// Cursor — skills under `~/.cursor/skills`.
     Cursor,
+    /// opencode — skills under `~/.config/opencode/skills`.
+    #[value(name = "opencode")]
+    OpenCode,
 }
 
 /// Whether the mesh integration is set up for an agent, as `doctor` reports.
@@ -87,9 +88,9 @@ impl Agent {
     pub(crate) const ALL: [Agent; 5] = [
         Agent::ClaudeCode,
         Agent::Pi,
-        Agent::Generic,
         Agent::Codex,
         Agent::Cursor,
+        Agent::OpenCode,
     ];
 
     /// The agent's CLI label, for display.
@@ -97,9 +98,9 @@ impl Agent {
         match self {
             Agent::ClaudeCode => "claude-code",
             Agent::Pi => "pi",
-            Agent::Generic => "generic",
             Agent::Codex => "codex",
             Agent::Cursor => "cursor",
+            Agent::OpenCode => "opencode",
         }
     }
 
@@ -110,9 +111,9 @@ impl Agent {
         let part = match self {
             Agent::ClaudeCode => ".claude",
             Agent::Pi => ".pi",
-            Agent::Generic => ".agents",
             Agent::Codex => ".codex",
             Agent::Cursor => ".cursor",
+            Agent::OpenCode => ".config/opencode",
         };
         home.join(part)
     }
@@ -126,9 +127,9 @@ impl Agent {
         match self {
             Agent::ClaudeCode => home.join(".claude/skills"),
             Agent::Pi => home.join(".pi/agent/skills"),
-            Agent::Generic => home.join(".agents/skills"),
             Agent::Codex => home.join(".codex/skills"),
             Agent::Cursor => home.join(".cursor/skills"),
+            Agent::OpenCode => home.join(".config/opencode/skills"),
         }
     }
 
@@ -149,20 +150,16 @@ impl Agent {
     }
 
     pub(crate) fn owned_skill_dirs(self, home: &Path) -> Vec<PathBuf> {
-        let root = self.install_path(home);
-        OWNED_SKILL_DIRS
-            .iter()
-            .map(|name| root.join(name))
-            .collect()
+        owned_skill_dirs_under(&self.install_path(home))
     }
 
     pub(crate) fn legacy_install_paths(self, home: &Path) -> Vec<PathBuf> {
         match self {
             Agent::ClaudeCode => vec![home.join(".claude/skills/square")],
             Agent::Pi => vec![home.join(".agent-square/pi-extension")],
-            Agent::Generic => vec![home.join(".agents/skills/square")],
-            Agent::Codex => Vec::new(),
             Agent::Cursor => vec![home.join(".cursor/skills/square")],
+            // Never had an older install location.
+            Agent::Codex | Agent::OpenCode => Vec::new(),
         }
     }
 
@@ -180,6 +177,17 @@ impl Agent {
             AgentState::Absent
         }
     }
+}
+
+/// The `square-*`/`shared` dirs `plug` writes under a skill root — the set an
+/// agent install owns, and the set `plug --path` writes/removes under an
+/// explicit directory. Only these are removed on `unplug`, so a custom `--path`
+/// folder keeps anything else it holds.
+pub(crate) fn owned_skill_dirs_under(root: &Path) -> Vec<PathBuf> {
+    OWNED_SKILL_DIRS
+        .iter()
+        .map(|name| root.join(name))
+        .collect()
 }
 
 /// Is this embedded path's final component in the skip list? Shared by the
@@ -366,29 +374,28 @@ mod tests {
             .install_path(home)
             .ends_with(".claude/skills"));
         assert!(Agent::Pi.install_path(home).ends_with(".pi/agent/skills"));
-        assert!(Agent::Generic
-            .install_path(home)
-            .ends_with(".agents/skills"));
         assert!(Agent::Codex.install_path(home).ends_with(".codex/skills"));
         assert!(Agent::Cursor.install_path(home).ends_with(".cursor/skills"));
+        let opencode = Agent::OpenCode.install_path(home);
+        assert!(opencode.ends_with(".config/opencode/skills"));
     }
 
     #[test]
-    fn generic_in_sync_only_when_skill_tree_matches_embedded() {
+    fn codex_in_sync_only_when_skill_tree_matches_embedded() {
         let home = std::env::temp_dir().join(format!("agent-square-insync-{}", std::process::id()));
-        let dir = Agent::Generic.install_path(&home);
+        let dir = Agent::Codex.install_path(&home);
         std::fs::create_dir_all(&dir).unwrap();
 
-        assert!(!Agent::Generic.in_sync(&home));
+        assert!(!Agent::Codex.in_sync(&home));
 
         write_embedded_dir(&SKILLS, &dir);
-        assert!(Agent::Generic.in_sync(&home));
+        assert!(Agent::Codex.in_sync(&home));
 
         let file = dir.join("square-create/SKILL.md");
         let mut contents = std::fs::read_to_string(&file).unwrap();
         contents.push('\n');
         std::fs::write(&file, contents).unwrap();
-        assert!(!Agent::Generic.in_sync(&home));
+        assert!(!Agent::Codex.in_sync(&home));
 
         std::fs::remove_dir_all(&home).unwrap();
     }
@@ -416,7 +423,7 @@ mod tests {
     #[test]
     fn drift_warning_fires_only_for_a_diverged_install() {
         let home = std::env::temp_dir().join(format!("agent-square-drift-{}", std::process::id()));
-        let dir = Agent::Generic.install_path(&home);
+        let dir = Agent::Codex.install_path(&home);
         std::fs::create_dir_all(&dir).unwrap();
 
         write_embedded_dir(&SKILLS, &dir);

@@ -91,8 +91,8 @@ SYNOPSIS
 
        agent-square man
 
-       agent-square plug   [--agent claude-code|pi|generic|codex|cursor]
-       agent-square unplug [--agent claude-code|pi|generic|codex|cursor]
+       agent-square plug   [--agent claude-code|pi|codex|cursor|opencode] [--path DIR]
+       agent-square unplug [--agent claude-code|pi|codex|cursor|opencode] [--path DIR]
        agent-square doctor [--square 💬…] [--no-probe] [--output human|json]
 
        agent-square --help | --version
@@ -1060,26 +1060,31 @@ COMMANDS
        man
               Print this manual to stdout and exit.
 
-       plug [--agent claude-code|pi|generic|codex|cursor]
+       plug [--agent claude-code|pi|codex|cursor|opencode] [--path DIR]
               Install the embedded square Agent Skills into your agents:
-              ~/.claude/skills, ~/.pi/agent/skills, ~/.agents/skills,
-              ~/.codex/skills, and ~/.cursor/skills. The same portable skill
-              tree is used for every target, so no repo checkout is needed.
-              Writes immediately (reversible with unplug). With no --agent,
-              the detected agents are used; repeat --agent to select several.
-              An agent that is not on this machine (its config dir is missing)
-              is skipped, never scaffolded — even when named explicitly.
+              ~/.claude/skills, ~/.pi/agent/skills, ~/.codex/skills, and
+              ~/.cursor/skills. The same portable skill tree is used for every
+              target, so no repo checkout is needed. Writes immediately
+              (reversible with unplug). With no --agent, the detected agents are
+              used; repeat --agent to select several. An agent that is not on
+              this machine (its config dir is missing) is skipped, never
+              scaffolded — even when named explicitly. --path DIR installs the
+              tree into any directory as a skill root, unconditionally (no
+              detection); repeat for several. plug ends by listing every
+              supported agent and whether it was installed.
 
-       unplug [--agent claude-code|pi|generic|codex|cursor]
+       unplug [--agent claude-code|pi|codex|cursor|opencode] [--path DIR]
               Remove what plug installed (symmetric). With no --agent, the
-              agents that have it installed are used.
+              agents that have it installed are used. --path DIR removes only
+              the installed skill dirs, leaving the folder and anything else in
+              it.
 
        doctor [--square 💬…] [--no-probe] [--output human|json]
               Diagnose the environment and network, flutter-doctor style — each
               line a check with a [OK]/[!]/[x] verdict; a hard failure exits
               non-zero. With no --square, a machine-health report in four
               sections: Environment (version, OS/arch, log + socket dirs);
-              Integrations (per agent — claude-code, pi, generic, cursor —
+              Integrations (per agent — claude-code, pi, codex, cursor, opencode —
               whether the installed skill is up to date, out of date, not set
               up, or absent, with its path); Network (local bind, UDP, NAT/hole-punch behavior,
               public address, relay latency); and Active squares (each daemon
