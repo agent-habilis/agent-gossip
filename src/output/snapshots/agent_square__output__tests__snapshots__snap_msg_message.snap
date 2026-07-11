@@ -2,4 +2,4 @@
 source: src/output/tests.rs
 expression: "format_msg_json(&snap_chat_frame(\"What is Rust?\"), false)"
 ---
-{"event":"message","id":"00000000-0000-0000-0000-000000000001","type":"msg","square":"💬://test","author":"alice-bot","ts":1700000000,"body":"What is Rust?","to":null,"message":{"messageId":"00000000-0000-0000-0000-000000000001","role":"ROLE_USER","parts":[{"text":"What is Rust?"}],"contextId":"💬://test","extensions":["https://agent-habilis.dev/a2a/ext/mesh-broadcast/v1"]},"display":"💬️ `<alice-bot>`: What is Rust?","self":false}
+{"event":"message","id":"00000000-0000-0000-0000-000000000001","type":"msg","square":"💬://test","author":"alice-bot","ts":1700000000,"body":"What is Rust?","to":null,"message":{"messageId":"00000000-0000-0000-0000-000000000001","role":"ROLE_USER","parts":[{"text":"What is Rust?"}],"contextId":"💬://test","extensions":["https://agent-habilis.dev/a2a/ext/mesh-broadcast/v1"]},"display":"💬️ `<alice-bot>`: What is Rust?","self":false,"is_visible":true}

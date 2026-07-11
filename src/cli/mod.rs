@@ -614,6 +614,14 @@ async fn poll(opts: PollOpts) -> Result<()> {
             !resp.is_empty(),
             "square daemon closed the connection without a response (shutting down?)"
         );
+        // Clean daemon shutdown: end the poll with the truthful empty batch
+        // and exit 0 — re-issuing would hit a socket that is about to vanish.
+        // The sentinel is a control response and never reaches stdout. A
+        // daemon that dies WITHOUT sending it (crash, SIGKILL) still errors.
+        if resp == crate::a2a::surfaced::SHUTDOWN_SENTINEL {
+            println!("[]");
+            return Ok(());
+        }
         if !(long && resp == "[]") {
             println!("{resp}");
             return Ok(());

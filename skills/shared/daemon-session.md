@@ -66,6 +66,7 @@ From the script's printed JSON hold:
 - `$NAME` = `name`
 - `$NICKNAME` = `nickname`
 
-Then print the output <!-- slot name="noun" -->. The bell is already outstanding; if it exited
-before you print (early events), poll in the foreground, handle the batch per
-the **Event handling** section, update `$LAST`, and re-arm — then print.
+Then print the output <!-- slot name="noun" -->. The bell is already
+outstanding and your own meta report cannot fire it (document changes never
+ring the bell). If it exited anyway — early peer events — run the **Receive
+loop** before printing.

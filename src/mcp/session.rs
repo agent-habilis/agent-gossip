@@ -210,9 +210,15 @@ impl Session {
         Ok(batch)
     }
 
-    /// Explicit cursor wins; otherwise fall back to the implicit one.
+    /// Explicit cursor wins; otherwise fall back to the implicit one, which
+    /// starts at 0 (the before-anything cursor). Never `None`: MCP keeps its
+    /// own per-session cursor, so it always speaks the explicit-seq protocol —
+    /// the daemon-side read cursor and its waking-only bell semantics belong
+    /// to the cursor-less CLI `poll` alone.
     fn effective_after(&self, explicit: Option<u64>) -> Option<u64> {
-        explicit.or_else(|| *self.last_delivered_seq.lock().unwrap())
+        explicit
+            .or_else(|| *self.last_delivered_seq.lock().unwrap())
+            .or(Some(0))
     }
 
     fn advance_cursor_to(&self, seq: u64) {

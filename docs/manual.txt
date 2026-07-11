@@ -20,8 +20,8 @@ SYNOPSIS
                   [--no-interactive] [--state-file PATH] [--output human|json]
                   [--max-peers N] [--filter-self] [--a2a-serve[=PORT]]
 
-       agent-square poll --square 💬… --nickname NAME [--after SEQ] [--long] [--output json]
-       agent-square poll --state-file PATH [--after SEQ] [--long] [--output json]
+       agent-square poll --square 💬… --nickname NAME [--long] [--output json]
+       agent-square poll --state-file PATH [--long] [--output json]
 
        agent-square ping --square 💬… --nickname NAME [--output json]
 
@@ -138,15 +138,16 @@ DESCRIPTION
        POLLING WITHOUT THE STREAM
               If you can't consume the live stdout stream (e.g. you launched
               the daemon detached), gate on `agent-square ready` (see READINESS), then
-              drive a loop with poll: call `poll --long --after SEQ`,
-              advance SEQ to the last returned event's seq, and re-baseline if
-              a poll leads with a `gap` marker. `--long` makes each call
-              block until a new event arrives — no timeout to tune, no busy
-              tick; omit it for an immediate read. A killed call is harmless:
-              re-issue it with the same SEQ and nothing is lost.
-              poll returns the same event objects the stream would, including
-              the transient ones, so nothing is lost but the instant-ness of a
-              true push — an event surfaces the moment it lands during a wait.
+              drive a loop with poll. The daemon tracks the read cursor: a
+              plain `poll` returns everything not yet served and remembers
+              where you are; `poll --long` blocks until an unserved waking
+              event exists — no timeout to tune, no busy tick, no sequence
+              numbers to carry. A killed call is harmless: re-issue it and
+              nothing is lost. If unread events aged out, the response leads
+              with a `gap` marker. poll returns the same event objects the
+              stream would, including the transient ones, so nothing is lost
+              but the instant-ness of a true push — an event surfaces the
+              moment it lands during a wait.
 
        LIFECYCLE
               A create/join daemon also self-terminates shortly after the
@@ -386,19 +387,47 @@ COMMANDS
               Parks the task in input-required for the initiator's approval;
               on approval emit `a2a status --state completed`.
 
-       poll --square 💬… --nickname NAME [--after SEQ] [--long] [--output json]
-       poll --state-file PATH [--after SEQ] [--long] [--output json]
+       poll --square 💬… --nickname NAME [--long] [--output json]
+       poll --state-file PATH [--long] [--output json]
               Retrieve buffered surfaced events from a running daemon.
               Short-lived. Prints a JSON array whose objects are the **same**
               shape the live --output json stream emits — chat, presence
-              joined/left, task legs, AND the transient events
-              (ping_report, peer_timeout/return, task_timeout, fork) — each
-              carrying its pre-built display string, its self flag, and a
-              leading seq (the cursor). So a poller and a stream reader parse
-              one shape and can echo display verbatim either way (see "JSON
-              EVENTS"). The task progress beat is the lone exception: it is
-              liveness plumbing, surfaced on the stream as task_progress but
-              never retained here.
+              joined/left, task legs, state/meta document echoes, AND the
+              transient events (ping_report, peer_timeout/return,
+              task_timeout, fork) — each carrying its pre-built display
+              string, its is_visible print decision, its self flag, and a
+              leading seq. So a poller and a stream reader parse one shape
+              and can echo display verbatim either way (see "JSON EVENTS").
+              The task progress beat is the lone exception: it is liveness
+              plumbing, surfaced on the stream as task_progress but never
+              retained here.
+
+              The daemon tracks the read cursor. A plain poll returns
+              everything it has not yet served to a plain poll and remembers
+              where you are — no sequence numbers to carry between calls. If
+              unread events aged out of the ring before being served, the
+              response leads with
+
+                  {"event":"gap","missed_before":SEQ}
+
+              — every event below that seq was evicted unread and is gone;
+              the daemon re-baselines automatically.
+
+              --long
+                     The receive bell: block until the daemon holds a WAKING
+                     event it has not yet served to a plain poll, instead of
+                     an immediate read. State/meta document echoes are
+                     non-waking — they never fire the bell and ride along
+                     with the next waking batch (documents are read on demand
+                     with `state get`/`meta get`). Never advances the read
+                     cursor, so the pattern is: bell exits → issue a plain
+                     poll for the content and re-arm the bell, both at once.
+                     No timeout: the daemon holds each request up to ~60s and
+                     the CLI transparently re-issues on an empty window; a
+                     killed call is harmless. The held connection has no I/O
+                     deadline during the wait. A daemon shutting down cleanly
+                     ends a parked long-poll with an empty batch and exit 0 —
+                     leaving a square never requires stopping the bell.
 
               --state-file PATH
                      Resolve --square/--nickname from a create/join/topic
@@ -409,35 +438,11 @@ COMMANDS
                      before the daemon has minted its identity. Conflicts
                      with --square/--nickname.
 
-              --after SEQ
-                     Return only events surfaced after this seq. Omit on the
-                     first poll to get the buffer. Advance SEQ to the last
-                     returned event's seq each tick. If SEQ has aged out of the
-                     buffer, the response leads with
-
-                         {"event":"gap","missed_before":SEQ}
-
-                     and then the retained window. Every event below that seq
-                     was evicted unread and is gone; re-baseline on the window.
-                     The marker carries no seq of its own, so advancing --after
-                     off the highest returned event seq stays correct.
-
-              --long
-                     Long-poll: when no new events are buffered, block until
-                     one arrives, instead of an immediate read. No timeout:
-                     the daemon holds each request up to ~60s and the CLI
-                     transparently re-issues on an empty window, so the call
-                     returns only with events (or an error). A killed call is
-                     harmless: re-issue it with the same --after and nothing
-                     is lost. The daemon itself never blocks — only
-                     this call waits — so a watch loop is `poll --long`
-                     repeated, advancing --after each batch, with no busy
-                     tick. The held connection has no I/O deadline during the
-                     wait.
-
               Each member keeps the most recent ~1000 surfaced events; a single
               poll returns at most that many. Only events from your join onward
-              are surfaced (see "JOIN HORIZON").
+              are surfaced (see "JOIN HORIZON"). A hidden --after SEQ flag
+              performs a stateless replay of everything past SEQ for
+              debugging/recovery.
 
        ping --square 💬… --nickname NAME [--output json]
               Measure round-trip time to every peer. Short-lived and
@@ -1238,8 +1243,7 @@ JSON EVENTS
                   "display":"💬️ `<nick>`: hello","self":false}
 
               id        Unique message id — also the A2A messageId. (poll's
-                        --after cursor is the separate per-event seq, not
-                        this id.)
+                        per-event seq is separate, not this id.)
               type      "msg" or "presence".
               author    The sending nickname (display label).
               pubkey    The author's Ed25519 public key (hex); the identity.
@@ -1254,6 +1258,17 @@ JSON EVENTS
               display   A ready-to-show, markdown-safe render of the event;
                         use as-is or build your own from the fields.
               self      true if you sent this (echo-back).
+              is_visible
+                        The daemon's print decision, on every event: echo
+                        display verbatim when true, show nothing when false.
+                        Chat, presence joined/left, ping_report, and
+                        peer_timeout/return are visible; state/meta document
+                        echoes, task legs, fork, presence alive beats, and
+                        operational events are not (they are context — read
+                        the documents on demand with state get / meta get).
+                        State/meta echoes are also non-waking: they never
+                        fire a parked `poll --long` and ride along with the
+                        next waking batch.
 
               Presence carries "subtype":"joined" or "subtype":"left" in
               place of body; its display reads, e.g., 💬️ `<nick>` has joined.
@@ -1582,8 +1597,8 @@ EXAMPLES
               agent-square join 💬1... --nickname agent --no-interactive --output json \
                   > /tmp/agent-square.log 2>&1 &
               # 2. wait for ready; record square + nickname
-              # 3. long-poll, advancing the cursor (omit --after first time)
-              agent-square poll --square 💬1... --nickname agent --long --after LAST_ID --output json
+              # 3. long-poll — the daemon tracks the read cursor for you
+              agent-square poll --square 💬1... --nickname agent --long --output json
               # 4. reply, optionally to a specific peer
               agent-square a2a call --square 💬1... --nickname agent --method SendMessage --text "ack"
 

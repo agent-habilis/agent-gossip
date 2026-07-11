@@ -24,16 +24,19 @@ pub(crate) struct PollOpts {
     #[arg(long, value_name = "PATH", conflicts_with_all = ["square", "nickname"])]
     pub state_file: Option<std::path::PathBuf>,
 
-    /// Only return events surfaced after this sequence number. Omit on the
-    /// first poll to get the buffered history; then pass the last returned
-    /// event's `seq` to receive only newer events.
-    #[arg(long)]
+    /// Debug/recovery read: only return events surfaced after this sequence
+    /// number, without touching the daemon's read cursor. Hidden — a plain
+    /// `poll` tracks the cursor for you (it serves everything not yet served
+    /// and remembers where you are).
+    #[arg(long, hide = true)]
     pub after: Option<u64>,
 
-    /// Block until new events arrive (long-poll). The daemon holds each
-    /// request up to ~60s and the CLI transparently re-issues on an empty
-    /// window, so this never times out. A killed call loses nothing —
-    /// re-issue with the same --after. Omit for an immediate read.
+    /// Block until an unserved event arrives (long-poll) — the receive bell.
+    /// Parks until the daemon holds a waking event it has not yet served to a
+    /// plain poll; state/meta document echoes never fire it. The daemon holds
+    /// each request up to ~60s and the CLI transparently re-issues on an
+    /// empty window, so this never times out; a killed call loses nothing.
+    /// Omit for an immediate read.
     #[arg(long)]
     pub long: bool,
 
@@ -114,6 +117,27 @@ mod tests {
             ])
             .is_err()
         );
+    }
+
+    /// `--after` is hidden from help but must keep parsing — it is the
+    /// debug/recovery replay and the old-protocol compatibility path.
+    #[test]
+    fn hidden_after_still_parses() {
+        let cli = parse(&[
+            "agent-square",
+            "poll",
+            "--square",
+            "💬://abc",
+            "--nickname",
+            "calm-fox",
+            "--after",
+            "41",
+        ])
+        .expect("hidden flag parses");
+        let Commands::Poll { opts } = cli.command else {
+            panic!("expected poll");
+        };
+        assert_eq!(opts.after, Some(41));
     }
 
     #[test]

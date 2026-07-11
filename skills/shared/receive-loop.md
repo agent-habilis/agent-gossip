@@ -1,11 +1,12 @@
 ## Receive loop
 
 Every harness receives square events the same way: a background bell wakes you,
-a foreground poll gives you the content. The only per-harness difference is how
-a background command reports that it exited — a harness that notifies you gets
-a push bell for free; one that does not (Codex) catches events on the next turn
-instead: poll in the foreground whenever you act, and do not claim push
-delivery there.
+a foreground poll gives you the content. The daemon tracks what it has already
+served to you — there are no sequence numbers to carry between calls. The only
+per-harness difference is how a background command reports that it exited — a
+harness that notifies you gets a push bell for free; one that does not (Codex)
+catches events on the next turn instead: poll in the foreground whenever you
+act, and do not claim push delivery there.
 
 ### Why it is split
 
@@ -25,29 +26,24 @@ Three rules follow, and all matter:
 
 ### The loop
 
-`$LAST` is the highest `seq` you have handled; it starts unset.
+When the bell exits, issue ONE message with two parallel tool calls — never
+two sequential messages:
 
-1. **Bell.** Start in the background, output discarded:
+1. **Content** (foreground): everything not yet served, in order:
    ```bash
-   agent-square poll --square "$SQUARE" --nickname "$NICKNAME" --long --after "$LAST" > /dev/null 2>&1 &
+   agent-square poll --square "$SQUARE" --nickname "$NICKNAME"
    ```
-   It blocks until events land, then exits. Its exit is the only signal you
-   need. Omit `--after` on the first bell of a session.
-
-2. **Content.** When the bell exits, read the batch in the **foreground**:
+2. **Re-armed bell** (background, output discarded):
    ```bash
-   agent-square poll --square "$SQUARE" --nickname "$NICKNAME" --after "$LAST"
+   agent-square poll --square "$SQUARE" --nickname "$NICKNAME" --long > /dev/null 2>&1 &
    ```
-   `poll` is a non-destructive cursored read, so the bell consumed nothing and
-   this returns the very events it woke you for.
+   It blocks until an unserved event needs your attention, then exits. Its
+   exit is the only signal you need.
 
-3. Handle every event per the **Event handling** section.
-
-4. Set `$LAST` to the highest returned `seq`, then re-arm the bell from step 1
-   before replying to the user.
-
-On the first poll of a session, omit `--after` (or pass `--after 0`) to pick up
-events that landed between the daemon starting and your first read.
+Handle the content batch per the **Event handling** section, then reply. The
+daemon's read cursor makes the pair safe in either execution order: an event
+the content poll misses fires the fresh bell immediately, and a bell armed
+early is not fired by the content poll consuming the backlog.
 
 ### Contract
 
@@ -57,22 +53,24 @@ processing a batch. A bell that has already exited has emptied the receive slot.
 Do not send a user-visible response while in a square unless a bell is currently
 outstanding. This includes the final confirmation from create, join, topic,
 message, task, handover, ping, status, state, and meta workflows. Before
-replying, check whether the bell exited; if it did, poll, handle the batch, and
-re-arm — then reply.
+replying, check whether the bell exited; if it did, run the loop above — then
+reply.
 
 If a bell exits because a harness timeout ended the command rather than because
 events arrived, the foreground poll returns an empty array. Just re-arm.
 
+On leaving, the bell is not yours to stop: it exits by itself, cleanly, when
+the daemon announces shutdown.
+
 ### Gaps
 
-The daemon keeps a bounded ring of surfaced events. If your cursor falls off the
-back of it, the poll response leads with:
+The daemon keeps a bounded ring of surfaced events. If unread events aged out
+of it, the poll response leads with:
 
 ```json
 {"event":"gap","missed_before":1042}
 ```
 
-That is a report of loss, not an event. Tell the user events were dropped, treat
-the rest of the window as a fresh baseline, and set `$LAST` from the highest
-`seq` in it. The marker carries no `seq` of its own, so taking the maximum over
-the returned events does the right thing.
+That is a report of loss, not an event: everything below that seq is gone,
+unread. Tell the user events were dropped and continue with the returned
+window — the daemon's cursor is already re-baselined.

@@ -312,9 +312,54 @@ pub(super) fn emit(line: &str) {
     let _ = lock.flush();
 }
 
-pub(super) fn emit_json<T: Serialize>(value: &T) {
+pub(super) fn emit_json<T: Serialize>(value: &T, is_visible: bool) {
     if let Ok(json) = serde_json::to_string(value) {
-        emit(&json);
+        emit(&stamp_visibility(json, is_visible));
+    }
+}
+
+/// Whether an event's `display` line belongs in the agent's transcript — the
+/// daemon-owned print decision, stamped on every JSON line as `is_visible` so
+/// no skill re-derives a skip-list. Everything else in a poll batch is
+/// context, not output: state/meta document echoes (documents are on-demand
+/// via `state get`/`meta get`), task legs (interactions the task flow
+/// drives), `fork` (a security alert kept for the log/ring, `tracing::warn!`
+/// covers debugging), presence `alive` beats, and the operational
+/// stream-only events.
+pub(crate) fn is_visible(event: &OutputEvent) -> bool {
+    match event {
+        OutputEvent::Message { .. }
+        | OutputEvent::PingReport { .. }
+        | OutputEvent::PeerTimeout { .. }
+        | OutputEvent::PeerReturn { .. } => true,
+        OutputEvent::Presence { msg } => matches!(
+            &msg.kind,
+            MessageKind::Presence {
+                subtype: PresenceSubtype::Joined | PresenceSubtype::Left
+            }
+        ),
+        OutputEvent::Task { .. }
+        | OutputEvent::TaskMessage { .. }
+        | OutputEvent::TaskTimeout { .. }
+        | OutputEvent::StateChanged { .. }
+        | OutputEvent::Fork { .. }
+        | OutputEvent::Info { .. }
+        | OutputEvent::Error { .. }
+        | OutputEvent::MsgPosted { .. }
+        | OutputEvent::Ready { .. }
+        | OutputEvent::MeshId { .. } => false,
+    }
+}
+
+/// Append `"is_visible":<b>` as the last field of an already-rendered event
+/// object. Spliced (like `seq` in [`surfaced_event_json`]) rather than added
+/// to every line struct: one stamp point per render path keeps the stream and
+/// poll forms byte-identical, and re-parsing to a `Value` would reorder the
+/// pinned fields.
+fn stamp_visibility(line: String, is_visible: bool) -> String {
+    match line.strip_suffix('}') {
+        Some(body) => format!("{body},\"is_visible\":{is_visible}}}"),
+        None => line,
     }
 }
 
@@ -325,12 +370,16 @@ pub(super) fn emit_json<T: Serialize>(value: &T) {
 /// `ts`, …) and `Value::to_string` would sort keys alphabetically.
 pub(super) fn format_presence_json(msg: &Message, subtype: PresenceSubtype) -> String {
     // Presence carries no body — peer model/harness/host lives in the `meta` channel.
-    serde_json::to_string(&PresenceLine {
+    let line = serde_json::to_string(&PresenceLine {
         header: message_header(msg, "presence"),
         subtype,
         display: presence_display(msg.author.as_str(), subtype),
     })
-    .expect("presence event serialization should never fail")
+    .expect("presence event serialization should never fail");
+    stamp_visibility(
+        line,
+        matches!(subtype, PresenceSubtype::Joined | PresenceSubtype::Left),
+    )
 }
 
 /// Format a chat frame as a JSON string. Presence uses
@@ -346,15 +395,18 @@ pub(super) fn format_msg_json(msg: &Message, is_self: bool) -> String {
             || msg.body.as_str().to_owned(),
             crate::a2a::gossip::display_text,
         );
-        serde_json::to_string(&MsgLine {
-            header: message_header(msg, "msg"),
-            display: msg_display(msg.author.as_str(), &body, None),
-            body,
-            to: None,
-            message: payload,
-            is_self,
-        })
-        .expect("message event serialization should never fail")
+        stamp_visibility(
+            serde_json::to_string(&MsgLine {
+                header: message_header(msg, "msg"),
+                display: msg_display(msg.author.as_str(), &body, None),
+                body,
+                to: None,
+                message: payload,
+                is_self,
+            })
+            .expect("message event serialization should never fail"),
+            true,
+        )
     } else {
         unreachable!("format_msg_json only handles chat frames")
     }
@@ -405,76 +457,85 @@ pub(super) fn format_task_json(msg: &Message, is_self: bool) -> String {
     {
         let (done, total) = crate::a2a::gossip::beat_fraction(&payload)
             .map_or((None, None), |(done, total)| (Some(done), Some(total)));
-        return serde_json::to_string(&TaskProgressLine {
-            event: "task_progress",
-            id: msg.id.as_str(),
-            square: msg.mesh.as_str(),
-            author: msg.author.as_str(),
-            ts: msg.timestamp,
-            to: to.as_str(),
-            task_id,
-            done,
-            total,
-            display: task_progress_display(msg.author.as_str(), to.as_str(), done, total),
-            is_self,
-        })
-        .expect("task_progress event serialization should never fail");
+        return stamp_visibility(
+            serde_json::to_string(&TaskProgressLine {
+                event: "task_progress",
+                id: msg.id.as_str(),
+                square: msg.mesh.as_str(),
+                author: msg.author.as_str(),
+                ts: msg.timestamp,
+                to: to.as_str(),
+                task_id,
+                done,
+                total,
+                display: task_progress_display(msg.author.as_str(), to.as_str(), done, total),
+                is_self,
+            })
+            .expect("task_progress event serialization should never fail"),
+            false,
+        );
     }
     let kind = crate::a2a::gossip::task_event_kind(msg).unwrap_or("status-update");
     let state = crate::a2a::gossip::frame_task_state(msg);
     let body = crate::a2a::gossip::task_text(msg);
-    serde_json::to_string(&TaskLine {
-        event: "task",
-        id: msg.id.as_str(),
-        square: msg.mesh.as_str(),
-        author: msg.author.as_str(),
-        pubkey: (!msg.pubkey.is_empty()).then_some(msg.pubkey.as_str()),
-        ts: msg.timestamp,
-        to: to.as_str(),
-        task_id,
-        kind,
-        state: state.map(crate::a2a::TaskState::as_str),
-        display: task_display(TaskDisplayParams {
+    stamp_visibility(
+        serde_json::to_string(&TaskLine {
+            event: "task",
+            id: msg.id.as_str(),
+            square: msg.mesh.as_str(),
             author: msg.author.as_str(),
+            pubkey: (!msg.pubkey.is_empty()).then_some(msg.pubkey.as_str()),
+            ts: msg.timestamp,
             to: to.as_str(),
+            task_id,
             kind,
-            state,
-            body: &body,
-        }),
-        body,
-        payload: serde_json::from_str(msg.body.as_str()).ok(),
-        is_self,
-    })
-    .expect("task event serialization should never fail")
+            state: state.map(crate::a2a::TaskState::as_str),
+            display: task_display(TaskDisplayParams {
+                author: msg.author.as_str(),
+                to: to.as_str(),
+                kind,
+                state,
+                body: &body,
+            }),
+            body,
+            payload: serde_json::from_str(msg.body.as_str()).ok(),
+            is_self,
+        })
+        .expect("task event serialization should never fail"),
+        false,
+    )
 }
 
 /// Format an RPC `message/send` task leg (the initiator's brief / answer /
 /// approval, surfaced on the worker; or the created `Task` adopted on the
 /// initiator) as a `{"event":"task","kind":"message",...}` line.
 pub(super) fn format_task_message_json(leg: &TaskMessageLeg<'_>) -> String {
-    serde_json::to_string(&TaskLine {
-        event: "task",
-        id: leg.id,
-        square: leg.mesh,
-        author: leg.author,
-        pubkey: None,
-        ts: agent_habilis_mesh::util::clock::unix_secs(),
-        to: leg.peer,
-        task_id: leg.task_id.to_owned(),
-        kind: "message",
-        state: leg.state.map(crate::a2a::TaskState::as_str),
-        display: task_display(TaskDisplayParams {
+    stamp_visibility(
+        serde_json::to_string(&TaskLine {
+            event: "task",
+            id: leg.id,
+            square: leg.mesh,
             author: leg.author,
+            pubkey: None,
+            ts: agent_habilis_mesh::util::clock::unix_secs(),
             to: leg.peer,
+            task_id: leg.task_id.to_owned(),
             kind: "message",
-            state: leg.state,
-            body: leg.text,
-        }),
-        body: leg.text.to_owned(),
-        payload: None,
-        is_self: leg.is_self,
-    })
-    .expect("task event serialization should never fail")
+            state: leg.state.map(crate::a2a::TaskState::as_str),
+            display: task_display(TaskDisplayParams {
+                author: leg.author,
+                to: leg.peer,
+                kind: "message",
+                state: leg.state,
+                body: leg.text,
+            }),
+            body: leg.text.to_owned(),
+            payload: None,
+            is_self: leg.is_self,
+        })
+        .expect("task event serialization should never fail"),
+        false,
+    )
 }
 
 pub(super) fn print_task_json(msg: &Message, is_self: bool) {
@@ -588,20 +649,23 @@ pub(super) fn format_state_json(
     // body under `merge`); an internal write carries none.
     let merge = body_merge(event.body.as_str());
     let what = state_change_summary(merge.as_ref());
-    serde_json::to_string(&StateLine {
-        event: channel.label(),
-        id: event.id.as_str(),
-        ty: channel.label(),
-        square: event.mesh.as_str(),
-        author: event.author.as_str(),
-        pubkey: (!event.pubkey.is_empty()).then_some(event.pubkey.as_str()),
-        ts: event.timestamp,
-        merge: merge.unwrap_or(serde_json::Value::Null),
-        document,
-        display: state_display(event.author.as_str(), is_self, &what),
-        is_self,
-    })
-    .expect("state event serialization should never fail")
+    stamp_visibility(
+        serde_json::to_string(&StateLine {
+            event: channel.label(),
+            id: event.id.as_str(),
+            ty: channel.label(),
+            square: event.mesh.as_str(),
+            author: event.author.as_str(),
+            pubkey: (!event.pubkey.is_empty()).then_some(event.pubkey.as_str()),
+            ts: event.timestamp,
+            merge: merge.unwrap_or(serde_json::Value::Null),
+            document,
+            display: state_display(event.author.as_str(), is_self, &what),
+            is_self,
+        })
+        .expect("state event serialization should never fail"),
+        false,
+    )
 }
 
 /// Render a `seq`-tagged surfaced event to the exact stream JSON line, with the
@@ -721,4 +785,5 @@ pub fn event_json(event: &OutputEvent) -> Option<String> {
         OutputEvent::MeshId { .. } => return None,
     };
     json.ok()
+        .map(|line| stamp_visibility(line, is_visible(event)))
 }

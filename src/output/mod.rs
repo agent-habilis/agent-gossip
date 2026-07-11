@@ -13,6 +13,7 @@ mod json;
 mod tests;
 
 pub(crate) use json::PingPeer;
+pub(crate) use json::is_visible;
 use json::{
     SimpleEvent, emit, emit_json, format_presence_json, peer_return_display, peer_timeout_display,
     ping_report_display, print_message_json,
@@ -462,14 +463,17 @@ impl Output {
             |mode| {
                 // In human mode, `info("joined as <nick>")` covers this.
                 if mode == OutputMode::Json {
-                    emit_json(&SimpleEvent::Ready {
-                        version: crate::VERSION,
-                        square: mesh.as_str(),
-                        name: name.as_str(),
-                        nickname: nickname.as_str(),
-                        drift,
-                        a2a_port,
-                    });
+                    emit_json(
+                        &SimpleEvent::Ready {
+                            version: crate::VERSION,
+                            square: mesh.as_str(),
+                            name: name.as_str(),
+                            nickname: nickname.as_str(),
+                            drift,
+                            a2a_port,
+                        },
+                        false,
+                    );
                 }
             },
         );
@@ -644,9 +648,12 @@ impl Output {
                 OutputMode::Human => {
                     eprintln!("task {task_id} timed out");
                 }
-                OutputMode::Json => emit_json(&SimpleEvent::TaskTimeout {
-                    task_id: task_id.as_str(),
-                }),
+                OutputMode::Json => emit_json(
+                    &SimpleEvent::TaskTimeout {
+                        task_id: task_id.as_str(),
+                    },
+                    false,
+                ),
                 OutputMode::Silent => {}
             },
         );
@@ -751,11 +758,14 @@ impl Output {
                     let (open, close) = self.nick_ansi(nickname.as_str(), stderr_color());
                     eprintln!("{open}<{nickname}>{close} went quiet");
                 }
-                OutputMode::Json => emit_json(&SimpleEvent::PeerTimeout {
-                    nickname: nickname.as_str(),
-                    last_seen_secs_ago,
-                    display: peer_timeout_display(nickname.as_str()),
-                }),
+                OutputMode::Json => emit_json(
+                    &SimpleEvent::PeerTimeout {
+                        nickname: nickname.as_str(),
+                        last_seen_secs_ago,
+                        display: peer_timeout_display(nickname.as_str()),
+                    },
+                    true,
+                ),
                 OutputMode::Silent => {}
             },
         );
@@ -780,11 +790,14 @@ impl Output {
                         &pubkey[..pubkey.len().min(16)]
                     );
                 }
-                OutputMode::Json => emit_json(&SimpleEvent::Fork {
-                    nickname: nickname.as_str(),
-                    pubkey,
-                    seq,
-                }),
+                OutputMode::Json => emit_json(
+                    &SimpleEvent::Fork {
+                        nickname: nickname.as_str(),
+                        pubkey,
+                        seq,
+                    },
+                    false,
+                ),
                 OutputMode::Silent => {}
             },
         );
@@ -803,10 +816,13 @@ impl Output {
                     let (open, close) = self.nick_ansi(nickname.as_str(), stderr_color());
                     eprintln!("{open}<{nickname}>{close} came back");
                 }
-                OutputMode::Json => emit_json(&SimpleEvent::PeerReturn {
-                    nickname: nickname.as_str(),
-                    display: peer_return_display(nickname.as_str()),
-                }),
+                OutputMode::Json => emit_json(
+                    &SimpleEvent::PeerReturn {
+                        nickname: nickname.as_str(),
+                        display: peer_return_display(nickname.as_str()),
+                    },
+                    true,
+                ),
                 OutputMode::Silent => {}
             },
         );
@@ -821,7 +837,7 @@ impl Output {
                     eprintln!("message posted");
                     println!("{id}");
                 }
-                OutputMode::Json => emit_json(&SimpleEvent::MsgPosted { id: id.as_str() }),
+                OutputMode::Json => emit_json(&SimpleEvent::MsgPosted { id: id.as_str() }, false),
                 OutputMode::Silent => {}
             },
         );
@@ -835,7 +851,7 @@ impl Output {
             },
             |mode| match mode {
                 OutputMode::Human => eprintln!("{}", self.highlight(msg, stderr_color())),
-                OutputMode::Json => emit_json(&SimpleEvent::Info { message: msg }),
+                OutputMode::Json => emit_json(&SimpleEvent::Info { message: msg }, false),
                 OutputMode::Silent => {}
             },
         );
@@ -849,7 +865,7 @@ impl Output {
             },
             |mode| match mode {
                 OutputMode::Human => eprintln!("error: {msg}"),
-                OutputMode::Json => emit_json(&SimpleEvent::Error { message: msg }),
+                OutputMode::Json => emit_json(&SimpleEvent::Error { message: msg }, false),
                 OutputMode::Silent => {}
             },
         );
@@ -893,12 +909,15 @@ impl Output {
             Output::Stream { mode, tap, .. } => {
                 match mode {
                     OutputMode::Human => self.print_ping_report_human(&peers, known),
-                    OutputMode::Json => emit_json(&SimpleEvent::PingReport {
-                        responded: peers.len(),
-                        display: ping_report_display(&peers, known),
-                        peers: peers.clone(),
-                        known,
-                    }),
+                    OutputMode::Json => emit_json(
+                        &SimpleEvent::PingReport {
+                            responded: peers.len(),
+                            display: ping_report_display(&peers, known),
+                            peers: peers.clone(),
+                            known,
+                        },
+                        true,
+                    ),
                     OutputMode::Silent => {}
                 }
                 // Mirror into the daemon's surfaced-events ring so `poll`

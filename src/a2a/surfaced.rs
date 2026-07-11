@@ -33,6 +33,11 @@ pub(crate) struct SurfacedEvents {
     capacity: usize,
     next_seq: u64,
     events: VecDeque<SurfacedEvent>,
+    /// The newest seq assigned to a *waking* event (see
+    /// [`super::node::wakes`]). State/meta document echoes enter the ring but
+    /// never bump this, so a parked bell is not rung by content nobody prints
+    /// or reacts to — it rides along with the next waking batch instead.
+    latest_waking_seq: u64,
 }
 
 impl SurfacedEvents {
@@ -44,6 +49,7 @@ impl SurfacedEvents {
             // buffer without a spurious eviction signal.
             next_seq: 1,
             events: VecDeque::with_capacity(capacity.min(64)),
+            latest_waking_seq: 0,
         }
     }
 
@@ -52,6 +58,9 @@ impl SurfacedEvents {
     pub(crate) fn push(&mut self, event: OutputEvent) -> u64 {
         let seq = self.next_seq;
         self.next_seq += 1;
+        if super::node::wakes(&event) {
+            self.latest_waking_seq = seq;
+        }
         self.events.push_back(SurfacedEvent { seq, event });
         while self.events.len() > self.capacity {
             self.events.pop_front();
@@ -65,6 +74,12 @@ impl SurfacedEvents {
     /// (seq 1) lands. Climbs monotonically and is unaffected by eviction.
     pub(crate) fn latest_seq(&self) -> u64 {
         self.next_seq - 1
+    }
+
+    /// The newest seq assigned to a waking event (0 when none yet). The bell's
+    /// wake threshold — see [`SurfacedState::fulfill_ready_poll_waiters`].
+    pub(crate) fn latest_waking_seq(&self) -> u64 {
+        self.latest_waking_seq
     }
 
     /// The events surfaced after `after`, in seq order, plus `missed_before`.
@@ -119,6 +134,14 @@ pub struct PollBatch {
     pub missed_before: Option<u64>,
 }
 
+/// The clean-shutdown answer to a parked long-poll — an IPC control response,
+/// never printed and never an event. `"[]"` cannot serve here: it means "no
+/// news, re-issue", so a bell receiving it at shutdown reconnects to a socket
+/// that is about to vanish and dies with an error. The sentinel lets the CLI
+/// exit 0 instead; a daemon that dies *without* sending it (crash, SIGKILL)
+/// still produces a loud nonzero bell exit.
+pub(crate) const SHUTDOWN_SENTINEL: &str = r#"{"shutdown":true}"#;
+
 /// How a fulfilled/expired long-poll waiter's batch is delivered, per
 /// transport: the CLI/IPC path wants the JSON-array string the `Poll` arm
 /// builds today; the in-process path wants the typed events the caller renders.
@@ -130,13 +153,28 @@ pub(crate) enum PollResponder {
 }
 
 impl PollResponder {
-    /// Send the empty result for this transport (a timeout, a registry-full
-    /// degrade, or shutdown). Dropped receiver is fine — the client already
-    /// went away.
+    /// Send the empty result for this transport (a timeout or a registry-full
+    /// degrade — cases where "re-issue" is the right client move). Dropped
+    /// receiver is fine — the client already went away.
     fn send_empty(self) {
         match self {
             PollResponder::Json(tx) => {
                 let _ = tx.send("[]".to_string());
+            }
+            PollResponder::Typed(tx) => {
+                let _ = tx.send(PollBatch::default());
+            }
+        }
+    }
+
+    /// Send the clean-shutdown result: the [`SHUTDOWN_SENTINEL`] on the
+    /// CLI/socket transport (so a parked bell exits 0 instead of re-issuing
+    /// into a vanishing socket); the plain empty batch on the in-process
+    /// transport, whose channel-closure semantics were already clean.
+    fn send_shutdown(self) {
+        match self {
+            PollResponder::Json(tx) => {
+                let _ = tx.send(SHUTDOWN_SENTINEL.to_string());
             }
             PollResponder::Typed(tx) => {
                 let _ = tx.send(PollBatch::default());
@@ -157,12 +195,26 @@ impl PollResponder {
     }
 }
 
-/// A blocked poll, waiting for `surfaced_events` to advance past `wait_from`
-/// or for `deadline` to elapse.
+/// What a parked long-poll waits to be exceeded before it fires.
+#[derive(Clone, Copy)]
+pub(crate) enum PollBaseline {
+    /// Legacy explicit cursor: fire once `latest_seq() > seq`. Any push —
+    /// waking or not — counts, preserving the pre-cursor `--after N --long`
+    /// contract for old clients.
+    Seq(u64),
+    /// The bell: fire once `latest_waking_seq() > last_served`, both read
+    /// LIVE at fulfillment time. The dynamic baseline is what closes the
+    /// re-arm race in both directions: an unserved waking event fires a
+    /// just-armed bell immediately, and a foreground poll advancing
+    /// `last_served` under a parked bell keeps it parked instead of firing
+    /// it spuriously.
+    Served,
+}
+
+/// A blocked poll, waiting for its [`PollBaseline`] to be exceeded or for
+/// `deadline` to elapse.
 pub(crate) struct PollWaiter {
-    /// Respond once `surfaced_events.latest_seq() > wait_from`. Captured from
-    /// the live ring at registration so any later push is caught.
-    wait_from: u64,
+    baseline: PollBaseline,
     deadline: TokioInstant,
     responder: PollResponder,
 }
@@ -220,6 +272,13 @@ pub(crate) struct SurfacedState {
     /// deadline. Bounded by [`POLL_WAITERS_CAP`](agent_habilis_mesh::util::consts::POLL_WAITERS_CAP);
     /// fulfilled right after a drain, expired by the loop's poll-deadline arm.
     poll_waiters: Vec<PollWaiter>,
+    /// The highest seq ever handed to a *foreground* (non-long) poll — the
+    /// daemon-side read cursor. A cursor-less `poll` serves everything beyond
+    /// it and advances it; a cursor-less `poll --long` (the bell) parks until
+    /// a waking event exceeds it. Long-poll deliveries never advance it: a
+    /// bell's output is discarded by contract, so nothing was "served".
+    /// In-memory only — a fresh daemon starts at 0 (nothing served).
+    last_served: u64,
 }
 
 impl SurfacedState {
@@ -229,6 +288,7 @@ impl SurfacedState {
                 agent_habilis_mesh::util::consts::SURFACED_EVENTS_CAP,
             ),
             poll_waiters: Vec::new(),
+            last_served: 0,
         }
     }
 
@@ -274,10 +334,7 @@ impl SurfacedState {
         }
     }
 
-    /// Register a blocking poll that found the buffer empty. The wait baseline
-    /// is `after`, or the ring's current `latest_seq()` for a cursor-less call,
-    /// captured here (synchronously, from the live ring) so any push after this
-    /// point carries `seq > wait_from` and is caught by the next `fulfill`.
+    /// Register a blocking poll with its wait [`PollBaseline`].
     ///
     /// Returns `None` once the waiter is parked. If the registry is at
     /// `POLL_WAITERS_CAP`, the waiter is **not** parked and the responder is
@@ -285,30 +342,45 @@ impl SurfacedState {
     /// the registry can never grow without bound.
     pub(crate) fn register_poll_waiter(
         &mut self,
-        after: Option<u64>,
+        baseline: PollBaseline,
         deadline: TokioInstant,
         responder: PollResponder,
     ) -> Option<PollResponder> {
         if self.poll_waiters.len() >= agent_habilis_mesh::util::consts::POLL_WAITERS_CAP {
             return Some(responder);
         }
-        let wait_from = after.unwrap_or_else(|| self.surfaced_events.latest_seq());
         self.poll_waiters.push(PollWaiter {
-            wait_from,
+            baseline,
             deadline,
             responder,
         });
         None
     }
 
+    /// Advance the read cursor past everything a foreground poll just served.
+    /// `max` keeps a replay (hidden `--after 0`) from regressing it.
+    fn advance_last_served(&mut self, batch: &PollBatch) {
+        if let Some(newest) = batch.events.last().map(|item| item.seq) {
+            self.last_served = self.last_served.max(newest);
+        }
+    }
+
     /// Serve a `poll` / `fetch_messages` read, blocking if asked. The single
-    /// policy shared by the CLI/IPC and in-process arms so they can't drift:
+    /// policy shared by the CLI/IPC and in-process arms so they can't drift.
     ///
-    /// 1. if the buffer already has events past `after`, respond immediately
-    ///    (never make a caller with pending events wait);
-    /// 2. else if not `long`, respond immediately with empty;
-    /// 3. else register a waiter with deadline `now + longpoll_max_ms()` —
-    ///    and if the registry is full, respond empty.
+    /// Cursor-less (`after: None`) calls use the daemon-side read cursor:
+    /// - not `long`: serve everything beyond `last_served` and advance it —
+    ///   the foreground content read;
+    /// - `long` (the bell): respond immediately when an unserved *waking*
+    ///   event (or a gap) exists, else park a [`PollBaseline::Served`] waiter.
+    ///   Never advances the cursor — a bell's output is discarded.
+    ///
+    /// Explicit-`after` calls keep the legacy stateless contract:
+    /// - not `long`: serve past `after`; also advances `last_served` (via
+    ///   `max`) so an old-protocol client's foreground reads keep a new
+    ///   daemon's bell from re-firing forever;
+    /// - `long`: immediate on any event past `after`, else park a
+    ///   [`PollBaseline::Seq`] waiter.
     ///
     /// `now` is the registration instant (passed in so tests can pin it).
     pub(crate) fn poll_or_register(&mut self, params: PollOrRegisterParams) {
@@ -318,35 +390,51 @@ impl SurfacedState {
             now,
             responder,
         } = params;
-        let batch = self.poll_since(after);
-        // A gap is news even with an empty window: the caller must learn it
-        // lost events rather than park as if it were up to date.
-        if !batch.events.is_empty() || batch.missed_before.is_some() {
+        let (batch, baseline) = match after {
+            None => (
+                self.poll_since(Some(self.last_served)),
+                PollBaseline::Served,
+            ),
+            Some(after) => (self.poll_since(Some(after)), PollBaseline::Seq(after)),
+        };
+        if !long {
+            self.advance_last_served(&batch);
             responder.send_batch(batch);
             return;
         }
-        if !long {
-            responder.send_empty();
+        // A gap is news even for a bell: the caller must learn it lost events
+        // rather than park as if it were up to date.
+        let fire_now = batch.missed_before.is_some()
+            || match baseline {
+                PollBaseline::Served => self.surfaced_events.latest_waking_seq() > self.last_served,
+                PollBaseline::Seq(_) => !batch.events.is_empty(),
+            };
+        if fire_now {
+            responder.send_batch(batch);
             return;
         }
         let deadline =
             now + Duration::from_millis(agent_habilis_mesh::util::tuning::longpoll_max_ms());
-        if let Some(unregistered) = self.register_poll_waiter(after, deadline, responder) {
+        if let Some(unregistered) = self.register_poll_waiter(baseline, deadline, responder) {
             unregistered.send_empty(); // registry full → degrade to immediate
         }
     }
 
-    /// Deliver to every parked waiter whose baseline the ring has advanced past
-    /// (`latest_seq() > wait_from`). Called right after a drain each loop
-    /// iteration; the batch is computed via [`poll_since`](Self::poll_since) so
-    /// the response cap + logging match an immediate poll exactly.
+    /// Deliver to every parked waiter whose baseline has been exceeded —
+    /// `latest_seq()` for a legacy [`PollBaseline::Seq`], the live
+    /// `latest_waking_seq() > last_served` condition for the bell. Called
+    /// right after a drain each loop iteration; the batch is computed via
+    /// [`poll_since`](Self::poll_since) so the response cap + logging match
+    /// an immediate poll exactly.
     pub(crate) fn fulfill_ready_poll_waiters(&mut self) {
         let latest = self.surfaced_events.latest_seq();
-        if self
-            .poll_waiters
-            .iter()
-            .all(|waiter| waiter.wait_from >= latest)
-        {
+        let latest_waking = self.surfaced_events.latest_waking_seq();
+        let last_served = self.last_served;
+        let is_ready = move |waiter: &PollWaiter| match waiter.baseline {
+            PollBaseline::Seq(seq) => seq < latest,
+            PollBaseline::Served => last_served < latest_waking,
+        };
+        if !self.poll_waiters.iter().any(is_ready) {
             return; // nothing advanced; cheap fast path
         }
         // Split ready vs. still-waiting without borrowing `self` across the
@@ -355,7 +443,7 @@ impl SurfacedState {
         let ready: Vec<PollWaiter> = std::mem::take(&mut self.poll_waiters)
             .into_iter()
             .filter_map(|waiter| {
-                if waiter.wait_from < latest {
+                if is_ready(&waiter) {
                     Some(waiter)
                 } else {
                     still_waiting.push(waiter);
@@ -364,7 +452,11 @@ impl SurfacedState {
             })
             .collect();
         for waiter in ready {
-            let batch = self.poll_since(Some(waiter.wait_from));
+            let base = match waiter.baseline {
+                PollBaseline::Seq(seq) => seq,
+                PollBaseline::Served => self.last_served,
+            };
+            let batch = self.poll_since(Some(base));
             waiter.responder.send_batch(batch);
         }
         self.poll_waiters = still_waiting;
@@ -393,12 +485,12 @@ impl SurfacedState {
         self.poll_waiters = survivors;
     }
 
-    /// Drain every parked waiter with an empty result — called on event-loop
-    /// shutdown so a held long-poll returns a clean timeout-empty rather than a
-    /// dropped-channel error.
+    /// Drain every parked waiter with the clean-shutdown result — called on
+    /// event-loop shutdown so a held long-poll ends cleanly (exit 0) instead
+    /// of re-issuing into a socket that is about to vanish.
     pub(crate) fn close_poll_waiters(&mut self) {
         for waiter in std::mem::take(&mut self.poll_waiters) {
-            waiter.responder.send_empty();
+            waiter.responder.send_shutdown();
         }
     }
 }
@@ -406,10 +498,11 @@ impl SurfacedState {
 #[cfg(test)]
 mod tests {
     use super::{
-        PollOrRegisterParams, PollResponder, SurfacedEvents, SurfacedState, render_poll_array,
+        PollBaseline, PollOrRegisterParams, PollResponder, SurfacedEvents, SurfacedState,
+        render_poll_array,
     };
     use crate::output::OutputEvent;
-    use agent_habilis_mesh::protocol::Nickname;
+    use agent_habilis_mesh::protocol::{Channel, Message, MessageKind, Nickname};
     use std::time::Duration;
     use tokio::time::Instant as TokioInstant;
 
@@ -420,6 +513,16 @@ mod tests {
     fn peer_return(name: &str) -> OutputEvent {
         OutputEvent::PeerReturn {
             nickname: nick(name),
+        }
+    }
+
+    /// A meta/state document echo — pollable but non-waking.
+    fn meta_changed() -> OutputEvent {
+        OutputEvent::StateChanged {
+            channel: Channel::Meta,
+            event: Box::new(Message::fixture(MessageKind::Meta, "{}")),
+            document: serde_json::json!({}),
+            is_self: true,
         }
     }
 
@@ -580,18 +683,18 @@ mod tests {
     async fn waiter_fulfilled_by_a_new_event() {
         let mut surfaced = SurfacedState::new();
         let (tx, rx) = tokio::sync::oneshot::channel::<String>();
-        // Empty ring → register a waiter baselined at latest_seq() (0).
+        // Empty ring → register a bell (nothing served yet).
         assert!(
             surfaced
                 .register_poll_waiter(
-                    None,
+                    PollBaseline::Served,
                     TokioInstant::now() + Duration::from_secs(30),
                     PollResponder::Json(tx)
                 )
                 .is_none(),
             "registered, not degraded"
         );
-        // A new event lands and the loop drains+fulfills.
+        // A new waking event lands and the loop drains+fulfills.
         surfaced.push(peer_return("a"));
         surfaced.fulfill_ready_poll_waiters();
         let body = rx.await.expect("waiter was fulfilled");
@@ -607,7 +710,7 @@ mod tests {
         let mut surfaced = SurfacedState::new();
         let (tx, rx) = tokio::sync::oneshot::channel::<String>();
         let past = TokioInstant::now();
-        surfaced.register_poll_waiter(None, past, PollResponder::Json(tx));
+        surfaced.register_poll_waiter(PollBaseline::Served, past, PollResponder::Json(tx));
         // No event; the deadline (now) has passed.
         surfaced.expire_poll_waiters(TokioInstant::now() + Duration::from_millis(1));
         assert_eq!(rx.await.expect("waiter expired"), "[]", "timeout → empty");
@@ -623,7 +726,7 @@ mod tests {
             let (tx, _rx) = tokio::sync::oneshot::channel::<String>();
             assert!(
                 surfaced
-                    .register_poll_waiter(None, deadline, PollResponder::Json(tx))
+                    .register_poll_waiter(PollBaseline::Served, deadline, PollResponder::Json(tx))
                     .is_none()
             );
         }
@@ -631,7 +734,7 @@ mod tests {
         let (tx, _rx) = tokio::sync::oneshot::channel::<String>();
         assert!(
             surfaced
-                .register_poll_waiter(None, deadline, PollResponder::Json(tx))
+                .register_poll_waiter(PollBaseline::Served, deadline, PollResponder::Json(tx))
                 .is_some(),
             "over the cap → responder returned to caller"
         );
@@ -639,6 +742,196 @@ mod tests {
             surfaced.poll_waiters.len(),
             agent_habilis_mesh::util::consts::POLL_WAITERS_CAP
         );
+    }
+
+    /// Plain (cursor) polls advance `last_served`; the next one returns only
+    /// what landed since — no client-side cursor involved.
+    #[tokio::test]
+    async fn cursor_poll_serves_unserved_and_advances() {
+        let mut surfaced = SurfacedState::new();
+        surfaced.push(peer_return("a"));
+        surfaced.push(peer_return("b"));
+
+        let (first_tx, first_rx) = tokio::sync::oneshot::channel::<String>();
+        surfaced.poll_or_register(PollOrRegisterParams {
+            after: None,
+            long: false,
+            now: TokioInstant::now(),
+            responder: PollResponder::Json(first_tx),
+        });
+        let first = first_rx.await.expect("immediate");
+        assert!(first.contains("\"seq\":1") && first.contains("\"seq\":2"));
+        assert_eq!(surfaced.last_served, 2, "cursor advanced past the batch");
+
+        // Nothing new → empty, cursor unchanged.
+        let (empty_tx, empty_rx) = tokio::sync::oneshot::channel::<String>();
+        surfaced.poll_or_register(PollOrRegisterParams {
+            after: None,
+            long: false,
+            now: TokioInstant::now(),
+            responder: PollResponder::Json(empty_tx),
+        });
+        assert_eq!(empty_rx.await.expect("immediate"), "[]");
+        assert_eq!(surfaced.last_served, 2);
+
+        // One more event → only it is served.
+        surfaced.push(peer_return("c"));
+        let (third_tx, third_rx) = tokio::sync::oneshot::channel::<String>();
+        surfaced.poll_or_register(PollOrRegisterParams {
+            after: None,
+            long: false,
+            now: TokioInstant::now(),
+            responder: PollResponder::Json(third_tx),
+        });
+        let third = third_rx.await.expect("immediate");
+        assert!(third.contains("\"seq\":3") && !third.contains("\"seq\":2"));
+        assert_eq!(surfaced.last_served, 3);
+    }
+
+    /// An explicit-`after` replay (hidden debug flag) advances via `max`, so
+    /// `--after 0` cannot regress the cursor, while an old-protocol client's
+    /// foreground reads still move it forward.
+    #[tokio::test]
+    async fn explicit_after_advances_by_max_never_regresses() {
+        let mut surfaced = SurfacedState::new();
+        surfaced.push(peer_return("a"));
+        surfaced.push(peer_return("b"));
+        let (read_tx, read_rx) = tokio::sync::oneshot::channel::<String>();
+        surfaced.poll_or_register(PollOrRegisterParams {
+            after: Some(1),
+            long: false,
+            now: TokioInstant::now(),
+            responder: PollResponder::Json(read_tx),
+        });
+        read_rx.await.expect("immediate");
+        assert_eq!(surfaced.last_served, 2, "explicit read advanced");
+
+        let (replay_tx, replay_rx) = tokio::sync::oneshot::channel::<String>();
+        surfaced.poll_or_register(PollOrRegisterParams {
+            after: Some(0),
+            long: false,
+            now: TokioInstant::now(),
+            responder: PollResponder::Json(replay_tx),
+        });
+        replay_rx.await.expect("immediate");
+        assert_eq!(surfaced.last_served, 2, "replay did not regress");
+    }
+
+    /// The bell parks over unserved NON-waking events (a self meta echo must
+    /// not ring it), fires on the next waking push, and its batch carries the
+    /// non-waking events along.
+    #[tokio::test]
+    async fn bell_ignores_meta_but_delivers_it_with_the_next_waking_batch() {
+        let mut surfaced = SurfacedState::new();
+        surfaced.push(meta_changed()); // seq 1, non-waking
+
+        let (tx, mut rx) = tokio::sync::oneshot::channel::<String>();
+        surfaced.poll_or_register(PollOrRegisterParams {
+            after: None,
+            long: true,
+            now: TokioInstant::now(),
+            responder: PollResponder::Json(tx),
+        });
+        assert_eq!(surfaced.poll_waiters.len(), 1, "parked over the meta echo");
+        surfaced.fulfill_ready_poll_waiters();
+        assert!(rx.try_recv().is_err(), "meta alone never rings the bell");
+
+        surfaced.push(peer_return("a")); // seq 2, waking
+        surfaced.fulfill_ready_poll_waiters();
+        let body = rx.await.expect("woken by the waking event");
+        assert!(
+            body.contains("\"seq\":1") && body.contains("\"seq\":2"),
+            "the meta echo rides along: {body}"
+        );
+        assert_eq!(surfaced.last_served, 0, "a bell delivery serves nothing");
+    }
+
+    /// The gap-window race: a waking event that landed after the foreground
+    /// poll answered fires a just-armed bell immediately.
+    #[tokio::test]
+    async fn bell_armed_into_unserved_backlog_fires_immediately() {
+        let mut surfaced = SurfacedState::new();
+        surfaced.push(peer_return("a"));
+        let (tx, rx) = tokio::sync::oneshot::channel::<String>();
+        surfaced.poll_or_register(PollOrRegisterParams {
+            after: None,
+            long: true,
+            now: TokioInstant::now(),
+            responder: PollResponder::Json(tx),
+        });
+        assert!(surfaced.poll_waiters.is_empty(), "never parked");
+        let body = rx.await.expect("immediate fire");
+        assert!(body.contains("\"seq\":1"));
+    }
+
+    /// The no-spurious-wake race: a foreground poll consuming the backlog
+    /// while a bell is parked keeps the bell parked (the live baseline reads
+    /// the advanced cursor).
+    #[tokio::test]
+    async fn bell_is_not_woken_by_a_foreground_poll_serving_the_backlog() {
+        let mut surfaced = SurfacedState::new();
+        // Bell first (empty ring → parks).
+        let (bell_tx, mut bell_rx) = tokio::sync::oneshot::channel::<String>();
+        surfaced.poll_or_register(PollOrRegisterParams {
+            after: None,
+            long: true,
+            now: TokioInstant::now(),
+            responder: PollResponder::Json(bell_tx),
+        });
+        // An event lands; the foreground poll (same message, other call)
+        // serves it and advances the cursor BEFORE the fulfill pass runs.
+        surfaced.push(peer_return("a"));
+        let (fg_tx, fg_rx) = tokio::sync::oneshot::channel::<String>();
+        surfaced.poll_or_register(PollOrRegisterParams {
+            after: None,
+            long: false,
+            now: TokioInstant::now(),
+            responder: PollResponder::Json(fg_tx),
+        });
+        assert!(fg_rx.await.expect("served").contains("\"seq\":1"));
+        surfaced.fulfill_ready_poll_waiters();
+        assert!(
+            bell_rx.try_recv().is_err(),
+            "everything is served — the bell must stay parked"
+        );
+        assert_eq!(surfaced.poll_waiters.len(), 1);
+    }
+
+    /// The shutdown drain is distinguishable from a timeout: the CLI/socket
+    /// transport gets the sentinel (so a parked bell can exit 0 instead of
+    /// re-issuing into a vanishing socket); the in-process transport keeps
+    /// the plain empty batch.
+    #[tokio::test]
+    async fn shutdown_drain_sends_the_sentinel_to_json_waiters_only() {
+        let mut surfaced = SurfacedState::new();
+        let deadline = TokioInstant::now() + Duration::from_secs(30);
+        let (json_tx, json_rx) = tokio::sync::oneshot::channel::<String>();
+        let (typed_tx, typed_rx) = tokio::sync::oneshot::channel::<super::PollBatch>();
+        surfaced.register_poll_waiter(PollBaseline::Served, deadline, PollResponder::Json(json_tx));
+        surfaced.register_poll_waiter(
+            PollBaseline::Served,
+            deadline,
+            PollResponder::Typed(typed_tx),
+        );
+        surfaced.close_poll_waiters();
+        assert_eq!(
+            json_rx.await.expect("json waiter answered"),
+            super::SHUTDOWN_SENTINEL
+        );
+        let batch = typed_rx.await.expect("typed waiter answered");
+        assert!(batch.events.is_empty() && batch.missed_before.is_none());
+        assert!(surfaced.poll_waiters.is_empty());
+    }
+
+    /// Meta/state pushes bump `latest_seq` but never `latest_waking_seq`.
+    #[test]
+    fn waking_seq_ignores_document_echoes() {
+        let mut buf = SurfacedEvents::new(10);
+        buf.push(meta_changed());
+        assert_eq!(buf.latest_seq(), 1);
+        assert_eq!(buf.latest_waking_seq(), 0);
+        buf.push(peer_return("a"));
+        assert_eq!(buf.latest_waking_seq(), 2);
     }
 
     #[tokio::test]

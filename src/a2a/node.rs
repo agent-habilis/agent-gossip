@@ -285,6 +285,22 @@ async fn publish_own_card(state: &mut EventLoopState, ctx: &HandlerCtx<'_>) {
 /// startup events (`ready`/`mesh_id`) also flow through the same `Output` tap,
 /// and must NOT enter the ring. The `task` `Progress` beat is excluded too (a
 /// liveness widget update, never a retained record).
+/// Whether a surfaced event should wake a parked `poll --long` bell: anything
+/// the agent must see (`is_visible`) or act on (a task interaction). State and
+/// meta document echoes, `fork`, and presence `alive` beats stay in the ring —
+/// consumable in the next batch — but never ring the bell on their own, so a
+/// self meta report at session start cannot cost the agent a wake-up turn.
+pub(crate) fn wakes(event: &output::OutputEvent) -> bool {
+    use output::OutputEvent;
+    output::is_visible(event)
+        || matches!(
+            event,
+            OutputEvent::Task { .. }
+                | OutputEvent::TaskMessage { .. }
+                | OutputEvent::TaskTimeout { .. }
+        )
+}
+
 pub(crate) fn is_pollable(event: &output::OutputEvent) -> bool {
     use output::OutputEvent;
     match event {

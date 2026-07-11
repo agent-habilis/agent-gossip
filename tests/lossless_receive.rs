@@ -170,6 +170,167 @@ fn ready_event_implies_the_ipc_socket_accepts() {
     );
 }
 
+/// The 1-message create flow's load-bearing invariant: your own meta report is
+/// pollable (delivered, `is_visible: false`) but non-waking — a parked
+/// `poll --long` bell must NOT fire for it, and must still fire for the next
+/// real message, carrying the meta echo along in the same batch.
+#[test]
+fn bell_ignores_own_meta_report_but_delivers_it_with_the_next_message() {
+    use std::io::Read as _;
+
+    let (_daemon, mesh, nick) = spawn_create("bellmeta", "json");
+
+    // The create flow's self report.
+    let merge = format!(r#"{{"peers":{{"{nick}":{{"model":"test-model","status":"idle"}}}}}}"#);
+    let out = test_cmd()
+        .args([
+            "meta",
+            "merge",
+            "--square",
+            &mesh,
+            "--nickname",
+            &nick,
+            "--merge",
+            &merge,
+        ])
+        .output()
+        .expect("meta merge spawns");
+    assert!(out.status.success(), "meta merge failed");
+
+    // Arm the bell AFTER the report landed: it must park, not fire.
+    let mut bell = test_cmd()
+        .args([
+            "poll",
+            "--square",
+            &mesh,
+            "--nickname",
+            &nick,
+            "--long",
+            "--output",
+            "json",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("bell spawns");
+    // Give an immediate fire ample time to have exited.
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+    assert!(
+        bell.try_wait().expect("try_wait").is_none(),
+        "the bell fired on the agent's own meta report"
+    );
+
+    // A real message wakes it, and the batch carries the meta echo along.
+    cli_msg_checked(&mesh, &nick, "wake up");
+    let deadline = Instant::now() + MSG_TIMEOUT;
+    while bell.try_wait().expect("try_wait").is_none() {
+        assert!(Instant::now() < deadline, "bell never woke on a message");
+        std::thread::sleep(POLL);
+    }
+    let mut body = String::new();
+    bell.stdout
+        .take()
+        .expect("piped")
+        .read_to_string(&mut body)
+        .expect("read bell output");
+    assert!(
+        body.contains(r#""event":"meta""#),
+        "meta rode along: {body}"
+    );
+    assert!(
+        body.contains(r#""is_visible":false"#),
+        "meta is marked not printable: {body}"
+    );
+    assert!(
+        body.contains("wake up") && body.contains(r#""is_visible":true"#),
+        "the waking message is printable: {body}"
+    );
+}
+
+/// Spawn a parked bell (`poll --long`) against a live daemon and prove it is
+/// still parked after a grace period.
+fn park_bell(mesh: &str, nick: &str) -> Child {
+    let mut bell = test_cmd()
+        .args([
+            "poll",
+            "--square",
+            mesh,
+            "--nickname",
+            nick,
+            "--long",
+            "--output",
+            "json",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("bell spawns");
+    std::thread::sleep(std::time::Duration::from_secs(1));
+    assert!(
+        bell.try_wait().expect("try_wait").is_none(),
+        "bell must be parked before the daemon goes away"
+    );
+    bell
+}
+
+/// Wait for `child` to exit within `MSG_TIMEOUT`, returning its status.
+fn wait_exit(child: &mut Child) -> std::process::ExitStatus {
+    let deadline = Instant::now() + MSG_TIMEOUT;
+    loop {
+        if let Some(status) = child.try_wait().expect("try_wait") {
+            return status;
+        }
+        assert!(Instant::now() < deadline, "process never exited");
+        std::thread::sleep(POLL);
+    }
+}
+
+/// Leaving a square never requires stopping the bell: a daemon shutting down
+/// cleanly answers parked long-polls with the shutdown sentinel, and the bell
+/// exits 0 with the truthful empty batch — no error to surface, no stop-order
+/// dependency between the daemon task and the bell task.
+#[test]
+fn bell_exits_cleanly_when_the_daemon_leaves() {
+    use std::io::Read as _;
+
+    let (daemon, mesh, nick) = spawn_create("bellclean", "json");
+    let mut bell = park_bell(&mesh, &nick);
+
+    let out = std::process::Command::new("kill")
+        .args(["-TERM", &daemon.child.id().to_string()])
+        .output()
+        .expect("kill spawns");
+    assert!(out.status.success(), "SIGTERM failed");
+
+    let status = wait_exit(&mut bell);
+    let mut body = String::new();
+    bell.stdout
+        .take()
+        .expect("piped")
+        .read_to_string(&mut body)
+        .expect("read bell output");
+    assert!(
+        status.success(),
+        "a clean daemon shutdown must end the bell with exit 0, got {status}: {body}"
+    );
+    assert_eq!(body.trim(), "[]", "the sentinel never reaches stdout");
+}
+
+/// The negative twin: a daemon that dies WITHOUT announcing shutdown (SIGKILL)
+/// leaves the bell to exit nonzero — an error message still means an error.
+#[test]
+fn bell_errors_when_the_daemon_crashes() {
+    let (mut daemon, mesh, nick) = spawn_create("bellcrash", "json");
+    let mut bell = park_bell(&mesh, &nick);
+
+    daemon.child.kill().expect("SIGKILL");
+    let status = wait_exit(&mut bell);
+    assert!(
+        !status.success(),
+        "a crashed daemon must surface as a bell error"
+    );
+}
+
 /// A body far past any plausible notification cap survives `poll` unaltered.
 /// This is the invariant the skills rely on: whatever a notification shows, the
 /// authoritative read is complete.
