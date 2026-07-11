@@ -312,7 +312,7 @@ mod tests {
     /// The *source* layout the renderer consumes: templates + partials.
     #[test]
     fn skill_sources_are_templates_plus_partials() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("skills");
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../skills");
         for skill in OWNED_SKILL_DIRS {
             if *skill == "shared" {
                 continue;

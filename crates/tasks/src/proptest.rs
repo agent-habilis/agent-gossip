@@ -5,6 +5,6 @@ use crate::util::output;
 
 pub(crate) fn run(sh: &Shell) -> TaskOutcome {
     output::status("Running", "property-based tests (prop_)");
-    cmd!(sh, "cargo test prop_").quiet().run()?;
+    cmd!(sh, "cargo test -p agent-square prop_").quiet().run()?;
     Ok(())
 }

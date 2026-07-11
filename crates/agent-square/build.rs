@@ -30,8 +30,16 @@ const SKIP: &[&str] = include!(concat!(
 fn main() {
     let out_dir = PathBuf::from(std::env::var("OUT_DIR").expect("cargo sets OUT_DIR"));
     let generated = out_dir.join("skills");
-    render_skills(Path::new("skills"), &generated);
+    render_skills(&skills_dir(), &generated);
     emit_embed_fingerprint(&generated);
+}
+
+/// `skills/` sits at the workspace root, two levels above this package. Anchored
+/// to `CARGO_MANIFEST_DIR` rather than the CWD, which cargo only *happens* to set
+/// to the package dir — an absolute source path also keeps the `<!-- include -->`
+/// directives inside each template resolving against a real base.
+fn skills_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../skills")
 }
 
 /// Expand every `skills/square-*/SKILL.md` template into `dest`, one
@@ -76,10 +84,10 @@ fn render_skills(src: &Path, dest: &Path) {
 /// `agent.rs` reads it via `env!`, so a changed fingerprint recompiles that
 /// module and re-expands the `include_dir!` embed. Hashing the *output* (not
 /// the `skills/` sources) also catches renderer changes in this script and
-/// the `slot-template` crate; `rerun-if-changed=skills` makes the script
-/// re-run when a source changes.
+/// the `slot-template` crate; `rerun-if-changed` makes the script re-run when
+/// a source changes.
 fn emit_embed_fingerprint(generated: &Path) {
-    println!("cargo:rerun-if-changed=skills");
+    println!("cargo:rerun-if-changed=../../skills");
     let mut hasher = DefaultHasher::new();
     hash_dir(generated, generated, &mut hasher);
     println!(

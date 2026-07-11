@@ -5,14 +5,14 @@ use crate::util::output;
 
 pub(crate) fn run(sh: &Shell) -> TaskOutcome {
     output::status("Checking", "formatting");
-    cmd!(sh, "cargo fmt --check").quiet().run()?;
+    cmd!(sh, "cargo fmt --all --check").quiet().run()?;
 
     output::status("Running", "clippy");
     // `--features adversarial` so the adversarial suite + shim are linted
     // too (they are `required-features`-gated, else clippy would skip them).
     cmd!(
         sh,
-        "cargo clippy --all-targets --features adversarial -- -D warnings"
+        "cargo clippy -p agent-square --all-targets --features adversarial -- -D warnings"
     )
     .quiet()
     .run()?;
@@ -31,10 +31,12 @@ pub(crate) fn run(sh: &Shell) -> TaskOutcome {
     // except adversarial at 2, then the adversarial suite alone at 4.
     // (GitHub CI runs only the first — it does not enable the
     // `adversarial` feature.)
-    cmd!(sh, "cargo test -- --test-threads=2").quiet().run()?;
+    cmd!(sh, "cargo test -p agent-square -- --test-threads=2")
+        .quiet()
+        .run()?;
     cmd!(
         sh,
-        "cargo test --features adversarial --test adversarial -- --test-threads=4"
+        "cargo test -p agent-square --features adversarial --test adversarial -- --test-threads=4"
     )
     .quiet()
     .run()?;

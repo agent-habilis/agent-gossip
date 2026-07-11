@@ -730,7 +730,7 @@ impl AgentSquareServer {
         Parameters(_): Parameters<NoArgs>,
     ) -> Result<CallToolResult, McpError> {
         Ok(CallToolResult::success(vec![Content::text(include_str!(
-            "../../docs/manual.txt"
+            "../../../../docs/manual.txt"
         ))]))
     }
 

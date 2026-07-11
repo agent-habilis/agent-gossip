@@ -20,13 +20,18 @@ pub(crate) fn run(sh: &Shell, args: &[String]) -> TaskOutcome {
             release_args.push("--no-confirm".to_owned());
         }
         output::status("Releasing", &format!("{level} {}", release_args.join(" ")));
-        cmd!(sh, "cargo release {level} {release_args...}")
-            .quiet()
-            .run()?;
+        cmd!(
+            sh,
+            "cargo release -p agent-square {level} {release_args...}"
+        )
+        .quiet()
+        .run()?;
         return Ok(());
     }
     output::status("Building", "release binary");
-    cmd!(sh, "cargo build --release").quiet().run()?;
+    cmd!(sh, "cargo build -p agent-square --release")
+        .quiet()
+        .run()?;
     output::status("Built", "target/release/agent-square");
     Ok(())
 }

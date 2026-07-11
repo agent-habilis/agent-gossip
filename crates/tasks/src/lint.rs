@@ -10,7 +10,7 @@ pub(crate) fn run(sh: &Shell) -> TaskOutcome {
     // arms and their gated `expect`) trips false dead-code / too-many-lines errors.
     cmd!(
         sh,
-        "cargo clippy --all-targets --features adversarial -- -D warnings"
+        "cargo clippy -p agent-square --all-targets --features adversarial -- -D warnings"
     )
     .quiet()
     .run()?;

@@ -9,9 +9,12 @@ pub(crate) fn run(sh: &Shell) -> TaskOutcome {
     // `--test-threads=2` bounds concurrent daemons the same as
     // `test`/`ci` — `cargo llvm-cov` wraps `cargo test`, so the
     // integration suites would otherwise over-subscribe and flake.
-    cmd!(sh, "cargo llvm-cov --no-report -- --test-threads=2")
-        .quiet()
-        .run()?;
+    cmd!(
+        sh,
+        "cargo llvm-cov -p agent-square --no-report -- --test-threads=2"
+    )
+    .quiet()
+    .run()?;
     output::status("Coverage", "summary");
     cmd!(sh, "cargo llvm-cov report").quiet().run()?;
     Ok(())

@@ -125,7 +125,7 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
         // The manual is embedded at compile time (`include_str!`), so the
         // binary documents itself with no repo checkout.
         Commands::Man => {
-            print!("{}", include_str!("../../docs/manual.txt"));
+            print!("{}", include_str!("../../../../docs/manual.txt"));
             Ok(())
         }
         // Embedded integration artifacts written to the agents' skills dirs —

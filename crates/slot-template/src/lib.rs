@@ -237,11 +237,16 @@ fn normalize(path: &Path) -> PathBuf {
     for component in path.components() {
         match component {
             Component::CurDir => {}
-            Component::ParentDir => {
-                if !normalized.pop() {
-                    normalized.push("..");
+            // `..` may only cancel a *named* component. Popping blindly makes a
+            // leading `..` cancel the one before it (`../../x` → `x`), and root
+            // has no parent to climb to (`/..` → `/`).
+            Component::ParentDir => match normalized.components().next_back() {
+                Some(Component::Normal(_)) => {
+                    normalized.pop();
                 }
-            }
+                Some(Component::RootDir) => {}
+                _ => normalized.push(".."),
+            },
             Component::Prefix(_) | Component::RootDir | Component::Normal(_) => {
                 normalized.push(component);
             }
@@ -348,7 +353,7 @@ mod tests {
     use std::collections::HashMap;
     use std::path::{Path, PathBuf};
 
-    use super::{Error, expand, render};
+    use super::{Error, expand, normalize, render};
 
     // ---- render: slot substitution ----
 
@@ -671,6 +676,21 @@ mod tests {
                 reason: "not found".to_owned()
             })
         );
+    }
+
+    /// A leading `..` has nothing to cancel, so it must survive — including the
+    /// second one. Popping it would collapse `../../x` to `x`, silently reading a
+    /// different file.
+    #[test]
+    fn leading_parent_dirs_accumulate() {
+        assert_eq!(
+            normalize(Path::new("../../x/y.md")),
+            PathBuf::from("../../x/y.md")
+        );
+        assert_eq!(normalize(Path::new("../a/../b")), PathBuf::from("../b"));
+        assert_eq!(normalize(Path::new("a/../../b")), PathBuf::from("../b"));
+        // Root has no parent to climb to.
+        assert_eq!(normalize(Path::new("/../a")), PathBuf::from("/a"));
     }
 
     #[test]

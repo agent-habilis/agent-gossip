@@ -71,6 +71,10 @@ pub(crate) fn run(
         "cargo-zigbuild".to_owned(),
         "--target".to_owned(),
         triple.clone(),
+        // `--package` as well as `--bin`: the root manifest is a virtual
+        // workspace, so bin selection would otherwise lean on `default-members`.
+        "--package".to_owned(),
+        "agent-square".to_owned(),
         "--bin".to_owned(),
         "agent-square".to_owned(),
     ];
