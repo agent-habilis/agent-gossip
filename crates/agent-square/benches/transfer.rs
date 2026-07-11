@@ -5,7 +5,7 @@
 //!
 //! It is a plain `fn main()` harness (`harness = false`), not divan: a
 //! single long async transfer has nothing for a sampling framework to do.
-//! Uses only the public `embed` API.
+//! Uses only the public `api` surface.
 //!
 //! Run: `cargo task bench transfer` (or `cargo bench --bench transfer`).
 //! Size is env-tunable: `BENCH_TRANSFER_MB=2 cargo task bench transfer`
@@ -25,7 +25,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-use agent_square::embed::{CreateConfig, JoinConfig, MeshSession};
+use agent_square::api::{CreateConfig, JoinConfig, MeshSession};
 use agent_square::{JoinTarget, MeshName, Message, MessageBody};
 use tokio::sync::broadcast::{self, error::RecvError};
 

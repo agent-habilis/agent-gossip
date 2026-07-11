@@ -228,7 +228,7 @@ pub(crate) struct PollWaiter {
 /// A `gap` marker leads the array when the reader's cursor aged out. It is
 /// synthesized *here*, at render time, and never pushed into the ring: the
 /// ring is fed by the user-facing sink, so a real event announcing the loss
-/// would itself become a ring entry (and, on the embed path, a live
+/// would itself become a ring entry (and, on the api path, a live
 /// `events()` item). It carries no `seq` — it is a statement about the
 /// events that are missing, not one of them — so a reader advancing `--after`
 /// off the highest returned `seq` ignores it naturally.
@@ -299,7 +299,7 @@ impl SurfacedState {
 
     /// The events surfaced after the `after` seq cursor, in surfacing order —
     /// the single source of truth for the CLI socket `poll` and the typed
-    /// in-process `Poll` (embed `fetch` / MCP `fetch_messages`). Reads the local
+    /// in-process `Poll` (api `fetch` / MCP `fetch_messages`). Reads the local
     /// [`surfaced_events`](Self::surfaced_events) ring, NOT the cross-node
     /// message log, so one `seq` cursor walks chat, presence, task legs, and the
     /// transient events alike. Join-horizon needs no re-filtering here: a
@@ -309,7 +309,7 @@ impl SurfacedState {
     /// [`PollBatch::missed_before`], **not** by emitting an `info`/`error`
     /// through the daemon's user-facing sink: that sink carries the
     /// surfaced-events tap, so a notice emitted here would feed straight back
-    /// into the very ring being polled (and, on the embed/Capture path, into
+    /// into the very ring being polled (and, on the api/Capture path, into
     /// the live `events()` subscription). Purely developer-facing diagnostics
     /// still go to `tracing`.
     pub(crate) fn poll_since(&self, after: Option<u64>) -> PollBatch {

@@ -3,18 +3,18 @@
 //! This crate ships as **both** a binary (the `agent-square`
 //! CLI / MCP server) and a library. The binary is a thin shim over
 //! [`run_cli`]; library consumers embed a mesh in-process via the
-//! [`embed`] module.
+//! [`api`] module.
 //!
-//! ## Embedding
+//! ## The library API
 //!
 //! The public surface is deliberately tiny and **iroh-free**: the
-//! [`embed::MeshSession`] facade owns the event loop as an in-process
+//! [`api::MeshSession`] facade owns the event loop as an in-process
 //! `tokio` task (no subprocess, no Unix-socket IPC) and hands back only
 //! the protocol value types re-exported below. iroh version bumps stay
 //! an internal detail.
 //!
 //! ```no_run
-//! use agent_square::embed::{JoinConfig, MeshSession};
+//! use agent_square::api::{JoinConfig, MeshSession};
 //! use agent_square::MessageBody;
 //!
 //! # async fn run() -> anyhow::Result<()> {
@@ -39,7 +39,7 @@ pub(crate) mod cli;
 pub(crate) mod mcp;
 pub(crate) mod output;
 
-pub mod embed;
+pub mod api;
 
 // Not public API. Feature-gated, doc-hidden shims that expose the engine's
 // internals to the crate's own bench/adversarial suites. See harness/mod.rs.
@@ -52,6 +52,10 @@ pub mod harness;
 // externally-visible `agent_square::` API stable across the engine split.
 pub use a2a::surfaced::SurfacedEvent;
 pub use a2a::{TaskId, TaskState};
+// The `api::MeshSession::peers` / `ping` return types. Iroh-free by
+// construction (nicknames, counts, and two field-less enums), so re-exporting
+// them keeps the roster readable without widening the surface.
+pub use agent_habilis_mesh::daemon::state::{Reach, RosterEntry, RosterSnapshot};
 pub use agent_habilis_mesh::invite::InviteTicket;
 pub use agent_habilis_mesh::logging::LogSink;
 pub use agent_habilis_mesh::protocol::mesh::{
@@ -65,6 +69,8 @@ pub use agent_habilis_mesh::protocol::message::{
 pub use agent_habilis_mesh::protocol::nickname::{Nickname, NicknameError};
 pub use agent_habilis_mesh::resolver::{JoinTarget, JoinTargetError};
 pub use agent_habilis_mesh::transport::TransportPolicy;
+pub use agent_habilis_mesh::unicast::Lane;
+pub use output::PingPeer;
 // Wire/runtime constants the external test + bench crates assert against; the
 // rest of `util::consts` stays engine-internal.
 pub use agent_habilis_mesh::util::consts::{

@@ -703,12 +703,12 @@ fn fetch_messages_with_out_of_range_after_is_graceful() {
 
 #[test]
 fn fetch_messages_long_parks_then_times_out_empty() {
-    // The `long` arg threads MCP → session → embed → daemon and back over
+    // The `long` arg threads MCP → session → api → daemon and back over
     // stdio: against a lone session with no new traffic, a long-poll parks
     // for ~the daemon's park cap (shrunk to 500ms via the hidden flag) and
     // returns a well-formed empty batch (not an error, not an immediate
     // return). The parking-resolves-on-traffic behavior is covered
-    // behaviorally at the embed layer (session.rs); here we assert the wire
+    // behaviorally at the api layer (session.rs); here we assert the wire
     // round-trip + timeout shape. (Cursor first advanced past history.)
     let mut client = McpClient::spawn_with_args(&["--longpoll-max-ms", "500"]);
     client.create_and_get_mesh(130);

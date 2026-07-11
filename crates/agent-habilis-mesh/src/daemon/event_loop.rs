@@ -43,7 +43,7 @@ use crate::gossip::app::NodeApp;
 ///
 /// The engine loop is generic over the application: `app` implements
 /// [`NodeDriver`] (the a2a layer's `A2aApp` is the only current impl), and its
-/// two typed driver inputs — the in-process `session_rx` (embed/MCP) and the
+/// two typed driver inputs — the in-process `session_rx` (in-process) and the
 /// localhost binding's `http_rx` (`--a2a-serve`) — are threaded here so the
 /// loop never names an application payload type.
 ///
@@ -88,7 +88,7 @@ pub async fn run<A: NodeDriver>(
 
     // Every driver-derived fact in one place. Only the CLI exits the
     // process on quit and binds the unix socket; in-process drivers
-    // (embed / MCP) take typed requests on `session_rx` instead.
+    // (in-process: library API or MCP) take typed requests on `session_rx` instead.
     let (external_quit_rx, external_msg_tx, ipc_listener_disabled, exit_on_quit, handle_signals) =
         match driver {
             DriverMode::Cli => (None, None, false, true, true),
@@ -104,7 +104,7 @@ pub async fn run<A: NodeDriver>(
     let started = Instant::now();
     // CLI `create`/`join` daemons default their state file into the mesh's
     // runtime folder (`<prefix>/<nick>.state.json`, beside the socket + log)
-    // when no `--state-file` override is given. In-process embed/MCP sessions
+    // when no `--state-file` override is given. In-process in-process sessions
     // (`!exit_on_quit`) keep writing nothing.
     let state_file = state_file
         .or_else(|| {
@@ -189,7 +189,7 @@ pub async fn run<A: NodeDriver>(
     // exists and a gate that observes the flag is guaranteed a subsequent
     // `poll`/`msg` connect succeeds; a `None` here is a bind failure, and we
     // must NOT advertise readiness (the daemon still gossips, but has no IPC).
-    // In-process mode (embed/MCP) has no socket by design (`req_rx` drives it)
+    // In-process mode (in-process) has no socket by design (`req_rx` drives it)
     // and no `--state-file`, so it is always considered serving.
     //
     // The event is emitted *here*, beside the flag, rather than in `setup`:
@@ -387,7 +387,7 @@ struct EventLoop<A: NodeDriver> {
     /// Event-loop start, for the unmeshed-joiner co-host grace.
     started: Instant,
     external_quit_rx: Option<mpsc::Receiver<()>>,
-    /// The in-process typed session channel (embed / MCP); `None` on the CLI.
+    /// The in-process typed session channel (in-process: library API or MCP); `None` on the CLI.
     external_req_rx: Option<mpsc::Receiver<A::Session>>,
     external_msg_tx: Option<broadcast::Sender<Message>>,
     quit_rx: mpsc::Receiver<()>,
@@ -401,7 +401,7 @@ struct EventLoop<A: NodeDriver> {
 }
 
 /// The daemon's `select!` loop. Never returns normally on the CLI
-/// path (ctrl-c / SIGTERM `std::process::exit`s); embedded drivers
+/// path (ctrl-c / SIGTERM `std::process::exit`s); in-process drivers
 /// break out via their external quit channel and get `Ok(())`.
 /// Log the one per-daemon build-stamp line into the always-on file (one log
 /// file == one process == one build). The `ready` JSON event carries the same
@@ -584,7 +584,7 @@ async fn event_loop<A: NodeDriver>(loop_state: EventLoop<A>) -> Result<()> {
                 linkstate_arm(&mut state, &ctx).await;
             }
             _ = recv_opt(&mut external_quit_rx) => {
-                // External quit is always embedded (MCP): never hard-exit (`false`).
+                // External quit is always in-process (MCP): never hard-exit (`false`).
                 let ctx = parts.ctx(&sender);
                 announce_and_maybe_exit(&mut state, &mut app, &ctx, QuitParams { name: &mesh_name, exit_on_quit: false }).await;
                 break;
@@ -655,7 +655,7 @@ struct QuitParams<'a> {
 ///
 /// `exit_on_quit` is the CLI hard-exit: in interactive CLI mode the blocking
 /// stdin reader thread won't terminate on its own, so we `process::exit`.
-/// Embedded/MCP quits pass `false` and unwind cleanly instead. Under the
+/// In-process quits pass `false` and unwind cleanly instead. Under the
 /// `dhat-heap` profiling build we *never* `process::exit` regardless — it skips
 /// destructors, so the heap profiler would never flush `dhat-heap.json`; we fall
 /// through so `main` unwinds and the profiler drops (safe because profiling runs
@@ -713,7 +713,7 @@ fn spawn_quit_signal_tasks(exit_on_quit: bool) -> mpsc::Receiver<()> {
             let _ = signal_tx.send(()).await;
         });
     }
-    // Only the CLI daemon owns a process to exit; the embed/MCP driver runs
+    // Only the CLI daemon owns a process to exit; the in-process driver runs
     // in-process with no parent of its own to lose, so it must never self-quit
     // on a host reparent.
     #[cfg(unix)]
@@ -772,7 +772,7 @@ fn parent_lost(original_ppid: i32, current_ppid: i32) -> bool {
     original_ppid != current_ppid
 }
 
-/// Resolve the IPC receiver: reuse a pre-wired channel (MCP/embed) or,
+/// Resolve the IPC receiver: reuse a pre-wired channel (MCP / library API) or,
 /// for the CLI, spawn the unix-socket listener and own the channel.
 /// Returning `Option` keeps the loop's `select!` arm uniform.
 fn spawn_ipc_rx<C: serde::de::DeserializeOwned + Send + 'static>(
@@ -781,7 +781,7 @@ fn spawn_ipc_rx<C: serde::de::DeserializeOwned + Send + 'static>(
     author: &Nickname,
     sink: &std::sync::Arc<dyn NodeSink>,
 ) -> Option<mpsc::Receiver<IpcMessage<C>>> {
-    // In-process mode (embed / MCP): no socket. Returning `None` leaves
+    // In-process mode (in-process: library API or MCP): no socket. Returning `None` leaves
     // the loop's IPC `select!` arm inert (it pends forever), so the
     // unix-socket listener is never bound — those drivers use the typed
     // `session_rx` instead.
@@ -841,7 +841,7 @@ fn finalize_ping_round(state: &mut EventLoopState, sink: &dyn NodeSink) {
         })
         .collect();
     peers.sort_by(|left, right| left.nickname.as_str().cmp(right.nickname.as_str()));
-    // The embed/MCP `ping` request waits on this channel (no event stream to
+    // The in-process `ping` request waits on this channel (no event stream to
     // read the report from); the CLI/IPC path leaves it unset and consumes the
     // `ping_report` event below instead.
     if let Some(resp) = round.resp {
@@ -1128,7 +1128,7 @@ struct GossipLink<'a> {
 /// arrival re-announced). On `Fatal` (the actor itself is gone) the
 /// daemon stops posing as a live member: statusline state file cleared
 /// (a `Left` broadcast is pointless on a dead topic), `exit(1)` on the
-/// CLI path, `Err` for embedded drivers.
+/// CLI path, `Err` for in-process drivers.
 async fn resubscribe_tick(
     env: &ResubscribeEnv<'_>,
     state: &mut EventLoopState,

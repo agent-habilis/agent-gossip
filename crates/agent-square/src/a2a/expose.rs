@@ -33,7 +33,7 @@ const WRONG_PASSWORD: u32 = 3;
 const BAD_SECRET: u32 = 1;
 
 /// The a2a bridge's target + lookup/advertise/output configuration — grouped
-/// (matching the embed facade's `*Config` structs) since `expose` is a single
+/// (matching the api's `*Config` structs) since `expose` is a single
 /// CLI operation with no environment handles to keep separate.
 pub(crate) struct ExposeParams<'a> {
     pub(crate) to: &'a str,

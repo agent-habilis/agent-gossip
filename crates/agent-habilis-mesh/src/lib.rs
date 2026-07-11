@@ -2,7 +2,7 @@
 //!
 //! This workspace-internal crate holds the transport-and-protocol engine
 //! decoupled from the `agent-square` application (the A2A data model, the
-//! CLI/MCP bindings, the `embed` facade). It is never published
+//! CLI/MCP bindings, the library `api`). It is never published
 //! (`publish = false`); the `agent-square` crate depends on it and re-exports
 //! the curated public surface.
 
@@ -14,7 +14,7 @@ pub mod beacon;
 pub mod blob;
 pub mod daemon;
 pub mod directory;
-pub mod embed;
+
 pub mod gossip;
 // Creator-minted invites to an invite-only mesh. Engine-level: the redeem +
 // decode primitives back `resolver::JoinTarget::Invite`, and `mint` is `pub`

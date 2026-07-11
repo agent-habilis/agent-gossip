@@ -173,7 +173,7 @@ pub struct EventLoopState {
     /// instant. The node still receives & relays older messages
     /// (anti-entropy keeps the mesh's set uniform), but messages
     /// stamped before this are never *surfaced* (printed / `poll` /
-    /// `fetch` / embed): the operator/agent view starts at join.
+    /// `fetch` / library API): the operator/agent view starts at join.
     pub joined_at: i64,
     /// Goes false when the receiver stream terminally ends; IPC
     /// keeps working for `msg` / `poll` after that.
@@ -213,7 +213,7 @@ pub struct EventLoopState {
     /// Which transport planes directed sends may use — per-session, so
     /// in-process nodes can each run a different policy (the CLI sources it
     /// from the hidden `--no-unicast`/`--no-gossip-directed`/`--no-circuit`
-    /// flags, embed from its config). Read by [`crate::unicast::deliver`].
+    /// flags; the library API from its config). Read by [`crate::unicast::deliver`].
     /// The multi-hop transport handle, when the `--multihop` flag registered it
     /// on the participant endpoint. Owns the routing table (fed from received
     /// `LinkState` frames) and the underlay endpoint. `None` when multihop is off
@@ -233,7 +233,7 @@ pub struct EventLoopState {
     /// (GRAFT/repair, topology churn, our own re-broadcasts, anti-entropy
     /// re-sends, the rendezvous double-path) can deliver the same message
     /// twice; `mark_seen` drops the repeat before it reaches the log /
-    /// embed channel / agent. Bounded (`seen_ids_cap`, 2× the message log)
+    /// inbound push channel / agent. Bounded (`seen_ids_cap`, 2× the message log)
     /// so it always covers the retention window.
     pub seen: BoundedIdSet,
     /// User messages sent before we had a real-peer link (no gossip
@@ -362,7 +362,7 @@ pub struct PingRound {
     pub t1: TokioInstant,
     pub deadline: TokioInstant,
     pub pongs: HashMap<Nickname, TokioInstant>,
-    /// When set (the embed/MCP `ping` request), the finalized RTT rows are
+    /// When set (the in-process `ping` request), the finalized RTT rows are
     /// delivered here instead of only emitted as a `ping_report` event — the
     /// in-process driver has no event stream to read the report from. `None`
     /// for the CLI/IPC path, which consumes the event.

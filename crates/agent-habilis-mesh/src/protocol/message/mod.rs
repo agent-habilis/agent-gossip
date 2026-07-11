@@ -862,7 +862,7 @@ impl Message {
 /// (open or directed reply), returning the bytes alongside the
 /// canonical [`Message`] so callers can echo it without re-parsing.
 /// The single message-construction point shared by the IPC `msg`
-/// command, the embed send path, and interactive stdin.
+/// command, the library API send path, and interactive stdin.
 ///
 /// # Errors
 /// Propagates [`Message::serialize`] failure (oversized payload).

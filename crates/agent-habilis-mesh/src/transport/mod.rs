@@ -30,7 +30,7 @@ pub struct TransportPolicy {
 
 impl TransportPolicy {
     /// All transports enabled — the production default and every non-CLI path
-    /// (embed / MCP) unless overridden.
+    /// (in-process: library API or MCP) unless overridden.
     pub const DEFAULTS: Self = Self {
         unicast: true,
         gossip_directed: true,

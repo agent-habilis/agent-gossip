@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinHandle;
 
-use crate::embed::{DIRECTORY_ADVERTISER_COHOST, MeshSession};
+use crate::api::{DIRECTORY_ADVERTISER_COHOST, MeshSession};
 use agent_habilis_mesh::daemon::CoHostPolicy;
 use agent_habilis_mesh::directory::directory_mesh;
 use agent_habilis_mesh::protocol::mesh::{LookupOpts, LookupSet, MeshName, resolve_lookups};

@@ -25,12 +25,12 @@ pub enum DriverMode {
     /// The `agent-square create` / `join` CLI. Owns the unix-socket IPC listener
     /// (for `msg` / `poll`); ctrl-c / SIGTERM `std::process::exit`s.
     Cli,
-    /// Fully in-process, shared by the embed facade and the MCP server.
-    /// Outbound sends + polls arrive **typed** on the `session_rx` that
-    /// [`run`](super::run) takes alongside this; `msg_tx` pushes inbound to a
-    /// broadcast subscriber (embed's `messages()`), or is `None` for a poll-only
-    /// consumer (the MCP server). Never exits the process and binds no socket;
-    /// shutdown on `quit_rx`.
+    /// Fully in-process, driven by a [`Node`](super::Node). Outbound sends +
+    /// polls arrive **typed** on the `session_rx` that [`run`](super::run) takes
+    /// alongside this; `msg_tx` fans inbound out to the consumer's broadcast, or
+    /// is `None` when the consumer drains frames some other way (a poll-only
+    /// session, or an app that consumes every frame inside the loop). Never
+    /// exits the process and binds no socket; shutdown on `quit_rx`.
     InProcess {
         msg_tx: Option<broadcast::Sender<Message>>,
         quit_rx: mpsc::Receiver<()>,
@@ -160,9 +160,9 @@ pub struct EventLoopConfig {
     /// from. `setup_mesh` leaves this `None`; the advertise path sets
     /// it before `run` (same late-assignment pattern as `driver`).
     pub live_count: Option<std::sync::Arc<std::sync::atomic::AtomicUsize>>,
-    /// Who drives the loop (CLI / MCP / embed) and the channels that
+    /// Who drives the loop (CLI / in-process) and the channels that
     /// driver needs. `setup_mesh` leaves this [`DriverMode::Cli`] and
-    /// the MCP / embed sessions reassign it before `run`; folding the
+    /// the in-process sessions reassign it before `run`; folding the
     /// driver into the `setup_mesh` signature (so it can't be the
     /// wrong variant for a window) is the remaining follow-up.
     pub driver: DriverMode,

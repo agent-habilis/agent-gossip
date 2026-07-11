@@ -29,7 +29,7 @@ pub(super) struct PickerText {
 }
 
 /// Resolves on SIGINT (ctrl-c) or SIGTERM — the signals a supervisor or a
-/// skill uses to stop a foreground discover. The embed directory session
+/// skill uses to stop a foreground discover. The api directory session
 /// registers its own SIGTERM handler (which suppresses the OS default
 /// terminate), so without listening here a plain `kill` would hang the
 /// stream / picker loop.

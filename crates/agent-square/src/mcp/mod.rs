@@ -56,7 +56,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 
 use crate::a2a::TaskId;
-use crate::embed::{
+use crate::api::{
     A2aCallParams, CreateConfig, CreateError, Directory, JoinConfig, JoinError, TaskArtifactParams,
     TopicConfig,
 };
@@ -429,7 +429,7 @@ impl AgentSquareServer {
             return Err(already_in_mesh_error(existing));
         }
         // Parse each arg into its domain type at the boundary (every
-        // failure here is `invalid_params`); embed resolves the lookups
+        // failure here is `invalid_params`); the api resolves the lookups
         // and validates advertise, surfacing the latter as a typed
         // `CreateError` we re-classify below.
         let relay = match args.relay.as_deref() {

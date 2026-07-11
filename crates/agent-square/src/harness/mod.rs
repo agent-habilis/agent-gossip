@@ -10,3 +10,7 @@ pub mod bench;
 #[cfg(feature = "adversarial")]
 #[doc(hidden)]
 pub mod adversarial;
+
+#[cfg(feature = "adversarial")]
+#[doc(hidden)]
+pub mod session;

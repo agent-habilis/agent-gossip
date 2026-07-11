@@ -8,10 +8,7 @@ use crate::daemon::app::NodeDriver;
 use crate::daemon::config::{DriverMode, EventLoopConfig};
 use crate::protocol::mesh::MeshName;
 use crate::protocol::{MeshId, Message, Nickname};
-use crate::util::tuning::EMBED_INBOUND_CAP;
-
-/// Depth of the typed session-request channel the driver drains.
-const SESSION_REQUEST_CAP: usize = 64;
+use crate::util::tuning::SESSION_REQUEST_CAP;
 
 /// A live in-process membership over a background event loop, generic over the
 /// application driver `A`. Drop it (or call [`Node::leave`]) to wind the loop
@@ -22,7 +19,6 @@ pub struct Node<A: NodeDriver> {
     nickname: Nickname,
     req_tx: mpsc::Sender<A::Session>,
     quit_tx: mpsc::Sender<()>,
-    msg_tx: broadcast::Sender<Message>,
     task: Option<JoinHandle<anyhow::Result<()>>>,
 }
 
@@ -45,13 +41,24 @@ impl<A: NodeDriver + 'static> Node<A> {
     /// ctrl-c / SIGTERM listeners (pass `true` for a foreground command that owns
     /// the process, `false` for a session nested inside one that does — see
     /// [`DriverMode::InProcess`]).
+    ///
+    /// `push` is the caller's inbound fan-out, or `None` for a consumer that
+    /// drains frames some other way (a poll-only session, or an app that
+    /// consumes every frame inside the loop). `None` is not merely a saved
+    /// allocation: with a sender wired, the receive path calls
+    /// `broadcast::Sender::receiver_count()` — which takes a mutex — on **every**
+    /// inbound frame, only to discover nobody is listening.
     #[must_use]
-    pub fn spawn(mut cfg: EventLoopConfig, app: A, handle_signals: bool) -> Self {
+    pub fn spawn(
+        mut cfg: EventLoopConfig,
+        app: A,
+        push: Option<broadcast::Sender<Message>>,
+        handle_signals: bool,
+    ) -> Self {
         let (req_tx, req_rx) = mpsc::channel::<A::Session>(SESSION_REQUEST_CAP);
         let (quit_tx, quit_rx) = mpsc::channel::<()>(1);
-        let (msg_tx, _initial_rx) = broadcast::channel::<Message>(EMBED_INBOUND_CAP);
         cfg.driver = DriverMode::InProcess {
-            msg_tx: Some(msg_tx.clone()),
+            msg_tx: push,
             quit_rx,
             handle_signals,
         };
@@ -65,7 +72,6 @@ impl<A: NodeDriver + 'static> Node<A> {
             nickname,
             req_tx,
             quit_tx,
-            msg_tx,
             task: Some(task),
         }
     }
@@ -98,14 +104,6 @@ impl<A: NodeDriver + 'static> Node<A> {
             .send(req)
             .await
             .map_err(|_| anyhow::anyhow!("mesh event loop has stopped"))
-    }
-
-    /// Subscribe to inbound frames. Each call returns an independent receiver
-    /// that sees traffic delivered *after* it subscribed; under sustained lag
-    /// the bounded ring drops the oldest (a slow consumer never stalls the loop).
-    #[must_use]
-    pub fn messages(&self) -> broadcast::Receiver<Message> {
-        self.msg_tx.subscribe()
     }
 
     /// Ask the loop to broadcast `Left` and wind down, waiting up to 3s. On

@@ -577,6 +577,31 @@ signed frame; the signature covers the change.
 
 Code: `daemon::doc::MeshDoc::{build_change, ingest}`, `daemon::state_doc::change_body`.
 
+### api
+
+*Layer: frontend — the `agent-square` crate's public library surface.*
+
+The third frontend of the crate, beside the `pub(crate)` **cli** and **mcp**
+bindings: the one `pub` module a Rust program embeds a mesh through.
+`MeshSession` runs the event loop as a background `tokio` task in the caller's
+process — no subprocess, no Unix-socket IPC — and the surface is deliberately
+**iroh-free**: a join target is a `💬…` id parsed from a string, so an iroh
+version bump stays an internal detail. All three frontends share one
+`InProcessSession` core over the engine's `daemon::Node`; they differ only in
+presentation (the api adds the inbound broadcast and the captured-event stream;
+the MCP server is poll-only and silent).
+
+Distinct from **binding**, which the protocol layer owns (the gossip and
+JSON-RPC carriers of A2A): a `cli` / `mcp` / `api` frontend is a *Rust* surface
+on this crate, not a wire carrier.
+
+Code: `agent_square::api`. The engine handle it wraps is
+`agent_habilis_mesh::daemon::Node`.
+(Renamed from *embed*: that word names compile-time baking in this repo —
+`include_dir!` of the skill tree, `include_str!` of the manual — and the engine
+layer's in-process handle is a **node**, not a facade. The verb still belongs to
+consumers, who are *embedders*.)
+
 ## Layering
 
 Don't conflate the three: **rendezvous** / **beacon** bootstrap a mesh you

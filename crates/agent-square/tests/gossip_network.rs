@@ -181,10 +181,9 @@ async fn test_passworded_mesh_verifies_locally_and_meshes() {
 
     // No password: a crisp requirement error, not a silent empty mesh.
     let target = creator.mesh.parse().expect("join target");
-    let missing =
-        agent_square::embed::MeshSession::join(agent_square::embed::JoinConfig::new(target))
-            .await
-            .expect_err("a missing password must be rejected");
+    let missing = agent_square::api::MeshSession::join(agent_square::api::JoinConfig::new(target))
+        .await
+        .expect_err("a missing password must be rejected");
     assert!(
         missing.to_string().contains("password-protected"),
         "got: {missing}"
@@ -1423,7 +1422,7 @@ fn test_first_message_after_post_departure_join_is_delivered() {
 ///
 /// Subprocess (not `InProcNode`): the negative wait must span several
 /// anti-entropy cycles, and only a spawned daemon can take the hidden
-/// `--antientropy-interval-secs` flag (the embed path runs production
+/// `--antientropy-interval-secs` flag (the api path runs production
 /// defaults).
 #[test]
 fn test_join_horizon_hides_pre_join_history() {

@@ -27,10 +27,10 @@ pub struct HandlerCtx<'a> {
     /// shows up as a gossip neighbor on participant endpoints; it is
     /// filtered out of peer accounting everywhere it could leak.
     pub rendezvous_id: EndpointId,
-    /// Embed facade push channel. `Some` only when a `MeshSession`
-    /// drives the loop; every inbound message that survives the
-    /// self-author filter is forwarded here before kind routing.
-    /// `None` for CLI/MCP.
+    /// Inbound push channel. `Some` only when the in-process consumer wired one
+    /// (`DriverMode::InProcess::msg_tx`); every inbound message that survives
+    /// the self-author filter is forwarded here before kind routing. `None` for
+    /// the CLI, and for an in-process consumer that drains frames some other way.
     pub external_msg_tx: Option<&'a broadcast::Sender<Message>>,
     /// Per-loop generic event sink: the engine emits
     /// [`NodeEvent`](crate::gossip::event::NodeEvent) through it and never names

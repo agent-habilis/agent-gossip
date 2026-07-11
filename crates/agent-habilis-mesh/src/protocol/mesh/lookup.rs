@@ -103,7 +103,7 @@ impl LookupOpts {
         }
         buf.push(flags);
         if let RelayChoice::Custom(ladder) = &self.relay {
-            // The ladder is created locally and bounded by the CLI/embed,
+            // The ladder is created locally and bounded by the CLI / library API,
             // so this cast and the lengths below always fit.
             buf.push(u8::try_from(ladder.len()).expect("relay ladder bounded by MAX_RELAY_LADDER"));
             for url in ladder {
@@ -324,7 +324,7 @@ impl MeshConfig {
 /// Relay intent in a [`LookupSet`]: absent / default / custom. Resolved
 /// into a `RelayChoice` by `resolve_lookups`. `Custom` carries the
 /// ordered [`RelayLadder`] (iroh-free), so this enum is part of the public
-/// embed surface.
+/// library API surface.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum RelaySelection {
     /// No relay (the CLI `--relay` flag absent).
@@ -346,7 +346,7 @@ impl FromStr for RelaySelection {
     type Err = RelayLadderError;
 
     /// Parse a `--relay` optional-value flag. The bare form resolves via the
-    /// `"default"` `default_missing_value` (the same token the MCP/embed
+    /// `"default"` `default_missing_value` (the same token the MCP / library API
     /// surface uses) to [`RelaySelection::Default`]; any other value is a
     /// custom ladder. `Unset` comes from the *absent* flag (`Option::None`),
     /// not from this parser.
@@ -495,7 +495,7 @@ pub fn resolve_lookups(public: bool, lookups: LookupSet) -> LookupOpts {
 /// preserved (the beacon homes on the first reachable rung); an empty or
 /// whitespace-only entry is a hard error so a typo never silently
 /// shrinks the ladder. The single source of truth for `--relay` syntax,
-/// shared by the CLI value-parser and `RelayLadder` (the MCP/embed
+/// shared by the CLI value-parser and `RelayLadder` (the MCP / library API
 /// string path); `String` error so clap can surface it directly.
 pub(crate) fn parse_relay_ladder(raw: &str) -> Result<Vec<RelayUrl>, String> {
     raw.split(',')

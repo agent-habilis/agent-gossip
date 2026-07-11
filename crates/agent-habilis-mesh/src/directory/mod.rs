@@ -145,7 +145,7 @@ const MAX_LISTINGS: usize = 256;
 /// directory messages and aged out by [`Listings::expire`]. Pure +
 /// deterministic (the caller supplies `now`), so it unit-tests without
 /// a clock or a network. Shared by the CLI `discover` picker and the
-/// embedding directory watcher.
+/// in-process directory watcher.
 #[derive(Debug, Default)]
 pub struct Listings {
     entries: HashMap<MeshId, Listing>,

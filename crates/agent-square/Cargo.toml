@@ -31,10 +31,11 @@ path = "src/main.rs"
 # surface is unchanged.
 bench = ["agent-habilis-mesh/bench"]
 # Off by default. Forwards to the engine's `adversarial` feature and exposes
-# `src/harness/adversarial.rs` + `MeshSession::inject_raw` so the adversarial
-# integration suite (`tests/adversarial.rs`) can craft and inject malicious wire
-# messages a correct client never would. Never enabled in a normal/release
-# build, so the public surface is unchanged. `cargo task test`/`ci` enable it.
+# `src/harness/{adversarial,session}.rs` — the crafted-message injector and the
+# `MeshSession` testkit — so the adversarial suite (`tests/adversarial.rs`) can
+# inject malicious wire messages a correct client never would. The testkit lives
+# in `harness`, not `api`, so the feature cannot widen the public surface (nor
+# put an `iroh` type on it). `cargo task test`/`ci` enable it.
 adversarial = ["agent-habilis-mesh/adversarial"]
 # Off by default. Installs dhat's heap-profiling global allocator + a profiler
 # in `main`, and makes the CLI quit path return cleanly (instead of
@@ -113,7 +114,7 @@ agent-habilis-mesh = { path = "../agent-habilis-mesh", features = ["test-fixture
 proptest.workspace = true
 insta.workspace = true
 # In-process integration harness (`tests/common::InProcNode`) drives
-# `embed::MeshSession` async, so the test crates need a runtime + the
+# `api::MeshSession` async, so the test crates need a runtime + the
 # `#[tokio::test]` macro. Same major as the lib dep — no new dup version.
 tokio.workspace = true
 # Offline microbenchmarks (`benches/hot_paths.rs`). No html/plotting deps;
@@ -128,7 +129,7 @@ harness = false
 required-features = ["bench"]
 
 # Two-node loopback transfer soak. Plain `fn main()` harness over the
-# public `embed` API — no `bench` feature.
+# public `api` surface — no `bench` feature.
 [[bench]]
 name = "transfer"
 harness = false

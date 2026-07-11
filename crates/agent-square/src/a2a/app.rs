@@ -17,7 +17,7 @@ use crate::output::{Output, OutputEvent};
 use agent_habilis_mesh::protocol::Nickname;
 
 /// The tapped `Output` plus its surfaced-event receiver — the app's slice of the
-/// daemon's surfacing plumbing, assembled by the caller (CLI / embed / MCP) from
+/// daemon's surfacing plumbing, assembled by the caller (CLI / api / MCP) from
 /// its base `Output` and handed to [`A2aApp::with_io`].
 pub(crate) struct SurfacedIo {
     output: Output,

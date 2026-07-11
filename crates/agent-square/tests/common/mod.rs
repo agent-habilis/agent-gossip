@@ -405,7 +405,7 @@ pub(crate) fn channel_subcommand(channel: Channel) -> &'static str {
 
 /// Spawn `agent-square <channel> get … `, assert success, return trimmed stdout (the
 /// raw `{ok, document}` JSON line). Drives the real CLI → IPC socket → daemon
-/// read path the embed harness bypasses.
+/// read path the in-process harness bypasses.
 pub(crate) fn cli_channel_get(channel: Channel, mesh: &str, nickname: &str) -> String {
     let out = test_cmd()
         .args([channel_subcommand(channel), "get"])
@@ -438,11 +438,9 @@ pub(crate) fn cli_channel_merge(
         .expect("channel merge failed to spawn")
 }
 
-// ── In-process harness (embed::MeshSession) ──────────────────────
+// ── In-process harness (api::MeshSession) ──────────────────────
 
-use agent_square::embed::{
-    A2aCallParams, CreateConfig, JoinConfig, MeshSession, TaskArtifactParams,
-};
+use agent_square::api::{A2aCallParams, CreateConfig, JoinConfig, MeshSession, TaskArtifactParams};
 use agent_square::{
     Channel, MeshName, Message, MessageBody, MessageId, MessageKind, Nickname, OutputEvent,
     PresenceSubtype, TaskId, TaskState, TransportPolicy,
@@ -569,7 +567,7 @@ impl InProcNode {
         mesh: &str,
         nickname: &str,
         password: &str,
-    ) -> Result<Self, agent_square::embed::JoinError> {
+    ) -> Result<Self, agent_square::api::JoinError> {
         let target = mesh.parse().expect("valid test join target");
         let mut cfg = JoinConfig::new(target);
         cfg.nickname = Some(Nickname::new(nickname).expect("valid test nickname"));

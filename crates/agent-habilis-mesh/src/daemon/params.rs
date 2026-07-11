@@ -1,13 +1,13 @@
 //! The shared create/join intent, resolved once for every frontend.
 //!
-//! The CLI (`clap`), the embed facade (public API), and the MCP server
+//! The CLI (`clap`), the in-process driver (public API), and the MCP server
 //! (`serde`) each have their own native input struct, but they all want the
 //! same thing: turn a name + config + nickname (create) or a target +
 //! nickname (join) into a [`SetupKind`] plus the resolved author and the
 //! directory to advertise into. [`CreateParams`]/[`JoinParams`] are that
 //! common shape; `resolve` is the single place the nickname default, the
 //! advertise validation, and the target resolution live — instead of three
-//! near-identical copies in `cli`, `embed`, and `mcp`.
+//! near-identical copies in `cli`, `api`, and `mcp`.
 
 use std::fmt;
 
@@ -188,7 +188,7 @@ impl TopicParams {
     /// Derive the mesh from the string (always the public preset) and default
     /// the nickname. A topic never advertises. The empty/whitespace-string
     /// guard lives in [`derive_topic_mesh`], which every frontend (CLI,
-    /// embed, MCP) funnels through.
+    /// in-process) funnels through.
     ///
     /// # Errors
     /// Fails if the string is empty or whitespace-only.

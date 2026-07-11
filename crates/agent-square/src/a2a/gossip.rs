@@ -99,7 +99,7 @@ pub fn chat_payload(frame: &Frame) -> Result<Message> {
     Ok(payload)
 }
 
-/// The text projection of a chat frame's payload — the embed-consumer
+/// The text projection of a chat frame's payload — the api-consumer
 /// convenience for reading a received frame without unpacking the A2A object.
 /// `None` for a non-chat frame or an unparseable payload.
 #[must_use]

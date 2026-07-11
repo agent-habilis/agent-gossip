@@ -533,7 +533,7 @@ COMMANDS
               that square's local member(s) are stopped regardless of owner;
               narrow to one member with --nickname when several run on this
               machine. Daemons started with a --state-file outside
-              /tmp/agent-square (and embed/MCP sessions, which write
+              /tmp/agent-square (and in-process sessions, which write
               none) are not discoverable. Exits 0 whether or not anything
               matched; --output json prints:
 

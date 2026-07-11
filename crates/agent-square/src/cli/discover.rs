@@ -4,12 +4,12 @@
 //! on selection; `--no-interactive` / `--output json` streams
 //! `square_found`/`square_lost` JSON lines for an agent to act on. The pure
 //! directory primitives live in [`agent_habilis_mesh::directory`]; the live consumer
-//! in [`crate::embed::Directory`]; the terminal machinery in
+//! in [`crate::api::Directory`]; the terminal machinery in
 //! [`super::picker`]; this file is just the CLI command + mesh rendering.
 
 use anyhow::Result;
 
-use crate::embed::{Directory, DirectoryEvent, MeshListing};
+use crate::api::{Directory, DirectoryEvent, MeshListing};
 use agent_habilis_mesh::resolver::JoinTarget;
 
 use super::args::{DiscoverOpts, OutputFormat};

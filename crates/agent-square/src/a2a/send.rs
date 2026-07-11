@@ -34,7 +34,7 @@ pub(crate) struct StdinLineParams<'a> {
 /// Process one line of interactive stdin as a mesh broadcast (A2A is
 /// point-to-point, so directed 1:1 is a task, not a chat line) — validate the
 /// body, then delegate to `broadcast_message` so the send (and its
-/// oversize/serialize error handling) is identical to the IPC and embed paths.
+/// oversize/serialize error handling) is identical to the IPC and api paths.
 pub(crate) async fn handle_stdin_line(
     params: StdinLineParams<'_>,
     sender: &MeshSender,
@@ -1378,7 +1378,7 @@ pub(crate) struct SessionRequestParams<'a> {
     pub(crate) app: &'a mut A2aApp,
 }
 
-/// Handle one typed in-process [`SessionRequest`] (embed / MCP). `Send`
+/// Handle one typed in-process [`SessionRequest`] (in-process). `Send`
 /// broadcasts via the shared helper and echoes the canonical [`Message`]
 /// back on the oneshot; `Poll` returns the join-horizon-filtered buffer.
 /// Returns `true` if anything was broadcast so the caller can refresh

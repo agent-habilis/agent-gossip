@@ -88,11 +88,17 @@ pub(crate) fn antientropy_max_resend() -> usize {
 // `EventLoopState::transport` (a `crate::transport::TransportPolicy`) and read
 // by `unicast::deliver`. The CLI flags feed the session config, not this global.
 
-/// Capacity of the embed facade's inbound broadcast channel. Bounded
-/// so a slow embedder never backpressures the gossip/membership loop;
-/// under sustained lag the oldest buffered messages are dropped and
-/// the consumer observes `RecvError::Lagged` (see `embed::MeshSession`).
-pub const EMBED_INBOUND_CAP: usize = 1024;
+/// Capacity of a [`Node`](crate::daemon::Node)'s inbound push channel
+/// (`DriverMode::InProcess::msg_tx`). Bounded so a slow consumer never
+/// backpressures the gossip/membership loop; under sustained lag the oldest
+/// buffered messages are dropped and the consumer observes `RecvError::Lagged`.
+pub const NODE_INBOUND_CAP: usize = 1024;
+
+/// Depth of the typed session-request channel a [`Node`](crate::daemon::Node)'s
+/// driver drains. Pure backpressure: every request carries its own `oneshot`
+/// reply, so one caller has at most one in flight — the queue only grows when
+/// several tasks share a session.
+pub const SESSION_REQUEST_CAP: usize = 64;
 
 /// Soft resident-memory threshold (`MiB`) above which the daemon emits a
 /// one-shot `warn` (log + JSON `info` event) on its slow prune tick — the
@@ -181,7 +187,7 @@ pub(crate) fn ppid_watch_interval_ms() -> u64 {
 /// flags (`--alive-timeout-secs`, …). Replaces the former env-var reads: an
 /// experiment is now an edit-the-const + commit, and a subprocess test passes
 /// the flag. Production runs on [`Tuning::DEFAULTS`] (the `crate::util::consts`
-/// values) when [`init`] is never called (the embed / MCP path).
+/// values) when [`init`] is never called (the in-process path).
 #[derive(Clone, Copy, Debug)]
 pub struct Tuning {
     pub alive_timeout_secs: u64,
@@ -235,7 +241,7 @@ impl Default for Tuning {
 static TUNING: std::sync::OnceLock<Tuning> = std::sync::OnceLock::new();
 
 /// Install the process tuning, once, at daemon startup (from the parsed CLI
-/// flags). A second call is ignored; if never called (embed / MCP), [`current`]
+/// flags). A second call is ignored; if never called (in-process: library API or MCP), [`current`]
 /// returns [`Tuning::DEFAULTS`].
 pub fn init(tuning: Tuning) {
     let _ = TUNING.set(tuning);

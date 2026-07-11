@@ -3,7 +3,7 @@
 //! inject** wire messages a correct client would never produce — unsigned /
 //! bad-signature, equivocating (two messages at one `seq`), tampered, or
 //! backdated — to prove receivers reject or flag them. Pairs with
-//! [`crate::embed::MeshSession::inject_raw`]. Never compiled into a
+//! [`crate::api::MeshSession::inject_raw`]. Never compiled into a
 //! normal/release build, so the curated public surface is unchanged.
 #![allow(missing_docs, reason = "internal test shim, doc-hidden")]
 #![allow(

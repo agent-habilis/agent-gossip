@@ -17,12 +17,12 @@
 use std::time::Duration;
 
 use agent_habilis_mesh::async_trait;
+use agent_habilis_mesh::daemon::Node;
 use agent_habilis_mesh::daemon::app::NodeDriver;
 use agent_habilis_mesh::daemon::ctx::HandlerCtx;
 use agent_habilis_mesh::daemon::setup::{SetupKind, SetupParams, setup_mesh};
 use agent_habilis_mesh::daemon::state::EventLoopState;
 use agent_habilis_mesh::daemon::{CreateParams, JoinParams, Resolved, TopicParams};
-use agent_habilis_mesh::embed::Node;
 use agent_habilis_mesh::gossip::app::{AppClass, InboundApp, NodeApp};
 use agent_habilis_mesh::gossip::event::SilentSink;
 use agent_habilis_mesh::protocol::mesh::{
@@ -390,7 +390,12 @@ async fn spawn_node(select: Select, app: PipeApp, config: SpawnConfig) -> Result
     )
     .await
     .context("setting up the mesh")?;
-    let node = Node::spawn(elc, app, /* handle_signals */ true);
+    // No inbound fan-out: `PipeApp` consumes every frame inside the loop, so a
+    // broadcast would be a dead ring plus a `receiver_count()` mutex on the
+    // receive path of a byte-streaming app.
+    let node = Node::spawn(
+        elc, app, /* push */ None, /* handle_signals */ true,
+    );
     if is_create {
         // The minted id, so a `connect` peer can join this mesh.
         eprintln!("mesh-pipe: mesh {}", node.mesh_id().as_str());

@@ -88,7 +88,7 @@ reliability section runs one test at a time.
 
 Three layers:
 - **In-process (default, fast):** behavioral + output-schema tests drive the
-  real event loop via the embed facade (`crates/agent-square/tests/common::InProcNode`). Real
+  real event loop via the library `api` (`crates/agent-square/tests/common::InProcNode`). Real
   iroh mesh, no subprocess — sub-second.
 - **Every-run subprocess:** the wire-contract suite (CLI / stdout /
   `--output json` / Unix-socket / MCP-stdio) plus reliability invariants that
