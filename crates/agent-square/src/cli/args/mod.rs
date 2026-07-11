@@ -31,7 +31,7 @@ mod tuning;
 pub(crate) use a2a::{A2aAction, A2aOpts};
 pub(crate) use create::CreateOpts;
 pub(crate) use discover::DiscoverOpts;
-pub(crate) use doctor::DoctorOpts;
+pub(crate) use doctor::{DoctorOpts, OutputFormat};
 pub(crate) use invite::InviteOpts;
 pub(crate) use join::JoinOpts;
 pub(crate) use leave::LeaveOpts;

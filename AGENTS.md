@@ -105,6 +105,20 @@ vary per-run are **hidden CLI flags** (`#[arg(hide = true)]`, e.g.
 `--alive-timeout-secs`, `--heal-interval-secs`, `--log-dir`). Only `RUST_LOG`
 and `NO_COLOR` are read from the environment.
 
+### Terminal output
+
+`plug`, `unplug`, `man`, and `doctor` print a report for a human; every other
+command is JSON-only, and a live skill parses each. Two invariants:
+
+- **JSON is never colored.** Color lives only in `util::output` and `doctor`'s
+  `render_human`, both written through `anstream` — it resolves color support
+  per stream at write time, so a pipe gets plain bytes and an agent sees no
+  escapes. Hence no `--color` flag, no `is_terminal()` call, no env read of our
+  own. `output::json::emit` stays plain `std::io::stdout`.
+- **stdout is the product, stderr is only errors.** The roster *is* `plug`'s
+  output, so `status`/`status_warn` print to stdout; only `warn`/`error` go to
+  stderr.
+
 ### Logging
 
 Developer logs use `tracing`. Daemons (`create`/`join`) write to

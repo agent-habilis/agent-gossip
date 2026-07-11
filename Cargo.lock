@@ -71,6 +71,8 @@ dependencies = [
 name = "agent-habilis-mesh"
 version = "0.5.0"
 dependencies = [
+ "anstream 0.6.21",
+ "anstyle",
  "anyhow",
  "argon2",
  "async-trait",
@@ -108,6 +110,8 @@ name = "agent-square"
 version = "0.5.0"
 dependencies = [
  "agent-habilis-mesh",
+ "anstream 0.6.21",
+ "anstyle",
  "anyhow",
  "async-trait",
  "automerge",
@@ -4537,9 +4541,8 @@ checksum = "adb6935a6f5c20170eeceb1a3835a49e12e19d792f6dd344ccc76a985ca5a6ca"
 name = "tasks"
 version = "0.1.0"
 dependencies = [
+ "agent-habilis-mesh",
  "agent-square",
- "anstream 0.6.21",
- "anstyle",
  "cargo-zigbuild",
  "clap",
  "clap_mangen",

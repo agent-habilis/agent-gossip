@@ -1032,7 +1032,7 @@ COMMANDS
               the installed skill dirs, leaving the folder and anything else in
               it.
 
-       doctor [--square 💬…] [--no-probe]
+       doctor [--square 💬…] [--no-probe] [--output human|json]
               Diagnose the environment and network, flutter-doctor style — each
               line a check with a [OK]/[!]/[x] verdict; a hard failure exits
               non-zero. With no --square, a machine-health report in four
@@ -1045,7 +1045,7 @@ COMMANDS
               With --square 💬…, decode that square's declared connection methods
               (relay ladder, mDNS, DHT, or loopback ports) and live-probe which
               reach it, down to the direct-vs-relay path to its rendezvous.
-              --no-probe skips the live network probes; emits the
+              --no-probe skips the live network probes; --output json emits the
               structured report.
 
 GLOBAL OPTIONS
