@@ -7,10 +7,6 @@ pub mod clock;
 pub mod consts;
 pub(crate) mod cooldown;
 pub mod logs;
-#[expect(
-    dead_code,
-    reason = "shared cargo-style helpers; the binary uses a subset (e.g. `error` is unused here)"
-)]
 pub mod output;
 pub mod process;
 pub(crate) mod resident_memory;

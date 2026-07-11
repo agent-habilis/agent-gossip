@@ -20,12 +20,9 @@ cargo-zigbuild = "0.23"
 # swarm lib a build dependency of the task runner.
 agent-square = { path = "../agent-square" }
 clap_mangen = "0.2"
-# Colored cargo-style status output for the human running `cargo task`. The
-# shipped `agent-square` binary is agent-facing and prints plain text; this dev
-# runner is read by a developer scanning a build log, so it keeps color.
-# anstream strips it automatically when the stream isn't a terminal.
-anstyle = "1"
-anstream = "0.6"
+# The engine's cargo-style status helpers (`util::output`), shared with the
+# shipped binary rather than forked — see crates/tasks/src/util/mod.rs.
+agent-habilis-mesh = { path = "../agent-habilis-mesh" }
 
 [lints]
 workspace = true

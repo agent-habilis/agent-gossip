@@ -117,7 +117,7 @@ fn doctor_lists_active_mesh_as_json() {
     assert!(node.wait_ready(&mesh), "daemon never ready");
 
     let out = common::test_cmd()
-        .args(["doctor", "--no-probe"])
+        .args(["doctor", "--no-probe", "--output", "json"])
         .output()
         .expect("doctor command failed to spawn");
     assert!(

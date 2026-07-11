@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use anstyle::{AnsiColor, Style};
 use anyhow::Result;
 use serde::Serialize;
 
@@ -11,7 +12,7 @@ use agent_habilis_mesh::transport::ipc;
 use agent_habilis_mesh::util::output;
 
 use super::agent::{self, AgentState};
-use super::args::DoctorOpts;
+use super::args::{DoctorOpts, OutputFormat};
 
 /// Budget for the machine net-report (build endpoint + first completed report).
 const CAPABILITY_TIMEOUT: Duration = Duration::from_secs(6);
@@ -26,6 +27,16 @@ enum Verdict {
     Ok,
     Warn,
     Fail,
+}
+
+impl Verdict {
+    fn symbol(self) -> (&'static str, AnsiColor) {
+        match self {
+            Verdict::Ok => ("✓", AnsiColor::Green),
+            Verdict::Warn => ("!", AnsiColor::Yellow),
+            Verdict::Fail => ("✗", AnsiColor::Red),
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -102,7 +113,10 @@ pub(super) async fn run(opts: DoctorOpts) -> Result<()> {
         None => machine_report(opts.no_probe).await,
     };
 
-    println!("{}", serde_json::to_string_pretty(&report)?);
+    match opts.output {
+        OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
+        OutputFormat::Human => render_human(&report),
+    }
 
     // Diagnostic-tool convention (flutter/brew): a hard failure is a non-zero
     // exit. `process::exit` rather than returning `Err` so the rendered report
@@ -545,6 +559,36 @@ async fn live_reachability_section(mesh: &Mesh) -> Section {
         title: "Live reachability".to_owned(),
         checks,
     }
+}
+
+// ---- rendering -------------------------------------------------------------
+
+fn render_human(report: &Report) {
+    for section in &report.sections {
+        let header = Style::new().bold();
+        anstream::println!("\n{header}{}{header:#}", section.title);
+        for check in &section.checks {
+            let (symbol, color) = check.verdict.symbol();
+            let marked = Style::new().fg_color(Some(color.into())).bold();
+            match &check.detail {
+                Some(detail) => {
+                    anstream::println!("  [{marked}{symbol}{marked:#}] {} — {detail}", check.name);
+                }
+                None => {
+                    anstream::println!("  [{marked}{symbol}{marked:#}] {}", check.name);
+                }
+            }
+        }
+    }
+    let summary = &report.summary;
+    anstream::println!(
+        "\n{} ok, {} {}, {} {}",
+        summary.ok,
+        summary.warn,
+        plural(summary.warn, "warning", "warnings"),
+        summary.fail,
+        plural(summary.fail, "failure", "failures"),
+    );
 }
 
 fn yes_no(value: bool) -> &'static str {

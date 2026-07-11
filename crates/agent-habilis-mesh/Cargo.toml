@@ -56,6 +56,8 @@ automerge.workspace = true
 sha2.workspace = true
 rand.workspace = true
 libc.workspace = true
+anstyle.workspace = true
+anstream.workspace = true
 # mDNS + mainline-DHT address-lookup providers were extracted from iroh core
 # in the 1.0 line; these companion crates restore the `--mdns` / `--dht` legs.
 iroh-mdns-address-lookup = "0.4"

@@ -1,42 +1,51 @@
-// cargo-style status output for the `plug`/`unplug` subcommands —
-// a right-aligned (12-col) verb + message. Plain text, no color: this is the
-// agent-facing binary, whose human/color layer was removed.
+// Cargo-style status output for the operator-facing commands (`plug`, `unplug`,
+// `doctor`) and for the `cargo task` dev runner — a right-aligned (12-col) bold
+// verb + message.
 //
-// The `cargo task` dev runner deliberately does NOT share this file (it used to,
-// via `include!`): it is read by a human scanning a build log, where color is
-// what separates a failure from a progress line, so it keeps its own styled copy
-// in `crates/tasks/src/util/output.rs`.
+// Written through `anstream`, which resolves color support per stream at write
+// time: a terminal gets ANSI, a pipe/file/`NO_COLOR` gets plain bytes. So the
+// color never reaches an agent capturing stdout, and no caller needs a `--color`
+// flag or a TTY check of its own.
+//
+// Stream split: stdout is the product, stderr is only for errors. A status line
+// IS the product of `plug`/`unplug` (they print nothing else), so it goes to
+// stdout and survives `agent-square plug > roster.txt`. Only `warn`/`error` —
+// diagnostics, not output — go to stderr.
 
 use std::path::{Path, PathBuf};
 
-/// A status line: a right-aligned-12 `verb` then `msg`, on stderr.
+use anstyle::{AnsiColor, Style};
+
+/// A status line: a right-aligned-12 bold-green `verb` then `msg`, on stdout.
+/// An empty `msg` prints the verb alone, no trailing space.
 pub fn status(verb: &str, msg: &str) {
-    eprintln!("{verb:>12} {msg}");
+    line(AnsiColor::Green, verb, msg);
 }
 
-/// Like [`status`] but on **stdout** (for commands whose status IS the product a
-/// script may read). An empty `msg` prints the verb alone, no trailing space.
-pub(crate) fn status_out(verb: &str, msg: &str) {
+/// Like [`status`] but bold-**yellow** — for "not set up" / "out of date" rows.
+pub fn status_warn(verb: &str, msg: &str) {
+    line(AnsiColor::Yellow, verb, msg);
+}
+
+fn line(color: AnsiColor, verb: &str, msg: &str) {
+    let style = Style::new().fg_color(Some(color.into())).bold();
     if msg.is_empty() {
-        println!("{verb:>12}");
+        anstream::println!("{style}{verb:>12}{style:#}");
     } else {
-        println!("{verb:>12} {msg}");
+        anstream::println!("{style}{verb:>12}{style:#} {msg}");
     }
 }
 
-/// Like [`status`] — a distinct entry point for "not set up" / "out of date" rows.
-pub fn status_warn(verb: &str, msg: &str) {
-    eprintln!("{verb:>12} {msg}");
-}
-
-/// A cargo-style `warning: {msg}` line.
+/// A cargo-style `warning: {msg}` line (bold-yellow `warning`), on stderr.
 pub fn warn(msg: &str) {
-    eprintln!("warning: {msg}");
+    let style = Style::new().fg_color(Some(AnsiColor::Yellow.into())).bold();
+    anstream::eprintln!("{style}warning{style:#}: {msg}");
 }
 
-/// A cargo-style `error: {msg}` line.
-pub(crate) fn error(msg: &str) {
-    eprintln!("error: {msg}");
+/// A cargo-style `error: {msg}` line (bold-red `error`), on stderr.
+pub fn error(msg: &str) {
+    let style = Style::new().fg_color(Some(AnsiColor::Red.into())).bold();
+    anstream::eprintln!("{style}error{style:#}: {msg}");
 }
 
 /// A path for display: `$HOME` collapsed to `~`, else the full path.

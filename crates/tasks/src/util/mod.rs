@@ -2,12 +2,10 @@ use std::path::{Path, PathBuf};
 
 use xshell::{Shell, cmd};
 
-#[expect(
-    dead_code,
-    unreachable_pub,
-    reason = "shared cargo-style helpers included from the engine's src/util/output.rs; the task runner uses a subset, and the shared source marks them `pub` for the app's cross-crate use"
-)]
-pub(crate) mod output;
+// The engine's status helpers, shared rather than forked: both audiences want
+// the same cargo-style colored lines, and `anstream` already strips the color
+// for whichever of them is piping.
+pub(crate) use agent_habilis_mesh::util::output;
 
 /// Workspace root: the grandparent of this crate's `crates/tasks/` manifest dir.
 /// Falls back to CWD if the env var is somehow missing.
