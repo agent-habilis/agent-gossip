@@ -74,17 +74,17 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
         // clippy's `large_futures` 16 KiB threshold — boxing keeps the dispatch
         // future small and the size off the knife's edge as those types grow.
         Commands::Create { opts } => {
-            agent_habilis_mesh::util::tuning::init(opts.shared.tuning());
+            agent_habilis_mesh::util::tuning::init(opts.shared.tuning.tuning());
             Box::pin(create(opts)).await
         }
         Commands::Join { opts } => {
             reject_id_encoded_flag("--public", opts.public)?;
             reject_id_encoded_flag("--name", opts.name.is_some())?;
-            agent_habilis_mesh::util::tuning::init(opts.shared.tuning());
+            agent_habilis_mesh::util::tuning::init(opts.shared.tuning.tuning());
             Box::pin(join(opts.square, opts.nickname, opts.password, opts.shared)).await
         }
         Commands::Topic { opts } => {
-            agent_habilis_mesh::util::tuning::init(opts.shared.tuning());
+            agent_habilis_mesh::util::tuning::init(opts.shared.tuning.tuning());
             Box::pin(topic(opts)).await
         }
         Commands::Leave { opts } => session::leave(opts).await,
@@ -99,7 +99,7 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
         Commands::Topology { opts } => topology_cmd(opts).await,
         Commands::Ready { opts } => ready(opts).await,
         Commands::Discover { opts } => {
-            agent_habilis_mesh::util::tuning::init(opts.shared.tuning());
+            agent_habilis_mesh::util::tuning::init(opts.tuning.tuning());
             Box::pin(discover::discover(opts)).await
         }
         Commands::Mcp {
@@ -177,7 +177,7 @@ async fn run_session(resolved: Resolved, shared: SharedServerOpts) -> Result<()>
     };
     // Read the transport policy before the struct literal moves other `shared`
     // fields out (a `&shared` borrow can't follow a partial move).
-    let transport = shared.transport_policy();
+    let transport = shared.tuning.transport_policy();
     let mut cfg = setup_mesh(
         kind,
         SetupParams {
@@ -186,7 +186,7 @@ async fn run_session(resolved: Resolved, shared: SharedServerOpts) -> Result<()>
             state_file: shared.state_file,
             sink,
             transport,
-            multihop: shared.multihop,
+            multihop: shared.tuning.multihop,
             drift: drift.as_deref(),
             a2a_serve: a2a_serve_port,
         },
@@ -324,6 +324,7 @@ async fn a2a(action: A2aAction) -> Result<()> {
             advertise,
             password,
             loopback,
+            legacy_output: _,
         } => {
             let password = password::resolve_password(password)?;
             let advertise =
@@ -341,6 +342,7 @@ async fn a2a(action: A2aAction) -> Result<()> {
             ticket,
             port,
             password,
+            legacy_output: _,
         } => {
             // Error when the ticket needs a password and none was passed
             // (mirrors the mesh-join UX); otherwise resolve the given flag.
@@ -352,7 +354,11 @@ async fn a2a(action: A2aAction) -> Result<()> {
             };
             crate::a2a::connect(&ticket, port, password).await
         }
-        A2aAction::Discover { directory, lookups } => {
+        A2aAction::Discover {
+            directory,
+            lookups,
+            legacy_output: _,
+        } => {
             Box::pin(a2a_discover::discover(a2a_discover::DiscoverParams {
                 directory,
                 lookups: lookups.to_set(),
@@ -378,7 +384,7 @@ async fn a2a(action: A2aAction) -> Result<()> {
                     .map_err(|error| anyhow::anyhow!("{error}"))?;
                 let resp = ipc::send(&IpcCommand::Msg { mesh, body }, &nickname).await?;
                 let id = finish_send(&resp, "message")?;
-                Output::new(OutputMode::Json, false).msg_posted(&id);
+                println!("{id}");
                 return Ok(());
             }
             let to = to.ok_or_else(|| {
@@ -422,7 +428,7 @@ async fn a2a(action: A2aAction) -> Result<()> {
             };
             let resp = ipc::send(&cmd, &nickname).await?;
             let id = finish_send(&resp, "task status")?;
-            Output::new(OutputMode::Json, false).msg_posted(&id);
+            println!("{id}");
             Ok(())
         }
         A2aAction::Artifact {
@@ -454,7 +460,7 @@ async fn a2a(action: A2aAction) -> Result<()> {
             };
             let resp = ipc::send(&cmd, &nickname).await?;
             let id = finish_send(&resp, "task artifact")?;
-            Output::new(OutputMode::Json, false).msg_posted(&id);
+            println!("{id}");
             Ok(())
         }
         A2aAction::Fetch {
@@ -549,6 +555,7 @@ async fn poll(opts: PollOpts) -> Result<()> {
         state_file,
         after,
         long,
+        legacy_output: _,
     } = opts;
     // clap enforces exactly one form: `--state-file`, or `--square` +
     // `--nickname`. The state-file form waits for readiness first so a poll
@@ -616,6 +623,7 @@ async fn ping(opts: PingOpts) -> Result<()> {
     let PingOpts {
         square: mesh,
         nickname,
+        legacy_output: _,
     } = opts;
     let cmd = IpcCommand::Ping { mesh };
     let resp = ipc::send(&cmd, &nickname).await?;
@@ -633,6 +641,7 @@ async fn peers(opts: PeersOpts) -> Result<()> {
     let PeersOpts {
         square: mesh,
         nickname,
+        legacy_output: _,
     } = opts;
     let cmd = IpcCommand::Peers { mesh };
     let resp = ipc::send(&cmd, &nickname).await?;
@@ -670,6 +679,7 @@ async fn invite(opts: InviteOpts) -> Result<()> {
         square: mesh,
         nickname,
         ttl,
+        legacy_output: _,
     } = opts;
     let ttl = parse_ttl(ttl.as_deref())?;
     let cmd = IpcCommand::Invite { mesh, ttl };
@@ -782,6 +792,7 @@ async fn ready(opts: ReadyOpts) -> Result<()> {
     let ReadyOpts {
         state_file,
         timeout_secs,
+        legacy_output: _,
     } = opts;
     wait_for_ready(&state_file, timeout_secs).await?;
     print_ready_identity(&state_file);

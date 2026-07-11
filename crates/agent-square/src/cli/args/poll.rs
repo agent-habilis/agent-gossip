@@ -3,6 +3,8 @@
 
 use clap::Parser;
 
+use super::legacy::LegacyOutput;
+
 use agent_habilis_mesh::protocol::{MeshId, Nickname};
 
 #[derive(Parser, Debug)]
@@ -37,6 +39,9 @@ pub(crate) struct PollOpts {
     /// Omit for an immediate read.
     #[arg(long)]
     pub long: bool,
+
+    #[command(flatten)]
+    pub legacy_output: LegacyOutput,
 }
 
 #[cfg(test)]

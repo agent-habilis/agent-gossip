@@ -597,17 +597,6 @@ impl Output {
         );
     }
 
-    /// Print a "message posted" confirmation with the message ID.
-    pub(crate) fn msg_posted(&self, id: &MessageId) {
-        self.dispatch(
-            || OutputEvent::MsgPosted { id: id.clone() },
-            |mode| match mode {
-                OutputMode::Json => emit_json(&SimpleEvent::MsgPosted { id: id.as_str() }, false),
-                OutputMode::Silent => {}
-            },
-        );
-    }
-
     /// Print an informational line.
     pub(crate) fn info(&self, msg: &str) {
         self.dispatch(

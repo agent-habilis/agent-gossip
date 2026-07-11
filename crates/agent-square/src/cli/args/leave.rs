@@ -1,5 +1,7 @@
 use clap::Parser;
 
+use super::legacy::LegacyOutput;
+
 use agent_habilis_mesh::protocol::{MeshId, Nickname};
 
 #[derive(Parser, Debug)]
@@ -24,6 +26,9 @@ pub(crate) struct LeaveOpts {
     /// before reporting it unconfirmed. Hidden — a test knob.
     #[arg(long, hide = true, default_value_t = 5)]
     pub confirm_timeout_secs: u64,
+
+    #[command(flatten)]
+    pub legacy_output: LegacyOutput,
 }
 
 #[cfg(test)]

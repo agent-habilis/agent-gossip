@@ -123,7 +123,7 @@ async function main(): Promise<void> {
 
   run("exposing agent A over the mesh (agent-square a2a expose --loopback)");
   const expose = Bun.spawn(
-    agentSquare(["a2a", "expose", "--to", `http://127.0.0.1:${originPort}`, "--loopback", "--output", "json"]),
+    agentSquare(["a2a", "expose", "--to", `http://127.0.0.1:${originPort}`, "--loopback"]),
     { cwd: REPO_ROOT, stdout: "pipe", stderr: "ignore" },
   );
   children.push(expose);
@@ -132,7 +132,7 @@ async function main(): Promise<void> {
 
   run(`connecting from the other end (agent-square a2a connect --port ${localPort})`);
   const connect = Bun.spawn(
-    agentSquare(["a2a", "connect", ticket, "--port", String(localPort), "--output", "json"]),
+    agentSquare(["a2a", "connect", ticket, "--port", String(localPort)]),
     { cwd: REPO_ROOT, stdout: "ignore", stderr: "ignore" },
   );
   children.push(connect);

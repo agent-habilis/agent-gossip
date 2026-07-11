@@ -32,10 +32,9 @@ pub(crate) struct JoinOpts {
 
     /// Password for a password-protected square id — required exactly when
     /// the id carries a password verifier (checked locally before any
-    /// network; a wrong password fails immediately). Bare `--password`
-    /// prompts hidden on the terminal (as does omitting the flag entirely
-    /// for a protected id); `--password=<pw>` passes it inline (visible in
-    /// `ps` and shell history — prefer the prompt when a human types it).
+    /// network; a wrong password fails immediately). Pass it inline as
+    /// `--password=<pw>`; a bare `--password`, or omitting the flag on a
+    /// protected id, is an error (there is no terminal prompt).
     #[arg(long, num_args(0..=1), require_equals = true, default_missing_value = "\0")]
     pub password: Option<PasswordFlag>,
 

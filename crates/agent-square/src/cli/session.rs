@@ -135,6 +135,7 @@ pub(crate) async fn leave(opts: LeaveOpts) -> Result<()> {
         nickname,
         session_pid,
         confirm_timeout_secs,
+        legacy_output: _,
     } = opts;
     let Discovery { live, cleaned } = discover();
     let (matched, other_sessions) = if let Some(mesh_id) = &mesh {
@@ -195,7 +196,10 @@ pub(crate) async fn leave(opts: LeaveOpts) -> Result<()> {
     reason = "keeps the dispatch arm uniform with every other subcommand"
 )]
 pub(crate) async fn session(opts: SessionOpts) -> Result<()> {
-    let SessionOpts { session_pid } = opts;
+    let SessionOpts {
+        session_pid,
+        legacy_output: _,
+    } = opts;
     let Discovery { live, cleaned } = discover();
     let anchor = session_pid.unwrap_or_else(default_session_pid);
     let (owned, other_sessions) = split_owned(live, |pid| process::ancestry_contains(pid, anchor));

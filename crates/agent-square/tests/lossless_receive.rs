@@ -185,16 +185,7 @@ fn bell_ignores_own_meta_report_but_delivers_it_with_the_next_message() {
 
     // Arm the bell AFTER the report landed: it must park, not fire.
     let mut bell = test_cmd()
-        .args([
-            "poll",
-            "--square",
-            &mesh,
-            "--nickname",
-            &nick,
-            "--long",
-            "--output",
-            "json",
-        ])
+        .args(["poll", "--square", &mesh, "--nickname", &nick, "--long"])
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
@@ -237,16 +228,7 @@ fn bell_ignores_own_meta_report_but_delivers_it_with_the_next_message() {
 /// still parked after a grace period.
 fn park_bell(mesh: &str, nick: &str) -> Child {
     let mut bell = test_cmd()
-        .args([
-            "poll",
-            "--square",
-            mesh,
-            "--nickname",
-            nick,
-            "--long",
-            "--output",
-            "json",
-        ])
+        .args(["poll", "--square", mesh, "--nickname", nick, "--long"])
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()

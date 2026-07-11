@@ -34,7 +34,5 @@ both named `demo` (different seeds ⇒ different `💬…` ids) appear as two
 separate entries that both display the name `demo`.
 
 This is purely cosmetic in the name column — the `💬…` id is the real
-identifier everywhere: the interactive picker shows the full id next to each
-name (and joins the highlighted row by its id), and `--output json` carries
-both `name` and `square` (the id) on every `square_found` line. Each is joined
-independently by id.
+identifier everywhere: `discover` carries both `name` and `square` (the id) on
+every `square_found` line, and each is joined independently by id.

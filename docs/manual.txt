@@ -473,8 +473,7 @@ COMMANDS
 
        peers --square 💬… --nickname NAME
               List the live participant roster of a square. Queries the
-              running daemon and prints a JSON object (--output is accepted
-              for parity but peers always emits JSON):
+              running daemon and prints a JSON object:
 
                 {"ok":true,
                  "participants":[{"nickname":"word-word",
@@ -566,10 +565,8 @@ COMMANDS
               --advertise[=NAME] lists the ticket in a DIRECTORY (the same
               mechanism as `create --advertise`, bare ⇒ `global`) so the other
               side needs no 💬… at all: it runs `agent-square pipe discover NAME`, which
-              browses the directory and connects on pick — human mode is a live
-              picker (a 🔒 marks password-protected entries),
-              streams one `ticket_found`/`ticket_lost` line per change for an
-              agent to act on (the ad carries the full ticket plus a
+              browses the directory and streams one `ticket_found`/`ticket_lost`
+              line per change for an agent to act on (the ad carries the full ticket plus a
               `password` flag). Share the directory name like a code word; the
               ad is the full bearer ticket, so anyone browsing that directory
               can connect — unless the ticket is --password protected, which
@@ -592,10 +589,10 @@ COMMANDS
               so it serves the first consumer and exits. `--follow` also fans out
               (below).
 
-              makes `pipe listen` print just the bare `agent-square pipe
+              `pipe listen` prints just the bare `agent-square pipe
               connect 💬…` line for a script to capture (strip the `agent-square pipe
-              connect ` prefix for the ticket alone). `pipe connect` has no
-              --output — its stdout is the transferred bytes.
+              connect ` prefix for the ticket alone). `pipe connect`'s stdout is
+              the transferred bytes.
 
               Exit codes are meaningful for the single-shot transfers (a
               non-seekable `pipe listen` and its `pipe connect`, and the bench
@@ -650,8 +647,8 @@ COMMANDS
               min/avg/max latency and throughput measured by the producer (what was
               actually delivered). --budget takes a duration (10s, 2m, 1h) or a
               byte count (500b, 100kb, 50mb, 2gb; 1024-based) — the suffix is
-              required, so `m` (minutes) never reads as `mb`. The human report goes
-              to stderr; prints one JSON object instead.
+              required, so `m` (minutes) never reads as `mb`. The transfer report
+              is one JSON object on stderr.
 
               Examples:
                 agent-square pipe listen --square 💬… < report.pdf   # hint → agent-square pipe connect 💬…
@@ -694,16 +691,15 @@ COMMANDS
               forwards EVERY advertised port to the same local port; name
               `[LOCAL:]REMOTE...` mappings to pick or remap.
 
-              makes `port listen` print just the `agent-square port connect
+              `port listen` prints just the `agent-square port connect
               💬… PORT...` line, ready to run (each port maps to itself; edit to
-              `LOCAL:REMOTE` to bind a different local port). `port connect
-             ` only suppresses the status line.
+              `LOCAL:REMOTE` to bind a different local port).
 
-              In human mode both commands print a best-effort access-log line for
-              each HTTP request they recognize on the forwarded traffic (method,
-              path, status, size, latency). It only observes bytes already being
+              Both commands log a best-effort access-log line for each HTTP
+              request they recognize on the forwarded traffic (method, path,
+              status, size, latency). It only observes bytes already being
               forwarded and stops trying once a connection doesn't look like
-              HTTP/1.x. suppresses it.
+              HTTP/1.x.
 
               Exit codes don't mean anything here: both proxies exit 0 on a clean
               shutdown regardless of how many connections they served.
@@ -890,11 +886,10 @@ COMMANDS
               The discovery config comes from --square or the create-style
               --mdns/--dht/--relay flags, exactly as `pipe`; neither is a public
               default (--public is its explicit alias), and a loopback-only
-              config confines the mount to one machine. On the serving side,
-              swaps the decorated human hint for one plain
-              `agent-square mount 💬…` line a script can capture; on the mounting
-              side it prints the bare OS mount command when the mount is not
-              performed directly.
+              config confines the mount to one machine. On the serving side it
+              prints one plain `agent-square mount 💬…` line a script can
+              capture; on the mounting side it prints the bare OS mount command
+              when the mount is not performed directly.
 
               Contrast `file get`, which copies the tree to disk: `mount`
               copies nothing up front — reads stream just the bytes a peer

@@ -6,6 +6,7 @@
 
 use clap::{Parser, Subcommand};
 
+use super::legacy::LegacyOutput;
 use super::lookup::PublicLookupArgs;
 use crate::cli::password::PasswordFlag;
 use agent_habilis_mesh::protocol::mesh::MeshName;
@@ -57,6 +58,9 @@ pub(crate) enum A2aAction {
         /// Hidden — a testing knob.
         #[arg(long, hide = true, default_value_t = false)]
         loopback: bool,
+
+        #[command(flatten)]
+        legacy_output: LegacyOutput,
     },
 
     /// Redeem a `🎟️…` ticket and bind a local A2A endpoint for a client.
@@ -78,6 +82,9 @@ pub(crate) enum A2aAction {
         /// ticket carries the password flag. Pass it inline via `--password=<pw>`.
         #[arg(long, num_args(0..=1), require_equals = true, default_missing_value = "\0")]
         password: Option<PasswordFlag>,
+
+        #[command(flatten)]
+        legacy_output: LegacyOutput,
     },
 
     /// Browse a directory for advertised a2a bridges — the receiver side of
@@ -96,6 +103,9 @@ pub(crate) enum A2aAction {
         /// is the all-on public preset.
         #[command(flatten)]
         lookups: PublicLookupArgs,
+
+        #[command(flatten)]
+        legacy_output: LegacyOutput,
     },
 
     /// Make an A2A `SendMessage` (or `tasks/*`) call.

@@ -1,13 +1,11 @@
 // cargo-style status output for the `plug`/`unplug` subcommands —
-// a right-aligned (12-col) verb + message. Plain text, no color (this is
-// agent-facing tooling; a human-only color layer would only ever be stripped
-// for the piped/agent readers that are the norm here).
+// a right-aligned (12-col) verb + message. Plain text, no color: this is the
+// agent-facing binary, whose human/color layer was removed.
 //
-// CANONICAL SOURCE: the `cargo task` runner `include!`s this file verbatim
-// (`tasks/src/util/output.rs`), so the binary and the dev-task runner share one
-// definition with no crate dependency. Keep this file free of *inner* attributes
-// (`//!` / `#![…]`) — `include!` rejects them. Each consumer puts an outer
-// `#[expect(dead_code)]` on its `mod output` declaration (each uses a subset).
+// The `cargo task` dev runner deliberately does NOT share this file (it used to,
+// via `include!`): it is read by a human scanning a build log, where color is
+// what separates a failure from a progress line, so it keeps its own styled copy
+// in `crates/tasks/src/util/output.rs`.
 
 use std::path::{Path, PathBuf};
 

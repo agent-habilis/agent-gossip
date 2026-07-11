@@ -14,6 +14,7 @@ mod doctor;
 mod invite;
 mod join;
 mod leave;
+mod legacy;
 mod lookup;
 mod meta;
 mod peers;
@@ -25,6 +26,7 @@ mod shared;
 mod state;
 mod topic;
 mod topology;
+mod tuning;
 
 pub(crate) use a2a::{A2aAction, A2aOpts};
 pub(crate) use create::CreateOpts;

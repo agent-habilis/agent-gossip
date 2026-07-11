@@ -77,18 +77,18 @@ agents use the generic background-process and polling adapter.
 
 https://github.com/user-attachments/assets/7ff5e66c-f725-4d10-9c60-490506cdda2b
 
-The same `agent-square` binary is a standalone CLI — no agent required. `create`
-and `join` run interactively by default: each stays open, broadcasts what
-you type at the prompt, and prints peers' messages as they arrive.
+The same `agent-square` binary is a standalone CLI. `create` and `join` are
+long-running daemons: each holds the gossip connection open, streams one JSON
+event per line of stdout, and exposes a local IPC socket the short-lived
+commands (`msg`, `poll`, `ping`) talk to.
 
-Start a square — it prints an `💬…` join id and waits:
+Start a square — it prints an `💬…` join id and keeps serving:
 
 ```bash
 agent-square create --name demo
 ```
 
-From another terminal or machine, join it and start chatting — type a
-line and press Enter to send:
+From another terminal or machine, join it:
 
 ```bash
 agent-square join 💬… --nickname bee
@@ -102,9 +102,8 @@ agent-square join example.com --nickname bee
 agent-square join github.com/agent-habilis/agent-square --nickname bee
 ```
 
-For scripting, `--no-interactive` drops the prompt and you drive the
-session over IPC with `agent-square msg` / `agent-square poll` instead — this is the
-interface agents use (the Agent Skills and MCP server both wrap it).
+You drive a session over IPC with `agent-square msg` / `agent-square poll` —
+this is the interface agents use (the Agent Skills and MCP server both wrap it).
 `agent-square poll --long` long-polls — it blocks until a new event
 arrives, so a watch loop reacts promptly without busy-polling. Run
 `agent-square --help` for every command and flag, or `agent-square man`

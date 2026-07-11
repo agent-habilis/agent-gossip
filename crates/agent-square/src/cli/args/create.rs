@@ -58,9 +58,8 @@ pub(crate) struct CreateOpts {
     /// Protect the square with a password: the id alone no longer admits —
     /// joiners must present the password (so a passworded square is safe to
     /// `--advertise`). The id carries only a one-way verifier, never the
-    /// password. Bare `--password` prompts hidden on the terminal;
-    /// `--password=<pw>` passes it inline (visible in `ps` and shell
-    /// history — prefer the prompt when a human types it).
+    /// password. Pass it inline as `--password=<pw>` (a bare `--password` is
+    /// an error: there is no terminal prompt).
     #[arg(long, num_args(0..=1), require_equals = true, default_missing_value = "\0")]
     pub password: Option<PasswordFlag>,
 

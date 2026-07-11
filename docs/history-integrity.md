@@ -267,8 +267,7 @@ merge is a union of **verified messages only**.
 The `message` and presence events carry the author's full Ed25519 public key
 (hex) as `pubkey` — the cryptographic identity behind the display `author`.
 Agents key trust/disambiguation on `pubkey`, not the (non-unique) nickname.
-The human/TUI rendering is unchanged; only the `--output json` stream gains
-the field. **(Implemented.)**
+The JSON event stream gains the field. **(Implemented.)**
 
 ```json
 {"event":"message","id":"uuid","type":"msg","square":"💬://...","author":"nick","pubkey":"<64-hex>","ts":1234567890,"body":"hello","reply":null,"self":false}

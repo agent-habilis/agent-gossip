@@ -5,8 +5,9 @@ use clap::Parser;
 
 use agent_habilis_mesh::protocol::mesh::MeshName;
 
+use super::legacy::LegacyOutput;
 use super::lookup::PublicLookupArgs;
-use super::shared::SharedServerOpts;
+use super::tuning::TuningOpts;
 
 #[derive(Parser, Debug)]
 pub(crate) struct DiscoverOpts {
@@ -24,8 +25,15 @@ pub(crate) struct DiscoverOpts {
     #[command(flatten)]
     pub lookups: PublicLookupArgs,
 
+    /// `discover` joins the directory as a pure consumer: it writes no state
+    /// file, runs no gossip session, and serves no binding, so it takes only
+    /// the hidden tuning knobs — not the daemon flags of `SharedServerOpts`,
+    /// which it would silently ignore.
     #[command(flatten)]
-    pub shared: SharedServerOpts,
+    pub tuning: TuningOpts,
+
+    #[command(flatten)]
+    pub legacy_output: LegacyOutput,
 }
 
 #[cfg(test)]

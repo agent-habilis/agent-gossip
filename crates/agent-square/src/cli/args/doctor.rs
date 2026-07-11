@@ -5,6 +5,8 @@
 
 use clap::Parser;
 
+use super::legacy::LegacyOutput;
+
 use agent_habilis_mesh::protocol::MeshId;
 
 #[derive(Parser, Debug)]
@@ -19,6 +21,9 @@ pub(crate) struct DoctorOpts {
     /// touching the network (static decode + local state).
     #[arg(long, default_value_t = false)]
     pub no_probe: bool,
+
+    #[command(flatten)]
+    pub legacy_output: LegacyOutput,
 }
 
 #[cfg(test)]

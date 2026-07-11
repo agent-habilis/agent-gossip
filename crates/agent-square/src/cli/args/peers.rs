@@ -4,6 +4,8 @@
 
 use clap::Parser;
 
+use super::legacy::LegacyOutput;
+
 use agent_habilis_mesh::protocol::{MeshId, Nickname};
 
 #[derive(Parser, Debug)]
@@ -15,6 +17,9 @@ pub(crate) struct PeersOpts {
     /// Nickname of the local agent (must have a running join/create session)
     #[arg(long)]
     pub nickname: Nickname,
+
+    #[command(flatten)]
+    pub legacy_output: LegacyOutput,
 }
 
 #[cfg(test)]
