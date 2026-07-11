@@ -14,7 +14,6 @@ use anyhow::Result;
 use futures_util::StreamExt;
 use iroh::{Endpoint, EndpointId, RelayUrl};
 use iroh_gossip::api::{GossipReceiver, GossipSender};
-use tokio::io::BufReader;
 use tokio::sync::{broadcast, mpsc, watch};
 
 use crate::daemon::state_file::StateFile;
@@ -23,8 +22,6 @@ use crate::protocol::mesh::MeshName;
 use crate::protocol::{MeshId, Message, Nickname};
 use crate::transport::MeshSender;
 use crate::transport::ipc::IpcMessage;
-use crate::util::bounded_read::{LineRead, read_bounded_line};
-use crate::util::consts::MAX_STDIN_LINE_BYTES;
 use crate::util::tuning::{
     ALIVE_INTERVAL_SECS, LINKSTATE_INTERVAL_SECS, RECLAIM_INTERVAL_MS, RESUBSCRIBE_MAX_ATTEMPTS,
     STATE_REFRESH_SECS, antientropy_interval_secs, heal_interval_secs, heal_stall_threshold_secs,
@@ -70,7 +67,6 @@ pub async fn run<A: NodeDriver>(
         mesh_key,
         sink,
         mint_mesh,
-        interactive,
         endpoint,
         router: _router,
         max_peers,
@@ -232,7 +228,6 @@ pub async fn run<A: NodeDriver>(
         state,
         app,
         ipc_rx,
-        interactive,
         intervals,
         rendezvous,
         rendezvous_params,
@@ -375,7 +370,6 @@ struct EventLoop<A: NodeDriver> {
     /// `state` and threaded as its own `&mut` through the app callbacks.
     app: A,
     ipc_rx: Option<mpsc::Receiver<IpcMessage<A::Ipc>>>,
-    interactive: bool,
     intervals: MaintenanceIntervals,
     rendezvous: Option<beacon::Rendezvous>,
     rendezvous_params: beacon::RendezvousParams,
@@ -418,7 +412,7 @@ fn log_daemon_start(author: &Nickname) {
 
 #[expect(
     clippy::too_many_lines,
-    reason = "the daemon's central select! loop: one arm per event source (stdin, ipc, a2a, gossip, circuit, the maintenance ticks, quit); each arm delegates to a helper, but the arm list itself is irreducibly long"
+    reason = "the daemon's central select! loop: one arm per event source (ipc, a2a, gossip, circuit, the maintenance ticks, quit); each arm delegates to a helper, but the arm list itself is irreducibly long"
 )]
 async fn event_loop<A: NodeDriver>(loop_state: EventLoop<A>) -> Result<()> {
     let EventLoop {
@@ -434,7 +428,6 @@ async fn event_loop<A: NodeDriver>(loop_state: EventLoop<A>) -> Result<()> {
         mut state,
         mut app,
         mut ipc_rx,
-        interactive,
         mut intervals,
         mut rendezvous,
         mut rendezvous_params,
@@ -458,9 +451,6 @@ async fn event_loop<A: NodeDriver>(loop_state: EventLoop<A>) -> Result<()> {
     // so events interleave in surfacing order). The loop drives the ring
     // through the app's `drain_surfaced` / poll-deadline hooks — the engine
     // never names the ring's element type.
-
-    let mut stdin_reader = BufReader::new(tokio::io::stdin());
-    let mut stdin_open = interactive;
 
     let mut anchors = TickAnchors::now();
 
@@ -497,8 +487,6 @@ async fn event_loop<A: NodeDriver>(loop_state: EventLoop<A>) -> Result<()> {
 
     loop {
         tokio::select! {
-            result = read_bounded_line(&mut stdin_reader, MAX_STDIN_LINE_BYTES), if stdin_open =>
-                stdin_open = handle_stdin_arm(result, &mut app, &mut state, &parts.ctx(&sender)).await,
             () = sleep_until_opt(state.ping_round.as_ref().map(|round| round.deadline)) =>
                 finalize_ping_round(&mut state, sink.as_ref()),
             () = sleep_until_opt(app.earliest_poll_deadline()) => app.poll_deadline_elapsed(),
@@ -653,13 +641,13 @@ struct QuitParams<'a> {
 
 /// Announce departure, then decide whether to hard-exit the process.
 ///
-/// `exit_on_quit` is the CLI hard-exit: in interactive CLI mode the blocking
-/// stdin reader thread won't terminate on its own, so we `process::exit`.
-/// Embedded/MCP quits pass `false` and unwind cleanly instead. Under the
-/// `dhat-heap` profiling build we *never* `process::exit` regardless — it skips
-/// destructors, so the heap profiler would never flush `dhat-heap.json`; we fall
-/// through so `main` unwinds and the profiler drops (safe because profiling runs
-/// use `--no-interactive`, i.e. no blocking stdin thread to hang shutdown).
+/// `exit_on_quit` is the CLI hard-exit: the CLI process exits immediately on
+/// quit rather than tearing down its background tasks (advertiser,
+/// `--a2a-serve` server, iroh) and unwinding. Embedded/MCP quits pass `false`
+/// and unwind cleanly instead. Under the `dhat-heap` profiling build we
+/// *never* `process::exit` regardless — it skips destructors, so the heap
+/// profiler would never flush `dhat-heap.json`; we fall through so `main`
+/// unwinds and the profiler drops.
 async fn announce_and_maybe_exit<A: NodeDriver>(
     state: &mut EventLoopState,
     app: &mut A,
@@ -1241,28 +1229,6 @@ fn apply_rung_change(
         // Drop the beacon: `maybe_cohost` → `beacon::ensure` rebuilds it
         // homed on the new rung at the next heal/reclaim tick.
         *rendezvous = None;
-    }
-}
-
-/// One stdin-line read; returns the new `stdin_open` (`false` on EOF/error).
-/// The line itself is broadcast by the app ([`NodeDriver::handle_stdin`]).
-async fn handle_stdin_arm<A: NodeDriver>(
-    result: std::io::Result<LineRead>,
-    app: &mut A,
-    state: &mut EventLoopState,
-    ctx: &HandlerCtx<'_>,
-) -> bool {
-    match result {
-        Err(_) | Ok(LineRead::Eof) => false,
-        Ok(LineRead::TooLong) => {
-            ctx.sink
-                .emit(NodeEvent::Error("input line too long; ignored".to_owned()));
-            true
-        }
-        Ok(LineRead::Line(line)) => {
-            app.handle_stdin(line.trim(), state, ctx).await;
-            true
-        }
     }
 }
 

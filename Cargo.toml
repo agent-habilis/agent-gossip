@@ -42,8 +42,6 @@ automerge = "0.10"
 sha2 = "0.10"
 rand = "0.9"
 libc = "0.2"
-anstyle = "1"
-anstream = "0.6"
 # Shared dev-deps (unit + integration tests, benches).
 proptest = "1.6"
 insta = "1"
@@ -56,8 +54,8 @@ divan = "0.1"
 # `rust_2021_compatibility` is a migration-only group, not used here.
 [workspace.lints.rust]
 rust_2018_idioms = { level = "warn", priority = -1 }
-# `deny` not `forbid`: src/main.rs has one legitimate libc FFI block that
-# carries a documented `#[allow(unsafe_code, reason = ...)]`.
+# `deny` not `forbid`: the engine carries a few documented libc FFI blocks,
+# each with an `#[expect(unsafe_code, reason = ...)]`.
 unsafe_code = "deny"
 unreachable_pub = "warn"
 unused_qualifications = "warn"
@@ -174,8 +172,6 @@ clap = { version = "4", features = ["derive"] }
 # Embeds the portable Agent Skills tree into the binary at compile time so
 # `agent-square plug` is self-contained.
 include_dir = "0.7"
-anstyle.workspace = true
-anstream.workspace = true
 # The shared `state`/`meta` documents are automerge CRDTs: concurrent edits
 # merge without a bespoke ordered-log fold. `default-features` stays on (the
 # `storage-v2` on-disk format is unused — we carry changes on the wire).
@@ -186,26 +182,14 @@ iroh.workspace = true
 anyhow.workspace = true
 uuid.workspace = true
 sha2.workspace = true
-# Hidden `--password` prompt. Reads from the controlling TTY (/dev/tty), not
-# stdin — `pipe listen`'s stdin is the data source — and avoids a new
-# unsafe termios block. Pinned =7.4.0: it clears ECHO but leaves ICANON on,
-# which is exactly the heuristic Ghostty/WezTerm/iTerm2 use to detect a
-# password prompt (lock cursor + macOS secure input); 7.5+ switched to raw
-# char-by-char reads (ICANON off) and silently defeats that detection.
-rpassword = "=7.4.0"
 bytes.workspace = true
 bs58.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 rand.workspace = true
-libc.workspace = true
-# PTY spawn + resize for `agent-square sh` (broadcast a live shell). Blocking I/O,
-# bridged to tokio via reader/writer threads.
-portable-pty = "0.9"
 tracing.workspace = true
 tracing-subscriber.workspace = true
 rmcp = { version = "1.5", features = ["server", "transport-io", "macros", "schemars"] }
-nfsserve = "0.11.0"
 async-trait.workspace = true
 # The flag-gated (`--a2a-serve`) localhost JSON-RPC 2.0 A2A binding. All
 # three are already transitive in the lockfile (via iroh/reqwest), so

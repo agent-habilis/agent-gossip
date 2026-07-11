@@ -4,11 +4,10 @@ use anyhow::Result;
 
 use agent_habilis_mesh::daemon::state_file::read_session_entry;
 use agent_habilis_mesh::protocol::Nickname;
-use agent_habilis_mesh::util::consts::MESH_GLYPH;
 use agent_habilis_mesh::util::process;
 use agent_habilis_mesh::util::runtime_base;
 
-use super::args::{LeaveOpts, OutputFormat, SessionOpts};
+use super::args::{LeaveOpts, SessionOpts};
 
 /// One live daemon on this machine, resolved from its state file. `mesh`
 /// and `pid` are required to act on an entry; `name`/`nickname` are carried
@@ -130,24 +129,12 @@ fn target_json(target: &Target) -> serde_json::Value {
     serde_json::Value::Object(obj)
 }
 
-fn display_name(target: &Target) -> String {
-    let name = target
-        .name
-        .clone()
-        .unwrap_or_else(|| agent_habilis_mesh::util::mesh_prefix(&target.mesh));
-    match &target.nickname {
-        Some(nickname) => format!("#{name} <{nickname}>"),
-        None => format!("#{name}"),
-    }
-}
-
 pub(crate) async fn leave(opts: LeaveOpts) -> Result<()> {
     let LeaveOpts {
         square: mesh,
         nickname,
         session_pid,
         confirm_timeout_secs,
-        output,
     } = opts;
     let Discovery { live, cleaned } = discover();
     let (matched, other_sessions) = if let Some(mesh_id) = &mesh {
@@ -186,39 +173,20 @@ pub(crate) async fn leave(opts: LeaveOpts) -> Result<()> {
         confirmed.push((target, gone));
     }
 
-    match output {
-        OutputFormat::Json => {
-            let report = serde_json::json!({
-                "ok": true,
-                "left": confirmed
-                    .iter()
-                    .map(|(target, gone)| {
-                        let mut obj = target_json(target);
-                        obj["confirmed"] = (*gone).into();
-                        obj
-                    })
-                    .collect::<Vec<_>>(),
-                "other_sessions": other_sessions,
-                "cleaned": cleaned,
-            });
-            println!("{report}");
-        }
-        OutputFormat::Human => {
-            if confirmed.is_empty() {
-                if other_sessions == 0 {
-                    println!("{MESH_GLYPH} not in a square");
-                } else {
-                    println!(
-                        "{MESH_GLYPH} no square owned by this session ({other_sessions} running for other sessions — untouched)"
-                    );
-                }
-            }
-            for (target, gone) in &confirmed {
-                let suffix = if *gone { "" } else { " (unconfirmed)" };
-                println!("{MESH_GLYPH} left {}{suffix}", display_name(target));
-            }
-        }
-    }
+    let report = serde_json::json!({
+        "ok": true,
+        "left": confirmed
+            .iter()
+            .map(|(target, gone)| {
+                let mut obj = target_json(target);
+                obj["confirmed"] = (*gone).into();
+                obj
+            })
+            .collect::<Vec<_>>(),
+        "other_sessions": other_sessions,
+        "cleaned": cleaned,
+    });
+    println!("{report}");
     Ok(())
 }
 
@@ -227,39 +195,18 @@ pub(crate) async fn leave(opts: LeaveOpts) -> Result<()> {
     reason = "keeps the dispatch arm uniform with every other subcommand"
 )]
 pub(crate) async fn session(opts: SessionOpts) -> Result<()> {
-    let SessionOpts {
-        session_pid,
-        output,
-    } = opts;
+    let SessionOpts { session_pid } = opts;
     let Discovery { live, cleaned } = discover();
     let anchor = session_pid.unwrap_or_else(default_session_pid);
     let (owned, other_sessions) = split_owned(live, |pid| process::ancestry_contains(pid, anchor));
 
-    match output {
-        OutputFormat::Json => {
-            let report = serde_json::json!({
-                "ok": true,
-                "sessions": owned.iter().map(target_json).collect::<Vec<_>>(),
-                "other_sessions": other_sessions,
-                "cleaned": cleaned,
-            });
-            println!("{report}");
-        }
-        OutputFormat::Human => {
-            if owned.is_empty() {
-                if other_sessions == 0 {
-                    println!("{MESH_GLYPH} not in a square");
-                } else {
-                    println!(
-                        "{MESH_GLYPH} no square owned by this session ({other_sessions} running for other sessions)"
-                    );
-                }
-            }
-            for target in &owned {
-                println!("{MESH_GLYPH} {} (pid {})", display_name(target), target.pid);
-            }
-        }
-    }
+    let report = serde_json::json!({
+        "ok": true,
+        "sessions": owned.iter().map(target_json).collect::<Vec<_>>(),
+        "other_sessions": other_sessions,
+        "cleaned": cleaned,
+    });
+    println!("{report}");
     Ok(())
 }
 

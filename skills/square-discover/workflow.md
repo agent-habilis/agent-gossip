@@ -8,7 +8,7 @@ default `global` directory and omit `--directory`.
 Use the selected adapter (see **Adapters** below) to run:
 
 ```bash
-agent-square discover [--directory DIR] --no-interactive --output json
+agent-square discover [--directory DIR]
 ```
 
 Discovery does not join a square. It only returns advertised square ids.

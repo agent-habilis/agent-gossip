@@ -52,16 +52,7 @@ fn directory_advertise_then_discover() {
     let adv_log = tmp_log("dir-adv");
     let adv_file = File::create(&adv_log).unwrap();
     let mut advertiser = test_cmd()
-        .args([
-            "create",
-            "--advertise",
-            "dtest",
-            "--nickname",
-            "adv",
-            "--no-interactive",
-            "--output",
-            "json",
-        ])
+        .args(["create", "--advertise", "dtest", "--nickname", "adv"])
         .args(common::flag_args(&DIR_FLAGS))
         .stdout(Stdio::from(adv_file.try_clone().unwrap()))
         .stderr(Stdio::from(adv_file))
@@ -84,14 +75,7 @@ fn directory_advertise_then_discover() {
     let disc_log = tmp_log("dir-disc");
     let disc_file = File::create(&disc_log).unwrap();
     let mut discoverer = test_cmd()
-        .args([
-            "discover",
-            "--directory",
-            "dtest",
-            "--no-interactive",
-            "--output",
-            "json",
-        ])
+        .args(["discover", "--directory", "dtest"])
         .args(common::flag_args(&DIR_FLAGS))
         .stdout(Stdio::from(disc_file.try_clone().unwrap()))
         .stderr(Stdio::from(disc_file))
@@ -156,9 +140,6 @@ fn discover_stops_on_sigterm() {
             "stoptest",
             "--nickname",
             "adv",
-            "--no-interactive",
-            "--output",
-            "json",
         ])
         .args(common::flag_args(&DIR_FLAGS))
         .stdout(Stdio::from(adv_file.try_clone().unwrap()))
@@ -173,14 +154,7 @@ fn discover_stops_on_sigterm() {
     let disc_log = tmp_log("term-disc");
     let disc_file = File::create(&disc_log).unwrap();
     let mut discoverer = test_cmd()
-        .args([
-            "discover",
-            "--directory",
-            "stoptest",
-            "--no-interactive",
-            "--output",
-            "json",
-        ])
+        .args(["discover", "--directory", "stoptest"])
         .args(common::flag_args(&DIR_FLAGS))
         .stdout(Stdio::from(disc_file.try_clone().unwrap()))
         .stderr(Stdio::from(disc_file))

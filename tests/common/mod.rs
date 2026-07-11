@@ -219,18 +219,10 @@ pub(crate) fn cli_msg_checked(mesh: &str, nickname: &str, body: &str) -> String 
     String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
 
-/// Spawn `agent-square poll … --output json`, assert success,
+/// Spawn `agent-square poll …`, assert success,
 /// return trimmed stdout.
 pub(crate) fn cli_poll(mesh: &str, nickname: &str, after: Option<&str>) -> String {
-    let mut args = vec![
-        "poll",
-        "--square",
-        mesh,
-        "--nickname",
-        nickname,
-        "--output",
-        "json",
-    ];
+    let mut args = vec!["poll", "--square", mesh, "--nickname", nickname];
     if let Some(id) = after {
         args.extend(["--after", id]);
     }
@@ -250,16 +242,7 @@ pub(crate) fn cli_poll(mesh: &str, nickname: &str, after: Option<&str>) -> Strin
 /// JSON stdout and how long the call took — so a test can assert it blocked /
 /// resolved promptly.
 pub(crate) fn cli_poll_long(mesh: &str, nickname: &str, after: Option<&str>) -> (String, Duration) {
-    let mut args = vec![
-        "poll",
-        "--square",
-        mesh,
-        "--nickname",
-        nickname,
-        "--long",
-        "--output",
-        "json",
-    ];
+    let mut args = vec!["poll", "--square", mesh, "--nickname", nickname, "--long"];
     if let Some(id) = after {
         args.extend(["--after", id]);
     }
@@ -1095,33 +1078,22 @@ pub(crate) async fn three_peers(suffix: &str) -> (InProcNode, InProcNode, InProc
 // binary: real SIGKILL / SIGSTOP-SIGCONT, real stdout, real
 // Unix-socket IPC, real heal/anti-entropy timing.
 
-/// Human-mode create prints `others can join with: agent-square join <id>`;
-/// pull the id token out of that hint, if `trimmed` is such a line.
-fn parse_join_hint_mesh_id(trimmed: &str) -> Option<String> {
-    let (_, after) = trimmed.split_once("agent-square join ")?;
-    after.split_whitespace().next().map(str::to_owned)
-}
-
-/// Both lifecycle lines end with ` as <NICK>` (`created #N and joined as
-/// <nick>` / `joined #N as <nick>`); presence/message lines never contain
-/// ` as <`. Anchor on the last ` as <` so the leading `<author>` of a
-/// message line can't be mistaken for the nick.
-fn parse_lifecycle_nickname(trimmed: &str) -> Option<String> {
-    let (_, after_as) = trimmed.rsplit_once(" as <")?;
-    let end = after_as.find('>')?;
-    Some(after_as[..end].to_string())
-}
-
 /// Scan a `create`/`join` log's full contents so far for the mesh id and
-/// nickname, filling in whichever of `mesh_id`/`nickname` is still unset.
+/// nickname, filling in whichever of `mesh_id`/`nickname` is still unset. The
+/// daemon's JSON `ready` event carries both (`square` / `nickname`).
 fn scan_create_log(content: &str, mesh_id: &mut Option<String>, nickname: &mut Option<String>) {
     for line in content.lines() {
-        let trimmed = line.trim();
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(line.trim()) else {
+            continue;
+        };
+        if value["event"] != "ready" {
+            continue;
+        }
         if mesh_id.is_none() {
-            *mesh_id = parse_join_hint_mesh_id(trimmed);
+            *mesh_id = value["square"].as_str().map(str::to_owned);
         }
         if nickname.is_none() {
-            *nickname = parse_lifecycle_nickname(trimmed);
+            *nickname = value["nickname"].as_str().map(str::to_owned);
         }
     }
 }
@@ -1352,31 +1324,18 @@ pub(crate) struct Msg {
     pub body: String,
 }
 
-/// Split a `<author> rest...` line into (author, rest). Returns `None` for
-/// lines that don't start with an angle-bracketed author.
-fn split_author_line(line: &str) -> Option<(&str, &str)> {
-    let rest = line.trim().strip_prefix('<')?;
-    let bracket_end = rest.find('>')?;
-    Some((&rest[..bracket_end], rest[bracket_end + 1..].trim()))
-}
-
-/// Parse message lines in the format:
-/// - `<author>: body`
-/// - `<author> → <addressee>: body`
+/// Parse the daemon's JSON `message` events (chat only — `type:"msg"`,
+/// skipping `presence`), pulling out `(author, body)`.
 fn parse_messages(output: &str) -> Vec<Msg> {
     let mut msgs = Vec::new();
     for line in output.lines() {
-        let Some((author, after)) = split_author_line(line) else {
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(line.trim()) else {
             continue;
         };
-        if after.starts_with("has joined") || after.starts_with("has left") {
+        if value["event"] != "message" || value["type"] != "msg" {
             continue;
         }
-        let body = if let Some(rest) = after.strip_prefix(':') {
-            rest.trim()
-        } else if let Some(idx) = after.find(':') {
-            after[idx + 1..].trim()
-        } else {
+        let (Some(author), Some(body)) = (value["author"].as_str(), value["body"].as_str()) else {
             continue;
         };
         if !body.is_empty() {

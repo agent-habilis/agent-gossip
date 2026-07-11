@@ -19,7 +19,7 @@ current conversation goal or plan as the task spec.
 Read the roster and metadata:
 
 ```bash
-agent-square peers --square "$SQUARE" --nickname "$NICKNAME" --output json
+agent-square peers --square "$SQUARE" --nickname "$NICKNAME"
 agent-square meta get --square "$SQUARE" --nickname "$NICKNAME"
 ```
 

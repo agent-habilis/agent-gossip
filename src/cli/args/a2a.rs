@@ -7,7 +7,6 @@
 use clap::{Parser, Subcommand};
 
 use super::lookup::PublicLookupArgs;
-use super::output::OutputFormat;
 use crate::cli::password::PasswordFlag;
 use agent_habilis_mesh::protocol::mesh::MeshName;
 use agent_habilis_mesh::protocol::{MeshId, Nickname};
@@ -49,9 +48,7 @@ pub(crate) enum A2aAction {
 
         /// Protect the bridge with a password: the ticket alone no longer
         /// redeems — consumers must present the password (so a passworded ticket
-        /// is safe to share). Bare `--password` prompts hidden on the terminal;
-        /// `--password=<pw>` passes it inline (visible in `ps` — prefer the
-        /// prompt when a human types it).
+        /// is safe to share). Pass it inline as `--password=<pw>`.
         #[arg(long, num_args(0..=1), require_equals = true, default_missing_value = "\0")]
         password: Option<PasswordFlag>,
 
@@ -60,10 +57,6 @@ pub(crate) enum A2aAction {
         /// Hidden — a testing knob.
         #[arg(long, hide = true, default_value_t = false)]
         loopback: bool,
-
-        /// Output format: human (default) or json (a bare connect line).
-        #[arg(long, default_value = "human")]
-        output: OutputFormat,
     },
 
     /// Redeem a `🎟️…` ticket and bind a local A2A endpoint for a client.
@@ -82,48 +75,27 @@ pub(crate) enum A2aAction {
         port: Option<u16>,
 
         /// Password for a password-protected ticket — required exactly when the
-        /// ticket carries the password flag (prompts on a terminal, or inline
-        /// via `--password=<pw>`).
+        /// ticket carries the password flag. Pass it inline via `--password=<pw>`.
         #[arg(long, num_args(0..=1), require_equals = true, default_missing_value = "\0")]
         password: Option<PasswordFlag>,
-
-        /// Output format: human (default) or json (prints the bound URL only).
-        #[arg(long, default_value = "human")]
-        output: OutputFormat,
     },
 
-    /// Browse a directory for advertised a2a bridges and connect to one — the
-    /// receiver side of `a2a expose --advertise`, no `🎟️…` to copy.
+    /// Browse a directory for advertised a2a bridges — the receiver side of
+    /// `a2a expose --advertise`, no `🎟️…` to copy.
     ///
-    /// Human mode runs a live picker and binds a local endpoint on selection;
-    /// `--output json` streams `ticket_found`/`ticket_lost` lines instead (the
-    /// agent captures a ticket and runs `a2a connect` itself).
+    /// Streams one `ticket_found`/`ticket_lost` JSON line per directory change;
+    /// the agent captures a ticket and runs `a2a connect` itself.
     Discover {
         /// The directory to browse — the name the exposer passed to
         /// `--advertise` (omit for the default `global` directory).
         #[arg(long)]
         directory: Option<MeshName>,
 
-        /// Local port to bind the bridge on when a bridge is picked (default: an
-        /// ephemeral port).
-        #[arg(long)]
-        port: Option<u16>,
-
         /// Which lookup mechanisms reach the directory (same flags as
         /// `discover`): must match the advertiser's. Naming none (or `--public`)
         /// is the all-on public preset.
         #[command(flatten)]
         lookups: PublicLookupArgs,
-
-        /// Password for a password-protected pick (🔒 in the picker) — prompts
-        /// on pick when omitted.
-        #[arg(long, num_args(0..=1), require_equals = true, default_missing_value = "\0")]
-        password: Option<PasswordFlag>,
-
-        /// Output format: human (default) — the live picker — or json, one
-        /// `ticket_found`/`ticket_lost` line per directory change.
-        #[arg(long, default_value = "human")]
-        output: OutputFormat,
     },
 
     /// Make an A2A `SendMessage` (or `tasks/*`) call.

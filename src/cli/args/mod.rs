@@ -2,9 +2,8 @@
 //! per-command argument structs together. Each command's args (and its
 //! parse tests) live in their own file — `create`, `join`, `msg`,
 //! `poll`, `ping`, `discover` — over the shared building blocks
-//! `shared` (`SharedServerOpts`), `lookup` (`LookupArgs`), and `output`
-//! (`OutputFormat`). The imperative per-command logic lives in the
-//! parent [`super`] module.
+//! `shared` (`SharedServerOpts`) and `lookup` (`LookupArgs`). The
+//! imperative per-command logic lives in the parent [`super`] module.
 
 use clap::{Parser, Subcommand};
 
@@ -17,7 +16,6 @@ mod join;
 mod leave;
 mod lookup;
 mod meta;
-mod output;
 mod peers;
 mod ping;
 mod poll;
@@ -36,7 +34,6 @@ pub(crate) use invite::InviteOpts;
 pub(crate) use join::JoinOpts;
 pub(crate) use leave::LeaveOpts;
 pub(crate) use meta::{MetaAction, MetaOpts};
-pub(crate) use output::OutputFormat;
 pub(crate) use peers::PeersOpts;
 pub(crate) use ping::PingOpts;
 pub(crate) use poll::PollOpts;
@@ -139,10 +136,9 @@ pub(crate) enum Commands {
 
     /// Browse squares advertising themselves in a directory.
     ///
-    /// Joins the directory and shows a live list of squares
-    /// created with `--advertise`. Interactive (default): pick a number
-    /// to join. `--no-interactive` / `--output json`: stream
-    /// `square_found` / `square_lost` JSON lines for an agent to act on.
+    /// Joins the directory and streams `square_found` / `square_lost` JSON
+    /// lines for squares created with `--advertise` — capture an id and call
+    /// `join` yourself. Does not auto-join.
     Discover {
         #[command(flatten)]
         opts: DiscoverOpts,

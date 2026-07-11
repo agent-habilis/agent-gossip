@@ -10,7 +10,7 @@ its own state file on clean shutdown.
 If no live task is available or context was cleared, run:
 
 ```bash
-agent-square leave --session-pid "$PPID" --output json
+agent-square leave --session-pid "$PPID"
 ```
 
 `$PPID` inside the shell tool is the agent process whose daemons are parented

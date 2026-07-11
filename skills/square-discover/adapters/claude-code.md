@@ -4,7 +4,7 @@ Use the Monitor tool. Launch discovery under a distinct description so
 `/square-leave` never stops it:
 
 ```text
-command: "agent-square discover [--directory DIR] --no-interactive --output json"
+command: "agent-square discover [--directory DIR]"
 description: "square-discover"
 persistent: true
 timeout_ms: 300000

@@ -106,7 +106,7 @@ fn wait_rendezvous_served(mesh: &str, survivors: &[&str]) -> bool {
 
 /// Wire contract for the `info` IPC + `doctor` active-meshes scan: a live
 /// daemon answers `info` over its socket with its own identity, so
-/// `doctor --output json` lists it under "Active squares" with the full mesh
+/// `doctor` lists it under "Active squares" with the full mesh
 /// id and name. `--no-probe` keeps this to the fast local-socket scan (no
 /// net-report), so the test stays offline-safe.
 #[test]
@@ -117,7 +117,7 @@ fn doctor_lists_active_mesh_as_json() {
     assert!(node.wait_ready(&mesh), "daemon never ready");
 
     let out = common::test_cmd()
-        .args(["doctor", "--no-probe", "--output", "json"])
+        .args(["doctor", "--no-probe"])
         .output()
         .expect("doctor command failed to spawn");
     assert!(
@@ -213,7 +213,7 @@ async fn test_password_flag_wire_contract() {
 
     // Missing password, non-interactive: crisp requirement error.
     let missing = common::test_cmd()
-        .args(["join", &mesh_id, "--no-interactive"])
+        .args(["join", &mesh_id])
         .output()
         .expect("spawn join without password");
     assert!(
@@ -228,7 +228,7 @@ async fn test_password_flag_wire_contract() {
 
     // Wrong password: rejected locally against the id's verifier.
     let wrong = common::test_cmd()
-        .args(["join", &mesh_id, "--no-interactive", "--password=hunter3"])
+        .args(["join", &mesh_id, "--password=hunter3"])
         .output()
         .expect("spawn join with wrong password");
     assert!(!wrong.status.success(), "wrong password must exit non-zero");
@@ -671,13 +671,7 @@ fn test_network_public_accepted() {
     let log = tmp_log("public");
     let file = File::create(&log).unwrap();
     let mut child = common::test_cmd()
-        .args([
-            "create",
-            "--name",
-            "pub-test",
-            "--public",
-            "--no-interactive",
-        ])
+        .args(["create", "--name", "pub-test", "--public"])
         .stdout(Stdio::from(file.try_clone().unwrap()))
         .stderr(Stdio::from(file))
         .spawn()
@@ -722,7 +716,7 @@ fn test_state_file_removed_on_signal() {
         let _ = fs::remove_file(&state_file);
 
         let mut child = common::test_cmd()
-            .args(["create", "--name", "statefile-test", "--no-interactive"])
+            .args(["create", "--name", "statefile-test"])
             .arg("--state-file")
             .arg(&state_file)
             .stdout(Stdio::from(file.try_clone().unwrap()))
@@ -778,7 +772,7 @@ fn test_ready_gate_succeeds_when_serving() {
     let _ = fs::remove_file(&state_file);
 
     let mut child = common::test_cmd()
-        .args(["create", "--name", "ready-test", "--no-interactive"])
+        .args(["create", "--name", "ready-test"])
         .arg("--state-file")
         .arg(&state_file)
         .stdout(Stdio::from(file.try_clone().unwrap()))
@@ -846,7 +840,7 @@ fn test_ready_gate_waits_for_a_late_daemon() {
     // Launch the daemon a beat later, writing the same state file.
     std::thread::sleep(Duration::from_millis(500));
     let mut child = common::test_cmd()
-        .args(["create", "--name", "ready-race", "--no-interactive"])
+        .args(["create", "--name", "ready-race"])
         .arg("--state-file")
         .arg(&state_file)
         .stdout(Stdio::from(file.try_clone().unwrap()))
@@ -924,7 +918,7 @@ fn test_ready_gate_rejects_a_stale_ready_file() {
     let _ = fs::remove_file(&state_file);
 }
 
-/// `agent-square ready --output json` doubles as the identity read: on a fresh
+/// `agent-square ready` doubles as the identity read: on a fresh
 /// `ready:true` file it prints `{mesh,name,nickname}` and exits 0, so a
 /// fallback caller learns its own identity from the gate without parsing the
 /// state file (or guessing its `${PPID}` name) itself.
@@ -950,7 +944,7 @@ fn test_ready_gate_emits_identity_json_on_success() {
         .arg("ready")
         .arg("--state-file")
         .arg(&state_file)
-        .args(["--timeout-secs", "5", "--output", "json"])
+        .args(["--timeout-secs", "5"])
         .output()
         .expect("failed to run agent-square ready");
     assert!(
@@ -958,7 +952,7 @@ fn test_ready_gate_emits_identity_json_on_success() {
         "a fresh ready:true file should pass the gate"
     );
     let parsed: serde_json::Value =
-        serde_json::from_slice(&output.stdout).expect("ready --output json prints a JSON object");
+        serde_json::from_slice(&output.stdout).expect("ready prints a JSON object");
     assert_eq!(parsed["square"], "💬deadbeef");
     assert_eq!(parsed["name"], "cool-team");
     assert_eq!(parsed["nickname"], "calm-otter");
@@ -1597,7 +1591,7 @@ fn test_orphaned_daemon_self_terminates() {
     let joiner_log = tmp_log("orphan-joiner-out");
     let script = format!(
         "'{bin}' --log-dir '{dir}' join {mesh} --nickname orphan-joiner \
-            --ppid-watch-interval-ms 200 --output json >'{out}' 2>&1 & \
+            --ppid-watch-interval-ms 200 >'{out}' 2>&1 & \
          echo $! >'{pid}'; exec sleep 600",
         bin = bin().display(),
         dir = common::test_log_dir(),
@@ -2409,14 +2403,7 @@ fn spawn_discoverable_daemon(name: &str) -> (std::process::Child, PathBuf, Strin
     let log = tmp_log(&format!("leave-{name}"));
     let file = File::create(&log).unwrap();
     let mut child = common::test_cmd()
-        .args([
-            "create",
-            "--name",
-            name,
-            "--no-interactive",
-            "--output",
-            "json",
-        ])
+        .args(["create", "--name", name])
         .stdout(Stdio::from(file.try_clone().unwrap()))
         .stderr(Stdio::from(file))
         .spawn()
@@ -2488,7 +2475,7 @@ fn leave_explicit_target_stops_only_that_mesh() {
         spawn_discoverable_daemon("leave-bystander");
 
     let out = common::test_cmd()
-        .args(["leave", &victim_mesh, "--output", "json"])
+        .args(["leave", &victim_mesh])
         .output()
         .expect("failed to run agent-square leave");
     assert!(out.status.success(), "leave failed: {out:?}");
@@ -2532,7 +2519,7 @@ fn leave_session_scope_via_decoy_parent() {
     let mut decoy = Command::new("sh")
         .arg("-c")
         .arg(format!(
-            "{} --log-dir {} create --name leave-decoy --no-interactive --output json > {} 2>&1; :",
+            "{} --log-dir {} create --name leave-decoy > {} 2>&1; :",
             bin().display(),
             common::test_log_dir(),
             log.display(),
@@ -2554,7 +2541,7 @@ fn leave_session_scope_via_decoy_parent() {
 
     // Read-only probe: reports the decoy's daemon, does not stop it.
     let out = common::test_cmd()
-        .args(["session", "--session-pid", &decoy_pid, "--output", "json"])
+        .args(["session", "--session-pid", &decoy_pid])
         .output()
         .expect("failed to run agent-square session");
     assert!(out.status.success(), "session failed: {out:?}");
@@ -2570,7 +2557,7 @@ fn leave_session_scope_via_decoy_parent() {
     );
 
     let leave_out = common::test_cmd()
-        .args(["leave", "--session-pid", &decoy_pid, "--output", "json"])
+        .args(["leave", "--session-pid", &decoy_pid])
         .output()
         .expect("failed to run agent-square leave");
     assert!(leave_out.status.success(), "leave failed: {leave_out:?}");
@@ -2596,13 +2583,7 @@ fn leave_nothing_owned_is_a_clean_noop() {
         .expect("failed to spawn sleep");
 
     let out = common::test_cmd()
-        .args([
-            "leave",
-            "--session-pid",
-            &idle.id().to_string(),
-            "--output",
-            "json",
-        ])
+        .args(["leave", "--session-pid", &idle.id().to_string()])
         .output()
         .expect("failed to run agent-square leave");
     assert!(out.status.success(), "leave should exit 0 on a no-op");

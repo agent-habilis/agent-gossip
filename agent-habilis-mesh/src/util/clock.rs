@@ -66,13 +66,11 @@ fn civil_from_unix(unix_secs: i64) -> (i64, i64, i64, i64, i64, i64) {
 }
 
 /// Format a Unix timestamp as a compact **local**-time stamp,
-/// `YYYY-MM-DD HH:MM`. Used by the `agent-square discover` picker to show when a
-/// mesh was first seen, in the operator's own timezone.
+/// `YYYY-MM-DD HH:MM`, in the system's own timezone.
 ///
 /// `libc::localtime_r` resolves the system timezone (DST included) for
 /// the given instant; if it ever fails (not reachable for a valid
-/// `time_t`), we fall back to UTC via [`civil_from_unix`] so the picker
-/// still renders.
+/// `time_t`), we fall back to UTC via [`civil_from_unix`].
 #[must_use]
 #[expect(
     unsafe_code,

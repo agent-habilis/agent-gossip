@@ -120,7 +120,6 @@ pub struct EventLoopConfig {
     /// only on the creator of an invite-only mesh; `None` everywhere else (a
     /// joiner holds no issuer key, so it could never mint).
     pub mint_mesh: Option<Mesh>,
-    pub interactive: bool,
     pub endpoint: Endpoint,
     /// iroh router whose accept loop routes inbound gossip
     /// connections. Must be held alive for the whole event loop —

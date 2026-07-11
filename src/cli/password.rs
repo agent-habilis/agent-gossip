@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 
 use agent_habilis_mesh::protocol::crypto::Password;
 
@@ -9,14 +9,14 @@ use agent_habilis_mesh::protocol::crypto::Password;
 /// "empty password" error).
 pub(crate) const BARE: &str = "\0";
 
-/// A `--password` optional-value flag resolved by clap: bare `--password`
-/// (prompt on a TTY) vs `--password=<pw>` (inline). The *absent* flag is
-/// `Option::None` at the field, so this type models only the two present
-/// forms — replacing the former `Option<Option<String>>`.
+/// A `--password` optional-value flag resolved by clap: bare `--password` vs
+/// `--password=<pw>` (inline). The *absent* flag is `Option::None` at the
+/// field, so this type models only the two present forms.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum PasswordFlag {
-    /// Bare `--password`: prompt on the controlling TTY.
-    Prompt,
+    /// Bare `--password` with no value. The CLI is agent-driven with no TTY to
+    /// prompt, so a bare flag is a hard error — [`resolve_password`] rejects it.
+    Bare,
     /// `--password=<pw>`: the inline value (possibly empty, which
     /// [`resolve_password`] rejects).
     Inline(String),
@@ -27,7 +27,7 @@ impl std::str::FromStr for PasswordFlag {
 
     fn from_str(text: &str) -> Result<Self, Self::Err> {
         Ok(if text == BARE {
-            PasswordFlag::Prompt
+            PasswordFlag::Bare
         } else {
             PasswordFlag::Inline(text.to_owned())
         })
@@ -35,56 +35,24 @@ impl std::str::FromStr for PasswordFlag {
 }
 
 /// Resolve a clap optional-value `--password` flag (absent / bare / valued)
-/// into a [`Password`]. Bare ⇒ a hidden prompt on the controlling TTY —
-/// `/dev/tty`, never stdin/stdout, so it never collides with a command's
-/// stdout/stdin data stream. `confirm` re-prompts and compares (creation
-/// paths: a typo would mint an unjoinable mesh or an unredeemable ticket).
-///
-/// `no_prompt` (non-interactive / `--output json` frontends) makes a bare
-/// flag a hard error instead of a hang waiting on a TTY an agent doesn't have.
-pub(crate) fn resolve_password(
-    flag: Option<PasswordFlag>,
-    confirm: bool,
-    no_prompt: bool,
-) -> Result<Option<Password>> {
+/// into a [`Password`]. A bare `--password` is a hard error — the CLI is
+/// agent-driven with no TTY to prompt, so the value must be passed inline.
+pub(crate) fn resolve_password(flag: Option<PasswordFlag>) -> Result<Option<Password>> {
     match flag {
         None => Ok(None),
         Some(PasswordFlag::Inline(value)) => validated(value).map(Some),
-        Some(PasswordFlag::Prompt) => {
-            if no_prompt {
-                bail!("--password needs an inline value here: --password=<pw> (no TTY to prompt)");
-            }
-            let first = prompt("password: ")?;
-            if confirm {
-                let second = prompt("confirm password: ")?;
-                if first != second {
-                    bail!("passwords do not match");
-                }
-            }
-            validated(first).map(Some)
-        }
+        Some(PasswordFlag::Bare) => bail!("--password needs an inline value: --password=<pw>"),
     }
 }
 
-/// The target (a `💬…` id or `🎟️…` ticket) is password-protected but the flag was
-/// absent: prompt on a TTY, or bail with a crisp instruction. `what` names
-/// the artifact for the error ("square", "ticket"). A failed prompt (no
-/// controlling TTY — e.g. a scripted run) still names the requirement.
-pub(crate) fn require_password(no_prompt: bool, what: &str) -> Result<Password> {
-    if no_prompt {
-        bail!("this {what} is password-protected — pass --password");
-    }
-    let value = prompt(&format!("{what} password: "))
-        .with_context(|| format!("this {what} is password-protected — pass --password=<pw>"))?;
-    validated(value)
-}
-
-fn prompt(text: &str) -> Result<String> {
-    // rpassword reads AND writes /dev/tty with ECHO off + ICANON on — the
-    // exact termios state Ghostty/WezTerm/iTerm2 detect to show their
-    // password-input indicator (and enable macOS secure input).
-    rpassword::prompt_password(text)
-        .context("cannot prompt for a password (no TTY) — pass --password=<pw>")
+/// The target (a `💬…` id or `🎟️…` ticket) is password-protected but the flag
+/// was absent. `what` names the artifact for the error ("square", "ticket").
+///
+/// # Errors
+/// Always errors: a password-protected target needs an explicit
+/// `--password=<pw>` (there is no interactive prompt).
+pub(crate) fn require_password(what: &str) -> Result<Password> {
+    bail!("this {what} is password-protected — pass --password=<pw>")
 }
 
 fn validated(value: String) -> Result<Password> {
@@ -100,29 +68,26 @@ mod tests {
 
     #[test]
     fn absent_flag_is_no_password() {
-        assert!(resolve_password(None, false, true).unwrap().is_none());
+        assert!(resolve_password(None).unwrap().is_none());
     }
 
     #[test]
-    fn inline_value_needs_no_tty() {
-        let password =
-            resolve_password(Some(PasswordFlag::Inline("hunter2".to_owned())), true, true)
-                .unwrap()
-                .unwrap();
+    fn inline_value_resolves() {
+        let password = resolve_password(Some(PasswordFlag::Inline("hunter2".to_owned())))
+            .unwrap()
+            .unwrap();
         assert_eq!(password.as_str(), "hunter2");
     }
 
     #[test]
     fn empty_and_whitespace_values_are_rejected() {
-        assert!(resolve_password(Some(PasswordFlag::Inline(String::new())), false, true).is_err());
-        assert!(
-            resolve_password(Some(PasswordFlag::Inline("   ".to_owned())), false, true).is_err()
-        );
+        assert!(resolve_password(Some(PasswordFlag::Inline(String::new()))).is_err());
+        assert!(resolve_password(Some(PasswordFlag::Inline("   ".to_owned()))).is_err());
     }
 
     #[test]
-    fn bare_flag_without_a_tty_context_is_a_hard_error() {
-        let error = resolve_password(Some(PasswordFlag::Prompt), false, true).unwrap_err();
+    fn bare_flag_is_a_hard_error() {
+        let error = resolve_password(Some(PasswordFlag::Bare)).unwrap_err();
         assert!(
             error.to_string().contains("--password=<pw>"),
             "got: {error}"
@@ -130,10 +95,10 @@ mod tests {
     }
 
     #[test]
-    fn bare_sentinel_parses_to_prompt() {
+    fn bare_sentinel_parses_to_bare() {
         assert!(matches!(
             super::BARE.parse::<PasswordFlag>(),
-            Ok(PasswordFlag::Prompt)
+            Ok(PasswordFlag::Bare)
         ));
         assert!(matches!(
             "hunter2".parse::<PasswordFlag>(),
@@ -142,8 +107,8 @@ mod tests {
     }
 
     #[test]
-    fn require_password_without_a_tty_context_names_the_artifact() {
-        let error = super::require_password(true, "ticket").unwrap_err();
+    fn require_password_names_the_artifact() {
+        let error = super::require_password("ticket").unwrap_err();
         assert!(
             error.to_string().contains("ticket is password-protected"),
             "got: {error}"

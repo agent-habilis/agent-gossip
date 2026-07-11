@@ -543,13 +543,6 @@ fn push_changed_paths(key: &str, value: &serde_json::Value, push: &mut impl FnMu
     push(format!("/{key}"));
 }
 
-/// The `changed …` clause from a raw `State` body (parses once, then defers to
-/// [`state_change_summary`]). For the human render path, which holds the body
-/// string rather than the parsed merge.
-pub(super) fn state_change_summary_from_body(body: &str) -> String {
-    state_change_summary(body_merge(body).as_ref())
-}
-
 /// The surfaced RFC 7386 delta inside a channel-event body: the new `change`
 /// form carries it under `m`; a legacy `merge` body under `merge`. `None` when
 /// absent (an internal write, or an opaque/unparseable body).

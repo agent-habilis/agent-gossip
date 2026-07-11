@@ -130,21 +130,6 @@ impl NodeDriver for A2aApp {
         self.surfaced.close_poll_waiters();
     }
 
-    async fn handle_stdin(&mut self, line: &str, state: &mut EventLoopState, ctx: &HandlerCtx<'_>) {
-        let out = self.output.clone();
-        crate::a2a::send::handle_stdin_line(
-            crate::a2a::send::StdinLineParams {
-                text: line,
-                mesh: ctx.mesh,
-                author: ctx.author,
-            },
-            ctx.sender,
-            state,
-            &out,
-        )
-        .await;
-    }
-
     async fn handle_session(
         &mut self,
         req: SessionRequest,

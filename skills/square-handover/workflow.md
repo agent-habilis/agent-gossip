@@ -22,7 +22,7 @@ steps, and gotchas. Keep it concise enough for one message.
 Read the roster and metadata:
 
 ```bash
-agent-square peers --square "$SQUARE" --nickname "$NICKNAME" --output json
+agent-square peers --square "$SQUARE" --nickname "$NICKNAME"
 agent-square meta get --square "$SQUARE" --nickname "$NICKNAME"
 ```
 

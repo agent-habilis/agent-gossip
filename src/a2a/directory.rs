@@ -23,7 +23,6 @@ use agent_habilis_mesh::daemon::CoHostPolicy;
 use agent_habilis_mesh::directory::directory_mesh;
 use agent_habilis_mesh::protocol::mesh::{LookupOpts, LookupSet, MeshName, resolve_lookups};
 use agent_habilis_mesh::protocol::{MeshId, MessageBody, Nickname};
-use agent_habilis_mesh::util::clock::unix_secs;
 use agent_habilis_mesh::util::tuning::{
     advertise_interval_secs, directory_expiry_secs, directory_private_for_test,
 };
@@ -71,8 +70,6 @@ pub(crate) struct TicketListing {
     /// redeem it.
     pub password: bool,
     last_seen: Instant,
-    /// Unix seconds when first seen (preserved across re-ads). Display-only.
-    pub first_seen_unix: i64,
 }
 
 /// The change one [`TicketListings::note`] made, keyed by the ticket string.
@@ -132,7 +129,6 @@ impl TicketListings {
                 label,
                 password,
                 last_seen: now,
-                first_seen_unix: unix_secs(),
             },
         );
         Some(TicketChange::Found(ad.ticket))
@@ -152,7 +148,13 @@ impl TicketListings {
         expired
     }
 
-    /// The current listings, sorted by label then ticket — a stable picker order.
+    fn get(&self, ticket: &str) -> Option<&TicketListing> {
+        self.entries.get(ticket)
+    }
+
+    /// The current listings, sorted by label then ticket. Test-only: the live
+    /// path streams `TicketDirectoryEvent`s rather than snapshotting.
+    #[cfg(test)]
     pub(crate) fn snapshot(&self) -> Vec<TicketListing> {
         let mut listings: Vec<TicketListing> = self.entries.values().cloned().collect();
         listings.sort_by(|left, right| {
@@ -161,10 +163,6 @@ impl TicketListings {
                 .then_with(|| left.ticket.cmp(&right.ticket))
         });
         listings
-    }
-
-    fn get(&self, ticket: &str) -> Option<&TicketListing> {
-        self.entries.get(ticket)
     }
 }
 
@@ -225,7 +223,6 @@ pub(crate) enum TicketDirectoryEvent {
 #[derive(Debug)]
 pub(crate) struct TicketDirectory {
     session: Option<MeshSession>,
-    listings: Arc<Mutex<TicketListings>>,
     events_rx: Option<mpsc::UnboundedReceiver<TicketDirectoryEvent>>,
     task: Option<JoinHandle<()>>,
 }
@@ -292,17 +289,9 @@ impl TicketDirectory {
 
         Ok(Self {
             session: Some(session),
-            listings,
             events_rx: Some(events_rx),
             task: Some(task),
         })
-    }
-
-    pub(crate) fn snapshot(&self) -> Vec<TicketListing> {
-        self.listings
-            .lock()
-            .expect("ticket directory mutex")
-            .snapshot()
     }
 
     /// Take the event stream (`Found` / `Updated` / `Lost`). Single-consumer:

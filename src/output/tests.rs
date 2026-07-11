@@ -1,62 +1,12 @@
-//! Output-module tests: Human-mode coloring and the JSON wire format
-//! (shape assertions + insta snapshots + proptests). The wire
-//! serializers under test live in [`super::json`].
+//! Output-module tests: the JSON wire format (shape assertions + insta
+//! snapshots + proptests). The wire serializers under test live in
+//! [`super::json`].
 
 use super::json::{SimpleEvent, format_msg_json, format_presence_json};
-use super::{Output, OutputMode, style};
 use agent_habilis_mesh::protocol::{Message, MessageKind, PresenceSubtype};
 
 fn parse(text: &str) -> serde_json::Value {
     serde_json::from_str(text).unwrap_or_else(|error| panic!("invalid JSON: {error}\n{text}"))
-}
-
-// ── Human-mode coloring (style::*) ─────────────────────────
-
-fn human(self_nick: &str) -> Output {
-    Output::new(OutputMode::Human, false, Some(self_nick.to_owned()))
-}
-
-#[test]
-fn nick_ansi_self_vs_peer() {
-    let out = human("alice");
-    assert_eq!(
-        out.nick_ansi("alice", true),
-        (style::SELF_NICK, style::RESET)
-    );
-    assert_eq!(out.nick_ansi("bob", true), (style::PEER_NICK, style::RESET));
-}
-
-#[test]
-fn nick_ansi_disabled_is_empty() {
-    let out = human("alice");
-    assert_eq!(out.nick_ansi("alice", false), ("", ""));
-    assert_eq!(out.nick_ansi("bob", false), ("", ""));
-}
-
-#[test]
-fn highlight_colors_mesh_and_self_and_peer() {
-    let out = human("alice");
-    let colored = out.highlight("created #team and joined as <alice>", true);
-    assert_eq!(
-        colored,
-        format!(
-            "created {}#team{} and joined as {}<alice>{}",
-            style::MESH,
-            style::RESET,
-            style::SELF_NICK,
-            style::RESET
-        )
-    );
-    // A peer nick in an info line gets the peer color.
-    let peer = out.highlight("joined as <bob>", true);
-    assert!(peer.contains(&format!("{}<bob>{}", style::PEER_NICK, style::RESET)));
-}
-
-#[test]
-fn highlight_disabled_is_identity() {
-    let out = human("alice");
-    let text = "created #team and joined as <alice>";
-    assert_eq!(out.highlight(text, false), text);
 }
 
 // ── format_msg_json: msg type ──────────────────────────────

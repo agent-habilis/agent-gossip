@@ -24,7 +24,6 @@ fn man_prints_manual_to_stdout() {
         "SYNOPSIS",
         "DESCRIPTION",
         "COMMANDS",
-        "INTERACTIVE MODE",
         "JSON EVENTS",
         "JOIN HORIZON",
         "EXAMPLES",

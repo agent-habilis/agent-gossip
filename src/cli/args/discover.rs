@@ -1,5 +1,5 @@
 //! `discover` command args: browse squares advertising in a directory.
-//! (The live picker runtime is [`crate::cli::discover`].)
+//! (The JSON-streaming runtime is [`crate::cli::discover`].)
 
 use clap::Parser;
 

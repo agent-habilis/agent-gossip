@@ -2,8 +2,6 @@ use clap::Parser;
 
 use agent_habilis_mesh::protocol::{MeshId, Nickname};
 
-use super::output::OutputFormat;
-
 #[derive(Parser, Debug)]
 pub(crate) struct LeaveOpts {
     /// The `💬…` id of the square to leave — the full id or a unique prefix
@@ -26,17 +24,13 @@ pub(crate) struct LeaveOpts {
     /// before reporting it unconfirmed. Hidden — a test knob.
     #[arg(long, hide = true, default_value_t = 5)]
     pub confirm_timeout_secs: u64,
-
-    /// Output format: human (default) or json.
-    #[arg(long, default_value = "human")]
-    pub output: OutputFormat,
 }
 
 #[cfg(test)]
 mod tests {
     use clap::Parser;
 
-    use crate::cli::args::{Cli, Commands, OutputFormat};
+    use crate::cli::args::{Cli, Commands};
 
     #[test]
     fn leave_defaults() {
@@ -48,7 +42,6 @@ mod tests {
         assert!(opts.nickname.is_none());
         assert!(opts.session_pid.is_none());
         assert_eq!(opts.confirm_timeout_secs, 5);
-        assert_eq!(opts.output, OutputFormat::Human);
     }
 
     #[test]
@@ -59,15 +52,12 @@ mod tests {
             "💬AbCdEf1234",
             "--nickname",
             "my-nick",
-            "--output",
-            "json",
         ]);
         let Commands::Leave { opts } = cli.command else {
             panic!("expected Leave command");
         };
         assert_eq!(opts.square.unwrap().as_str(), "💬://AbCdEf1234");
         assert_eq!(opts.nickname.unwrap().as_str(), "my-nick");
-        assert_eq!(opts.output, OutputFormat::Json);
     }
 
     #[test]

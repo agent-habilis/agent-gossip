@@ -1,6 +1,6 @@
 //! [`broadcast_message`] is the single source of truth for the chat send path —
-//! the IPC `Msg` command, the typed in-process `SessionRequest`, and stdin all
-//! funnel through it so they cannot drift.
+//! the IPC `Msg` command and the typed in-process `SessionRequest` both funnel
+//! through it so they cannot drift.
 
 use std::time::Instant;
 
@@ -21,54 +21,6 @@ use agent_habilis_mesh::util::consts::{
     LOGGED_SHARD_GROUP_MAX_TOTAL, MAX_LOGICAL_BODY_BYTES, MAX_MESSAGE_SIZE, MAX_SEALED_BODY_BYTES,
     MAX_SHARD_TOTAL,
 };
-
-/// The stdin line plus the identity it's authored under — grouped so
-/// `handle_stdin_line` stays within the argument budget alongside its
-/// sender/state/out handles.
-pub(crate) struct StdinLineParams<'a> {
-    pub(crate) text: &'a str,
-    pub(crate) mesh: &'a MeshId,
-    pub(crate) author: &'a Nickname,
-}
-
-/// Process one line of interactive stdin as a mesh broadcast (A2A is
-/// point-to-point, so directed 1:1 is a task, not a chat line) — validate the
-/// body, then delegate to `broadcast_message` so the send (and its
-/// oversize/serialize error handling) is identical to the IPC and embed paths.
-pub(crate) async fn handle_stdin_line(
-    params: StdinLineParams<'_>,
-    sender: &MeshSender,
-    state: &mut EventLoopState,
-    out: &output::Output,
-) {
-    let StdinLineParams { text, mesh, author } = params;
-    out.clear_input_line();
-    if text.is_empty() {
-        return;
-    }
-    let body = match MessageBody::new(text) {
-        Ok(body) => body,
-        Err(error) => {
-            out.report_error(&error);
-            return;
-        }
-    };
-    match broadcast_message(
-        BroadcastMessageParams {
-            mesh,
-            author,
-            text: body,
-        },
-        state,
-        sender,
-        out,
-    )
-    .await
-    {
-        Ok(_) => state.last_sent_at = Instant::now(),
-        Err(error) => out.report_error(&error),
-    }
-}
 
 /// Retain a just-built outbound message in the local log (pruning the
 /// fork/DAG indexes on any eviction) and write the dev log. The operator

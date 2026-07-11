@@ -62,7 +62,7 @@ struct JsonNode {
 }
 
 impl JsonNode {
-    /// Spawn `agent-square create --no-interactive --output json`, wait for the
+    /// Spawn `agent-square create`, wait for the
     /// `ready` event, and return the node + mesh identifier.
     fn create() -> (Self, String) {
         Self::create_with_flags(&[])
@@ -75,14 +75,7 @@ impl JsonNode {
         let log = tmp_log("json-create");
         let file = fs::File::create(&log).unwrap();
         let child = common::test_cmd()
-            .args([
-                "create",
-                "--name",
-                "jtest",
-                "--no-interactive",
-                "--output",
-                "json",
-            ])
+            .args(["create", "--name", "jtest"])
             .args(common::flag_args(flags))
             .stdout(Stdio::from(file.try_clone().unwrap()))
             .stderr(Stdio::from(file))
@@ -117,7 +110,7 @@ impl JsonNode {
         )
     }
 
-    /// Spawn `agent-square join <mesh> --nickname <nickname> --no-interactive --output json`.
+    /// Spawn `agent-square join <mesh> --nickname <nickname>`.
     fn join(mesh: &str, nickname: &str) -> Self {
         Self::join_with_flags(mesh, nickname, &[])
     }
@@ -128,15 +121,7 @@ impl JsonNode {
         let log = tmp_log(&format!("json-{nickname}"));
         let file = fs::File::create(&log).unwrap();
         let child = common::test_cmd()
-            .args([
-                "join",
-                mesh,
-                "--nickname",
-                nickname,
-                "--no-interactive",
-                "--output",
-                "json",
-            ])
+            .args(["join", mesh, "--nickname", nickname])
             .args(common::flag_args(flags))
             .stdout(Stdio::from(file.try_clone().unwrap()))
             .stderr(Stdio::from(file))
@@ -757,9 +742,6 @@ fn test_hard_kill_triggers_peer_timeout() {
             "create",
             "--name",
             "hardkill",
-            "--no-interactive",
-            "--output",
-            "json",
             "--state-file",
             state_file.to_str().unwrap(),
         ])
@@ -1329,7 +1311,7 @@ async fn test_peers_roster_shape() {
     );
 }
 
-/// Poll/stream parity: a `msg` returned by `agent-square poll --output json` is the
+/// Poll/stream parity: a `msg` returned by `agent-square poll` is the
 /// **byte-identical** object the live `--output json` stream emitted for the
 /// same message — except for the leading `seq` the poll record adds as its
 /// cursor. This is the contract a Monitor-less fallback relies on: parse one
@@ -1454,7 +1436,7 @@ fn channel_wire_contract(channel: Channel) {
         serde_json::from_slice(&out.stdout).expect("merge stdout is JSON");
     assert_eq!(resp["ok"], true, "{label} merge should report ok:true");
 
-    // The joiner surfaces it on its --output json stream as an `event:"<chan>"`
+    // The joiner surfaces it on its stream as an `event:"<chan>"`
     // record carrying the merge document + the freshly-derived document.
     let want_doc = serde_json::json!({"k": "v"});
     let deadline = Instant::now() + MSG_TIMEOUT;

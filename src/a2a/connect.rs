@@ -33,7 +33,6 @@ const RETRY_DELAY: Duration = Duration::from_secs(3);
 pub(crate) async fn connect(
     ticket: &str,
     local_port: Option<u16>,
-    json: bool,
     password: Option<Password>,
 ) -> Result<()> {
     let ticket = A2aTicket::decode(ticket)?;
@@ -51,11 +50,7 @@ pub(crate) async fn connect(
     let port = listener.local_addr()?.port();
     let local_base = format!("http://127.0.0.1:{port}");
     tracing::info!("a2a bridge listening on {local_base}");
-    if json {
-        println!("{local_base}");
-    } else {
-        println!("📡 A2A bridge ready — point your client at {local_base}");
-    }
+    println!("{local_base}");
     let shared = SharedConnection::new(endpoint.clone(), ticket.addr.clone());
     let auth = Arc::new(auth);
     let local_base = Arc::new(local_base);

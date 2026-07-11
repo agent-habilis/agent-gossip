@@ -691,7 +691,7 @@ mod ticket;
 mod harness_tests;
 
 pub(crate) use connect::connect;
-pub(crate) use directory::{TicketDirectory, TicketDirectoryEvent, TicketListing};
+pub(crate) use directory::{TicketDirectory, TicketDirectoryEvent};
 pub(crate) use expose::{ExposeParams, expose};
 
 /// ALPN for the a2a bridge — a raw bidirectional QUIC stream with its own
@@ -716,22 +716,10 @@ async fn wait_online(endpoint: &Endpoint) {
     let _ = tokio::time::timeout(Duration::from_secs(5), endpoint.online()).await;
 }
 
-/// Present the exposer's status and the consumer's ready-to-run command on
-/// **stdout** — the exposer's product (its stdout carries no data; that flows
-/// over the network), and stderr stays errors-only. Human (default) shows a
-/// status line + the command in blue on a terminal (plain when piped); `json`
-/// is the bare command for machines (no status/colors).
-fn announce(json: bool, status: &str, command: &str) {
+/// Present the consumer's ready-to-run command on **stdout** — the exposer's
+/// product (its stdout carries no data; that flows over the network), and
+/// stderr stays errors-only. The bare command, one line, for a machine caller.
+fn announce(status: &str, command: &str) {
     tracing::info!("{status}");
-    if json {
-        println!("{command}");
-        return;
-    }
-    let (open, close) = if crate::output::stdout_color() {
-        (crate::output::style::BLUE, crate::output::style::RESET)
-    } else {
-        ("", "")
-    };
-    println!("📡 {status}");
-    println!("other peer can connect with: {open}{command}{close}");
+    println!("{command}");
 }

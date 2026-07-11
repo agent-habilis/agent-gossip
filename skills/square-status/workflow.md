@@ -15,7 +15,7 @@ Then stop.
 Run:
 
 ```bash
-agent-square peers --square "$SQUARE" --nickname "$NICKNAME" --output json
+agent-square peers --square "$SQUARE" --nickname "$NICKNAME"
 agent-square meta get --square "$SQUARE" --nickname "$NICKNAME"
 ```
 

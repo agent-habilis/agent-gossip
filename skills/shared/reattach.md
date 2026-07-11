@@ -6,7 +6,7 @@ skill needs an existing square.
 Run:
 
 ```bash
-agent-square session --session-pid "$PPID" --output json
+agent-square session --session-pid "$PPID"
 ```
 
 `$PPID` inside the shell tool is the agent process whose daemons are parented

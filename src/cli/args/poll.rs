@@ -5,8 +5,6 @@ use clap::Parser;
 
 use agent_habilis_mesh::protocol::{MeshId, Nickname};
 
-use super::output::OutputFormat;
-
 #[derive(Parser, Debug)]
 pub(crate) struct PollOpts {
     /// Square identifier (💬...)
@@ -36,10 +34,6 @@ pub(crate) struct PollOpts {
     /// re-issue with the same --after. Omit for an immediate read.
     #[arg(long)]
     pub long: bool,
-
-    /// Output format: human (default) or json (structured JSON)
-    #[arg(long, default_value = "human")]
-    pub output: OutputFormat,
 }
 
 #[cfg(test)]

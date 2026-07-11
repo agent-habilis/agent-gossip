@@ -296,8 +296,8 @@ mod tests {
         );
         assert_eq!(
             password_of(&["agent-square", "create", "--password"]),
-            Some(PasswordFlag::Prompt),
-            "bare ⇒ prompt"
+            Some(PasswordFlag::Bare),
+            "bare ⇒ bare (rejected at resolve time)"
         );
         assert_eq!(
             password_of(&["agent-square", "create", "--password=hunter2"]),
@@ -320,7 +320,6 @@ mod tests {
             "--public",
             "--nickname",
             "custom-name",
-            "--no-interactive",
         ]);
         match cli.command {
             Commands::Create { opts } => {
@@ -330,7 +329,6 @@ mod tests {
                     Some("custom-name")
                 );
                 assert!(opts.public);
-                assert!(opts.shared.no_interactive);
             }
             Commands::Join { .. }
             | Commands::Topic { .. }

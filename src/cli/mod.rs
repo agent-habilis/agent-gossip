@@ -1,5 +1,5 @@
 //! The `agent-square` command-line interface: the clap-derived argument shape
-//! lives in [`args`], the live `discover` picker in [`discover`], and the
+//! lives in [`args`], the `discover` JSON stream in [`discover`], and the
 //! per-subcommand handlers + [`dispatch`] here. `lib.rs::run_cli` parses
 //! argv and calls `dispatch`; each handler is the thin glue between the
 //! parsed args and the daemon / IPC / embed layers it drives.
@@ -24,15 +24,14 @@ mod args;
 mod discover;
 mod doctor;
 mod password;
-mod picker;
 mod plug;
 mod session;
+mod signal;
 
 pub(crate) use args::Cli;
 use args::{
-    A2aAction, Commands, CreateOpts, InviteOpts, MetaAction, MetaOpts, OutputFormat, PeersOpts,
-    PingOpts, PollOpts, ReadyOpts, SharedServerOpts, StateAction, StateOpts, TopicOpts,
-    TopologyOpts,
+    A2aAction, Commands, CreateOpts, InviteOpts, MetaAction, MetaOpts, PeersOpts, PingOpts,
+    PollOpts, ReadyOpts, SharedServerOpts, StateAction, StateOpts, TopicOpts, TopologyOpts,
 };
 
 /// `join` has no `--public`/`--name`: both are encoded in the `💬…`
@@ -95,9 +94,6 @@ pub(crate) async fn dispatch(cli: Cli) -> Result<()> {
         Commands::A2a { opts } => Box::pin(a2a(opts.action)).await,
         Commands::Peers { opts } => peers(opts).await,
         Commands::Invite { opts } => invite(opts).await,
-        // Boxed like the event-loop futures above: the discover arm holds a
-        // picker + connect chain that puts it over clippy's 16 KiB
-        // `large_futures` budget.
         Commands::State { opts } => state(opts).await,
         Commands::Meta { opts } => meta(opts).await,
         Commands::Topology { opts } => topology_cmd(opts).await,
@@ -152,11 +148,7 @@ async fn run_session(resolved: Resolved, shared: SharedServerOpts) -> Result<()>
         SetupKind::Create { config, .. } => Some(config.lookups.clone()),
         SetupKind::Join { .. } | SetupKind::Topic { .. } => None,
     };
-    let out = Output::new(
-        shared.output.into(),
-        shared.filter_self,
-        Some(author.as_str().to_owned()),
-    );
+    let out = Output::new(OutputMode::Json, shared.filter_self);
     // Nag once at startup if an installed integration has fallen behind this
     // binary. CLI-only: the embed/MCP paths pass `None` so in-process tests
     // stay hermetic. `agent-square status` is the on-demand counterpart.
@@ -190,7 +182,6 @@ async fn run_session(resolved: Resolved, shared: SharedServerOpts) -> Result<()>
         kind,
         SetupParams {
             author,
-            interactive: !shared.no_interactive,
             max_peers: shared.max_peers,
             state_file: shared.state_file,
             sink,
@@ -219,11 +210,7 @@ async fn create(opts: CreateOpts) -> Result<()> {
     // Borrow-then-move: resolve the lookups and advertise selection (which
     // borrow `opts`) before moving `opts.name`/`opts.nickname` out.
     let advertise = opts.advertise_selection();
-    let password = password::resolve_password(
-        opts.password.clone(),
-        /* confirm */ true,
-        opts.shared.no_prompt(),
-    )?;
+    let password = password::resolve_password(opts.password.clone())?;
     let config = MeshConfig {
         lookups: resolve_lookups(opts.public, opts.lookups.to_set()),
         // The verifier is baked in at setup: its salt is the seed, which is
@@ -261,15 +248,13 @@ async fn join(
     password_flag: Option<password::PasswordFlag>,
     shared: SharedServerOpts,
 ) -> Result<()> {
-    let no_prompt = shared.no_prompt();
-    let mut password =
-        password::resolve_password(password_flag, /* confirm */ false, no_prompt)?;
-    // A protected id/invite with the flag absent still prompts on a TTY — the
-    // operator pasted a token and shouldn't need to know about the flag. Both
-    // join-target variants can be password-protected (a `💬` id or a `🎟️`
-    // invite), so classify either before prompting.
+    let mut password = password::resolve_password(password_flag)?;
+    // A protected id/invite with the flag absent is a hard error naming the
+    // requirement (there is no interactive prompt). Both join-target variants
+    // can be password-protected (a `💬` id or a `🎟️` invite), so classify
+    // either before erroring.
     if password.is_none() {
-        let prompt_for = match &target {
+        let requires = match &target {
             JoinTarget::Mesh(id) => id
                 .as_str()
                 .parse::<Mesh>()
@@ -277,8 +262,8 @@ async fn join(
                 .then_some("square"),
             JoinTarget::Invite(invite) => invite.requires_password().then_some("invite"),
         };
-        if let Some(what) = prompt_for {
-            password = Some(password::require_password(no_prompt, what)?);
+        if let Some(what) = requires {
+            password = Some(password::require_password(what)?);
         }
     }
     // `join` never advertises — that is a create-time decision.
@@ -339,10 +324,8 @@ async fn a2a(action: A2aAction) -> Result<()> {
             advertise,
             password,
             loopback,
-            output,
         } => {
-            let json = matches!(output, OutputFormat::Json);
-            let password = password::resolve_password(password, /* confirm */ true, json)?;
+            let password = password::resolve_password(password)?;
             let advertise =
                 agent_habilis_mesh::protocol::mesh::DirectorySelection::from_flag(advertise);
             Box::pin(crate::a2a::expose(crate::a2a::ExposeParams {
@@ -350,7 +333,6 @@ async fn a2a(action: A2aAction) -> Result<()> {
                 flags: lookups.to_set(),
                 advertise,
                 loopback,
-                json,
                 password,
             }))
             .await
@@ -359,33 +341,21 @@ async fn a2a(action: A2aAction) -> Result<()> {
             ticket,
             port,
             password,
-            output,
         } => {
-            let json = matches!(output, OutputFormat::Json);
-            // Prompt when the ticket needs a password and none was passed
+            // Error when the ticket needs a password and none was passed
             // (mirrors the mesh-join UX); otherwise resolve the given flag.
             let password = match password {
                 None if crate::a2a::ticket_requires_password(&ticket) => {
-                    Some(password::require_password(json, "ticket")?)
+                    Some(password::require_password("ticket")?)
                 }
-                other => password::resolve_password(other, /* confirm */ false, json)?,
+                other => password::resolve_password(other)?,
             };
-            crate::a2a::connect(&ticket, port, json, password).await
+            crate::a2a::connect(&ticket, port, password).await
         }
-        A2aAction::Discover {
-            directory,
-            port,
-            lookups,
-            password,
-            output,
-        } => {
-            let json = matches!(output, OutputFormat::Json);
+        A2aAction::Discover { directory, lookups } => {
             Box::pin(a2a_discover::discover(a2a_discover::DiscoverParams {
                 directory,
-                port,
                 lookups: lookups.to_set(),
-                password,
-                json,
             }))
             .await
         }
@@ -408,7 +378,7 @@ async fn a2a(action: A2aAction) -> Result<()> {
                     .map_err(|error| anyhow::anyhow!("{error}"))?;
                 let resp = ipc::send(&IpcCommand::Msg { mesh, body }, &nickname).await?;
                 let id = finish_send(&resp, "message")?;
-                Output::new(OutputMode::Human, false, None).msg_posted(&id);
+                Output::new(OutputMode::Json, false).msg_posted(&id);
                 return Ok(());
             }
             let to = to.ok_or_else(|| {
@@ -452,7 +422,7 @@ async fn a2a(action: A2aAction) -> Result<()> {
             };
             let resp = ipc::send(&cmd, &nickname).await?;
             let id = finish_send(&resp, "task status")?;
-            Output::new(OutputMode::Human, false, None).msg_posted(&id);
+            Output::new(OutputMode::Json, false).msg_posted(&id);
             Ok(())
         }
         A2aAction::Artifact {
@@ -484,7 +454,7 @@ async fn a2a(action: A2aAction) -> Result<()> {
             };
             let resp = ipc::send(&cmd, &nickname).await?;
             let id = finish_send(&resp, "task artifact")?;
-            Output::new(OutputMode::Human, false, None).msg_posted(&id);
+            Output::new(OutputMode::Json, false).msg_posted(&id);
             Ok(())
         }
         A2aAction::Fetch {
@@ -579,7 +549,6 @@ async fn poll(opts: PollOpts) -> Result<()> {
         state_file,
         after,
         long,
-        output: _,
     } = opts;
     // clap enforces exactly one form: `--state-file`, or `--square` +
     // `--nickname`. The state-file form waits for readiness first so a poll
@@ -639,7 +608,6 @@ async fn ping(opts: PingOpts) -> Result<()> {
     let PingOpts {
         square: mesh,
         nickname,
-        output: _,
     } = opts;
     let cmd = IpcCommand::Ping { mesh };
     let resp = ipc::send(&cmd, &nickname).await?;
@@ -657,7 +625,6 @@ async fn peers(opts: PeersOpts) -> Result<()> {
     let PeersOpts {
         square: mesh,
         nickname,
-        output: _,
     } = opts;
     let cmd = IpcCommand::Peers { mesh };
     let resp = ipc::send(&cmd, &nickname).await?;
@@ -695,29 +662,14 @@ async fn invite(opts: InviteOpts) -> Result<()> {
         square: mesh,
         nickname,
         ttl,
-        output,
     } = opts;
     let ttl = parse_ttl(ttl.as_deref())?;
     let cmd = IpcCommand::Invite { mesh, ttl };
     let resp = ipc::send(&cmd, &nickname).await?;
-    if matches!(output, OutputFormat::Json) {
-        println!("{resp}");
-    }
+    println!("{resp}");
     let parsed: serde_json::Value = serde_json::from_str(&resp)?;
     if parsed.get("ok").and_then(serde_json::Value::as_bool) != Some(true) {
-        let error = parsed
-            .get("error")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or("invite failed");
-        if !matches!(output, OutputFormat::Json) {
-            eprintln!("{error}");
-        }
         std::process::exit(1);
-    }
-    if !matches!(output, OutputFormat::Json)
-        && let Some(token) = parsed.get("invite").and_then(serde_json::Value::as_str)
-    {
-        println!("{token}");
     }
     Ok(())
 }
@@ -810,8 +762,7 @@ async fn meta(opts: MetaOpts) -> Result<()> {
 
 /// Block until the daemon's `--state-file` reports it is *freshly* serving
 /// (the `ready` flag is `true` and `last_updated` is recent), then exit 0.
-/// In `human` mode a pure gate — prints nothing; with `--output json` it
-/// prints `{mesh,name,nickname}` on success, so the gate doubles as the
+/// Prints `{mesh,name,nickname}` on success, so the gate doubles as the
 /// identity read instead of the caller parsing the file. Times out non-zero.
 ///
 /// Robustness: a missing, unreadable, malformed, or stale-but-not-yet-ready
@@ -823,12 +774,9 @@ async fn ready(opts: ReadyOpts) -> Result<()> {
     let ReadyOpts {
         state_file,
         timeout_secs,
-        output,
     } = opts;
     wait_for_ready(&state_file, timeout_secs).await?;
-    if matches!(output, OutputFormat::Json) {
-        print_ready_identity(&state_file);
-    }
+    print_ready_identity(&state_file);
     Ok(())
 }
 

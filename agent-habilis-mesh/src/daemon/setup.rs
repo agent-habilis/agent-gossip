@@ -201,7 +201,6 @@ async fn build_member_endpoint(
 /// argument budget.
 pub struct SetupParams<'a> {
     pub author: Nickname,
-    pub interactive: bool,
     pub max_peers: usize,
     pub state_file: Option<PathBuf>,
     pub sink: std::sync::Arc<dyn NodeSink>,
@@ -276,7 +275,6 @@ struct Assembled {
 pub async fn setup_mesh(kind: SetupKind, params: SetupParams<'_>) -> Result<EventLoopConfig> {
     let SetupParams {
         author,
-        interactive,
         max_peers,
         state_file,
         sink,
@@ -383,7 +381,6 @@ pub async fn setup_mesh(kind: SetupKind, params: SetupParams<'_>) -> Result<Even
         mesh_key,
         sink,
         mint_mesh,
-        interactive,
         endpoint,
         router,
         max_peers,

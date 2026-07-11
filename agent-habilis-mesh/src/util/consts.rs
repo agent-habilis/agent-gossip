@@ -223,10 +223,6 @@ pub(crate) const UNICAST_INBOX_CAP: usize = 256;
 /// trip answers well inside an hour.
 pub const A2A_CALL_MAX_TIMEOUT_SECS: u64 = 3600;
 
-/// Max bytes for one stdin line. A body up to a full logical (multipart) body
-/// is accepted; the daemon splits it across the wire.
-pub(crate) const MAX_STDIN_LINE_BYTES: usize = MAX_LOGICAL_BODY_BYTES;
-
 /// Max bytes for one IPC command line: a full logical body in a JSON envelope
 /// (mesh id, nickname, keys). The body travels JSON-escaped inside the line
 /// — worst case every char doubles (quotes/backslashes/newlines) — so budget

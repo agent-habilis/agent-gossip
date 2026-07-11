@@ -1,12 +1,10 @@
 //! `ping` command args: arm an RTT round on the running daemon.
-//! Fire-and-forget — the `ping_report` arrives on the daemon's
-//! `--output json` stream, not on this command's stdout.
+//! Fire-and-forget — the `ping_report` arrives on the daemon's JSON
+//! stream, not on this command's stdout.
 
 use clap::Parser;
 
 use agent_habilis_mesh::protocol::{MeshId, Nickname};
-
-use super::output::OutputFormat;
 
 #[derive(Parser, Debug)]
 pub(crate) struct PingOpts {
@@ -17,21 +15,16 @@ pub(crate) struct PingOpts {
     /// Nickname of the local agent (must have a running join/create session)
     #[arg(long)]
     pub nickname: Nickname,
-
-    /// Output format. Accepted for parity with other commands; the
-    /// `ping_report` arrives on the daemon's own `--output json` stream.
-    #[arg(long, default_value = "human")]
-    pub output: OutputFormat,
 }
 
 #[cfg(test)]
 mod tests {
     use clap::Parser;
 
-    use crate::cli::args::{Cli, Commands, OutputFormat};
+    use crate::cli::args::{Cli, Commands};
 
     #[test]
-    fn ping_accepts_output_flag() {
+    fn ping_parses_square_and_nickname() {
         let cli = Cli::parse_from([
             "agent-square",
             "ping",
@@ -39,12 +32,10 @@ mod tests {
             "💬AbCdEf1234",
             "--nickname",
             "my-nick",
-            "--output",
-            "json",
         ]);
         let Commands::Ping { opts } = cli.command else {
             panic!("expected Ping command");
         };
-        assert_eq!(opts.output, OutputFormat::Json);
+        assert_eq!(opts.nickname.as_str(), "my-nick");
     }
 }

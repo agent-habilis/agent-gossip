@@ -7,8 +7,6 @@ use clap::Parser;
 
 use agent_habilis_mesh::util::consts;
 
-use super::output::OutputFormat;
-
 /// Shared options for server commands.
 #[derive(Parser, Debug)]
 #[expect(
@@ -16,14 +14,6 @@ use super::output::OutputFormat;
     reason = "flat clap flag group; each bool is an independent CLI switch, not a state machine to model as an enum"
 )]
 pub(crate) struct SharedServerOpts {
-    /// Disable interactive message input from stdin
-    #[arg(long, default_value_t = false)]
-    pub no_interactive: bool,
-
-    /// Output format: human (default) or json (structured JSON lines)
-    #[arg(long, default_value = "human")]
-    pub output: OutputFormat,
-
     /// Suppress self-authored messages from stdout (for Monitor use)
     #[arg(long, default_value_t = false)]
     pub filter_self: bool,
@@ -148,13 +138,6 @@ pub(crate) struct SharedServerOpts {
 }
 
 impl SharedServerOpts {
-    /// Whether a hidden `--password` prompt must NOT block this session:
-    /// non-interactive or JSON-output runs are agent-driven, with no human
-    /// at a TTY to answer.
-    pub(crate) fn no_prompt(&self) -> bool {
-        self.no_interactive || matches!(self.output, OutputFormat::Json)
-    }
-
     /// The process tuning carried by these flags, for [`agent_habilis_mesh::util::tuning::init`].
     pub(crate) fn tuning(&self) -> agent_habilis_mesh::util::tuning::Tuning {
         agent_habilis_mesh::util::tuning::Tuning {

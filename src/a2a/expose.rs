@@ -40,7 +40,6 @@ pub(crate) struct ExposeParams<'a> {
     pub(crate) flags: LookupSet,
     pub(crate) advertise: DirectorySelection,
     pub(crate) loopback: bool,
-    pub(crate) json: bool,
     pub(crate) password: Option<Password>,
 }
 
@@ -60,7 +59,6 @@ pub(crate) async fn expose(params: ExposeParams<'_>) -> Result<()> {
         flags,
         advertise,
         loopback,
-        json,
         password,
     } = params;
     let origin = parse_origin(to)?;
@@ -80,18 +78,11 @@ pub(crate) async fn expose(params: ExposeParams<'_>) -> Result<()> {
                 ticket: ticket.encode(),
                 label: Some(format!("a2a {origin}")),
             };
-            if !json {
-                agent_habilis_mesh::util::output::status(
-                    "Advertising",
-                    &format!("in #{directory} directory"),
-                );
-            }
             Some(spawn_ticket_advertiser(directory, lookups, &ad)?)
         }
         None => None,
     };
     super::announce(
-        json,
         &format!("A2A {origin} → square"),
         &format!("agent-square a2a connect {}", ticket.encode()),
     );

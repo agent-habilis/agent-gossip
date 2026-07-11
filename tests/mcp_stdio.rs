@@ -1034,9 +1034,6 @@ fn discover_meshes_finds_an_advertised_mesh() {
             "mcpdisc",
             "--nickname",
             "adv",
-            "--no-interactive",
-            "--output",
-            "json",
         ])
         .args(flag_args(&DIR_FLAGS))
         .stdout(Stdio::from(adv_file.try_clone().unwrap()))

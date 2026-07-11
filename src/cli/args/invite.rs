@@ -6,8 +6,6 @@ use clap::Parser;
 
 use agent_habilis_mesh::protocol::{MeshId, Nickname};
 
-use super::output::OutputFormat;
-
 #[derive(Parser, Debug)]
 pub(crate) struct InviteOpts {
     /// The invite-only square to mint for (its 💬… id).
@@ -24,11 +22,6 @@ pub(crate) struct InviteOpts {
     /// invite. Defaults to 24h.
     #[arg(long)]
     pub ttl: Option<String>,
-
-    /// Output format: human (default, prints just the 🎟️… token) or json (the
-    /// raw `{ok,invite}` line).
-    #[arg(long, default_value = "human")]
-    pub output: OutputFormat,
 }
 
 #[cfg(test)]

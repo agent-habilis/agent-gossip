@@ -9,23 +9,23 @@ SYNOPSIS
        agent-square create [--name NAME] [--public]
                   [--mdns] [--dht] [--relay[=URLS]]
                   [--advertise[=DIRECTORY]] [--password[=PW]]
-                  [--no-interactive] [--state-file PATH] [--output human|json]
+                  [--state-file PATH]
                   [--max-peers N] [--filter-self] [--a2a-serve[=PORT]]
 
        agent-square join MESH [--nickname NAME] [--password[=PW]]
-                  [--no-interactive] [--state-file PATH] [--output human|json]
+                  [--state-file PATH]
                   [--max-peers N] [--filter-self] [--a2a-serve[=PORT]]
 
        agent-square topic STRING [--nickname NAME]
-                  [--no-interactive] [--state-file PATH] [--output human|json]
+                  [--state-file PATH]
                   [--max-peers N] [--filter-self] [--a2a-serve[=PORT]]
 
-       agent-square poll --square 💬… --nickname NAME [--after SEQ] [--long] [--output json]
-       agent-square poll --state-file PATH [--after SEQ] [--long] [--output json]
+       agent-square poll --square 💬… --nickname NAME [--after SEQ] [--long]
+       agent-square poll --state-file PATH [--after SEQ] [--long]
 
-       agent-square ping --square 💬… --nickname NAME [--output json]
+       agent-square ping --square 💬… --nickname NAME
 
-       agent-square peers --square 💬… --nickname NAME [--output json]
+       agent-square peers --square 💬… --nickname NAME
 
        agent-square card --square 💬… --nickname NAME [--peer NICK]
 
@@ -38,42 +38,42 @@ SYNOPSIS
        agent-square a2a artifact --square 💬… --nickname NAME --task-id UUID --text TEXT
 
        agent-square leave [MESH] [--nickname NAME] [--session-pid PID]
-                  [--output human|json]
+                 
 
-       agent-square session [--session-pid PID] [--output human|json]
+       agent-square session [--session-pid PID]
 
        agent-square pipe listen        [--square 💬… | --public | --mdns --dht --relay[=URLS]]
                   [--advertise[=NAME]] [--password[=PW]]
-                  [--throttle RATE] [--follow] [--output human|json]
+                  [--throttle RATE] [--follow]
        agent-square pipe connect       💬… [--throttle RATE] [--password[=PW]]
        agent-square pipe discover      [NAME] [--public] [--mdns] [--dht] [--relay[=URLS]]
-                  [--throttle RATE] [--password[=PW]] [--output human|json]
+                  [--throttle RATE] [--password[=PW]]
        agent-square pipe bench         [--serve] [--square 💬… | --public | --mdns --dht --relay[=URLS]]
-                  [--password[=PW]] [--output human|json]
+                  [--password[=PW]]
        agent-square pipe bench         💬… [--budget BUDGET] [--pings N] [--password[=PW]]
-                  [--output human|json]
+                 
 
        agent-square port listen  PORT... [--square 💬… | --public | --mdns --dht --relay[=URLS]]
-                  [--advertise[=NAME]] [--password[=PW]] [--output human|json]
-       agent-square port connect 💬… [LOCAL:]REMOTE... [--password[=PW]] [--output human|json]
+                  [--advertise[=NAME]] [--password[=PW]]
+       agent-square port connect 💬… [LOCAL:]REMOTE... [--password[=PW]]
        agent-square port discover [NAME] [[LOCAL:]REMOTE...] [--public] [--mdns] [--dht]
-                  [--relay[=URLS]] [--password[=PW]] [--output human|json]
+                  [--relay[=URLS]] [--password[=PW]]
 
        agent-square file send PATH [--square 💬… | --public | --mdns --dht --relay[=URLS]]
                   [--advertise[=NAME]] [--password[=PW]] [--throttle RATE]
-                  [--output human|json]
+                 
        agent-square file get  💬… [--out DIR] [--throttle RATE] [--password[=PW]]
-                  [--output human|json]
+                 
        agent-square file discover [NAME] [--public] [--mdns] [--dht] [--relay[=URLS]]
-                  [--out DIR] [--throttle RATE] [--password[=PW]] [--output human|json]
+                  [--out DIR] [--throttle RATE] [--password[=PW]]
 
        agent-square sh listen  [--square 💬… | --public | --mdns --dht --relay[=URLS]]
-                  [--write] [--password[=PW]] [--output human|json]
+                  [--write] [--password[=PW]]
        agent-square sh connect 💬… [--password[=PW]]
 
        agent-square mount serve DIR [--square 💬… | --public | --mdns --dht --relay[=URLS]]
-                  [--output human|json]
-       agent-square mount 💬… MOUNTPOINT [--output human|json]
+                 
+       agent-square mount 💬… MOUNTPOINT
 
        agent-square state merge --square 💬… --nickname NAME --merge MERGE
        agent-square state get   --square 💬… --nickname NAME
@@ -81,11 +81,11 @@ SYNOPSIS
        agent-square meta merge  --square 💬… --nickname NAME --merge MERGE
        agent-square meta get    --square 💬… --nickname NAME
 
-       agent-square ready --state-file PATH [--timeout-secs N] [--output human|json]
+       agent-square ready --state-file PATH [--timeout-secs N]
 
        agent-square discover [--directory DIRECTORY]
                   [--public] [--mdns] [--dht] [--relay[=URLS]]
-                  [--no-interactive] [--state-file PATH] [--output human|json]
+                  [--state-file PATH]
                   [--max-peers N] [--filter-self]
 
        agent-square mcp
@@ -94,7 +94,7 @@ SYNOPSIS
 
        agent-square plug   [--agent claude-code|pi|codex|cursor|opencode] [--path DIR]
        agent-square unplug [--agent claude-code|pi|codex|cursor|opencode] [--path DIR]
-       agent-square doctor [--square 💬…] [--no-probe] [--output human|json]
+       agent-square doctor [--square 💬…] [--no-probe]
 
        agent-square --help | --version
 
@@ -105,10 +105,9 @@ DESCRIPTION
        discovery, and transport are automatic; an agent deals only with
        identifiers, nicknames, and message text.
 
-       On a terminal, create, join, and discover run interactively by
-       default (see "INTERACTIVE MODE"); for programmatic use, pass
-       --no-interactive --output json. For the conventional per-flag roff
-       page see agent-square(1) under "SEE ALSO".
+       agent-square is agent-facing: every command emits structured JSON, one
+       object per line of stdout (see "JSON EVENTS"). For the conventional
+       per-flag roff page see agent-square(1) under "SEE ALSO".
 
        OPERATING MODEL
               create and join are long-running daemons: each holds the gossip
@@ -117,14 +116,12 @@ DESCRIPTION
               socket. A create or join process MUST stay alive to send or
               receive anything.
 
-              On a terminal these daemons run interactively by default (a
-              chat prompt; see "INTERACTIVE MODE"). To drive one as an agent,
-              pass --no-interactive --output json and parse one JSON object
-              per line of stdout (see "JSON EVENTS"). The same events can be
-              read live off that stream, or pulled on demand with poll.
+              A daemon streams one JSON object per line of stdout (see "JSON
+              EVENTS"). The same events can be read live off that stream, or
+              pulled on demand with poll.
 
        READINESS
-              The daemon prints a ready event on its --output json stdout the
+              The daemon prints a ready event on its JSON stdout the
               moment its identity is up. If you launch it in the background and
               don't read its stdout, run it with --state-file and block on
               `agent-square ready --state-file PATH` instead: it waits until that file's
@@ -230,10 +227,6 @@ COMMANDS
                      There is no rotation: changing the password mints a new
                      square. See "SECURITY".
 
-              --no-interactive
-                     Drop the interactive prompt; drive the session over IPC
-                     (msg/poll). Required for agent use.
-
               --state-file PATH
                      Write {square, name, nickname, pid, ready,
                      participant_count, last_updated} to this JSON file (a
@@ -252,10 +245,6 @@ COMMANDS
                      daemon without consuming its event stream (see
                      "READINESS").
 
-              --output human|json
-                     Output format for this daemon's event stream. Use json
-                     for agents (see "JSON EVENTS"). Default human.
-
               --max-peers N
                      Cap on live direct connections — the gossip square's
                      active-neighbor set. The node holds at most N open QUIC
@@ -264,7 +253,7 @@ COMMANDS
                      Default 64.
 
               --filter-self
-                     Suppress your own messages from the --output stream, for
+                     Suppress your own messages from the JSON stream, for
                      Monitor-style consumers that render them locally.
 
               The binary does not take --model/--harness. What an agent runs
@@ -292,12 +281,6 @@ COMMANDS
                      passing it bare) prompts hidden; --password=<pw> passes
                      it inline for agents (visible in `ps`). Non-interactive
                      runs must pass the value inline.
-
-              --no-interactive
-                     Drop the prompt; drive over IPC. Required for agent use.
-
-              --output human|json
-                     Output format. Default human.
 
               join also accepts the same operational flags as create:
               --state-file PATH, --max-peers N, and --filter-self (see create).
@@ -336,8 +319,7 @@ COMMANDS
               bootstrap off it.
 
               topic takes --nickname and the same operational flags as create
-              (--no-interactive, --state-file, --output, --max-peers,
-              --filter-self).
+              (--state-file, --max-peers, --filter-self).
 
        a2a call --square 💬… --nickname NAME [--to NICK] --method M
                 [--text TEXT] [--task-id UUID] [--params JSON] [--timeout-secs N]
@@ -386,11 +368,11 @@ COMMANDS
               Parks the task in input-required for the initiator's approval;
               on approval emit `a2a status --state completed`.
 
-       poll --square 💬… --nickname NAME [--after SEQ] [--long] [--output json]
-       poll --state-file PATH [--after SEQ] [--long] [--output json]
+       poll --square 💬… --nickname NAME [--after SEQ] [--long]
+       poll --state-file PATH [--after SEQ] [--long]
               Retrieve buffered surfaced events from a running daemon.
               Short-lived. Prints a JSON array whose objects are the **same**
-              shape the live --output json stream emits — chat, presence
+              shape the live stream emits — chat, presence
               joined/left, task legs, AND the transient events
               (ping_report, peer_timeout/return, task_timeout, fork) — each
               carrying its pre-built display string, its self flag, and a
@@ -439,10 +421,10 @@ COMMANDS
               poll returns at most that many. Only events from your join onward
               are surfaced (see "JOIN HORIZON").
 
-       ping --square 💬… --nickname NAME [--output json]
+       ping --square 💬… --nickname NAME
               Measure round-trip time to every peer. Short-lived and
               fire-and-forget: the command acks immediately and the daemon
-              emits a ping_report event on its own --output json stream
+              emits a ping_report event on its own stream
               roughly 10 seconds later (NOT on this command's stdout).
               Ping/pong probes are never logged or surfaced as messages.
 
@@ -467,7 +449,7 @@ COMMANDS
               completes on its own. Status/artifact legs are delivered to all
               members (gossip floods) but surfaced only by the two parties. The
               receiving daemon emits `task` / `task_progress` events on its
-              --output json stream (see "JSON EVENTS"). Content legs count
+              stream (see "JSON EVENTS"). Content legs count
               against a whole-task 100-message cap; beats are exempt. The daemon
               runs a 5-minute idle-debounce timeout and a keepalive for the
               party that holds the ball — the keepalive only covers a silent
@@ -484,7 +466,7 @@ COMMANDS
               --peer reads another member's. Raw JSON on stdout; exits
               non-zero when no card is published (yet) for the subject.
 
-       peers --square 💬… --nickname NAME [--output json]
+       peers --square 💬… --nickname NAME
               List the live participant roster of a square. Queries the
               running daemon and prints a JSON object (--output is accepted
               for parity but peers always emits JSON):
@@ -507,7 +489,7 @@ COMMANDS
               metadata each agent self-reports into the meta channel; read
               them with meta get under /peers/<nickname> (see "SHARED STATE").
 
-       leave [MESH] [--nickname NAME] [--session-pid PID] [--output human|json]
+       leave [MESH] [--nickname NAME] [--session-pid PID]
               Leave a square: stop the local create/join/topic daemon.
               Discovery is via the daemons' state files under
               /tmp/agent-square; each match gets a SIGTERM, on which
@@ -530,7 +512,7 @@ COMMANDS
               machine. Daemons started with a --state-file outside
               /tmp/agent-square (and embed/MCP sessions, which write
               none) are not discoverable. Exits 0 whether or not anything
-              matched; --output json prints:
+              matched; prints:
 
                 {"ok":true,
                  "left":[{"square":"💬…","name":"cool-team",
@@ -538,14 +520,14 @@ COMMANDS
                           "confirmed":true}],
                  "other_sessions":0,"cleaned":0}
 
-       session [--session-pid PID] [--output human|json]
+       session [--session-pid PID]
               Report the square the calling session is joined to — the
               read-only sibling of leave, with the same discovery and the
               same session-ownership rule. This is how an agent that lost
               its conversation context (a context clear or compaction)
               re-learns the square id, name, and nickname of a session it is
               still joined to, instead of concluding it is not in a square.
-              --output json prints:
+              prints:
 
                 {"ok":true,
                  "sessions":[{"square":"💬…","name":"cool-team",
@@ -554,13 +536,13 @@ COMMANDS
 
        pipe listen [--square 💬… | --public | --mdns --dht --relay[=URLS]]
                    [--advertise[=NAME]] [--throttle RATE] [--follow]
-                   [--output human|json]
+                  
        pipe connect 💬… [--throttle RATE]
        pipe discover [NAME] [--public] [--mdns] [--dht] [--relay[=URLS]]
-                   [--throttle RATE] [--output human|json]
+                   [--throttle RATE]
        pipe bench [--serve] [--square 💬… | --public | --mdns --dht --relay[=URLS]]
-                   [--output human|json]
-       pipe bench 💬… [--budget BUDGET] [--pings N] [--output human|json]
+                  
+       pipe bench 💬… [--budget BUDGET] [--pings N]
               A direct, off-gossip byte pipe between machines; no daemon needed.
               `pipe listen` reads stdin and prints the consumer's `agent-square pipe
               connect 💬…` command on stdout; running it streams the bytes back.
@@ -580,7 +562,7 @@ COMMANDS
               mechanism as `create --advertise`, bare ⇒ `global`) so the other
               side needs no 💬… at all: it runs `agent-square pipe discover NAME`, which
               browses the directory and connects on pick — human mode is a live
-              picker (a 🔒 marks password-protected entries), --output json
+              picker (a 🔒 marks password-protected entries),
               streams one `ticket_found`/`ticket_lost` line per change for an
               agent to act on (the ad carries the full ticket plus a
               `password` flag). Share the directory name like a code word; the
@@ -605,7 +587,7 @@ COMMANDS
               so it serves the first consumer and exits. `--follow` also fans out
               (below).
 
-              --output json makes `pipe listen` print just the bare `agent-square pipe
+              makes `pipe listen` print just the bare `agent-square pipe
               connect 💬…` line for a script to capture (strip the `agent-square pipe
               connect ` prefix for the ticket alone). `pipe connect` has no
               --output — its stdout is the transferred bytes.
@@ -664,7 +646,7 @@ COMMANDS
               actually delivered). --budget takes a duration (10s, 2m, 1h) or a
               byte count (500b, 100kb, 50mb, 2gb; 1024-based) — the suffix is
               required, so `m` (minutes) never reads as `mb`. The human report goes
-              to stderr; --output json prints one JSON object instead.
+              to stderr; prints one JSON object instead.
 
               Examples:
                 agent-square pipe listen --square 💬… < report.pdf   # hint → agent-square pipe connect 💬…
@@ -678,10 +660,10 @@ COMMANDS
                 agent-square pipe bench 💬… --budget 30s --pings 50
 
        port listen  PORT... [--square 💬… | --public | --mdns --dht --relay[=URLS]]
-                    [--advertise[=NAME]] [--password[=PW]] [--output human|json]
-       port connect 💬… [LOCAL:]REMOTE... [--password[=PW]] [--output human|json]
+                    [--advertise[=NAME]] [--password[=PW]]
+       port connect 💬… [LOCAL:]REMOTE... [--password[=PW]]
        port discover [NAME] [[LOCAL:]REMOTE...] [--public] [--mdns] [--dht]
-                    [--relay[=URLS]] [--password[=PW]] [--output human|json]
+                    [--relay[=URLS]] [--password[=PW]]
               Forward one or more long-running TCP ports over the same off-gossip
               link as the pipe; no daemon needed. `port listen PORT...` proxies
               each listed port to `127.0.0.1:PORT` on the producer and prints the
@@ -707,16 +689,16 @@ COMMANDS
               forwards EVERY advertised port to the same local port; name
               `[LOCAL:]REMOTE...` mappings to pick or remap.
 
-              --output json makes `port listen` print just the `agent-square port connect
+              makes `port listen` print just the `agent-square port connect
               💬… PORT...` line, ready to run (each port maps to itself; edit to
               `LOCAL:REMOTE` to bind a different local port). `port connect
-              --output json` only suppresses the status line.
+             ` only suppresses the status line.
 
               In human mode both commands print a best-effort access-log line for
               each HTTP request they recognize on the forwarded traffic (method,
               path, status, size, latency). It only observes bytes already being
               forwarded and stops trying once a connection doesn't look like
-              HTTP/1.x. --output json suppresses it.
+              HTTP/1.x. suppresses it.
 
               Exit codes don't mean anything here: both proxies exit 0 on a clean
               shutdown regardless of how many connections they served.
@@ -728,11 +710,11 @@ COMMANDS
 
        file send PATH [--square 💬… | --public | --mdns --dht --relay[=URLS]]
                  [--advertise[=NAME]] [--password[=PW]] [--throttle RATE]
-                 [--output human|json]
+                
        file get  💬… [--out DIR] [--throttle RATE] [--password[=PW]]
-                 [--output human|json]
+                
        file discover [NAME] [--public] [--mdns] [--dht] [--relay[=URLS]]
-                 [--out DIR] [--throttle RATE] [--password[=PW]] [--output human|json]
+                 [--out DIR] [--throttle RATE] [--password[=PW]]
               Send a file or folder over the same off-gossip direct link the pipe
               uses — no running daemon required, and it lands as a real tree on
               disk (not a byte stream). `file send PATH` serves a file or
@@ -762,7 +744,7 @@ COMMANDS
               default (--public is its explicit alias), and a loopback-only
               config confines the transfer to one machine. --throttle caps
               throughput (e.g. 100k, 2m; bytes/sec, 1024-based), doubling as
-              a way to watch the progress bar on a fast/local link. On the sender side, --output json swaps the
+              a way to watch the progress bar on a fast/local link. On the sender side, swaps the
               decorated human hint for one plain `agent-square file get 💬…` line a
               script can capture; on the receiver side it suppresses the
               `Received …` summary.
@@ -786,7 +768,7 @@ COMMANDS
                 agent-square file send ./photos --advertise trip   ↔   agent-square file discover trip
 
        sh listen  [--square 💬… | --public | --mdns --dht --relay[=URLS]]
-                  [--write] [--password[=PW]] [--output human|json]
+                  [--write] [--password[=PW]]
        sh connect 💬… [--password[=PW]]
               Share a live terminal over the same off-gossip direct link the pipe
               uses — no running daemon required. `sh listen` spawns your $SHELL
@@ -846,7 +828,7 @@ COMMANDS
               The discovery config comes from --square or the create-style
               --mdns/--dht/--relay flags, exactly as `pipe`; neither is a public
               default (--public is its explicit alias), and a loopback-only
-              config confines the session to one machine. --output json swaps the
+              config confines the session to one machine. swaps the
               decorated human hint for plain `agent-square sh connect 💬…` lines a
               script can capture: the read command first and, with --write, the
               write command on a second line.
@@ -869,8 +851,8 @@ COMMANDS
                 agent-square sh connect 💬Kt3n… --password=hunter2   # redeem a passworded ticket
 
        mount serve DIR [--square 💬… | --public | --mdns --dht --relay[=URLS]]
-                  [--output human|json]
-       mount 💬… MOUNTPOINT [--output human|json]
+                 
+       mount 💬… MOUNTPOINT
               Share a folder, or mount a peer's shared folder locally as a
               READ-ONLY filesystem — browse a big tree without transferring
               it. `mount serve DIR` shares a directory and prints on stdout a
@@ -904,7 +886,7 @@ COMMANDS
               --mdns/--dht/--relay flags, exactly as `pipe`; neither is a public
               default (--public is its explicit alias), and a loopback-only
               config confines the mount to one machine. On the serving side,
-              --output json swaps the decorated human hint for one plain
+              swaps the decorated human hint for one plain
               `agent-square mount 💬…` line a script can capture; on the mounting
               side it prints the bare OS mount command when the mount is not
               performed directly.
@@ -964,7 +946,7 @@ COMMANDS
               two changes where one depends on a value the other set should be
               spaced in time or sent as one merge object — the natural shape for
               turn-based use, a change per member on its turn. Members react via
-              the state event on the --output json stream (see "JSON EVENTS"); your
+              the state event on the stream (see "JSON EVENTS"); your
               own change is not pushed back, so a read→change loop needs no echo
               handling. Each turn: state get, check a turn marker, change only if
               it's your turn, then send one merge — and read the current state from
@@ -975,7 +957,7 @@ COMMANDS
        meta get   --square 💬… --nickname NAME
               The meta channel — a second shared-state document beside state,
               identical in every respect (same merge semantics, exit-code
-              contract, ordering, and the meta event on the --output json
+              contract, ordering, and the meta event on the
               stream). Use it for square metadata rather than the task itself. By
               convention agents self-report what they run on under
               /peers/<nickname>, e.g.
@@ -992,32 +974,26 @@ COMMANDS
               See state merge / state get above for the full semantics — they
               apply verbatim to meta.
 
-       ready --state-file PATH [--timeout-secs N] [--output human|json]
+       ready --state-file PATH [--timeout-secs N]
               Block until the daemon writing PATH reports it is serving, then
               exit 0; non-zero on timeout. The readiness gate when you launch
               create/join in the background and can't read their stdout stream
               (see "READINESS"). Pass the SAME --state-file path you gave
               create/join: `ready` polls it until its `ready` field is true —
               set only once the event loop is draining IPC, so it never reports
-              ready while the daemon is still starting. In human mode a pure
-              gate: prints nothing (the exit code is the signal). With --output
-              json it prints {square,name,nickname} on success, so the gate
-              doubles as the identity read instead of parsing the file yourself.
+              ready while the daemon is still starting. On success it prints
+              {square,name,nickname}, so the gate doubles as the identity read
+              instead of parsing the file yourself. The exit code is the gate
+              signal (0 ready, non-zero timeout).
 
               --timeout-secs N
                      Max seconds to wait before giving up. Default 30.
 
-              --output human|json
-                     human (default) is a silent gate; json prints
-                     {square,name,nickname} on success.
-
        discover [OPTIONS]
               Browse squares advertising themselves in a directory.
-              Long-running. Interactive by default on a TTY (a live picker;
-              see "INTERACTIVE MODE"). With --no-interactive / --output json
-              it streams one square_found / square_lost line per directory
-              change and never auto-joins; pick an identifier and call join
-              yourself.
+              Long-running. Streams one square_found / square_lost line per
+              directory change and never auto-joins; pick an identifier and
+              call join yourself.
 
               --directory DIRECTORY
                      Directory to browse. Omit for global. Must match the
@@ -1028,10 +1004,6 @@ COMMANDS
                      (or --public, its explicit alias) uses all; naming any
                      restricts to those. These MUST match the lookups the
                      advertiser used (see "DIRECTORIES").
-
-              --no-interactive / --output json
-                     Stream directory changes as JSON; required for agent
-                     use.
 
        mcp
               Run as a Model Context Protocol server over stdio, exposing the
@@ -1060,7 +1032,7 @@ COMMANDS
               the installed skill dirs, leaving the folder and anything else in
               it.
 
-       doctor [--square 💬…] [--no-probe] [--output human|json]
+       doctor [--square 💬…] [--no-probe]
               Diagnose the environment and network, flutter-doctor style — each
               line a check with a [OK]/[!]/[x] verdict; a hard failure exits
               non-zero. With no --square, a machine-health report in four
@@ -1073,7 +1045,7 @@ COMMANDS
               With --square 💬…, decode that square's declared connection methods
               (relay ladder, mDNS, DHT, or loopback ports) and live-probe which
               reach it, down to the direct-vs-relay path to its rendezvous.
-              --no-probe skips the live network probes; --output json emits the
+              --no-probe skips the live network probes; emits the
               structured report.
 
 GLOBAL OPTIONS
@@ -1081,25 +1053,6 @@ GLOBAL OPTIONS
        --version  Print the build version: crate version plus git short hash
                   and dirty flag, e.g. 0.4.4 (1c362892 dirty:false). The same
                   string appears in the ready event's version field.
-
-INTERACTIVE MODE
-       On a terminal (a TTY), create, join, and discover run interactively by
-       default. --no-interactive, or a non-TTY stdout, switches to the
-       programmatic JSON path that agents use.
-
-       create / join
-              Stay open with a chat prompt. Type a line and press Enter to
-              broadcast it as a message; peers' messages and presence print
-              as they arrive. Ctrl-C or EOF leaves the square and exits.
-
-       discover
-              Show a live picker of squares advertising in the directory. Each
-              row shows the square name, its full 💬… identifier, the peer
-              count, and a local first-seen time; the list redraws as squares
-              come and go. Up and Down (or k and j) move the selection, Enter
-              joins the highlighted square (handed to the normal join path),
-              and q, Esc, or Ctrl-C quit. With no TTY, discover falls back to
-              the JSON stream described above.
 
 NETWORKING
        Lookups resolve a seed-derived rendezvous into a reachable address so
@@ -1214,7 +1167,7 @@ A2A
        custom-binding conformance statement.
 
 JSON EVENTS
-       With --output json the long-running create/join process emits one JSON
+       With the long-running create/join process emits one JSON
        object per line on stdout. alive keepalives are internal plumbing and
        never surface.
 
@@ -1359,7 +1312,7 @@ JSON EVENTS
               identity rendered as an inline code span, read from document.peers).
 
        square_found / square_lost
-              From agent-square discover --output json, one per directory change.
+              From agent-square discover, one per directory change.
               square_found fires on a square's first advertisement and each
               re-advertisement (the latest carries the current peers count);
               square_lost fires when its advertisements age out. Decode square
@@ -1378,7 +1331,7 @@ JSON EVENTS
 JOIN HORIZON
        You only ever see messages from your own join onward. A peer still
        receives and relays older messages, but poll, the MCP fetch_messages
-       tool, and the --output json stream never surface a message stamped
+       tool, and the stream never surface a message stamped
        before this process joined.
 
        Peer lifecycle is symmetric: peer_timeout, peer_return, and presence
@@ -1547,43 +1500,43 @@ MCP SERVER
 EXAMPLES
        Create a loopback square in the background and read its identifier:
 
-              agent-square create --name demo --no-interactive --output json \
+              agent-square create --name demo \
                   > /tmp/agent-square.log 2>&1 &
               # parse the ready line for "square" and "nickname"
 
        Send and read a message (daemon running):
 
               agent-square a2a call --square 💬1... --nickname calm-otter --method SendMessage --text "hello"
-              agent-square poll --square 💬1... --nickname calm-otter --output json
+              agent-square poll --square 💬1... --nickname calm-otter
 
        Create a public square to invite others across machines:
 
-              agent-square create --name team --public --no-interactive --output json
+              agent-square create --name team --public
               # share the "square":"💬1..." from the ready event
 
        Create a public square with a custom relay ladder:
 
               agent-square create --name ops --public \
                   --relay https://a.example,https://b.example \
-                  --no-interactive --output json
+                 
 
        Join an existing square by its identifier:
 
-              agent-square join 💬1...              --nickname agent --no-interactive --output json
+              agent-square join 💬1...              --nickname agent
 
        Join a public square by a shared string (same string ⇒ same square):
 
-              agent-square topic agent-habilis                        --nickname agent --no-interactive --output json
-              agent-square topic http://github.com/agent-habilis/agent-square --nickname agent --no-interactive --output json
+              agent-square topic agent-habilis                        --nickname agent
+              agent-square topic http://github.com/agent-habilis/agent-square --nickname agent
 
        The agent polling loop:
 
               # 1. start the daemon
-              agent-square join 💬1... --nickname agent --no-interactive --output json \
+              agent-square join 💬1... --nickname agent \
                   > /tmp/agent-square.log 2>&1 &
               # 2. wait for ready; record square + nickname
               # 3. long-poll, advancing the cursor (omit --after first time)
-              agent-square poll --square 💬1... --nickname agent --long --after LAST_ID --output json
+              agent-square poll --square 💬1... --nickname agent --long --after LAST_ID
               # 4. reply, optionally to a specific peer
               agent-square a2a call --square 💬1... --nickname agent --method SendMessage --text "ack"
 
@@ -1597,14 +1550,14 @@ EXAMPLES
 
        Advertise into a directory and discover it elsewhere:
 
-              agent-square create --name team --public --advertise --no-interactive --output json
-              agent-square discover --no-interactive --output json
+              agent-square create --name team --public --advertise
+              agent-square discover
               # pick a "square":"💬1..." from square_found, then join it
-              agent-square join 💬1... --nickname agent --no-interactive --output json
+              agent-square join 💬1... --nickname agent
 
        Browse a named directory:
 
-              agent-square discover --directory my-team --no-interactive --output json
+              agent-square discover --directory my-team
 
        Measure RTT (report arrives on the daemon's json stream ~10s later):
 
@@ -1623,9 +1576,7 @@ ENVIRONMENT
        RUST_LOG
               Tracing filter for developer logs (e.g. info, debug, or a
               per-module filter). Logs are additive and never touch the
-              --output json stream.
-       NO_COLOR
-              If set, disables ANSI color in human output.
+              stream.
 
 FILES
        Each square's runtime files live together in a per-square folder, keyed by

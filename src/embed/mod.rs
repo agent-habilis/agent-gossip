@@ -293,7 +293,6 @@ async fn create_setup(
         kind,
         SetupParams {
             author,
-            interactive: false,
             max_peers,
             state_file: None,
             sink,
@@ -386,7 +385,6 @@ async fn resolved_setup(
         kind,
         SetupParams {
             author,
-            interactive: false,
             max_peers,
             state_file: None,
             sink,
@@ -1030,7 +1028,6 @@ impl MeshSession {
             },
             SetupParams {
                 author,
-                interactive: false,
                 max_peers: GOSSIP_ACTIVE_VIEW_CAPACITY,
                 state_file: None,
                 sink,

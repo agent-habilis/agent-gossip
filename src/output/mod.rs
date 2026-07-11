@@ -1,12 +1,8 @@
-use std::io::IsTerminal;
-use std::sync::LazyLock;
-
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::a2a::TaskId;
 use agent_habilis_mesh::protocol::mesh::MeshName;
 use agent_habilis_mesh::protocol::{MeshId, Message, MessageId, MessageKind, Nickname};
-use agent_habilis_mesh::util::consts::MESH_GLYPH;
 
 mod json;
 #[cfg(test)]
@@ -22,7 +18,6 @@ pub use json::{event_json, surfaced_event_json};
 /// Output mode — chosen per event loop at construction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum OutputMode {
-    Human,
     Json,
     /// Silent mode — suppresses all stdout and stderr user-facing
     /// output. Used by the MCP server, where stdout is reserved for
@@ -164,55 +159,6 @@ pub(crate) struct TaskMessageLeg<'a> {
     pub is_self: bool,
 }
 
-/// ANSI styling for the Human-mode `<nick>` / `#mesh` tokens.
-/// Hand-rolled (no color dependency); emission is gated on a TTY +
-/// `NO_COLOR` per stream (see [`stdout_color`] / [`stderr_color`]).
-pub(crate) mod style {
-    pub(crate) const RESET: &str = "\x1b[0m";
-    /// Bold green — the local member's own nickname.
-    pub(super) const SELF_NICK: &str = "\x1b[1;32m";
-    /// Bold cyan — a peer's nickname.
-    pub(super) const PEER_NICK: &str = "\x1b[1;36m";
-    /// Bold yellow — a mesh name.
-    pub(crate) const MESH: &str = "\x1b[1;33m";
-    /// Bold blue — the runnable hint (`agent-square join` on create, `agent-square pipe connect`
-    /// on the pipe producer).
-    pub(crate) const BLUE: &str = "\x1b[1;34m";
-    /// Bold — the highlighted row in the `discover` picker.
-    pub(crate) const BOLD: &str = "\x1b[1m";
-}
-
-/// Color is on when the stream is a terminal and `NO_COLOR` is unset.
-fn color_enabled(stream_is_terminal: bool) -> bool {
-    stream_is_terminal && std::env::var_os("NO_COLOR").is_none()
-}
-
-/// Whether stdout should carry ANSI color. Cached — neither the TTY
-/// status nor the env var changes at runtime, and piped/non-TTY output
-/// (tests, the `/mesh` skill) auto-disables.
-pub(crate) fn stdout_color() -> bool {
-    static ENABLED: LazyLock<bool> =
-        LazyLock::new(|| color_enabled(std::io::stdout().is_terminal()));
-    *ENABLED
-}
-
-/// Stderr counterpart to [`stdout_color`] (presence/info/timeout lines).
-fn stderr_color() -> bool {
-    static ENABLED: LazyLock<bool> =
-        LazyLock::new(|| color_enabled(std::io::stderr().is_terminal()));
-    *ENABLED
-}
-
-/// The ANSI `(prefix, suffix)` wrapping a `#mesh` token — empty when
-/// disabled, so callers interpolate inline with no allocation either way.
-fn mesh_ansi(enabled: bool) -> (&'static str, &'static str) {
-    if enabled {
-        (style::MESH, style::RESET)
-    } else {
-        ("", "")
-    }
-}
-
 /// Per-event-loop output destination. Replaces the former
 /// process-global `MODE`/`FILTER_SELF` statics so multiple in-process
 /// sessions (embed facade, tests) can run with independent output
@@ -221,8 +167,7 @@ fn mesh_ansi(enabled: bool) -> (&'static str, &'static str) {
 #[derive(Debug, Clone)]
 pub(crate) enum Output {
     /// Write to the process stdout/stderr in the given mode (CLI /
-    /// MCP-silent). `self_nick` is the local member's nickname, used to
-    /// paint your own `<nick>` distinctly from peers' in Human mode.
+    /// MCP-silent).
     ///
     /// `tap` is an optional fan-out: when set, every surfaced
     /// [`OutputEvent`] is *also* sent here, in addition to being rendered
@@ -236,7 +181,6 @@ pub(crate) enum Output {
     Stream {
         mode: OutputMode,
         filter_self: bool,
-        self_nick: Option<String>,
         tap: Option<UnboundedSender<OutputEvent>>,
     },
     /// Push structured events into an in-process channel (embed
@@ -253,11 +197,10 @@ pub(crate) enum Output {
 }
 
 impl Output {
-    pub(crate) fn new(mode: OutputMode, filter_self: bool, self_nick: Option<String>) -> Self {
+    pub(crate) fn new(mode: OutputMode, filter_self: bool) -> Self {
         Self::Stream {
             mode,
             filter_self,
-            self_nick,
             tap: None,
         }
     }
@@ -273,14 +216,10 @@ impl Output {
     pub(crate) fn with_tap(self, tap: UnboundedSender<OutputEvent>) -> Self {
         match self {
             Output::Stream {
-                mode,
-                filter_self,
-                self_nick,
-                tap: _,
+                mode, filter_self, ..
             } => Output::Stream {
                 mode,
                 filter_self,
-                self_nick,
                 tap: Some(tap),
             },
             Output::Capture {
@@ -298,106 +237,7 @@ impl Output {
         Self::Stream {
             mode: OutputMode::Silent,
             filter_self: false,
-            self_nick: None,
             tap: None,
-        }
-    }
-
-    /// The local member's nickname, when known (Human-mode self-color).
-    fn self_nick(&self) -> Option<&str> {
-        match self {
-            Output::Stream { self_nick, .. } => self_nick.as_deref(),
-            Output::Capture { .. } => None,
-        }
-    }
-
-    /// The ANSI `(prefix, suffix)` wrapping a `<name>` token —
-    /// [`style::SELF_NICK`] for the local member, else
-    /// [`style::PEER_NICK`]; empty when disabled. Callers interpolate
-    /// inline so a disabled line allocates nothing extra.
-    fn nick_ansi(&self, name: &str, enabled: bool) -> (&'static str, &'static str) {
-        if !enabled {
-            return ("", "");
-        }
-        let color = if self.self_nick() == Some(name) {
-            style::SELF_NICK
-        } else {
-            style::PEER_NICK
-        };
-        (color, style::RESET)
-    }
-
-    /// Colorize `<nick>` / `#mesh` tokens in a pre-composed `info`
-    /// string. Safe because nicknames/mesh names exclude `< > #` and
-    /// whitespace, so the markers are unambiguous delimiters and the
-    /// string never carries free-form message-body text.
-    fn highlight(&self, text: &str, enabled: bool) -> String {
-        if !enabled {
-            return text.to_owned();
-        }
-        let mut out = String::with_capacity(text.len());
-        let mut chars = text.chars().peekable();
-        while let Some(ch) = chars.next() {
-            match ch {
-                '<' => self.scan_nick_tag(&mut chars, &mut out),
-                '#' => Self::scan_mesh_tag(&mut chars, &mut out),
-                other => out.push(other),
-            }
-        }
-        out
-    }
-
-    /// Consume a `<nick` tag body (the `<` is already consumed) up to and
-    /// including its closing `>`, appending the colorized token to `out` —
-    /// or the literal, unclosed prefix when the string ends first.
-    fn scan_nick_tag(
-        &self,
-        chars: &mut std::iter::Peekable<std::str::Chars<'_>>,
-        out: &mut String,
-    ) {
-        let mut name = String::new();
-        let mut closed = false;
-        while let Some(&next) = chars.peek() {
-            chars.next();
-            if next == '>' {
-                closed = true;
-                break;
-            }
-            name.push(next);
-        }
-        if closed {
-            let (open, close) = self.nick_ansi(&name, true);
-            out.push_str(open);
-            out.push('<');
-            out.push_str(&name);
-            out.push('>');
-            out.push_str(close);
-        } else {
-            out.push('<');
-            out.push_str(&name);
-        }
-    }
-
-    /// Consume a `#mesh` tag body (the `#` is already consumed) up to the
-    /// next delimiter/whitespace, appending the colorized token to `out` —
-    /// or a bare `#` when no name follows.
-    fn scan_mesh_tag(chars: &mut std::iter::Peekable<std::str::Chars<'_>>, out: &mut String) {
-        let mut name = String::new();
-        while let Some(&next) = chars.peek() {
-            if next.is_whitespace() || matches!(next, '<' | '>' | '#') {
-                break;
-            }
-            name.push(next);
-            chars.next();
-        }
-        if name.is_empty() {
-            out.push('#');
-        } else {
-            let (open, close) = mesh_ansi(true);
-            out.push_str(open);
-            out.push('#');
-            out.push_str(&name);
-            out.push_str(close);
         }
     }
 
@@ -460,7 +300,6 @@ impl Output {
                 a2a_port,
             },
             |mode| {
-                // In human mode, `info("joined as <nick>")` covers this.
                 if mode == OutputMode::Json {
                     emit_json(&SimpleEvent::Ready {
                         version: crate::VERSION,
@@ -475,22 +314,12 @@ impl Output {
         );
     }
 
-    /// Surface the mesh identifier at startup (stderr). Human mode
-    /// prints the runnable join command (`agent-square join <id>`); JSON mode
-    /// prints the bare `💬…` id (the integration harness greps this);
-    /// Silent suppresses it.
+    /// Surface the mesh identifier at startup (stderr). JSON mode prints the
+    /// bare `💬…` id (the integration harness greps this); Silent suppresses it.
     pub(crate) fn mesh_id_line(&self, id: &MeshId) {
         self.dispatch(
             || OutputEvent::MeshId { id: id.clone() },
             |mode| match mode {
-                OutputMode::Human => {
-                    let (open, close) = if stderr_color() {
-                        (style::BLUE, style::RESET)
-                    } else {
-                        ("", "")
-                    };
-                    eprintln!("others can join with: {open}agent-square join {id}{close}");
-                }
                 OutputMode::Json => eprintln!("{id}"),
                 OutputMode::Silent => {}
             },
@@ -525,7 +354,6 @@ impl Output {
                 is_self,
             },
             |mode| match mode {
-                OutputMode::Human => self.print_message_human(msg),
                 OutputMode::Json => print_message_json(msg, is_self),
                 OutputMode::Silent => {}
             },
@@ -537,9 +365,10 @@ impl Output {
     /// branch on `event`. When `filter_self` is enabled, self-authored legs are
     /// suppressed.
     pub(crate) fn print_task(&self, msg: &Message, is_self: bool) {
-        let to = match &msg.kind {
+        // Only worker-pushed status/artifact frames surface as a `task` event.
+        match &msg.kind {
             MessageKind::App { tag, to, .. } => match (tag.as_str(), to) {
-                (crate::a2a::wire::STATUS | crate::a2a::wire::ARTIFACT, Some(to)) => to.clone(),
+                (crate::a2a::wire::STATUS | crate::a2a::wire::ARTIFACT, Some(_)) => {}
                 _ => return,
             },
             MessageKind::Presence { .. }
@@ -552,29 +381,16 @@ impl Output {
             | MessageKind::State
             | MessageKind::Meta
             | MessageKind::LinkState => return,
-        };
+        }
         if is_self && self.filters_self() {
             return;
         }
-        let kind = crate::a2a::gossip::task_event_kind(msg).unwrap_or("status-update");
-        let state = crate::a2a::gossip::frame_task_state(msg);
         self.dispatch(
             || OutputEvent::Task {
                 msg: Box::new(msg.clone()),
                 is_self,
             },
             |mode| match mode {
-                OutputMode::Human => {
-                    let (open, close) = self.nick_ansi(msg.author.as_str(), stdout_color());
-                    let (to_open, to_close) = self.nick_ansi(to.as_str(), stdout_color());
-                    let label =
-                        state.map_or_else(|| kind.to_owned(), |state| format!("{kind} {state}"));
-                    println!(
-                        "task {label} {open}<{}>{close} → {to_open}<{to}>{to_close}: {}",
-                        msg.author,
-                        crate::a2a::gossip::task_text(msg)
-                    );
-                }
                 OutputMode::Json => json::print_task_json(msg, is_self),
                 OutputMode::Silent => {}
             },
@@ -611,11 +427,6 @@ impl Output {
                 is_self,
             },
             |mode| match mode {
-                OutputMode::Human => {
-                    let label = state
-                        .map_or_else(|| "message".to_owned(), |state| format!("message {state}"));
-                    println!("task {label} <{author}> → <{peer}>: {text}");
-                }
                 OutputMode::Json => emit(&json::format_task_message_json(&TaskMessageLeg {
                     id: &id,
                     mesh: &mesh,
@@ -633,17 +444,14 @@ impl Output {
 
     /// A task crossed its idle-debounce timeout and was evicted by the
     /// daemon's per-task silence sweep (the task analogue of
-    /// [`peer_timeout`](Self::peer_timeout)). Human mode prints a stderr
-    /// note; JSON mode emits a `task_timeout` event for the widget.
+    /// [`peer_timeout`](Self::peer_timeout)). JSON mode emits a `task_timeout`
+    /// event for the widget.
     pub(crate) fn task_timeout(&self, task_id: &TaskId) {
         self.dispatch(
             || OutputEvent::TaskTimeout {
                 task_id: task_id.clone(),
             },
             |mode| match mode {
-                OutputMode::Human => {
-                    eprintln!("task {task_id} timed out");
-                }
                 OutputMode::Json => emit_json(&SimpleEvent::TaskTimeout {
                     task_id: task_id.as_str(),
                 }),
@@ -675,7 +483,6 @@ impl Output {
         match self {
             Output::Stream { mode, tap, .. } => {
                 match mode {
-                    OutputMode::Human => self.print_state_human(channel, event, is_self),
                     OutputMode::Json => {
                         emit(&json::format_state_json(channel, event, document, is_self));
                     }
@@ -687,7 +494,7 @@ impl Output {
             }
             Output::Capture { tx, tap, .. } => {
                 let evt = make();
-                // Poll/fetch history + human UI always see it.
+                // Poll/fetch history always sees it.
                 if let Some(tap) = tap {
                     let _ = tap.send(evt.clone());
                 }
@@ -696,25 +503,6 @@ impl Output {
                     let _ = tx.send(evt);
                 }
             }
-        }
-    }
-
-    fn print_state_human(
-        &self,
-        channel: agent_habilis_mesh::protocol::Channel,
-        event: &Message,
-        is_self: bool,
-    ) {
-        let what = json::state_change_summary_from_body(event.body.as_str());
-        let ch = channel.label();
-        if is_self {
-            eprintln!("{MESH_GLYPH}\u{FE0F} you changed {what} ({ch})");
-        } else {
-            let (open, close) = self.nick_ansi(event.author.as_str(), stderr_color());
-            eprintln!(
-                "{MESH_GLYPH}\u{FE0F} {open}<{}>{close} changed {what} ({ch})",
-                event.author
-            );
         }
     }
 
@@ -727,10 +515,6 @@ impl Output {
                 msg: Box::new(msg.clone()),
             },
             |mode| match mode {
-                OutputMode::Human => {
-                    let (open, close) = self.nick_ansi(msg.author.as_str(), stderr_color());
-                    eprintln!("{open}<{}>{close} has {subtype}", msg.author);
-                }
                 OutputMode::Json => emit(&format_presence_json(msg, *subtype)),
                 OutputMode::Silent => {}
             },
@@ -747,10 +531,6 @@ impl Output {
                 last_seen_secs_ago,
             },
             |mode| match mode {
-                OutputMode::Human => {
-                    let (open, close) = self.nick_ansi(nickname.as_str(), stderr_color());
-                    eprintln!("{open}<{nickname}>{close} went quiet");
-                }
                 OutputMode::Json => emit_json(&SimpleEvent::PeerTimeout {
                     nickname: nickname.as_str(),
                     last_seen_secs_ago,
@@ -763,8 +543,8 @@ impl Output {
 
     /// Equivocation / fork alert (Phase 2): an author's signing key produced
     /// two different messages at the same `seq` — cryptographic proof of a
-    /// fork. Surfaced once per offending key. Human mode prints a stderr
-    /// warning; JSON mode emits a `fork` event for agents.
+    /// fork. Surfaced once per offending key. JSON mode emits a `fork` event
+    /// for agents.
     pub(crate) fn fork(&self, nickname: &Nickname, pubkey: &str, seq: u64) {
         self.dispatch(
             || OutputEvent::Fork {
@@ -773,13 +553,6 @@ impl Output {
                 seq,
             },
             |mode| match mode {
-                OutputMode::Human => {
-                    let (open, close) = self.nick_ansi(nickname.as_str(), stderr_color());
-                    eprintln!(
-                        "⚠ fork: {open}<{nickname}>{close} signed conflicting messages at seq {seq} (key {})",
-                        &pubkey[..pubkey.len().min(16)]
-                    );
-                }
                 OutputMode::Json => emit_json(&SimpleEvent::Fork {
                     nickname: nickname.as_str(),
                     pubkey,
@@ -799,10 +572,6 @@ impl Output {
                 nickname: nickname.clone(),
             },
             |mode| match mode {
-                OutputMode::Human => {
-                    let (open, close) = self.nick_ansi(nickname.as_str(), stderr_color());
-                    eprintln!("{open}<{nickname}>{close} came back");
-                }
                 OutputMode::Json => emit_json(&SimpleEvent::PeerReturn {
                     nickname: nickname.as_str(),
                     display: peer_return_display(nickname.as_str()),
@@ -817,10 +586,6 @@ impl Output {
         self.dispatch(
             || OutputEvent::MsgPosted { id: id.clone() },
             |mode| match mode {
-                OutputMode::Human => {
-                    eprintln!("message posted");
-                    println!("{id}");
-                }
                 OutputMode::Json => emit_json(&SimpleEvent::MsgPosted { id: id.as_str() }),
                 OutputMode::Silent => {}
             },
@@ -834,7 +599,6 @@ impl Output {
                 message: msg.to_owned(),
             },
             |mode| match mode {
-                OutputMode::Human => eprintln!("{}", self.highlight(msg, stderr_color())),
                 OutputMode::Json => emit_json(&SimpleEvent::Info { message: msg }),
                 OutputMode::Silent => {}
             },
@@ -848,30 +612,10 @@ impl Output {
                 message: msg.to_owned(),
             },
             |mode| match mode {
-                OutputMode::Human => eprintln!("error: {msg}"),
                 OutputMode::Json => emit_json(&SimpleEvent::Error { message: msg }),
                 OutputMode::Silent => {}
             },
         );
-    }
-
-    /// Surface any displayable error (`anyhow::Error`, `BodyError`, …)
-    /// through the same sink as [`Output::error`] — the single funnel
-    /// for interactive (and future) error reporting, so the
-    /// `error:`-prefixed Human line and the structured `Error` event
-    /// stay in lockstep without each caller stringifying by hand.
-    pub(crate) fn report_error(&self, error: &impl std::fmt::Display) {
-        self.error(&error.to_string());
-    }
-
-    /// Human-mode render of a ping round: one colorized `<nick> Nms` line
-    /// per responder, then the `responded/known online` summary.
-    fn print_ping_report_human(&self, peers: &[PingPeer], known: usize) {
-        for peer in peers {
-            let (open, close) = self.nick_ansi(peer.nickname.as_str(), stderr_color());
-            eprintln!("{open}<{}>{close} {}ms", peer.nickname, peer.rtt_ms);
-        }
-        eprintln!("{}/{known} online", peers.len());
     }
 
     /// Emit the result of an `agent-square ping` round: per-peer RTT, plus how
@@ -892,7 +636,6 @@ impl Output {
             }
             Output::Stream { mode, tap, .. } => {
                 match mode {
-                    OutputMode::Human => self.print_ping_report_human(&peers, known),
                     OutputMode::Json => emit_json(&SimpleEvent::PingReport {
                         responded: peers.len(),
                         display: ping_report_display(&peers, known),
@@ -909,41 +652,11 @@ impl Output {
             }
         }
     }
-
-    /// Render a broadcast chat message in Human mode: `<author>: text`. The
-    /// author `<nick>` token is colored (self vs peer); the **text** is printed
-    /// raw — it may legitimately contain `<`, `>`, `#`, so it must never be run
-    /// through the colorizer.
-    fn print_message_human(&self, msg: &Message) {
-        let enabled = stdout_color();
-        let (open, close) = self.nick_ansi(msg.author.as_str(), enabled);
-        // Chat carries an A2A payload; show its text projection, not the
-        // JSON. The fallback (raw body) can only fire on crafted input the
-        // receive path already dropped — a display path never panics.
-        let text = serde_json::from_str::<crate::a2a::Message>(msg.body.as_str()).map_or_else(
-            |_| msg.body.as_str().to_owned(),
-            |payload| crate::a2a::gossip::display_text(&payload),
-        );
-        println!("{open}<{}>{close}: {text}", msg.author);
-    }
-
-    /// Clear the last line typed by the user (move up + erase). Human
-    /// mode only; a no-op for JSON/Silent/Capture (terminal control
-    /// has no structured form).
-    pub(crate) fn clear_input_line(&self) {
-        if let Output::Stream {
-            mode: OutputMode::Human,
-            ..
-        } = self
-        {
-            eprint!("\x1b[1A\x1b[2K");
-        }
-    }
 }
 
 /// The app renders the engine's generic
 /// [`NodeEvent`](agent_habilis_mesh::gossip::event::NodeEvent)s by mapping each onto the
-/// existing `Output` method, so stdout / `--output json` / tap forms stay
+/// existing `Output` method, so the stdout JSON and tap forms stay
 /// byte-identical. This seam lets the engine emit surfacings without naming the
 /// concrete `Output`.
 impl agent_habilis_mesh::gossip::event::NodeSink for Output {

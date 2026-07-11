@@ -109,13 +109,6 @@ pub trait NodeDriver: NodeApp {
     /// Defaults to a no-op — an app with no parked waiters has none to close.
     fn close_poll_waiters(&mut self) {}
 
-    /// Broadcast one line of interactive stdin (CLI chat).
-    ///
-    /// Defaults to a no-op — an app that isn't line-oriented ignores stdin.
-    async fn handle_stdin(&mut self, line: &str, state: &mut EventLoopState, ctx: &HandlerCtx<'_>) {
-        let _ = (line, state, ctx);
-    }
-
     /// Dispatch one typed in-process session request. Returns `true` when it
     /// broadcast (so the loop refreshes the heartbeat-suppression clock).
     ///

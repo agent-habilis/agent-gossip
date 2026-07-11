@@ -1,13 +1,11 @@
 //! `ready` command args: block until a backgrounded `create`/`join`
 //! daemon reports — via its `--state-file` `ready` flag — that it is
-//! serving, then exit. A gate (exit code only) for the CLI-polling
-//! fallback: launch the daemon backgrounded, `agent-square ready` on the same
-//! `--state-file`, then `poll`. With `--output json` the gate also prints
-//! `{square,name,nickname}`, so the caller need not parse the file itself.
+//! serving, then exit. A gate for the CLI-polling fallback: launch the
+//! daemon backgrounded, `agent-square ready` on the same `--state-file`,
+//! then `poll`. On success the gate prints `{square,name,nickname}`, so the
+//! caller need not parse the file itself.
 
 use clap::Parser;
-
-use super::output::OutputFormat;
 
 #[derive(Parser, Debug)]
 pub(crate) struct ReadyOpts {
@@ -20,10 +18,4 @@ pub(crate) struct ReadyOpts {
     /// Max seconds to wait for the daemon to start serving before giving up.
     #[arg(long, default_value_t = agent_habilis_mesh::util::tuning::READY_MAX_SECS)]
     pub timeout_secs: u64,
-
-    /// Output format. `human` (default) is a silent gate (exit code only);
-    /// `json` prints `{square,name,nickname}` on success, so the gate doubles
-    /// as the identity read.
-    #[arg(long, default_value = "human")]
-    pub output: OutputFormat,
 }

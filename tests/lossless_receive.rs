@@ -39,20 +39,13 @@ impl Drop for Daemon {
     }
 }
 
-/// Spawn `create` with the given `--output` mode, stdout+stderr to a log, and
-/// wait for the `ready` line. Returns the daemon, its log, mesh, and nickname.
-fn spawn_create(name: &str, output: &str) -> (Daemon, String, String) {
+/// Spawn `create` with stdout+stderr to a log, and wait for the `ready` line.
+/// Returns the daemon, its log, mesh, and nickname.
+fn spawn_create(name: &str) -> (Daemon, String, String) {
     let log = tmp_log(&format!("lossless-{name}"));
     let file = fs::File::create(&log).unwrap();
     let child = test_cmd()
-        .args([
-            "create",
-            "--name",
-            name,
-            "--no-interactive",
-            "--output",
-            output,
-        ])
+        .args(["create", "--name", name])
         .stdout(Stdio::from(file.try_clone().unwrap()))
         .stderr(Stdio::from(file))
         .spawn()
@@ -84,14 +77,7 @@ fn spawn_create_piped(name: &str) -> (Daemon, String, String) {
     use std::io::{BufRead as _, BufReader};
 
     let mut child = test_cmd()
-        .args([
-            "create",
-            "--name",
-            name,
-            "--no-interactive",
-            "--output",
-            "json",
-        ])
+        .args(["create", "--name", name])
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
@@ -175,7 +161,7 @@ fn ready_event_implies_the_ipc_socket_accepts() {
 /// authoritative read is complete.
 #[test]
 fn poll_returns_a_long_body_byte_for_byte() {
-    let (_daemon, mesh, nick) = spawn_create("longbody", "json");
+    let (_daemon, mesh, nick) = spawn_create("longbody");
     let body = long_body();
     cli_msg_checked(&mesh, &nick, &body);
 

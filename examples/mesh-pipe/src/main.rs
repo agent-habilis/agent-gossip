@@ -378,7 +378,6 @@ async fn spawn_node(select: Select, app: PipeApp, config: SpawnConfig) -> Result
         kind,
         SetupParams {
             author,
-            interactive: false,
             max_peers,
             state_file: None,
             sink: std::sync::Arc::new(SilentSink),
