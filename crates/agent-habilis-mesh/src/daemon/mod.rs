@@ -20,6 +20,7 @@ pub mod app;
 mod bounded_id_set;
 pub mod config;
 pub mod ctx;
+pub mod node;
 // In-memory accounting stores owned by `EventLoopState`. `pub(crate)` so
 // the gossip anti-entropy layer (and its tests) can name `MessageLog` /
 // `DigestWindow`; still crate-internal.
@@ -41,4 +42,5 @@ pub(crate) mod event_loop;
 
 pub use config::{CoHostPolicy, DriverMode, EventLoopConfig, ReadyAnnounce};
 pub use event_loop::run;
+pub use node::Node;
 pub use params::{CreateParams, JoinParams, Resolved, TopicParams, derive_topic_mesh};

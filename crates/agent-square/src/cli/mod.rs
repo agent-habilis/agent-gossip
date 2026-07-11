@@ -2,13 +2,13 @@
 //! lives in [`args`], the `discover` JSON stream in [`discover`], and the
 //! per-subcommand handlers + [`dispatch`] here. `lib.rs::run_cli` parses
 //! argv and calls `dispatch`; each handler is the thin glue between the
-//! parsed args and the daemon / IPC / embed layers it drives.
+//! parsed args and the daemon / IPC / api layers it drives.
 
 use anyhow::Result;
 use serde::Deserialize;
 
 use crate::a2a::ipc::IpcCommand;
-use crate::embed::spawn_advertiser;
+use crate::api::spawn_advertiser;
 use crate::output::{Output, OutputMode};
 use agent_habilis_mesh::daemon::run as run_event_loop;
 use agent_habilis_mesh::daemon::setup::{SetupKind, SetupParams, setup_mesh};
@@ -150,7 +150,7 @@ async fn run_session(resolved: Resolved, shared: SharedServerOpts) -> Result<()>
     };
     let out = Output::new(OutputMode::Json, shared.filter_self);
     // Nag once at startup if an installed integration has fallen behind this
-    // binary. CLI-only: the embed/MCP paths pass `None` so in-process tests
+    // binary. CLI-only: the in-process paths pass `None` so in-process tests
     // stay hermetic. `agent-square status` is the on-demand counterpart.
     let drift = agent::home_dir()
         .ok()

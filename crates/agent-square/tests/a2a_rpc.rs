@@ -8,7 +8,7 @@ mod common;
 
 use std::time::Duration;
 
-use agent_square::embed::A2aCallParams;
+use agent_square::api::A2aCallParams;
 use common::{InProcNode, MSG_TIMEOUT};
 use serde_json::json;
 

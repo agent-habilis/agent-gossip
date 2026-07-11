@@ -116,8 +116,8 @@ pub struct Listing {
     /// Local instant of the most recent ad; drives expiry.
     pub last_seen: Instant,
     /// Unix seconds when this mesh was *first* seen in the directory
-    /// (preserved across re-ads). Display-only — the `agent-square discover` picker
-    /// renders it as an ISO-8601 timestamp.
+    /// (preserved across re-ads). Carried on the `square_found` event so a
+    /// consumer can order or age the listing.
     pub first_seen_unix: i64,
 }
 
@@ -144,8 +144,8 @@ const MAX_LISTINGS: usize = 256;
 /// The live directory: a set of [`Listing`]s keyed by mesh id, fed by
 /// directory messages and aged out by [`Listings::expire`]. Pure +
 /// deterministic (the caller supplies `now`), so it unit-tests without
-/// a clock or a network. Shared by the CLI `discover` picker and the
-/// embedding directory watcher.
+/// a clock or a network. Shared by the CLI `discover` stream and the
+/// in-process directory watcher.
 #[derive(Debug, Default)]
 pub struct Listings {
     entries: HashMap<MeshId, Listing>,
@@ -163,8 +163,8 @@ impl Listings {
     /// visible field (the peer count) changed, and `None` for an
     /// unchanged re-ad or an unparseable body. Suppressing the no-op
     /// `Updated` matters because every advertiser re-ads on a fixed
-    /// interval — surfacing each would repaint the picker / spam the
-    /// JSON stream every tick with identical data.
+    /// interval — surfacing each would spam the JSON stream every tick
+    /// with identical data.
     pub fn note(&mut self, body: &str, now: Instant) -> Option<ListingChange> {
         let ad = Ad::parse(body)?;
         // `ad.id` is a `MeshId` (shallow charset check only); the

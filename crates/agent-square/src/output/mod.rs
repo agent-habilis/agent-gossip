@@ -1,4 +1,4 @@
-use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::mpsc::{self, UnboundedSender};
 
 use crate::a2a::TaskId;
 use agent_habilis_mesh::protocol::mesh::MeshName;
@@ -8,7 +8,7 @@ mod json;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use json::PingPeer;
+pub use json::PingPeer;
 pub(crate) use json::is_visible;
 use json::{
     SimpleEvent, emit, emit_json, format_presence_json, peer_return_display, peer_timeout_display,
@@ -28,7 +28,7 @@ pub(crate) enum OutputMode {
 }
 
 /// Owned, structured form of every line the daemon would print.
-/// In-process consumers ([`crate::embed::MeshSession::events`],
+/// In-process consumers ([`crate::api::MeshSession::events`],
 /// tests) receive these over a channel instead of scraping stdout;
 /// the `Stream` sink renders the *same* data through `events.rs`, so
 /// the wire format stays byte-identical.
@@ -162,7 +162,7 @@ pub(crate) struct TaskMessageLeg<'a> {
 
 /// Per-event-loop output destination. Replaces the former
 /// process-global `MODE`/`FILTER_SELF` statics so multiple in-process
-/// sessions (embed facade, tests) can run with independent output
+/// sessions (library api, tests) can run with independent output
 /// instead of racing a first-write-wins `OnceLock`. Threaded by
 /// `&Output` (not `Copy` — `Capture` holds a channel sender).
 #[derive(Debug, Clone)]
@@ -184,11 +184,11 @@ pub(crate) enum Output {
         filter_self: bool,
         tap: Option<UnboundedSender<OutputEvent>>,
     },
-    /// Push structured events into an in-process channel (embed
+    /// Push structured events into an in-process channel (the api
     /// facade / tests). Mode-agnostic: every event is captured.
     ///
     /// `tap` mirrors each event into the daemon's `surfaced_events` ring,
-    /// exactly as the `Stream` tap does — so the embed facade's `fetch`
+    /// exactly as the `Stream` tap does — so the api's `fetch`
     /// (pull) sees the same events its `events()` subscription (push) does.
     Capture {
         tx: UnboundedSender<OutputEvent>,
@@ -210,7 +210,7 @@ impl Output {
     /// [`OutputEvent`] is then *also* sent to `tap` (the daemon's
     /// `surfaced_events` mirror) in addition to being rendered/captured.
     /// Applies to BOTH the `Stream` sink (CLI daemon) and the `Capture` sink
-    /// (embed/MCP — so its `fetch` sees the same events its `events()`
+    /// (in-process — so its `fetch` sees the same events its `events()`
     /// subscription does); replaces any existing tap (there is only ever one
     /// attach site). Lets the event loop wrap the sink it was handed without
     /// `EventLoopConfig` carrying a receiver.
@@ -242,8 +242,7 @@ impl Output {
         }
     }
 
-    /// Capture every event into `tx` (embed facade / in-process
-    /// tests).
+    /// Capture every event into `tx` (the library API / in-process tests).
     pub(crate) fn capture(tx: UnboundedSender<OutputEvent>) -> Self {
         Self::Capture {
             tx,
@@ -469,8 +468,8 @@ impl Output {
 
     /// Surface a shared-state change: the human `💬 … changed shared state`
     /// line, the structured `state` event for the agent API (poll / `--output
-    /// json` / embed `events()`), and the surfaced-ring mirror. F5: a *self*
-    /// change goes to poll/UI but is **never** delivered to the embed `events()`
+    /// json` / api `events()`), and the surfaced-ring mirror. F5: a *self*
+    /// change goes to poll/UI but is **never** delivered to the api `events()`
     /// reaction channel, so an agent is never woken by its own patch (alternation
     /// stays loop-safe without a per-consumer guard). On the CLI/Monitor path the
     /// self-skip is the Monitor's job.
@@ -660,6 +659,14 @@ impl Output {
             }
         }
     }
+}
+
+/// A capturing sink paired with the receiver that drains it — the stream behind
+/// [`MeshSession::events`](crate::api::MeshSession::events). Named apart from
+/// [`Output::capture`], which builds only the sink half.
+pub(crate) fn capture_events() -> (Output, mpsc::UnboundedReceiver<OutputEvent>) {
+    let (events_tx, events_rx) = mpsc::unbounded_channel();
+    (Output::capture(events_tx), events_rx)
 }
 
 /// The app renders the engine's generic

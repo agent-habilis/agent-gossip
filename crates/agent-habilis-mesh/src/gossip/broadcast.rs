@@ -110,7 +110,7 @@ pub struct StateMergeParams<'a> {
 }
 
 /// The single shared-state write helper, shared by the IPC `state_merge` command
-/// and the embed `StateMerge` request. Translates the RFC 7386 merge into one
+/// and the in-process `StateMerge` request. Translates the RFC 7386 merge into one
 /// automerge change, gossips it inside a signed frame, and retains it locally so
 /// anti-entropy can serve it (gossip never echoes to self).
 ///

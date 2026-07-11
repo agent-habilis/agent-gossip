@@ -1,14 +1,14 @@
 //! The MCP server's mesh handle — a thin wrapper over the in-process
-//! [`crate::embed::MeshSession`] that adds the implicit `fetch` cursor. The rmcp
+//! [`crate::api::MeshSession`] that adds the implicit `fetch` cursor. The rmcp
 //! server, tool handlers, and arg/result types live in [`super`]; only the
-//! session plumbing lives here, reused from `embed` rather than duplicated.
+//! session plumbing lives here, reused from `api` rather than duplicated.
 
 use std::sync::Mutex;
 
 use anyhow::Result;
 
 use crate::a2a::TaskId;
-use crate::embed::{
+use crate::api::{
     A2aCallParams, CreateConfig, CreateError, InProcessSession, JoinConfig, JoinError,
     TaskArtifactParams, TopicConfig,
 };
@@ -26,7 +26,7 @@ pub(super) struct Session {
 }
 
 impl Session {
-    /// Start a new mesh — poll-only, silent — from an embed [`CreateConfig`].
+    /// Start a new mesh — poll-only, silent — from an api [`CreateConfig`].
     ///
     /// # Errors
     /// Propagates [`CreateError`] so the tool layer can classify
@@ -239,7 +239,7 @@ mod tests {
     use serde_json::json;
 
     use super::{MeshId, MeshName, Message, MessageBody, MessageId, Nickname, Session};
-    use crate::embed::{CreateConfig, JoinConfig};
+    use crate::api::{CreateConfig, JoinConfig};
     use agent_habilis_mesh::protocol::{MessageKind, PresenceSubtype};
     use agent_habilis_mesh::resolver::JoinTarget;
 

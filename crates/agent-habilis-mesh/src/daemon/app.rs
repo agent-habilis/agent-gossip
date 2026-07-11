@@ -15,7 +15,7 @@ use crate::protocol::mesh::MeshName;
 /// the app the loop state plus the per-arm [`HandlerCtx`].
 #[async_trait::async_trait]
 pub trait NodeDriver: NodeApp {
-    /// The typed in-process request an embed/MCP session pushes (the shared
+    /// The typed in-process request an in-process session pushes (the shared
     /// alternative to the CLI's IPC-over-socket path). Opaque to the engine.
     type Session: Send;
     /// One request from the localhost A2A JSON-RPC binding's HTTP task

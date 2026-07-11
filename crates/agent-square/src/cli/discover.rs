@@ -3,12 +3,12 @@
 //! Streams `square_found`/`square_lost` JSON lines for an agent to act on
 //! (the agent picks and joins by id itself). The pure directory primitives
 //! live in [`agent_habilis_mesh::directory`]; the live consumer in
-//! [`crate::embed::Directory`]; this file is just the CLI command + mesh
+//! [`crate::api::Directory`]; this file is just the CLI command + mesh
 //! rendering.
 
 use anyhow::Result;
 
-use crate::embed::{Directory, DirectoryEvent};
+use crate::api::{Directory, DirectoryEvent};
 
 use super::args::DiscoverOpts;
 use super::signal::{interrupted, sigterm_stream};

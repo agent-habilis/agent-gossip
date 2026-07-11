@@ -27,9 +27,9 @@ independent second one:
 - **The generic outbound primitive.** `listen` emits frames through
   `agent_habilis_mesh::gossip::send_app(state, ctx, tag, to, corr, body)` —
   the engine's payload-agnostic build → sign → route helper.
-- **The generic embedding facade.** It runs the event loop in-process via
-  `agent_habilis_mesh::embed::Node<PipeApp>` (the app-agnostic analogue of
-  `agent-square`'s `embed::MeshSession`).
+- **The generic in-process node.** It runs the event loop in-process via
+  `agent_habilis_mesh::daemon::Node<PipeApp>` — the app-agnostic handle that
+  `agent-square`'s `api::MeshSession` now wraps rather than duplicates.
 
 It depends on **only** the engine crate (plus `tokio` / `anyhow` / `clap` /
 `base64`) — never on `agent-square` or its a2a layer.

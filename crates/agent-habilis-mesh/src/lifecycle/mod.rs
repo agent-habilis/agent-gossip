@@ -44,7 +44,7 @@ pub(crate) fn log_leaving(name: &str) {
 
 /// What [`observe`] computed for one received message: whether it is
 /// past our join horizon (surfaceable) and how it changed the roster.
-/// Returned to the gossip router, which needs both for the embed-push
+/// Returned to the gossip router, which needs both for the inbound-push
 /// gate and the presence/msg dispatch.
 pub(crate) struct Observed {
     pub surfaceable: bool,
@@ -76,7 +76,7 @@ pub(crate) fn observe(
     // Join horizon: the node still relays/logs everything (anti-entropy
     // keeps the mesh's set uniform), but a message stamped before we
     // joined is never *surfaced* to the operator/agent. Computed here
-    // (not just before the embed push) because the arrival-surfacing
+    // (not just before the inbound push) because the arrival-surfacing
     // decisions below need it too.
     let surfaceable = message.timestamp >= state.joined_at;
 

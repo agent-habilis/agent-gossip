@@ -2,7 +2,7 @@ use crate::daemon::ctx::HandlerCtx;
 use crate::daemon::state::EventLoopState;
 use crate::protocol::{Message, Nickname};
 
-/// Per-frame classification the engine needs to decide retention, embed
+/// Per-frame classification the engine needs to decide retention, push
 /// surfacing, and fork/DAG indexing without knowing the app's tag taxonomy.
 /// Only meaningful for `MessageKind::App` frames — the engine consults it
 /// solely when [`crate::protocol::MessageKind::app_tag`] is `Some`.

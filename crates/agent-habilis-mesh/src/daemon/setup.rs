@@ -166,7 +166,7 @@ pub(crate) fn register_rendezvous(endpoint: &Endpoint, params: &RendezvousParams
 
 /// Build the endpoint, subscribe to the topic, and produce a ready
 /// `EventLoopConfig`. Shared by the `create` / `join` CLI paths and
-/// the embed + MCP sessions.
+/// the in-process sessions.
 ///
 /// Output ordering differs by design: `Create` prints the mesh ID to
 /// stderr, then `info`, then `ready`; `Join` emits `ready` then `info`.
@@ -206,7 +206,7 @@ pub struct SetupParams<'a> {
     pub sink: std::sync::Arc<dyn NodeSink>,
     /// Which transports directed messages may use (per-session). Defaults to
     /// [`crate::transport::TransportPolicy::DEFAULTS`] (all enabled) on the
-    /// embed/MCP paths; the CLI derives it from `--no-unicast`/`--no-*`.
+    /// in-process paths; the CLI derives it from `--no-unicast`/`--no-*`.
     pub transport: crate::transport::TransportPolicy,
     /// `--multihop`: register the multi-hop custom transport on the participant
     /// endpoint (a second underlay endpoint is stood up for hop-by-hop
@@ -214,12 +214,12 @@ pub struct SetupParams<'a> {
     pub multihop: bool,
     /// Skill-drift warning folded into the `ready` event. Computed by the CLI
     /// (the real `agent-square create`/`join` path) from the on-disk install;
-    /// `None` on the embed/library and MCP paths, which keeps the in-process
+    /// `None` on the in-process paths, which keeps the in-process
     /// tests hermetic (no dependence on the dev machine's install state).
     pub drift: Option<&'a str>,
     /// `--a2a-serve`: bind the localhost JSON-RPC binding on this port
     /// (`0` = OS-assigned) — bound here, before `ready` fires, so the event
-    /// carries the real port. `None` (embed/MCP and the flag's default)
+    /// carries the real port. `None` (in-process and the flag's default)
     /// serves nothing.
     pub a2a_serve: Option<u16>,
 }
@@ -391,10 +391,10 @@ pub async fn setup_mesh(kind: SetupKind, params: SetupParams<'_>) -> Result<Even
         transport,
         multihop: multihop_handle,
         unicast_rx,
-        // Set by the advertise path (cli::create / embed::create) before
+        // Set by the advertise path (cli::create / api::create) before
         // `run`; absent for every non-advertising session.
         live_count: None,
-        // Default to the CLI driver; the MCP / embed sessions
+        // Default to the CLI driver; the in-process sessions
         // overwrite `cfg.driver` before handing it to `daemon::run`.
         driver: DriverMode::Cli,
         ready,

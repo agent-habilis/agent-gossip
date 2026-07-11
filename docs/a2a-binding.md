@@ -99,7 +99,7 @@ socket (a held streaming socket is still deferred).
   peer author global state, or broadcast, **under the peer's identity** on
   the caller's behalf (identity laundering).
 - **Agent surface.** `agent-square a2a call --to <peer> --method <m> --params <json>`,
-  the embed `MeshSession::a2a_call`, and the MCP `a2a_call` tool. Members
+  the library `api::MeshSession::a2a_call`, and the MCP `a2a_call` tool. Members
   advertise the capability via the declared `mesh-a2a-rpc` extension in
   their card.
 

@@ -1330,7 +1330,7 @@ pub(crate) struct SessionRequestParams<'a> {
     pub(crate) app: &'a mut A2aApp,
 }
 
-/// Handle one typed in-process [`SessionRequest`] (embed / MCP). `Send`
+/// Handle one typed in-process [`SessionRequest`] (in-process). `Send`
 /// broadcasts via the shared helper and echoes the canonical [`Message`]
 /// back on the oneshot; `Poll` returns the join-horizon-filtered buffer.
 /// Returns `true` if anything was broadcast so the caller can refresh

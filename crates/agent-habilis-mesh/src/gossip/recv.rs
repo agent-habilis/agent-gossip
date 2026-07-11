@@ -265,7 +265,7 @@ pub(crate) async fn ingest(
         flush_pending(state, ctx, "inbound traffic resumed").await;
     }
     // Duplicate suppression: a true repeat delivery must not
-    // re-heartbeat, re-run membership, re-embed-forward, re-log, or re-print.
+    // re-heartbeat, re-run membership, re-push, re-log, or re-print.
     // Keyed on the author-bound dedup key (`SHA-256(pubkey ‖ id)`), so a peer
     // signing its own message under a **victim's** id gets a different key and
     // cannot suppress the victim's genuine message. Re-broadcasts of
@@ -309,21 +309,21 @@ pub(crate) async fn ingest(
 
     // Directed frames are sealed to their addressee. A **relay** forwards and
     // retains the opaque frame but never validates or surfaces its content (it
-    // can't read it, and `maybe_push_embed`/dispatch below are already gated to
+    // can't read it, and `maybe_push_inbound`/dispatch below are already gated to
     // the addressee). The **addressee** decrypts the body in place, then the
     // recovered plaintext passes the A2A boundary gate exactly as a broadcast
     // does. A frame sealed to us that fails to open (tampered / wrong key) is
     // dropped.
     // Classify the (now-decrypted) App payload **once** here — inside the gate,
     // where the boundary check already parses it — and thread the result to the
-    // embed and retain steps so neither re-parses the body. `None` for an infra
+    // push and retain steps so neither re-parses the body. `None` for an infra
     // frame (no app payload).
     let (sealed_body, app_class) = match gate_and_decrypt(&mut message, state, ctx, &*app) {
         Gated::Pass { sealed, class } => (sealed, class),
         Gated::Drop => return,
     };
 
-    maybe_push_embed(ctx, &message, surfaceable, app_class.as_ref());
+    maybe_push_inbound(ctx, &message, surfaceable, app_class.as_ref());
 
     match &message.kind {
         MessageKind::PeerInfo => {
@@ -486,7 +486,7 @@ struct InboundFrame<'a> {
 /// One shard of a split body: retain it for anti-entropy (so a missing shard
 /// heals like any message) and, when its group completes, gate the
 /// reassembled logical message through the A2A boundary and surface it once —
-/// embed-pushed and dispatched exactly like an ordinary inbound message.
+/// pushed and dispatched exactly like an ordinary inbound message.
 async fn handle_shard(
     frame: InboundFrame<'_>,
     state: &mut EventLoopState,
@@ -542,7 +542,7 @@ async fn handle_shard(
         {
             return;
         }
-        // Classify the reassembled body once; thread it to the embed step.
+        // Classify the reassembled body once; thread it to the push step.
         let logical_class = logical.kind.app_tag().map(|_| app.classify(&logical));
         if logical_class.as_ref().is_some_and(|cls| !cls.valid) {
             tracing::warn!(
@@ -551,7 +551,7 @@ async fn handle_shard(
             );
             return;
         }
-        maybe_push_embed(ctx, &logical, surfaceable, logical_class.as_ref());
+        maybe_push_inbound(ctx, &logical, surfaceable, logical_class.as_ref());
         // Dispatch the reassembled logical frame exactly like a single-frame one:
         // a directed RPC request/response (both shard now) reaches its handler,
         // and content surfaces. The shards were already retained above, so the
@@ -755,7 +755,7 @@ fn is_directed_content(kind: &MessageKind) -> bool {
 /// our decrypted view; `None` otherwise) plus the frame's [`AppClass`] (`class`:
 /// `Some` for an App frame, classified once here on the decrypted body; `None`
 /// for an infra frame with no app payload). Threading the class out means the
-/// embed + retain steps never re-parse the payload.
+/// push + retain steps never re-parse the payload.
 enum Gated {
     Drop,
     Pass {
@@ -933,23 +933,23 @@ fn addressed_to_us(message: &Message, us: &Nickname) -> bool {
     }
 }
 
-/// Hand a surviving inbound message to the embed facade before kind
+/// Hand a surviving inbound message to the in-process driver before kind
 /// routing, so the consumer sees `msg` / `presence` / `peer_info` /
 /// `task` alike. Non-blocking by construction (bounded broadcast); a send error
-/// or full ring is intentionally dropped so a slow embedder never stalls
-/// the gossip loop. The `receiver_count` gate skips the per-message clone
-/// while no consumer is subscribed (always, until the embedder calls
-/// `messages()`; forever for CLI/MCP where the field is `None`).
-/// `surfaceable` keeps pre-join backlog off the embed channel too; plumbing
+/// or full ring is intentionally dropped so a slow consumer never stalls
+/// the gossip loop. The `receiver_count` gate skips the per-message clone while
+/// nobody has subscribed yet; a consumer that never wants the fan-out passes no
+/// sender at all, so the field is `None` and even that gate is skipped.
+/// `surfaceable` keeps pre-join backlog off the inbound push channel too; plumbing
 /// kinds (digest/ping/pong) are excluded. `class` is the caller's once-computed
 /// classification (`None` for an infra frame).
-fn maybe_push_embed(
+fn maybe_push_inbound(
     ctx: &HandlerCtx<'_>,
     message: &Message,
     surfaceable: bool,
     class: Option<&AppClass>,
 ) {
-    // Short-circuit the cheap structural guards first: no live embed subscriber
+    // Short-circuit the cheap structural guards first: no live inbound subscriber
     // (always so for CLI/MCP, where the field is `None`), a pre-join or
     // third-party frame, or an infra kind.
     let Some(tx) = ctx.external_msg_tx else {
@@ -971,7 +971,7 @@ fn maybe_push_embed(
     {
         return;
     }
-    // An App frame reaches an embed consumer only when it is loggable (not RPC
+    // An App frame reaches an in-process consumer only when it is loggable (not RPC
     // plumbing) and not a liveness beat — the app's per-tag policy, threaded in
     // from the caller's single classification. An infra frame (`class == None`,
     // `app_tag` also `None`) is always pushable past the structural guards above.

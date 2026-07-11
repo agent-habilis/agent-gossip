@@ -5,7 +5,7 @@ use crate::a2a::TaskId;
 use agent_habilis_mesh::daemon::state::RosterSnapshot;
 use agent_habilis_mesh::protocol::{Message, MessageBody, Nickname};
 
-/// A typed in-process request from an embed/MCP session to the event
+/// A typed in-process request from an in-process session to the event
 /// loop — the shared alternative to the CLI's `IpcCommand`-over-socket
 /// (which must serialize). `Send` broadcasts a message and echoes back the
 /// canonical [`Message`]; `Poll` reads the buffered history after a cursor.

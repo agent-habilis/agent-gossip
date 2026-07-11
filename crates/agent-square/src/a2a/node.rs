@@ -328,9 +328,9 @@ fn classify(message: &Message) -> AppClass {
     // tag mandates. `a2a_msg` is broadcast-only (`to: None`); status/artifact and
     // RPC req/resp are directed-only (`to: Some`). Enforcing the addressing here
     // is what stops a forged broadcast status/artifact (`to: None`) — which would
-    // otherwise pass, then retain + embed-push on every peer — and a directed
+    // otherwise pass, then retain + inbound-push on every peer — and a directed
     // `a2a_msg` from crossing the gate. A tag outside the a2a taxonomy is invalid:
-    // a signed frame with an arbitrary tag must not cross to embed consumers, so
+    // a signed frame with an arbitrary tag must not cross to api consumers, so
     // drop it whole. `None` is a non-App frame the engine gates itself.
     let directed = matches!(message.kind, MessageKind::App { to: Some(_), .. });
     let valid = match tag {
@@ -941,7 +941,7 @@ mod classify_tests {
     }
 
     // ① A forged broadcast status (`to: None`) — even with a well-formed body —
-    // must fail the boundary gate, so it is dropped before it can retain/embed
+    // must fail the boundary gate, so it is dropped before it can retain/push
     // on every peer. (`a2a_artifact` shares the directed-only rule.)
     #[test]
     fn broadcast_status_is_invalid() {

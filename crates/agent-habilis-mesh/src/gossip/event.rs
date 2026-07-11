@@ -12,7 +12,7 @@ pub struct PingRtt {
 
 /// A generic surfacing the engine emits — the chat-agnostic subset of the app's
 /// `OutputEvent`. The app's [`NodeSink`] impl maps each variant onto the
-/// existing `Output` method, so the rendered stdout / `--output json` / embed
+/// existing `Output` method, so the rendered stdout / `--output json` / library API
 /// forms stay byte-identical.
 #[derive(Debug)]
 pub enum NodeEvent {

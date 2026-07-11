@@ -120,13 +120,13 @@ fn directory_advertise_then_discover() {
 }
 
 /// A running `discover` must exit on a plain **SIGTERM** (`kill <pid>`),
-/// not only on SIGINT. The embed directory session registers its own
+/// not only on SIGINT. The api directory session registers its own
 /// SIGTERM handler (suppressing the OS default-terminate), so `discover`'s
 /// own loop has to break on SIGTERM too — otherwise `kill` hangs it.
 /// Regression for that hang.
 #[test]
 fn discover_stops_on_sigterm() {
-    // Advertiser so the discoverer fully comes up (and thus has the embed
+    // Advertiser so the discoverer fully comes up (and thus has the api
     // session — and its SIGTERM handler — running) before we signal it.
     let adv_log = tmp_log("term-adv");
     let adv_file = File::create(&adv_log).unwrap();
