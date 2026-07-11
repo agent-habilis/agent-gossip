@@ -1,5 +1,3 @@
-# square-discover workflow
-
 ## Arguments
 
 The optional first argument is the directory to browse. If omitted, use the
@@ -7,7 +5,7 @@ default `global` directory and omit `--directory`.
 
 ## Browse
 
-Use the selected adapter to run:
+Use the selected adapter (see **Adapters** below) to run:
 
 ```bash
 agent-square discover [--directory DIR] --no-interactive --output json

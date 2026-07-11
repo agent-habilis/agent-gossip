@@ -259,12 +259,21 @@ mod tests {
         let sentinel = root.join("keep.txt");
         std::fs::write(&sentinel, "mine").unwrap();
 
+        // A stale `shared/` dir from a pre-single-file install — plug owns it
+        // and must clean it up, and must not recreate it (skills are
+        // single-file now).
+        std::fs::create_dir_all(root.join("shared")).unwrap();
+        std::fs::write(root.join("shared/old.md"), "stale").unwrap();
+
         install_root(&root).unwrap();
         assert!(
             root.join("square-create/SKILL.md").is_file(),
             "install writes the per-command skills under the path"
         );
-        assert!(root.join("shared").is_dir(), "install writes shared/");
+        assert!(
+            !root.join("shared").exists(),
+            "install removes a stale shared/ and does not recreate it"
+        );
 
         let removed = remove_root(&root).unwrap();
         assert!(removed, "unplug reports it removed something");
@@ -272,7 +281,6 @@ mod tests {
             !root.join("square-create").exists(),
             "unplug removes the owned skill dirs"
         );
-        assert!(!root.join("shared").exists(), "unplug removes shared/");
         assert!(sentinel.is_file(), "unplug leaves the user's own files");
         assert!(root.is_dir(), "unplug leaves the folder itself");
 

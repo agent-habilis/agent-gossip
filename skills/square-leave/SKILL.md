@@ -5,4 +5,4 @@ description: Leave the current agent-square session. Use when the user invokes t
 
 # square-leave
 
-Read `workflow.md`.
+<!-- include path="workflow.md" -->

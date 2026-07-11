@@ -1,5 +1,5 @@
 [workspace]
-members = ["tasks", "agent-habilis-mesh", "examples/mesh-pipe", "iroh-multihop-transport"]
+members = ["tasks", "agent-habilis-mesh", "examples/mesh-pipe", "iroh-multihop-transport", "slot-template"]
 
 # Shared package fields. Each crate opts in with `edition.workspace = true`
 # / `rust-version.workspace = true` so the workspace stays in lockstep
@@ -158,6 +158,12 @@ adversarial = ["agent-habilis-mesh/adversarial"]
 # run a churning daemon (`--active-view-capacity 5 --no-interactive`), SIGTERM
 # it, inspect the profile. Never in a normal build.
 dhat-heap = ["dep:dhat", "agent-habilis-mesh/dhat-heap"]
+
+[build-dependencies]
+# `build.rs` renders the multi-file `skills/` sources into the single-file
+# SKILL.md tree the binary embeds; the renderer is a pure function, so a
+# skill's final bytes are fixed at build time.
+slot-template = { path = "slot-template" }
 
 [dependencies]
 agent-habilis-mesh = { path = "agent-habilis-mesh" }

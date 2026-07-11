@@ -1,8 +1,15 @@
-//! Stage the integration artifacts the `agent-square setup` installer embeds.
+//! Render the multi-file `skills/` sources into the single-file SKILL.md tree
+//! the binary embeds (`src/cli/agent.rs` `include_dir!($OUT_DIR/skills)`), and
+//! emit a fingerprint of the *generated* output so editing a source or the
+//! renderer itself forces a rebuild (`include_dir!` is otherwise untracked on
+//! stable, and fingerprinting the sources would miss renderer-only changes).
 //!
-//! The installer embeds the portable `skills/` tree and emits an embed
-//! fingerprint so editing any embedded artifact forces a rebuild (`include_dir!`
-//! is otherwise untracked on stable).
+//! One `SKILL.md` per skill is the runtime contract: an agent invoking a skill
+//! gets the whole procedure in the file it was already handed — zero extra
+//! read round-trips. The sources stay multi-file for reuse; each SKILL.md
+//! template declares its own sources with `<!-- include path="..." -->`
+//! directives that `slot-template` expands at build time, so adding a skill
+//! needs no change here.
 //!
 //! The git version stamp (`VERGEN_GIT_*`, feeding `util::version::VERSION`)
 //! lives in the engine crate's build script (`agent-habilis-mesh/build.rs`),
@@ -10,9 +17,9 @@
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-/// Names never staged/embedded — shared verbatim with `src/cli/setup.rs`'s
+/// Names never staged/embedded — shared verbatim with `src/cli/agent.rs`'s
 /// write-out filter via one `include!`d fragment, so staging and write-out can
 /// never disagree (the binary never carries a file it would discard on install).
 const SKIP: &[&str] = include!(concat!(
@@ -20,32 +27,71 @@ const SKIP: &[&str] = include!(concat!(
     "/src/cli/embed_skip.rs"
 ));
 
-/// The repo dirs `src/cli/setup.rs` embeds, relative to the manifest.
-const EMBED_DIRS: &[&str] = &["skills"];
-
 fn main() {
-    emit_embed_fingerprint();
+    let out_dir = PathBuf::from(std::env::var("OUT_DIR").expect("cargo sets OUT_DIR"));
+    let generated = out_dir.join("skills");
+    render_skills(Path::new("skills"), &generated);
+    emit_embed_fingerprint(&generated);
 }
 
-/// Hash the (skip-filtered) contents of every embedded dir and publish it as
-/// `AGENT_SQUARE_EMBED_FINGERPRINT`. `setup.rs` reads it via `env!`, so a changed
-/// fingerprint recompiles that module and re-expands the embeds; the
-/// `rerun-if-changed` lines make this script recompute when a source changes.
-fn emit_embed_fingerprint() {
-    let mut hasher = DefaultHasher::new();
-    for dir in EMBED_DIRS {
-        println!("cargo:rerun-if-changed={dir}");
-        hash_dir(Path::new(dir), &mut hasher);
+/// Expand every `skills/square-*/SKILL.md` template into `dest`, one
+/// self-contained `SKILL.md` per skill. `shared/` is never emitted.
+fn render_skills(src: &Path, dest: &Path) {
+    if dest.exists() {
+        std::fs::remove_dir_all(dest)
+            .unwrap_or_else(|error| panic!("clear {}: {error}", dest.display()));
     }
+
+    let mut skills: Vec<PathBuf> = std::fs::read_dir(src)
+        .unwrap_or_else(|error| panic!("read {}: {error}", src.display()))
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.is_dir()
+                && path
+                    .file_name()
+                    .is_some_and(|name| name.to_string_lossy().starts_with("square-"))
+        })
+        .collect();
+    skills.sort();
+
+    let mut loader = |path: &Path| std::fs::read_to_string(path).map_err(|error| error.to_string());
+    for skill_dir in skills {
+        let skill = skill_dir
+            .file_name()
+            .expect("skill dir has a name")
+            .to_string_lossy()
+            .into_owned();
+        let rendered = slot_template::expand(&skill_dir.join("SKILL.md"), &[], &mut loader)
+            .unwrap_or_else(|error| panic!("skills/{skill}/SKILL.md: {error}"));
+        let out = dest.join(&skill);
+        std::fs::create_dir_all(&out)
+            .unwrap_or_else(|error| panic!("mkdir {}: {error}", out.display()));
+        std::fs::write(out.join("SKILL.md"), rendered)
+            .unwrap_or_else(|error| panic!("write {}/SKILL.md: {error}", out.display()));
+    }
+}
+
+/// Hash the generated tree and publish it as `AGENT_SQUARE_EMBED_FINGERPRINT`.
+/// `agent.rs` reads it via `env!`, so a changed fingerprint recompiles that
+/// module and re-expands the `include_dir!` embed. Hashing the *output* (not
+/// the `skills/` sources) also catches renderer changes in this script and
+/// the `slot-template` crate; `rerun-if-changed=skills` makes the script
+/// re-run when a source changes.
+fn emit_embed_fingerprint(generated: &Path) {
+    println!("cargo:rerun-if-changed=skills");
+    let mut hasher = DefaultHasher::new();
+    hash_dir(generated, generated, &mut hasher);
     println!(
         "cargo:rustc-env=AGENT_SQUARE_EMBED_FINGERPRINT={:016x}",
         hasher.finish()
     );
 }
 
-/// Feed `dir`'s skip-filtered tree (paths + file bytes) into `hasher`, in a
-/// deterministic order so the fingerprint is stable across builds.
-fn hash_dir(dir: &Path, hasher: &mut DefaultHasher) {
+/// Feed `dir`'s skip-filtered tree (root-relative paths + file bytes) into
+/// `hasher`, in a deterministic order so the fingerprint is stable across
+/// builds and machines (`OUT_DIR` itself never taints the hash).
+fn hash_dir(root: &Path, dir: &Path, hasher: &mut DefaultHasher) {
     let Ok(read) = std::fs::read_dir(dir) else {
         return;
     };
@@ -56,9 +102,12 @@ fn hash_dir(dir: &Path, hasher: &mut DefaultHasher) {
             continue;
         }
         let path = entry.path();
-        path.to_string_lossy().hash(hasher);
+        path.strip_prefix(root)
+            .expect("entry lives under the hashed root")
+            .to_string_lossy()
+            .hash(hasher);
         if path.is_dir() {
-            hash_dir(&path, hasher);
+            hash_dir(root, &path, hasher);
         } else if let Ok(bytes) = std::fs::read(&path) {
             bytes.hash(hasher);
         }

@@ -1,9 +1,8 @@
-# square-meta workflow
-
 ## Guard
 
-If `$SQUARE`, `$NAME`, or `$NICKNAME` is missing, read `../shared/reattach.md`
-and try to recover the session identity. If that does not yield a square, print:
+If `$SQUARE`, `$NAME`, or `$NICKNAME` is missing, follow the **Reattach**
+section and try to recover the session identity. If that does not yield a
+square, print:
 
 ```text
 💬 Not in a square. Use ${SKILL_PREFIX}square-create or ${SKILL_PREFIX}square-join first.

@@ -1,9 +1,7 @@
-# square-task workflow
-
 ## Guard
 
-If `$SQUARE` or `$NICKNAME` is missing, read `../shared/reattach.md` and try to
-recover the session identity. If that does not yield a square, print:
+If `$SQUARE` or `$NICKNAME` is missing, follow the **Reattach** section and try
+to recover the session identity. If that does not yield a square, print:
 
 ```text
 💬 Not in a square. Use ${SKILL_PREFIX}square-create or ${SKILL_PREFIX}square-join first.
@@ -52,6 +50,6 @@ todo mechanism when available.
 
 ## Drive
 
-Read `../shared/events.md` and follow the task event rules. Print worker
+Follow the task event rules in the **Event handling** section. Print worker
 artifact results; answer `input-required` questions when the answer is clear;
 approve results that satisfy the brief.

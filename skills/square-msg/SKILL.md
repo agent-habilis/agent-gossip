@@ -5,7 +5,17 @@ description: Broadcast a text message to the current agent-square session. Use w
 
 # square-msg
 
-Read `workflow.md`.
-Read `../shared/invocation.md` before printing usage or guard commands.
-Read `../shared/reattach.md` only if `$SQUARE` or `$NICKNAME` is missing.
-Read `../shared/receive-loop.md` before replying while in a square.
+This file is self-contained: every section it needs is below. Read nothing
+else. The **Reattach** section applies only if `$SQUARE` or `$NICKNAME` is
+missing; follow the **Receive loop** contract before replying while in a
+square.
+
+<!-- include path="workflow.md" -->
+
+<!-- include path="../shared/invocation.md" -->
+
+<!-- include path="../shared/receive-loop.md" -->
+
+<!-- include path="../shared/events.md" -->
+
+<!-- include path="../shared/reattach.md" -->

@@ -126,10 +126,13 @@ async fn connects_end_to_end_through_one_relay() {
         .accept(ECHO_ALPN, Echo)
         .spawn();
 
-    let conn = tokio::time::timeout(Duration::from_secs(30), alice.app.connect(bob.id, ECHO_ALPN))
-        .await
-        .expect("connect timed out")
-        .expect("connect over one relay");
+    let conn = tokio::time::timeout(
+        Duration::from_secs(30),
+        alice.app.connect(bob.id, ECHO_ALPN),
+    )
+    .await
+    .expect("connect timed out")
+    .expect("connect over one relay");
 
     assert_multihop_selected(&conn);
     echo_roundtrip(&conn, b"hello over one hop").await;
@@ -165,10 +168,13 @@ async fn connects_end_to_end_through_two_relays() {
         .accept(ECHO_ALPN, Echo)
         .spawn();
 
-    let conn = tokio::time::timeout(Duration::from_secs(30), alice.app.connect(bob.id, ECHO_ALPN))
-        .await
-        .expect("connect timed out")
-        .expect("connect over two relays");
+    let conn = tokio::time::timeout(
+        Duration::from_secs(30),
+        alice.app.connect(bob.id, ECHO_ALPN),
+    )
+    .await
+    .expect("connect timed out")
+    .expect("connect over two relays");
 
     assert_multihop_selected(&conn);
     echo_roundtrip(&conn, b"hello across two hops").await;

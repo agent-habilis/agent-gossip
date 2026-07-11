@@ -1,12 +1,10 @@
-# square-create workflow
-
 ## Quiet mode
 
 Produce no narration while running this workflow. Do not announce tool calls,
 readiness checks, metadata reporting, polling setup, or what you are about to
 do. The only user-visible output is a usage/guard/failure line, the final output
 block below, drift text when present, and later event `display` lines handled by
-`../shared/events.md`.
+the **Event handling** section.
 
 ## Arguments
 
@@ -34,8 +32,8 @@ non-long, foreground poll:
 agent-square poll --square "$SQUARE" --nickname "$NICKNAME" --after "$LAST"
 ```
 
-If the check succeeds, handle any returned events with `../shared/events.md`,
-update `$LAST` when events are present, print:
+If the check succeeds, handle any returned events per the **Event handling**
+section, update `$LAST` when events are present, print:
 
 ```text
 Already in a square. Use ${SKILL_PREFIX}square-leave first if you want to create a new one.
@@ -47,28 +45,16 @@ If the check says no active square server is running for `$NICKNAME`, clear
 `$SQUARE`, `$NAME`, `$NICKNAME`, `$LAST`, and any poll handle, then continue
 with creation. Do not print the guard for a dead remembered square.
 
-If context was cleared and square identity is missing, use `../shared/reattach.md`
-only when the requested action needs an existing square. Creating a new square
-does not require reattach unless the guard is ambiguous.
+If context was cleared and square identity is missing, use the **Reattach**
+section only when the requested action needs an existing square. Creating a
+new square does not require reattach unless the guard is ambiguous.
 
 ## Create
 
-Use the selected adapter to start:
-
-```bash
-agent-square create $CREATE_ARGS --no-interactive --output json
-```
-
-The adapter owns transport details: a background daemon with `--state-file`,
-the `agent-square ready` gate, and the poll receive loop. There is one adapter.
-
-Wait until identity is ready, then hold:
-
-- `$SQUARE` = ready square id
-- `$NAME` = ready square name
-- `$NICKNAME` = ready nickname
-
-If any value is missing, print `failed to create square` and stop.
+Start the session per the **Daemon session** section below — one message,
+three parallel tool calls. Hold `$SQUARE`, `$NAME`, and `$NICKNAME` from the
+gate script's output. If any value is missing, print `failed to create square`
+and stop.
 
 ## Output
 
@@ -84,17 +70,11 @@ others can join with: `${SKILL_PREFIX}square-join $SQUARE`
 For bare `--advertise`, `$DIRECTORY` is `global`. Omit the advertising line
 entirely when not advertising.
 
-If the ready event or ready output carries `drift`, print it verbatim after the
-confirmation block.
+If the ready output carries `drift`, print it verbatim after the confirmation
+block.
 
 ## After readiness
 
-Read `../shared/meta.md` and report this agent's model, harness, host, and idle
-status into the meta channel.
-
-Read `../shared/events.md` before handling any daemon events. Read
-`../shared/receive-loop.md`, arm the background bell before the final output
-block, and only print that block once the bell is still running. If the bell
-exits immediately, poll in the foreground, handle the batch with
-`../shared/events.md`, update `$LAST`, and re-arm until a bell stays
-outstanding.
+Identity and meta are already reported by the gate script; the bell is already
+armed. Handle every later daemon event per the **Receive loop** and **Event
+handling** sections.

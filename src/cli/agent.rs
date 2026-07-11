@@ -5,10 +5,12 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use include_dir::{include_dir, Dir};
+use include_dir::{Dir, include_dir};
 
-/// The portable Agent Skills payload installed into each supported harness.
-pub(crate) static SKILLS: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/skills");
+/// The portable Agent Skills payload installed into each supported harness:
+/// the single-file-per-skill tree `build.rs` renders from the multi-file
+/// `skills/` sources into `$OUT_DIR/skills`.
+pub(crate) static SKILLS: Dir<'_> = include_dir!("$OUT_DIR/skills");
 
 const OWNED_SKILL_DIRS: &[&str] = &[
     "square-create",
@@ -24,6 +26,9 @@ const OWNED_SKILL_DIRS: &[&str] = &[
     "square-status",
     "square-task",
     "square-topic",
+    // No longer embedded (skills are single-file since the build-time
+    // renderer), but pre-single-file installs left a `shared/` dir on disk;
+    // keeping it owned lets plug/unplug clean those up.
     "shared",
 ];
 
@@ -266,54 +271,85 @@ mod tests {
     use include_dir::Dir;
     use std::path::Path;
 
+    /// The embedded tree is the *generated* one: exactly one `SKILL.md` per
+    /// skill dir, no `shared/`, no partials, and no leftover runtime reads or
+    /// unrendered slots — the whole point of the build-time renderer is that
+    /// an agent never spends a round trip reading a second file.
     #[test]
-    fn embedded_artifacts_carry_their_entrypoints() {
+    fn embedded_skills_are_single_file() {
         for skill in OWNED_SKILL_DIRS {
             if *skill == "shared" {
                 continue;
             }
+            let dir = SKILLS
+                .get_dir(skill)
+                .unwrap_or_else(|| panic!("{skill} is embedded"));
+            let files: Vec<_> = dir.files().collect();
+            assert_eq!(
+                files.len(),
+                1,
+                "{skill}: exactly one embedded file, found {:?}",
+                files.iter().map(|file| file.path()).collect::<Vec<_>>()
+            );
+            assert!(dir.dirs().next().is_none(), "{skill}: no embedded subdirs");
+            let body = SKILLS
+                .get_file(format!("{skill}/SKILL.md"))
+                .and_then(include_dir::File::contents_utf8)
+                .unwrap_or_else(|| panic!("{skill}/SKILL.md is embedded utf-8"));
             assert!(
-                SKILLS.get_file(format!("{skill}/SKILL.md")).is_some(),
-                "{skill} entrypoint"
+                !body.contains("Read `../shared/") && !body.contains("Read `workflow.md`"),
+                "{skill}: generated skill must not instruct runtime file reads"
+            );
+            assert!(
+                !body.contains("<!-- include") && !body.contains("<!-- slot"),
+                "{skill}: generated skill carries an unrendered directive"
             );
         }
-        assert!(SKILLS.get_dir("shared").is_some());
-        assert!(SKILLS.get_file("shared/SKILL.md").is_none());
+        assert!(SKILLS.get_dir("shared").is_none());
         assert!(SKILLS.get_dir("square").is_none());
     }
 
+    /// The *source* layout the renderer consumes: templates + partials.
     #[test]
-    fn portable_square_skill_layout_is_progressive() {
+    fn skill_sources_are_templates_plus_partials() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("skills");
         for skill in OWNED_SKILL_DIRS {
             if *skill == "shared" {
                 continue;
             }
             let skill_dir = root.join(skill);
-            assert!(skill_dir.join("SKILL.md").is_file(), "{skill} entrypoint");
+            assert!(skill_dir.join("SKILL.md").is_file(), "{skill} template");
             assert!(skill_dir.join("workflow.md").is_file(), "{skill} workflow");
-        }
-        for skill in [
-            "square-create",
-            "square-discover",
-            "square-join",
-            "square-topic",
-        ] {
-            let skill_dir = root.join(skill);
+            // Templates are self-describing: each declares its sources with
+            // include directives instead of a wiring table in build.rs.
+            let template = std::fs::read_to_string(skill_dir.join("SKILL.md"))
+                .unwrap_or_else(|error| panic!("{skill}/SKILL.md: {error}"));
             assert!(
-                skill_dir.join("adapters/generic.md").is_file(),
-                "{skill} daemon adapter"
+                template.contains("<!-- include "),
+                "{skill}: template declares no includes"
             );
         }
-        // `create`/`join`/`topic` have exactly one adapter: every harness starts
-        // the daemon and polls the same way. A Claude-Code-specific adapter is
-        // what carried the Monitor event path, which truncated message bodies at
-        // 500 chars and persisted them to disk. `discover` still needs Monitor —
-        // it streams until killed and has no poll equivalent.
+        for partial in [
+            "daemon-session.md",
+            "events.md",
+            "invocation.md",
+            "meta.md",
+            "reattach.md",
+            "receive-loop.md",
+        ] {
+            assert!(root.join("shared").join(partial).is_file(), "{partial}");
+        }
+        // `create`/`join`/`topic` share ONE daemon flow (the parameterized
+        // `shared/daemon-session.md` partial): every harness starts the daemon
+        // and polls the same way, so no per-skill or per-harness adapters. A
+        // Claude-Code-specific adapter is what carried the Monitor event path,
+        // which truncated message bodies at 500 chars and persisted them to
+        // disk. `discover` still needs Monitor — it streams until killed and
+        // has no poll equivalent.
         for skill in ["square-create", "square-join", "square-topic"] {
             assert!(
-                !root.join(skill).join("adapters/claude-code.md").exists(),
-                "{skill} must not reintroduce a Monitor adapter"
+                !root.join(skill).join("adapters").exists(),
+                "{skill} must not reintroduce per-skill adapters"
             );
         }
         assert!(
@@ -321,41 +357,60 @@ mod tests {
                 .is_file(),
             "square-discover still has a Monitor adapter (tracked follow-up)"
         );
-        assert!(root.join("shared/harness-detect.md").is_file());
-        assert!(root.join("shared/receive-loop.md").is_file());
-        assert!(root.join("shared/events.md").is_file());
-        assert!(root.join("shared/meta.md").is_file());
-        assert!(root.join("shared/reattach.md").is_file());
         assert!(!root.join("shared/SKILL.md").exists());
+    }
+
+    /// The Monitor prohibition, pinned on the *generated* content: the daemon
+    /// starters must never tell an agent to use a watch/push tool (it
+    /// truncates message bodies and persists them to disk).
+    #[test]
+    fn generated_daemon_starters_never_mention_monitor() {
+        for skill in ["square-create", "square-join", "square-topic"] {
+            let body = SKILLS
+                .get_file(format!("{skill}/SKILL.md"))
+                .and_then(include_dir::File::contents_utf8)
+                .unwrap_or_else(|| panic!("{skill}/SKILL.md is embedded utf-8"));
+            assert!(
+                !body.contains("Monitor"),
+                "{skill}: generated skill must not route through a Monitor/watch tool"
+            );
+        }
     }
 
     /// A harness writes a background command's output to a file. The daemon's
     /// `--output json` stdout carries every message body, and its stderr prints
     /// the bare square id — a join credential (`Output::mesh_id_line`). The
-    /// `> /dev/null 2>&1` in each adapter is therefore the only thing keeping
-    /// either off disk; dropping one would reintroduce the leak silently, so pin
-    /// it here rather than trust review.
+    /// `> /dev/null 2>&1` on each backgrounded line is therefore the only thing
+    /// keeping either off disk; dropping one would reintroduce the leak
+    /// silently, so pin it here rather than trust review.
     ///
-    /// Stated as a property of *any* backgrounded `agent-square` line, so a
-    /// future adapter is covered too.
+    /// Stated as a property of *any* backgrounded `agent-square` line in any
+    /// generated skill, so a future skill is covered too.
     #[test]
     fn backgrounded_square_commands_discard_stdout_and_stderr() {
-        for skill in ["square-create", "square-join", "square-topic"] {
-            let path = format!("{skill}/adapters/generic.md");
-            let adapter = SKILLS
+        let mut daemon_starters_checked = 0;
+        for skill in OWNED_SKILL_DIRS {
+            if *skill == "shared" {
+                continue;
+            }
+            let path = format!("{skill}/SKILL.md");
+            let body = SKILLS
                 .get_file(&path)
                 .and_then(include_dir::File::contents_utf8)
                 .unwrap_or_else(|| panic!("{path} is embedded"));
 
-            let backgrounded: Vec<&str> = adapter
+            let backgrounded: Vec<&str> = body
                 .lines()
                 .map(str::trim_end)
                 .filter(|line| line.starts_with("agent-square ") && line.ends_with('&'))
                 .collect();
-            assert!(
-                backgrounded.len() >= 2,
-                "{path}: expected the daemon launch and the poll bell to be backgrounded, found {backgrounded:?}"
-            );
+            if ["square-create", "square-join", "square-topic"].contains(skill) {
+                assert!(
+                    backgrounded.len() >= 2,
+                    "{path}: expected the daemon launch and the poll bell to be backgrounded, found {backgrounded:?}"
+                );
+                daemon_starters_checked += 1;
+            }
             for line in backgrounded {
                 assert!(
                     line.contains("> /dev/null 2>&1"),
@@ -365,14 +420,17 @@ mod tests {
                 );
             }
         }
+        assert_eq!(daemon_starters_checked, 3);
     }
 
     #[test]
     fn install_paths_are_under_home() {
         let home = Path::new("/home/x");
-        assert!(Agent::ClaudeCode
-            .install_path(home)
-            .ends_with(".claude/skills"));
+        assert!(
+            Agent::ClaudeCode
+                .install_path(home)
+                .ends_with(".claude/skills")
+        );
         assert!(Agent::Pi.install_path(home).ends_with(".pi/agent/skills"));
         assert!(Agent::Codex.install_path(home).ends_with(".codex/skills"));
         assert!(Agent::Cursor.install_path(home).ends_with(".cursor/skills"));
@@ -412,9 +470,12 @@ mod tests {
         write_embedded_dir(&SKILLS, &dir);
         assert!(Agent::Cursor.in_sync(&home));
 
+        // A stale `shared/` dir from a pre-single-file install is extra
+        // content, not drift — the embedded files all still match.
+        std::fs::create_dir_all(dir.join("shared")).unwrap();
         std::fs::write(dir.join("shared/extra.md"), "extra").unwrap();
         assert!(Agent::Cursor.in_sync(&home));
-        std::fs::remove_file(dir.join("square-join/workflow.md")).unwrap();
+        std::fs::remove_file(dir.join("square-join/SKILL.md")).unwrap();
         assert!(!Agent::Cursor.in_sync(&home));
 
         std::fs::remove_dir_all(&home).unwrap();

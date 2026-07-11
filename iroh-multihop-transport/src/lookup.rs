@@ -57,6 +57,8 @@ impl AddressLookup for MultihopLookup {
             endpoint_id,
             EndpointData::from_iter([TransportAddr::Custom(route.encode())]),
         );
-        Some(Box::pin(stream::once(Ok(Item::new(info, PROVENANCE, None)))))
+        Some(Box::pin(stream::once(Ok(Item::new(
+            info, PROVENANCE, None,
+        )))))
     }
 }

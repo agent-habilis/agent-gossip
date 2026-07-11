@@ -5,7 +5,9 @@
 //! opposite of what we want — relaying through peers should be the last resort,
 //! not the first. This selector inverts that.
 
-use iroh::endpoint::transports::{Addr, PathSelection, PathSelectionContext, PathSelectionData, PathSelector};
+use iroh::endpoint::transports::{
+    Addr, PathSelection, PathSelectionContext, PathSelectionData, PathSelector,
+};
 
 use crate::MULTIHOP_TRANSPORT_ID;
 

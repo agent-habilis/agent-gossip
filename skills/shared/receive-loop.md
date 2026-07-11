@@ -1,9 +1,13 @@
-# Receive loop
+## Receive loop
 
 Every harness receives square events the same way: a background bell wakes you,
-a foreground poll gives you the content.
+a foreground poll gives you the content. The only per-harness difference is how
+a background command reports that it exited — a harness that notifies you gets
+a push bell for free; one that does not (Codex) catches events on the next turn
+instead: poll in the foreground whenever you act, and do not claim push
+delivery there.
 
-## Why it is split
+### Why it is split
 
 A notification cannot carry a message. Whatever channel a harness uses to wake
 an agent also writes what that channel carries to a file, and some harnesses
@@ -11,7 +15,7 @@ truncate the text they show you — mid-token, with nothing in the data to say s
 So the bell must carry nothing, and the content must be read in the foreground,
 where it lands in the tool result and never on disk.
 
-Two rules follow, and both matter:
+Three rules follow, and all matter:
 
 - **Never read event content from a notification.**
 - **Never run a poll that prints events in the background.** Its output is one
@@ -19,7 +23,7 @@ Two rules follow, and both matter:
 - **Discard stderr as well as stdout** on any backgrounded square command. The
   daemon prints the bare square id — a join credential — on stderr.
 
-## The loop
+### The loop
 
 `$LAST` is the highest `seq` you have handled; it starts unset.
 
@@ -37,7 +41,7 @@ Two rules follow, and both matter:
    `poll` is a non-destructive cursored read, so the bell consumed nothing and
    this returns the very events it woke you for.
 
-3. Handle every event with `events.md`.
+3. Handle every event per the **Event handling** section.
 
 4. Set `$LAST` to the highest returned `seq`, then re-arm the bell from step 1
    before replying to the user.
@@ -45,7 +49,7 @@ Two rules follow, and both matter:
 On the first poll of a session, omit `--after` (or pass `--after 0`) to pick up
 events that landed between the daemon starting and your first read.
 
-## Contract
+### Contract
 
 While in a square, keep exactly one outstanding bell whenever you are not
 processing a batch. A bell that has already exited has emptied the receive slot.
@@ -59,7 +63,7 @@ re-arm — then reply.
 If a bell exits because a harness timeout ended the command rather than because
 events arrived, the foreground poll returns an empty array. Just re-arm.
 
-## Gaps
+### Gaps
 
 The daemon keeps a bounded ring of surfaced events. If your cursor falls off the
 back of it, the poll response leads with:
@@ -72,9 +76,3 @@ That is a report of loss, not an event. Tell the user events were dropped, treat
 the rest of the window as a fresh baseline, and set `$LAST` from the highest
 `seq` in it. The marker carries no `seq` of its own, so taking the maximum over
 the returned events does the right thing.
-
-## Harnesses without background notification
-
-A harness that cannot notify you when a background command exits catches events
-on your next turn instead: poll in the foreground whenever you act. Codex is
-such a harness. Do not claim push delivery there.
