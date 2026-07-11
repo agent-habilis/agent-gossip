@@ -192,19 +192,33 @@ pub(crate) async fn drain_dead_receiver(
     );
 }
 
-/// Drain `pending_outbound` onto the wire, in order. Shared by the two
-/// meshed edges: the first real-peer `NeighborUp`, and a degraded
-/// node's first inbound message after a fault (starvation recovery /
-/// resume), where traffic — not a fresh link — is the healthy signal.
+/// Drain `pending_outbound` onto the wire, in order. Runs on the meshed
+/// edges — the first real-peer `NeighborUp`, and a degraded node's first
+/// inbound message after a fault (starvation recovery / resume) — and again
+/// on a later `PeerInfo` arrival while frames remain buffered: a frame that
+/// fails to deliver (typically a directed frame whose addressee's endpoint
+/// isn't known yet at the first flush) is re-buffered for that retry, not
+/// dropped.
 async fn flush_pending(state: &mut EventLoopState, ctx: &HandlerCtx<'_>, edge: &'static str) {
-    let mut flushed = 0usize;
-    for bytes in state.pending_outbound.take() {
-        if let Err(error) = ctx.sender.broadcast(bytes).await {
-            tracing::warn!(%error, "flush of a buffered outbound message failed");
+    let mut delivered = 0usize;
+    let mut requeued = 0usize;
+    for (msg, bytes) in state.pending_outbound.take() {
+        // Re-route each frame through the send decision rather than blanket-
+        // broadcasting: a directed frame buffered while unmeshed must still
+        // take unicast, never the gossip flood.
+        let Err(error) = crate::transport::deliver(&msg, bytes.clone(), state, ctx.sender).await
+        else {
+            delivered += 1;
+            continue;
+        };
+        if state.pending_outbound.push((msg, bytes)) {
+            requeued += 1;
+            tracing::debug!(%error, "buffered outbound message not deliverable yet; requeued");
+        } else {
+            tracing::warn!(%error, "buffered outbound message undeliverable and the buffer is full; dropped");
         }
-        flushed += 1;
     }
-    tracing::info!(flushed, edge, "meshed: flushed buffered messages");
+    tracing::info!(delivered, requeued, edge, "meshed: flushed buffered messages");
 }
 
 /// Validate + dispatch one inbound wire message, regardless of transport. Both
@@ -337,13 +351,17 @@ pub(crate) async fn ingest(
         MessageKind::Ping => {
             // Auto-respond to every probe with a pong addressed to the pinger.
             // The daemon owns this — no agent involvement. The pong is directed,
-            // so `deliver` sends it unicast to the pinger when reachable that
-            // way, avoiding the N-flooded-pongs fan-out; else it rides gossip.
+            // so `deliver` sends it unicast to the pinger; if the pinger's
+            // `PeerInfo` hasn't arrived yet the pong is dropped (debug-logged)
+            // and the pinger's round simply misses us this time.
             let pong = Message::new_pong(ctx.mesh, ctx.author, message.author.clone())
                 .signed(ctx.identity);
             crate::logging::messages::log_out(&pong);
-            if let Ok(bytes) = pong.serialize() {
-                let _ = crate::unicast::deliver(&pong, Bytes::from(bytes), state, ctx.sender).await;
+            if let Ok(bytes) = pong.serialize()
+                && let Err(error) =
+                    crate::transport::deliver(&pong, Bytes::from(bytes), state, ctx.sender).await
+            {
+                tracing::debug!(%error, pinger = %message.author, "auto-pong not delivered");
             }
             return;
         }
@@ -1022,6 +1040,12 @@ async fn handle_peer_info(
     // precondition) needs the memory precisely *after* that link dies.
     if state.known_endpoints.insert(peer_id) {
         let _ = add_peer_addr(ctx.endpoint, peer_addr.clone());
+    }
+    // A buffered directed frame addressed to this author may just have become
+    // deliverable — its endpoint binding and dial address are now registered.
+    // Only while meshed: the pre-mesh backlog waits for the meshed edge.
+    if state.meshed && !state.pending_outbound.is_empty() {
+        flush_pending(state, ctx, "peer info arrival").await;
     }
     let now = Instant::now();
     // A `PeerInfo` is a dial hint, never a link: `linked_endpoints` is

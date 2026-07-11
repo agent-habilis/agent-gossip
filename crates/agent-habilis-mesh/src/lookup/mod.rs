@@ -249,7 +249,7 @@ pub async fn probe_connect(
 pub(crate) fn build_mesh(
     endpoint: Endpoint,
     active_view_capacity: usize,
-    unicast: Option<crate::unicast::UnicastAcceptor>,
+    unicast: Option<crate::transport::UnicastAcceptor>,
 ) -> (Gossip, Router) {
     // `active_view_capacity` is the live direct-neighbor cap (`--max-peers`),
     // raised above iroh-gossip's default (5) so meshes up to it form a full mesh
@@ -268,7 +268,7 @@ pub(crate) fn build_mesh(
     // A participant also accepts inbound unicast; the rendezvous/beacon endpoint
     // passes `None` (it is not a participant and carries no unicast traffic).
     if let Some(acceptor) = unicast {
-        builder = builder.accept(crate::unicast::UNICAST_ALPN, acceptor);
+        builder = builder.accept(crate::transport::UNICAST_ALPN, acceptor);
     }
     let router = builder.spawn();
     (gossip, router)

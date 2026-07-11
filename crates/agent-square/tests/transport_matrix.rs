@@ -1,48 +1,26 @@
-//! The unified transport matrix: **one** application operation-suite run against
-//! **every** transport, proving each transport is compatible with each
-//! app-level operation. In-process over the real event loop + a real iroh mesh
-//! (`common::InProcNode`), using the per-session `TransportPolicy` so each row
-//! forces a different transport without a subprocess.
+//! The application operation-suite over the two structural planes: gossip for
+//! broadcasts / `state` / `meta`, unicast for every directed frame. In-process
+//! over the real event loop + a real iroh mesh (`common::InProcNode`).
 //!
 //! The suite (`run_operations`) drives a broadcast chat, a shared-`state` merge,
 //! a `meta` merge, and the full **directed A2A task lifecycle with streaming**
 //! (create → worker `working` → artifact → initiator approval → worker
-//! `completed`). The rows:
-//!
-//! - `matrix_default`  — all transports on (unicast-preferred + gossip).
-//! - `matrix_unicast`  — `no_gossip_directed`: directed frames take `UnicastOnly`
-//!   with **no** fallback, so a completed lifecycle proves unicast.
-//! - `matrix_gossip`   — `no_unicast`: directed frames take `Route::Gossip`, so
-//!   completion proves gossip.
-//!
-//! Every row is **pure-by-policy** (the forced transport is the only path a
-//! directed frame can take), so "the lifecycle completed" is a real proof the
-//! named transport carried every directed leg — no per-transport counter needed.
+//! `completed`). Gossip cannot carry a directed frame at all, so a completed
+//! lifecycle — including the sharded multi-frame RPC — is inherently the
+//! unicast proof; no per-transport policy row is needed.
 
 mod common;
 
 use std::time::Instant;
 
-use agent_square::{Channel, TaskId, TaskState, TransportPolicy};
+use agent_square::{Channel, TaskId, TaskState};
 use common::{InProcNode, MSG_TIMEOUT, POLL};
 use serde_json::{Value, json};
 
-/// Active-view cap for the (2-node) rows that want a full mesh.
+/// Active-view cap for a 2-node suite that wants a full mesh.
 const FULL_MESH: usize = 64;
 
-/// `no_gossip_directed`: directed frames take `UnicastOnly`, no gossip fallback.
-const UNICAST_ONLY: TransportPolicy = TransportPolicy {
-    unicast: true,
-    gossip_directed: false,
-};
-
-/// `no_unicast`: directed frames take `Route::Gossip`.
-const GOSSIP_ONLY: TransportPolicy = TransportPolicy {
-    unicast: false,
-    gossip_directed: true,
-};
-
-// The former `matrix_circuit` row is gone: multi-hop is now the
+// There is no forced-multihop row: multi-hop is now the
 // `iroh-multihop-transport` datagram transport, which only forwards over *live*
 // underlay endpoints and so can't be exercised by injecting a synthetic graph
 // onto an in-proc mesh. Real multi-hop delivery is covered end-to-end by that
@@ -109,7 +87,7 @@ async fn run_operations(alice: &mut InProcNode, bob: &mut InProcNode) {
         "meta never converged on the peer"
     );
 
-    // 4. Directed A2A task lifecycle + streaming — the transport-selectable path.
+    // 4. Directed A2A task lifecycle + streaming — the unicast-only path.
     let resp = alice.create_task(&bob.nickname, "port the parser").await;
     let task_id = task_id_of(&resp);
     // A multi-frame brief (~20 KB seals past the single-frame cap) proves the
@@ -153,43 +131,9 @@ async fn run_operations(alice: &mut InProcNode, bob: &mut InProcNode) {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn matrix_default() {
-    let mut alice = InProcNode::create_with_transport(
-        "tm-default",
-        "tm-def-a",
-        TransportPolicy::DEFAULTS,
-        FULL_MESH,
-    )
-    .await;
-    let mut bob = InProcNode::join_with_transport(
-        &alice.mesh,
-        "tm-def-b",
-        TransportPolicy::DEFAULTS,
-        FULL_MESH,
-    )
-    .await;
-    run_operations(&mut alice, &mut bob).await;
-    alice.leave().await;
-    bob.leave().await;
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn matrix_unicast() {
-    let mut alice =
-        InProcNode::create_with_transport("tm-unicast", "tm-uni-a", UNICAST_ONLY, FULL_MESH).await;
-    let mut bob =
-        InProcNode::join_with_transport(&alice.mesh, "tm-uni-b", UNICAST_ONLY, FULL_MESH).await;
-    run_operations(&mut alice, &mut bob).await;
-    alice.leave().await;
-    bob.leave().await;
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn matrix_gossip() {
-    let mut alice =
-        InProcNode::create_with_transport("tm-gossip", "tm-gos-a", GOSSIP_ONLY, FULL_MESH).await;
-    let mut bob =
-        InProcNode::join_with_transport(&alice.mesh, "tm-gos-b", GOSSIP_ONLY, FULL_MESH).await;
+async fn operations_suite_over_both_planes() {
+    let mut alice = InProcNode::create_with_peers("tm-default", "tm-def-a", FULL_MESH).await;
+    let mut bob = InProcNode::join_with_peers(&alice.mesh, "tm-def-b", FULL_MESH).await;
     run_operations(&mut alice, &mut bob).await;
     alice.leave().await;
     bob.leave().await;

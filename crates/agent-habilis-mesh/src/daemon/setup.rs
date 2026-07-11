@@ -176,10 +176,10 @@ pub(crate) fn register_rendezvous(endpoint: &Endpoint, params: &RendezvousParams
 /// back-pressure the loop (a dropped frame heals via anti-entropy).
 fn unicast_inbox() -> (
     mpsc::Receiver<bytes::Bytes>,
-    crate::unicast::UnicastAcceptor,
+    crate::transport::UnicastAcceptor,
 ) {
     let (tx, rx) = mpsc::channel::<bytes::Bytes>(crate::util::consts::UNICAST_INBOX_CAP);
-    (rx, crate::unicast::UnicastAcceptor::new(tx))
+    (rx, crate::transport::UnicastAcceptor::new(tx))
 }
 
 /// Build this member's participant endpoint, registering the multi-hop transport
@@ -204,10 +204,6 @@ pub struct SetupParams<'a> {
     pub max_peers: usize,
     pub state_file: Option<PathBuf>,
     pub sink: std::sync::Arc<dyn NodeSink>,
-    /// Which transports directed messages may use (per-session). Defaults to
-    /// [`crate::transport::TransportPolicy::DEFAULTS`] (all enabled) on the
-    /// in-process paths; the CLI derives it from `--no-unicast`/`--no-*`.
-    pub transport: crate::transport::TransportPolicy,
     /// `--multihop`: register the multi-hop custom transport on the participant
     /// endpoint (a second underlay endpoint is stood up for hop-by-hop
     /// forwarding). Off by default on every path.
@@ -240,7 +236,7 @@ struct SetupBuild<'a> {
     a2a_port: Option<u16>,
     max_peers: usize,
     lookups: &'a LookupOpts,
-    unicast_acceptor: &'a crate::unicast::UnicastAcceptor,
+    unicast_acceptor: &'a crate::transport::UnicastAcceptor,
     /// Register the multi-hop transport on the participant endpoint.
     multihop: bool,
     rung_tx: &'a watch::Sender<Option<RelayUrl>>,
@@ -278,7 +274,6 @@ pub async fn setup_mesh(kind: SetupKind, params: SetupParams<'_>) -> Result<Even
         max_peers,
         state_file,
         sink,
-        transport,
         multihop,
         drift,
         a2a_serve,
@@ -388,7 +383,6 @@ pub async fn setup_mesh(kind: SetupKind, params: SetupParams<'_>) -> Result<Even
         rung_rx,
         cohost,
         state_file,
-        transport,
         multihop: multihop_handle,
         unicast_rx,
         // Set by the advertise path (cli::create / api::create) before

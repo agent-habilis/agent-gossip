@@ -426,7 +426,7 @@ pub(crate) fn cli_channel_merge(
 use agent_square::api::{A2aCallParams, CreateConfig, JoinConfig, MeshSession, TaskArtifactParams};
 use agent_square::{
     Channel, MeshName, Message, MessageBody, MessageId, MessageKind, Nickname, OutputEvent,
-    PresenceSubtype, TaskId, TaskState, TransportPolicy,
+    PresenceSubtype, TaskId, TaskState,
 };
 use tokio::sync::mpsc::UnboundedReceiver;
 
@@ -480,18 +480,11 @@ impl InProcNode {
         )
     }
 
-    /// Create a mesh under an explicit transport policy + active-view cap — the
-    /// per-node knobs the transport matrix forces (e.g. `no_unicast` + a
-    /// `max_peers = 1` line topology to route directed traffic over a circuit).
-    pub(crate) async fn create_with_transport(
-        name: &str,
-        nick: &str,
-        transport: TransportPolicy,
-        max_peers: usize,
-    ) -> Self {
+    /// Create a mesh under an explicit active-view cap (a small cap forces a
+    /// partial mesh, so directed traffic must reach non-neighbours).
+    pub(crate) async fn create_with_peers(name: &str, nick: &str, max_peers: usize) -> Self {
         let mut cfg = CreateConfig::new(test_mesh_name(name));
         cfg.nickname = Some(Nickname::new(nick).expect("valid test nickname"));
-        cfg.transport = transport;
         cfg.max_peers = max_peers;
         Self::from_session(
             MeshSession::create(cfg)
@@ -500,17 +493,11 @@ impl InProcNode {
         )
     }
 
-    /// Join `mesh` under an explicit transport policy + active-view cap.
-    pub(crate) async fn join_with_transport(
-        mesh: &str,
-        nick: &str,
-        transport: TransportPolicy,
-        max_peers: usize,
-    ) -> Self {
+    /// Join `mesh` under an explicit active-view cap.
+    pub(crate) async fn join_with_peers(mesh: &str, nick: &str, max_peers: usize) -> Self {
         let target = mesh.parse().expect("valid test join target");
         let mut cfg = JoinConfig::new(target);
         cfg.nickname = Some(Nickname::new(nick).expect("valid test nickname"));
-        cfg.transport = transport;
         cfg.max_peers = max_peers;
         Self::from_session(
             MeshSession::join(cfg)

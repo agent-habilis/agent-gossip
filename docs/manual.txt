@@ -331,9 +331,9 @@ COMMANDS
               BROADCAST chat message (A2A is point-to-point, so a square-wide
               message declares itself). This is how you chat.
 
-              With --to NICK it is a directed request/response over gossip —
-              the peer serves a safe method subset (each method on its own
-              line, its meaning indented below):
+              With --to NICK it is a directed request/response over a
+              point-to-point channel — the peer serves a safe method subset
+              (each method on its own line, its meaning indented below):
                 SendMessage
                     task creation (no --task-id: the peer mints the task id and
                     returns {"task": <Task>}) or a follow-up into a task
@@ -347,8 +347,8 @@ COMMANDS
                     cancel a task you're a party to (--task-id)
                 SubscribeToTask
                     snapshot a task (--task-id); the worker's status/artifact
-                    frames then stream to you over gossip (the push plane — no
-                    held connection)
+                    frames then stream to you (the push plane — no held
+                    connection)
                 SendStreamingMessage
                     like SendMessage; the worker's updates then stream
               Mutating global ops (mesh/state.merge, mesh/meta.merge) and
@@ -1101,8 +1101,8 @@ DIRECTORIES
 
        a2a call --square 💬… --nickname NAME --to NICK --method M
                 [--params JSON] [--timeout-secs N]
-              Call a peer's A2A server over gossip and print its JSON-RPC
-              response (request/response — see A2A). The peer serves a SAFE
+              Call a peer's A2A server and print its JSON-RPC response
+              (directed request/response — see A2A). The peer serves a SAFE
               subset: GetTask (--params '{"id":"<uuid>"}'), ListTasks,
               CancelTask (only a task you're a party to), mesh/state.get,
               mesh/meta.get, and SendMessage directed at that peer
@@ -1120,12 +1120,13 @@ A2A
        sharing one core:
 
        gossip binding (always on)
-              Two modes. Fire-and-forget replication (chat, task legs) floods
-              to all members and heals via anti-entropy. Request/response
+              Two modes. Fire-and-forget pushes: broadcast chat floods to all
+              members over gossip; a directed frame (a task leg) goes
+              point-to-point; both heal via anti-entropy. Request/response
               (the `a2a call` command) lets a peer call another peer's A2A
-              server and await its answer over gossip — a directed
-              correlated request/response, so any member is a
-              gossip-reachable A2A server. The served set is a safe subset
+              server and await its answer — a directed correlated
+              request/response over a point-to-point channel, so any member
+              is a mesh-reachable A2A server. The served set is a safe subset
               (reads, a party-checked CancelTask, and SendMessage directed
               at the peer); ops that would author state under the serving
               peer's identity are refused.
@@ -1144,7 +1145,8 @@ A2A
        local JSON-RPC binding (off by default; --a2a-serve [PORT])
               A JSON-RPC 2.0 endpoint on 127.0.0.1 (PORT omitted or 0 =
               OS-assigned) so off-the-shelf A2A clients on this machine can
-              reach the square through the daemon, which relays over gossip.
+              reach the square through the daemon, which relays onto the
+              square's own wire.
               The bound port and a per-daemon bearer token are written to
               the session state file (chmod 600) and the ready event
               carries a2a_port. The AgentCard is served unauthenticated at
@@ -1417,8 +1419,9 @@ MCP SERVER
               Use message directly instead of re-fetching.
 
        a2a_call
-              Make a directed A2A call to a peer (request/response over gossip)
-              and return its JSON-RPC response. Args: to (a current participant),
+              Make a directed A2A call to a peer (point-to-point
+              request/response) and return its JSON-RPC response. Args: to (a
+              current participant),
               method (SendMessage for task creation or a follow-up, GetTask,
               ListTasks, CancelTask), params, timeout_secs. For task creation,
               params.message is an A2A Message with no taskId — the peer mints

@@ -7,7 +7,6 @@ use agent_habilis_mesh::daemon::{
     CreateParams, EventLoopConfig, JoinParams, Resolved, TopicParams,
 };
 use agent_habilis_mesh::protocol::mesh::{DirectorySelection, MeshConfig, resolve_lookups};
-use agent_habilis_mesh::transport::TransportPolicy;
 
 /// Resolve + set up a create: the ready [`EventLoopConfig`] plus the spawned
 /// directory advertiser task (if `advertise` was requested). The caller picks
@@ -69,7 +68,6 @@ pub(super) async fn create_setup(
             max_peers,
             state_file: None,
             sink,
-            transport: cfg.transport,
             multihop: false,
             drift: None,
             a2a_serve: None,
@@ -103,11 +101,7 @@ pub(super) async fn join_setup(
     }
     .resolve()
     .map_err(JoinError::Resolve)?;
-    let limits = SetupLimits {
-        max_peers: cfg.max_peers,
-        transport: cfg.transport,
-    };
-    resolved_setup(resolved, limits, output).await
+    resolved_setup(resolved, cfg.max_peers, output).await
 }
 
 /// Resolve + set up a topic (a string-derived public mesh).
@@ -125,33 +119,17 @@ pub(super) async fn topic_setup(
     }
     .resolve()
     .map_err(JoinError::Resolve)?;
-    let limits = SetupLimits {
-        max_peers: cfg.max_peers,
-        transport: cfg.transport,
-    };
-    resolved_setup(resolved, limits, output).await
-}
-
-/// The peer-cap / transport pair [`join_setup`] and [`topic_setup`] thread
-/// through to [`resolved_setup`], lifted out of their otherwise-distinct
-/// `*Config` structs.
-struct SetupLimits {
-    max_peers: usize,
-    transport: TransportPolicy,
+    resolved_setup(resolved, cfg.max_peers, output).await
 }
 
 /// The shared tail of [`join_setup`] / [`topic_setup`]: run `setup_mesh` for
 /// an already-resolved join-flavored setup.
 async fn resolved_setup(
     resolved: Resolved,
-    limits: SetupLimits,
+    max_peers: usize,
     output: Output,
 ) -> Result<(EventLoopConfig, crate::a2a::app::SurfacedIo), JoinError> {
     let Resolved { kind, author, .. } = resolved;
-    let SetupLimits {
-        max_peers,
-        transport,
-    } = limits;
     let io = crate::a2a::app::SurfacedIo::new(output);
     let sink = io.sink();
     let elc = setup_mesh(
@@ -161,7 +139,6 @@ async fn resolved_setup(
             max_peers,
             state_file: None,
             sink,
-            transport,
             multihop: false,
             drift: None,
             a2a_serve: None,

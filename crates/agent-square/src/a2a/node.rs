@@ -681,8 +681,8 @@ async fn handle_a2a_req(
         to: Some(requester),
         corr: Some(corr.clone()),
     };
-    // Directed reply over the shared RPC sender: unicast → circuit → gossip,
-    // transparently splitting a large sealed response into shard frames.
+    // Directed reply over the shared RPC sender: unicast, transparently
+    // splitting a large sealed response into shard frames.
     if let Err(error) = crate::a2a::send::send_directed_rpc(
         crate::a2a::send::DirectedRpcParams {
             mesh: ctx.mesh,
@@ -732,7 +732,7 @@ async fn resend_cached_shards(
         {
             continue;
         }
-        if agent_habilis_mesh::unicast::deliver(&msg, bytes, state, ctx.sender)
+        if agent_habilis_mesh::transport::deliver(&msg, bytes, state, ctx.sender)
             .await
             .is_ok()
         {

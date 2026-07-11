@@ -30,7 +30,6 @@ use agent_habilis_mesh::protocol::mesh::{
 };
 use agent_habilis_mesh::protocol::{AppFrameParams, AppTag, Message, MessageBody, Nickname};
 use agent_habilis_mesh::resolver::JoinTarget;
-use agent_habilis_mesh::transport::TransportPolicy;
 use agent_habilis_mesh::util::consts::{GOSSIP_ACTIVE_VIEW_CAPACITY, MAX_MESSAGE_SIZE};
 
 use anyhow::{Context, Result};
@@ -68,36 +67,13 @@ enum Command {
     Connect(ConnectArgs),
 }
 
-/// Process-global transport policy, shared by both subcommands. The engine's
-/// directed-send tier order is unicast → circuit → gossip; on loopback the
-/// addressee is always dialable, so unicast wins and the circuit never triggers.
-/// Turning unicast and the gossip-directed fallback off — with a capped active
-/// view so the mesh is genuinely partial — forces directed frames onto a
-/// multi-hop circuit. Defaults reproduce the pre-existing behaviour exactly
-/// (unicast on, gossip-directed on, circuit on, full active view).
+/// Mesh sizing shared by both subcommands.
 #[derive(Args, Clone, Copy)]
-struct TransportArgs {
+struct MeshArgs {
     /// Cap on active-view neighbours (a small cap forces a partial mesh, so
     /// routes to non-neighbours become multi-hop).
     #[arg(long, value_name = "N", default_value_t = GOSSIP_ACTIVE_VIEW_CAPACITY)]
     max_peers: usize,
-    /// Disable the unicast (point-to-point) directed transport.
-    #[arg(long)]
-    no_unicast: bool,
-    /// Disable gossip as a directed transport / fallback.
-    #[arg(long)]
-    no_gossip_directed: bool,
-}
-
-impl TransportArgs {
-    /// The per-session transport policy these flags select. The circuit stays on
-    /// so a directed frame with no unicast/gossip path still routes multi-hop.
-    fn policy(&self) -> TransportPolicy {
-        TransportPolicy {
-            unicast: !self.no_unicast,
-            gossip_directed: !self.no_gossip_directed,
-        }
-    }
 }
 
 #[derive(Args)]
@@ -134,7 +110,7 @@ struct ListenArgs {
     #[arg(long, value_name = "NAME")]
     nick: Option<String>,
     #[command(flatten)]
-    transport: TransportArgs,
+    sizing: MeshArgs,
 }
 
 #[derive(Args)]
@@ -149,7 +125,7 @@ struct ConnectArgs {
     #[arg(long, value_name = "NAME")]
     nick: Option<String>,
     #[command(flatten)]
-    transport: TransportArgs,
+    sizing: MeshArgs,
 }
 
 /// The engine seam. `connect` writes inbound `pipe_data` to `stdout` and fires
@@ -356,12 +332,10 @@ fn listen_select(args: &ListenArgs) -> Result<Select> {
 }
 
 /// The per-session config for [`spawn_node`]: the nickname override plus the
-/// `TransportArgs`-derived active-view cap and directed-transport policy —
-/// shared by both `listen` and `connect`.
+/// active-view cap — shared by both `listen` and `connect`.
 struct SpawnConfig {
     nickname: Option<Nickname>,
     max_peers: usize,
-    transport: TransportPolicy,
 }
 
 /// Build the event loop for `select`, spawn it as a [`Node`], and return the
@@ -371,7 +345,6 @@ async fn spawn_node(select: Select, app: PipeApp, config: SpawnConfig) -> Result
     let SpawnConfig {
         nickname,
         max_peers,
-        transport,
     } = config;
     let (kind, author, is_create) = select.resolve(nickname)?;
     let elc = setup_mesh(
@@ -381,7 +354,6 @@ async fn spawn_node(select: Select, app: PipeApp, config: SpawnConfig) -> Result
             max_peers,
             state_file: None,
             sink: std::sync::Arc::new(SilentSink),
-            transport,
             multihop: false,
             drift: None,
             a2a_serve: None,
@@ -436,8 +408,7 @@ async fn run_listen(args: ListenArgs) -> Result<()> {
         PipeApp::sender(),
         SpawnConfig {
             nickname,
-            max_peers: args.transport.max_peers,
-            transport: args.transport.policy(),
+            max_peers: args.sizing.max_peers,
         },
     )
     .await?;
@@ -492,8 +463,7 @@ async fn run_connect(args: ConnectArgs) -> Result<()> {
         PipeApp::receiver(done_tx),
         SpawnConfig {
             nickname,
-            max_peers: args.transport.max_peers,
-            transport: args.transport.policy(),
+            max_peers: args.sizing.max_peers,
         },
     )
     .await?;
