@@ -1,5 +1,0 @@
----
-source: src/output/tests.rs
-expression: "snap_state(r#\"{\"n\": 1}\"#, &serde_json::json!({\"n\": 1}), true,)"
----
-{"event":"state","id":"00000000-0000-0000-0000-000000000001","type":"state","square":"💬://test","author":"alice-bot","ts":1700000000,"merge":{"n":1},"document":{"n":1},"display":"💬️ you changed /n","self":true}

@@ -1,0 +1,93 @@
+[package]
+name = "agent-habilis-mesh"
+version = "0.5.0"
+edition.workspace = true
+rust-version.workspace = true
+authors = ["Caio Gondim <me@caiogondim.com>"]
+description = "serverless gossip-network engine for agent-square"
+license = "MIT"
+publish = false
+
+[lints]
+workspace = true
+
+[lib]
+name = "agent_habilis_mesh"
+path = "src/lib.rs"
+
+[features]
+# Off by default. Exposes the engine's cross-crate test fixtures (`Message`
+# builders, `From<&str>` conveniences, etc.) — items otherwise `#[cfg(test)]`
+# — so the app's test suites (which live in a separate crate now) can build
+# them. The app enables it through its `[dev-dependencies]`, so it is on for
+# `cargo test` and off for a normal/release build.
+test-fixtures = []
+# Off by default. Exposes the engine's `pub(crate)` hot paths so the app's
+# `benches/hot_paths.rs` (via `agent_square::harness::bench`) can reach them.
+# Never enabled in a normal/release build.
+bench = ["test-fixtures"]
+# Off by default. Exposes the engine internals (crafted-message + state-doc
+# constructors) the app's `harness::adversarial` shim reaches so the adversarial
+# suite can inject malicious wire messages. Never enabled in a normal build.
+adversarial = ["test-fixtures"]
+# Off by default. Gates out the daemon's `std::process::exit` on the quit path
+# so the daemon returns cleanly and the app's dhat heap profiler (installed in
+# `main`) can flush `dhat-heap.json`. The app's `dhat-heap` feature forwards to
+# this one. Never in a normal build.
+dhat-heap = []
+
+[dependencies]
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+bytes.workspace = true
+tracing.workspace = true
+async-trait.workspace = true
+uuid.workspace = true
+iroh.workspace = true
+iroh-gossip.workspace = true
+# The multi-hop iroh custom transport: reach a peer with no direct path by
+# relaying its QUIC packets through intermediate peers. Registered on the
+# participant endpoint (the `--multihop` flag).
+iroh-multihop-transport = { path = "../iroh-multihop-transport" }
+bs58.workspace = true
+automerge.workspace = true
+sha2.workspace = true
+rand.workspace = true
+libc.workspace = true
+# mDNS + mainline-DHT address-lookup providers were extracted from iroh core
+# in the 1.0 line; these companion crates restore the `--mdns` / `--dht` legs.
+iroh-mdns-address-lookup = "0.4"
+iroh-mainline-address-lookup = "0.4"
+# Argon2id password stretching for `--password` (mesh hash verifier + ticket
+# handshake tokens). default-features off: no `password-hash` string format —
+# we only need the raw `hash_password_into` KDF.
+argon2 = { version = "0.5", default-features = false, features = ["alloc"] }
+governor = "0.10"
+futures-util = "0.3"
+# End-to-end sealing of directed frames: a NaCl-style sealed box (ephemeral
+# X25519 ECDH → ChaCha20-Poly1305) so only the addressed recipient can read a
+# directed body. The AEAD key is derived from the ECDH secret via the in-tree
+# `crypto::derive_secret` (SHA-256), so no HKDF dep. Both crates are pure-Rust
+# (no `unsafe`, which the workspace denies).
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+chacha20poly1305 = "0.10"
+# Best-effort wiping of retained secrets (the mesh password + derived channel
+# keys) on drop, so they don't linger in process memory / core dumps.
+zeroize = "1"
+interprocess = { version = "2", features = ["tokio"] }
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+insta.workspace = true
+tokio.workspace = true
+divan.workspace = true
+
+# Stamps the build's git short hash + dirty flag into the version
+# (`util::version::VERSION`), so every build self-identifies its commit in
+# `--version`, the `ready` event, and every log line. git-CLI backend — no
+# libgit2/gix; build hosts all have `git`.
+[build-dependencies]
+vergen-gitcl = "1"

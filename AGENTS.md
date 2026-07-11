@@ -50,6 +50,29 @@ the build:
 All dev tasks run through `cargo task` — run it with no arguments to list
 every subcommand.
 
+### Workspace layout
+
+The root `Cargo.toml` is a **virtual manifest** — it owns no package. Every
+crate lives under `crates/` (`agent-square` the app, `agent-habilis-mesh` the
+engine, `iroh-multihop-transport`, `slot-template`, and the dev-only `tasks`),
+with `examples/mesh-pipe` as a second engine consumer.
+
+Three things in the root manifest are load-bearing *because* it is virtual, and
+dropping any of them changes the build silently:
+
+- **`resolver = "3"`** — a virtual workspace inherits nothing from its members,
+  so it otherwise defaults to the edition-2015 `resolver = "1"` and unifies
+  dev-/build-dependency features into the shipped binary.
+- **`default-members = ["crates/agent-square"]`** — an unscoped `cargo build` /
+  `test` / `clippy` at a virtual root means *all* members. This pins it to the
+  app; widening coverage is a deliberate change, not a default.
+- **`[profile.*]` and `[patch.crates-io]`** — cargo honours these only in the
+  workspace root. They cannot move into a member manifest.
+
+`docs/`, `skills/`, and `assets/` stay at the repo root, so the app reaches up
+for them: `build.rs` renders `../../skills`, and the embedded manual is an
+`include_str!("../../../../docs/manual.txt")` from `src/{cli,mcp}/mod.rs`.
+
 ### Testing
 
 `cargo task test` / `cargo task ci` run the suite. **Always run tests in the
@@ -59,19 +82,19 @@ observable markers instead of sleeping fixed floors, but the suite still
 takes minutes end to end. The remaining floors are iroh-bound, not ours:
 the 15s direct-path idle timeout floors the freeze-window tests, the two
 beacon-migration tests keep a fixed ~36s handoff wait at the production heal
-cadence (see `RENDEZVOUS_HANDOFF` in `tests/gossip_network.rs` — shortening
+cadence (see `RENDEZVOUS_HANDOFF` in `crates/agent-square/tests/gossip_network.rs` — shortening
 the cadence there trips a zombie-link pathology), and the serial-gated
 reliability section runs one test at a time.
 
 Three layers:
 - **In-process (default, fast):** behavioral + output-schema tests drive the
-  real event loop via the embed facade (`tests/common::InProcNode`). Real
+  real event loop via the embed facade (`crates/agent-square/tests/common::InProcNode`). Real
   iroh mesh, no subprocess — sub-second.
 - **Every-run subprocess:** the wire-contract suite (CLI / stdout /
   `--output json` / Unix-socket / MCP-stdio) plus reliability invariants that
   need real OS processes and signals (SIGKILL beacon migration, SIGSTOP/CONT
-  heal recovery, anti-entropy backfill) — `tests/gossip_network.rs`.
-- **Adversarial (`--features adversarial`, `tests/adversarial.rs`):** an
+  heal recovery, anti-entropy backfill) — `crates/agent-square/tests/gossip_network.rs`.
+- **Adversarial (`--features adversarial`, `crates/agent-square/tests/adversarial.rs`):** an
   in-process attacker injects crafted wire bytes a correct client never
   produces; defended cases pass, open-gap `#[should_panic]` tripwires go red
   the moment a gap is closed. `cargo task test`/`ci` enable the feature.

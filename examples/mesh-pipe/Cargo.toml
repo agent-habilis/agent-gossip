@@ -16,7 +16,7 @@ path = "src/main.rs"
 [dependencies]
 # The ONLY engine dependency — this crate never touches agent-square / a2a,
 # which is the whole point: it proves the engine is payload-generic.
-agent-habilis-mesh = { path = "../../agent-habilis-mesh" }
+agent-habilis-mesh = { path = "../../crates/agent-habilis-mesh" }
 tokio.workspace = true
 anyhow.workspace = true
 clap = { version = "4", features = ["derive"] }

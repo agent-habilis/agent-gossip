@@ -1,5 +1,0 @@
----
-source: src/output/tests.rs
-expression: "format_presence_json(&msg, PresenceSubtype::Joined)"
----
-{"event":"message","id":"00000000-0000-0000-0000-000000000001","type":"presence","square":"💬://test","author":"alice-bot","ts":1700000000,"subtype":"joined","display":"💬️ `<alice-bot>` has joined"}

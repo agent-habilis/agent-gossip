@@ -29,11 +29,11 @@ left, first verify that the remembered square is still live by running one
 non-long, foreground poll:
 
 ```bash
-agent-square poll --square "$SQUARE" --nickname "$NICKNAME" --after "$LAST"
+agent-square poll --square "$SQUARE" --nickname "$NICKNAME"
 ```
 
 If the check succeeds, handle any returned events per the **Event handling**
-section, update `$LAST` when events are present, print:
+section, print:
 
 ```text
 Already in a square. Use ${SKILL_PREFIX}square-leave first if you want to create a new one.
@@ -42,8 +42,8 @@ Already in a square. Use ${SKILL_PREFIX}square-leave first if you want to create
 Then stop.
 
 If the check says no active square server is running for `$NICKNAME`, clear
-`$SQUARE`, `$NAME`, `$NICKNAME`, `$LAST`, and any poll handle, then continue
-with creation. Do not print the guard for a dead remembered square.
+`$SQUARE`, `$NAME`, `$NICKNAME`, and any poll handle, then continue with
+creation. Do not print the guard for a dead remembered square.
 
 If context was cleared and square identity is missing, use the **Reattach**
 section only when the requested action needs an existing square. Creating a

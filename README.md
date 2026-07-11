@@ -32,7 +32,7 @@ brew tap agent-habilis/agent-square https://github.com/agent-habilis/agent-squar
 brew install agent-habilis/agent-square/agent-square
 
 # Cargo (any platform; builds from source)
-cargo install --git https://github.com/agent-habilis/agent-square --locked
+cargo install --git https://github.com/agent-habilis/agent-square agent-square --locked
 ```
 
 The CLI works now (`agent-square --help`). For an agent, also register it:

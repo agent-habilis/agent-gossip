@@ -1,5 +1,17 @@
 [workspace]
-members = ["tasks", "agent-habilis-mesh", "examples/mesh-pipe", "iroh-multihop-transport", "slot-template"]
+members = ["crates/*", "examples/mesh-pipe"]
+# Load-bearing on a *virtual* manifest: a root package on edition 2024 implies
+# `resolver = "3"`, but a virtual workspace inherits nothing from its members
+# and silently defaults to the edition-2015 `resolver = "1"`. Left implicit, the
+# split from root-package to virtual would quietly change feature unification
+# across the whole graph — notably folding the `test-fixtures` dev-dep feature
+# into the shipped binary.
+resolver = "3"
+# Also load-bearing on a virtual manifest: with no root package, an unscoped
+# `cargo build`/`test`/`clippy`/`run` defaults to *every* member instead of the
+# app. This pins the pre-split meaning. Widening coverage to the whole workspace
+# is a deliberate follow-up (drop this key), not a side effect of the move.
+default-members = ["crates/agent-square"]
 
 # Shared package fields. Each crate opts in with `edition.workspace = true`
 # / `rust-version.workspace = true` so the workspace stays in lockstep
@@ -98,147 +110,6 @@ module_name_repetitions = "allow"
 # the lint is noise here, not an actionable signal.
 multiple_crate_versions = "allow"
 
-[package]
-name = "agent-square"
-version = "0.5.0"
-edition.workspace = true
-rust-version.workspace = true
-authors = ["Caio Gondim <me@caiogondim.com>"]
-description = "mesh network for agents"
-documentation = "https://github.com/agent-habilis/agent-square"
-license = "MIT"
-repository = "https://github.com/agent-habilis/agent-square"
-homepage = "https://github.com/agent-habilis/agent-square"
-readme = "README.md"
-keywords = ["agents", "gossip", "communication"]
-categories = ["network-programming"]
-exclude = [
-    "TODO.md",
-    "text.txt",
-    "AGENTS.md",
-    "CLAUDE.md",
-    ".cargo/",
-    ".github/",
-    "Formula/",
-    "docs/",
-    "examples/",
-    "proptest-regressions/",
-    ".stignore",
-]
-
-[lints]
-workspace = true
-
-[lib]
-name = "agent_square"
-path = "src/lib.rs"
-
-[[bin]]
-name = "agent-square"
-path = "src/main.rs"
-
-[features]
-# Off by default. Forwards to the engine's `bench` feature, which exposes its
-# `pub(crate)` hot paths so `benches/hot_paths.rs` (via `harness::bench`) can
-# reach them; never enabled in a normal or release build, so the public API
-# surface is unchanged.
-bench = ["agent-habilis-mesh/bench"]
-# Off by default. Forwards to the engine's `adversarial` feature and exposes
-# `src/harness/adversarial.rs` + `MeshSession::inject_raw` so the adversarial
-# integration suite (`tests/adversarial.rs`) can craft and inject malicious wire
-# messages a correct client never would. Never enabled in a normal/release
-# build, so the public surface is unchanged. `cargo task test`/`ci` enable it.
-adversarial = ["agent-habilis-mesh/adversarial"]
-# Off by default. Installs dhat's heap-profiling global allocator + a profiler
-# in `main`, and makes the CLI quit path return cleanly (instead of
-# `process::exit`) so the profiler flushes `dhat-heap.json` on shutdown. For
-# localizing the gossip-churn per-connection retention: build with this feature,
-# run a churning daemon (`--active-view-capacity 5 --no-interactive`), SIGTERM
-# it, inspect the profile. Never in a normal build.
-dhat-heap = ["dep:dhat", "agent-habilis-mesh/dhat-heap"]
-
-[build-dependencies]
-# `build.rs` renders the multi-file `skills/` sources into the single-file
-# SKILL.md tree the binary embeds; the renderer is a pure function, so a
-# skill's final bytes are fixed at build time.
-slot-template = { path = "slot-template" }
-
-[dependencies]
-agent-habilis-mesh = { path = "agent-habilis-mesh" }
-# Optional: only compiled in under the `dhat-heap` feature (heap profiling).
-dhat = { version = "0.3", optional = true }
-tokio.workspace = true
-clap = { version = "4", features = ["derive"] }
-# Embeds the portable Agent Skills tree into the binary at compile time so
-# `agent-square plug` is self-contained.
-include_dir = "0.7"
-# The shared `state`/`meta` documents are automerge CRDTs: concurrent edits
-# merge without a bespoke ordered-log fold. `default-features` stays on (the
-# `storage-v2` on-disk format is unused — we carry changes on the wire).
-automerge.workspace = true
-# `unstable-net-report`: 1.0.0 gated `Endpoint::net_report()` behind it, and the
-# capability probe (`lookup::capability`) reads the report directly.
-iroh.workspace = true
-anyhow.workspace = true
-uuid.workspace = true
-sha2.workspace = true
-bytes.workspace = true
-bs58.workspace = true
-serde.workspace = true
-serde_json.workspace = true
-rand.workspace = true
-tracing.workspace = true
-tracing-subscriber.workspace = true
-rmcp = { version = "1.5", features = ["server", "transport-io", "macros", "schemars"] }
-async-trait.workspace = true
-# The flag-gated (`--a2a-serve`) localhost JSON-RPC 2.0 A2A binding. All
-# three are already transitive in the lockfile (via iroh/reqwest), so
-# promoting them to direct deps adds zero new crates to the graph.
-hyper = { version = "1", features = ["server", "http1"] }
-http-body-util = "0.1"
-hyper-util = { version = "0.1", features = ["tokio"] }
-
-# Compact global allocator, Linux only (see src/main.rs). Halves the daemon's
-# resident memory on the static-musl fleet; on macOS the system allocator wins,
-# so it is not pulled there.
-[target.'cfg(target_os = "linux")'.dependencies]
-mimalloc = { version = "0.1", default-features = false }
-
-[dev-dependencies]
-# Enable the engine's `test-fixtures` feature for test/bench builds only, so the
-# app's test suites can build the engine's cross-crate test fixtures. Off for a
-# normal `cargo build` (dev-deps don't apply there).
-agent-habilis-mesh = { path = "agent-habilis-mesh", features = ["test-fixtures"] }
-proptest.workspace = true
-insta.workspace = true
-# In-process integration harness (`tests/common::InProcNode`) drives
-# `embed::MeshSession` async, so the test crates need a runtime + the
-# `#[tokio::test]` macro. Same major as the lib dep — no new dup version.
-tokio.workspace = true
-# Offline microbenchmarks (`benches/hot_paths.rs`). No html/plotting deps;
-# prints a summary table to stdout.
-divan.workspace = true
-
-# Offline microbenchmarks of the pure hot paths. Needs `bench` for the
-# `harness::bench` shim that reaches `pub(crate)` internals.
-[[bench]]
-name = "hot_paths"
-harness = false
-required-features = ["bench"]
-
-# Two-node loopback transfer soak. Plain `fn main()` harness over the
-# public `embed` API — no `bench` feature.
-[[bench]]
-name = "transfer"
-harness = false
-
-# Adversarial / malicious-peer integration suite. Needs `adversarial` for the
-# crafted-message injector that reaches `pub(crate)` message internals; the
-# default `cargo test` skips it, `cargo task test`/`ci` enable the feature.
-[[test]]
-name = "adversarial"
-required-features = ["adversarial"]
-
 # Dependencies get light optimization in dev/test builds; workspace members
 # stay at opt-level 0 (`package."*"` never applies to them) so incremental
 # builds stay fast. Debug-built curve/AEAD/hash math is ~10x slower and
@@ -285,13 +156,6 @@ opt-level = 3
 inherits = "release"
 lto = "thin"
 codegen-units = 16
-
-[package.metadata.release]
-publish = false
-push = false
-tag-name = "v{{version}}"
-pre-release-commit-message = "chore: release v{{version}}"
-allow-branch = ["main"]
 
 # Local, uncommitted patch consuming the leak fixes from our GitHub forks
 # (kept out of `main` until the upstream PRs merge, then dropped for the released

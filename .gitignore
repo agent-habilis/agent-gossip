@@ -1,4 +1,4 @@
-# Rust build output (single workspace -> only the root target/)
+# Rust build output (one workspace -> one target/, at the root)
 /target
 
 # Node
