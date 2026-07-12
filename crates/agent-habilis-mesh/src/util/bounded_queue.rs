@@ -44,6 +44,10 @@ impl<T> BoundedQueue<T> {
         std::mem::take(&mut self.queue)
     }
 
+    pub(crate) fn is_empty(&self) -> bool {
+        self.queue.is_empty()
+    }
+
     /// Free slots before [`push`](Self::push) starts rejecting. Used to admit a
     /// whole multipart body atomically (all parts or none), so a half-buffered
     /// body never reaches peers.

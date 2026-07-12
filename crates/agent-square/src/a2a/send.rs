@@ -188,10 +188,10 @@ async fn send_msg_part(
     if state.meshed {
         commit_outbound_part(state, msg, out, echo);
         // Single send decision: a directed message goes point-to-point over
-        // unicast when the addressee is dialable, else gossip (see `unicast`).
-        agent_habilis_mesh::unicast::deliver(msg, bytes, state, sender).await?;
-    } else if state.pending_outbound.push(bytes.clone()) {
-        // Buffered for gossip until the first real-peer link flushes it.
+        // unicast, a broadcast over gossip (see `transport::deliver`).
+        agent_habilis_mesh::transport::deliver(msg, bytes, state, sender).await?;
+    } else if state.pending_outbound.push((msg.clone(), bytes.clone())) {
+        // Buffered until the meshed edge flushes it through the send decision.
         commit_outbound_part(state, msg, out, echo);
     } else {
         // Full buffer: the frame reaches no plane, so the reported drop matches
@@ -967,12 +967,12 @@ async fn send_task_leg(
     } = part;
     if state.meshed {
         // Meshed: retain locally, then hit the wire (a transient send error
-        // still leaves a content leg in our log for anti-entropy). Unicast when
-        // the addressee is dialable, else gossip (see `unicast::deliver`).
+        // still leaves a content leg in our log for anti-entropy). Directed
+        // legs go unicast, broadcasts gossip (see `transport::deliver`).
         retain_leg(state, out, RetainLegParams { msg, echo, content });
-        agent_habilis_mesh::unicast::deliver(msg, bytes, state, sender).await?;
-    } else if state.pending_outbound.push(bytes.clone()) {
-        // Buffered for gossip until the first real-peer link flushes it.
+        agent_habilis_mesh::transport::deliver(msg, bytes, state, sender).await?;
+    } else if state.pending_outbound.push((msg.clone(), bytes.clone())) {
+        // Buffered until the meshed edge flushes it through the send decision.
         retain_leg(state, out, RetainLegParams { msg, echo, content });
     } else {
         tracing::warn!("pending outbound buffer full; outbound message dropped");
@@ -1083,7 +1083,7 @@ pub(crate) async fn send_shard_repair_requests(
         match frame.serialize() {
             Ok(bytes) => {
                 if let Err(error) =
-                    agent_habilis_mesh::unicast::deliver(&frame, Bytes::from(bytes), state, sender)
+                    agent_habilis_mesh::transport::deliver(&frame, Bytes::from(bytes), state, sender)
                         .await
                 {
                     tracing::debug!(%error, "shard repair request send failed; next tick retries");
@@ -1186,8 +1186,8 @@ pub(crate) async fn broadcast_a2a_call(
         unregistered.send_response(&rpc_error(-32603, "too many in-flight a2a calls"));
         return;
     }
-    // Directed request over the shared RPC sender: unicast → circuit → gossip per
-    // frame, transparently splitting a large sealed body into shard frames.
+    // Directed request over the shared RPC sender: unicast per frame,
+    // transparently splitting a large sealed body into shard frames.
     if let Err(error) = send_directed_rpc(
         DirectedRpcParams {
             mesh,
@@ -1215,8 +1215,8 @@ pub(crate) struct DirectedRpcParams<'a> {
 
 /// Send one directed RPC frame (an `App` request/response), transparently
 /// splitting a sealed body too large for one frame into shard-tagged frames —
-/// each an ordinary directed frame riding the unicast → circuit → gossip
-/// cascade, so the RPC plane is size-transparent like chat and task legs. RPC
+/// each an ordinary directed frame riding unicast, so the RPC plane is
+/// size-transparent like chat and task legs. RPC
 /// frames are plumbing (never logged for anti-entropy); the shards reassemble
 /// only in the receiver's dedicated store, and a big group is served from the
 /// sender-side [`ShardCache`](agent_habilis_mesh::daemon::reassembly::ShardCache)
@@ -1241,7 +1241,7 @@ pub(crate) async fn send_directed_rpc(
     if single.wire_len() <= MAX_MESSAGE_SIZE {
         agent_habilis_mesh::logging::messages::log_out(&single);
         let bytes = Bytes::from(single.serialize()?);
-        return agent_habilis_mesh::unicast::deliver(&single, bytes, state, sender).await;
+        return agent_habilis_mesh::transport::deliver(&single, bytes, state, sender).await;
     }
     // The RPC body is already sealed (base58, ~1.37x the input) — gate on the
     // sealed ceiling so the caller-facing limit stays `MAX_LOGICAL_BODY_BYTES`.
@@ -1291,7 +1291,7 @@ pub(crate) async fn send_directed_rpc(
         if total > LOGGED_SHARD_GROUP_MAX_TOTAL {
             cache_frames.push(bytes.clone());
         }
-        agent_habilis_mesh::unicast::deliver(&msg, bytes, state, sender).await?;
+        agent_habilis_mesh::transport::deliver(&msg, bytes, state, sender).await?;
     }
     if !cache_frames.is_empty() {
         state.shard_cache.insert(group, cache_frames);

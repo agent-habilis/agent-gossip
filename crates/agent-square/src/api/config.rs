@@ -1,7 +1,6 @@
 use agent_habilis_mesh::protocol::Nickname;
 use agent_habilis_mesh::protocol::mesh::{LookupSet, MeshName};
 use agent_habilis_mesh::resolver::JoinTarget;
-use agent_habilis_mesh::transport::TransportPolicy;
 use agent_habilis_mesh::util::consts::GOSSIP_ACTIVE_VIEW_CAPACITY;
 
 /// How to join a mesh.
@@ -19,9 +18,6 @@ pub struct JoinConfig {
     /// Password for a password-protected id. Verified locally against the
     /// id's verifier before any network; required iff the id carries one.
     pub password: Option<String>,
-    /// Which transport planes directed sends may use. Default all-on;
-    /// narrowed by tests to pin a message to one lane.
-    pub transport: TransportPolicy,
 }
 
 impl JoinConfig {
@@ -36,7 +32,6 @@ impl JoinConfig {
             nickname: None,
             max_peers: GOSSIP_ACTIVE_VIEW_CAPACITY,
             password: None,
-            transport: TransportPolicy::default(),
         }
     }
 }
@@ -54,9 +49,6 @@ pub struct TopicConfig {
     pub nickname: Option<Nickname>,
     /// Max direct peer connections before gossip relays the rest.
     pub max_peers: usize,
-    /// Which transport planes directed sends may use. Default all-on;
-    /// narrowed by tests to pin a message to one lane.
-    pub transport: TransportPolicy,
 }
 
 impl TopicConfig {
@@ -67,7 +59,6 @@ impl TopicConfig {
             string,
             nickname: None,
             max_peers: GOSSIP_ACTIVE_VIEW_CAPACITY,
-            transport: TransportPolicy::default(),
         }
     }
 }
@@ -105,9 +96,6 @@ pub struct CreateConfig {
     /// minted id (joiners must present the password), and every derivation
     /// switches onto the Argon2id-stretched key.
     pub password: Option<String>,
-    /// Which transport planes directed sends may use. Default all-on;
-    /// narrowed by tests to pin a message to one lane.
-    pub transport: TransportPolicy,
 }
 
 impl CreateConfig {
@@ -125,7 +113,6 @@ impl CreateConfig {
             directory: None,
             max_peers: GOSSIP_ACTIVE_VIEW_CAPACITY,
             password: None,
-            transport: TransportPolicy::default(),
         }
     }
 }

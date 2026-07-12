@@ -101,7 +101,7 @@ impl fmt::Display for PresenceSubtype {
 /// `gossip::recv::addressed_to_us`. `Some(nick)` for a frame that targets
 /// exactly one participant (`Pong`, the A2A task-push legs, the A2A RPC
 /// request/response); `None` for a broadcast or infrastructure kind. The
-/// [`crate::unicast`] send router uses this to decide point-to-point vs gossip.
+/// [`crate::transport`] send router uses this to decide point-to-point vs gossip.
 ///
 /// Deliberately **separate** from `addressed_to_us`: that answers a *surfacing*
 /// question and treats `Pong` as broadcast-visible, whereas routing wants the

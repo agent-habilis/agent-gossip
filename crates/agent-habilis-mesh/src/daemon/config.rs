@@ -143,9 +143,6 @@ pub struct EventLoopConfig {
     pub cohost: CoHostPolicy,
     /// When set, the daemon writes peer count changes to this file.
     pub state_file: Option<PathBuf>,
-    /// Which transports directed messages may use (per-session). `run()` copies
-    /// it into `EventLoopState::transport`, which `unicast::deliver` reads.
-    pub transport: crate::transport::TransportPolicy,
     /// The multi-hop transport handle when `--multihop` registered it on the
     /// participant endpoint; `run()` moves it into `EventLoopState::multihop`.
     /// `None` when multihop is off. Built in `setup_mesh`.

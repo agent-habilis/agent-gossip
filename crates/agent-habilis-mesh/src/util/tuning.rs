@@ -83,11 +83,6 @@ pub(crate) fn antientropy_max_resend() -> usize {
     current().antientropy_max_resend.max(1)
 }
 
-// The directed-transport toggles (unicast / gossip-directed) are **not** here:
-// transport policy is a per-session property, carried in
-// `EventLoopState::transport` (a `crate::transport::TransportPolicy`) and read
-// by `unicast::deliver`. The CLI flags feed the session config, not this global.
-
 /// Capacity of a [`Node`](crate::daemon::Node)'s inbound push channel
 /// (`DriverMode::InProcess::msg_tx`). Bounded so a slow consumer never
 /// backpressures the gossip/membership loop; under sustained lag the oldest

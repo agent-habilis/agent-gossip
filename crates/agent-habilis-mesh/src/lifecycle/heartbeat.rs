@@ -51,13 +51,18 @@ pub(crate) fn tick_sweep(state: &mut EventLoopState, sink: &dyn NodeSink) {
         .collect();
     for (nick, seen, age) in expired {
         state.last_seen.remove(nick.as_str());
-        state.participant_endpoints.remove(nick.as_str());
         if state.participants.remove(nick.as_str()) {
             state.write_participant_count();
             if state.surfaced.remove(nick.as_str()) {
                 state.quiet.insert(nick.clone());
                 // Retain the last-heard instant so the roster can still
                 // report this evictee's recency (its `last_seen` is gone).
+                // The endpoint binding is retained too: a quiet peer is the
+                // one expected to *return*, and its return (any signed
+                // message) re-adds it to the roster without a `PeerInfo`
+                // re-broadcast — dropping the binding here would leave a
+                // returned peer undeliverable for directed frames until its
+                // gossip link happens to bounce.
                 state.quiet_since.insert(nick.clone(), seen);
                 sink.emit(NodeEvent::PeerTimeout {
                     nickname: nick.clone(),
@@ -65,6 +70,7 @@ pub(crate) fn tick_sweep(state: &mut EventLoopState, sink: &dyn NodeSink) {
                 });
                 tracing::debug!(nickname = %nick, age_secs = age, "peer evicted (silence timeout)");
             } else {
+                state.participant_endpoints.remove(nick.as_str());
                 tracing::trace!(
                     nickname = %nick,
                     age_secs = age,
@@ -80,6 +86,16 @@ pub(crate) fn tick_sweep(state: &mut EventLoopState, sink: &dyn NodeSink) {
     state
         .quiet_since
         .retain(|nick, _| quiet.contains(nick.as_str()));
+    // Same bound for the endpoint dial hints: an entry lives as long as its
+    // nick is an active participant or a returnable quiet evictee, so the map
+    // is capped at |participants| + QUIET_CAP even under nickname churn.
+    // (Safe against a just-arrived `PeerInfo`: `lifecycle::observe` runs
+    // before `handle_peer_info`, so a recorded endpoint's author is already a
+    // participant.)
+    let participants = &state.participants;
+    state
+        .participant_endpoints
+        .retain(|nick, _| participants.contains(nick) || quiet.contains(nick.as_str()));
 }
 
 #[cfg(test)]
@@ -150,6 +166,45 @@ mod tests {
             secs >= alive_timeout_secs(),
             "recency reflects the actual silence age, got {secs}s"
         );
+    }
+
+    #[test]
+    fn sweep_keeps_a_quiet_peers_endpoint_for_its_return() {
+        let mut state = fresh_state();
+        let expired_at = Instant::now()
+            .checked_sub(Duration::from_secs(alive_timeout_secs() + 10))
+            .unwrap();
+        state.last_seen.insert(nick("swift-cedar"), expired_at);
+        state.participants.insert(nick("swift-cedar"));
+        state.surfaced.insert(nick("swift-cedar"));
+        let endpoint = iroh::SecretKey::from_bytes(&[7; 32]).public();
+        state
+            .participant_endpoints
+            .insert(nick("swift-cedar"), endpoint);
+
+        tick_sweep(&mut state, &SilentSink);
+
+        assert!(state.quiet.contains("swift-cedar"));
+        assert_eq!(
+            state.participant_endpoints.get("swift-cedar"),
+            Some(&endpoint),
+            "a returnable quiet peer keeps its dial hint — its return never re-broadcasts PeerInfo"
+        );
+    }
+
+    #[test]
+    fn sweep_prunes_endpoints_of_nicks_neither_active_nor_quiet() {
+        let mut state = fresh_state();
+        let endpoint = iroh::SecretKey::from_bytes(&[8; 32]).public();
+        // Not in `participants`, not in `quiet`: fell off the quiet FIFO or
+        // departed via `left` churn — the dial hint must not outlive it.
+        state
+            .participant_endpoints
+            .insert(nick("gone-fern"), endpoint);
+
+        tick_sweep(&mut state, &SilentSink);
+
+        assert!(!state.participant_endpoints.contains_key("gone-fern"));
     }
 
     #[test]

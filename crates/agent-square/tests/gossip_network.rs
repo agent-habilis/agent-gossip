@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 
 use common::{
     CONNECT_TIMEOUT, InProcNode, MSG_TIMEOUT, Msg, Node, POLL, RECOVERY_TIMEOUT, bin, chat_text,
-    cli_message, cli_message_raw, cli_peers, cli_ping, cli_poll, cli_poll_long, cli_task_create,
+    cli_message, cli_message_raw, cli_peers, cli_ping, cli_poll, cli_poll_long,
     cli_task_create_raw, ipc_raw, serial_guard, socket_path, tmp_log, trace_log, wait_total,
     wait_until,
 };
@@ -2595,15 +2595,15 @@ fn leave_nothing_owned_is_a_clean_noop() {
     let _ = idle.wait();
 }
 
-/// With `--no-gossip-directed`, gossip carries no directed traffic, so a
-/// directed A2A task that still round-trips (request out, worker-minted id
-/// back) proves the unicast transport delivers point-to-point — not via the
-/// gossip flood. Broadcasts still ride gossip, so the warmup meshes the
-/// daemons and exchanges the `PeerInfo` the sender's unicast dial resolves on.
+/// Gossip carries no directed traffic, so a directed A2A task that
+/// round-trips (request out, worker-minted id back) proves the unicast
+/// transport delivers point-to-point — not via the gossip flood. Broadcasts
+/// still ride gossip, so the warmup meshes the daemons and exchanges the
+/// `PeerInfo` the sender's unicast dial resolves on.
 #[test]
-fn unicast_only_delivers_directed_task() {
-    let (creator, mesh) = Node::create_flags("uni-only", &[("--no-gossip-directed", "")]);
-    let joiner = Node::join_flags(&mesh, "uni-only-b", &[("--no-gossip-directed", "")]);
+fn directed_task_delivers_point_to_point() {
+    let (creator, mesh) = Node::create_named("p2p-task");
+    let joiner = Node::join(&mesh, "p2p-task-b");
     assert!(creator.wait_ready(&mesh), "creator never ready");
     assert!(joiner.wait_ready(&mesh), "joiner never ready");
 
@@ -2619,13 +2619,13 @@ fn unicast_only_delivers_directed_task() {
     );
 
     // Directed task: gossip won't carry the A2aReq/A2aResp, so a round-trip (a
-    // worker-minted task id) can only have gone point-to-point. Under strict
-    // unicast-only the send can fail until the sender has learned the worker's
-    // endpoint (its signed `PeerInfo`) and warmed a dial, so retry until it
-    // lands — a success proves unicast delivered both legs.
+    // worker-minted task id) can only have gone point-to-point. The send fails
+    // until the sender has learned the worker's endpoint (its signed
+    // `PeerInfo`) and a dial lands, so retry until it does — a success proves
+    // unicast delivered both legs.
     let deadline = Instant::now() + MSG_TIMEOUT;
     loop {
-        let out = cli_task_create_raw(&mesh, &creator.nickname, &joiner.nickname, "uni hello");
+        let out = cli_task_create_raw(&mesh, &creator.nickname, &joiner.nickname, "p2p hello");
         if out.status.success()
             && let Ok(parsed) = serde_json::from_str::<serde_json::Value>(
                 String::from_utf8_lossy(&out.stdout).trim(),
@@ -2636,35 +2636,8 @@ fn unicast_only_delivers_directed_task() {
         }
         assert!(
             Instant::now() < deadline,
-            "directed task never round-tripped under unicast-only — unicast failed to deliver"
+            "directed task never round-tripped — unicast failed to deliver"
         );
         std::thread::sleep(POLL);
     }
-}
-
-/// With `--no-unicast`, the point-to-point transport is off and every directed
-/// frame rides gossip (the pre-unicast behavior). A directed A2A task must
-/// still round-trip — the safety-switch parity check.
-#[test]
-fn gossip_only_delivers_directed_task() {
-    let (creator, mesh) = Node::create_flags("gos-only", &[("--no-unicast", "")]);
-    let joiner = Node::join_flags(&mesh, "gos-only-b", &[("--no-unicast", "")]);
-    assert!(creator.wait_ready(&mesh), "creator never ready");
-    assert!(joiner.wait_ready(&mesh), "joiner never ready");
-
-    cli_message(&mesh, &creator.nickname, "warmup");
-    assert!(
-        wait_until(
-            || joiner.count_from(&creator.nickname, "warmup"),
-            1,
-            MSG_TIMEOUT
-        ) >= 1,
-        "warmup never reached the joiner"
-    );
-
-    let id = cli_task_create(&mesh, &creator.nickname, &joiner.nickname, "gossip hello");
-    assert!(
-        !id.is_empty(),
-        "directed task returned no id under gossip-only"
-    );
 }

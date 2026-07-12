@@ -16,10 +16,6 @@ use clap::Parser;
 use agent_habilis_mesh::util::consts;
 
 #[derive(Parser, Debug)]
-#[expect(
-    clippy::struct_excessive_bools,
-    reason = "flat clap flag group; each bool is an independent CLI switch, not a state machine to model as an enum"
-)]
 pub(crate) struct TuningOpts {
     /// Peer-eviction silence timeout (seconds).
     #[arg(long, hide = true, default_value_t = consts::ALIVE_TIMEOUT_SECS)]
@@ -89,20 +85,9 @@ pub(crate) struct TuningOpts {
     #[arg(long, hide = true, default_value_t = false)]
     pub directory_private: bool,
 
-    /// Disable the unicast (point-to-point) transport: force every message onto
-    /// gossip, the pre-unicast behavior.
-    #[arg(long, hide = true, default_value_t = false)]
-    pub no_unicast: bool,
-
-    /// Make directed messages unicast-only: gossip no longer carries or falls
-    /// back for them (broadcasts still ride gossip). Tests use this to prove
-    /// unicast delivery in isolation.
-    #[arg(long, hide = true, default_value_t = false)]
-    pub no_gossip_directed: bool,
-
     /// Register the multi-hop transport on the participant endpoint: a directed
     /// message to a peer with no direct path rides the multihop path (relayed
-    /// through peers) instead of gossip. Stands up a second underlay endpoint.
+    /// through peers). Stands up a second underlay endpoint.
     #[arg(long, hide = true, default_value_t = false)]
     pub multihop: bool,
 }
@@ -131,13 +116,4 @@ impl TuningOpts {
         }
     }
 
-    /// The per-session transport policy these flags select. Threaded into the
-    /// session config (not the process-global tuning) so it stays a session
-    /// property. See [`agent_habilis_mesh::transport::TransportPolicy`].
-    pub(crate) fn transport_policy(&self) -> agent_habilis_mesh::transport::TransportPolicy {
-        agent_habilis_mesh::transport::TransportPolicy {
-            unicast: !self.no_unicast,
-            gossip_directed: !self.no_gossip_directed,
-        }
-    }
 }

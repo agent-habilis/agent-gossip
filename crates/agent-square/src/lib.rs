@@ -68,8 +68,7 @@ pub use agent_habilis_mesh::protocol::message::{
 };
 pub use agent_habilis_mesh::protocol::nickname::{Nickname, NicknameError};
 pub use agent_habilis_mesh::resolver::{JoinTarget, JoinTargetError};
-pub use agent_habilis_mesh::transport::TransportPolicy;
-pub use agent_habilis_mesh::unicast::Lane;
+pub use agent_habilis_mesh::transport::Lane;
 pub use output::PingPeer;
 // Wire/runtime constants the external test + bench crates assert against; the
 // rest of `util::consts` stays engine-internal.

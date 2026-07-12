@@ -35,13 +35,15 @@ State: `linked_endpoints` (the links), `participant_endpoints` (the bridge).
 
 *Layer: transport · keyed by node id (hex).*
 
-The point-to-point QUIC channel a **directed** frame (one addressee) takes when
-its addressee is dialable — a real client/server link this node opens to one
-participant's endpoint, on its own ALPN (`agent-square/unicast/1`), off
-the gossip flood. Gossip stays the transport for broadcasts and the fallback
-for a directed frame whose addressee can't be reached by unicast. Without it,
-a directed frame (`a2a_req`/`a2a_resp`, a task push leg, a `pong`) floods every
-neighbor and is filtered at the receiver — O(N) fan-out to reach one peer.
+The point-to-point QUIC channel every **directed** frame (one addressee) takes
+— a real client/server link this node opens to one participant's endpoint, on
+its own ALPN (`agent-square/unicast/1`), off the gossip flood. Gossip carries
+broadcasts only, structurally: a directed frame (`a2a_req`/`a2a_resp`, a task
+push leg, a `pong`) is unicast-only, dialed inline when no warm connection
+exists, and errors as undeliverable when the addressee's endpoint is unknown
+(its signed `PeerInfo` hasn't arrived) — callers retry once it is learned. The
+one deliberate exception is repair: anti-entropy may re-broadcast a *logged*
+directed frame over gossip, as the recovery plane, never as a send path.
 
 Distinct from **link** (a gossip active-view neighbor) and from the roster's
 **connected/gossip** `reach` tag, which stays a gossip-overlay fact — a live
@@ -50,16 +52,16 @@ from the **a2a** JSON-RPC binding. Inbound unicast frames are validated +
 dispatched by the *same* `gossip::ingest` path as gossip, so signature-verify
 and dedup are identical and a frame delivered over both transports surfaces
 exactly once. Every wire frame stays ≤ `MAX_MESSAGE_SIZE` on both planes, so
-any frame remains gossip-carriable and anti-entropy-healable.
+any frame remains anti-entropy-healable.
 
-State: `unicast_pool` (the per-peer connection pool). See [`src/unicast`].
+State: `unicast_pool` (the per-peer connection pool). See [`src/transport`].
 
 ### multihop
 
 *Layer: transport (a real iroh transport, not an app-level plane).*
 
 Reaching a peer that has **no direct path** by relaying its QUIC packets through
-intermediate peers. Unlike **unicast**/**circuit**/**gossip**, multihop is **not**
+intermediate peers. Unlike **unicast**/**gossip**, multihop is **not**
 an application protocol layered on iroh's stock transport — it is a genuine iroh
 **custom transport** (the `iroh-multihop-transport` crate, registered via iroh's
 `unstable-custom-transports` seam). iroh runs its full QUIC state machine

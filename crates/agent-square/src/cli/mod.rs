@@ -175,9 +175,6 @@ async fn run_session(resolved: Resolved, shared: SharedServerOpts) -> Result<()>
         }
         None => (None, None),
     };
-    // Read the transport policy before the struct literal moves other `shared`
-    // fields out (a `&shared` borrow can't follow a partial move).
-    let transport = shared.tuning.transport_policy();
     let mut cfg = setup_mesh(
         kind,
         SetupParams {
@@ -185,7 +182,6 @@ async fn run_session(resolved: Resolved, shared: SharedServerOpts) -> Result<()>
             max_peers: shared.max_peers,
             state_file: shared.state_file,
             sink,
-            transport,
             multihop: shared.tuning.multihop,
             drift: drift.as_deref(),
             a2a_serve: a2a_serve_port,

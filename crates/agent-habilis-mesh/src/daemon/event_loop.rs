@@ -74,7 +74,6 @@ pub async fn run<A: NodeDriver>(
         rung_rx,
         cohost,
         state_file,
-        transport,
         multihop,
         unicast_rx,
         live_count,
@@ -129,7 +128,6 @@ pub async fn run<A: NodeDriver>(
         &mut state,
         &endpoint,
         SessionWireParams {
-            transport,
             live_count,
             rendezvous_id: rendezvous_params.id,
         },
@@ -248,22 +246,20 @@ pub async fn run<A: NodeDriver>(
 /// The 1-minute housekeeping arm: the memory warn + reassembly sweep, then
 /// ask authors to re-send what our stalled big shard groups are missing —
 /// Wire the just-built state to this session's endpoint + config: the real
-/// unicast pool (the default is detached), the transport policy, the
-/// advertise counter (set before the first write so the initial ad carries a
-/// real count), and the rendezvous id — then publish the initial count.
+/// unicast pool (the default is detached), the advertise counter (set before
+/// the first write so the initial ad carries a real count), and the
+/// rendezvous id — then publish the initial count.
 fn wire_session_state(state: &mut EventLoopState, endpoint: &Endpoint, wiring: SessionWireParams) {
-    state.unicast_pool = crate::unicast::UnicastPool::new(endpoint.clone());
-    state.transport = wiring.transport;
+    state.unicast_pool = crate::transport::UnicastPool::new(endpoint.clone());
     state.live_count = wiring.live_count;
     state.rendezvous_id = Some(wiring.rendezvous_id);
     state.write_participant_count();
 }
 
 /// The per-session value cluster [`wire_session_state`] folds into a fresh
-/// [`EventLoopState`]: the configured transport policy, the shared advertise
-/// counter (if advertising), and the well-known rendezvous endpoint id.
+/// [`EventLoopState`]: the shared advertise counter (if advertising) and the
+/// well-known rendezvous endpoint id.
 struct SessionWireParams {
-    transport: crate::transport::TransportPolicy,
     live_count: Option<std::sync::Arc<std::sync::atomic::AtomicUsize>>,
     rendezvous_id: EndpointId,
 }

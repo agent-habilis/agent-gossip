@@ -26,7 +26,6 @@ pub mod lookup;
 pub mod protocol;
 pub mod resolver;
 pub mod transport;
-pub mod unicast;
 pub mod util;
 
 // Re-exported at the crate root so engine code (and the app's re-export) can

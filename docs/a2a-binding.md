@@ -16,9 +16,10 @@ task status, and results are `Message`, `TaskStatusUpdate`, and
 `oneof`, no inline `kind` tag, no `final`; JSON-RPC methods are PascalCase —
 `SendMessage`, `GetTask`, …). Our own `--output json` agent stream keeps the
 friendly kebab state names — it is our API, not the A2A wire. The gossip binding runs in two
-modes: **fire-and-forget** replication (chat, task legs — flooded, healed by
-anti-entropy) and, for a peer that wants a synchronous answer,
-**request/response** (§*Gossip request/response* below). This document
+modes: **fire-and-forget** pushes (broadcast chat flooded over gossip; directed
+task legs point-to-point over unicast; both healed by anti-entropy) and, for a
+peer that wants a synchronous answer, **request/response** (§*Directed peer
+RPC* below). This document
 states how the gossip binding maps the A2A operations onto a serverless
 gossip mesh, and where its mechanics deviate from the request/response
 bindings while preserving the spec's semantics ("functional equivalence").
@@ -68,7 +69,7 @@ operations become signed frames.
 | `GetExtendedAgentCard` / agent card retrieval | every member's daemon publishes its `AgentCard` at meta `/peers/<nick>/card` on join (v1.0 `supportedInterfaces[]`, the gossip interface addressed by pubkey); peers read the replicated meta document (no HTTP anywhere). `GetExtendedAgentCard` over the localhost binding returns the same full card. |
 | push notification config | not offered; `capabilities.pushNotifications = false`, the four config methods return `-32601` |
 
-## Gossip request/response (directed peer RPC)
+## Directed peer RPC (request/response)
 
 On top of the fire-and-forget plane, a peer can call another peer's A2A
 server and await its response — so any member is an A2A server, not just a
@@ -82,10 +83,12 @@ socket (a held streaming socket is still deferred).
   — the response reaches the caller through a parked waiter
   (`src/daemon/state.rs`), which times out per call.
 - **Transport.** Being directed, both frames take the **unicast**
-  point-to-point channel when the addressee is dialable, falling back to the
-  gossip flood otherwise (see the `unicast` entry in `glossary.md`). Either way
-  the wire frame is identical and the receiver's validate/dedup path is the
-  same, so the choice is invisible above the transport.
+  point-to-point channel only — gossip never carries them (see the `unicast`
+  entry in `glossary.md`). An addressee whose endpoint is unknown (no
+  `PeerInfo` yet) is an immediate send error; the caller retries or its parked
+  waiter times out. The wire frame is the same canonical `Message` gossip
+  broadcasts use, and the receiver's validate/dedup path is identical on both
+  planes.
 - **Server (`src/a2a/gossip_rpc.rs`).** The receiving peer serves a **safe
   method subset**, distinct from the localhost binding's full surface:
   `GetTask`, `ListTasks`, `CancelTask` (only for a task the caller is a
@@ -119,16 +122,17 @@ socket (a held streaming socket is still deferred).
   extension (declared in every card) marks one. This is the one remaining
   deliberate deviation — A2A is otherwise point-to-point (a directed
   `SendMessage` is task creation, not chat).
-- **Streaming over gossip.** A2A streams a server's `TaskStatusUpdate` /
+- **Streaming without a socket.** A2A streams a server's `TaskStatusUpdate` /
   `TaskArtifactUpdate` events to a subscribed client; here the worker pushes
-  them fire-and-forget over gossip (`a2a_status` / `a2a_artifact`), and the
+  them fire-and-forget (`a2a_status` / `a2a_artifact`, directed unicast
+  frames, anti-entropy-healed), and the
   initiator receives them as events (or pulls via `GetTask`). The worker
   authors `completed` after the initiator's approval message — native A2A
   server-completes semantics, no extension.
 - **Localhost binding is fully task-capable.** An off-the-shelf A2A client on
   `--a2a-serve` can delegate a task: a directed `SendMessage` (POST to
   `/peers/<nick>`, or to the `url` on a peer's served card) is routed through
-  the gossip request/response waiter — the peer mints the task id and the Task
+  the directed request/response waiter — the peer mints the task id and the Task
   comes back synchronously to the HTTP client. Broadcast `SendMessage` (POST
   to `/` or `/mesh`) is the mesh-chat path. A peer's card served over this
   binding advertises `url = http://127.0.0.1:<port>/peers/<nick>` — our daemon
@@ -141,12 +145,12 @@ Declared in every member's card (`capabilities.extensions`):
 
 - `https://agent-habilis.dev/a2a/ext/mesh-broadcast/v1`
 - `https://agent-habilis.dev/a2a/ext/mesh-a2a-rpc/v1` — the member serves
-  A2A over gossip (request/response) for the safe method subset above; this is
+  A2A over the mesh (directed request/response) for the safe method subset above; this is
   also how task delegation works (a directed `SendMessage` creates a task)
 - `https://agent-habilis.dev/a2a/ext/mesh-blob/v1` — a large file on a `Part`
   travels as a `url` reference (a `🎟️…` ticket) whose bytes stream
   point-to-point over the `agent-square/blob/1` ALPN and are
-  SHA-256-verified, instead of inlining over gossip. The `🎟️…` in `Part.url` is
+  SHA-256-verified, instead of inlining in the wire frame. The `🎟️…` in `Part.url` is
   an opaque in-network capability token, not an RFC URL.
 - `https://agent-habilis.dev/a2a/ext/mesh-seal/v1` — **directed frames are
   end-to-end sealed.** A frame addressed to a peer (`A2aStatus`, `A2aArtifact`,

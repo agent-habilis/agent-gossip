@@ -44,7 +44,7 @@ pub enum Reach {
 /// peer heartbeat-evicted past `ALIVE_TIMEOUT_SECS` (still returnable);
 /// `reach` is `direct` only while we hold a live link to it; `transport`
 /// is the lane a directed frame to this peer would take right now (the
-/// live [`crate::unicast`] send decision — distinct from `reach`, which
+/// live [`crate::transport`] send decision — distinct from `reach`, which
 /// is a gossip-overlay link fact). Serialized directly into the
 /// `agent-square peers` response and the MCP `mesh_info` roster.
 #[derive(Debug, Clone, Serialize)]
@@ -53,7 +53,7 @@ pub struct RosterEntry {
     pub last_seen_secs_ago: Option<u64>,
     pub quiet: bool,
     pub reach: Reach,
-    pub transport: crate::unicast::Lane,
+    pub transport: crate::transport::Lane,
 }
 
 /// Live participant roster: every known peer (active + quiet) sorted
@@ -198,22 +198,14 @@ pub struct EventLoopState {
     /// user messages are buffered until `meshed`, then flushed, so the
     /// first message after a join can't be a lost one-shot.
     pub meshed: bool,
-    /// Which transports a directed message may use (per-session). `new()`
-    /// defaults to all-enabled; `event_loop::run` sets the configured value.
-    /// Read by `crate::unicast::deliver`.
-    pub transport: crate::transport::TransportPolicy,
     /// The unicast (point-to-point) connection pool: dials + reuses a QUIC
     /// connection to each addressable participant so a directed message goes
     /// p2p instead of flooding the gossip mesh. Interior-mutable (Arc), so the
     /// send helpers reach it through `&EventLoopState`. `new` installs a
     /// detached pool; the real loop replaces it with an endpoint-backed one.
     /// Independent of `linked_endpoints` by design (unicast can reach a
-    /// non-neighbor). See [`crate::unicast`].
-    pub unicast_pool: crate::unicast::UnicastPool,
-    /// Which transport planes directed sends may use — per-session, so
-    /// in-process nodes can each run a different policy (the CLI sources it
-    /// from the hidden `--no-unicast`/`--no-gossip-directed`/`--no-circuit`
-    /// flags; the library API from its config). Read by [`crate::unicast::deliver`].
+    /// non-neighbor). See [`crate::transport`].
+    pub unicast_pool: crate::transport::UnicastPool,
     /// The multi-hop transport handle, when the `--multihop` flag registered it
     /// on the participant endpoint. Owns the routing table (fed from received
     /// `LinkState` frames) and the underlay endpoint. `None` when multihop is off
@@ -238,9 +230,11 @@ pub struct EventLoopState {
     pub seen: BoundedIdSet,
     /// User messages sent before we had a real-peer link (no gossip
     /// path yet — a bare `broadcast` would be a lost one-shot). Drained in
-    /// FIFO order once `meshed` flips; a bounded FIFO queue (cap
+    /// FIFO order once `meshed` flips, each routed through the send decision;
+    /// the parsed frame rides beside its wire bytes so the flush never
+    /// re-parses what this node just serialized. A bounded FIFO queue (cap
     /// `PENDING_OUTBOUND_CAP`) so the backlog can't grow without limit.
-    pub pending_outbound: BoundedQueue<Bytes>,
+    pub pending_outbound: BoundedQueue<(Message, Bytes)>,
     pub state_file: Option<StateFile>,
     /// Whether the event loop is serving IPC yet. Starts `false` (the
     /// pre-loop state-file write reports "identity up, not yet serving");
@@ -423,8 +417,7 @@ impl EventLoopState {
             rendezvous_linked: false,
             announced: false,
             meshed: false,
-            transport: crate::transport::TransportPolicy::DEFAULTS,
-            unicast_pool: crate::unicast::UnicastPool::disconnected(),
+            unicast_pool: crate::transport::UnicastPool::disconnected(),
             multihop: None,
             link_state_seq: 0,
             reclaim_until: None,
@@ -489,7 +482,7 @@ impl EventLoopState {
                 last_seen_secs_ago: self.last_seen.get(nick).map(secs_since),
                 quiet: false,
                 reach: self.reach_of(nick),
-                transport: crate::unicast::lane_for(nick, self),
+                transport: crate::transport::lane_for(nick, self),
             })
             .chain(self.quiet.iter().map(|nick| RosterEntry {
                 nickname: nick.clone(),
@@ -499,7 +492,7 @@ impl EventLoopState {
                 last_seen_secs_ago: self.quiet_since.get(nick).map(secs_since),
                 quiet: true,
                 reach: Reach::Gossip,
-                transport: crate::unicast::lane_for(nick, self),
+                transport: crate::transport::lane_for(nick, self),
             }))
             .collect();
         // Most-recently-seen first; unknown recency (no heartbeat yet) sorts last.
@@ -1007,7 +1000,7 @@ mod tests {
 
     #[test]
     fn roster_transport_mirrors_the_send_decision() {
-        use crate::unicast::Lane;
+        use crate::transport::Lane;
         let mut state = fresh_state();
         state.meshed = true;
         // Known endpoint while meshed → unicast (the send path would dial it).
@@ -1015,7 +1008,7 @@ mod tests {
         state
             .participant_endpoints
             .insert(nick("dialable"), endpoint_id(1));
-        // No PeerInfo yet → nothing to dial or route a circuit to → gossip.
+        // No PeerInfo yet → nothing to dial → unreachable for directed frames.
         state.participants.insert(nick("unknown"));
 
         let lane = |current: &EventLoopState, name: &str| {
@@ -1028,19 +1021,13 @@ mod tests {
                 .transport
         };
         assert_eq!(lane(&state, "dialable"), Lane::Unicast);
-        assert_eq!(lane(&state, "unknown"), Lane::Gossip);
+        assert_eq!(lane(&state, "unknown"), Lane::Unreachable);
 
         // Unmeshed: the known endpoint is reached via the multihop transport (iroh
         // picks a direct path when meshed, else the multihop one), so the column
         // reads `multihop` rather than a direct `unicast`.
         state.meshed = false;
         assert_eq!(lane(&state, "dialable"), Lane::Multihop);
-
-        // Policy narrows the column exactly like it narrows `deliver`.
-        state.transport.unicast = false;
-        assert_eq!(lane(&state, "dialable"), Lane::Gossip);
-        state.transport.gossip_directed = false;
-        assert_eq!(lane(&state, "dialable"), Lane::Unreachable);
     }
 
     #[test]

@@ -20,12 +20,14 @@ use crate::util::consts::MAX_MESSAGE_SIZE;
 /// task builders. A non-a2a consumer emits its `App`-tagged payloads through
 /// this one primitive: it stamps the frame with `tag`/`to`/`corr`, signs it with
 /// the loop identity, and routes it with the same single-send decision the a2a
-/// path uses ([`crate::unicast::deliver`]) — unicast to a sole addressee
-/// when dialable, gossip otherwise. A broadcast (`to == None`) always gossips.
+/// path uses ([`crate::transport::deliver`]) — unicast to a sole addressee,
+/// gossip for a broadcast (`to == None`).
 ///
 /// Reliability matches the engine's own plumbing: while unmeshed the frame is
-/// buffered into `pending_outbound` (flushed on the first real-peer link), so a
-/// send issued before the mesh forms is not lost.
+/// buffered into `pending_outbound` and flushed through the send decision on
+/// the meshed edge; a directed frame whose addressee is still unknown at that
+/// flush is re-buffered and retried as `PeerInfo`s arrive (dropped only when
+/// the bounded buffer overflows).
 ///
 /// This is a **single-frame** send: unlike the a2a chat path it does not split a
 /// large body across shards (that logic is entangled with a2a's per-author hash
@@ -64,10 +66,10 @@ pub async fn send_app(
     if state.meshed {
         // Directed vs. broadcast is decided inside `deliver` from the frame's
         // `to` — the same routing the a2a send path rides.
-        crate::unicast::deliver(&frame, bytes, state, ctx.sender).await
-    } else if state.pending_outbound.push(bytes.clone()) {
-        // Buffered until the first real-peer link flushes it (see
-        // `gossip::recv::flush_pending`).
+        crate::transport::deliver(&frame, bytes, state, ctx.sender).await
+    } else if state.pending_outbound.push((frame, bytes)) {
+        // Buffered until the meshed edge flushes it through the same send
+        // decision (see `gossip::recv::flush_pending`).
         Ok(())
     } else {
         anyhow::bail!("pending outbound buffer full; app frame dropped")
@@ -210,10 +212,10 @@ pub async fn broadcast_state_merge(
             .await
             .map_err(|error| anyhow::anyhow!("{error}"))?;
     } else {
-        // Unmeshed: buffer for gossip until we mesh. (The change is already in
-        // the local doc, so heads anti-entropy still reconciles it if the buffer
-        // is full.)
-        state.pending_outbound.push(Bytes::from(bytes));
+        // Unmeshed: buffer until we mesh. (The change is already in the local
+        // doc, so heads anti-entropy still reconciles it if the buffer is
+        // full.)
+        state.pending_outbound.push((signed, Bytes::from(bytes)));
     }
     Ok(())
 }

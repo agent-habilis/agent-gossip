@@ -68,7 +68,7 @@ pub const MAX_SHARD_TOTAL: u32 = 65_536;
 /// heal via anti-entropy) — exactly the old 16-shard behavior. A bigger
 /// group's shards skip the log so one huge body can't evict the mesh's whole
 /// anti-entropy history; those transfers are transport-reliable instead
-/// (QUIC streams on unicast/circuit, best-effort on a gossip fallback).
+/// (QUIC streams on the unicast connection).
 pub const LOGGED_SHARD_GROUP_MAX_TOTAL: u32 = 16;
 
 /// Upper bound on a logical (possibly multipart) body the daemon will accept

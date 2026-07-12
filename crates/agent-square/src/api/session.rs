@@ -1,6 +1,5 @@
 use agent_habilis_mesh::daemon::setup::{SetupKind, SetupParams, setup_mesh};
 use agent_habilis_mesh::daemon::state::RosterSnapshot;
-use agent_habilis_mesh::transport::TransportPolicy;
 use agent_habilis_mesh::util::consts::GOSSIP_ACTIVE_VIEW_CAPACITY;
 use tokio::sync::{broadcast, mpsc};
 
@@ -102,7 +101,6 @@ impl MeshSession {
                 sink,
                 drift: None,
                 a2a_serve: None,
-                transport: TransportPolicy::default(),
                 multihop: false,
             },
         )
