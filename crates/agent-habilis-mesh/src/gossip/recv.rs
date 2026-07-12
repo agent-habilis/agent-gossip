@@ -218,7 +218,12 @@ async fn flush_pending(state: &mut EventLoopState, ctx: &HandlerCtx<'_>, edge: &
             tracing::warn!(%error, "buffered outbound message undeliverable and the buffer is full; dropped");
         }
     }
-    tracing::info!(delivered, requeued, edge, "meshed: flushed buffered messages");
+    tracing::info!(
+        delivered,
+        requeued,
+        edge,
+        "meshed: flushed buffered messages"
+    );
 }
 
 /// Validate + dispatch one inbound wire message, regardless of transport. Both

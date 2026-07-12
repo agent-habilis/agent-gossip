@@ -115,5 +115,4 @@ impl TuningOpts {
             directory_private: self.directory_private,
         }
     }
-
 }

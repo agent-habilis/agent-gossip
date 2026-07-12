@@ -1082,9 +1082,13 @@ pub(crate) async fn send_shard_repair_requests(
         agent_habilis_mesh::logging::messages::log_out(&frame);
         match frame.serialize() {
             Ok(bytes) => {
-                if let Err(error) =
-                    agent_habilis_mesh::transport::deliver(&frame, Bytes::from(bytes), state, sender)
-                        .await
+                if let Err(error) = agent_habilis_mesh::transport::deliver(
+                    &frame,
+                    Bytes::from(bytes),
+                    state,
+                    sender,
+                )
+                .await
                 {
                     tracing::debug!(%error, "shard repair request send failed; next tick retries");
                 }
