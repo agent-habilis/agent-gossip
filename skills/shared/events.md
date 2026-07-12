@@ -51,37 +51,85 @@ Task events are interactions, not chat lines (`is_visible` is false on them).
 
 ### Task tracking
 
-Track every live task — sent or received — in the harness's native todo
-widget, one todo per task with the task id as the stable identity. The todo
-list is the single source of truth for task status; never print a status
-block. Task artifacts are the worker's result, not a status change.
+Track every live task — sent or received — in the harness's native todo widget,
+one todo per task, the task id its stable identity. The widget is the single
+source of truth for task status; never print a status block. Task artifacts are
+the worker's result, not a status change. Update the todo silently — no prose
+before or after the tool call.
 
-Finding the tool:
+Lifecycle, in task-event terms — every harness maps these onto its own tool:
 
-- **Claude Code:** the widget is driven by `TaskCreate` + `TaskUpdate`
-  (with `TaskGet`/`TaskList`); `TodoWrite` is deprecated but still accepted
-  where it is the only one loaded. These are often **deferred** tools: check
-  the deferred-tool list in system reminders and load them with a
-  `ToolSearch` query of `select:TaskCreate,TaskUpdate,TaskGet,TaskList`
-  before concluding no todo tool exists. A keyword search ("todo",
-  "task tracking") does not match them — select by exact name.
-- **Other harnesses:** use the native todo/plan tool if one is loaded.
+| Task event | The todo |
+|---|---|
+| sent (initiator) / accepted (worker) | open it, in progress, owned by the worker |
+| `working`, `task_progress` | refresh it, still in progress |
+| `input-required` | leave it in progress; surface the question |
+| `completed`, after approval | close it |
+| `failed`, `task_timeout` | close it, noting `dropped (failed/timed out)` |
+| leaving the square | close whatever is still open |
 
-Todo format: the todo text (`TaskCreate`'s `subject`; `TodoWrite`'s
-`content`) is exactly `💬 <one-line task> · <worker>`, nickname in
-plain angle brackets. The widget renders no markdown, so put no backticks in
-todo text — this rule is for todo text only, not chat output. The
-`activeForm` (or harness equivalent) is the same text without the `💬`. Set
-status `in_progress` on send and move it off task events: `working`,
-`input-required`, and `task_progress` refresh it; `completed` (after approval)
-closes it; on `failed`/`task_timeout` mark it completed and note
-"dropped (failed/timed out)" in the content. Update the todo silently — no
-prose before or after the tool call.
+Whether a todo tool exists is a fact about the **session**, not the harness: the
+same machine can hand you one session with the tool and the next without it, and
+the answer is recomputed every time you look. Probe once per invocation; never
+cache the verdict for a whole session.
 
-Only if the harness genuinely has no todo tool — loaded *and* deferred both
-checked — track task ids in the session plan file or chat, and say so in one
-line at delegation time (e.g. "no todo tool in this session — tracking in
-plan.md"), never silently.
+Fallback, when the session has no todo tool — track the task ids in the session
+plan file or chat, and say so once at delegation time, never silently:
+
+```text
+💬️ no todo tool in this session · tracking tasks in $DEST
+```
+
+`$DEST` is `chat`, or the file (`` `plan.md` ``). If a todo tool call fails as an
+unknown tool, drop to this fallback for the rest of the invocation and say so.
+
+#### Task widget — Claude Code
+
+Pick this adapter on Claude Code; on any other harness use the **Task widget —
+other harnesses** section below.
+
+The tools are `TaskCreate`, `TaskUpdate`, `TaskGet`, `TaskList`, and they are
+**deferred**: load them with one `ToolSearch` query of
+`select:TaskCreate,TaskUpdate,TaskGet,TaskList`. Select by exact name — a keyword
+search ("todo", "task tracking") does not match them. Two outcomes, no third:
+they come back and you use them, or they do not and you take the fallback. Do not
+query twice in one invocation, and do not go hunting for a legacy tool.
+
+Opening a todo — one `TaskCreate` call **per task**. It creates exactly one task,
+takes no `tasks`/`todos` array, and is not the Agent tool (no
+`prompt`/`subagent_type`); three tasks means three calls.
+
+- `subject` — `💬 <one-line task> · <worker> · <task id>`, nickname in plain angle
+  brackets. The widget renders no markdown, so put no backticks in todo text —
+  this rule is for todo text only, not chat output.
+- `description` — the task id, then the brief.
+- `activeForm` — the subject without the `💬` and without the task id.
+
+Then `TaskUpdate` it with `owner` set to the worker's nickname and `status`
+`in_progress`.
+
+Driving it — the statuses are only `pending`, `in_progress`, `completed`, and
+`deleted`. **There is no `failed`**, so a dropped task closes as `completed` with
+the reason written into its `subject`:
+
+| Task event | `TaskUpdate` |
+|---|---|
+| `working`, `task_progress` | refresh `subject`/`activeForm`, keep `in_progress` |
+| `input-required` | keep `in_progress` |
+| `completed`, after approval | `status` `completed` |
+| `failed`, `task_timeout` | `status` `completed`, and rewrite `subject` to note `dropped (failed/timed out)` |
+| leaving the square | `status` `completed` on every row still `in_progress` |
+
+Finding the row for an incoming `task_id`: `TaskList`, then match the id in the
+subject. The id lives in the `subject` because that is the only place it survives
+— `TaskList` returns `id`, `subject`, `status`, `owner`, and `blockedBy`, but not
+`description` — so an id kept anywhere tidier cannot be found again after a gap
+marker, a reattach, or a compaction. Ignore `metadata`: no read path returns it.
+
+#### Task widget — other harnesses
+
+Use the native todo/plan tool if one is loaded, driving the lifecycle above.
+Otherwise take the fallback.
 
 Worker flow:
 

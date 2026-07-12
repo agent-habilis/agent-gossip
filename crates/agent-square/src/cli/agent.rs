@@ -380,14 +380,25 @@ mod tests {
     /// A harness writes a background command's output to a file. The daemon's
     /// `--output json` stdout carries every message body, and its stderr prints
     /// the bare square id — a join credential (`Output::mesh_id_line`). The
-    /// `> /dev/null 2>&1` on each backgrounded line is therefore the only thing
-    /// keeping either off disk; dropping one would reintroduce the leak
-    /// silently, so pin it here rather than trust review.
+    /// `> /dev/null 2>&1` on each such line is therefore the only thing keeping
+    /// either off disk; dropping one would reintroduce the leak silently, so pin
+    /// it here rather than trust review.
     ///
-    /// Stated as a property of *any* backgrounded `agent-square` line in any
-    /// generated skill, so a future skill is covered too.
+    /// Backgrounding leaves no trace in the rendered text to match on — the
+    /// harness's background facility owns it, and the launches carry no trailing
+    /// `&`. So key off what is still visible: the two commands that run long, and
+    /// are therefore the only ones ever handed to that facility.
     #[test]
-    fn backgrounded_square_commands_discard_stdout_and_stderr() {
+    fn long_running_square_commands_discard_stdout_and_stderr() {
+        fn is_daemon_launch(line: &str) -> bool {
+            ["create", "join", "topic"]
+                .iter()
+                .any(|sub| line.starts_with(&format!("agent-square {sub} ")))
+        }
+        fn is_bell(line: &str) -> bool {
+            line.starts_with("agent-square poll ") && line.contains("--long")
+        }
+
         let mut daemon_starters_checked = 0;
         for skill in OWNED_SKILL_DIRS {
             if *skill == "shared" {
@@ -399,25 +410,34 @@ mod tests {
                 .and_then(include_dir::File::contents_utf8)
                 .unwrap_or_else(|| panic!("{path} is embedded"));
 
-            let backgrounded: Vec<&str> = body
+            // `trim`, not `trim_end`: the re-armed bell sits inside a numbered
+            // list, so it is indented in every skill that runs the receive loop.
+            let long_running: Vec<&str> = body
                 .lines()
-                .map(str::trim_end)
-                .filter(|line| line.starts_with("agent-square ") && line.ends_with('&'))
+                .map(str::trim)
+                .filter(|line| is_daemon_launch(line) || is_bell(line))
                 .collect();
-            if ["square-create", "square-join", "square-topic"].contains(skill) {
+
+            for line in &long_running {
                 assert!(
-                    backgrounded.len() >= 2,
-                    "{path}: expected the daemon launch and the poll bell to be backgrounded, found {backgrounded:?}"
-                );
-                daemon_starters_checked += 1;
-            }
-            for line in backgrounded {
-                assert!(
-                    line.contains("> /dev/null 2>&1"),
-                    "{path}: a backgrounded command must discard stdout AND stderr, \
+                    line.ends_with("> /dev/null 2>&1"),
+                    "{path}: a long-running command must discard stdout AND stderr, \
                      or the harness writes message bodies and the square id to a \
                      file: {line}"
                 );
+            }
+
+            if ["square-create", "square-join", "square-topic"].contains(skill) {
+                assert_eq!(
+                    long_running.iter().filter(|line| is_daemon_launch(line)).count(),
+                    1,
+                    "{path}: expected exactly one daemon launch, found {long_running:?}"
+                );
+                assert!(
+                    long_running.iter().any(|line| is_bell(line)),
+                    "{path}: expected a poll bell, found {long_running:?}"
+                );
+                daemon_starters_checked += 1;
             }
         }
         assert_eq!(daemon_starters_checked, 3);
