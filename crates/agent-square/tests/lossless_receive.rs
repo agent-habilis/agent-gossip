@@ -7,13 +7,15 @@
 //! redirect is pinned by `cli::agent::tests::backgrounded_square_commands_discard_stdout`)
 //! and read content back through `poll`, which must never truncate.
 
-mod common;
+use agent_square_test_fixtures as common;
 
 use std::fs;
 use std::process::{Child, Stdio};
 use std::time::Instant;
 
-use common::{CONNECT_TIMEOUT, MSG_TIMEOUT, POLL, cli_msg_checked, cli_poll, test_cmd, tmp_log};
+use common::{
+    CONNECT_TIMEOUT, MSG_TIMEOUT, POLL, cli_message_checked, cli_poll, test_cmd, tmp_log,
+};
 
 /// Long enough to exceed any plausible notification cap, and to make a partial
 /// write obvious rather than subtle.
@@ -198,7 +200,7 @@ fn bell_ignores_own_meta_report_but_delivers_it_with_the_next_message() {
     );
 
     // A real message wakes it, and the batch carries the meta echo along.
-    cli_msg_checked(&mesh, &nick, "wake up");
+    cli_message_checked(&mesh, &nick, "wake up");
     let deadline = Instant::now() + MSG_TIMEOUT;
     while bell.try_wait().expect("try_wait").is_none() {
         assert!(Instant::now() < deadline, "bell never woke on a message");
@@ -306,7 +308,7 @@ fn bell_errors_when_the_daemon_crashes() {
 fn poll_returns_a_long_body_byte_for_byte() {
     let (_daemon, mesh, nick) = spawn_create("longbody");
     let body = long_body();
-    cli_msg_checked(&mesh, &nick, &body);
+    cli_message_checked(&mesh, &nick, &body);
 
     let deadline = Instant::now() + MSG_TIMEOUT;
     loop {

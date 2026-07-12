@@ -10,7 +10,7 @@
 //! Uses `--output json` and 3 peers to test multi-peer dynamics.
 //!
 //! Run `cargo build --release` first for faster crypto (shorter connect times).
-mod common;
+use agent_square_test_fixtures as common;
 
 use std::fs;
 use std::path::PathBuf;
@@ -209,7 +209,7 @@ impl Drop for JsonNode {
 // already-running daemon; success is asserted.
 
 fn cli_send(mesh: &str, nickname: &str, body: &str) -> String {
-    common::cli_msg_checked(mesh, nickname, body)
+    common::cli_message_checked(mesh, nickname, body)
 }
 
 // ── test fixtures ──────────────────────────────────────────────────────────

@@ -23,7 +23,7 @@
 //! `meta_and_state_channels_are_independent` is the one inherently cross-channel
 //! test and stays standalone.
 
-mod common;
+use agent_square_test_fixtures as common;
 
 use std::time::{Duration, Instant};
 

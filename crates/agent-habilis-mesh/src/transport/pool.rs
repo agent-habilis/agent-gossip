@@ -137,7 +137,11 @@ impl UnicastPool {
         let conn = if let Some(conn) = warm {
             conn
         } else {
-            if on_cooldown(&mut *self.inner.dial_failures.lock().await, eid, Instant::now()) {
+            if on_cooldown(
+                &mut *self.inner.dial_failures.lock().await,
+                eid,
+                Instant::now(),
+            ) {
                 bail!("unicast dial on cooldown after a recent failure");
             }
             match dial(&endpoint, eid).await {

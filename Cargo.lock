@@ -110,6 +110,7 @@ name = "agent-square"
 version = "0.5.0"
 dependencies = [
  "agent-habilis-mesh",
+ "agent-square-test-fixtures",
  "anstream 0.6.21",
  "anstyle",
  "anyhow",
@@ -138,6 +139,16 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+]
+
+[[package]]
+name = "agent-square-test-fixtures"
+version = "0.5.0"
+dependencies = [
+ "agent-square",
+ "anyhow",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]

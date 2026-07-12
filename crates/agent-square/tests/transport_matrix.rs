@@ -9,7 +9,7 @@
 //! lifecycle — including the sharded multi-frame RPC — is inherently the
 //! unicast proof; no per-transport policy row is needed.
 
-mod common;
+use agent_square_test_fixtures as common;
 
 use std::time::Instant;
 

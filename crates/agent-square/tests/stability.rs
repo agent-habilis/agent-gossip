@@ -10,7 +10,7 @@
 //! All in-process via the `InProcNode` harness (real iroh mesh, sub-second
 //! to ~30s each, deterministic). Total CI cost ~70s.
 
-mod common;
+use agent_square_test_fixtures as common;
 
 use std::time::Duration;
 

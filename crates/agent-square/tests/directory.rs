@@ -8,7 +8,7 @@
 //! — runs hermetically. This is the regression guard for the directory
 //! bootstrap fix (a discoverer never co-hosts; only the advertiser does).
 
-mod common;
+use agent_square_test_fixtures as common;
 
 use std::fs::{self, File};
 use std::path::Path;

@@ -250,9 +250,10 @@ pub(crate) struct BroadcastMessageParams<'a> {
 /// way, its id pinned to the payload's A2A `messageId`.
 ///
 /// # Errors
-/// Propagates a [`Message::serialize`] failure and a gossip broadcast error,
-/// errors if the unmeshed pending-outbound buffer is full, and refuses a body
-/// that would need more than [`MAX_SHARD_TOTAL`] shards.
+/// Refuses a body past the [`MAX_LOGICAL_BODY_BYTES`] input ceiling, propagates
+/// a [`Message::serialize`] failure and a gossip broadcast error, errors if the
+/// unmeshed pending-outbound buffer is full, and refuses a body that would need
+/// more than [`MAX_SHARD_TOTAL`] shards.
 #[expect(
     clippy::too_many_lines,
     reason = "one straight-line compose/sign/split/broadcast pipeline shared by every caller; splitting would scatter a single sequential path across helpers"
@@ -264,6 +265,19 @@ pub(crate) async fn broadcast_message(
     out: &output::Output,
 ) -> anyhow::Result<(MessageId, Message)> {
     let BroadcastMessageParams { mesh, author, text } = params;
+    // Gate the caller's *logical* body up front. Downstream only ever sees the
+    // composed, sealed, shard-split wire body, so without this an oversized
+    // input does not get refused — it gets split into ~18k frames and dies as an
+    // opaque "pending outbound buffer full", or floods every peer. Same ceiling
+    // and same blob-channel advice as the RPC path (`send_rpc_frame`), so the
+    // caller-facing limit is one number regardless of which path a body takes.
+    if text.as_str().len() > MAX_LOGICAL_BODY_BYTES {
+        return Err(anyhow::anyhow!(
+            "message body too large: {} bytes exceeds the input ceiling \
+             ({MAX_LOGICAL_BODY_BYTES} bytes); use the blob channel for files",
+            text.as_str().len()
+        ));
+    }
     let signer = state.identity.clone();
     let payload = crate::a2a::gossip::chat_message(mesh, text.as_str());
     let payload_id =
@@ -1081,9 +1095,13 @@ pub(crate) async fn send_shard_repair_requests(
         agent_habilis_mesh::logging::messages::log_out(&frame);
         match frame.serialize() {
             Ok(bytes) => {
-                if let Err(error) =
-                    agent_habilis_mesh::transport::deliver(&frame, Bytes::from(bytes), state, sender)
-                        .await
+                if let Err(error) = agent_habilis_mesh::transport::deliver(
+                    &frame,
+                    Bytes::from(bytes),
+                    state,
+                    sender,
+                )
+                .await
                 {
                     tracing::debug!(%error, "shard repair request send failed; next tick retries");
                 }

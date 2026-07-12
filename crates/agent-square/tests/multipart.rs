@@ -5,10 +5,10 @@
 //! These pin that round-trip for a plain `msg` and for a task content leg —
 //! the body surfaces **once**, as the whole logical message, never as raw shards.
 
-mod common;
+use agent_square_test_fixtures as common;
 
 use agent_square::{MAX_LOGICAL_BODY_BYTES, MAX_MESSAGE_SIZE, MessageBody, TaskId, TaskState};
-use common::{InProcNode, MSG_TIMEOUT, chat_text};
+use common::{BIG_BODY_TIMEOUT, InProcNode, MSG_TIMEOUT, chat_text};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn multishard_message_reassembles_into_one() {
@@ -61,8 +61,11 @@ async fn multishard_message_past_the_old_cap_reassembles() {
     let big = "0123456789".repeat(20 * 1024);
     let id = alice.send(&big).await;
 
+    // `BIG_BODY_TIMEOUT`, not `MSG_TIMEOUT`: past 16 shards the group skips the
+    // message log, so a dropped shard heals only through the (deliberately lazy)
+    // `shard/repair` round — which cannot even begin inside a 1-minute budget.
     assert!(
-        bob.wait_body(&big, MSG_TIMEOUT).await,
+        bob.wait_body(&big, BIG_BODY_TIMEOUT).await,
         "the reassembled >16-shard body never arrived"
     );
     assert_eq!(bob.count_body(&big), 1, "the body surfaces exactly once");
@@ -92,7 +95,12 @@ async fn shard_repair_reserves_cached_big_group_frames() {
     // A >16-shard body: alice caches its frames for repair.
     let big = "0123456789".repeat(20 * 1024); // ~200 KB, ~55 shards
     let id = alice.send(&big).await;
-    assert!(bob.wait_body(&big, MSG_TIMEOUT).await, "big body arrived");
+    // Unlogged group: a lost shard heals only via `shard/repair`, which needs
+    // longer than `MSG_TIMEOUT` to even fire. See `BIG_BODY_TIMEOUT`.
+    assert!(
+        bob.wait_body(&big, BIG_BODY_TIMEOUT).await,
+        "big body arrived"
+    );
 
     // Bob asks alice to re-send two shards of that group (the group id is the
     // logical message id). Bob already holds them — dedup will drop the

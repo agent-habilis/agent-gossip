@@ -18,7 +18,7 @@
 //! sent from the same node after the injection — so absence means "dropped",
 //! never "not yet arrived".
 
-mod common;
+use agent_square_test_fixtures as common;
 
 use std::time::{Duration, Instant};
 

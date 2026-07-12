@@ -100,9 +100,17 @@ mimalloc = { version = "0.1", default-features = false }
 # app's test suites can build the engine's cross-crate test fixtures. Off for a
 # normal `cargo build` (dev-deps don't apply there).
 agent-habilis-mesh = { path = "../agent-habilis-mesh", features = ["test-fixtures"] }
+# The shared harness the 16 integration binaries drive (`InProcNode`, `Node`, the
+# `cli_*` helpers). A crate rather than a `tests/common/` module because each
+# binary is its own compilation unit: as a module, every helper a binary did not
+# personally call looked dead, which forced a blanket `#![allow(dead_code)]` that
+# also hid genuinely dead helpers. A library's `pub` surface is exempt from the
+# lint. The dependency cycle (it depends on `agent-square`) is legal precisely
+# because this back-edge is a dev-dependency.
+agent-square-test-fixtures = { path = "../agent-square-test-fixtures" }
 proptest.workspace = true
 insta.workspace = true
-# In-process integration harness (`tests/common::InProcNode`) drives
+# The in-process harness (`agent_square_test_fixtures::InProcNode`) drives
 # `api::MeshSession` async, so the test crates need a runtime + the
 # `#[tokio::test]` macro. Same major as the lib dep — no new dup version.
 tokio.workspace = true

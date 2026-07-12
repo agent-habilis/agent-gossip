@@ -29,7 +29,10 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: actions-rust-lang/setup-rust-toolchain@v1
-      - run: cargo clippy -p agent-square --all-targets -- -D warnings
+      # `agent-square-test-fixtures` is named explicitly: clippy lints only the
+      # packages it is given, so the shared test harness would otherwise be
+      # compiled as a dependency but never linted.
+      - run: cargo clippy -p agent-square -p agent-square-test-fixtures --all-targets -- -D warnings
 
   test:
     runs-on: ubuntu-latest

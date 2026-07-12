@@ -4,7 +4,7 @@
 //! responses. These are the reliability guarantees we make at the
 //! MCP surface.
 
-mod common;
+use agent_square_test_fixtures as common;
 
 use common::{CONNECT_TIMEOUT, MSG_TIMEOUT, POLL, flag_args, test_cmd, tmp_log};
 use std::fs::{self, File};
@@ -281,6 +281,21 @@ fn create_pair_with(base_id: u64, creator_args: &[&str]) -> (McpClient, McpClien
         probe_id += 1;
         std::thread::sleep(Duration::from_millis(100));
     }
+
+    // Linkage above only proves the broadcast path carries the creator's
+    // traffic. A *directed* call (`a2a_call --to`) is additionally sealed to the
+    // creator's published X25519 key, which the daemon refuses to send without
+    // ("cards still propagating") and which replicates through the `meta`
+    // document on its own schedule. So wait for the card too, or every directed
+    // call in this binary races it — the subprocess twin of
+    // `InProcNode::await_peer_card`.
+    let card = format!("/peers/{creator_nick}/card");
+    assert!(
+        poll_doc(&mut joiner, probe_id, "get_meta", |doc| doc
+            .pointer(&card)
+            .is_some()),
+        "creator's card never reached the joiner's meta doc"
+    );
 
     (creator, joiner, mesh, creator_nick)
 }
@@ -876,7 +891,7 @@ fn fetch_messages_cursor_returns_only_new_since_last_call() {
 fn task_creation_surfaces_to_worker_via_fetch() {
     let (mut creator, mut joiner, mesh, creator_nick) = create_pair(700);
 
-    let resp = tool_result_json(&joiner.tool_call(
+    let raw = joiner.tool_call(
         710,
         "a2a_call",
         serde_json::json!({
@@ -889,8 +904,9 @@ fn task_creation_surfaces_to_worker_via_fetch() {
                 "contextId": mesh,
             }},
         }),
-    ))
-    .expect("a2a_call should succeed");
+    );
+    let resp = tool_result_json(&raw)
+        .unwrap_or_else(|| panic!("a2a_call should succeed; raw response: {raw}"));
     // The worker mints the task id and returns a submitted Task (v1.0
     // SendMessageResponse oneof: `{"task": <Task>}`).
     assert!(resp["result"]["task"].is_object(), "got: {resp}");
