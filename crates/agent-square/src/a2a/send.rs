@@ -488,8 +488,8 @@ async fn broadcast_task_frame(
         let bytes = Bytes::from(single.serialize()?);
         let id = single.id.clone();
         // The wire frame's directed body is sealed to the addressee, which we
-        // cannot decrypt; surface the self-echo from a plaintext twin instead
-        // (same id, never signed or sent).
+        // cannot decrypt; surface *and ingest* the self-echo from a plaintext
+        // twin instead (same id, never signed or sent).
         let echo = Message::new_frame(mesh, author, kind, echo_body).with_id(id.clone());
         send_task_leg(
             state,
@@ -503,7 +503,7 @@ async fn broadcast_task_frame(
             },
         )
         .await?;
-        ingest_own_leg(app, &single, task_id, out);
+        ingest_own_leg(app, &echo, task_id, out);
         return Ok((id, single));
     }
     // Only content legs are ever large enough to split; the beat is a tiny
@@ -581,7 +581,7 @@ async fn broadcast_task_frame(
         Message::new_frame(mesh, author, kind.clone(), payload_body).with_id(logical_id.clone());
     let echo = Message::new_frame(mesh, author, kind, echo_body).with_id(logical_id);
     out.print_task(&echo, true);
-    ingest_own_leg(app, &logical, task_id, out);
+    ingest_own_leg(app, &echo, task_id, out);
     Ok((logical.id.clone(), logical))
 }
 
@@ -598,9 +598,17 @@ pub(crate) struct TaskStatusParams<'a> {
     pub(crate) app: &'a mut A2aApp,
 }
 
-/// Worker-emit a `TaskStatusUpdate` for a task we're serving: resolve the
-/// other party from the task record and push the status to it. A progress note
-/// like `"35/100"` on a non-terminal `working` state rides as a beat fraction.
+/// Worker-emit a `TaskStatusUpdate` for a task we're serving: resolve the other
+/// party from the task record and push the status to it. `--text` becomes the
+/// status note and nothing more — there is no progress reporting here. A
+/// `done/total` fraction can only ride a *beat*, and the sole beat producer is
+/// the daemon keepalive, which sources its fraction from `last_fraction` — a
+/// field written only from a *received* beat. The loop has no source, so the
+/// fraction is unreachable on every node. Giving a worker real progress needs a
+/// producer, and it is not a one-liner: `beat_metadata` sets the beat marker, and
+/// `ingest` routes any beat-marked status to `LegKind::Beat`, which does not
+/// advance state — so naively tagging a `working` status with a fraction would
+/// swallow the transition.
 ///
 /// # Errors
 /// `unknown task` if we hold no record for `task_id`; otherwise a
@@ -993,9 +1001,14 @@ fn retain_leg(state: &mut EventLoopState, out: &output::Output, params: RetainLe
 }
 
 /// Advance our own coarse task state machine for a leg we just sent and warn
-/// once if a content leg pushed the task past its whole-task cap. The `task_id`
-/// is threaded in rather than parsed from `msg`: our own echoed directed leg
-/// carries a *sealed* body, so parsing it would fail.
+/// once if a content leg pushed the task past its whole-task cap. `msg` must be
+/// the **plaintext twin** of the leg, never the wire frame: the wire body is
+/// sealed to the addressee, so a status leg's state could not be read back out
+/// of it. The `task_id` is threaded in for the same reason it always was — the
+/// artifact leg never needs its body at all.
+///
+/// Only *skill-driven* legs may come through here. The daemon's own keepalive
+/// beat must NOT — see [`crate::a2a::task::broadcast_status`].
 fn ingest_own_leg(
     app: &mut A2aApp,
     msg: &Message,

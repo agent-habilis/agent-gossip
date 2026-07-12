@@ -63,10 +63,21 @@ Lifecycle, in task-event terms — every harness maps these onto its own tool:
 |---|---|
 | sent (initiator) / accepted (worker) | open it, in progress, owned by the worker |
 | `working`, `task_progress` | refresh it, still in progress |
-| `input-required` | leave it in progress; surface the question |
+| `input-required`, kind `artifact-update` | leave it in progress; the result is in, awaiting your approval |
+| `input-required`, kind `status-update` | leave it in progress; surface the worker's question |
+| kind `message`, on a task you are working | the initiator's answer or approval — act on it |
 | `completed`, after approval | close it |
 | `failed`, `task_timeout` | close it, noting `dropped (failed/timed out)` |
 | leaving the square | close whatever is still open |
+
+`input-required` means two different things, and only the event's `kind` tells
+them apart. `artifact-update` is the worker's **result**, parked for your
+approval — show it and approve or ask for changes. `status-update` is the worker
+**asking you a question** — answer it. Both are answered the same way, with a
+follow-up that carries `--task-id` (see the initiator flow below).
+
+`task_progress` is a **liveness** beat, not progress: it carries no done/total
+and no percentage. It says the worker is still alive on the task, nothing more.
 
 Whether a todo tool exists is a fact about the **session**, not the harness: the
 same machine can hand you one session with the tool and the next without it, and
@@ -133,30 +144,56 @@ Otherwise take the fallback.
 
 Worker flow:
 
-1. On an incoming task brief, ask the user whether to accept it.
+1. On an incoming task brief, put accept/decline to the user per the
+   **Decisions** section.
 2. Hold `$TASK_ID` from the incoming task event's `task_id` field.
 3. If accepted, run:
    ```bash
    agent-square a2a status --square "$SQUARE" --nickname "$NICKNAME" --task-id "$TASK_ID" --state working
    ```
    Then do the work.
-4. For a report-back task, return the result with:
+4. If the work blocks on something only the initiator can decide, ask:
+   ```bash
+   agent-square a2a status --square "$SQUARE" --nickname "$NICKNAME" --task-id "$TASK_ID" --state input-required --text "$QUESTION"
+   ```
+   The answer comes back as a `message` leg on the same task, which resumes it to
+   `working` — carry on from there. Ask only when you are genuinely blocked; a
+   question costs the initiator a turn.
+5. For a report-back task, return the result with:
    ```bash
    agent-square a2a artifact --square "$SQUARE" --nickname "$NICKNAME" --task-id "$TASK_ID" --text "$RESULT"
    ```
-5. For a handover task, mark completion with:
+   This parks the task in `input-required` for the initiator's approval. It is
+   not the end of the task — you still owe it a terminal state.
+6. When the initiator's approval arrives, close the task yourself:
    ```bash
    agent-square a2a status --square "$SQUARE" --nickname "$NICKNAME" --task-id "$TASK_ID" --state completed
    ```
-6. If declined, run:
+   You are the task's server: only you can author `completed`. The initiator's
+   approval is a message, not a state change — the task stays open until you
+   close it.
+
+   On a **handover** there is no approval to wait for: the initiator stops
+   watching once you go `working`. You still owe the task the same terminal
+   `completed`, when the work is actually done.
+7. If declined, run:
    ```bash
    agent-square a2a status --square "$SQUARE" --nickname "$NICKNAME" --task-id "$TASK_ID" --state failed --text "$REASON"
    ```
 
 Initiator flow:
 
-1. Capture the task id from the directed `SendMessage` response.
-2. Answer `input-required` questions with a follow-up directed `SendMessage`.
-3. For report-back tasks, show the artifact result and approve or request
-   changes.
+1. Capture the task id from the directed `SendMessage` response
+   (`result.task.id`) and hold it as `$TASK_ID`.
+2. Every follow-up into that task — an answer, an approval, a change request —
+   carries `--task-id`:
+   ```bash
+   agent-square a2a call --square "$SQUARE" --nickname "$NICKNAME" --to "$WORKER" --method SendMessage --task-id "$TASK_ID" --text "$TEXT"
+   ```
+   **A `SendMessage` without `--task-id` is not a follow-up — it opens a brand
+   new task.** That is the protocol's rule, not a quirk: an absent task id means
+   "no task yet", so the worker mints one. The only `SendMessage` that omits
+   `--task-id` is the one that creates the task.
+3. For report-back tasks, show the artifact result, then approve or request
+   changes with the follow-up above. The worker closes the task; you do not.
 4. For handovers, stop watching once the worker accepts.

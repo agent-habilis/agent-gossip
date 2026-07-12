@@ -161,9 +161,12 @@ pub(crate) fn ingest(tasks: &mut HashMap<TaskId, TaskRecord>, params: IngestLegP
     // A task leg is a directed status/artifact app frame. `a2a_msg` (broadcast
     // chat) and every infra kind are never task legs; task `message/send` legs
     // are applied directly from the RPC path, not through `ingest`. The caller
-    // already holds the `task_id` (8.0 moved it into the body, which is *sealed*
-    // on the sender's own echo — re-parsing it here would fail and silently drop
-    // the leg), so it is threaded in rather than recovered from the body.
+    // already holds the `task_id` (8.0 moved it into the body), so it is threaded
+    // in rather than recovered from the body.
+    //
+    // On the `mine` path the caller must hand us the plaintext twin of the leg,
+    // not the wire frame: the wire body is sealed to the addressee, and a status
+    // leg reads its state out of the body.
     let MessageKind::App {
         tag, to: Some(to), ..
     } = &frame.kind
@@ -172,10 +175,6 @@ pub(crate) fn ingest(tasks: &mut HashMap<TaskId, TaskRecord>, params: IngestLegP
     };
     let (kind, fraction) = match tag.as_str() {
         wire::STATUS => {
-            // A status leg still reads its state from the body. On the sender's
-            // own sealed status echo this parse fails → `return false`, so a
-            // status self-echo stays a no-op (a worker's status is authoritative
-            // once, on the receiver's unsealed leg) — exactly as pre-8.0.
             let Ok(payload) = gossip::status_payload(frame) else {
                 return false;
             };
@@ -185,9 +184,6 @@ pub(crate) fn ingest(tasks: &mut HashMap<TaskId, TaskRecord>, params: IngestLegP
                 (LegKind::Status(payload.status.state), None)
             }
         }
-        // The artifact leg needs nothing from the (possibly sealed) body — the
-        // threaded `task_id` is enough to advance the record, so the sender's
-        // own artifact echo reaches `apply` and parks the task for review.
         wire::ARTIFACT => (LegKind::Artifact, None),
         _ => return false,
     };
@@ -570,6 +566,16 @@ struct BroadcastStatusParams<'a> {
 /// Build, sign, and fire-and-forget a daemon-originated status frame (the
 /// keepalive beat and the timeout cancel). A serialize error is swallowed
 /// like any other plumbing broadcast — the payloads are small literals.
+///
+/// **Do not fold this into `send::broadcast_task_frame`.** It looks like a
+/// duplicate of it and it is not: that path self-ingests through
+/// `send::ingest_own_leg`, and a beat routed through `apply` would refresh
+/// `last_skill_activity` (see [`TaskRecord::should_keepalive`]) — the one clock
+/// that stops a *crashed* skill's daemon from keepaliving its tasks forever.
+/// Unify the two and every abandoned task becomes immortal: beaten indefinitely,
+/// never reaped. The keepalive hand-sets `last_activity` above instead, which is
+/// exactly the point. `monitor_contract`'s
+/// `test_task_times_out_when_skill_goes_silent` is what catches this.
 async fn broadcast_status(
     state: &EventLoopState,
     ctx: &HandlerCtx<'_>,
@@ -750,6 +756,105 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&line).expect("valid JSON");
         assert_eq!(parsed["task_id"], task_id.as_str());
         assert_eq!(parsed["self"], true);
+    }
+
+    /// The **ingest contract** for a worker's own status leg: a sealed body is a
+    /// no-op, a plaintext one advances the record. Only STATUS legs read their
+    /// state out of the body, which is why only they were affected — the artifact
+    /// leg needs nothing from it and always self-echoed correctly.
+    ///
+    /// Pre-fix, `broadcast_task_frame` handed `ingest_own_leg` the **sealed** wire
+    /// frame, so the parse failed, `ingest` returned before `apply`, and a
+    /// worker's own `completed` never reached its own record. The worker is the
+    /// A2A *server*, so `GetTask` — served from that record — kept answering
+    /// `working` for an approved task, and `tick_task_sweep` later reaped it,
+    /// firing `task_timeout` and broadcasting a `canceled` for finished work. The
+    /// idle clock it reaped against sat at the last leg that *did* reach `apply`
+    /// (the artifact); with no artifact, the keepalive covered the task until
+    /// `TASK_KEEPALIVE_MAX_SECS` ran out and the timeout ran from there.
+    ///
+    /// This pins `ingest`, **not** its callers: it calls `ingest` directly. The
+    /// caller contract — `broadcast_task_frame` passing the plaintext twin it
+    /// already builds — is pinned at integration level, where a caller regression
+    /// is actually observable.
+    #[test]
+    fn own_status_echo_completes_the_workers_own_record() {
+        use agent_habilis_mesh::protocol::{AppFrameParams, AppTag, MeshId, Message, MessageBody};
+
+        let mesh = MeshId::from("💬test");
+        let task_id = tid();
+        let now = Instant::now();
+
+        // The worker's own status leg, as the plaintext twin (`sealed: false`)
+        // or as the wire frame the addressee alone can read (`sealed: true`).
+        let status_frame = |state: TaskState, sealed: bool| {
+            let body = if sealed {
+                "sealed-ciphertext-stand-in".to_owned()
+            } else {
+                let payload = crate::a2a::gossip::status_update(
+                    &mesh,
+                    crate::a2a::gossip::StatusUpdateParams {
+                        task_id: &task_id,
+                        state,
+                        note: None,
+                        metadata: None,
+                    },
+                );
+                serde_json::to_string(&payload).expect("payload serializes")
+            };
+            Message::new_app(
+                &mesh,
+                &Nickname::from("worker-bot"),
+                AppFrameParams {
+                    tag: AppTag::from(crate::a2a::wire::STATUS),
+                    to: Some(Nickname::from("calm-otter")),
+                    corr: None,
+                    body: MessageBody::new(&body).expect("valid body"),
+                },
+            )
+        };
+        let ingest_own = |tasks: &mut HashMap<_, _>, frame: &Message| {
+            super::ingest(
+                tasks,
+                super::IngestLegParams {
+                    frame,
+                    task_id: &task_id,
+                    mine: true,
+                    now,
+                },
+            );
+        };
+
+        // Worker receives the offer (⇒ Receiver) and drives itself to `working`.
+        let mut tasks = HashMap::new();
+        apply(&mut tasks, &leg(LegKind::Offer, false), now);
+        ingest_own(&mut tasks, &status_frame(TaskState::Working, false));
+        assert_eq!(tasks[&tid()].state, TaskState::Working);
+
+        // The wire frame is unreadable to its own sender: ingesting *that* is
+        // the bug, and it must stay a no-op rather than silently half-advance.
+        ingest_own(&mut tasks, &status_frame(TaskState::Completed, true));
+        assert_eq!(
+            tasks[&tid()].state,
+            TaskState::Working,
+            "a sealed body carries no state — the caller must ingest the plaintext twin"
+        );
+
+        // The plaintext twin closes the worker's own record.
+        ingest_own(&mut tasks, &status_frame(TaskState::Completed, false));
+        assert_eq!(tasks[&tid()].state, TaskState::Completed);
+        assert!(tasks[&tid()].state.is_terminal());
+
+        // And so the idle sweep passes it over, however long it sits there.
+        // This is `tick_task_sweep`'s expiry predicate, verbatim.
+        let timeout = Duration::from_secs(crate::a2a::task::task_timeout_secs());
+        let rec = tasks.get_mut(&tid()).expect("the record is live");
+        rec.last_activity = now.checked_sub(10 * timeout).expect("in range");
+        let expired = !rec.state.is_terminal() && now.duration_since(rec.last_activity) > timeout;
+        assert!(
+            !expired,
+            "a completed task is never swept, so it never emits a spurious task_timeout"
+        );
     }
 
     /// Drive the happy-path lifecycle from the initiator's view and assert

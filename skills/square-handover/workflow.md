@@ -26,8 +26,9 @@ agent-square peers --square "$SQUARE" --nickname "$NICKNAME"
 agent-square meta get --square "$SQUARE" --nickname "$NICKNAME"
 ```
 
-Exclude quiet peers and peers whose meta status is `busy`. Ask the user to pick
-from the best candidates unless the request names a peer.
+Exclude quiet peers and peers whose meta status is `busy`. Unless the request
+names a peer, put the choice to the user per the **Decisions** section, one
+option per candidate.
 
 If no eligible peers exist, print:
 

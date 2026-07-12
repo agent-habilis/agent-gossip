@@ -324,6 +324,81 @@ pub(crate) fn cli_task_create(mesh: &str, nickname: &str, to: &str, text: &str) 
         .to_string()
 }
 
+/// Who is following up, into which task, on whom — grouped so
+/// [`cli_task_followup`] stays inside the argument budget.
+pub(crate) struct FollowupParams<'a> {
+    pub(crate) mesh: &'a str,
+    pub(crate) nickname: &'a str,
+    pub(crate) to: &'a str,
+    pub(crate) task_id: &'a str,
+    pub(crate) text: &'a str,
+}
+
+/// Send a **follow-up into an existing task** via the CLI — an answer, an
+/// approval, a change request. The `--task-id` is what makes it a follow-up: A2A
+/// reads an absent `taskId` as "no task yet", so the same call without it opens a
+/// second, unrelated task on the worker. Returns the parsed JSON-RPC response,
+/// whose `result.task.id` must be the id passed in.
+pub(crate) fn cli_task_followup(params: &FollowupParams<'_>) -> serde_json::Value {
+    let &FollowupParams {
+        mesh,
+        nickname,
+        to,
+        task_id,
+        text,
+    } = params;
+    let out = test_cmd()
+        .args([
+            "a2a",
+            "call",
+            "--square",
+            mesh,
+            "--nickname",
+            nickname,
+            "--to",
+            to,
+            "--method",
+            "SendMessage",
+            "--task-id",
+            task_id,
+            "--text",
+            text,
+        ])
+        .output()
+        .expect("a2a call command failed to spawn");
+    assert!(
+        out.status.success(),
+        "a2a follow-up failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    serde_json::from_str(stdout.trim()).expect("a2a call prints a JSON-RPC response")
+}
+
+/// Worker-emit a task artifact (the result) via the CLI. Panics on failure.
+pub(crate) fn cli_task_artifact(mesh: &str, nickname: &str, task_id: &str, text: &str) {
+    let out = test_cmd()
+        .args([
+            "a2a",
+            "artifact",
+            "--square",
+            mesh,
+            "--nickname",
+            nickname,
+            "--task-id",
+            task_id,
+            "--text",
+            text,
+        ])
+        .output()
+        .expect("a2a artifact command failed to spawn");
+    assert!(
+        out.status.success(),
+        "a2a artifact failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
 /// Worker-emit a task status via the CLI (`agent-square a2a status`). Panics on failure.
 pub(crate) fn cli_task_status(mesh: &str, nickname: &str, task_id: &str, state: &str) {
     let out = test_cmd()

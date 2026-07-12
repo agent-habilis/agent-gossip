@@ -1221,6 +1221,117 @@ async fn test_task_times_out_when_skill_goes_silent() {
     );
 }
 
+/// The converse, and the test that would have caught the sealed-self-echo bug
+/// from the *agent's* side: a task driven to `completed` through the full
+/// report-back flow must never be reaped afterwards. No `task_timeout`, no
+/// `canceled`, on either party.
+///
+/// This is the shape the bug actually took in the wild. The worker sealed its own
+/// status frames to the addressee and then fed those unreadable frames back into
+/// its own state machine, so its `working` and `completed` never advanced its own
+/// record. Non-terminal, it stayed sweepable, and minutes after the initiator had
+/// approved the result the worker reaped its own finished task — surfacing a
+/// `task_timeout` to its skill and broadcasting a `canceled` to the peer.
+///
+/// The suite could not see it: every existing lifecycle assertion watched the
+/// *initiator's* mirror, which advances correctly because it decrypts the inbound
+/// leg. Only the producer was broken, and only the producer went unwatched.
+///
+/// The deadline is deliberately not hardcoded. Pre-fix it depended on where the
+/// ball sat: a task parked in `input-required` puts it on the initiator, so the
+/// worker sends no keepalive and the sweep fires one `--task-timeout-secs` after
+/// the last leg that reached `apply`; a task the worker still owns is keepalived
+/// for up to `--task-keepalive-max-secs` first. The window below clears both.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_completed_task_is_never_reaped() {
+    let timers: &[(&str, &str)] = &[
+        ("--task-timeout-secs", "3"),
+        ("--task-keepalive-secs", "1"),
+        ("--task-keepalive-max-secs", "2"),
+        ("--sweep-interval-secs", "1"),
+    ];
+    let (creator, mesh) = JsonNode::create_with_flags(timers);
+    let worker = JsonNode::join_with_flags(&mesh, "tk-done", timers);
+    assert!(creator.wait_ready(&mesh));
+    assert!(worker.wait_ready(&mesh));
+
+    let saw_join = wait_until(
+        || {
+            creator
+                .presence_events()
+                .iter()
+                .filter(|value| value["subtype"] == "joined")
+                .count()
+        },
+        1,
+        MSG_TIMEOUT,
+    );
+    assert!(saw_join >= 1, "creator never saw the worker join");
+
+    // The full report-back flow, exactly as the skill drives it.
+    let tid = common::cli_task_create(&mesh, &creator.nickname, "tk-done", "count to three");
+    let saw_offer = wait_until(
+        || {
+            worker
+                .json_events()
+                .iter()
+                .filter(|value| value["event"] == "task" && value["kind"] == "message")
+                .count()
+        },
+        1,
+        MSG_TIMEOUT,
+    );
+    assert!(saw_offer >= 1, "worker never surfaced the task message");
+
+    common::cli_task_status(&mesh, "tk-done", &tid, "working");
+    common::cli_task_artifact(&mesh, "tk-done", &tid, "three");
+
+    // The initiator approves *into the task* — the `--task-id` is what makes this
+    // a follow-up rather than a brand-new task.
+    let approved = common::cli_task_followup(&common::FollowupParams {
+        mesh: &mesh,
+        nickname: &creator.nickname,
+        to: "tk-done",
+        task_id: &tid,
+        text: "approved, thank you",
+    });
+    assert_eq!(
+        approved["result"]["task"]["id"], tid,
+        "a --task-id follow-up must land on the same task, not open a new one: {approved}"
+    );
+
+    // The worker, as the task's server, authors the terminal state.
+    common::cli_task_status(&mesh, "tk-done", &tid, "completed");
+
+    // Now wait out a window that comfortably exceeds every pre-fix deadline —
+    // keepalive-max (2s) + timeout (3s) + a sweep tick (1s), with headroom.
+    tokio::time::sleep(Duration::from_secs(12)).await;
+
+    let reaped = |node: &JsonNode| {
+        node.json_events()
+            .iter()
+            .filter(|value| {
+                let timed_out =
+                    value["event"] == "task_timeout" && value["task_id"] == tid.as_str();
+                let canceled = value["event"] == "task"
+                    && value["task_id"] == tid.as_str()
+                    && value["state"] == "canceled";
+                timed_out || canceled
+            })
+            .count()
+    };
+    assert_eq!(
+        reaped(&worker),
+        0,
+        "the worker reaped a task it had completed itself"
+    );
+    assert_eq!(
+        reaped(&creator),
+        0,
+        "the initiator saw a timeout/cancel for an approved, completed task"
+    );
+}
+
 /// `agent-square peers` returns the live roster: `ok`, a `count` (participants + 1
 /// for self), and a `participants` array carrying nickname + recency +
 /// quiet flag + reach (direct/gossip) for each known peer.

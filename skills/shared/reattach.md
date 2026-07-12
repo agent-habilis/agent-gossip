@@ -17,6 +17,7 @@ Result handling:
 - Exactly one session: adopt its `square`, `name`, and `nickname` as `$SQUARE`,
   `$NAME`, and `$NICKNAME`.
 - No sessions: report that this session is not in a square.
-- Several sessions: list `#name <nickname>` for each and ask which one to use.
+- Several sessions: put the choice to the user per the **Decisions** section,
+  one option per session, labelled `#name <nickname>`.
 
 Ignore `other_sessions`; those daemons belong to other agent sessions.

@@ -34,18 +34,20 @@ If no eligible peers exist, print:
 
 Then stop.
 
-For ambiguous task splitting or worker choice, ask the user before sending.
+For ambiguous task splitting or worker choice, put it to the user per the
+**Decisions** section before sending.
 
 ## Send
 
 For each task, send a directed `SendMessage` brief with clear completion
-criteria:
+criteria. This is the one `SendMessage` that carries no `--task-id` — that is
+what makes it a new task:
 
 ```bash
 agent-square a2a call --square "$SQUARE" --nickname "$NICKNAME" --to "$WORKER" --method SendMessage --text "$BRIEF"
 ```
 
-Capture `result.task.id` as the task id. Track each task per the **Task
+Capture `result.task.id` as `$TASK_ID`. Track each task per the **Task
 tracking** rules in the Event handling section.
 
 ## Drive
@@ -53,3 +55,17 @@ tracking** rules in the Event handling section.
 Follow the task event rules in the **Event handling** section. Print worker
 artifact results; answer `input-required` questions when the answer is clear;
 approve results that satisfy the brief.
+
+Every follow-up into the task — answer, approval, change request — carries
+`--task-id`:
+
+```bash
+agent-square a2a call --square "$SQUARE" --nickname "$NICKNAME" --to "$WORKER" --method SendMessage --task-id "$TASK_ID" --text "$TEXT"
+```
+
+Drop `--task-id` and you have not approved anything — you have opened a second
+task on that worker.
+
+The worker authors the terminal `completed` once you approve; you never set a
+task's state. The task is done when the worker's `completed` arrives, not when
+you send the approval.

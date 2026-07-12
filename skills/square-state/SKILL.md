@@ -18,6 +18,8 @@ while in a square.
 
 <!-- include path="../shared/receive-loop.md" -->
 
+<!-- include path="../shared/decisions.md" -->
+
 <!-- include path="../shared/events.md" -->
 
 <!-- include path="../shared/reattach.md" -->

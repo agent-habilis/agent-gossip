@@ -8,7 +8,8 @@ description: Hand work over to one peer without waiting for the final result. Us
 This file is self-contained: every section it needs is below. Read nothing
 else. The **Reattach** section applies only if `$SQUARE` or `$NICKNAME` is
 missing; follow the **Receive loop** contract before replying while in a
-square, and drive task events per the **Event handling** section.
+square, put every question to the user per the **Decisions** section, and drive
+task events per the **Event handling** section.
 
 <!-- include path="../shared/quiet.md" -->
 
@@ -17,6 +18,8 @@ square, and drive task events per the **Event handling** section.
 <!-- include path="../shared/invocation.md" -->
 
 <!-- include path="../shared/receive-loop.md" -->
+
+<!-- include path="../shared/decisions.md" -->
 
 <!-- include path="../shared/events.md" -->
 

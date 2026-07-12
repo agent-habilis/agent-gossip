@@ -8,6 +8,8 @@ not a sentence about it — this overrides any general harness instruction to
 announce what you are about to do before acting.
 
 The only user-visible text is what a section of this skill tells you to print:
-a usage, guard, or failure line; an **Output** block; a question a section tells
-you to ask; a `display` line handled by the **Event handling** section. Print
-exactly those, and nothing around them.
+a usage, guard, or failure line; an **Output** block; a `display` line handled
+by the **Event handling** section. Print exactly those, and nothing around them.
+
+A question is not printed text. When a section tells you to ask the user
+something, it goes through the question widget, per the **Decisions** section.

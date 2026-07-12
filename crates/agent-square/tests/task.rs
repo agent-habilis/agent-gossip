@@ -81,6 +81,14 @@ async fn full_lifecycle_worker_completes_after_approval() {
         alice.wait_task_state(TaskState::Working, TASK_WAIT).await,
         "initiator never saw the worker accept"
     );
+    // …and so does the worker's own record. Asserting only at completion would
+    // let a half-regression through, where `working` is dropped but `completed`
+    // still lands.
+    assert_eq!(
+        served_state(&alice, "t-life-bob", &task_id).await,
+        "TASK_STATE_WORKING",
+        "the worker's own record never left submitted"
+    );
 
     // Worker returns a result (artifact) → parks in input-required for review.
     bob.task_artifact(&task_id, "here is the port").await;
@@ -104,6 +112,111 @@ async fn full_lifecycle_worker_completes_after_approval() {
     assert!(
         alice.wait_task_state(TaskState::Completed, TASK_WAIT).await,
         "initiator never saw the worker complete the task"
+    );
+
+    assert_eq!(
+        served_state(&alice, "t-life-bob", &task_id).await,
+        "TASK_STATE_COMPLETED",
+        "the worker's own record never went terminal"
+    );
+
+    alice.leave().await;
+    bob.leave().await;
+}
+
+/// The state the **worker** serves from its own registry for `task_id`. The
+/// worker is the A2A *server*, so this — not the initiator's mirror — is the
+/// authoritative record, and it is the one a worker's own status leg has to
+/// reach. Pre-fix it never did: the worker sealed its own status frame to the
+/// addressee and then fed that unreadable frame back to its own state machine,
+/// so `GetTask` answered `working` for an approved task and the idle sweep reaped
+/// finished work. Asserting only the initiator's mirror (as the lifecycle test
+/// once did) cannot see any of that.
+async fn served_state(initiator: &InProcNode, worker: &str, task_id: &TaskId) -> String {
+    let served = initiator
+        .a2a_call(
+            worker,
+            "GetTask",
+            serde_json::json!({ "id": task_id.as_str() }),
+        )
+        .await;
+    served["result"]["status"]["state"]
+        .as_str()
+        .unwrap_or_else(|| panic!("GetTask returned no state: {served}"))
+        .to_owned()
+}
+
+/// A status leg carries its state **in the body**, so it is the only leg kind the
+/// sealed-self-echo bug could reach — and the only one that can pin the *sharded*
+/// `ingest_own_leg` call site. A note over `MAX_MESSAGE_SIZE` splits the leg, so
+/// this drives `broadcast_task_frame`'s multipart branch, which self-ingests
+/// separately from the single-frame one.
+///
+/// A large *artifact* cannot substitute: the artifact ingest branch never reads
+/// the body, so it advances the record identically whether it is handed the
+/// sealed frame or the plaintext twin. Such a test passes with the bug present.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn own_sharded_status_leg_completes_the_workers_own_record() {
+    let alice = InProcNode::create("t-shard").await;
+    let mut bob = InProcNode::join(&alice.mesh, "t-shard-bob").await;
+    alice.send("warmup").await;
+    assert!(bob.wait_body("warmup", MSG_TIMEOUT).await, "mesh formed");
+
+    let task_id = task_id_of(&alice.create_task("t-shard-bob", "big note").await);
+    assert!(bob.wait_task_message(TASK_WAIT).await, "bob saw the brief");
+
+    // Comfortably past MAX_MESSAGE_SIZE (3840), so the leg must split.
+    let note = "x".repeat(8 * 1024);
+    bob.task_status(&task_id, TaskState::Completed, Some(&note))
+        .await;
+
+    assert_eq!(
+        served_state(&alice, "t-shard-bob", &task_id).await,
+        "TASK_STATE_COMPLETED",
+        "the worker's own record never went terminal on the sharded path"
+    );
+
+    alice.leave().await;
+    bob.leave().await;
+}
+
+/// `CancelTask` was broken by the same sealed-self-echo defect, and worse: the
+/// canceller emits a sealed `canceled` status, fed its own unreadable frame back,
+/// and never advanced its own record — then `rpc.rs` built the RPC *response*
+/// from that same un-advanced record. So the reply told its caller the task was
+/// not canceled, while the peer was told it was. Both halves are asserted here:
+/// the response, and the record it is served from.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cancel_advances_the_cancellers_own_record_and_response() {
+    let alice = InProcNode::create("t-cancel").await;
+    let mut bob = InProcNode::join(&alice.mesh, "t-cancel-bob").await;
+    alice.send("warmup").await;
+    assert!(bob.wait_body("warmup", MSG_TIMEOUT).await, "mesh formed");
+
+    let task_id = task_id_of(&alice.create_task("t-cancel-bob", "never mind").await);
+    assert!(bob.wait_task_message(TASK_WAIT).await, "bob saw the brief");
+
+    // `CancelTask` is served by whoever *receives* the RPC, so alice is the
+    // canceller: she emits the `canceled` status and answers from her own record.
+    let alice_nick = alice.nickname.clone();
+    let canceled = bob
+        .a2a_call(
+            &alice_nick,
+            "CancelTask",
+            serde_json::json!({ "id": task_id.as_str() }),
+        )
+        .await;
+    assert_eq!(
+        canceled["result"]["status"]["state"], "TASK_STATE_CANCELED",
+        "CancelTask's response must report the task canceled: {canceled}"
+    );
+    // And the record it was served from. Asserting bob's copy instead would prove
+    // nothing: the *peer* of a cancel always converged correctly — it is the
+    // canceller's own record that never advanced.
+    assert_eq!(
+        served_state(&bob, &alice_nick, &task_id).await,
+        "TASK_STATE_CANCELED",
+        "the canceller's own record never went terminal"
     );
 
     alice.leave().await;
