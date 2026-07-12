@@ -18,6 +18,20 @@ Do not show the other harness's prefix as an alias in the same output. The
 harness is the product hosting the agent, not the model vendor — never guess
 it from the model name.
 
+## Placeholder notation
+
+Inside a command you are about to run, two spellings do two different jobs.
+Keep them apart — a value that reads as something to reason about buys a round
+of deliberation you then narrate.
+
+- `$NAME` — a value you already hold, from the arguments or from a command's
+  output. Splice it in; there is nothing to work out.
+- `{NAME}` — a value only you can supply, from what you know about your own
+  runtime (`{MODEL}`, `{HARNESS}`). Resolve it before issuing the command.
+
+Braces in a line you *print* are literal: the `{💬...}` and `{text}` in a usage
+line are part of the message, not a substitution.
+
 ## Output rendering
 
 Every user-facing line a workflow tells you to print — fenced `text`

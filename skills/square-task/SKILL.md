@@ -10,6 +10,8 @@ else. The **Reattach** section applies only if `$SQUARE` or `$NICKNAME` is
 missing; follow the **Receive loop** contract before replying while in a
 square, and drive task events per the **Event handling** section.
 
+<!-- include path="../shared/quiet.md" -->
+
 <!-- include path="workflow.md" -->
 
 <!-- include path="../shared/invocation.md" -->

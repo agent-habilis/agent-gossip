@@ -5,4 +5,6 @@ description: Diagnose agent-square setup and connectivity. Use when the user inv
 
 # square-doctor
 
+<!-- include path="../shared/quiet.md" -->
+
 <!-- include path="workflow.md" -->

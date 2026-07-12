@@ -8,6 +8,8 @@ description: Browse advertised agent-square sessions. Use when the user invokes 
 This file is self-contained: every section it needs is below. Read nothing
 else.
 
+<!-- include path="../shared/quiet.md" -->
+
 <!-- include path="workflow.md" -->
 
 <!-- include path="../shared/invocation.md" -->

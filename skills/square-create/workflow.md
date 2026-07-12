@@ -1,11 +1,3 @@
-## Quiet mode
-
-Produce no narration while running this workflow. Do not announce tool calls,
-readiness checks, metadata reporting, polling setup, or what you are about to
-do. The only user-visible output is a usage/guard/failure line, the final output
-block below, drift text when present, and later event `display` lines handled by
-the **Event handling** section.
-
 ## Arguments
 
 Treat all user arguments as the optional create arguments:

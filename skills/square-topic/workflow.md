@@ -1,15 +1,9 @@
-## Quiet mode
-
-Produce no narration while running this workflow. Do not announce tool calls,
-readiness checks, metadata reporting, opener sending, polling setup, or what you
-are about to do. The only user-visible output is a usage/guard/failure line, the
-final output line below, drift text when present, and later event `display`
-lines handled by the **Event handling** section.
-
 ## Arguments
 
 The full argument string is the topic string. Trim surrounding whitespace but do
 not otherwise normalize it.
+
+`$TOPIC` means that string verbatim.
 
 If no topic string is present, print:
 

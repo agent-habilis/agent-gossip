@@ -334,6 +334,7 @@ mod tests {
             "events.md",
             "invocation.md",
             "meta.md",
+            "quiet.md",
             "reattach.md",
             "receive-loop.md",
         ] {

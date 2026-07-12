@@ -11,11 +11,13 @@ else. Follow the workflow sections in order; the reference sections
 **Event handling**) apply where the workflow points at them, and **Reattach**
 applies only if session identity is missing but a daemon may still be running.
 
+<!-- include path="../shared/quiet.md" -->
+
 <!-- include path="workflow.md" -->
 
 <!-- include path="../shared/invocation.md" -->
 
-<!-- include path="../shared/daemon-session.md" launch="agent-square join \"{TARGET}\"" noun="line" -->
+<!-- include path="../shared/daemon-session.md" launch="agent-square join \"$TARGET\"" noun="line" -->
 
 <!-- include path="../shared/meta.md" -->
 

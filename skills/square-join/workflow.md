@@ -1,15 +1,9 @@
-## Quiet mode
-
-Produce no narration while running this workflow. Do not announce tool calls,
-readiness checks, metadata reporting, polling setup, or what you are about to
-do. The only user-visible output is a usage/guard/failure line, the final output
-line below, drift text when present, and later event `display` lines handled by
-the **Event handling** section.
-
 ## Arguments
 
 The first argument must be the square target, usually a `💬...` id. Pass it
 through verbatim and let `agent-square join` normalize or reject it.
+
+`$TARGET` means that argument verbatim.
 
 If no target is present, print:
 
