@@ -45,8 +45,8 @@ criteria:
 agent-square a2a call --square "$SQUARE" --nickname "$NICKNAME" --to "$WORKER" --method SendMessage --text "$BRIEF"
 ```
 
-Capture `result.task.id` as the task id. Track each task in the harness's native
-todo mechanism when available.
+Capture `result.task.id` as the task id. Track each task per the **Task
+tracking** rules in the Event handling section.
 
 ## Drive
 

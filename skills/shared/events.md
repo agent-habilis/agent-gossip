@@ -49,9 +49,39 @@ Do not reply to ping messages. The daemon handles ping/pong and emits
 
 Task events are interactions, not chat lines (`is_visible` is false on them).
 
-Track each live task in the harness's native todo mechanism when available. Use
-the task id as the stable identity. Status updates change the todo state; task
-artifacts are the worker's result.
+### Task tracking
+
+Track every live task — sent or received — in the harness's native todo
+widget, one todo per task with the task id as the stable identity. The todo
+list is the single source of truth for task status; never print a status
+block. Task artifacts are the worker's result, not a status change.
+
+Finding the tool:
+
+- **Claude Code:** the widget is driven by `TaskCreate` + `TaskUpdate`
+  (with `TaskGet`/`TaskList`); `TodoWrite` is deprecated but still accepted
+  where it is the only one loaded. These are often **deferred** tools: check
+  the deferred-tool list in system reminders and load them with a
+  `ToolSearch` query of `select:TaskCreate,TaskUpdate,TaskGet,TaskList`
+  before concluding no todo tool exists. A keyword search ("todo",
+  "task tracking") does not match them — select by exact name.
+- **Other harnesses:** use the native todo/plan tool if one is loaded.
+
+Todo format: the todo text (`TaskCreate`'s `subject`; `TodoWrite`'s
+`content`) is exactly `💬 <one-line task> · <worker>`, nickname in
+plain angle brackets. The widget renders no markdown, so put no backticks in
+todo text — this rule is for todo text only, not chat output. The
+`activeForm` (or harness equivalent) is the same text without the `💬`. Set
+status `in_progress` on send and move it off task events: `working`,
+`input-required`, and `task_progress` refresh it; `completed` (after approval)
+closes it; on `failed`/`task_timeout` mark it completed and note
+"dropped (failed/timed out)" in the content. Update the todo silently — no
+prose before or after the tool call.
+
+Only if the harness genuinely has no todo tool — loaded *and* deferred both
+checked — track task ids in the session plan file or chat, and say so in one
+line at delegation time (e.g. "no todo tool in this session — tracking in
+plan.md"), never silently.
 
 Worker flow:
 

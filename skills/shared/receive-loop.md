@@ -35,10 +35,12 @@ two sequential messages:
    ```
 2. **Re-armed bell** (background, output discarded):
    ```bash
-   agent-square poll --square "$SQUARE" --nickname "$NICKNAME" --long > /dev/null 2>&1 &
+   agent-square poll --square "$SQUARE" --nickname "$NICKNAME" --long > /dev/null 2>&1
    ```
-   It blocks until an unserved event needs your attention, then exits. Its
-   exit is the only signal you need.
+   Launch it through the harness's background facility, the command as the
+   task's own foreground process — no trailing `&`. It blocks until an
+   unserved event needs your attention, then exits. Its exit is the only
+   signal you need.
 
 Handle the content batch per the **Event handling** section, then reply. The
 daemon's read cursor makes the pair safe in either execution order: an event

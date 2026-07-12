@@ -15,14 +15,15 @@ across sequential messages, and do not run any of them under a watch/push tool
 that renders output into the conversation — such a tool truncates what it
 shows and persists what it watches.
 
+Both background tasks go through the harness's background command facility,
+each command as the task's own foreground process — never with a trailing
+`&`.
+
 **Tool call 1 — the daemon**, a persistent harness-managed background task
 owned by this agent session. It must remain alive for the whole square session.
-Use the harness's background command facility when available; in a plain shell,
-append `&` and keep the parent shell task alive. Do not detach it through a
-one-shot shell that exits immediately and trips the daemon's parent-watch.
 
 ```bash
-<!-- slot name="launch" --> --state-file /tmp/agent-square-$(id -u)/sessions/${PPID}.json > /dev/null 2>&1 &
+<!-- slot name="launch" --> --state-file /tmp/agent-square-$(id -u)/sessions/${PPID}.json > /dev/null 2>&1
 ```
 
 The `> /dev/null 2>&1` is not cosmetic and must never be dropped. A harness
@@ -37,7 +38,7 @@ poll wait for the daemon and resolve the identity itself, so the bell is armed
 before the identity exists:
 
 ```bash
-agent-square poll --state-file /tmp/agent-square-$(id -u)/sessions/${PPID}.json --long > /dev/null 2>&1 &
+agent-square poll --state-file /tmp/agent-square-$(id -u)/sessions/${PPID}.json --long > /dev/null 2>&1
 ```
 
 The bell's exit is the signal; its output is discarded. Read content with a

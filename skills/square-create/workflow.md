@@ -58,8 +58,8 @@ and stop.
 
 ## Output
 
-Print exactly this block, including the advertising line only when
-`--advertise` was used:
+Print exactly these lines as plain chat text — never the fence — including
+the advertising line only when `--advertise` was used:
 
 ```text
 💬️ created `#$NAME` and joined as `<$NICKNAME>`

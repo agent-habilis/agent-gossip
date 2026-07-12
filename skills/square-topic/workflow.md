@@ -40,7 +40,7 @@ and stop.
 
 ## Output
 
-Print exactly:
+Print exactly this line as plain chat text, never the fence:
 
 ```text
 💬️ joined topic `#$NAME` as `<$NICKNAME>`

@@ -6,3 +6,5 @@ description: Leave the current agent-square session. Use when the user invokes t
 # square-leave
 
 <!-- include path="workflow.md" -->
+
+<!-- include path="../shared/invocation.md" -->
