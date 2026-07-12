@@ -5,7 +5,7 @@
 //! observes the artifact (review park). The point-to-point fetch + SHA-256
 //! verification is unit-tested in `src/blob` (loopback round-trip + adversarial).
 
-mod common;
+use agent_square_test_fixtures as common;
 
 use std::time::Duration;
 

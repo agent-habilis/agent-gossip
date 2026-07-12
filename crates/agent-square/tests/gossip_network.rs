@@ -7,7 +7,7 @@
 //! Crypto-heavy deps are optimized even in dev builds (see the
 //! `[profile.dev.package]` overrides in `Cargo.toml`), so debug `cargo test`
 //! runs at near-release connect speeds.
-mod common;
+use agent_square_test_fixtures as common;
 
 use std::fs::{self, File};
 use std::path::PathBuf;
@@ -2296,7 +2296,7 @@ fn test_starvation_watchdog_recovers_loudly() {
     );
     // Degraded, not broken: the IPC plane still accepts a send (it is
     // buffered until traffic proves the mesh again).
-    let _ = common::cli_msg_checked(&mesh, &survivor.nickname, "sv-after");
+    let _ = common::cli_message_checked(&mesh, &survivor.nickname, "sv-after");
 }
 
 /// False-positive guard: a lone creator is alone by construction — it

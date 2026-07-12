@@ -86,10 +86,22 @@ cadence (see `RENDEZVOUS_HANDOFF` in `crates/agent-square/tests/gossip_network.r
 the cadence there trips a zombie-link pathology), and the serial-gated
 reliability section runs one test at a time.
 
+The suite shares one harness, the **`agent-square-test-fixtures`** crate
+(`InProcNode`, the subprocess `Node`, the `cli_*` helpers). It is a library
+crate, not a `tests/common/` module, because each integration binary is its own
+compilation unit: as a module, every helper a given binary did not call looked
+dead, which forced a blanket `#![allow(dead_code)]` that also hid genuinely dead
+helpers. A library's `pub` surface is exempt from the lint, while the crate's own
+private helpers stay checked. It is a dev-dependency of `agent-square` and
+depends on `agent-square` in turn — cargo permits the cycle because the back-edge
+is a dev-dependency. Note `bin()` resolves the binary under test by walking up
+from `current_exe()`: `env!("CARGO_BIN_EXE_agent-square")` is defined only for
+the owning package's integration tests, never for a library.
+
 Three layers:
 - **In-process (default, fast):** behavioral + output-schema tests drive the
-  real event loop via the library `api` (`crates/agent-square/tests/common::InProcNode`). Real
-  iroh mesh, no subprocess — sub-second.
+  real event loop via the library `api` (`agent_square_test_fixtures::InProcNode`).
+  Real iroh mesh, no subprocess — sub-second.
 - **Every-run subprocess:** the wire-contract suite (CLI / stdout /
   `--output json` / Unix-socket / MCP-stdio) plus reliability invariants that
   need real OS processes and signals (SIGKILL beacon migration, SIGSTOP/CONT

@@ -10,7 +10,7 @@
 //! The CLI/stdout/Unix-socket wire contract lives in `monitor_contract.rs`;
 //! the gossip request/response mechanics in `a2a_rpc.rs`.
 
-mod common;
+use agent_square_test_fixtures as common;
 
 use std::time::Duration;
 

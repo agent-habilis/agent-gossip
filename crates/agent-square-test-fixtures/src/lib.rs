@@ -1,12 +1,23 @@
-#![allow(
-    dead_code,
-    reason = "shared integration-test helpers; not every test crate exercises every one"
-)]
 #![expect(
     clippy::wildcard_enum_match_arm,
-    reason = "OutputEvent is #[non_exhaustive]; matching it from this external test crate mandates a wildcard arm, so exhaustive enumeration is impossible"
+    reason = "OutputEvent is #[non_exhaustive]; matching it from outside agent-square mandates a wildcard arm, so exhaustive enumeration is impossible"
 )]
-//! Shared test infrastructure for integration tests.
+#![expect(
+    clippy::missing_panics_doc,
+    clippy::missing_errors_doc,
+    clippy::must_use_candidate,
+    reason = "a test harness, not a public API: panicking on a broken invariant IS the assertion, so a `# Panics` section on every helper documents nothing, and no caller benefits from `#[must_use]`"
+)]
+//! Shared harness for the `agent-square` integration suites.
+//!
+//! This is a library crate, not a `tests/common/` module, for one reason: each
+//! integration binary is its own compilation unit, so a shared `mod common;`
+//! makes every helper it does not personally call look dead. Sixteen binaries
+//! with wildly different needs (`man_contract` uses one helper; `gossip_network`
+//! uses two dozen) made that unavoidable, and the blanket `#![allow(dead_code)]`
+//! it forced also hid genuinely dead helpers. A library's `pub` surface is
+//! exempt from the lint by construction, so the suppression is gone — while the
+//! crate's own private helpers stay `dead_code`-checked.
 
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
@@ -15,12 +26,12 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
-// The single source of truth for the runtime base dir lives in the shared
-// crate (a dev-dependency); re-export it so test code resolves the same
-// per-user base the daemon uses without a divergent copy.
-pub(crate) use agent_square::runtime_base;
+// The single source of truth for the runtime base dir lives in the app crate;
+// re-export it so test code resolves the same per-user base the daemon uses
+// without a divergent copy.
+pub use agent_square::runtime_base;
 
-pub(crate) const CONNECT_TIMEOUT: Duration = Duration::from_mins(1);
+pub const CONNECT_TIMEOUT: Duration = Duration::from_mins(1);
 /// Steady-state delivery budget: how long a meshed peer may take to surface a
 /// message/presence/task leg. The suite-wide standard for every positive
 /// (adaptive, break-on-success) delivery wait. A meshed in-process round trip
@@ -30,8 +41,8 @@ pub(crate) const CONNECT_TIMEOUT: Duration = Duration::from_mins(1);
 /// `[profile.dev.package]` overrides, so debug crypto is no longer the
 /// bottleneck). `wait_for`/`wait_until` are adaptive, so a healthy run returns
 /// immediately and only a genuine stall pays the ceiling.
-pub(crate) const MSG_TIMEOUT: Duration = Duration::from_mins(1);
-pub(crate) const POLL: Duration = Duration::from_millis(250);
+pub const MSG_TIMEOUT: Duration = Duration::from_mins(1);
+pub const POLL: Duration = Duration::from_millis(250);
 
 /// Budget for a delivery asserted **after a disruption** (beacon death,
 /// SIGSTOP freeze, rendezvous migration, creator departure). Re-meshing waits
@@ -45,7 +56,40 @@ pub(crate) const POLL: Duration = Duration::from_millis(250);
 /// there slows convergence past a tighter bound without any product fault. One
 /// named constant so every post-disruption assertion across the suite uses the
 /// same floor.
-pub(crate) const RECOVERY_TIMEOUT: Duration = Duration::from_mins(2);
+pub const RECOVERY_TIMEOUT: Duration = Duration::from_mins(2);
+
+/// Delivery budget for a **big (unlogged) multi-shard body**.
+///
+/// A large shard group skips the message log by design — it must not evict the
+/// anti-entropy history — so anti-entropy cannot heal it. A dropped shard is
+/// recovered only by the receiver's `shard/repair` ask, and that path is
+/// deliberately lazy: the partial group has to sit idle for
+/// `REASSEMBLY_REPAIR_IDLE_SECS` (60s) *and* the check runs on a one-minute
+/// prune tick, so a repair round can land anywhere up to ~2 minutes out.
+///
+/// Asserting a big body's arrival within the steady-state `MSG_TIMEOUT` (1 min)
+/// therefore asserts that **no shard is ever dropped** — which the design does
+/// not promise; the repair path exists precisely because one can be. A budget
+/// that cannot clear a full repair cycle turns a single lost shard into a test
+/// failure, which is what made the multi-shard tests flaky. Adaptive like every
+/// other wait here: a healthy run returns in well under a second, and only a
+/// genuine stall pays the ceiling.
+pub const BIG_BODY_TIMEOUT: Duration = Duration::from_mins(3);
+
+/// Per-attempt deadline for a directed A2A call (see [`InProcNode::a2a_call`]).
+/// Deliberately far below `MSG_TIMEOUT`: a request the overlay dropped will
+/// never be answered, so the only thing a long wait buys is a slower retry. Long
+/// enough that a merely *slow* peer still answers within one attempt.
+const RPC_ATTEMPT: Duration = Duration::from_secs(10);
+
+/// Whether `response` is the daemon's "nobody ever answered" transport timeout,
+/// as opposed to a real reply carrying an error. Only the former is worth
+/// re-issuing — see [`InProcNode::a2a_call`].
+fn is_rpc_timeout(response: &serde_json::Value) -> bool {
+    response["error"]["message"]
+        .as_str()
+        .is_some_and(|message| message.contains("timed out"))
+}
 
 /// Serializes the daemon-spawning reliability tests (`#[test]`, sync) —
 /// beacon migration, sleep/wake heal, anti-entropy, flap storms. They assert
@@ -63,21 +107,34 @@ static SERIAL_GATE: std::sync::Mutex<()> = std::sync::Mutex::new(());
 /// Acquire the [`SERIAL_GATE`]; hold the returned guard for the whole test.
 /// Poison-tolerant: a failing (panicking) test must not cascade-poison the
 /// gate and spuriously fail the others. For `#[test]` (sync) tests only.
-pub(crate) fn serial_guard() -> std::sync::MutexGuard<'static, ()> {
+pub fn serial_guard() -> std::sync::MutexGuard<'static, ()> {
     SERIAL_GATE
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
-/// Use the freshly built test binary to avoid stale release output formats.
-pub(crate) fn bin() -> PathBuf {
-    PathBuf::from(env!("CARGO_BIN_EXE_agent-square"))
+/// The freshly built `agent-square` binary under test (never a stale release
+/// build, whose output formats may differ).
+///
+/// Resolved from the *running* test executable rather than
+/// `env!("CARGO_BIN_EXE_agent-square")`: cargo defines that variable only while
+/// compiling the owning package's integration tests and benches, never for a
+/// library — not even a path dev-dependency of that same package — so the
+/// compile-time form cannot live in this crate. libtest puts the test binary at
+/// `<target>/<profile>/deps/<name>-<hash>`; the app sits one level up.
+pub fn bin() -> PathBuf {
+    let mut dir = std::env::current_exe().expect("path of the running test executable");
+    dir.pop();
+    if dir.ends_with("deps") {
+        dir.pop();
+    }
+    dir.join("agent-square")
 }
 
 /// Per-test-process log dir so `cargo task test` never writes into
 /// the operator's default `agent-square/logs`. Passed via the
 /// global `--log-dir` flag.
-pub(crate) fn test_log_dir() -> &'static str {
+pub fn test_log_dir() -> &'static str {
     static DIR: OnceLock<String> = OnceLock::new();
     DIR.get_or_init(|| {
         let dir =
@@ -90,7 +147,7 @@ pub(crate) fn test_log_dir() -> &'static str {
 /// `Command` for the built binary with `--log-dir` redirected to a
 /// per-test temp dir. Use instead of `Command::new(bin())`. (`--log-dir`
 /// is a global flag, so it sits before the subcommand here.)
-pub(crate) fn test_cmd() -> Command {
+pub fn test_cmd() -> Command {
     let mut cmd = Command::new(bin());
     cmd.arg("--log-dir").arg(test_log_dir());
     cmd
@@ -119,7 +176,7 @@ fn apply_flags(cmd: &mut Command, pairs: &[(&str, &str)]) {
 /// bare flag — e.g. the boolean `("--directory-private", "")`. For pair lists
 /// that never include `RUST_LOG` (directory / monitor spawns); use
 /// [`apply_flags`] otherwise.
-pub(crate) fn flag_args(pairs: &[(&str, &str)]) -> Vec<String> {
+pub fn flag_args(pairs: &[(&str, &str)]) -> Vec<String> {
     pairs
         .iter()
         .flat_map(|(flag, value)| {
@@ -134,7 +191,7 @@ pub(crate) fn flag_args(pairs: &[(&str, &str)]) -> Vec<String> {
 
 static COUNTER: AtomicU32 = AtomicU32::new(0);
 
-pub(crate) fn tmp_log(tag: &str) -> PathBuf {
+pub fn tmp_log(tag: &str) -> PathBuf {
     let sequence = COUNTER.fetch_add(1, Ordering::Relaxed);
     std::env::temp_dir().join(format!(
         "agent-square-test-{}-{}-{}.log",
@@ -144,7 +201,7 @@ pub(crate) fn tmp_log(tag: &str) -> PathBuf {
     ))
 }
 
-pub(crate) fn socket_path(mesh: &str, nickname: &str) -> String {
+pub fn socket_path(mesh: &str, nickname: &str) -> String {
     runtime_base()
         .join(agent_square::mesh_prefix(mesh))
         .join(format!("{nickname}.ipc.sock"))
@@ -156,7 +213,7 @@ pub(crate) fn socket_path(mesh: &str, nickname: &str) -> String {
 /// in `Node::log`). Mirrors `agent_square::logs::log_file_path`:
 /// `<mesh_prefix>/<nick>.tracing.log` under the per-test log dir. Use this to
 /// assert on `tracing` output (warn/info) the operator stream never carries.
-pub(crate) fn trace_log(mesh: &str, nickname: &str) -> String {
+pub fn trace_log(mesh: &str, nickname: &str) -> String {
     let path = format!(
         "{}/{}/{nickname}.tracing.log",
         test_log_dir(),
@@ -166,7 +223,7 @@ pub(crate) fn trace_log(mesh: &str, nickname: &str) -> String {
 }
 
 /// Wait until `count_fn` returns >= `target` or `timeout` elapses.
-pub(crate) fn wait_until(count_fn: impl Fn() -> usize, target: usize, timeout: Duration) -> usize {
+pub fn wait_until(count_fn: impl Fn() -> usize, target: usize, timeout: Duration) -> usize {
     let deadline = Instant::now() + timeout;
     loop {
         let current = count_fn();
@@ -179,12 +236,11 @@ pub(crate) fn wait_until(count_fn: impl Fn() -> usize, target: usize, timeout: D
 
 // ── CLI helpers ───────────────────────────────────────────────────
 
-/// Spawn `agent-square msg …` and return the raw `Output`
-/// (no success assertion — callers that test failure paths inspect it).
 /// Broadcast a mesh chat message via the CLI — `agent-square a2a call --method
-/// message/send --text` with no `--to` (A2A is point-to-point, so a mesh-wide
-/// message declares itself).
-pub(crate) fn cli_msg_raw(mesh: &str, nickname: &str, body: &str) -> Output {
+/// SendMessage --text` with no `--to` (A2A is point-to-point, so a mesh-wide
+/// message declares itself). Returns the raw `Output` with no success assertion,
+/// so a caller testing a failure path can inspect it.
+pub fn cli_message_raw(mesh: &str, nickname: &str, body: &str) -> Output {
     test_cmd()
         .args([
             "a2a",
@@ -202,15 +258,15 @@ pub(crate) fn cli_msg_raw(mesh: &str, nickname: &str, body: &str) -> Output {
         .expect("a2a call command failed to spawn")
 }
 
-/// `cli_msg_raw` + trim stdout. No success assertion.
-pub(crate) fn cli_msg_stdout(mesh: &str, nickname: &str, body: &str) -> String {
-    let out = cli_msg_raw(mesh, nickname, body);
+/// [`cli_message_raw`] + trim stdout. No success assertion.
+pub fn cli_message(mesh: &str, nickname: &str, body: &str) -> String {
+    let out = cli_message_raw(mesh, nickname, body);
     String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
 
-/// `cli_msg_raw` + assert success + trim stdout.
-pub(crate) fn cli_msg_checked(mesh: &str, nickname: &str, body: &str) -> String {
-    let out = cli_msg_raw(mesh, nickname, body);
+/// [`cli_message_raw`] + assert success + trim stdout.
+pub fn cli_message_checked(mesh: &str, nickname: &str, body: &str) -> String {
+    let out = cli_message_raw(mesh, nickname, body);
     assert!(
         out.status.success(),
         "a2a call (broadcast) failed: {}",
@@ -221,7 +277,7 @@ pub(crate) fn cli_msg_checked(mesh: &str, nickname: &str, body: &str) -> String 
 
 /// Spawn `agent-square poll …`, assert success,
 /// return trimmed stdout.
-pub(crate) fn cli_poll(mesh: &str, nickname: &str, after: Option<&str>) -> String {
+pub fn cli_poll(mesh: &str, nickname: &str, after: Option<&str>) -> String {
     let mut args = vec!["poll", "--square", mesh, "--nickname", nickname];
     if let Some(id) = after {
         args.extend(["--after", id]);
@@ -241,7 +297,7 @@ pub(crate) fn cli_poll(mesh: &str, nickname: &str, after: Option<&str>) -> Strin
 /// `agent-square poll --long` (long-poll; blocks until events arrive), returning the
 /// JSON stdout and how long the call took — so a test can assert it blocked /
 /// resolved promptly.
-pub(crate) fn cli_poll_long(mesh: &str, nickname: &str, after: Option<&str>) -> (String, Duration) {
+pub fn cli_poll_long(mesh: &str, nickname: &str, after: Option<&str>) -> (String, Duration) {
     let mut args = vec!["poll", "--square", mesh, "--nickname", nickname, "--long"];
     if let Some(id) = after {
         args.extend(["--after", id]);
@@ -268,7 +324,7 @@ pub(crate) fn cli_poll_long(mesh: &str, nickname: &str, after: Option<&str>) -> 
 /// `agent-square` client entirely (so a test can exercise a single daemon-side
 /// long-poll park, which `poll --long` deliberately hides behind its
 /// re-issue loop).
-pub(crate) fn ipc_raw(mesh: &str, nickname: &str, line: &str) -> String {
+pub fn ipc_raw(mesh: &str, nickname: &str, line: &str) -> String {
     use std::io::{BufRead, BufReader, Write};
     let mut stream = std::os::unix::net::UnixStream::connect(socket_path(mesh, nickname))
         .expect("connect to daemon socket");
@@ -283,10 +339,44 @@ pub(crate) fn ipc_raw(mesh: &str, nickname: &str, line: &str) -> String {
     response.trim().to_string()
 }
 
+/// Block until `target`'s card is present in `nickname`'s `meta` doc — the real
+/// precondition for any **directed** A2A call, and the subprocess counterpart of
+/// [`InProcNode::await_peer_card`].
+///
+/// Gossip linkage is *not* this signal. A directed frame is sealed to the
+/// recipient's published X25519 key (`a2a::card::peer_seal_key`) and is never
+/// sent in plaintext, so the daemon rejects the call outright until that key
+/// arrives. The key rides the `meta` document, which replicates on its own
+/// schedule — independently of the broadcast path a linkage probe observes. A
+/// call issued on linkage alone therefore races card propagation and fails with
+/// "its encryption key is not known yet (cards still propagating)".
+pub fn await_peer_card_cli(mesh: &str, nickname: &str, target: &str) {
+    let pointer = format!("/peers/{target}/card");
+    let deadline = Instant::now() + MSG_TIMEOUT;
+    loop {
+        let raw = cli_channel_get(Channel::Meta, mesh, nickname);
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(&raw)
+            && value["document"].pointer(&pointer).is_some()
+        {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "{target}'s card never reached {nickname}'s meta doc"
+        );
+        std::thread::sleep(POLL);
+    }
+}
+
 /// Create a task on `to` via the CLI (`agent-square a2a call --to <peer> --method
-/// message/send --text`) and return the raw `Output` (no success assertion —
+/// SendMessage --text`) and return the raw `Output` (no success assertion —
 /// callers that test the unknown-participant failure path inspect it).
-pub(crate) fn cli_task_create_raw(mesh: &str, nickname: &str, to: &str, text: &str) -> Output {
+///
+/// Deliberately **unguarded**: it is the helper the unknown-participant and
+/// unicast-retry tests use, and waiting on a card that will never arrive (or
+/// that the test means to race) is exactly what they must not do. Callers
+/// targeting a known peer want [`cli_task_create`].
+pub fn cli_task_create_raw(mesh: &str, nickname: &str, to: &str, text: &str) -> Output {
     test_cmd()
         .args([
             "a2a",
@@ -306,9 +396,15 @@ pub(crate) fn cli_task_create_raw(mesh: &str, nickname: &str, to: &str, text: &s
         .expect("a2a call command failed to spawn")
 }
 
-/// Create a task and return the **worker-minted** task id (parsed from the
-/// JSON-RPC response the call prints on stdout). Panics on failure.
-pub(crate) fn cli_task_create(mesh: &str, nickname: &str, to: &str, text: &str) -> String {
+/// Create a task on a **known** peer and return the worker-minted task id
+/// (parsed from the JSON-RPC response the call prints on stdout). Panics on
+/// failure.
+///
+/// Waits for `to`'s card first: a directed call is rejected until the seal key
+/// replicates, so issuing one the moment the mesh links is a race. See
+/// [`await_peer_card_cli`].
+pub fn cli_task_create(mesh: &str, nickname: &str, to: &str, text: &str) -> String {
+    await_peer_card_cli(mesh, nickname, to);
     let out = cli_task_create_raw(mesh, nickname, to, text);
     assert!(
         out.status.success(),
@@ -325,7 +421,7 @@ pub(crate) fn cli_task_create(mesh: &str, nickname: &str, to: &str, text: &str) 
 }
 
 /// Worker-emit a task status via the CLI (`agent-square a2a status`). Panics on failure.
-pub(crate) fn cli_task_status(mesh: &str, nickname: &str, task_id: &str, state: &str) {
+pub fn cli_task_status(mesh: &str, nickname: &str, task_id: &str, state: &str) {
     let out = test_cmd()
         .args([
             "a2a",
@@ -350,7 +446,7 @@ pub(crate) fn cli_task_status(mesh: &str, nickname: &str, task_id: &str, state: 
 
 /// Spawn `agent-square peers …`, assert success, return trimmed stdout (the
 /// raw `{ok, participants, count}` JSON line).
-pub(crate) fn cli_peers(mesh: &str, nickname: &str) -> String {
+pub fn cli_peers(mesh: &str, nickname: &str) -> String {
     let out = test_cmd()
         .args(["peers", "--square", mesh, "--nickname", nickname])
         .output()
@@ -365,7 +461,7 @@ pub(crate) fn cli_peers(mesh: &str, nickname: &str) -> String {
 
 /// Spawn `agent-square ping … `, assert success. Fire-and-forget — the RTT
 /// report lands on the target daemon's own output stream, not here.
-pub(crate) fn cli_ping(mesh: &str, nickname: &str) {
+pub fn cli_ping(mesh: &str, nickname: &str) {
     let out = test_cmd()
         .args(["ping", "--square", mesh, "--nickname", nickname])
         .output()
@@ -378,8 +474,8 @@ pub(crate) fn cli_ping(mesh: &str, nickname: &str) {
 }
 
 /// The CLI subcommand for a channel (`state` / `meta`) — `Channel::label` is
-/// `pub(crate)`, not reachable from this external test crate.
-pub(crate) fn channel_subcommand(channel: Channel) -> &'static str {
+/// `pub(crate)`, not reachable from outside `agent-square`.
+pub fn channel_subcommand(channel: Channel) -> &'static str {
     match channel {
         Channel::State => "state",
         Channel::Meta => "meta",
@@ -389,7 +485,7 @@ pub(crate) fn channel_subcommand(channel: Channel) -> &'static str {
 /// Spawn `agent-square <channel> get … `, assert success, return trimmed stdout (the
 /// raw `{ok, document}` JSON line). Drives the real CLI → IPC socket → daemon
 /// read path the in-process harness bypasses.
-pub(crate) fn cli_channel_get(channel: Channel, mesh: &str, nickname: &str) -> String {
+pub fn cli_channel_get(channel: Channel, mesh: &str, nickname: &str) -> String {
     let out = test_cmd()
         .args([channel_subcommand(channel), "get"])
         .args(["--square", mesh, "--nickname", nickname])
@@ -408,12 +504,7 @@ pub(crate) fn cli_channel_get(channel: Channel, mesh: &str, nickname: &str) -> S
 /// [`Output`](std::process::Output). The CLI **exits non-zero** on a rejected
 /// `{ok:false}` merge (the scriptable exit-code contract), so this returns the
 /// status + stdout unjudged for the caller to assert on.
-pub(crate) fn cli_channel_merge(
-    channel: Channel,
-    mesh: &str,
-    nickname: &str,
-    merge: &str,
-) -> Output {
+pub fn cli_channel_merge(channel: Channel, mesh: &str, nickname: &str, merge: &str) -> Output {
     test_cmd()
         .args([channel_subcommand(channel), "merge"])
         .args(["--square", mesh, "--nickname", nickname, "--merge", merge])
@@ -433,14 +524,27 @@ use tokio::sync::mpsc::UnboundedReceiver;
 /// One in-process mesh node: a real [`MeshSession`] (real iroh
 /// endpoint + the real `daemon::run` loop on a background task) plus
 /// its captured [`OutputEvent`] stream. Drop-in analogue of the
-/// subprocess `JsonNode`/`Node`, but everything runs in the test
-/// process — so coverage is recorded and teardown is deterministic.
-pub(crate) struct InProcNode {
+/// subprocess [`Node`], but everything runs in the test process — so
+/// coverage is recorded and teardown is deterministic.
+pub struct InProcNode {
     pub session: MeshSession,
     rx: UnboundedReceiver<OutputEvent>,
     drained: Vec<OutputEvent>,
     pub mesh: String,
     pub nickname: String,
+}
+
+// `MeshSession` and the event receiver are not `Debug`; the identity plus how
+// much has been captured is all a failing assertion needs anyway.
+impl std::fmt::Debug for InProcNode {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("InProcNode")
+            .field("mesh", &self.mesh)
+            .field("nickname", &self.nickname)
+            .field("drained", &self.drained.len())
+            .finish_non_exhaustive()
+    }
 }
 
 /// Validate a `&str` into a [`MeshName`] for the in-process harness.
@@ -450,7 +554,7 @@ fn test_mesh_name(name: &str) -> MeshName {
 
 impl InProcNode {
     /// Create a new private mesh. `self.mesh` holds the `💬…` id.
-    pub(crate) async fn create(name: &str) -> Self {
+    pub async fn create(name: &str) -> Self {
         Self::from_session(
             MeshSession::create(CreateConfig::new(test_mesh_name(name)))
                 .await
@@ -459,7 +563,7 @@ impl InProcNode {
     }
 
     /// Create a new private mesh with an explicit nickname.
-    pub(crate) async fn create_with_nick(name: &str, nick: &str) -> Self {
+    pub async fn create_with_nick(name: &str, nick: &str) -> Self {
         let mut cfg = CreateConfig::new(test_mesh_name(name));
         cfg.nickname = Some(Nickname::new(nick).expect("valid test nickname"));
         Self::from_session(
@@ -470,7 +574,7 @@ impl InProcNode {
     }
 
     /// Create a new private, password-protected mesh.
-    pub(crate) async fn create_with_password(name: &str, password: &str) -> Self {
+    pub async fn create_with_password(name: &str, password: &str) -> Self {
         let mut cfg = CreateConfig::new(test_mesh_name(name));
         cfg.password = Some(password.to_owned());
         Self::from_session(
@@ -483,7 +587,7 @@ impl InProcNode {
     /// Create a mesh under an explicit transport policy + active-view cap — the
     /// per-node knobs the transport matrix forces (e.g. `no_unicast` + a
     /// `max_peers = 1` line topology to route directed traffic over a circuit).
-    pub(crate) async fn create_with_transport(
+    pub async fn create_with_transport(
         name: &str,
         nick: &str,
         transport: TransportPolicy,
@@ -501,7 +605,7 @@ impl InProcNode {
     }
 
     /// Join `mesh` under an explicit transport policy + active-view cap.
-    pub(crate) async fn join_with_transport(
+    pub async fn join_with_transport(
         mesh: &str,
         nick: &str,
         transport: TransportPolicy,
@@ -533,7 +637,7 @@ impl InProcNode {
     }
 
     /// Join `mesh` (a `💬…` id) with an explicit nickname.
-    pub(crate) async fn join(mesh: &str, nickname: &str) -> Self {
+    pub async fn join(mesh: &str, nickname: &str) -> Self {
         let target = mesh.parse().expect("valid test join target");
         let mut cfg = JoinConfig::new(target);
         cfg.nickname = Some(Nickname::new(nickname).expect("valid test nickname"));
@@ -546,7 +650,7 @@ impl InProcNode {
 
     /// Join a password-protected `mesh`, surfacing the join error (so a
     /// wrong-password test can assert on it).
-    pub(crate) async fn try_join_with_password(
+    pub async fn try_join_with_password(
         mesh: &str,
         nickname: &str,
         password: &str,
@@ -559,7 +663,7 @@ impl InProcNode {
     }
 
     /// Broadcast a plain message; returns the new message id.
-    pub(crate) async fn send(&self, text: &str) -> MessageId {
+    pub async fn send(&self, text: &str) -> MessageId {
         self.session
             .send(MessageBody::new(text).expect("valid body"))
             .await
@@ -568,22 +672,21 @@ impl InProcNode {
     }
 
     /// Apply an RFC 7386 merge to the shared state. Panics if the merge is
-    /// rejected (not a JSON object / loop stopped) — use
-    /// [`Self::try_state_merge`] to exercise rejection deliberately.
-    pub(crate) async fn state_merge(&self, merge: serde_json::Value) {
+    /// rejected (not a JSON object / loop stopped).
+    pub async fn state_merge(&self, merge: serde_json::Value) {
         self.try_state_merge(merge)
             .await
             .expect("in-process state_merge failed");
     }
 
     /// Like [`Self::state_merge`] but returns the raw result.
-    pub(crate) async fn try_state_merge(&self, merge: serde_json::Value) -> anyhow::Result<()> {
+    async fn try_state_merge(&self, merge: serde_json::Value) -> anyhow::Result<()> {
         self.session.state_merge(merge).await
     }
 
     /// The current derived shared-state document (the merge fold over the
     /// state log).
-    pub(crate) async fn state_get(&self) -> serde_json::Value {
+    pub async fn state_get(&self) -> serde_json::Value {
         self.session
             .state_get()
             .await
@@ -592,19 +695,19 @@ impl InProcNode {
 
     /// Apply an RFC 7386 merge to the `meta` channel. Panics on rejection —
     /// use [`Self::try_meta_merge`] to exercise rejection deliberately.
-    pub(crate) async fn meta_merge(&self, merge: serde_json::Value) {
+    pub async fn meta_merge(&self, merge: serde_json::Value) {
         self.try_meta_merge(merge)
             .await
             .expect("in-process meta_merge failed");
     }
 
     /// Like [`Self::meta_merge`] but returns the raw result.
-    pub(crate) async fn try_meta_merge(&self, merge: serde_json::Value) -> anyhow::Result<()> {
+    pub async fn try_meta_merge(&self, merge: serde_json::Value) -> anyhow::Result<()> {
         self.session.meta_merge(merge).await
     }
 
     /// The current derived `meta`-channel document.
-    pub(crate) async fn meta_get(&self) -> serde_json::Value {
+    pub async fn meta_get(&self) -> serde_json::Value {
         self.session
             .meta_get()
             .await
@@ -617,27 +720,15 @@ impl InProcNode {
     // single test body covers `Channel::State` and `Channel::Meta`.
 
     /// Apply a merge to `channel`. Panics on rejection.
-    pub(crate) async fn merge(&self, channel: Channel, merge: serde_json::Value) {
+    pub async fn merge(&self, channel: Channel, merge: serde_json::Value) {
         match channel {
             Channel::State => self.state_merge(merge).await,
             Channel::Meta => self.meta_merge(merge).await,
         }
     }
 
-    /// Apply a merge to `channel`, returning the raw result.
-    pub(crate) async fn try_merge(
-        &self,
-        channel: Channel,
-        merge: serde_json::Value,
-    ) -> anyhow::Result<()> {
-        match channel {
-            Channel::State => self.try_state_merge(merge).await,
-            Channel::Meta => self.try_meta_merge(merge).await,
-        }
-    }
-
     /// The current derived document for `channel`.
-    pub(crate) async fn get(&self, channel: Channel) -> serde_json::Value {
+    pub async fn get(&self, channel: Channel) -> serde_json::Value {
         match channel {
             Channel::State => self.state_get().await,
             Channel::Meta => self.meta_get().await,
@@ -645,7 +736,7 @@ impl InProcNode {
     }
 
     /// Captured changes on `channel` so far, each `(derived document, is_self)`.
-    pub(crate) fn changes(&mut self, channel: Channel) -> Vec<(serde_json::Value, bool)> {
+    pub fn changes(&mut self, channel: Channel) -> Vec<(serde_json::Value, bool)> {
         self.pump();
         self.drained
             .iter()
@@ -665,7 +756,7 @@ impl InProcNode {
     /// whose freshly-derived document satisfies `pred` is captured — the
     /// reaction-hook check (a self-change never satisfies it, exercising the F5
     /// self-wake guard).
-    pub(crate) async fn wait_change(
+    pub async fn wait_change(
         &mut self,
         channel: Channel,
         timeout: Duration,
@@ -686,7 +777,7 @@ impl InProcNode {
     /// Create a task on `target` (native A2A `message/send`, no `taskId`): the
     /// worker mints the id and returns the `Task`. Returns the parsed JSON-RPC
     /// response.
-    pub(crate) async fn create_task(&self, target: &str, text: &str) -> serde_json::Value {
+    pub async fn create_task(&self, target: &str, text: &str) -> serde_json::Value {
         // Task creation seals the request to `target`'s card
         // (`a2a::card::peer_seal_key`). The card propagates asynchronously and the
         // seal is one-shot, so wait for it first — otherwise, under the concurrent
@@ -694,13 +785,17 @@ impl InProcNode {
         self.await_peer_card(target).await;
         let msg =
             agent_square::a2a::gossip::send_message_payload(self.session.mesh_id(), None, text);
-        self.a2a_call(target, "SendMessage", serde_json::json!({ "message": msg }))
+        self.a2a_call_retrying(target, "SendMessage", serde_json::json!({ "message": msg }))
             .await
     }
 
-    /// Block until `target`'s card is present in this node's `meta` doc (the
-    /// seal key source for any directed A2A call), or panic on timeout.
-    pub(crate) async fn await_peer_card(&self, target: &str) {
+    /// Block until `target`'s card is present in this node's `meta` doc — the
+    /// seal-key source for any directed A2A call, and the precondition
+    /// [`Self::a2a_call`] cannot enforce itself (the unknown-peer tests call a
+    /// nickname whose card will never arrive and must fail fast, not block).
+    /// [`Self::create_task`] applies it for you; a bare `a2a_call` to a real
+    /// peer must call this first or it races card propagation.
+    pub async fn await_peer_card(&self, target: &str) {
         let pointer = format!("/peers/{target}/card");
         let deadline = Instant::now() + MSG_TIMEOUT;
         while self.meta_get().await.pointer(&pointer).is_none() {
@@ -714,7 +809,7 @@ impl InProcNode {
 
     /// Send a follow-up message (answer / approval / change) into an existing
     /// task on `target`. Returns the updated `Task` response.
-    pub(crate) async fn task_message(
+    pub async fn task_message(
         &self,
         target: &str,
         task_id: &TaskId,
@@ -725,12 +820,18 @@ impl InProcNode {
             Some(task_id),
             text,
         );
-        self.a2a_call(target, "SendMessage", serde_json::json!({ "message": msg }))
+        self.a2a_call_retrying(target, "SendMessage", serde_json::json!({ "message": msg }))
             .await
     }
 
-    /// A directed A2A call to `target`; returns the parsed JSON-RPC response.
-    pub(crate) async fn a2a_call(
+    /// A directed A2A call to `target`, sent **exactly once**; returns the
+    /// parsed JSON-RPC response.
+    ///
+    /// Reach for this only to assert on single-shot behaviour itself. Anything
+    /// that merely needs the call to *land* wants [`Self::a2a_call_retrying`]:
+    /// a directed request dropped by a momentarily linkless overlay is never
+    /// retransmitted, so a lone attempt just burns the caller's deadline.
+    pub async fn a2a_call(
         &self,
         target: &str,
         method: &str,
@@ -741,14 +842,64 @@ impl InProcNode {
                 peer: Nickname::new(target).expect("valid target"),
                 method: method.to_owned(),
                 params,
-                timeout: Duration::from_mins(1),
+                timeout: MSG_TIMEOUT,
             })
             .await
             .expect("a2a_call transport")
     }
 
+    /// A small directed A2A call, **re-issued while the peer never answers**.
+    ///
+    /// A directed request is broadcast into the gossip overlay, and `A2aReq` /
+    /// `A2aResp` are unlogged — anti-entropy never heals them. So a request sent
+    /// while the overlay happens to hold no live peer link is dropped *for good*
+    /// and the caller simply blocks to its deadline. That window is real and
+    /// routine right after a join: `linked_endpoints` is written only by
+    /// `NeighborUp`/`NeighborDown`, so a fresh pair can link, deliver, and then
+    /// watch the neighbor go down, leaving the daemon at "silent partition
+    /// (meshed but zero peer links)" until the next heal tick re-bridges it 15s
+    /// later. A single-shot call therefore races overlay convergence — this was
+    /// the suite's long-standing ~50% flake in `a2a_rpc`, reproducible on one
+    /// test with no concurrency at all.
+    ///
+    /// Retrying is the same remedy the subprocess unicast test already applies
+    /// (`gossip_network.rs`, "retry until it lands"), and it is safe here: the
+    /// task registry treats a duplicate leg as a no-op (`a2a/task.rs`). Each
+    /// attempt gets a short deadline so a dropped frame is re-sent promptly
+    /// rather than burning the budget waiting on a frame the overlay discarded —
+    /// which is exactly why this must stay off the large-payload path, where a
+    /// resend overflows the outbound queue instead. See [`Self::a2a_call`].
+    ///
+    /// Only a transport timeout is retried. Any genuine answer — including a
+    /// semantic error such as "not permitted" or "unknown participant" — means
+    /// the round trip completed, and is returned untouched.
+    pub async fn a2a_call_retrying(
+        &self,
+        target: &str,
+        method: &str,
+        params: serde_json::Value,
+    ) -> serde_json::Value {
+        let peer = Nickname::new(target).expect("valid target");
+        let deadline = Instant::now() + MSG_TIMEOUT;
+        loop {
+            let response = self
+                .session
+                .a2a_call(A2aCallParams {
+                    peer: peer.clone(),
+                    method: method.to_owned(),
+                    params: params.clone(),
+                    timeout: RPC_ATTEMPT,
+                })
+                .await
+                .expect("a2a_call transport");
+            if !is_rpc_timeout(&response) || Instant::now() >= deadline {
+                return response;
+            }
+        }
+    }
+
     /// Worker-emit a `TaskStatusUpdate` on a task we're serving.
-    pub(crate) async fn task_status(&self, task_id: &TaskId, state: TaskState, note: Option<&str>) {
+    pub async fn task_status(&self, task_id: &TaskId, state: TaskState, note: Option<&str>) {
         self.session
             .task_status(task_id.clone(), state, note.map(str::to_owned))
             .await
@@ -756,7 +907,7 @@ impl InProcNode {
     }
 
     /// Worker-emit a `TaskArtifactUpdate` (the result) on a task we're serving.
-    pub(crate) async fn task_artifact(&self, task_id: &TaskId, text: &str) {
+    pub async fn task_artifact(&self, task_id: &TaskId, text: &str) {
         self.session
             .task_artifact(TaskArtifactParams {
                 task_id: task_id.clone(),
@@ -772,7 +923,7 @@ impl InProcNode {
     /// Worker-emit a `TaskArtifactUpdate` whose result is a file, offloaded over
     /// the blob channel and referenced by a `Part.url`. Returns the daemon's echo
     /// so a test can read the minted `💬…` reference.
-    pub(crate) async fn task_artifact_file(&self, task_id: &TaskId, path: &Path) -> Message {
+    pub async fn task_artifact_file(&self, task_id: &TaskId, path: &Path) -> Message {
         self.session
             .task_artifact(TaskArtifactParams {
                 task_id: task_id.clone(),
@@ -787,7 +938,7 @@ impl InProcNode {
 
     /// Captured worker-pushed task frames (status/artifact; includes self
     /// echoes — filter on `is_self`/author as needed).
-    pub(crate) fn tasks(&mut self) -> Vec<(&Message, bool)> {
+    pub fn tasks(&mut self) -> Vec<(&Message, bool)> {
         self.pump();
         self.drained
             .iter()
@@ -800,7 +951,7 @@ impl InProcNode {
 
     /// Whether any `message`-kind task event (an RPC `message/send` leg) has
     /// been surfaced so far.
-    pub(crate) fn saw_task_message(&mut self) -> bool {
+    pub fn saw_task_message(&mut self) -> bool {
         self.pump();
         self.drained
             .iter()
@@ -809,7 +960,7 @@ impl InProcNode {
 
     /// Wait until a worker-pushed task frame in `state` (from any author) is
     /// surfaced.
-    pub(crate) async fn wait_task_state(&mut self, state: TaskState, timeout: Duration) -> bool {
+    pub async fn wait_task_state(&mut self, state: TaskState, timeout: Duration) -> bool {
         self.wait_for(timeout, |events| {
             events.iter().any(|event| {
                 matches!(
@@ -824,7 +975,7 @@ impl InProcNode {
 
     /// Wait until a `message`-kind task event (an RPC `message/send` leg) is
     /// surfaced to us (the worker).
-    pub(crate) async fn wait_task_message(&mut self, timeout: Duration) -> bool {
+    pub async fn wait_task_message(&mut self, timeout: Duration) -> bool {
         self.wait_for(timeout, |events| {
             events
                 .iter()
@@ -834,7 +985,7 @@ impl InProcNode {
     }
 
     /// Clean shutdown (broadcasts `Left`).
-    pub(crate) async fn leave(self) {
+    pub async fn leave(self) {
         let _ = self.session.leave().await;
     }
 
@@ -846,15 +997,15 @@ impl InProcNode {
     }
 
     /// Every captured event so far (drains pending first).
-    pub(crate) fn events(&mut self) -> &[OutputEvent] {
+    pub fn events(&mut self) -> &[OutputEvent] {
         self.pump();
         &self.drained
     }
 
     /// Captured events rendered to the documented `--output json`
     /// wire format and parsed — byte-identical to what the subprocess
-    /// emitted. Mirrors the old `JsonNode::json_events()`.
-    pub(crate) fn json_events(&mut self) -> Vec<serde_json::Value> {
+    /// emitted.
+    pub fn json_events(&mut self) -> Vec<serde_json::Value> {
         self.pump();
         self.drained
             .iter()
@@ -865,16 +1016,15 @@ impl InProcNode {
 
     /// Only `{"event":"message"}` lines (both `msg` and `presence`
     /// carry `event:"message"`).
-    pub(crate) fn message_events(&mut self) -> Vec<serde_json::Value> {
+    pub fn message_events(&mut self) -> Vec<serde_json::Value> {
         self.json_events()
             .into_iter()
             .filter(|value| value["event"] == "message")
             .collect()
     }
 
-    /// `{"event":"message","type":"msg"}` lines only (excludes
-    /// presence). Mirrors the old `JsonNode::msg_events()`.
-    pub(crate) fn msg_events(&mut self) -> Vec<serde_json::Value> {
+    /// `{"event":"message","type":"msg"}` lines only (excludes presence).
+    pub fn msg_events(&mut self) -> Vec<serde_json::Value> {
         self.json_events()
             .into_iter()
             .filter(|value| value["event"] == "message" && value["type"] == "msg")
@@ -883,7 +1033,7 @@ impl InProcNode {
 
     /// Inbound `msg`-kind messages captured so far (includes self
     /// echoes — filter on `is_self` if needed).
-    pub(crate) fn messages(&mut self) -> Vec<&Message> {
+    pub fn messages(&mut self) -> Vec<&Message> {
         self.pump();
         self.drained
             .iter()
@@ -895,9 +1045,9 @@ impl InProcNode {
     }
 
     /// `msg` events from *other* peers only (drops our own echoes).
-    /// The subprocess `Node` parsed only peer lines, so ports that
+    /// The subprocess [`Node`] parsed only peer lines, so ports that
     /// counted "deliveries" use this.
-    pub(crate) fn inbound(&mut self) -> Vec<&Message> {
+    pub fn inbound(&mut self) -> Vec<&Message> {
         self.pump();
         self.drained
             .iter()
@@ -913,7 +1063,7 @@ impl InProcNode {
 
     /// Wait until a peer (non-self) `msg` with exactly `body` is
     /// captured, or `timeout` elapses.
-    pub(crate) async fn wait_body(&mut self, body: &str, timeout: Duration) -> bool {
+    pub async fn wait_body(&mut self, body: &str, timeout: Duration) -> bool {
         self.wait_for(timeout, |events| {
             events.iter().any(|event| {
                 matches!(
@@ -928,7 +1078,7 @@ impl InProcNode {
 
     /// Wait until at least `min_count` peer (non-self) messages have
     /// been captured, or `timeout` elapses.
-    pub(crate) async fn wait_inbound(&mut self, min_count: usize, timeout: Duration) -> bool {
+    pub async fn wait_inbound(&mut self, min_count: usize, timeout: Duration) -> bool {
         self.wait_for(timeout, |events| {
             events
                 .iter()
@@ -940,7 +1090,7 @@ impl InProcNode {
     }
 
     /// Count inbound (non-self) `msg` events whose body equals `body`.
-    pub(crate) fn count_body(&mut self, body: &str) -> usize {
+    pub fn count_body(&mut self, body: &str) -> usize {
         self.pump();
         self.drained
             .iter()
@@ -956,7 +1106,7 @@ impl InProcNode {
 
     /// Number of surfaced presence events of the given kind
     /// (`joined` when `joined` is true, else `left`).
-    pub(crate) fn presence_count(&mut self, joined: bool) -> usize {
+    pub fn presence_count(&mut self, joined: bool) -> usize {
         self.pump();
         let want = if joined {
             PresenceSubtype::Joined
@@ -975,12 +1125,7 @@ impl InProcNode {
     }
 
     /// Wait until a `joined`/`left` presence for `nick` is surfaced.
-    pub(crate) async fn wait_presence(
-        &mut self,
-        nick: &str,
-        joined: bool,
-        timeout: Duration,
-    ) -> bool {
+    pub async fn wait_presence(&mut self, nick: &str, joined: bool, timeout: Duration) -> bool {
         let want = if joined {
             PresenceSubtype::Joined
         } else {
@@ -1000,7 +1145,7 @@ impl InProcNode {
 
     /// Wait until at least `min_count` `joined`/`left` presence events
     /// (any author) have been surfaced.
-    pub(crate) async fn wait_presence_count(
+    pub async fn wait_presence_count(
         &mut self,
         joined: bool,
         min_count: usize,
@@ -1028,7 +1173,7 @@ impl InProcNode {
 
     /// Poll until `pred` over the accumulated events holds, or
     /// `timeout` elapses. Returns whether the predicate was satisfied.
-    pub(crate) async fn wait_for(
+    pub async fn wait_for(
         &mut self,
         timeout: Duration,
         mut pred: impl FnMut(&[OutputEvent]) -> bool,
@@ -1048,7 +1193,7 @@ impl InProcNode {
 
     /// Convenience: wait until at least `n` inbound `msg` events are
     /// seen (any author, including self echoes).
-    pub(crate) async fn wait_messages(&mut self, min_count: usize, timeout: Duration) -> bool {
+    pub async fn wait_messages(&mut self, min_count: usize, timeout: Duration) -> bool {
         self.wait_for(timeout, |events| {
             events
                 .iter()
@@ -1060,10 +1205,33 @@ impl InProcNode {
     }
 }
 
+/// Wait until `left` and `right` each hold the *other's* card — the true
+/// precondition for a directed A2A **round trip**, and the one a single
+/// [`InProcNode::await_peer_card`] does not establish.
+///
+/// Both legs are sealed, so both directions must have converged. The caller
+/// seals the request to the callee's key; the callee then seals its reply back
+/// to the *caller's* key — and a responder that lacks the caller's card does not
+/// error, it **drops the reply on the floor** (`a2a/node.rs`: "cannot seal a2a
+/// rpc response — dropping"). The caller has no way to distinguish that from a
+/// slow peer, so it blocks for the full RPC timeout and the test fails ~60s
+/// later with "peer unreachable or slow".
+///
+/// The two directions are not equally likely to be ready, which is why guarding
+/// only one hides the bug rather than fixing it: the creator publishes its card
+/// when it mints the square, so a joiner tends to pick it up during its initial
+/// `meta` sync, while the joiner's own card has to propagate *back* afterwards.
+/// Waiting on the caller's view alone therefore passes most of the time and
+/// flakes under load.
+pub async fn await_mutual_cards(left: &InProcNode, right: &InProcNode) {
+    left.await_peer_card(&right.nickname).await;
+    right.await_peer_card(&left.nickname).await;
+}
+
 /// In-process analogue of the subprocess `three_peers`: a creator
 /// plus two joiners (`mon-<suffix>-a` / `-b`), all meshed in this
 /// process. The mesh id is `creator.mesh`.
-pub(crate) async fn three_peers(suffix: &str) -> (InProcNode, InProcNode, InProcNode) {
+pub async fn three_peers(suffix: &str) -> (InProcNode, InProcNode, InProcNode) {
     let creator = InProcNode::create(&format!("mon{suffix}")).await;
     let joiner_a = InProcNode::join(&creator.mesh, &format!("mon-{suffix}-a")).await;
     let joiner_b = InProcNode::join(&creator.mesh, &format!("mon-{suffix}-b")).await;
@@ -1096,7 +1264,8 @@ fn scan_create_log(content: &str, mesh_id: &mut Option<String>, nickname: &mut O
     }
 }
 
-pub(crate) struct Node {
+#[derive(Debug)]
+pub struct Node {
     child: Child,
     log: PathBuf,
     pub nickname: String,
@@ -1104,31 +1273,27 @@ pub(crate) struct Node {
 
 impl Node {
     /// Spawn `agent-square create`, wait for 💬... and the assigned nickname.
-    pub(crate) fn create() -> (Self, String) {
+    pub fn create() -> (Self, String) {
         Self::create_named("itest")
     }
 
     /// Spawn `agent-square create --name <name>`. Uses a fixed name by default
     /// since tests don't care what the mesh is called — only that creation
     /// and join round-trip.
-    pub(crate) fn create_named(name: &str) -> (Self, String) {
+    pub fn create_named(name: &str) -> (Self, String) {
         Self::create_flags(name, &[])
     }
 
     /// Like [`create_named`](Self::create_named) but passes extra hidden
     /// tuning flags to the spawned daemon as `(flag, value)` pairs (e.g. a
     /// shortened heal cadence). Replaces the former env overrides.
-    pub(crate) fn create_flags(name: &str, flags: &[(&str, &str)]) -> (Self, String) {
+    pub fn create_flags(name: &str, flags: &[(&str, &str)]) -> (Self, String) {
         Self::create_args(name, &[], flags)
     }
 
     /// Like [`create_flags`](Self::create_flags) but also passes extra raw
     /// `create` CLI args (e.g. `["--public"]`).
-    pub(crate) fn create_args(
-        name: &str,
-        extra: &[&str],
-        flags: &[(&str, &str)],
-    ) -> (Self, String) {
+    pub fn create_args(name: &str, extra: &[&str], flags: &[(&str, &str)]) -> (Self, String) {
         let log = tmp_log("create");
         let file = File::create(&log).unwrap();
         let mut args = vec!["create", "--name", name];
@@ -1167,24 +1332,19 @@ impl Node {
     }
 
     /// Spawn `agent-square join <mesh> --nickname <nickname>`.
-    pub(crate) fn join(mesh: &str, nickname: &str) -> Self {
+    pub fn join(mesh: &str, nickname: &str) -> Self {
         Self::join_flags(mesh, nickname, &[])
     }
 
     /// Like [`join`](Self::join) but passes extra hidden tuning flags to the
     /// spawned daemon as `(flag, value)` pairs.
-    pub(crate) fn join_flags(mesh: &str, nickname: &str, flags: &[(&str, &str)]) -> Self {
+    pub fn join_flags(mesh: &str, nickname: &str, flags: &[(&str, &str)]) -> Self {
         Self::join_args(mesh, nickname, &[], flags)
     }
 
     /// Like [`join_flags`](Self::join_flags) but also passes extra raw
     /// `join` CLI args (e.g. `["--password=pw"]`).
-    pub(crate) fn join_args(
-        mesh: &str,
-        nickname: &str,
-        extra: &[&str],
-        flags: &[(&str, &str)],
-    ) -> Self {
+    pub fn join_args(mesh: &str, nickname: &str, extra: &[&str], flags: &[(&str, &str)]) -> Self {
         let log = tmp_log(nickname);
         let file = File::create(&log).unwrap();
         let mut cmd = test_cmd();
@@ -1203,12 +1363,12 @@ impl Node {
         }
     }
 
-    pub(crate) fn log_contents(&self) -> String {
+    pub fn log_contents(&self) -> String {
         fs::read_to_string(&self.log).unwrap_or_default()
     }
 
     /// Last `count` log lines, oldest-first — for failure diagnostics.
-    pub(crate) fn log_tail(&self, count: usize) -> String {
+    pub fn log_tail(&self, count: usize) -> String {
         let content = self.log_contents();
         let lines: Vec<&str> = content.lines().collect();
         lines[lines.len().saturating_sub(count)..].join("\n")
@@ -1217,7 +1377,7 @@ impl Node {
     /// Block until this node's IPC socket exists.
     /// The socket is bound inside `event_loop` after `subscribe_and_join` completes,
     /// so its presence is the most reliable "node is ready" signal.
-    pub(crate) fn wait_ready(&self, mesh: &str) -> bool {
+    pub fn wait_ready(&self, mesh: &str) -> bool {
         let sock = socket_path(mesh, &self.nickname);
         let deadline = Instant::now() + CONNECT_TIMEOUT;
         while Instant::now() < deadline {
@@ -1234,12 +1394,12 @@ impl Node {
         false
     }
 
-    pub(crate) fn messages(&self) -> Vec<Msg> {
+    pub fn messages(&self) -> Vec<Msg> {
         parse_messages(&self.log_contents())
     }
 
     /// How many received messages match `(author, body)` exactly.
-    pub(crate) fn count_from(&self, author: &str, body: &str) -> usize {
+    pub fn count_from(&self, author: &str, body: &str) -> usize {
         self.messages()
             .iter()
             .filter(|msg| msg.author == author && msg.body == body)
@@ -1249,7 +1409,7 @@ impl Node {
     /// How many **distinct** messages from `author` have a body starting with
     /// `prefix` — the convergence metric for the anti-entropy gap-recovery
     /// tests (each sends `prefix-{i}` and waits for the full distinct set).
-    pub(crate) fn count_distinct_from(&self, author: &str, prefix: &str) -> usize {
+    pub fn count_distinct_from(&self, author: &str, prefix: &str) -> usize {
         self.messages()
             .iter()
             .filter(|msg| msg.author == author && msg.body.starts_with(prefix))
@@ -1259,7 +1419,7 @@ impl Node {
     }
 
     /// Send SIGINT to the child process (triggers the ctrl-c handler).
-    pub(crate) fn sigint(&self) {
+    pub fn sigint(&self) {
         self.signal("-INT");
     }
 
@@ -1267,7 +1427,7 @@ impl Node {
     /// graceful `Left`, the OS reaps it; peers must detect the silent
     /// vanish via the alive-timeout. (`Drop` also kills, harmlessly,
     /// if the test didn't.)
-    pub(crate) fn kill(&self) {
+    pub fn kill(&self) {
         self.signal("-KILL");
     }
 
@@ -1278,7 +1438,7 @@ impl Node {
     /// a zombie link that takes iroh's idle timeout to die. Reaping
     /// here guarantees the shutdown (including socket release) fully
     /// completed before the test proceeds.
-    pub(crate) fn wait_exit(&mut self) {
+    pub fn wait_exit(&mut self) {
         let _ = self.child.wait();
     }
 
@@ -1286,12 +1446,12 @@ impl Node {
     /// node). It stays alive and keeps its sockets/ports bound, but
     /// runs no code, so peers eventually evict it on the
     /// alive-timeout. Resume with [`cont`](Self::cont).
-    pub(crate) fn stop(&self) {
+    pub fn stop(&self) {
         self.signal("-STOP");
     }
 
     /// SIGCONT — wake a [`stop`](Self::stop)ped process.
-    pub(crate) fn cont(&self) {
+    pub fn cont(&self) {
         self.signal("-CONT");
     }
 
@@ -1312,12 +1472,12 @@ impl Drop for Node {
 
 /// The text projection of a chat frame's A2A payload — what a test asserts
 /// against, since the frame `body` carries the serialized payload.
-pub(crate) fn chat_text(msg: &Message) -> String {
+pub fn chat_text(msg: &Message) -> String {
     agent_square::a2a::gossip::chat_text(msg).expect("a chat frame carries an a2a payload")
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct Msg {
+pub struct Msg {
     pub author: String,
     pub body: String,
 }
@@ -1346,17 +1506,7 @@ fn parse_messages(output: &str) -> Vec<Msg> {
     msgs
 }
 
-/// `cli_msg_raw` with no success assertion — the gossip tests' default.
-pub(crate) fn cli_message_raw(mesh: &str, nickname: &str, body: &str) -> Output {
-    cli_msg_raw(mesh, nickname, body)
-}
-
-/// `cli_msg_stdout` shorthand.
-pub(crate) fn cli_message(mesh: &str, nickname: &str, body: &str) -> String {
-    cli_msg_stdout(mesh, nickname, body)
-}
-
-/// `wait_until` with the standard message-delivery timeout.
-pub(crate) fn wait_total(total_fn: impl Fn() -> usize, target: usize) -> usize {
+/// [`wait_until`] with the standard message-delivery timeout.
+pub fn wait_total(total_fn: impl Fn() -> usize, target: usize) -> usize {
     wait_until(total_fn, target, MSG_TIMEOUT)
 }

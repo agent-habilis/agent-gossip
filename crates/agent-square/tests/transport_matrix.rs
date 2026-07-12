@@ -19,7 +19,7 @@
 //! directed frame can take), so "the lifecycle completed" is a real proof the
 //! named transport carried every directed leg — no per-transport counter needed.
 
-mod common;
+use agent_square_test_fixtures as common;
 
 use std::time::Instant;
 

@@ -5,7 +5,7 @@
 //! sealed-box crypto itself (round-trip, wrong key, tamper) is unit-tested in
 //! `src/protocol/seal.rs`.
 
-mod common;
+use agent_square_test_fixtures as common;
 
 use std::time::Duration;
 

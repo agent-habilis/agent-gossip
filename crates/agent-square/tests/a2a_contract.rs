@@ -9,7 +9,7 @@
 //! `mesh-state` extension methods, and the cross-binding property: a JSON-RPC
 //! send on one node surfaces on a plain gossip peer.
 
-mod common;
+use agent_square_test_fixtures as common;
 
 use std::io::{Read, Write};
 use std::net::TcpStream;

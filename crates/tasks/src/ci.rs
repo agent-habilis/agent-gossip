@@ -10,9 +10,11 @@ pub(crate) fn run(sh: &Shell) -> TaskOutcome {
     output::status("Running", "clippy");
     // `--features adversarial` so the adversarial suite + shim are linted
     // too (they are `required-features`-gated, else clippy would skip them).
+    // See `lint.rs` for why the feature is qualified and the fixtures crate
+    // is named explicitly.
     cmd!(
         sh,
-        "cargo clippy -p agent-square --all-targets --features adversarial -- -D warnings"
+        "cargo clippy -p agent-square -p agent-square-test-fixtures --all-targets --features agent-square/adversarial -- -D warnings"
     )
     .quiet()
     .run()?;

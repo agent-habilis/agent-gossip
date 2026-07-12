@@ -4,15 +4,10 @@
 //! (a read, a `message/send` that opens a task and returns it), the safe-set
 //! rejection of a mutating op, and the fast-fail for an unknown peer.
 
-mod common;
+use agent_square_test_fixtures as common;
 
-use std::time::Duration;
-
-use agent_square::api::A2aCallParams;
-use common::{InProcNode, MSG_TIMEOUT};
+use common::{InProcNode, MSG_TIMEOUT, await_mutual_cards};
 use serde_json::json;
-
-const RPC_TIMEOUT: Duration = MSG_TIMEOUT;
 
 /// A `tasks/list` call to a peer returns *that peer's* task view over gossip.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -23,24 +18,19 @@ async fn rpc_tasks_list_reaches_the_peer() {
     assert!(bob.wait_body("link", MSG_TIMEOUT).await, "bob meshed");
     // Prove the reverse path too: the RPC response rides bob's outbound, and
     // A2aReq/A2aResp are not loggable (no anti-entropy healing), so a reply
-    // broadcast into a still-converging overlay is lost for good and the call
-    // dies as a 60s waiter timeout — the suite's long-standing flake.
+    // broadcast into a still-converging overlay is lost for good.
     bob.send("link-back").await;
     assert!(
         alice.wait_body("link-back", MSG_TIMEOUT).await,
         "alice meshed"
     );
+    // Linkage is not enough. Both legs of the call are sealed, so both peers
+    // must hold the other's card first — see `await_mutual_cards`.
+    await_mutual_cards(&alice, &bob).await;
 
     let response = alice
-        .session
-        .a2a_call(A2aCallParams {
-            peer: "rpc-bob".parse().unwrap(),
-            method: "ListTasks".to_string(),
-            params: json!({}),
-            timeout: RPC_TIMEOUT,
-        })
-        .await
-        .expect("a2a_call returns");
+        .a2a_call_retrying("rpc-bob", "ListTasks", json!({}))
+        .await;
     assert!(
         response["result"]["tasks"].is_array(),
         "ListTasks result carries a tasks array: {response}"
@@ -62,13 +52,15 @@ async fn rpc_message_send_opens_task_and_returns_it() {
     assert!(bob.wait_body("link", MSG_TIMEOUT).await, "bob meshed");
     // Prove the reverse path too: the RPC response rides bob's outbound, and
     // A2aReq/A2aResp are not loggable (no anti-entropy healing), so a reply
-    // broadcast into a still-converging overlay is lost for good and the call
-    // dies as a 60s waiter timeout — the suite's long-standing flake.
+    // broadcast into a still-converging overlay is lost for good.
     bob.send("link-back").await;
     assert!(
         alice.wait_body("link-back", MSG_TIMEOUT).await,
         "alice meshed"
     );
+    // See `rpc_tasks_list_reaches_the_peer`: both legs are sealed, so both
+    // peers must hold the other's card before a directed round trip.
+    await_mutual_cards(&alice, &bob).await;
 
     let our_message_id = "550e8400-e29b-41d4-a716-446655440000";
     let create = json!({ "message": {
@@ -78,15 +70,8 @@ async fn rpc_message_send_opens_task_and_returns_it() {
         "contextId": alice.mesh,
     }});
     let response = alice
-        .session
-        .a2a_call(A2aCallParams {
-            peer: "rpc-send-bob".parse().unwrap(),
-            method: "SendMessage".to_string(),
-            params: create,
-            timeout: RPC_TIMEOUT,
-        })
-        .await
-        .expect("a2a_call returns");
+        .a2a_call_retrying("rpc-send-bob", "SendMessage", create)
+        .await;
     // v1.0 SendMessage returns a SendMessageResponse oneof: {"task": <Task>}.
     let task = &response["result"]["task"];
     assert_eq!(
@@ -114,24 +99,23 @@ async fn rpc_state_merge_is_refused() {
     assert!(bob.wait_body("link", MSG_TIMEOUT).await, "bob meshed");
     // Prove the reverse path too: the RPC response rides bob's outbound, and
     // A2aReq/A2aResp are not loggable (no anti-entropy healing), so a reply
-    // broadcast into a still-converging overlay is lost for good and the call
-    // dies as a 60s waiter timeout — the suite's long-standing flake.
+    // broadcast into a still-converging overlay is lost for good.
     bob.send("link-back").await;
     assert!(
         alice.wait_body("link-back", MSG_TIMEOUT).await,
         "alice meshed"
     );
+    // See `rpc_tasks_list_reaches_the_peer`: both legs are sealed, so both
+    // peers must hold the other's card before a directed round trip.
+    await_mutual_cards(&alice, &bob).await;
 
     let response = alice
-        .session
-        .a2a_call(A2aCallParams {
-            peer: "rpc-merge-bob".parse().unwrap(),
-            method: "mesh/state.merge".to_string(),
-            params: json!({ "merge": { "x": 1 } }),
-            timeout: RPC_TIMEOUT,
-        })
-        .await
-        .expect("a2a_call returns");
+        .a2a_call_retrying(
+            "rpc-merge-bob",
+            "mesh/state.merge",
+            json!({ "merge": { "x": 1 } }),
+        )
+        .await;
     assert!(
         response["error"]["message"]
             .as_str()
@@ -156,15 +140,8 @@ async fn rpc_unknown_peer_fails_fast() {
         "parts": [{ "text": "hi" }],
     }});
     let response = alice
-        .session
-        .a2a_call(A2aCallParams {
-            peer: "ghost-peer".parse().unwrap(),
-            method: "SendMessage".to_string(),
-            params: create,
-            timeout: RPC_TIMEOUT,
-        })
-        .await
-        .expect("a2a_call returns");
+        .a2a_call_retrying("ghost-peer", "SendMessage", create)
+        .await;
     assert!(
         response["error"]["message"]
             .as_str()
