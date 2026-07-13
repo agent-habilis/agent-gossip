@@ -1,7 +1,7 @@
 //! The `state`/`meta` channel wire body: the tagged envelope that carries one
 //! automerge change (or, from an old binary, a legacy RFC 7386 merge the
 //! automerge engine treats as a no-op). The convergent document itself — merge,
-//! authorization, and reconciliation — lives in [`super::doc`].
+//! authorization, and reconciliation — lives in the parent module.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

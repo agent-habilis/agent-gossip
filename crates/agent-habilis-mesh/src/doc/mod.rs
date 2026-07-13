@@ -19,6 +19,8 @@
 //! held in `pending` and drained — through the same gate — once their deps land,
 //! so the gate is never bypassed by dependency buffering.
 
+pub mod wire;
+
 use std::collections::{HashMap, HashSet};
 
 use automerge::transaction::Transactable;

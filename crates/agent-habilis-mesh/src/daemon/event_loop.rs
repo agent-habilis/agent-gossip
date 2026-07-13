@@ -94,7 +94,6 @@ pub async fn run<A: NodeDriver>(
             } => (Some(quit_rx), msg_tx, true, false, handle_signals),
         };
     let external_req_rx = session_rx;
-    let a2a_rx = http_rx;
 
     let started = Instant::now();
     // CLI `create`/`join` daemons default their state file into the mesh's
@@ -199,7 +198,7 @@ pub async fn run<A: NodeDriver>(
             name: mesh_name.clone(),
             nickname: author.clone(),
             drift: ready.drift,
-            a2a_port: ready.a2a_port,
+            a2a_port: ready.http_port,
         });
     }
 
@@ -237,7 +236,7 @@ pub async fn run<A: NodeDriver>(
         external_msg_tx,
         quit_rx,
         exit_on_quit,
-        a2a_rx,
+        http_rx,
         unicast_rx: Some(unicast_rx),
     }))
     .await
@@ -383,7 +382,7 @@ struct EventLoop<A: NodeDriver> {
     quit_rx: mpsc::Receiver<()>,
     exit_on_quit: bool,
     /// The localhost A2A binding's request channel (`--a2a-serve`); `None` off.
-    a2a_rx: Option<mpsc::Receiver<A::Http>>,
+    http_rx: Option<mpsc::Receiver<A::Http>>,
     /// Inbound unicast frames from the `UNICAST_ALPN` acceptor, drained into
     /// `gossip::ingest` (same validation + dedup path as gossip). `Option` so
     /// the `select!` arm can disable itself if the channel ever closes.
@@ -435,7 +434,7 @@ async fn event_loop<A: NodeDriver>(loop_state: EventLoop<A>) -> Result<()> {
         external_msg_tx,
         mut quit_rx,
         exit_on_quit,
-        mut a2a_rx,
+        mut http_rx,
         mut unicast_rx,
     } = loop_state;
 
@@ -502,8 +501,8 @@ async fn event_loop<A: NodeDriver>(loop_state: EventLoop<A>) -> Result<()> {
                     }
                 }
             },
-            a2a_req = recv_opt(&mut a2a_rx) => match a2a_req {
-                None => a2a_rx = None,
+            http_req = recv_opt(&mut http_rx) => match http_req {
+                None => http_rx = None,
                 Some(req) => {
                     let ctx = parts.ctx(&sender);
                     app.handle_http(req, &mut state, &ctx).await;

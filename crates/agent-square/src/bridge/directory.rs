@@ -336,7 +336,7 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use super::{TicketAd, TicketChange, TicketListings};
-    use crate::a2a::ticket::A2aTicket;
+    use crate::bridge::ticket::A2aTicket;
     use agent_habilis_mesh::protocol::mesh::LookupOpts;
     use iroh::{EndpointAddr, SecretKey};
 

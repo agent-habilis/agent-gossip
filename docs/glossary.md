@@ -351,9 +351,10 @@ leg the daemon's own keepalive never counts as). Past that, the keepalive stops
 and the peer's debounce reaps the task — so a crashed or abandoned skill cannot
 hold the peer forever.
 
-Code: `MessageKind::{A2aReq,A2aResp,A2aStatus,A2aArtifact}`,
-`gossip::recv::ingest_remote_message`, `gossip::emit_task_status`/`emit_task_artifact`,
-`a2a::task` (`TaskRecord::should_keepalive`, `adopt_initiator`).
+Code: `MessageKind::App` with the A2A tags in `a2a::wire`,
+`gossip::recv::ingest_remote_message`, `a2a::send::emit_task_status`/
+`emit_task_artifact`, and `a2a::task`
+(`TaskRecord::should_keepalive`, `adopt_initiator`).
 
 ### handover
 

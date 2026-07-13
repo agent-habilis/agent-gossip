@@ -14,6 +14,7 @@ pub mod beacon;
 pub mod blob;
 pub mod daemon;
 pub mod directory;
+pub mod doc;
 
 pub mod gossip;
 // Creator-minted invites to an invite-only mesh. Engine-level: the redeem +
@@ -24,6 +25,7 @@ pub mod lifecycle;
 pub mod logging;
 pub mod lookup;
 pub mod protocol;
+pub mod reassembly;
 pub mod resolver;
 pub mod transport;
 pub mod util;

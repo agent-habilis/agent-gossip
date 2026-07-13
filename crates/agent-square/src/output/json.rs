@@ -13,8 +13,8 @@ use serde::Serialize;
 
 use agent_habilis_mesh::util::consts::MESH_GLYPH;
 
-use super::{OutputEvent, TaskMessageLeg};
-use agent_habilis_mesh::protocol::{Message, MessageKind, Nickname, PresenceSubtype};
+use super::{OutputEvent, PingPeer, TaskMessageLeg};
+use agent_habilis_mesh::protocol::{Message, MessageKind, PresenceSubtype};
 
 /// One-shot events (everything except the `"event":"message"` family).
 /// `#[serde(tag = "event")]` inlines the discriminator as the first field.
@@ -70,13 +70,6 @@ pub(super) enum SimpleEvent<'a> {
         /// Pre-formatted, markdown-safe RTT table (see [`ping_report_display`]).
         display: String,
     },
-}
-
-/// One peer's RTT in a `ping_report` event.
-#[derive(Debug, Clone, Serialize)]
-pub struct PingPeer {
-    pub nickname: Nickname,
-    pub rtt_ms: u64,
 }
 
 /// Common prefix for every `{"event":"message",...}` line. Field

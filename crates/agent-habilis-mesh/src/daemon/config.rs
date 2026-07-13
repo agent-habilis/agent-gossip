@@ -175,7 +175,7 @@ pub struct ReadyAnnounce {
     /// A stale skill install, rendered by `agent-square`'s `drift_warning`.
     pub drift: Option<String>,
     /// The bound A2A HTTP port under `--a2a-serve`.
-    pub a2a_port: Option<u16>,
+    pub http_port: Option<u16>,
 }
 
 impl std::fmt::Debug for EventLoopConfig {

@@ -35,6 +35,8 @@
 // purpose — it is the agent-communication data model both bindings (gossip,
 // local JSON-RPC) share, and embedders speak it directly.
 pub mod a2a;
+pub(crate) mod bridge;
+pub mod events;
 pub(crate) mod cli;
 pub(crate) mod mcp;
 pub(crate) mod output;
@@ -69,7 +71,7 @@ pub use agent_habilis_mesh::protocol::message::{
 pub use agent_habilis_mesh::protocol::nickname::{Nickname, NicknameError};
 pub use agent_habilis_mesh::resolver::{JoinTarget, JoinTargetError};
 pub use agent_habilis_mesh::transport::Lane;
-pub use output::PingPeer;
+pub use events::{OutputEvent, PingPeer};
 // Wire/runtime constants the external test + bench crates assert against; the
 // rest of `util::consts` stays engine-internal.
 pub use agent_habilis_mesh::util::consts::{
@@ -77,7 +79,7 @@ pub use agent_habilis_mesh::util::consts::{
 };
 pub use agent_habilis_mesh::util::version::VERSION;
 pub use agent_habilis_mesh::util::{ensure_runtime_base, mesh_prefix, runtime_base};
-pub use output::{OutputEvent, event_json, surfaced_event_json};
+pub use output::{event_json, surfaced_event_json};
 
 use anyhow::Result;
 

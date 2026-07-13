@@ -24,15 +24,15 @@ pub mod node;
 // In-memory accounting stores owned by `EventLoopState`. `pub(crate)` so
 // the gossip anti-entropy layer (and its tests) can name `MessageLog` /
 // `DigestWindow`; still crate-internal.
-pub mod doc;
+pub use crate::doc;
 pub(crate) mod message_log;
 pub(crate) mod params;
 // Dedicated, byte-budgeted buffer for partial multipart bodies — reassembly
 // no longer reads the message log, so log eviction can't break it.
-pub mod reassembly;
+pub use crate::reassembly;
 pub mod setup;
 pub mod state;
-pub mod state_doc;
+pub use crate::doc::wire as state_doc;
 // The session state file the daemon writes for external readers (its
 // sole writer). Daemon-session state, not a generic `util` helper.
 pub mod state_file;

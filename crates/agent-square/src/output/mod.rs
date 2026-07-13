@@ -2,13 +2,13 @@ use tokio::sync::mpsc::{self, UnboundedSender};
 
 use crate::a2a::TaskId;
 use agent_habilis_mesh::protocol::mesh::MeshName;
-use agent_habilis_mesh::protocol::{MeshId, Message, MessageId, MessageKind, Nickname};
+use agent_habilis_mesh::protocol::{MeshId, Message, MessageKind, Nickname};
 
 mod json;
 #[cfg(test)]
 mod tests;
 
-pub use json::PingPeer;
+pub(crate) use crate::events::{OutputEvent, PingPeer};
 pub(crate) use json::is_visible;
 use json::{
     SimpleEvent, emit, emit_json, format_presence_json, peer_return_display, peer_timeout_display,
@@ -25,104 +25,6 @@ pub(crate) enum OutputMode {
     /// the JSON-RPC protocol transport and any print would corrupt
     /// the stream.
     Silent,
-}
-
-/// Owned, structured form of every line the daemon would print.
-/// In-process consumers ([`crate::api::MeshSession::events`],
-/// tests) receive these over a channel instead of scraping stdout;
-/// the `Stream` sink renders the *same* data through `events.rs`, so
-/// the wire format stays byte-identical.
-///
-/// `#[non_exhaustive]`: a future event kind must not be a breaking
-/// change for embedders matching on this.
-#[derive(Debug, Clone)]
-#[non_exhaustive]
-pub enum OutputEvent {
-    Ready {
-        mesh: MeshId,
-        name: MeshName,
-        nickname: Nickname,
-        /// One-line skill-drift warning when the installed integration has
-        /// fallen behind this binary (see `cli::agent::drift_warning`), else
-        /// `None`. The startup nag for stale skills.
-        drift: Option<String>,
-        /// The bound `--a2a-serve` port; `None` when the binding is off
-        /// (the default), keeping the common event unchanged.
-        a2a_port: Option<u16>,
-    },
-    MeshId {
-        id: MeshId,
-    },
-    Message {
-        msg: Box<Message>,
-        is_self: bool,
-    },
-    Presence {
-        msg: Box<Message>,
-    },
-    PeerTimeout {
-        nickname: Nickname,
-        last_seen_secs_ago: u64,
-    },
-    PeerReturn {
-        nickname: Nickname,
-    },
-    /// Equivocation detected (Phase 2): an author key signed two different
-    /// messages at the same `seq`. Surfaced once per offending key.
-    Fork {
-        nickname: Nickname,
-        pubkey: String,
-        seq: u64,
-    },
-    MsgPosted {
-        id: MessageId,
-    },
-    Info {
-        message: String,
-    },
-    Error {
-        message: String,
-    },
-    PingReport {
-        peers: Vec<PingPeer>,
-        known: usize,
-    },
-    /// One leg of a task surfaced to the addressee (or the
-    /// sender's own echo). Carries the full `Message` so the JSON sink can
-    /// render `to`/`task_id`/`phase`/`body`. The JSON sink renders
-    /// the `Progress` phase as a `task_progress` event and every other
-    /// phase as a `task` event.
-    Task {
-        msg: Box<Message>,
-        is_self: bool,
-    },
-    /// An RPC `message/send` task leg (the initiator's brief / answer, or the
-    /// created `Task`) surfaced with no backing frame — it arrived over the
-    /// request/response binding. Renders as a `task` event, `kind:message`.
-    TaskMessage {
-        id: String,
-        mesh: String,
-        author: String,
-        peer: String,
-        task_id: String,
-        state: Option<crate::a2a::TaskState>,
-        text: String,
-        is_self: bool,
-    },
-    /// A task was evicted for crossing its idle-debounce timeout (the
-    /// daemon-side per-task silence sweep). Daemon-originated — no `Message`.
-    TaskTimeout {
-        task_id: TaskId,
-    },
-    /// A shared-state change: the patch event, the freshly-derived document, and
-    /// whether it was our own write. Drives the reaction hook and the human
-    /// `💬 … changed shared state` line.
-    StateChanged {
-        channel: agent_habilis_mesh::protocol::Channel,
-        event: Box<Message>,
-        document: serde_json::Value,
-        is_self: bool,
-    },
 }
 
 /// The value cluster for [`Output::ready`]: the mesh identity fields plus

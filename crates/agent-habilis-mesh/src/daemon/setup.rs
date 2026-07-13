@@ -233,7 +233,7 @@ struct SetupBuild<'a> {
     author: &'a Nickname,
     sink: &'a dyn NodeSink,
     drift: Option<&'a str>,
-    a2a_port: Option<u16>,
+    http_port: Option<u16>,
     max_peers: usize,
     lookups: &'a LookupOpts,
     unicast_acceptor: &'a crate::transport::UnicastAcceptor,
@@ -282,7 +282,7 @@ pub async fn setup_mesh(kind: SetupKind, params: SetupParams<'_>) -> Result<Even
     // `A2aApp`); the engine only needs the resolved port for the `ready` event
     // and the published card. `Some(0)` (ephemeral) is resolved caller-side and
     // passed back in here as the real port.
-    let a2a_port = a2a_serve;
+    let http_port = a2a_serve;
     // Create mints the config from the caller's choices; join decodes it
     // from the id — one source of truth either way.
     let lookups = match &kind {
@@ -308,7 +308,7 @@ pub async fn setup_mesh(kind: SetupKind, params: SetupParams<'_>) -> Result<Even
         author: &author,
         sink: sink.as_ref(),
         drift,
-        a2a_port,
+        http_port,
         max_peers,
         lookups: &lookups,
         unicast_acceptor: &unicast_acceptor,
@@ -357,7 +357,7 @@ pub async fn setup_mesh(kind: SetupKind, params: SetupParams<'_>) -> Result<Even
     // (`author`, `sink`, `rung_tx`).
     let ready = ReadyAnnounce {
         drift: build.drift.map(str::to_owned),
-        a2a_port: build.a2a_port,
+        http_port: build.http_port,
     };
 
     // Off the critical path: nothing below blocks `ready`, which `run` emits

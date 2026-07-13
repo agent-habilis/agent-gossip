@@ -53,7 +53,7 @@ pub struct StateFile {
     nickname: String,
     /// The `--a2a-serve` port + bearer token, when the binding is on. The
     /// token is why every write chmods the file to 0o600.
-    a2a: std::sync::Mutex<Option<(u16, String)>>,
+    http: std::sync::Mutex<Option<(u16, String)>>,
 }
 
 impl StateFile {
@@ -63,7 +63,7 @@ impl StateFile {
             mesh: mesh.as_str().to_string(),
             name: name.as_str().to_string(),
             nickname: nickname.as_str().to_string(),
-            a2a: std::sync::Mutex::new(None),
+            http: std::sync::Mutex::new(None),
         }
     }
 
@@ -72,7 +72,7 @@ impl StateFile {
     /// # Panics
     /// Panics if an internal invariant is violated.
     pub fn set_a2a(&self, port: u16, token: String) {
-        *self.a2a.lock().expect("state-file a2a mutex not poisoned") = Some((port, token));
+        *self.http.lock().expect("state-file http mutex not poisoned") = Some((port, token));
     }
 
     /// Write a fresh, complete state document — `square`, `name`,
@@ -106,9 +106,9 @@ impl StateFile {
         obj.insert("ready".into(), ready.into());
         obj.insert("participant_count".into(), participant_count.into());
         if let Some((port, token)) = self
-            .a2a
+            .http
             .lock()
-            .expect("state-file a2a mutex not poisoned")
+            .expect("state-file http mutex not poisoned")
             .clone()
         {
             obj.insert("a2a_port".into(), port.into());
