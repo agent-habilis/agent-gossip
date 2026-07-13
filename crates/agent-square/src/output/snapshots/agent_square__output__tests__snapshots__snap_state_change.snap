@@ -1,5 +1,5 @@
 ---
-source: src/output/tests.rs
+source: crates/agent-square/src/output/tests.rs
 expression: "snap_state(r#\"{\"turn\": \"b\"}\"#, &serde_json::json!({\"turn\": \"b\", \"n\": 1}),\nfalse,)"
 ---
-{"event":"state","id":"00000000-0000-0000-0000-000000000001","type":"state","square":"💬://test","author":"alice-bot","ts":1700000000,"merge":{"turn":"b"},"document":{"n":1,"turn":"b"},"display":"💬️ `<alice-bot>` changed /turn","self":false,"is_visible":false}
+{"event":"state","id":"00000000-0000-0000-0000-000000000001","type":"state","square":"💬://2sh6uik3qk2BjD42URSDoBoTsPwnPFLJRNxMPbswdY8xDissgYzRUF4u6aznZ","author":"alice-bot","ts":1700000000,"merge":{"turn":"b"},"document":{"n":1,"turn":"b"},"display":"💬️ `<alice-bot>` changed /turn","self":false,"is_visible":false}

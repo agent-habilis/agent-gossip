@@ -305,16 +305,17 @@ mod tests {
     #[test]
     fn writes_expected_shape() {
         let path = unique_path("shape");
+        let mesh = MeshId::from("💬abcd");
         let state_file = StateFile::new(
             path.clone(),
-            &MeshId::from("💬abcd"),
+            &mesh,
             &Nickname::from("treat-empire"),
             &name("cool-team"),
         );
         state_file.write(3, true);
         let contents = std::fs::read_to_string(&path).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&contents).unwrap();
-        assert_eq!(parsed["square"], "💬://abcd");
+        assert_eq!(parsed["square"], mesh.as_str());
         assert_eq!(parsed["name"], "cool-team");
         assert_eq!(parsed["nickname"], "treat-empire");
         assert_eq!(parsed["ready"], true);
@@ -403,16 +404,17 @@ mod tests {
         // A pre-existing file with stale/foreign keys is fully replaced —
         // the daemon is the sole writer, so nothing is merged or preserved.
         std::fs::write(&path, br#"{"name":"stale","auto_reply":false,"junk":1}"#).unwrap();
+        let mesh = MeshId::from("💬fresh");
         let state_file = StateFile::new(
             path.clone(),
-            &MeshId::from("💬fresh"),
+            &mesh,
             &Nickname::from("swift-cedar"),
             &name("cool-team"),
         );
         state_file.write(3, true);
         let parsed: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        assert_eq!(parsed["square"], "💬://fresh");
+        assert_eq!(parsed["square"], mesh.as_str());
         assert_eq!(parsed["name"], "cool-team");
         assert_eq!(parsed["nickname"], "swift-cedar");
         assert_eq!(parsed["participant_count"], 3);
@@ -450,15 +452,16 @@ mod tests {
     #[test]
     fn read_identity_carries_session_fields() {
         let path = unique_path("identity");
+        let mesh = MeshId::from("💬round");
         let state_file = StateFile::new(
             path.clone(),
-            &MeshId::from("💬round"),
+            &mesh,
             &Nickname::from("treat-empire"),
             &name("cool-team"),
         );
         state_file.write(2, true);
         let identity = super::read_identity(&path);
-        assert_eq!(identity.mesh.as_deref(), Some("💬://round"));
+        assert_eq!(identity.mesh.as_deref(), Some(mesh.as_str()));
         assert_eq!(identity.name.as_deref(), Some("cool-team"));
         assert_eq!(identity.nickname.as_deref(), Some("treat-empire"));
         state_file.remove();
@@ -467,15 +470,16 @@ mod tests {
     #[test]
     fn read_session_entry_round_trips_write() {
         let path = unique_path("session-entry");
+        let mesh = MeshId::from("💬round");
         let state_file = StateFile::new(
             path.clone(),
-            &MeshId::from("💬round"),
+            &mesh,
             &Nickname::from("treat-empire"),
             &name("cool-team"),
         );
         state_file.write(2, true);
         let entry = super::read_session_entry(&path).expect("present");
-        assert_eq!(entry.mesh.as_deref(), Some("💬://round"));
+        assert_eq!(entry.mesh.as_deref(), Some(mesh.as_str()));
         assert_eq!(entry.name.as_deref(), Some("cool-team"));
         assert_eq!(entry.nickname.as_deref(), Some("treat-empire"));
         assert_eq!(entry.pid, Some(std::process::id()));

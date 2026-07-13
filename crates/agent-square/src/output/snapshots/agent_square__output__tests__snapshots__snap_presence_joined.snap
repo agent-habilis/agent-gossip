@@ -1,5 +1,5 @@
 ---
-source: src/output/tests.rs
+source: crates/agent-square/src/output/tests.rs
 expression: "format_presence_json(&msg, PresenceSubtype::Joined)"
 ---
-{"event":"message","id":"00000000-0000-0000-0000-000000000001","type":"presence","square":"💬://test","author":"alice-bot","ts":1700000000,"subtype":"joined","display":"💬️ `<alice-bot>` has joined","is_visible":true}
+{"event":"message","id":"00000000-0000-0000-0000-000000000001","type":"presence","square":"💬://2sh6uik3qk2BjD42URSDoBoTsPwnPFLJRNxMPbswdY8xDissgYzRUF4u6aznZ","author":"alice-bot","ts":1700000000,"subtype":"joined","display":"💬️ `<alice-bot>` has joined","is_visible":true}

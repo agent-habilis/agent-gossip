@@ -370,14 +370,12 @@ mod tests {
 
     #[test]
     fn socket_path_format() {
-        let path = socket_path(
-            &MeshId::from("💬abcdefghijkmnpqr"),
-            &Nickname::from("my-nick"),
-        );
+        let mesh = MeshId::from("💬abcdefghijkmnpqr");
+        let path = socket_path(&mesh, &Nickname::from("my-nick"));
         let base = crate::util::runtime_base();
         assert!(path.starts_with(&*base.to_string_lossy()));
         assert!(path.ends_with("/my-nick.ipc.sock"));
-        assert!(path.contains("💬abcdefghijkmnpq")); // 16-char mesh folder
+        assert!(path.contains(&crate::util::mesh_prefix(mesh.as_str())));
     }
 
     // ── property-based tests ───────────────────────────────────────
@@ -394,7 +392,7 @@ mod tests {
         }
 
         fn arb_mesh() -> impl Strategy<Value = MeshId> {
-            "💬[1-9A-HJ-NP-Za-km-z]{4,24}".prop_map(|raw| MeshId::new(raw).unwrap())
+            "[1-9A-HJ-NP-Za-km-z]{4,24}".prop_map(|label| MeshId::from(label.as_str()))
         }
 
         proptest! {
@@ -474,7 +472,7 @@ mod tests {
     async fn ipc_listen_and_send_msg() {
         // Base58-encode the pid so the mesh id passes strict charset validation.
         let pid_b58 = bs58::encode(std::process::id().to_le_bytes()).into_string();
-        let mesh = MeshId::new(format!("💬ipctest{pid_b58}")).unwrap();
+        let mesh = MeshId::from(format!("ipctest{pid_b58}").as_str());
         let nickname = Nickname::from("test-nick");
 
         let (tx, rx) = mpsc::channel::<IpcMessage<TestCommand>>(8);
@@ -544,7 +542,7 @@ mod tests {
         use tokio::io::AsyncReadExt;
 
         let pid_b58 = bs58::encode(std::process::id().to_le_bytes()).into_string();
-        let mesh = MeshId::new(format!("💬ipcquiet{pid_b58}")).unwrap();
+        let mesh = MeshId::from(format!("ipcquiet{pid_b58}").as_str());
         let nickname = Nickname::from("idle-nick");
         let (tx, rx) = mpsc::channel::<IpcMessage<TestCommand>>(8);
         let listener = bind(&mesh, &nickname).expect("bind IPC socket");

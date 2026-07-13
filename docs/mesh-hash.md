@@ -84,6 +84,11 @@ a pre-`💬://` binary rejects a `💬://…` id (the `://` fails its Base58 cha
 check), so discovery is forward-compatible only, the same one-way break the
 retired `ahs` prefix had.
 
+In code, `MeshId` is the branded form of this token. Every construction path,
+including JSON deserialization, verifies the Base58Check checksum and fully
+decodes the current wire format. A raw string therefore cannot enter APIs as a
+`MeshId` unless its version, payload, and checksum are all valid.
+
 > [!NOTE]
 > We use Base58 (not base64/hex) for readability: it drops visually ambiguous
 > glyphs (`0`/`O`, `I`/`l`) and all punctuation, so a `💬://…` id

@@ -41,3 +41,20 @@ pub(crate) struct JoinOpts {
     #[command(flatten)]
     pub shared: SharedServerOpts,
 }
+
+#[cfg(test)]
+mod tests {
+    use clap::Parser;
+
+    use crate::cli::args::Cli;
+
+    #[test]
+    fn mistyped_square_hash_fails_during_cli_parsing() {
+        let mut mistyped = agent_habilis_mesh::protocol::MeshId::from("join-cli-test").to_string();
+        let replacement = if mistyped.ends_with('1') { "2" } else { "1" };
+        mistyped.replace_range(mistyped.len() - 1.., replacement);
+
+        let error = Cli::try_parse_from(["agent-square", "join", &mistyped]).unwrap_err();
+        assert!(error.to_string().contains("invalid square hash"));
+    }
+}

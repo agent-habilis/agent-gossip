@@ -1,5 +1,5 @@
 ---
-source: agent-habilis-mesh/src/protocol/message/mod.rs
+source: crates/agent-habilis-mesh/src/protocol/message/mod.rs
 expression: wire
 ---
-{"v":"10.0","id":"00000000-0000-0000-0000-000000000001","type":"app","tag":"a2a_req","to":"addressed-nick","corr":"00000000-0000-0000-0000-0000000000aa","mesh":"💬://test","author":"alice-bot","ts":1700000000,"body":"{\"method\":\"tasks/list\",\"params\":{}}","ext":{}}
+{"v":"10.0","id":"00000000-0000-0000-0000-000000000001","type":"app","tag":"a2a_req","to":"addressed-nick","corr":"00000000-0000-0000-0000-0000000000aa","mesh":"💬://GZmd7XLcWpb4hRAdBCcyqZjAQo9nccdvfWEGKSTjo7wfgtzvceN6a659wSzsy57dqC","author":"alice-bot","ts":1700000000,"body":"{\"method\":\"tasks/list\",\"params\":{}}","ext":{}}

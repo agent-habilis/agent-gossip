@@ -529,15 +529,16 @@ mod tests {
 
     #[test]
     fn ipc_command_msg_round_trip() {
+        let expected = MeshId::from("💬://test");
         let cmd = IpcCommand::Msg {
-            mesh: MeshId::from("💬://test"),
+            mesh: expected.clone(),
             body: MessageBody::from("hello"),
         };
         let json = serde_json::to_string(&cmd).unwrap();
         let parsed: IpcCommand = serde_json::from_str(&json).unwrap();
         assert_eq!(
             parsed.mesh_id().expect("Msg is mesh-addressed").as_str(),
-            "💬://test"
+            expected.as_str()
         );
     }
 
@@ -551,8 +552,9 @@ mod tests {
 
     #[test]
     fn ipc_command_state_merge_round_trip() {
+        let expected = MeshId::from("💬://test");
         let cmd = IpcCommand::StateMerge {
-            mesh: MeshId::from("💬://test"),
+            mesh: expected.clone(),
             merge: serde_json::json!({"turn": "b"}),
         };
         let json = serde_json::to_string(&cmd).unwrap();
@@ -561,7 +563,7 @@ mod tests {
         let parsed: IpcCommand = serde_json::from_str(&json).unwrap();
         match parsed {
             IpcCommand::StateMerge { mesh, merge } => {
-                assert_eq!(mesh.as_str(), "💬://test");
+                assert_eq!(mesh, expected);
                 assert_eq!(merge, serde_json::json!({"turn": "b"}));
             }
             IpcCommand::Msg { .. }
@@ -615,14 +617,15 @@ mod tests {
 
     #[test]
     fn ipc_command_ping_round_trip() {
+        let expected = MeshId::from("💬://test");
         let cmd = IpcCommand::Ping {
-            mesh: MeshId::from("💬://test"),
+            mesh: expected.clone(),
         };
         let json = serde_json::to_string(&cmd).unwrap();
         assert!(json.contains("\"command\":\"ping\""));
         let parsed: IpcCommand = serde_json::from_str(&json).unwrap();
         match parsed {
-            IpcCommand::Ping { mesh } => assert_eq!(mesh.as_str(), "💬://test"),
+            IpcCommand::Ping { mesh } => assert_eq!(mesh, expected),
             IpcCommand::Msg { .. }
             | IpcCommand::Poll { .. }
             | IpcCommand::A2aStatus { .. }
@@ -674,14 +677,15 @@ mod tests {
 
     #[test]
     fn ipc_command_peers_round_trip() {
+        let expected = MeshId::from("💬://test");
         let cmd = IpcCommand::Peers {
-            mesh: MeshId::from("💬://test"),
+            mesh: expected.clone(),
         };
         let json = serde_json::to_string(&cmd).unwrap();
         assert!(json.contains("\"command\":\"peers\""));
         let parsed: IpcCommand = serde_json::from_str(&json).unwrap();
         match parsed {
-            IpcCommand::Peers { mesh } => assert_eq!(mesh.as_str(), "💬://test"),
+            IpcCommand::Peers { mesh } => assert_eq!(mesh, expected),
             IpcCommand::Msg { .. }
             | IpcCommand::Poll { .. }
             | IpcCommand::Ping { .. }
@@ -736,7 +740,7 @@ mod tests {
         }
 
         fn arb_mesh() -> impl Strategy<Value = MeshId> {
-            "💬[1-9A-HJ-NP-Za-km-z]{4,24}".prop_map(|raw| MeshId::new(raw).unwrap())
+            "[1-9A-HJ-NP-Za-km-z]{4,24}".prop_map(|label| MeshId::from(label.as_str()))
         }
 
         proptest! {

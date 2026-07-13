@@ -51,17 +51,18 @@ mod tests {
 
     #[test]
     fn leave_accepts_explicit_target() {
+        let expected = agent_habilis_mesh::protocol::MeshId::from("AbCdEf1234");
         let cli = Cli::parse_from([
             "agent-square",
             "leave",
-            "💬AbCdEf1234",
+            expected.as_str(),
             "--nickname",
             "my-nick",
         ]);
         let Commands::Leave { opts } = cli.command else {
             panic!("expected Leave command");
         };
-        assert_eq!(opts.square.unwrap().as_str(), "💬://AbCdEf1234");
+        assert_eq!(opts.square.unwrap(), expected);
         assert_eq!(opts.nickname.unwrap().as_str(), "my-nick");
     }
 

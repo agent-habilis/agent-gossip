@@ -1078,11 +1078,12 @@ mod tests {
     /// A valid UUID for the hand-written wire-JSON fixtures below (the
     /// validating `MessageId` deserialize rejects non-UUID ids).
     const FIXTURE_ID: &str = "550e8400-e29b-41d4-a716-446655440000";
+    const FIXTURE_MESH: &str = "💬://2UXAThUkdBAbiJNXvCt4YeMGQ9myFg7gJJZSr3pG3MAGzUwWmmV7D2NgrWBn1";
 
     #[test]
     fn test_unknown_ext_fields_ignored() {
         let json = format!(
-            r#"{{"v":"10.0","id":"{FIXTURE_ID}","type":"app","tag":"a2a_msg","mesh":"💬test","author":"a-b","ts":0,"body":"hi","ext":{{"future_field":"value","another":42}}}}"#
+            r#"{{"v":"10.0","id":"{FIXTURE_ID}","type":"app","tag":"a2a_msg","mesh":"{FIXTURE_MESH}","author":"a-b","ts":0,"body":"hi","ext":{{"future_field":"value","another":42}}}}"#
         );
         let parsed = Message::parse(json.as_bytes()).unwrap();
         assert_eq!(parsed.body.as_str(), "hi");
@@ -1092,7 +1093,7 @@ mod tests {
     #[test]
     fn test_missing_ext_defaults_to_empty_object() {
         let json = format!(
-            r#"{{"v":"10.0","id":"{FIXTURE_ID}","type":"app","tag":"a2a_msg","mesh":"💬test","author":"a-b","ts":0,"body":"hi"}}"#
+            r#"{{"v":"10.0","id":"{FIXTURE_ID}","type":"app","tag":"a2a_msg","mesh":"{FIXTURE_MESH}","author":"a-b","ts":0,"body":"hi"}}"#
         );
         let parsed = Message::parse(json.as_bytes()).unwrap();
         assert_eq!(parsed.ext, serde_json::json!({}));
@@ -1141,7 +1142,7 @@ mod tests {
         // so a crafted value never reaches the fork/DAG indexes or sig verify.
         let base = |extra: &str| {
             format!(
-                r#"{{"v":"10.0","id":"{FIXTURE_ID}","type":"app","tag":"a2a_msg","mesh":"💬test","author":"a-b","ts":0,"body":"hi"{extra},"ext":{{}}}}"#
+                r#"{{"v":"10.0","id":"{FIXTURE_ID}","type":"app","tag":"a2a_msg","mesh":"{FIXTURE_MESH}","author":"a-b","ts":0,"body":"hi"{extra},"ext":{{}}}}"#
             )
         };
         // 3KB garbage pubkey, non-hex / wrong-length variants, and a bad hash.

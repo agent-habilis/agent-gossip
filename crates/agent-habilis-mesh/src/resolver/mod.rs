@@ -39,11 +39,14 @@ impl FromStr for JoinTarget {
 
     fn from_str(input: &str) -> Result<Self, Self::Err> {
         let trimmed = input.trim();
-        // Not a `💬…` id — try a `🎟️` invite before falling back to the topic
-        // hint (the two brands never collide, so a clean classify).
-        if let Ok(id) = trimmed.parse::<MeshId>() {
-            return Ok(JoinTarget::Mesh(id));
+        if trimmed.starts_with(MESH_GLYPH) {
+            return trimmed
+                .parse::<MeshId>()
+                .map(JoinTarget::Mesh)
+                .map_err(|error| JoinTargetError(error.to_string()));
         }
+        // The two token brands never collide, so only non-mesh input reaches
+        // the invite decoder and topic hint.
         if let Ok(invite) = InviteTicket::decode(trimmed) {
             return Ok(JoinTarget::Invite(invite));
         }
@@ -132,6 +135,15 @@ mod tests {
         let target: JoinTarget = id.parse().unwrap();
         let mesh = resolve(&target).unwrap();
         assert_eq!(mesh.to_string(), id);
+    }
+
+    #[test]
+    fn mistyped_mesh_id_reports_an_invalid_square_hash() {
+        let mut mistyped = known_mesh_id();
+        let replacement = if mistyped.ends_with('1') { "2" } else { "1" };
+        mistyped.replace_range(mistyped.len() - 1.., replacement);
+        let error = mistyped.parse::<JoinTarget>().unwrap_err();
+        assert_eq!(error.to_string(), "invalid square hash");
     }
 
     #[test]

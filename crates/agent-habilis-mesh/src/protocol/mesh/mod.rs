@@ -1,8 +1,7 @@
 //! The mesh identifier, at two levels:
 //!
-//! - [`MeshId`] — the validated `💬…` *string* (shallow: prefix +
-//!   length + Base58 charset). Cheap boundary check at the CLI / IPC
-//!   edge. Code: [`id`].
+//! - [`MeshId`] — the validated `💬…` string. Possession proves the checksum,
+//!   version, and full payload structure. Code: [`id`].
 //! - [`Mesh`] — the *decoded* structure (32-byte seed + name +
 //!   [`MeshConfig`]), with the Base58Check codec (this file). `MeshId`
 //!   is what flows through the wire/CLI; `Mesh` is what `setup_mesh`
