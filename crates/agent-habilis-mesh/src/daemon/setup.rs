@@ -55,7 +55,13 @@ pub enum SetupKind {
     /// except the first peer must beacon: there is no distinguished creator,
     /// so it co-hosts the shared rendezvous eagerly-but-probed
     /// ([`CoHostPolicy::EagerProbed`]) rather than deferring.
-    Topic { mesh: Mesh },
+    Topic {
+        mesh: Mesh,
+        /// The raw string the mesh was derived from. The derived name is
+        /// lossy (URL scheme and query stripped, truncated), so the string
+        /// is carried whole for every user-facing joined/left surface.
+        topic_string: String,
+    },
 }
 
 /// Build the `RendezvousParams` for a mesh. `id` is the well-known
@@ -264,6 +270,8 @@ struct Assembled {
     /// The multi-hop transport handle when `--multihop` registered it, threaded
     /// into `EventLoopState` so the link-state tick can feed its routing table.
     multihop: Option<iroh_multihop_transport::MultihopHandle>,
+    /// The raw topic string (`SetupKind::Topic` only); `None` for create/join.
+    topic_string: Option<String>,
 }
 
 /// # Errors
@@ -287,7 +295,7 @@ pub async fn setup_mesh(kind: SetupKind, params: SetupParams<'_>) -> Result<Even
     // from the id — one source of truth either way.
     let lookups = match &kind {
         SetupKind::Create { config, .. } => config.lookups.clone(),
-        SetupKind::Join { mesh, .. } | SetupKind::Topic { mesh } => mesh.lookups().clone(),
+        SetupKind::Join { mesh, .. } | SetupKind::Topic { mesh, .. } => mesh.lookups().clone(),
     };
 
     // The off-loop rung channel: the backgrounded startup probe and the
@@ -328,6 +336,7 @@ pub async fn setup_mesh(kind: SetupKind, params: SetupParams<'_>) -> Result<Even
         mesh_key,
         mint_mesh,
         multihop: multihop_handle,
+        topic_string,
     } = match kind {
         SetupKind::Create {
             name,
@@ -372,6 +381,7 @@ pub async fn setup_mesh(kind: SetupKind, params: SetupParams<'_>) -> Result<Even
         identity,
         mesh: mesh_id,
         name: mesh_name,
+        topic_string,
         mesh_password,
         mesh_key,
         sink,
@@ -507,12 +517,13 @@ async fn setup_create(build: &SetupBuild<'_>, create: CreateSetup) -> Result<Ass
         mesh_key,
         mint_mesh,
         multihop,
+        topic_string: None,
     })
 }
 
 /// Attach to an existing mesh. Join and Topic share one attach path;
 /// they differ only in the co-host policy (Topic has no distinguished
-/// creator, so its first peer must beacon) and the startup verb. Like
+/// creator, so its first peer must beacon) and the startup line. Like
 /// `create`, non-blocking on the *mesh*: the subscribe below only kicks off a
 /// background connect, so a joiner is never invisible while bootstrapping and
 /// `ready` never waits for a peer. It does wait for the IPC socket — see
@@ -521,10 +532,12 @@ async fn setup_join(build: &SetupBuild<'_>, kind: SetupKind) -> Result<Assembled
     let sink = build.sink;
     let author = build.author;
 
-    let (mesh, mesh_password, cohost, verb) = match kind {
-        SetupKind::Join { mesh, password } => (mesh, password, CoHostPolicy::Deferred, "joined"),
+    let (mesh, mesh_password, cohost, topic_string) = match kind {
+        SetupKind::Join { mesh, password } => (mesh, password, CoHostPolicy::Deferred, None),
         // A topic mesh is always passwordless.
-        SetupKind::Topic { mesh } => (mesh, None, CoHostPolicy::EagerProbed, "joined topic"),
+        SetupKind::Topic { mesh, topic_string } => {
+            (mesh, None, CoHostPolicy::EagerProbed, Some(topic_string))
+        }
         SetupKind::Create { .. } => unreachable!("outer arm excludes Create"),
     };
     let mesh_key = mesh.stretched_key().map(zeroize::Zeroizing::new);
@@ -561,10 +574,12 @@ async fn setup_join(build: &SetupBuild<'_>, kind: SetupKind) -> Result<Assembled
         author.as_str(),
         mesh.network_label(),
     );
-    sink.emit(NodeEvent::Info(format!(
-        "{verb} #{} as <{author}>",
-        mesh.name
-    )));
+    // A topic square announces the raw string, not the derived `#name` — the
+    // name is lossy and the string is what a user shares to meet peers.
+    sink.emit(NodeEvent::Info(match &topic_string {
+        Some(raw_topic) => format!("joined topic {raw_topic} as <{author}>"),
+        None => format!("joined #{} as <{author}>", mesh.name),
+    }));
 
     Ok(Assembled {
         mesh_id,
@@ -581,5 +596,6 @@ async fn setup_join(build: &SetupBuild<'_>, kind: SetupKind) -> Result<Assembled
         // redeeming an invite-only mesh.
         mint_mesh: None,
         multihop,
+        topic_string,
     })
 }

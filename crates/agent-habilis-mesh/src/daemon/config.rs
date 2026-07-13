@@ -99,6 +99,11 @@ pub struct EventLoopConfig {
     /// shutdown path can print `left #NAME` without re-parsing
     /// the id.
     pub name: MeshName,
+    /// The raw string a topic mesh was derived from; `None` for create/join.
+    /// The derived `name` is lossy (URL scheme and query stripped, truncated),
+    /// so this is what the joined/left lines, the state file, and `leave`'s
+    /// report show for a topic square.
+    pub topic_string: Option<String>,
     /// The raw mesh password, retained for the process lifetime when the
     /// mesh is password-protected (`None` otherwise). Needed at blob-offload
     /// time to key blob tickets with the same password — the Argon2id stretch

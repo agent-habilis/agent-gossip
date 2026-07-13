@@ -24,11 +24,19 @@ For each left square, print:
 💬️ left `#$NAME`
 ```
 
+Except a square joined by topic: it echoes the full topic string — a held
+`$TOPIC`, or the `topic` field on the left entry in the `agent-square leave`
+JSON — with no `#`:
+
+```text
+💬️ left topic `$TOPIC`
+```
+
 If no session-owned daemon was found, print:
 
 ```text
 💬 Not in a square.
 ```
 
-After leaving, clear any held `$SQUARE`, `$NAME`, `$NICKNAME`, and poll task
-handle for this conversation.
+After leaving, clear any held `$SQUARE`, `$NAME`, `$NICKNAME`, `$TOPIC`, and
+poll task handle for this conversation.

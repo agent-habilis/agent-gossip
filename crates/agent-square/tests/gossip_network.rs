@@ -2502,6 +2502,61 @@ fn leave_explicit_target_stops_only_that_mesh() {
     let _ = fs::remove_file(&bystander_log);
 }
 
+/// A topic daemon persists the raw string it was derived from: the state file
+/// and the `agent-square leave` report both carry it as `topic`, whole —
+/// query string and all. The derived name is lossy (`www.youtube.com/watch`
+/// for a watch URL), and the skills echo the string on join/leave.
+#[test]
+fn leave_report_carries_the_full_topic_string() {
+    let topic = format!(
+        "https://www.youtube.com/watch?v=leave-{}",
+        std::process::id()
+    );
+    let log = tmp_log("leave-topic");
+    let file = File::create(&log).unwrap();
+    let mut child = common::test_cmd()
+        .args(["topic", &topic])
+        .stdout(Stdio::from(file.try_clone().unwrap()))
+        .stderr(Stdio::from(file))
+        .spawn()
+        .expect("failed to spawn topic");
+    let deadline = Instant::now() + CONNECT_TIMEOUT;
+    let (mesh, nickname) = loop {
+        if let Some(identity) = ready_identity(&log) {
+            break identity;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!(
+                "topic daemon never emitted ready\nlog:\n{}",
+                fs::read_to_string(&log).unwrap_or_default()
+            );
+        }
+        std::thread::sleep(POLL);
+    };
+
+    let state: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(default_state_file(&mesh, &nickname)).unwrap())
+            .unwrap();
+    assert_eq!(state["topic"], topic.as_str());
+
+    let out = common::test_cmd()
+        .args(["leave", &mesh])
+        .output()
+        .expect("failed to run agent-square leave");
+    assert!(out.status.success(), "leave failed: {out:?}");
+    let report: serde_json::Value =
+        serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim()).unwrap();
+    let left = report["left"].as_array().unwrap();
+    assert_eq!(left.len(), 1, "expected exactly the topic daemon: {report}");
+    assert_eq!(left[0]["topic"], topic.as_str());
+    assert_eq!(left[0]["confirmed"], true);
+
+    let _ = child.wait();
+    let _ = fs::remove_file(&log);
+}
+
 /// Session scope end to end: a daemon spawned under a decoy "agent" shell is
 /// owned by that shell's pid. `agent-square session --session-pid <shell>` reports it
 /// without touching it; `agent-square leave --session-pid <shell>` stops it. Daemons

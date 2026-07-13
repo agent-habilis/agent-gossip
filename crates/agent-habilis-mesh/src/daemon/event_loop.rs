@@ -63,6 +63,7 @@ pub async fn run<A: NodeDriver>(
         identity,
         mesh: mesh_str,
         name: mesh_name,
+        topic_string,
         mesh_password,
         mesh_key,
         sink,
@@ -107,7 +108,17 @@ pub async fn run<A: NodeDriver>(
                     .join(format!("{author}.state.json"))
             })
         })
-        .map(|path| StateFile::new(path, &mesh_str, &author, &mesh_name));
+        .map(|path| {
+            StateFile::new(path, &mesh_str, &author, &mesh_name)
+                .with_topic(topic_string.as_deref())
+        });
+    // The departure line's label: a topic square shows `topic` plus the raw
+    // string it was derived from (the name is lossy, and the wording mirrors
+    // the `joined topic …` startup line), every other square its `#name`.
+    let leave_label = topic_string.map_or_else(
+        || format!("#{mesh_name}"),
+        |raw_topic| format!("topic {raw_topic}"),
+    );
     // Seed the state file with the app's discovery fields (the a2a bind port +
     // bearer token) before readiness is advertised — the local client reads them
     // from this mode-600 file.
@@ -219,6 +230,7 @@ pub async fn run<A: NodeDriver>(
         endpoint,
         mesh: mesh_str,
         name: mesh_name,
+        leave_label,
         author,
         sink,
         max_peers,
@@ -357,6 +369,9 @@ struct EventLoop<A: NodeDriver> {
     endpoint: Endpoint,
     mesh: MeshId,
     name: MeshName,
+    /// The departure line's label: the raw topic string for a topic
+    /// square (the derived name is lossy), `#name` otherwise.
+    leave_label: String,
     author: Nickname,
     sink: std::sync::Arc<dyn NodeSink>,
     max_peers: usize,
@@ -417,6 +432,7 @@ async fn event_loop<A: NodeDriver>(loop_state: EventLoop<A>) -> Result<()> {
         endpoint,
         mesh: mesh_str,
         name: mesh_name,
+        leave_label,
         author,
         sink,
         max_peers,
@@ -569,7 +585,7 @@ async fn event_loop<A: NodeDriver>(loop_state: EventLoop<A>) -> Result<()> {
             _ = recv_opt(&mut external_quit_rx) => {
                 // External quit is always in-process (MCP): never hard-exit (`false`).
                 let ctx = parts.ctx(&sender);
-                announce_and_maybe_exit(&mut state, &mut app, &ctx, QuitParams { name: &mesh_name, exit_on_quit: false }).await;
+                announce_and_maybe_exit(&mut state, &mut app, &ctx, QuitParams { name: &mesh_name, leave_label: &leave_label, exit_on_quit: false }).await;
                 break;
             }
             req = recv_opt(&mut external_req_rx) => match req {
@@ -583,7 +599,7 @@ async fn event_loop<A: NodeDriver>(loop_state: EventLoop<A>) -> Result<()> {
             },
             _ = quit_rx.recv() => {
                 let ctx = parts.ctx(&sender);
-                announce_and_maybe_exit(&mut state, &mut app, &ctx, QuitParams { name: &mesh_name, exit_on_quit }).await;
+                announce_and_maybe_exit(&mut state, &mut app, &ctx, QuitParams { name: &mesh_name, leave_label: &leave_label, exit_on_quit }).await;
                 break;
             }
         }
@@ -608,7 +624,7 @@ async fn shutdown<A: NodeDriver>(
     state: &mut EventLoopState,
     app: &mut A,
     ctx: &HandlerCtx<'_>,
-    name: &MeshName,
+    quit: &QuitParams<'_>,
 ) {
     // Release app-owned resources (fail parked app waiters, close the
     // blob-serving endpoint whose store spool is dropped with it).
@@ -616,8 +632,9 @@ async fn shutdown<A: NodeDriver>(
     if let Some(sf) = state.state_file.as_ref() {
         sf.remove();
     }
-    ctx.sink.emit(NodeEvent::Info(format!("left #{name}")));
-    lifecycle::log_leaving(name.as_str());
+    ctx.sink
+        .emit(NodeEvent::Info(format!("left {}", quit.leave_label)));
+    lifecycle::log_leaving(quit.name.as_str());
     gossip::broadcast_msg(
         ctx.sender,
         &Message::new_left(ctx.mesh, ctx.author).signed(&state.identity),
@@ -626,11 +643,14 @@ async fn shutdown<A: NodeDriver>(
     tokio::time::sleep(Duration::from_millis(500)).await;
 }
 
-/// The mesh name (for the departure log line) and whether this quit should
-/// hard-exit the process — the plain values [`announce_and_maybe_exit`] needs
-/// beyond the loop state and the shared handler context.
+/// The mesh name (for the departure log line), the user-facing departure
+/// label (the raw topic string for a topic square, `#name` otherwise), and
+/// whether this quit should hard-exit the process — the plain values
+/// [`announce_and_maybe_exit`] needs beyond the loop state and the shared
+/// handler context.
 struct QuitParams<'a> {
     name: &'a MeshName,
+    leave_label: &'a str,
     exit_on_quit: bool,
 }
 
@@ -654,7 +674,7 @@ async fn announce_and_maybe_exit<A: NodeDriver>(
     // the `exit_on_quit` path below may `std::process::exit`. Other app-owned
     // waiters (A2A calls) are failed in `on_shutdown` (inside `shutdown`).
     app.close_poll_waiters();
-    shutdown(state, app, ctx, quit.name).await;
+    shutdown(state, app, ctx, &quit).await;
     #[cfg(not(feature = "dhat-heap"))]
     if quit.exit_on_quit {
         std::process::exit(0);

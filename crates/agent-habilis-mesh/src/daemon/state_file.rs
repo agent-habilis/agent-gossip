@@ -6,9 +6,15 @@
 //!
 //! The daemon is the **sole writer**: the `/square:*` skills are
 //! read-only and never touch this file. The daemon owns every key —
-//! `square`, `name`, `nickname`, `pid`, `ready`, `participant_count`,
-//! `last_updated` — and writes a fresh, complete document on each update
-//! (no read-merge: there are no foreign keys to preserve).
+//! `square`, `name`, `nickname`, `topic` (topic squares only), `pid`,
+//! `ready`, `participant_count`, `last_updated` — and writes a fresh,
+//! complete document on each update (no read-merge: there are no foreign
+//! keys to preserve).
+//!
+//! `topic` is the raw string a topic square was derived from. The derived
+//! `name` is lossy (URL scheme and query stripped, truncated), so the
+//! string is persisted whole — it is what `agent-square leave` and the
+//! skills echo for a topic square.
 //!
 //! `ready` is `false` at the early identity write and flips to `true`
 //! once the event loop is serving IPC, so a reader (e.g. `agent-square ready`)
@@ -51,6 +57,7 @@ pub struct StateFile {
     mesh: String,
     name: String,
     nickname: String,
+    topic: Option<String>,
     /// The `--a2a-serve` port + bearer token, when the binding is on. The
     /// token is why every write chmods the file to 0o600.
     http: std::sync::Mutex<Option<(u16, String)>>,
@@ -63,8 +70,17 @@ impl StateFile {
             mesh: mesh.as_str().to_string(),
             name: name.as_str().to_string(),
             nickname: nickname.as_str().to_string(),
+            topic: None,
             http: std::sync::Mutex::new(None),
         }
+    }
+
+    /// Attach the raw topic string a topic square was derived from, so every
+    /// write publishes it as `topic`. A no-op `None` keeps the one
+    /// construction site unconditional.
+    pub(crate) fn with_topic(mut self, topic: Option<&str>) -> Self {
+        self.topic = topic.map(str::to_owned);
+        self
     }
 
     /// Note the bound `--a2a-serve` port + bearer token so subsequent writes
@@ -102,6 +118,9 @@ impl StateFile {
         obj.insert("square".into(), self.mesh.clone().into());
         obj.insert("name".into(), self.name.clone().into());
         obj.insert("nickname".into(), self.nickname.clone().into());
+        if let Some(topic) = &self.topic {
+            obj.insert("topic".into(), topic.clone().into());
+        }
         obj.insert("pid".into(), std::process::id().into());
         obj.insert("ready".into(), ready.into());
         obj.insert("participant_count".into(), participant_count.into());
@@ -180,6 +199,8 @@ pub struct SessionIdentity {
     pub mesh: Option<String>,
     pub name: Option<String>,
     pub nickname: Option<String>,
+    /// The raw topic string; present only for a topic square.
+    pub topic: Option<String>,
 }
 
 /// Read the session identity from the state file. Best-effort: a read/parse
@@ -202,6 +223,7 @@ pub fn read_identity(path: &Path) -> SessionIdentity {
         mesh: field("square"),
         name: field("name"),
         nickname: field("nickname"),
+        topic: field("topic"),
     }
 }
 
@@ -215,6 +237,8 @@ pub struct SessionEntry {
     pub mesh: Option<String>,
     pub name: Option<String>,
     pub nickname: Option<String>,
+    /// The raw topic string; present only for a topic square.
+    pub topic: Option<String>,
     pub pid: Option<u32>,
 }
 
@@ -236,6 +260,7 @@ pub fn read_session_entry(path: &Path) -> Option<SessionEntry> {
         mesh: text("square"),
         name: text("name"),
         nickname: text("nickname"),
+        topic: text("topic"),
         pid: parsed
             .get("pid")
             .and_then(serde_json::Value::as_u64)
@@ -322,6 +347,33 @@ mod tests {
         assert_eq!(parsed["participant_count"], 3);
         assert_eq!(parsed["pid"], std::process::id());
         assert!(parsed["last_updated"].is_number());
+        assert!(
+            parsed.get("topic").is_none(),
+            "non-topic squares carry no topic key"
+        );
+        state_file.remove();
+    }
+
+    #[test]
+    fn topic_string_round_trips_whole() {
+        // The derived name is lossy (`www.youtube.com/watch`); the raw string
+        // must survive verbatim, query string and all, so leave can echo it.
+        let raw = "https://www.youtube.com/watch?v=jSqCL7Npln0";
+        let path = unique_path("topic");
+        let state_file = StateFile::new(
+            path.clone(),
+            &MeshId::from("💬topic"),
+            &Nickname::from("treat-empire"),
+            &name("www.youtube.com/watch"),
+        )
+        .with_topic(Some(raw));
+        state_file.write(1, true);
+        let parsed: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(parsed["topic"], raw);
+        assert_eq!(super::read_identity(&path).topic.as_deref(), Some(raw));
+        let entry = super::read_session_entry(&path).expect("present");
+        assert_eq!(entry.topic.as_deref(), Some(raw));
         state_file.remove();
     }
 

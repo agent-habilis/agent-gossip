@@ -10,14 +10,17 @@ use agent_habilis_mesh::util::runtime_base;
 use super::args::{LeaveOpts, SessionOpts};
 
 /// One live daemon on this machine, resolved from its state file. `mesh`
-/// and `pid` are required to act on an entry; `name`/`nickname` are carried
-/// for reporting only.
+/// and `pid` are required to act on an entry; `name`/`nickname`/`topic` are
+/// carried for reporting only.
 #[derive(Debug, Clone)]
 pub(crate) struct Target {
     path: PathBuf,
     mesh: String,
     name: Option<String>,
     nickname: Option<String>,
+    /// The raw topic string (topic squares only) — what the leave report
+    /// echoes instead of the lossy derived `name`.
+    topic: Option<String>,
     pid: u32,
 }
 
@@ -52,6 +55,7 @@ fn discover() -> Discovery {
                 mesh,
                 name: entry.name,
                 nickname: entry.nickname,
+                topic: entry.topic,
                 pid,
             });
         } else {
@@ -124,6 +128,9 @@ fn target_json(target: &Target) -> serde_json::Value {
     }
     if let Some(nickname) = &target.nickname {
         obj.insert("nickname".into(), nickname.clone().into());
+    }
+    if let Some(topic) = &target.topic {
+        obj.insert("topic".into(), topic.clone().into());
     }
     obj.insert("pid".into(), target.pid.into());
     serde_json::Value::Object(obj)
@@ -224,6 +231,7 @@ mod tests {
             mesh: mesh.to_owned(),
             name: Some("cool-team".to_owned()),
             nickname: Some(nickname.to_owned()),
+            topic: None,
             pid,
         }
     }

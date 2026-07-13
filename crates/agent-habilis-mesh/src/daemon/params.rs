@@ -195,7 +195,10 @@ impl TopicParams {
     pub fn resolve(self) -> Result<Resolved> {
         let mesh = derive_topic_mesh(&self.string)?;
         Ok(Resolved {
-            kind: SetupKind::Topic { mesh },
+            kind: SetupKind::Topic {
+                mesh,
+                topic_string: self.string,
+            },
             author: self.nickname.unwrap_or_else(Nickname::random),
             advertise_directory: None,
         })

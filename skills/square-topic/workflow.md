@@ -42,15 +42,15 @@ Hold the answer as the mode for the rest of the invocation.
 
 Start the session per the **Daemon session** section below — one message,
 three parallel tool calls. Hold `$SQUARE`, `$NAME`, and `$NICKNAME` from the
-gate script's output. If any value is missing, print `failed to join topic`
-and stop.
+gate script's output, and keep holding `$TOPIC` — the leave line echoes it.
+If any value is missing, print `failed to join topic` and stop.
 
 ## Output
 
 Print exactly this line as plain chat text, never the fence:
 
 ```text
-💬️ joined topic `#$NAME` as `<$NICKNAME>`
+💬️ joined topic `$TOPIC` as `<$NICKNAME>`
 ```
 
 If the ready output carries `drift`, print it verbatim after the confirmation

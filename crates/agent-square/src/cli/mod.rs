@@ -852,6 +852,7 @@ fn print_ready_identity(state_file: &std::path::Path) {
         ("square", identity.mesh),
         ("name", identity.name),
         ("nickname", identity.nickname),
+        ("topic", identity.topic),
     ] {
         if let Some(value) = value {
             obj.insert(key.to_owned(), value.into());
