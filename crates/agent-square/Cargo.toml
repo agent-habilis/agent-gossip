@@ -1,6 +1,6 @@
 [package]
 name = "agent-square"
-version = "0.5.0"
+version = "0.6.0"
 edition.workspace = true
 rust-version.workspace = true
 authors = ["Caio Gondim <me@caiogondim.com>"]
