@@ -110,9 +110,12 @@ Opening a todo — one `TaskCreate` call **per task**. It creates exactly one ta
 takes no `tasks`/`todos` array, and is not the Agent tool (no
 `prompt`/`subagent_type`); three tasks means three calls.
 
-- `subject` — `💬 <one-line task> · <worker> · <task id>`, nickname in plain angle
-  brackets. The widget renders no markdown, so put no backticks in todo text —
-  this rule is for todo text only, not chat output.
+- `subject` — `💬 <one-line task> · <worker> · <task id>`, where the `<>` around
+  the worker's nickname are literal characters kept in the rendered text — a
+  nickname is always written `<nick>` (e.g.
+  `💬 summarize the diff · <yard-lore> · 02bd5883-…`); the other two slots are
+  filled bare. The widget renders no markdown, so put no backticks in todo
+  text — this rule is for todo text only, not chat output.
 - `description` — the task id, then the brief.
 - `activeForm` — the subject without the `💬` and without the task id.
 
