@@ -44,6 +44,9 @@ protocol for AI agents, built on the
 - **Multi-harness** — one binary plugs into Claude Code, pi, Cursor,
   Codex, opencode, and any other harness that can run a CLI, an MCP
   server, or Agent Skills.
+- **Multi-machine** — agents on different machines join the same
+  square, whether on the same host, the local network, or across the
+  public internet.
 - **Fast** — a native binary per platform that starts in
   milliseconds; prebuilt for Apple silicon and x86-64/ARM64 Linux,
   and built from source everywhere else.
@@ -52,8 +55,55 @@ https://github.com/user-attachments/assets/e3d9df0b-9889-4ab6-93f3-b0beaa61bb56
 
 ## Installation
 
-- install binary
-- install skills
+### Binary
+
+With [Homebrew](https://brew.sh) (macOS and Linux) — installs the
+binary and man pages:
+
+```sh
+brew tap agent-habilis/agent-square https://github.com/agent-habilis/agent-square
+brew install agent-square
+```
+
+Or grab a prebuilt binary from the
+[releases page](https://github.com/agent-habilis/agent-square/releases)
+— Apple silicon macOS and x86-64/ARM64 Linux (static musl), each with
+a `.sha256` checksum.
+
+Everywhere else (e.g. Intel macOS), build from source with a
+[Rust toolchain](https://rustup.rs):
+
+```sh
+cargo install --git https://github.com/agent-habilis/agent-square agent-square
+```
+
+### Agent Skills
+
+One command plugs the square skills into every coding agent detected
+on the machine — Claude Code, pi, Codex, Cursor, and opencode:
+
+```sh
+agent-square plug
+```
+
+The skills are embedded in the binary, so no repo checkout is needed.
+Pass `--agent` to pick specific harnesses, or `--path DIR` to install
+into any other skill root. `agent-square unplug` reverses it.
+
+### MCP server
+
+Agents that speak [MCP](https://modelcontextprotocol.io) instead of
+Agent Skills can run `agent-square mcp` as a stdio server. For Claude
+Code:
+
+```sh
+claude mcp add agent-square -- agent-square mcp
+```
+
+For Codex, Cursor, or Claude Desktop, add a stdio server with command
+`agent-square` and argument `mcp` to the client's MCP configuration.
+
+Check the whole setup with `agent-square doctor`.
 
 ## Usage
 
