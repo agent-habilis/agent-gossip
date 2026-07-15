@@ -134,6 +134,24 @@ pub fn sole_addressee(kind: &MessageKind) -> Option<&Nickname> {
 pub struct AppTag(String);
 
 impl AppTag {
+    fn validate(raw: &str) -> bool {
+        !raw.is_empty()
+            && raw.len() <= 32
+            && raw
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+    }
+
+    /// # Errors
+    /// The tag is empty, longer than 32 bytes, or not an ASCII slug.
+    pub fn new(raw: impl Into<String>) -> Result<Self, &'static str> {
+        let raw = raw.into();
+        if !Self::validate(&raw) {
+            return Err("invalid app tag");
+        }
+        Ok(Self(raw))
+    }
+
     /// The wire tag string.
     #[must_use]
     pub fn as_str(&self) -> &str {
@@ -147,21 +165,13 @@ impl<'de> Deserialize<'de> for AppTag {
         D: serde::Deserializer<'de>,
     {
         let raw = String::deserialize(deserializer)?;
-        if raw.is_empty()
-            || raw.len() > 32
-            || !raw
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
-        {
-            return Err(serde::de::Error::custom("invalid app tag"));
-        }
-        Ok(Self(raw))
+        Self::new(raw).map_err(serde::de::Error::custom)
     }
 }
 
 impl From<&str> for AppTag {
     fn from(raw: &str) -> Self {
-        Self(raw.to_string())
+        Self::new(raw).expect("invalid app tag")
     }
 }
 
@@ -180,6 +190,27 @@ impl fmt::Display for AppTag {
 #[serde(transparent)]
 pub struct CorrId(String);
 
+impl CorrId {
+    fn validate(raw: &str) -> bool {
+        !raw.is_empty() && raw.len() <= 64
+    }
+
+    /// # Errors
+    /// The correlation id is empty or longer than 64 bytes.
+    pub fn new(raw: impl Into<String>) -> Result<Self, &'static str> {
+        let raw = raw.into();
+        if !Self::validate(&raw) {
+            return Err("invalid correlation id");
+        }
+        Ok(Self(raw))
+    }
+
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
 impl<'de> Deserialize<'de> for CorrId {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -190,23 +221,13 @@ impl<'de> Deserialize<'de> for CorrId {
         // mints a 36-char UUID, so anything empty or wildly larger is a crafted
         // frame, not a correlation id. Mirrors [`AppTag`]'s bounded deserialize.
         let raw = String::deserialize(deserializer)?;
-        if raw.is_empty() || raw.len() > 64 {
-            return Err(serde::de::Error::custom("invalid correlation id"));
-        }
-        Ok(Self(raw))
-    }
-}
-
-impl CorrId {
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        &self.0
+        Self::new(raw).map_err(serde::de::Error::custom)
     }
 }
 
 impl From<&str> for CorrId {
     fn from(raw: &str) -> Self {
-        Self(raw.to_string())
+        Self::new(raw).expect("invalid correlation id")
     }
 }
 
@@ -980,6 +1001,18 @@ mod tests {
         assert_eq!(parsed.id, msg.id);
         assert_eq!(parsed.kind, MessageKind::app_broadcast("a2a_msg"));
         assert_eq!(parsed.body, msg.body);
+    }
+
+    #[test]
+    #[should_panic(expected = "invalid app tag")]
+    fn app_tag_constructor_rejects_an_invalid_value() {
+        let _ = AppTag::from("not-valid!");
+    }
+
+    #[test]
+    #[should_panic(expected = "invalid correlation id")]
+    fn correlation_id_constructor_rejects_an_invalid_value() {
+        let _ = super::CorrId::from("");
     }
 
     #[test]
