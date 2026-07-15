@@ -107,7 +107,7 @@ impl Topology {
                         })
                     })
                     .collect::<Option<Vec<_>>>()?;
-                Some(Route(hops))
+                Route::new(hops)
             })
             .collect()
     }

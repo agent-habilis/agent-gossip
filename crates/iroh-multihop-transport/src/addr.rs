@@ -13,7 +13,7 @@
 
 use iroh::{EndpointAddr, EndpointId};
 use iroh_base::CustomAddr;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::MULTIHOP_TRANSPORT_ID;
 
@@ -27,10 +27,18 @@ pub struct RouteHop {
 
 /// A source route: the ordered hops **after** the sender, ending at the
 /// destination. Empty is invalid (there is nothing to send to).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Route(pub(crate) Vec<RouteHop>);
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Route(Vec<RouteHop>);
 
 impl Route {
+    pub(crate) fn singleton(hop: RouteHop) -> Self {
+        Self(vec![hop])
+    }
+
+    pub(crate) fn new(hops: Vec<RouteHop>) -> Option<Self> {
+        (!hops.is_empty()).then_some(Self(hops))
+    }
+
     pub(crate) fn hops(&self) -> &[RouteHop] {
         &self.0
     }
@@ -71,6 +79,16 @@ impl Route {
     }
 }
 
+impl<'de> Deserialize<'de> for Route {
+    fn deserialize<DeserializerT>(deserializer: DeserializerT) -> Result<Self, DeserializerT::Error>
+    where
+        DeserializerT: Deserializer<'de>,
+    {
+        let hops = Vec::<RouteHop>::deserialize(deserializer)?;
+        Self::new(hops).ok_or_else(|| serde::de::Error::custom("empty multihop route"))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{Route, RouteHop};
@@ -86,17 +104,24 @@ mod tests {
 
     #[test]
     fn encode_decode_roundtrips() {
-        let route = Route(vec![hop(1), hop(2), hop(3)]);
+        let route = Route::new(vec![hop(1), hop(2), hop(3)]).unwrap();
         let addr = route.encode();
         assert_eq!(Route::decode(&addr).expect("decodes"), route);
     }
 
     #[test]
     fn wrong_transport_id_does_not_decode() {
-        let route = Route(vec![hop(1)]);
+        let route = Route::new(vec![hop(1)]).unwrap();
         let addr = route.encode();
         let foreign = iroh_base::CustomAddr::from_parts(0x99, addr.data());
         assert!(Route::decode(&foreign).is_none());
+    }
+
+    #[test]
+    fn empty_route_does_not_decode() {
+        let bytes = postcard::to_allocvec(&Vec::<RouteHop>::new()).unwrap();
+        let addr = iroh_base::CustomAddr::from_parts(crate::MULTIHOP_TRANSPORT_ID, &bytes);
+        assert!(Route::decode(&addr).is_none());
     }
 
     #[test]
