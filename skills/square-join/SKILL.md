@@ -18,7 +18,7 @@ be running.
 
 <!-- include path="../shared/invocation.md" -->
 
-<!-- include path="../shared/daemon-session.md" launch="agent-square join \"$TARGET\"" noun="line" -->
+<!-- include path="../shared/daemon-session.md" launch="agent-square join \"$TARGET\"" noun="line" bell_prefix="" -->
 
 <!-- include path="../shared/meta.md" -->
 

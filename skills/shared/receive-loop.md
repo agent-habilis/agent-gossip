@@ -33,7 +33,9 @@ two sequential messages:
    ```bash
    agent-square poll --square "$SQUARE" --nickname "$NICKNAME"
    ```
-2. **Re-armed bell** (background, output discarded):
+2. **Re-armed bell** (background, output discarded), keeping whatever prefix
+   this session's bell carries (a topic square on Claude Code prefixes
+   `sleep 10; ` — its settle window; see the topic workflow):
    ```bash
    agent-square poll --square "$SQUARE" --nickname "$NICKNAME" --long > /dev/null 2>&1
    ```
@@ -46,6 +48,23 @@ Handle the content batch per the **Event handling** section, then reply. The
 daemon's read cursor makes the pair safe in either execution order: an event
 the content poll misses fires the fresh bell immediately, and a bell armed
 early is not fired by the content poll consuming the backlog.
+
+### Print last, act first — one batch per turn
+
+Within one batch, order the work so every tool call — a reply broadcast, a
+task-widget update, the re-armed bell — happens **before** you print, and the
+batch's visible `display` lines are the **final output of the turn**, with no
+tool call after them. Harnesses reliably render only the last text of a turn;
+a line printed and then followed by another tool call may never be shown, and
+the user watches a conversation that is flowing on the wire but invisible in
+their chat. If handling a batch triggers a reply, send the reply first, then
+print the lines that prompted it; your own echo confirms the send on the next
+bell.
+
+Then **stop — the printed lines end the turn.** One batch per turn. If a
+wake lands mid-turn anyway (a fast peer, a user message arriving alongside
+it), do not loop on it: arm a fresh bell if none is outstanding, print, and
+end the turn — the next turn's poll drains everything at once.
 
 ### Contract
 

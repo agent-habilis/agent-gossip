@@ -310,6 +310,36 @@ pub const TASK_CONTENT_CAP: u32 = 100;
 /// `--beacon-cohost-grace-secs`.
 pub const BEACON_COHOST_GRACE_SECS: u64 = 10;
 
+// A public `EagerProbed` beacon holder (topic joiner, directory advertiser)
+// periodically *sheds* its beacon and re-runs probe-before-claim, because two
+// members that claimed inside each other's probe window both hold the same
+// `rendezvous_id` and each captures its own bootstrap dial — a split that
+// nothing else repairs (see `daemon::event_loop::shed_rival_beacon_if_due`).
+
+/// First shed after a probed public claim. Early, because the likeliest rival
+/// is a peer that started within seconds of us — but past the claim's own
+/// probe + relay-home warmup, so a genuinely lone holder isn't churned while
+/// still settling. Flag: `--rival-recheck-first-secs`.
+pub const RIVAL_RECHECK_FIRST_SECS: u64 = 12;
+
+/// Steady shed cadence while the holder has no real-peer links. A lone
+/// holder's shed disturbs nobody, so it re-checks briskly — this cadence
+/// bounds how long two mutually-invisible lone holders stay split. Flag:
+/// `--rival-recheck-secs`.
+pub const RIVAL_RECHECK_SECS: u64 = 30;
+
+/// Steady shed cadence while meshed — the island-vs-island backstop. Slow,
+/// because a healthy square pays the shed's ~probe-budget beacon blip each
+/// cycle and a meshed split (two multi-member islands) is already rare.
+/// Flag: `--rival-recheck-meshed-secs`.
+pub const RIVAL_RECHECK_MESHED_SECS: u64 = 300;
+
+/// Span of the deterministic per-node phase offset added to the first shed,
+/// derived from the participant endpoint id. Orders simultaneous claimants so
+/// the earlier-offset node sheds first, finds the other's still-held beacon,
+/// and yields — a tie-break, not a delay knob, so no flag.
+pub const RIVAL_RECHECK_OFFSET_SPAN_SECS: u64 = 8;
+
 /// How long an `agent-square ping` round collects pongs before the daemon emits its
 /// `ping_report`. Flag: `--ping-window-secs`.
 pub const PING_WINDOW_SECS: u64 = 10;

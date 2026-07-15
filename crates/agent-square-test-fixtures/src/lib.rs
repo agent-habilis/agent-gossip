@@ -422,12 +422,13 @@ pub fn cli_task_create(mesh: &str, nickname: &str, to: &str, text: &str) -> Stri
 
 /// Who is following up, into which task, on whom — grouped so
 /// [`cli_task_followup`] stays inside the argument budget.
-pub(crate) struct FollowupParams<'a> {
-    pub(crate) mesh: &'a str,
-    pub(crate) nickname: &'a str,
-    pub(crate) to: &'a str,
-    pub(crate) task_id: &'a str,
-    pub(crate) text: &'a str,
+#[derive(Debug)]
+pub struct FollowupParams<'a> {
+    pub mesh: &'a str,
+    pub nickname: &'a str,
+    pub to: &'a str,
+    pub task_id: &'a str,
+    pub text: &'a str,
 }
 
 /// Send a **follow-up into an existing task** via the CLI — an answer, an
@@ -435,7 +436,7 @@ pub(crate) struct FollowupParams<'a> {
 /// reads an absent `taskId` as "no task yet", so the same call without it opens a
 /// second, unrelated task on the worker. Returns the parsed JSON-RPC response,
 /// whose `result.task.id` must be the id passed in.
-pub(crate) fn cli_task_followup(params: &FollowupParams<'_>) -> serde_json::Value {
+pub fn cli_task_followup(params: &FollowupParams<'_>) -> serde_json::Value {
     let &FollowupParams {
         mesh,
         nickname,
@@ -472,7 +473,7 @@ pub(crate) fn cli_task_followup(params: &FollowupParams<'_>) -> serde_json::Valu
 }
 
 /// Worker-emit a task artifact (the result) via the CLI. Panics on failure.
-pub(crate) fn cli_task_artifact(mesh: &str, nickname: &str, task_id: &str, text: &str) {
+pub fn cli_task_artifact(mesh: &str, nickname: &str, task_id: &str, text: &str) {
     let out = test_cmd()
         .args([
             "a2a",
@@ -707,6 +708,18 @@ impl InProcNode {
             MeshSession::join(cfg)
                 .await
                 .expect("in-process join failed"),
+        )
+    }
+
+    /// Join the public topic mesh derived from `string`, with an explicit
+    /// nickname.
+    pub async fn topic(string: &str, nickname: &str) -> Self {
+        let mut cfg = agent_square::api::TopicConfig::new(string.to_owned());
+        cfg.nickname = Some(Nickname::new(nickname).expect("valid test nickname"));
+        Self::from_session(
+            MeshSession::topic(cfg)
+                .await
+                .expect("in-process topic join failed"),
         )
     }
 
@@ -1418,6 +1431,27 @@ impl Node {
             .stderr(Stdio::from(file))
             .spawn()
             .expect("failed to spawn join");
+        Node {
+            child,
+            log,
+            nickname: nickname.to_string(),
+        }
+    }
+
+    /// Spawn `agent-square topic <string> --nickname <nickname>` with extra
+    /// hidden tuning flags as `(flag, value)` pairs. The daemon logs its
+    /// mesh id like `join` does, so readiness gating works unchanged.
+    pub fn topic_flags(string: &str, nickname: &str, flags: &[(&str, &str)]) -> Self {
+        let log = tmp_log(nickname);
+        let file = File::create(&log).unwrap();
+        let mut cmd = test_cmd();
+        cmd.args(["topic", string, "--nickname", nickname]);
+        apply_flags(&mut cmd, flags);
+        let child = cmd
+            .stdout(Stdio::from(file.try_clone().unwrap()))
+            .stderr(Stdio::from(file))
+            .spawn()
+            .expect("failed to spawn topic");
         Node {
             child,
             log,

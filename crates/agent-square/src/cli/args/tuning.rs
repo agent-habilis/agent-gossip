@@ -85,6 +85,22 @@ pub(crate) struct TuningOpts {
     #[arg(long, hide = true, default_value_t = false)]
     pub directory_private: bool,
 
+    /// First rival re-check shed of an `EagerProbed` public beacon (seconds).
+    #[arg(long, hide = true, default_value_t = consts::RIVAL_RECHECK_FIRST_SECS)]
+    pub rival_recheck_first_secs: u64,
+
+    /// Steady rival re-check cadence for a lone beacon holder (seconds).
+    #[arg(long, hide = true, default_value_t = consts::RIVAL_RECHECK_SECS)]
+    pub rival_recheck_secs: u64,
+
+    /// Steady rival re-check cadence while meshed (seconds).
+    #[arg(long, hide = true, default_value_t = consts::RIVAL_RECHECK_MESHED_SECS)]
+    pub rival_recheck_meshed_secs: u64,
+
+    /// Narrow topic-mesh lookups to mDNS only (no DHT, no relay).
+    #[arg(long, hide = true, default_value_t = false)]
+    pub topic_mdns_only: bool,
+
     /// Register the multi-hop transport on the participant endpoint: a directed
     /// message to a peer with no direct path rides the multihop path (relayed
     /// through peers). Stands up a second underlay endpoint.
@@ -113,6 +129,10 @@ impl TuningOpts {
             antientropy_interval_secs: self.antientropy_interval_secs,
             antientropy_max_resend: self.antientropy_max_resend,
             directory_private: self.directory_private,
+            rival_recheck_first_secs: self.rival_recheck_first_secs,
+            rival_recheck_secs: self.rival_recheck_secs,
+            rival_recheck_meshed_secs: self.rival_recheck_meshed_secs,
+            topic_mdns_only: self.topic_mdns_only,
         }
     }
 }

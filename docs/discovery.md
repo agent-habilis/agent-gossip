@@ -278,6 +278,19 @@ peers bootstrap off it. (`src/protocol/crypto.rs::topic_seed`,
 `Mesh::from_topic`.) Per §6, the string is a bearer capability: anyone who
 knows or guesses it joins.
 
+Two peers that run `topic` near-simultaneously can both pass the
+probe-before-claim window and bind duplicate same-id beacons — each then
+captures its own bootstrap dial and sits alone in its own overlay. The
+**rival re-check** repairs this: an `EagerProbed` public beacon holder
+periodically *sheds* its beacon (a graceful endpoint close, so its own
+link drops immediately) and re-probes the rendezvous from a fresh
+throwaway endpoint; finding a rival it stays a participant and the heal
+re-graft merges the two overlays. Shed times are phase-offset per node
+(endpoint-id-derived on the first check, jittered after), so one holder
+catches the other still up.
+(`src/daemon/event_loop.rs::shed_rival_beacon_if_due`,
+`RIVAL_RECHECK_*` in `src/util/consts.rs`.)
+
 ---
 
 ## 8. Into the gossip mesh

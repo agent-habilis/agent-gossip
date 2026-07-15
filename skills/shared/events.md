@@ -18,6 +18,10 @@ presence keepalives, operational events — is context, not output: consume it
 only if the current workflow says to (documents are on-demand via
 `${SKILL_PREFIX}square-state` and `${SKILL_PREFIX}square-status`).
 
+Print the lines **last in the turn** — after every tool call the batch
+triggers, per the Receive loop's *Print last, act first* rule. A line followed
+by another tool call may never render in the user's chat.
+
 Your own `msg` echo (`self: true`) is visible by design — it is the send
 confirmation.
 

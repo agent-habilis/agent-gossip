@@ -18,7 +18,7 @@ be running.
 
 <!-- include path="../shared/invocation.md" -->
 
-<!-- include path="../shared/daemon-session.md" launch="agent-square create $CREATE_ARGS" noun="block" -->
+<!-- include path="../shared/daemon-session.md" launch="agent-square create $CREATE_ARGS" noun="block" bell_prefix="" -->
 
 <!-- include path="../shared/meta.md" -->
 

@@ -23,9 +23,9 @@ use crate::protocol::{MeshId, Message, Nickname};
 use crate::transport::MeshSender;
 use crate::transport::ipc::IpcMessage;
 use crate::util::tuning::{
-    ALIVE_INTERVAL_SECS, LINKSTATE_INTERVAL_SECS, RECLAIM_INTERVAL_MS, RESUBSCRIBE_MAX_ATTEMPTS,
-    STATE_REFRESH_SECS, antientropy_interval_secs, heal_interval_secs, heal_stall_threshold_secs,
-    ppid_watch_interval_ms, sweep_interval_secs,
+    ALIVE_INTERVAL_SECS, LINKSTATE_INTERVAL_SECS, RECLAIM_INTERVAL_MS, RECLAIM_WINDOW_SECS,
+    RESUBSCRIBE_MAX_ATTEMPTS, STATE_REFRESH_SECS, antientropy_interval_secs, heal_interval_secs,
+    heal_stall_threshold_secs, ppid_watch_interval_ms, sweep_interval_secs,
 };
 use crate::{beacon, gossip, lifecycle, lookup};
 
@@ -151,13 +151,16 @@ pub async fn run<A: NodeDriver>(
     // duplicate copies. Why: `EventLoopConfig::cohost`.
     let mut rendezvous: Option<beacon::Rendezvous> = None;
     if claims_at_startup(cohost) {
-        beacon::ensure(
+        let claimed = beacon::ensure(
             &rendezvous_params,
             &endpoint,
             &mut rendezvous,
             probes_before_claim(cohost),
         )
         .await;
+        if claimed {
+            schedule_rival_recheck(&mut state, cohost, &rendezvous_params, &endpoint);
+        }
     }
 
     let (gossip_sender, receiver) = topic.split();
@@ -563,7 +566,7 @@ async fn event_loop<A: NodeDriver>(loop_state: EventLoop<A>) -> Result<()> {
                         GossipLink { sender: &mut sender, receiver: &mut receiver, attempts: &mut resubscribe_attempts },
                     ).await?;
                     let ctx = parts.ctx(&sender);
-                    maybe_cohost(&state, &ctx, &CohostArm { policy: cohost, params: &rendezvous_params, started }, &mut rendezvous).await;
+                    maybe_cohost(&mut state, &ctx, &CohostArm { policy: cohost, params: &rendezvous_params, started }, &mut rendezvous).await;
                 }
             }
             // A bootstrap rung chosen off-loop (startup probe / beacon self-monitor); apply it cheaply.
@@ -571,7 +574,19 @@ async fn event_loop<A: NodeDriver>(loop_state: EventLoop<A>) -> Result<()> {
             Ok(()) = rung_rx.changed() => apply_rung_change(&mut rendezvous_params, &endpoint, &mut rendezvous, &rung_rx),
             _ = intervals.reclaim.tick() => {
                 let ctx = parts.ctx(&sender);
-                maybe_reclaim(&state, &ctx, &CohostArm { policy: cohost, params: &rendezvous_params, started }, &mut rendezvous).await;
+                let arm = CohostArm { policy: cohost, params: &rendezvous_params, started };
+                // The rival re-check shed rides this ticker, NOT the heal tick:
+                // simultaneous joiners' heal tickers align, and a shed deadline
+                // quantized to a shared multi-second boundary re-synchronizes
+                // the very sheds whose ms-scale phase offsets must differ for
+                // one holder to catch the other still up (observed lockstep:
+                // both shed within 5ms, both probe into the gap, both re-bind,
+                // forever). At this cadence the offsets survive; the next tick
+                // (~RECLAIM_INTERVAL_MS later, after the dropped endpoint has
+                // unmapped) runs the re-probe via `maybe_reclaim`.
+                if !shed_rival_beacon_if_due(&mut state, &arm, &mut rendezvous) {
+                    maybe_reclaim(&mut state, &ctx, &arm, &mut rendezvous).await;
+                }
             }
             _ = intervals.antientropy.tick() => {
                 let ctx = parts.ctx(&sender);
@@ -946,6 +961,16 @@ async fn run_heal(
         // The frozen-era link view is stale by definition; clearing this
         // re-arms the regular tick's probe until a fresh NeighborUp.
         state.rendezvous_linked = false;
+        // A rival re-check deadline that "matured" while the process was
+        // frozen would shed the beacon into a mesh that is still
+        // re-forming; push it out a steady interval so the re-bootstrap
+        // settles first.
+        if state.next_rival_recheck.is_some() {
+            state.next_rival_recheck = Some(
+                Instant::now()
+                    + Duration::from_secs(crate::util::tuning::rival_recheck_secs()),
+            );
+        }
         // Re-assert the rendezvous hint (the network changed). The rung
         // is re-validated off-loop by the beacon's liveness self-monitor,
         // so a rung that died during the freeze self-corrects — no inline
@@ -1262,19 +1287,22 @@ struct CohostArm<'a> {
 /// member probes first (`beacon::ensure`) so it never registers a
 /// duplicate rendezvous that would capture its own bootstrap dial.
 async fn maybe_cohost(
-    state: &EventLoopState,
+    state: &mut EventLoopState,
     ctx: &HandlerCtx<'_>,
     arm: &CohostArm<'_>,
     current: &mut Option<beacon::Rendezvous>,
 ) {
     if may_cohost(arm.policy, state.meshed, arm.started) {
-        beacon::ensure(
+        let claimed = beacon::ensure(
             arm.params,
             ctx.endpoint,
             current,
             probes_before_claim(arm.policy),
         )
         .await;
+        if claimed {
+            schedule_rival_recheck(state, arm.policy, arm.params, ctx.endpoint);
+        }
     }
 }
 
@@ -1286,7 +1314,7 @@ async fn maybe_cohost(
 /// else probes first (`!Eager`) so a survivor that already took over
 /// isn't displaced by a colliding duplicate.
 async fn maybe_reclaim(
-    state: &EventLoopState,
+    state: &mut EventLoopState,
     ctx: &HandlerCtx<'_>,
     arm: &CohostArm<'_>,
     current: &mut Option<beacon::Rendezvous>,
@@ -1296,14 +1324,129 @@ async fn maybe_reclaim(
             .reclaim_until
             .is_some_and(|deadline| Instant::now() < deadline)
     {
-        beacon::ensure(
+        let claimed = beacon::ensure(
             arm.params,
             ctx.endpoint,
             current,
             probes_before_claim(arm.policy),
         )
         .await;
+        if claimed {
+            schedule_rival_recheck(state, arm.policy, arm.params, ctx.endpoint);
+        }
     }
+}
+
+/// Whether this session's beacon is subject to the periodic rival
+/// re-check shed: only a **public** `EagerProbed` co-host. `EagerProbed`
+/// claimants share a `rendezvous_id` with concurrent peers (topic joiners,
+/// directory advertisers) and can double-claim inside each other's probe
+/// window; every other policy either owns the identity from t=0 (`Eager`
+/// creator), meshes before claiming (`Deferred`), or never claims
+/// (`Never`). A loopback mesh's port ladder arbitrates atomically at bind
+/// time (`AddrInUse` + identity probe), so no split exists to fix there.
+fn rival_recheck_applies(policy: CoHostPolicy, public: bool) -> bool {
+    policy == CoHostPolicy::EagerProbed && public
+}
+
+/// When the next rival re-check shed should run, from the moment of a
+/// claim. Round 0 (a startup claim) is the *fast first* check plus a
+/// deterministic endpoint-id phase offset — the tie-break that orders
+/// simultaneous claimants so the earlier one sheds, finds the later
+/// one's still-held beacon, and yields. Later rounds run the steady
+/// cadence (lone vs meshed tier) plus fresh random jitter, breaking the
+/// residual both-shed-together collision geometrically.
+fn next_recheck_delay(round: u32, meshed: bool, endpoint_id: EndpointId) -> Duration {
+    use crate::util::consts::RIVAL_RECHECK_OFFSET_SPAN_SECS;
+    use crate::util::tuning::{
+        rival_recheck_first_secs, rival_recheck_meshed_secs, rival_recheck_secs,
+    };
+
+    if round == 0 {
+        let mut prefix = [0u8; 8];
+        prefix.copy_from_slice(&endpoint_id.as_bytes()[..8]);
+        // Pubkey bytes are already uniform — no hashing needed.
+        let offset_ms = u64::from_le_bytes(prefix) % (RIVAL_RECHECK_OFFSET_SPAN_SECS * 1000);
+        return Duration::from_secs(rival_recheck_first_secs()) + Duration::from_millis(offset_ms);
+    }
+    let base_secs = if meshed {
+        rival_recheck_meshed_secs()
+    } else {
+        rival_recheck_secs()
+    };
+    // Jitter spans the full base: two split holders re-jitter from
+    // near-aligned schedules every round, and the wider the span the more
+    // likely one's probe window lands while the other still holds.
+    let jitter_ms = rand::Rng::random_range(&mut rand::rng(), 0..=base_secs.saturating_mul(1000));
+    Duration::from_secs(base_secs) + Duration::from_millis(jitter_ms)
+}
+
+/// Arm the next rival re-check after a fresh claim (a `None` → live
+/// `beacon::ensure` transition). No-op for sessions the shed doesn't
+/// apply to, so every claim site can call it unconditionally.
+fn schedule_rival_recheck(
+    state: &mut EventLoopState,
+    policy: CoHostPolicy,
+    params: &beacon::RendezvousParams,
+    endpoint: &Endpoint,
+) {
+    if !rival_recheck_applies(policy, params.bind_ports.is_empty()) {
+        return;
+    }
+    let delay = next_recheck_delay(state.rival_recheck_rounds, state.meshed, endpoint.id());
+    state.next_rival_recheck = Some(Instant::now() + delay);
+}
+
+/// The rival re-check itself: at the scheduled deadline, **release** the
+/// held beacon and let probe-before-claim re-arbitrate on the reclaim
+/// burst. Two `EagerProbed` members that claimed inside each other's
+/// probe window both hold the same `rendezvous_id` and each captures its
+/// own bootstrap dial — a split nothing else repairs, because a holder's
+/// dial of the shared id preferentially reaches itself. Dropping our copy
+/// first removes us from every resolution channel (relay registration,
+/// mDNS record, pooled connection), so the re-probe's answer is finally
+/// meaningful: *connects* ⇒ a rival serves it, stay a participant and let
+/// the heal re-graft merge the overlays; *times out* ⇒ genuinely alone,
+/// re-claim. Returns whether a shed happened (the caller then skips this
+/// tick's synchronous re-claim).
+fn shed_rival_beacon_if_due(
+    state: &mut EventLoopState,
+    arm: &CohostArm<'_>,
+    rendezvous: &mut Option<beacon::Rendezvous>,
+) -> bool {
+    if rendezvous.is_none() || !rival_recheck_applies(arm.policy, arm.params.bind_ports.is_empty())
+    {
+        return false;
+    }
+    let due = state
+        .next_rival_recheck
+        .is_some_and(|deadline| Instant::now() >= deadline);
+    if !due {
+        return false;
+    }
+    tracing::info!(
+        target: "agent_square::gossip",
+        "beacon rival re-check: releasing the rendezvous to re-probe for a same-id co-host"
+    );
+    // `shed`, not a plain drop: the graceful endpoint close turns the
+    // participant's link to its own dead beacon into an immediate
+    // `NeighborDown` instead of a zombie that only dies at the QUIC idle
+    // timeout — the zombie both stalls the post-shed re-graft and leaves
+    // a poisoned pool entry under the shared id.
+    if let Some(held) = rendezvous.take() {
+        held.shed();
+    }
+    state.next_rival_recheck = None;
+    state.rival_recheck_rounds = state.rival_recheck_rounds.saturating_add(1);
+    // Don't wait for that `NeighborDown` either — clear the link flag now
+    // (mirroring the hard resume edge), or a yielding node's heal ticks
+    // idle on "rendezvous linked" instead of grafting the rival's beacon.
+    state.rendezvous_linked = false;
+    // Arm the fast burst explicitly rather than waiting for our own
+    // beacon's `NeighborDown` to do it — the re-probe (and the re-claim
+    // when no rival exists) then runs within ~RECLAIM_INTERVAL_MS.
+    state.reclaim_until = Some(Instant::now() + Duration::from_secs(RECLAIM_WINDOW_SECS));
+    true
 }
 
 /// The time-driven maintenance tickers.
@@ -1389,8 +1532,8 @@ mod tests {
     use std::time::Duration;
 
     use super::{
-        CoHostPolicy, claims_at_startup, is_resume, is_wall_resume, orphan_watch_warranted,
-        parent_lost, probes_before_claim,
+        CoHostPolicy, claims_at_startup, is_resume, is_wall_resume, next_recheck_delay,
+        orphan_watch_warranted, parent_lost, probes_before_claim, rival_recheck_applies,
     };
 
     #[test]
@@ -1414,6 +1557,65 @@ mod tests {
         assert!(!probes_before_claim(CoHostPolicy::Eager));
         assert!(!claims_at_startup(CoHostPolicy::Deferred));
         assert!(!claims_at_startup(CoHostPolicy::Never));
+    }
+
+    #[test]
+    fn rival_recheck_gates_on_eager_probed_and_public() {
+        // The shed exists for shared-rendezvous claimants racing each other:
+        // topic joiners and directory advertisers, both `EagerProbed` on a
+        // public (ephemeral, address-lookup) rendezvous.
+        assert!(rival_recheck_applies(CoHostPolicy::EagerProbed, true));
+        // The loopback port ladder arbitrates atomically at bind time — no
+        // split to fix, shedding would only churn the beacon.
+        assert!(!rival_recheck_applies(CoHostPolicy::EagerProbed, false));
+        // Every other policy either owns the identity from t=0, meshes
+        // before claiming, or never claims.
+        assert!(!rival_recheck_applies(CoHostPolicy::Eager, true));
+        assert!(!rival_recheck_applies(CoHostPolicy::Deferred, true));
+        assert!(!rival_recheck_applies(CoHostPolicy::Never, true));
+    }
+
+    #[test]
+    fn first_recheck_delay_is_deterministic_and_bounded() {
+        use crate::util::consts::{RIVAL_RECHECK_FIRST_SECS, RIVAL_RECHECK_OFFSET_SPAN_SECS};
+
+        let id = |byte: u8| iroh::SecretKey::from_bytes(&[byte; 32]).public();
+
+        // Round 0 must be a *deterministic* function of the endpoint id — it
+        // is the tie-break ordering simultaneous claimants, so per-call
+        // randomness would defeat it.
+        assert_eq!(next_recheck_delay(0, false, id(1)), next_recheck_delay(0, false, id(1)));
+
+        // Base + phase offset, offset strictly inside the span.
+        let base = Duration::from_secs(RIVAL_RECHECK_FIRST_SECS);
+        let span = Duration::from_secs(RIVAL_RECHECK_OFFSET_SPAN_SECS);
+        for byte in 0..8u8 {
+            let delay = next_recheck_delay(0, false, id(byte));
+            assert!(delay >= base && delay < base + span, "out of bounds: {delay:?}");
+        }
+
+        // Distinct ids must (in practice) spread across the span — all-equal
+        // offsets would mean the tie-break never orders anyone.
+        let all_equal = (1..8u8)
+            .all(|byte| next_recheck_delay(0, false, id(byte)) == next_recheck_delay(0, false, id(0)));
+        assert!(!all_equal, "phase offsets did not spread across ids");
+    }
+
+    #[test]
+    fn steady_recheck_delay_is_jittered_within_bounds() {
+        use crate::util::consts::{RIVAL_RECHECK_MESHED_SECS, RIVAL_RECHECK_SECS};
+
+        let id = iroh::SecretKey::from_bytes(&[9; 32]).public();
+
+        // Steady rounds: base by tier plus jitter in [0, base].
+        let lone_base = Duration::from_secs(RIVAL_RECHECK_SECS);
+        let meshed_base = Duration::from_secs(RIVAL_RECHECK_MESHED_SECS);
+        for _ in 0..8 {
+            let lone = next_recheck_delay(1, false, id);
+            assert!(lone >= lone_base && lone <= lone_base * 2);
+            let meshed = next_recheck_delay(1, true, id);
+            assert!(meshed >= meshed_base && meshed <= meshed_base * 2);
+        }
     }
 
     #[test]

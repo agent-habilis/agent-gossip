@@ -13,7 +13,12 @@
 //!
 //! - **Public:** ephemeral port, discoverable by node id via N0 pkarr.
 //!   Every member co-hosts permanently; pkarr is last-writer-wins, so
-//!   the record always resolves to a recently-live member.
+//!   the record always resolves to a recently-live member. Two
+//!   `EagerProbed` members can still claim inside each other's probe
+//!   window and bind duplicate same-id copies (each capturing its own
+//!   bootstrap dial); the event loop's periodic rival re-check shed
+//!   (`daemon::event_loop::shed_rival_beacon_if_due`) re-arbitrates, so
+//!   the single-co-host invariant holds *eventually*, not at claim time.
 //! - **Private:** a deterministic loopback port *ladder* (no
 //!   pkarr/DNS). Exactly one member per mesh is the beacon: a member
 //!   binds the first free rung; on `AddrInUse` it probes the rung's
@@ -90,6 +95,25 @@ pub(crate) struct Rendezvous {
     /// The relay-rung liveness/discovery monitor (`spawn_relay_monitor`).
     /// `None` for private / relay-disabled meshes (nothing to monitor).
     monitor: Option<JoinHandle<()>>,
+    /// The co-hosted endpoint itself, retained so [`Self::shed`] can close
+    /// it gracefully — a plain drop (task abort) skips the orderly QUIC
+    /// close, and the participant's link to its own dead beacon lingers as
+    /// a zombie until the idle timeout, stalling the post-shed re-graft.
+    endpoint: Endpoint,
+}
+
+impl Rendezvous {
+    /// Release the beacon *gracefully*: abort the tasks, then close the
+    /// endpoint off-loop so every peer holding a link to it (including our
+    /// own participant) sees an immediate `NeighborDown` instead of a
+    /// zombie link that only dies at the QUIC idle timeout.
+    pub(crate) fn shed(self) {
+        let endpoint = self.endpoint.clone();
+        tokio::spawn(async move {
+            endpoint.close().await;
+        });
+        // `self` drops here, aborting both tasks.
+    }
 }
 
 impl Drop for Rendezvous {
@@ -167,18 +191,39 @@ async fn build_rendezvous_endpoint(
         // would collide and capture our own bootstrap dial. Skipped for
         // the eager origin (`probe_first == false`): it has no peers to
         // collide with and must be the beacon from t=0.
-        if probe_first
-            && probe_connect(
-                participant,
-                EndpointAddr::new(params.id),
-                // Clamped so at most one probe is outstanding per heal tick
-                // even when tests shorten the cadence below the probe cap.
-                Duration::from_secs(HEAL_PROBE_SECS.min(heal_interval_secs())),
-            )
-            .await
-        {
-            tracing::debug!("public rendezvous already served by a beacon; staying participant");
-            return None;
+        //
+        // The probe dials from a **throwaway endpoint**, not `participant`:
+        // an ex-holder re-probing after a rival re-check shed carries stale
+        // per-id connection state for the shared `rendezvous_id` (the link
+        // to its own just-dropped beacon — the reused-endpoint-id pathology
+        // of iroh-gossip#10), and a dial from it joins that dead state and
+        // times out even while the rival's live addresses sit in the
+        // address book. A fresh endpoint has no history to get stuck on.
+        if probe_first {
+            // Clamped so at most one probe is outstanding per heal tick
+            // even when tests shorten the cadence below the probe cap.
+            let budget = Duration::from_secs(HEAL_PROBE_SECS.min(heal_interval_secs()));
+            let found_rival = match build_endpoint(&lookups, None, None, Vec::new(), None).await {
+                Ok(prober) => {
+                    let found =
+                        probe_connect(&prober, EndpointAddr::new(params.id), budget).await;
+                    prober.close().await;
+                    found
+                }
+                // Can't build a prober ⇒ can't tell; claiming blind here
+                // risks the duplicate-id collision, so stay a participant
+                // and let the next tick retry.
+                Err(error) => {
+                    tracing::debug!(%error, "rival probe endpoint build failed; next tick retries");
+                    return None;
+                }
+            };
+            if found_rival {
+                tracing::debug!(
+                    "public rendezvous already served by a beacon; staying participant"
+                );
+                return None;
+            }
         }
         let endpoint = build_endpoint(
             &lookups,
@@ -227,17 +272,21 @@ async fn build_rendezvous_endpoint(
 /// synchronous (we must know immediately whether we hold a beacon);
 /// the `subscribe_and_join` runs inside the spawned task so the event
 /// loop never blocks on it.
+///
+/// Returns whether this call stood up a **new** rendezvous (a
+/// `None`/dead → live transition) — the edge the event loop's rival
+/// re-check scheduling keys on.
 pub(crate) async fn ensure(
     params: &RendezvousParams,
     participant: &Endpoint,
     current: &mut Option<Rendezvous>,
     probe_first: bool,
-) {
+) -> bool {
     if current
         .as_ref()
         .is_some_and(|rendezvous| !rendezvous.task.is_finished())
     {
-        return;
+        return false;
     }
     if current.is_some() {
         tracing::info!("beacon released (co-host task ended); attempting re-stand-up");
@@ -251,7 +300,7 @@ pub(crate) async fn ensure(
         // occupied — our mesh's beacon(s) already exist on the ladder
         // (joiners reach them by identity-checked dial). Either way,
         // nothing to do; the next tick retries.
-        return;
+        return false;
     };
 
     // The rendezvous pseudo-node's active view is overlay plumbing, not the
@@ -280,6 +329,7 @@ pub(crate) async fn ensure(
     let monitor_endpoint = endpoint.clone();
     let monitor_homed = params.bootstrap_relay.is_some();
     let monitor_rung_tx = params.rung_tx.clone();
+    let rendezvous_endpoint = endpoint.clone();
 
     let task = tokio::spawn(async move {
         use std::time::Duration;
@@ -338,5 +388,10 @@ pub(crate) async fn ensure(
     });
 
     tracing::info!("beacon role active: serving the rendezvous");
-    *current = Some(Rendezvous { task, monitor });
+    *current = Some(Rendezvous {
+        task,
+        monitor,
+        endpoint: rendezvous_endpoint,
+    });
+    true
 }

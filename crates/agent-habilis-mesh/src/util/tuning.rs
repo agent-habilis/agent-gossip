@@ -202,6 +202,10 @@ pub struct Tuning {
     pub directory_expiry_secs: u64,
     pub antientropy_max_resend: usize,
     pub directory_private: bool,
+    pub rival_recheck_first_secs: u64,
+    pub rival_recheck_secs: u64,
+    pub rival_recheck_meshed_secs: u64,
+    pub topic_mdns_only: bool,
 }
 
 impl Tuning {
@@ -224,6 +228,10 @@ impl Tuning {
         directory_expiry_secs: crate::util::consts::DIRECTORY_EXPIRY_SECS,
         antientropy_max_resend: crate::util::consts::ANTIENTROPY_MAX_RESEND,
         directory_private: false,
+        rival_recheck_first_secs: crate::util::consts::RIVAL_RECHECK_FIRST_SECS,
+        rival_recheck_secs: crate::util::consts::RIVAL_RECHECK_SECS,
+        rival_recheck_meshed_secs: crate::util::consts::RIVAL_RECHECK_MESHED_SECS,
+        topic_mdns_only: false,
     };
 }
 
@@ -420,6 +428,37 @@ pub fn advertise_interval_secs() -> u64 {
 #[must_use]
 pub fn directory_expiry_secs() -> u64 {
     current().directory_expiry_secs
+}
+
+/// First shed of an `EagerProbed` public beacon after a probed claim — see
+/// [`crate::util::consts::RIVAL_RECHECK_FIRST_SECS`] for the rationale.
+/// Hidden flag `--rival-recheck-first-secs` (tests converge in seconds).
+/// Clamped to `>= 1`.
+pub(crate) fn rival_recheck_first_secs() -> u64 {
+    current().rival_recheck_first_secs.max(1)
+}
+
+/// Steady shed cadence for a lone `EagerProbed` public beacon holder —
+/// see [`crate::util::consts::RIVAL_RECHECK_SECS`]. Hidden flag
+/// `--rival-recheck-secs`. Clamped to `>= 1`.
+pub(crate) fn rival_recheck_secs() -> u64 {
+    current().rival_recheck_secs.max(1)
+}
+
+/// Steady shed cadence while meshed (island-vs-island backstop) — see
+/// [`crate::util::consts::RIVAL_RECHECK_MESHED_SECS`]. Hidden flag
+/// `--rival-recheck-meshed-secs`. Clamped to `>= 1`.
+pub(crate) fn rival_recheck_meshed_secs() -> u64 {
+    current().rival_recheck_meshed_secs.max(1)
+}
+
+/// Topic meshes are the public preset; the `--topic-mdns-only` flag narrows
+/// their lookups to mDNS (no DHT, no relay). **Test-only** (hidden flag): the
+/// beacon-claim race is otherwise unreachable in CI (no public relay), same
+/// rationale as `--directory-private` — see `tests/topic_split.rs`.
+#[must_use]
+pub fn topic_mdns_only_for_test() -> bool {
+    current().topic_mdns_only
 }
 
 /// Directories are public by default; the `--directory-private` flag flips

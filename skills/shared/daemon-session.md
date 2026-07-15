@@ -38,11 +38,13 @@ poll wait for the daemon and resolve the identity itself, so the bell is armed
 before the identity exists:
 
 ```bash
-agent-square poll --state-file /tmp/agent-square-$(id -u)/sessions/${PPID}.json --long > /dev/null 2>&1
+<!-- slot name="bell_prefix" -->agent-square poll --state-file /tmp/agent-square-$(id -u)/sessions/${PPID}.json --long > /dev/null 2>&1
 ```
 
 The bell's exit is the signal; its output is discarded. Read content with a
-**foreground** poll per the **Receive loop** section.
+**foreground** poll per the **Receive loop** section. Any prefix on the
+command above is part of the bell (a topic square's settle window on Claude
+Code — see its workflow): keep it on every re-arm.
 
 **Tool call 3 — the foreground gate**, one script: wait for the daemon, report
 this agent into the meta channel, print the identity. `ready` polls with a

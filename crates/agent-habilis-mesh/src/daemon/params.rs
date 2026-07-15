@@ -174,10 +174,25 @@ pub fn derive_topic_mesh(string: &str) -> Result<Mesh> {
     if string.trim().is_empty() {
         anyhow::bail!("topic string must not be empty");
     }
+    // `--topic-mdns-only` (test-only): keep the mesh *public-shaped* (an
+    // ephemeral, address-lookup-discoverable rendezvous — the beacon-claim
+    // race under test lives on that path, not the loopback ladder) while
+    // reaching no further than the LAN — CI has no public relay, and the
+    // narrowed config bytes also derive a topic id no production peer on
+    // the same string can land in. Same rationale as `--directory-private`.
+    let lookups = if crate::util::tuning::topic_mdns_only_for_test() {
+        LookupOpts {
+            mdns: true,
+            dht: false,
+            relay: crate::protocol::mesh::RelayChoice::Disabled,
+        }
+    } else {
+        LookupOpts::public_preset()
+    };
     Ok(Mesh::from_topic(
         string,
         MeshConfig {
-            lookups: LookupOpts::public_preset(),
+            lookups,
             password: None,
             issuer_pubkey: None,
         },

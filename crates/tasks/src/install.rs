@@ -24,6 +24,19 @@ pub(crate) fn run(sh: &Shell) -> TaskOutcome {
     cmd!(sh, "cargo install --path {pkg} --force --locked")
         .quiet()
         .run()?;
-    output::status("Installed", "~/.cargo/bin/agent-square");
+    // Report what the installed binary *says it is*, not just that the install
+    // ran: a fossilized vergen stamp shipped days of installs that all
+    // self-identified as an old commit (`765793f`), and the mismatch was only
+    // caught in a failing field test. Best-effort — a probe hiccup must not
+    // fail an install that succeeded.
+    let installed = std::env::var_os("CARGO_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::home_dir().map(|user_home| user_home.join(".cargo")))
+        .map_or_else(|| "agent-square".into(), |cargo| cargo.join("bin/agent-square"));
+    let version = cmd!(sh, "{installed} --version")
+        .quiet()
+        .read()
+        .unwrap_or_else(|_| "unknown (version probe failed)".to_owned());
+    output::status("Installed", version.trim());
     Ok(())
 }

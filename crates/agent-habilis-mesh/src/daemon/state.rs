@@ -221,6 +221,19 @@ pub struct EventLoopState {
     /// survivor claims the freed rendezvous port in ~1s rather than
     /// waiting for the next 15s heal tick.
     pub reclaim_until: Option<Instant>,
+    /// When `Some(deadline)`, the next rival re-check *shed* of an
+    /// `EagerProbed` public beacon: at the deadline the holder drops its
+    /// co-host and lets probe-before-claim re-arbitrate, so a same-id
+    /// rival that claimed inside our probe window is finally found and
+    /// yielded to (see `event_loop::shed_rival_beacon_if_due`). `None`
+    /// while not holding a shed-eligible beacon.
+    pub next_rival_recheck: Option<Instant>,
+    /// How many rival re-check sheds have run. Round 0 (the claim made at
+    /// startup, before any shed) schedules the *fast first* re-check with
+    /// the deterministic endpoint-id tie-break offset — the likeliest
+    /// rival started within seconds of us; later rounds run the steady
+    /// jittered cadence.
+    pub rival_recheck_rounds: u32,
     /// Recently-seen message ids, for duplicate suppression. Gossip
     /// (GRAFT/repair, topology churn, our own re-broadcasts, anti-entropy
     /// re-sends, the rendezvous double-path) can deliver the same message
@@ -421,6 +434,8 @@ impl EventLoopState {
             multihop: None,
             link_state_seq: 0,
             reclaim_until: None,
+            next_rival_recheck: None,
+            rival_recheck_rounds: 0,
             seen: BoundedIdSet::new(seen_ids_cap()),
             pending_outbound: BoundedQueue::new(PENDING_OUTBOUND_CAP),
             state_file,
