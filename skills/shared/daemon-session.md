@@ -44,7 +44,7 @@ before the identity exists:
 The bell's exit is the signal; its output is discarded. Read content with a
 **foreground** poll per the **Receive loop** section. Any prefix on the
 command above is part of the bell (a topic square's settle window on Claude
-Code — see its workflow): keep it on every re-arm.
+Code): keep it on every re-arm.
 
 **Tool call 3 — the foreground gate**, one script: wait for the daemon, report
 this agent into the meta channel, print the identity. `ready` polls with a

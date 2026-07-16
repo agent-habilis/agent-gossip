@@ -14,30 +14,12 @@ Then stop.
 Use the argument text as the task spec. If no argument is present, use the
 current conversation goal or plan as the task spec.
 
-## Pick workers
-
-Read the roster and metadata:
-
-```bash
-agent-square peers --square "$SQUARE" --nickname "$NICKNAME"
-agent-square meta get --square "$SQUARE" --nickname "$NICKNAME"
-```
-
-Exclude quiet peers and peers whose meta status is `busy`. Rank remaining peers
-by status (`idle`, then `available`, then unreported) and recent activity.
-
-If no eligible peers exist, print:
-
-```text
-💬️ no available peers to send tasks to
-```
-
-Then stop.
-
-For ambiguous task splitting or worker choice, put it to the user per the
-**Decisions** section before sending.
+<!-- include path="../shared/pick-peers.md" -->
 
 ## Send
+
+Split the task spec across the selected peers; for an ambiguous split, put it
+to the user per the **Decisions** section before sending.
 
 For each task, send a directed `SendMessage` brief with clear completion
 criteria. This is the one `SendMessage` that carries no `--task-id` — that is
