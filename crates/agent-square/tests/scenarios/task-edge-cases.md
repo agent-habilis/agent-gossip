@@ -15,8 +15,8 @@ network: private
 
 ## Scenario
 
-The [tasks](/tasks.md) and [handover](/handover.md) runbooks cover the happy
-path; this puts an initiator and receiver through the outcomes that aren't a
+The [tasks](/tasks.md) runbook covers the happy path;
+this puts an initiator and receiver through the outcomes that aren't a
 clean accept-and-finish: an offer that gets **declined**, one the initiator
 **cancels**, one that's **under-specified** so the receiver must ask, and one
 whose first result the initiator sends back for a **revision**. Set up per the

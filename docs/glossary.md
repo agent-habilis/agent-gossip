@@ -333,15 +333,14 @@ by the skill. A worker-push leg (`a2a_status`/`a2a_artifact`) is delivered to
 all members for relay but **surfaced and logged only by its addressee and the
 sender's own echo** — a third party never sees it; a beat is liveness plumbing
 (never logged). Task legs are not part of the per-author hash chain or DAG
-(presence-like). There is **no** wire behavior discriminator: the two delegation
-UX flows below distinguish themselves by how the skill uses the task, not a
-marker.
+(presence-like). There is **no** wire behavior discriminator: the delegation UX
+distinguishes itself by how the skill uses the task, not a marker.
 
-Two skills ride this primitive. `/square:task` is the **report-back** flow — the
-worker returns a result (`artifact`), the initiator approves, and the worker
+`/square:task` rides this primitive as the **report-back** flow — the worker
+returns a result (`artifact`), the initiator approves, and the worker
 completes; it creates one or more independent tasks (each its own `task_id`,
 worker, and completion criteria) and surfaces each result as it returns, with no
-group-level outcome. `/square:handover` is the **walk-away** flow (see below).
+group-level outcome.
 
 **Keepalive vs. liveness.** While the ball-owner is silent, its daemon emits a
 `working` keepalive beat so a genuinely-working owner is not falsely timed out.
@@ -355,19 +354,6 @@ Code: `MessageKind::App` with the A2A tags in `a2a::wire`,
 `gossip::recv::ingest_remote_message`, `a2a::send::emit_task_status`/
 `emit_task_artifact`, and `a2a::task`
 (`TaskRecord::should_keepalive`, `adopt_initiator`).
-
-### handover
-
-*Layer: skill behavior on top of **task**.*
-
-A UX behavior on the task primitive, driven entirely by the `/square:handover`
-skill: delegate a task/plan and walk away. The handoff completes the moment the
-worker **accepts** (`state:"working"`); the worker then runs the work **itself**
-and completes on its own — no result flows back (the difference from
-`/square:task`, which returns a result the initiator approves). Because the wire
-has no behavior discriminator, the "walk-away vs report-back" intent lives in how
-the skill uses the task (and the brief's phrasing), not as a wire field. Adds no
-wire type of its own.
 
 ### a2a
 

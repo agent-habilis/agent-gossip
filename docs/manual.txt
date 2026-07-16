@@ -487,8 +487,8 @@ COMMANDS
               is square size, not the array length — the same field the MCP
               square_info result and the --state-file use). reach is "direct"
               when a live gossip link to that peer exists, else "gossip"
-              (relayed). Backs the /square:handover and /square:task target
-              pickers, nickname validation, and the /square:status roster.
+              (relayed). Backs the /square:task target picker, nickname
+              validation, and the /square:status roster.
               The roster does not carry model/harness/host — those are square
               metadata each agent self-reports into the meta channel; read
               them with meta get under /peers/<nickname> (see "SHARED STATE").

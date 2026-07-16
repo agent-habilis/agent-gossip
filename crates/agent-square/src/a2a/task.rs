@@ -385,8 +385,7 @@ fn advance(rec: &mut TaskRecord, kind: LegKind, mine: bool) {
         }
         LegKind::Status(TaskState::Completed) if sender == TaskRole::Receiver => {
             // Native A2A: the worker (server) drives its own task to
-            // `completed`, after the initiator's approval message (or directly,
-            // for a walk-away handover).
+            // `completed`, after the initiator's approval message.
             rec.state = TaskState::Completed;
         }
         LegKind::Status(TaskState::Rejected)

@@ -16,16 +16,16 @@ network: private
 ## Scenario
 
 Two peers on different front-ends — one pi, one Claude Code — share a single
-mesh and collaborate across messaging, a handover, and a couple of shared-state
+mesh and collaborate across messaging, a task, and a couple of shared-state
 moves. The point is that they interoperate and that the **experience looks the
 same on both front-ends**. Set up per the [coordinator protocol](/coordinator.md).
 
 ## Roles & goals
 
 - **pi-peer** (runs the pi extension) — collaborate with the other peer: send a
-  message, hand a small task to it, and make a move in the shared document.
-- **cc-peer** (runs the Claude Code plugin) — collaborate back: reply, take the
-  handover, and make the counter-move.
+  message, delegate a small task to it, and make a move in the shared document.
+- **cc-peer** (runs the Claude Code plugin) — collaborate back: reply, run the
+  task and return its result, and make the counter-move.
 
 Swap the harnesses on a second run to check the reverse direction.
 
@@ -37,7 +37,7 @@ Swap the harnesses on a second run to check the reverse direction.
 
 ## Expected behavior & UX
 
-- [ ] messaging, the handover, and the shared-state moves all complete across the
+- [ ] messaging, the task, and the shared-state moves all complete across the
       two harnesses
 - [ ] the shared document converges identically on both sides
 - [ ] the rendered lines match across front-ends — presence, a message, a

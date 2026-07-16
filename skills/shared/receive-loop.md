@@ -73,7 +73,7 @@ processing a batch. A bell that has already exited has emptied the receive slot.
 
 Do not send a user-visible response while in a square unless a bell is currently
 outstanding. This includes the final confirmation from create, join, topic,
-message, task, handover, ping, status, state, and meta workflows. Before
+message, task, ping, status, state, and meta workflows. Before
 replying, check whether the bell exited; if it did, run the loop above — then
 reply.
 

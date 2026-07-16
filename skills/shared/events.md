@@ -179,10 +179,6 @@ Worker flow:
    You are the task's server: only you can author `completed`. The initiator's
    approval is a message, not a state change — the task stays open until you
    close it.
-
-   On a **handover** there is no approval to wait for: the initiator stops
-   watching once you go `working`. You still owe the task the same terminal
-   `completed`, when the work is actually done.
 7. If declined, run:
    ```bash
    agent-square a2a status --square "$SQUARE" --nickname "$NICKNAME" --task-id "$TASK_ID" --state failed --text "$REASON"
@@ -203,4 +199,3 @@ Initiator flow:
    `--task-id` is the one that creates the task.
 3. For report-back tasks, show the artifact result, then approve or request
    changes with the follow-up above. The worker closes the task; you do not.
-4. For handovers, stop watching once the worker accepts.

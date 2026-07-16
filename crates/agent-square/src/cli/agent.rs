@@ -12,11 +12,15 @@ use include_dir::{Dir, include_dir};
 /// `skills/` sources into `$OUT_DIR/skills`.
 pub(crate) static SKILLS: Dir<'_> = include_dir!("$OUT_DIR/skills");
 
+/// Dirs plug/unplug own but that are no longer embedded — the pre-single-file
+/// `shared/` partials and removed skills. Old installs left them on disk;
+/// keeping them owned lets plug/unplug clean those up.
+const RETIRED_SKILL_DIRS: &[&str] = &["shared", "square-handover"];
+
 const OWNED_SKILL_DIRS: &[&str] = &[
     "square-create",
     "square-discover",
     "square-doctor",
-    "square-handover",
     "square-join",
     "square-leave",
     "square-meta",
@@ -26,10 +30,6 @@ const OWNED_SKILL_DIRS: &[&str] = &[
     "square-status",
     "square-task",
     "square-topic",
-    // No longer embedded (skills are single-file since the build-time
-    // renderer), but pre-single-file installs left a `shared/` dir on disk;
-    // keeping it owned lets plug/unplug clean those up.
-    "shared",
 ];
 
 /// Ties this module's compilation to the embedded artifacts' content
@@ -191,6 +191,7 @@ impl Agent {
 pub(crate) fn owned_skill_dirs_under(root: &Path) -> Vec<PathBuf> {
     OWNED_SKILL_DIRS
         .iter()
+        .chain(RETIRED_SKILL_DIRS)
         .map(|name| root.join(name))
         .collect()
 }
@@ -278,9 +279,6 @@ mod tests {
     #[test]
     fn embedded_skills_are_single_file() {
         for skill in OWNED_SKILL_DIRS {
-            if *skill == "shared" {
-                continue;
-            }
             let dir = SKILLS
                 .get_dir(skill)
                 .unwrap_or_else(|| panic!("{skill} is embedded"));
@@ -314,9 +312,6 @@ mod tests {
     fn skill_sources_are_templates_plus_partials() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../skills");
         for skill in OWNED_SKILL_DIRS {
-            if *skill == "shared" {
-                continue;
-            }
             let skill_dir = root.join(skill);
             assert!(skill_dir.join("SKILL.md").is_file(), "{skill} template");
             assert!(skill_dir.join("workflow.md").is_file(), "{skill} workflow");
@@ -402,9 +397,6 @@ mod tests {
 
         let mut daemon_starters_checked = 0;
         for skill in OWNED_SKILL_DIRS {
-            if *skill == "shared" {
-                continue;
-            }
             let path = format!("{skill}/SKILL.md");
             let body = SKILLS
                 .get_file(&path)

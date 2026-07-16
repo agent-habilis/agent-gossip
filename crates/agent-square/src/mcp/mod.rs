@@ -931,13 +931,12 @@ call the `ping` tool.
 TASKS arrive as `event:\"task\"` records addressed to you and are driven with \
 `send_task`, reusing one `task_id` across all legs: \
 offer → accept/decline → [context] → done → confirm/change. The opening offer \
-body begins with a flow marker on its own first line: `[[task]]` (report-back — \
-do the work and return the result on `done`, which the initiator confirms or \
-`change`s) or `[[handover]]` (walk-away — you take the task over and run it \
-yourself; the initiator auto-confirms and expects no result on `done`). STRIP \
-that marker line before acting on the brief; a missing/unrecognized marker means \
-`[[task]]`. To initiate a task, prepend the matching marker to your own offer \
-body. Don't display task legs as chat lines — drive the flow.
+body may begin with a `[[task]]` flow marker on its own first line (report-back \
+— do the work and return the result on `done`, which the initiator confirms or \
+`change`s). STRIP that marker line before acting on the brief; a \
+missing/unrecognized marker means `[[task]]`. To initiate a task, prepend the \
+marker to your own offer body. Don't display task legs as chat lines — drive \
+the flow.
 
 SHARED STATE is one JSON document the whole square shares, separate from chat. \
 Read it with `get_state`; change it with `apply_state_merge` (an RFC 7386 JSON \

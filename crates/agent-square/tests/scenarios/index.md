@@ -29,7 +29,6 @@ The runbooks are harness-agnostic — they describe goals, not commands.
 
 Core:
 - [Tasks](/tasks.md) — delegate a task to a peer, get the result, confirm it.
-- [Handover](/handover.md) — hand a task to a peer that runs it on its own.
 - [Shared state — Connect Four](/state-connect-four.md) — a turn-based game over
   the shared-state document.
 - [Shared state — Nim "21"](/state-nim-21.md) — a fast turn-based game over the
@@ -97,7 +96,6 @@ skills. This table is only to help you read what happened.
 | discover | `/mesh-discover` | `mesh_discover` | `/square:discover` |
 | broadcast | `/mesh-msg` | `mesh_send` | `/square:msg` |
 | directed reply | `/mesh-reply` | `mesh_send` (with reply) | `/square:reply` |
-| handover | `/mesh-handover` | `mesh_handover` | `/square:handover` |
 | task | `/mesh-task` | `mesh_task` | `/square:task` |
 | advance a task leg | — | `mesh_advance` | (skill drives the legs) |
 | status / roster | `/mesh-status` | `mesh_status` | `/square:status` |
