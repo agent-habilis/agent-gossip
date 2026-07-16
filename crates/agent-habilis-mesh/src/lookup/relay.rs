@@ -51,13 +51,19 @@ use crate::util::tuning::{
 /// Last such move: iroh 1.0.1 retired the `iroh-canary` infix for the
 /// stable `*.relay.n0.iroh.link` hosts. Mixed-ladder meshes (binaries
 /// from before/after that bump) still rendezvous via rung 0, which is
-/// ladder-version-independent; only the rung 1..4 fallback diverges.
+/// ladder-version-independent; only the fallback rungs diverge. The
+/// `relay.agent-habilis.com` cutover then moved rung 0 itself: binaries
+/// from before it home on the retired `swarm-relay.…` host, so they
+/// cannot relay-direct rendezvous with binaries from after.
 const RENDEZVOUS_RELAY_LADDER: [&str; 5] = [
-    "https://swarm-relay.agent-habilis.com./", // ours (rung 0)
-    "https://use1-1.relay.n0.iroh.link./",     // NA-east
-    "https://usw1-1.relay.n0.iroh.link./",     // NA-west
-    "https://euc1-1.relay.n0.iroh.link./",     // EU
-    "https://aps1-1.relay.n0.iroh.link./",     // AP
+    // No trailing-dot FQDN on rung 0: Cloudflare routes by exact Host
+    // header and 404s the dotted form (including the /relay websocket
+    // upgrade); n0's infra tolerates the dot.
+    "https://relay.agent-habilis.com/",    // ours (rung 0)
+    "https://use1-1.relay.n0.iroh.link./", // NA-east
+    "https://usw1-1.relay.n0.iroh.link./", // NA-west
+    "https://euc1-1.relay.n0.iroh.link./", // EU
+    "https://aps1-1.relay.n0.iroh.link./", // AP
 ];
 
 /// Parsed once; `RelayUrl` clones are `Arc`-backed (cheap).
