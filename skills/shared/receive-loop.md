@@ -35,7 +35,7 @@ two sequential messages:
    ```
 2. **Re-armed bell** (background, output discarded), keeping whatever prefix
    this session's bell carries (a topic square on Claude Code prefixes
-   `sleep 10; ` — its settle window; see the topic workflow):
+   `sleep 5; ` — its settle window; see the topic workflow):
    ```bash
    agent-square poll --square "$SQUARE" --nickname "$NICKNAME" --long > /dev/null 2>&1
    ```
